@@ -1,0 +1,22 @@
+amends "package://github.com/jdx/hk/releases/download/v1.52.0/hk@1.52.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v1.52.0/hk@1.52.0#/Builtins.pkl"
+
+min_hk_version = "1.52.0"
+
+local checks = new Mapping<String, Step> {
+    ["hk-test"] = Builtins.hk_test
+    ["cargo-fmt"] = Builtins.cargo_fmt
+}
+
+hooks {
+    ["pre-commit"] {
+        steps = checks
+    }
+    ["check"] {
+        steps = checks
+    }
+    ["fix"] {
+        fix = true
+        steps = checks
+    }
+}

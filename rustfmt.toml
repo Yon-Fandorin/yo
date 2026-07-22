@@ -1,0 +1,18 @@
+# Keep formatting deterministic through the pinned nightly toolchain.
+edition = "2024"
+max_width = 100
+tab_spaces = 4
+newline_style = "Unix"
+use_field_init_shorthand = true
+match_block_trailing_comma = true
+format_strings = false
+
+# Nightly-only structure and documentation formatting.
+unstable_features = true
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_imports = true
+reorder_modules = true
+wrap_comments = true
+comment_width = 100
+trailing_comma = "Vertical"
