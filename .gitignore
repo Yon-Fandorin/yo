@@ -1,2 +1,6 @@
 /hk.local.pkl
 /.config/hk.local.pkl
+
+# Repository-local workbench and editor artifacts
+/.local-exclude/
+/nvim.log
