@@ -3,7 +3,7 @@
 | Axis | State |
 | --- | --- |
 | Document | Accepted |
-| Implementation | Not started |
+| Implementation | S1 knowledge foundation implemented |
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 
@@ -49,10 +49,16 @@ are separate gates: validated Pilot capabilities MAY move to a standalone
 Methexis repository, while generalizing beyond the `yo`-proven contract
 requires evidence from a second real product consumer.
 
-The first corpus is the Structured Core `Surface` vertical slice. It SHOULD
-contain roughly 20–50 units covering geometry, cell width, graphemes, style,
-`Surface` invariants, common Inline and Fullscreen output semantics, HTML
+The first evaluation corpus is the Structured Core `Surface` vertical slice. It
+SHOULD contain roughly 20–50 units covering geometry, cell width, graphemes,
+style, `Surface` invariants, common Inline and Fullscreen output semantics, HTML
 projection, fixtures, and validation.
+
+S1 precedes that evaluation corpus with five TUI architecture Draft units. This
+small seed exists to exercise the file model, identity algorithm, graph
+validation, and agent-facing Fast Check before the larger Surface authoring
+cost. It is foundation evidence, not the evaluation corpus or a replacement for
+the S5 Surface gate.
 
 A small SOT operating-procedure corpus MUST provide a structurally different
 secondary sample. It MAY reference the repository workflow authority but MUST
@@ -95,6 +101,33 @@ The Pilot uses one Markdown file per unit:
 - a constrained English body for canonical meaning;
 - a stable semantic `KnowledgeId`;
 - a mutable physical file location.
+
+The Draft corpus begins under:
+
+```text
+methexis/
+  knowledge/<domain>/<KnowledgeId>.md
+  owners/<domain>.yaml
+```
+
+The directory and filename are organizational hints, not identity. The loader
+MUST read `KnowledgeId` and OwnerId from record content and MUST preserve
+identity when a valid record moves. Each ID is lowercase dot-separated semantic
+segments. A segment starts with an ASCII letter, ends with an ASCII letter or
+digit, and contains only lowercase ASCII letters, digits, or single internal
+hyphens. IDs MUST NOT encode the physical path, record kind, revision, or first
+consumer.
+
+Frontmatter contains only machine metadata: schema, ID, kind, OwnerId, Source
+references, and typed relations. The Markdown body contains canonical meaning;
+it MUST NOT duplicate a canonical statement in frontmatter. Every body has a
+non-empty `Statement` section. A decision also has `Rationale`; a procedure also
+has `Steps` and `Completion Criteria`.
+
+Canonical records MUST NOT use YAML merge keys. They add an alternate metadata
+composition mechanism without adding meaning to the closed Pilot schema.
+Canonical bodies MUST NOT contain raw HTML blocks or comments; hidden rendered
+content cannot satisfy a required semantic section.
 
 The canonical English body is agent-generated and begins as Draft. When Korean
 user input is material provenance, a reviewer sees an authorized Source excerpt
@@ -156,15 +189,17 @@ its content hash detects drift.
 ## SOT-004: Revision, approval, and Checkpoint
 
 `KnowledgeId` is stable semantic identity. `RevisionId` identifies exact
-canonical meaning and is a deterministic hash of:
+canonical meaning. The Pilot encodes it as `sha256:<lowercase-hex>` over one
+unambiguous, length-delimited semantic representation containing:
 
-- ID, kind, and owner;
+- schema version, ID, kind, and owner;
 - canonical body;
-- pinned Source references;
-- relations.
+- sorted pinned Source references;
+- relation type and sorted target references for every closed relation type.
 
-Physical path, generation time, and line-ending representation MUST NOT change
-the revision.
+The loader normalizes CRLF and bare CR to LF before hashing. Other canonical body
+bytes remain meaningful. Physical path, YAML key order or formatting, generation
+time, and original line-ending representation MUST NOT change the revision.
 
 A revision stays under the same KnowledgeId only while it answers the same
 semantic question and existing inbound relations still identify the same
@@ -270,9 +305,19 @@ projections and mark affected Checkpoints degraded. A change concurrent with
 resolution follows the immutable snapshot and final revalidation rules in
 `SOT-007`. Unaffected approved knowledge remains eligible.
 
-Fast editing validation covers schema, required fields, ID uniqueness, missing
-targets, graph cycles, and current-to-approved revision matching. It SHOULD be
-available through the repository `hk` workflow.
+Fast editing validation uses two phases. The local phase parses every record and
+aggregates schema, field, ID, relation-shape, and body-section diagnostics. The
+global phase runs only when every record passes locally, then aggregates
+duplicate IDs, missing owners or targets, and graph cycles. Diagnostics have
+stable codes and deterministic path/code/location ordering. Any diagnostic
+produces no snapshot.
+
+The first `methexis check` validates only the current working-tree Draft corpus.
+Its structured result MUST identify authority as `draft` and approval and
+Checkpoint as `not_evaluated`; success proves structural integrity, never
+approval. Source records, exact approval, and Checkpoint evaluation enter
+through later owning Slices. Fast editing validation SHOULD be available through
+the repository `hk` workflow.
 
 Checkpoint activation additionally verifies:
 
@@ -498,7 +543,8 @@ workspace, introduce database authority, or generalize before evaluation.
 
 ## Deferred
 
-- Exact Markdown/frontmatter serialization after corpus authoring feedback.
+- Evolution of the initial Markdown/frontmatter schema after corpus authoring
+  feedback.
 - Exact command spelling and final structured field names.
 - Semantic or vector retrieval.
 - Database-backed authority.

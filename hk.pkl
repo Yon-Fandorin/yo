@@ -6,6 +6,16 @@ min_hk_version = "1.52.0"
 local checks = new Mapping<String, Step> {
     ["hk-test"] = Builtins.hk_test
     ["cargo-fmt"] = Builtins.cargo_fmt
+    ["methexis-draft"] = new Step {
+        glob = List(
+            "methexis/**/*.md",
+            "methexis/**/*.yaml",
+            "tools/methexis/**/*.rs",
+            "tools/methexis/Cargo.toml",
+            "Cargo.lock",
+        )
+        check = "cargo run --quiet --locked -p methexis -- check"
+    }
 }
 
 hooks {

@@ -8,12 +8,17 @@ const HELP: &str = concat!(
     "methexis ",
     env!("CARGO_PKG_VERSION"),
     "
-Methexis SOT Pilot command shell
+Methexis SOT Pilot
 
 USAGE:
     methexis [--help | --version]
+    methexis check
 
-No knowledge operations are implemented yet.
+COMMANDS:
+    check    Validate the current working-tree Draft corpus
+
+Run `check` from the repository root.
+Approval and Checkpoint state are not evaluated yet.
 ",
 );
 
@@ -22,7 +27,7 @@ fn methexis() -> Command {
 }
 
 #[test]
-fn help_describes_only_the_bootstrap_surface() {
+fn help_describes_the_draft_check_surface() {
     let output = methexis().arg("--help").output().expect("run methexis");
 
     assert!(output.status.success());
@@ -95,4 +100,50 @@ fn stream_failures_are_returned_to_the_binary_boundary() {
         .expect_err("injected writer must fail");
 
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+}
+
+#[test]
+fn check_reports_the_repository_draft_corpus_on_stdout() {
+    let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crate is under <repository>/tools/methexis");
+    let output = methexis()
+        .current_dir(repository_root)
+        .arg("check")
+        .output()
+        .expect("run methexis check");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("check output is JSON");
+    assert_eq!(report["schema"], "methexis.check/v1alpha1");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["authority"], "draft");
+    assert_eq!(report["approval"], "not_evaluated");
+    assert_eq!(report["checkpoint"], "not_evaluated");
+    assert_eq!(report["units"].as_array().map(Vec::len), Some(5));
+}
+
+#[test]
+fn check_reports_validation_failures_on_stderr() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("local-invalid");
+    let output = methexis()
+        .current_dir(fixture)
+        .arg("check")
+        .output()
+        .expect("run failing methexis check");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stderr).expect("failure output is JSON");
+    assert_eq!(report["schema"], "methexis.check/v1alpha1");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["authority"], "draft");
+    assert_eq!(report["snapshot_revision"], serde_json::Value::Null);
 }
