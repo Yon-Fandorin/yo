@@ -13,12 +13,18 @@ Methexis SOT Pilot
 USAGE:
     methexis [--help | --version]
     methexis check
+    methexis project-review <request.json>
+    methexis build-review <request.json>
+    methexis approve <request.json>
 
 COMMANDS:
-    check    Validate the current working-tree Draft corpus
+    check             Validate Draft knowledge and approval proposals
+    project-review    Write a tracked Korean review Projection
+    build-review      Build a local human-review packet
+    approve           Record a human-authorized approval proposal
 
-Run `check` from the repository root.
-Approval and Checkpoint state are not evaluated yet.
+Run commands from the repository root. Mutations remain Draft proposals until
+trusted integration. Checkpoint and Source freshness are not evaluated yet.
 ",
 );
 
@@ -121,7 +127,7 @@ fn check_reports_the_repository_draft_corpus_on_stdout() {
     assert_eq!(report["schema"], "methexis.check/v1alpha1");
     assert_eq!(report["ok"], true);
     assert_eq!(report["authority"], "draft");
-    assert_eq!(report["approval"], "not_evaluated");
+    assert_eq!(report["approval"], "proposal_evaluated");
     assert_eq!(report["checkpoint"], "not_evaluated");
     assert_eq!(report["units"].as_array().map(Vec::len), Some(5));
 }

@@ -78,6 +78,7 @@ pub(crate) struct OwnerRecord {
 #[derive(Clone, Debug)]
 pub(crate) struct KnowledgeUnit {
     pub(crate) metadata: KnowledgeMetadata,
+    pub(crate) body: String,
     pub(crate) path: PathBuf,
     pub(crate) revision: String,
 }

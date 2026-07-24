@@ -1,0 +1,16 @@
+{
+  "schema": "methexis.operation/v1alpha1",
+  "ok": true,
+  "operation": "record_approval",
+  "status": "written",
+  "authority": "draft_proposal",
+  "affected_ids": [
+    "tui.relocated"
+  ],
+  "path": "methexis/approvals/tui.relocated.yaml",
+  "hash": "sha256:f58fc4303a3d7480741ac31deaa1a82098d8bd46c8235dbf8cbea9d8c4097df7",
+  "request_hash": "sha256:fb8ba8023725c58283924345d82a5a6b0cc1e273ee5a01d5263c892ac48dba1c",
+  "next_actions": [
+    "submit the approval proposal through repository review; it is not authoritative yet"
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "schema": "methexis.operation/v1alpha1",
+  "ok": false,
+  "operation": "generate_review_projection",
+  "error": {
+    "code": "revision_mismatch",
+    "message": "expected revision `sha256:0000000000000000000000000000000000000000000000000000000000000000` but current revision is `sha256:1a357cfa1afc1aa8f9ae72c84b6719f6c136afff55d34101067d4db4ff9caf56`",
+    "affected_ids": [
+      "tui.relocated"
+    ],
+    "next_actions": [
+      "rebuild the request from the current revision"
+    ]
+  }
+}

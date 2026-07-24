@@ -1,0 +1,8 @@
+{
+  "schema": "methexis.approval-request/v1alpha1",
+  "knowledge_id": "tui.relocated",
+  "expected_revision": "sha256:1a357cfa1afc1aa8f9ae72c84b6719f6c136afff55d34101067d4db4ff9caf56",
+  "projection_hash": "sha256:b55a7dc051ab823eb63d87fdaaaa9a7002006b85fd0c18d4e583af9246c5e51d",
+  "reviewer": "tui-architecture",
+  "reviewed_at": "2026-07-24T12:00:00Z"
+}

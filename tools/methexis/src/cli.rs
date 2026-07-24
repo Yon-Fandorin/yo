@@ -7,7 +7,7 @@ use std::{
 
 use serde::Serialize;
 
-use crate::check_repository;
+use crate::{check_repository, review::ReviewService};
 
 const HELP: &str = concat!(
     "methexis ",
@@ -18,12 +18,18 @@ Methexis SOT Pilot
 USAGE:
     methexis [--help | --version]
     methexis check
+    methexis project-review <request.json>
+    methexis build-review <request.json>
+    methexis approve <request.json>
 
 COMMANDS:
-    check    Validate the current working-tree Draft corpus
+    check             Validate Draft knowledge and approval proposals
+    project-review    Write a tracked Korean review Projection
+    build-review      Build a local human-review packet
+    approve           Record a human-authorized approval proposal
 
-Run `check` from the repository root.
-Approval and Checkpoint state are not evaluated yet.
+Run commands from the repository root. Mutations remain Draft proposals until
+trusted integration. Checkpoint and Source freshness are not evaluated yet.
 ",
 );
 
@@ -57,7 +63,42 @@ pub fn run(
                 write_json(&mut stderr, &report, ExitCode::from(2))
             }
         },
+        [command, request] if command == OsStr::new("project-review") => {
+            run_operation(ReviewOperation::Project, request, &mut stdout, &mut stderr)
+        },
+        [command, request] if command == OsStr::new("build-review") => {
+            run_operation(ReviewOperation::Build, request, &mut stdout, &mut stderr)
+        },
+        [command, request] if command == OsStr::new("approve") => {
+            run_operation(ReviewOperation::Approve, request, &mut stdout, &mut stderr)
+        },
         _ => write_text(&mut stderr, UNSUPPORTED_COMMAND, ExitCode::from(2)),
+    }
+}
+
+enum ReviewOperation {
+    Project,
+    Build,
+    Approve,
+}
+
+fn run_operation(
+    operation: ReviewOperation,
+    request: &OsStr,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let root = env::current_dir()?;
+    let service = ReviewService::new(&root);
+    let request = std::path::Path::new(request);
+    let result = match operation {
+        ReviewOperation::Project => service.generate_projection(request),
+        ReviewOperation::Build => service.build_review(request),
+        ReviewOperation::Approve => service.record_approval(request),
+    };
+    match result {
+        Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
     }
 }
 

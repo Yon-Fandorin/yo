@@ -1,11 +1,13 @@
-//! Draft knowledge validation for the Methexis SOT Pilot in `yo`.
+//! Draft knowledge, review Projection, and approval proposal tooling for
+//! the Methexis SOT Pilot in `yo`.
 //!
-//! Approval, Checkpoint, Source validation, and projection behavior remain
-//! absent until their owning Slices are accepted.
+//! Trusted-ref authority, Checkpoint, and Source validation remain absent until
+//! their owning Slices are accepted.
 
 mod check;
 mod cli;
 mod model;
+mod review;
 
 use std::path::Path;
 

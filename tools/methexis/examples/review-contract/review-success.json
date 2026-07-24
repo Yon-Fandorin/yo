@@ -1,0 +1,16 @@
+{
+  "schema": "methexis.operation/v1alpha1",
+  "ok": true,
+  "operation": "build_review",
+  "status": "written",
+  "authority": "draft_proposal",
+  "affected_ids": [
+    "tui.relocated"
+  ],
+  "path": ".local-exclude/methexis/reviews/30038fe76ec5202e80176fcfa600795fc94a3cd7f9ed846fdb2a93cf25a58d4c/manifest.json",
+  "hash": "sha256:9cb33f219e6472daf4f55fe84601a2c437fd19ff4ce12b33f6d13efa9258a195",
+  "request_hash": "sha256:04cf72dab3b2e779932e557ee2114e9ab1a57b71df896d6ee2fcc4ae82a9a5e4",
+  "next_actions": [
+    "read the packet and obtain explicit human approval"
+  ]
+}

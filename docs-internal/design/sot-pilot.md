@@ -3,7 +3,7 @@
 | Axis | State |
 | --- | --- |
 | Document | Accepted |
-| Implementation | S1 knowledge foundation implemented |
+| Implementation | S1 foundation and S2a review/approval proposal flow implemented |
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 
@@ -221,10 +221,23 @@ Approval binds one exact RevisionId, reviewer OwnerId, review time, and the
 profile, compiler identity, and hash of the Korean review projection. Approval
 does not apply to a mutable KnowledgeId in general.
 
+The Pilot keeps one generated Korean review Projection per KnowledgeId under
+`methexis/review-projections/`. It binds the exact RevisionId, Projection
+profile, compiler identity, deterministic request lineage, and exact reviewed
+file bytes. Direct edits, revision drift, or lineage drift are structural
+failures; the file is regenerated from an explicit request instead.
+
 Each KnowledgeId has at most one current approval record. When the current
 revision differs from that record, the unit is Draft. Git history retains old
 approval records; the Pilot does not create an unbounded file per historical
 revision.
+
+The current approval record lives under `methexis/approvals/`. Identical writes
+are idempotent. Replacing different bytes requires the exact prior RevisionId
+as a compare-and-swap precondition; there is no force path. A matching record
+in a working tree or proposed branch is only approval evidence for review. It
+does not produce effective `approved` state until loaded from the configured
+trusted integration commit.
 
 A `Checkpoint` pins a consistent map of approved KnowledgeIds to RevisionIds.
 A tracked active-Checkpoint record points to exactly one Checkpoint and its
@@ -312,12 +325,14 @@ duplicate IDs, missing owners or targets, and graph cycles. Diagnostics have
 stable codes and deterministic path/code/location ordering. Any diagnostic
 produces no snapshot.
 
-The first `methexis check` validates only the current working-tree Draft corpus.
-Its structured result MUST identify authority as `draft` and approval and
-Checkpoint as `not_evaluated`; success proves structural integrity, never
-approval. Source records, exact approval, and Checkpoint evaluation enter
-through later owning Slices. Fast editing validation SHOULD be available through
-the repository `hk` workflow.
+Working-tree `methexis check` validates Draft Knowledge and any tracked
+Projection and approval proposals. Its structured result MUST identify
+authority and every effective unit approval as `draft`. It MAY report
+`matching_proposal`, `stale_proposal`, or missing evidence, but success proves
+only structural integrity. It MUST NOT promote working-tree evidence to trusted
+approval. Source freshness, trusted-ref evaluation, and Checkpoint eligibility
+enter through later owning Slices. Fast editing validation SHOULD be available
+through the repository `hk` workflow.
 
 Checkpoint activation additionally verifies:
 
@@ -431,6 +446,29 @@ Exact command names and final JSON fields remain provisional. Review never
 implies approval. A CLI cannot prove that its caller is human, so approval still
 requires explicit human authorization in the repository review flow.
 
+The current agent path uses versioned JSON request files, conventionally under
+`.local-exclude/methexis/requests/`. It writes tracked Projection and approval
+proposals, and content-addressed review packets under
+`.local-exclude/methexis/reviews/`. Requests and local packets are
+non-authoritative and MAY be discarded after their paths and hashes are
+returned. A future database MAY retain request history for audit or evaluation,
+but remains a reconstructible index rather than authority.
+
+The implemented operations are:
+
+```text
+project-review <request.json>  -> tracked Korean review Projection
+build-review <request.json>    -> local packet and manifest
+approve <request.json>         -> tracked exact-revision approval proposal
+check                           -> Draft structure and proposal evidence
+```
+
+Every mutation publishes atomically and rejects symlinked output parents.
+Tracked mutations serialize concurrent writers per target. A different
+Projection requires its exact prior content hash; a different approval requires
+its exact prior RevisionId. Failures leave the prior record unchanged and expose
+no eligible partial output.
+
 The Pilot MUST be dogfooded during real Codex Surface work. Interface elements
 that do not improve safe agent completion SHOULD be removed or reshaped from
 evidence rather than preserved for compatibility.
@@ -526,15 +564,16 @@ The proposed implementation sequence is:
 ```text
 S1 knowledge-foundation
    |
-   +-- S2 approval-checkpoint -----+
-   |                               |
-   +-- S3 librarian-discovery -----+--> S4 context-resolution
-                                            |
-                                      S5 surface-dogfood
+   +-- S2a approval-projection --> S2b checkpoint-activation --+
+   |                                                           |
+   +-- S3 librarian-discovery ---------------------------------+--> S4 context-resolution
+                                                                        |
+                                                                  S5 surface-dogfood
 ```
 
-S2 and S3 may run in parallel after S1. S4 is their explicit join. S5 expands
-the Surface corpus to roughly 20–50 units and runs the 8–12 task evaluation.
+S2a and S3 may run in parallel after S1. S2b depends on S2a, and S4 is the
+explicit join of S2b and S3. S5 expands the Surface corpus to roughly 20–50
+units and runs the 8–12 task evaluation.
 
 Every Slice must provide one end-to-end agent path, versioned structured
 output, success and failure fixtures, owner decision references, tests, and
@@ -548,6 +587,7 @@ workspace, introduce database authority, or generalize before evaluation.
 - Exact command spelling and final structured field names.
 - Semantic or vector retrieval.
 - Database-backed authority.
+- Persistent non-authoritative request history and its retention policy.
 - Background services and network APIs.
 - Cryptographic reviewer identity.
 - Generalizing SOT beyond the `yo`-proven contract before a second consumer.

@@ -42,6 +42,10 @@ pub struct UnitRevision {
     pub id: String,
     pub revision: String,
     pub path: String,
+    pub effective_approval: &'static str,
+    pub approval_evidence: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_reason: Option<&'static str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -58,10 +62,62 @@ pub struct CheckReport {
     pub next_actions: Vec<String>,
 }
 
+pub(crate) struct Foundation {
+    pub(crate) units: Vec<KnowledgeUnit>,
+    pub(crate) owners: Vec<Owner>,
+}
+
 pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
+    let mut foundation = match load_foundation(repository_root) {
+        Ok(foundation) => foundation,
+        Err(mut diagnostics) => {
+            sort_diagnostics(&mut diagnostics);
+            return failed_report(diagnostics);
+        },
+    };
+    let review_validation = crate::review::validate_records(repository_root, &foundation);
+    if !review_validation.diagnostics.is_empty() {
+        return failed_report(review_validation.diagnostics);
+    }
+
+    foundation
+        .units
+        .sort_by(|left, right| left.metadata.id.cmp(&right.metadata.id));
+    let snapshot_revision = snapshot_revision(&foundation.units);
+    let unit_revisions = foundation
+        .units
+        .into_iter()
+        .map(|unit| {
+            let state = review_validation.states.get(&unit.metadata.id);
+            UnitRevision {
+                id: unit.metadata.id,
+                revision: unit.revision,
+                path: display_path(&unit.path, repository_root),
+                effective_approval: "draft",
+                approval_evidence: state.map_or("missing", |state| state.evidence),
+                approval_reason: state.and_then(|state| state.reason),
+            }
+        })
+        .collect();
+
+    CheckReport {
+        schema: CHECK_SCHEMA,
+        ok: true,
+        authority: "draft",
+        approval: "proposal_evaluated",
+        checkpoint: "not_evaluated",
+        snapshot_revision: Some(snapshot_revision),
+        affected_ids: Vec::new(),
+        units: unit_revisions,
+        diagnostics: Vec::new(),
+        next_actions: Vec::new(),
+    }
+}
+
+pub(crate) fn load_foundation(repository_root: &Path) -> Result<Foundation, Vec<Diagnostic>> {
     let corpus_root = repository_root.join("methexis");
     if let Some(diagnostic) = authority_root_diagnostic(&corpus_root, repository_root) {
-        return failed_report(vec![diagnostic]);
+        return Err(vec![diagnostic]);
     }
     let mut diagnostics = Vec::new();
     let knowledge_paths = collect_files(
@@ -95,38 +151,16 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
 
     sort_diagnostics(&mut diagnostics);
     if !diagnostics.is_empty() {
-        return failed_report(diagnostics);
+        return Err(diagnostics);
     }
 
     let mut global_diagnostics = validate_global(&units, &owners, repository_root);
     sort_diagnostics(&mut global_diagnostics);
     if !global_diagnostics.is_empty() {
-        return failed_report(global_diagnostics);
+        return Err(global_diagnostics);
     }
 
-    units.sort_by(|left, right| left.metadata.id.cmp(&right.metadata.id));
-    let snapshot_revision = snapshot_revision(&units);
-    let unit_revisions = units
-        .into_iter()
-        .map(|unit| UnitRevision {
-            id: unit.metadata.id,
-            revision: unit.revision,
-            path: display_path(&unit.path, repository_root),
-        })
-        .collect();
-
-    CheckReport {
-        schema: CHECK_SCHEMA,
-        ok: true,
-        authority: "draft",
-        approval: "not_evaluated",
-        checkpoint: "not_evaluated",
-        snapshot_revision: Some(snapshot_revision),
-        affected_ids: Vec::new(),
-        units: unit_revisions,
-        diagnostics: Vec::new(),
-        next_actions: Vec::new(),
-    }
+    Ok(Foundation { units, owners })
 }
 
 fn authority_root_diagnostic(root: &Path, repository_root: &Path) -> Option<Diagnostic> {
@@ -342,6 +376,7 @@ fn parse_knowledge_file(
     let revision = knowledge_revision(&metadata, body);
     Ok(KnowledgeUnit {
         metadata,
+        body: body.to_owned(),
         path: path.to_owned(),
         revision,
     })
@@ -756,6 +791,12 @@ fn classify_body_lines(body: &str) -> Vec<BodyLine<'_>> {
             }
         })
         .collect()
+}
+
+pub(crate) fn body_has_forbidden_html(body: &str) -> bool {
+    classify_body_lines(body)
+        .iter()
+        .any(|line| line.forbidden_html)
 }
 
 fn update_html_comment_state(mut line: &str, html_comment: &mut bool) {
