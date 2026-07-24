@@ -4,3 +4,6 @@
 # Repository-local workbench and editor artifacts
 /.local-exclude/
 /nvim.log
+
+# Rust workspace build output
+/target/

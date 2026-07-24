@@ -1,4 +1,4 @@
-# SOT Pilot Contract
+# Methexis SOT Pilot Contract
 
 | Axis | State |
 | --- | --- |
@@ -7,9 +7,13 @@
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 
-This document is the tracked authority for the first `tools/sot` Pilot and the
-incubating `tools/librarian`. It owns stable behavior and trust boundaries, not
-the exact pre-implementation CLI spelling or serialization details.
+This document is the tracked authority for the first `tools/methexis` Pilot and
+the incubating `tools/librarian`. It owns stable behavior and trust boundaries,
+not the exact pre-implementation CLI spelling or serialization details.
+
+Methexis is the product that maintains agreement between approved canonical
+knowledge and its Projections. SOT names the architectural authority role and
+remains the prefix for stable decision IDs; it is not the product name.
 
 `MUST` and `MUST NOT` are blocking contracts. `SHOULD` requires a documented
 reason to deviate. Illustrative paths, commands, and field names are not frozen
@@ -36,13 +40,13 @@ their rules.
 
 ## SOT-001: Pilot and product boundary
 
-`tools/sot` MUST begin as an internal `yo` Pilot. Its first job is to improve
-code-agent work on `yo`; it is not yet a generic knowledge platform.
+`tools/methexis` MUST begin as an internal `yo` Pilot. Its first job is to
+improve code-agent work on `yo`; it is not yet a generic knowledge platform.
 
 `yo` is the incubation testbed and first reference consumer, not the expected
-permanent owner of the SOT product. Repository extraction and domain
-generalization are separate gates: validated Pilot capabilities MAY move to a
-standalone SOT repository, while generalizing beyond the `yo`-proven contract
+permanent owner of Methexis. Repository extraction and domain generalization
+are separate gates: validated Pilot capabilities MAY move to a standalone
+Methexis repository, while generalizing beyond the `yo`-proven contract
 requires evidence from a second real product consumer.
 
 The first corpus is the Structured Core `Surface` vertical slice. It SHOULD
@@ -348,7 +352,7 @@ invalidate only affected results.
 Pilot artifacts remain outside Git history, for example:
 
 ```text
-.local-exclude/sot/builds/<BuildId>/
+.local-exclude/methexis/builds/<BuildId>/
   context.md
   manifest.json
 ```
@@ -370,7 +374,7 @@ The primary Pilot consumer is a code agent. Every operation MUST:
 
 The responsibility surface includes:
 
-| SOT | Librarian |
+| Methexis | Librarian |
 | --- | --- |
 | Fast check | Candidate discovery |
 | Review packet | Catalog integrity check |
@@ -392,16 +396,16 @@ After the repository foundation establishes the root Cargo workspace, add
 exactly two initial tool crates:
 
 ```text
-tools/sot
+tools/methexis
 tools/librarian
 ```
 
 Each crate contains one library and one thin binary. Internal concerns remain
 modules until an independent consumer justifies another crate.
 
-The tools exchange a versioned candidate JSON artifact. SOT MUST validate that
-artifact and MUST NOT depend on Librarian's internal Rust types. Do not add a
-shared contract crate in the Pilot.
+The tools exchange a versioned candidate JSON artifact. Methexis MUST validate
+that artifact and MUST NOT depend on Librarian's internal Rust types. Do not add
+a shared contract crate in the Pilot.
 
 This split follows lifecycle rather than module count. Both tools incubate in
 `yo` and are expected to graduate to standalone repositories. After each
@@ -439,12 +443,12 @@ preservation across relocation, no authority mutation through search,
 transferred contract tests, and a passing `yo` Pilot against the final
 Librarian.
 
-SOT repository graduation requires:
+Methexis repository graduation requires:
 
 - the deterministic suite and A/B/C Pilot evaluation pass in `yo`;
 - its public contract contains no TUI- or `yo`-specific types;
 - contract, fixture, and failure tests transfer to the standalone repository;
-- `yo` passes the same evaluation while consuming the standalone SOT;
+- `yo` passes the same evaluation while consuming standalone Methexis;
 - the in-repository implementation shrinks to a thin adapter.
 
 Repository extraction MAY happen after stable `yo` Pilot evidence when the tool
@@ -468,7 +472,7 @@ That migration requires:
 
 After migration, contributors change the owning KnowledgeUnits and regenerate
 the committed Projection rather than editing it independently. The generated
-file remains readable without running SOT.
+file remains readable without running Methexis.
 
 ## Delivery
 

@@ -1,0 +1,16 @@
+[workspace]
+members = ["tools/methexis"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+repository = "https://github.com/Yon-Fandorin/yo"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
