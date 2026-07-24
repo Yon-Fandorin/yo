@@ -7,7 +7,7 @@ use std::{
 
 use serde::Serialize;
 
-use crate::{check_repository, review::ReviewService};
+use crate::{check_repository, checkpoint::CheckpointService, review::ReviewService};
 
 const HELP: &str = concat!(
     "methexis ",
@@ -21,15 +21,19 @@ USAGE:
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis approve <request.json>
+    methexis create-checkpoint <request.json>
+    methexis propose-activation <request.json>
 
 COMMANDS:
     check             Validate Draft knowledge and approval proposals
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal
+    create-checkpoint Create an immutable trusted-revision Checkpoint proposal
+    propose-activation Propose the active Checkpoint with compare-and-swap
 
 Run commands from the repository root. Mutations remain Draft proposals until
-trusted integration. Checkpoint and Source freshness are not evaluated yet.
+trusted integration. Source freshness is not evaluated yet.
 ",
 );
 
@@ -72,7 +76,47 @@ pub fn run(
         [command, request] if command == OsStr::new("approve") => {
             run_operation(ReviewOperation::Approve, request, &mut stdout, &mut stderr)
         },
+        [command, request] if command == OsStr::new("create-checkpoint") => {
+            run_checkpoint_operation(
+                CheckpointOperation::Create,
+                request,
+                &mut stdout,
+                &mut stderr,
+            )
+        },
+        [command, request] if command == OsStr::new("propose-activation") => {
+            run_checkpoint_operation(
+                CheckpointOperation::Activate,
+                request,
+                &mut stdout,
+                &mut stderr,
+            )
+        },
         _ => write_text(&mut stderr, UNSUPPORTED_COMMAND, ExitCode::from(2)),
+    }
+}
+
+enum CheckpointOperation {
+    Create,
+    Activate,
+}
+
+fn run_checkpoint_operation(
+    operation: CheckpointOperation,
+    request: &OsStr,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let root = env::current_dir()?;
+    let service = CheckpointService::new(&root);
+    let request = std::path::Path::new(request);
+    let result = match operation {
+        CheckpointOperation::Create => service.create(request),
+        CheckpointOperation::Activate => service.propose_activation(request),
+    };
+    match result {
+        Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
     }
 }
 

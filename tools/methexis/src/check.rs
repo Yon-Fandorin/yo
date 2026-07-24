@@ -46,6 +46,7 @@ pub struct UnitRevision {
     pub approval_evidence: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_reason: Option<&'static str>,
+    pub eligibility: &'static str,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -55,6 +56,8 @@ pub struct CheckReport {
     pub authority: &'static str,
     pub approval: &'static str,
     pub checkpoint: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trusted_commit: Option<String>,
     pub snapshot_revision: Option<String>,
     pub affected_ids: Vec<String>,
     pub units: Vec<UnitRevision>,
@@ -79,6 +82,13 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
     if !review_validation.diagnostics.is_empty() {
         return failed_report(review_validation.diagnostics);
     }
+    let authority = match crate::checkpoint::evaluate(repository_root) {
+        Ok(authority) => authority,
+        Err(mut diagnostics) => {
+            sort_diagnostics(&mut diagnostics);
+            return failed_report(diagnostics);
+        },
+    };
 
     foundation
         .units
@@ -89,13 +99,39 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
         .into_iter()
         .map(|unit| {
             let state = review_validation.states.get(&unit.metadata.id);
+            let trusted_approval = authority.as_ref().is_some_and(|authority| {
+                authority.approvals.get(&unit.metadata.id) == Some(&unit.revision)
+            });
+            let active = trusted_approval
+                && authority
+                    .as_ref()
+                    .is_some_and(|authority| authority.active.contains(&unit.metadata.id));
             UnitRevision {
                 id: unit.metadata.id,
                 revision: unit.revision,
                 path: display_path(&unit.path, repository_root),
-                effective_approval: "draft",
-                approval_evidence: state.map_or("missing", |state| state.evidence),
-                approval_reason: state.and_then(|state| state.reason),
+                effective_approval: if trusted_approval {
+                    "approved"
+                } else {
+                    "draft"
+                },
+                approval_evidence: if trusted_approval {
+                    "trusted_approval"
+                } else {
+                    state.map_or("missing", |state| state.evidence)
+                },
+                approval_reason: if trusted_approval {
+                    None
+                } else {
+                    state.and_then(|state| state.reason)
+                },
+                eligibility: if active {
+                    "active"
+                } else if authority.is_some() {
+                    "inactive"
+                } else {
+                    "not_evaluated"
+                },
             }
         })
         .collect();
@@ -104,8 +140,17 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
         schema: CHECK_SCHEMA,
         ok: true,
         authority: "draft",
-        approval: "proposal_evaluated",
-        checkpoint: "not_evaluated",
+        approval: if authority.is_some() {
+            "trusted_evaluated"
+        } else {
+            "proposal_evaluated"
+        },
+        checkpoint: authority
+            .as_ref()
+            .map_or("not_evaluated", |authority| authority.checkpoint),
+        trusted_commit: authority
+            .as_ref()
+            .map(|authority| authority.trusted_commit.clone()),
         snapshot_revision: Some(snapshot_revision),
         affected_ids: Vec::new(),
         units: unit_revisions,
@@ -207,6 +252,7 @@ fn failed_report(diagnostics: Vec<Diagnostic>) -> CheckReport {
         authority: "draft",
         approval: "not_evaluated",
         checkpoint: "not_evaluated",
+        trusted_commit: None,
         snapshot_revision: None,
         affected_ids,
         units: Vec::new(),

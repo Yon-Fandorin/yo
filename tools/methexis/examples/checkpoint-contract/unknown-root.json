@@ -1,0 +1,16 @@
+{
+  "schema": "methexis.operation/v1alpha1",
+  "ok": false,
+  "operation": "create_checkpoint",
+  "trusted_commit": "1fb3234251c26e900f7dd5f0b0279a0caa7f9bf4",
+  "error": {
+    "code": "unknown_checkpoint_root",
+    "message": "root KnowledgeId `unknown.root` does not exist",
+    "affected_ids": [
+      "unknown.root"
+    ],
+    "next_actions": [
+      "repair the trusted approval closure and retry"
+    ]
+  }
+}

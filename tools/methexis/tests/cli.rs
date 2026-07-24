@@ -16,15 +16,19 @@ USAGE:
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis approve <request.json>
+    methexis create-checkpoint <request.json>
+    methexis propose-activation <request.json>
 
 COMMANDS:
     check             Validate Draft knowledge and approval proposals
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal
+    create-checkpoint Create an immutable trusted-revision Checkpoint proposal
+    propose-activation Propose the active Checkpoint with compare-and-swap
 
 Run commands from the repository root. Mutations remain Draft proposals until
-trusted integration. Checkpoint and Source freshness are not evaluated yet.
+trusted integration. Source freshness is not evaluated yet.
 ",
 );
 

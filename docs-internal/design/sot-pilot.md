@@ -3,7 +3,7 @@
 | Axis | State |
 | --- | --- |
 | Document | Accepted |
-| Implementation | S1 foundation and S2a review/approval proposal flow implemented |
+| Implementation | S1, S2a, and S2b Checkpoint proposal engine implemented; activation awaits Source validation |
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 
@@ -72,15 +72,22 @@ consumer.
 
 ## SOT-002: Knowledge authority and unit model
 
-Records reachable from a configured trusted integration commit are the only
-approval authority in the Pilot. Host or repository policy selects a trusted
-integration ref, defaulting to accepted `develop`; task input and the invoking
-agent MUST NOT override it. At the start of resolution, the ref is resolved once
-to an exact commit and that commit is recorded in every result.
+Records reachable from the repository-local `refs/heads/develop` are the only
+approval authority in the current Pilot. Task input, environment variables, and
+the invoking agent MUST NOT override it. At the start of an operation, the ref
+is resolved once to an exact commit and that commit is recorded in every
+result. An internal injected policy MAY be used by isolated tests but is not a
+production input surface.
 
-A human-approved Wave MAY configure an exact accepted Wave commit as a temporary
-trust anchor. A Task commit, proposed Slice commit, working-tree state, or branch
-name supplied only by the caller is never authority.
+Authority reads MUST use the system Git executable with caller Git
+configuration and environment removed. Replacement refs and graft-like object
+substitution MUST be disabled, so the recorded object ID and materialized tree
+cannot diverge.
+
+A Task commit, proposed Slice commit, working-tree state, or branch name
+supplied by the caller is never authority. Supporting a human-approved Wave
+commit as a temporary trust anchor is deferred until repository policy owns a
+non-caller-controlled configuration surface.
 
 Knowledge, Source, approval, Checkpoint, and active-Checkpoint records MUST be
 tracked. Proposed branch and working-tree edits are Draft inputs until the
@@ -251,6 +258,25 @@ the Git tree identity and active-Checkpoint hash, replaced crash-safely, and
 discarded on mismatch. Concurrent authority changes are serialized by the
 repository merge and review workflow rather than a runtime database lock.
 
+The current Checkpoint request names explicit root KnowledgeIds. Selection adds
+the complete `depends_on` and `constrained_by` closure; `validated_by` and
+`applies_to` do not add KnowledgeUnits. Checkpoint creation reads exact blobs
+from one pinned trusted Git commit without checking it out, then publishes an
+immutable create-if-absent proposal. Activation proposal is a separate
+active-record compare-and-swap operation. It rejects a Checkpoint created from
+an older trusted commit and has no fallback or force path. Before proposal, its
+canonical bytes MUST be reproduced from the recorded commit. After integration,
+that commit MUST be an ancestor of current trusted integration, remain
+readable, and reproduce the same Checkpoint while the current approved closure
+also matches. A Checkpoint MUST NOT select a replacement together with a unit
+it supersedes.
+
+S2b records `source_status: not_evaluated`. Even after its Checkpoint and active
+record are integrated into `develop`, Fast Check MUST report
+`pending_source_validation` and keep selected units `inactive`. Only the Source
+validation Slice may produce `active`; this prevents missing Source
+infrastructure from being treated as successful freshness evidence.
+
 ## SOT-005: Librarian discovery and location boundary
 
 Final context selection is deterministic. Librarian is an advisory discovery
@@ -326,13 +352,13 @@ stable codes and deterministic path/code/location ordering. Any diagnostic
 produces no snapshot.
 
 Working-tree `methexis check` validates Draft Knowledge and any tracked
-Projection and approval proposals. Its structured result MUST identify
-authority and every effective unit approval as `draft`. It MAY report
-`matching_proposal`, `stale_proposal`, or missing evidence, but success proves
-only structural integrity. It MUST NOT promote working-tree evidence to trusted
-approval. Source freshness, trusted-ref evaluation, and Checkpoint eligibility
-enter through later owning Slices. Fast editing validation SHOULD be available
-through the repository `hk` workflow.
+Projection and approval proposals. It MAY report `matching_proposal`,
+`stale_proposal`, or missing working-tree evidence, but MUST NOT promote that
+evidence to trusted approval. It separately reads the pinned trusted commit and
+may report `approved` only for an exact matching approval found there. A
+trusted active-record proposal remains `pending_source_validation` and its
+units remain `inactive` until the Source guard is implemented. Fast editing
+validation SHOULD be available through the repository `hk` workflow.
 
 Checkpoint activation additionally verifies:
 
@@ -460,14 +486,20 @@ The implemented operations are:
 project-review <request.json>  -> tracked Korean review Projection
 build-review <request.json>    -> local packet and manifest
 approve <request.json>         -> tracked exact-revision approval proposal
-check                           -> Draft structure and proposal evidence
+create-checkpoint <request.json> -> immutable trusted-revision Checkpoint proposal
+propose-activation <request.json> -> active-record proposal with compare-and-swap
+check                           -> Draft structure, trusted approval, and pending activation
 ```
 
 Every mutation publishes atomically and rejects symlinked output parents.
+Publication resolves and retains directory handles before locking or writing;
+a concurrent parent rename or symlink swap cannot redirect output outside that
+opened repository directory.
 Tracked mutations serialize concurrent writers per target. A different
 Projection requires its exact prior content hash; a different approval requires
-its exact prior RevisionId. Failures leave the prior record unchanged and expose
-no eligible partial output.
+its exact prior RevisionId. Checkpoints are immutable; active-record replacement
+requires the exact prior record hash. Failures leave the prior record unchanged
+and expose no eligible partial output.
 
 The Pilot MUST be dogfooded during real Codex Surface work. Interface elements
 that do not improve safe agent completion SHOULD be removed or reshaped from
@@ -564,15 +596,16 @@ The proposed implementation sequence is:
 ```text
 S1 knowledge-foundation
    |
-   +-- S2a approval-projection --> S2b checkpoint-activation --+
-   |                                                           |
-   +-- S3 librarian-discovery ---------------------------------+--> S4 context-resolution
-                                                                        |
-                                                                  S5 surface-dogfood
+   +-- S2a approval-projection --> S2b checkpoint-proposal --> S2c source-validation --+
+   |                                                                                   |
+   +-- S3 librarian-discovery ---------------------------------------------------------+--> S4 context-resolution
+                                                                                                |
+                                                                                          S5 surface-dogfood
 ```
 
-S2a and S3 may run in parallel after S1. S2b depends on S2a, and S4 is the
-explicit join of S2b and S3. S5 expands the Surface corpus to roughly 20–50
+S2a and S3 may run in parallel after S1. S2b depends on S2a; S2c owns Source
+freshness and is the only stage that may open active eligibility. S4 is the
+explicit join of S2c and S3. S5 expands the Surface corpus to roughly 20–50
 units and runs the 8–12 task evaluation.
 
 Every Slice must provide one end-to-end agent path, versioned structured

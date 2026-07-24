@@ -191,9 +191,34 @@ pub(super) fn parse_approval(
     path: &Path,
     repository_root: &Path,
 ) -> Result<ApprovalRecord, Diagnostic> {
-    let display = relative_path(repository_root, path);
     let bytes = read_record(path, repository_root, "approval_unreadable", "approval")?;
-    let content = String::from_utf8(bytes).map_err(|error| {
+    parse_approval_bytes(&bytes, path, repository_root)
+}
+
+#[allow(clippy::result_large_err)]
+pub(super) fn parse_approval_bytes(
+    bytes: &[u8],
+    path: &Path,
+    repository_root: &Path,
+) -> Result<ApprovalRecord, Diagnostic> {
+    let display = relative_path(repository_root, path);
+    if bytes.len() > MAX_RECORD_BYTES {
+        return Err(local_diagnostic(
+            display,
+            "review_record_too_large",
+            format!("approval exceeds {MAX_RECORD_BYTES} bytes"),
+            Vec::new(),
+        ));
+    }
+    if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        return Err(local_diagnostic(
+            display,
+            "review_record_bom_forbidden",
+            "approval must not start with a UTF-8 BOM".to_owned(),
+            Vec::new(),
+        ));
+    }
+    let content = std::str::from_utf8(bytes).map_err(|error| {
         local_diagnostic(
             display.clone(),
             "approval_not_utf8",
@@ -201,7 +226,7 @@ pub(super) fn parse_approval(
             Vec::new(),
         )
     })?;
-    let record: ApprovalRecord = serde_norway::from_str(&content).map_err(|error| {
+    let record: ApprovalRecord = serde_norway::from_str(content).map_err(|error| {
         local_diagnostic(
             display.clone(),
             "invalid_approval_yaml",

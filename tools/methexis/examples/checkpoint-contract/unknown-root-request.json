@@ -1,0 +1,6 @@
+{
+  "schema": "methexis.checkpoint-request/v1alpha1",
+  "roots": [
+    "unknown.root"
+  ]
+}
