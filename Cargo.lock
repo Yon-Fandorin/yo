@@ -112,6 +112,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
+name = "librarian"
+version = "0.0.0"
+dependencies = [
+ "rustix",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "sha2",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,0 +1,5 @@
+{
+  "schema": "librarian.discovery-request/v1alpha1",
+  "query": "zzqvnonexistentlexeme",
+  "anchors": []
+}

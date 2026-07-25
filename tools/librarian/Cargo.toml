@@ -1,0 +1,24 @@
+[package]
+name = "librarian"
+version = "0.0.0"
+edition.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "librarian"
+path = "src/lib.rs"
+
+[[bin]]
+name = "librarian"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+rustix = { version = "1.1.4", features = ["fs"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+serde_norway = "0.9.42"
+sha2 = "0.11.0"

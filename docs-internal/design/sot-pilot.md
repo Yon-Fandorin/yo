@@ -3,7 +3,7 @@
 | Axis | State |
 | --- | --- |
 | Document | Accepted |
-| Implementation | W0 foundation and the approved active five-unit TUI seed are implemented; S3 Librarian discovery is aligned but not implemented |
+| Implementation | W0 foundation, the approved active five-unit TUI seed, and S3 Librarian discovery are implemented |
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 

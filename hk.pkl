@@ -6,6 +6,19 @@ min_hk_version = "1.52.0"
 local checks = new Mapping<String, Step> {
     ["hk-test"] = Builtins.hk_test
     ["cargo-fmt"] = Builtins.cargo_fmt
+    ["librarian-discovery"] = new Step {
+        glob = List(
+            "methexis/knowledge/**/*.md",
+            "methexis/review-projections/**/*.md",
+            "tools/librarian/**/*.json",
+            "tools/librarian/**/*.md",
+            "tools/librarian/**/*.rs",
+            "tools/librarian/Cargo.toml",
+            "Cargo.lock",
+            "Cargo.toml",
+        )
+        check = "cargo test --quiet --locked -p librarian"
+    }
     ["methexis-draft"] = new Step {
         glob = List(
             "methexis/**/*.md",
@@ -13,6 +26,7 @@ local checks = new Mapping<String, Step> {
             "tools/methexis/**/*.rs",
             "tools/methexis/Cargo.toml",
             "Cargo.lock",
+            "Cargo.toml",
         )
         check = "cargo run --quiet --locked -p methexis -- check"
     }

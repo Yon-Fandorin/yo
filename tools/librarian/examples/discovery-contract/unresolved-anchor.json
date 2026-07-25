@@ -1,0 +1,9 @@
+{
+  "schema": "librarian.discovery-request/v1alpha1",
+  "anchors": [
+    {
+      "kind": "symbol",
+      "value": "yo::missing::symbol"
+    }
+  ]
+}

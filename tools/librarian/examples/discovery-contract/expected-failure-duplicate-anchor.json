@@ -1,0 +1,14 @@
+{
+  "schema": "librarian.error/v1alpha1",
+  "ok": false,
+  "operation": "discover",
+  "error": {
+    "code": "duplicate_anchor",
+    "message": "identical anchors must not be repeated",
+    "affected_ids": [],
+    "affected_paths": [],
+    "next_actions": [
+      "correct the discovery request and retry"
+    ]
+  }
+}
