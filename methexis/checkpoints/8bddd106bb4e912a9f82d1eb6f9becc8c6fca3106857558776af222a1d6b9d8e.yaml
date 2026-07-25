@@ -1,0 +1,31 @@
+schema: methexis.checkpoint/v1alpha1
+checkpoint_id: sha256:8bddd106bb4e912a9f82d1eb6f9becc8c6fca3106857558776af222a1d6b9d8e
+trusted_commit: 4be0c819710032d0f2e7cd917cc36f9cc78e8f79
+source_status: not_evaluated
+roots:
+- tui.architecture.evidence-based-split
+- tui.dependencies.selection-gate
+- tui.runtime.typed-flow
+units:
+- id: tui.architecture.evidence-based-split
+  revision: sha256:0787fb2d64d3d16201752a02130ea45f9287734f37b6bf10f0269f6b239f8794
+  reasons:
+  - root:tui.architecture.evidence-based-split
+- id: tui.architecture.module-boundaries
+  revision: sha256:4c2604b602190817b68ceccf6f5e726fadc89b5fb32875dedcc17d53bfa1533e
+  reasons:
+  - required_by:tui.runtime.typed-flow
+- id: tui.crate.ui-only-boundary
+  revision: sha256:890ea5c07e508f9b29a01edeb5e274fffa4750e3cfe22d1fc1ef53546988d2a4
+  reasons:
+  - required_by:tui.architecture.evidence-based-split
+  - required_by:tui.architecture.module-boundaries
+  - required_by:tui.runtime.typed-flow
+- id: tui.dependencies.selection-gate
+  revision: sha256:11a84ded112fda98eee50b4b6230b3291a51f65791f2370ccbcd8ca7f142a208
+  reasons:
+  - root:tui.dependencies.selection-gate
+- id: tui.runtime.typed-flow
+  revision: sha256:191d3c5030c6e2e161556232cd548bccf8b375cb52a85a586db14fb6aa6dac49
+  reasons:
+  - root:tui.runtime.typed-flow
