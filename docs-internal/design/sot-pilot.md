@@ -3,7 +3,7 @@
 | Axis | State |
 | --- | --- |
 | Document | Accepted |
-| Implementation | W0 foundation engine implemented through decision/code Source validation; seed activation remains a later Slice |
+| Implementation | W0 foundation and the approved active five-unit TUI seed are implemented; S3 Librarian discovery is aligned but not implemented |
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 
@@ -54,11 +54,12 @@ SHOULD contain roughly 20–50 units covering geometry, cell width, graphemes,
 style, `Surface` invariants, common Inline and Fullscreen output semantics, HTML
 projection, fixtures, and validation.
 
-S1 precedes that evaluation corpus with five TUI architecture Draft units. This
-small seed exists to exercise the file model, identity algorithm, graph
-validation, and agent-facing Fast Check before the larger Surface authoring
-cost. It is foundation evidence, not the evaluation corpus or a replacement for
-the S5 Surface gate.
+S1 precedes that evaluation corpus with five TUI architecture units that began
+as Draft and were later reviewed, approved, and activated. This small seed
+exists to exercise the file model, identity algorithm, graph validation, and
+agent-facing Fast Check before the larger Surface authoring cost. It is
+foundation evidence, not the evaluation corpus or a replacement for the S5
+Surface gate.
 
 A small SOT operating-procedure corpus MUST provide a structurally different
 secondary sample. It MAY reference the repository workflow authority but MUST
@@ -294,7 +295,8 @@ input marker because Source freshness is a current derived guard rather than
 authored Checkpoint state. Once the Source validation engine is present, Fast
 Check derives `active` or `degraded` from the trusted Checkpoint and current
 observations. The W0 Draft seed does not create real approvals or activation;
-that authority transition belongs to a later directly reviewed Slice.
+that authority transition belongs to a later directly reviewed Slice. The
+current repository has completed that later transition for all five seed units.
 
 ## SOT-005: Librarian discovery and location boundary
 
@@ -310,10 +312,62 @@ and catalog component that MAY:
 Librarian MUST NOT approve meaning, mutate canonical authority silently, or
 bypass a Checkpoint. Search and LLM output are candidate signals only.
 
+The first agent path accepts a versioned request containing at least one of a
+non-empty natural-language query or one or more code-path, symbol, and
+KnowledgeId anchors. It returns a deterministic, versioned candidate set.
+Each candidate contains a stable KnowledgeId and machine-readable reasons;
+Librarian never labels it approved, active, or safe to use. Methexis owns
+required-closure expansion and final eligibility filtering.
+
+The initial catalog contains every structurally valid KnowledgeUnit, regardless
+of approval or eligibility. Searchable fields are its ID, title, canonical
+English body, typed relations, physical location, and an exact-revision valid
+Korean review Projection when present. Source content, approvals, and
+Checkpoints do not contribute text-ranking signals. Structured code Source
+locators MAY satisfy an explicit path or symbol anchor without making Source
+content searchable.
+
+Librarian builds that catalog from the current working tree, including valid
+untracked Draft records inside the declared corpus directories. It does not
+resolve `develop` or grant trust to those files. It captures the sorted relative
+paths and exact relevant bytes into one immutable catalog snapshot before
+ranking. A concurrent change that prevents a consistent capture returns a
+retryable failure and no candidate set.
+
+Initial ranking is deterministic lexical evidence, ordered from exact ID and
+anchor matches through phrase and token overlap to one-hop relation signals.
+Every contribution remains inspectable in the candidate reasons. Librarian
+MUST NOT expand required dependency closure. Semantic or vector retrieval, LLM
+ranking, fuzzy matching, and language-specific morphological dependencies
+remain evidence-gated extensions rather than Pilot defaults.
+
+An unresolved anchor and a query with no matches are successful observations
+and remain explicit in the result. A request with neither query nor anchors is
+invalid. An invalid catalog produces a structured failure and no partial
+candidate set; silently skipping a damaged record could hide required
+knowledge.
+
+The discovery command writes exactly one complete structured success value to
+stdout. It writes a structured failure to stderr, leaves stdout empty, and
+returns non-zero. Callers MAY pipe or redirect successful JSON to a file; the
+Pilot MUST NOT create or own a persistent candidate artifact or cache. The
+result identifies the request, catalog snapshot, compiler, ordered candidates,
+reasons, unresolved anchors, and truncation. S4 hashes the exact candidate input
+it consumes into the ContextBuild lineage.
+
+The Pilot rebuilds one immutable in-memory catalog from the captured
+working-tree files for each request. It does not introduce a database,
+persistent index, storage trait, or background service before corpus evidence
+justifies one. Any later index remains reconstructible and non-authoritative.
+
 The initial Librarian implementation incubates under `yo/tools/librarian`.
-Validated capabilities and contract tests later graduate to the standalone
-Librarian repository; its local checkout path and transfer mechanism are not
-part of this contract. The Pilot directory is not copied wholesale.
+Validated capabilities and contract tests later graduate to a standalone
+Librarian repository after Surface and SOT operating-procedure dogfooding.
+Contract fixtures transfer before implementation, `yo` retains a thin adapter,
+reference corpus, contract fixtures, and integration evaluation, and the two
+repositories MUST NOT maintain parallel implementations. The destination
+repository and reconciliation with any existing Librarian code are decided from
+that evidence; the Pilot directory is not copied wholesale.
 
 ## SOT-006: Invalidation and validation
 
@@ -517,7 +571,7 @@ build-review <request.json>    -> local packet and manifest
 approve <request.json>         -> tracked exact-revision approval proposal
 create-checkpoint <request.json> -> immutable trusted-revision Checkpoint proposal
 propose-activation <request.json> -> active-record proposal with compare-and-swap
-check                           -> Draft structure, trusted approval, and pending activation
+check                           -> Draft structure, trusted approval, and active/degraded eligibility
 ```
 
 Every mutation publishes atomically and rejects symlinked output parents.
