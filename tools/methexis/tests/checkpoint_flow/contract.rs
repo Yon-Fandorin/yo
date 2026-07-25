@@ -95,3 +95,31 @@ fn trusted_activation_becomes_active_when_decision_sources_are_fresh() {
     let graft_isolated = success_json(repository.run(&["check"]));
     assert_eq!(graft_isolated["checkpoint"], "active");
 }
+
+#[test]
+fn trusted_code_activation_degrades_without_losing_approval_on_byte_drift() {
+    let repository = GitRepository::code_approved();
+    repository.integrate_active_checkpoint();
+
+    let active = success_json(repository.run(&["check"]));
+    assert_eq!(active["checkpoint"], "active");
+    assert_eq!(active["units"][0]["effective_approval"], "approved");
+    assert_eq!(active["units"][0]["eligibility"], "active");
+    let trusted_commit = active["trusted_commit"].clone();
+
+    fs::write(
+        repository.path.join("methexis/code-source.txt"),
+        b"drifted\n",
+    )
+    .unwrap();
+    let degraded = success_json(repository.run(&["check"]));
+
+    assert_eq!(degraded["checkpoint"], "degraded");
+    assert_eq!(degraded["trusted_commit"], trusted_commit);
+    assert_eq!(degraded["units"][0]["effective_approval"], "approved");
+    assert_eq!(degraded["units"][0]["eligibility"], "stale");
+    assert_eq!(
+        degraded["units"][0]["eligibility_evidence"],
+        json!(["code_hash_mismatch:tui.code-fixture"])
+    );
+}

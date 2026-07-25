@@ -1,0 +1,8 @@
+schema: methexis.source/v1alpha1
+id: tui.code-fixture
+revision: sha256:0caebdcef7d77fd71733557a5b9c147e90c55fd67002ae4e7f7a51bce920a3cd
+payload:
+  kind: code
+  path: methexis/code-source.txt
+  symbol: fixture
+  content_hash: sha256:02db0d2659c9d48bc15f81a388594fc0e3cf4c780fdc27ea21e0671afc37de19

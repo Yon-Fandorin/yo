@@ -128,6 +128,14 @@ pub(super) fn final_revalidate(
     repository_root: &Path,
     capture: &Capture,
 ) -> Result<(), FreshnessFailure> {
+    final_revalidate_with(repository_root, capture, || {})
+}
+
+fn final_revalidate_with(
+    repository_root: &Path,
+    capture: &Capture,
+    mut after_read: impl FnMut(),
+) -> Result<(), FreshnessFailure> {
     match capture {
         Capture::File {
             path,
@@ -136,9 +144,22 @@ pub(super) fn final_revalidate(
         } => {
             let mut file =
                 open_file(repository_root, Path::new(path)).map_err(|_| changed(path))?;
-            let current_identity = identity(&file).map_err(|_| changed(path))?;
+            let before = identity(&file).map_err(|_| changed(path))?;
             let bytes = read_bounded(&mut file, path).map_err(|_| changed(path))?;
-            if current_identity != *captured_identity || hash_bytes(&bytes) != *hash {
+            after_read();
+            let after = identity(&file).map_err(|_| changed(path))?;
+            let mut current =
+                open_file(repository_root, Path::new(path)).map_err(|_| changed(path))?;
+            let current_before = identity(&current).map_err(|_| changed(path))?;
+            let current_bytes = read_bounded(&mut current, path).map_err(|_| changed(path))?;
+            let current_after = identity(&current).map_err(|_| changed(path))?;
+            if before != after
+                || after != *captured_identity
+                || current_before != current_after
+                || current_after != *captured_identity
+                || hash_bytes(&bytes) != *hash
+                || hash_bytes(&current_bytes) != *hash
+            {
                 return Err(changed(path));
             }
         },
@@ -152,6 +173,15 @@ pub(super) fn final_revalidate(
         },
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn final_revalidate_after_read(
+    repository_root: &Path,
+    capture: &Capture,
+    after_read: impl FnMut(),
+) -> Result<(), FreshnessFailure> {
+    final_revalidate_with(repository_root, capture, after_read)
 }
 
 fn open_file(repository_root: &Path, relative: &Path) -> Result<File, OpenFailure> {

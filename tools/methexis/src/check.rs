@@ -269,7 +269,7 @@ fn failed_report(diagnostics: Vec<Diagnostic>) -> CheckReport {
     failed_report_with_context(diagnostics, None, false)
 }
 
-fn failed_authority_report(failure: crate::checkpoint::AuthorityFailure) -> CheckReport {
+pub(crate) fn failed_authority_report(failure: crate::checkpoint::AuthorityFailure) -> CheckReport {
     failed_report_with_context(
         failure.diagnostics,
         failure.trusted_commit,

@@ -40,6 +40,25 @@ impl From<Vec<Diagnostic>> for AuthorityFailure {
     }
 }
 
+impl AuthorityFailure {
+    pub(crate) fn from_source(trusted_commit: &str, failure: source::FreshnessFailure) -> Self {
+        let retryable = failure.code == "source_changed_during_validation";
+        Self {
+            diagnostics: vec![Diagnostic {
+                phase: DiagnosticPhase::Global,
+                path: "methexis/sources".to_owned(),
+                code: failure.code.to_owned(),
+                message: failure.message,
+                line: None,
+                column: None,
+                affected_ids: failure.affected_ids,
+            }],
+            trusted_commit: Some(trusted_commit.to_owned()),
+            retryable,
+        }
+    }
+}
+
 pub(crate) fn evaluate(
     repository_root: &Path,
     working: &Foundation,
@@ -136,22 +155,7 @@ pub(crate) fn evaluate(
         .map(|unit| unit.id.clone())
         .collect::<BTreeSet<_>>();
     let source_evaluation = source::evaluate(repository_root, &foundation, working, &selected)
-        .map_err(|failure| {
-            let retryable = failure.code == "source_changed_during_validation";
-            AuthorityFailure {
-                diagnostics: vec![Diagnostic {
-                    phase: DiagnosticPhase::Global,
-                    path: "methexis/sources".to_owned(),
-                    code: failure.code.to_owned(),
-                    message: failure.message,
-                    line: None,
-                    column: None,
-                    affected_ids: failure.affected_ids,
-                }],
-                trusted_commit: Some(snapshot.commit.clone()),
-                retryable,
-            }
-        })?;
+        .map_err(|failure| AuthorityFailure::from_source(&snapshot.commit, failure))?;
     let active = source_evaluation
         .units
         .iter()

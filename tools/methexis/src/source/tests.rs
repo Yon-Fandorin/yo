@@ -128,6 +128,93 @@ fn code_capture_hashes_exact_bytes_and_revalidates_identity() {
 }
 
 #[test]
+fn final_code_read_detects_a_mutation_before_its_post_read_stat() {
+    let repository = TemporaryRepository::new();
+    let path = repository.path.join("source.rs");
+    fs::write(&path, b"captured\n").unwrap();
+    let capture = match working_tree::capture(&repository.path, "source.rs", &sha256(b"captured\n"))
+        .unwrap()
+    {
+        working_tree::CaptureState::Fresh(capture) => capture,
+        _ => panic!("initial bytes should be fresh"),
+    };
+
+    let failure = working_tree::final_revalidate_after_read(&repository.path, &capture, || {
+        fs::write(&path, b"changed!\n").unwrap();
+    })
+    .expect_err("post-read stat must detect the concurrent mutation");
+
+    let report = crate::check::failed_authority_report(
+        crate::checkpoint::AuthorityFailure::from_source("0123456789abcdef", failure),
+    );
+    assert!(report.retryable);
+    assert!(report.units.is_empty());
+    assert_eq!(report.snapshot_revision, None);
+    assert_eq!(report.trusted_commit.as_deref(), Some("0123456789abcdef"));
+    assert_eq!(
+        report.next_actions,
+        ["retry `methexis check`; no state was published"]
+    );
+}
+
+#[test]
+fn final_code_read_detects_same_byte_path_replacement() {
+    let repository = TemporaryRepository::new();
+    let path = repository.path.join("source.rs");
+    let displaced = repository.path.join("source.old");
+    fs::write(&path, b"captured\n").unwrap();
+    let capture = match working_tree::capture(&repository.path, "source.rs", &sha256(b"captured\n"))
+        .unwrap()
+    {
+        working_tree::CaptureState::Fresh(capture) => capture,
+        _ => panic!("initial bytes should be fresh"),
+    };
+
+    let failure = working_tree::final_revalidate_after_read(&repository.path, &capture, || {
+        fs::rename(&path, &displaced).unwrap();
+        fs::write(&path, b"captured\n").unwrap();
+    })
+    .expect_err("post-read path replacement must fail even when bytes match");
+
+    assert_eq!(failure.code, "source_changed_during_validation");
+}
+
+#[test]
+fn final_code_read_rehashes_when_modeled_identity_is_restored() {
+    use std::fs::{FileTimes, OpenOptions};
+
+    let repository = TemporaryRepository::new();
+    let path = repository.path.join("source.rs");
+    fs::write(&path, b"captured\n").unwrap();
+    let metadata = fs::metadata(&path).unwrap();
+    let modified = metadata.modified().unwrap();
+    let accessed = metadata.accessed().unwrap();
+    let capture = match working_tree::capture(&repository.path, "source.rs", &sha256(b"captured\n"))
+        .unwrap()
+    {
+        working_tree::CaptureState::Fresh(capture) => capture,
+        _ => panic!("initial bytes should be fresh"),
+    };
+
+    let failure = working_tree::final_revalidate_after_read(&repository.path, &capture, || {
+        fs::write(&path, b"modified\n").unwrap();
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_times(
+                FileTimes::new()
+                    .set_accessed(accessed)
+                    .set_modified(modified),
+            )
+            .unwrap();
+    })
+    .expect_err("the final current-path hash must detect restored-metadata byte drift");
+
+    assert_eq!(failure.code, "source_changed_during_validation");
+}
+
+#[test]
 fn missing_code_capture_detects_a_file_that_appears() {
     let repository = TemporaryRepository::new();
     let capture =
@@ -158,11 +245,17 @@ fn code_drift_degrades_the_selected_unit_without_changing_authority() {
     record.revision = revision::calculate(&record);
     let source_path = repository.path.join("methexis/sources/code/tui.code.yaml");
     fs::write(&source_path, serde_norway::to_string(&record).unwrap()).unwrap();
+    let decision = write_source(&repository, decision_record("Accepted."));
     let mut selected_unit = unit("tui.selected", Relations::default());
-    selected_unit.metadata.sources = vec![SourceRef {
-        id: record.id.clone(),
-        revision: record.revision.clone(),
-    }];
+    selected_unit.metadata.sources = [
+        (&record.id, &record.revision),
+        (&decision.record.id, &decision.record.revision),
+    ]
+    .map(|(id, revision)| SourceRef {
+        id: id.clone(),
+        revision: revision.clone(),
+    })
+    .to_vec();
     let source = Source {
         record,
         path: source_path,
@@ -170,7 +263,7 @@ fn code_drift_degrades_the_selected_unit_without_changing_authority() {
     let trusted = Foundation {
         units: vec![selected_unit],
         owners: Vec::new(),
-        sources: vec![source],
+        sources: vec![source, decision],
     };
     let working = Foundation {
         units: trusted.units.clone(),
@@ -181,6 +274,13 @@ fn code_drift_degrades_the_selected_unit_without_changing_authority() {
 
     let fresh = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
     assert_eq!(fresh.checkpoint, "active");
+    assert_eq!(
+        fresh.units["tui.selected"].evidence,
+        [
+            "code_hash_match:tui.code",
+            "decision_revision_match:tui.decision"
+        ]
+    );
     fs::write(repository.path.join("src/lib.rs"), b"drifted\n").unwrap();
     let drifted = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
 
@@ -188,6 +288,118 @@ fn code_drift_degrades_the_selected_unit_without_changing_authority() {
     assert_eq!(
         drifted.units["tui.selected"].eligibility,
         Eligibility::Stale
+    );
+}
+
+#[test]
+fn conversation_and_external_sources_fail_closed_in_a_multi_source_unit() {
+    let repository = TemporaryRepository::new();
+    let conversation = write_source(
+        &repository,
+        SourceRecord {
+            schema: SOURCE_SCHEMA.to_owned(),
+            id: "tui.conversation".to_owned(),
+            revision: hash('0'),
+            payload: SourcePayload::Conversation {
+                material: crate::model::ConversationMaterial::Excerpt {
+                    content: "Authorized excerpt.".to_owned(),
+                },
+            },
+        },
+    );
+    let external = write_source(
+        &repository,
+        SourceRecord {
+            schema: SOURCE_SCHEMA.to_owned(),
+            id: "tui.external".to_owned(),
+            revision: hash('0'),
+            payload: SourcePayload::External {
+                freshness: crate::model::ExternalFreshness::Immutable {
+                    locator: "https://example.invalid/spec".to_owned(),
+                    version: "v1".to_owned(),
+                    content_hash: hash('4'),
+                },
+            },
+        },
+    );
+    let mut selected_unit = unit("tui.selected", Relations::default());
+    selected_unit.metadata.sources = [&conversation, &external]
+        .map(|source| SourceRef {
+            id: source.record.id.clone(),
+            revision: source.record.revision.clone(),
+        })
+        .to_vec();
+    let trusted = foundation(selected_unit, vec![conversation, external]);
+    let working = clone_foundation(&trusted);
+    let selected = BTreeSet::from(["tui.selected".to_owned()]);
+
+    let evaluation = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
+
+    assert_eq!(evaluation.checkpoint, "degraded");
+    assert_eq!(
+        evaluation.units["tui.selected"].evidence,
+        [
+            "conversation_unverified:tui.conversation",
+            "external_unverified:tui.external"
+        ]
+    );
+}
+
+#[test]
+fn a_working_decision_change_can_only_demote_trusted_knowledge() {
+    let repository = TemporaryRepository::new();
+    let trusted_source = source(decision_record("Accepted."));
+    let working_source = write_source(&repository, decision_record("Changed."));
+    let mut selected_unit = unit("tui.selected", Relations::default());
+    selected_unit.metadata.sources = vec![SourceRef {
+        id: trusted_source.record.id.clone(),
+        revision: trusted_source.record.revision.clone(),
+    }];
+    let trusted = foundation(selected_unit.clone(), vec![trusted_source]);
+    let working = foundation(selected_unit, vec![working_source]);
+    let selected = BTreeSet::from(["tui.selected".to_owned()]);
+
+    let evaluation = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
+
+    assert_eq!(evaluation.checkpoint, "degraded");
+    assert_eq!(
+        evaluation.units["tui.selected"].evidence,
+        ["working_source_drift:tui.decision"]
+    );
+}
+
+#[test]
+fn missing_and_mismatched_trusted_sources_are_distinct_failures() {
+    let repository = TemporaryRepository::new();
+    let mismatched = write_source(&repository, decision_record("Accepted."));
+    let mut selected_unit = unit("tui.selected", Relations::default());
+    selected_unit.metadata.sources = vec![
+        SourceRef {
+            id: mismatched.record.id.clone(),
+            revision: hash('9'),
+        },
+        SourceRef {
+            id: "tui.missing".to_owned(),
+            revision: hash('8'),
+        },
+    ];
+    let trusted = foundation(selected_unit, vec![mismatched]);
+    let working = clone_foundation(&trusted);
+    let selected = BTreeSet::from(["tui.selected".to_owned()]);
+
+    let evaluation = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
+
+    assert_eq!(evaluation.checkpoint, "degraded");
+    assert_eq!(
+        evaluation.units["tui.selected"].eligibility,
+        Eligibility::Invalid
+    );
+    assert_eq!(
+        evaluation.units["tui.selected"].evidence,
+        [
+            "source_missing:tui.missing",
+            "source_revision_mismatch:tui.decision"
+        ]
     );
 }
 
@@ -283,6 +495,55 @@ fn code_record(line_hint: Option<u64>) -> SourceRecord {
             content_hash: hash('1'),
             line_hint,
         },
+    }
+}
+
+fn decision_record(content: &str) -> SourceRecord {
+    let mut record = SourceRecord {
+        schema: SOURCE_SCHEMA.to_owned(),
+        id: "tui.decision".to_owned(),
+        revision: hash('0'),
+        payload: SourcePayload::Decision {
+            content: content.to_owned(),
+        },
+    };
+    record.revision = revision::calculate(&record);
+    record
+}
+
+fn source(record: SourceRecord) -> Source {
+    Source {
+        record,
+        path: PathBuf::new(),
+    }
+}
+
+fn write_source(repository: &TemporaryRepository, mut record: SourceRecord) -> Source {
+    record.revision = revision::calculate(&record);
+    let kind = record.payload.kind();
+    let path = repository
+        .path
+        .join("methexis/sources")
+        .join(kind)
+        .join(format!("{}.yaml", record.id));
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, serde_norway::to_string(&record).unwrap()).unwrap();
+    Source { record, path }
+}
+
+fn foundation(unit: KnowledgeUnit, sources: Vec<Source>) -> Foundation {
+    Foundation {
+        units: vec![unit],
+        owners: Vec::new(),
+        sources,
+    }
+}
+
+fn clone_foundation(foundation: &Foundation) -> Foundation {
+    Foundation {
+        units: foundation.units.clone(),
+        owners: foundation.owners.clone(),
+        sources: foundation.sources.clone(),
     }
 }
 

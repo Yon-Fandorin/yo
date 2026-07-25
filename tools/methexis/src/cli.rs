@@ -25,7 +25,7 @@ USAGE:
     methexis propose-activation <request.json>
 
 COMMANDS:
-    check             Validate Draft knowledge and approval proposals
+    check             Validate Draft records and trusted Source-aware eligibility
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal
@@ -33,7 +33,8 @@ COMMANDS:
     propose-activation Propose the active Checkpoint with compare-and-swap
 
 Run commands from the repository root. Mutations remain Draft proposals until
-trusted integration. Source freshness is not evaluated yet.
+trusted integration. Check derives approval and active/degraded eligibility
+from local develop, then uses current Source observations only to demote it.
 ",
 );
 

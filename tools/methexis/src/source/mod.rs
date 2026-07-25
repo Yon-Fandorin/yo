@@ -11,7 +11,7 @@ mod working_tree;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use freshness::evaluate;
+pub(crate) use freshness::{FreshnessFailure, evaluate};
 pub(crate) use records::load;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

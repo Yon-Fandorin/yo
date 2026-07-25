@@ -17,6 +17,14 @@ pub(super) struct GitRepository {
 
 impl GitRepository {
     pub(super) fn foundation() -> Self {
+        Self::from_fixture("relocation-a")
+    }
+
+    pub(super) fn code_foundation() -> Self {
+        Self::from_fixture("code-active")
+    }
+
+    fn from_fixture(fixture: &str) -> Self {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
@@ -27,7 +35,10 @@ impl GitRepository {
         ));
         fs::create_dir(&path).unwrap();
         copy_directory(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/relocation-a/methexis"),
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(fixture)
+                .join("methexis"),
             &path.join("methexis"),
         );
         let repository = Self { path };
@@ -47,11 +58,43 @@ impl GitRepository {
 
     pub(super) fn approved() -> Self {
         let repository = Self::foundation();
-        repository.approve_units(&[KNOWLEDGE_ID]);
-        repository.git(&["add", "methexis"]);
-        repository.git(&["commit", "-m", "fixture approval"]);
-        repository.git(&["branch", "-f", "develop", "HEAD"]);
+        repository.integrate_approval();
         repository
+    }
+
+    pub(super) fn code_approved() -> Self {
+        let repository = Self::code_foundation();
+        repository.integrate_approval();
+        repository
+    }
+
+    fn integrate_approval(&self) {
+        self.approve_units(&[KNOWLEDGE_ID]);
+        self.git(&["add", "methexis"]);
+        self.git(&["commit", "-m", "fixture approval"]);
+        self.git(&["branch", "-f", "develop", "HEAD"]);
+    }
+
+    pub(super) fn integrate_active_checkpoint(&self) {
+        let create_request = self.request("checkpoint.json", &checkpoint_request());
+        let created =
+            success_json(self.run(&["create-checkpoint", create_request.to_str().unwrap()]));
+        let activation_request = self.request(
+            "activation.json",
+            &json!({
+                "schema": "methexis.activation-request/v1alpha1",
+                "checkpoint_id": created["checkpoint_id"],
+                "checkpoint_hash": created["hash"]
+            }),
+        );
+        success_json(self.run(&["propose-activation", activation_request.to_str().unwrap()]));
+        self.git(&[
+            "add",
+            "methexis/checkpoints",
+            "methexis/active-checkpoint.yaml",
+        ]);
+        self.git(&["commit", "-m", "activate fixture checkpoint"]);
+        self.git(&["branch", "-f", "develop", "HEAD"]);
     }
 
     pub(super) fn approve_units(&self, ids: &[&str]) {

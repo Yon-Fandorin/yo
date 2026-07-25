@@ -1,8 +1,8 @@
-//! Knowledge, review, trusted-approval, and Checkpoint proposal tooling for the
-//! Methexis SOT Pilot in `yo`.
+//! Knowledge, review, trusted-approval, Checkpoint, and Source freshness tooling
+//! for the Methexis SOT Pilot in `yo`.
 //!
-//! Source validation remains closed until its owning Slice is accepted, so a
-//! trusted active-Checkpoint proposal cannot yet make knowledge eligible.
+//! Trusted integration is fixed to local `develop`. Working-tree observations
+//! may demote Source-aware eligibility to degraded, but never grant authority.
 
 mod check;
 mod checkpoint;
