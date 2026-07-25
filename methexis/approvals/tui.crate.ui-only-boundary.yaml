@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.crate.ui-only-boundary
+revision: sha256:890ea5c07e508f9b29a01edeb5e274fffa4750e3cfe22d1fc1ef53546988d2a4
+reviewer: tui-architecture
+reviewed_at: 2026-07-25T16:11:52Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:9ba5b2e67f8d13c2b05bd5bde886c380acb9a455e35c70ddfacea443039f4d6e
+request_hash: sha256:fb26cbcd72b29f40eef78705a42904c7ad3e538dc4f442cb02398f39e39a8a00

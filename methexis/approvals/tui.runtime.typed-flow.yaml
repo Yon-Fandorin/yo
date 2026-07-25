@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.runtime.typed-flow
+revision: sha256:191d3c5030c6e2e161556232cd548bccf8b375cb52a85a586db14fb6aa6dac49
+reviewer: tui-architecture
+reviewed_at: 2026-07-25T16:11:52Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:3154ec88df976a6921e05c2c4f739e66b70d6fb5cb9de4caa25fad6b274dbe94
+request_hash: sha256:e3a041a742d106833a3616b47a60bf13eda1f6647770a301df4a6e757ecc70f3

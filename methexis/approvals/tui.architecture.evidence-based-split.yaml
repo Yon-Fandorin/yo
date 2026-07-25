@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.architecture.evidence-based-split
+revision: sha256:0787fb2d64d3d16201752a02130ea45f9287734f37b6bf10f0269f6b239f8794
+reviewer: tui-architecture
+reviewed_at: 2026-07-25T16:11:52Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:d89696dd4a798257a528001edf5b038a0aae3697a1793fb2bd5032394d1c79d8
+request_hash: sha256:3058544196eaf433f565e8cd862819de99acea7c1f68f9b74c33d12ecaf98adb

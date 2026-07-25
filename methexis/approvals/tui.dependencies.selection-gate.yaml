@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.dependencies.selection-gate
+revision: sha256:11a84ded112fda98eee50b4b6230b3291a51f65791f2370ccbcd8ca7f142a208
+reviewer: tui-architecture
+reviewed_at: 2026-07-25T16:11:52Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:697bb6330c412e9f61444ad8a2e699f8eb83a54c261f05fab0562ff86894fb2c
+request_hash: sha256:e46f7687d7d0b0e33853a378b8690aba936010dd1469982316c942fa31ebb39d
