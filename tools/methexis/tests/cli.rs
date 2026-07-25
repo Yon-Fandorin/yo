@@ -114,7 +114,7 @@ fn stream_failures_are_returned_to_the_binary_boundary() {
 }
 
 #[test]
-fn check_reports_the_repository_draft_corpus_on_stdout() {
+fn check_reports_the_repository_corpus_on_stdout() {
     let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(std::path::Path::parent)
@@ -133,11 +133,18 @@ fn check_reports_the_repository_draft_corpus_on_stdout() {
     assert_eq!(report["ok"], true);
     assert_eq!(report["authority"], "draft");
     let units = report["units"].as_array().expect("units are an array");
-    assert_eq!(units.len(), 5);
-    assert!(
+    assert_eq!(
         units
             .iter()
-            .all(|unit| unit["effective_approval"] == "draft")
+            .map(|unit| unit["id"].as_str().expect("unit has an ID"))
+            .collect::<Vec<_>>(),
+        [
+            "tui.architecture.evidence-based-split",
+            "tui.architecture.module-boundaries",
+            "tui.crate.ui-only-boundary",
+            "tui.dependencies.selection-gate",
+            "tui.runtime.typed-flow",
+        ]
     );
     assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
 }
