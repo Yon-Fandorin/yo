@@ -10,6 +10,7 @@ mod cli;
 mod model;
 mod publication;
 mod review;
+mod source;
 
 use std::path::Path;
 

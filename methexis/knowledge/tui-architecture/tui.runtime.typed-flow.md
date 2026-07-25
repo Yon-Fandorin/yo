@@ -4,7 +4,8 @@ id: tui.runtime.typed-flow
 kind: decision
 owner: tui-architecture
 sources:
-  - tui.arc-003
+  - id: tui.arc-003
+    revision: sha256:33b1012a4204eaa6811533d7fd37c5015ffc9c4d97a02e394e41bab5554d3727
 relations:
   depends_on:
     - tui.architecture.module-boundaries

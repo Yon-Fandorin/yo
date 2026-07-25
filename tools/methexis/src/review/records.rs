@@ -41,7 +41,12 @@ pub(super) fn render_review_packet(unit: &KnowledgeUnit, projection: &Projection
         .metadata
         .sources
         .iter()
-        .map(|source| format!("- `{source}` — `not_evaluated`"))
+        .map(|source| {
+            format!(
+                "- `{}` at `{}` — `not_evaluated`",
+                source.id, source.revision
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let relations = unit

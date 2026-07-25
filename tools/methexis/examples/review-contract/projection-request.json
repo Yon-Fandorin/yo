@@ -1,6 +1,6 @@
 {
   "schema": "methexis.review-projection-request/v1alpha1",
   "knowledge_id": "tui.relocated",
-  "expected_revision": "sha256:1a357cfa1afc1aa8f9ae72c84b6719f6c136afff55d34101067d4db4ff9caf56",
+  "expected_revision": "sha256:54e7e0b515b400d95c7a3578fbd72fef0ab0e1d71c6f1b057637ee0f2998874d",
   "korean_markdown": "물리적 위치는 의미적 정체성이 아닙니다."
 }

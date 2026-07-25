@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.arc-001
+revision: sha256:3902cbd31a95232e4b6f8a96893305074bedd3e4442ebd24aaa40055fba70475
+payload:
+  kind: decision
+  content: The initial yo-tui crate is a narrow UI-only boundary with internal implementation details.

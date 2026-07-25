@@ -4,7 +4,8 @@ id: tui.architecture.evidence-based-split
 kind: decision
 owner: tui-architecture
 sources:
-  - tui.arc-004
+  - id: tui.arc-004
+    revision: sha256:1084e2f78f3f92cb38ef03387f7bc39edeb42db24b53a3ea665507f284a3f0a9
 relations:
   constrained_by:
     - tui.crate.ui-only-boundary

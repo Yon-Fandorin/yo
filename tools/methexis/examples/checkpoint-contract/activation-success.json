@@ -4,14 +4,14 @@
   "operation": "propose_activation",
   "status": "written",
   "authority": "draft_proposal",
-  "trusted_commit": "1fb3234251c26e900f7dd5f0b0279a0caa7f9bf4",
+  "trusted_commit": "8f32802b338831bb4119e1fcf9d413bd736cc023",
   "affected_ids": [
     "tui.relocated"
   ],
   "path": "methexis/active-checkpoint.yaml",
-  "hash": "sha256:022e0db6c32bf4e166f891da3d9a696581847c913670d61de012e4090b6159af",
-  "checkpoint_id": "sha256:d6d63f1f97f7f8731a6e0950cb6ba6d7555274cb40d58c60bfd57173090858a5",
-  "request_hash": "sha256:7a50c577c4792edd2cfa5e83829636817977ced4f175374e99d3111c3fd5adc0",
+  "hash": "sha256:5731a65d8a00fda36fdee778d6ccd6b5d09a706aa70edab56a59ff8b4ef31ff2",
+  "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
+  "request_hash": "sha256:e4685908fd65a3e6a30dfc78909526c62b5f8ed290cc87f085860fe16c61dc34",
   "next_actions": [
     "submit the Checkpoint and active record through repository review"
   ]

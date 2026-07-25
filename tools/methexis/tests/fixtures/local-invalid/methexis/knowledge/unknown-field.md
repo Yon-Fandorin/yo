@@ -4,7 +4,8 @@ id: tui.unknown-field
 kind: rule
 owner: tui-architecture
 sources:
-  - tui.fixture
+  - id: tui.fixture
+    revision: sha256:3d3ff9057aadcbf2f44300bce0f97c5c84dc3c59a1a76e09eb012b299892f130
 unexpected: true
 ---
 ## Statement

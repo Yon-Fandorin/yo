@@ -3,7 +3,7 @@
 | Axis | State |
 | --- | --- |
 | Document | Accepted |
-| Implementation | S1, S2a, and S2b Checkpoint proposal engine implemented; activation awaits Source validation |
+| Implementation | W0 foundation engine implemented through decision/code Source validation; seed activation remains a later Slice |
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 
@@ -179,9 +179,12 @@ Derivation and support belong to provenance. Translation and summarization
 belong to projection lineage. A weak `related_to` signal belongs to Librarian
 discovery and MUST NOT affect SOT eligibility or invalidation.
 
-Knowledge files reference stable `SourceId`s. Source records own their location,
-original content or external reference, and revision exactly once. The closed
-initial Source kinds are:
+Knowledge files pin typed `{ SourceId, SourceRevision }` references. Source
+records own their location, original content or external reference, and
+revision exactly once. A Source change never follows implicitly: the
+KnowledgeUnit must pin the new SourceRevision, producing a new RevisionId that
+requires review, approval, and Checkpoint activation. The closed initial Source
+kinds are:
 
 | Kind | Meaning |
 | --- | --- |
@@ -192,6 +195,21 @@ initial Source kinds are:
 
 Code line numbers are hints, not identity. Path and symbol locate a code Source;
 its content hash detects drift.
+
+The Pilot stores one typed YAML record per Source below
+`methexis/sources/<kind>/`. Directory and filename are organizational hints;
+the record's SourceId is identity. The schema is closed and has no catch-all
+payload. Conversation records contain either an authorized excerpt or an opaque
+reference. External records declare immutable, mutable, or attested freshness,
+but Conversation and External records remain ineligible until the corresponding
+verifier exists.
+
+`SourceRevision` is `sha256:<lowercase-hex>` over a domain-separated,
+length-delimited representation of schema, SourceId, kind, and that kind's
+semantic fields. YAML formatting, physical record path, generation time, a code
+line hint, and the revision field itself are excluded. Code path, symbol, and
+content hash are semantic; a code symbol is a locator rather than a byte-range
+extraction boundary.
 
 ## SOT-004: Revision, approval, and Checkpoint
 
@@ -271,11 +289,12 @@ readable, and reproduce the same Checkpoint while the current approved closure
 also matches. A Checkpoint MUST NOT select a replacement together with a unit
 it supersedes.
 
-S2b records `source_status: not_evaluated`. Even after its Checkpoint and active
-record are integrated into `develop`, Fast Check MUST report
-`pending_source_validation` and keep selected units `inactive`. Only the Source
-validation Slice may produce `active`; this prevents missing Source
-infrastructure from being treated as successful freshness evidence.
+The Checkpoint record retains the historical `source_status: not_evaluated`
+input marker because Source freshness is a current derived guard rather than
+authored Checkpoint state. Once the Source validation engine is present, Fast
+Check derives `active` or `degraded` from the trusted Checkpoint and current
+observations. The W0 Draft seed does not create real approvals or activation;
+that authority transition belongs to a later directly reviewed Slice.
 
 ## SOT-005: Librarian discovery and location boundary
 
@@ -351,14 +370,15 @@ duplicate IDs, missing owners or targets, and graph cycles. Diagnostics have
 stable codes and deterministic path/code/location ordering. Any diagnostic
 produces no snapshot.
 
-Working-tree `methexis check` validates Draft Knowledge and any tracked
-Projection and approval proposals. It MAY report `matching_proposal`,
+Working-tree `methexis check` validates Draft Knowledge, typed Source records,
+and any tracked Projection and approval proposals. It MAY report `matching_proposal`,
 `stale_proposal`, or missing working-tree evidence, but MUST NOT promote that
 evidence to trusted approval. It separately reads the pinned trusted commit and
-may report `approved` only for an exact matching approval found there. A
-trusted active-record proposal remains `pending_source_validation` and its
-units remain `inactive` until the Source guard is implemented. Fast editing
-validation SHOULD be available through the repository `hk` workflow.
+may report `approved` only for an exact matching approval found there. A trusted
+active record becomes `active` only when all selected Source guards pass; a
+stable freshness failure yields `degraded` and marks only affected required
+closures stale or invalid. Fast editing validation SHOULD be available through
+the repository `hk` workflow.
 
 Checkpoint activation additionally verifies:
 
@@ -397,6 +417,15 @@ approval revisions, and required evidence hashes. For a code Source it resolves
 the recorded locator against the current working tree, captures the bytes and
 file identity, and hashes that immutable snapshot. A missing locator, dirty
 change, or hash mismatch is drift rather than an implicit authority revision.
+
+The code guard hashes exact whole-file bytes in v1; it does not normalize line
+endings or extract a symbol range. It walks repository-relative path components
+without following symlinks, retains the opened file while capturing bytes,
+checks identity before and after capture, and reopens and rehashes immediately
+before returning. A stable missing file or hash mismatch is stale, a path escape
+or symlink is invalid, and a concurrent identity or byte change returns the
+retryable `source_changed_during_validation` failure without a partial result or
+automatic retry.
 
 External Sources use one enforceable freshness mode:
 

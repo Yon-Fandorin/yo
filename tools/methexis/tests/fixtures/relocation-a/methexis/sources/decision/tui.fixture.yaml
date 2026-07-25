@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.fixture
+revision: sha256:3d3ff9057aadcbf2f44300bce0f97c5c84dc3c59a1a76e09eb012b299892f130
+payload:
+  kind: decision
+  content: Fixture provenance.

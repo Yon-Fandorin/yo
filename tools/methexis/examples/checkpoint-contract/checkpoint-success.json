@@ -4,13 +4,13 @@
   "operation": "create_checkpoint",
   "status": "written",
   "authority": "draft_proposal",
-  "trusted_commit": "1fb3234251c26e900f7dd5f0b0279a0caa7f9bf4",
+  "trusted_commit": "8f32802b338831bb4119e1fcf9d413bd736cc023",
   "affected_ids": [
     "tui.relocated"
   ],
-  "path": "methexis/checkpoints/d6d63f1f97f7f8731a6e0950cb6ba6d7555274cb40d58c60bfd57173090858a5.yaml",
-  "hash": "sha256:860a0dff0592b95d8cb6b3f36dd4250893de4507d182b45f76a1a9696a48fcb4",
-  "checkpoint_id": "sha256:d6d63f1f97f7f8731a6e0950cb6ba6d7555274cb40d58c60bfd57173090858a5",
+  "path": "methexis/checkpoints/7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9.yaml",
+  "hash": "sha256:e9d6a9442c1964fdbf6d9fe7173cab6189cc8df9d52d2b4381b82ded0d7dac01",
+  "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
   "request_hash": "sha256:359c923a34912c02d862c5f547614c4b60ae624a76dda45fb2b378b01bd84c70",
   "next_actions": [
     "inspect the immutable Checkpoint before proposing activation"

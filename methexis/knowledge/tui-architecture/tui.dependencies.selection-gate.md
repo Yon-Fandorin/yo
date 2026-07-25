@@ -4,7 +4,8 @@ id: tui.dependencies.selection-gate
 kind: rule
 owner: tui-architecture
 sources:
-  - tui.arc-005
+  - id: tui.arc-005
+    revision: sha256:f0a837e8f5083f84eca42901a671f4771d061634f31da1ffab32ff963fbddef2
 relations:
   applies_to:
     - workspace.dependencies

@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const KNOWLEDGE_SCHEMA: &str = "methexis.knowledge/v1alpha1";
 pub(crate) const OWNER_SCHEMA: &str = "methexis.owner/v1alpha1";
+pub(crate) const SOURCE_SCHEMA: &str = "methexis.source/v1alpha1";
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SourceRef {
+    pub(crate) id: String,
+    pub(crate) revision: String,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,9 +71,81 @@ pub(crate) struct KnowledgeMetadata {
     pub(crate) id: String,
     pub(crate) kind: KnowledgeKind,
     pub(crate) owner: String,
-    pub(crate) sources: Vec<String>,
+    pub(crate) sources: Vec<SourceRef>,
     #[serde(default)]
     pub(crate) relations: Relations,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SourceRecord {
+    pub(crate) schema: String,
+    pub(crate) id: String,
+    pub(crate) revision: String,
+    pub(crate) payload: SourcePayload,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum SourcePayload {
+    Decision {
+        content: String,
+    },
+    Code {
+        path: String,
+        symbol: String,
+        content_hash: String,
+        #[serde(default)]
+        line_hint: Option<u64>,
+    },
+    Conversation {
+        material: ConversationMaterial,
+    },
+    External {
+        freshness: ExternalFreshness,
+    },
+}
+
+impl SourcePayload {
+    pub(crate) const fn kind(&self) -> &'static str {
+        match self {
+            Self::Decision { .. } => "decision",
+            Self::Code { .. } => "code",
+            Self::Conversation { .. } => "conversation",
+            Self::External { .. } => "external",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ConversationMaterial {
+    Excerpt {
+        content: String,
+    },
+    Opaque {
+        reference: String,
+        content_hash: String,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "freshness", rename_all = "snake_case", deny_unknown_fields)]
+pub(crate) enum ExternalFreshness {
+    Immutable {
+        locator: String,
+        version: String,
+        content_hash: String,
+    },
+    Mutable {
+        locator: String,
+        content_hash: String,
+    },
+    Attested {
+        reference: String,
+        content_hash: String,
+        expires_at: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -86,6 +166,12 @@ pub(crate) struct KnowledgeUnit {
 #[derive(Clone, Debug)]
 pub(crate) struct Owner {
     pub(crate) id: String,
+    pub(crate) path: PathBuf,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Source {
+    pub(crate) record: SourceRecord,
     pub(crate) path: PathBuf,
 }
 

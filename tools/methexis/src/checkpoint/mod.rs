@@ -21,6 +21,8 @@ mod records;
 mod storage;
 mod validation;
 
+pub(crate) use evaluation::AuthorityFailure;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct CreateRequest {

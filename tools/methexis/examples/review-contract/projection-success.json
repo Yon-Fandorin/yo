@@ -8,8 +8,8 @@
     "tui.relocated"
   ],
   "path": "methexis/review-projections/tui.relocated.md",
-  "hash": "sha256:b55a7dc051ab823eb63d87fdaaaa9a7002006b85fd0c18d4e583af9246c5e51d",
-  "request_hash": "sha256:bd2b1953a9bc4d1a5cc3f103ed3d5145ffbf5f37aca6fa4fd5c0d5bb0df989ee",
+  "hash": "sha256:61a12ec064384b869f3639a594e55587ea204cf11d599ce5b86b65463904eda1",
+  "request_hash": "sha256:a6b96d71561479ee34890374671b0c9be82f4eb7cf190bddf2fdaa95d2379e18",
   "next_actions": [
     "build a review packet before requesting approval"
   ]

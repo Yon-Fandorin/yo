@@ -40,7 +40,7 @@ fn agent_contract_fixtures_are_complete_and_current() {
 }
 
 #[test]
-fn trusted_activation_remains_closed_until_source_validation_exists() {
+fn trusted_activation_becomes_active_when_decision_sources_are_fresh() {
     let repository = GitRepository::approved();
     let create_request = repository.request("checkpoint.json", &checkpoint_request());
     let created =
@@ -78,9 +78,13 @@ fn trusted_activation_remains_closed_until_source_validation_exists() {
     repository.git(&["branch", "-f", "develop", "HEAD"]);
 
     let after = success_json(repository.run(&["check"]));
-    assert_eq!(after["checkpoint"], "pending_source_validation");
+    assert_eq!(after["checkpoint"], "active");
     assert_eq!(after["units"][0]["effective_approval"], "approved");
-    assert_eq!(after["units"][0]["eligibility"], "inactive");
+    assert_eq!(after["units"][0]["eligibility"], "active");
+    assert_eq!(
+        after["units"][0]["eligibility_evidence"],
+        json!(["decision_revision_match:tui.fixture"])
+    );
     let trusted_commit = repository.git(&["rev-parse", "develop"]);
     let trusted_commit = String::from_utf8(trusted_commit.stdout).unwrap();
     assert_eq!(after["trusted_commit"], trusted_commit.trim());
@@ -89,5 +93,5 @@ fn trusted_activation_remains_closed_until_source_validation_exists() {
     fs::create_dir_all(&info).unwrap();
     fs::write(info.join("grafts"), format!("{}\n", trusted_commit.trim())).unwrap();
     let graft_isolated = success_json(repository.run(&["check"]));
-    assert_eq!(graft_isolated["checkpoint"], "pending_source_validation");
+    assert_eq!(graft_isolated["checkpoint"], "active");
 }

@@ -2,8 +2,8 @@
 
 Run the Pilot from the `yo` repository root. Mutating operations create
 reviewable Draft proposals. `check` separately derives exact-revision approval
-from the local `develop` ref, but Source freshness is not implemented, so no
-Checkpoint can make knowledge active yet.
+from the local `develop` ref and evaluates pinned Source freshness before an
+integrated Checkpoint can make knowledge active.
 
 The versioned contract fixtures under
 [`examples/review-contract`](examples/review-contract/) and
@@ -34,8 +34,9 @@ requested roots plus their `depends_on` and `constrained_by` closure.
 `propose-activation` reproduces that exact Checkpoint from its claimed commit,
 then writes the active-record proposal with compare-and-swap.
 Both files become authority only after repository review integrates them into
-`develop`. Until Source validation lands, `check` reports an integrated active
-record as `pending_source_validation` and keeps every unit `inactive`.
+`develop`. `check` reports a fully fresh integrated active record as `active`;
+stable Source drift yields `degraded`, while a concurrent Source change returns
+a retryable failure without partial state.
 
 Every operation prints one JSON value. Success uses stdout and exit code `0`;
 failure uses stderr and exit code `2`. Treat returned paths and hashes as the
@@ -67,7 +68,16 @@ src/checkpoint/
   validation.rs  approved required-closure selection
   records.rs     deterministic record encoding and validation
   storage.rs     immutable publication and active-record CAS
-  evaluation.rs  trusted approval and pending activation derivation
+  evaluation.rs  trusted approval, activation, and freshness derivation
+
+src/source/
+  mod.rs          Source facade and eligibility result types
+  records.rs      typed YAML record loading
+  revision.rs     deterministic SourceRevision identity
+  validation.rs   closed schema and semantic-field validation
+  freshness.rs    selected-unit guards and required-state propagation
+  working_tree.rs exact-byte, symlink-safe code capture and revalidation
+  tests.rs        revision, schema, drift, race, and propagation scenarios
 
 src/publication.rs  directory-handle-relative lock and atomic-write policy
 

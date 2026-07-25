@@ -1,5 +1,5 @@
 {
   "schema": "methexis.activation-request/v1alpha1",
-  "checkpoint_id": "sha256:d6d63f1f97f7f8731a6e0950cb6ba6d7555274cb40d58c60bfd57173090858a5",
-  "checkpoint_hash": "sha256:860a0dff0592b95d8cb6b3f36dd4250893de4507d182b45f76a1a9696a48fcb4"
+  "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
+  "checkpoint_hash": "sha256:e9d6a9442c1964fdbf6d9fe7173cab6189cc8df9d52d2b4381b82ded0d7dac01"
 }

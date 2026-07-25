@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.arc-004
+revision: sha256:1084e2f78f3f92cb38ef03387f7bc39edeb42db24b53a3ea665507f284a3f0a9
+payload:
+  kind: decision
+  content: Keep one production TUI crate until an independent consumer proves an extraction boundary.

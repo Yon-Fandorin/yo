@@ -33,6 +33,13 @@ fn local_failures_are_aggregated_and_block_global_validation() {
             .iter()
             .any(|diagnostic| diagnostic.code == "invalid_knowledge_id")
     );
+    assert!(
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.path.starts_with("methexis/sources/")),
+        "Source and Knowledge local failures must be aggregated in one run"
+    );
 }
 
 #[test]

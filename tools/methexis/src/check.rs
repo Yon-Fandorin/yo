@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::model::{
     KNOWLEDGE_SCHEMA, KnowledgeKind, KnowledgeMetadata, KnowledgeUnit, OWNER_SCHEMA, Owner,
-    OwnerRecord, Relations, UnitsById,
+    OwnerRecord, Relations, Source, UnitsById,
 };
 
 const CHECK_SCHEMA: &str = "methexis.check/v1alpha1";
@@ -47,6 +47,8 @@ pub struct UnitRevision {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub approval_reason: Option<&'static str>,
     pub eligibility: &'static str,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub eligibility_evidence: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -56,6 +58,8 @@ pub struct CheckReport {
     pub authority: &'static str,
     pub approval: &'static str,
     pub checkpoint: &'static str,
+    #[serde(skip_serializing_if = "is_false")]
+    pub retryable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trusted_commit: Option<String>,
     pub snapshot_revision: Option<String>,
@@ -68,6 +72,7 @@ pub struct CheckReport {
 pub(crate) struct Foundation {
     pub(crate) units: Vec<KnowledgeUnit>,
     pub(crate) owners: Vec<Owner>,
+    pub(crate) sources: Vec<Source>,
 }
 
 pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
@@ -82,11 +87,11 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
     if !review_validation.diagnostics.is_empty() {
         return failed_report(review_validation.diagnostics);
     }
-    let authority = match crate::checkpoint::evaluate(repository_root) {
+    let authority = match crate::checkpoint::evaluate(repository_root, &foundation) {
         Ok(authority) => authority,
-        Err(mut diagnostics) => {
-            sort_diagnostics(&mut diagnostics);
-            return failed_report(diagnostics);
+        Err(mut failure) => {
+            sort_diagnostics(&mut failure.diagnostics);
+            return failed_authority_report(failure);
         },
     };
 
@@ -106,6 +111,9 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
                 && authority
                     .as_ref()
                     .is_some_and(|authority| authority.active.contains(&unit.metadata.id));
+            let freshness = authority
+                .as_ref()
+                .and_then(|authority| authority.freshness.get(&unit.metadata.id));
             UnitRevision {
                 id: unit.metadata.id,
                 revision: unit.revision,
@@ -127,10 +135,17 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
                 },
                 eligibility: if active {
                     "active"
+                } else if trusted_approval {
+                    freshness.map_or("inactive", |state| state.eligibility.as_str())
                 } else if authority.is_some() {
                     "inactive"
                 } else {
                     "not_evaluated"
+                },
+                eligibility_evidence: if !trusted_approval {
+                    Vec::new()
+                } else {
+                    freshness.map_or_else(Vec::new, |state| state.evidence.clone())
                 },
             }
         })
@@ -148,6 +163,7 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
         checkpoint: authority
             .as_ref()
             .map_or("not_evaluated", |authority| authority.checkpoint),
+        retryable: false,
         trusted_commit: authority
             .as_ref()
             .map(|authority| authority.trusted_commit.clone()),
@@ -177,6 +193,13 @@ pub(crate) fn load_foundation(repository_root: &Path) -> Result<Foundation, Vec<
         repository_root,
         &mut diagnostics,
     );
+    let sources = match crate::source::load(repository_root) {
+        Ok(sources) => sources,
+        Err(mut source_diagnostics) => {
+            diagnostics.append(&mut source_diagnostics);
+            Vec::new()
+        },
+    };
 
     let mut units = Vec::new();
     for path in knowledge_paths {
@@ -199,13 +222,17 @@ pub(crate) fn load_foundation(repository_root: &Path) -> Result<Foundation, Vec<
         return Err(diagnostics);
     }
 
-    let mut global_diagnostics = validate_global(&units, &owners, repository_root);
+    let mut global_diagnostics = validate_global(&units, &owners, &sources, repository_root);
     sort_diagnostics(&mut global_diagnostics);
     if !global_diagnostics.is_empty() {
         return Err(global_diagnostics);
     }
 
-    Ok(Foundation { units, owners })
+    Ok(Foundation {
+        units,
+        owners,
+        sources,
+    })
 }
 
 fn authority_root_diagnostic(root: &Path, repository_root: &Path) -> Option<Diagnostic> {
@@ -239,6 +266,26 @@ fn authority_root_diagnostic(root: &Path, repository_root: &Path) -> Option<Diag
 }
 
 fn failed_report(diagnostics: Vec<Diagnostic>) -> CheckReport {
+    failed_report_with_context(diagnostics, None, false)
+}
+
+fn failed_authority_report(failure: crate::checkpoint::AuthorityFailure) -> CheckReport {
+    failed_report_with_context(
+        failure.diagnostics,
+        failure.trusted_commit,
+        failure.retryable,
+    )
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+fn failed_report_with_context(
+    diagnostics: Vec<Diagnostic>,
+    trusted_commit: Option<String>,
+    retryable: bool,
+) -> CheckReport {
     let affected_ids = diagnostics
         .iter()
         .flat_map(|diagnostic| diagnostic.affected_ids.iter().cloned())
@@ -252,12 +299,17 @@ fn failed_report(diagnostics: Vec<Diagnostic>) -> CheckReport {
         authority: "draft",
         approval: "not_evaluated",
         checkpoint: "not_evaluated",
-        trusted_commit: None,
+        retryable,
+        trusted_commit,
         snapshot_revision: None,
         affected_ids,
         units: Vec::new(),
         diagnostics,
-        next_actions: vec!["fix the listed diagnostics and rerun `methexis check`".to_owned()],
+        next_actions: if retryable {
+            vec!["retry `methexis check`; no state was published".to_owned()]
+        } else {
+            vec!["fix the listed diagnostics and rerun `methexis check`".to_owned()]
+        },
     }
 }
 
@@ -284,7 +336,7 @@ fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {
     });
 }
 
-fn collect_files(
+pub(crate) fn collect_files(
     root: &Path,
     extension: &str,
     repository_root: &Path,
@@ -474,7 +526,7 @@ fn parse_owner_file(path: &Path, repository_root: &Path) -> Result<Owner, Vec<Di
     }
 }
 
-fn read_normalized(path: &Path, display_path: &str) -> Result<String, Vec<Diagnostic>> {
+pub(crate) fn read_normalized(path: &Path, display_path: &str) -> Result<String, Vec<Diagnostic>> {
     let bytes = fs::read(path).map_err(|error| {
         vec![local_diagnostic(
             display_path.to_owned(),
@@ -543,7 +595,7 @@ fn split_frontmatter(content: &str) -> Result<(&str, &str), String> {
     Ok((frontmatter, body))
 }
 
-fn parse_yaml<T>(yaml: &str, path: &str, line_offset: u64) -> Result<T, Vec<Diagnostic>>
+pub(crate) fn parse_yaml<T>(yaml: &str, path: &str, line_offset: u64) -> Result<T, Vec<Diagnostic>>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -612,19 +664,31 @@ fn validate_metadata(
         ));
     }
 
-    validate_unique_ids(
-        &metadata.sources,
-        "source",
-        path,
-        &affected,
-        &mut diagnostics,
-    );
+    let source_ids = metadata
+        .sources
+        .iter()
+        .map(|source| source.id.clone())
+        .collect::<Vec<_>>();
+    validate_unique_ids(&source_ids, "source", path, &affected, &mut diagnostics);
     for source in &metadata.sources {
-        if !is_semantic_id(source) {
+        if !is_semantic_id(&source.id) {
             diagnostics.push(local_diagnostic(
                 path.to_owned(),
                 "invalid_source_id",
-                format!("invalid SourceId `{source}`"),
+                format!("invalid SourceId `{}`", source.id),
+                None,
+                None,
+                affected.clone(),
+            ));
+        }
+        if !valid_hash(&source.revision) {
+            diagnostics.push(local_diagnostic(
+                path.to_owned(),
+                "invalid_source_revision",
+                format!(
+                    "Source `{}` must pin a lowercase SHA-256 SourceRevision",
+                    source.id
+                ),
                 None,
                 None,
                 affected.clone(),
@@ -892,6 +956,7 @@ fn fence_closing_line(line: &str, marker: u8, length: usize) -> bool {
 fn validate_global(
     units: &[KnowledgeUnit],
     owners: &[Owner],
+    sources: &[Source],
     repository_root: &Path,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
@@ -909,6 +974,13 @@ fn validate_global(
             .entry(owner.id.clone())
             .or_default()
             .push(owner);
+    }
+    let mut sources_by_id = BTreeMap::<String, Vec<&Source>>::new();
+    for source in sources {
+        sources_by_id
+            .entry(source.record.id.clone())
+            .or_default()
+            .push(source);
     }
 
     if units.is_empty() {
@@ -945,6 +1017,18 @@ fn validate_global(
             }
         }
     }
+    for (id, duplicates) in &sources_by_id {
+        if duplicates.len() > 1 {
+            for source in duplicates {
+                diagnostics.push(global_diagnostic(
+                    display_path(&source.path, repository_root),
+                    "duplicate_source_id",
+                    format!("SourceId `{id}` appears in more than one file"),
+                    vec![id.clone()],
+                ));
+            }
+        }
+    }
 
     let known_ids = units_by_id.keys().cloned().collect::<BTreeSet<_>>();
     for unit in units {
@@ -955,6 +1039,16 @@ fn validate_global(
                 format!("OwnerId `{}` has no owner record", unit.metadata.owner),
                 vec![unit.metadata.id.clone()],
             ));
+        }
+        for source in &unit.metadata.sources {
+            if !sources_by_id.contains_key(&source.id) {
+                diagnostics.push(global_diagnostic(
+                    display_path(&unit.path, repository_root),
+                    "missing_source_record",
+                    format!("SourceId `{}` has no Source record", source.id),
+                    vec![unit.metadata.id.clone(), source.id.clone()],
+                ));
+            }
         }
 
         for (relation, targets) in [
@@ -1104,7 +1198,10 @@ fn knowledge_revision(metadata: &KnowledgeMetadata, body: &str) -> String {
 
     let mut sources = metadata.sources.clone();
     sources.sort();
-    hash_list(&mut hasher, b"sources", &sources);
+    for source in sources {
+        hash_part(&mut hasher, b"source_id", source.id.as_bytes());
+        hash_part(&mut hasher, b"source_revision", source.revision.as_bytes());
+    }
     for (relation, targets) in metadata.relations.typed() {
         let mut targets = targets.to_vec();
         targets.sort();
@@ -1154,6 +1251,14 @@ fn hash_part(hasher: &mut Sha256, label: &[u8], value: &[u8]) {
 
 fn is_semantic_id(id: &str) -> bool {
     !id.is_empty() && id.split('.').all(is_segment)
+}
+
+fn valid_hash(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 fn is_segment(segment: &str) -> bool {
@@ -1219,9 +1324,9 @@ mod tests {
     #[test]
     fn semantic_revision_ignores_yaml_order_and_line_endings() {
         let first = "\
----\r\nschema: methexis.knowledge/v1alpha1\r\nid: tui.example\r\nkind: rule\r\nowner: tui-architecture\r\nsources:\r\n  - tui.arc-001\r\nrelations:\r\n  depends_on: []\r\n---\r\n## Statement\r\n\r\nAn example rule.\r\n";
+---\r\nschema: methexis.knowledge/v1alpha1\r\nid: tui.example\r\nkind: rule\r\nowner: tui-architecture\r\nsources:\r\n  - id: tui.arc-001\r\n    revision: sha256:0000000000000000000000000000000000000000000000000000000000000000\r\nrelations:\r\n  depends_on: []\r\n---\r\n## Statement\r\n\r\nAn example rule.\r\n";
         let second = "\
----\nowner: tui-architecture\nkind: rule\nid: tui.example\nschema: methexis.knowledge/v1alpha1\nrelations:\n  depends_on: []\nsources: [tui.arc-001]\n---\n## Statement\n\nAn example rule.\n";
+---\nowner: tui-architecture\nkind: rule\nid: tui.example\nschema: methexis.knowledge/v1alpha1\nrelations:\n  depends_on: []\nsources:\n  - revision: sha256:0000000000000000000000000000000000000000000000000000000000000000\n    id: tui.arc-001\n---\n## Statement\n\nAn example rule.\n";
 
         let first = parse_for_test(first);
         let second = parse_for_test(second);
@@ -1236,7 +1341,7 @@ mod tests {
             id: "tui.example".to_owned(),
             kind: crate::model::KnowledgeKind::Rule,
             owner: "tui-architecture".to_owned(),
-            sources: vec!["tui.arc-001".to_owned()],
+            sources: vec![source_ref("tui.arc-001")],
             relations: crate::model::Relations::default(),
         };
 
@@ -1250,7 +1355,7 @@ mod tests {
     fn semantic_revision_has_a_golden_digest() {
         assert_eq!(
             knowledge_revision(&metadata_for_test(), "## Statement\n\nStable.\n"),
-            "sha256:c817d73088381ab8254ef365f210d10bb9ac9c162f852c9f94e5f3a01360f313",
+            "sha256:925c20b6fba7467a7d637d7a5ac59cbd183410eb4cc0ade5c20156158f655317",
         );
     }
 
@@ -1265,10 +1370,10 @@ mod tests {
     #[test]
     fn semantic_revision_sorts_sources_and_typed_relations() {
         let mut first = metadata_for_test();
-        first.sources = vec!["tui.source-b".to_owned(), "tui.source-a".to_owned()];
+        first.sources = vec![source_ref("tui.source-b"), source_ref("tui.source-a")];
         first.relations.depends_on = vec!["tui.unit-b".to_owned(), "tui.unit-a".to_owned()];
         let mut second = metadata_for_test();
-        second.sources = vec!["tui.source-a".to_owned(), "tui.source-b".to_owned()];
+        second.sources = vec![source_ref("tui.source-a"), source_ref("tui.source-b")];
         second.relations.depends_on = vec!["tui.unit-a".to_owned(), "tui.unit-b".to_owned()];
 
         assert_eq!(
@@ -1302,6 +1407,29 @@ mod tests {
 
         assert_eq!(diagnostics[0].phase, DiagnosticPhase::Local);
         assert_eq!(diagnostics[0].line, Some(1));
+    }
+
+    #[test]
+    fn retryable_authority_failure_preserves_trusted_commit_and_action() {
+        let report = super::failed_authority_report(crate::checkpoint::AuthorityFailure {
+            diagnostics: vec![local_diagnostic(
+                "methexis/sources".to_owned(),
+                "source_changed_during_validation",
+                "Source changed".to_owned(),
+                None,
+                None,
+                vec!["tui.example".to_owned()],
+            )],
+            trusted_commit: Some("0123456789abcdef".to_owned()),
+            retryable: true,
+        });
+
+        assert!(report.retryable);
+        assert_eq!(report.trusted_commit.as_deref(), Some("0123456789abcdef"));
+        assert_eq!(
+            report.next_actions,
+            ["retry `methexis check`; no state was published"]
+        );
     }
 
     #[test]
@@ -1414,8 +1542,16 @@ mod tests {
             id: "tui.example".to_owned(),
             kind: crate::model::KnowledgeKind::Rule,
             owner: "tui-architecture".to_owned(),
-            sources: vec!["tui.fixture".to_owned()],
+            sources: vec![source_ref("tui.fixture")],
             relations: crate::model::Relations::default(),
+        }
+    }
+
+    fn source_ref(id: &str) -> crate::model::SourceRef {
+        crate::model::SourceRef {
+            id: id.to_owned(),
+            revision: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                .to_owned(),
         }
     }
 

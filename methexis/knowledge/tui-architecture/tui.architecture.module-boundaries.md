@@ -4,7 +4,8 @@ id: tui.architecture.module-boundaries
 kind: decision
 owner: tui-architecture
 sources:
-  - tui.arc-002
+  - id: tui.arc-002
+    revision: sha256:a2c1cbfee356358867477b2ddd59eab6ac377d43b6461e3d6f4837d828e030c8
 relations:
   constrained_by:
     - tui.crate.ui-only-boundary

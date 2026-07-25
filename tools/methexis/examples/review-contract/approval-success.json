@@ -8,8 +8,8 @@
     "tui.relocated"
   ],
   "path": "methexis/approvals/tui.relocated.yaml",
-  "hash": "sha256:f58fc4303a3d7480741ac31deaa1a82098d8bd46c8235dbf8cbea9d8c4097df7",
-  "request_hash": "sha256:fb8ba8023725c58283924345d82a5a6b0cc1e273ee5a01d5263c892ac48dba1c",
+  "hash": "sha256:289d58401dbb3193f3c33c1ab46fd0dd5de210db8f6282781a169d6fe84bb3bf",
+  "request_hash": "sha256:852e5f238da26359f06c0f01f9acd2da85f2ccd4b19ac4b1c72c3275f11d81b1",
   "next_actions": [
     "submit the approval proposal through repository review; it is not authoritative yet"
   ]

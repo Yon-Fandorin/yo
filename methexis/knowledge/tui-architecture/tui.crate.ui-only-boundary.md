@@ -4,7 +4,8 @@ id: tui.crate.ui-only-boundary
 kind: decision
 owner: tui-architecture
 sources:
-  - tui.arc-001
+  - id: tui.arc-001
+    revision: sha256:3902cbd31a95232e4b6f8a96893305074bedd3e4442ebd24aaa40055fba70475
 relations:
   validated_by:
     - architecture.public-api-gate
