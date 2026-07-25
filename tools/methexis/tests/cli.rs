@@ -132,9 +132,14 @@ fn check_reports_the_repository_draft_corpus_on_stdout() {
     assert_eq!(report["schema"], "methexis.check/v1alpha1");
     assert_eq!(report["ok"], true);
     assert_eq!(report["authority"], "draft");
-    assert_eq!(report["approval"], "proposal_evaluated");
-    assert_eq!(report["checkpoint"], "not_evaluated");
-    assert_eq!(report["units"].as_array().map(Vec::len), Some(5));
+    let units = report["units"].as_array().expect("units are an array");
+    assert_eq!(units.len(), 5);
+    assert!(
+        units
+            .iter()
+            .all(|unit| unit["effective_approval"] == "draft")
+    );
+    assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
 }
 
 #[test]
