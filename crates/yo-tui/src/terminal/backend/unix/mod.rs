@@ -14,6 +14,8 @@ use rustix::{
     termios::{OptionalActions, Termios, tcgetattr, tcsetattr},
 };
 
+mod backend;
+
 pub(super) trait TermiosDriver {
     type State: Clone;
     type Error;

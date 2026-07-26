@@ -12,3 +12,6 @@ mod transaction;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use transaction::TerminalSession;
