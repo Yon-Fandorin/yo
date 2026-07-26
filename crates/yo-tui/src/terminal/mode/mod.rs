@@ -8,6 +8,7 @@
     )
 )]
 
+pub(crate) mod inline;
 pub(crate) mod screen;
 mod transaction;
 
