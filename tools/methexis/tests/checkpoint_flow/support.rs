@@ -24,7 +24,7 @@ impl GitRepository {
         Self::from_fixture("code-active")
     }
 
-    fn from_fixture(fixture: &str) -> Self {
+    pub(super) fn from_fixture(fixture: &str) -> Self {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system clock")
@@ -76,7 +76,17 @@ impl GitRepository {
     }
 
     pub(super) fn integrate_active_checkpoint(&self) {
-        let create_request = self.request("checkpoint.json", &checkpoint_request());
+        self.integrate_active_checkpoint_roots(&[KNOWLEDGE_ID]);
+    }
+
+    pub(super) fn integrate_active_checkpoint_roots(&self, roots: &[&str]) {
+        let create_request = self.request(
+            "checkpoint.json",
+            &json!({
+                "schema": "methexis.checkpoint-request/v1alpha1",
+                "roots": roots
+            }),
+        );
         let created =
             success_json(self.run(&["create-checkpoint", create_request.to_str().unwrap()]));
         let activation_request = self.request(

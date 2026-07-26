@@ -7,6 +7,7 @@
 mod check;
 mod checkpoint;
 mod cli;
+mod context;
 mod model;
 mod publication;
 mod review;

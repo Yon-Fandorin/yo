@@ -4,15 +4,15 @@ use std::{
     ffi::{OsStr, OsString},
     fs::File,
     io::{self, Read, Write},
-    os::fd::OwnedFd,
+    os::{fd::OwnedFd, unix::ffi::OsStrExt},
     path::{Component, Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
 
 use rustix::{
     fs::{
-        AtFlags, FileType, Mode, OFlags, RenameFlags, linkat, mkdirat, open, openat, renameat,
-        renameat_with, statat, unlinkat,
+        AtFlags, Dir, FileType, Mode, OFlags, RenameFlags, fstat, linkat, mkdirat, open, openat,
+        renameat, renameat_with, statat, unlinkat,
     },
     io::Errno,
 };
@@ -34,10 +34,19 @@ pub(crate) enum PublicationError {
     Io(io::Error),
 }
 
+pub(crate) enum GuardedDirectoryError<E> {
+    Publication(PublicationError),
+    Guard(E),
+}
+
 pub(crate) enum DirectoryState {
     Missing,
-    Matches,
+    Matches(VerifiedDirectory),
     Different,
+}
+
+pub(crate) struct VerifiedDirectory {
+    _directory: OwnedFd,
 }
 
 pub(crate) struct TargetLock {
@@ -118,10 +127,30 @@ impl TargetLock {
             },
             Err(error) => return Err(PublicationError::Io(errno(error))),
         };
+        let expected_names = files
+            .iter()
+            .map(|(name, _)| OsString::from(name))
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut actual_names = std::collections::BTreeSet::new();
+        for entry in
+            Dir::read_from(&directory).map_err(|error| PublicationError::Io(errno(error)))?
+        {
+            let entry = entry.map_err(|error| PublicationError::Io(errno(error)))?;
+            let name = entry.file_name().to_bytes();
+            if name != b"." && name != b".." {
+                actual_names.insert(OsString::from(OsStr::from_bytes(name)));
+            }
+        }
+        if actual_names != expected_names {
+            return Ok(DirectoryState::Different);
+        }
         for (name, expected) in files {
-            let actual = match read_relative(&directory, name) {
+            let actual = match read_relative(&directory, name, expected.len()) {
                 Ok(actual) => actual,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    return Ok(DirectoryState::Different);
+                },
+                Err(error) if error.kind() == io::ErrorKind::InvalidData => {
                     return Ok(DirectoryState::Different);
                 },
                 Err(error) => return Err(PublicationError::Io(error)),
@@ -130,34 +159,61 @@ impl TargetLock {
                 return Ok(DirectoryState::Different);
             }
         }
-        Ok(DirectoryState::Matches)
+        Ok(DirectoryState::Matches(VerifiedDirectory {
+            _directory: directory,
+        }))
     }
 
     pub(crate) fn atomic_create_directory(
         &self,
         files: &[(&str, &[u8])],
     ) -> Result<(), PublicationError> {
+        match self.atomic_create_directory_guarded(files, || Ok::<(), std::convert::Infallible>(()))
+        {
+            Ok(()) => Ok(()),
+            Err(GuardedDirectoryError::Publication(error)) => Err(error),
+            Err(GuardedDirectoryError::Guard(never)) => match never {},
+        }
+    }
+
+    pub(crate) fn atomic_create_directory_guarded<E>(
+        &self,
+        files: &[(&str, &[u8])],
+        final_guard: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), GuardedDirectoryError<E>> {
         let temporary = temporary_name(&self.target_name);
-        mkdirat(&self.parent, &temporary, DIRECTORY_MODE)
-            .map_err(|error| PublicationError::Io(errno(error)))?;
-        let result = (|| -> io::Result<()> {
+        mkdirat(&self.parent, &temporary, DIRECTORY_MODE).map_err(|error| {
+            GuardedDirectoryError::Publication(PublicationError::Io(errno(error)))
+        })?;
+        let prepared = (|| -> io::Result<()> {
             let directory =
                 openat(&self.parent, &temporary, OPEN_DIRECTORY, Mode::empty()).map_err(errno)?;
             for (name, bytes) in files {
                 write_new_file(&directory, *name, bytes)?;
             }
-            renameat_with(
-                &self.parent,
-                &temporary,
-                &self.parent,
-                &self.target_name,
-                RenameFlags::NOREPLACE,
-            )
-            .map_err(errno)
+            Ok(())
         })();
-        if let Err(error) = result {
+        if let Err(error) = prepared {
             cleanup_directory(&self.parent, &temporary, files);
-            return Err(PublicationError::Io(error));
+            return Err(GuardedDirectoryError::Publication(PublicationError::Io(
+                error,
+            )));
+        }
+        if let Err(error) = final_guard() {
+            cleanup_directory(&self.parent, &temporary, files);
+            return Err(GuardedDirectoryError::Guard(error));
+        }
+        if let Err(error) = renameat_with(
+            &self.parent,
+            &temporary,
+            &self.parent,
+            &self.target_name,
+            RenameFlags::NOREPLACE,
+        ) {
+            cleanup_directory(&self.parent, &temporary, files);
+            return Err(GuardedDirectoryError::Publication(PublicationError::Io(
+                errno(error),
+            )));
         }
         Ok(())
     }
@@ -274,16 +330,38 @@ fn write_new_file(parent: &OwnedFd, name: impl rustix::path::Arg, bytes: &[u8]) 
     file.sync_all()
 }
 
-fn read_relative(parent: &OwnedFd, name: &str) -> io::Result<Vec<u8>> {
+fn read_relative(parent: &OwnedFd, name: &str, expected_len: usize) -> io::Result<Vec<u8>> {
     let fd = openat(
         parent,
         name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::empty(),
     )
     .map_err(errno)?;
+    let before = fstat(&fd).map_err(errno)?;
+    if FileType::from_raw_mode(before.st_mode) != FileType::RegularFile {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "artifact is not a regular file",
+        ));
+    }
     let mut bytes = Vec::new();
-    File::from(fd).read_to_end(&mut bytes)?;
+    let mut file = File::from(fd);
+    (&mut file)
+        .take((expected_len + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    let after = fstat(&file).map_err(errno)?;
+    if before.st_dev != after.st_dev
+        || before.st_ino != after.st_ino
+        || before.st_size != after.st_size
+        || before.st_mtime != after.st_mtime
+        || before.st_mtime_nsec != after.st_mtime_nsec
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "artifact changed during verification",
+        ));
+    }
     Ok(bytes)
 }
 

@@ -231,7 +231,7 @@ pub(super) fn parse_approval_bytes(
             Vec::new(),
         )
     })?;
-    let record: ApprovalRecord = serde_norway::from_str(content).map_err(|error| {
+    let mut record: ApprovalRecord = serde_norway::from_str(content).map_err(|error| {
         local_diagnostic(
             display.clone(),
             "invalid_approval_yaml",
@@ -271,6 +271,7 @@ pub(super) fn parse_approval_bytes(
             affected,
         ));
     }
+    record.hash = hash_bytes(bytes);
     Ok(record)
 }
 

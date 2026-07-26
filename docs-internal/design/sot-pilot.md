@@ -3,7 +3,7 @@
 | Axis | State |
 | --- | --- |
 | Document | Accepted |
-| Implementation | W0 foundation, the approved active five-unit TUI seed, and S3 Librarian discovery are implemented; S4 is aligned but not implemented |
+| Implementation | W0 foundation, the approved active five-unit TUI seed, S3 Librarian discovery, and S4 Context Resolution are implemented |
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 
@@ -565,8 +565,7 @@ the final agent payload, including its preamble, stable IDs, headings, bodies,
 and emitted relation text. It MUST NOT substitute character or byte estimates.
 An unsupported profile is a structured failure. Tokenizer identity and version
 are lineage inputs and change the BuildId. The first implementation supports
-one profile; the exact Rust dependency is selected through the implementation
-dependency gate.
+one profile and pins `o200k_base/v1` to `tiktoken-rs` 0.12.0.
 
 Applicable existing validation evidence is recorded and attached when the
 corpus provides it. In the first compiler profile it appears only in the
@@ -703,6 +702,7 @@ approve <request.json>         -> tracked exact-revision approval proposal
 create-checkpoint <request.json> -> immutable trusted-revision Checkpoint proposal
 propose-activation <request.json> -> active-record proposal with compare-and-swap
 check                           -> Draft structure, trusted approval, and active/degraded eligibility
+resolve-context <request.json>  -> immutable ContextBuild locator and hashes
 ```
 
 S4 adds context resolution with a versioned request and one structured result.

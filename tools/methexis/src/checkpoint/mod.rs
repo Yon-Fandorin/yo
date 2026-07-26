@@ -14,6 +14,7 @@ const DEFAULT_TRUSTED_REF: &str = "refs/heads/develop";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_RECORD_BYTES: usize = 256 * 1024;
 
+mod context;
 mod evaluation;
 mod git;
 mod operations;
@@ -21,6 +22,10 @@ mod records;
 mod storage;
 mod validation;
 
+pub(crate) use context::{
+    ContextAuthority, final_revalidate as final_revalidate_context_authority,
+    resolve as resolve_context_authority,
+};
 pub(crate) use evaluation::AuthorityFailure;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -218,6 +223,10 @@ fn relative_path(repository_root: &Path, path: &Path) -> String {
         .to_string_lossy()
         .replace('\\', "/")
 }
+
+#[cfg(test)]
+#[path = "context_tests.rs"]
+mod context_tests;
 
 struct SelectedCheckpoint {
     roots: Vec<String>,

@@ -132,7 +132,7 @@ pub(super) fn publish_artifact_directory(
         .directory_state(files)
         .map_err(|error| publication_failure(operation, id, error))?
     {
-        DirectoryState::Matches => return Ok("unchanged"),
+        DirectoryState::Matches(_) => return Ok("unchanged"),
         DirectoryState::Different => {
             return Err(OperationFailure::new(
                 operation,

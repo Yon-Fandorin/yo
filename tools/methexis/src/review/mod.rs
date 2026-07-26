@@ -33,7 +33,16 @@ pub(crate) struct ProposalState {
 
 pub(crate) struct ReviewValidation {
     pub(crate) states: BTreeMap<String, ProposalState>,
+    pub(crate) evidence: BTreeMap<String, ApprovalEvidence>,
     pub(crate) diagnostics: Vec<Diagnostic>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ApprovalEvidence {
+    pub(crate) projection_hash: String,
+    pub(crate) projection_profile: String,
+    pub(crate) projection_compiler: String,
+    pub(crate) approval_hash: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -118,6 +127,8 @@ struct ApprovalRecord {
     projection_compiler: String,
     projection_hash: String,
     request_hash: String,
+    #[serde(skip)]
+    hash: String,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -23,12 +23,27 @@ local checks = new Mapping<String, Step> {
         glob = List(
             "methexis/**/*.md",
             "methexis/**/*.yaml",
+            "tools/methexis/**/*.json",
+            "tools/methexis/**/*.md",
             "tools/methexis/**/*.rs",
             "tools/methexis/Cargo.toml",
             "Cargo.lock",
             "Cargo.toml",
         )
         check = "cargo run --quiet --locked -p methexis -- check"
+    }
+    ["methexis-tests"] = new Step {
+        glob = List(
+            "methexis/**/*.md",
+            "methexis/**/*.yaml",
+            "tools/methexis/**/*.json",
+            "tools/methexis/**/*.md",
+            "tools/methexis/**/*.rs",
+            "tools/methexis/Cargo.toml",
+            "Cargo.lock",
+            "Cargo.toml",
+        )
+        check = "cargo test --quiet --locked -p methexis"
     }
 }
 

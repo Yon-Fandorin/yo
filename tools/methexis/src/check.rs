@@ -87,7 +87,7 @@ pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
     if !review_validation.diagnostics.is_empty() {
         return failed_report(review_validation.diagnostics);
     }
-    let authority = match crate::checkpoint::evaluate(repository_root, &foundation) {
+    let authority = match crate::checkpoint::evaluate(repository_root, Some(&foundation.sources)) {
         Ok(authority) => authority,
         Err(mut failure) => {
             sort_diagnostics(&mut failure.diagnostics);
@@ -538,6 +538,13 @@ pub(crate) fn read_normalized(path: &Path, display_path: &str) -> Result<String,
         )]
     })?;
 
+    normalize_record_bytes(&bytes, display_path)
+}
+
+pub(crate) fn normalize_record_bytes(
+    bytes: &[u8],
+    display_path: &str,
+) -> Result<String, Vec<Diagnostic>> {
     if bytes.len() > MAX_RECORD_BYTES {
         return Err(vec![local_diagnostic(
             display_path.to_owned(),
@@ -563,7 +570,7 @@ pub(crate) fn read_normalized(path: &Path, display_path: &str) -> Result<String,
         )]);
     }
 
-    let content = String::from_utf8(bytes).map_err(|error| {
+    let content = String::from_utf8(bytes.to_vec()).map_err(|error| {
         vec![local_diagnostic(
             display_path.to_owned(),
             "invalid_utf8",

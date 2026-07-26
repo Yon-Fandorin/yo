@@ -139,6 +139,7 @@ pub(crate) fn validate_records(
             (unit.metadata.id.clone(), state)
         })
         .collect::<BTreeMap<_, _>>();
+    let mut evidence = BTreeMap::new();
 
     for (id, records) in approvals {
         if records.len() != 1 {
@@ -200,10 +201,19 @@ pub(crate) fn validate_records(
             continue;
         }
         states.insert(
-            id,
+            id.clone(),
             ProposalState {
                 evidence: "matching_proposal",
                 reason: None,
+            },
+        );
+        evidence.insert(
+            id,
+            super::ApprovalEvidence {
+                projection_hash: projection.hash.clone(),
+                projection_profile: projection.metadata.profile.clone(),
+                projection_compiler: projection.metadata.compiler.clone(),
+                approval_hash: approval.hash.clone(),
             },
         );
     }
@@ -211,6 +221,7 @@ pub(crate) fn validate_records(
     sort_diagnostics(&mut diagnostics);
     ReviewValidation {
         states,
+        evidence,
         diagnostics,
     }
 }

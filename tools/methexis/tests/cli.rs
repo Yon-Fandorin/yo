@@ -18,6 +18,7 @@ USAGE:
     methexis approve <request.json>
     methexis create-checkpoint <request.json>
     methexis propose-activation <request.json>
+    methexis resolve-context <request.json>
 
 COMMANDS:
     check             Validate Draft records and trusted Source-aware eligibility
@@ -26,6 +27,7 @@ COMMANDS:
     approve           Record a human-authorized approval proposal
     create-checkpoint Create an immutable trusted-revision Checkpoint proposal
     propose-activation Propose the active Checkpoint with compare-and-swap
+    resolve-context    Build or reuse deterministic token-bounded agent context
 
 Run commands from the repository root. Mutations remain Draft proposals until
 trusted integration. Check derives approval and active/degraded eligibility

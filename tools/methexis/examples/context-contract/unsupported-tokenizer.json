@@ -1,0 +1,14 @@
+{
+  "schema": "methexis.context-failure/v1alpha1",
+  "ok": false,
+  "operation": "resolve_context",
+  "error": {
+    "code": "unsupported_tokenizer_profile",
+    "message": "expected tokenizer profile `o200k_base/v1`",
+    "affected_ids": [],
+    "affected_paths": [],
+    "next_actions": [
+      "correct the Context Resolution request and retry"
+    ]
+  }
+}

@@ -17,6 +17,7 @@ use sha2::{Digest, Sha256};
 use super::freshness::FreshnessFailure;
 
 const MAX_CODE_SOURCE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_SOURCE_RECORD_BYTES: usize = 256 * 1024;
 const OPEN_DIRECTORY: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::NOFOLLOW)
@@ -34,7 +35,7 @@ pub(super) enum CaptureState {
     },
 }
 
-pub(super) enum Capture {
+pub(crate) enum Capture {
     File {
         path: String,
         identity: Identity,
@@ -49,7 +50,7 @@ pub(super) enum Capture {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct Identity {
+pub(crate) struct Identity {
     device: u64,
     inode: u64,
     size: i64,
@@ -95,7 +96,12 @@ pub(super) fn capture(
             vec![relative_path.to_owned()],
         )
     })?;
-    let bytes = read_bounded(&mut file, relative_path)?;
+    let bytes = read_bounded(
+        &mut file,
+        relative_path,
+        MAX_CODE_SOURCE_BYTES,
+        "code Source",
+    )?;
     let after = identity(&file).map_err(|error| {
         failure(
             "source_capture_failed",
@@ -145,13 +151,16 @@ fn final_revalidate_with(
             let mut file =
                 open_file(repository_root, Path::new(path)).map_err(|_| changed(path))?;
             let before = identity(&file).map_err(|_| changed(path))?;
-            let bytes = read_bounded(&mut file, path).map_err(|_| changed(path))?;
+            let bytes = read_bounded(&mut file, path, MAX_CODE_SOURCE_BYTES, "code Source")
+                .map_err(|_| changed(path))?;
             after_read();
             let after = identity(&file).map_err(|_| changed(path))?;
             let mut current =
                 open_file(repository_root, Path::new(path)).map_err(|_| changed(path))?;
             let current_before = identity(&current).map_err(|_| changed(path))?;
-            let current_bytes = read_bounded(&mut current, path).map_err(|_| changed(path))?;
+            let current_bytes =
+                read_bounded(&mut current, path, MAX_CODE_SOURCE_BYTES, "code Source")
+                    .map_err(|_| changed(path))?;
             let current_after = identity(&current).map_err(|_| changed(path))?;
             if before != after
                 || after != *captured_identity
@@ -216,6 +225,51 @@ fn open_file(repository_root: &Path, relative: &Path) -> Result<File, OpenFailur
     Ok(File::from(fd))
 }
 
+pub(crate) fn capture_record(
+    repository_root: &Path,
+    relative_path: &str,
+) -> Result<(Vec<u8>, Capture), FreshnessFailure> {
+    let mut file = open_file(repository_root, Path::new(relative_path)).map_err(|error| {
+        failure(
+            "source_record_capture_failed",
+            format!("cannot capture Source record `{relative_path}`: {error:?}"),
+            vec![relative_path.to_owned()],
+        )
+    })?;
+    let before = identity(&file).map_err(|error| {
+        failure(
+            "source_record_capture_failed",
+            error.to_string(),
+            vec![relative_path.to_owned()],
+        )
+    })?;
+    let bytes = read_bounded(
+        &mut file,
+        relative_path,
+        MAX_SOURCE_RECORD_BYTES,
+        "Source record",
+    )?;
+    let after = identity(&file).map_err(|error| {
+        failure(
+            "source_record_capture_failed",
+            error.to_string(),
+            vec![relative_path.to_owned()],
+        )
+    })?;
+    if before != after {
+        return Err(changed(relative_path));
+    }
+    let hash = hash_bytes(&bytes);
+    Ok((
+        bytes,
+        Capture::File {
+            path: relative_path.to_owned(),
+            identity: after,
+            hash,
+        },
+    ))
+}
+
 fn require_regular(file: &OwnedFd) -> Result<(), OpenFailure> {
     let stat = fstat(file).map_err(|error| OpenFailure::Io(error.to_string()))?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
@@ -235,9 +289,14 @@ fn identity(file: &File) -> std::io::Result<Identity> {
     })
 }
 
-fn read_bounded(file: &mut File, path: &str) -> Result<Vec<u8>, FreshnessFailure> {
+fn read_bounded(
+    file: &mut File,
+    path: &str,
+    limit: usize,
+    label: &str,
+) -> Result<Vec<u8>, FreshnessFailure> {
     let mut bytes = Vec::new();
-    file.take((MAX_CODE_SOURCE_BYTES + 1) as u64)
+    file.take((limit + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|error| {
             failure(
@@ -246,10 +305,10 @@ fn read_bounded(file: &mut File, path: &str) -> Result<Vec<u8>, FreshnessFailure
                 vec![path.to_owned()],
             )
         })?;
-    if bytes.len() > MAX_CODE_SOURCE_BYTES {
+    if bytes.len() > limit {
         return Err(failure(
-            "code_source_too_large",
-            "code Source exceeds the Pilot size limit".to_owned(),
+            "source_too_large",
+            format!("{label} exceeds the Pilot size limit"),
             vec![path.to_owned()],
         ));
     }
@@ -284,6 +343,7 @@ fn failure(code: &'static str, message: String, affected_ids: Vec<String>) -> Fr
     }
 }
 
+#[derive(Debug)]
 enum OpenFailure {
     Missing,
     Unsafe,

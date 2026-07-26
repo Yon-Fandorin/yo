@@ -1,0 +1,11 @@
+{
+  "schema": "methexis.context-request/v1alpha1",
+  "anchors": [
+    {
+      "kind": "knowledge_id",
+      "value": "tui.runtime.typed-flow"
+    }
+  ],
+  "tokenizer_profile": "character-estimate/v1",
+  "max_tokens": 8000
+}

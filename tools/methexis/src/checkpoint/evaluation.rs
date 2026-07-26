@@ -11,19 +11,31 @@ use super::{
     validation,
 };
 use crate::{
-    check::{Diagnostic, DiagnosticPhase, Foundation, load_foundation},
-    review::validate_records,
+    check::{Diagnostic, DiagnosticPhase, load_foundation},
+    model::Source,
+    review::{ApprovalEvidence, validate_records},
     source::{self, UnitFreshness},
 };
 
 pub(crate) struct AuthorityEvaluation {
     pub(crate) trusted_commit: String,
     pub(crate) approvals: BTreeMap<String, String>,
+    pub(crate) approval_evidence: BTreeMap<String, ApprovalEvidence>,
     pub(crate) active: BTreeSet<String>,
     pub(crate) freshness: BTreeMap<String, UnitFreshness>,
+    pub(crate) freshness_guard: source::FreshnessGuard,
     pub(crate) checkpoint: &'static str,
+    pub(crate) active_checkpoint: Option<ActiveCheckpoint>,
 }
 
+pub(crate) struct ActiveCheckpoint {
+    pub(crate) id: String,
+    pub(crate) hash: String,
+    pub(crate) active_record_hash: String,
+    pub(crate) authority_basis_commit: String,
+}
+
+#[derive(Debug)]
 pub(crate) struct AuthorityFailure {
     pub(crate) diagnostics: Vec<Diagnostic>,
     pub(crate) trusted_commit: Option<String>,
@@ -61,7 +73,7 @@ impl AuthorityFailure {
 
 pub(crate) fn evaluate(
     repository_root: &Path,
-    working: &Foundation,
+    provided_working_sources: Option<&[Source]>,
 ) -> Result<Option<AuthorityEvaluation>, AuthorityFailure> {
     const OPERATION: &str = "check_authority";
     if !repository_root.join(".git").exists() {
@@ -93,18 +105,22 @@ pub(crate) fn evaluate(
         })
         .map(|unit| (unit.metadata.id.clone(), unit.revision.clone()))
         .collect::<BTreeMap<_, _>>();
+    let approval_evidence = review.evidence;
 
     let active_path = snapshot.root.join("methexis/active-checkpoint.yaml");
     if !active_path.exists() {
         return Ok(Some(AuthorityEvaluation {
             trusted_commit: snapshot.commit.clone(),
             approvals,
+            approval_evidence,
             active: BTreeSet::new(),
             freshness: BTreeMap::new(),
+            freshness_guard: source::FreshnessGuard::empty(),
             checkpoint: "inactive",
+            active_checkpoint: None,
         }));
     }
-    let (active_record, _) = read_active(&active_path, OPERATION)
+    let (active_record, active_bytes) = read_active(&active_path, OPERATION)
         .map_err(|error| with_commit(vec![diagnostic(error)]))?;
     let filename = active_record
         .checkpoint_id
@@ -154,8 +170,26 @@ pub(crate) fn evaluate(
         .iter()
         .map(|unit| unit.id.clone())
         .collect::<BTreeSet<_>>();
-    let source_evaluation = source::evaluate(repository_root, &foundation, working, &selected)
-        .map_err(|failure| AuthorityFailure::from_source(&snapshot.commit, failure))?;
+    let loaded_working_sources;
+    let source_record_captures;
+    let working_sources = if let Some(sources) = provided_working_sources {
+        source_record_captures = Vec::new();
+        sources
+    } else {
+        (loaded_working_sources, source_record_captures) =
+            source::load_captured(repository_root).map_err(|diagnostics| AuthorityFailure {
+                diagnostics,
+                trusted_commit: Some(snapshot.commit.clone()),
+                retryable: false,
+            })?;
+        &loaded_working_sources
+    };
+    let mut source_evaluation =
+        source::evaluate(repository_root, &foundation, working_sources, &selected)
+            .map_err(|failure| AuthorityFailure::from_source(&snapshot.commit, failure))?;
+    source_evaluation
+        .guard
+        .add_record_captures(source_record_captures);
     let active = source_evaluation
         .units
         .iter()
@@ -165,9 +199,17 @@ pub(crate) fn evaluate(
     Ok(Some(AuthorityEvaluation {
         trusted_commit: snapshot.commit.clone(),
         approvals,
+        approval_evidence,
         active,
         freshness: source_evaluation.units,
+        freshness_guard: source_evaluation.guard,
         checkpoint: source_evaluation.checkpoint,
+        active_checkpoint: Some(ActiveCheckpoint {
+            id: active_record.checkpoint_id,
+            hash: active_record.checkpoint_hash,
+            active_record_hash: hash_bytes(&active_bytes),
+            authority_basis_commit: active_record.trusted_commit,
+        }),
     }))
 }
 

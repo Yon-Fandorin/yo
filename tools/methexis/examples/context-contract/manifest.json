@@ -1,0 +1,167 @@
+{
+  "schema": "methexis.context-manifest/v1alpha1",
+  "build_id": "sha256:f471962f20fd889ff39ed26edb189c565b88600f86956b26917022a4c7676080",
+  "plan": {
+    "schema": "methexis.context-build-plan/v1alpha1",
+    "checkpoint": {
+      "id": "sha256:8bddd106bb4e912a9f82d1eb6f9becc8c6fca3106857558776af222a1d6b9d8e",
+      "hash": "sha256:a3d1a4ca8f79ddd6c952ce9492ba05a63b84eeeeb9d970179f611fa055e01ac6",
+      "authority_basis_commit": "4be0c819710032d0f2e7cd917cc36f9cc78e8f79"
+    },
+    "units": [
+      {
+        "id": "tui.crate.ui-only-boundary",
+        "revision": "sha256:890ea5c07e508f9b29a01edeb5e274fffa4750e3cfe22d1fc1ef53546988d2a4",
+        "sources": [
+          {
+            "id": "tui.arc-001",
+            "revision": "sha256:3902cbd31a95232e4b6f8a96893305074bedd3e4442ebd24aaa40055fba70475"
+          }
+        ],
+        "depends_on": [],
+        "constrained_by": [],
+        "validation": [
+          {
+            "id": "architecture.public-api-gate",
+            "status": "referenced_not_executed"
+          }
+        ],
+        "approval": {
+          "projection_hash": "sha256:9ba5b2e67f8d13c2b05bd5bde886c380acb9a455e35c70ddfacea443039f4d6e",
+          "projection_profile": "ko-review/v1alpha1",
+          "projection_compiler": "methexis/0.0.0",
+          "approval_hash": "sha256:9b40653a36b08addb5c89d670d9ab88745f960ce0f739802499ea97fe2ff4c28"
+        }
+      },
+      {
+        "id": "tui.architecture.module-boundaries",
+        "revision": "sha256:4c2604b602190817b68ceccf6f5e726fadc89b5fb32875dedcc17d53bfa1533e",
+        "sources": [
+          {
+            "id": "tui.arc-002",
+            "revision": "sha256:a2c1cbfee356358867477b2ddd59eab6ac377d43b6461e3d6f4837d828e030c8"
+          }
+        ],
+        "depends_on": [],
+        "constrained_by": [
+          "tui.crate.ui-only-boundary"
+        ],
+        "validation": [
+          {
+            "id": "architecture.import-gate",
+            "status": "referenced_not_executed"
+          },
+          {
+            "id": "architecture.raw-ansi-gate",
+            "status": "referenced_not_executed"
+          }
+        ],
+        "approval": {
+          "projection_hash": "sha256:70eb74484436987a816d441df111b389e47d8ed575e3c89c6995d388a9e91419",
+          "projection_profile": "ko-review/v1alpha1",
+          "projection_compiler": "methexis/0.0.0",
+          "approval_hash": "sha256:fa7986e4faf238c52909a5ccf8d7b6678eb3e1df3b1de649167b06a7f4e5b81a"
+        }
+      },
+      {
+        "id": "tui.runtime.typed-flow",
+        "revision": "sha256:191d3c5030c6e2e161556232cd548bccf8b375cb52a85a586db14fb6aa6dac49",
+        "sources": [
+          {
+            "id": "tui.arc-003",
+            "revision": "sha256:33b1012a4204eaa6811533d7fd37c5015ffc9c4d97a02e394e41bab5554d3727"
+          }
+        ],
+        "depends_on": [
+          "tui.architecture.module-boundaries"
+        ],
+        "constrained_by": [
+          "tui.crate.ui-only-boundary"
+        ],
+        "validation": [
+          {
+            "id": "runtime.backpressure-tests",
+            "status": "referenced_not_executed"
+          },
+          {
+            "id": "runtime.ordering-tests",
+            "status": "referenced_not_executed"
+          }
+        ],
+        "approval": {
+          "projection_hash": "sha256:3154ec88df976a6921e05c2c4f739e66b70d6fb5cb9de4caa25fad6b274dbe94",
+          "projection_profile": "ko-review/v1alpha1",
+          "projection_compiler": "methexis/0.0.0",
+          "approval_hash": "sha256:de311b365ab5aee6fc0b61a9952d2c887ab0a5b343006afb9a95bb2d083f7e8f"
+        }
+      }
+    ],
+    "observations": [
+      {
+        "id": "tui.architecture.module-boundaries",
+        "eligibility": "active",
+        "evidence": [
+          "decision_revision_match:tui.arc-002"
+        ],
+        "approval": {
+          "projection_hash": "sha256:70eb74484436987a816d441df111b389e47d8ed575e3c89c6995d388a9e91419",
+          "projection_profile": "ko-review/v1alpha1",
+          "projection_compiler": "methexis/0.0.0",
+          "approval_hash": "sha256:fa7986e4faf238c52909a5ccf8d7b6678eb3e1df3b1de649167b06a7f4e5b81a"
+        }
+      },
+      {
+        "id": "tui.crate.ui-only-boundary",
+        "eligibility": "active",
+        "evidence": [
+          "decision_revision_match:tui.arc-001"
+        ],
+        "approval": {
+          "projection_hash": "sha256:9ba5b2e67f8d13c2b05bd5bde886c380acb9a455e35c70ddfacea443039f4d6e",
+          "projection_profile": "ko-review/v1alpha1",
+          "projection_compiler": "methexis/0.0.0",
+          "approval_hash": "sha256:9b40653a36b08addb5c89d670d9ab88745f960ce0f739802499ea97fe2ff4c28"
+        }
+      },
+      {
+        "id": "tui.runtime.typed-flow",
+        "eligibility": "active",
+        "evidence": [
+          "decision_revision_match:tui.arc-003"
+        ],
+        "approval": {
+          "projection_hash": "sha256:3154ec88df976a6921e05c2c4f739e66b70d6fb5cb9de4caa25fad6b274dbe94",
+          "projection_profile": "ko-review/v1alpha1",
+          "projection_compiler": "methexis/0.0.0",
+          "approval_hash": "sha256:de311b365ab5aee6fc0b61a9952d2c887ab0a5b343006afb9a95bb2d083f7e8f"
+        }
+      }
+    ],
+    "required_roots": [
+      "tui.runtime.typed-flow"
+    ],
+    "direct_anchors": [
+      {
+        "anchor": {
+          "kind": "knowledge_id",
+          "value": "tui.runtime.typed-flow"
+        },
+        "roots": [
+          "tui.runtime.typed-flow"
+        ]
+      }
+    ],
+    "candidate_input_hash": null,
+    "candidate_decisions": [],
+    "compiler": "methexis/0.0.0",
+    "payload_profile": "methexis.context-markdown/v1alpha1",
+    "tokenizer_profile": "o200k_base/v1",
+    "tokenizer_compiler": "tiktoken-rs/0.12.0",
+    "max_tokens": 8000
+  },
+  "context": {
+    "path": "context.md",
+    "hash": "sha256:b58866aa727934a31dc3b6b0e1bb3c7c2c7d8b33f355480e842658bed14fa874",
+    "tokens": 326
+  }
+}

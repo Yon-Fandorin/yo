@@ -110,6 +110,39 @@ payload:
 }
 
 #[test]
+fn source_loader_rejects_duplicate_ids_before_context_freshness_mapping() {
+    let repository = TemporaryRepository::new();
+    let source = write_source(&repository, decision_record("duplicate"));
+    let duplicate = source.path.with_file_name("duplicate.yaml");
+    fs::copy(&source.path, duplicate).unwrap();
+
+    let diagnostics = super::load(&repository.path).unwrap_err();
+
+    assert_eq!(diagnostics.len(), 2);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code == "duplicate_source_id")
+    );
+}
+
+#[test]
+fn captured_source_record_rejects_same_semantics_with_new_file_identity() {
+    let repository = TemporaryRepository::new();
+    let source = write_source(&repository, decision_record("captured"));
+    let (_, captures) = super::load_captured(&repository.path).unwrap();
+    let bytes = fs::read(&source.path).unwrap();
+    let replacement = source.path.with_extension("replacement");
+    fs::write(&replacement, bytes).unwrap();
+    fs::rename(replacement, &source.path).unwrap();
+
+    let failure =
+        super::working_tree::final_revalidate(&repository.path, &captures[0]).unwrap_err();
+
+    assert_eq!(failure.code, "source_changed_during_validation");
+}
+
+#[test]
 fn code_capture_hashes_exact_bytes_and_revalidates_identity() {
     let repository = TemporaryRepository::new();
     fs::create_dir(repository.path.join("src")).unwrap();
@@ -272,7 +305,7 @@ fn code_drift_degrades_the_selected_unit_without_changing_authority() {
     };
     let selected = BTreeSet::from(["tui.selected".to_owned()]);
 
-    let fresh = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
+    let fresh = super::evaluate(&repository.path, &trusted, &working.sources, &selected).unwrap();
     assert_eq!(fresh.checkpoint, "active");
     assert_eq!(
         fresh.units["tui.selected"].evidence,
@@ -282,7 +315,7 @@ fn code_drift_degrades_the_selected_unit_without_changing_authority() {
         ]
     );
     fs::write(repository.path.join("src/lib.rs"), b"drifted\n").unwrap();
-    let drifted = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
+    let drifted = super::evaluate(&repository.path, &trusted, &working.sources, &selected).unwrap();
 
     assert_eq!(drifted.checkpoint, "degraded");
     assert_eq!(
@@ -333,7 +366,8 @@ fn conversation_and_external_sources_fail_closed_in_a_multi_source_unit() {
     let working = clone_foundation(&trusted);
     let selected = BTreeSet::from(["tui.selected".to_owned()]);
 
-    let evaluation = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
+    let evaluation =
+        super::evaluate(&repository.path, &trusted, &working.sources, &selected).unwrap();
 
     assert_eq!(evaluation.checkpoint, "degraded");
     assert_eq!(
@@ -359,7 +393,8 @@ fn a_working_decision_change_can_only_demote_trusted_knowledge() {
     let working = foundation(selected_unit, vec![working_source]);
     let selected = BTreeSet::from(["tui.selected".to_owned()]);
 
-    let evaluation = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
+    let evaluation =
+        super::evaluate(&repository.path, &trusted, &working.sources, &selected).unwrap();
 
     assert_eq!(evaluation.checkpoint, "degraded");
     assert_eq!(
@@ -387,7 +422,8 @@ fn missing_and_mismatched_trusted_sources_are_distinct_failures() {
     let working = clone_foundation(&trusted);
     let selected = BTreeSet::from(["tui.selected".to_owned()]);
 
-    let evaluation = super::evaluate(&repository.path, &trusted, &working, &selected).unwrap();
+    let evaluation =
+        super::evaluate(&repository.path, &trusted, &working.sources, &selected).unwrap();
 
     assert_eq!(evaluation.checkpoint, "degraded");
     assert_eq!(

@@ -14,11 +14,11 @@ use crate::{
 pub(crate) fn evaluate(
     repository_root: &Path,
     trusted: &Foundation,
-    working: &Foundation,
+    working_sources: &[Source],
     selected: &BTreeSet<String>,
 ) -> Result<FreshnessEvaluation, FreshnessFailure> {
     let trusted_sources = sources_by_id(&trusted.sources);
-    let working_sources = sources_by_id(&working.sources);
+    let working_sources_by_id = sources_by_id(working_sources);
     let trusted_units = trusted
         .units
         .iter()
@@ -48,7 +48,7 @@ pub(crate) fn evaluate(
                 evidence.push(format!("source_revision_mismatch:{}", pinned.id));
                 continue;
             }
-            let Some(working_source) = working_sources.get(pinned.id.as_str()) else {
+            let Some(working_source) = working_sources_by_id.get(pinned.id.as_str()) else {
                 eligibility = eligibility.max(Eligibility::Stale);
                 evidence.push(format!("working_source_missing:{}", pinned.id));
                 continue;
@@ -104,11 +104,12 @@ pub(crate) fn evaluate(
     }
 
     propagate_required_dependents(&trusted_units, selected, &mut units);
-    final_revalidate_source_records(repository_root, working)?;
-    for (capture, knowledge_id, source_id) in &code_captures {
-        super::working_tree::final_revalidate(repository_root, capture)
-            .map_err(|failure| with_affected(failure, knowledge_id, source_id))?;
-    }
+    let guard = FreshnessGuard {
+        source_revisions: source_revisions(working_sources),
+        code_captures,
+        record_captures: Vec::new(),
+    };
+    final_revalidate(repository_root, &guard)?;
     let checkpoint = if units
         .values()
         .all(|state| state.eligibility == Eligibility::Active)
@@ -117,7 +118,46 @@ pub(crate) fn evaluate(
     } else {
         "degraded"
     };
-    Ok(FreshnessEvaluation { units, checkpoint })
+    Ok(FreshnessEvaluation {
+        units,
+        checkpoint,
+        guard,
+    })
+}
+
+pub(crate) struct FreshnessGuard {
+    source_revisions: BTreeMap<String, String>,
+    code_captures: Vec<(super::working_tree::Capture, String, String)>,
+    record_captures: Vec<super::working_tree::Capture>,
+}
+
+impl FreshnessGuard {
+    pub(crate) fn empty() -> Self {
+        Self {
+            source_revisions: BTreeMap::new(),
+            code_captures: Vec::new(),
+            record_captures: Vec::new(),
+        }
+    }
+
+    pub(crate) fn add_record_captures(&mut self, captures: Vec<super::working_tree::Capture>) {
+        self.record_captures = captures;
+    }
+}
+
+pub(crate) fn final_revalidate(
+    repository_root: &Path,
+    guard: &FreshnessGuard,
+) -> Result<(), FreshnessFailure> {
+    final_revalidate_source_records(repository_root, &guard.source_revisions)?;
+    for capture in &guard.record_captures {
+        super::working_tree::final_revalidate(repository_root, capture)?;
+    }
+    for (capture, knowledge_id, source_id) in &guard.code_captures {
+        super::working_tree::final_revalidate(repository_root, capture)
+            .map_err(|failure| with_affected(failure, knowledge_id, source_id))?;
+    }
+    Ok(())
 }
 
 fn with_affected(
@@ -176,12 +216,19 @@ pub(super) fn propagate_required_dependents(
     }
 }
 
+fn source_revisions(sources: &[Source]) -> BTreeMap<String, String> {
+    sources
+        .iter()
+        .map(|source| (source.record.id.clone(), source.record.revision.clone()))
+        .collect()
+}
+
 fn final_revalidate_source_records(
     repository_root: &Path,
-    initial: &Foundation,
+    initial: &BTreeMap<String, String>,
 ) -> Result<(), FreshnessFailure> {
-    let final_sources =
-        super::records::load(repository_root).map_err(|diagnostics| FreshnessFailure {
+    let (final_sources, _) =
+        super::records::load_captured(repository_root).map_err(|diagnostics| FreshnessFailure {
             code: "source_changed_during_validation",
             message: diagnostics.first().map_or_else(
                 || "Source records changed during validation".to_owned(),
@@ -192,23 +239,15 @@ fn final_revalidate_source_records(
                 .flat_map(|diagnostic| diagnostic.affected_ids)
                 .collect(),
         })?;
-    let initial = initial
-        .sources
-        .iter()
-        .map(|source| (&source.record.id, &source.record.revision))
-        .collect::<BTreeMap<_, _>>();
-    let final_state = final_sources
-        .iter()
-        .map(|source| (&source.record.id, &source.record.revision))
-        .collect::<BTreeMap<_, _>>();
-    if initial != final_state {
+    let final_state = source_revisions(&final_sources);
+    if *initial != final_state {
         return Err(FreshnessFailure {
             code: "source_changed_during_validation",
             message: "Source records changed during validation".to_owned(),
             affected_ids: initial
                 .keys()
                 .chain(final_state.keys())
-                .map(|id| (*id).clone())
+                .cloned()
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),

@@ -11,8 +11,8 @@ mod working_tree;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use freshness::{FreshnessFailure, evaluate};
-pub(crate) use records::load;
+pub(crate) use freshness::{FreshnessFailure, FreshnessGuard, evaluate, final_revalidate};
+pub(crate) use records::{load, load_captured};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum Eligibility {
@@ -40,4 +40,5 @@ pub(crate) struct UnitFreshness {
 pub(crate) struct FreshnessEvaluation {
     pub(crate) units: BTreeMap<String, UnitFreshness>,
     pub(crate) checkpoint: &'static str,
+    pub(crate) guard: FreshnessGuard,
 }
