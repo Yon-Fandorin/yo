@@ -120,11 +120,38 @@ Repeated conflicts or files modified by many Tasks are contention hotspots. Paus
 
 Each Slice must include its implementation or docs, discriminating validation, public-contract updates, and known limits.
 
-Every Slice receives worker self-check and human review. The slice planner proposes its risk and required lenses in the Slice Contract; workers cannot lower them. Escalate risk when implementation reveals public-contract, failure-behavior, or shared-ownership impact. Treat uncertainty as higher risk, and let the human reviewer approve the final classification.
+Every Slice receives worker self-check and its required review lenses. The
+slice planner proposes its risk and required lenses in the Slice Contract;
+workers cannot lower them. Escalate risk when implementation reveals
+public-contract, failure-behavior, or shared-ownership impact.
 
 Fresh-context contract review is required for public contracts, terminal lifecycle, concurrency, failure behavior, workflow, and SOT changes. Slice integration review is required for Wave Slices and changes that consume shared interfaces or sibling results. A simple independent docs or configuration Slice may omit an additional lens only with a recorded rationale.
 
-After explicit human approval, squash a direct Slice into `develop`:
+Classify a Slice as **human-attention** when it introduces or changes a product
+decision, public contract, failure semantics, dependency choice, permissions,
+destructive or external effect, workflow authority, or semantic SOT authority;
+when required review has an unresolved finding; when validation is not green;
+or when material uncertainty remains. Uncertain classification is
+human-attention. It requires explicit human approval for that exact Slice.
+
+A Slice is **routine** only when it implements an already approved exact
+contract or performs mechanical repository follow-through, introduces none of
+the human-attention conditions, has all declared dependencies accepted and
+integrated, passes all required validation, and has no unresolved finding from
+any review. Under a standing human authorization, the slice planner may
+auto-integrate a routine Slice and MUST record the classification rationale
+plus the authorization's human origin and scope in the integration report or
+accepted commit. Generated projections, fixtures, approval records, and
+immutable Checkpoints are routine only when they preserve an already reviewed
+exact revision and add no semantic choice. Selecting roots or changing the
+active Checkpoint is always human-attention. Explicit human approval that
+already includes the exact activation transition satisfies that Slice's
+disposition; do not request a second merge approval. If the standing
+authorization is absent or revoked, routine Slices also require explicit human
+approval.
+
+After the Slice's review disposition is satisfied, squash a direct Slice into
+`develop`:
 
 ```bash
 git switch develop
@@ -132,7 +159,7 @@ git merge --squash slice/direct/<slice>
 git commit
 ```
 
-Squash an approved Wave Slice into its Wave:
+Squash an accepted Wave Slice into its Wave:
 
 ```bash
 git switch wave/<wave>
@@ -189,14 +216,18 @@ Treat `rib` as read-only. Keep audits, comparisons, and disposable prototypes in
 
 Do not rewrite shared history or force-push without explicit approval.
 
-## Merge gate
+## Integration readiness
 
-Request Slice approval only when:
+Integrate any Slice only when:
 
 - the diff contains one agreed outcome;
+- declared dependencies are accepted and integrated;
 - relevant tests, documentation checks, and `git diff --check` pass;
 - tracked files contain no `.local-exclude/` content or `rib` copies; and
 - risk, required review lenses, and any omission rationale are explicit; and
 - the outcome, evidence, and limits are ready for review.
 
-Approval applies only to that Slice. Follow-up work requires a new Slice and review.
+For a human-attention Slice, request approval only after this gate passes.
+Explicit approval applies only to that Slice. Standing routine authorization
+applies to eligible future Slices until the human revokes it. Follow-up work
+still requires a new Slice, classification, and review disposition.
