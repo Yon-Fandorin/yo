@@ -8,6 +8,7 @@
     )
 )]
 
+pub(crate) mod screen;
 mod transaction;
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use super::{TermiosDriver, TtyStateAdapter};
-use crate::terminal::backend::TerminalBackend;
+use crate::terminal::backend::{ScreenModeBackend, TerminalBackend};
 
 const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
@@ -70,6 +70,16 @@ where
 
     fn restore_tty_state(&mut self, state: &Self::TtyState) -> Result<(), Self::Error> {
         self.tty.restore(state).map_err(UnixBackendError::Tty)
+    }
+}
+
+impl<D, W> ScreenModeBackend for UnixBackend<D, W>
+where
+    D: TermiosDriver,
+    W: Write,
+{
+    fn alternate_screen_mode() -> Self::Mode {
+        UnixMode::AlternateScreen
     }
 }
 

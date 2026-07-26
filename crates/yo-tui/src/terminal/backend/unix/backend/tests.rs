@@ -6,7 +6,10 @@ use crate::terminal::{
         TerminalBackend,
         unix::{TermiosDriver, TtyStateAdapter},
     },
-    mode::TerminalSession,
+    mode::{
+        TerminalSession,
+        screen::{ScreenMode, enter_screen},
+    },
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -166,4 +169,34 @@ fn concrete_backend_connects_tty_capture_raw_entry_and_restoration() {
         backend.tty.driver.applied,
         [TtyState { raw: true }, TtyState { raw: false }]
     );
+}
+
+// Inline recipe는 main screen을 유지하며 alternate-screen bytes를 전혀 쓰지 않는다.
+#[test]
+fn inline_recipe_never_acquires_the_alternate_screen() {
+    let mut backend = backend(RecordingWriter::default());
+
+    enter_screen(&mut backend, ScreenMode::Inline)
+        .unwrap()
+        .close()
+        .unwrap();
+
+    assert!(backend.output.bytes.is_empty());
+    assert_eq!(
+        backend.tty.driver.applied,
+        [TtyState { raw: true }, TtyState { raw: false }]
+    );
+}
+
+// Fullscreen recipe만 alternate screen을 획득하고 정상 종료에서 대칭적으로 해제한다.
+#[test]
+fn fullscreen_recipe_owns_the_alternate_screen() {
+    let mut backend = backend(RecordingWriter::default());
+
+    enter_screen(&mut backend, ScreenMode::Fullscreen)
+        .unwrap()
+        .close()
+        .unwrap();
+
+    assert_eq!(backend.output.bytes, b"\x1b[?1049h\x1b[?1049l");
 }

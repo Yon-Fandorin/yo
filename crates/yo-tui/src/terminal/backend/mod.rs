@@ -14,3 +14,7 @@ pub(crate) trait TerminalBackend {
     fn release_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error>;
     fn restore_tty_state(&mut self, state: &Self::TtyState) -> Result<(), Self::Error>;
 }
+
+pub(crate) trait ScreenModeBackend: TerminalBackend {
+    fn alternate_screen_mode() -> Self::Mode;
+}
