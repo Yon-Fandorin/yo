@@ -3,7 +3,7 @@
 | Axis | State |
 | --- | --- |
 | Document | Accepted |
-| Implementation | W0 foundation, the approved active five-unit TUI seed, and S3 Librarian discovery are implemented |
+| Implementation | W0 foundation, the approved active five-unit TUI seed, and S3 Librarian discovery are implemented; S4 is aligned but not implemented |
 | First corpus | Structured Core `Surface` |
 | Product scope | Internal `yo` Pilot |
 
@@ -76,9 +76,12 @@ consumer.
 Records reachable from the repository-local `refs/heads/develop` are the only
 approval authority in the current Pilot. Task input, environment variables, and
 the invoking agent MUST NOT override it. At the start of an operation, the ref
-is resolved once to an exact commit and that commit is recorded in every
-result. An internal injected policy MAY be used by isolated tests but is not a
-production input surface.
+is resolved once to an exact commit; that pinned snapshot is the only authority
+used for computation and its commit is recorded in every result. An operation
+that promises final authority stability MAY reread only the configured ref and
+active-record identities before returning. A mismatch fails the pinned
+operation and never switches it to the newer snapshot. An internal injected
+policy MAY be used by isolated tests but is not a production input surface.
 
 Authority reads MUST use the system Git executable with caller Git
 configuration and environment removed. Replacement refs and graft-like object
@@ -465,6 +468,45 @@ Librarian candidates. The resolver then:
 9. final-revalidates observed mutable Sources;
 10. publishes an immutable, traceable `ContextBuild`.
 
+The versioned request MUST contain at least one direct anchor or one Librarian
+candidate result reference. A candidate reference is a repository-relative
+local path plus the expected SHA-256 of the exact file bytes; the candidate
+JSON is not embedded in the request. The resolver captures and verifies those
+bytes before parsing and records their hash in ContextBuild lineage. A direct
+KnowledgeId, path, or symbol anchor is a required root. An unresolved direct
+path or symbol fails explicitly; when it resolves to multiple exact units, all
+of them are required roots. Librarian candidates are advisory optional inputs.
+
+Direct anchors resolve only against the KnowledgeSnapshot loaded from the
+pinned trusted commit. A KnowledgeId matches its exact semantic ID. A path
+matches either the exact canonical repository-relative Knowledge record path or
+an exact `applies_to` value; a symbol matches only an exact `applies_to` value.
+Code Source locators, Librarian's working-tree catalog, Draft files, and fuzzy
+text do not participate. Anchor values use the same typed, trimmed
+duplicate-rejection semantics as Librarian requests; the S4 request schema
+additionally declares maximum anchor counts and value lengths.
+
+A candidate path must remain beneath the opened repository root. Capture
+rejects absolute paths, empty or dot components, `..`, symlinks, non-regular
+files, and files over the compiler profile's declared bound. It opens path
+components relative to retained directory handles, captures one bounded byte
+snapshot, and verifies file identity before and after capture. A concurrent
+change is a structured retryable failure with no partial result or automatic
+retry.
+
+Methexis validates the candidate wire contract rather than reimplementing
+Librarian retrieval. Its independent closed decoder validates every envelope,
+identity, compiler, candidate, path, reason, unresolved-anchor, and truncation
+field defined by the versioned candidate-set schema. It rejects unknown fields,
+duplicate candidates or reasons, collection ordering that the schema declares
+canonical, malformed or inconsistent hashes and candidate-set identity, a false
+success marker, a candidate score unequal to the sum of its reason scores, and
+candidate ordering that is not descending score then ascending KnowledgeId.
+Cross-tool golden fixtures pin the complete accepted and rejected wire shapes.
+Methexis does not recompute reason signals or fixed score weights, candidate
+recall, or whether Librarian found the best result; reason scores determine
+advisory order, not authority or eligibility.
+
 The freshness guard runs on every resolution, including a cache hit. It compares
 the trusted commit and active-Checkpoint hash, referenced KnowledgeUnit hashes,
 approval revisions, and required evidence hashes. For a code Source it resolves
@@ -493,20 +535,63 @@ requires one. The guard does not rerun executable validation.
 
 The resolver compiles only from its captured Source snapshot. Immediately before
 publishing a new artifact or returning a cached one, it rechecks every observed
-mutable Source identity and hash. A concurrent mismatch publishes nothing and
-returns a structured retryable `source_changed_during_resolution` failure.
+mutable Source identity and hash and compares the current trusted-ref and active
+Checkpoint identities with the values captured at operation start. A concurrent
+mismatch publishes nothing and returns a structured retryable
+`source_changed_during_resolution` or `authority_changed_during_resolution`
+failure.
+This whole-operation failure also applies when the concurrently changed Source
+belongs only to an optional candidate: the resolver cannot claim a consistent
+snapshot assembled partly before and partly after that change. It does not
+retry automatically.
+
+Selection operates on atomic semantic bundles. A root or candidate and its full
+transitive `depends_on` and `constrained_by` closure are either included
+together or not included. Shared required units are included and charged once.
+A blocked or unaffordable required-root bundle fails the build. A blocked or
+unaffordable optional-candidate bundle is omitted as a whole with a structured
+manifest reason.
+
+Packing uses deterministic greedy order. Required-root bundles are admitted
+first. Optional candidates are then considered in the validated Librarian
+order; a bundle is included when its marginal token cost fits, otherwise it is
+omitted and later candidates are still considered. The Pilot does not use
+score-per-token optimization, knapsack selection, an LLM reranker, or silent
+body truncation.
+
+The request names a supported versioned tokenizer profile and a maximum token
+budget. The resolver counts the actual tokens of every byte-bearing element in
+the final agent payload, including its preamble, stable IDs, headings, bodies,
+and emitted relation text. It MUST NOT substitute character or byte estimates.
+An unsupported profile is a structured failure. Tokenizer identity and version
+are lineage inputs and change the BuildId. The first implementation supports
+one profile; the exact Rust dependency is selected through the implementation
+dependency gate.
+
+Applicable existing validation evidence is recorded and attached when the
+corpus provides it. In the first compiler profile it appears only in the
+manifest and consumes no agent-payload tokens. Context resolution does not
+execute validation commands, invent missing evidence, or describe a
+`validated_by` reference as an executed result. Evidence execution and
+collection are a later capability.
 
 Artifact publication is atomic create-if-absent, never replacement. The
 publisher builds in a temporary sibling and installs it with a no-clobber
 primitive. If the BuildId destination already exists, it verifies the manifest
-and every artifact hash and reuses the exact match. A mismatch is a determinism
-or corruption collision: quarantine the new temporary output, keep the existing
-artifact unchanged, and fail. Partial output is never eligible.
+and every artifact hash and reuses the exact match. Existing-build verification
+rejects symlinked build or artifact paths, resolves them relative to retained
+directory handles, and retains those handles through verification and result
+construction. A mismatch is a determinism or corruption collision: quarantine
+the new temporary output, keep the existing artifact unchanged, and fail.
+Partial output is never eligible.
 
-Any mismatch degrades the Checkpoint and fails the affected required dependency
-closure before context is returned. Optional affected knowledge is omitted with
-a structured reason. A resolver MUST NOT fall back to an older approved
-revision. A new review, evidence run, and activation restore eligibility.
+A Source, approval, or evidence freshness mismatch degrades the Checkpoint and
+fails the affected required dependency closure before context is returned.
+Optional affected knowledge is omitted with a structured reason. Local
+ContextBuild corruption or a determinism collision fails storage verification
+but does not alter Checkpoint eligibility. A resolver MUST NOT fall back to an
+older approved revision. A new review, evidence run, and activation restore
+eligibility.
 
 Missing, blocked, or unaffordable required knowledge MUST fail the build.
 Required bodies MUST NOT be silently truncated. Optional knowledge MAY be
@@ -515,8 +600,27 @@ omitted only when the manifest records the omission and reason.
 The user operation resolves a context; it does not rebuild one on every
 request. Identical content-addressed inputs reuse an existing `BuildId` only
 after the freshness guard passes. Relevant knowledge, relation, compiler,
-projection, model, tokenizer, permission, task-anchor, or budget changes
-invalidate only affected results.
+projection, tokenizer, direct-anchor, exact candidate-input bytes, or budget
+changes invalidate only affected results. The exact candidate-input hash is a
+BuildId identity input; its physical input path is only a locator.
+
+`BuildId` is the domain-separated SHA-256 of a versioned, length-delimited
+canonical build plan. The plan contains the active-Checkpoint identity and hash,
+its stable authority-basis commit, selected Knowledge revisions and required
+relations, deterministic inclusion and omission decisions with their reason
+codes, all Source and evidence observations that affected those decisions,
+normalized direct anchors, the exact candidate-input hash, compiler and payload
+profile, tokenizer profile, and maximum budget. It excludes the current
+observation of `develop`, input and output paths, timestamps, result status, and
+artifact hashes. Consequently an unrelated trusted-ref advance can reuse the
+same build after final authority and freshness verification, while a change to
+any relevant semantic input cannot.
+
+The initial resolver request has no model or permission field and the first
+profile performs no model- or permission-specific filtering. A future versioned
+profile MAY add such inputs only together with their trusted derivation source,
+selection semantics, and BuildId participation; a caller string alone cannot
+grant content eligibility.
 
 Pilot artifacts remain outside Git history, for example:
 
@@ -526,9 +630,36 @@ Pilot artifacts remain outside Git history, for example:
   manifest.json
 ```
 
-The manifest records the Checkpoint, included and omitted revisions, blocked
-inputs, candidate reasons, compiler and profile identity, budget, and artifact
-hashes. Agent work records the BuildId it consumed.
+`context.md` is the minimal canonical English payload for the agent and is the
+only artifact charged to the request token budget. Its versioned compiler
+profile fixes the exact preamble, heading grammar, and emitted relation fields.
+Units use a deterministic topological order over `depends_on` and
+`constrained_by`, with ascending KnowledgeId as the tie-breaker, so required
+units precede their consumers. Each unit emits its stable KnowledgeId, exact
+canonical English body, and its included required-relation IDs. Golden fixtures
+pin the exact payload bytes and token totals. The payload excludes Korean review
+Projections, raw Source content, validation evidence, full approval or
+Checkpoint records, and retrieval diagnostics.
+
+`manifest.json` records the Checkpoint and its stable authority-basis commit,
+exact candidate-input hash, direct anchors, included and omitted revisions and
+reasons, blocked inputs, candidate reasons, compiler and profile identity,
+tokenizer and budget, BuildId preimage fields, and the `context.md` hash. It
+does not contain its own hash. Agent work records the BuildId it consumed.
+
+The fixed BuildId store owns the immutable original in the Pilot. A successful
+structured result returns `created` or `reused`, the BuildId, and the paths and
+hashes of both artifacts. That per-operation result also records the exact
+current trusted commit observed for final verification; it may therefore differ
+across safe reuse of the same immutable build. Cache reuse first reproduces the
+BuildId plan, verifies current freshness, and verifies the stored manifest and
+artifact hashes. Existing different content at the same BuildId is corruption
+and MUST NOT be overwritten.
+
+Caller-selected output paths are not part of initial resolution. A later
+read/export operation MAY stream a verified artifact to stdout or copy it to a
+caller-selected destination without changing the managed original, BuildId,
+lineage, or integrity checks.
 
 ## SOT-008: Agent-first interface
 
@@ -574,6 +705,16 @@ propose-activation <request.json> -> active-record proposal with compare-and-swa
 check                           -> Draft structure, trusted approval, and active/degraded eligibility
 ```
 
+S4 adds context resolution with a versioned request and one structured result.
+Success returns only the small artifact locator and integrity record described
+by `SOT-007`; the completed context is not streamed implicitly. Failures
+distinguish stable required-input failures from retryable concurrent Source or
+authority changes. Stable ineligibility or unaffordability of an optional
+candidate remains a successful build with an omission record; malformed input
+or an integrity failure still fails the operation. Neither direct anchors nor
+candidate input may override the trusted commit, active Checkpoint, approval,
+or freshness guards.
+
 Every mutation publishes atomically and rejects symlinked output parents.
 Publication resolves and retains directory handles before locking or writing;
 a concurrent parent rename or symlink swap cannot redirect output outside that
@@ -604,6 +745,11 @@ modules until an independent consumer justifies another crate.
 The tools exchange a versioned candidate JSON artifact. Methexis MUST validate
 that artifact and MUST NOT depend on Librarian's internal Rust types. Do not add
 a shared contract crate in the Pilot.
+
+The first ContextBuild implementation remains inside the existing Methexis
+library and thin binary. It MUST NOT add a resolver crate, database, background
+service, external connector, HTML view, GUI, or evidence runner. Those remain
+separate evidence-gated capabilities.
 
 This split follows lifecycle rather than module count. Both tools incubate in
 `yo` and are expected to graduate to standalone repositories. After each
