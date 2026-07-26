@@ -1,7 +1,13 @@
 use std::iter;
 
-use super::transaction::{SessionFailure, TerminalSession};
-use crate::terminal::backend::{ScreenModeBackend, TerminalBackend};
+use super::{
+    inline::{InlineRenderError, InlineRenderer, InlineViewport},
+    transaction::{SessionFailure, TerminalSession},
+};
+use crate::{
+    surface::Surface,
+    terminal::backend::{ScreenModeBackend, TerminalBackend, TerminalOutputBackend},
+};
 
 type EntryFailure<B> = SessionFailure<
     <B as TerminalBackend>::Error,
@@ -28,4 +34,18 @@ where
             TerminalSession::enter(backend, iter::once(B::alternate_screen_mode()))
         },
     }
+}
+
+pub(crate) fn render_inline<B>(
+    session: &mut TerminalSession<'_, B>,
+    viewport: &mut InlineViewport,
+    previous: Option<&Surface>,
+    current: &Surface,
+) -> Result<(), InlineRenderError>
+where
+    B: TerminalOutputBackend,
+{
+    let pending = viewport.begin_frame(current.size());
+    let mut renderer = InlineRenderer::new(session.output());
+    renderer.render(pending, previous, current)
 }

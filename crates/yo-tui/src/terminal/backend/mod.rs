@@ -1,5 +1,7 @@
 //! Crate-private boundary for platform terminal dependencies.
 
+use std::io::Write;
+
 #[cfg(unix)]
 mod unix;
 
@@ -17,4 +19,10 @@ pub(crate) trait TerminalBackend {
 
 pub(crate) trait ScreenModeBackend: TerminalBackend {
     fn alternate_screen_mode() -> Self::Mode;
+}
+
+pub(crate) trait TerminalOutputBackend: TerminalBackend {
+    type Output: Write;
+
+    fn output(&mut self) -> &mut Self::Output;
 }

@@ -2,6 +2,8 @@ mod renderer;
 
 use std::{error::Error, fmt};
 
+pub(crate) use renderer::{InlineRenderError, InlineRenderer};
+
 use crate::surface::{FrameDiff, Size, Surface};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

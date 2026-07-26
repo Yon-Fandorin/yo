@@ -1,14 +1,17 @@
 use std::io::{self, Write};
 
 use super::{UnixBackend, UnixBackendError, UnixMode};
-use crate::terminal::{
-    backend::{
-        TerminalBackend,
-        unix::{TermiosDriver, TtyStateAdapter},
-    },
-    mode::{
-        TerminalSession,
-        screen::{ScreenMode, enter_screen},
+use crate::{
+    surface::{Size, Surface},
+    terminal::{
+        backend::{
+            TerminalBackend,
+            unix::{TermiosDriver, TtyStateAdapter},
+        },
+        mode::{
+            TerminalSession,
+            screen::{ScreenMode, enter_screen, render_inline},
+        },
     },
 };
 
@@ -199,4 +202,21 @@ fn fullscreen_recipe_owns_the_alternate_screen() {
         .unwrap();
 
     assert_eq!(backend.output.bytes, b"\x1b[?1049h\x1b[?1049l");
+}
+
+// lifecycle session과 Inline renderer는 같은 backend output stream을 순서대로 공유한다.
+#[test]
+fn inline_renderer_writes_through_the_active_session_backend() {
+    let mut backend = backend(RecordingWriter::default());
+    let mut viewport = crate::terminal::mode::inline::InlineViewport::default();
+    let current = Surface::new(Size::new(2, 1)).unwrap();
+
+    let mut session = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
+    render_inline(&mut session, &mut viewport, None, &current).unwrap();
+    session.close().unwrap();
+
+    assert_eq!(
+        backend.output.bytes,
+        b"\r\n\x1b[1A\x1b[1G\x1b[1G\x1b[0;39;49m  \x1b[1B\x1b[1G"
+    );
 }

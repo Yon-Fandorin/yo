@@ -4,7 +4,7 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
-use crate::terminal::backend::TerminalBackend;
+use crate::terminal::backend::{TerminalBackend, TerminalOutputBackend};
 
 type BackendFailure<B> = SessionFailure<
     <B as TerminalBackend>::Error,
@@ -145,6 +145,15 @@ where
                 let _ = self.backend.restore_tty_state(&state);
             }));
         }
+    }
+}
+
+impl<B> TerminalSession<'_, B>
+where
+    B: TerminalOutputBackend,
+{
+    pub(crate) fn output(&mut self) -> &mut B::Output {
+        self.backend.output()
     }
 }
 
