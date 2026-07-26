@@ -6,6 +6,8 @@ use crate::{
     terminal::mode::inline::{InlineFramePlan, InlineViewport},
 };
 
+mod restore;
+
 fn surface(size: Size, point: Point, text: &str) -> Surface {
     let mut surface = Surface::new(size).unwrap();
     let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();

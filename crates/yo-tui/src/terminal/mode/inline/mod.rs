@@ -24,6 +24,13 @@ pub(crate) enum InlineFramePlan {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InlineRestorePlan {
+    Nothing,
+    ClearOwned { size: Size },
+    LeaveUntrusted { abandoned_rows: u16 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InlineFrameError {
     CurrentSizeMismatch { expected: Size, actual: Size },
     PreviousFrameRequired,
@@ -114,6 +121,26 @@ impl InlineViewport {
             self.state = ViewportState::Abandoned { rows: size.height };
         }
     }
+
+    pub(crate) fn begin_restore(&mut self) -> PendingRestore<'_> {
+        let plan = match self.state {
+            ViewportState::Empty => InlineRestorePlan::Nothing,
+            ViewportState::Owned { size, .. } => InlineRestorePlan::ClearOwned { size },
+            ViewportState::Abandoned { rows } => InlineRestorePlan::LeaveUntrusted {
+                abandoned_rows: rows,
+            },
+        };
+
+        if let InlineRestorePlan::ClearOwned { size } = plan {
+            self.state = ViewportState::Abandoned { rows: size.height };
+        }
+
+        PendingRestore {
+            viewport: self,
+            plan,
+            committed: false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -193,6 +220,40 @@ impl Drop for PendingFrame<'_> {
                 ViewportState::Abandoned { .. }
             ));
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct PendingRestore<'viewport> {
+    viewport: &'viewport mut InlineViewport,
+    plan: InlineRestorePlan,
+    committed: bool,
+}
+
+impl PendingRestore<'_> {
+    pub(crate) const fn plan(&self) -> InlineRestorePlan {
+        self.plan
+    }
+
+    pub(crate) fn commit(mut self) {
+        self.viewport.state = ViewportState::Empty;
+        self.committed = true;
+    }
+}
+
+impl Drop for PendingRestore<'_> {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        debug_assert!(matches!(
+            (self.plan, self.viewport.state),
+            (InlineRestorePlan::Nothing, ViewportState::Empty)
+                | (
+                    InlineRestorePlan::ClearOwned { .. } | InlineRestorePlan::LeaveUntrusted { .. },
+                    ViewportState::Abandoned { .. }
+                )
+        ));
     }
 }
 

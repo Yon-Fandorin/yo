@@ -2,6 +2,7 @@ use super::{InlineFramePlan, InlineViewport};
 use crate::surface::Size;
 
 mod diff;
+mod restore;
 
 // 첫 frame은 현재 높이의 viewport와 그 바로 아래 anchor를 새로 배치해야 한다.
 #[test]

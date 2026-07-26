@@ -4,7 +4,7 @@ use std::{
     io::{self, Write},
 };
 
-use super::{InlineFrameError, InlineFramePlan, PendingFrame};
+use super::{InlineFrameError, InlineFramePlan, InlineRestorePlan, PendingFrame, PendingRestore};
 use crate::{
     surface::{Point, Surface},
     terminal::{AnsiEncoder, TerminalOp, TerminalOps},
@@ -50,6 +50,13 @@ pub(crate) struct InlineRenderer<Writer> {
     ansi: AnsiEncoder<Writer>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InlineRestoreOutcome {
+    Nothing,
+    Cleared,
+    LeftUntrusted { abandoned_rows: u16 },
+}
+
 impl<Writer: Write> InlineRenderer<Writer> {
     pub(crate) const fn new(writer: Writer) -> Self {
         Self {
@@ -82,6 +89,30 @@ impl<Writer: Write> InlineRenderer<Writer> {
         self.ansi.writer_mut().flush()?;
         pending.commit();
         Ok(())
+    }
+
+    pub(crate) fn restore(
+        &mut self,
+        pending: PendingRestore<'_>,
+    ) -> Result<InlineRestoreOutcome, InlineRenderError> {
+        let outcome = match pending.plan() {
+            InlineRestorePlan::Nothing => InlineRestoreOutcome::Nothing,
+            InlineRestorePlan::LeaveUntrusted { abandoned_rows } => {
+                InlineRestoreOutcome::LeftUntrusted { abandoned_rows }
+            },
+            InlineRestorePlan::ClearOwned { size } => {
+                let mut cursor = Cursor::from_anchor(self.ansi.writer_mut(), size.height)?;
+                for row in 0..size.height {
+                    cursor.move_to(self.ansi.writer_mut(), Point::new(0, row))?;
+                    self.ansi.writer_mut().write_all(b"\x1b[2K")?;
+                }
+                cursor.move_to(self.ansi.writer_mut(), Point::new(0, 0))?;
+                self.ansi.writer_mut().flush()?;
+                InlineRestoreOutcome::Cleared
+            },
+        };
+        pending.commit();
+        Ok(outcome)
     }
 
     pub(crate) fn into_inner(self) -> Writer {
@@ -123,6 +154,12 @@ impl Cursor {
         };
 
         move_up(writer, anchor_distance)?;
+        move_to_column(writer, 0)?;
+        Ok(Self { row: 0 })
+    }
+
+    fn from_anchor(writer: &mut impl Write, viewport_height: u16) -> io::Result<Self> {
+        move_up(writer, viewport_height)?;
         move_to_column(writer, 0)?;
         Ok(Self { row: 0 })
     }
