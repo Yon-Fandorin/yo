@@ -45,6 +45,15 @@ local checks = new Mapping<String, Step> {
         )
         check = "cargo test --quiet --locked -p methexis"
     }
+    ["yo-tui-tests"] = new Step {
+        glob = List(
+            "crates/yo-tui/**/*.rs",
+            "crates/yo-tui/Cargo.toml",
+            "Cargo.lock",
+            "Cargo.toml",
+        )
+        check = "cargo test --quiet --locked -p yo-tui"
+    }
 }
 
 hooks {

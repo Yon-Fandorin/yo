@@ -1,5 +1,5 @@
 [workspace]
-members = ["tools/librarian", "tools/methexis"]
+members = ["crates/yo-tui", "tools/librarian", "tools/methexis"]
 resolver = "3"
 
 [workspace.package]
