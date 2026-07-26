@@ -70,7 +70,10 @@ where
             acquired_modes: Vec::new(),
         };
 
-        if let Err(primary) = session.backend.enable_raw_input() {
+        if let Err(primary) = session
+            .backend
+            .enable_raw_input(session.tty_state.as_ref().unwrap())
+        {
             return Err(session.finish_with_error(primary));
         }
 

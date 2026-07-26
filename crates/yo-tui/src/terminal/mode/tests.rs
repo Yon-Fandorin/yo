@@ -62,7 +62,7 @@ impl TerminalBackend for RecordingBackend {
         self.record(Call::CaptureTty)
     }
 
-    fn enable_raw_input(&mut self) -> Result<(), Self::Error> {
+    fn enable_raw_input(&mut self, _original: &Self::TtyState) -> Result<(), Self::Error> {
         self.record(Call::EnableRawInput)
     }
 
