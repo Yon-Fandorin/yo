@@ -90,6 +90,7 @@ fn independent_decoder_accepts_the_librarian_contract_golden() {
             "tui.architecture.module-boundaries",
             "tui.crate.ui-only-boundary",
             "tui.dependencies.selection-gate",
+            "tui.dependencies.terminal-backend-selection",
             "tui.runtime.typed-flow",
             "tui.surface.blank-cell",
             "tui.surface.deterministic-diff",
