@@ -1,15 +1,15 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:83b5611019b191e7e1ebcb379da5e5b3f1586b9e35c5e89ecb8b82b80c9fbbca",
+  "candidate_set_id": "sha256:c894e2126b254cec82df13a3336756a8f2dedcd1f5ca6b332d83d37fc8e8e2f5",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:21963895f867353d8220970161ddaf313d9ea577632cb5ae15607c5110c4c485",
+  "catalog_hash": "sha256:3f45fda2d42718880045a3181482dd1f2659f9d87a6d396d00187eaf79e433ec",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
       "id": "tui.architecture.module-boundaries",
       "path": "methexis/knowledge/tui-architecture/tui.architecture.module-boundaries.md",
-      "score": 1520,
+      "score": 1530,
       "reasons": [
         {
           "kind": "query_phrase",
@@ -55,13 +55,18 @@
           "kind": "relation",
           "via": "tui.surface.terminal-ops",
           "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
         }
       ]
     },
     {
       "id": "tui.surface.terminal-ops",
       "path": "methexis/knowledge/tui-architecture/tui.surface.terminal-ops.md",
-      "score": 210,
+      "score": 220,
       "reasons": [
         {
           "kind": "query_token",
@@ -78,6 +83,40 @@
         {
           "kind": "relation",
           "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.terminal.lifecycle-restoration",
+      "path": "methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md",
+      "score": 220,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "raw",
+          "score": 100
+        },
+        {
+          "kind": "query_token",
+          "field": "projection",
+          "term": "raw",
+          "score": 100
+        },
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
           "score": 10
         }
       ]
@@ -103,7 +142,7 @@
     {
       "id": "tui.runtime.typed-flow",
       "path": "methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md",
-      "score": 20,
+      "score": 30,
       "reasons": [
         {
           "kind": "relation",
@@ -113,6 +152,33 @@
         {
           "kind": "relation",
           "via": "tui.surface.terminal-ops",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.terminal.inline-viewport",
+      "path": "methexis/knowledge/tui-architecture/tui.terminal.inline-viewport.md",
+      "score": 30,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
           "score": 10
         }
       ]

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.terminal-001
+revision: sha256:09566a1e3f4602e0cf492602d3fbb116ca1199398b30a7b6b06c99f2c5f8cac7
+payload:
+  kind: decision
+  content: Inline mode owns one active main-screen viewport below persistent scrollback, redraws that viewport in place across ordinary size changes, and re-anchors without erasing unowned output only when its anchor can no longer be trusted.
