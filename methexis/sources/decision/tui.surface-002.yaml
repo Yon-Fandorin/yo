@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-002
+revision: sha256:db432d5ec4d0b578a05c7d1285c659a82926afc8ae9b49612ca7757096d743a6
+payload:
+  kind: decision
+  content: Surface geometry uses u16 Point, Size, and Rect values with checked arithmetic; larger logical positions belong to an upper model.

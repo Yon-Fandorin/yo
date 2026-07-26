@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-006
+revision: sha256:281d917d4c79bb359405194e98ee9c4f10cd8da610fd00f7becd91e0d64c796c
+payload:
+  kind: decision
+  content: Components receive a bounded SurfaceView with validated operations and readable cell state, while mutable Surface storage, retained widget trees, and layers remain private.

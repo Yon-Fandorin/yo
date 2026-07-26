@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.terminal-ops
+revision: sha256:ad84fe74ecf5998e0f5f20c92ac793d02550bc114b0836d580d916b47d63c1b1
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:e687c68fbdb7cdc20b6c6e9960dc3dfcd6fae0e591bde1fdd0fb66ea0010e33f
+request_hash: sha256:4130952081bd8b9961ff9d1162853d673c271dcda3db4bb491b24d07785fb50a

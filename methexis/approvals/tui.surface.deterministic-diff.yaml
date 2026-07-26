@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.deterministic-diff
+revision: sha256:269a7815cb3c6b213295b70da7c26ddc2dded7a776bfbe12353d5b2ebff41e4c
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:0a538096f10c9e64c18344f43ccb525e2f4f89d6178b27f312908f0e64db627b
+request_hash: sha256:2325550fca6d41228a44d939a6aaaed0a4bb937e136aec9f2ac4b0c90004e778

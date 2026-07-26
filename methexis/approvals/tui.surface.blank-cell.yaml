@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.blank-cell
+revision: sha256:ec8988e176bf90cbe93c8c0d19c547dbf20fe006e08d79fc89ceb7d052d7ba85
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:767c3c38d61c2cfcbbe93078948a8914166739c0ce81e6a0bf0b8b48fefedd15
+request_hash: sha256:4d085d172d51d8c25327aea844a2e22bdb3c2314bd0e00d280fd4cbbbc681a1e

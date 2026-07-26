@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.text-segmentation
+revision: sha256:a4911404c56747266cada0136602123dc0c06115f330f8bd6e7fbd355bdd46f3
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:9d463b62337d1ffa17a47b3e45ec2a3d6cbb0c501bc32e0d748281477694b6c5
+request_hash: sha256:0ead4760e274c8d13124f20ea6501b3058edad87c0ff7b8fc904212cb73c328c

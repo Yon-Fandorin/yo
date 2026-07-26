@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.intersecting-overwrite
+revision: sha256:f3a763bf9e406f42fc674a22fbe37e1585074bffb66436854553f48408d2aa0f
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:bb5928b120d522049db66180b9d57e35cfb43c2429502b160ae3f358355f39a2
+request_hash: sha256:ab7c17bdc4d7981dbf456e010dcc50ca7687118aa7779ab6c42fc59e0e00e0cb

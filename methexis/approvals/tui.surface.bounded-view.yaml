@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.bounded-view
+revision: sha256:87ae8d0afee3a38ac35fe33cc9d7edfcbc96809236d6931e1fa22f7bd5fb9634
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:0804fe5cc7958a41b4933948be5868fbc240d05b795616810a39f29cec7c0533
+request_hash: sha256:99253a8658697b1bf2cfec75fcd4236ff09d56ed2d6faa4affac78e95e65d7b9

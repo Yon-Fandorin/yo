@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-010
+revision: sha256:869b76d54d7f56600fd503d70309df0e1f649d9c0c0a1f109d9344d8eed54d95
+payload:
+  kind: decision
+  content: HTML directly and deterministically projects completed Surface state into a canonical fragment, with separate developer viewer chrome and no initial browser ANSI emulator.

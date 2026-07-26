@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.model-ownership
+revision: sha256:d1529670a39e3d9ca4cda0fcaf822c2afee833043334b1894931f25e821bcd24
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:49dd1bc1299698e0f21902aed6a3cf05f0ad08a6542cf8af8976f07d30e7a835
+request_hash: sha256:e830209e44c2a877edafc8d68a436b85d990115557259d0196e3d0c1e2747026

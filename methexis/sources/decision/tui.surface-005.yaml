@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-005
+revision: sha256:0bbc68263301ea99e4cd145491062b965e3ecc168dc0b429446c8b6613b9bfc2
+payload:
+  kind: decision
+  content: The initial yo-unicode-17.0-narrow/v1 profile uses Unicode 17.0 data, renders supported grapheme clusters in one or two cells with explicit emoji and East Asian Width rules, rejects zero-width clusters and controls, and is shared by terminal and HTML.

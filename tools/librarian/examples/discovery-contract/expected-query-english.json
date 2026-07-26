@@ -1,15 +1,15 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:d97aa4ac9bfdfd9c638593e2999f7ee780d283ade10baeb67c9749e7ab5ab084",
+  "candidate_set_id": "sha256:83b5611019b191e7e1ebcb379da5e5b3f1586b9e35c5e89ecb8b82b80c9fbbca",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:623e996be5f5f8a445af456e7dd0626e892efbe585c4c7c8e6d31d83fecf2465",
+  "catalog_hash": "sha256:21963895f867353d8220970161ddaf313d9ea577632cb5ae15607c5110c4c485",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
       "id": "tui.architecture.module-boundaries",
       "path": "methexis/knowledge/tui-architecture/tui.architecture.module-boundaries.md",
-      "score": 1500,
+      "score": 1520,
       "reasons": [
         {
           "kind": "query_phrase",
@@ -45,6 +45,109 @@
           "field": "validated_by",
           "term": "raw",
           "score": 100
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.html-projection",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.surface.terminal-ops",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.terminal-ops.md",
+      "score": 210,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "ansi",
+          "score": 100
+        },
+        {
+          "kind": "query_token",
+          "field": "projection",
+          "term": "ansi",
+          "score": 100
+        },
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.surface.html-projection",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.html-projection.md",
+      "score": 110,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "ansi",
+          "score": 100
+        },
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.runtime.typed-flow",
+      "path": "methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md",
+      "score": 20,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.surface.model-ownership",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.model-ownership.md",
+      "score": 20,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.html-projection",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.surface.validation-matrix",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.validation-matrix.md",
+      "score": 20,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.surface.html-projection",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
+          "score": 10
         }
       ]
     },
@@ -61,8 +164,44 @@
       ]
     },
     {
-      "id": "tui.runtime.typed-flow",
-      "path": "methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md",
+      "id": "tui.surface.deterministic-diff",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.deterministic-diff.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.surface.geometry",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.geometry.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.surface.grapheme-cells",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.grapheme-cells.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.surface.html-projection",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.surface.resolved-style",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.resolved-style.md",
       "score": 10,
       "reasons": [
         {

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-004
+revision: sha256:c2c4a6c44f6fa03c598df0aef1afe0fc36dd4ebfb686bcac53a8c19215f52ea8
+payload:
+  kind: decision
+  content: A wide grapheme has one leader cell owning text and width, followed by continuation cells that record their nonzero backward distance to the leader.

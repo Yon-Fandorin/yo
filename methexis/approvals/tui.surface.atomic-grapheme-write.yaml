@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.atomic-grapheme-write
+revision: sha256:c1cdcafa4c92e4e590431b36b8afa3cdeace0e2a9b3355bc544bb76580eaac02
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:1699e9cb6fe22b8224d43e47f1a563663d80c8ff6a9e9d91150c1e4ce2263bfd
+request_hash: sha256:feae167be024dec66997025377c3b6f545476fe8d39aa7379c124f3fb749d4ce

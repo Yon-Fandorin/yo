@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-009
+revision: sha256:f6030cde4a874b81529ee571d8b6a2a2aeba05d31f1a7faaaa4e394439394315
+payload:
+  kind: decision
+  content: Terminal rendering converts FrameDiff into typed TerminalOps and then ANSI; an outer mode controller owns Inline and Fullscreen entry, restoration, and cursor policy.

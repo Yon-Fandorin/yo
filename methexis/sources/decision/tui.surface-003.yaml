@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-003
+revision: sha256:8f261aed5acc0e933a14062488ca9ed00f4ab65c26d77bd0947687598b24d83b
+payload:
+  kind: decision
+  content: Every physical cell stores its fully resolved inline Style; semantic roles and theme resolution remain outside Surface.

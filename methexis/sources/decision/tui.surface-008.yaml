@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-008
+revision: sha256:512037b1212651047735ddd684910614a4088b49a259c377e8cdbf4fddbeb23a
+payload:
+  kind: decision
+  content: Diff compares completed previous and current Surfaces and emits deterministic row spans; full comparison precedes any evidence-gated dirty tracking.

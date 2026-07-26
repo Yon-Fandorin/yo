@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-001
+revision: sha256:664bce95595fcb8557fd9168c90714ec011446aaa0e906da36a89cd42294aa05
+payload:
+  kind: decision
+  content: Surface owns deterministic completed two-dimensional cell state, while terminal lifecycle and higher-level scroll state remain outside it.

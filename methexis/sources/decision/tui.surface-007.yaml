@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-007
+revision: sha256:7b765f36083f502eeafc68aa00492202a50c50261d5280c36f7fb24984928c32
+payload:
+  kind: decision
+  content: A grapheme write is atomic and never shifts surrounding cells; the primitive owns non-shifting physical cell overwrite and footprint cleanup, while wrapping, ellipsis, logical text-sequence insertion, deletion, replacement, and width-changing reflow belong to the upper text model and layout.

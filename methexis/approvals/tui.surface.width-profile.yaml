@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.surface.width-profile
+revision: sha256:6f83deba02e9cce6473c947191acca41e160fe9a78a3a2b9e1646ecd5aac0883
+reviewer: tui-architecture
+reviewed_at: 2026-07-26T08:30:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:0211f40945c23dfbaef68b4a36ff58fc9546f14d66bc3e0c04300885711d1c13
+request_hash: sha256:b8cd1187b12a6970dfbf7491585d765d15efb8b09fb41ce76b850b531c8a1fe5

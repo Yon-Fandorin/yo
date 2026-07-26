@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-012
+revision: sha256:cb44e4ac50682edbd3ab99755be0b7d2604681206fdf11285e207d7092ca95ec
+payload:
+  kind: decision
+  content: Text is segmented into untailored Unicode 17.0 extended grapheme clusters before Surface mutation, with normalization-preserving original cluster bytes retained.

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-011
+revision: sha256:7f049056042e8f724e460d06e1324d673c08374cceebe4542789d21bf542f43b
+payload:
+  kind: decision
+  content: Actual PTY behavior is rendering truth across modern macOS and Linux terminals, tmux, SSH, and remote tmux; deterministic HTML is a diagnostic projection.

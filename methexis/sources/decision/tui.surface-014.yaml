@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.surface-014
+revision: sha256:9d71c6a68b137a752115546488860baf8eb68128b35b0a286dd4e64ad961d730
+payload:
+  kind: decision
+  content: A grapheme write atomically clears every existing grapheme footprint intersecting its proposed footprint, writes the new grapheme, and fails without mutation if that complete closure crosses SurfaceView bounds.
