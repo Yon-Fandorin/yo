@@ -1,4 +1,4 @@
-use crate::surface::Size;
+use crate::surface::{FrameDiff, Size, Surface};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InlineFramePlan {
@@ -17,6 +17,13 @@ pub(crate) enum InlineFramePlan {
         abandoned_rows: u16,
         current: Size,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InlineFrameError {
+    CurrentSizeMismatch { expected: Size, actual: Size },
+    PreviousFrameRequired,
+    PreviousSizeMismatch { expected: Size, actual: Size },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -97,18 +104,60 @@ impl PendingFrame<'_> {
         self.plan
     }
 
+    pub(crate) fn diff<'current>(
+        &self,
+        previous: Option<&Surface>,
+        current: &'current Surface,
+    ) -> Result<FrameDiff<'current>, InlineFrameError> {
+        let expected_current = current_size(self.plan);
+        if current.size() != expected_current {
+            return Err(InlineFrameError::CurrentSizeMismatch {
+                expected: expected_current,
+                actual: current.size(),
+            });
+        }
+
+        match self.plan {
+            InlineFramePlan::Update { current: expected }
+            | InlineFramePlan::Reconcile {
+                previous: expected, ..
+            } => {
+                let previous = previous.ok_or(InlineFrameError::PreviousFrameRequired)?;
+                if previous.size() != expected {
+                    return Err(InlineFrameError::PreviousSizeMismatch {
+                        expected,
+                        actual: previous.size(),
+                    });
+                }
+
+                if matches!(self.plan, InlineFramePlan::Update { .. }) {
+                    Ok(FrameDiff::between(previous, current))
+                } else {
+                    Ok(FrameDiff::complete(previous.size(), current))
+                }
+            },
+            InlineFramePlan::Initialize { .. } | InlineFramePlan::Reanchor { .. } => {
+                Ok(FrameDiff::complete(current.size(), current))
+            },
+        }
+    }
+
     pub(crate) fn commit(mut self) {
-        let current = match self.plan {
-            InlineFramePlan::Initialize { current }
-            | InlineFramePlan::Update { current }
-            | InlineFramePlan::Reconcile { current, .. }
-            | InlineFramePlan::Reanchor { current, .. } => current,
-        };
+        let current = current_size(self.plan);
         self.viewport.state = ViewportState::Owned {
             size: current,
             frame_valid: true,
         };
         self.committed = true;
+    }
+}
+
+const fn current_size(plan: InlineFramePlan) -> Size {
+    match plan {
+        InlineFramePlan::Initialize { current }
+        | InlineFramePlan::Update { current }
+        | InlineFramePlan::Reconcile { current, .. }
+        | InlineFramePlan::Reanchor { current, .. } => current,
     }
 }
 

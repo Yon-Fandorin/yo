@@ -27,6 +27,16 @@ impl<'current> FrameDiff<'current> {
         }
     }
 
+    /// Produces a complete current frame when an adapter cannot trust prior
+    /// rendered content even if the logical size and cells are unchanged.
+    pub(crate) fn complete(previous_size: Size, current: &'current Surface) -> Self {
+        Self {
+            previous_size,
+            current_size: current.size(),
+            spans: complete_current_rows(current),
+        }
+    }
+
     #[must_use]
     pub const fn previous_size(&self) -> Size {
         self.previous_size

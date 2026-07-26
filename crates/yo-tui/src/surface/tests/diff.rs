@@ -24,6 +24,36 @@ fn identical_frames_have_an_empty_diff() {
     assert_eq!(diff.current_size(), Size::new(4, 2));
 }
 
+// adapter가 기존 출력 위치를 신뢰하지 못하면 같은 frame도 모든 행을 다시 그릴 수 있어야 한다.
+#[test]
+fn complete_diff_emits_every_row_for_an_identical_frame() {
+    let current = Surface::new(Size::new(3, 2)).unwrap();
+
+    let diff = FrameDiff::complete(current.size(), &current);
+
+    assert_eq!(diff.previous_size(), Size::new(3, 2));
+    assert_eq!(diff.current_size(), Size::new(3, 2));
+    assert_eq!(
+        diff.spans()
+            .iter()
+            .map(|span| (span.row(), span.start_column(), span.end_column()))
+            .collect::<Vec<_>>(),
+        [(0, 0, 3), (1, 0, 3)]
+    );
+}
+
+// 폭이 0인 full redraw도 크기 정보는 유지하고 존재하지 않는 cell span은 만들지 않는다.
+#[test]
+fn complete_diff_preserves_zero_width_geometry() {
+    let current = Surface::new(Size::new(0, 2)).unwrap();
+
+    let diff = FrameDiff::complete(Size::new(4, 2), &current);
+
+    assert_eq!(diff.previous_size(), Size::new(4, 2));
+    assert_eq!(diff.current_size(), Size::new(0, 2));
+    assert!(diff.spans().is_empty());
+}
+
 // 서로 떨어진 변경은 row와 column 오름차순의 독립 span으로 방출한다.
 #[test]
 fn changed_spans_have_stable_row_and_column_order() {
