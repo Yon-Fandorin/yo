@@ -156,8 +156,8 @@ fn check_reports_the_repository_corpus_on_stdout() {
         assert!(ids.contains(&seed), "repository corpus lost seed `{seed}`");
     }
 
-    // Surface corpus는 계속 늘어날 수 있지만, 현재 사람이 승인한 14개 단위는
-    // exact revision에 맞는 승인 제안을 가진 Draft로 모두 노출되어야 한다.
+    // Surface corpus는 계속 늘어날 수 있지만, develop에 통합된 14개 단위는
+    // exact revision에 맞는 trusted approval을 가진 상태로 모두 노출되어야 한다.
     for (id, revision) in [
         // grapheme 쓰기는 원자적으로 수행하고, 주변 셀의 재배치는 상위 layout에 맡긴다.
         (
@@ -235,10 +235,11 @@ fn check_reports_the_repository_corpus_on_stdout() {
             .find(|unit| unit["id"] == id)
             .unwrap_or_else(|| panic!("repository corpus lost Surface unit `{id}`"));
         assert_eq!(unit["revision"], revision);
-        // Slice가 develop에 통합되기 전이므로 아직 trusted approval은 아니지만,
-        // 방금 승인한 정확한 revision의 proposal까지 생성됐는지는 확인할 수 있다.
-        assert_eq!(unit["effective_approval"], "draft");
-        assert_eq!(unit["approval_evidence"], "matching_proposal");
+        // 승인은 develop 통합으로 신뢰되지만, 별도 Checkpoint에 포함하기 전까지
+        // agent context에는 활성 지식으로 노출되지 않는다.
+        assert_eq!(unit["effective_approval"], "approved");
+        assert_eq!(unit["approval_evidence"], "trusted_approval");
+        assert_eq!(unit["eligibility"], "inactive");
     }
     assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
 }
