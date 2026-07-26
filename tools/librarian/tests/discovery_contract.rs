@@ -87,19 +87,25 @@ fn exact_revision_korean_projection_is_searchable() {
     );
 }
 
+// 코드 경로 앵커가 정확히 일치한 지식 단위를 관계 이웃보다 우선하는지 확인한다.
 #[test]
 fn applies_to_path_anchor_is_an_exact_signal() {
     let (result, _) = success("anchor-path.json");
 
     assert_eq!(
-        result["candidates"].as_array().expect("candidates").len(),
-        1
-    );
-    assert_eq!(
         result["candidates"][0]["id"],
         "tui.dependencies.selection-gate"
     );
+    assert_eq!(result["candidates"][0]["score"], 8_000);
     assert_eq!(result["candidates"][0]["reasons"][0]["kind"], "anchor");
+    assert!(
+        result["candidates"]
+            .as_array()
+            .expect("candidates")
+            .iter()
+            .skip(1)
+            .all(|candidate| candidate["score"].as_u64().expect("score") < 8_000)
+    );
 }
 
 #[test]

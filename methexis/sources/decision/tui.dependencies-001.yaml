@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.dependencies-001
+revision: sha256:86e9d5a7077db91c100f3da00d773be2f9697290f6ae8399393635ca767f65bf
+payload:
+  kind: decision
+  content: The initial Unix terminal adapter combines a feature-minimal crossterm input boundary with rustix-owned exact termios state and a signal-hook notification boundary, while yo retains typed rendering, lifecycle, and signal policy.

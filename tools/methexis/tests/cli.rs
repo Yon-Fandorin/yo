@@ -235,11 +235,10 @@ fn check_reports_the_repository_corpus_on_stdout() {
             .find(|unit| unit["id"] == id)
             .unwrap_or_else(|| panic!("repository corpus lost Surface unit `{id}`"));
         assert_eq!(unit["revision"], revision);
-        // 승인은 develop 통합으로 신뢰되지만, 별도 Checkpoint에 포함하기 전까지
-        // agent context에는 활성 지식으로 노출되지 않는다.
+        // 이 테스트는 corpus의 exact revision과 trusted approval만 소유한다.
+        // 활성 여부는 현재 Checkpoint에 따라 달라지므로 checkpoint_flow에서 검증한다.
         assert_eq!(unit["effective_approval"], "approved");
         assert_eq!(unit["approval_evidence"], "trusted_approval");
-        assert_eq!(unit["eligibility"], "inactive");
     }
     assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
 }

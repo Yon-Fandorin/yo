@@ -89,7 +89,19 @@ fn independent_decoder_accepts_the_librarian_contract_golden() {
         serde_json::json!([
             "tui.architecture.module-boundaries",
             "tui.crate.ui-only-boundary",
-            "tui.runtime.typed-flow"
+            "tui.dependencies.selection-gate",
+            "tui.runtime.typed-flow",
+            "tui.surface.blank-cell",
+            "tui.surface.deterministic-diff",
+            "tui.surface.geometry",
+            "tui.surface.grapheme-cells",
+            "tui.surface.model-ownership",
+            "tui.surface.resolved-style",
+            "tui.surface.terminal-ops",
+            "tui.surface.text-segmentation",
+            "tui.surface.width-profile",
+            "tui.terminal.inline-viewport",
+            "tui.terminal.lifecycle-restoration"
         ])
     );
 }

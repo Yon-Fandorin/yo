@@ -1,15 +1,15 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:c894e2126b254cec82df13a3336756a8f2dedcd1f5ca6b332d83d37fc8e8e2f5",
+  "candidate_set_id": "sha256:124409aec2432939cfb38931bef8fa13076e68ade5c49f217a388db556be1a5b",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:3f45fda2d42718880045a3181482dd1f2659f9d87a6d396d00187eaf79e433ec",
+  "catalog_hash": "sha256:b5192d950569a277072fe2f3da9b1e229847e7880e26b7bf7d85a811c296ecba",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
       "id": "tui.architecture.module-boundaries",
       "path": "methexis/knowledge/tui-architecture/tui.architecture.module-boundaries.md",
-      "score": 1530,
+      "score": 1540,
       "reasons": [
         {
           "kind": "query_phrase",
@@ -48,6 +48,11 @@
         },
         {
           "kind": "relation",
+          "via": "tui.dependencies.terminal-backend-selection",
+          "score": 10
+        },
+        {
+          "kind": "relation",
           "via": "tui.surface.html-projection",
           "score": 10
         },
@@ -59,6 +64,81 @@
         {
           "kind": "relation",
           "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.dependencies.terminal-backend-selection",
+      "path": "methexis/knowledge/tui-architecture/tui.dependencies.terminal-backend-selection.md",
+      "score": 420,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "ansi",
+          "score": 100
+        },
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "raw",
+          "score": 100
+        },
+        {
+          "kind": "query_token",
+          "field": "projection",
+          "term": "ansi",
+          "score": 100
+        },
+        {
+          "kind": "query_token",
+          "field": "projection",
+          "term": "raw",
+          "score": 100
+        },
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.terminal.lifecycle-restoration",
+      "path": "methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md",
+      "score": 230,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "raw",
+          "score": 100
+        },
+        {
+          "kind": "query_token",
+          "field": "projection",
+          "term": "raw",
+          "score": 100
+        },
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.dependencies.terminal-backend-selection",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
           "score": 10
         }
       ]
@@ -88,35 +168,6 @@
         {
           "kind": "relation",
           "via": "tui.terminal.lifecycle-restoration",
-          "score": 10
-        }
-      ]
-    },
-    {
-      "id": "tui.terminal.lifecycle-restoration",
-      "path": "methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md",
-      "score": 220,
-      "reasons": [
-        {
-          "kind": "query_token",
-          "field": "body",
-          "term": "raw",
-          "score": 100
-        },
-        {
-          "kind": "query_token",
-          "field": "projection",
-          "term": "raw",
-          "score": 100
-        },
-        {
-          "kind": "relation",
-          "via": "tui.architecture.module-boundaries",
-          "score": 10
-        },
-        {
-          "kind": "relation",
-          "via": "tui.surface.terminal-ops",
           "score": 10
         }
       ]
@@ -225,6 +276,18 @@
         {
           "kind": "relation",
           "via": "tui.architecture.module-boundaries",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.dependencies.selection-gate",
+      "path": "methexis/knowledge/tui-architecture/tui.dependencies.selection-gate.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.dependencies.terminal-backend-selection",
           "score": 10
         }
       ]
