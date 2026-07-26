@@ -47,6 +47,21 @@ impl<Writer: Write> AnsiEncoder<Writer> {
         Ok(())
     }
 
+    pub(crate) fn writer_mut(&mut self) -> &mut Writer {
+        &mut self.writer
+    }
+
+    pub(crate) fn encode_content_operation(&mut self, operation: TerminalOp<'_>) -> io::Result<()> {
+        match operation {
+            TerminalOp::SetStyle(style) => self.encode_style(style),
+            TerminalOp::WriteGrapheme { text, .. } => self.writer.write_all(text.as_bytes()),
+            TerminalOp::WriteBlank { count } => self.encode_blanks(count.get()),
+            TerminalOp::FrameSizeChanged { .. } | TerminalOp::MoveTo(_) => {
+                unreachable!("position and geometry operations belong to the mode controller")
+            },
+        }
+    }
+
     fn encode_operation(&mut self, operation: TerminalOp<'_>) -> io::Result<()> {
         match operation {
             TerminalOp::FrameSizeChanged { .. } => {
@@ -60,9 +75,9 @@ impl<Writer: Write> AnsiEncoder<Writer> {
                     u32::from(point.x) + 1
                 )
             },
-            TerminalOp::SetStyle(style) => self.encode_style(style),
-            TerminalOp::WriteGrapheme { text, .. } => self.writer.write_all(text.as_bytes()),
-            TerminalOp::WriteBlank { count } => self.encode_blanks(count.get()),
+            TerminalOp::SetStyle(_)
+            | TerminalOp::WriteGrapheme { .. }
+            | TerminalOp::WriteBlank { .. } => self.encode_content_operation(operation),
         }
     }
 

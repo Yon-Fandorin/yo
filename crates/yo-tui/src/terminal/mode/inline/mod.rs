@@ -1,3 +1,7 @@
+mod renderer;
+
+use std::{error::Error, fmt};
+
 use crate::surface::{FrameDiff, Size, Surface};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +29,26 @@ pub(crate) enum InlineFrameError {
     PreviousFrameRequired,
     PreviousSizeMismatch { expected: Size, actual: Size },
 }
+
+impl fmt::Display for InlineFrameError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CurrentSizeMismatch { expected, actual } => write!(
+                formatter,
+                "current frame size is {}x{}, expected {}x{}",
+                actual.width, actual.height, expected.width, expected.height
+            ),
+            Self::PreviousFrameRequired => formatter.write_str("previous frame is required"),
+            Self::PreviousSizeMismatch { expected, actual } => write!(
+                formatter,
+                "previous frame size is {}x{}, expected {}x{}",
+                actual.width, actual.height, expected.width, expected.height
+            ),
+        }
+    }
+}
+
+impl Error for InlineFrameError {}
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 enum ViewportState {
