@@ -1,4 +1,4 @@
-use std::{collections::TryReserveError, error::Error, fmt};
+use std::{collections::TryReserveError, error::Error, fmt, ops::Range};
 
 use super::{Cell, GeometryError, Point, Rect, Size, Style, SurfaceView};
 
@@ -44,6 +44,10 @@ impl Surface {
 
     pub(crate) fn cell_by_index(&self, index: usize) -> &Cell {
         &self.cells[index]
+    }
+
+    pub(crate) fn cells_by_range(&self, range: Range<usize>) -> &[Cell] {
+        &self.cells[range]
     }
 
     pub(crate) fn replace_by_index(&mut self, index: usize, cell: Cell) {
