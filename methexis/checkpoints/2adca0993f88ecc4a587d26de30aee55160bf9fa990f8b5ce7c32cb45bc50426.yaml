@@ -1,0 +1,100 @@
+schema: methexis.checkpoint/v1alpha1
+checkpoint_id: sha256:2adca0993f88ecc4a587d26de30aee55160bf9fa990f8b5ce7c32cb45bc50426
+trusted_commit: a02e94e69d1cd2a7ff1af8a5b751122ca997bb2f
+source_status: not_evaluated
+roots:
+- tui.architecture.evidence-based-split
+- tui.dependencies.selection-gate
+- tui.dependencies.terminal-backend-selection
+- tui.runtime.typed-flow
+- tui.terminal.lifecycle-restoration
+units:
+- id: tui.architecture.evidence-based-split
+  revision: sha256:0787fb2d64d3d16201752a02130ea45f9287734f37b6bf10f0269f6b239f8794
+  reasons:
+  - root:tui.architecture.evidence-based-split
+- id: tui.architecture.module-boundaries
+  revision: sha256:4c2604b602190817b68ceccf6f5e726fadc89b5fb32875dedcc17d53bfa1533e
+  reasons:
+  - required_by:tui.dependencies.terminal-backend-selection
+  - required_by:tui.runtime.typed-flow
+  - required_by:tui.surface.geometry
+  - required_by:tui.surface.model-ownership
+  - required_by:tui.surface.resolved-style
+  - required_by:tui.surface.terminal-ops
+  - required_by:tui.terminal.inline-viewport
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.crate.ui-only-boundary
+  revision: sha256:890ea5c07e508f9b29a01edeb5e274fffa4750e3cfe22d1fc1ef53546988d2a4
+  reasons:
+  - required_by:tui.architecture.evidence-based-split
+  - required_by:tui.architecture.module-boundaries
+  - required_by:tui.runtime.typed-flow
+  - required_by:tui.surface.model-ownership
+  - required_by:tui.surface.text-segmentation
+  - required_by:tui.surface.width-profile
+- id: tui.dependencies.selection-gate
+  revision: sha256:11a84ded112fda98eee50b4b6230b3291a51f65791f2370ccbcd8ca7f142a208
+  reasons:
+  - required_by:tui.dependencies.terminal-backend-selection
+  - root:tui.dependencies.selection-gate
+- id: tui.dependencies.terminal-backend-selection
+  revision: sha256:0649b47073f85abba9378aba0f7db21280626a7ba18fe4bd371d4da39b3f383e
+  reasons:
+  - root:tui.dependencies.terminal-backend-selection
+- id: tui.runtime.typed-flow
+  revision: sha256:191d3c5030c6e2e161556232cd548bccf8b375cb52a85a586db14fb6aa6dac49
+  reasons:
+  - required_by:tui.surface.terminal-ops
+  - required_by:tui.terminal.lifecycle-restoration
+  - root:tui.runtime.typed-flow
+- id: tui.surface.blank-cell
+  revision: sha256:ec8988e176bf90cbe93c8c0d19c547dbf20fe006e08d79fc89ceb7d052d7ba85
+  reasons:
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.deterministic-diff
+  revision: sha256:269a7815cb3c6b213295b70da7c26ddc2dded7a776bfbe12353d5b2ebff41e4c
+  reasons:
+  - required_by:tui.surface.terminal-ops
+- id: tui.surface.geometry
+  revision: sha256:41f9fe004f1a95d1d95b6810cd05408e5e356e17858ee3f7f0002164d2abff8f
+  reasons:
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.grapheme-cells
+  revision: sha256:f0c1a62e8e1121618003f8b5c264fc77945afb7bec087037813ce2bbba6d72ff
+  reasons:
+  - required_by:tui.surface.deterministic-diff
+- id: tui.surface.model-ownership
+  revision: sha256:d1529670a39e3d9ca4cda0fcaf822c2afee833043334b1894931f25e821bcd24
+  reasons:
+  - required_by:tui.surface.deterministic-diff
+  - required_by:tui.surface.grapheme-cells
+- id: tui.surface.resolved-style
+  revision: sha256:7210c4f0cdb9a5f7382c0e7edb7ea24d40b42181259854d2e4ae558b284ac33e
+  reasons:
+  - required_by:tui.surface.blank-cell
+  - required_by:tui.surface.grapheme-cells
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.terminal-ops
+  revision: sha256:ad84fe74ecf5998e0f5f20c92ac793d02550bc114b0836d580d916b47d63c1b1
+  reasons:
+  - required_by:tui.terminal.inline-viewport
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.surface.text-segmentation
+  revision: sha256:a4911404c56747266cada0136602123dc0c06115f330f8bd6e7fbd355bdd46f3
+  reasons:
+  - required_by:tui.surface.grapheme-cells
+  - required_by:tui.surface.width-profile
+- id: tui.surface.width-profile
+  revision: sha256:6f83deba02e9cce6473c947191acca41e160fe9a78a3a2b9e1646ecd5aac0883
+  reasons:
+  - required_by:tui.surface.grapheme-cells
+- id: tui.terminal.inline-viewport
+  revision: sha256:5b8ec9c7f3c0ef0eff9846d6efcc78e9cc4d9ee4390217e8544755ded8a14120
+  reasons:
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.terminal.lifecycle-restoration
+  revision: sha256:f7b595fa469fd33f66f1688b02aab3099e3b450de08ee8a3dd3ebbff1c52827f
+  reasons:
+  - required_by:tui.dependencies.terminal-backend-selection
+  - root:tui.terminal.lifecycle-restoration
