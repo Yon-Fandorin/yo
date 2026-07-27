@@ -71,6 +71,27 @@ fn hard_breaks_reset_the_physical_column() {
     assert_eq!(layout.height.get(), 4);
 }
 
+// LF, CRLF와 단독 CR 바로 앞뒤의 source cursor는 각 물리 행 경계에 정확히 놓인다.
+#[test]
+fn maps_cursor_around_every_hard_break_form() {
+    let text = "A\nB\r\nC\rD";
+    let cases = [
+        ("A".len(), Point::new(1, 0)),
+        ("A\n".len(), Point::new(0, 1)),
+        ("A\nB".len(), Point::new(1, 1)),
+        ("A\nB\r\n".len(), Point::new(0, 2)),
+        ("A\nB\r\nC".len(), Point::new(1, 2)),
+        ("A\nB\r\nC\r".len(), Point::new(0, 3)),
+    ];
+
+    for (cursor, expected) in cases {
+        assert_eq!(
+            layout_text(text, cursor, width(4)).unwrap().cursor,
+            expected
+        );
+    }
+}
+
 // 커서 뒤의 넓은 grapheme이 줄바꿈되면 커서도 그 grapheme의 시작 위치에 놓인다.
 #[test]
 fn cursor_precedes_the_next_grapheme_after_soft_wrap() {

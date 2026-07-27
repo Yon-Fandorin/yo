@@ -1,4 +1,4 @@
-//! Safe visible projections for non-executing prompt control input.
+//! Safe visible projections for non-executing terminal text.
 
 const TAB_STOP: u16 = 4;
 
