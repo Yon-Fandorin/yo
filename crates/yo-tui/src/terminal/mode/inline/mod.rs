@@ -2,7 +2,7 @@ mod renderer;
 
 use std::{error::Error, fmt};
 
-pub(crate) use renderer::{InlineRenderError, InlineRenderer};
+pub(crate) use renderer::{InlineRenderError, InlineRenderer, InlineRestoreOutcome};
 
 use crate::surface::{FrameDiff, Size, Surface};
 

@@ -1,8 +1,8 @@
 use std::iter;
 
 use super::{
-    inline::{InlineRenderError, InlineRenderer, InlineViewport},
-    transaction::{SessionFailure, TerminalSession},
+    inline::{InlineRenderError, InlineRenderer, InlineRestoreOutcome, InlineViewport},
+    transaction::{CleanupFailures, SessionFailure, TerminalSession},
 };
 use crate::{
     surface::Surface,
@@ -49,3 +49,26 @@ where
     let mut renderer = InlineRenderer::new(session.output());
     renderer.render(pending, previous, current)
 }
+
+#[derive(Debug)]
+pub(crate) struct InlineCloseReport<M, E> {
+    pub(crate) viewport: Result<InlineRestoreOutcome, InlineRenderError>,
+    pub(crate) terminal: Result<(), CleanupFailures<M, E>>,
+}
+
+pub(crate) fn close_inline<B>(
+    mut session: TerminalSession<'_, B>,
+    viewport: &mut InlineViewport,
+) -> InlineCloseReport<B::Mode, B::Error>
+where
+    B: TerminalOutputBackend,
+{
+    let pending = viewport.begin_restore();
+    let viewport = InlineRenderer::new(session.output()).restore(pending);
+    let terminal = session.close();
+
+    InlineCloseReport { viewport, terminal }
+}
+
+#[cfg(test)]
+mod tests;
