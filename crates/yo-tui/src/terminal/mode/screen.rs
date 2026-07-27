@@ -67,8 +67,20 @@ pub(crate) struct InlineRunReport<T, M, E> {
     pub(crate) cleanup: InlineCloseReport<M, E>,
 }
 
+pub(crate) struct FullscreenRunReport<T, M, E> {
+    pub(crate) operation: Result<T, PanicPayload>,
+    pub(crate) cleanup: Result<(), CleanupFailures<M, E>>,
+}
+
 type InlineBoundaryResult<B, T> = Result<
     PanicOutcome<InlineRunReport<T, <B as TerminalBackend>::Mode, <B as TerminalBackend>::Error>>,
+    PanicRouteError,
+>;
+
+type FullscreenBoundaryResult<B, T> = Result<
+    PanicOutcome<
+        FullscreenRunReport<T, <B as TerminalBackend>::Mode, <B as TerminalBackend>::Error>,
+    >,
     PanicRouteError,
 >;
 
@@ -85,6 +97,21 @@ where
         let cleanup = close_inline(session, viewport);
 
         InlineRunReport { operation, cleanup }
+    }))
+}
+
+pub(crate) fn run_fullscreen_boundary<B, T>(
+    mut session: TerminalSession<'_, B>,
+    operation: impl FnOnce(&mut TerminalSession<'_, B>) -> T,
+) -> FullscreenBoundaryResult<B, T>
+where
+    B: TerminalBackend,
+{
+    catch_owner_panic(AssertUnwindSafe(|| {
+        let operation = catch_unwind(AssertUnwindSafe(|| operation(&mut session)));
+        let cleanup = session.close();
+
+        FullscreenRunReport { operation, cleanup }
     }))
 }
 

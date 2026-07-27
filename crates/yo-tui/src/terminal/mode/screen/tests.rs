@@ -4,7 +4,10 @@ use std::{
     rc::Rc,
 };
 
-use super::{ScreenMode, close_inline, enter_screen, render_inline, run_inline_boundary};
+use super::{
+    ScreenMode, close_inline, enter_screen, render_inline, run_fullscreen_boundary,
+    run_inline_boundary,
+};
 use crate::{
     surface::{Size, Surface},
     terminal::{
@@ -25,8 +28,10 @@ enum Mode {
 enum Event {
     CaptureTty,
     EnableRaw,
+    EnterAlternateScreen,
     OperationPanic,
     ClearViewport,
+    LeaveAlternateScreen,
     RestoreTty,
 }
 
@@ -83,11 +88,17 @@ impl TerminalBackend for RecordingBackend {
         Ok(())
     }
 
-    fn acquire_mode(&mut self, _mode: Self::Mode) -> Result<(), Self::Error> {
+    fn acquire_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
+        match mode {
+            Mode::AlternateScreen => self.events.borrow_mut().push(Event::EnterAlternateScreen),
+        }
         Ok(())
     }
 
-    fn release_mode(&mut self, _mode: Self::Mode) -> Result<(), Self::Error> {
+    fn release_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
+        match mode {
+            Mode::AlternateScreen => self.events.borrow_mut().push(Event::LeaveAlternateScreen),
+        }
         Ok(())
     }
 
@@ -284,6 +295,79 @@ fn inline_boundary_retains_primary_panic_and_both_cleanup_failures() {
     ));
     assert!(report.cleanup.terminal.is_err());
     assert_eq!(routed.diagnostic.unwrap().message, "application panic");
+}
+
+// Fullscreen 앱 panic 뒤 alternate screen과 TTY를 순서대로 복구하고 원인을 보존한다.
+#[test]
+fn fullscreen_boundary_restores_terminal_before_returning_the_primary_panic() {
+    let _panic_route_owner = lock_panic_route_test();
+    let mut backend = backend(ClearBehavior::Succeed, false);
+    let events = Rc::clone(&backend.events);
+    let session = enter_screen(&mut backend, ScreenMode::Fullscreen).unwrap();
+    let operation_events = Rc::clone(&events);
+
+    let routed = run_fullscreen_boundary(session, move |_| -> () {
+        operation_events.borrow_mut().push(Event::OperationPanic);
+        panic!("fullscreen application panic");
+    })
+    .unwrap();
+
+    let report = routed.result.unwrap();
+    let Err(primary) = report.operation else {
+        panic!("application panic must remain the primary result");
+    };
+    assert_eq!(
+        primary.downcast_ref::<&str>(),
+        Some(&"fullscreen application panic")
+    );
+    assert!(report.cleanup.is_ok());
+    assert_eq!(
+        routed.diagnostic.unwrap().message,
+        "fullscreen application panic"
+    );
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[
+            Event::CaptureTty,
+            Event::EnableRaw,
+            Event::EnterAlternateScreen,
+            Event::OperationPanic,
+            Event::LeaveAlternateScreen,
+            Event::RestoreTty,
+        ]
+    );
+}
+
+// Fullscreen 앱 panic과 TTY 복구 오류가 함께 발생해도 둘 다 보존한다.
+#[test]
+fn fullscreen_boundary_retains_primary_and_terminal_cleanup_failure() {
+    let _panic_route_owner = lock_panic_route_test();
+    let mut backend = backend(ClearBehavior::Succeed, true);
+    let session = enter_screen(&mut backend, ScreenMode::Fullscreen).unwrap();
+
+    let routed = run_fullscreen_boundary(session, |_| -> () {
+        panic!("fullscreen application panic");
+    })
+    .unwrap();
+
+    let report = routed.result.unwrap();
+    let Err(primary) = report.operation else {
+        panic!("application panic must remain the primary result");
+    };
+    assert_eq!(
+        primary.downcast_ref::<&str>(),
+        Some(&"fullscreen application panic")
+    );
+    let cleanup = report.cleanup.unwrap_err();
+    assert_eq!(cleanup.failures.len(), 1);
+    assert_eq!(
+        cleanup.failures[0].cause,
+        crate::terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
+    );
+    assert_eq!(
+        routed.diagnostic.unwrap().message,
+        "fullscreen application panic"
+    );
 }
 
 fn lock_panic_route_test() -> std::sync::MutexGuard<'static, ()> {
