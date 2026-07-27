@@ -1,10 +1,12 @@
 //! Prompt editing assembled from semantic input, text storage, and control policy.
 
-use std::time::Duration;
+use std::{num::NonZeroU16, time::Duration};
 
 pub(crate) mod binding;
+pub(crate) mod layout;
 
 use binding::NewlineBinding;
+use layout::{LayoutError, TextLayout};
 
 use super::{
     buffer::TextBuffer,
@@ -48,6 +50,10 @@ impl PromptEditor {
 
     pub(crate) const fn cursor_byte_index(&self) -> usize {
         self.buffer.cursor_byte_index()
+    }
+
+    pub(crate) fn layout(&self, width: NonZeroU16) -> Result<TextLayout, LayoutError> {
+        layout::layout_text(self.text(), self.cursor_byte_index(), width)
     }
 
     pub(crate) fn handle(
