@@ -23,6 +23,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Mode {
     AlternateScreen,
+    CursorVisibility,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,9 +31,11 @@ enum Event {
     CaptureTty,
     EnableRaw,
     EnterAlternateScreen,
+    NormalizeCursorVisibility,
     OperationPanic,
     ClearViewport,
     LeaveAlternateScreen,
+    RestoreCursorVisibility,
     RestoreTty,
 }
 
@@ -92,6 +95,10 @@ impl TerminalBackend for RecordingBackend {
     fn acquire_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
             Mode::AlternateScreen => self.events.borrow_mut().push(Event::EnterAlternateScreen),
+            Mode::CursorVisibility => self
+                .events
+                .borrow_mut()
+                .push(Event::NormalizeCursorVisibility),
         }
         Ok(())
     }
@@ -99,6 +106,10 @@ impl TerminalBackend for RecordingBackend {
     fn release_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
             Mode::AlternateScreen => self.events.borrow_mut().push(Event::LeaveAlternateScreen),
+            Mode::CursorVisibility => self
+                .events
+                .borrow_mut()
+                .push(Event::RestoreCursorVisibility),
         }
         Ok(())
     }
@@ -116,6 +127,10 @@ impl TerminalBackend for RecordingBackend {
 impl ScreenModeBackend for RecordingBackend {
     fn alternate_screen_mode() -> Self::Mode {
         Mode::AlternateScreen
+    }
+
+    fn cursor_visibility_mode() -> Self::Mode {
+        Mode::CursorVisibility
     }
 }
 
@@ -145,7 +160,7 @@ fn rendered_session<'backend>(
 ) -> crate::terminal::mode::TerminalSession<'backend, RecordingBackend> {
     let mut session = enter_screen(backend, ScreenMode::Inline).unwrap();
     let current = Surface::new(Size::new(1, 1)).unwrap();
-    render_inline(&mut session, viewport, None, &current).unwrap();
+    render_inline(&mut session, viewport, None, &current, Point::new(0, 0)).unwrap();
     session
 }
 
@@ -201,9 +216,39 @@ fn inline_renderer_rejects_a_fullscreen_session() {
     let current = Surface::new(Size::new(1, 1)).unwrap();
     let mut viewport = InlineViewport::default();
 
-    let error = render_inline(&mut session, &mut viewport, None, &current).unwrap_err();
+    let error = render_inline(
+        &mut session,
+        &mut viewport,
+        None,
+        &current,
+        Point::new(0, 0),
+    )
+    .unwrap_err();
 
     assert!(matches!(error, InlineRenderError::AlternateScreenOwned));
+    assert!(session.close().is_ok());
+}
+
+// visibility 복구를 등록하지 않은 main-screen session은 cursor를 숨길 수 없으므로 출력 전에
+// 거부한다.
+#[test]
+fn inline_renderer_requires_cursor_visibility_ownership() {
+    let mut backend = backend(ClearBehavior::Succeed, false);
+    let mut session =
+        crate::terminal::mode::TerminalSession::enter(&mut backend, std::iter::empty()).unwrap();
+    let current = Surface::new(Size::new(1, 1)).unwrap();
+    let mut viewport = InlineViewport::default();
+
+    let error = render_inline(
+        &mut session,
+        &mut viewport,
+        None,
+        &current,
+        Point::new(0, 0),
+    )
+    .unwrap_err();
+
+    assert!(matches!(error, InlineRenderError::CursorVisibilityNotOwned));
     assert!(session.close().is_ok());
 }
 
@@ -321,8 +366,10 @@ fn inline_boundary_cleans_up_before_returning_the_primary_panic() {
         &[
             Event::CaptureTty,
             Event::EnableRaw,
+            Event::NormalizeCursorVisibility,
             Event::OperationPanic,
             Event::ClearViewport,
+            Event::RestoreCursorVisibility,
             Event::RestoreTty,
         ]
     );

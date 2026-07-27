@@ -1,5 +1,5 @@
 use super::{InlineFramePlan, InlineViewport};
-use crate::surface::Size;
+use crate::surface::{Point, Size};
 
 mod diff;
 mod restore;
@@ -14,7 +14,8 @@ fn first_frame_initializes_an_owned_viewport() {
     assert_eq!(
         pending.plan(),
         InlineFramePlan::Initialize {
-            current: Size::new(80, 3)
+            current: Size::new(80, 3),
+            cursor: Point::new(0, 3),
         }
     );
 }
@@ -30,7 +31,9 @@ fn committed_same_size_frame_can_update_in_place() {
     assert_eq!(
         pending.plan(),
         InlineFramePlan::Update {
-            current: Size::new(80, 3)
+            current: Size::new(80, 3),
+            previous_cursor: Point::new(0, 3),
+            cursor: Point::new(0, 3),
         }
     );
 }
@@ -49,6 +52,8 @@ fn height_change_reconciles_the_larger_row_footprint() {
             previous: Size::new(80, 5),
             current: Size::new(80, 2),
             owned_rows: 5,
+            previous_cursor: Point::new(0, 5),
+            cursor: Point::new(0, 2),
         }
     );
 }
@@ -68,6 +73,8 @@ fn geometry_invalidation_requires_reconciliation_at_the_same_size() {
             previous: Size::new(80, 3),
             current: Size::new(80, 3),
             owned_rows: 3,
+            previous_cursor: Point::new(0, 3),
+            cursor: Point::new(0, 3),
         }
     );
 }
@@ -86,6 +93,7 @@ fn lost_anchor_abandons_old_rows_before_reanchoring() {
         InlineFramePlan::Reanchor {
             abandoned_rows: 4,
             current: Size::new(100, 2),
+            cursor: Point::new(0, 2),
         }
     );
 }
@@ -103,6 +111,7 @@ fn uncommitted_frame_is_treated_as_an_uncertain_anchor() {
         InlineFramePlan::Reanchor {
             abandoned_rows: 3,
             current: Size::new(80, 2),
+            cursor: Point::new(0, 2),
         }
     );
 }
@@ -121,6 +130,40 @@ fn failed_reanchor_preserves_the_larger_uncertain_footprint() {
         InlineFramePlan::Reanchor {
             abandoned_rows: 5,
             current: Size::new(80, 1),
+            cursor: Point::new(0, 1),
+        }
+    );
+}
+
+// 유효하지 않은 caret은 출력 계획을 시작하기 전에 거부되어 직전 frame 신뢰를 보존한다.
+#[test]
+fn invalid_caret_preserves_the_trusted_frame() {
+    let size = Size::new(8, 3);
+    let previous_cursor = Point::new(2, 1);
+    let mut viewport = InlineViewport::default();
+    viewport
+        .begin_frame_at(size, previous_cursor)
+        .unwrap()
+        .commit();
+
+    let error = viewport.begin_frame_at(size, Point::new(8, 1)).unwrap_err();
+
+    assert_eq!(
+        error,
+        super::InlineFrameError::CursorOutOfBounds {
+            cursor: Point::new(8, 1),
+            size,
+        }
+    );
+    assert_eq!(
+        viewport
+            .begin_frame_at(size, Point::new(3, 1))
+            .unwrap()
+            .plan(),
+        InlineFramePlan::Update {
+            current: size,
+            previous_cursor,
+            cursor: Point::new(3, 1),
         }
     );
 }

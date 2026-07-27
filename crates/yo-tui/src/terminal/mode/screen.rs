@@ -36,7 +36,9 @@ where
     B: ScreenModeBackend,
 {
     match screen_mode {
-        ScreenMode::Inline => TerminalSession::enter(backend, iter::empty()),
+        ScreenMode::Inline => {
+            TerminalSession::enter(backend, iter::once(B::cursor_visibility_mode()))
+        },
         ScreenMode::Fullscreen => {
             TerminalSession::enter(backend, iter::once(B::alternate_screen_mode()))
         },
@@ -48,6 +50,7 @@ pub(crate) fn render_inline<B>(
     viewport: &mut InlineViewport,
     previous: Option<&Surface>,
     current: &Surface,
+    cursor: Point,
 ) -> Result<(), InlineRenderError>
 where
     B: ScreenModeBackend + TerminalOutputBackend,
@@ -56,7 +59,12 @@ where
     if session.owns_mode(B::alternate_screen_mode()) {
         return Err(InlineRenderError::AlternateScreenOwned);
     }
-    let pending = viewport.begin_frame(current.size());
+    if !session.owns_mode(B::cursor_visibility_mode()) {
+        return Err(InlineRenderError::CursorVisibilityNotOwned);
+    }
+    let pending = viewport
+        .begin_frame_at(current.size(), cursor)
+        .map_err(InlineRenderError::Frame)?;
     let mut renderer = InlineRenderer::new(session.output());
     renderer.render(pending, previous, current)
 }

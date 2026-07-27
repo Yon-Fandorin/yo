@@ -32,8 +32,8 @@ fn initial_render_uses_only_relative_row_and_column_controls() {
     let output = renderer.into_inner();
     assert_eq!(
         output,
-        b"\r\n\n\x1b[2A\x1b[1G\x1b[1G\x1b[0;39;49m A \
-          \x1b[1B\x1b[1G   \x1b[1B\x1b[1G"
+        b"\x1b[?25l\r\n\n\x1b[2A\x1b[1G\x1b[1G\x1b[0;39;49m A \
+          \x1b[1B\x1b[1G   \x1b[1B\x1b[1G\x1b[?25h"
     );
 }
 
@@ -58,7 +58,7 @@ fn shrinking_clears_only_the_owned_surplus_rows() {
             .count()
             == 2
     );
-    assert!(output.ends_with(b"\x1b[1A\x1b[1G"));
+    assert!(output.ends_with(b"\x1b[1A\x1b[1G\x1b[?25h"));
 }
 
 // grow는 기존 anchor 아래에 늘어난 행만 확보한 뒤 새 전체 높이만큼 상대 이동한다.
@@ -73,7 +73,11 @@ fn growing_allocates_only_the_added_rows() {
 
     renderer.render(pending, Some(&previous), &current).unwrap();
 
-    assert!(renderer.into_inner().starts_with(b"\r\n\n\x1b[3A\x1b[1G"));
+    assert!(
+        renderer
+            .into_inner()
+            .starts_with(b"\x1b[?25l\r\n\n\x1b[3A\x1b[1G")
+    );
 }
 
 // anchor를 잃은 복구는 버린 행 아래로 먼저 이동한 후 새 viewport 행을 별도로 확보한다.
@@ -90,7 +94,7 @@ fn reanchor_skips_abandoned_rows_before_allocating_the_new_viewport() {
     assert!(
         renderer
             .into_inner()
-            .starts_with(b"\r\n\n\r\n\x1b[1A\x1b[1G")
+            .starts_with(b"\x1b[?25l\r\n\n\r\n\x1b[1A\x1b[1G")
     );
 }
 
@@ -104,7 +108,7 @@ fn zero_sized_viewport_emits_no_row_movement() {
 
     renderer.render(pending, None, &current).unwrap();
 
-    assert_eq!(renderer.into_inner(), b"\x1b[1G\x1b[1G");
+    assert_eq!(renderer.into_inner(), b"\x1b[?25l\x1b[1G\x1b[1G\x1b[?25h");
 }
 
 // flush 실패는 frame을 commit하지 않아 다음 시도가 안전한 reanchor 계획을 선택한다.
@@ -141,6 +145,62 @@ fn partial_write_failure_leaves_the_viewport_untrusted() {
     ));
 }
 
+// frame write가 한 번 실패해도 주원인을 보존하면서 즉시 cursor-visible 복구를 시도한다.
+#[test]
+fn recoverable_write_failure_attempts_to_show_the_cursor_immediately() {
+    let current = Surface::new(Size::new(2, 1)).unwrap();
+    let mut viewport = InlineViewport::default();
+    let pending = viewport.begin_frame(current.size());
+    let mut renderer = InlineRenderer::new(OneShotFailingWriter {
+        bytes: Vec::new(),
+        remaining: HIDE_CURSOR_LENGTH,
+        failed: false,
+    });
+
+    let error = renderer.render(pending, None, &current).unwrap_err();
+    let output = renderer.into_inner().bytes;
+
+    assert!(matches!(error, InlineRenderError::Output(_)));
+    assert!(output.ends_with(b"\x1b[?25h"));
+}
+
+// 첫 frame 완료 뒤 물리 cursor는 bottom anchor가 아니라 shell이 지정한 prompt caret에 보인다.
+#[test]
+fn initial_frame_places_the_physical_cursor_at_the_prompt_caret() {
+    let current = Surface::new(Size::new(4, 3)).unwrap();
+    let mut viewport = InlineViewport::default();
+    let pending = viewport
+        .begin_frame_at(current.size(), Point::new(2, 1))
+        .unwrap();
+    let mut renderer = InlineRenderer::new(Vec::new());
+
+    renderer.render(pending, None, &current).unwrap();
+
+    assert!(renderer.into_inner().ends_with(b"\x1b[1A\x1b[3G\x1b[?25h"));
+}
+
+// 다음 frame은 기억한 caret에서 논리 anchor를 거쳐 viewport top으로 돌아와 새 caret을 배치한다.
+#[test]
+fn steady_frame_returns_from_the_remembered_caret_with_relative_moves() {
+    let size = Size::new(4, 3);
+    let previous = Surface::new(size).unwrap();
+    let current = previous.clone();
+    let mut viewport = InlineViewport::default();
+    viewport
+        .begin_frame_at(size, Point::new(2, 1))
+        .unwrap()
+        .commit();
+    let pending = viewport.begin_frame_at(size, Point::new(1, 0)).unwrap();
+    let mut renderer = InlineRenderer::new(Vec::new());
+
+    renderer.render(pending, Some(&previous), &current).unwrap();
+
+    assert_eq!(
+        renderer.into_inner(),
+        b"\x1b[?25l\x1b[2B\x1b[3A\x1b[1G\x1b[2G\x1b[?25h"
+    );
+}
+
 struct FlushFailingWriter(Vec<u8>);
 
 impl Write for FlushFailingWriter {
@@ -158,6 +218,14 @@ struct PartialFailingWriter {
     remaining: usize,
 }
 
+const HIDE_CURSOR_LENGTH: usize = b"\x1b[?25l".len();
+
+struct OneShotFailingWriter {
+    bytes: Vec<u8>,
+    remaining: usize,
+    failed: bool,
+}
+
 impl Write for PartialFailingWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if self.remaining == 0 {
@@ -165,6 +233,27 @@ impl Write for PartialFailingWriter {
         }
         let written = self.remaining.min(bytes.len());
         self.remaining -= written;
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Write for OneShotFailingWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.failed {
+            self.bytes.extend_from_slice(bytes);
+            return Ok(bytes.len());
+        }
+        if self.remaining == 0 {
+            self.failed = true;
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "write"));
+        }
+        let written = self.remaining.min(bytes.len());
+        self.remaining -= written;
+        self.bytes.extend_from_slice(&bytes[..written]);
         Ok(written)
     }
 

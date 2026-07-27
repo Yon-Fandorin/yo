@@ -86,6 +86,24 @@ fn zero_height_restore_only_normalizes_the_anchor_column() {
     assert_eq!(renderer.into_inner(), b"\x1b[1G\x1b[1G");
 }
 
+// prompt 안의 실제 caret에서 종료해도 먼저 논리 anchor로 내려간 뒤 소유 행만 지운다.
+#[test]
+fn restore_returns_from_the_tracked_prompt_caret_before_clearing() {
+    let size = Size::new(4, 3);
+    let mut viewport = InlineViewport::default();
+    viewport
+        .begin_frame_at(size, crate::surface::Point::new(2, 1))
+        .unwrap()
+        .commit();
+    let pending = viewport.begin_restore();
+    let mut renderer = InlineRenderer::new(Vec::new());
+
+    let outcome = renderer.restore(pending).unwrap();
+
+    assert_eq!(outcome, InlineRestoreOutcome::Cleared);
+    assert!(renderer.into_inner().starts_with(b"\x1b[2B\x1b[3A\x1b[1G"));
+}
+
 struct PartialFailingWriter {
     remaining: usize,
 }

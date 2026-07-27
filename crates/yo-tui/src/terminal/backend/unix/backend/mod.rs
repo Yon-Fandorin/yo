@@ -5,10 +5,12 @@ use crate::terminal::backend::{ScreenModeBackend, TerminalBackend, TerminalOutpu
 
 const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
+const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum UnixMode {
     AlternateScreen,
+    CursorVisibility,
 }
 
 #[derive(Debug)]
@@ -59,12 +61,14 @@ where
     fn acquire_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
             UnixMode::AlternateScreen => self.write_mode(ENTER_ALTERNATE_SCREEN),
+            UnixMode::CursorVisibility => self.write_mode(SHOW_CURSOR),
         }
     }
 
     fn release_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
             UnixMode::AlternateScreen => self.write_mode(LEAVE_ALTERNATE_SCREEN),
+            UnixMode::CursorVisibility => self.write_mode(SHOW_CURSOR),
         }
     }
 
@@ -80,6 +84,10 @@ where
 {
     fn alternate_screen_mode() -> Self::Mode {
         UnixMode::AlternateScreen
+    }
+
+    fn cursor_visibility_mode() -> Self::Mode {
+        UnixMode::CursorVisibility
     }
 }
 

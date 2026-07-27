@@ -10,9 +10,13 @@ use crate::{
     terminal::{AnsiEncoder, TerminalOp, TerminalOps},
 };
 
+const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
+const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
+
 #[derive(Debug)]
 pub(crate) enum InlineRenderError {
     AlternateScreenOwned,
+    CursorVisibilityNotOwned,
     Frame(InlineFrameError),
     Output(io::Error),
 }
@@ -23,6 +27,9 @@ impl fmt::Display for InlineRenderError {
             Self::AlternateScreenOwned => {
                 formatter.write_str("inline rendering requires the main screen")
             },
+            Self::CursorVisibilityNotOwned => {
+                formatter.write_str("inline rendering requires cursor visibility ownership")
+            },
             Self::Frame(error) => write!(formatter, "inline frame is inconsistent: {error}"),
             Self::Output(_) => formatter.write_str("writing the inline viewport failed"),
         }
@@ -32,7 +39,7 @@ impl fmt::Display for InlineRenderError {
 impl Error for InlineRenderError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::AlternateScreenOwned => None,
+            Self::AlternateScreenOwned | Self::CursorVisibilityNotOwned => None,
             Self::Frame(error) => Some(error),
             Self::Output(error) => Some(error),
         }
@@ -77,21 +84,31 @@ impl<Writer: Write> InlineRenderer<Writer> {
     ) -> Result<(), InlineRenderError> {
         let plan = pending.plan();
         let operations = TerminalOps::from_diff(&pending.diff(previous, current)?);
-        let mut cursor = Cursor::prepare(self.ansi.writer_mut(), plan)?;
+        let output = (|| {
+            self.ansi.writer_mut().write_all(HIDE_CURSOR)?;
+            let mut cursor = Cursor::prepare(self.ansi.writer_mut(), plan)?;
 
-        for operation in operations.as_slice() {
-            match *operation {
-                TerminalOp::FrameSizeChanged { .. } => {},
-                TerminalOp::MoveTo(point) => {
-                    cursor.move_to(self.ansi.writer_mut(), point)?;
-                },
-                content => self.ansi.encode_content_operation(content)?,
+            for operation in operations.as_slice() {
+                match *operation {
+                    TerminalOp::FrameSizeChanged { .. } => {},
+                    TerminalOp::MoveTo(point) => {
+                        cursor.move_to(self.ansi.writer_mut(), point)?;
+                    },
+                    content => self.ansi.encode_content_operation(content)?,
+                }
             }
+
+            cursor.clear_surplus(self.ansi.writer_mut(), plan)?;
+            cursor.move_to(self.ansi.writer_mut(), target_cursor(plan))?;
+            self.ansi.writer_mut().write_all(SHOW_CURSOR)?;
+            self.ansi.writer_mut().flush()
+        })();
+        if let Err(primary) = output {
+            let _ = self.ansi.writer_mut().write_all(SHOW_CURSOR);
+            let _ = self.ansi.writer_mut().flush();
+            return Err(InlineRenderError::Output(primary));
         }
 
-        cursor.clear_surplus(self.ansi.writer_mut(), plan)?;
-        cursor.move_to(self.ansi.writer_mut(), Point::new(0, current.size().height))?;
-        self.ansi.writer_mut().flush()?;
         pending.commit();
         Ok(())
     }
@@ -105,8 +122,8 @@ impl<Writer: Write> InlineRenderer<Writer> {
             InlineRestorePlan::LeaveUntrusted { abandoned_rows } => {
                 InlineRestoreOutcome::LeftUntrusted { abandoned_rows }
             },
-            InlineRestorePlan::ClearOwned { size } => {
-                let mut cursor = Cursor::from_anchor(self.ansi.writer_mut(), size.height)?;
+            InlineRestorePlan::ClearOwned { size, cursor } => {
+                let mut cursor = Cursor::from_tracked_cursor(self.ansi.writer_mut(), size, cursor)?;
                 for row in 0..size.height {
                     cursor.move_to(self.ansi.writer_mut(), Point::new(0, row))?;
                     self.ansi.writer_mut().write_all(b"\x1b[2K")?;
@@ -132,12 +149,13 @@ struct Cursor {
 
 impl Cursor {
     fn prepare(writer: &mut impl Write, plan: InlineFramePlan) -> io::Result<Self> {
+        return_to_anchor(writer, plan)?;
         let anchor_distance = match plan {
-            InlineFramePlan::Initialize { current } => {
+            InlineFramePlan::Initialize { current, .. } => {
                 allocate_rows(writer, current.height)?;
                 current.height
             },
-            InlineFramePlan::Update { current } => current.height,
+            InlineFramePlan::Update { current, .. } => current.height,
             InlineFramePlan::Reconcile {
                 previous, current, ..
             } => {
@@ -151,6 +169,7 @@ impl Cursor {
             InlineFramePlan::Reanchor {
                 abandoned_rows,
                 current,
+                ..
             } => {
                 allocate_rows(writer, abandoned_rows)?;
                 allocate_rows(writer, current.height)?;
@@ -163,8 +182,13 @@ impl Cursor {
         Ok(Self { row: 0 })
     }
 
-    fn from_anchor(writer: &mut impl Write, viewport_height: u16) -> io::Result<Self> {
-        move_up(writer, viewport_height)?;
+    fn from_tracked_cursor(
+        writer: &mut impl Write,
+        size: crate::surface::Size,
+        cursor: Point,
+    ) -> io::Result<Self> {
+        move_down(writer, size.height - cursor.y)?;
+        move_up(writer, size.height)?;
         move_to_column(writer, 0)?;
         Ok(Self { row: 0 })
     }
@@ -193,6 +217,33 @@ impl Cursor {
             writer.write_all(b"\x1b[2K")?;
         }
         Ok(())
+    }
+}
+
+fn return_to_anchor(writer: &mut impl Write, plan: InlineFramePlan) -> io::Result<()> {
+    let (height, cursor) = match plan {
+        InlineFramePlan::Update {
+            current,
+            previous_cursor,
+            ..
+        } => (current.height, previous_cursor),
+        InlineFramePlan::Reconcile {
+            previous,
+            previous_cursor,
+            ..
+        } => (previous.height, previous_cursor),
+        InlineFramePlan::Initialize { .. } | InlineFramePlan::Reanchor { .. } => return Ok(()),
+    };
+    move_down(writer, height - cursor.y)?;
+    Ok(())
+}
+
+const fn target_cursor(plan: InlineFramePlan) -> Point {
+    match plan {
+        InlineFramePlan::Initialize { cursor, .. }
+        | InlineFramePlan::Update { cursor, .. }
+        | InlineFramePlan::Reconcile { cursor, .. }
+        | InlineFramePlan::Reanchor { cursor, .. } => cursor,
     }
 }
 

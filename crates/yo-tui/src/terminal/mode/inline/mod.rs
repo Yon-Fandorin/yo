@@ -4,31 +4,37 @@ use std::{error::Error, fmt};
 
 pub(crate) use renderer::{InlineRenderError, InlineRenderer, InlineRestoreOutcome};
 
-use crate::surface::{FrameDiff, Size, Surface};
+use crate::surface::{FrameDiff, Point, Size, Surface};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InlineFramePlan {
     Initialize {
         current: Size,
+        cursor: Point,
     },
     Update {
         current: Size,
+        previous_cursor: Point,
+        cursor: Point,
     },
     Reconcile {
         previous: Size,
         current: Size,
         owned_rows: u16,
+        previous_cursor: Point,
+        cursor: Point,
     },
     Reanchor {
         abandoned_rows: u16,
         current: Size,
+        cursor: Point,
     },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InlineRestorePlan {
     Nothing,
-    ClearOwned { size: Size },
+    ClearOwned { size: Size, cursor: Point },
     LeaveUntrusted { abandoned_rows: u16 },
 }
 
@@ -37,6 +43,7 @@ pub(crate) enum InlineFrameError {
     CurrentSizeMismatch { expected: Size, actual: Size },
     PreviousFrameRequired,
     PreviousSizeMismatch { expected: Size, actual: Size },
+    CursorOutOfBounds { cursor: Point, size: Size },
 }
 
 impl fmt::Display for InlineFrameError {
@@ -53,6 +60,11 @@ impl fmt::Display for InlineFrameError {
                 "previous frame size is {}x{}, expected {}x{}",
                 actual.width, actual.height, expected.width, expected.height
             ),
+            Self::CursorOutOfBounds { cursor, size } => write!(
+                formatter,
+                "inline cursor {},{} is outside {}x{}",
+                cursor.x, cursor.y, size.width, size.height
+            ),
         }
     }
 }
@@ -65,6 +77,7 @@ enum ViewportState {
     Empty,
     Owned {
         size: Size,
+        cursor: Point,
         frame_valid: bool,
     },
     Abandoned {
@@ -79,20 +92,50 @@ pub(crate) struct InlineViewport {
 
 impl InlineViewport {
     pub(crate) fn begin_frame(&mut self, current: Size) -> PendingFrame<'_> {
+        self.begin_frame_at(current, Point::new(0, current.height))
+            .expect("the logical bottom anchor is valid for every viewport")
+    }
+
+    pub(crate) fn begin_frame_at(
+        &mut self,
+        current: Size,
+        cursor: Point,
+    ) -> Result<PendingFrame<'_>, InlineFrameError> {
+        let inside_surface = cursor.y < current.height && cursor.x < current.width;
+        let at_bottom_anchor = cursor == Point::new(0, current.height);
+        if !inside_surface && !at_bottom_anchor {
+            return Err(InlineFrameError::CursorOutOfBounds {
+                cursor,
+                size: current,
+            });
+        }
+
         let plan = match self.state {
-            ViewportState::Empty => InlineFramePlan::Initialize { current },
+            ViewportState::Empty => InlineFramePlan::Initialize { current, cursor },
             ViewportState::Owned {
                 size: previous,
+                cursor: previous_cursor,
                 frame_valid: true,
-            } if previous == current => InlineFramePlan::Update { current },
-            ViewportState::Owned { size: previous, .. } => InlineFramePlan::Reconcile {
+            } if previous == current => InlineFramePlan::Update {
+                current,
+                previous_cursor,
+                cursor,
+            },
+            ViewportState::Owned {
+                size: previous,
+                cursor: previous_cursor,
+                ..
+            } => InlineFramePlan::Reconcile {
                 previous,
                 current,
                 owned_rows: previous.height.max(current.height),
+                previous_cursor,
+                cursor,
             },
             ViewportState::Abandoned { rows } => InlineFramePlan::Reanchor {
                 abandoned_rows: rows,
                 current,
+                cursor,
             },
         };
 
@@ -105,11 +148,11 @@ impl InlineViewport {
             rows: uncertain_rows,
         };
 
-        PendingFrame {
+        Ok(PendingFrame {
             viewport: self,
             plan,
             committed: false,
-        }
+        })
     }
 
     pub(crate) fn invalidate_frame(&mut self) {
@@ -127,13 +170,15 @@ impl InlineViewport {
     pub(crate) fn begin_restore(&mut self) -> PendingRestore<'_> {
         let plan = match self.state {
             ViewportState::Empty => InlineRestorePlan::Nothing,
-            ViewportState::Owned { size, .. } => InlineRestorePlan::ClearOwned { size },
+            ViewportState::Owned { size, cursor, .. } => {
+                InlineRestorePlan::ClearOwned { size, cursor }
+            },
             ViewportState::Abandoned { rows } => InlineRestorePlan::LeaveUntrusted {
                 abandoned_rows: rows,
             },
         };
 
-        if let InlineRestorePlan::ClearOwned { size } = plan {
+        if let InlineRestorePlan::ClearOwned { size, .. } = plan {
             self.state = ViewportState::Abandoned { rows: size.height };
         }
 
@@ -171,7 +216,9 @@ impl PendingFrame<'_> {
         }
 
         match self.plan {
-            InlineFramePlan::Update { current: expected }
+            InlineFramePlan::Update {
+                current: expected, ..
+            }
             | InlineFramePlan::Reconcile {
                 previous: expected, ..
             } => {
@@ -199,6 +246,7 @@ impl PendingFrame<'_> {
         let current = current_size(self.plan);
         self.viewport.state = ViewportState::Owned {
             size: current,
+            cursor: target_cursor(self.plan),
             frame_valid: true,
         };
         self.committed = true;
@@ -207,10 +255,19 @@ impl PendingFrame<'_> {
 
 const fn current_size(plan: InlineFramePlan) -> Size {
     match plan {
-        InlineFramePlan::Initialize { current }
-        | InlineFramePlan::Update { current }
+        InlineFramePlan::Initialize { current, .. }
+        | InlineFramePlan::Update { current, .. }
         | InlineFramePlan::Reconcile { current, .. }
         | InlineFramePlan::Reanchor { current, .. } => current,
+    }
+}
+
+const fn target_cursor(plan: InlineFramePlan) -> Point {
+    match plan {
+        InlineFramePlan::Initialize { cursor, .. }
+        | InlineFramePlan::Update { cursor, .. }
+        | InlineFramePlan::Reconcile { cursor, .. }
+        | InlineFramePlan::Reanchor { cursor, .. } => cursor,
     }
 }
 

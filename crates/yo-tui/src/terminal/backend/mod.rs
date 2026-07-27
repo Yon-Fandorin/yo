@@ -19,6 +19,7 @@ pub(crate) trait TerminalBackend {
 
 pub(crate) trait ScreenModeBackend: TerminalBackend {
     fn alternate_screen_mode() -> Self::Mode;
+    fn cursor_visibility_mode() -> Self::Mode;
 }
 
 pub(crate) trait TerminalOutputBackend: TerminalBackend {

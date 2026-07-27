@@ -1,5 +1,5 @@
 use super::super::{InlineRestorePlan, InlineViewport};
-use crate::surface::Size;
+use crate::surface::{Point, Size};
 
 // 신뢰 가능한 viewport 종료는 정확히 그 소유 크기를 지우는 계획을 만든다.
 #[test]
@@ -12,7 +12,8 @@ fn owned_viewport_plans_an_owned_clear() {
     assert_eq!(
         pending.plan(),
         InlineRestorePlan::ClearOwned {
-            size: Size::new(80, 3)
+            size: Size::new(80, 3),
+            cursor: Point::new(0, 3),
         }
     );
 }

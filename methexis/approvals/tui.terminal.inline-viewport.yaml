@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: tui.terminal.inline-viewport
-revision: sha256:5b8ec9c7f3c0ef0eff9846d6efcc78e9cc4d9ee4390217e8544755ded8a14120
+revision: sha256:dad59a7d08cb9afc9466bdc9e675d2d497d51f623b24a7b726c0cb01fd61cb2c
 reviewer: tui-architecture
-reviewed_at: 2026-07-26T14:45:40Z
+reviewed_at: 2026-07-27T12:11:32Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:eecbf750d6cbfcc42d7f038cdefddc7c82c7f3266edfe3308153d7740d8ad0fa
-request_hash: sha256:42df9d0324c75984b8167cb2f58cb59b3b1f275e409f8b1dcaccff4289f8a412
+projection_hash: sha256:75de2ce9552f84025f589786ea84a4a0165b7ce3d04a0abfe65f82a14a34ccb5
+request_hash: sha256:8e5d7f83a49cd3d7c950dcc8ad12bad2777696e0b57ec2aa81cf4bfb41006f09

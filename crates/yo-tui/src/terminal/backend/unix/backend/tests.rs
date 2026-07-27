@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use super::{UnixBackend, UnixBackendError, UnixMode};
 use crate::{
-    surface::{Size, Surface},
+    surface::{Point, Size, Surface},
     terminal::{
         backend::{
             TerminalBackend,
@@ -174,7 +174,7 @@ fn concrete_backend_connects_tty_capture_raw_entry_and_restoration() {
     );
 }
 
-// Inline recipe는 main screen을 유지하며 alternate-screen bytes를 전혀 쓰지 않는다.
+// Inline recipe는 main screen을 유지하고 cursor visibility 복구만 대칭 등록한다.
 #[test]
 fn inline_recipe_never_acquires_the_alternate_screen() {
     let mut backend = backend(RecordingWriter::default());
@@ -184,11 +184,25 @@ fn inline_recipe_never_acquires_the_alternate_screen() {
         .close()
         .unwrap();
 
-    assert!(backend.output.bytes.is_empty());
+    assert_eq!(backend.output.bytes, b"\x1b[?25h\x1b[?25h");
     assert_eq!(
         backend.tty.driver.applied,
         [TtyState { raw: true }, TtyState { raw: false }]
     );
+}
+
+// Inline session은 frame 출력 여부와 무관하게 종료 시 cursor-visible bytes를 다시 flush한다.
+#[test]
+fn inline_close_reasserts_cursor_visibility() {
+    let mut backend = backend(RecordingWriter::default());
+
+    enter_screen(&mut backend, ScreenMode::Inline)
+        .unwrap()
+        .close()
+        .unwrap();
+
+    assert!(backend.output.bytes.ends_with(b"\x1b[?25h"));
+    assert_eq!(backend.output.flushes, 2);
 }
 
 // Fullscreen recipe만 alternate screen을 획득하고 정상 종료에서 대칭적으로 해제한다.
@@ -212,11 +226,21 @@ fn inline_renderer_writes_through_the_active_session_backend() {
     let current = Surface::new(Size::new(2, 1)).unwrap();
 
     let mut session = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
-    render_inline(&mut session, &mut viewport, None, &current).unwrap();
+    render_inline(
+        &mut session,
+        &mut viewport,
+        None,
+        &current,
+        Point::new(0, 0),
+    )
+    .unwrap();
     session.close().unwrap();
 
     assert_eq!(
         backend.output.bytes,
-        b"\r\n\x1b[1A\x1b[1G\x1b[1G\x1b[0;39;49m  \x1b[1B\x1b[1G"
+        b"\x1b[?25h\
+          \x1b[?25l\r\n\x1b[1A\x1b[1G\x1b[1G\x1b[0;39;49m  \
+          \x1b[1G\x1b[?25h\
+          \x1b[?25h"
     );
 }
