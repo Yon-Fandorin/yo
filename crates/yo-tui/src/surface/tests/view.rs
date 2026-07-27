@@ -239,3 +239,45 @@ fn clear_preserves_crossing_footprints() {
     }
     assert_eq!(surface, before);
 }
+
+// subview 좌표는 부모 view 원점에 상대적이며 쓰기는 계산된 절대 영역에만 반영된다.
+#[test]
+fn nested_view_uses_parent_relative_coordinates() {
+    let mut surface = Surface::new(Size::new(6, 3)).unwrap();
+    {
+        let mut parent = surface
+            .view(Rect::new(Point::new(2, 1), Size::new(3, 2)))
+            .unwrap();
+        let mut child = parent
+            .subview(Rect::new(Point::new(1, 0), Size::new(2, 1)))
+            .unwrap();
+
+        assert_eq!(
+            child.write(Point::new(0, 0), Grapheme::try_from("A").unwrap(), style(3)),
+            WriteOutcome::Written
+        );
+    }
+
+    assert!(matches!(
+        surface.cell(Point::new(3, 1)).unwrap().content(),
+        CellContent::Grapheme { text, .. } if text.as_ref() == "A"
+    ));
+    assert_eq!(
+        surface.cell(Point::new(2, 1)).unwrap().content(),
+        &CellContent::Blank
+    );
+}
+
+// subview가 부모 범위를 넘으면 Surface를 빌려주지 않는다.
+#[test]
+fn nested_view_rejects_invalid_relative_geometry() {
+    let mut surface = Surface::new(Size::new(4, 1)).unwrap();
+    let mut parent = surface
+        .view(Rect::new(Point::new(2, 0), Size::new(1, 1)))
+        .unwrap();
+
+    assert!(matches!(
+        parent.subview(Rect::new(Point::new(1, 0), Size::new(1, 1))),
+        Err(super::super::GeometryError::OutOfBounds)
+    ));
+}

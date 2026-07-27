@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, num::NonZeroU16};
 
-use super::{Cell, CellContent, Grapheme, Point, Rect, Style, Surface};
+use super::{Cell, CellContent, GeometryError, Grapheme, Point, Rect, Style, Surface};
 
 /// Result of a bounded, atomic surface mutation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +40,25 @@ impl<'surface> SurfaceView<'surface> {
             self.surface.replace_by_index(index, Cell::blank(style));
         }
         WriteOutcome::Written
+    }
+
+    pub(crate) fn subview(&mut self, rect: Rect) -> Result<SurfaceView<'_>, GeometryError> {
+        if !rect.fits_within(self.rect.size)? {
+            return Err(GeometryError::OutOfBounds);
+        }
+        let origin = Point::new(
+            self.rect
+                .origin
+                .x
+                .checked_add(rect.origin.x)
+                .ok_or(GeometryError::Overflow)?,
+            self.rect
+                .origin
+                .y
+                .checked_add(rect.origin.y)
+                .ok_or(GeometryError::Overflow)?,
+        );
+        Ok(SurfaceView::new(self.surface, Rect::new(origin, rect.size)))
     }
 
     pub fn write(&mut self, point: Point, grapheme: Grapheme, style: Style) -> WriteOutcome {

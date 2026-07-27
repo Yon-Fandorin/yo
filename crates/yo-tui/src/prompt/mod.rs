@@ -25,6 +25,12 @@ pub(crate) struct PromptMeasure {
     pub(crate) desired_height: NonZeroU16,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedPrompt {
+    layout: crate::input::editor::layout::TextLayout,
+    width: NonZeroU16,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PromptMeasureError {
     ZeroWidth,
@@ -46,14 +52,29 @@ pub(crate) enum PromptRenderError {
     SurfaceConflict,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PromptPaintError {
+    WidthMismatch { prepared: u16, actual: u16 },
+    ZeroHeight,
+}
+
 pub(crate) fn measure(
     editor: &PromptEditor,
     width: u16,
 ) -> Result<PromptMeasure, PromptMeasureError> {
-    let layout = prompt_layout(editor, width)?;
+    let prepared = prepare(editor, width)?;
     Ok(PromptMeasure {
-        desired_height: layout.height,
+        desired_height: prepared.desired_height(),
     })
+}
+
+pub(crate) fn prepare(
+    editor: &PromptEditor,
+    width: u16,
+) -> Result<PreparedPrompt, PromptMeasureError> {
+    let width = NonZeroU16::new(width).ok_or(PromptMeasureError::ZeroWidth)?;
+    let layout = editor.layout(width).map_err(PromptMeasureError::Layout)?;
+    Ok(PreparedPrompt { layout, width })
 }
 
 pub(crate) fn render(
@@ -65,20 +86,50 @@ pub(crate) fn render(
     if view.size().width == 0 {
         return Err(PromptRenderError::ZeroWidth);
     }
-    let height = NonZeroU16::new(view.size().height).ok_or(PromptRenderError::ZeroHeight)?;
-    let layout = prompt_layout(editor, view.size().width).map_err(|error| match error {
+    NonZeroU16::new(view.size().height).ok_or(PromptRenderError::ZeroHeight)?;
+    let prepared = prepare(editor, view.size().width).map_err(|error| match error {
         PromptMeasureError::ZeroWidth => {
             unreachable!("the prompt view width was checked before layout")
         },
         PromptMeasureError::Layout(error) => PromptRenderError::Layout(error),
     })?;
-    let visible = VisibleRows::for_cursor(layout.height, layout.cursor.y, height, *state);
 
     if view.clear(style) == WriteOutcome::Clipped {
         return Err(PromptRenderError::SurfaceConflict);
     }
 
-    for positioned in layout
+    paint_prepared(prepared, view, style, state).map_err(|error| match error {
+        PromptPaintError::WidthMismatch { .. } => {
+            unreachable!("prompt render prepares against the target view width")
+        },
+        PromptPaintError::ZeroHeight => {
+            unreachable!("the prompt view height was checked before painting")
+        },
+    })
+}
+
+pub(crate) fn paint_prepared(
+    prepared: PreparedPrompt,
+    view: &mut SurfaceView<'_>,
+    style: Style,
+    state: &mut PromptViewState,
+) -> Result<PromptFrame, PromptPaintError> {
+    if view.size().width != prepared.width.get() {
+        return Err(PromptPaintError::WidthMismatch {
+            prepared: prepared.width.get(),
+            actual: view.size().width,
+        });
+    }
+    let height = NonZeroU16::new(view.size().height).ok_or(PromptPaintError::ZeroHeight)?;
+    let visible = VisibleRows::for_cursor(
+        prepared.layout.height,
+        prepared.layout.cursor.y,
+        height,
+        *state,
+    );
+
+    for positioned in prepared
+        .layout
         .glyphs
         .into_iter()
         .filter(|positioned| visible.contains(positioned.point.y))
@@ -92,18 +143,16 @@ pub(crate) fn render(
     state.set_first_visible_row(visible.first());
 
     Ok(PromptFrame {
-        cursor: visible.translate(layout.cursor),
-        content_height: layout.height,
+        cursor: visible.translate(prepared.layout.cursor),
+        content_height: prepared.layout.height,
         first_visible_row: visible.first(),
     })
 }
 
-fn prompt_layout(
-    editor: &PromptEditor,
-    width: u16,
-) -> Result<crate::input::editor::layout::TextLayout, PromptMeasureError> {
-    let width = NonZeroU16::new(width).ok_or(PromptMeasureError::ZeroWidth)?;
-    editor.layout(width).map_err(PromptMeasureError::Layout)
+impl PreparedPrompt {
+    pub(crate) const fn desired_height(&self) -> NonZeroU16 {
+        self.layout.height
+    }
 }
 
 #[cfg(test)]

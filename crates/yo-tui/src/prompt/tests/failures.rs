@@ -1,6 +1,7 @@
 use super::{PromptRenderError, PromptViewState, editor_with, prompt_style, render};
 use crate::{
     input::editor::{PromptEditor, layout::LayoutError},
+    prompt::{PromptPaintError, paint_prepared, prepare},
     surface::{Grapheme, Point, Rect, Size, Style, Surface, WriteOutcome},
 };
 
@@ -115,6 +116,34 @@ fn crossing_surface_footprint_preserves_surface_and_view_state() {
     };
 
     assert_eq!(error, PromptRenderError::SurfaceConflict);
+    assert_eq!(surface, before_surface);
+    assert_eq!(state, before_state);
+}
+
+// 준비 폭과 다른 view는 paint 전에 거절되어 화면과 스크롤 상태를 건드리지 않는다.
+#[test]
+fn prepared_width_mismatch_is_rejected_before_painting() {
+    let editor = editor_with("x");
+    let prepared = prepare(&editor, 1).unwrap();
+    let mut state = scrolled_state();
+    let mut surface = Surface::new(Size::new(2, 1)).unwrap();
+    let before_surface = surface.clone();
+    let before_state = state;
+
+    let error = {
+        let mut view = surface
+            .view(Rect::new(Point::new(0, 0), Size::new(2, 1)))
+            .unwrap();
+        paint_prepared(prepared, &mut view, prompt_style(), &mut state).unwrap_err()
+    };
+
+    assert_eq!(
+        error,
+        PromptPaintError::WidthMismatch {
+            prepared: 1,
+            actual: 2,
+        }
+    );
     assert_eq!(surface, before_surface);
     assert_eq!(state, before_state);
 }

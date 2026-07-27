@@ -15,8 +15,9 @@ mod layout;
 mod viewport;
 
 pub(crate) use layout::{
-    TranscriptLayoutConfig, TranscriptLayoutConfigError, TranscriptRenderError,
-    TranscriptRenderFrame, TranscriptStyles, render,
+    TranscriptLayoutConfig, TranscriptLayoutConfigError, TranscriptMeasure, TranscriptMeasureError,
+    TranscriptPaintError, TranscriptRenderError, TranscriptRenderFrame, TranscriptStyles, measure,
+    paint_prepared, prepare, render,
 };
 pub(crate) use viewport::{TranscriptScrollCommand, TranscriptViewMode, TranscriptViewState};
 

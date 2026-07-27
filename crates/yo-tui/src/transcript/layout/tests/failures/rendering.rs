@@ -7,6 +7,7 @@ use super::{
 use crate::{
     surface::{Grapheme, GraphemeError, Point, Rect, Size, Surface, WriteOutcome},
     text::flow::TextFlowError,
+    transcript::{TranscriptPaintError, paint_prepared, prepare},
 };
 
 // view 폭 전체가 들여쓰기에 소비되면 본문을 잃지 않고 렌더를 원자적으로 거절한다.
@@ -160,6 +161,37 @@ fn crossing_surface_footprint_preserves_surface_and_view_state() {
     };
 
     assert_eq!(error, TranscriptRenderError::SurfaceConflict);
+    assert_eq!(surface, before_surface);
+    assert_eq!(state, before_state);
+}
+
+// 준비 폭과 다른 view는 glyph 쓰기 전에 거절되어 Surface와 viewport 상태를 보존한다.
+#[test]
+fn prepared_width_mismatch_is_rejected_before_painting() {
+    let mut transcript = TranscriptState::new();
+    transcript
+        .push_user(id(1), "x".into())
+        .expect("unique user item");
+    let prepared = prepare(&transcript, 3, &TranscriptLayoutConfig::default()).unwrap();
+    let mut state = TranscriptViewState::default();
+    let mut surface = Surface::new(Size::new(4, 1)).unwrap();
+    let before_surface = surface.clone();
+    let before_state = state;
+
+    let error = {
+        let mut view = surface
+            .view(Rect::new(Point::new(0, 0), Size::new(4, 1)))
+            .unwrap();
+        paint_prepared(prepared, &mut view, styles(), &mut state, None).unwrap_err()
+    };
+
+    assert_eq!(
+        error,
+        TranscriptPaintError::WidthMismatch {
+            prepared: 3,
+            actual: 4,
+        }
+    );
     assert_eq!(surface, before_surface);
     assert_eq!(state, before_state);
 }

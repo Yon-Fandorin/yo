@@ -31,6 +31,26 @@ pub(crate) struct TranscriptRenderFrame {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct TranscriptMeasure {
+    pub(crate) content_height: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedTranscript {
+    layout: TranscriptLayout,
+    width: NonZeroU16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TranscriptMeasureError {
+    ZeroWidth,
+    InvalidConfig(TranscriptLayoutConfigError),
+    BodyWidthUnavailable,
+    Text(TextFlowError),
+    HeightOverflow,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TranscriptRenderError {
     ZeroWidth,
     ZeroHeight,
@@ -39,6 +59,12 @@ pub(crate) enum TranscriptRenderError {
     Text(TextFlowError),
     HeightOverflow,
     SurfaceConflict,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TranscriptPaintError {
+    WidthMismatch { prepared: u16, actual: u16 },
+    ZeroHeight,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,6 +88,30 @@ struct TranscriptLayout {
     height: u16,
 }
 
+pub(crate) fn measure(
+    transcript: &TranscriptState,
+    width: u16,
+    config: &TranscriptLayoutConfig,
+) -> Result<TranscriptMeasure, TranscriptMeasureError> {
+    let prepared = prepare(transcript, width, config)?;
+    Ok(TranscriptMeasure {
+        content_height: prepared.content_height(),
+    })
+}
+
+pub(crate) fn prepare(
+    transcript: &TranscriptState,
+    width: u16,
+    config: &TranscriptLayoutConfig,
+) -> Result<PreparedTranscript, TranscriptMeasureError> {
+    let width = NonZeroU16::new(width).ok_or(TranscriptMeasureError::ZeroWidth)?;
+    config
+        .validate_for_width(width.get())
+        .map_err(TranscriptMeasureError::InvalidConfig)?;
+    let layout = layout(transcript, width, config).map_err(measure_error)?;
+    Ok(PreparedTranscript { layout, width })
+}
+
 pub(crate) fn render(
     transcript: &TranscriptState,
     view: &mut SurfaceView<'_>,
@@ -72,18 +122,41 @@ pub(crate) fn render(
 ) -> Result<TranscriptRenderFrame, TranscriptRenderError> {
     let size = view.size();
     let width = NonZeroU16::new(size.width).ok_or(TranscriptRenderError::ZeroWidth)?;
-    let height = NonZeroU16::new(size.height).ok_or(TranscriptRenderError::ZeroHeight)?;
-    config
-        .validate_for_width(width.get())
-        .map_err(TranscriptRenderError::InvalidConfig)?;
-    let layout = layout(transcript, width, config)?;
-    let visible = VisibleRows::resolve(layout.height, height, *state, command);
+    NonZeroU16::new(size.height).ok_or(TranscriptRenderError::ZeroHeight)?;
+    let prepared = prepare(transcript, width.get(), config).map_err(render_error)?;
 
     if view.clear(styles.background) == WriteOutcome::Clipped {
         return Err(TranscriptRenderError::SurfaceConflict);
     }
 
-    for positioned in layout
+    paint_prepared(prepared, view, styles, state, command).map_err(|error| match error {
+        TranscriptPaintError::WidthMismatch { .. } => {
+            unreachable!("transcript render prepares against the target view width")
+        },
+        TranscriptPaintError::ZeroHeight => {
+            unreachable!("the transcript view height was checked before painting")
+        },
+    })
+}
+
+pub(crate) fn paint_prepared(
+    prepared: PreparedTranscript,
+    view: &mut SurfaceView<'_>,
+    styles: TranscriptStyles,
+    state: &mut TranscriptViewState,
+    command: Option<TranscriptScrollCommand>,
+) -> Result<TranscriptRenderFrame, TranscriptPaintError> {
+    if view.size().width != prepared.width.get() {
+        return Err(TranscriptPaintError::WidthMismatch {
+            prepared: prepared.width.get(),
+            actual: view.size().width,
+        });
+    }
+    let height = NonZeroU16::new(view.size().height).ok_or(TranscriptPaintError::ZeroHeight)?;
+    let visible = VisibleRows::resolve(prepared.layout.height, height, *state, command);
+
+    for positioned in prepared
+        .layout
         .glyphs
         .into_iter()
         .filter(|positioned| visible.contains(positioned.point.y))
@@ -97,9 +170,39 @@ pub(crate) fn render(
 
     *state = visible.next_state();
     Ok(TranscriptRenderFrame {
-        content_height: layout.height,
+        content_height: prepared.layout.height,
         first_visible_row: visible.first(),
     })
+}
+
+fn measure_error(error: TranscriptRenderError) -> TranscriptMeasureError {
+    match error {
+        TranscriptRenderError::InvalidConfig(error) => TranscriptMeasureError::InvalidConfig(error),
+        TranscriptRenderError::BodyWidthUnavailable => TranscriptMeasureError::BodyWidthUnavailable,
+        TranscriptRenderError::Text(error) => TranscriptMeasureError::Text(error),
+        TranscriptRenderError::HeightOverflow => TranscriptMeasureError::HeightOverflow,
+        TranscriptRenderError::ZeroWidth
+        | TranscriptRenderError::ZeroHeight
+        | TranscriptRenderError::SurfaceConflict => {
+            unreachable!("pure transcript layout does not return view or Surface failures")
+        },
+    }
+}
+
+fn render_error(error: TranscriptMeasureError) -> TranscriptRenderError {
+    match error {
+        TranscriptMeasureError::ZeroWidth => TranscriptRenderError::ZeroWidth,
+        TranscriptMeasureError::InvalidConfig(error) => TranscriptRenderError::InvalidConfig(error),
+        TranscriptMeasureError::BodyWidthUnavailable => TranscriptRenderError::BodyWidthUnavailable,
+        TranscriptMeasureError::Text(error) => TranscriptRenderError::Text(error),
+        TranscriptMeasureError::HeightOverflow => TranscriptRenderError::HeightOverflow,
+    }
+}
+
+impl PreparedTranscript {
+    pub(crate) const fn content_height(&self) -> u16 {
+        self.layout.height
+    }
 }
 
 impl TranscriptStyles {
