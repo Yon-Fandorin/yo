@@ -8,6 +8,7 @@
     )
 )]
 
+pub(crate) mod buffer;
 pub(crate) mod event;
 
 #[cfg(test)]
