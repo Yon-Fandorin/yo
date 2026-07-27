@@ -123,3 +123,15 @@ fn forward_deletion_normalizes_a_newly_merged_grapheme() {
     assert!(buffer.delete_backward());
     assert!(buffer.is_empty());
 }
+
+// 제출할 문자열은 복사하지 않고 꺼내며 버퍼와 커서는 초기 상태로 돌아간다.
+#[test]
+fn takes_owned_text_and_resets_the_buffer() {
+    let mut buffer = TextBuffer::new();
+    buffer.insert("질문");
+
+    assert_eq!(buffer.take().as_deref(), Some("질문"));
+    assert!(buffer.is_empty());
+    assert_eq!(buffer.cursor_byte_index(), 0);
+    assert_eq!(buffer.take(), None);
+}

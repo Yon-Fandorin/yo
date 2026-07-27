@@ -36,6 +36,15 @@ impl TextBuffer {
         true
     }
 
+    pub(crate) fn take(&mut self) -> Option<String> {
+        if self.text.is_empty() {
+            return None;
+        }
+
+        self.cursor = 0;
+        Some(std::mem::take(&mut self.text))
+    }
+
     pub(crate) fn insert(&mut self, text: &str) -> bool {
         if text.is_empty() {
             return false;

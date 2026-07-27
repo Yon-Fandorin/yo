@@ -120,7 +120,7 @@ fn repeats_edits_and_ignores_releases() {
     assert_eq!(editor.text(), "x");
 }
 
-// Alt 문자와 Enter는 아직 편집 계약이 아니므로 상위 계층에 그대로 돌려준다.
+// Alt 문자와 modifier가 추가된 Enter는 선택된 편집 계약이 아니므로 그대로 돌려준다.
 #[test]
 fn leaves_unselected_commands_unhandled() {
     let mut editor = PromptEditor::new();
@@ -151,10 +151,109 @@ fn leaves_unselected_commands_unhandled() {
         EditorEffect::Unhandled
     );
     assert_eq!(
-        editor.handle(press(KeyCode::Enter), false, NOW),
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::CONTROL, KeyAction::Press),
+            false,
+            NOW
+        ),
         EditorEffect::Unhandled
     );
     assert_eq!(editor.text(), "x");
+}
+
+// Enter는 현재 입력을 소유한 제출 효과로 넘기고 편집 버퍼를 비운다.
+#[test]
+fn enter_submits_owned_text_and_resets_the_editor() {
+    let mut editor = PromptEditor::new();
+    editor.handle(InputEvent::Paste("질문".into()), false, NOW);
+
+    assert_eq!(
+        editor.handle(press(KeyCode::Enter), false, NOW),
+        EditorEffect::Submitted("질문".into())
+    );
+    assert!(editor.text().is_empty());
+    assert_eq!(editor.cursor_byte_index(), 0);
+}
+
+// 빈 입력의 Enter는 빈 요청을 제출하지 않고 상태를 그대로 둔다.
+#[test]
+fn enter_does_not_submit_empty_text() {
+    let mut editor = PromptEditor::new();
+
+    assert_eq!(
+        editor.handle(press(KeyCode::Enter), false, NOW),
+        EditorEffect::NoChange
+    );
+    assert!(editor.text().is_empty());
+}
+
+// Shift+Enter는 제출하지 않고 편집 중인 문자열에 줄바꿈을 추가한다.
+#[test]
+fn shift_enter_inserts_a_newline() {
+    let mut editor = PromptEditor::new();
+    editor.handle(InputEvent::Paste("첫 줄".into()), false, NOW);
+
+    assert_eq!(
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::SHIFT, KeyAction::Press),
+            false,
+            NOW
+        ),
+        EditorEffect::BufferChanged
+    );
+    editor.handle(InputEvent::Paste("둘째 줄".into()), false, NOW);
+
+    assert_eq!(editor.text(), "첫 줄\n둘째 줄");
+}
+
+// Enter release는 무시하고 repeat 제출은 한 번만 일어나며 Shift+Enter repeat는 줄바꿈을 반복한다.
+#[test]
+fn enter_actions_preserve_release_and_repeat_semantics() {
+    let mut editor = PromptEditor::new();
+    editor.handle(InputEvent::Paste("질문".into()), false, NOW);
+
+    assert_eq!(
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::NONE, KeyAction::Release),
+            false,
+            NOW
+        ),
+        EditorEffect::Unhandled
+    );
+    assert_eq!(editor.text(), "질문");
+    assert_eq!(
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::NONE, KeyAction::Repeat),
+            false,
+            NOW
+        ),
+        EditorEffect::Submitted("질문".into())
+    );
+    assert_eq!(
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::NONE, KeyAction::Repeat),
+            false,
+            NOW
+        ),
+        EditorEffect::NoChange
+    );
+    assert_eq!(
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::SHIFT, KeyAction::Repeat),
+            false,
+            NOW
+        ),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::SHIFT, KeyAction::Repeat),
+            false,
+            NOW
+        ),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.text(), "\n\n");
 }
 
 // Ctrl+C/D 결과는 실제 프로세스 동작 없이 명시적인 요청으로 전달한다.

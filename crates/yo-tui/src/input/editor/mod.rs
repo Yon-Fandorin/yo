@@ -8,13 +8,14 @@ use super::{
     event::{InputEvent, KeyAction, KeyCode, KeyEvent, KeyModifiers},
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum EditorEffect {
     Unhandled,
     NoChange,
     BufferChanged,
     ExitArmed,
     InterruptTask,
+    Submitted(String),
     Exit,
 }
 
@@ -65,6 +66,20 @@ impl PromptEditor {
 
         if key.action == KeyAction::Release {
             return EditorEffect::Unhandled;
+        }
+
+        if key.code == KeyCode::Enter {
+            return match key.modifiers {
+                KeyModifiers::NONE => self
+                    .buffer
+                    .take()
+                    .map_or(EditorEffect::NoChange, EditorEffect::Submitted),
+                KeyModifiers::SHIFT => {
+                    self.buffer.insert("\n");
+                    EditorEffect::BufferChanged
+                },
+                _ => EditorEffect::Unhandled,
+            };
         }
 
         let changed = match key.code {
