@@ -174,7 +174,7 @@ fn attempt_cleanup<M, E>(
     }
 }
 
-fn panic_message(payload: Box<dyn Any + Send>) -> String {
+pub(super) fn panic_message(payload: Box<dyn Any + Send>) -> String {
     match payload.downcast::<String>() {
         Ok(message) => *message,
         Err(payload) => match payload.downcast::<&'static str>() {

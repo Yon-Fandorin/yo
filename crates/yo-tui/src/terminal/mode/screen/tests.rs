@@ -30,6 +30,7 @@ enum Event {
 enum ClearBehavior {
     Succeed,
     Fail,
+    Panic,
 }
 
 struct RecordingWriter {
@@ -46,6 +47,7 @@ impl Write for RecordingWriter {
                 ClearBehavior::Fail => {
                     return Err(io::Error::new(io::ErrorKind::BrokenPipe, "clear"));
                 },
+                ClearBehavior::Panic => panic!("viewport clear panic"),
             }
         }
         Ok(bytes.len())
@@ -186,4 +188,29 @@ fn viewport_and_terminal_failures_are_both_retained() {
         terminal.failures[0].cause,
         crate::terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
     );
+}
+
+// viewport clear panic과 TTY 복구 오류가 함께 발생해도 둘 다 보존한다.
+#[test]
+fn viewport_panic_and_terminal_failure_are_both_retained() {
+    let mut backend = backend(ClearBehavior::Panic, true);
+    let events = Rc::clone(&backend.events);
+    let mut viewport = InlineViewport::default();
+    let session = rendered_session(&mut backend, &mut viewport);
+
+    let report = close_inline(session, &mut viewport);
+
+    assert!(matches!(
+        report.viewport,
+        Err(crate::terminal::mode::transaction::CleanupFailureCause::Panicked(
+            ref message
+        )) if message == "viewport clear panic"
+    ));
+    let terminal = report.terminal.unwrap_err();
+    assert_eq!(terminal.failures.len(), 1);
+    assert_eq!(
+        terminal.failures[0].cause,
+        crate::terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
+    );
+    assert!(events.borrow().contains(&Event::RestoreTty));
 }

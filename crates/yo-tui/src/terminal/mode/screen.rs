@@ -1,8 +1,13 @@
-use std::iter;
+use std::{
+    iter,
+    panic::{AssertUnwindSafe, catch_unwind},
+};
 
 use super::{
     inline::{InlineRenderError, InlineRenderer, InlineRestoreOutcome, InlineViewport},
-    transaction::{CleanupFailures, SessionFailure, TerminalSession},
+    transaction::{
+        CleanupFailureCause, CleanupFailures, SessionFailure, TerminalSession, panic_message,
+    },
 };
 use crate::{
     surface::Surface,
@@ -52,7 +57,7 @@ where
 
 #[derive(Debug)]
 pub(crate) struct InlineCloseReport<M, E> {
-    pub(crate) viewport: Result<InlineRestoreOutcome, InlineRenderError>,
+    pub(crate) viewport: Result<InlineRestoreOutcome, CleanupFailureCause<InlineRenderError>>,
     pub(crate) terminal: Result<(), CleanupFailures<M, E>>,
 }
 
@@ -63,8 +68,14 @@ pub(crate) fn close_inline<B>(
 where
     B: TerminalOutputBackend,
 {
-    let pending = viewport.begin_restore();
-    let viewport = InlineRenderer::new(session.output()).restore(pending);
+    let viewport = match catch_unwind(AssertUnwindSafe(|| {
+        let pending = viewport.begin_restore();
+        InlineRenderer::new(session.output()).restore(pending)
+    })) {
+        Ok(Ok(outcome)) => Ok(outcome),
+        Ok(Err(error)) => Err(CleanupFailureCause::Error(error)),
+        Err(payload) => Err(CleanupFailureCause::Panicked(panic_message(payload))),
+    };
     let terminal = session.close();
 
     InlineCloseReport { viewport, terminal }
