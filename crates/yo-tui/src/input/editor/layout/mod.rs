@@ -6,6 +6,10 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::surface::{Grapheme, GraphemeError, Point};
 
+mod display;
+
+use display::{control_notation, tab_spaces};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PositionedGrapheme {
     pub(crate) point: Point,
@@ -57,31 +61,60 @@ pub(crate) fn layout_text(
             continue;
         }
 
+        if text == "\t" {
+            if x == width {
+                x = 0;
+                y = y.checked_add(1).ok_or(LayoutError::HeightOverflow)?;
+            }
+            let spaces = tab_spaces(x);
+            for offset in 0..spaces {
+                place_grapheme(
+                    Grapheme::try_from(" ").expect("ASCII space is renderable"),
+                    byte_index,
+                    cursor,
+                    offset == 0,
+                    width,
+                    &mut x,
+                    &mut y,
+                    &mut cursor_point,
+                    &mut glyphs,
+                )?;
+            }
+            continue;
+        }
+
+        if let Some(notation) = control_notation(text) {
+            for (offset, character) in notation.chars().enumerate() {
+                let mut encoded = [0; 4];
+                let character = character.encode_utf8(&mut encoded);
+                place_grapheme(
+                    Grapheme::try_from(&*character).expect("ASCII control notation is renderable"),
+                    byte_index,
+                    cursor,
+                    offset == 0,
+                    width,
+                    &mut x,
+                    &mut y,
+                    &mut cursor_point,
+                    &mut glyphs,
+                )?;
+            }
+            continue;
+        }
+
         let grapheme = Grapheme::try_from(text)
             .map_err(|cause| LayoutError::UnrenderableGrapheme { byte_index, cause })?;
-        let grapheme_width = grapheme.width();
-        if grapheme_width.get() > width {
-            return Err(LayoutError::GraphemeTooWide {
-                byte_index,
-                width: grapheme_width,
-            });
-        }
-
-        if x.checked_add(grapheme_width.get())
-            .is_none_or(|end| end > width)
-        {
-            x = 0;
-            y = y.checked_add(1).ok_or(LayoutError::HeightOverflow)?;
-        }
-        if byte_index == cursor {
-            cursor_point = Some(Point::new(x, y));
-        }
-
-        glyphs.push(PositionedGrapheme {
-            point: Point::new(x, y),
+        place_grapheme(
             grapheme,
-        });
-        x += grapheme_width.get();
+            byte_index,
+            cursor,
+            true,
+            width,
+            &mut x,
+            &mut y,
+            &mut cursor_point,
+            &mut glyphs,
+        )?;
     }
 
     let cursor = match cursor_point {
@@ -99,6 +132,47 @@ pub(crate) fn layout_text(
         cursor,
         height,
     })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the helper advances one explicit layout cursor and output"
+)]
+fn place_grapheme(
+    grapheme: Grapheme,
+    byte_index: usize,
+    source_cursor: usize,
+    marks_source_start: bool,
+    width: u16,
+    x: &mut u16,
+    y: &mut u16,
+    cursor: &mut Option<Point>,
+    glyphs: &mut Vec<PositionedGrapheme>,
+) -> Result<(), LayoutError> {
+    let grapheme_width = grapheme.width();
+    if grapheme_width.get() > width {
+        return Err(LayoutError::GraphemeTooWide {
+            byte_index,
+            width: grapheme_width,
+        });
+    }
+
+    if x.checked_add(grapheme_width.get())
+        .is_none_or(|end| end > width)
+    {
+        *x = 0;
+        *y = y.checked_add(1).ok_or(LayoutError::HeightOverflow)?;
+    }
+    if marks_source_start && byte_index == source_cursor {
+        *cursor = Some(Point::new(*x, *y));
+    }
+
+    glyphs.push(PositionedGrapheme {
+        point: Point::new(*x, *y),
+        grapheme,
+    });
+    *x += grapheme_width.get();
+    Ok(())
 }
 
 fn validate_cursor(text: &str, cursor: usize) -> Result<(), LayoutError> {

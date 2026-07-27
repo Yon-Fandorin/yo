@@ -116,10 +116,10 @@ fn zero_width_does_not_mutate_the_surface() {
     assert_eq!(surface, before);
 }
 
-// 표시 정책이 없는 control 입력은 layout 오류를 보존하고 Surface를 부분 변경하지 않는다.
+// 표시 정책이 없는 zero-width 입력은 layout 오류를 보존하고 Surface를 부분 변경하지 않는다.
 #[test]
 fn layout_failure_does_not_mutate_the_surface() {
-    let editor = editor_with("\t");
+    let editor = editor_with("\u{301}");
     let size = Size::new(4, 1);
     let mut surface = Surface::new(size).unwrap();
     let before = surface.clone();
@@ -133,7 +133,7 @@ fn layout_failure_does_not_mutate_the_surface() {
         error,
         PromptRenderError::Layout(LayoutError::UnrenderableGrapheme {
             byte_index: 0,
-            cause: crate::surface::GraphemeError::Control
+            cause: crate::surface::GraphemeError::ZeroWidth
         })
     );
     assert_eq!(surface, before);
