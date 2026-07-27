@@ -2,6 +2,10 @@
 
 use std::time::Duration;
 
+pub(crate) mod binding;
+
+use binding::NewlineBinding;
+
 use super::{
     buffer::TextBuffer,
     control::{ControlEffect, ControlKeyPolicy},
@@ -23,11 +27,19 @@ pub(crate) enum EditorEffect {
 pub(crate) struct PromptEditor {
     buffer: TextBuffer,
     control: ControlKeyPolicy,
+    newline_binding: NewlineBinding,
 }
 
 impl PromptEditor {
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn with_newline_binding(newline_binding: NewlineBinding) -> Self {
+        Self {
+            newline_binding,
+            ..Self::default()
+        }
     }
 
     pub(crate) fn text(&self) -> &str {
@@ -69,16 +81,15 @@ impl PromptEditor {
         }
 
         if key.code == KeyCode::Enter {
-            return match key.modifiers {
-                KeyModifiers::NONE => self
-                    .buffer
+            return if key.modifiers == KeyModifiers::NONE {
+                self.buffer
                     .take()
-                    .map_or(EditorEffect::NoChange, EditorEffect::Submitted),
-                KeyModifiers::SHIFT => {
-                    self.buffer.insert("\n");
-                    EditorEffect::BufferChanged
-                },
-                _ => EditorEffect::Unhandled,
+                    .map_or(EditorEffect::NoChange, EditorEffect::Submitted)
+            } else if self.newline_binding.matches(key.modifiers) {
+                self.buffer.insert("\n");
+                EditorEffect::BufferChanged
+            } else {
+                EditorEffect::Unhandled
             };
         }
 

@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use super::{EditorEffect, PromptEditor};
+use super::{
+    EditorEffect, PromptEditor,
+    binding::{NewlineBinding, NewlineBindingError},
+};
 use crate::{
     input::event::{InputEvent, KeyAction, KeyCode, KeyEvent, KeyModifiers, KeyState},
     surface::Size,
@@ -254,6 +257,41 @@ fn enter_actions_preserve_release_and_repeat_semantics() {
         EditorEffect::BufferChanged
     );
     assert_eq!(editor.text(), "\n\n");
+}
+
+// 줄바꿈 modifier는 내부 바인딩으로 교체할 수 있고 기본 Shift는 더 이상 가로채지 않는다.
+#[test]
+fn custom_newline_binding_replaces_shift() {
+    let binding = NewlineBinding::new(KeyModifiers::ALT).unwrap();
+    let mut editor = PromptEditor::with_newline_binding(binding);
+    editor.handle(InputEvent::Paste("첫 줄".into()), false, NOW);
+
+    assert_eq!(
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::SHIFT, KeyAction::Press),
+            false,
+            NOW
+        ),
+        EditorEffect::Unhandled
+    );
+    assert_eq!(
+        editor.handle(
+            key(KeyCode::Enter, KeyModifiers::ALT, KeyAction::Press),
+            false,
+            NOW
+        ),
+        EditorEffect::BufferChanged
+    );
+    assert_eq!(editor.text(), "첫 줄\n");
+}
+
+// modifier 없는 Enter는 제출 전용이므로 줄바꿈 바인딩으로 설정할 수 없다.
+#[test]
+fn newline_binding_cannot_replace_plain_enter_submission() {
+    assert_eq!(
+        NewlineBinding::new(KeyModifiers::NONE),
+        Err(NewlineBindingError::ConflictsWithSubmit)
+    );
 }
 
 // Ctrl+C/D 결과는 실제 프로세스 동작 없이 명시적인 요청으로 전달한다.
