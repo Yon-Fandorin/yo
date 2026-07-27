@@ -8,6 +8,7 @@ use std::{
     rc::Rc,
     sync::{Mutex, MutexGuard, TryLockError},
     thread::{self, ThreadId},
+    time::Duration,
 };
 
 use crossterm::event::{
@@ -52,6 +53,7 @@ pub(super) enum EventSourceAcquireFailure {
 pub(super) trait EventSource {
     type Error;
 
+    fn poll(&mut self, timeout: Duration) -> Result<bool, Self::Error>;
     fn read(&mut self) -> Result<Event, Self::Error>;
 }
 
@@ -65,6 +67,21 @@ where
 {
     pub(super) fn new(source: S) -> Self {
         Self { source }
+    }
+
+    pub(super) fn poll(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<Option<InputEvent>, InputReadFailure<S::Error>> {
+        if !self
+            .source
+            .poll(timeout)
+            .map_err(InputReadFailure::Source)?
+        {
+            return Ok(None);
+        }
+
+        self.read().map(Some)
     }
 
     pub(super) fn read(&mut self) -> Result<InputEvent, InputReadFailure<S::Error>> {
@@ -106,6 +123,10 @@ impl CrosstermEventSource {
 
 impl EventSource for CrosstermEventSource {
     type Error = std::io::Error;
+
+    fn poll(&mut self, timeout: Duration) -> Result<bool, Self::Error> {
+        crossterm::event::poll(timeout)
+    }
 
     fn read(&mut self) -> Result<Event, Self::Error> {
         crossterm::event::read()

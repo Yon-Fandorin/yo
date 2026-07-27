@@ -15,7 +15,9 @@ use rustix::{
 };
 
 mod backend;
+mod event;
 mod input;
+mod signal;
 
 pub(super) trait TermiosDriver {
     type State: Clone;

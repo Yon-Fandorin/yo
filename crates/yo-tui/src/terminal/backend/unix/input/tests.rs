@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, time::Duration};
 
 use crossterm::event::{
     Event, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyEventKind, KeyEventState,
@@ -279,6 +279,10 @@ struct RecordingSource {
 
 impl EventSource for RecordingSource {
     type Error = &'static str;
+
+    fn poll(&mut self, _timeout: Duration) -> Result<bool, Self::Error> {
+        Ok(!self.events.is_empty())
+    }
 
     fn read(&mut self) -> Result<Event, Self::Error> {
         self.events.pop_front().unwrap()
