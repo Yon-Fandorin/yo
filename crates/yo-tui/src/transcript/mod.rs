@@ -4,11 +4,21 @@
     not(test),
     expect(
         dead_code,
+        unused_imports,
         reason = "transcript state lands before its layout and shell consumers"
     )
 )]
 
 use std::collections::HashMap;
+
+mod layout;
+mod viewport;
+
+pub(crate) use layout::{
+    TranscriptLayoutConfig, TranscriptLayoutConfigError, TranscriptRenderError,
+    TranscriptRenderFrame, TranscriptStyles, render,
+};
+pub(crate) use viewport::{TranscriptScrollCommand, TranscriptViewMode, TranscriptViewState};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TranscriptItemId(u64);
