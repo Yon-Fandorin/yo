@@ -4,6 +4,7 @@ use std::{
 };
 
 use super::{
+    fullscreen::{FullscreenRenderError, FullscreenRenderer, FullscreenViewport},
     inline::{InlineRenderError, InlineRenderer, InlineRestoreOutcome, InlineViewport},
     panic_route::{PanicOutcome, PanicPayload, PanicRouteError, catch_owner_panic},
     transaction::{
@@ -11,7 +12,7 @@ use super::{
     },
 };
 use crate::{
-    surface::Surface,
+    surface::{Point, Surface},
     terminal::backend::{ScreenModeBackend, TerminalBackend, TerminalOutputBackend},
 };
 
@@ -49,11 +50,35 @@ pub(crate) fn render_inline<B>(
     current: &Surface,
 ) -> Result<(), InlineRenderError>
 where
-    B: TerminalOutputBackend,
+    B: ScreenModeBackend + TerminalOutputBackend,
+    B::Mode: PartialEq,
 {
+    if session.owns_mode(B::alternate_screen_mode()) {
+        return Err(InlineRenderError::AlternateScreenOwned);
+    }
     let pending = viewport.begin_frame(current.size());
     let mut renderer = InlineRenderer::new(session.output());
     renderer.render(pending, previous, current)
+}
+
+pub(crate) fn render_fullscreen<B>(
+    session: &mut TerminalSession<'_, B>,
+    viewport: &mut FullscreenViewport,
+    previous: Option<&Surface>,
+    current: &Surface,
+    cursor: Point,
+) -> Result<(), FullscreenRenderError>
+where
+    B: ScreenModeBackend + TerminalOutputBackend,
+    B::Mode: PartialEq,
+{
+    if !session.owns_mode(B::alternate_screen_mode()) {
+        return Err(FullscreenRenderError::AlternateScreenNotOwned);
+    }
+    let pending = viewport
+        .begin_frame(current.size(), cursor)
+        .map_err(FullscreenRenderError::Frame)?;
+    FullscreenRenderer::new(session.output()).render(pending, previous, current)
 }
 
 #[derive(Debug)]

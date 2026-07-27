@@ -106,6 +106,13 @@ where
         }
     }
 
+    pub(crate) fn owns_mode(&self, mode: B::Mode) -> bool
+    where
+        B::Mode: PartialEq,
+    {
+        self.acquired_modes.contains(&mode)
+    }
+
     fn restore(&mut self) -> Vec<CleanupFailure<B::Mode, B::Error>> {
         let modes = mem::take(&mut self.acquired_modes);
         let tty_state = self.tty_state.take();

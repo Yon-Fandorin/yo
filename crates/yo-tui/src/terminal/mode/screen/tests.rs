@@ -5,15 +5,16 @@ use std::{
 };
 
 use super::{
-    ScreenMode, close_inline, enter_screen, render_inline, run_fullscreen_boundary,
-    run_inline_boundary,
+    ScreenMode, close_inline, enter_screen, render_fullscreen, render_inline,
+    run_fullscreen_boundary, run_inline_boundary,
 };
 use crate::{
-    surface::{Size, Surface},
+    surface::{Point, Size, Surface},
     terminal::{
         backend::{ScreenModeBackend, TerminalBackend, TerminalOutputBackend},
         mode::{
-            inline::{InlineRestoreOutcome, InlineViewport},
+            fullscreen::{FullscreenRenderError, FullscreenViewport},
+            inline::{InlineRenderError, InlineRestoreOutcome, InlineViewport},
             panic_route::PANIC_ROUTE_TEST_OWNER,
         },
     },
@@ -146,6 +147,64 @@ fn rendered_session<'backend>(
     let current = Surface::new(Size::new(1, 1)).unwrap();
     render_inline(&mut session, viewport, None, &current).unwrap();
     session
+}
+
+// active Fullscreen session의 writer만 빌려 frame과 shell cursor를 출력한다.
+#[test]
+fn fullscreen_renderer_writes_through_the_active_session() {
+    let mut backend = backend(ClearBehavior::Succeed, false);
+    let mut session = enter_screen(&mut backend, ScreenMode::Fullscreen).unwrap();
+    let current = Surface::new(Size::new(1, 1)).unwrap();
+    let mut viewport = FullscreenViewport::default();
+
+    render_fullscreen(
+        &mut session,
+        &mut viewport,
+        None,
+        &current,
+        Point::new(0, 0),
+    )
+    .unwrap();
+
+    assert!(session.close().is_ok());
+}
+
+// Fullscreen renderer는 alternate screen을 소유하지 않은 Inline session에 출력하지 않는다.
+#[test]
+fn fullscreen_renderer_rejects_an_inline_session() {
+    let mut backend = backend(ClearBehavior::Succeed, false);
+    let mut session = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
+    let current = Surface::new(Size::new(1, 1)).unwrap();
+    let mut viewport = FullscreenViewport::default();
+
+    let error = render_fullscreen(
+        &mut session,
+        &mut viewport,
+        None,
+        &current,
+        Point::new(0, 0),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        FullscreenRenderError::AlternateScreenNotOwned
+    ));
+    assert!(session.close().is_ok());
+}
+
+// Inline renderer는 alternate screen을 소유한 Fullscreen session의 화면을 수정하지 않는다.
+#[test]
+fn inline_renderer_rejects_a_fullscreen_session() {
+    let mut backend = backend(ClearBehavior::Succeed, false);
+    let mut session = enter_screen(&mut backend, ScreenMode::Fullscreen).unwrap();
+    let current = Surface::new(Size::new(1, 1)).unwrap();
+    let mut viewport = InlineViewport::default();
+
+    let error = render_inline(&mut session, &mut viewport, None, &current).unwrap_err();
+
+    assert!(matches!(error, InlineRenderError::AlternateScreenOwned));
+    assert!(session.close().is_ok());
 }
 
 // 정상 outer close는 Inline viewport를 먼저 지운 뒤 마지막에 TTY를 복구한다.

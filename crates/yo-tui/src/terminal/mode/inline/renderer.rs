@@ -12,6 +12,7 @@ use crate::{
 
 #[derive(Debug)]
 pub(crate) enum InlineRenderError {
+    AlternateScreenOwned,
     Frame(InlineFrameError),
     Output(io::Error),
 }
@@ -19,6 +20,9 @@ pub(crate) enum InlineRenderError {
 impl fmt::Display for InlineRenderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::AlternateScreenOwned => {
+                formatter.write_str("inline rendering requires the main screen")
+            },
             Self::Frame(error) => write!(formatter, "inline frame is inconsistent: {error}"),
             Self::Output(_) => formatter.write_str("writing the inline viewport failed"),
         }
@@ -28,6 +32,7 @@ impl fmt::Display for InlineRenderError {
 impl Error for InlineRenderError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::AlternateScreenOwned => None,
             Self::Frame(error) => Some(error),
             Self::Output(error) => Some(error),
         }
