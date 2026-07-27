@@ -9,6 +9,7 @@
 )]
 
 pub(crate) mod inline;
+pub(crate) mod panic_route;
 pub(crate) mod screen;
 mod transaction;
 
