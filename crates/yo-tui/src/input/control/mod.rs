@@ -53,6 +53,10 @@ impl ControlKeyPolicy {
         ControlEffect::Unhandled
     }
 
+    pub(crate) fn cancel_exit_sequence(&mut self) {
+        self.empty_ctrl_c_at = None;
+    }
+
     fn handle_ctrl_c(
         &mut self,
         action: KeyAction,

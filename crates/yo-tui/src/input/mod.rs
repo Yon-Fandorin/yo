@@ -10,6 +10,7 @@
 
 pub(crate) mod buffer;
 pub(crate) mod control;
+pub(crate) mod editor;
 pub(crate) mod event;
 
 #[cfg(test)]
