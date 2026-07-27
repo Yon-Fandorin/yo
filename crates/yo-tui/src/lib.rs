@@ -6,3 +6,4 @@ pub(crate) mod layout;
 pub(crate) mod prompt;
 pub mod surface;
 pub mod terminal;
+pub(crate) mod transcript;
