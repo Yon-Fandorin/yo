@@ -26,6 +26,16 @@ impl TextBuffer {
         self.text.is_empty()
     }
 
+    pub(crate) fn clear(&mut self) -> bool {
+        if self.text.is_empty() {
+            return false;
+        }
+
+        self.text.clear();
+        self.cursor = 0;
+        true
+    }
+
     pub(crate) fn insert(&mut self, text: &str) -> bool {
         if text.is_empty() {
             return false;
