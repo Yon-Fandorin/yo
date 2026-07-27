@@ -20,7 +20,7 @@ fn scrolled_state() -> PromptViewState {
 // 폭이 0인 view는 layout을 시도하거나 Surface와 스크롤 상태를 바꾸지 않는다.
 #[test]
 fn zero_width_preserves_surface_and_view_state() {
-    let editor = PromptEditor::new();
+    let editor = editor_with("\u{301}");
     let mut state = scrolled_state();
     let mut surface = Surface::new(Size::new(1, 1)).unwrap();
     let before_surface = surface.clone();
@@ -41,7 +41,7 @@ fn zero_width_preserves_surface_and_view_state() {
 // 높이가 0인 view는 layout을 시도하거나 Surface와 스크롤 상태를 바꾸지 않는다.
 #[test]
 fn zero_height_preserves_surface_and_view_state() {
-    let editor = PromptEditor::new();
+    let editor = editor_with("\u{301}");
     let mut state = scrolled_state();
     let mut surface = Surface::new(Size::new(1, 1)).unwrap();
     let before_surface = surface.clone();

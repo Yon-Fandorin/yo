@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{PromptFrame, PromptRenderError, PromptViewState, render};
+use super::{PromptFrame, PromptRenderError, PromptViewState, measure, render};
 use crate::{
     input::{
         editor::{EditorEffect, PromptEditor},
@@ -10,6 +10,7 @@ use crate::{
 };
 
 mod failures;
+mod measurement;
 mod scrolling;
 
 fn editor_with(text: &str) -> PromptEditor {
@@ -70,6 +71,7 @@ fn projects_prompt_content_and_cursor() {
     let size = Size::new(4, 3);
     let mut state = PromptViewState::default();
     let mut surface = Surface::new(size).unwrap();
+    let measurement = measure(&editor, size.width).unwrap();
     let frame = {
         let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
         render(&editor, &mut view, style, &mut state).unwrap()
@@ -83,6 +85,7 @@ fn projects_prompt_content_and_cursor() {
             first_visible_row: 0,
         }
     );
+    assert_eq!(frame.content_height, measurement.desired_height);
     assert!(matches!(
         surface.cell(Point::new(0, 0)).unwrap().content(),
         CellContent::Grapheme { text, .. } if text.as_ref() == "A"

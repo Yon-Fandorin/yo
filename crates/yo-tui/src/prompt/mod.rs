@@ -21,6 +21,17 @@ pub(crate) use viewport::PromptViewState;
 use viewport::VisibleRows;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PromptMeasure {
+    pub(crate) desired_height: NonZeroU16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PromptMeasureError {
+    ZeroWidth,
+    Layout(LayoutError),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PromptFrame {
     pub(crate) cursor: Point,
     pub(crate) content_height: NonZeroU16,
@@ -35,15 +46,32 @@ pub(crate) enum PromptRenderError {
     SurfaceConflict,
 }
 
+pub(crate) fn measure(
+    editor: &PromptEditor,
+    width: u16,
+) -> Result<PromptMeasure, PromptMeasureError> {
+    let layout = prompt_layout(editor, width)?;
+    Ok(PromptMeasure {
+        desired_height: layout.height,
+    })
+}
+
 pub(crate) fn render(
     editor: &PromptEditor,
     view: &mut SurfaceView<'_>,
     style: Style,
     state: &mut PromptViewState,
 ) -> Result<PromptFrame, PromptRenderError> {
-    let width = NonZeroU16::new(view.size().width).ok_or(PromptRenderError::ZeroWidth)?;
+    if view.size().width == 0 {
+        return Err(PromptRenderError::ZeroWidth);
+    }
     let height = NonZeroU16::new(view.size().height).ok_or(PromptRenderError::ZeroHeight)?;
-    let layout = editor.layout(width).map_err(PromptRenderError::Layout)?;
+    let layout = prompt_layout(editor, view.size().width).map_err(|error| match error {
+        PromptMeasureError::ZeroWidth => {
+            unreachable!("the prompt view width was checked before layout")
+        },
+        PromptMeasureError::Layout(error) => PromptRenderError::Layout(error),
+    })?;
     let visible = VisibleRows::for_cursor(layout.height, layout.cursor.y, height, *state);
 
     if view.clear(style) == WriteOutcome::Clipped {
@@ -68,6 +96,14 @@ pub(crate) fn render(
         content_height: layout.height,
         first_visible_row: visible.first(),
     })
+}
+
+fn prompt_layout(
+    editor: &PromptEditor,
+    width: u16,
+) -> Result<crate::input::editor::layout::TextLayout, PromptMeasureError> {
+    let width = NonZeroU16::new(width).ok_or(PromptMeasureError::ZeroWidth)?;
+    editor.layout(width).map_err(PromptMeasureError::Layout)
 }
 
 #[cfg(test)]
