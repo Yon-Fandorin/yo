@@ -14,9 +14,12 @@ use std::{
 };
 
 type PanicHook = dyn Fn(&PanicHookInfo<'_>) + Send + Sync + 'static;
-type PanicPayload = Box<dyn Any + Send + 'static>;
+pub(crate) type PanicPayload = Box<dyn Any + Send + 'static>;
 
 static PANIC_HOOK_OWNER: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+pub(crate) static PANIC_ROUTE_TEST_OWNER: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PanicDiagnostic {

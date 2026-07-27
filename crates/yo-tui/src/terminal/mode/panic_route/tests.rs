@@ -1,17 +1,16 @@
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
-        Arc, Barrier, Mutex,
+        Arc, Barrier,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
 };
 
 use super::{
-    PanicDiagnostic, PanicHook, PanicLocation, PanicOutcome, PanicRouteError, catch_owner_panic,
+    PANIC_ROUTE_TEST_OWNER, PanicDiagnostic, PanicHook, PanicLocation, PanicOutcome,
+    PanicRouteError, catch_owner_panic,
 };
-
-static TEST_HOOK_OWNER: Mutex<()> = Mutex::new(());
 
 // terminal을 소유한 현재 thread의 첫 panic만 owned metadata로 보관한다.
 #[test]
@@ -140,7 +139,7 @@ fn retained_diagnostic_has_a_stable_owned_projection() {
 }
 
 fn lock_test_hook() -> std::sync::MutexGuard<'static, ()> {
-    TEST_HOOK_OWNER
+    PANIC_ROUTE_TEST_OWNER
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }

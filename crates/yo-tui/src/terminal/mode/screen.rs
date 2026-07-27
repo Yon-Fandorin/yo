@@ -5,6 +5,7 @@ use std::{
 
 use super::{
     inline::{InlineRenderError, InlineRenderer, InlineRestoreOutcome, InlineViewport},
+    panic_route::{PanicOutcome, PanicPayload, PanicRouteError, catch_owner_panic},
     transaction::{
         CleanupFailureCause, CleanupFailures, SessionFailure, TerminalSession, panic_message,
     },
@@ -59,6 +60,32 @@ where
 pub(crate) struct InlineCloseReport<M, E> {
     pub(crate) viewport: Result<InlineRestoreOutcome, CleanupFailureCause<InlineRenderError>>,
     pub(crate) terminal: Result<(), CleanupFailures<M, E>>,
+}
+
+pub(crate) struct InlineRunReport<T, M, E> {
+    pub(crate) operation: Result<T, PanicPayload>,
+    pub(crate) cleanup: InlineCloseReport<M, E>,
+}
+
+type InlineBoundaryResult<B, T> = Result<
+    PanicOutcome<InlineRunReport<T, <B as TerminalBackend>::Mode, <B as TerminalBackend>::Error>>,
+    PanicRouteError,
+>;
+
+pub(crate) fn run_inline_boundary<B, T>(
+    mut session: TerminalSession<'_, B>,
+    viewport: &mut InlineViewport,
+    operation: impl FnOnce(&mut TerminalSession<'_, B>, &mut InlineViewport) -> T,
+) -> InlineBoundaryResult<B, T>
+where
+    B: TerminalOutputBackend,
+{
+    catch_owner_panic(AssertUnwindSafe(|| {
+        let operation = catch_unwind(AssertUnwindSafe(|| operation(&mut session, viewport)));
+        let cleanup = close_inline(session, viewport);
+
+        InlineRunReport { operation, cleanup }
+    }))
 }
 
 pub(crate) fn close_inline<B>(

@@ -4,12 +4,15 @@ use std::{
     rc::Rc,
 };
 
-use super::{ScreenMode, close_inline, enter_screen, render_inline};
+use super::{ScreenMode, close_inline, enter_screen, render_inline, run_inline_boundary};
 use crate::{
     surface::{Size, Surface},
     terminal::{
         backend::{ScreenModeBackend, TerminalBackend, TerminalOutputBackend},
-        mode::inline::{InlineRestoreOutcome, InlineViewport},
+        mode::{
+            inline::{InlineRestoreOutcome, InlineViewport},
+            panic_route::PANIC_ROUTE_TEST_OWNER,
+        },
     },
 };
 
@@ -22,6 +25,7 @@ enum Mode {
 enum Event {
     CaptureTty,
     EnableRaw,
+    OperationPanic,
     ClearViewport,
     RestoreTty,
 }
@@ -213,4 +217,77 @@ fn viewport_panic_and_terminal_failure_are_both_retained() {
         crate::terminal::mode::transaction::CleanupFailureCause::Error("restore tty")
     );
     assert!(events.borrow().contains(&Event::RestoreTty));
+}
+
+// 앱 panic을 주원인으로 보존하면서 viewport와 TTY를 정리한 뒤 진단을 반환한다.
+#[test]
+fn inline_boundary_cleans_up_before_returning_the_primary_panic() {
+    let _panic_route_owner = lock_panic_route_test();
+    let mut backend = backend(ClearBehavior::Succeed, false);
+    let events = Rc::clone(&backend.events);
+    let mut viewport = InlineViewport::default();
+    let session = rendered_session(&mut backend, &mut viewport);
+    let operation_events = Rc::clone(&events);
+
+    let routed = run_inline_boundary(session, &mut viewport, move |_, _| -> () {
+        operation_events.borrow_mut().push(Event::OperationPanic);
+        panic!("application panic");
+    })
+    .unwrap();
+
+    let report = routed.result.unwrap();
+    let Err(primary) = report.operation else {
+        panic!("application panic must remain the primary result");
+    };
+    assert_eq!(primary.downcast_ref::<&str>(), Some(&"application panic"));
+    assert!(matches!(
+        report.cleanup.viewport,
+        Ok(InlineRestoreOutcome::Cleared)
+    ));
+    assert!(report.cleanup.terminal.is_ok());
+    assert_eq!(routed.diagnostic.unwrap().message, "application panic");
+    assert_eq!(
+        events.borrow().as_slice(),
+        &[
+            Event::CaptureTty,
+            Event::EnableRaw,
+            Event::OperationPanic,
+            Event::ClearViewport,
+            Event::RestoreTty,
+        ]
+    );
+}
+
+// 앱 panic과 viewport·TTY 정리 실패가 동시에 발생해도 어느 하나도 잃지 않는다.
+#[test]
+fn inline_boundary_retains_primary_panic_and_both_cleanup_failures() {
+    let _panic_route_owner = lock_panic_route_test();
+    let mut backend = backend(ClearBehavior::Panic, true);
+    let mut viewport = InlineViewport::default();
+    let session = rendered_session(&mut backend, &mut viewport);
+
+    let routed = run_inline_boundary(session, &mut viewport, |_, _| -> () {
+        panic!("application panic");
+    })
+    .unwrap();
+
+    let report = routed.result.unwrap();
+    let Err(primary) = report.operation else {
+        panic!("application panic must remain the primary result");
+    };
+    assert_eq!(primary.downcast_ref::<&str>(), Some(&"application panic"));
+    assert!(matches!(
+        report.cleanup.viewport,
+        Err(crate::terminal::mode::transaction::CleanupFailureCause::Panicked(
+            ref message
+        )) if message == "viewport clear panic"
+    ));
+    assert!(report.cleanup.terminal.is_err());
+    assert_eq!(routed.diagnostic.unwrap().message, "application panic");
+}
+
+fn lock_panic_route_test() -> std::sync::MutexGuard<'static, ()> {
+    PANIC_ROUTE_TEST_OWNER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
