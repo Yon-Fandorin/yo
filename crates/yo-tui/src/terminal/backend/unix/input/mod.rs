@@ -1,3 +1,15 @@
+//! Exclusive Crossterm event boundary for one process-affine reader thread.
+//!
+//! All yo calls to Crossterm `read`, `poll`, or `EventStream` must remain in
+//! this module so the dependency's single-thread precondition stays enforced.
+
+use std::{
+    marker::PhantomData,
+    rc::Rc,
+    sync::{Mutex, MutexGuard, TryLockError},
+    thread::{self, ThreadId},
+};
+
 use crossterm::event::{
     Event, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyEventKind, KeyEventState,
     KeyModifiers as CrosstermKeyModifiers, MediaKeyCode as CrosstermMediaKeyCode,
@@ -22,6 +34,82 @@ pub(super) enum UnsupportedInputKind {
     FocusGained,
     FocusLost,
     Mouse,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum InputReadFailure<SourceError> {
+    Source(SourceError),
+    Decode(InputDecodeFailure),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum EventSourceAcquireFailure {
+    AlreadyOwned,
+    DifferentThread,
+    OwnershipPoisoned,
+}
+
+pub(super) trait EventSource {
+    type Error;
+
+    fn read(&mut self) -> Result<Event, Self::Error>;
+}
+
+pub(super) struct InputReader<S> {
+    source: S,
+}
+
+impl<S> InputReader<S>
+where
+    S: EventSource,
+{
+    pub(super) fn new(source: S) -> Self {
+        Self { source }
+    }
+
+    pub(super) fn read(&mut self) -> Result<InputEvent, InputReadFailure<S::Error>> {
+        let event = self.source.read().map_err(InputReadFailure::Source)?;
+        decode_event(event).map_err(InputReadFailure::Decode)
+    }
+}
+
+static CROSSTERM_EVENT_OWNER: Mutex<Option<ThreadId>> = Mutex::new(None);
+
+pub(super) struct CrosstermEventSource {
+    _ownership: MutexGuard<'static, Option<ThreadId>>,
+    _thread_affinity: PhantomData<Rc<()>>,
+}
+
+impl CrosstermEventSource {
+    pub(super) fn acquire() -> Result<Self, EventSourceAcquireFailure> {
+        let mut ownership = match CROSSTERM_EVENT_OWNER.try_lock() {
+            Ok(ownership) => ownership,
+            Err(TryLockError::WouldBlock) => {
+                return Err(EventSourceAcquireFailure::AlreadyOwned);
+            },
+            Err(TryLockError::Poisoned(_)) => {
+                return Err(EventSourceAcquireFailure::OwnershipPoisoned);
+            },
+        };
+        let current = thread::current().id();
+        if ownership.as_ref().is_some_and(|owner| *owner != current) {
+            return Err(EventSourceAcquireFailure::DifferentThread);
+        }
+        ownership.get_or_insert(current);
+
+        Ok(Self {
+            _ownership: ownership,
+            _thread_affinity: PhantomData,
+        })
+    }
+}
+
+impl EventSource for CrosstermEventSource {
+    type Error = std::io::Error;
+
+    fn read(&mut self) -> Result<Event, Self::Error> {
+        crossterm::event::read()
+    }
 }
 
 pub(super) fn decode_event(event: Event) -> Result<InputEvent, InputDecodeFailure> {

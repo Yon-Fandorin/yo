@@ -1,10 +1,15 @@
+use std::collections::VecDeque;
+
 use crossterm::event::{
     Event, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyEventKind, KeyEventState,
     KeyModifiers as CrosstermKeyModifiers, MediaKeyCode as CrosstermMediaKeyCode,
     ModifierKeyCode as CrosstermModifierKeyCode, MouseButton, MouseEvent, MouseEventKind,
 };
 
-use super::{InputDecodeFailure, UnsupportedInputKind, decode_event};
+use super::{
+    CrosstermEventSource, EventSource, EventSourceAcquireFailure, InputDecodeFailure,
+    InputReadFailure, InputReader, UnsupportedInputKind, decode_event,
+};
 use crate::{
     input::event::{
         InputEvent, KeyAction, KeyCode, KeyEvent, KeyModifiers, KeyState, MediaKeyCode,
@@ -266,6 +271,83 @@ fn unsupported_events_are_explicit_failures() {
         decode_event(mouse),
         Err(InputDecodeFailure::Unsupported(UnsupportedInputKind::Mouse))
     );
+}
+
+struct RecordingSource {
+    events: VecDeque<Result<Event, &'static str>>,
+}
+
+impl EventSource for RecordingSource {
+    type Error = &'static str;
+
+    fn read(&mut self) -> Result<Event, Self::Error> {
+        self.events.pop_front().unwrap()
+    }
+}
+
+// reader는 source가 전달한 정상 event만 semantic input으로 반환한다.
+#[test]
+fn reader_decodes_one_complete_source_event() {
+    let source = RecordingSource {
+        events: VecDeque::from([Ok(Event::Resize(120, 40))]),
+    };
+    let mut reader = InputReader::new(source);
+
+    assert_eq!(
+        reader.read().unwrap(),
+        InputEvent::Resize(Size::new(120, 40))
+    );
+}
+
+// Crossterm이 event를 만들기 전에 실패하면 원인을 추측하지 않고 source failure로 보존한다.
+#[test]
+fn source_failure_returns_no_partial_input_event() {
+    let source = RecordingSource {
+        events: VecDeque::from([Err("read failure"), Ok(Event::Paste("after".to_owned()))]),
+    };
+    let mut reader = InputReader::new(source);
+
+    assert_eq!(reader.read(), Err(InputReadFailure::Source("read failure")));
+    assert_eq!(
+        reader.read().unwrap(),
+        InputEvent::Paste("after".to_owned())
+    );
+}
+
+// 정상적으로 읽힌 비활성 event는 source 오류와 구분된 decode failure다.
+#[test]
+fn unsupported_source_event_is_a_decode_failure() {
+    let source = RecordingSource {
+        events: VecDeque::from([Ok(Event::FocusGained)]),
+    };
+    let mut reader = InputReader::new(source);
+
+    assert_eq!(
+        reader.read(),
+        Err(InputReadFailure::Decode(InputDecodeFailure::Unsupported(
+            UnsupportedInputKind::FocusGained
+        )))
+    );
+}
+
+// production source는 하나만 소유하며 최초 reader thread 밖의 재획득도 거절한다.
+#[test]
+fn production_source_enforces_single_thread_ownership() {
+    let source = CrosstermEventSource::acquire().unwrap();
+    assert!(matches!(
+        CrosstermEventSource::acquire(),
+        Err(EventSourceAcquireFailure::AlreadyOwned)
+    ));
+    let _reader = InputReader::new(source);
+    drop(_reader);
+
+    let cross_thread = std::thread::spawn(|| match CrosstermEventSource::acquire() {
+        Err(failure) => failure,
+        Ok(_) => panic!("a different thread must not acquire the source"),
+    })
+    .join()
+    .unwrap();
+    assert_eq!(cross_thread, EventSourceAcquireFailure::DifferentThread);
 }
 
 fn decode_key(source: CrosstermKeyEvent) -> KeyEvent {
