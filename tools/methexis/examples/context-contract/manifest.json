@@ -1,12 +1,12 @@
 {
   "schema": "methexis.context-manifest/v1alpha1",
-  "build_id": "sha256:79e0a8b43b7f863117f5903725b939730e335b20bc33e83330f6b69e797dd1e3",
+  "build_id": "sha256:35ee9ce35b285f3fb90593f29684a678e3335074a1db806ad05305660a109e80",
   "plan": {
     "schema": "methexis.context-build-plan/v1alpha1",
     "checkpoint": {
-      "id": "sha256:f8cfc55a98279680d32601c66d64e5ae34f313d065d0ec0b407d377bf41728d5",
-      "hash": "sha256:ee26cf43967c341e3c6ade1b2fb3ae04a12120129a2dff50c926b11ae11537cf",
-      "authority_basis_commit": "163239e84c76ba869cf7e7491e1f9944a7c167e5"
+      "id": "sha256:e0d259a6569905cec3f25ac338a17a6876bfef48dacd5fb4521b311e559d9a05",
+      "hash": "sha256:c03fe5549ab53b83a140479f0d69d71ff52529ae1f77aad0b68148b3faec1781",
+      "authority_basis_commit": "dc17de86f4d84d45de5fcbc75a31f93e7ed7b30e"
     },
     "units": [
       {
@@ -35,11 +35,11 @@
       },
       {
         "id": "tui.architecture.module-boundaries",
-        "revision": "sha256:4c2604b602190817b68ceccf6f5e726fadc89b5fb32875dedcc17d53bfa1533e",
+        "revision": "sha256:95366906f598718e308296d25ff8e765ba6fc8dd602eff8ce4eaea95eb249ffb",
         "sources": [
           {
             "id": "tui.arc-002",
-            "revision": "sha256:a2c1cbfee356358867477b2ddd59eab6ac377d43b6461e3d6f4837d828e030c8"
+            "revision": "sha256:a7bfae9c0bad769321988e9d2d075341ff173177aa22a40fad9ea58b44dfd155"
           }
         ],
         "depends_on": [],
@@ -57,10 +57,10 @@
           }
         ],
         "approval": {
-          "projection_hash": "sha256:70eb74484436987a816d441df111b389e47d8ed575e3c89c6995d388a9e91419",
+          "projection_hash": "sha256:bfdcfc076ad2671daa815d765336715ba3896085dcdea5880719d6c2d7dc39ef",
           "projection_profile": "ko-review/v1alpha1",
           "projection_compiler": "methexis/0.0.0",
-          "approval_hash": "sha256:fa7986e4faf238c52909a5ccf8d7b6678eb3e1df3b1de649167b06a7f4e5b81a"
+          "approval_hash": "sha256:96954396d7f5adf37d053505eaf9edfd906847f3eed5ecadd5aafda2eb45b142"
         }
       },
       {
@@ -104,10 +104,10 @@
           "decision_revision_match:tui.arc-002"
         ],
         "approval": {
-          "projection_hash": "sha256:70eb74484436987a816d441df111b389e47d8ed575e3c89c6995d388a9e91419",
+          "projection_hash": "sha256:bfdcfc076ad2671daa815d765336715ba3896085dcdea5880719d6c2d7dc39ef",
           "projection_profile": "ko-review/v1alpha1",
           "projection_compiler": "methexis/0.0.0",
-          "approval_hash": "sha256:fa7986e4faf238c52909a5ccf8d7b6678eb3e1df3b1de649167b06a7f4e5b81a"
+          "approval_hash": "sha256:96954396d7f5adf37d053505eaf9edfd906847f3eed5ecadd5aafda2eb45b142"
         }
       },
       {
@@ -161,7 +161,7 @@
   },
   "context": {
     "path": "context.md",
-    "hash": "sha256:b58866aa727934a31dc3b6b0e1bb3c7c2c7d8b33f355480e842658bed14fa874",
-    "tokens": 326
+    "hash": "sha256:1011c955cf0dbaf9b728341f6d30b794de5be92030b6335ad5bb1d95e8e2aec1",
+    "tokens": 395
   }
 }
