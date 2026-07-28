@@ -1,10 +1,15 @@
 //! Frontend-independent agent execution semantics for yo.
 
+mod backend;
 mod command;
 mod engine;
 mod event;
 mod session;
 
+pub use backend::{
+    AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
+    BackendPoll, BackendScriptStep, ScriptedBackend,
+};
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision, UserInput};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
 pub use event::{ActivityKind, ActivityOutcome, ActivityUpdate, AgentEvent, Failure, TurnOutcome};
