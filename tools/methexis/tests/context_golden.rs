@@ -28,7 +28,9 @@ fn assert_artifacts_match(
     );
 }
 
-// 승인 전환 중에는 전체 의존성 폐쇄가 명시적으로 차단되고, 활성화 뒤에는 기존 golden을 재현한다.
+// 현재 저장소에서 필수 의존 지식이 비활성이면 어떤 지식이 막혔는지 실패로 알려 준다.
+// 모두 활성이면 완전한 의존성 context와 manifest가 golden을 재현하며, 현재 상태의 한 경로만
+// 실행한다.
 #[test]
 fn direct_request_preserves_the_typed_flow_dependency_closure() {
     let root = repository_root();
@@ -62,7 +64,8 @@ fn direct_request_preserves_the_typed_flow_dependency_closure() {
     );
 }
 
-// 변경되지 않은 활성 leaf는 승인 전환 중에도 독립적인 성공 경로와 exact artifact를 보장한다.
+// 다른 지식의 승인 전환과 무관한 활성 leaf는 계속 사용할 수 있어야 한다.
+// 의존성이 없는 이 지식만으로 만든 context와 manifest가 exact golden과 일치하는지 확인한다.
 #[test]
 fn stable_leaf_request_reproduces_the_exact_context_and_manifest_goldens() {
     let root = repository_root();
@@ -92,6 +95,7 @@ fn stable_leaf_request_reproduces_the_exact_context_and_manifest_goldens() {
     );
 }
 
+// 지원하지 않는 tokenizer 요청의 실패 출력이 golden과 정확히 일치하는지 검증한다.
 #[test]
 fn unsupported_tokenizer_reproduces_the_failure_golden() {
     let root = repository_root();
@@ -115,7 +119,8 @@ fn unsupported_tokenizer_reproduces_the_failure_golden() {
     assert_eq!(actual, expected);
 }
 
-// 독립 decoder는 승인 전환 중에도 golden 후보에서 선택된 정렬 부분집합을 안전하게 읽는다.
+// Methexis가 Librarian의 golden 후보 파일을 독립적으로 검증한 뒤 안전한 지식만 선택하는지 확인한다.
+// 선택된 id는 비어 있지 않고 중복 없이 정렬되며 모두 허용된 `tui.` 지식이어야 한다.
 #[test]
 fn independent_decoder_accepts_the_librarian_contract_golden() {
     let root = repository_root();

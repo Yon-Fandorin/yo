@@ -1,6 +1,8 @@
 //! Deterministic parent-swap coverage for directory-handle publication.
 
 #[cfg(unix)]
+// 이미 연 parent 디렉터리는 이후 symlink 교체로 리다이렉트되지 않고 원래 디렉터리에 원자적으로
+// 기록한다.
 #[test]
 fn opened_parent_cannot_be_redirected_by_a_later_symlink_swap() {
     use std::{

@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 
 use super::support::*;
 
+// 각 checkpoint 예제 요청으로 실제 CLI 명령을 실행하고 성공·실패 JSON 전체를 golden과 비교한다.
+// 요청·응답 schema가 바뀌었는데 agent용 예제가 뒤처지는 문제를 이 비교로 잡는다.
 #[test]
 fn agent_contract_fixtures_are_complete_and_current() {
     let repository = GitRepository::approved();
@@ -39,6 +41,9 @@ fn agent_contract_fixtures_are_complete_and_current() {
     assert_eq!(actual, expected);
 }
 
+// 같은 checkpoint 초안 생성은 중복 없이 재사용되고 activation 제안만 한 상태에서는 inactive다.
+// 승인된 지식과 fresh decision 근거를 신뢰 브랜치에 통합한 뒤에만 active가 되며, 외부 graft로
+// Git 이력을 꾸며도 이 권한 판정이 바뀌지 않는지 확인한다.
 #[test]
 fn trusted_activation_becomes_active_when_decision_sources_are_fresh() {
     let repository = GitRepository::approved();
@@ -96,6 +101,9 @@ fn trusted_activation_becomes_active_when_decision_sources_are_fresh() {
     assert_eq!(graft_isolated["checkpoint"], "active");
 }
 
+// checkpoint가 trusted integration에서 활성화된 뒤 참조한 code 바이트가 바뀌면 현재 실행 입력과
+// 활성화 시점 입력이 달라진다. 지식 승인과 trusted commit은 보존하되 checkpoint는 degraded,
+// 해당 지식은 stale로 낮춰 사용을 막는다.
 #[test]
 fn trusted_code_activation_degrades_without_losing_approval_on_byte_drift() {
     let repository = GitRepository::code_approved();

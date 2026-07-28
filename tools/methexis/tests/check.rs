@@ -7,6 +7,7 @@ fn fixture(name: &str) -> std::path::PathBuf {
         .join(name)
 }
 
+// 여러 로컬 레코드 오류를 한 번에 모아 보고하고 global graph 검증은 실행하지 않는다.
 #[test]
 fn local_failures_are_aggregated_and_block_global_validation() {
     let report = methexis::check_repository(&fixture("local-invalid"));
@@ -42,6 +43,7 @@ fn local_failures_are_aggregated_and_block_global_validation() {
     );
 }
 
+// 로컬 검증을 통과한 뒤 missing target과 relation cycle을 global 오류로 함께 보고한다.
 #[test]
 fn global_failures_include_missing_targets_and_cycles() {
     let report = methexis::check_repository(&fixture("global-invalid"));
@@ -68,6 +70,8 @@ fn global_failures_include_missing_targets_and_cycles() {
     );
 }
 
+// 중복 KnowledgeId가 있으면 충돌한 두 파일 모두에 진단을 남긴다.
+// 이 전역 오류와 무관한 relation cycle도 계속 보고해 다른 전역 문제를 숨기지 않는다.
 #[test]
 fn duplicate_knowledge_ids_are_reported_for_each_path() {
     let report = methexis::check_repository(&fixture("duplicate-id"));
@@ -93,6 +97,7 @@ fn duplicate_knowledge_ids_are_reported_for_each_path() {
     );
 }
 
+// 같은 corpus를 반복 검사하거나 물리 경로만 옮겨도 semantic identity가 유지되는지 확인한다.
 #[test]
 fn repeated_checks_and_physical_relocation_preserve_identity() {
     let first = methexis::check_repository(&fixture("relocation-a"));
@@ -107,6 +112,7 @@ fn repeated_checks_and_physical_relocation_preserve_identity() {
 }
 
 #[cfg(unix)]
+// authority root 자체가 symlink면 내부를 따라가지 않고 즉시 거부한다.
 #[test]
 fn authority_root_symlinks_are_rejected_without_following_them() {
     use std::{

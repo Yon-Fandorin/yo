@@ -64,6 +64,7 @@ The catalog contains a stable test statement.
     .expect("knowledge record");
 }
 
+// 같은 KnowledgeId가 두 번 등장하면 catalog 전체 load가 duplicate_knowledge_id로 실패한다.
 #[test]
 fn duplicate_knowledge_id_invalidates_the_whole_catalog() {
     let root = TestDirectory::new("duplicate-id");
@@ -76,6 +77,8 @@ fn duplicate_knowledge_id_invalidates_the_whole_catalog() {
     assert_eq!(envelope.error.code, "duplicate_knowledge_id");
 }
 
+// 번역 Projection이 원문의 현재 revision과 맞지 않아도 카탈로그 자체는 읽을 수 있다.
+// 다만 오래된 번역이 검색 결과에 노출되지 않도록 discovery candidate에서는 제외한다.
 #[test]
 fn stale_projection_is_valid_but_not_searchable() {
     let root = TestDirectory::new("stale-projection");
@@ -104,6 +107,8 @@ fn stale_projection_is_valid_but_not_searchable() {
     assert!(result.candidates.is_empty());
 }
 
+// 원문 revision이 맞더라도 생성된 번역 Projection을 사람이 직접 고치면 무결성이 깨진다.
+// 수정된 번역을 공식 검색 자료로 오인하지 않도록 invalid_catalog_record로 거부한다.
 #[test]
 fn directly_edited_exact_revision_projection_invalidates_catalog() {
     let root = TestDirectory::new("edited-projection");
@@ -127,6 +132,7 @@ fn directly_edited_exact_revision_projection_invalidates_catalog() {
     assert_eq!(error.into_envelope().error.code, "invalid_catalog_record");
 }
 
+// raw HTML 추가와 필수 section 중복은 모두 지식 레코드를 invalid_catalog_record로 무효화한다.
 #[test]
 fn forbidden_html_and_duplicate_sections_invalidate_knowledge() {
     for (label, addition) in [
@@ -145,6 +151,7 @@ fn forbidden_html_and_duplicate_sections_invalidate_knowledge() {
     }
 }
 
+// 필수 heading이 fence 안에 있으면 section으로 인정되지 않아 invalid_catalog_record로 거부한다.
 #[test]
 fn required_heading_inside_a_fence_does_not_validate_body() {
     let root = TestDirectory::new("fenced-heading");
@@ -161,6 +168,8 @@ fn required_heading_inside_a_fence_does_not_validate_body() {
     assert_eq!(error.into_envelope().error.code, "invalid_catalog_record");
 }
 
+// 두 지식이 서로를 필수 의존성으로 가리키면 어느 쪽도 먼저 처리할 수 없다.
+// 오류 경로는 시작 id를 끝에 한 번 더 적어 닫힌 순환임을 보여 주며 catalog 전체를 거부한다.
 #[test]
 fn required_relation_cycle_invalidates_the_whole_catalog() {
     let root = TestDirectory::new("required-cycle");
@@ -182,6 +191,7 @@ fn required_relation_cycle_invalidates_the_whole_catalog() {
     assert_eq!(envelope.error.affected_ids.len(), 3);
 }
 
+// supersedes 관계 순환도 catalog 전체를 invalid_relation_graph로 무효화한다.
 #[test]
 fn supersedes_cycle_invalidates_the_whole_catalog() {
     let root = TestDirectory::new("supersedes-cycle");
@@ -201,6 +211,7 @@ fn supersedes_cycle_invalidates_the_whole_catalog() {
     assert_eq!(error.into_envelope().error.code, "invalid_relation_graph");
 }
 
+// 지식 corpus가 비어 있으면 유효한 catalog가 성립하지 않아 invalid_relation_graph로 실패한다.
 #[test]
 fn empty_knowledge_corpus_is_invalid() {
     let root = TestDirectory::new("empty-corpus");
@@ -213,6 +224,7 @@ fn empty_knowledge_corpus_is_invalid() {
     assert_eq!(error.into_envelope().error.code, "invalid_relation_graph");
 }
 
+// 지식이 참조하는 Source가 삭제되면 catalog 전체 load가 missing_source로 실패한다.
 #[test]
 fn missing_source_invalidates_the_whole_catalog() {
     let root = TestDirectory::new("missing-source");
@@ -228,6 +240,8 @@ fn missing_source_invalidates_the_whole_catalog() {
     assert_eq!(error.into_envelope().error.code, "missing_source");
 }
 
+// 지식이 가리키는 SourceRevision이 현재 Source 레코드와 달라도 Librarian은 이를 구조 오류로
+// 단정하지 않는다. 권한·freshness 판정은 Methexis에 맡기고 해당 지식은 catalog에 유지한다.
 #[test]
 fn pinned_older_source_revision_remains_discoverable() {
     let root = TestDirectory::new("stale-source-reference");

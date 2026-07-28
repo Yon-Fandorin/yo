@@ -6,6 +6,7 @@ use serde_json::json;
 
 use super::support::*;
 
+// 알 수 없는 root나 잘못된 checkpoint hash는 active 출력을 전혀 게시하지 않고 거부한다.
 #[test]
 fn unknown_root_and_wrong_checkpoint_hash_publish_nothing() {
     let repository = GitRepository::approved();
@@ -41,6 +42,7 @@ fn unknown_root_and_wrong_checkpoint_hash_publish_nothing() {
     );
 }
 
+// 미승인 root와 이동된 trust anchor는 권한을 추측하지 않고 fail-closed로 거부한다.
 #[test]
 fn unapproved_root_and_moved_trust_anchor_fail_closed() {
     let repository = GitRepository::foundation();
@@ -84,6 +86,7 @@ fn unapproved_root_and_moved_trust_anchor_fail_closed() {
     );
 }
 
+// 손상된 checkpoint는 active 출력을 남기지 않고 구조화된 실패로 거부한다.
 #[test]
 fn damaged_checkpoint_is_rejected_without_active_output() {
     let repository = GitRepository::approved();
@@ -110,6 +113,8 @@ fn damaged_checkpoint_is_rejected_without_active_output() {
     );
 }
 
+// 호출자가 Git 환경 변수나 같은 이름의 replacement ref를 주입해도 신뢰 기준을 바꿀 수 없어야 한다.
+// checkpoint는 저장소가 정한 실제 authority ref만 읽어 권한을 판정한다.
 #[test]
 fn caller_git_environment_and_replacement_refs_cannot_change_authority() {
     let repository = GitRepository::approved();
@@ -130,6 +135,8 @@ fn caller_git_environment_and_replacement_refs_cannot_change_authority() {
     assert_eq!(created["affected_ids"][0], KNOWLEDGE_ID);
 }
 
+// 새 지식이 이전 지식을 대체하도록 승인됐다면 두 버전을 한 context에 동시에 넣어서는 안 된다.
+// checkpoint가 replacement와 superseded 지식을 함께 선택하는 모순을 거부한다.
 #[test]
 fn checkpoint_cannot_select_a_replacement_with_its_superseded_unit() {
     let repository = GitRepository::foundation();

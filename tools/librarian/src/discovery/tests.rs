@@ -30,6 +30,7 @@ fn catalog() -> Catalog {
     }
 }
 
+// 중복 anchor는 점수에 흡수시키지 않고 duplicate_anchor 오류로 거부한다.
 #[test]
 fn duplicate_anchors_are_rejected_instead_of_hiding_score() {
     let request = DiscoveryRequest {
@@ -52,6 +53,7 @@ fn duplicate_anchors_are_rejected_instead_of_hiding_score() {
     assert_eq!(error.error.code, "duplicate_anchor");
 }
 
+// 앞뒤 공백만 다른 같은 anchor도 중복으로 판정해 duplicate_anchor로 거부한다.
 #[test]
 fn whitespace_variants_of_the_same_anchor_are_duplicates() {
     let request = DiscoveryRequest {
@@ -72,6 +74,8 @@ fn whitespace_variants_of_the_same_anchor_are_duplicates() {
     assert_eq!(error.into_envelope().error.code, "duplicate_anchor");
 }
 
+// query가 KnowledgeId와 정확히 같으면 그 사실을 ExactQuery라는 첫 번째 점수 근거로 남긴다.
+// 최종 score를 근거별 점수의 합으로 다시 계산할 수 있어야 한다.
 #[test]
 fn exact_id_query_has_distinct_and_reconstructible_evidence() {
     let request = DiscoveryRequest {
@@ -92,6 +96,7 @@ fn exact_id_query_has_distinct_and_reconstructible_evidence() {
     assert_eq!(candidate.score, explained_score);
 }
 
+// 동점 candidate는 knowledge id 순으로 정렬된다.
 #[test]
 fn equal_scores_are_ordered_by_knowledge_id() {
     let request = DiscoveryRequest {
@@ -110,6 +115,8 @@ fn equal_scores_are_ordered_by_knowledge_id() {
     assert_eq!(ids, ["test.alpha", "test.beta"]);
 }
 
+// 같은 검색어가 여러 관계 대상에 나타나는 후보에서도 최종 score를 숨은 규칙으로 만들지 않는다.
+// 응답에 공개한 reason별 점수를 모두 더하면 최종 score를 그대로 재구성할 수 있어야 한다.
 #[test]
 fn repeated_term_across_relation_targets_has_one_explained_contribution() {
     let mut catalog = catalog();
@@ -141,6 +148,8 @@ fn repeated_term_across_relation_targets_has_one_explained_contribution() {
     );
 }
 
+// 여러 anchor 중 일부만 지식을 찾더라도 성공한 결과를 버리거나 실패한 항목을 숨기지 않는다.
+// 찾은 지식은 candidates에, 찾지 못한 anchor는 unresolved_anchors에 각각 남긴다.
 #[test]
 fn mixed_resolved_and_unresolved_anchors_remain_explicit() {
     let request = DiscoveryRequest {

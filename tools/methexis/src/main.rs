@@ -30,6 +30,8 @@ mod tests {
 
     use super::{IO_ERROR, report_io_error};
 
+    // 출력 I/O 실패 뒤 main이 호출하는 fallback 함수는 정해진 io_error JSON을 stderr에 쓰고
+    // FAILURE 코드를 반환한다. 여기서는 실제 스트림 실패가 아니라 fallback 함수의 결과를 검증한다.
     #[test]
     fn io_failure_has_a_structured_fallback() {
         let mut stderr = Vec::new();

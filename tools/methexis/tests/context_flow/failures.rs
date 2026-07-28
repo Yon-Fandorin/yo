@@ -9,6 +9,9 @@ use super::{
     },
 };
 
+// 사용자가 직접 지정한 anchor를 찾지 못하거나 필수 지식 묶음이 token 예산에 들어가지 않으면
+// context를 만들 수 없다. 부분 context를 stdout에 내보내지 않고 각각의 원인을 구조화된 오류로
+// 보고한다.
 #[test]
 fn unresolved_direct_anchor_and_required_over_budget_fail_without_stdout() {
     let repository = active_repository();
@@ -23,6 +26,8 @@ fn unresolved_direct_anchor_and_required_over_budget_fail_without_stdout() {
     assert_eq!(failure["error"]["code"], "required_budget_exceeded");
 }
 
+// 필수 지식이 stale하면 완전한 context가 아니므로 전체 요청을 실패시킨다.
+// 선택 후보만 stale한 경우에는 요청을 살리되 해당 묶음을 제외한 이유를 bundle_stale로 남긴다.
 #[test]
 fn stale_required_knowledge_fails_and_stale_optional_candidate_is_omitted() {
     let repository = GitRepository::code_approved();
@@ -55,6 +60,8 @@ fn stale_required_knowledge_fails_and_stale_optional_candidate_is_omitted() {
     );
 }
 
+// 같은 build id의 기존 디렉터리가 손상돼 있으면 정상 결과인 것처럼 덮어써서는 안 된다.
+// 충돌을 실패로 보고하고 이번에 만든 임시 출력은 quarantine으로 옮겨 부분 게시를 막는다.
 #[test]
 fn corrupted_existing_build_fails_and_quarantines_new_output() {
     let repository = active_repository();
@@ -77,6 +84,8 @@ fn corrupted_existing_build_fails_and_quarantines_new_output() {
     );
 }
 
+// 기존 build에 계약에 없는 파일이 있으면 다른 프로세스나 사람이 같은 위치를 바꾼 것이다.
+// 그 내용을 지우거나 재사용하지 않고 context_build_collision으로 실패한다.
 #[test]
 fn existing_build_with_an_unexpected_file_is_a_collision() {
     let repository = active_repository();
@@ -95,6 +104,8 @@ fn existing_build_with_an_unexpected_file_is_a_collision() {
     assert_eq!(failure["error"]["code"], "context_build_collision");
 }
 
+// candidate 입력이나 build 출력 경로에 symlink가 있으면 허용된 저장소 경계 밖을 읽거나 쓸 수 있다.
+// 링크를 따라가지 않고 어느 경로가 안전하지 않은지 구조화된 오류로 보고한다.
 #[test]
 fn symlinked_candidate_and_build_paths_fail_closed() {
     let repository = active_repository();
@@ -134,6 +145,7 @@ fn symlinked_candidate_and_build_paths_fail_closed() {
     assert_eq!(failure["error"]["code"], "context_path_symlink");
 }
 
+// 지원하지 않는 tokenizer profile과 빈 요청은 구조화된 계약 오류로 실패하는지 확인한다.
 #[test]
 fn request_and_candidate_contract_failures_are_structured() {
     let repository = active_repository();

@@ -86,6 +86,8 @@ mod tests {
     use super::*;
     use crate::model::{KnowledgeKind, KnowledgeMetadata, Relations};
 
+    // 의존성이 모두 해결돼 다음에 배치할 수 있는 지식이 여러 개면 id 오름차순으로 하나를 고른다.
+    // 이 규칙으로 입력 순서와 무관하게 항상 같은 의존성 우선 순서를 만든다.
     #[test]
     fn topological_order_uses_a_global_ascending_ready_tie_break() {
         let units = vec![

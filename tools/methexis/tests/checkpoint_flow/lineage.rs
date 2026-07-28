@@ -34,6 +34,8 @@ struct Identity<'a> {
     units: &'a [Unit],
 }
 
+// checkpoint 내부 hash끼리 맞는 것만으로는 정당한 산출물임을 증명하지 못한다.
+// 실제 승인 기록에서 같은 선택 과정을 재현할 수 없는 자체 조립 checkpoint를 거부한다.
 #[test]
 fn self_consistent_but_unreproducible_checkpoint_is_rejected() {
     let repository = GitRepository::approved();

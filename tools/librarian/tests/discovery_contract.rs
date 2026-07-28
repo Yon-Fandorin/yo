@@ -33,6 +33,8 @@ fn success(name: &str) -> (serde_json::Value, Vec<u8>) {
     (value, stdout)
 }
 
+// 영어 query 결과에서 각 candidate 점수가 reason 점수의 합계로 설명되고 approval·eligibility 필드가
+// 없음을 검증한다.
 #[test]
 fn canonical_english_returns_explained_candidates() {
     let (result, _) = success("query-english.json");
@@ -70,6 +72,7 @@ fn canonical_english_returns_explained_candidates() {
     }
 }
 
+// 한국어 query가 projection 필드 매칭으로 지식 단위를 검색할 수 있는지 확인한다.
 #[test]
 fn exact_revision_korean_projection_is_searchable() {
     let (result, _) = success("query-korean.json");
@@ -108,6 +111,7 @@ fn applies_to_path_anchor_is_an_exact_signal() {
     );
 }
 
+// knowledge_id 앵커가 정확히 일치하는 지식 단위를 최고 점수로 관계 이웃보다 우선시키는지 확인한다.
 #[test]
 fn exact_knowledge_id_anchor_outranks_relation_neighbors() {
     let (result, _) = success("anchor-id.json");
@@ -120,6 +124,7 @@ fn exact_knowledge_id_anchor_outranks_relation_neighbors() {
     );
 }
 
+// 매칭 결과가 없는 query도 빈 candidates와 빈 unresolved_anchors를 보고하며 성공하는지 확인한다.
 #[test]
 fn query_with_no_matches_is_a_successful_empty_observation() {
     let (result, _) = success("query-no-match.json");
@@ -138,6 +143,8 @@ fn query_with_no_matches_is_a_successful_empty_observation() {
     );
 }
 
+// 해석할 수 없는 앵커가 있어도 빈 candidates와 하나의 unresolved_anchors를 보고하며 성공하는지
+// 확인한다.
 #[test]
 fn unresolved_anchor_is_a_successful_empty_observation() {
     let (result, _) = success("unresolved-anchor.json");
@@ -157,6 +164,7 @@ fn unresolved_anchor_is_a_successful_empty_observation() {
     );
 }
 
+// 동일한 snapshot과 요청에 대한 discover 출력이 바이트 단위로 결정적인지 확인한다.
 #[test]
 fn identical_snapshot_and_request_are_byte_deterministic() {
     let (_, first) = success("query-english.json");
@@ -165,6 +173,7 @@ fn identical_snapshot_and_request_are_byte_deterministic() {
     assert_eq!(first, second);
 }
 
+// 성공 wire 출력 전체가 golden fixture와 정확히 일치하는지 검증한다.
 #[test]
 fn complete_success_wire_output_matches_the_golden_fixture() {
     let (_, stdout) = success("query-english.json");
@@ -178,6 +187,7 @@ fn complete_success_wire_output_matches_the_golden_fixture() {
     assert_eq!(stdout, expected);
 }
 
+// 실패 시 종료 코드 2, 빈 stdout, 그리고 golden fixture와 일치하는 stderr를 검증한다.
 #[test]
 fn complete_failure_wire_output_matches_the_golden_fixture() {
     let (code, stdout, stderr) = run_example("failure-duplicate-anchor.json");

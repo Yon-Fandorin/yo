@@ -12,6 +12,8 @@ use super::{
 };
 use crate::{check::load_foundation, review::ReviewService};
 
+// context를 만드는 사이 trusted ref가 다른 commit으로 이동하거나 사라지면 처음 읽은 권한을 더는
+// 보장할 수 없다. 원래 trusted commit을 새 snapshot으로 바꾸지 않고 다시 시도할 오류로 종료한다.
 #[test]
 fn final_guard_rejects_a_concurrent_trusted_ref_advance_without_switching_snapshot() {
     let repository = Repository::new();

@@ -14,6 +14,7 @@ use crate::{
     },
 };
 
+// code Source의 line_hint가 달라도 revision은 같게 계산된다.
 #[test]
 fn source_revision_excludes_code_line_hint() {
     let first = code_record(Some(10));
@@ -22,6 +23,7 @@ fn source_revision_excludes_code_line_hint() {
     assert_eq!(revision::calculate(&first), revision::calculate(&second));
 }
 
+// 의미상 같은 바이트라도 payload kind가 다르면 서로 다른 revision이 된다.
 #[test]
 fn source_revision_is_domain_separated_by_kind() {
     let decision = SourceRecord {
@@ -49,6 +51,7 @@ fn source_revision_is_domain_separated_by_kind() {
     );
 }
 
+// 닫힌 Source payload schema는 모든 지원 kind를 읽고 알 수 없는 필드는 거부한다.
 #[test]
 fn closed_payload_schema_parses_all_kinds_and_rejects_unknown_fields() {
     for yaml in [
@@ -109,6 +112,8 @@ payload:
     assert!(serde_norway::from_str::<SourceRecord>(unknown).is_err());
 }
 
+// 같은 SourceId를 가진 두 파일을 하나로 덮어쓰지 않고 source load 전체를 거부한다.
+// 어느 파일이 충돌했는지 알 수 있도록 두 경로 모두에 duplicate_source_id 진단을 남긴다.
 #[test]
 fn source_loader_rejects_duplicate_ids_before_context_freshness_mapping() {
     let repository = TemporaryRepository::new();
@@ -126,6 +131,8 @@ fn source_loader_rejects_duplicate_ids_before_context_freshness_mapping() {
     );
 }
 
+// 캡처한 뒤 파일이 다른 파일로 교체되면 내용이 우연히 같아도 같은 입력이라고 단정할 수 없다.
+// 바이트뿐 아니라 파일 identity도 비교해 오래된 Source snapshot을 거부한다.
 #[test]
 fn captured_source_record_rejects_same_semantics_with_new_file_identity() {
     let repository = TemporaryRepository::new();
@@ -142,6 +149,8 @@ fn captured_source_record_rejects_same_semantics_with_new_file_identity() {
     assert_eq!(failure.code, "source_changed_during_validation");
 }
 
+// code Source의 content_hash는 경로나 텍스트 해석이 아니라 디스크에서 읽은 정확한 바이트와
+// 일치해야 한다. 읽기를 마친 뒤에도 같은 파일인지 다시 확인해 중간 교체를 놓치지 않는다.
 #[test]
 fn code_capture_hashes_exact_bytes_and_revalidates_identity() {
     let repository = TemporaryRepository::new();
@@ -160,6 +169,8 @@ fn code_capture_hashes_exact_bytes_and_revalidates_identity() {
     assert_eq!(failure.code, "source_changed_during_validation");
 }
 
+// 파일을 다 읽은 직후 최종 상태를 확인하기 전에 내용이 바뀌는 짧은 경주 구간도 닫아야 한다.
+// post-read stat이 달라지면 완성된 캡처를 내보내지 않고 동시 변경으로 판정한다.
 #[test]
 fn final_code_read_detects_a_mutation_before_its_post_read_stat() {
     let repository = TemporaryRepository::new();
@@ -190,6 +201,8 @@ fn final_code_read_detects_a_mutation_before_its_post_read_stat() {
     );
 }
 
+// 읽는 도중 파일을 교체한 뒤 같은 경로와 바이트로 되돌려 놓아도 변경 사실을 숨길 수 없어야 한다.
+// 파일 identity 변화를 이용해 이런 교체를 동시 변경으로 검출한다.
 #[test]
 fn final_code_read_detects_same_byte_path_replacement() {
     let repository = TemporaryRepository::new();
@@ -212,6 +225,8 @@ fn final_code_read_detects_same_byte_path_replacement() {
     assert_eq!(failure.code, "source_changed_during_validation");
 }
 
+// 모델상 파일 identity가 다시 원래 값처럼 보여도 이전 hash를 그대로 믿지 않는다.
+// 최종 바이트를 다시 읽어 hash함으로써 identity 검사만으로 놓칠 수 있는 내용 변경을 잡는다.
 #[test]
 fn final_code_read_rehashes_when_modeled_identity_is_restored() {
     use std::fs::{FileTimes, OpenOptions};
@@ -247,6 +262,7 @@ fn final_code_read_rehashes_when_modeled_identity_is_restored() {
     assert_eq!(failure.code, "source_changed_during_validation");
 }
 
+// 캡처 시 없던 code 파일이 최종 검증 전에 생기면 동시 변경으로 검출한다.
 #[test]
 fn missing_code_capture_detects_a_file_that_appears() {
     let repository = TemporaryRepository::new();
@@ -264,6 +280,8 @@ fn missing_code_capture_detects_a_file_that_appears() {
     assert_eq!(failure.code, "source_changed_during_validation");
 }
 
+// 승인 뒤 code 파일 바이트가 달라지면 그 승인이 갑자기 다른 권한으로 바뀌어서는 안 된다.
+// 기존 권한은 유지하되 해당 code를 사용하는 지식만 degraded 상태로 낮춘다.
 #[test]
 fn code_drift_degrades_the_selected_unit_without_changing_authority() {
     let repository = TemporaryRepository::new();
@@ -324,6 +342,8 @@ fn code_drift_degrades_the_selected_unit_without_changing_authority() {
     );
 }
 
+// 여러 근거 중 conversation이나 external Source처럼 아직 검증할 수 없는 종류가 하나라도 섞이면
+// 검증된 일부만 보고 전체를 신뢰하지 않고 지식 단위를 안전한 실패 상태로 둔다.
 #[test]
 fn conversation_and_external_sources_fail_closed_in_a_multi_source_unit() {
     let repository = TemporaryRepository::new();
@@ -379,6 +399,8 @@ fn conversation_and_external_sources_fail_closed_in_a_multi_source_unit() {
     );
 }
 
+// 아직 승인되지 않은 작업 중 decision은 trusted 지식의 권한을 더 높이는 근거가 될 수 없다.
+// 현재 신뢰 수준을 유지하거나 변경 영향에 따라 stale·degraded로만 낮출 수 있다.
 #[test]
 fn a_working_decision_change_can_only_demote_trusted_knowledge() {
     let repository = TemporaryRepository::new();
@@ -403,6 +425,8 @@ fn a_working_decision_change_can_only_demote_trusted_knowledge() {
     );
 }
 
+// 참조한 Source 파일이 없는 경우와 기대 revision이 아닌 경우는 모두 지식을 invalid로 만들지만
+// 복구 방법은 다르다. 원인을 구분하도록 source_missing과 source_revision_mismatch 증거를 보존한다.
 #[test]
 fn missing_and_mismatched_trusted_sources_are_distinct_failures() {
     let repository = TemporaryRepository::new();
@@ -440,6 +464,7 @@ fn missing_and_mismatched_trusted_sources_are_distinct_failures() {
 }
 
 #[cfg(unix)]
+// code Source 경로의 어느 구성 요소든 symlink면 실제 파일을 읽지 않고 캡처를 거부한다.
 #[test]
 fn code_capture_rejects_symlinked_components() {
     use std::os::unix::fs::symlink;
@@ -464,6 +489,8 @@ fn code_capture_rejects_symlinked_components() {
     assert_eq!(failure.code, "source_changed_during_validation");
 }
 
+// 필수 의존 지식이 stale이면 그 지식을 사용하는 dependent만 stale로 전파한다.
+// 관계없는 지식은 active로 유지해 하나의 실패가 catalog 전체를 막지 않게 한다.
 #[test]
 fn stale_required_source_propagates_only_to_dependents() {
     let dependency = unit("tui.dependency", Relations::default());

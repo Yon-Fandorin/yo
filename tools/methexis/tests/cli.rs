@@ -39,6 +39,7 @@ fn methexis() -> Command {
     Command::new(env!("CARGO_BIN_EXE_methexis"))
 }
 
+// --help가 성공 상태로 Source-aware check를 포함한 전체 명령 표면을 정확히 출력하는지 확인한다.
 #[test]
 fn help_describes_the_source_aware_check_surface() {
     let output = methexis().arg("--help").output().expect("run methexis");
@@ -51,6 +52,7 @@ fn help_describes_the_source_aware_check_surface() {
     );
 }
 
+// 인자 없이 실행해도 --help와 동일한 bootstrap help를 성공 상태로 출력하는지 확인한다.
 #[test]
 fn no_arguments_uses_the_same_bootstrap_help() {
     let output = methexis().output().expect("run methexis");
@@ -63,6 +65,7 @@ fn no_arguments_uses_the_same_bootstrap_help() {
     );
 }
 
+// --version이 패키지 버전을 그대로 포함한 한 줄만 출력하고 stderr를 비우는지 확인한다.
 #[test]
 fn version_uses_the_package_version() {
     let output = methexis().arg("--version").output().expect("run methexis");
@@ -75,6 +78,7 @@ fn version_uses_the_package_version() {
     );
 }
 
+// 지원하지 않는 명령은 종료 코드 2와 구조화된 unsupported_command 오류 JSON을 stderr로 반환한다.
 #[test]
 fn unsupported_input_is_a_structured_failure() {
     let output = methexis()
@@ -107,6 +111,8 @@ impl Write for FailingWriter {
     }
 }
 
+// stdout writer가 BrokenPipe를 반환하면 library가 성공처럼 삼키지 않고 같은 오류 종류를
+// main 호출자에게 돌려준다. 그러면 main이 정해진 fallback 처리를 실행할 수 있다.
 #[test]
 fn stream_failures_are_returned_to_the_binary_boundary() {
     let error = methexis::run(Vec::<OsString>::new(), FailingWriter, Vec::<u8>::new())
@@ -243,6 +249,7 @@ fn check_reports_the_repository_corpus_on_stdout() {
     assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
 }
 
+// 잘못된 fixture 저장소에서 check는 종료 코드 2와 실패 보고 JSON을 stdout이 아닌 stderr로 보낸다.
 #[test]
 fn check_reports_validation_failures_on_stderr() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

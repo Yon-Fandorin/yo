@@ -6,6 +6,7 @@ use serde_json::json;
 
 use super::support::*;
 
+// projection 교체는 기존 projection의 정확한 hash를 제시한 경우에만 허용한다.
 #[test]
 fn projection_replacement_requires_the_exact_existing_hash() {
     let repository = TempRepository::new();
@@ -53,6 +54,7 @@ fn projection_replacement_requires_the_exact_existing_hash() {
     assert_ne!(replacement["hash"], first_hash);
 }
 
+// approval 교체는 바로 이전 승인 revision을 정확히 지정한 경우에만 허용한다.
 #[test]
 fn approval_replacement_requires_the_exact_previous_revision() {
     let repository = TempRepository::new();

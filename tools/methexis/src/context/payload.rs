@@ -305,6 +305,8 @@ fn unit_plan<'a>(unit: &'a KnowledgeUnit, authority: &'a ContextAuthority) -> Un
 mod tests {
     use super::*;
 
+    // `<|endoftext|>` 같은 markdown 리터럴은 제어 token이 아닌 ordinary 텍스트로 토큰 수를
+    // 계산한다.
     #[test]
     fn markdown_literals_are_counted_as_ordinary_text_not_control_tokens() {
         let literal = b"<|endoftext|>";

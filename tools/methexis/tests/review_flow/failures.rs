@@ -6,6 +6,8 @@ use serde_json::json;
 
 use super::support::*;
 
+// 요청 revision이 원문과 다르면 projection을 만들지 않고, projection 증거가 없으면 approval도
+// 만들지 않는다. 생성 뒤 원문이 바뀐 projection은 stale로 보고하되 새 권한을 부여하지 않는다.
 #[test]
 fn invalid_requests_and_stale_projection_fail_without_partial_authority() {
     let repository = TempRepository::new();
@@ -77,6 +79,7 @@ fn invalid_requests_and_stale_projection_fail_without_partial_authority() {
     );
 }
 
+// 안전하지 않거나 쓸 수 없는 출력 부모에는 임시 projection조차 남기지 않는다.
 #[test]
 fn unsafe_or_unwritable_output_parent_leaves_no_partial_projection() {
     let repository = TempRepository::new();
@@ -100,6 +103,7 @@ fn unsafe_or_unwritable_output_parent_leaves_no_partial_projection() {
     );
 }
 
+// reviewer·evidence·시간이 계약과 다르면 approval 생성을 모두 거부한다.
 #[test]
 fn approval_rejects_wrong_evidence_reviewer_and_time() {
     let repository = TempRepository::new();
@@ -161,6 +165,8 @@ fn approval_rejects_wrong_evidence_reviewer_and_time() {
     );
 }
 
+// 생성 뒤 사람이 고친 projection과 내부 hash가 깨진 approval은 둘 다 신뢰할 수 없다.
+// 단순한 stale 상태로 취급하지 않고 구조적 무결성 실패로 명확히 거부한다.
 #[test]
 fn edited_projection_and_damaged_approval_are_structural_failures() {
     let repository = TempRepository::new();
@@ -230,6 +236,7 @@ fn edited_projection_and_damaged_approval_are_structural_failures() {
     assert!(has_diagnostic(&failure, "invalid_approval_yaml"));
 }
 
+// 보이는 raw HTML은 projection에서 거부하되 fenced code 안의 HTML 예시는 허용한다.
 #[test]
 fn projection_rejects_visible_raw_html_but_allows_fenced_examples() {
     let repository = TempRepository::new();
@@ -256,6 +263,7 @@ fn projection_rejects_visible_raw_html_but_allows_fenced_examples() {
 }
 
 #[cfg(unix)]
+// projection 대상이 symlink면 그 내용을 읽거나 교체하지 않고 안전하게 거부한다.
 #[test]
 fn projection_refuses_a_symlink_target_without_reading_or_replacing_it() {
     use std::os::unix::fs::symlink;

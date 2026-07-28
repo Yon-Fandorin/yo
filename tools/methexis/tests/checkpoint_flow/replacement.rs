@@ -4,6 +4,7 @@ use serde_json::json;
 
 use super::support::*;
 
+// active checkpoint 교체는 현재 active record의 정확한 hash를 제시할 때만 허용한다.
 #[test]
 fn activation_replacement_requires_the_exact_active_record_hash() {
     let repository = GitRepository::approved();

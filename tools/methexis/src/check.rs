@@ -1328,6 +1328,7 @@ mod tests {
         validate_metadata,
     };
 
+    // YAML 키 순서와 줄바꿈(CRLF·LF)이 달라도 같은 내용의 revision은 동일하다.
     #[test]
     fn semantic_revision_ignores_yaml_order_and_line_endings() {
         let first = "\
@@ -1341,6 +1342,7 @@ mod tests {
         assert_eq!(first, second);
     }
 
+    // 메타데이터가 같아도 본문이 다르면 revision이 달라진다.
     #[test]
     fn body_change_changes_revision() {
         let metadata = crate::model::KnowledgeMetadata {
@@ -1358,6 +1360,7 @@ mod tests {
         );
     }
 
+    // 고정된 입력의 revision이 golden digest와 정확히 일치하는지 검증한다.
     #[test]
     fn semantic_revision_has_a_golden_digest() {
         assert_eq!(
@@ -1366,6 +1369,7 @@ mod tests {
         );
     }
 
+    // 단독 CR과 CRLF 줄바꿈이 모두 LF로 정규화되는지 확인한다.
     #[test]
     fn bare_carriage_returns_normalize_to_lf() {
         assert_eq!(
@@ -1374,6 +1378,8 @@ mod tests {
         );
     }
 
+    // Source와 관계 목록은 작성 순서가 아니라 의미로 revision을 계산해야 한다.
+    // 같은 항목을 다른 순서로 적어도 정렬 후 동일한 semantic revision이 나오는지 확인한다.
     #[test]
     fn semantic_revision_sorts_sources_and_typed_relations() {
         let mut first = metadata_for_test();
@@ -1389,6 +1395,7 @@ mod tests {
         );
     }
 
+    // 메시지 알파벳 순서와 충돌하더라도 파일에서 더 앞선 line의 진단을 먼저 정렬한다.
     #[test]
     fn diagnostic_order_uses_location_before_message() {
         let mut diagnostics = vec![
@@ -1416,6 +1423,8 @@ mod tests {
         assert_eq!(diagnostics[0].line, Some(1));
     }
 
+    // 권한 정보를 읽는 도중 일시적인 변경이 감지돼 다시 시도해야 하더라도 진단 정보는 잃지 않는다.
+    // 마지막으로 확인한 trusted commit과 호출자가 취할 다음 action을 오류에 함께 보존한다.
     #[test]
     fn retryable_authority_failure_preserves_trusted_commit_and_action() {
         let report = super::failed_authority_report(crate::checkpoint::AuthorityFailure {
@@ -1439,6 +1448,8 @@ mod tests {
         );
     }
 
+    // YAML 1.1 파서는 대문자 `NO`도 false로 오해할 수 있다.
+    // serde_norway 경계에서는 문자열 필드에 쓴 `NO`를 글자 그대로 보존하는지 확인한다.
     #[test]
     fn norway_keeps_yaml_no_as_a_string_for_string_fields() {
         let owner: crate::model::OwnerRecord =
@@ -1448,6 +1459,8 @@ mod tests {
         assert_eq!(owner.id, "NO");
     }
 
+    // 같은 YAML key를 두 번 쓰면 어느 값이 진짜인지 조용히 선택해서는 안 된다.
+    // serde_norway가 중복 key를 발견하는 즉시 역직렬화를 거부하는지 확인한다.
     #[test]
     fn norway_rejects_duplicate_mapping_keys_at_the_typed_boundary() {
         let result = parse_yaml::<crate::model::OwnerRecord>(
@@ -1459,6 +1472,8 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // `<<` merge key는 보이지 않는 필드 상속을 만들어 닫힌 schema 검증을 흐릴 수 있다.
+    // 입력 의미가 명시적으로 보이도록 serde_norway 경계에서 merge key를 거부한다.
     #[test]
     fn norway_rejects_yaml_merge_keys_at_the_typed_boundary() {
         let result = parse_yaml::<crate::model::OwnerRecord>(
@@ -1470,6 +1485,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // fenced code 안의 heading은 필수 본문 section을 충족한 것으로 세지 않는다.
     #[test]
     fn headings_inside_fenced_code_do_not_satisfy_body_sections() {
         let metadata = metadata_for_test();
@@ -1487,6 +1503,8 @@ mod tests {
         );
     }
 
+    // HTML comment 자체는 raw_html_forbidden으로 거부하고, 그 안의 heading도 필수 section으로
+    // 인정하지 않아 missing_body_section을 함께 보고하는지 확인한다.
     #[test]
     fn headings_inside_html_comments_make_the_body_invalid() {
         let diagnostics = validate_metadata(
@@ -1508,6 +1526,7 @@ mod tests {
         );
     }
 
+    // fenced code 안에 raw HTML 철자가 있어도 실제 HTML 노드가 아니므로 허용한다.
     #[test]
     fn raw_html_spelling_inside_fenced_code_is_allowed() {
         let diagnostics = validate_metadata(
@@ -1524,6 +1543,8 @@ mod tests {
         );
     }
 
+    // 본문만 따로 검사하더라도 오류 line은 잘라 낸 본문 기준이 되어서는 안 된다.
+    // 사용자가 바로 찾아갈 수 있도록 frontmatter를 포함한 원본 파일의 line을 보고한다.
     #[test]
     fn body_diagnostic_lines_are_file_relative() {
         let diagnostics = validate_metadata(&metadata_for_test(), "## Statement\n", 12, "unit.md");
@@ -1535,6 +1556,7 @@ mod tests {
         assert_eq!(empty.line, Some(12));
     }
 
+    // frontmatter 끝의 빈 줄도 세어 본문 시작 line을 정확히 계산한다.
     #[test]
     fn body_start_line_counts_trailing_blank_frontmatter_lines() {
         let content = "---\nschema: example\n\n---\n## Statement\n";

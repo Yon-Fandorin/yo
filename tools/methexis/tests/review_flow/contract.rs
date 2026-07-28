@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 
 use super::support::*;
 
+// 각 review 예제 요청으로 실제 CLI 명령을 실행하고 성공·실패 JSON 전체를 golden과 비교한다.
+// 요청·응답 schema가 바뀌었는데 agent용 예제가 뒤처지는 문제를 이 비교로 잡는다.
 #[test]
 fn agent_contract_fixtures_are_complete_and_current() {
     let repository = TempRepository::new();
@@ -45,6 +47,8 @@ fn agent_contract_fixtures_are_complete_and_current() {
     assert_eq!(actual, expected);
 }
 
+// 같은 원문 revision으로 projection을 만들고 검토·승인 제안을 다시 실행해도 중복 산출물이 생기면
+// 안 된다. 기존 Draft 제안을 안전하게 재사용해 결과가 동일한 idempotent 흐름인지 확인한다.
 #[test]
 fn projection_review_and_approval_form_an_idempotent_proposal_flow() {
     let repository = TempRepository::new();
