@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use super::transaction::{CleanupFailureCause, CleanupStep, TerminalSession};
+use super::transaction::{CleanupFailureCause, CleanupStep, SessionFailureCause, TerminalSession};
 use crate::terminal::backend::TerminalBackend;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,7 +112,10 @@ fn raw_input_failure_restores_the_captured_tty_state() {
         Err(failure) => failure,
     };
 
-    assert_eq!(failure.primary, Error("raw input"));
+    assert!(matches!(
+        failure.primary,
+        SessionFailureCause::Error(Error("raw input"))
+    ));
     assert!(failure.cleanup.is_empty());
     assert_eq!(
         backend.calls,
@@ -131,8 +134,90 @@ fn partial_mode_acquisition_rolls_back_the_uncertain_mode_too() {
         Err(failure) => failure,
     };
 
-    assert_eq!(failure.primary, Error("alternate screen"));
+    assert!(matches!(
+        failure.primary,
+        SessionFailureCause::Error(Error("alternate screen"))
+    ));
     assert!(failure.cleanup.is_empty());
+    assert_eq!(
+        backend.calls,
+        [
+            Call::CaptureTty,
+            Call::EnableRawInput,
+            Call::Acquire(Mode::Paste),
+            Call::Acquire(Mode::AlternateScreen),
+            Call::Release(Mode::AlternateScreen),
+            Call::Release(Mode::Paste),
+            Call::RestoreTty,
+        ]
+    );
+}
+
+// raw input 적용 중 panic이 나도 TTY 원본을 명시적으로 복구하고 panic을 구조화한다.
+#[test]
+fn raw_input_panic_restores_tty_and_is_reported() {
+    let mut backend = RecordingBackend {
+        panics: VecDeque::from([Call::EnableRawInput]),
+        ..RecordingBackend::default()
+    };
+
+    let failure = match TerminalSession::enter(&mut backend, []) {
+        Ok(_) => panic!("raw input panic must reject entry"),
+        Err(failure) => failure,
+    };
+
+    let SessionFailureCause::Panicked(payload) = failure.primary else {
+        panic!("raw input panic must remain a panic payload");
+    };
+    assert_eq!(
+        payload.downcast_ref::<&str>(),
+        Some(&"recording backend panic")
+    );
+    assert!(failure.cleanup.is_empty());
+    assert_eq!(
+        backend.calls,
+        [Call::CaptureTty, Call::EnableRawInput, Call::RestoreTty]
+    );
+}
+
+// mode 적용 중 panic이 나도 불확실한 mode부터 역순으로 해제하고 TTY를 복구한다.
+#[test]
+fn mode_acquisition_panic_rolls_back_uncertain_mode_and_tty() {
+    let mut backend = RecordingBackend {
+        failures: VecDeque::from([
+            (
+                Call::Release(Mode::AlternateScreen),
+                Error("leave alternate screen"),
+            ),
+            (Call::RestoreTty, Error("restore tty")),
+        ]),
+        panics: VecDeque::from([Call::Acquire(Mode::AlternateScreen)]),
+        ..RecordingBackend::default()
+    };
+
+    let failure = match TerminalSession::enter(&mut backend, [Mode::Paste, Mode::AlternateScreen]) {
+        Ok(_) => panic!("mode acquisition panic must reject entry"),
+        Err(failure) => failure,
+    };
+
+    let SessionFailureCause::Panicked(payload) = failure.primary else {
+        panic!("mode acquisition panic must remain a panic payload");
+    };
+    assert_eq!(
+        payload.downcast_ref::<&str>(),
+        Some(&"recording backend panic")
+    );
+    assert_eq!(
+        failure
+            .cleanup
+            .iter()
+            .map(|failure| failure.step)
+            .collect::<Vec<_>>(),
+        [
+            CleanupStep::Mode(Mode::AlternateScreen),
+            CleanupStep::TtyState,
+        ]
+    );
     assert_eq!(
         backend.calls,
         [

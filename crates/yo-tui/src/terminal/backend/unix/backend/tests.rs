@@ -9,7 +9,7 @@ use crate::{
             unix::{TermiosDriver, TtyStateAdapter},
         },
         mode::{
-            TerminalSession,
+            SessionFailureCause, TerminalSession,
             screen::{ScreenMode, enter_screen, render_inline},
         },
     },
@@ -128,7 +128,10 @@ fn uncertain_entry_failure_uses_the_shared_transactional_rollback() {
         Err(failure) => failure,
     };
 
-    assert!(matches!(failure.primary, UnixBackendError::Output(_)));
+    assert!(matches!(
+        failure.primary,
+        SessionFailureCause::Error(UnixBackendError::Output(_))
+    ));
     assert_eq!(failure.cleanup.len(), 1);
     assert_eq!(backend.output.bytes, b"\x1b[?1049h\x1b[?1049l");
     assert_eq!(
@@ -150,7 +153,10 @@ fn partial_mode_write_uses_the_same_pre_registered_rollback() {
         Err(failure) => failure,
     };
 
-    assert!(matches!(failure.primary, UnixBackendError::Output(_)));
+    assert!(matches!(
+        failure.primary,
+        SessionFailureCause::Error(UnixBackendError::Output(_))
+    ));
     assert!(failure.cleanup.is_empty());
     assert_eq!(backend.output.bytes, b"\x1b[?1\x1b[?1049l");
     assert_eq!(

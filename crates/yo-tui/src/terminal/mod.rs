@@ -1,8 +1,8 @@
 //! Typed terminal effects before platform byte encoding.
 
 mod ansi;
-mod backend;
-mod mode;
+pub(crate) mod backend;
+pub(crate) mod mode;
 mod ops;
 
 pub use ansi::{AnsiEncodeError, AnsiEncoder};

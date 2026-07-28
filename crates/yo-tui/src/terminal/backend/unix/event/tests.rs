@@ -5,10 +5,8 @@ use crossterm::event::Event;
 use super::{UnixEvent, UnixEventReader};
 use crate::{
     input::event::InputEvent,
-    terminal::backend::unix::{
-        input::{EventSource, InputReadFailure, InputReader},
-        signal::{SignalSource, TerminationSignal},
-    },
+    runner::{TerminationEvent, TerminationSource},
+    terminal::backend::unix::input::{EventSource, InputReadFailure},
 };
 
 #[derive(Default)]
@@ -30,23 +28,23 @@ impl EventSource for RecordingEventSource {
 }
 
 #[derive(Default)]
-struct PendingSignals {
-    pending: VecDeque<Option<TerminationSignal>>,
+struct PendingTermination {
+    pending: VecDeque<TerminationEvent>,
 }
 
-impl SignalSource for PendingSignals {
-    fn pending(&mut self) -> Option<TerminationSignal> {
-        self.pending.pop_front().flatten()
+impl TerminationSource for PendingTermination {
+    fn poll_termination(&mut self) -> TerminationEvent {
+        self.pending.pop_front().unwrap_or(TerminationEvent::None)
     }
 }
 
 fn reader(
     input: RecordingEventSource,
-    pending: impl IntoIterator<Item = Option<TerminationSignal>>,
-) -> UnixEventReader<RecordingEventSource, PendingSignals> {
+    pending: impl IntoIterator<Item = TerminationEvent>,
+) -> UnixEventReader<RecordingEventSource, PendingTermination> {
     UnixEventReader::new(
-        InputReader::new(input),
-        PendingSignals {
+        input,
+        PendingTermination {
             pending: pending.into_iter().collect(),
         },
     )
@@ -60,12 +58,12 @@ fn pending_signal_preempts_terminal_polling() {
             ready: VecDeque::from([Err("must not poll")]),
             ..RecordingEventSource::default()
         },
-        [Some(TerminationSignal::Terminate)],
+        [TerminationEvent::Requested],
     );
 
     assert_eq!(
         reader.next(Duration::from_secs(1)).unwrap(),
-        UnixEvent::Terminate(TerminationSignal::Terminate)
+        UnixEvent::Terminate
     );
 }
 
@@ -76,7 +74,7 @@ fn returns_ready_terminal_input() {
         ready: VecDeque::from([Ok(true)]),
         events: VecDeque::from([Ok(Event::Paste("질문".to_owned()))]),
     };
-    let mut reader = reader(input, [None]);
+    let mut reader = reader(input, [TerminationEvent::None]);
     let timeout = Duration::from_millis(25);
 
     assert_eq!(
@@ -93,12 +91,12 @@ fn observes_signal_arriving_during_terminal_poll() {
             ready: VecDeque::from([Ok(false)]),
             ..RecordingEventSource::default()
         },
-        [None, Some(TerminationSignal::Hangup)],
+        [TerminationEvent::None, TerminationEvent::Requested],
     );
 
     assert_eq!(
         reader.next(Duration::from_millis(25)).unwrap(),
-        UnixEvent::Terminate(TerminationSignal::Hangup)
+        UnixEvent::Terminate
     );
 }
 
@@ -110,12 +108,12 @@ fn post_poll_signal_preempts_ready_terminal_input() {
             ready: VecDeque::from([Ok(true)]),
             events: VecDeque::from([Ok(Event::Paste("discarded".to_owned()))]),
         },
-        [None, Some(TerminationSignal::Terminate)],
+        [TerminationEvent::None, TerminationEvent::Requested],
     );
 
     assert_eq!(
         reader.next(Duration::from_millis(25)).unwrap(),
-        UnixEvent::Terminate(TerminationSignal::Terminate)
+        UnixEvent::Terminate
     );
 }
 
@@ -127,12 +125,12 @@ fn post_poll_signal_preempts_terminal_failure() {
             ready: VecDeque::from([Err("poll failed")]),
             ..RecordingEventSource::default()
         },
-        [None, Some(TerminationSignal::Quit)],
+        [TerminationEvent::None, TerminationEvent::Requested],
     );
 
     assert_eq!(
         reader.next(Duration::from_millis(25)).unwrap(),
-        UnixEvent::Terminate(TerminationSignal::Quit)
+        UnixEvent::Terminate
     );
 }
 
@@ -144,7 +142,7 @@ fn returns_idle_after_bounded_poll() {
             ready: VecDeque::from([Ok(false)]),
             ..RecordingEventSource::default()
         },
-        [None, None],
+        [TerminationEvent::None, TerminationEvent::None],
     );
 
     assert_eq!(
@@ -161,7 +159,7 @@ fn preserves_terminal_poll_failure() {
             ready: VecDeque::from([Err("poll failed")]),
             ..RecordingEventSource::default()
         },
-        [None],
+        [TerminationEvent::None, TerminationEvent::None],
     );
 
     assert_eq!(

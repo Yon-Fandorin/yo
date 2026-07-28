@@ -3,7 +3,7 @@
 use std::io::Write;
 
 #[cfg(unix)]
-mod unix;
+pub(crate) mod unix;
 
 pub(crate) trait TerminalBackend {
     type TtyState;

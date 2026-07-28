@@ -17,9 +17,12 @@ use rustix::{
 mod backend;
 mod event;
 mod input;
-mod signal;
 
-pub(super) trait TermiosDriver {
+pub(crate) use backend::{UnixBackend, UnixBackendError, UnixMode};
+pub(crate) use event::{UnixEvent, UnixEventReader};
+pub(crate) use input::{CrosstermEventSource, EventSource};
+
+pub(crate) trait TermiosDriver {
     type State: Clone;
     type Error;
 
@@ -28,7 +31,7 @@ pub(super) trait TermiosDriver {
     fn apply(&mut self, state: &Self::State) -> Result<(), Self::Error>;
 }
 
-pub(super) struct TtyStateAdapter<D> {
+pub(crate) struct TtyStateAdapter<D> {
     driver: D,
 }
 
@@ -36,7 +39,7 @@ impl<D> TtyStateAdapter<D>
 where
     D: TermiosDriver,
 {
-    pub(super) fn new(driver: D) -> Self {
+    pub(crate) fn new(driver: D) -> Self {
         Self { driver }
     }
 
@@ -55,16 +58,21 @@ where
     }
 }
 
-pub(super) struct RustixTermiosDriver {
+pub(crate) struct RustixTermiosDriver {
     input: BorrowedFd<'static>,
 }
 
 impl RustixTermiosDriver {
-    pub(super) fn stdin() -> Self {
+    pub(crate) fn stdin() -> Self {
         Self {
             input: stdio::stdin(),
         }
     }
+}
+
+pub(crate) fn terminal_size() -> Result<crate::surface::Size, io::Errno> {
+    let size = rustix::termios::tcgetwinsize(stdio::stdout())?;
+    Ok(crate::surface::Size::new(size.ws_col, size.ws_row))
 }
 
 impl TermiosDriver for RustixTermiosDriver {

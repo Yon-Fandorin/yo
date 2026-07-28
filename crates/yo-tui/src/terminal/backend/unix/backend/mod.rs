@@ -8,18 +8,18 @@ const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
 const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum UnixMode {
+pub(crate) enum UnixMode {
     AlternateScreen,
     CursorVisibility,
 }
 
 #[derive(Debug)]
-pub(super) enum UnixBackendError<TtyError> {
+pub(crate) enum UnixBackendError<TtyError> {
     Tty(TtyError),
     Output(io::Error),
 }
 
-pub(super) struct UnixBackend<D, W> {
+pub(crate) struct UnixBackend<D, W> {
     tty: TtyStateAdapter<D>,
     output: W,
 }
@@ -29,7 +29,7 @@ where
     D: TermiosDriver,
     W: Write,
 {
-    pub(super) fn new(tty: TtyStateAdapter<D>, output: W) -> Self {
+    pub(crate) fn new(tty: TtyStateAdapter<D>, output: W) -> Self {
         Self { tty, output }
     }
 

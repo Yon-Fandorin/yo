@@ -7,7 +7,7 @@ use std::{
 use crate::terminal::backend::{TerminalBackend, TerminalOutputBackend};
 
 type BackendFailure<B> = SessionFailure<
-    <B as TerminalBackend>::Error,
+    SessionFailureCause<<B as TerminalBackend>::Error>,
     <B as TerminalBackend>::Mode,
     <B as TerminalBackend>::Error,
 >;
@@ -35,7 +35,24 @@ pub(crate) struct CleanupFailures<M, E> {
     pub(crate) failures: Vec<CleanupFailure<M, E>>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum SessionFailureCause<E> {
+    Error(E),
+    Panicked(Box<dyn Any + Send>),
+}
+
+impl<E> std::fmt::Debug for SessionFailureCause<E>
+where
+    E: std::fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Error(error) => formatter.debug_tuple("Error").field(error).finish(),
+            Self::Panicked(_) => formatter.write_str("Panicked(..)"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct SessionFailure<P, M, E> {
     pub(crate) primary: P,
     pub(crate) cleanup: Vec<CleanupFailure<M, E>>,
@@ -58,29 +75,51 @@ where
         backend: &'backend mut B,
         modes: impl IntoIterator<Item = B::Mode>,
     ) -> Result<Self, BackendFailure<B>> {
-        let tty_state = backend
-            .capture_tty_state()
-            .map_err(|primary| SessionFailure {
-                primary,
-                cleanup: Vec::new(),
-            })?;
+        let tty_state = match catch_unwind(AssertUnwindSafe(|| backend.capture_tty_state())) {
+            Ok(Ok(state)) => state,
+            Ok(Err(error)) => {
+                return Err(SessionFailure {
+                    primary: SessionFailureCause::Error(error),
+                    cleanup: Vec::new(),
+                });
+            },
+            Err(payload) => {
+                return Err(SessionFailure {
+                    primary: SessionFailureCause::Panicked(payload),
+                    cleanup: Vec::new(),
+                });
+            },
+        };
         let mut session = Self {
             backend,
             tty_state: Some(tty_state),
             acquired_modes: Vec::new(),
         };
 
-        if let Err(primary) = session
-            .backend
-            .enable_raw_input(session.tty_state.as_ref().unwrap())
-        {
-            return Err(session.finish_with_error(primary));
+        match catch_unwind(AssertUnwindSafe(|| {
+            session
+                .backend
+                .enable_raw_input(session.tty_state.as_ref().unwrap())
+        })) {
+            Ok(Ok(())) => {},
+            Ok(Err(error)) => {
+                return Err(session.finish_with_error(SessionFailureCause::Error(error)));
+            },
+            Err(payload) => {
+                return Err(session.finish_with_error(SessionFailureCause::Panicked(payload)));
+            },
         }
 
         for mode in modes {
             session.acquired_modes.push(mode);
-            if let Err(primary) = session.backend.acquire_mode(mode) {
-                return Err(session.finish_with_error(primary));
+            match catch_unwind(AssertUnwindSafe(|| session.backend.acquire_mode(mode))) {
+                Ok(Ok(())) => {},
+                Ok(Err(error)) => {
+                    return Err(session.finish_with_error(SessionFailureCause::Error(error)));
+                },
+                Err(payload) => {
+                    return Err(session.finish_with_error(SessionFailureCause::Panicked(payload)));
+                },
             }
         }
 

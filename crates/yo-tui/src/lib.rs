@@ -4,8 +4,13 @@ pub mod html;
 pub(crate) mod input;
 pub(crate) mod layout;
 pub(crate) mod prompt;
+#[cfg(unix)]
+mod runner;
 pub(crate) mod shell;
 pub mod surface;
 pub mod terminal;
 pub(crate) mod text;
 pub(crate) mod transcript;
+
+#[cfg(unix)]
+pub use runner::{ExitReason, RunError, RunOutcome, TerminationEvent, TerminationSource, run};

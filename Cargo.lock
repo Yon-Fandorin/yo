@@ -731,7 +731,6 @@ dependencies = [
  "emojis",
  "icu_properties",
  "rustix",
- "signal-hook",
  "unicode-segmentation",
 ]
 

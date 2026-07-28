@@ -8,7 +8,8 @@ use super::{
     inline::{InlineRenderError, InlineRenderer, InlineRestoreOutcome, InlineViewport},
     panic_route::{PanicOutcome, PanicPayload, PanicRouteError, catch_owner_panic},
     transaction::{
-        CleanupFailureCause, CleanupFailures, SessionFailure, TerminalSession, panic_message,
+        CleanupFailureCause, CleanupFailures, SessionFailure, SessionFailureCause, TerminalSession,
+        panic_message,
     },
 };
 use crate::{
@@ -17,7 +18,7 @@ use crate::{
 };
 
 type EntryFailure<B> = SessionFailure<
-    <B as TerminalBackend>::Error,
+    SessionFailureCause<<B as TerminalBackend>::Error>,
     <B as TerminalBackend>::Mode,
     <B as TerminalBackend>::Error,
 >;
@@ -118,7 +119,7 @@ type FullscreenBoundaryResult<B, T> = Result<
 >;
 
 pub(crate) fn run_inline_boundary<B, T>(
-    mut session: TerminalSession<'_, B>,
+    session: TerminalSession<'_, B>,
     viewport: &mut InlineViewport,
     operation: impl FnOnce(&mut TerminalSession<'_, B>, &mut InlineViewport) -> T,
 ) -> InlineBoundaryResult<B, T>
@@ -126,11 +127,22 @@ where
     B: TerminalOutputBackend,
 {
     catch_owner_panic(AssertUnwindSafe(|| {
-        let operation = catch_unwind(AssertUnwindSafe(|| operation(&mut session, viewport)));
-        let cleanup = close_inline(session, viewport);
-
-        InlineRunReport { operation, cleanup }
+        run_inline_guarded(session, viewport, operation)
     }))
+}
+
+pub(crate) fn run_inline_guarded<B, T>(
+    mut session: TerminalSession<'_, B>,
+    viewport: &mut InlineViewport,
+    operation: impl FnOnce(&mut TerminalSession<'_, B>, &mut InlineViewport) -> T,
+) -> InlineRunReport<T, B::Mode, B::Error>
+where
+    B: TerminalOutputBackend,
+{
+    let operation = catch_unwind(AssertUnwindSafe(|| operation(&mut session, viewport)));
+    let cleanup = close_inline(session, viewport);
+
+    InlineRunReport { operation, cleanup }
 }
 
 pub(crate) fn run_fullscreen_boundary<B, T>(

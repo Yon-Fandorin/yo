@@ -1,45 +1,48 @@
-//! Fair polling of process signals and terminal input on the owner thread.
+//! Fair polling of process-host termination and terminal input on the owner thread.
 
 use std::time::Duration;
 
-use super::{
-    input::{EventSource, InputReadFailure, InputReader},
-    signal::{SignalSource, TerminationSignal},
+use super::input::{EventSource, InputReadFailure, InputReader};
+use crate::{
+    input::event::InputEvent,
+    runner::{TerminationEvent, TerminationSource},
 };
-use crate::input::event::InputEvent;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum UnixEvent {
+pub(crate) enum UnixEvent {
     Input(InputEvent),
-    Terminate(TerminationSignal),
+    Terminate,
     Idle,
 }
 
-pub(super) struct UnixEventReader<E, S> {
+pub(crate) struct UnixEventReader<E, T> {
     input: InputReader<E>,
-    signals: S,
+    termination: T,
 }
 
-impl<E, S> UnixEventReader<E, S>
+impl<E, T> UnixEventReader<E, T>
 where
     E: EventSource,
-    S: SignalSource,
+    T: TerminationSource,
 {
-    pub(super) fn new(input: InputReader<E>, signals: S) -> Self {
-        Self { input, signals }
+    pub(crate) fn new(input: E, termination: T) -> Self {
+        Self {
+            input: InputReader::new(input),
+            termination,
+        }
     }
 
-    pub(super) fn next(
+    pub(crate) fn next(
         &mut self,
         timeout: Duration,
     ) -> Result<UnixEvent, InputReadFailure<E::Error>> {
-        if let Some(signal) = self.signals.pending() {
-            return Ok(UnixEvent::Terminate(signal));
+        if self.termination.poll_termination() == TerminationEvent::Requested {
+            return Ok(UnixEvent::Terminate);
         }
 
         let input = self.input.poll(timeout);
-        if let Some(signal) = self.signals.pending() {
-            return Ok(UnixEvent::Terminate(signal));
+        if self.termination.poll_termination() == TerminationEvent::Requested {
+            return Ok(UnixEvent::Terminate);
         }
 
         Ok(input?.map_or(UnixEvent::Idle, UnixEvent::Input))

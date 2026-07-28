@@ -26,38 +26,38 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum InputDecodeFailure {
+pub(crate) enum InputDecodeFailure {
     Unsupported(UnsupportedInputKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum UnsupportedInputKind {
+pub(crate) enum UnsupportedInputKind {
     FocusGained,
     FocusLost,
     Mouse,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(super) enum InputReadFailure<SourceError> {
+pub(crate) enum InputReadFailure<SourceError> {
     Source(SourceError),
     Decode(InputDecodeFailure),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum EventSourceAcquireFailure {
+pub(crate) enum EventSourceAcquireFailure {
     AlreadyOwned,
     DifferentThread,
     OwnershipPoisoned,
 }
 
-pub(super) trait EventSource {
+pub(crate) trait EventSource {
     type Error;
 
     fn poll(&mut self, timeout: Duration) -> Result<bool, Self::Error>;
     fn read(&mut self) -> Result<Event, Self::Error>;
 }
 
-pub(super) struct InputReader<S> {
+pub(crate) struct InputReader<S> {
     source: S,
 }
 
@@ -65,11 +65,11 @@ impl<S> InputReader<S>
 where
     S: EventSource,
 {
-    pub(super) fn new(source: S) -> Self {
+    pub(crate) fn new(source: S) -> Self {
         Self { source }
     }
 
-    pub(super) fn poll(
+    pub(crate) fn poll(
         &mut self,
         timeout: Duration,
     ) -> Result<Option<InputEvent>, InputReadFailure<S::Error>> {
@@ -92,13 +92,13 @@ where
 
 static CROSSTERM_EVENT_OWNER: Mutex<Option<ThreadId>> = Mutex::new(None);
 
-pub(super) struct CrosstermEventSource {
+pub(crate) struct CrosstermEventSource {
     _ownership: MutexGuard<'static, Option<ThreadId>>,
     _thread_affinity: PhantomData<Rc<()>>,
 }
 
 impl CrosstermEventSource {
-    pub(super) fn acquire() -> Result<Self, EventSourceAcquireFailure> {
+    pub(crate) fn acquire() -> Result<Self, EventSourceAcquireFailure> {
         let mut ownership = match CROSSTERM_EVENT_OWNER.try_lock() {
             Ok(ownership) => ownership,
             Err(TryLockError::WouldBlock) => {
