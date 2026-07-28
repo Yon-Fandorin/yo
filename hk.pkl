@@ -8,6 +8,7 @@ local checks = new Mapping<String, Step> {
     ["cargo-fmt"] = Builtins.cargo_fmt
     ["test-explanations"] = new Step {
         glob = List(
+            "crates/**/*.rs",
             "tools/librarian/**/*.rs",
             "tools/methexis/**/*.rs",
             "tools/validation/test-explanations.sh",

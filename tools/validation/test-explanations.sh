@@ -5,7 +5,7 @@ missing=0
 file_list="$(mktemp /tmp/yo-test-explanations.XXXXXX)"
 trap 'rm -f -- "${file_list}"' EXIT
 
-rg --files tools/librarian tools/methexis -g '*.rs' | LC_ALL=C sort > "${file_list}"
+rg --files crates tools/librarian tools/methexis -g '*.rs' | LC_ALL=C sort > "${file_list}"
 
 while IFS= read -r file; do
     if ! awk '

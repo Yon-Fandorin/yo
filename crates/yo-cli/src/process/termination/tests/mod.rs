@@ -706,6 +706,8 @@ fn subprocess_signal_waits_for_active_cleanup() {
     assert!(stdout.find("SESSION_READY").unwrap() < stdout.find("CLEANUP_DONE").unwrap());
 }
 
+// 격리된 child는 active session이 SIGINT를 typed 요청으로 관찰할 때까지 살아 있어야 한다.
+// 요청을 받은 뒤 cleanup 완료를 출력하고 나서야 원래 SIGINT 기본 종료를 재생한다.
 #[test]
 #[ignore]
 fn subprocess_child_signal_waits_for_active_cleanup() {
@@ -743,6 +745,8 @@ fn subprocess_idle_overrides_an_ignored_action() {
     assert_eq!(output.status.signal(), Some(SIGTERM));
 }
 
+// 격리된 child에 SIGTERM ignore action을 먼저 설치해도 coordinator가 이를 실행 정책으로 물려받지
+// 않는다. IDLE에서 SIGTERM을 올리면 뒤의 panic까지 가지 않고 기본 signal 종료가 일어나야 한다.
 #[test]
 #[ignore]
 fn subprocess_child_idle_overrides_an_ignored_action() {
@@ -766,6 +770,8 @@ fn subprocess_idle_overrides_a_custom_action() {
     assert_eq!(output.status.signal(), Some(SIGHUP));
 }
 
+// 격리된 child에 custom SIGHUP handler가 있어도 coordinator의 IDLE 정책은 그 handler를 호출하지
+// 않는다. SIGHUP을 올리면 뒤의 panic까지 가지 않고 기본 signal 종료가 일어나야 한다.
 #[test]
 #[ignore]
 fn subprocess_child_idle_overrides_a_custom_action() {
@@ -793,6 +799,8 @@ fn subprocess_shutdown_restores_action_and_caller_mask() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("RESTORED"));
 }
 
+// 격리된 child에서 shutdown한 뒤 설치 전 SIGINT action과 caller signal mask가 정확히 복원된다.
+// 은퇴 뒤의 delayed publication 시도도 DefaultNow가 되어 pending bit로 보관되지 않는다.
 #[test]
 #[ignore]
 fn subprocess_child_shutdown_restores_action_and_caller_mask() {
@@ -841,6 +849,8 @@ fn subprocess_failed_install_restores_action_and_caller_mask() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("ROLLBACK_RESTORED"));
 }
 
+// 실제 OS action 설치를 SIGINT 단계에서 실패시키면 앞서 바꾼 SIGHUP action과 caller mask를
+// 복구한다. 실패 은퇴 뒤의 delayed publication도 DefaultNow가 되어 pending으로 남지 않는다.
 #[test]
 #[ignore]
 fn subprocess_child_failed_install_restores_action_and_caller_mask() {
@@ -907,6 +917,8 @@ fn subprocess_signal_wins_over_session_panic() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("PANIC_CLEANUP_DONE"));
 }
 
+// active session이 SIGQUIT을 게시한 뒤 panic해도 stack cleanup은 먼저 실행된다.
+// cleanup이 끝나면 panic을 계속 전파하는 대신 pending SIGQUIT 기본 종료를 재생해야 한다.
 #[test]
 #[ignore]
 fn subprocess_child_signal_wins_over_session_panic() {
@@ -934,6 +946,8 @@ fn subprocess_cleanup_error_precedes_signal_replay() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("yo: cleanup failed"));
 }
 
+// active session이 SIGTERM을 게시하고 cleanup 오류를 반환하면 coordinator가 오류를 stderr에
+// 먼저 출력한 뒤 pending SIGTERM 기본 종료를 재생한다.
 #[test]
 #[ignore]
 fn subprocess_child_cleanup_error_precedes_signal_replay() {

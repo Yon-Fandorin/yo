@@ -131,12 +131,11 @@ detail. Cover the happy path and discriminating failure paths at contract
 boundaries; record environment-dependent cases separately instead of presenting
 them as internally verified.
 
-Every Rust test added to or materially changed under `tools/librarian/` or
-`tools/methexis/` must have an understandable Korean line-comment immediately
-above `#[test]`. Use multiple lines when one line would hide the setup, expected
-result, or reason. Do not merely translate the function name or use unexplained
-jargon. `tools/validation/test-explanations.sh` enforces presence; review owns
-factual accuracy and readability.
+Every built-in Rust test in the workspace must have an understandable Korean
+line-comment immediately above `#[test]`. Use multiple lines when one line would
+hide the setup, expected result, or reason. Do not merely translate the function
+name or use unexplained jargon. `tools/validation/test-explanations.sh` enforces
+presence; review owns factual accuracy and readability.
 
 Keep small unit tests beside the private behavior they exercise. When fixtures,
 failure matrices, or distinct behavior groups make the production module hard
