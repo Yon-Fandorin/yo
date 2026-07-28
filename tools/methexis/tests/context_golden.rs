@@ -120,7 +120,8 @@ fn unsupported_tokenizer_reproduces_the_failure_golden() {
 }
 
 // Methexis가 Librarian의 golden 후보 파일을 독립적으로 검증한 뒤 안전한 지식만 선택하는지 확인한다.
-// 선택된 id는 비어 있지 않고 중복 없이 정렬되며 모두 허용된 `tui.` 지식이어야 한다.
+// 선택된 id는 비어 있지 않고 중복 없이 정렬돼야 한다. Manifest의 후보 결정은
+// hash-pinned 입력 후보의 ID와 순서를 그대로 보존해 독립 디코더가 입력을 바꾸지 않아야 한다.
 #[test]
 fn independent_decoder_accepts_the_librarian_contract_golden() {
     let root = repository_root();
@@ -149,9 +150,29 @@ fn independent_decoder_accepts_the_librarian_contract_golden() {
             .all(|pair| { pair[0].as_str().unwrap() < pair[1].as_str().unwrap() })
     );
 
-    assert!(
-        affected_ids
-            .iter()
-            .all(|id| id.as_str().unwrap().starts_with("tui."))
-    );
+    let candidates: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            root.join("tools/librarian/examples/discovery-contract/expected-query-english.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let candidate_ids: Vec<_> = candidates["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|candidate| candidate["id"].as_str().unwrap())
+        .collect();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(root.join(result["manifest"]["path"].as_str().unwrap())).unwrap(),
+    )
+    .unwrap();
+    let decision_ids: Vec<_> = manifest["plan"]["candidate_decisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|decision| decision["candidate"]["id"].as_str().unwrap())
+        .collect();
+
+    assert_eq!(decision_ids, candidate_ids);
 }
