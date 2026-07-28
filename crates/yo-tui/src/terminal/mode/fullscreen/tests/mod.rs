@@ -107,6 +107,26 @@ fn resize_selects_a_complete_current_frame() {
     assert!(output.ends_with(b"\x1b[2;3H"));
 }
 
+// resize event가 같은 geometry를 다시 보고하더라도 이전 화면 신뢰를 폐기해 다음 frame을
+// incremental diff가 아닌 전체 redraw로 복구한다.
+#[test]
+fn explicit_resize_invalidation_forces_a_complete_frame() {
+    let size = Size::new(2, 1);
+    let mut viewport = FullscreenViewport::default();
+    viewport
+        .begin_frame(size, Point::new(0, 0))
+        .unwrap()
+        .commit();
+
+    viewport.invalidate_frame();
+
+    let pending = viewport.begin_frame(size, Point::new(1, 0)).unwrap();
+    assert!(matches!(
+        pending.plan(),
+        FullscreenFramePlan::Complete { .. }
+    ));
+}
+
 // 유효하지 않은 cursor는 출력 계획을 시작하지 않아 기존 frame 신뢰를 유지한다.
 #[test]
 fn invalid_cursor_preserves_the_previous_frame_trust() {

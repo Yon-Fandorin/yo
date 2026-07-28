@@ -17,6 +17,9 @@ yo-tui = { path = "../yo-tui" }
 nix = { version = "=0.31.3", default-features = false, features = ["signal"] }
 signal-hook = { version = "=0.3.18", default-features = false }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+nix = { version = "=0.31.3", default-features = false, features = ["term"] }
+
 # The workspace defaults are repeated so only disposition.rs can lower
 # unsafe_code from deny to allow for the reviewed Nix sigaction boundary.
 [lints.rust]

@@ -3,20 +3,30 @@ use std::{
     panic,
 };
 
-use super::{LiveBackendError, LiveInlineReport, LoopExit};
+use super::{LiveBackendError, LoopError, LoopExit};
 use crate::{
     runner::{RunError, RunOutcome},
     terminal::{
         backend::unix::UnixMode,
         mode::{
-            CleanupFailure, SessionFailure, SessionFailureCause,
+            CleanupFailure, CleanupFailures, SessionFailure, SessionFailureCause,
             panic_route::{PanicDiagnostic, PanicOutcome, PanicPayload, PanicRouteError},
             screen::InlineCloseReport,
         },
     },
 };
 
-type RunnerBoundary = Result<PanicOutcome<Result<LiveInlineReport, RunError>>, PanicRouteError>;
+pub(super) struct LiveRunReport {
+    pub(super) operation: Result<Result<LoopExit, LoopError>, PanicPayload>,
+    pub(super) cleanup: LiveCleanup,
+}
+
+pub(super) enum LiveCleanup {
+    Inline(InlineCloseReport<UnixMode, LiveBackendError>),
+    Fullscreen(Result<(), CleanupFailures<UnixMode, LiveBackendError>>),
+}
+
+type RunnerBoundary = Result<PanicOutcome<Result<LiveRunReport, RunError>>, PanicRouteError>;
 
 pub(super) fn entry_failure(
     failure: SessionFailure<SessionFailureCause<LiveBackendError>, UnixMode, LiveBackendError>,
@@ -46,11 +56,18 @@ pub(super) fn finish(outcome: RunnerBoundary) -> Result<RunOutcome, RunError> {
         Ok(Err(error)) => return Err(error),
         Err(payload) => resume_after_cleanup_panic(payload, outcome.diagnostic),
     };
+    finish_report(report, outcome.diagnostic)
+}
+
+fn finish_report(
+    report: LiveRunReport,
+    diagnostic: Option<PanicDiagnostic>,
+) -> Result<RunOutcome, RunError> {
     let operation = match report.operation {
         Ok(operation) => operation,
         Err(payload) => {
             emit_panic_cleanup(&report.cleanup);
-            resume_after_cleanup_panic(payload, outcome.diagnostic)
+            resume_after_cleanup_panic(payload, diagnostic)
         },
     };
 
@@ -91,11 +108,7 @@ where
     }
 }
 
-fn require_clean_close<M, E>(report: InlineCloseReport<M, E>) -> Result<(), RunError>
-where
-    M: std::fmt::Debug,
-    E: std::fmt::Debug,
-{
+fn require_clean_close(report: LiveCleanup) -> Result<(), RunError> {
     let detail = cleanup_detail(&report);
     if detail.is_empty() {
         Ok(())
@@ -104,26 +117,27 @@ where
     }
 }
 
-fn cleanup_detail<M, E>(report: &InlineCloseReport<M, E>) -> String
-where
-    M: std::fmt::Debug,
-    E: std::fmt::Debug,
-{
+fn cleanup_detail(report: &LiveCleanup) -> String {
     let mut failures = Vec::new();
-    if let Err(error) = &report.viewport {
-        failures.push(format!("inline viewport: {error:?}"));
-    }
-    if let Err(error) = &report.terminal {
-        failures.push(format!("terminal: {error:?}"));
+    match report {
+        LiveCleanup::Inline(report) => {
+            if let Err(error) = &report.viewport {
+                failures.push(format!("inline viewport: {error:?}"));
+            }
+            if let Err(error) = &report.terminal {
+                failures.push(format!("terminal: {error:?}"));
+            }
+        },
+        LiveCleanup::Fullscreen(report) => {
+            if let Err(error) = report {
+                failures.push(format!("terminal: {error:?}"));
+            }
+        },
     }
     failures.join("; ")
 }
 
-fn emit_panic_cleanup<M, E>(report: &InlineCloseReport<M, E>)
-where
-    M: std::fmt::Debug,
-    E: std::fmt::Debug,
-{
+fn emit_panic_cleanup(report: &LiveCleanup) {
     let detail = cleanup_detail(report);
     if !detail.is_empty() {
         let _ = writeln!(
@@ -142,13 +156,45 @@ fn resume_after_cleanup_panic(payload: PanicPayload, diagnostic: Option<PanicDia
 
 #[cfg(test)]
 mod tests {
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-
-    use super::{LiveBackendError, UnixMode, entry_failure};
-    use crate::terminal::mode::{
-        SessionFailure, SessionFailureCause,
-        panic_route::{PANIC_ROUTE_TEST_OWNER, catch_owner_panic},
+    use std::{
+        io,
+        panic::{AssertUnwindSafe, catch_unwind},
     };
+
+    use super::{
+        LiveBackendError, LiveCleanup, LiveRunReport, LoopError, LoopExit, UnixMode,
+        cleanup_detail, entry_failure, finish_report,
+    };
+    use crate::{
+        runner::ExitReason,
+        terminal::{
+            backend::unix::UnixBackendError,
+            mode::{
+                CleanupFailure, CleanupFailureCause, CleanupFailures, CleanupStep, SessionFailure,
+                SessionFailureCause,
+                panic_route::{PANIC_ROUTE_TEST_OWNER, catch_owner_panic},
+            },
+        },
+    };
+
+    fn failed_fullscreen_cleanup(messages: &[&str]) -> LiveCleanup {
+        LiveCleanup::Fullscreen(Err(CleanupFailures {
+            failures: messages
+                .iter()
+                .enumerate()
+                .map(|(index, message)| CleanupFailure {
+                    step: if index == 0 {
+                        CleanupStep::Mode(UnixMode::AlternateScreen)
+                    } else {
+                        CleanupStep::TtyState
+                    },
+                    cause: CleanupFailureCause::Error(UnixBackendError::Output(io::Error::other(
+                        *message,
+                    ))),
+                })
+                .collect(),
+        }))
+    }
 
     // 진입 panic은 복구 뒤 일반 오류로 바뀌지 않고 원래 payload와 진단으로 다시 unwind한다.
     #[test]
@@ -175,5 +221,73 @@ mod tests {
 
         assert_eq!(payload.downcast_ref::<&str>(), Some(&"entry panic"));
         assert_eq!(routed.diagnostic.unwrap().message, "entry panic");
+    }
+
+    // 실행 오류와 여러 cleanup 오류가 겹치면 실행 오류를 주원인으로 유지하면서 모든 복구 실패를
+    // 덧붙인다.
+    #[test]
+    fn operation_error_retains_primary_and_every_cleanup_failure() {
+        let cleanup = failed_fullscreen_cleanup(&["leaving screen", "restoring termios"]);
+        let report = LiveRunReport {
+            operation: Ok(Err(LoopError::Agent("agent disconnected".to_owned()))),
+            cleanup,
+        };
+
+        let error = finish_report(report, None).unwrap_err().to_string();
+
+        assert!(error.contains("agent disconnected"));
+        assert!(error.contains("leaving screen"));
+        assert!(error.contains("restoring termios"));
+    }
+
+    // 종료 신호를 관찰했더라도 terminal 복구가 실패하면 정상 종료로 숨기지 않고 복구 오류를
+    // 반환한다.
+    #[test]
+    fn termination_exit_reports_cleanup_failure_before_host_replays_signal() {
+        let report = LiveRunReport {
+            operation: Ok(Ok(LoopExit::TerminationRequested)),
+            cleanup: failed_fullscreen_cleanup(&["restoring termios"]),
+        };
+
+        let error = finish_report(report, None).unwrap_err().to_string();
+
+        assert!(error.contains("restoring terminal state failed"));
+        assert!(error.contains("restoring termios"));
+    }
+
+    // panic과 여러 cleanup 오류가 겹쳐도 모든 복구 실패를 표현할 수 있고 원래 panic payload를
+    // 그대로 재전파한다.
+    #[test]
+    fn panic_retains_payload_after_collecting_every_cleanup_failure() {
+        let cleanup = failed_fullscreen_cleanup(&["leaving screen", "restoring termios"]);
+        let detail = cleanup_detail(&cleanup);
+        assert!(detail.contains("leaving screen"));
+        assert!(detail.contains("restoring termios"));
+        let payload = catch_unwind(AssertUnwindSafe(|| panic!("runner panic"))).unwrap_err();
+        let report = LiveRunReport {
+            operation: Err(payload),
+            cleanup,
+        };
+
+        let resumed = catch_unwind(AssertUnwindSafe(|| {
+            let _ = finish_report(report, None);
+        }))
+        .unwrap_err();
+
+        assert_eq!(resumed.downcast_ref::<&str>(), Some(&"runner panic"));
+    }
+
+    // cleanup이 성공한 termination 경로는 host가 같은 signal을 재생할 수 있도록 정상 사유를
+    // 보존한다.
+    #[test]
+    fn clean_termination_preserves_the_termination_exit_reason() {
+        let report = LiveRunReport {
+            operation: Ok(Ok(LoopExit::TerminationRequested)),
+            cleanup: LiveCleanup::Fullscreen(Ok(())),
+        };
+
+        let outcome = finish_report(report, None).unwrap();
+
+        assert_eq!(outcome.reason(), ExitReason::TerminationRequested);
     }
 }

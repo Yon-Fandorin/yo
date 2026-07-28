@@ -98,6 +98,10 @@ impl FullscreenViewport {
             committed: false,
         })
     }
+
+    pub(crate) fn invalidate_frame(&mut self) {
+        self.trust = FrameTrust::Untrusted;
+    }
 }
 
 #[derive(Debug)]

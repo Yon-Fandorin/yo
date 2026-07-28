@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:a23804d5cba14c9835ec36b620149fd4592ba64459ab99ef342bc71d58f47973",
+  "candidate_set_id": "sha256:26ff93d139f5e415b96e5b542fc6e3707879ead6be22bbe4151a72e89bbd02ee",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:6d78a85760da7323072e6bca53ef0f380822f339299fa4bd8a899693274241bc",
+  "catalog_hash": "sha256:5698b820f4bcb667ad57814e5acc3c98044e55d4eb3e0863beff67178109281e",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -241,6 +241,23 @@
         {
           "kind": "relation",
           "via": "tui.surface.terminal-ops",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.runtime.mode-selection",
+      "path": "methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md",
+      "score": 20,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
           "score": 10
         },
         {

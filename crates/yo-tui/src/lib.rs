@@ -14,6 +14,6 @@ pub(crate) mod transcript;
 
 #[cfg(unix)]
 pub use runner::{
-    AgentAction, AgentConnection, DispatchOutcome, ExitReason, PendingDispatch, RunError,
-    RunOutcome, TerminationEvent, TerminationSource, run,
+    AgentAction, AgentConnection, DispatchOutcome, ExitReason, PendingDispatch, PresentationMode,
+    RunError, RunOutcome, TerminationEvent, TerminationSource, run, run_with_mode,
 };

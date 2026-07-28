@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.mode-001
+revision: sha256:241f742ee7db493a368c0a70db766f900a1517bb623d072726fe9d9de50f02d2
+payload:
+  kind: decision
+  content: The live yo CLI preserves Inline as its temporary no-option compatibility mode, exposes explicit Inline and Fullscreen selection, and defers both Auto selection and the long-term default until comparative tool research and terminal-matrix evidence justify a separate decision.

@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.runtime.mode-selection
+revision: sha256:da04bd60dc60009bb82238da9fe97af2dd5c6afa772b653e6cac594147d3ff1d
+reviewer: tui-architecture
+reviewed_at: 2026-07-28T16:02:17Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:36016388b6a90808bd6e08c8501e5f6c64ad2358c9ce68d4b2c31c6b21abcad9
+request_hash: sha256:2e642877bb485233074cbe64f2113ed8d8da0c7afff4ebec3844d284497a6cd2

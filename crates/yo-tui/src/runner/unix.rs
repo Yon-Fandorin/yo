@@ -7,24 +7,27 @@ use std::{
 
 use yo_core::RuntimePoll;
 
-use self::finalize::finish;
+use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
     runner::{
-        AgentConnection, DispatchOutcome, RunError, RunOutcome, TerminationSource,
+        AgentConnection, DispatchOutcome, PresentationMode, RunError, RunOutcome,
+        TerminationSource,
         state::{FrameError, StateEffect, StateError, TuiState},
     },
     surface::{Size, Surface},
     terminal::{
         backend::unix::{
             CrosstermEventSource, RustixTermiosDriver, TtyStateAdapter, UnixBackend,
-            UnixBackendError, UnixEvent, UnixEventReader, UnixMode, terminal_size,
+            UnixBackendError, UnixEvent, UnixEventReader, terminal_size,
         },
         mode::{
             TerminalSession,
+            fullscreen::{FullscreenRenderError, FullscreenViewport},
             inline::{InlineRenderError, InlineViewport},
             panic_route::catch_owner_panic,
             screen::{
-                InlineRunReport, ScreenMode, enter_screen, render_inline, run_inline_guarded,
+                ScreenMode, enter_screen, render_fullscreen, render_inline, run_fullscreen_guarded,
+                run_inline_guarded,
             },
         },
     },
@@ -36,8 +39,6 @@ const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const WORKER_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_AGENT_EVENTS_PER_TICK: usize = 256;
 pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
-pub(super) type LiveInlineReport =
-    InlineRunReport<Result<LoopExit, LoopError>, UnixMode, LiveBackendError>;
 
 pub(super) enum LoopExit {
     UserRequested,
@@ -50,7 +51,8 @@ pub(super) enum LoopError {
     Agent(String),
     State(StateError),
     Frame(FrameError),
-    Render(InlineRenderError),
+    InlineRender(InlineRenderError),
+    FullscreenRender(FullscreenRenderError),
 }
 
 impl LoopError {
@@ -68,7 +70,10 @@ impl LoopError {
                 "allocating the next transcript item ID failed".to_owned()
             },
             Self::Frame(error) => error.detail(),
-            Self::Render(error) => format!("rendering the inline frame failed: {error}"),
+            Self::InlineRender(error) => format!("rendering the inline frame failed: {error}"),
+            Self::FullscreenRender(error) => {
+                format!("rendering the fullscreen frame failed: {error}")
+            },
         }
     }
 }
@@ -92,15 +97,30 @@ pub fn run<A>(
 where
     A: AgentConnection,
 {
+    run_with_mode(termination, agent, PresentationMode::Inline)
+}
+
+/// Runs one terminal UI session in the explicitly selected presentation mode.
+///
+/// Mode selection is complete before this function acquires terminal state.
+pub fn run_with_mode<A>(
+    termination: &mut impl TerminationSource,
+    agent: &mut A,
+    mode: PresentationMode,
+) -> Result<RunOutcome, RunError>
+where
+    A: AgentConnection,
+{
     finish(catch_owner_panic(AssertUnwindSafe(|| {
-        run_routed(termination, agent)
+        run_routed(termination, agent, mode)
     })))
 }
 
 fn run_routed<A>(
     termination: &mut impl TerminationSource,
     agent: &mut A,
-) -> Result<LiveInlineReport, RunError>
+    mode: PresentationMode,
+) -> Result<LiveRunReport, RunError>
 where
     A: AgentConnection,
 {
@@ -115,32 +135,56 @@ where
     let output = stdout.lock();
     let tty = TtyStateAdapter::new(RustixTermiosDriver::stdin());
     let mut backend = UnixBackend::new(tty, output);
-    let session =
-        enter_screen(&mut backend, ScreenMode::Inline).map_err(finalize::entry_failure)?;
-    let mut viewport = InlineViewport::default();
     let mut state = TuiState::new();
     let started = Instant::now();
 
-    Ok(run_inline_guarded(
-        session,
-        &mut viewport,
-        |session, viewport| {
-            drive(
-                session,
-                viewport,
-                &mut events,
-                &mut state,
-                agent,
-                size,
-                started,
-            )
+    match mode {
+        PresentationMode::Inline => {
+            let session =
+                enter_screen(&mut backend, ScreenMode::Inline).map_err(finalize::entry_failure)?;
+            let mut viewport = InlineViewport::default();
+            let report = run_inline_guarded(session, &mut viewport, |session, viewport| {
+                drive(
+                    session,
+                    viewport,
+                    &mut events,
+                    &mut state,
+                    agent,
+                    size,
+                    started,
+                )
+            });
+            Ok(LiveRunReport {
+                operation: report.operation,
+                cleanup: LiveCleanup::Inline(report.cleanup),
+            })
         },
-    ))
+        PresentationMode::Fullscreen => {
+            let session = enter_screen(&mut backend, ScreenMode::Fullscreen)
+                .map_err(finalize::entry_failure)?;
+            let mut viewport = FullscreenViewport::default();
+            let report = run_fullscreen_guarded(session, |session| {
+                drive(
+                    session,
+                    &mut viewport,
+                    &mut events,
+                    &mut state,
+                    agent,
+                    size,
+                    started,
+                )
+            });
+            Ok(LiveRunReport {
+                operation: report.operation,
+                cleanup: LiveCleanup::Fullscreen(report.cleanup),
+            })
+        },
+    }
 }
 
-fn drive<B, E, T, A>(
+fn drive<B, E, T, A, P>(
     session: &mut TerminalSession<'_, B>,
-    viewport: &mut InlineViewport,
+    viewport: &mut P,
     events: &mut UnixEventReader<E, T>,
     state: &mut TuiState,
     agent: &mut A,
@@ -155,6 +199,7 @@ where
     E::Error: std::fmt::Debug,
     T: TerminationSource,
     A: AgentConnection,
+    P: LivePresenter<B>,
 {
     let mut previous = None;
     let mut frame_visible = false;
@@ -337,14 +382,14 @@ where
     Ok(changed)
 }
 
-pub(super) fn prepare_resize(viewport: &mut InlineViewport, size: &mut Size, next: Size) {
+pub(super) fn prepare_resize<P: FrameViewport>(viewport: &mut P, size: &mut Size, next: Size) {
     viewport.invalidate_frame();
     *size = next;
 }
 
-fn redraw<B>(
+fn redraw<B, P>(
     session: &mut TerminalSession<'_, B>,
-    viewport: &mut InlineViewport,
+    viewport: &mut P,
     state: &mut TuiState,
     size: Size,
     previous: &mut Option<Surface>,
@@ -353,19 +398,78 @@ where
     B: crate::terminal::backend::ScreenModeBackend
         + crate::terminal::backend::TerminalOutputBackend,
     B::Mode: PartialEq,
+    P: LivePresenter<B>,
 {
     let frame = state.prepare_frame(size).map_err(LoopError::Frame)?;
-    render_inline(
-        session,
-        viewport,
-        previous.as_ref(),
-        &frame.surface,
-        frame.cursor,
-    )
-    .map_err(LoopError::Render)?;
+    viewport.render(session, previous.as_ref(), &frame.surface, frame.cursor)?;
     state.commit_frame(&frame);
     *previous = Some(frame.surface);
     Ok(())
+}
+
+pub(super) trait FrameViewport {
+    fn invalidate_frame(&mut self);
+}
+
+pub(super) trait LivePresenter<B>: FrameViewport
+where
+    B: crate::terminal::backend::ScreenModeBackend
+        + crate::terminal::backend::TerminalOutputBackend,
+{
+    fn render(
+        &mut self,
+        session: &mut TerminalSession<'_, B>,
+        previous: Option<&Surface>,
+        current: &Surface,
+        cursor: crate::surface::Point,
+    ) -> Result<(), LoopError>;
+}
+
+impl FrameViewport for InlineViewport {
+    fn invalidate_frame(&mut self) {
+        InlineViewport::invalidate_frame(self);
+    }
+}
+
+impl<B> LivePresenter<B> for InlineViewport
+where
+    B: crate::terminal::backend::ScreenModeBackend
+        + crate::terminal::backend::TerminalOutputBackend,
+    B::Mode: PartialEq,
+{
+    fn render(
+        &mut self,
+        session: &mut TerminalSession<'_, B>,
+        previous: Option<&Surface>,
+        current: &Surface,
+        cursor: crate::surface::Point,
+    ) -> Result<(), LoopError> {
+        render_inline(session, self, previous, current, cursor).map_err(LoopError::InlineRender)
+    }
+}
+
+impl FrameViewport for FullscreenViewport {
+    fn invalidate_frame(&mut self) {
+        FullscreenViewport::invalidate_frame(self);
+    }
+}
+
+impl<B> LivePresenter<B> for FullscreenViewport
+where
+    B: crate::terminal::backend::ScreenModeBackend
+        + crate::terminal::backend::TerminalOutputBackend,
+    B::Mode: PartialEq,
+{
+    fn render(
+        &mut self,
+        session: &mut TerminalSession<'_, B>,
+        previous: Option<&Surface>,
+        current: &Surface,
+        cursor: crate::surface::Point,
+    ) -> Result<(), LoopError> {
+        render_fullscreen(session, self, previous, current, cursor)
+            .map_err(LoopError::FullscreenRender)
+    }
 }
 
 fn validate_size(size: Size) -> Result<(), RunError> {

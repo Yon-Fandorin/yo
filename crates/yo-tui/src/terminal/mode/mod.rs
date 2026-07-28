@@ -14,8 +14,10 @@ pub(crate) mod panic_route;
 pub(crate) mod screen;
 mod transaction;
 pub(crate) use transaction::{
-    CleanupFailure, SessionFailure, SessionFailureCause, TerminalSession,
+    CleanupFailure, CleanupFailures, SessionFailure, SessionFailureCause, TerminalSession,
 };
+#[cfg(test)]
+pub(crate) use transaction::{CleanupFailureCause, CleanupStep};
 
 #[cfg(test)]
 mod tests;

@@ -146,18 +146,28 @@ where
 }
 
 pub(crate) fn run_fullscreen_boundary<B, T>(
-    mut session: TerminalSession<'_, B>,
+    session: TerminalSession<'_, B>,
     operation: impl FnOnce(&mut TerminalSession<'_, B>) -> T,
 ) -> FullscreenBoundaryResult<B, T>
 where
     B: TerminalBackend,
 {
     catch_owner_panic(AssertUnwindSafe(|| {
-        let operation = catch_unwind(AssertUnwindSafe(|| operation(&mut session)));
-        let cleanup = session.close();
-
-        FullscreenRunReport { operation, cleanup }
+        run_fullscreen_guarded(session, operation)
     }))
+}
+
+pub(crate) fn run_fullscreen_guarded<B, T>(
+    mut session: TerminalSession<'_, B>,
+    operation: impl FnOnce(&mut TerminalSession<'_, B>) -> T,
+) -> FullscreenRunReport<T, B::Mode, B::Error>
+where
+    B: TerminalBackend,
+{
+    let operation = catch_unwind(AssertUnwindSafe(|| operation(&mut session)));
+    let cleanup = session.close();
+
+    FullscreenRunReport { operation, cleanup }
 }
 
 pub(crate) fn close_inline<B>(
