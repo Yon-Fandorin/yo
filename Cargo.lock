@@ -751,6 +751,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "yo-core"
+version = "0.0.0"
+
+[[package]]
 name = "yo-tui"
 version = "0.0.0"
 dependencies = [
