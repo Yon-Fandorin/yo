@@ -41,7 +41,10 @@ pub enum ActivityKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ActivityUpdate {
+    /// Appends one ordered fragment to the Activity's current text.
     TextDelta(String),
+    /// Replaces the Activity's current text with an authoritative snapshot.
+    TextSnapshot(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

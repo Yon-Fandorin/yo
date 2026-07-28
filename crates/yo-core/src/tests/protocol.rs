@@ -81,6 +81,16 @@ fn every_activity_phase_carries_the_same_correlation_identity() {
     }
 }
 
+// TextDelta는 기존 텍스트 뒤에 이어 붙일 조각이고 TextSnapshot은 지금까지의 텍스트를
+// 통째로 교체할 최종 상태여서 frontend가 둘을 추측 없이 구분할 수 있는지 확인한다.
+#[test]
+fn text_updates_distinguish_append_from_replacement() {
+    assert_ne!(
+        ActivityUpdate::TextDelta("answer".to_owned()),
+        ActivityUpdate::TextSnapshot("answer".to_owned())
+    );
+}
+
 // 승인 응답 명령과 응답 Activity가 원래 요청의 Activity와 request ID를 함께 가리킴을 확인한다.
 #[test]
 fn activity_response_keeps_its_request_correlation() {

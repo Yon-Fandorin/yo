@@ -9,7 +9,7 @@ mod session;
 
 pub use backend::{
     AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendPoll, BackendScriptStep, ScriptedBackend,
+    BackendPoll, BackendScriptStep, CodexBackend, CodexBackendConfig, ScriptedBackend,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision, UserInput};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
