@@ -1,0 +1,28 @@
+[package]
+name = "yo-cli"
+version = "0.0.0"
+edition.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "yo"
+path = "src/main.rs"
+
+[dependencies]
+yo-tui = { path = "../yo-tui" }
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "=0.31.3", default-features = false, features = ["signal"] }
+signal-hook = { version = "=0.3.18", default-features = false }
+
+# The workspace defaults are repeated so only disposition.rs can lower
+# unsafe_code from deny to allow for the reviewed Nix sigaction boundary.
+[lints.rust]
+unsafe_code = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

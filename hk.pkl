@@ -54,6 +54,41 @@ local checks = new Mapping<String, Step> {
         )
         check = "cargo test --quiet --locked -p yo-tui"
     }
+    ["yo-cli-tests"] = new Step {
+        glob = List(
+            "crates/yo-cli/**/*.rs",
+            "crates/yo-cli/Cargo.toml",
+            "crates/yo-tui/**/*.rs",
+            "crates/yo-tui/Cargo.toml",
+            "Cargo.lock",
+            "Cargo.toml",
+        )
+        check = "cargo test --quiet --locked -p yo-cli"
+    }
+    ["yo-cli-lints"] = new Step {
+        glob = List(
+            "crates/yo-cli/**/*.rs",
+            "crates/yo-cli/Cargo.toml",
+            "crates/yo-tui/**/*.rs",
+            "crates/yo-tui/Cargo.toml",
+            "Cargo.lock",
+            "Cargo.toml",
+        )
+        check = "cargo clippy --quiet --locked -p yo-cli --all-targets -- -D warnings"
+    }
+    ["yo-cli-unix-matrix"] = new Step {
+        glob = List(
+            "crates/yo-cli/**/*.rs",
+            "crates/yo-cli/Cargo.toml",
+            "crates/yo-tui/**/*.rs",
+            "crates/yo-tui/Cargo.toml",
+            ".github/workflows/unix-compile.yml",
+            "tools/validation/yo-cli-unix-matrix.sh",
+            "Cargo.lock",
+            "Cargo.toml",
+        )
+        check = "bash tools/validation/yo-cli-unix-matrix.sh"
+    }
 }
 
 hooks {

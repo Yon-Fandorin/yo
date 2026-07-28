@@ -7,3 +7,9 @@
 
 # Rust workspace build output
 /target/
+
+# Unix subprocess failure artifacts
+/core
+/core.*
+/crates/*/core
+/crates/*/core.*
