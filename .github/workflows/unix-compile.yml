@@ -1,0 +1,27 @@
+name: Unix compile
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  yo-cli:
+    name: yo-cli (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install nightly-2026-05-22 --profile minimal
+      - name: Compile yo-cli
+        run: cargo check --locked -p yo-cli --all-targets
