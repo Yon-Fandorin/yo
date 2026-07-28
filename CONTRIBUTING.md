@@ -116,6 +116,34 @@ Workers do not resolve merge conflicts. A contract or design conflict blocks int
 
 Repeated conflicts or files modified by many Tasks are contention hotspots. Pause parallel work and review ownership or module boundaries instead of adding workers.
 
+## Test code
+
+Treat a test as an executable explanation of one behavioral contract. Its name
+and nearby explanation must let a reviewer understand:
+
+- the scenario and relevant precondition;
+- the observable result the assertions establish; and
+- why that result protects a contract or failure boundary.
+
+Do not claim behavior that the test does not observe. Distinguish values that
+the test compares directly from inferred state, evidence, or implementation
+detail. Cover the happy path and discriminating failure paths at contract
+boundaries; record environment-dependent cases separately instead of presenting
+them as internally verified.
+
+Every Rust test added to or materially changed under `tools/librarian/` or
+`tools/methexis/` must have an understandable Korean line-comment immediately
+above `#[test]`. Use multiple lines when one line would hide the setup, expected
+result, or reason. Do not merely translate the function name or use unexplained
+jargon. `tools/validation/test-explanations.sh` enforces presence; review owns
+factual accuracy and readability.
+
+Keep small unit tests beside the private behavior they exercise. When fixtures,
+failure matrices, or distinct behavior groups make the production module hard
+to scan, move tests into a named `tests` module or integration-test files.
+Choose the boundary by responsibility, not an arbitrary line-count threshold,
+and keep shared test support separate from individual scenarios.
+
 ## Review and integration
 
 Each Slice must include its implementation or docs, discriminating validation, public-contract updates, and known limits.
