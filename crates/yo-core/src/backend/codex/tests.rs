@@ -38,6 +38,10 @@ impl FakePeer {
 }
 
 impl JsonPeer for FakePeer {
+    fn stop_handle(&self) -> crate::BackendStopHandle {
+        crate::BackendStopHandle::no_op()
+    }
+
     fn send(&mut self, message: &Value) -> Result<(), BackendFailure> {
         self.sent.0.borrow_mut().push(message.clone());
         Ok(())
@@ -91,8 +95,11 @@ fn backend(later_messages: impl IntoIterator<Item = Value>) -> (Backend<FakePeer
     ]
     .concat();
     let (peer, sent) = FakePeer::new(messages);
-    let client = AppServerClient::initialize(peer, Duration::from_secs(1)).unwrap();
-    (Backend::new(client, "/workspace".into()), sent)
+    let mut client = AppServerClient::new(peer, Duration::from_secs(1));
+    client.initialize().unwrap();
+    let mut backend = Backend::new_uninitialized(client, "/workspace".into());
+    backend.initialized = true;
+    (backend, sent)
 }
 
 // 초기화가 성공하면 initialize 요청 다음에 initialized 알림을 정확한 순서로 보내고,
@@ -116,6 +123,7 @@ fn initializes_before_starting_a_thread() {
     assert_eq!(sent[2]["id"], 2);
     assert_eq!(sent[2]["method"], "thread/start");
     assert_eq!(sent[2]["params"]["cwd"], "/workspace");
+    assert_eq!(sent[2]["params"]["ephemeral"], true);
 }
 
 // 검증하지 않은 Codex minor 버전이면 initialized 알림이나 Session 명령을 보내기 전에
@@ -123,9 +131,10 @@ fn initializes_before_starting_a_thread() {
 #[test]
 fn incompatible_version_fails_during_initialization() {
     let (peer, sent) = FakePeer::new([initialize_response(1, "0.146.0")]);
+    let mut client = AppServerClient::new(peer, Duration::from_secs(1));
 
-    let failure = match AppServerClient::initialize(peer, Duration::from_secs(1)) {
-        Ok(_) => panic!("an unverified Codex version must not initialize"),
+    let failure = match client.initialize() {
+        Ok(()) => panic!("an unverified Codex version must not initialize"),
         Err(failure) => failure,
     };
 
@@ -172,6 +181,7 @@ fn maps_a_coding_turn_into_semantic_events() {
                     "id": "item-a",
                     "type": "commandExecution",
                     "status": "completed",
+                    "command": "cargo test",
                     "aggregatedOutput": "cargo test\nok"
                 }
             }
@@ -189,7 +199,14 @@ fn maps_a_coding_turn_into_semantic_events() {
             "params": {
                 "threadId": "thread-a",
                 "turnId": "turn-a",
-                "item": { "id": "item-b", "type": "fileChange", "status": "completed" }
+                "item": {
+                    "id": "item-b",
+                    "type": "fileChange",
+                    "status": "completed",
+                    "changes": [
+                        { "path": "src/lib.rs", "kind": "update", "diff": "@@" }
+                    ]
+                }
             }
         }),
         json!({
@@ -230,7 +247,7 @@ fn maps_a_coding_turn_into_semantic_events() {
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::ActivityUpdated {
             activity: activity(active_turn, 1),
-            update: crate::ActivityUpdate::TextSnapshot("cargo test\nok".to_owned()),
+            update: crate::ActivityUpdate::TextSnapshot("$ cargo test\ncargo test\nok".to_owned()),
         })
     );
     assert_eq!(
@@ -245,6 +262,13 @@ fn maps_a_coding_turn_into_semantic_events() {
         RuntimePoll::Event(AgentEvent::ActivityStarted {
             activity: activity(active_turn, 2),
             kind: ActivityKind::FileChange,
+        })
+    );
+    assert_eq!(
+        runtime.poll_event().unwrap(),
+        RuntimePoll::Event(AgentEvent::ActivityUpdated {
+            activity: activity(active_turn, 2),
+            update: crate::ActivityUpdate::TextSnapshot("update: src/lib.rs".to_owned()),
         })
     );
     assert_eq!(
@@ -278,7 +302,9 @@ fn correlates_an_approval_round_trip() {
             "params": {
                 "threadId": "thread-a",
                 "turnId": "turn-a",
-                "itemId": "item-a"
+                "itemId": "item-a",
+                "command": "cargo test",
+                "reason": "requires workspace execution"
             }
         }),
         json!({
@@ -306,6 +332,15 @@ fn correlates_an_approval_round_trip() {
             kind: ActivityKind::ApprovalRequest {
                 request_id: request.request_id(),
             },
+        })
+    );
+    assert_eq!(
+        runtime.poll_event().unwrap(),
+        RuntimePoll::Event(AgentEvent::ActivityUpdated {
+            activity: request.activity(),
+            update: crate::ActivityUpdate::TextSnapshot(
+                "$ cargo test\nReason: requires workspace execution".to_owned()
+            ),
         })
     );
     runtime

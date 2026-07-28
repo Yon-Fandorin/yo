@@ -5,10 +5,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use yo_core::RuntimePoll;
+
 use self::finalize::finish;
 use crate::{
     runner::{
-        RunError, RunOutcome, TerminationSource,
+        AgentConnection, DispatchOutcome, RunError, RunOutcome, TerminationSource,
         state::{FrameError, StateEffect, StateError, TuiState},
     },
     surface::{Size, Surface},
@@ -31,6 +33,8 @@ use crate::{
 mod finalize;
 
 const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const WORKER_RETRY_INTERVAL: Duration = Duration::from_millis(10);
+const MAX_AGENT_EVENTS_PER_TICK: usize = 256;
 pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
 pub(super) type LiveInlineReport =
     InlineRunReport<Result<LoopExit, LoopError>, UnixMode, LiveBackendError>;
@@ -43,6 +47,7 @@ pub(super) enum LoopExit {
 #[derive(Debug)]
 pub(super) enum LoopError {
     Input(String),
+    Agent(String),
     State(StateError),
     Frame(FrameError),
     Render(InlineRenderError),
@@ -52,8 +57,12 @@ impl LoopError {
     pub(super) fn detail(&self) -> String {
         match self {
             Self::Input(error) => format!("reading terminal input failed: {error}"),
+            Self::Agent(error) => format!("communicating with the agent failed: {error}"),
             Self::State(StateError::Transcript(error)) => {
                 format!("updating transcript state failed: {error:?}")
+            },
+            Self::State(StateError::UnknownActivity(activity)) => {
+                format!("updating unknown agent Activity failed: {activity:?}")
             },
             Self::State(StateError::ItemIdOverflow) => {
                 "allocating the next transcript item ID failed".to_owned()
@@ -76,13 +85,25 @@ impl Error for LoopError {}
 ///
 /// The process host remains responsible for signal installation, identity, and
 /// final disposition. This function returns only after terminal cleanup.
-pub fn run(termination: &mut impl TerminationSource) -> Result<RunOutcome, RunError> {
+pub fn run<A>(
+    termination: &mut impl TerminationSource,
+    agent: &mut A,
+) -> Result<RunOutcome, RunError>
+where
+    A: AgentConnection,
+{
     finish(catch_owner_panic(AssertUnwindSafe(|| {
-        run_routed(termination)
+        run_routed(termination, agent)
     })))
 }
 
-fn run_routed(termination: &mut impl TerminationSource) -> Result<LiveInlineReport, RunError> {
+fn run_routed<A>(
+    termination: &mut impl TerminationSource,
+    agent: &mut A,
+) -> Result<LiveInlineReport, RunError>
+where
+    A: AgentConnection,
+{
     let source = CrosstermEventSource::acquire()
         .map_err(|error| RunError::new("acquiring terminal input failed", format!("{error:?}")))?;
     let size = terminal_size()
@@ -103,15 +124,26 @@ fn run_routed(termination: &mut impl TerminationSource) -> Result<LiveInlineRepo
     Ok(run_inline_guarded(
         session,
         &mut viewport,
-        |session, viewport| drive(session, viewport, &mut events, &mut state, size, started),
+        |session, viewport| {
+            drive(
+                session,
+                viewport,
+                &mut events,
+                &mut state,
+                agent,
+                size,
+                started,
+            )
+        },
     ))
 }
 
-fn drive<B, E, T>(
+fn drive<B, E, T, A>(
     session: &mut TerminalSession<'_, B>,
     viewport: &mut InlineViewport,
     events: &mut UnixEventReader<E, T>,
     state: &mut TuiState,
+    agent: &mut A,
     mut size: Size,
     started: Instant,
 ) -> Result<LoopExit, LoopError>
@@ -122,11 +154,96 @@ where
     E: crate::terminal::backend::unix::EventSource,
     E::Error: std::fmt::Debug,
     T: TerminationSource,
+    A: AgentConnection,
 {
     let mut previous = None;
     let mut frame_visible = false;
+    let mut pending_dispatch = None;
+    let mut pending_control = None;
 
     loop {
+        if drain_agent(agent, state)? && size.width > 0 && size.height > 0 {
+            redraw(session, viewport, state, size, &mut previous)?;
+            frame_visible = true;
+        }
+        if let Some(action) = pending_control.take() {
+            match agent
+                .retry(action)
+                .map_err(|error| LoopError::Agent(error.to_string()))?
+            {
+                DispatchOutcome::Accepted => {},
+                DispatchOutcome::Backpressured(action) => {
+                    pending_control = Some(action);
+                },
+            }
+        }
+        if pending_control.is_none()
+            && let Some(action) = pending_dispatch.take()
+        {
+            match agent
+                .retry(action)
+                .map_err(|error| LoopError::Agent(error.to_string()))?
+            {
+                DispatchOutcome::Accepted => {},
+                DispatchOutcome::Backpressured(action) => {
+                    pending_dispatch = Some(action);
+                },
+            }
+        }
+        if pending_control.is_some() || pending_dispatch.is_some() {
+            match events
+                .next(WORKER_RETRY_INTERVAL)
+                .map_err(|error| LoopError::Input(format!("{error:?}")))?
+            {
+                UnixEvent::Terminate => return Ok(LoopExit::TerminationRequested),
+                UnixEvent::Input(input) => {
+                    match handle_backpressured_input(
+                        state,
+                        input,
+                        started.elapsed(),
+                        pending_control.is_none(),
+                    )
+                    .map_err(LoopError::State)?
+                    {
+                        StateEffect::Exit => return Ok(LoopExit::UserRequested),
+                        StateEffect::Dispatch(action) => {
+                            let is_interrupt =
+                                matches!(&action, crate::runner::AgentAction::Interrupt);
+                            if is_interrupt {
+                                pending_dispatch = None;
+                            }
+                            match agent
+                                .dispatch(action)
+                                .map_err(|error| LoopError::Agent(error.to_string()))?
+                            {
+                                DispatchOutcome::Accepted => {},
+                                DispatchOutcome::Backpressured(action) => {
+                                    if is_interrupt {
+                                        pending_control = Some(action);
+                                    } else {
+                                        debug_assert!(pending_control.is_none());
+                                        pending_control = Some(action);
+                                    }
+                                },
+                            }
+                        },
+                        StateEffect::Redraw => {
+                            if size.width > 0 && size.height > 0 {
+                                redraw(session, viewport, state, size, &mut previous)?;
+                                frame_visible = true;
+                            }
+                        },
+                        StateEffect::Unchanged => {},
+                        StateEffect::Resize(next) => {
+                            prepare_resize(viewport, &mut size, next);
+                            frame_visible = false;
+                        },
+                    }
+                },
+                UnixEvent::Idle => {},
+            }
+            continue;
+        }
         let timeout = if !frame_visible && size.width > 0 && size.height > 0 {
             Duration::ZERO
         } else {
@@ -155,6 +272,21 @@ where
                         frame_visible = true;
                     }
                 },
+                StateEffect::Dispatch(action) => {
+                    match agent
+                        .dispatch(action)
+                        .map_err(|error| LoopError::Agent(error.to_string()))?
+                    {
+                        DispatchOutcome::Accepted => {},
+                        DispatchOutcome::Backpressured(action) => {
+                            pending_dispatch = Some(action);
+                        },
+                    }
+                    if size.width > 0 && size.height > 0 {
+                        redraw(session, viewport, state, size, &mut previous)?;
+                        frame_visible = true;
+                    }
+                },
                 StateEffect::Resize(next) => {
                     prepare_resize(viewport, &mut size, next);
                     frame_visible = false;
@@ -162,6 +294,47 @@ where
             },
         }
     }
+}
+
+pub(super) fn handle_backpressured_input(
+    state: &mut TuiState,
+    input: crate::input::event::InputEvent,
+    now: Duration,
+    allow_pending_request: bool,
+) -> Result<StateEffect, StateError> {
+    if (allow_pending_request && state.has_pending_request())
+        || input.is_ctrl_c_or_d()
+        || matches!(input, crate::input::event::InputEvent::Resize(_))
+    {
+        state.handle(input, now)
+    } else {
+        Ok(StateEffect::Unchanged)
+    }
+}
+
+pub(super) fn drain_agent<A>(agent: &mut A, state: &mut TuiState) -> Result<bool, LoopError>
+where
+    A: AgentConnection,
+{
+    let mut changed = false;
+    for _ in 0..MAX_AGENT_EVENTS_PER_TICK {
+        match agent
+            .poll()
+            .map_err(|error| LoopError::Agent(error.to_string()))?
+        {
+            RuntimePoll::Pending => return Ok(changed),
+            RuntimePoll::Event(event) => {
+                state.observe(event).map_err(LoopError::State)?;
+                changed = true;
+            },
+            RuntimePoll::Closed => {
+                return Err(LoopError::Agent(
+                    "the agent connection closed unexpectedly".to_owned(),
+                ));
+            },
+        }
+    }
+    Ok(changed)
 }
 
 pub(super) fn prepare_resize(viewport: &mut InlineViewport, size: &mut Size, next: Size) {

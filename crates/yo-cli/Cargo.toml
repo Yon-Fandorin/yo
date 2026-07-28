@@ -10,6 +10,7 @@ name = "yo"
 path = "src/main.rs"
 
 [dependencies]
+yo-core = { path = "../yo-core" }
 yo-tui = { path = "../yo-tui" }
 
 [target.'cfg(unix)'.dependencies]

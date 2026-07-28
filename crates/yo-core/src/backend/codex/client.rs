@@ -9,7 +9,7 @@ use super::{
     protocol::{self, Incoming},
     transport::{JsonPeer, PeerPoll},
 };
-use crate::{BackendFailure, BackendFailureKind};
+use crate::{BackendFailure, BackendFailureKind, BackendStopHandle};
 
 pub(super) enum ClientPoll {
     Pending,
@@ -25,14 +25,21 @@ pub(super) struct AppServerClient<P> {
 }
 
 impl<P: JsonPeer> AppServerClient<P> {
-    pub(super) fn initialize(peer: P, request_timeout: Duration) -> Result<Self, BackendFailure> {
-        let mut client = Self {
+    pub(super) fn new(peer: P, request_timeout: Duration) -> Self {
+        Self {
             peer,
             request_timeout,
             next_request_id: 1,
             pending: VecDeque::new(),
-        };
-        let result = client.call(
+        }
+    }
+
+    pub(super) fn stop_handle(&self) -> BackendStopHandle {
+        self.peer.stop_handle()
+    }
+
+    pub(super) fn initialize(&mut self) -> Result<(), BackendFailure> {
+        let result = self.call(
             "initialize",
             json!({
                 "clientInfo": {
@@ -43,8 +50,7 @@ impl<P: JsonPeer> AppServerClient<P> {
             }),
         )?;
         protocol::decode_initialize(result)?;
-        client.peer.send(&protocol::initialized_notification())?;
-        Ok(client)
+        self.peer.send(&protocol::initialized_notification())
     }
 
     pub(super) fn call(&mut self, method: &str, params: Value) -> Result<Value, BackendFailure> {

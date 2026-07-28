@@ -3,6 +3,8 @@ use std::{error::Error, fmt};
 use std::{io::Write, process::ExitCode};
 
 #[cfg(unix)]
+mod agent;
+#[cfg(unix)]
 mod process;
 
 #[cfg(unix)]
@@ -18,57 +20,87 @@ fn main() -> ExitCode {
 
 #[cfg(unix)]
 fn run() -> Result<(), AppError> {
-    let mut host =
-        process::termination::TerminationCoordinator::install().map_err(AppError::Host)?;
-    let session = host
-        .with_active_session(yo_tui::run)
-        .map_err(AppError::Host)?;
-    let shutdown = host.shutdown();
+    let cwd = std::env::current_dir()
+        .map_err(|error| AppError::single("reading the working directory", error))?;
+    let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
+        AppError::single("installing the process termination coordinator", error)
+    })?;
+    let session = host.with_active_session(|termination| run_agent_session(termination, cwd));
 
-    match (session, shutdown) {
-        (Ok(_), Ok(())) => Ok(()),
-        (Err(session), Ok(())) => Err(AppError::Session(session)),
-        (Ok(_), Err(shutdown)) => Err(AppError::Host(shutdown)),
-        (Err(session), Err(shutdown)) => Err(AppError::SessionAndShutdown { session, shutdown }),
+    let mut failures = Vec::new();
+    match session {
+        Ok(Ok(_)) => {},
+        Ok(Err(error)) => failures.extend(error.failures),
+        Err(error) => failures.push(format!("process termination session: {error}")),
+    }
+    if let Err(error) = host.shutdown() {
+        failures.push(format!("process termination cleanup: {error}"));
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::many(failures))
+    }
+}
+
+#[cfg(unix)]
+fn run_agent_session(
+    termination: &mut impl yo_tui::TerminationSource,
+    cwd: std::path::PathBuf,
+) -> Result<(), AppError> {
+    let backend = yo_core::CodexBackend::spawn(yo_core::CodexBackendConfig::new(cwd))
+        .map_err(|error| AppError::single("starting Codex", error))?;
+    let Some(mut agent) = agent::TuiAgentConnection::start(backend, termination)
+        .map_err(|error| AppError::single("creating the agent Session", error))?
+    else {
+        return Ok(());
+    };
+    let terminal = yo_tui::run(termination, &mut agent);
+    let cleanup = agent.shutdown();
+
+    let mut failures = Vec::new();
+    if let Err(error) = terminal {
+        failures.push(format!("terminal session: {error}"));
+    }
+    if let Err(error) = cleanup {
+        failures.push(format!("agent cleanup: {error}"));
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::many(failures))
     }
 }
 
 #[cfg(unix)]
 #[derive(Debug)]
-enum AppError {
-    Host(process::termination::HostError),
-    Session(yo_tui::RunError),
-    SessionAndShutdown {
-        session: yo_tui::RunError,
-        shutdown: process::termination::HostError,
-    },
+struct AppError {
+    failures: Vec<String>,
+}
+
+#[cfg(unix)]
+impl AppError {
+    fn single(context: &'static str, error: impl fmt::Display) -> Self {
+        Self::many([format!("{context}: {error}")])
+    }
+
+    fn many(failures: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            failures: failures.into_iter().collect(),
+        }
+    }
 }
 
 #[cfg(unix)]
 impl fmt::Display for AppError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Host(error) => error.fmt(formatter),
-            Self::Session(error) => error.fmt(formatter),
-            Self::SessionAndShutdown { session, shutdown } => {
-                write!(
-                    formatter,
-                    "{session}; additionally, shutdown failed: {shutdown}"
-                )
-            },
-        }
+        formatter.write_str(&self.failures.join("; additionally, "))
     }
 }
 
 #[cfg(unix)]
-impl Error for AppError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Host(error) => Some(error),
-            Self::Session(error) | Self::SessionAndShutdown { session: error, .. } => Some(error),
-        }
-    }
-}
+impl Error for AppError {}
 
 #[cfg(not(unix))]
 fn main() -> ExitCode {

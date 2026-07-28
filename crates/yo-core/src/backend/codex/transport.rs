@@ -3,6 +3,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{
         Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, TryRecvError},
     },
     thread::{self, JoinHandle},
@@ -12,7 +13,7 @@ use std::{
 use serde_json::Value;
 
 use super::CodexBackendConfig;
-use crate::{BackendFailure, BackendFailureKind};
+use crate::{BackendFailure, BackendFailureKind, BackendStopHandle};
 
 pub(super) enum PeerPoll {
     Pending,
@@ -21,6 +22,7 @@ pub(super) enum PeerPoll {
 }
 
 pub(super) trait JsonPeer {
+    fn stop_handle(&self) -> BackendStopHandle;
     fn send(&mut self, message: &Value) -> Result<(), BackendFailure>;
     fn receive(&mut self, timeout: Duration) -> Result<PeerPoll, BackendFailure>;
     fn try_receive(&mut self) -> Result<PeerPoll, BackendFailure>;
@@ -34,7 +36,7 @@ enum ReaderMessage {
 }
 
 pub(super) struct StdioPeer {
-    child: Child,
+    process: Arc<ProcessControl>,
     stdin: Option<ChildStdin>,
     receiver: Receiver<ReaderMessage>,
     reader: Option<JoinHandle<()>>,
@@ -42,6 +44,23 @@ pub(super) struct StdioPeer {
     stderr_tail: Arc<Mutex<String>>,
     shutdown_timeout: Duration,
     shutdown_result: Option<Result<(), BackendFailure>>,
+}
+
+struct ProcessControl {
+    child: Mutex<Child>,
+    stop_requested: AtomicBool,
+}
+
+impl ProcessControl {
+    fn request_stop(&self) {
+        self.stop_requested.store(true, Ordering::Release);
+        let Ok(mut child) = self.child.lock() else {
+            return;
+        };
+        if matches!(child.try_wait(), Ok(None)) {
+            let _ = child.kill();
+        }
+    }
 }
 
 impl StdioPeer {
@@ -158,7 +177,10 @@ impl StdioPeer {
         };
 
         Ok(Self {
-            child,
+            process: Arc::new(ProcessControl {
+                child: Mutex::new(child),
+                stop_requested: AtomicBool::new(false),
+            }),
             stdin: Some(stdin),
             receiver,
             reader: Some(reader),
@@ -167,6 +189,11 @@ impl StdioPeer {
             shutdown_timeout: config.shutdown_timeout(),
             shutdown_result: None,
         })
+    }
+
+    pub(super) fn stop_handle(&self) -> BackendStopHandle {
+        let process = Arc::clone(&self.process);
+        BackendStopHandle::new(move || process.request_stop())
     }
 
     fn map_reader(&self, message: ReaderMessage) -> Result<PeerPoll, BackendFailure> {
@@ -203,8 +230,20 @@ impl StdioPeer {
         self.stdin.take();
         let deadline = Instant::now() + self.shutdown_timeout;
         let process_failure = loop {
-            match self.child.try_wait() {
+            let status = self
+                .process
+                .child
+                .lock()
+                .map_err(|_| {
+                    BackendFailure::new(
+                        BackendFailureKind::Cleanup,
+                        "Codex app-server process lock was poisoned",
+                    )
+                })?
+                .try_wait();
+            match status {
                 Ok(Some(status)) if status.success() => break None,
+                Ok(Some(_)) if self.process.stop_requested.load(Ordering::Acquire) => break None,
                 Ok(Some(status)) => {
                     break Some(BackendFailure::new(
                         BackendFailureKind::Cleanup,
@@ -215,13 +254,19 @@ impl StdioPeer {
                     thread::sleep(Duration::from_millis(10));
                 },
                 Ok(None) => {
-                    self.child.kill().map_err(|error| {
+                    let mut child = self.process.child.lock().map_err(|_| {
+                        BackendFailure::new(
+                            BackendFailureKind::Cleanup,
+                            "Codex app-server process lock was poisoned",
+                        )
+                    })?;
+                    child.kill().map_err(|error| {
                         BackendFailure::new(
                             BackendFailureKind::Cleanup,
                             format!("failed to terminate Codex app-server: {error}"),
                         )
                     })?;
-                    self.child.wait().map_err(|error| {
+                    child.wait().map_err(|error| {
                         BackendFailure::new(
                             BackendFailureKind::Cleanup,
                             format!("failed to reap Codex app-server: {error}"),
@@ -275,6 +320,10 @@ impl StdioPeer {
 }
 
 impl JsonPeer for StdioPeer {
+    fn stop_handle(&self) -> BackendStopHandle {
+        self.stop_handle()
+    }
+
     fn send(&mut self, message: &Value) -> Result<(), BackendFailure> {
         let stdin = self.stdin.as_mut().ok_or_else(|| {
             BackendFailure::new(
@@ -331,12 +380,14 @@ impl JsonPeer for StdioPeer {
 
 impl Drop for StdioPeer {
     fn drop(&mut self) {
-        let reaped = if matches!(self.child.try_wait(), Ok(Some(_))) {
-            true
-        } else {
-            let _ = self.child.kill();
-            self.child.wait().is_ok()
-        };
+        let reaped = self.process.child.lock().is_ok_and(|mut child| {
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                true
+            } else {
+                let _ = child.kill();
+                child.wait().is_ok()
+            }
+        });
         if reaped {
             let _ = self.join_readers();
         }

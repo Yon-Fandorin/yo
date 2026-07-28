@@ -1,9 +1,16 @@
-use std::time::Duration;
+use std::{num::NonZeroU64, time::Duration};
+
+use yo_core::{
+    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate,
+    AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendEvent, BackendScriptStep,
+    RequestId, RuntimeError, RuntimePoll, ScriptedBackend, SessionId, TurnId, TurnOutcome, TurnRef,
+    UserInput,
+};
 
 use super::{
-    ExitReason, RunOutcome,
+    AgentAction, AgentConnection, ExitReason, RunOutcome,
     state::{StateEffect, StateError, TuiState},
-    unix::prepare_resize,
+    unix::{drain_agent, handle_backpressured_input, prepare_resize},
 };
 use crate::{
     input::event::{InputEvent, KeyAction, KeyCode, KeyEvent as YoKeyEvent, KeyState},
@@ -64,7 +71,7 @@ fn submitted_prompt_becomes_one_user_transcript_item() {
                 Duration::ZERO,
             )
             .unwrap(),
-        StateEffect::Redraw
+        StateEffect::Dispatch(AgentAction::Submit("question".to_owned()))
     );
 
     assert_eq!(state.editor().text(), "");
@@ -172,4 +179,433 @@ fn public_outcome_exposes_host_termination_reason() {
         RunOutcome::termination_requested().reason(),
         ExitReason::TerminationRequested
     );
+}
+
+fn nonzero(value: u64) -> NonZeroU64 {
+    NonZeroU64::new(value).unwrap()
+}
+
+fn turn() -> TurnRef {
+    TurnRef::new(SessionId::new(nonzero(1)), TurnId::new(nonzero(1)))
+}
+
+fn activity(value: u64) -> ActivityRef {
+    ActivityRef::new(turn(), ActivityId::new(nonzero(value)))
+}
+
+// agent message의 streaming delta를 먼저 표시하더라도 final snapshot이 다르면 화면 문자열을
+// authoritative 결과로 교체하고 완료 뒤 그대로 남긴다.
+#[test]
+fn renders_the_authoritative_agent_message_snapshot() {
+    let mut state = TuiState::new();
+    let message = activity(1);
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: message,
+            kind: ActivityKind::AgentMessage,
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: message,
+            update: ActivityUpdate::TextDelta("partial".to_owned()),
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityUpdated {
+            activity: message,
+            update: ActivityUpdate::TextSnapshot("complete answer".to_owned()),
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityFinished {
+            activity: message,
+            outcome: ActivityOutcome::Completed,
+        })
+        .unwrap();
+
+    assert_eq!(
+        rendered_row(&state, Size::new(24, 3), 0),
+        "⏺ complete answer"
+    );
+}
+
+// non-message Activity의 빈 delta는 label 뒤에 보이지 않는 줄 바꿈을 누적하지 않고
+// transcript와 화면 revision을 그대로 유지한다.
+#[test]
+fn empty_activity_delta_does_not_add_placeholder_lines() {
+    let mut state = TuiState::new();
+    let tool = activity(1);
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: tool,
+            kind: ActivityKind::ToolCall,
+        })
+        .unwrap();
+    let before = state.transcript().clone();
+
+    assert_eq!(
+        state
+            .observe(AgentEvent::ActivityUpdated {
+                activity: tool,
+                update: ActivityUpdate::TextDelta(String::new()),
+            })
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+
+    assert_eq!(state.transcript(), &before);
+}
+
+// tool과 file-change Activity는 agent message가 없어도 서로 다른 완료 관찰로 transcript에
+// 계속 남아 코딩 작업이 chat text만으로 축소되지 않는다.
+#[test]
+fn retains_completed_tool_and_file_change_observations() {
+    let mut state = TuiState::new();
+    let tool = activity(1);
+    let file = activity(2);
+    for (activity, kind) in [
+        (tool, ActivityKind::ToolCall),
+        (file, ActivityKind::FileChange),
+    ] {
+        state
+            .observe(AgentEvent::ActivityStarted { activity, kind })
+            .unwrap();
+        state
+            .observe(AgentEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Completed,
+            })
+            .unwrap();
+    }
+
+    assert_eq!(rendered_row(&state, Size::new(30, 4), 0), "⏺ Running tool…");
+    assert_eq!(
+        rendered_row(&state, Size::new(30, 4), 2),
+        "⏺ File change observed"
+    );
+}
+
+// outstanding approval이 있을 때 `y` 제출은 새 Turn이나 steer가 아니라 원래 Activity와
+// request ID를 가진 승인 응답 action이 된다.
+#[test]
+fn converts_yes_into_a_correlated_approval_response() {
+    let mut state = TuiState::new();
+    let request_activity = activity(1);
+    let request_id = RequestId::new(nonzero(7));
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::ApprovalRequest { request_id },
+        })
+        .unwrap();
+    state
+        .handle(InputEvent::Paste("y".to_owned()), Duration::ZERO)
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToApproval {
+            request: ActivityRequestRef::new(request_activity, request_id),
+            decision: ApprovalDecision::Approved,
+        })
+    );
+}
+
+// agent가 추가 입력을 요청한 동안 제출한 문자열은 활성 Turn steer가 아니라 원래
+// Activity와 request ID를 가진 UserInput 응답 action으로 변환된다.
+#[test]
+fn converts_text_into_a_correlated_agent_input_response() {
+    let mut state = TuiState::new();
+    let request_activity = activity(1);
+    let request_id = RequestId::new(nonzero(8));
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::UserInputRequest { request_id },
+        })
+        .unwrap();
+    state
+        .handle(
+            InputEvent::Paste("use the second option".to_owned()),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToUserInput {
+            request: ActivityRequestRef::new(request_activity, request_id),
+            input: "use the second option".to_owned(),
+        })
+    );
+}
+
+// TurnStarted 뒤 Ctrl+C는 process exit sequence를 시작하지 않고 해당 agent 작업의
+// interrupt intent를 한 번 전달한다.
+#[test]
+fn active_turn_ctrl_c_dispatches_interrupt() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(
+                key(
+                    KeyCode::Character('c'),
+                    crate::input::event::KeyModifiers::CONTROL,
+                ),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::Interrupt)
+    );
+}
+
+// command lane이 가득 찬 동안에도 runner의 제한 입력 경로는 Ctrl+C를 버리지 않고 활성
+// Turn interrupt로 해석해 우선 control lane에 전달할 수 있게 한다.
+#[test]
+fn backpressure_still_services_active_turn_ctrl_c() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+
+    assert_eq!(
+        handle_backpressured_input(
+            &mut state,
+            key(
+                KeyCode::Character('c'),
+                crate::input::event::KeyModifiers::CONTROL,
+            ),
+            Duration::ZERO,
+            false,
+        )
+        .unwrap(),
+        StateEffect::Dispatch(AgentAction::Interrupt)
+    );
+}
+
+// command lane이 가득 차도 빈 editor의 Ctrl+D는 보통 경로와 똑같이 즉시 정상 종료로
+// 해석되어 provider stop과 terminal cleanup 경로에 도달한다.
+#[test]
+fn backpressure_still_services_empty_ctrl_d_exit() {
+    let mut state = TuiState::new();
+
+    assert_eq!(
+        handle_backpressured_input(
+            &mut state,
+            key(
+                KeyCode::Character('d'),
+                crate::input::event::KeyModifiers::CONTROL,
+            ),
+            Duration::ZERO,
+            false,
+        )
+        .unwrap(),
+        StateEffect::Exit
+    );
+}
+
+// normal command lane이 가득 차도 이미 관찰한 approval request의 입력과 Enter는 계속
+// 처리되어 correlated response를 urgent lane으로 보낼 수 있다.
+#[test]
+fn backpressure_still_services_a_pending_approval_response() {
+    let mut state = TuiState::new();
+    let request_activity = activity(1);
+    let request_id = RequestId::new(NonZeroU64::new(1).unwrap());
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::ApprovalRequest { request_id },
+        })
+        .unwrap();
+    assert_eq!(
+        handle_backpressured_input(
+            &mut state,
+            InputEvent::Paste("y".to_owned()),
+            Duration::ZERO,
+            true,
+        )
+        .unwrap(),
+        StateEffect::Redraw
+    );
+
+    assert_eq!(
+        handle_backpressured_input(
+            &mut state,
+            key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+            Duration::ZERO,
+            true,
+        )
+        .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToApproval {
+            request: ActivityRequestRef::new(request_activity, request_id),
+            decision: ApprovalDecision::Approved,
+        })
+    );
+}
+
+// 이미 다른 urgent control이 TUI 재시도 slot을 차지한 동안에는 다음 approval 입력을
+// 소비하지 않아, state에서 request를 제거한 뒤 response를 잃는 상황을 만들지 않는다.
+#[test]
+fn backpressure_pauses_request_input_while_another_control_is_retained() {
+    let mut state = TuiState::new();
+    let request_activity = activity(1);
+    let request_id = RequestId::new(NonZeroU64::new(1).unwrap());
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: request_activity,
+            kind: ActivityKind::ApprovalRequest { request_id },
+        })
+        .unwrap();
+
+    assert_eq!(
+        handle_backpressured_input(
+            &mut state,
+            InputEvent::Paste("y".to_owned()),
+            Duration::ZERO,
+            false,
+        )
+        .unwrap(),
+        StateEffect::Unchanged
+    );
+    assert!(state.has_pending_request());
+}
+
+// Turn의 실패 event는 활성 상태를 닫고 사용자에게 backend 오류 내용을 별도 transcript
+// 항목으로 남긴다.
+#[test]
+fn renders_turn_failure_and_clears_active_state() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+
+    state
+        .observe(AgentEvent::TurnFinished {
+            turn: turn(),
+            outcome: TurnOutcome::Failed(yo_core::Failure::new("provider stopped")),
+        })
+        .unwrap();
+
+    assert!(!state.turn_active());
+    assert_eq!(
+        rendered_row(&state, Size::new(36, 3), 0),
+        "⏺ Turn failed: provider stopped"
+    );
+}
+
+struct RuntimeConnection {
+    runtime: AgentRuntime<ScriptedBackend>,
+}
+
+impl AgentConnection for RuntimeConnection {
+    type Error = RuntimeError;
+
+    fn dispatch(&mut self, _action: AgentAction) -> Result<super::DispatchOutcome, Self::Error> {
+        unreachable!("this projection test consumes only backend observations")
+    }
+
+    fn retry(
+        &mut self,
+        _pending: super::PendingDispatch,
+    ) -> Result<super::DispatchOutcome, Self::Error> {
+        unreachable!("this projection test consumes only backend observations")
+    }
+
+    fn poll(&mut self) -> Result<RuntimePoll, Self::Error> {
+        self.runtime.poll_event()
+    }
+}
+
+// ScriptedBackend의 coding Activity가 core 상관관계 검증을 통과한 뒤 TUI drain 경계에서
+// Tool과 FileChange transcript로 함께 투영되는지 결합해 확인한다.
+#[test]
+fn projects_fake_backend_coding_activities_through_core_into_tui() {
+    let active_turn = turn();
+    let tool = activity(1);
+    let file = activity(2);
+    let create = AgentCommand::CreateSession {
+        session_id: active_turn.session_id(),
+    };
+    let start = AgentCommand::StartTurn {
+        turn: active_turn,
+        input: UserInput::from("inspect"),
+    };
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(create.clone()),
+        BackendScriptStep::AcceptCommand(start.clone()),
+        BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+            activity: tool,
+            kind: ActivityKind::ToolCall,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityUpdated {
+            activity: tool,
+            update: ActivityUpdate::TextSnapshot("$ cargo test\nok".to_owned()),
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+            activity: tool,
+            outcome: ActivityOutcome::Completed,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+            activity: file,
+            kind: ActivityKind::FileChange,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityUpdated {
+            activity: file,
+            update: ActivityUpdate::TextSnapshot("update: src/lib.rs".to_owned()),
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+            activity: file,
+            outcome: ActivityOutcome::Completed,
+        }),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: active_turn,
+            outcome: TurnOutcome::Completed,
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut runtime = AgentRuntime::new(backend);
+    let mut state = TuiState::new();
+    for event in runtime.execute_command(create).unwrap() {
+        state.observe(event).unwrap();
+    }
+    for event in runtime.execute_command(start).unwrap() {
+        state.observe(event).unwrap();
+    }
+    let mut connection = RuntimeConnection { runtime };
+
+    assert!(drain_agent(&mut connection, &mut state).unwrap());
+
+    let frame = state.prepare_frame(Size::new(32, 8)).unwrap();
+    let rows = (0..8)
+        .map(|y| {
+            (0..32)
+                .map(
+                    |x| match frame.surface.cell(Point::new(x, y)).unwrap().content() {
+                        CellContent::Blank | CellContent::Continuation { .. } => ' ',
+                        CellContent::Grapheme { text, .. } => text.chars().next().unwrap(),
+                    },
+                )
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rows.contains("Running tool…"));
+    assert!(rows.contains("$ cargo test"));
+    assert!(rows.contains("File change observed"));
+    assert!(rows.contains("update: src/lib.rs"));
 }

@@ -20,7 +20,8 @@ use transport::{JsonPeer, StdioPeer};
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
     AgentBackend, AgentCommand, ApprovalDecision, BackendCapabilities, BackendEvent,
-    BackendFailure, BackendFailureKind, BackendPoll, RequestId, SessionId, TurnRef,
+    BackendFailure, BackendFailureKind, BackendPoll, BackendStopHandle, RequestId, SessionId,
+    TurnRef,
 };
 
 /// Local stdio adapter for a compatible `codex app-server` process.
@@ -29,7 +30,10 @@ pub struct CodexBackend {
 }
 
 impl CodexBackend {
-    /// Spawns Codex, completes the initialize handshake, and verifies the tested protocol line.
+    /// Spawns Codex and prepares the cancellable transport.
+    ///
+    /// The initialize handshake is deferred to `CreateSession` so the runtime owner can cancel it
+    /// through [`AgentBackend::stop_handle`].
     pub fn spawn(config: CodexBackendConfig) -> Result<Self, BackendFailure> {
         if !config.working_directory().is_absolute()
             || !config.working_directory().is_dir()
@@ -51,14 +55,18 @@ impl CodexBackend {
             })?
             .to_owned();
         let peer = StdioPeer::spawn(&config)?;
-        let client = AppServerClient::initialize(peer, config.request_timeout())?;
+        let client = AppServerClient::new(peer, config.request_timeout());
         Ok(Self {
-            inner: Backend::new(client, cwd),
+            inner: Backend::new_uninitialized(client, cwd),
         })
     }
 }
 
 impl AgentBackend for CodexBackend {
+    fn stop_handle(&self) -> BackendStopHandle {
+        self.inner.client.stop_handle()
+    }
+
     fn capabilities(&self) -> BackendCapabilities {
         self.inner.capabilities()
     }
@@ -92,6 +100,7 @@ struct ApprovalBinding {
 
 struct Backend<P> {
     client: AppServerClient<P>,
+    initialized: bool,
     cwd: String,
     session: Option<SessionBinding>,
     turns: HashMap<TurnRef, String>,
@@ -106,9 +115,10 @@ struct Backend<P> {
 }
 
 impl<P: JsonPeer> Backend<P> {
-    fn new(client: AppServerClient<P>, cwd: String) -> Self {
+    fn new_uninitialized(client: AppServerClient<P>, cwd: String) -> Self {
         Self {
             client,
+            initialized: false,
             cwd,
             session: None,
             turns: HashMap::new(),
@@ -180,11 +190,16 @@ impl<P: JsonPeer> Backend<P> {
     }
 
     fn create_session(&mut self, session_id: SessionId) -> Result<(), BackendFailure> {
+        if !self.initialized {
+            self.client.initialize()?;
+            self.initialized = true;
+        }
         let result = self.client.call(
             "thread/start",
             json!({
                 "cwd": self.cwd,
                 "serviceName": "yo",
+                "ephemeral": true,
             }),
         )?;
         let thread_id = protocol::string_at(&result, &["thread", "id"])?.to_owned();
@@ -282,6 +297,10 @@ impl<P: JsonPeer> Backend<P> {
 }
 
 impl<P: JsonPeer> AgentBackend for Backend<P> {
+    fn stop_handle(&self) -> BackendStopHandle {
+        self.client.stop_handle()
+    }
+
     fn capabilities(&self) -> BackendCapabilities {
         self.capabilities()
     }

@@ -174,6 +174,28 @@ impl TranscriptState {
         Ok(())
     }
 
+    pub(crate) fn replace_text(
+        &mut self,
+        id: TranscriptItemId,
+        text: String,
+    ) -> Result<(), TranscriptStateError> {
+        let item = self.item_mut(id)?;
+        if item.phase == TranscriptPhase::Final {
+            return Err(TranscriptStateError::FinalItem(id));
+        }
+        let TranscriptBody::Message(message) = &mut item.body;
+        if message.text == text {
+            return Ok(());
+        }
+
+        item.revision = item
+            .revision
+            .checked_add(1)
+            .ok_or(TranscriptStateError::RevisionOverflow(id))?;
+        message.text = text;
+        Ok(())
+    }
+
     pub(crate) fn finalize(&mut self, id: TranscriptItemId) -> Result<(), TranscriptStateError> {
         let item = self.item_mut(id)?;
         if item.phase == TranscriptPhase::Final {

@@ -9,6 +9,7 @@ publish = false
 emojis = "=0.9.0"
 icu_properties = { version = "=2.2.0", features = ["compiled_data"] }
 unicode-segmentation = "=1.13.3"
+yo-core = { path = "../yo-core" }
 
 [target.'cfg(unix)'.dependencies]
 crossterm = { version = "=0.29.0", default-features = false, features = ["bracketed-paste", "events"] }

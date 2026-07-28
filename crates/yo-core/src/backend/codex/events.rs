@@ -246,6 +246,13 @@ impl<P: JsonPeer> Backend<P> {
                 "duplicate Codex approval request id",
             ));
         }
+        if let Some(summary) = approval_summary(method, &params) {
+            self.pending_events
+                .push_back(BackendEvent::ActivityUpdated {
+                    activity,
+                    update: ActivityUpdate::TextSnapshot(summary),
+                });
+        }
         Ok(Some(BackendEvent::ActivityStarted {
             activity,
             kind: ActivityKind::ApprovalRequest { request_id },
@@ -308,10 +315,59 @@ fn final_text_snapshot(params: &Value) -> Option<String> {
     let item = params.get("item")?;
     match item.get("type")?.as_str()? {
         "agentMessage" | "plan" => item.get("text")?.as_str().map(str::to_owned),
-        "commandExecution" => item
-            .get("aggregatedOutput")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        "commandExecution" => command_snapshot(item),
+        "fileChange" => file_change_snapshot(item),
         _ => None,
+    }
+}
+
+fn command_snapshot(item: &Value) -> Option<String> {
+    let command = item.get("command").and_then(Value::as_str);
+    let output = item.get("aggregatedOutput").and_then(Value::as_str);
+    match (command, output.filter(|output| !output.is_empty())) {
+        (Some(command), Some(output)) => Some(format!("$ {command}\n{output}")),
+        (Some(command), None) => Some(format!("$ {command}")),
+        (None, Some(output)) => Some(output.to_owned()),
+        (None, None) => None,
+    }
+}
+
+fn file_change_snapshot(item: &Value) -> Option<String> {
+    let changes = item.get("changes")?.as_array()?;
+    let lines = changes
+        .iter()
+        .filter_map(|change| {
+            let path = change.get("path")?.as_str()?;
+            let kind = change
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("update");
+            Some(format!("{kind}: {path}"))
+        })
+        .collect::<Vec<_>>();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn approval_summary(method: &str, params: &Value) -> Option<String> {
+    let reason = params
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|reason| !reason.is_empty());
+    let subject = match method {
+        "item/commandExecution/requestApproval" => params
+            .get("command")
+            .and_then(Value::as_str)
+            .map(|command| format!("$ {command}")),
+        "item/fileChange/requestApproval" => params
+            .get("grantRoot")
+            .and_then(Value::as_str)
+            .map(|root| format!("write access: {root}")),
+        _ => None,
+    };
+    match (subject, reason) {
+        (Some(subject), Some(reason)) => Some(format!("{subject}\nReason: {reason}")),
+        (Some(subject), None) => Some(subject),
+        (None, Some(reason)) => Some(format!("Reason: {reason}")),
+        (None, None) => None,
     }
 }

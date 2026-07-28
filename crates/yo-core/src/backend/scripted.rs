@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use super::{
     AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendPoll,
+    BackendPoll, BackendStopHandle,
 };
 use crate::AgentCommand;
 
@@ -58,6 +58,10 @@ impl ScriptedBackend {
 }
 
 impl AgentBackend for ScriptedBackend {
+    fn stop_handle(&self) -> BackendStopHandle {
+        BackendStopHandle::no_op()
+    }
+
     fn capabilities(&self) -> BackendCapabilities {
         self.capabilities
     }

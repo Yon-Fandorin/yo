@@ -1,9 +1,11 @@
 //! Narrow live TUI facade for the `yo` application entry point.
 
+mod agent;
 mod error;
 mod state;
 mod unix;
 
+pub use agent::{AgentAction, AgentConnection, DispatchOutcome, PendingDispatch};
 pub use error::RunError;
 pub use unix::run;
 

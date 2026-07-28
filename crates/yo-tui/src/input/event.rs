@@ -7,6 +7,19 @@ pub(crate) enum InputEvent {
     Resize(Size),
 }
 
+impl InputEvent {
+    pub(crate) fn is_ctrl_c_or_d(&self) -> bool {
+        matches!(
+            self,
+            Self::Key(KeyEvent {
+                code: KeyCode::Character('c' | 'd'),
+                modifiers,
+                ..
+            }) if modifiers.contains(KeyModifiers::CONTROL)
+        )
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct KeyEvent {
     pub(crate) code: KeyCode,

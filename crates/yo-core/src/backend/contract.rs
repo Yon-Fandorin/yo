@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand, TurnOutcome, TurnRef,
@@ -9,6 +9,12 @@ use crate::{
 /// Provider wire types remain behind this boundary. An implementation may use a worker internally,
 /// but these methods themselves do not expose transport or process details.
 pub trait AgentBackend {
+    /// Returns a thread-safe handle that can break an outstanding backend operation.
+    ///
+    /// Calling the handle must be prompt and idempotent. After it is called, any currently
+    /// executing backend method must return promptly so that its owner can run [`Self::shutdown`].
+    fn stop_handle(&self) -> BackendStopHandle;
+
     /// Returns provider-neutral capabilities fixed for this initialized backend.
     fn capabilities(&self) -> BackendCapabilities;
 
@@ -25,6 +31,38 @@ pub trait AgentBackend {
     /// Implementations must make repeated calls safe. A successful call makes later polling return
     /// [`BackendPoll::Closed`] and later commands fail explicitly.
     fn shutdown(&mut self) -> Result<(), BackendFailure>;
+}
+
+/// Provider-neutral, cloneable cancellation handle for backend lifecycle ownership.
+#[derive(Clone)]
+pub struct BackendStopHandle {
+    request: Arc<dyn Fn() + Send + Sync>,
+}
+
+impl BackendStopHandle {
+    /// Creates a stop handle from an idempotent, nonblocking callback.
+    pub fn new(request: impl Fn() + Send + Sync + 'static) -> Self {
+        Self {
+            request: Arc::new(request),
+        }
+    }
+
+    /// Creates a handle for a backend whose operations always return promptly.
+    #[must_use]
+    pub fn no_op() -> Self {
+        Self::new(|| {})
+    }
+
+    /// Requests cancellation without waiting for backend cleanup.
+    pub fn request_stop(&self) {
+        (self.request)();
+    }
+}
+
+impl fmt::Debug for BackendStopHandle {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("BackendStopHandle(..)")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

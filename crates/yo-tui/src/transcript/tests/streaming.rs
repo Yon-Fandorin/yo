@@ -76,3 +76,34 @@ fn finalization_advances_revision_and_locks_text() {
     assert_eq!(item.phase(), TranscriptPhase::Final);
     assert_eq!(message(item).text(), "done");
 }
+
+// 최종 스냅샷은 앞서 이어 붙인 중간 문자열과 달라도 authoritative text로 한 번 교체한다.
+#[test]
+fn authoritative_snapshot_replaces_streamed_text() {
+    let mut transcript = TranscriptState::new();
+    transcript.start_assistant(id(7)).unwrap();
+    transcript.append_text(id(7), "partial answer").unwrap();
+
+    transcript
+        .replace_text(id(7), "complete answer".to_owned())
+        .unwrap();
+
+    let item = &transcript.items()[0];
+    assert_eq!(item.revision(), 2);
+    assert_eq!(message(item).text(), "complete answer");
+}
+
+// 현재 문자열과 같은 스냅샷은 화면 의미를 바꾸지 않으므로 revision을 증가시키지 않는다.
+#[test]
+fn identical_snapshot_is_unchanged() {
+    let mut transcript = TranscriptState::new();
+    transcript.start_assistant(id(7)).unwrap();
+    transcript.append_text(id(7), "complete answer").unwrap();
+    let before = transcript.clone();
+
+    transcript
+        .replace_text(id(7), "complete answer".to_owned())
+        .unwrap();
+
+    assert_eq!(transcript, before);
+}

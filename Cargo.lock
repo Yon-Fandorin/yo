@@ -747,6 +747,7 @@ version = "0.0.0"
 dependencies = [
  "nix",
  "signal-hook",
+ "yo-core",
  "yo-tui",
 ]
 
@@ -767,6 +768,7 @@ dependencies = [
  "icu_properties",
  "rustix",
  "unicode-segmentation",
+ "yo-core",
 ]
 
 [[package]]
