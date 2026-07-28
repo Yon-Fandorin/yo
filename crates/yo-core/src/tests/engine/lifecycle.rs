@@ -176,10 +176,10 @@ fn failed_turn_may_abandon_an_unanswered_request() {
     assert_eq!(engine.active_turn(), None);
 }
 
-// InterruptTurn이 진행 중 Activity를 먼저 중단하고 그 뒤 Turn을 중단하는 순서의 이벤트를 만드는지
+// InterruptTurn은 요청만 기록하고 backend가 Activity와 Turn의 실제 중단을 알린 뒤에야 닫히는지
 // 확인한다.
 #[test]
-fn interruption_closes_active_activities_before_the_turn() {
+fn interruption_waits_for_backend_terminal_events() {
     let (mut engine, active_turn) = engine_with_active_turn();
     let first = activity(active_turn, 1);
     let already_finished = activity(active_turn, 2);
@@ -193,22 +193,32 @@ fn interruption_closes_active_activities_before_the_turn() {
         .finish_activity(already_finished, ActivityOutcome::Completed)
         .unwrap();
 
-    let events = engine
+    let immediate = engine
         .handle_command(AgentCommand::InterruptTurn { turn: active_turn })
+        .unwrap();
+    assert!(immediate.is_empty());
+    assert_eq!(engine.active_turn(), Some(active_turn));
+
+    let activity_finished = engine
+        .finish_activity(first, ActivityOutcome::Interrupted)
+        .unwrap();
+    let turn_finished = engine
+        .finish_turn(active_turn, TurnOutcome::Interrupted)
         .unwrap();
 
     assert_eq!(
-        events,
-        vec![
-            AgentEvent::ActivityFinished {
-                activity: first,
-                outcome: ActivityOutcome::Interrupted,
-            },
-            AgentEvent::TurnFinished {
-                turn: active_turn,
-                outcome: TurnOutcome::Interrupted,
-            },
-        ]
+        activity_finished,
+        AgentEvent::ActivityFinished {
+            activity: first,
+            outcome: ActivityOutcome::Interrupted,
+        }
+    );
+    assert_eq!(
+        turn_finished,
+        AgentEvent::TurnFinished {
+            turn: active_turn,
+            outcome: TurnOutcome::Interrupted,
+        }
     );
     assert_eq!(engine.active_turn(), None);
 }

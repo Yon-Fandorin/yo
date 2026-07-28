@@ -22,6 +22,7 @@ struct TurnState {
     turn: TurnRef,
     input: UserInput,
     outcome: Option<TurnOutcome>,
+    interrupt_requested: bool,
     activities: HashMap<ActivityRef, ActivityState>,
     activity_order: Vec<ActivityRef>,
     requests: HashMap<ActivityRequestRef, RequestState>,
@@ -80,6 +81,28 @@ impl EngineState {
             });
         }
         Ok(session)
+    }
+
+    fn require_session(&self, actual: SessionId) -> Result<&SessionState, AgentRejection> {
+        let session = self
+            .session
+            .as_ref()
+            .ok_or(AgentRejection::SessionNotCreated)?;
+        if session.session_id != actual {
+            return Err(AgentRejection::SessionMismatch {
+                expected: session.session_id,
+                actual,
+            });
+        }
+        Ok(session)
+    }
+
+    fn require_active_turn(&self, turn: TurnRef) -> Result<&TurnState, AgentRejection> {
+        let session = self.require_session(turn.session_id())?;
+        session
+            .active_turn()
+            .filter(|active| active.turn == turn)
+            .ok_or(AgentRejection::TurnNotActive { turn })
     }
 
     fn require_active_turn_mut(&mut self, turn: TurnRef) -> Result<&mut TurnState, AgentRejection> {

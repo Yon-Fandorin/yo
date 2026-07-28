@@ -47,7 +47,31 @@ impl AgentEngine {
         &mut self,
         command: AgentCommand,
     ) -> Result<Vec<AgentEvent>, AgentRejection> {
-        self.state.handle_command(command)
+        self.state.handle_command(command, false)
+    }
+
+    pub(crate) fn validate_command(
+        &self,
+        command: &AgentCommand,
+        supports_steer: bool,
+    ) -> Result<(), AgentRejection> {
+        self.state.validate_command(command, supports_steer)
+    }
+
+    pub(crate) fn commit_command(
+        &mut self,
+        command: AgentCommand,
+        supports_steer: bool,
+    ) -> Result<Vec<AgentEvent>, AgentRejection> {
+        self.state.handle_command(command, supports_steer)
+    }
+
+    pub(crate) fn fail_active_turn(&mut self, failure: crate::Failure) -> Vec<AgentEvent> {
+        self.state.fail_active_turn(failure)
+    }
+
+    pub(crate) fn interrupt_active_turn(&mut self) -> Vec<AgentEvent> {
+        self.state.interrupt_active_turn()
     }
 
     /// Records the beginning of a backend-produced Activity on the active Turn.

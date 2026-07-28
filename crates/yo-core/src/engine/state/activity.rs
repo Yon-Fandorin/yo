@@ -1,11 +1,58 @@
 use super::{ActivityState, EngineState, RequestState};
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate, AgentEvent,
-    RequestId, TurnOutcome, TurnRef,
+    Failure, RequestId, TurnOutcome, TurnRef,
     engine::{AgentRejection, ExpectedResponse, ResponseKind},
 };
 
 impl EngineState {
+    pub(in crate::engine) fn fail_active_turn(&mut self, failure: Failure) -> Vec<AgentEvent> {
+        self.finish_active_turn(
+            ActivityOutcome::Failed(failure.clone()),
+            TurnOutcome::Failed(failure),
+        )
+    }
+
+    pub(in crate::engine) fn interrupt_active_turn(&mut self) -> Vec<AgentEvent> {
+        self.finish_active_turn(ActivityOutcome::Interrupted, TurnOutcome::Interrupted)
+    }
+
+    fn finish_active_turn(
+        &mut self,
+        activity_outcome: ActivityOutcome,
+        turn_outcome: TurnOutcome,
+    ) -> Vec<AgentEvent> {
+        let Some(turn_state) = self
+            .session
+            .as_mut()
+            .and_then(|session| session.active_turn_mut())
+        else {
+            return Vec::new();
+        };
+
+        let mut events = Vec::new();
+        for activity in &turn_state.activity_order {
+            let state = turn_state
+                .activities
+                .get_mut(activity)
+                .expect("activity order and storage stay synchronized");
+            if state.active {
+                state.active = false;
+                events.push(AgentEvent::ActivityFinished {
+                    activity: *activity,
+                    outcome: activity_outcome.clone(),
+                });
+            }
+        }
+        let turn = turn_state.turn;
+        turn_state.outcome = Some(turn_outcome.clone());
+        events.push(AgentEvent::TurnFinished {
+            turn,
+            outcome: turn_outcome,
+        });
+        events
+    }
+
     pub(in crate::engine) fn start_activity(
         &mut self,
         activity: ActivityRef,

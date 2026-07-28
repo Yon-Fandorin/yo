@@ -34,6 +34,9 @@ pub enum AgentRejection {
     TurnNotActive {
         turn: TurnRef,
     },
+    InterruptAlreadyRequested {
+        turn: TurnRef,
+    },
     DuplicateActivity {
         activity: ActivityRef,
     },
