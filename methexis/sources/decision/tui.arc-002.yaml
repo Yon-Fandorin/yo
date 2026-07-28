@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: tui.arc-002
-revision: sha256:a2c1cbfee356358867477b2ddd59eab6ac377d43b6461e3d6f4837d828e030c8
+revision: sha256:a7bfae9c0bad769321988e9d2d075341ff173177aa22a40fad9ea58b44dfd155
 payload:
   kind: decision
-  content: Components produce structured terminal-independent output; host adapters own terminal I/O.
+  content: Components produce structured terminal-independent output, terminal adapters own terminal I/O, and the application entry host owns process-wide lifecycle policy while supplying typed control to UI sessions.

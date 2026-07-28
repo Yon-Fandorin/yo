@@ -1,15 +1,15 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: tui.architecture.module-boundaries
-revision: sha256:4c2604b602190817b68ceccf6f5e726fadc89b5fb32875dedcc17d53bfa1533e
+revision: sha256:95366906f598718e308296d25ff8e765ba6fc8dd602eff8ce4eaea95eb249ffb
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:ea589e50c06c8e28faee0845a0f233781f504d25a3055c4658197919f4192a6c
+request_hash: sha256:d034a404267d2cf6c46887f7dab071ccd2342f10052583d5544cae0a25536d5a
 ---
 # Korean Review Projection
 
 ## Translation
 
-`yo-tui` 내부 의존성은 터미널에 독립적인 기반 모듈을 향해야 합니다. 컴포넌트는 동일한 입력에서 동일한 결과가 나오는 구조화 출력을 만들고, 터미널 I/O를 수행하거나 원시 ANSI 제어 바이트를 출력해서는 안 됩니다.
+`yo-tui` 내부 의존성은 터미널 독립 기반 모듈을 향해야 합니다. 컴포넌트는 결정론적 구조화 출력을 만들고 터미널 I/O나 원시 ANSI 제어 바이트를 직접 출력하면 안 됩니다. 터미널 adapter는 TTY와 terminal-output 연산을 소유합니다. 애플리케이션 진입 host는 Unix signal 설치와 replay를 포함한 프로세스 전체 lifecycle 정책을 소유하고 반복 가능한 UI session에는 typed control observation만 제공합니다.
 
-이 안쪽 방향의 의존성 덕분에 터미널 adapter와 문서 adapter가 동일한 구조화 UI 모델을 소비할 수 있으며, 어느 adapter도 컴포넌트의 의미를 소유하지 않습니다.
+이 의존성 방향은 terminal/documentation adapter가 같은 UI 모델을 소비하면서 컴포넌트 의미를 소유하지 않게 합니다. 프로세스 정책을 제품 진입 host에 두면 UI 라이브러리가 미래 GUI나 다른 frontend의 lifecycle root가 되는 것을 방지합니다.

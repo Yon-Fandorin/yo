@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.process-001
+revision: sha256:1399ceade012efc95e5d819aa0305716e9c1db8ac0d86f4049594e2310da88df
+payload:
+  kind: decision
+  content: The private yo-cli process host owns one irreversible Unix termination coordinator whose packed atomic phase and signal bits linearize delivery, lends one closure-scoped cleanup lease to repeatable UI sessions, default-terminates while idle, restores exact prior dispositions only through explicit idle shutdown, and permanently retires after shutdown or partial failure.

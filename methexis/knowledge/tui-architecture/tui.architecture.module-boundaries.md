@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.arc-002
-    revision: sha256:a2c1cbfee356358867477b2ddd59eab6ac377d43b6461e3d6f4837d828e030c8
+    revision: sha256:a7bfae9c0bad769321988e9d2d075341ff173177aa22a40fad9ea58b44dfd155
 relations:
   constrained_by:
     - tui.crate.ui-only-boundary
@@ -19,10 +19,14 @@ relations:
 
 Dependencies within `yo-tui` MUST flow toward terminal-independent foundation
 modules. Components produce deterministic structured output and MUST NOT perform
-terminal I/O or emit raw ANSI control bytes.
+terminal I/O or emit raw ANSI control bytes. Terminal adapters own TTY and
+terminal-output operations. The application entry host owns process-wide
+lifecycle policy, including Unix signal installation and replay, and supplies
+only typed control observations to repeatable UI sessions.
 
 ## Rationale
 
 An inward dependency direction lets terminal and documentation adapters consume
 one structured UI model without allowing either adapter to own component
-semantics.
+semantics. Keeping process policy in the product entry host prevents a UI
+library from becoming the lifecycle root of a future GUI or other frontend.

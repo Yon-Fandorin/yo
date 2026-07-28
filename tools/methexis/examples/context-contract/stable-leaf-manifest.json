@@ -1,0 +1,79 @@
+{
+  "schema": "methexis.context-manifest/v1alpha1",
+  "build_id": "sha256:5a6cec48a1016644e42bedbb912c71894b4f7db655a0a637a39174765afe03af",
+  "plan": {
+    "schema": "methexis.context-build-plan/v1alpha1",
+    "checkpoint": {
+      "id": "sha256:f8cfc55a98279680d32601c66d64e5ae34f313d065d0ec0b407d377bf41728d5",
+      "hash": "sha256:ee26cf43967c341e3c6ade1b2fb3ae04a12120129a2dff50c926b11ae11537cf",
+      "authority_basis_commit": "163239e84c76ba869cf7e7491e1f9944a7c167e5"
+    },
+    "units": [
+      {
+        "id": "tui.crate.ui-only-boundary",
+        "revision": "sha256:890ea5c07e508f9b29a01edeb5e274fffa4750e3cfe22d1fc1ef53546988d2a4",
+        "sources": [
+          {
+            "id": "tui.arc-001",
+            "revision": "sha256:3902cbd31a95232e4b6f8a96893305074bedd3e4442ebd24aaa40055fba70475"
+          }
+        ],
+        "depends_on": [],
+        "constrained_by": [],
+        "validation": [
+          {
+            "id": "architecture.public-api-gate",
+            "status": "referenced_not_executed"
+          }
+        ],
+        "approval": {
+          "projection_hash": "sha256:9ba5b2e67f8d13c2b05bd5bde886c380acb9a455e35c70ddfacea443039f4d6e",
+          "projection_profile": "ko-review/v1alpha1",
+          "projection_compiler": "methexis/0.0.0",
+          "approval_hash": "sha256:9b40653a36b08addb5c89d670d9ab88745f960ce0f739802499ea97fe2ff4c28"
+        }
+      }
+    ],
+    "observations": [
+      {
+        "id": "tui.crate.ui-only-boundary",
+        "eligibility": "active",
+        "evidence": [
+          "decision_revision_match:tui.arc-001"
+        ],
+        "approval": {
+          "projection_hash": "sha256:9ba5b2e67f8d13c2b05bd5bde886c380acb9a455e35c70ddfacea443039f4d6e",
+          "projection_profile": "ko-review/v1alpha1",
+          "projection_compiler": "methexis/0.0.0",
+          "approval_hash": "sha256:9b40653a36b08addb5c89d670d9ab88745f960ce0f739802499ea97fe2ff4c28"
+        }
+      }
+    ],
+    "required_roots": [
+      "tui.crate.ui-only-boundary"
+    ],
+    "direct_anchors": [
+      {
+        "anchor": {
+          "kind": "knowledge_id",
+          "value": "tui.crate.ui-only-boundary"
+        },
+        "roots": [
+          "tui.crate.ui-only-boundary"
+        ]
+      }
+    ],
+    "candidate_input_hash": null,
+    "candidate_decisions": [],
+    "compiler": "methexis/0.0.0",
+    "payload_profile": "methexis.context-markdown/v1alpha1",
+    "tokenizer_profile": "o200k_base/v1",
+    "tokenizer_compiler": "tiktoken-rs/0.12.0",
+    "max_tokens": 8000
+  },
+  "context": {
+    "path": "context.md",
+    "hash": "sha256:d19b38df38bb9d193fa73d35ff70723f447c2634713fc6bf112ccf132e50e21c",
+    "tokens": 106
+  }
+}

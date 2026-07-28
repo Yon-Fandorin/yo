@@ -257,16 +257,16 @@ fn reference_corpus_matches_methexis_revision_and_projection_contracts() {
         .expect("crate is nested below repository root");
     let catalog = load(root).expect("reference corpus is valid");
 
-    // seed는 이미 활성화된 최초 계약이다. Surface corpus가 커지더라도
+    // seed는 현재 승인된 기반 계약이다. Surface corpus가 커지더라도
     // 이 ID와 revision이 사라지거나 바뀌면 기존 지식 기반이 깨진 것이다.
     let expected_seed = BTreeMap::from([
         (
             "tui.architecture.evidence-based-split",
-            "sha256:0787fb2d64d3d16201752a02130ea45f9287734f37b6bf10f0269f6b239f8794",
+            "sha256:b8022eaed3bf1313bb75a4e7c15bb3aa698550415f3845e9daa0e9544c8a2b42",
         ),
         (
             "tui.architecture.module-boundaries",
-            "sha256:4c2604b602190817b68ceccf6f5e726fadc89b5fb32875dedcc17d53bfa1533e",
+            "sha256:95366906f598718e308296d25ff8e765ba6fc8dd602eff8ce4eaea95eb249ffb",
         ),
         (
             "tui.crate.ui-only-boundary",
@@ -279,6 +279,23 @@ fn reference_corpus_matches_methexis_revision_and_projection_contracts() {
         (
             "tui.runtime.typed-flow",
             "sha256:191d3c5030c6e2e161556232cd548bccf8b375cb52a85a586db14fb6aa6dac49",
+        ),
+    ]);
+
+    // process host 계약은 signal의 프로세스 소유권과 반복 가능한 TUI session 경계를
+    // 함께 고정하므로 세 단위를 exact revision으로 검증한다.
+    let expected_process_host = BTreeMap::from([
+        (
+            "tui.dependencies.terminal-backend-selection",
+            "sha256:263b9b9a27a07bbcae8c1bb5bb6144fba5ef69e7857ca0698152bbf458692312",
+        ),
+        (
+            "tui.runtime.process-termination-coordinator",
+            "sha256:cbb78b65c659e052ec0683d5f9052bfedc769738dc4d94b8bcfee39f894a11e7",
+        ),
+        (
+            "tui.terminal.lifecycle-restoration",
+            "sha256:4403451e95ae089a621b9699d0801a6cb34300d73948a18a171ac722e06fbd19",
         ),
     ]);
 
@@ -360,10 +377,15 @@ fn reference_corpus_matches_methexis_revision_and_projection_contracts() {
     // 전체 개수를 고정하면 정상적인 corpus 확장도 실패한다. 따라서 하한만 확인하고,
     // 아래 반복문에서 현재 필수 계약 각각의 정확한 내용을 별도로 고정한다.
     assert!(
-        catalog.units.len() >= expected_seed.len() + expected_surface.len(),
+        catalog.units.len()
+            >= expected_seed.len() + expected_process_host.len() + expected_surface.len(),
         "the extensible reference corpus must retain the seed and Surface contracts"
     );
-    for (id, revision) in expected_seed.into_iter().chain(expected_surface) {
+    for (id, revision) in expected_seed
+        .into_iter()
+        .chain(expected_process_host)
+        .chain(expected_surface)
+    {
         let unit = &catalog.units[id];
         assert_eq!(unit.revision, revision);
         assert!(unit.projection.is_some(), "{id} Projection must be valid");

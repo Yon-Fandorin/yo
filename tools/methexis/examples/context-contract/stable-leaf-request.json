@@ -1,0 +1,11 @@
+{
+  "schema": "methexis.context-request/v1alpha1",
+  "anchors": [
+    {
+      "kind": "knowledge_id",
+      "value": "tui.crate.ui-only-boundary"
+    }
+  ],
+  "tokenizer_profile": "o200k_base/v1",
+  "max_tokens": 8000
+}

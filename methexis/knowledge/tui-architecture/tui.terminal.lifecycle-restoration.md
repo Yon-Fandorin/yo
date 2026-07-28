@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.terminal-002
-    revision: sha256:d1ec20f7d7dfb4701076011cc3df266d2df05755f00f141aa53ab7cb43add8c8
+    revision: sha256:6614c83e4bc373c79bcf084aaa2d5db42952b304bc7714e0fe8c5a76a48af4ad
 relations:
   depends_on:
     - tui.runtime.typed-flow
@@ -56,11 +56,13 @@ restoration.
 
 Configured asynchronous termination signals MUST enter the typed control path
 and perform cleanup on the terminal-owning thread rather than writing terminal
-sequences directly inside a signal handler. After cleanup, the process MUST
-remove its installed notification handling, unblock the terminating signal, and
-re-raise that same signal under its default disposition; it MUST NOT substitute
-a numeric exit code. `SIGKILL`, synchronous fatal faults, and process abort are
-outside the restoration guarantee.
+sequences directly inside a signal handler. A terminal session MUST return a
+typed termination acknowledgment only after completing the same restoration
+path. The process host, not `yo-tui`, then replays the selected signal under its
+default disposition; it MUST NOT substitute a numeric exit code. Notification
+handling remains installed across sequential sessions and is restored only by
+the host's explicit process-level shutdown. `SIGKILL`, synchronous fatal
+faults, and process abort are outside the restoration guarantee.
 
 Job-control suspension and resumption are not termination exits and are outside
 this initial contract. Supporting them requires a separate restore-before-stop
@@ -70,6 +72,11 @@ Explicit restoration MUST report the primary failure and all cleanup failures
 without allowing cleanup to mask the cause. `Drop` MUST provide an idempotent,
 non-panicking best-effort fallback for unwind and early-return mistakes, but it
 MUST NOT replace the reportable explicit path.
+
+If a termination observation linearizes before post-cleanup finalization, that
+signal wins over a concurrent panic after cleanup; retained panic diagnostics
+and cleanup failures are emitted before same-signal replay. Otherwise the
+original panic resumes after cleanup.
 
 ## Rationale
 

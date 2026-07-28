@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:19350f8892f625f9d00b1d293ee704a23db46c25b55332530620fb4d7f76a514",
+  "candidate_set_id": "sha256:1869bdbcf75672e808a378c63ba4f9399f0c8b8be36324f356df0f34b0dec64a",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:1790304aa487bbcf7262d71a2a8f01e1ced337fe379dddee96b12163bb9caf61",
+  "catalog_hash": "sha256:bbb3da094ac8229d4629c2e00b14062b0b667cdbd725ebe7b38e650c800962f2",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -110,40 +110,6 @@
       ]
     },
     {
-      "id": "tui.terminal.lifecycle-restoration",
-      "path": "methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md",
-      "score": 230,
-      "reasons": [
-        {
-          "kind": "query_token",
-          "field": "body",
-          "term": "raw",
-          "score": 100
-        },
-        {
-          "kind": "query_token",
-          "field": "projection",
-          "term": "raw",
-          "score": 100
-        },
-        {
-          "kind": "relation",
-          "via": "tui.architecture.module-boundaries",
-          "score": 10
-        },
-        {
-          "kind": "relation",
-          "via": "tui.dependencies.terminal-backend-selection",
-          "score": 10
-        },
-        {
-          "kind": "relation",
-          "via": "tui.surface.terminal-ops",
-          "score": 10
-        }
-      ]
-    },
-    {
       "id": "tui.surface.terminal-ops",
       "path": "methexis/knowledge/tui-architecture/tui.surface.terminal-ops.md",
       "score": 220,
@@ -173,6 +139,34 @@
       ]
     },
     {
+      "id": "tui.terminal.lifecycle-restoration",
+      "path": "methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md",
+      "score": 130,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "raw",
+          "score": 100
+        },
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.dependencies.terminal-backend-selection",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
+          "score": 10
+        }
+      ]
+    },
+    {
       "id": "tui.surface.html-projection",
       "path": "methexis/knowledge/tui-architecture/tui.surface.html-projection.md",
       "score": 110,
@@ -186,6 +180,28 @@
         {
           "kind": "relation",
           "via": "tui.architecture.module-boundaries",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.runtime.process-termination-coordinator",
+      "path": "methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md",
+      "score": 30,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.dependencies.terminal-backend-selection",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
           "score": 10
         }
       ]

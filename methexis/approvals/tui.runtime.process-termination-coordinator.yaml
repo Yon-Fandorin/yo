@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.runtime.process-termination-coordinator
+revision: sha256:cbb78b65c659e052ec0683d5f9052bfedc769738dc4d94b8bcfee39f894a11e7
+reviewer: tui-architecture
+reviewed_at: 2026-07-28T03:38:22Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:0f76dd046d0bf2f50457432f7e31664dfee82f3e06b26ead8a98e95b4ccb549b
+request_hash: sha256:a7dd1a2733367565df8b4e13c3000dc510e1f3d61c45a3080d1d2ec77c705bcd

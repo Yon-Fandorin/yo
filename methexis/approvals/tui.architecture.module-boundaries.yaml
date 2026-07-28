@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: tui.architecture.module-boundaries
-revision: sha256:4c2604b602190817b68ceccf6f5e726fadc89b5fb32875dedcc17d53bfa1533e
+revision: sha256:95366906f598718e308296d25ff8e765ba6fc8dd602eff8ce4eaea95eb249ffb
 reviewer: tui-architecture
-reviewed_at: 2026-07-25T16:18:26Z
+reviewed_at: 2026-07-28T03:12:21Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:70eb74484436987a816d441df111b389e47d8ed575e3c89c6995d388a9e91419
-request_hash: sha256:686a1640fe229c382e0370b993764f0ad0cf5ea74af99e1aba3191f11d6cdcb7
+projection_hash: sha256:bfdcfc076ad2671daa815d765336715ba3896085dcdea5880719d6c2d7dc39ef
+request_hash: sha256:b6b756acf9e8a10cb22db64d4b1d3faa4d4ec9de79272569e0995d60d0632d51

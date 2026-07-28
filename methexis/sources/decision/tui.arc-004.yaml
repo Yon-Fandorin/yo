@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: tui.arc-004
-revision: sha256:1084e2f78f3f92cb38ef03387f7bc39edeb42db24b53a3ea665507f284a3f0a9
+revision: sha256:f8142dd48cbea18f4703cb05e1bc991efce810f688b770617d591ec36a4c9f83
 payload:
   kind: decision
-  content: Keep one production TUI crate until an independent consumer proves an extraction boundary.
+  content: Keep yo-tui as the single production TUI library until an independent consumer proves an extraction boundary; a product entry package may compose it and own process-wide policy without constituting speculative shared-domain extraction.

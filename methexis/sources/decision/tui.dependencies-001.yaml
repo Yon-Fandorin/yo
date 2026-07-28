@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: tui.dependencies-001
-revision: sha256:86e9d5a7077db91c100f3da00d773be2f9697290f6ae8399393635ca767f65bf
+revision: sha256:3bfc01fb7ae2f355d5918e080cba41c8b7e83ab6953633e71009f72b0cd784cb
 payload:
   kind: decision
-  content: The initial Unix terminal adapter combines a feature-minimal crossterm input boundary with rustix-owned exact termios state and a signal-hook notification boundary, while yo retains typed rendering, lifecycle, and signal policy.
+  content: The Unix UI adapter uses feature-minimal crossterm input and rustix-owned exact termios state, while the private yo-cli process host uses one audited nix sigaction boundary and signal-hook default emulation; yo-tui owns terminal cleanup but not process-signal installation or replay.

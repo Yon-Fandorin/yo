@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: tui.terminal-002
-revision: sha256:d1ec20f7d7dfb4701076011cc3df266d2df05755f00f141aa53ab7cb43add8c8
+revision: sha256:6614c83e4bc373c79bcf084aaa2d5db42952b304bc7714e0fe8c5a76a48af4ad
 payload:
   kind: decision
-  content: Terminal lifecycle uses compensating cleanup registered before mutation, one idempotent explicit restoration path for normal, failure, panic, and handled-signal exits, best-effort Drop fallback, and structured preservation of both the primary and restoration failures.
+  content: Each repeatable terminal session uses compensating cleanup registered before mutation and one explicit restoration path for normal, failure, panic, and typed termination exits; after cleanup it returns a structured acknowledgment to the process host, while best-effort Drop never replaces reportable cleanup.
