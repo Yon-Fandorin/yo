@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.runtime-003
+revision: sha256:ab6c58d06b8265e625a748064ce17cbe1d35d1fb1b89c9ee40f08bb783b889d4
+payload:
+  kind: decision
+  content: A Session owns ordered Turns and retained agent context. Each Turn spans one accepted user request through completion, interruption, or failure, and model, streamed response, tool, file-change, approval, and agent-requested-input work within that Turn is represented as Activity. The first host allows one active Session and at most one active Turn, while every Session and Turn is explicitly identified without an implicit global current session. Resources intended to survive a Turn are Session-owned. Resume, fork, list, archive, rollback, and multiple loaded Sessions are deferred, but the initial identity and ownership model must permit them without redefining Session or Turn.

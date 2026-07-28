@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.runtime-004
+revision: sha256:758a6808866b5e829a0587c25714535461e007977c7ca5b36292c91197438329
+payload:
+  kind: decision
+  content: A normal prompt submitted during an active Turn is interpreted and submitted as a steer request for that identified Turn in the initial TUI. A response to an outstanding approval or agent-requested input remains an Activity response rather than a steer or new Turn. Queuing a later Turn is a distinct future operation, and an unsupported steer fails explicitly instead of silently becoming a queue.

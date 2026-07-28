@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: agent.core.frontend-independent-boundary
+revision: sha256:48bdc83d2ff51aec31703a19c69bfe7cf8767eff6f55c488f531ff247b5dbdce
+reviewer: agent-runtime
+reviewed_at: 2026-07-28T08:28:07Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:ebd348918a1ecae42d3b86034330443470622e7379222f39603d8bfe5c7ef4a1
+request_hash: sha256:2a14c8b2db6a06d917032eedf4eda6d49429aa13673866183882e3f87338799e

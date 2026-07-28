@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: agent.runtime.command-event-boundary
+revision: sha256:3f107762677c3569560bed6c9e97e3f89da0b850d54f0147cf83c9c6882cb334
+reviewer: agent-runtime
+reviewed_at: 2026-07-28T08:28:07Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:afcca8e9a5b7c8c55e0af35858d118f9115ca7abcacfa36af7e8768a9e0f4459
+request_hash: sha256:90064cc80f015a4b452174404ef9dca492459f56c243132075c0de06a12a2209

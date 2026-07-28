@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.runtime-002
+revision: sha256:adf064cf0c511d0326936d135fc8293878253a2851f09a3441ccf29f83f31a1e
+payload:
+  kind: decision
+  content: Frontends communicate with yo-core through named typed commands and events rather than manipulating provider or Session internals. An agent command is the agent-domain intent carried by the existing typed runtime flow. Commands and events identify their Session, applicable Turn, and applicable Activity or request correlation target. yo-core owns execution meaning and semantic observations, while frontends own input gestures and presentation. The first boundary uses in-process Rust types and channels, keeps provider wire names private, and defers a remote protocol until a real remote consumer exists.

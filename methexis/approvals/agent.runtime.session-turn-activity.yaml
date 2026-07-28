@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: agent.runtime.session-turn-activity
+revision: sha256:f2711f638f3fc4c25bf22c5f043a8b12510507472b838288d6db0a0dbe12d66a
+reviewer: agent-runtime
+reviewed_at: 2026-07-28T08:28:07Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:59e05f87fcb3d21093f0723a2b7318455946c90188d5814af27f8aa928ea83e5
+request_hash: sha256:12ce43414a296432a5aab7fc386f8e098d231a6b5202c8f4b4c61cb1c9a7493d

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.runtime-005
+revision: sha256:529d5579ee8f5a93e7e913770eb70bfa2c023c259d83522cafade0e3f133e7f6
+payload:
+  kind: decision
+  content: The first real backend is a locally installed Codex app-server adapter over its default stdio JSONL transport. It initializes and checks protocol-version compatibility, maps Codex Thread, Turn, and Item messages into yo-neutral Session, Turn, and Activity semantics, keeps Codex wire types private, and fails explicitly on incompatibility. yo-cli selects and wires the backend, while its private module owns the child process and cleanup in coordination with the product process host. A deterministic fake implements the same core contract without Codex, credentials, network access, or model nondeterminism. WebSocket, remote app-server, and another provider are deferred.

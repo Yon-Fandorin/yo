@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.runtime-001
+revision: sha256:40a0bbfa90eee27e96941b38090a22f368967cd45071910f3303ced1aabc02e3
+payload:
+  kind: decision
+  content: The shared agent engine is named yo-core and owns only frontend-independent agent execution semantics; yo-tui owns UI behavior, yo-cli owns the product entry point, process-wide lifecycle policy, and top-level wiring, and a future GUI reuses yo-core without yo-tui. Shared use alone does not qualify code for yo-core. Session, command, event, configuration, and backend remain internal modules of the one initial crate, and a protocol or adapter crate split requires an independent consumer or release boundary.

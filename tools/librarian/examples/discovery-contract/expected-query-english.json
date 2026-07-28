@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:1869bdbcf75672e808a378c63ba4f9399f0c8b8be36324f356df0f34b0dec64a",
+  "candidate_set_id": "sha256:a23804d5cba14c9835ec36b620149fd4592ba64459ab99ef342bc71d58f47973",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:bbb3da094ac8229d4629c2e00b14062b0b667cdbd725ebe7b38e650c800962f2",
+  "catalog_hash": "sha256:6d78a85760da7323072e6bca53ef0f380822f339299fa4bd8a899693274241bc",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -280,6 +280,30 @@
         {
           "kind": "relation",
           "via": "tui.surface.terminal-ops",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.core.frontend-independent-boundary",
+      "path": "methexis/knowledge/agent-runtime/agent.core.frontend-independent-boundary.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.delivery.first-coding-loop",
+      "path": "methexis/knowledge/agent-runtime/agent.delivery.first-coding-loop.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
           "score": 10
         }
       ]

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.runtime-006
+revision: sha256:5f242f01d7c50a1cffdb032b44fa0e9bf64eba92f88f60daefb3d60c61f8465b
+payload:
+  kind: decision
+  content: The first executable coding loop covers app-server initialization, a new Session, prompt submission, streamed response, a completed tool Activity and file-change observation, approval round trips, Turn completion or interruption, explicit failures, and child-process cleanup. A deterministic fake proves happy, approval, interruption, and failure flows, including completed tool and file-change events; an environment-dependent compatible local Codex path proves a real completed tool action and observable file change in a disposable workspace. Resume and listing, fork, archive, rollback, queue, WebSocket and remote transport, multiple active Sessions, another backend, and GUI remain out of scope.
