@@ -2,7 +2,7 @@ use std::{
     io::{Read, Write},
     ops::{Deref, DerefMut},
     path::Path,
-    process::{Child, Command, Stdio},
+    process::{Child, Stdio},
     sync::{Arc, Mutex, mpsc},
     thread,
     time::Instant,
@@ -25,33 +25,8 @@ impl SshServer {
             .canonicalize()
             .expect("canonicalize yo binary");
         let remote = remote_command(&repository, &yo, &self.codex, option);
-        let destination = format!(
-            "{}@127.0.0.1",
-            std::env::var("USER").expect("USER identifies the local SSH account")
-        );
-
         let mut child = ChildGuard::new(
-            Command::new("ssh")
-                .args([
-                    "-F",
-                    "/dev/null",
-                    "-tt",
-                    "-o",
-                    "BatchMode=yes",
-                    "-o",
-                    "IdentitiesOnly=yes",
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "UserKnownHostsFile=/dev/null",
-                    "-o",
-                    "LogLevel=ERROR",
-                    "-p",
-                    &self.port.to_string(),
-                    "-i",
-                ])
-                .arg(&self.identity)
-                .arg(destination)
+            self.client(true)
                 .arg(remote)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
@@ -125,12 +100,12 @@ impl SshServer {
     }
 }
 
-struct ChildGuard {
+pub(super) struct ChildGuard {
     child: Child,
 }
 
 impl ChildGuard {
-    fn new(child: Child) -> Self {
+    pub(super) fn new(child: Child) -> Self {
         Self { child }
     }
 }
@@ -197,11 +172,11 @@ fn remote_command(repository: &Path, yo: &Path, codex: &Path, option: &str) -> S
     )
 }
 
-fn shell_quote(path: &Path) -> String {
+pub(super) fn shell_quote(path: &Path) -> String {
     format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
 }
 
-fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
+pub(super) fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
     let deadline = Instant::now() + EXIT_TIMEOUT;
     loop {
         if let Some(status) = child.try_wait().expect("inspect SSH child") {
@@ -216,7 +191,7 @@ fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
     }
 }
 
-fn assert_ordered_pair(output: &[u8], enter: &[u8], leave: &[u8]) {
+pub(super) fn assert_ordered_pair(output: &[u8], enter: &[u8], leave: &[u8]) {
     let enter_at = position(output, enter).expect("screen entry must be observable");
     let leave_at = position(output, leave).expect("screen restoration must be observable");
     assert!(enter_at < leave_at, "screen restoration must follow entry");

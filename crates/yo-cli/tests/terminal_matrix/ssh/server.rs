@@ -11,7 +11,7 @@ use std::{
 use super::READY_TIMEOUT;
 
 pub(super) struct SshServer {
-    _root: FixtureRoot,
+    root: FixtureRoot,
     pub(super) port: u16,
     pub(super) identity: PathBuf,
     pub(super) codex: PathBuf,
@@ -86,12 +86,45 @@ LogLevel ERROR
             .expect("isolated sshd could not acquire a local port after five attempts");
 
         Self {
-            _root: root,
+            root,
             port,
             identity,
             codex,
             child,
         }
+    }
+
+    pub(super) fn client(&self, allocate_pty: bool) -> Command {
+        let destination = format!(
+            "{}@127.0.0.1",
+            std::env::var("USER").expect("USER identifies the local SSH account")
+        );
+        let mut command = Command::new("ssh");
+        command
+            .args(["-F", "/dev/null"])
+            .arg(if allocate_pty { "-tt" } else { "-T" })
+            .args([
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "IdentitiesOnly=yes",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                "UserKnownHostsFile=/dev/null",
+                "-o",
+                "LogLevel=ERROR",
+                "-p",
+                &self.port.to_string(),
+                "-i",
+            ])
+            .arg(&self.identity)
+            .arg(destination);
+        command
+    }
+
+    pub(super) fn fixture_path(&self, name: &str) -> PathBuf {
+        self.root.join(name)
     }
 }
 
