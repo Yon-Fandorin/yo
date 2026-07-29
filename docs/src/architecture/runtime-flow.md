@@ -164,5 +164,5 @@ independent cleanup boundaries and reports their contexts together.
 - [Terminal lifecycle restoration](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md)
 - [Process termination coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md)
 
-After locating the failing boundary, use [Validation](../validation/README.md)
+After locating the failing boundary, use [Validation](../validation/)
 to choose the evidence that can confirm the fix.

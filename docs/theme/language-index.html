@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>yo Developer Docs</title>
+        <script>
+            (() => {
+                let saved = null;
+                try {
+                    saved = window.localStorage.getItem("yo-docs-language");
+                } catch {
+                    // Fall back to the browser language when storage is unavailable.
+                }
+                const preferred = navigator.languages?.some((language) =>
+                    language.toLowerCase().startsWith("ko")
+                ) ? "ko" : "en";
+                const language = saved === "ko" || saved === "en" ? saved : preferred;
+                window.location.replace(`./${language}/${window.location.search}${window.location.hash}`);
+            })();
+        </script>
+    </head>
+    <body>
+        <main>
+            <h1>yo Developer Docs</h1>
+            <p>
+                <a href="./ko/" hreflang="ko" lang="ko">한국어</a>
+                <span aria-hidden="true"> · </span>
+                <a href="./en/" hreflang="en" lang="en">English</a>
+            </p>
+        </main>
+    </body>
+</html>

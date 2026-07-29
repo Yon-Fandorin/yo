@@ -3,7 +3,7 @@
 Start from the observable outcome, not a familiar filename. This page selects
 the first owner and the next boundary to inspect. Use the [Code map](../architecture/code-map.md)
 for module responsibilities, [Runtime flow](../architecture/runtime-flow.md)
-for cross-crate ordering, and [Validation](../validation/README.md) for the
+for cross-crate ordering, and [Validation](../validation/) for the
 meaning of the resulting evidence.
 
 Methexis owns behavioral contracts. The routes below link to those owners
@@ -70,8 +70,8 @@ unrelated system command.
 | Change Unix termination observation, signal priority, disposition, or restoration | [`yo-cli/src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Terminal restoration changes: `yo-tui/terminal/mode`; typed observation changes: `yo-tui/runner` | [Process termination coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md) |
 
 After choosing the owner, select the first check from
-[Validation](../validation/README.md#start-from-the-changed-boundary). Run its
-[Slice-close baseline](../validation/README.md#slice-close-baseline) and any
+[Validation](../validation/#start-from-the-changed-boundary). Run its
+[Slice-close baseline](../validation/#slice-close-baseline) and any
 affected environment matrix before accepting the change.
 
 ## Follow a symptom across boundaries
@@ -90,7 +90,7 @@ The visible failure is not always owned by the module that displays it:
 
 For the full order of startup, one Turn, and cleanup, use the
 [Runtime flow](../architecture/runtime-flow.md). For what a passed, failed, or
-unverified result means, use [Validation](../validation/README.md).
+unverified result means, use [Validation](../validation/).
 
 ## Keep the change in its owner
 

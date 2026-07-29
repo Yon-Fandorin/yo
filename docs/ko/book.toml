@@ -1,0 +1,22 @@
+[book]
+title = "yo 개발 문서"
+description = "yo를 개발하는 사람과 코드 에이전트를 위한 아키텍처 및 작업 안내서."
+authors = ["yo contributors"]
+language = "ko"
+src = "src"
+
+[build]
+build-dir = "../../target/developer-docs/ko"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/Yon-Fandorin/yo"
+edit-url-template = "https://github.com/Yon-Fandorin/yo/edit/develop/docs/ko/{path}"
+additional-css = ["../theme/yo.css"]
+additional-js = ["../theme/language-switch.js"]
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.search]
+enable = true
+limit-results = 20

@@ -90,7 +90,7 @@ The `surface` is the common completed state. Terminal and HTML projections
 consume it independently; neither projection defines layout meaning for the
 other.
 
-After choosing an owner, use [Validation](../validation/README.md) as the
+After choosing an owner, use [Validation](../validation/) as the
 single map from changed boundary to evidence. Follow the
 [terminal environment matrix](../validation/terminal-matrix.md) when real
 terminal behavior is involved. Before closing a

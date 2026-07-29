@@ -24,6 +24,12 @@ contracts. These Developer Docs own code navigation, working explanations, and
 validation guidance. When a contract matters, this guide links to its
 KnowledgeUnit instead of restating it as a second authority.
 
+English is the canonical Developer Docs source. The Korean book is a
+reviewable Projection of the same page set. Validation rejects a Projection
+whose recorded English source hashes are stale; translation review still owns
+semantic accuracy. Use the language switch in the page header to move between
+matching pages.
+
 For a first change:
 
 1. Use [Architecture](./architecture/overview.md) to learn the system shape.
@@ -32,4 +38,22 @@ For a first change:
 3. Follow the [Runtime flow](./architecture/runtime-flow.md) if the change
    crosses boundaries.
 4. Select focused and Slice-close evidence in
-   [Validation](./validation/README.md).
+   [Validation](./validation/).
+
+## Maintaining the Korean Projection
+
+When a canonical page changes, update the page at the same path under
+`docs/ko/src` and review its semantic accuracy before accepting a new source
+hash. Keep the page set, link destinations, headings, lists, tables, and code
+fences aligned; repository validation checks those mechanical boundaries.
+
+After translation review, compute the changed canonical page's hash from
+`docs/src`:
+
+```bash
+(cd docs/src && shasum --algorithm 256 path/to/page.md)
+```
+
+Replace only that page's matching line in `docs/ko/source.sha256`, then run
+`bash tools/validation/developer-docs.sh`. Never refresh a hash only to silence
+the stale-Projection check.

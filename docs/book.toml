@@ -6,13 +6,14 @@ language = "en"
 src = "src"
 
 [build]
-build-dir = "../target/developer-docs"
+build-dir = "../target/developer-docs/en"
 create-missing = false
 
 [output.html]
 git-repository-url = "https://github.com/Yon-Fandorin/yo"
 edit-url-template = "https://github.com/Yon-Fandorin/yo/edit/develop/docs/{path}"
 additional-css = ["theme/yo.css"]
+additional-js = ["theme/language-switch.js"]
 default-theme = "light"
 preferred-dark-theme = "navy"
 

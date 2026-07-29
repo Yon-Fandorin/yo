@@ -90,6 +90,22 @@ body {
     border-block-end-color: var(--yo-rule);
 }
 
+.yo-language-switch {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    padding-inline: 0.7rem;
+    color: var(--yo-mute);
+    font-family: var(--mono-font);
+    font-size: 0.82rem;
+    font-weight: 650;
+    text-decoration: none;
+}
+
+.yo-language-switch:hover {
+    color: var(--yo-flow);
+}
+
 .menu-title {
     font-family: var(--mono-font);
     font-size: 1.45rem;
