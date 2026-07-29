@@ -1,7 +1,62 @@
 # Validation
 
-Use the narrowest discriminating check while developing, then run the
-repository checks before closing a Slice.
+Choose evidence by the boundary that changed. Start with the smallest check
+that can distinguish the expected behavior from its important failure, then
+widen before closing the Slice.
+
+## Evidence layers
+
+| Layer | What it establishes | Examples |
+|---|---|---|
+| In-process | Deterministic state, protocol, layout, rendering, and injected failure behavior | `yo-core` engine/runtime tests; `yo-tui` component tests; rendering parity goldens |
+| Host-integrated | Behavior of real host facilities without optional installed services | Linux PTY, termios, process signal, and terminal-restoration tests in `yo-cli` |
+| External environment | Compatibility with installed programs, authentication, and nested terminal environments | Codex, tmux, local `sshd`, SSH, and tmux inside SSH |
+
+The first layer gives fast diagnosis but cannot prove an OS terminal lifecycle.
+The host-integrated layer exercises real Unix boundaries but cannot prove every
+terminal multiplexer or remote session. The external layer closes those gaps
+only for the environment where it actually ran.
+
+An ignored or unavailable environment check is **unverified**, not passed.
+Record the missing command, host, credential, or platform instead of weakening
+the assertion or silently skipping it.
+
+## Start from the changed boundary
+
+| Change area | First useful command | Closest evidence |
+|---|---|---|
+| Session, Turn, Activity, engine, or runtime semantics | `cargo test -p yo-core` | `crates/yo-core/src/tests` and the owning module tests |
+| Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
+| Codex protocol translation or provider-ID correlation | `cargo test -p yo-core backend::codex::tests` | `crates/yo-core/src/backend/codex/tests.rs` |
+| Surface, Unicode width, input, layout, transcript, or presenter policy | `cargo test -p yo-tui` | Tests beside the owning `yo-tui` module |
+| Terminal and HTML projection of the same completed frame | `cargo test -p yo-tui --test rendering_parity` | `crates/yo-tui/tests/rendering_parity` and its goldens |
+| Process termination or real terminal restoration | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
+| Unix process-coordinator state and compensation | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |
+| Linux/macOS conditional compilation | `bash tools/validation/yo-cli-unix-matrix.sh` | Local host result plus `.github/workflows/unix-compile.yml` for both hosts |
+| tmux, SSH, or nested tmux behavior | See the [terminal environment matrix](./terminal-matrix.md) | Ignored `yo-cli` environment tests |
+
+These commands are entry points, not permission to ignore affected neighboring
+boundaries. For example, an edit to `AgentSession` can require both its focused
+tests and the TUI runner tests when the admission result observed by the
+frontend changes.
+
+## Reading a result
+
+- **Passed** means the named command ran its assertions successfully in the
+  stated environment.
+- **Failed** means the command ran and found a mismatch, timeout, panic, or
+  cleanup error. Follow the first owning boundary, then retain any additional
+  cleanup failures.
+- **Unverified** means the check did not run in the required environment. Keep
+  it visible as a coverage gap.
+
+Goldens and snapshots establish an exact projection of their fixture. Review
+the diff when intentionally updating one; do not treat regeneration alone as
+evidence that the new output is correct.
+
+## Slice-close baseline
+
+After focused checks pass, run the repository baseline:
 
 ```bash
 cargo test --workspace --all-targets
@@ -9,8 +64,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 hk check
 ```
 
-Tests establish deterministic code behavior. Ignored environment tests are
-separate evidence: they run only where the required terminal, tmux, SSH, or
-Codex installation is available and must not silently pass when unavailable.
+`cargo test` runs the normal test set and compiles ignored tests; it does not
+execute ignored environment tests. `hk check` selects repository checks from
+`hk.pkl` according to the changed paths, including formatting, test
+explanations, affected crate checks, Methexis checks, and Developer Docs checks.
 
-See [Terminal environment matrix](./terminal-matrix.md) for those checks.
+If the Slice changes a platform or external-environment boundary, add the
+relevant matrix command rather than claiming the baseline covered it.
+
+## Useful owners
+
+- Hook selection: [`hk.pkl`](https://github.com/Yon-Fandorin/yo/blob/develop/hk.pkl)
+- Unix host compile check: [`tools/validation/yo-cli-unix-matrix.sh`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/validation/yo-cli-unix-matrix.sh)
+- Rendering parity fixture: [`crates/yo-tui/tests/fixtures/rendering-parity/README.md`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/tests/fixtures/rendering-parity/README.md)
+- Test explanation policy: [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#test-code)
