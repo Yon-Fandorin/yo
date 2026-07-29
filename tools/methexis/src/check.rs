@@ -16,6 +16,66 @@ const CHECK_SCHEMA: &str = "methexis.check/v1alpha1";
 const REVISION_DOMAIN: &[u8] = b"methexis.knowledge-revision/v1alpha1";
 const SNAPSHOT_DOMAIN: &[u8] = b"methexis.knowledge-snapshot/v1alpha1";
 const MAX_RECORD_BYTES: usize = 256 * 1024;
+mod artifacts;
+mod runner;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckClass {
+    Records,
+    Relations,
+    Authority,
+    Artifacts,
+}
+
+impl CheckClass {
+    pub const ALL: [Self; 4] = [
+        Self::Records,
+        Self::Relations,
+        Self::Authority,
+        Self::Artifacts,
+    ];
+
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Records => "records",
+            Self::Relations => "relations",
+            Self::Authority => "authority",
+            Self::Artifacts => "artifacts",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == value)
+    }
+
+    fn prerequisites(self) -> &'static [Self] {
+        match self {
+            Self::Records => &[Self::Records],
+            Self::Relations => &[Self::Records, Self::Relations],
+            Self::Authority => &[Self::Records, Self::Relations, Self::Authority],
+            Self::Artifacts => &Self::ALL,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckStatus {
+    Passed,
+    Failed,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CheckOutcome {
+    pub check: CheckClass,
+    pub status: CheckStatus,
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +115,9 @@ pub struct UnitRevision {
 pub struct CheckReport {
     pub schema: &'static str,
     pub ok: bool,
+    pub requested_checks: Vec<CheckClass>,
+    pub executed_checks: Vec<CheckClass>,
+    pub checks: Vec<CheckOutcome>,
     pub authority: &'static str,
     pub approval: &'static str,
     pub checkpoint: &'static str,
@@ -69,6 +132,10 @@ pub struct CheckReport {
     pub next_actions: Vec<String>,
 }
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 pub(crate) struct Foundation {
     pub(crate) units: Vec<KnowledgeUnit>,
     pub(crate) owners: Vec<Owner>,
@@ -76,106 +143,32 @@ pub(crate) struct Foundation {
 }
 
 pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
-    let mut foundation = match load_foundation(repository_root) {
-        Ok(foundation) => foundation,
-        Err(mut diagnostics) => {
-            sort_diagnostics(&mut diagnostics);
-            return failed_report(diagnostics);
-        },
-    };
-    let review_validation = crate::review::validate_records(repository_root, &foundation);
-    if !review_validation.diagnostics.is_empty() {
-        return failed_report(review_validation.diagnostics);
-    }
-    let authority = match crate::checkpoint::evaluate(repository_root, Some(&foundation.sources)) {
-        Ok(authority) => authority,
-        Err(mut failure) => {
-            sort_diagnostics(&mut failure.diagnostics);
-            return failed_authority_report(failure);
-        },
-    };
+    runner::check_repository_selected(repository_root, &CheckClass::ALL)
+}
 
-    foundation
-        .units
-        .sort_by(|left, right| left.metadata.id.cmp(&right.metadata.id));
-    let snapshot_revision = snapshot_revision(&foundation.units);
-    let unit_revisions = foundation
-        .units
-        .into_iter()
-        .map(|unit| {
-            let state = review_validation.states.get(&unit.metadata.id);
-            let trusted_approval = authority.as_ref().is_some_and(|authority| {
-                authority.approvals.get(&unit.metadata.id) == Some(&unit.revision)
-            });
-            let active = trusted_approval
-                && authority
-                    .as_ref()
-                    .is_some_and(|authority| authority.active.contains(&unit.metadata.id));
-            let freshness = authority
-                .as_ref()
-                .and_then(|authority| authority.freshness.get(&unit.metadata.id));
-            UnitRevision {
-                id: unit.metadata.id,
-                revision: unit.revision,
-                path: display_path(&unit.path, repository_root),
-                effective_approval: if trusted_approval {
-                    "approved"
-                } else {
-                    "draft"
-                },
-                approval_evidence: if trusted_approval {
-                    "trusted_approval"
-                } else {
-                    state.map_or("missing", |state| state.evidence)
-                },
-                approval_reason: if trusted_approval {
-                    None
-                } else {
-                    state.and_then(|state| state.reason)
-                },
-                eligibility: if active {
-                    "active"
-                } else if trusted_approval {
-                    freshness.map_or("inactive", |state| state.eligibility.as_str())
-                } else if authority.is_some() {
-                    "inactive"
-                } else {
-                    "not_evaluated"
-                },
-                eligibility_evidence: if !trusted_approval {
-                    Vec::new()
-                } else {
-                    freshness.map_or_else(Vec::new, |state| state.evidence.clone())
-                },
-            }
-        })
-        .collect();
-
-    CheckReport {
-        schema: CHECK_SCHEMA,
-        ok: true,
-        authority: "draft",
-        approval: if authority.is_some() {
-            "trusted_evaluated"
-        } else {
-            "proposal_evaluated"
-        },
-        checkpoint: authority
-            .as_ref()
-            .map_or("not_evaluated", |authority| authority.checkpoint),
-        retryable: false,
-        trusted_commit: authority
-            .as_ref()
-            .map(|authority| authority.trusted_commit.clone()),
-        snapshot_revision: Some(snapshot_revision),
-        affected_ids: Vec::new(),
-        units: unit_revisions,
-        diagnostics: Vec::new(),
-        next_actions: Vec::new(),
-    }
+pub(crate) fn check_repository_selected(
+    repository_root: &Path,
+    requested: &[CheckClass],
+) -> CheckReport {
+    runner::check_repository_selected(repository_root, requested)
 }
 
 pub(crate) fn load_foundation(repository_root: &Path) -> Result<Foundation, Vec<Diagnostic>> {
+    let foundation = load_records(repository_root)?;
+    let mut global_diagnostics = validate_global(
+        &foundation.units,
+        &foundation.owners,
+        &foundation.sources,
+        repository_root,
+    );
+    sort_diagnostics(&mut global_diagnostics);
+    if !global_diagnostics.is_empty() {
+        return Err(global_diagnostics);
+    }
+    Ok(foundation)
+}
+
+fn load_records(repository_root: &Path) -> Result<Foundation, Vec<Diagnostic>> {
     let corpus_root = repository_root.join("methexis");
     if let Some(diagnostic) = authority_root_diagnostic(&corpus_root, repository_root) {
         return Err(vec![diagnostic]);
@@ -222,12 +215,6 @@ pub(crate) fn load_foundation(repository_root: &Path) -> Result<Foundation, Vec<
         return Err(diagnostics);
     }
 
-    let mut global_diagnostics = validate_global(&units, &owners, &sources, repository_root);
-    sort_diagnostics(&mut global_diagnostics);
-    if !global_diagnostics.is_empty() {
-        return Err(global_diagnostics);
-    }
-
     Ok(Foundation {
         units,
         owners,
@@ -265,52 +252,9 @@ fn authority_root_diagnostic(root: &Path, repository_root: &Path) -> Option<Diag
     }
 }
 
-fn failed_report(diagnostics: Vec<Diagnostic>) -> CheckReport {
-    failed_report_with_context(diagnostics, None, false)
-}
-
+#[cfg(test)]
 pub(crate) fn failed_authority_report(failure: crate::checkpoint::AuthorityFailure) -> CheckReport {
-    failed_report_with_context(
-        failure.diagnostics,
-        failure.trusted_commit,
-        failure.retryable,
-    )
-}
-
-fn is_false(value: &bool) -> bool {
-    !value
-}
-
-fn failed_report_with_context(
-    diagnostics: Vec<Diagnostic>,
-    trusted_commit: Option<String>,
-    retryable: bool,
-) -> CheckReport {
-    let affected_ids = diagnostics
-        .iter()
-        .flat_map(|diagnostic| diagnostic.affected_ids.iter().cloned())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-
-    CheckReport {
-        schema: CHECK_SCHEMA,
-        ok: false,
-        authority: "draft",
-        approval: "not_evaluated",
-        checkpoint: "not_evaluated",
-        retryable,
-        trusted_commit,
-        snapshot_revision: None,
-        affected_ids,
-        units: Vec::new(),
-        diagnostics,
-        next_actions: if retryable {
-            vec!["retry `methexis check`; no state was published".to_owned()]
-        } else {
-            vec!["fix the listed diagnostics and rerun `methexis check`".to_owned()]
-        },
-    }
+    runner::failed_authority_report(failure)
 }
 
 fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {

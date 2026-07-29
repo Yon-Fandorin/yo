@@ -8,7 +8,8 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    check_repository, checkpoint::CheckpointService, context::ContextService, review::ReviewService,
+    CheckClass, check_repository_selected, checkpoint::CheckpointService, context::ContextService,
+    review::ReviewService,
 };
 
 const HELP: &str = concat!(
@@ -19,7 +20,7 @@ Methexis SOT Pilot
 
 USAGE:
     methexis [--help | --version]
-    methexis check
+    methexis check [--only <class>[,<class>...]]...
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis approve <request.json>
@@ -28,7 +29,7 @@ USAGE:
     methexis resolve-context <request.json>
 
 COMMANDS:
-    check             Validate Draft records and trusted Source-aware eligibility
+    check             Validate SOT integrity; classes: records, relations, authority, artifacts
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal
@@ -54,6 +55,10 @@ pub fn run(
 ) -> io::Result<ExitCode> {
     let args = args.into_iter().collect::<Vec<_>>();
 
+    if args.first().is_some_and(|arg| arg == OsStr::new("check")) {
+        return run_check(&args[1..], &mut stdout, &mut stderr);
+    }
+
     match args.as_slice() {
         [] => write_text(&mut stdout, HELP, ExitCode::SUCCESS),
         [arg] if arg == OsStr::new("--help") || arg == OsStr::new("-h") => {
@@ -62,15 +67,6 @@ pub fn run(
         [arg] if arg == OsStr::new("--version") || arg == OsStr::new("-V") => {
             writeln!(stdout, "methexis {}", env!("CARGO_PKG_VERSION"))?;
             Ok(ExitCode::SUCCESS)
-        },
-        [arg] if arg == OsStr::new("check") => {
-            let root = env::current_dir()?;
-            let report = check_repository(&root);
-            if report.ok {
-                write_json(&mut stdout, &report, ExitCode::SUCCESS)
-            } else {
-                write_json(&mut stderr, &report, ExitCode::from(2))
-            }
         },
         [command, request] if command == OsStr::new("project-review") => {
             run_operation(ReviewOperation::Project, request, &mut stdout, &mut stderr)
@@ -102,6 +98,81 @@ pub fn run(
         },
         _ => write_text(&mut stderr, UNSUPPORTED_COMMAND, ExitCode::from(2)),
     }
+}
+
+#[derive(Serialize)]
+struct CheckArgumentFailure {
+    schema: &'static str,
+    ok: bool,
+    error: CheckArgumentError,
+}
+
+#[derive(Serialize)]
+struct CheckArgumentError {
+    code: &'static str,
+    affected_ids: Vec<String>,
+    next_actions: Vec<&'static str>,
+}
+
+fn run_check(
+    args: &[OsString],
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let requested = match parse_check_selection(args) {
+        Ok(requested) => requested,
+        Err(()) => {
+            return write_json(
+                stderr,
+                &CheckArgumentFailure {
+                    schema: "methexis.error/v1alpha1",
+                    ok: false,
+                    error: CheckArgumentError {
+                        code: "invalid_check_selector",
+                        affected_ids: Vec::new(),
+                        next_actions: vec!["methexis --help"],
+                    },
+                },
+                ExitCode::from(2),
+            );
+        },
+    };
+    let root = env::current_dir()?;
+    let report = check_repository_selected(&root, &requested);
+    if report.ok {
+        write_json(stdout, &report, ExitCode::SUCCESS)
+    } else {
+        write_json(stderr, &report, ExitCode::from(2))
+    }
+}
+
+fn parse_check_selection(args: &[OsString]) -> Result<Vec<CheckClass>, ()> {
+    if args.is_empty() {
+        return Ok(CheckClass::ALL.to_vec());
+    }
+
+    let mut requested = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let argument = args[index].to_str().ok_or(())?;
+        let value = if argument == "--only" {
+            index += 1;
+            args.get(index).and_then(|value| value.to_str()).ok_or(())?
+        } else if let Some(value) = argument.strip_prefix("--only=") {
+            value
+        } else {
+            return Err(());
+        };
+        for selector in value.split(',') {
+            let selector = selector.trim();
+            if selector.is_empty() {
+                return Err(());
+            }
+            requested.push(CheckClass::parse(selector).ok_or(())?);
+        }
+        index += 1;
+    }
+    Ok(requested)
 }
 
 fn run_context_operation(

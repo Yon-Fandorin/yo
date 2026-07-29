@@ -433,6 +433,23 @@ duplicate IDs, missing owners or targets, and graph cycles. Diagnostics have
 stable codes and deterministic path/code/location ordering. Any diagnostic
 produces no snapshot.
 
+The Pilot exposes that validation as four ordered check classes:
+
+```text
+records -> relations -> authority -> artifacts
+```
+
+`methexis check` requests all classes. `--only` accepts a repeatable,
+comma-separated list, so `--only authority,artifacts` and repeated `--only`
+flags are equivalent. A requested class always executes its prerequisites.
+The versioned report distinguishes canonical `requested_checks` from
+`executed_checks` and records each planned class as `passed`, `failed`, or
+`blocked`. A failed prerequisite blocks its remaining dependants rather than
+presenting them as checked. Selector names are case-sensitive; surrounding
+whitespace is ignored, while unknown names and empty comma segments are usage
+errors. A blocked requested class makes the overall report unsuccessful because
+the requested validation did not complete.
+
 Working-tree `methexis check` validates Draft Knowledge, typed Source records,
 and any tracked Projection and approval proposals. It MAY report `matching_proposal`,
 `stale_proposal`, or missing working-tree evidence, but MUST NOT promote that
@@ -442,6 +459,20 @@ active record becomes `active` only when all selected Source guards pass; a
 stable freshness failure yields `degraded` and marks only affected required
 closures stale or invalid. Fast editing validation SHOULD be available through
 the repository `hk` workflow.
+
+The `artifacts` class validates only tracked contract artifacts derived from
+trusted authority. In this Pilot it checks the registered context manifests'
+Checkpoint ID, hash, and authority-basis commit against the active trusted
+Checkpoint. It does not claim byte-for-byte regeneration and does not inspect
+or gate rebuildable `.local-exclude/` ContextBuild caches. Generic Rust tests,
+linting, and formatting remain Cargo and `hk` responsibilities rather than
+Methexis check classes. A repository or isolated fixture with none of the
+registered tracked artifact paths has an empty, passing `artifacts` class.
+Presence of any registered path enables the closed set, after which every
+registered artifact is required. If no active trusted Checkpoint is available,
+`authority` may pass as an evaluation while `artifacts` is `blocked`; the
+requested validation is incomplete, so the overall report fails and directs
+the caller to establish active trusted authority.
 
 Checkpoint activation additionally verifies:
 
@@ -707,7 +738,8 @@ build-review <request.json>    -> local packet and manifest
 approve <request.json>         -> tracked exact-revision approval proposal
 create-checkpoint <request.json> -> immutable trusted-revision Checkpoint proposal
 propose-activation <request.json> -> active-record proposal with compare-and-swap
-check                           -> Draft structure, trusted approval, and active/degraded eligibility
+check [--only <class>[,<class>...]]...
+                                -> selected SOT integrity classes and their prerequisites
 resolve-context <request.json>  -> immutable ContextBuild locator and hashes
 ```
 

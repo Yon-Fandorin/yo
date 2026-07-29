@@ -22,7 +22,23 @@ methexis create-checkpoint <checkpoint-request.json>
 methexis propose-activation <activation-request.json>
 methexis resolve-context <context-request.json>
 methexis check
+methexis check --only authority,artifacts
 ```
+
+`check` is read-only. Without selectors it runs all ordered classes:
+`records`, `relations`, `authority`, and `artifacts`. `--only` may be repeated
+or contain comma-separated names; requested downstream classes automatically
+run their prerequisites. The JSON result separates `requested_checks` from
+`executed_checks` and marks every planned class `passed`, `failed`, or
+`blocked`.
+
+`artifacts` covers the tracked context-contract manifests registered by the
+Pilot. It verifies their Checkpoint provenance against active trusted
+authority. It neither regenerates the full bytes nor checks rebuildable
+`.local-exclude/` caches. Workspace tests and linting remain Cargo and `hk`
+responsibilities. If any registered tracked manifest is present, the complete
+registered set is required. Without active trusted authority the class is
+`blocked` and the requested check is unsuccessful.
 
 `project-review` writes a generated file under
 `methexis/review-projections/`. `build-review` returns the path and hash of a
@@ -92,6 +108,12 @@ src/source/
   tests.rs        revision, schema, drift, race, and propagation scenarios
 
 src/publication.rs  directory-handle-relative lock and atomic-write policy
+
+src/check.rs        check wire types plus record and relation validation
+src/check/
+  runner.rs         prerequisite planning, execution, and report composition
+  artifacts.rs      tracked authority-derived manifest provenance
+  artifacts/tests.rs matching and stale-provenance regressions
 
 src/context/
   mod.rs         ContextService facade

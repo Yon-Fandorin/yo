@@ -26,7 +26,7 @@ pub(crate) use context::{
     ContextAuthority, final_revalidate as final_revalidate_context_authority,
     resolve as resolve_context_authority,
 };
-pub(crate) use evaluation::AuthorityFailure;
+pub(crate) use evaluation::{ActiveCheckpoint, AuthorityFailure};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

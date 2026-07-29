@@ -12,7 +12,7 @@ Methexis SOT Pilot
 
 USAGE:
     methexis [--help | --version]
-    methexis check
+    methexis check [--only <class>[,<class>...]]...
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis approve <request.json>
@@ -21,7 +21,7 @@ USAGE:
     methexis resolve-context <request.json>
 
 COMMANDS:
-    check             Validate Draft records and trusted Source-aware eligibility
+    check             Validate SOT integrity; classes: records, relations, authority, artifacts
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal
@@ -142,6 +142,11 @@ fn check_reports_the_repository_corpus_on_stdout() {
     assert_eq!(report["schema"], "methexis.check/v1alpha1");
     assert_eq!(report["ok"], true);
     assert_eq!(report["authority"], "draft");
+    assert_eq!(
+        report["requested_checks"],
+        serde_json::json!(["records", "relations", "authority", "artifacts"])
+    );
+    assert_eq!(report["requested_checks"], report["executed_checks"]);
     let units = report["units"].as_array().expect("units are an array");
     let ids = units
         .iter()
@@ -247,6 +252,70 @@ fn check_reports_the_repository_corpus_on_stdout() {
         assert_eq!(unit["approval_evidence"], "trusted_approval");
     }
     assert_eq!(report["diagnostics"].as_array().map(Vec::len), Some(0));
+}
+
+// 쉼표 목록과 반복된 --only가 같은 정규화된 요청과 선행 검사 계획으로 실행되는지 확인한다.
+#[test]
+fn check_only_accepts_comma_lists_and_repeated_flags_equivalently() {
+    let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("crate is under <repository>/tools/methexis");
+    let comma = methexis()
+        .current_dir(repository_root)
+        .args(["check", "--only", " authority, artifacts "])
+        .output()
+        .expect("run comma-separated selection");
+    let repeated = methexis()
+        .current_dir(repository_root)
+        .args([
+            "check",
+            "--only=authority",
+            "--only",
+            "artifacts",
+            "--only",
+            "authority",
+        ])
+        .output()
+        .expect("run repeated selection");
+
+    assert!(comma.status.success());
+    assert!(repeated.status.success());
+    let comma: serde_json::Value =
+        serde_json::from_slice(&comma.stdout).expect("comma output is JSON");
+    let repeated: serde_json::Value =
+        serde_json::from_slice(&repeated.stdout).expect("repeated output is JSON");
+    assert_eq!(
+        comma["requested_checks"],
+        serde_json::json!(["authority", "artifacts"])
+    );
+    assert_eq!(
+        comma["executed_checks"],
+        serde_json::json!(["records", "relations", "authority", "artifacts"])
+    );
+    assert_eq!(comma, repeated);
+}
+
+// 알 수 없는 이름이나 빈 쉼표 항목은 검사를 일부 실행하지 않고 구조화된 사용 오류로 거부한다.
+#[test]
+fn check_only_rejects_unknown_and_empty_selectors() {
+    for selectors in [
+        &["check", "--only", "records,unknown"][..],
+        &["check", "--only", "Authority"][..],
+        &["check", "--only", "authority,"][..],
+        &["check", "--only="][..],
+    ] {
+        let output = methexis()
+            .args(selectors)
+            .output()
+            .expect("run invalid selection");
+
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        let error: serde_json::Value =
+            serde_json::from_slice(&output.stderr).expect("error is JSON");
+        assert_eq!(error["error"]["code"], "invalid_check_selector");
+    }
 }
 
 // 잘못된 fixture 저장소에서 check는 종료 코드 2와 실패 보고 JSON을 stdout이 아닌 stderr로 보낸다.

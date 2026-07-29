@@ -15,6 +15,29 @@ fn local_failures_are_aggregated_and_block_global_validation() {
     assert!(!report.ok);
     assert!(report.snapshot_revision.is_none());
     assert!(report.units.is_empty());
+    assert_eq!(report.executed_checks, [methexis::CheckClass::Records]);
+    assert_eq!(
+        report
+            .checks
+            .iter()
+            .map(|outcome| (outcome.check, outcome.status))
+            .collect::<Vec<_>>(),
+        [
+            (methexis::CheckClass::Records, methexis::CheckStatus::Failed,),
+            (
+                methexis::CheckClass::Relations,
+                methexis::CheckStatus::Blocked,
+            ),
+            (
+                methexis::CheckClass::Authority,
+                methexis::CheckStatus::Blocked,
+            ),
+            (
+                methexis::CheckClass::Artifacts,
+                methexis::CheckStatus::Blocked,
+            ),
+        ]
+    );
     assert!(report.diagnostics.len() >= 3);
     assert!(
         report
@@ -100,15 +123,67 @@ fn duplicate_knowledge_ids_are_reported_for_each_path() {
 // 같은 corpus를 반복 검사하거나 물리 경로만 옮겨도 semantic identity가 유지되는지 확인한다.
 #[test]
 fn repeated_checks_and_physical_relocation_preserve_identity() {
-    let first = methexis::check_repository(&fixture("relocation-a"));
-    let repeated = methexis::check_repository(&fixture("relocation-a"));
-    let relocated = methexis::check_repository(&fixture("relocation-b"));
+    let requested = [methexis::CheckClass::Authority];
+    let first = methexis::check_repository_selected(&fixture("relocation-order-a"), &requested);
+    let repeated = methexis::check_repository_selected(&fixture("relocation-order-a"), &requested);
+    let relocated = methexis::check_repository_selected(&fixture("relocation-order-b"), &requested);
 
     assert!(first.ok);
     assert_eq!(first, repeated);
     assert_eq!(first.snapshot_revision, relocated.snapshot_revision);
-    assert_eq!(first.units[0].revision, relocated.units[0].revision);
-    assert_ne!(first.units[0].path, relocated.units[0].path);
+    assert_eq!(
+        first
+            .units
+            .iter()
+            .map(|unit| (&unit.id, &unit.revision))
+            .collect::<Vec<_>>(),
+        relocated
+            .units
+            .iter()
+            .map(|unit| (&unit.id, &unit.revision))
+            .collect::<Vec<_>>()
+    );
+    assert_ne!(
+        first
+            .units
+            .iter()
+            .map(|unit| &unit.path)
+            .collect::<Vec<_>>(),
+        relocated
+            .units
+            .iter()
+            .map(|unit| &unit.path)
+            .collect::<Vec<_>>()
+    );
+}
+
+// tracked artifact가 있지만 active trusted Checkpoint가 없는 저장소에서는 authority까지만
+// 실행되고 artifacts는 blocked가 되어, 완료되지 않은 요청을 성공으로 보고하지 않는다.
+#[test]
+fn artifacts_are_blocked_without_active_trusted_authority() {
+    let report = methexis::check_repository(&fixture("artifacts-no-authority"));
+
+    assert!(!report.ok);
+    assert_eq!(
+        report.executed_checks,
+        [
+            methexis::CheckClass::Records,
+            methexis::CheckClass::Relations,
+            methexis::CheckClass::Authority,
+        ]
+    );
+    assert_eq!(
+        report.checks.last().map(|outcome| outcome.status),
+        Some(methexis::CheckStatus::Blocked)
+    );
+    assert_eq!(
+        report.diagnostics[0].code,
+        "tracked_artifact_authority_unavailable"
+    );
+    assert_eq!(
+        report.next_actions,
+        ["integrate and activate trusted authority before checking tracked artifacts"]
+    );
 }
 
 #[cfg(unix)]
