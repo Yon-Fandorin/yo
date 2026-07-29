@@ -42,11 +42,13 @@ pub(crate) struct CapturedFile {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct FileIdentity {
-    device: u64,
+    // rustix exposes the platform ABI here: Darwin uses signed integers while
+    // Linux uses unsigned ones. Widening preserves either value losslessly.
+    device: i128,
     inode: u64,
     length: i64,
     modified_seconds: i64,
-    modified_nanoseconds: u64,
+    modified_nanoseconds: i128,
 }
 
 #[derive(Default)]
@@ -85,11 +87,11 @@ impl FileIdentity {
     fn from(file: impl AsFd) -> Result<Self, Errno> {
         let stat = fstat(file)?;
         Ok(Self {
-            device: stat.st_dev,
+            device: stat.st_dev.into(),
             inode: stat.st_ino,
             length: stat.st_size,
             modified_seconds: stat.st_mtime,
-            modified_nanoseconds: stat.st_mtime_nsec,
+            modified_nanoseconds: stat.st_mtime_nsec.into(),
         })
     }
 }

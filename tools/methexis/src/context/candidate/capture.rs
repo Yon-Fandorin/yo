@@ -12,7 +12,10 @@ use rustix::{
     io::Errno,
 };
 
-use crate::context::{hash::digest, wire::ResolveFailure};
+use crate::{
+    context::{hash::digest, wire::ResolveFailure},
+    file_identity::FileIdentity,
+};
 
 const MAX_CANDIDATE_BYTES: usize = 4 * 1024 * 1024;
 const OPEN_DIRECTORY: OFlags = OFlags::RDONLY
@@ -24,16 +27,7 @@ pub(super) struct CapturedFile {
     pub(super) path: String,
     pub(super) bytes: Vec<u8>,
     pub(super) hash: String,
-    identity: Identity,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Identity {
-    device: u64,
-    inode: u64,
-    size: i64,
-    modified_seconds: i64,
-    modified_nanoseconds: u64,
+    identity: FileIdentity,
 }
 
 pub(super) fn capture(
@@ -42,9 +36,9 @@ pub(super) fn capture(
 ) -> Result<CapturedFile, ResolveFailure> {
     let mut file = open_file(repository_root, Path::new(relative_path))
         .map_err(|error| open_failure(error, relative_path))?;
-    let before = identity(&file).map_err(|error| io_failure(error, relative_path))?;
+    let before = FileIdentity::capture(&file).map_err(|error| io_failure(error, relative_path))?;
     let bytes = read_bounded(&mut file, relative_path)?;
-    let after = identity(&file).map_err(|error| io_failure(error, relative_path))?;
+    let after = FileIdentity::capture(&file).map_err(|error| io_failure(error, relative_path))?;
     if before != after {
         return Err(changed(relative_path));
     }
@@ -70,16 +64,16 @@ fn final_revalidate_with(
 ) -> Result<(), ResolveFailure> {
     let mut file =
         open_file(repository_root, Path::new(&capture.path)).map_err(|_| changed(&capture.path))?;
-    let before = identity(&file).map_err(|_| changed(&capture.path))?;
+    let before = FileIdentity::capture(&file).map_err(|_| changed(&capture.path))?;
     let bytes = read_bounded(&mut file, &capture.path).map_err(|_| changed(&capture.path))?;
     after_read();
-    let after = identity(&file).map_err(|_| changed(&capture.path))?;
+    let after = FileIdentity::capture(&file).map_err(|_| changed(&capture.path))?;
     let mut reopened =
         open_file(repository_root, Path::new(&capture.path)).map_err(|_| changed(&capture.path))?;
-    let reopened_before = identity(&reopened).map_err(|_| changed(&capture.path))?;
+    let reopened_before = FileIdentity::capture(&reopened).map_err(|_| changed(&capture.path))?;
     let reopened_bytes =
         read_bounded(&mut reopened, &capture.path).map_err(|_| changed(&capture.path))?;
-    let reopened_after = identity(&reopened).map_err(|_| changed(&capture.path))?;
+    let reopened_after = FileIdentity::capture(&reopened).map_err(|_| changed(&capture.path))?;
     if before != after
         || after != capture.identity
         || reopened_before != reopened_after
@@ -151,17 +145,6 @@ pub(super) fn safe_relative(path: &Path) -> bool {
         count += 1;
     }
     count > 0
-}
-
-fn identity(file: &File) -> std::io::Result<Identity> {
-    let stat = fstat(file).map_err(std::io::Error::from)?;
-    Ok(Identity {
-        device: stat.st_dev,
-        inode: stat.st_ino,
-        size: stat.st_size,
-        modified_seconds: stat.st_mtime,
-        modified_nanoseconds: stat.st_mtime_nsec,
-    })
 }
 
 fn read_bounded(file: &mut File, path: &str) -> Result<Vec<u8>, ResolveFailure> {

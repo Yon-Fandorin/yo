@@ -15,6 +15,7 @@ use rustix::{
 use sha2::{Digest, Sha256};
 
 use super::freshness::FreshnessFailure;
+use crate::file_identity::FileIdentity;
 
 const MAX_CODE_SOURCE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_SOURCE_RECORD_BYTES: usize = 256 * 1024;
@@ -38,7 +39,7 @@ pub(super) enum CaptureState {
 pub(crate) enum Capture {
     File {
         path: String,
-        identity: Identity,
+        identity: FileIdentity,
         hash: String,
     },
     Missing {
@@ -47,15 +48,6 @@ pub(crate) enum Capture {
     Invalid {
         path: String,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct Identity {
-    device: u64,
-    inode: u64,
-    size: i64,
-    modified_seconds: i64,
-    modified_nanoseconds: u64,
 }
 
 pub(super) fn capture(
@@ -89,7 +81,7 @@ pub(super) fn capture(
             ));
         },
     };
-    let before = identity(&file).map_err(|error| {
+    let before = FileIdentity::capture(&file).map_err(|error| {
         failure(
             "source_capture_failed",
             error.to_string(),
@@ -102,7 +94,7 @@ pub(super) fn capture(
         MAX_CODE_SOURCE_BYTES,
         "code Source",
     )?;
-    let after = identity(&file).map_err(|error| {
+    let after = FileIdentity::capture(&file).map_err(|error| {
         failure(
             "source_capture_failed",
             error.to_string(),
@@ -150,18 +142,18 @@ fn final_revalidate_with(
         } => {
             let mut file =
                 open_file(repository_root, Path::new(path)).map_err(|_| changed(path))?;
-            let before = identity(&file).map_err(|_| changed(path))?;
+            let before = FileIdentity::capture(&file).map_err(|_| changed(path))?;
             let bytes = read_bounded(&mut file, path, MAX_CODE_SOURCE_BYTES, "code Source")
                 .map_err(|_| changed(path))?;
             after_read();
-            let after = identity(&file).map_err(|_| changed(path))?;
+            let after = FileIdentity::capture(&file).map_err(|_| changed(path))?;
             let mut current =
                 open_file(repository_root, Path::new(path)).map_err(|_| changed(path))?;
-            let current_before = identity(&current).map_err(|_| changed(path))?;
+            let current_before = FileIdentity::capture(&current).map_err(|_| changed(path))?;
             let current_bytes =
                 read_bounded(&mut current, path, MAX_CODE_SOURCE_BYTES, "code Source")
                     .map_err(|_| changed(path))?;
-            let current_after = identity(&current).map_err(|_| changed(path))?;
+            let current_after = FileIdentity::capture(&current).map_err(|_| changed(path))?;
             if before != after
                 || after != *captured_identity
                 || current_before != current_after
@@ -236,7 +228,7 @@ pub(crate) fn capture_record(
             vec![relative_path.to_owned()],
         )
     })?;
-    let before = identity(&file).map_err(|error| {
+    let before = FileIdentity::capture(&file).map_err(|error| {
         failure(
             "source_record_capture_failed",
             error.to_string(),
@@ -249,7 +241,7 @@ pub(crate) fn capture_record(
         MAX_SOURCE_RECORD_BYTES,
         "Source record",
     )?;
-    let after = identity(&file).map_err(|error| {
+    let after = FileIdentity::capture(&file).map_err(|error| {
         failure(
             "source_record_capture_failed",
             error.to_string(),
@@ -276,17 +268,6 @@ fn require_regular(file: &OwnedFd) -> Result<(), OpenFailure> {
         return Err(OpenFailure::Unsafe);
     }
     Ok(())
-}
-
-fn identity(file: &File) -> std::io::Result<Identity> {
-    let stat = fstat(file).map_err(std::io::Error::from)?;
-    Ok(Identity {
-        device: stat.st_dev,
-        inode: stat.st_ino,
-        size: stat.st_size,
-        modified_seconds: stat.st_mtime,
-        modified_nanoseconds: stat.st_mtime_nsec,
-    })
 }
 
 fn read_bounded(

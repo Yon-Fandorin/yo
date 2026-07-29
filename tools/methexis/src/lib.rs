@@ -8,6 +8,7 @@ mod check;
 mod checkpoint;
 mod cli;
 mod context;
+mod file_identity;
 mod model;
 mod publication;
 mod review;
