@@ -11,7 +11,8 @@ use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
     runner::{
         AgentConnection, DispatchOutcome, PresentationMode, RunError, RunOutcome,
-        TerminationSource,
+        TerminationSource, TuiSession,
+        session::SessionParts,
         state::{FrameError, StateEffect, StateError, TuiState},
     },
     surface::{Size, Surface},
@@ -111,14 +112,33 @@ pub fn run_with_mode<A>(
 where
     A: AgentConnection,
 {
+    let mut session = TuiSession::new();
+    run_session_with_mode(termination, agent, &mut session, mode)
+}
+
+/// Runs one terminal ownership generation for an existing TUI session.
+///
+/// The caller retains `session` after terminal cleanup and may pass it to a
+/// later generation with the same agent connection. Each call acquires a fresh
+/// presenter and frame history.
+pub fn run_session_with_mode<A>(
+    termination: &mut impl TerminationSource,
+    agent: &mut A,
+    session: &mut TuiSession,
+    mode: PresentationMode,
+) -> Result<RunOutcome, RunError>
+where
+    A: AgentConnection,
+{
     finish(catch_owner_panic(AssertUnwindSafe(|| {
-        run_routed(termination, agent, mode)
+        run_routed(termination, agent, session, mode)
     })))
 }
 
 fn run_routed<A>(
     termination: &mut impl TerminationSource,
     agent: &mut A,
+    retained: &mut TuiSession,
     mode: PresentationMode,
 ) -> Result<LiveRunReport, RunError>
 where
@@ -135,7 +155,6 @@ where
     let output = stdout.lock();
     let tty = TtyStateAdapter::new(RustixTermiosDriver::stdin());
     let mut backend = UnixBackend::new(tty, output);
-    let mut state = TuiState::new();
     let started = Instant::now();
 
     match mode {
@@ -148,7 +167,7 @@ where
                     session,
                     viewport,
                     &mut events,
-                    &mut state,
+                    retained,
                     agent,
                     size,
                     started,
@@ -158,7 +177,7 @@ where
                 // An untrusted restore may leave the last frame visible. Replaying the current
                 // chat projection can then duplicate content, which the recovery contract prefers
                 // to erasing rows whose ownership is no longer provable.
-                Ok(Ok(exit)) => (Ok(Ok(exit)), retained_session_output(&state)),
+                Ok(Ok(exit)) => (Ok(Ok(exit)), retained_session_output(retained.state())),
                 Ok(Err(error)) => (Ok(Err(error)), None),
                 Err(payload) => (Err(payload), None),
             };
@@ -177,7 +196,7 @@ where
                     session,
                     &mut viewport,
                     &mut events,
-                    &mut state,
+                    retained,
                     agent,
                     size,
                     started,
@@ -196,11 +215,11 @@ pub(super) fn retained_session_output(state: &TuiState) -> Option<String> {
     state.session_output().ok().flatten()
 }
 
-fn drive<B, E, T, A, P>(
+pub(super) fn drive<B, E, T, A, P>(
     session: &mut TerminalSession<'_, B>,
     viewport: &mut P,
     events: &mut UnixEventReader<E, T>,
-    state: &mut TuiState,
+    retained: &mut TuiSession,
     agent: &mut A,
     mut size: Size,
     started: Instant,
@@ -217,8 +236,11 @@ where
 {
     let mut previous = None;
     let mut frame_visible = false;
-    let mut pending_dispatch = None;
-    let mut pending_control = None;
+    let SessionParts {
+        state,
+        pending_dispatch,
+        pending_control,
+    } = retained.parts_mut();
 
     loop {
         if drain_agent(agent, state)? && size.width > 0 && size.height > 0 {
@@ -232,7 +254,7 @@ where
             {
                 DispatchOutcome::Accepted => {},
                 DispatchOutcome::Backpressured(action) => {
-                    pending_control = Some(action);
+                    *pending_control = Some(action);
                 },
             }
         }
@@ -245,7 +267,7 @@ where
             {
                 DispatchOutcome::Accepted => {},
                 DispatchOutcome::Backpressured(action) => {
-                    pending_dispatch = Some(action);
+                    *pending_dispatch = Some(action);
                 },
             }
         }
@@ -269,7 +291,7 @@ where
                             let is_interrupt =
                                 matches!(&action, crate::runner::AgentAction::Interrupt);
                             if is_interrupt {
-                                pending_dispatch = None;
+                                *pending_dispatch = None;
                             }
                             match agent
                                 .dispatch(action)
@@ -278,10 +300,10 @@ where
                                 DispatchOutcome::Accepted => {},
                                 DispatchOutcome::Backpressured(action) => {
                                     if is_interrupt {
-                                        pending_control = Some(action);
+                                        *pending_control = Some(action);
                                     } else {
                                         debug_assert!(pending_control.is_none());
-                                        pending_control = Some(action);
+                                        *pending_control = Some(action);
                                     }
                                 },
                             }
@@ -338,7 +360,7 @@ where
                     {
                         DispatchOutcome::Accepted => {},
                         DispatchOutcome::Backpressured(action) => {
-                            pending_dispatch = Some(action);
+                            *pending_dispatch = Some(action);
                         },
                     }
                     if size.width > 0 && size.height > 0 {

@@ -86,6 +86,13 @@ terminal-operation, and HTML-projection types.
 | [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | Shared transactional restoration, Inline and Fullscreen presenters, panic routing, and the crate-private platform boundary | `yo-cli/process` only when process signal policy changes |
 | [`html`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/html/mod.rs) | Deterministic browser projection of completed `Surface` state | `surface` when terminal and browser output disagree |
 
+`runner::TuiSession` owns transcript, editor, pending-request, view, and
+backpressured agent-dispatch state that can outlive one terminal ownership
+generation. Reentry keeps the same agent connection because the retained state
+contains identities from that agent Session. `runner/unix.rs` acquires fresh
+terminal input, presenter, viewport ownership, and frame history for each
+generation; those resources never move into `TuiSession`.
+
 The `surface` is the common completed state. Terminal and HTML projections
 consume it independently; neither projection defines layout meaning for the
 other.

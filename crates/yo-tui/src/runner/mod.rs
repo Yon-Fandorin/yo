@@ -2,12 +2,14 @@
 
 mod agent;
 mod error;
+mod session;
 mod state;
 mod unix;
 
 pub use agent::{AgentAction, AgentConnection, DispatchOutcome, PendingDispatch};
 pub use error::RunError;
-pub use unix::{run, run_with_mode};
+pub use session::TuiSession;
+pub use unix::{run, run_session_with_mode, run_with_mode};
 
 /// Terminal presentation selected before the live session acquires terminal state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

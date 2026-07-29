@@ -87,6 +87,14 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | 공유 transactional restoration, Inline·Fullscreen presenter, panic routing, crate-private platform boundary | 프로세스 signal 정책이 바뀔 때만 `yo-cli/process` |
 | [`html`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/html/mod.rs) | 완성된 `Surface` 상태를 결정론적으로 브라우저에 Projection | 터미널과 브라우저 출력이 다르면 `surface` |
 
+`runner::TuiSession`은 한 번의 터미널 소유 기간보다 오래 유지할 수 있는
+대화 기록, editor, 대기 중인 요청, view, backpressure로 전달되지 못한
+agent dispatch 상태를 소유한다. 보존된 상태에는 해당 agent Session의
+식별자가 있으므로 재진입할 때도 같은 agent 연결을 유지한다.
+`runner/unix.rs`는 매 터미널 소유 기간마다 터미널 입력, presenter,
+viewport 소유권, frame 이력을 새로 얻으며, 이 자원들은 `TuiSession`으로
+옮기지 않는다.
+
 `surface`는 공통으로 완성된 상태다. 터미널과 HTML Projection은 이를
 각자 소비하며, 어느 쪽도 다른 쪽의 layout 의미를 정의하지 않는다.
 

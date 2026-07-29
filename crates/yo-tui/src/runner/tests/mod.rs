@@ -18,6 +18,8 @@ use crate::{
     terminal::mode::inline::{InlineFramePlan, InlineViewport},
 };
 
+mod reentry;
+
 fn key(code: KeyCode, modifiers: crate::input::event::KeyModifiers) -> InputEvent {
     InputEvent::Key(YoKeyEvent {
         code,
