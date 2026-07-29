@@ -90,7 +90,7 @@ fn activity(turn: TurnRef, value: u64) -> ActivityRef {
 
 fn backend(later_messages: impl IntoIterator<Item = Value>) -> (Backend<FakePeer>, Sent) {
     let messages = [
-        vec![initialize_response(1, "0.145.9")],
+        vec![initialize_response(1, "0.146.0")],
         later_messages.into_iter().collect(),
     ]
     .concat();
@@ -127,10 +127,10 @@ fn initializes_before_starting_a_thread() {
 }
 
 // 검증하지 않은 Codex minor 버전이면 initialized 알림이나 Session 명령을 보내기 전에
-// Initialization 실패로 연결을 중단하는지 확인한다.
+// Initialization 실패로 연결을 중단하고, 새로 검증한 0.146은 이 경로에 들지 않게 한다.
 #[test]
 fn incompatible_version_fails_during_initialization() {
-    let (peer, sent) = FakePeer::new([initialize_response(1, "0.146.0")]);
+    let (peer, sent) = FakePeer::new([initialize_response(1, "0.147.0")]);
     let mut client = AppServerClient::new(peer, Duration::from_secs(1));
 
     let failure = match client.initialize() {
