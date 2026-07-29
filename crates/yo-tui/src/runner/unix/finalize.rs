@@ -5,7 +5,7 @@ use std::{
 
 use super::{LiveBackendError, LoopError, LoopExit};
 use crate::{
-    runner::{RunError, RunOutcome},
+    runner::{RunError, RunOutcome, TerminalOutcome},
     terminal::{
         backend::unix::UnixMode,
         mode::{
@@ -45,7 +45,7 @@ pub(super) fn entry_failure(
     }
 }
 
-pub(super) fn finish(outcome: RunnerBoundary) -> Result<RunOutcome, RunError> {
+pub(super) fn finish(outcome: RunnerBoundary) -> Result<TerminalOutcome, RunError> {
     let outcome = outcome.map_err(|error| {
         RunError::new(
             "installing terminal panic route failed",
@@ -63,7 +63,7 @@ pub(super) fn finish(outcome: RunnerBoundary) -> Result<RunOutcome, RunError> {
 fn finish_report(
     report: LiveRunReport,
     diagnostic: Option<PanicDiagnostic>,
-) -> Result<RunOutcome, RunError> {
+) -> Result<TerminalOutcome, RunError> {
     let output = report.output;
     let operation = match report.operation {
         Ok(operation) => operation,
@@ -74,13 +74,19 @@ fn finish_report(
     };
 
     match operation {
-        Ok(LoopExit::UserRequested) => {
+        Ok(LoopExit::User) => {
             require_clean_close(report.cleanup)?;
-            Ok(RunOutcome::user_requested(output))
+            Ok(TerminalOutcome::Exited(RunOutcome::user_requested(output)))
         },
-        Ok(LoopExit::TerminationRequested) => {
+        Ok(LoopExit::Termination) => {
             require_clean_close(report.cleanup)?;
-            Ok(RunOutcome::termination_requested(output))
+            Ok(TerminalOutcome::Exited(RunOutcome::termination_requested(
+                output,
+            )))
+        },
+        Ok(LoopExit::Suspend) => {
+            require_clean_close(report.cleanup)?;
+            Ok(TerminalOutcome::SuspendRequested)
         },
         Err(error) => {
             let cleanup = cleanup_detail(&report.cleanup);
@@ -168,7 +174,7 @@ mod tests {
         cleanup_detail, entry_failure, finish_report,
     };
     use crate::{
-        runner::ExitReason,
+        runner::{ExitReason, TerminalOutcome},
         terminal::{
             backend::unix::UnixBackendError,
             mode::{
@@ -249,7 +255,7 @@ mod tests {
     #[test]
     fn termination_exit_reports_cleanup_failure_before_host_replays_signal() {
         let report = LiveRunReport {
-            operation: Ok(Ok(LoopExit::TerminationRequested)),
+            operation: Ok(Ok(LoopExit::Termination)),
             cleanup: failed_fullscreen_cleanup(&["restoring termios"]),
             output: None,
         };
@@ -288,7 +294,7 @@ mod tests {
     #[test]
     fn clean_termination_preserves_the_termination_exit_reason() {
         let report = LiveRunReport {
-            operation: Ok(Ok(LoopExit::TerminationRequested)),
+            operation: Ok(Ok(LoopExit::Termination)),
             cleanup: LiveCleanup::Inline(InlineCloseReport {
                 viewport: Ok(crate::terminal::mode::inline::InlineRestoreOutcome::Cleared),
                 terminal: Ok(()),
@@ -296,7 +302,9 @@ mod tests {
             output: Some("retained\n".to_owned()),
         };
 
-        let outcome = finish_report(report, None).unwrap();
+        let TerminalOutcome::Exited(outcome) = finish_report(report, None).unwrap() else {
+            panic!("termination must complete the application session");
+        };
 
         assert_eq!(outcome.reason(), ExitReason::TerminationRequested);
         assert_eq!(outcome.output(), Some("retained\n"));
@@ -306,14 +314,48 @@ mod tests {
     #[test]
     fn clean_fullscreen_exit_has_no_session_output() {
         let report = LiveRunReport {
-            operation: Ok(Ok(LoopExit::UserRequested)),
+            operation: Ok(Ok(LoopExit::User)),
             cleanup: LiveCleanup::Fullscreen(Ok(())),
             output: None,
         };
 
-        let outcome = finish_report(report, None).unwrap();
+        let TerminalOutcome::Exited(outcome) = finish_report(report, None).unwrap() else {
+            panic!("user exit must complete the application session");
+        };
 
         assert_eq!(outcome.reason(), ExitReason::UserRequested);
         assert_eq!(outcome.output(), None);
+    }
+
+    // 일시정지 요청은 terminal 복구가 모두 성공한 뒤에만 host로 전달되며 종료용 session
+    // 출력도 만들지 않는다.
+    #[test]
+    fn clean_suspend_returns_only_after_terminal_restoration() {
+        let report = LiveRunReport {
+            operation: Ok(Ok(LoopExit::Suspend)),
+            cleanup: LiveCleanup::Fullscreen(Ok(())),
+            output: None,
+        };
+
+        assert_eq!(
+            finish_report(report, None).unwrap(),
+            TerminalOutcome::SuspendRequested
+        );
+    }
+
+    // 일시정지 요청 중 terminal 복구가 실패하면 host가 프로세스를 멈추지 않도록 구조화된
+    // 복구 오류를 반환한다.
+    #[test]
+    fn suspend_cleanup_failure_prevents_host_suspension() {
+        let report = LiveRunReport {
+            operation: Ok(Ok(LoopExit::Suspend)),
+            cleanup: failed_fullscreen_cleanup(&["restoring termios"]),
+            output: None,
+        };
+
+        let error = finish_report(report, None).unwrap_err().to_string();
+
+        assert!(error.contains("restoring terminal state failed"));
+        assert!(error.contains("restoring termios"));
     }
 }

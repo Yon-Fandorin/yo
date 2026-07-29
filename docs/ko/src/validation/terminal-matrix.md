@@ -5,9 +5,10 @@ review를 돕지만 이 검사를 대신하지 않는다.
 
 ## 일반 test가 검사하는 범위
 
-Linux에서 ignored가 아닌 `yo-cli` test는 실제 PTY를 만들고 일반
-Fullscreen 종료와 signal에 의한 복원을 실행한다. tmux, `sshd`, 설치된
-Codex는 필요하지 않다.
+Linux에서 ignored가 아닌 `yo-cli` test는 실제 PTY를 만들고 Inline 종료,
+Fullscreen 종료, signal에 의한 복원, 두 mode의 두 번 연속
+`Ctrl+Z`/`SIGCONT` 세대를 실행한다. tmux, `sshd`, 설치된 Codex는
+필요하지 않다.
 
 ```bash
 cargo test -p yo-cli pty_tests::
@@ -75,7 +76,7 @@ test는 localhost에 격리된 `sshd`를 시작하고 임시 key를 생성한 �
 
 | host와 경로 | Inline | Fullscreen | 증거 |
 |---|---:|---:|---|
-| Linux 직접 실제 PTY | Unverified | Yes | 일반 `yo-cli` test가 현재 Fullscreen을 검사 |
+| Linux 직접 실제 PTY | Yes | Yes | 일반 `yo-cli` test가 두 mode의 종료·반복 일시정지/재개와 Fullscreen termination을 검사 |
 | Linux 로컬 tmux | Yes | Yes | ignored 환경 test |
 | Linux SSH | Yes | Yes | ignored 환경 test |
 | Linux SSH 내부 tmux | Yes | Yes | ignored 환경 test |

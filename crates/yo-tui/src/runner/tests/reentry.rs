@@ -230,7 +230,7 @@ fn run_generation(
             Instant::now(),
         )
         .unwrap(),
-        LoopExit::TerminationRequested
+        LoopExit::Termination
     ));
     terminal.close().unwrap();
     presenter

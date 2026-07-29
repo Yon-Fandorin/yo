@@ -13,7 +13,7 @@ use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
 
 use self::state::{Phase, SharedState, StateError};
 
-mod disposition;
+pub(crate) mod disposition;
 mod state;
 
 static PROCESS_COORDINATOR: AtomicU8 = AtomicU8::new(0);
@@ -119,12 +119,30 @@ where
         })
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn with_active_session<T, E>(
         &mut self,
         operation: impl FnOnce(&mut TerminationEvents) -> Result<T, E>,
     ) -> Result<Result<T, E>, HostError>
     where
         E: fmt::Display,
+    {
+        self.with_active_resource(
+            &mut (),
+            |events, ()| operation(events),
+            |()| Ok::<(), std::convert::Infallible>(()),
+        )
+    }
+
+    pub(crate) fn with_active_resource<R, T, E, C>(
+        &mut self,
+        resource: &mut R,
+        operation: impl FnOnce(&mut TerminationEvents, &mut R) -> Result<T, E>,
+        termination_cleanup: impl FnOnce(&mut R) -> Result<(), C>,
+    ) -> Result<Result<T, E>, HostError>
+    where
+        E: fmt::Display,
+        C: fmt::Display,
     {
         self.require_owner()?;
         if self.retired {
@@ -140,16 +158,34 @@ where
         let mut events = TerminationEvents {
             shared: self.shared,
         };
-        let result = catch_unwind(AssertUnwindSafe(|| operation(&mut events)));
+        let result = catch_unwind(AssertUnwindSafe(|| operation(&mut events, resource)));
         self.shared
             .transition_preserving(Phase::Active, Phase::Cleaning)
             .map_err(HostError::state)?;
         let selected = self.shared.finalize_cleaning().map_err(HostError::state)?;
 
         if let Some(signal) = selected {
+            let cleanup = catch_unwind(AssertUnwindSafe(|| termination_cleanup(resource)));
             if let Ok(Err(error)) = &result {
                 use std::io::Write;
                 let _ = writeln!(std::io::stderr().lock(), "yo: {error}");
+            }
+            match cleanup {
+                Ok(Ok(())) => {},
+                Ok(Err(error)) => {
+                    use std::io::Write;
+                    let _ = writeln!(
+                        std::io::stderr().lock(),
+                        "yo: process termination resource cleanup: {error}"
+                    );
+                },
+                Err(_) => {
+                    use std::io::Write;
+                    let _ = writeln!(
+                        std::io::stderr().lock(),
+                        "yo: process termination resource cleanup panicked"
+                    );
+                },
             }
             disposition::default_now(signal);
         }

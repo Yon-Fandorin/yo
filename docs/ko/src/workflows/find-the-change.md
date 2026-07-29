@@ -87,6 +87,7 @@ macro 내부 발생은 `rg`로 확인하고 symbol 의미는 rust-analyzer로 �
 | provider 중립 backend port나 command 수락 순서 변경 | [`yo-core/src/backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs)와 [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | Codex wire 동작도 바뀌면 `backend/codex`, 공개 frontend 사용법도 바뀌면 `lib.rs`와 `agent_session` | [프런트엔드 독립 코어](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.core.frontend-independent-boundary.md) |
 | Codex process, JSON protocol, version gate, ID 연결, event 변환 변경 | [`yo-core/src/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | provider 중립 의미도 바뀌면 `backend/contract`, `runtime`, `engine` | [Codex adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md) |
 | CLI 인자, 작업 디렉터리 확보, 시작 순서, 최상위 failure 취합 변경 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | agent adapter도 바뀌면 `agent`, signal 정책도 바뀌면 `process/termination` | [모듈 및 호스트 경계](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.architecture.module-boundaries.md) |
+| `Ctrl+Z`, 기본 프로세스 일시정지, `SIGCONT`, 터미널 세대 재진입 변경 | [`yo-cli/src/process/job_control.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/job_control.rs)와 [`yo-tui/src/runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 보존하는 application 상태도 바뀌면 `runner/session.rs`, lease 최종 확정에서 종료가 우선하면 `process/termination` | [job-control 일시정지와 재개](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md) |
 | Unix 종료 관찰, signal 우선순위·disposition·복원 변경 | [`yo-cli/src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | 터미널 복원도 바뀌면 `yo-tui/terminal/mode`, typed 관찰도 바뀌면 `yo-tui/runner` | [프로세스 종료 coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md) |
 
 설치된 Codex minor line이 거부되거나 schema가 바뀌었다면 version gate를
@@ -109,7 +110,8 @@ macro 내부 발생은 `rg`로 확인하고 symbol 의미는 rust-analyzer로 �
 | Codex가 작업을 수락했지만 대화 기록이 갱신되지 않음 | `backend/codex/events.rs` → `AgentRuntime::poll_event` → agent-session event lane → `TuiState::observe` → transcript |
 | backend가 바쁠 때만 input이 멈춤 | runner pending dispatch → `AgentSession::dispatch`/`retry` → bounded command lane → worker lifecycle |
 | 일반 종료 뒤 터미널 상태가 손상됨 | terminal mode guard → presenter cleanup → Unix backend. signal 경로가 관련될 때만 process termination 확인 |
-| 정리가 보이기 전에 signal로 종료됨 | TUI typed termination observation → guarded terminal return → agent shutdown → `TerminationCoordinator::with_active_session` |
+| 정리가 보이기 전에 signal로 종료됨 | TUI typed termination observation → guarded terminal return → agent shutdown → `TerminationCoordinator::with_active_resource` |
+| `Ctrl+Z` 뒤 터미널이 손상되거나 `fg` 뒤 Session이 사라짐 | TUI `SuspendRequested` → guarded terminal cleanup → active-resource 최종 확정 → `process/job_control` → 새 터미널 세대 |
 | 터미널과 HTML이 다름 | 공유 fixture와 완성된 `Surface` → terminal Projection과 HTML Projection을 각각 확인 |
 | tmux, SSH, SSH 내부 tmux에서만 실패함 | 먼저 실제 환경 경로를 재현한 뒤 terminal mode/backend 확인 |
 

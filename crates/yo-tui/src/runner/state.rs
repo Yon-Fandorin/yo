@@ -27,6 +27,7 @@ pub(super) enum StateEffect {
     Unchanged,
     Redraw,
     Dispatch(AgentAction),
+    Suspend,
     Exit,
     Resize(Size),
 }
@@ -98,6 +99,9 @@ impl TuiState {
     ) -> Result<StateEffect, StateError> {
         if let InputEvent::Resize(size) = input {
             return Ok(StateEffect::Resize(size));
+        }
+        if input.is_ctrl_z_press() {
+            return Ok(StateEffect::Suspend);
         }
 
         let editor_before = self.editor.clone();

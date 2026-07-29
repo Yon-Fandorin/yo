@@ -36,7 +36,7 @@ yo-tui
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable`이 backend를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 `AgentRuntime`을 통해 `CreateSession`을 보낸다. |
 | 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CreateSession`이 `initialize`와 `thread/start`를 수행하고 semantic engine이 `SessionCreated`를 만든다. |
-| 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_with_mode`가 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
+| 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode`가 첫 터미널 소유 세대의 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
 
 handshake 중에 종료 요청이 오면 `AgentSession::start_inner`가 취소
 callback을 관찰하고 backend 중지를 요청한 뒤 worker 정리를 기다린다.
@@ -101,6 +101,39 @@ Codex JSON과 provider identifier는 backend adapter 밖으로 나오지 않는�
 터미널 input event와 rendering type은 `yo-tui` 밖으로 나오지 않는다.
 그 사이를 지나는 command와 event type은 `yo-core`가 소유한다.
 
+## 일시정지와 재개
+
+`Ctrl+Z`는 application Session을 닫지 않고 터미널 소유권만 닫는다.
+
+```text
+Ctrl+Z press
+    ↓
+guard가 터미널을 복원한 뒤 TUI가 SuspendRequested 반환
+    ↓
+TerminationCoordinator가 활성 cleanup lease를 최종 확정
+    ├── 종료 선택됨: 살아 있는 agent를 정리하고 해당 signal 재생
+    └── 종료 없음: Idle로 반환
+          ↓
+yo-cli가 기본 SIGTSTP 동작을 적용하고 프로세스 정지
+          ↓ SIGCONT
+물려받은 SIGTSTP 상태 복원
+          ↓
+새 활성 lease와 터미널 소유 세대 시작
+```
+
+프로세스가 정지한 동안 `TuiSession`과 같은 agent 연결은 살아 있다.
+터미널 input, raw mode, presenter, viewport 소유권, frame 이력은 남기지
+않는다. 재개된 세대는 이 자원을 다시 획득하고 첫 화면 전체를 그린다.
+`process/job_control.rs`는 기본 `SIGTSTP` action을 임시로 설치하고,
+재개된 뒤 물려받았던 action과 mask를 복원한다.
+
+`with_active_resource`가 종료 signal 없이 cleanup lease를 최종 확정한
+뒤에만 프로세스를 일시정지할 수 있다. 이 경계에서 설정된 종료 signal이
+도착하면 resource-cleanup callback이 보존된 agent를 정리하며, 일시정지
+대신 바로 그 signal이 우선한다.
+
+계약: [터미널 job-control 일시정지와 재개](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md)
+
 ## 종료와 정리
 
 사용자 종료와 프로세스 종료는 프로세스 호스트가 signal 정책을 적용하기
@@ -113,30 +146,32 @@ yo-tui loop가 종료 이유를 반환
     ↓
 terminal guard가 표시 상태를 복원
     ↓
-yo_tui::run_with_mode 반환
+yo_tui::run_session_with_mode가 Exited 반환
     ↓
 AgentSession::shutdown
   worker 중지 → backend 중지 → 활성 semantic work 종료
     ↓
-TerminationCoordinator가 활성 session을 마무리
+TerminationCoordinator가 활성 resource lease를 마무리
     ├── 사용자 종료: yo-cli로 반환
     └── signal: 선택된 signal의 기본 disposition 적용
           ↓
 일반 반환에서는 yo-cli가 설치했던 signal 상태를 복원
 ```
 
-TUI는 `UserRequested` 또는 `TerminationRequested`만 보고한다. 어떤
-signal인지 식별하거나 프로세스의 마지막 동작을 선택하지 않는다. guard가
-있는 runner는 어떤 결과든 반환하기 전에 터미널 상태를 복원한다.
-`run_agent_session`은 터미널 연산이 실패했더라도 agent shutdown을
-호출하고, 필요하면 두 실패를 모두 모아 보고한다.
+application Session이 끝날 때 TUI는 `UserRequested` 또는
+`TerminationRequested`만 보고한다. 어떤 signal인지 식별하거나
+프로세스의 마지막 동작을 선택하지 않는다. guard가 있는 runner는 어떤
+결과든 반환하기 전에 터미널 상태를 복원한다. `run_agent_generation`은
+터미널 연산이 실패했더라도 agent shutdown을 호출하고, 필요하면 두 실패를
+모두 보고한다.
 
 일반 반환에서는
 [`TerminationCoordinator::shutdown`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs)이
 설치했던 signal disposition과 설치 thread의 원래 mask를 복원한다.
-종료 signal이 선택되면 `with_active_session`은 TUI와 agent 정리 경로가
-반환될 때까지 기다린다. 그 뒤 signal을 일반 애플리케이션 오류로 바꾸지
-않고 해당 signal의 기본 disposition을 적용한다.
+종료 signal이 선택되면 `with_active_resource`는 TUI 정리 경로가
+반환될 때까지 기다리고, 필요한 경우 보존된 agent도 정리한다. 그 뒤
+signal을 일반 애플리케이션 오류로 바꾸지 않고 해당 signal의 기본
+disposition을 적용한다.
 
 ## 첫 소유자 찾기
 
@@ -149,6 +184,7 @@ signal인지 식별하거나 프로세스의 마지막 동작을 선택하지 �
 | `terminal session` | `yo-tui/runner`와 터미널 mode 정리 |
 | `agent cleanup` | `yo-core/agent_session::shutdown`, 그다음 runtime/backend 정리 |
 | `process termination session` 또는 `process termination cleanup` | `yo-cli/process/termination` |
+| `suspending the process` | `yo-cli/process/job_control` |
 
 뒤이어 발생한 정리 실패를 버리지 않는다. 현재 최상위 경로는 서로
 독립적인 정리 경계를 모두 시도하고 각 오류 문맥을 함께 보고한다.
@@ -163,6 +199,7 @@ signal인지 식별하거나 프로세스의 마지막 동작을 선택하지 �
 - [표시 mode 선택](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md)
 - [터미널 생명주기 복원](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md)
 - [프로세스 종료 coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md)
+- [터미널 job-control 일시정지와 재개](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md)
 
 실패한 경계를 찾았다면 [검증](../validation/)에서 수정 결과를
 확인할 증거를 선택한다.

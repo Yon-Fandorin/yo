@@ -5,9 +5,10 @@ diagnosis and parity review but do not replace these checks.
 
 ## What the normal test set covers
 
-On Linux, the non-ignored `yo-cli` tests create real PTYs and exercise normal
-Fullscreen exit plus signal-driven restoration. They do not require tmux,
-`sshd`, or an installed Codex:
+On Linux, the non-ignored `yo-cli` tests create real PTYs and exercise Inline
+exit, Fullscreen exit, signal-driven restoration, and two consecutive
+`Ctrl+Z`/`SIGCONT` generations in both modes. They do not require tmux, `sshd`,
+or an installed Codex:
 
 ```bash
 cargo test -p yo-cli pty_tests::
@@ -77,7 +78,7 @@ The executable environment matrix currently covers:
 
 | Host and route | Inline | Fullscreen | Evidence |
 |---|---:|---:|---|
-| Linux direct real PTY | Unverified | Yes | Normal `yo-cli` tests currently cover Fullscreen |
+| Linux direct real PTY | Yes | Yes | Normal `yo-cli` tests cover exit and repeated suspend/resume in both modes, plus Fullscreen termination |
 | Linux local tmux | Yes | Yes | Ignored environment tests |
 | Linux SSH | Yes | Yes | Ignored environment tests |
 | Linux tmux inside SSH | Yes | Yes | Ignored environment tests |

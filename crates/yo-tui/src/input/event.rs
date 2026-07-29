@@ -8,14 +8,26 @@ pub(crate) enum InputEvent {
 }
 
 impl InputEvent {
-    pub(crate) fn is_ctrl_c_or_d(&self) -> bool {
+    pub(crate) fn is_control_flow_key(&self) -> bool {
         matches!(
             self,
             Self::Key(KeyEvent {
-                code: KeyCode::Character('c' | 'd'),
+                code: KeyCode::Character('c' | 'd' | 'z'),
                 modifiers,
                 ..
             }) if modifiers.contains(KeyModifiers::CONTROL)
+        )
+    }
+
+    pub(crate) fn is_ctrl_z_press(&self) -> bool {
+        matches!(
+            self,
+            Self::Key(KeyEvent {
+                code: KeyCode::Character('z' | 'Z'),
+                modifiers: KeyModifiers::CONTROL,
+                action: KeyAction::Press,
+                ..
+            })
         )
     }
 }

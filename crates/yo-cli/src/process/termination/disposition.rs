@@ -23,6 +23,13 @@ pub(super) fn restore(signal: Signal, action: &SigAction) -> nix::Result<()> {
     unsafe { sigaction(signal, action) }.map(drop)
 }
 
+#[allow(unsafe_code)]
+pub(in crate::process) fn replace(signal: Signal, action: &SigAction) -> nix::Result<SigAction> {
+    // SAFETY: callers provide a Nix-owned action whose handler storage is
+    // static. The returned prior action is retained until it is restored.
+    unsafe { sigaction(signal, action) }
+}
+
 #[cfg(test)]
 #[allow(unsafe_code)]
 pub(super) fn replace_for_test(signal: Signal, action: &SigAction) -> nix::Result<SigAction> {

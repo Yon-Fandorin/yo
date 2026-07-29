@@ -38,7 +38,7 @@ yo-tui
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable` transfers the backend to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` sends `CreateSession` through `AgentRuntime`. |
 | 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CreateSession` performs `initialize` and `thread/start`; the semantic engine produces `SessionCreated`. |
-| 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_with_mode` acquires input and terminal state, then enters the already selected presentation mode. |
+| 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode` acquires input and terminal state for the first terminal ownership generation, then enters the already selected presentation mode. |
 
 If termination arrives during the handshake, `AgentSession::start_inner`
 observes the cancellation callback, requests the backend stop, waits for worker
@@ -102,6 +102,39 @@ Codex JSON and provider identifiers end at the backend adapter. Terminal input
 events and rendering types end in `yo-tui`. The command and event types crossing
 the middle are owned by `yo-core`.
 
+## Suspend and resume
+
+`Ctrl+Z` closes terminal ownership without closing the application Session:
+
+```text
+Ctrl+Z press
+    ↓
+TUI returns SuspendRequested after guarded terminal restoration
+    ↓
+TerminationCoordinator finalizes the active cleanup lease
+    ├── termination selected: shut down the live agent and replay that signal
+    └── no termination: return to Idle
+          ↓
+yo-cli applies default SIGTSTP and the process stops
+          ↓ SIGCONT
+restore inherited SIGTSTP state
+          ↓
+open a fresh active lease and terminal ownership generation
+```
+
+`TuiSession` and the same agent connection remain alive while the process is
+stopped. Terminal input, raw mode, presenter, viewport ownership, and frame
+history do not: each resumed generation reacquires them and starts with a full
+frame. `process/job_control.rs` temporarily installs the default `SIGTSTP`
+action and restores the inherited action and mask after continuation.
+
+The process may suspend only after `with_active_resource` has finalized the
+cleanup lease with no selected termination signal. If a configured termination
+arrives at that boundary, its resource-cleanup callback shuts down the retained
+agent and that exact signal wins over suspension.
+
+Contract: [Terminal job-control suspend and resume](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md)
+
 ## Exit and cleanup
 
 User exit and process termination share the same cleanup route until the
@@ -114,29 +147,30 @@ yo-tui loop returns its reason
     ↓
 terminal guard restores presentation state
     ↓
-yo_tui::run_with_mode returns
+yo_tui::run_session_with_mode returns Exited
     ↓
 AgentSession::shutdown
   stop worker → stop backend → close active semantic work
     ↓
-TerminationCoordinator finishes the active session
+TerminationCoordinator finishes the active resource lease
     ├── user exit: return to yo-cli
     └── signal: apply the selected signal's default disposition
           ↓
 yo-cli restores installed signal state on ordinary return
 ```
 
-The TUI reports only `UserRequested` or `TerminationRequested`; it neither
-identifies signals nor chooses their final process behavior. Its guarded runner
-restores terminal state before returning either outcome. `run_agent_session`
-then calls agent shutdown even when the terminal operation failed and aggregates
-both failures when necessary.
+For a completed application Session, the TUI reports `UserRequested` or
+`TerminationRequested`; it neither identifies signals nor chooses their final
+process behavior. Its guarded runner restores terminal state before returning
+either outcome. `run_agent_generation` then calls agent shutdown even when the
+terminal operation failed and aggregates both failures when necessary.
 
 On an ordinary return, [`TerminationCoordinator::shutdown`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs)
 restores installed signal dispositions and the installing thread's original
-mask. On a selected termination signal, `with_active_session` waits until the
-TUI and agent cleanup route has returned, then applies that signal's default
-disposition instead of turning it into a normal application error.
+mask. On a selected termination signal, `with_active_resource` waits until the
+TUI cleanup route has returned, invokes retained-agent cleanup when necessary,
+then applies that signal's default disposition instead of turning it into a
+normal application error.
 
 ## Finding the first owner
 
@@ -149,6 +183,7 @@ Follow the context nearest the first failed boundary:
 | `terminal session` | `yo-tui/runner` and terminal mode cleanup |
 | `agent cleanup` | `yo-core/agent_session::shutdown`, then runtime/backend cleanup |
 | `process termination session` or `process termination cleanup` | `yo-cli/process/termination` |
+| `suspending the process` | `yo-cli/process/job_control` |
 
 Do not discard later cleanup failures: the current top-level path attempts the
 independent cleanup boundaries and reports their contexts together.
@@ -163,6 +198,7 @@ independent cleanup boundaries and reports their contexts together.
 - [Presentation mode selection](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md)
 - [Terminal lifecycle restoration](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md)
 - [Process termination coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md)
+- [Terminal job-control suspend and resume](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md)
 
 After locating the failing boundary, use [Validation](../validation/)
 to choose the evidence that can confirm the fix.

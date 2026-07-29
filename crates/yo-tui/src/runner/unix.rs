@@ -10,7 +10,7 @@ use yo_core::RuntimePoll;
 use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
     runner::{
-        AgentConnection, DispatchOutcome, PresentationMode, RunError, RunOutcome,
+        AgentConnection, DispatchOutcome, PresentationMode, RunError, TerminalOutcome,
         TerminationSource, TuiSession,
         session::SessionParts,
         state::{FrameError, StateEffect, StateError, TuiState},
@@ -42,8 +42,9 @@ const MAX_AGENT_EVENTS_PER_TICK: usize = 256;
 pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
 
 pub(super) enum LoopExit {
-    UserRequested,
-    TerminationRequested,
+    User,
+    Termination,
+    Suspend,
 }
 
 #[derive(Debug)]
@@ -90,11 +91,13 @@ impl Error for LoopError {}
 /// Runs one inline terminal UI session using host-owned termination state.
 ///
 /// The process host remains responsible for signal installation, identity, and
-/// final disposition. This function returns only after terminal cleanup.
+/// final disposition. This function returns only after terminal cleanup. A
+/// suspend result closes this fresh one-shot session; callers that need reentry
+/// must retain a [`TuiSession`] and use [`run_session_with_mode`].
 pub fn run<A>(
     termination: &mut impl TerminationSource,
     agent: &mut A,
-) -> Result<RunOutcome, RunError>
+) -> Result<TerminalOutcome, RunError>
 where
     A: AgentConnection,
 {
@@ -103,12 +106,14 @@ where
 
 /// Runs one terminal UI session in the explicitly selected presentation mode.
 ///
-/// Mode selection is complete before this function acquires terminal state.
+/// Mode selection is complete before this function acquires terminal state. A
+/// suspend result closes this fresh one-shot session; use
+/// [`run_session_with_mode`] to retain application state across generations.
 pub fn run_with_mode<A>(
     termination: &mut impl TerminationSource,
     agent: &mut A,
     mode: PresentationMode,
-) -> Result<RunOutcome, RunError>
+) -> Result<TerminalOutcome, RunError>
 where
     A: AgentConnection,
 {
@@ -126,7 +131,7 @@ pub fn run_session_with_mode<A>(
     agent: &mut A,
     session: &mut TuiSession,
     mode: PresentationMode,
-) -> Result<RunOutcome, RunError>
+) -> Result<TerminalOutcome, RunError>
 where
     A: AgentConnection,
 {
@@ -177,7 +182,10 @@ where
                 // An untrusted restore may leave the last frame visible. Replaying the current
                 // chat projection can then duplicate content, which the recovery contract prefers
                 // to erasing rows whose ownership is no longer provable.
-                Ok(Ok(exit)) => (Ok(Ok(exit)), retained_session_output(retained.state())),
+                Ok(Ok(exit @ (LoopExit::User | LoopExit::Termination))) => {
+                    (Ok(Ok(exit)), retained_session_output(retained.state()))
+                },
+                Ok(Ok(LoopExit::Suspend)) => (Ok(Ok(LoopExit::Suspend)), None),
                 Ok(Err(error)) => (Ok(Err(error)), None),
                 Err(payload) => (Err(payload), None),
             };
@@ -276,7 +284,7 @@ where
                 .next(WORKER_RETRY_INTERVAL)
                 .map_err(|error| LoopError::Input(format!("{error:?}")))?
             {
-                UnixEvent::Terminate => return Ok(LoopExit::TerminationRequested),
+                UnixEvent::Terminate => return Ok(LoopExit::Termination),
                 UnixEvent::Input(input) => {
                     match handle_backpressured_input(
                         state,
@@ -286,7 +294,8 @@ where
                     )
                     .map_err(LoopError::State)?
                     {
-                        StateEffect::Exit => return Ok(LoopExit::UserRequested),
+                        StateEffect::Exit => return Ok(LoopExit::User),
+                        StateEffect::Suspend => return Ok(LoopExit::Suspend),
                         StateEffect::Dispatch(action) => {
                             let is_interrupt =
                                 matches!(&action, crate::runner::AgentAction::Interrupt);
@@ -340,13 +349,14 @@ where
                     frame_visible = true;
                 }
             },
-            UnixEvent::Terminate => return Ok(LoopExit::TerminationRequested),
+            UnixEvent::Terminate => return Ok(LoopExit::Termination),
             UnixEvent::Input(input) => match state
                 .handle(input, started.elapsed())
                 .map_err(LoopError::State)?
             {
                 StateEffect::Unchanged => {},
-                StateEffect::Exit => return Ok(LoopExit::UserRequested),
+                StateEffect::Exit => return Ok(LoopExit::User),
+                StateEffect::Suspend => return Ok(LoopExit::Suspend),
                 StateEffect::Redraw => {
                     if size.width > 0 && size.height > 0 {
                         redraw(session, viewport, state, size, &mut previous)?;
@@ -384,7 +394,7 @@ pub(super) fn handle_backpressured_input(
     allow_pending_request: bool,
 ) -> Result<StateEffect, StateError> {
     if (allow_pending_request && state.has_pending_request())
-        || input.is_ctrl_c_or_d()
+        || input.is_control_flow_key()
         || matches!(input, crate::input::event::InputEvent::Resize(_))
     {
         state.handle(input, now)

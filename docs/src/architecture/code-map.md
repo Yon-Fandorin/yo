@@ -37,8 +37,9 @@ and [UI-only crate boundary](https://github.com/Yon-Fandorin/yo/blob/develop/met
 
 | Boundary | Owns | Does not own |
 |---|---|---|
-| [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | Argument parsing, presentation selection before terminal acquisition, working-directory capture, provider startup, and top-level cleanup aggregation | Agent semantics or terminal rendering |
+| [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | Argument parsing, presentation selection before terminal acquisition, working-directory capture, provider startup, terminal-generation reentry, and top-level cleanup aggregation | Agent semantics or terminal rendering |
 | [`src/agent/mod.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs) | Adapting `yo-core::AgentSession` to the TUI's `AgentConnection` port | Provider protocol translation |
+| [`src/process/job_control.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/job_control.rs) | Transactionally applying default `SIGTSTP`, suspending the process, and restoring inherited signal state after `SIGCONT` | TUI state or terminal restoration |
 | [`src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Unix signal installation, observation, restoration, and final disposition | Terminal state restoration |
 
 Follow process-start or shutdown failures from `main.rs` into the owner named
@@ -91,7 +92,9 @@ backpressured agent-dispatch state that can outlive one terminal ownership
 generation. Reentry keeps the same agent connection because the retained state
 contains identities from that agent Session. `runner/unix.rs` acquires fresh
 terminal input, presenter, viewport ownership, and frame history for each
-generation; those resources never move into `TuiSession`.
+generation; those resources never move into `TuiSession`. A clean `Ctrl+Z`
+returns `TerminalOutcome::SuspendRequested` only after those generation-local
+resources are restored.
 
 The `surface` is the common completed state. Terminal and HTML projections
 consume it independently; neither projection defines layout meaning for the

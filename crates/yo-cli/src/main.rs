@@ -26,13 +26,35 @@ fn run() -> Result<(), AppError> {
     let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
         AppError::single("installing the process termination coordinator", error)
     })?;
-    let session = host.with_active_session(|termination| run_agent_session(termination, cwd, mode));
-
+    let mut live = None;
+    let mut job_control = process::job_control::JobControl::new();
     let mut failures = Vec::new();
-    match session {
-        Ok(Ok(_)) => {},
-        Ok(Err(error)) => failures.extend(error.failures),
-        Err(error) => failures.push(format!("process termination session: {error}")),
+    loop {
+        let generation = host.with_active_resource(
+            &mut live,
+            |termination, live| run_agent_generation(termination, live, &cwd, mode),
+            shutdown_live_session,
+        );
+        match generation {
+            Ok(Ok(SessionStep::Suspend)) => {
+                if let Err(error) = job_control.suspend() {
+                    failures.push(format!("suspending the process: {error}"));
+                    break;
+                }
+            },
+            Ok(Ok(SessionStep::Complete)) => break,
+            Ok(Err(error)) => {
+                failures.extend(error.failures);
+                break;
+            },
+            Err(error) => {
+                failures.push(format!("process termination session: {error}"));
+                break;
+            },
+        }
+    }
+    if let Err(error) = shutdown_live_session(&mut live) {
+        failures.extend(error.failures);
     }
     if let Err(error) = host.shutdown() {
         failures.push(format!("process termination cleanup: {error}"));
@@ -46,40 +68,76 @@ fn run() -> Result<(), AppError> {
 }
 
 #[cfg(unix)]
-fn run_agent_session(
+struct LiveSession {
+    agent: agent::TuiAgentConnection,
+    tui: yo_tui::TuiSession,
+}
+
+#[cfg(unix)]
+enum SessionStep {
+    Suspend,
+    Complete,
+}
+
+#[cfg(unix)]
+fn run_agent_generation(
     termination: &mut impl yo_tui::TerminationSource,
-    cwd: std::path::PathBuf,
+    live: &mut Option<LiveSession>,
+    cwd: &std::path::Path,
     mode: yo_tui::PresentationMode,
-) -> Result<(), AppError> {
-    let backend = yo_core::CodexBackend::spawn(yo_core::CodexBackendConfig::new(cwd))
-        .map_err(|error| AppError::single("starting Codex", error))?;
-    let Some(mut agent) = agent::TuiAgentConnection::start(backend, termination)
-        .map_err(|error| AppError::single("creating the agent Session", error))?
-    else {
-        return Ok(());
-    };
-    let terminal = yo_tui::run_with_mode(termination, &mut agent, mode);
+) -> Result<SessionStep, AppError> {
+    if live.is_none() {
+        let backend = yo_core::CodexBackend::spawn(yo_core::CodexBackendConfig::new(cwd))
+            .map_err(|error| AppError::single("starting Codex", error))?;
+        let Some(agent) = agent::TuiAgentConnection::start(backend, termination)
+            .map_err(|error| AppError::single("creating the agent Session", error))?
+        else {
+            return Ok(SessionStep::Complete);
+        };
+        *live = Some(LiveSession {
+            agent,
+            tui: yo_tui::TuiSession::new(),
+        });
+    }
+    let session = live
+        .as_mut()
+        .expect("live session is initialized before terminal acquisition");
+    let terminal =
+        yo_tui::run_session_with_mode(termination, &mut session.agent, &mut session.tui, mode);
 
     let mut failures = Vec::new();
     match terminal {
-        Ok(outcome) => {
+        Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
+        Ok(yo_tui::TerminalOutcome::Exited(outcome)) => {
             if let Some(output) = outcome.output()
                 && let Err(error) = write_session_output(output)
             {
                 failures.push(format!("writing session output: {error}"));
             }
         },
+        Ok(_) => failures.push("terminal session: unsupported terminal outcome".to_owned()),
         Err(error) => failures.push(format!("terminal session: {error}")),
     }
-    let cleanup = agent.shutdown();
-    if let Err(error) = cleanup {
-        failures.push(format!("agent cleanup: {error}"));
+    if let Err(error) = shutdown_live_session(live) {
+        failures.extend(error.failures);
     }
     if failures.is_empty() {
-        Ok(())
+        Ok(SessionStep::Complete)
     } else {
         Err(AppError::many(failures))
     }
+}
+
+#[cfg(unix)]
+fn shutdown_live_session(live: &mut Option<LiveSession>) -> Result<(), AppError> {
+    let Some(mut session) = live.take() else {
+        return Ok(());
+    };
+    session
+        .agent
+        .shutdown()
+        .map(drop)
+        .map_err(|error| AppError::single("agent cleanup", error))
 }
 
 #[cfg(unix)]

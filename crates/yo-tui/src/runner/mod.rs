@@ -62,6 +62,16 @@ pub struct RunOutcome {
     output: Option<String>,
 }
 
+/// The result of one terminal ownership generation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TerminalOutcome {
+    /// The application session completed and should be shut down.
+    Exited(RunOutcome),
+    /// Terminal state was restored and the process host should suspend.
+    SuspendRequested,
+}
+
 impl RunOutcome {
     /// Returns why the session ended normally.
     #[must_use]

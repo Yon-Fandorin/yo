@@ -630,6 +630,35 @@ fn coordinator_lends_repeated_sessions_without_reinstallation() {
     coordinator.shutdown().unwrap();
 }
 
+// signal이 선택되지 않은 정상 세대에서는 종료 전용 resource cleanup을 실행하지 않아 다음
+// terminal 세대가 같은 application session을 계속 소유할 수 있다.
+#[test]
+fn normal_generation_keeps_the_shared_resource_alive() {
+    let (mut coordinator, _) = coordinator([]);
+    let mut resource = "live";
+    let mut cleanup_called = false;
+
+    assert_eq!(
+        coordinator
+            .with_active_resource(
+                &mut resource,
+                |_, resource| {
+                    assert_eq!(*resource, "live");
+                    Ok::<_, String>("suspend")
+                },
+                |_| {
+                    cleanup_called = true;
+                    Ok::<_, String>(())
+                },
+            )
+            .unwrap(),
+        Ok("suspend")
+    );
+    assert_eq!(resource, "live");
+    assert!(!cleanup_called);
+    coordinator.shutdown().unwrap();
+}
+
 // signal 없는 session panic은 coordinator를 IDLE로 복구한 뒤 원본 payload를 재개한다.
 #[test]
 fn panic_without_signal_resumes_after_session_finalization() {
@@ -944,6 +973,49 @@ fn subprocess_cleanup_error_precedes_signal_replay() {
 
     assert_eq!(output.status.signal(), Some(SIGTERM));
     assert!(String::from_utf8_lossy(&output.stderr).contains("yo: cleanup failed"));
+}
+
+// terminal 세대가 일시정지 결과를 만들었더라도 finalization 중 종료 signal이 선택되면
+// 살아 있는 application resource를 먼저 닫고 일시정지 대신 원래 signal로 종료한다.
+#[test]
+fn subprocess_selected_termination_cleans_shared_resource_before_replay() {
+    let output = run_child(
+        "process::termination::tests::subprocess_child_selected_termination_cleans_shared_resource_before_replay",
+    );
+
+    assert_eq!(output.status.signal(), Some(SIGTERM));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("RESOURCE_CLEANUP_DONE"),
+        "shared resource cleanup must finish before signal replay"
+    );
+}
+
+// 격리된 child는 operation이 남긴 resource를 termination 전용 callback으로 정리한 뒤
+// pending SIGTERM의 기본 동작을 재생한다.
+#[test]
+#[ignore]
+fn subprocess_child_selected_termination_cleans_shared_resource_before_replay() {
+    assert_child();
+    let mut coordinator = TerminationCoordinator::install().unwrap();
+    let shared = coordinator.shared;
+    let mut resource = Some("live");
+
+    let _: Result<(), &'static str> = coordinator
+        .with_active_resource(
+            &mut resource,
+            |_, resource| {
+                assert_eq!(*resource, Some("live"));
+                assert_eq!(shared.publish(SIGTERM), Publication::Published);
+                Ok(())
+            },
+            |resource| {
+                assert_eq!(resource.take(), Some("live"));
+                println!("RESOURCE_CLEANUP_DONE");
+                std::io::stdout().flush().unwrap();
+                Ok::<_, &'static str>(())
+            },
+        )
+        .unwrap();
 }
 
 // active session이 SIGTERM을 게시하고 cleanup 오류를 반환하면 coordinator가 오류를 stderr에

@@ -15,8 +15,9 @@ use nix::{
     sys::{
         signal::{Signal, kill},
         termios::tcgetattr,
+        wait::{WaitPidFlag, WaitStatus, waitpid},
     },
-    unistd::Pid,
+    unistd::{Pid, setpgid},
 };
 use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent,
@@ -110,9 +111,16 @@ struct PtyChild {
     child: std::process::Child,
     input: File,
     output: thread::JoinHandle<Vec<u8>>,
-    entered: mpsc::Receiver<()>,
+    ready_events: mpsc::Receiver<()>,
+    screen_events: mpsc::Receiver<ScreenEvent>,
     slave: std::os::fd::OwnedFd,
     original_termios: nix::sys::termios::Termios,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ScreenEvent {
+    Entered,
+    Left,
 }
 
 impl PtyChild {
@@ -142,23 +150,56 @@ impl PtyChild {
 
         let master = File::from(pty.master);
         let input = master.try_clone().unwrap();
-        let (entered_tx, entered) = mpsc::sync_channel(1);
-        let output = thread::spawn(move || capture_pty(master, entered_tx, ready_marker));
+        let (ready_tx, ready_events) = mpsc::channel();
+        let (screen_tx, screen_events) = mpsc::channel();
+        let output = thread::spawn(move || capture_pty(master, ready_tx, screen_tx, ready_marker));
 
         Self {
             child,
             input,
             output,
-            entered,
+            ready_events,
+            screen_events,
             slave: pty.slave,
             original_termios,
         }
     }
 
     fn wait_until_ready(&self) {
-        self.entered
+        self.ready_events
             .recv_timeout(Duration::from_secs(5))
             .expect("the child must emit its mode-specific ready marker");
+    }
+
+    fn wait_for_screen(&self, expected: ScreenEvent) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = self
+                .screen_events
+                .recv_timeout(remaining)
+                .expect("the child must complete the expected screen transition");
+            if event == expected {
+                return;
+            }
+        }
+    }
+
+    fn wait_until_stopped(&self) {
+        let pid = Pid::from_raw(i32::try_from(self.child.id()).unwrap());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match waitpid(pid, Some(WaitPidFlag::WUNTRACED | WaitPidFlag::WNOHANG)).unwrap() {
+                WaitStatus::Stopped(stopped, Signal::SIGTSTP) if stopped == pid => return,
+                WaitStatus::StillAlive => {},
+                status => panic!("expected SIGTSTP-stopped child, got {status:?}"),
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the child did not enter the SIGTSTP-stopped state"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
 
     fn finish(mut self) -> (std::process::ExitStatus, Vec<u8>) {
@@ -190,34 +231,52 @@ impl PtyChild {
     }
 }
 
-fn capture_pty(mut master: File, entered: mpsc::SyncSender<()>, ready_marker: &[u8]) -> Vec<u8> {
+fn capture_pty(
+    mut master: File,
+    ready_events: mpsc::Sender<()>,
+    screen_events: mpsc::Sender<ScreenEvent>,
+    ready_marker: &[u8],
+) -> Vec<u8> {
     let mut output = Vec::new();
-    let mut announced = false;
+    let mut ready_count = 0;
+    let mut enter_count = 0;
+    let mut leave_count = 0;
     let mut chunk = [0; 4096];
     loop {
         match master.read(&mut chunk) {
             Ok(0) => break,
             Ok(length) => {
                 output.extend_from_slice(&chunk[..length]);
-                if !announced && contains(&output, ready_marker) {
-                    announced = true;
-                    let _ = entered.send(());
+                let next_ready_count = output
+                    .windows(ready_marker.len())
+                    .filter(|candidate| *candidate == ready_marker)
+                    .count();
+                for _ in ready_count..next_ready_count {
+                    let _ = ready_events.send(());
                 }
-                if contains(&output, LEAVE_ALTERNATE_SCREEN) {
-                    break;
+                ready_count = next_ready_count;
+                let next_enter_count = output
+                    .windows(ENTER_ALTERNATE_SCREEN.len())
+                    .filter(|candidate| *candidate == ENTER_ALTERNATE_SCREEN)
+                    .count();
+                for _ in enter_count..next_enter_count {
+                    let _ = screen_events.send(ScreenEvent::Entered);
                 }
+                enter_count = next_enter_count;
+                let next_leave_count = output
+                    .windows(LEAVE_ALTERNATE_SCREEN.len())
+                    .filter(|candidate| *candidate == LEAVE_ALTERNATE_SCREEN)
+                    .count();
+                for _ in leave_count..next_leave_count {
+                    let _ = screen_events.send(ScreenEvent::Left);
+                }
+                leave_count = next_leave_count;
             },
             Err(error) if error.raw_os_error() == Some(nix::libc::EIO) => break,
             Err(error) => panic!("reading PTY output failed: {error}"),
         }
     }
     output
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|candidate| candidate == needle)
 }
 
 fn position(haystack: &[u8], needle: &[u8]) -> usize {
@@ -269,8 +328,16 @@ fn run_inline_with_retained_chat(
 ) -> Result<(), Box<dyn Error>> {
     let mut agent = RetainedChatAgent::new();
     let outcome = yo_tui::run_with_mode(termination, &mut agent, PresentationMode::Inline)?;
-    if let Some(output) = outcome.output() {
-        super::write_session_output(output)?;
+    match outcome {
+        yo_tui::TerminalOutcome::Exited(outcome) => {
+            if let Some(output) = outcome.output() {
+                super::write_session_output(output)?;
+            }
+        },
+        yo_tui::TerminalOutcome::SuspendRequested => {
+            return Err("unexpected suspension in retained-chat PTY helper".into());
+        },
+        _ => return Err("unsupported terminal outcome in retained-chat PTY helper".into()),
     }
     Ok(())
 }
@@ -342,6 +409,104 @@ fn fullscreen_termination_restores_real_pty_before_signal_replay() {
     assert_fullscreen_pair(&output);
 }
 
+// 실제 Linux PTY에서 두 번 연속 Ctrl+Z로 terminal을 완전히 복구해 프로세스를 멈추고,
+// SIGCONT마다 같은 TUI state로 새 Fullscreen 세대를 획득한 뒤 정상 종료한다.
+#[test]
+fn fullscreen_repeated_suspend_resume_restores_each_terminal_generation() {
+    let mut child = PtyChild::spawn(
+        "pty_tests::child_fullscreen_repeated_suspend_resume",
+        ENTER_ALTERNATE_SCREEN,
+    );
+    child.wait_until_ready();
+    child.wait_for_screen(ScreenEvent::Entered);
+
+    for _ in 0..2 {
+        child.input.write_all(&[0x1a]).unwrap();
+        child.input.flush().unwrap();
+        child.wait_for_screen(ScreenEvent::Left);
+        child.wait_until_stopped();
+        assert_eq!(
+            tcgetattr(&child.slave).unwrap(),
+            child.original_termios,
+            "each stopped interval must expose the original PTY termios"
+        );
+        kill(
+            Pid::from_raw(i32::try_from(child.child.id()).unwrap()),
+            Signal::SIGCONT,
+        )
+        .unwrap();
+        child.wait_for_screen(ScreenEvent::Entered);
+    }
+
+    child.input.write_all(&[0x04]).unwrap();
+    child.input.flush().unwrap();
+    let (status, output) = child.finish();
+
+    assert!(
+        status.success(),
+        "child failed:\n{}",
+        String::from_utf8_lossy(&output)
+    );
+    assert_eq!(
+        output
+            .windows(ENTER_ALTERNATE_SCREEN.len())
+            .filter(|candidate| *candidate == ENTER_ALTERNATE_SCREEN)
+            .count(),
+        3
+    );
+    assert_eq!(
+        output
+            .windows(LEAVE_ALTERNATE_SCREEN.len())
+            .filter(|candidate| *candidate == LEAVE_ALTERNATE_SCREEN)
+            .count(),
+        3
+    );
+}
+
+// 실제 Linux PTY의 Inline mode에서도 두 번 연속 일시정지할 때마다 viewport와 termios를
+// 복구하고, SIGCONT 뒤 같은 대화 상태를 새 viewport의 첫 전체 frame으로 다시 그린다.
+#[test]
+fn inline_repeated_suspend_resume_reacquires_a_fresh_viewport() {
+    const RETAINED: &[u8] = b"YO_INLINE_RETAINED";
+    let mut child = PtyChild::spawn("pty_tests::child_inline_repeated_suspend_resume", RETAINED);
+    child.wait_until_ready();
+
+    for _ in 0..2 {
+        child.input.write_all(&[0x1a]).unwrap();
+        child.input.flush().unwrap();
+        child.wait_until_stopped();
+        assert_eq!(
+            tcgetattr(&child.slave).unwrap(),
+            child.original_termios,
+            "each stopped interval must expose the original PTY termios"
+        );
+        kill(
+            Pid::from_raw(i32::try_from(child.child.id()).unwrap()),
+            Signal::SIGCONT,
+        )
+        .unwrap();
+        child.wait_until_ready();
+    }
+
+    child.input.write_all(&[0x04]).unwrap();
+    child.input.flush().unwrap();
+    let (status, output) = child.finish();
+
+    assert!(
+        status.success(),
+        "child failed:\n{}",
+        String::from_utf8_lossy(&output)
+    );
+    assert_eq!(
+        output
+            .windows(RETAINED.len())
+            .filter(|candidate| *candidate == RETAINED)
+            .count(),
+        4,
+        "one frame per terminal generation plus one final plain transcript is expected"
+    );
+}
+
 // 부모 테스트가 마련한 PTY 안에서 정상 Ctrl+D 종료 경로만 실행하는 자식 진입점이다.
 #[test]
 #[ignore]
@@ -374,5 +539,80 @@ fn child_fullscreen_termination() {
         .with_active_session(run_fullscreen)
         .unwrap()
         .unwrap();
+    coordinator.shutdown().unwrap();
+}
+
+// 부모가 제공한 실제 PTY에서 하나의 TUI session과 agent를 유지한 채 terminal 소유권만
+// 반복해서 닫고 다시 여는 자식 진입점이다.
+#[test]
+#[ignore]
+fn child_fullscreen_repeated_suspend_resume() {
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        return;
+    }
+    setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
+    let mut coordinator = TerminationCoordinator::install().unwrap();
+    let mut job_control = crate::process::job_control::JobControl::new();
+    let mut agent = PendingAgent;
+    let mut tui = yo_tui::TuiSession::new();
+
+    loop {
+        let outcome = coordinator
+            .with_active_session(|termination| {
+                yo_tui::run_session_with_mode(
+                    termination,
+                    &mut agent,
+                    &mut tui,
+                    PresentationMode::Fullscreen,
+                )
+            })
+            .unwrap()
+            .unwrap();
+        match outcome {
+            yo_tui::TerminalOutcome::SuspendRequested => job_control.suspend().unwrap(),
+            yo_tui::TerminalOutcome::Exited(_) => break,
+            _ => panic!("unsupported terminal outcome"),
+        }
+    }
+    coordinator.shutdown().unwrap();
+}
+
+// 부모가 제공한 실제 PTY에서 Inline viewport만 반복해서 교체하며 TUI session과 agent
+// 상태는 계속 보존하는 자식 진입점이다.
+#[test]
+#[ignore]
+fn child_inline_repeated_suspend_resume() {
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        return;
+    }
+    setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
+    let mut coordinator = TerminationCoordinator::install().unwrap();
+    let mut job_control = crate::process::job_control::JobControl::new();
+    let mut agent = RetainedChatAgent::new();
+    let mut tui = yo_tui::TuiSession::new();
+
+    loop {
+        let outcome = coordinator
+            .with_active_session(|termination| {
+                yo_tui::run_session_with_mode(
+                    termination,
+                    &mut agent,
+                    &mut tui,
+                    PresentationMode::Inline,
+                )
+            })
+            .unwrap()
+            .unwrap();
+        match outcome {
+            yo_tui::TerminalOutcome::SuspendRequested => job_control.suspend().unwrap(),
+            yo_tui::TerminalOutcome::Exited(outcome) => {
+                if let Some(output) = outcome.output() {
+                    super::write_session_output(output).unwrap();
+                }
+                break;
+            },
+            _ => panic!("unsupported terminal outcome"),
+        }
+    }
     coordinator.shutdown().unwrap();
 }
