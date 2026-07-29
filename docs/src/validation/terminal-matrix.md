@@ -69,6 +69,13 @@ their fixture directory. They require compatible local `ssh`, `sshd`,
 `ssh-keygen`, Codex, a set `USER` naming the local SSH account, and, for the
 nested cases, tmux.
 
+Each route checks both the empty-`Ctrl+D` exit path and two consecutive
+`Ctrl+Z` → stopped job → `fg` generations. The job-control checks compare the
+terminal with the route's actual interactive-shell termios at every stopped
+interval, require the `yo` process to be in the kernel stopped state, and
+require the requested presentation mode to be reacquired after each `fg`.
+Nested tmux additionally verifies restoration of the outer SSH PTY.
+
 These tests fail when a required command or assertion is unavailable; they do
 not convert a missing environment into a successful skip.
 
@@ -79,9 +86,9 @@ The executable environment matrix currently covers:
 | Host and route | Inline | Fullscreen | Evidence |
 |---|---:|---:|---|
 | Linux direct real PTY | Yes | Yes | Normal `yo-cli` tests cover exit and repeated suspend/resume in both modes, plus Fullscreen termination |
-| Linux local tmux | Yes | Yes | Ignored environment tests |
-| Linux SSH | Yes | Yes | Ignored environment tests |
-| Linux tmux inside SSH | Yes | Yes | Ignored environment tests |
+| Linux local tmux | Yes | Yes | Ignored tests cover clean exit and two shell-driven suspend/resume generations |
+| Linux SSH | Yes | Yes | Ignored tests cover clean exit and two remote-shell suspend/resume generations |
+| Linux tmux inside SSH | Yes | Yes | Ignored tests cover clean exit, two nested suspend/resume generations, and outer PTY restoration |
 | macOS compile | — | — | `cargo check` on a real macOS CI host |
 | macOS terminal behavior | Unverified | Unverified | No real-host environment run yet |
 

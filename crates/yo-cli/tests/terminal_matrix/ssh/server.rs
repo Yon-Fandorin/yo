@@ -9,6 +9,7 @@ use std::{
 };
 
 use super::READY_TIMEOUT;
+use crate::support::require_command;
 
 pub(super) struct SshServer {
     root: FixtureRoot,
@@ -213,16 +214,4 @@ fn command_path(command: &str) -> PathBuf {
             .trim(),
     )
     .expect("canonicalize command path")
-}
-
-fn require_command(command: &str, arguments: &[&str]) {
-    let output = Command::new(command)
-        .args(arguments)
-        .output()
-        .unwrap_or_else(|error| panic!("required command `{command}` is unavailable: {error}"));
-    assert!(
-        output.status.success(),
-        "required command `{command}` failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }

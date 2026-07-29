@@ -67,6 +67,13 @@ test는 localhost에 격리된 `sshd`를 시작하고 임시 key를 생성한 �
 `USER`가 로컬 SSH account 이름으로 설정되어 있어야 한다. 중첩된
 경우에는 tmux도 필요하다.
 
+각 경로는 빈 입력 `Ctrl+D` 종료와 두 번 연속
+`Ctrl+Z` → job 정지 → `fg` terminal generation을 모두 검사한다.
+job-control 검사는 매 정지 구간의 터미널을 해당 경로의 실제 interactive shell
+termios와 비교하고, `yo` 프로세스가 커널 stopped 상태인지 확인하며, 각 `fg`
+뒤 요청한 표시 mode를 다시 획득하는지 확인한다. SSH 내부 tmux는 바깥 SSH
+PTY 복구도 추가로 확인한다.
+
 필요한 명령이나 assertion을 사용할 수 없으면 test는 실패한다. 빠진 환경을
 성공한 skip으로 바꾸지 않는다.
 
@@ -77,9 +84,9 @@ test는 localhost에 격리된 `sshd`를 시작하고 임시 key를 생성한 �
 | host와 경로 | Inline | Fullscreen | 증거 |
 |---|---:|---:|---|
 | Linux 직접 실제 PTY | Yes | Yes | 일반 `yo-cli` test가 두 mode의 종료·반복 일시정지/재개와 Fullscreen termination을 검사 |
-| Linux 로컬 tmux | Yes | Yes | ignored 환경 test |
-| Linux SSH | Yes | Yes | ignored 환경 test |
-| Linux SSH 내부 tmux | Yes | Yes | ignored 환경 test |
+| Linux 로컬 tmux | Yes | Yes | ignored test가 정상 종료와 두 번의 shell 기반 일시정지/재개를 검사 |
+| Linux SSH | Yes | Yes | ignored test가 정상 종료와 두 번의 원격 shell 기반 일시정지/재개를 검사 |
+| Linux SSH 내부 tmux | Yes | Yes | ignored test가 정상 종료, 두 번의 중첩 일시정지/재개, 바깥 PTY 복구를 검사 |
 | macOS compile | — | — | 실제 macOS CI host의 `cargo check` |
 | macOS 터미널 동작 | Unverified | Unverified | 아직 실제 host 환경 실행이 없음 |
 

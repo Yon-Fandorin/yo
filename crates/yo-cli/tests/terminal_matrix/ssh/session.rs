@@ -12,15 +12,11 @@ use super::{
     ENTER_ALTERNATE_SCREEN, EXIT_TIMEOUT, HIDE_CURSOR, LEAVE_ALTERNATE_SCREEN, READY_TIMEOUT,
     RESTORED_MARKER, SHOW_CURSOR, server::SshServer,
 };
+use crate::support::{contains, count, last_position, position, repository_path, shell_quote};
 
 impl SshServer {
     pub(super) fn run_mode(&self, option: &str, alternate_screen: bool) {
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("crate is under <repository>/crates/yo-cli")
-            .canonicalize()
-            .expect("canonicalize repository");
+        let repository = repository_path();
         let yo = Path::new(env!("CARGO_BIN_EXE_yo"))
             .canonicalize()
             .expect("canonicalize yo binary");
@@ -66,9 +62,7 @@ impl SshServer {
                     String::from_utf8_lossy(&output.lock().expect("lock SSH output"))
                 )
             });
-        let input = child.stdin.as_mut().expect("SSH stdin remains open");
-        input.write_all(&[0x04]).expect("send empty Ctrl+D");
-        input.flush().expect("flush SSH input");
+        child.send_input(&[0x04]);
 
         let status = wait_for_exit(&mut child);
         drop(child.stdin.take());
@@ -107,6 +101,12 @@ pub(super) struct ChildGuard {
 impl ChildGuard {
     pub(super) fn new(child: Child) -> Self {
         Self { child }
+    }
+
+    pub(super) fn send_input(&mut self, bytes: &[u8]) {
+        let input = self.stdin.as_mut().expect("SSH stdin remains open");
+        input.write_all(bytes).expect("write SSH PTY input");
+        input.flush().expect("flush SSH PTY input");
     }
 }
 
@@ -172,10 +172,6 @@ fn remote_command(repository: &Path, yo: &Path, codex: &Path, option: &str) -> S
     )
 }
 
-pub(super) fn shell_quote(path: &Path) -> String {
-    format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
-}
-
 pub(super) fn wait_for_exit(child: &mut Child) -> std::process::ExitStatus {
     let deadline = Instant::now() + EXIT_TIMEOUT;
     loop {
@@ -197,27 +193,4 @@ pub(super) fn assert_ordered_pair(output: &[u8], enter: &[u8], leave: &[u8]) {
     assert!(enter_at < leave_at, "screen restoration must follow entry");
     assert_eq!(count(output, enter), 1);
     assert_eq!(count(output, leave), 1);
-}
-
-fn position(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|candidate| candidate == needle)
-}
-
-fn last_position(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .rposition(|candidate| candidate == needle)
-}
-
-fn count(haystack: &[u8], needle: &[u8]) -> usize {
-    haystack
-        .windows(needle.len())
-        .filter(|candidate| *candidate == needle)
-        .count()
-}
-
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    position(haystack, needle).is_some()
 }

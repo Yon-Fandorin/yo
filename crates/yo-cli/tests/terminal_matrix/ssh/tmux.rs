@@ -1,19 +1,22 @@
 use std::{
-    fs::OpenOptions,
-    io::{Read, Write},
+    io::Read,
     path::Path,
     process::{Command, Output, Stdio},
     thread,
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use nix::sys::termios::{LocalFlags, tcgetattr};
-
 use super::{
-    ENTER_ALTERNATE_SCREEN, READY_TIMEOUT, RESTORED_MARKER,
+    ENTER_ALTERNATE_SCREEN, LEAVE_ALTERNATE_SCREEN, READY_TIMEOUT, RESTORED_MARKER,
     server::SshServer,
-    session::{ChildGuard, assert_ordered_pair, shell_quote, wait_for_exit},
+    session::{ChildGuard, assert_ordered_pair, wait_for_exit},
 };
+use crate::support::{
+    contains, has_noncanonical_no_echo_input, repository_path, require_command, shell_quote,
+};
+
+#[path = "tmux/suspend.rs"]
+mod suspend;
 
 impl SshServer {
     pub(super) fn run_tmux_mode(&self, option: &str, alternate_screen: bool) {
@@ -26,16 +29,18 @@ impl SshServer {
         let session = "yo";
         let tmux = TmuxGuard::new(socket.clone());
 
-        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("crate is under <repository>/crates/yo-cli")
-            .canonicalize()
-            .expect("canonicalize repository");
+        let repository = repository_path();
         let yo = Path::new(env!("CARGO_BIN_EXE_yo"))
             .canonicalize()
             .expect("canonicalize yo binary");
-        let remote = remote_command(&repository, &yo, &self.codex, &socket, session, option);
+        let inner_command = format!(
+            "env PATH={codex_directory}:/usr/bin:/bin {yo} {option}",
+            codex_directory =
+                shell_quote(self.codex.parent().expect("Codex executable has a parent")),
+            yo = shell_quote(&yo),
+            option = shell_quote(Path::new(option)),
+        );
+        let remote = remote_tmux_command(&repository, &socket, session, &inner_command);
 
         let mut child = ChildGuard::new(
             self.client(true)
@@ -50,9 +55,7 @@ impl SshServer {
         let stderr_reader = capture(child.stderr.take().expect("capture SSH tmux stderr"));
 
         tmux.wait_until_ready(session, alternate_screen);
-        let input = child.stdin.as_mut().expect("SSH tmux stdin remains open");
-        input.write_all(&[0x04]).expect("send empty Ctrl+D");
-        input.flush().expect("flush SSH tmux input");
+        child.send_input(&[0x04]);
 
         let pane_exit = tmux.wait_until_dead(session);
         assert_eq!(
@@ -73,11 +76,7 @@ impl SshServer {
             String::from_utf8_lossy(&stderr),
         );
         assert!(contains(&output, RESTORED_MARKER));
-        assert_ordered_pair(
-            &output,
-            ENTER_ALTERNATE_SCREEN,
-            super::LEAVE_ALTERNATE_SCREEN,
-        );
+        assert_ordered_pair(&output, ENTER_ALTERNATE_SCREEN, LEAVE_ALTERNATE_SCREEN);
         assert!(
             !tmux.session_exists(session),
             "remote tmux session remained after yo exited"
@@ -94,36 +93,37 @@ impl TmuxGuard {
         Self { socket }
     }
 
-    fn wait_until_ready(&self, session: &str, alternate_screen: bool) {
-        let deadline = Instant::now() + READY_TIMEOUT;
-        loop {
-            if let Some(state) = self.pane_state(session)
-                && !state.dead
+    fn wait_until_ready(&self, session: &str, alternate_screen: bool) -> PaneState {
+        self.wait_until(session, "waiting for the TUI pane", |state| {
+            !state.dead
                 && state.alternate_screen == alternate_screen
                 && state.command == "yo"
                 && has_noncanonical_no_echo_input(&state.tty)
-            {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "tmux inside SSH did not reach the expected pane state within {READY_TIMEOUT:?}"
-            );
-            thread::sleep(std::time::Duration::from_millis(10));
-        }
+        })
     }
 
     fn wait_until_dead(&self, session: &str) -> PaneState {
+        self.wait_until(session, "waiting for the TUI pane to exit", |state| {
+            state.dead && state.status.is_some()
+        })
+    }
+
+    fn wait_until(
+        &self,
+        session: &str,
+        context: &'static str,
+        predicate: impl Fn(&PaneState) -> bool,
+    ) -> PaneState {
         let deadline = Instant::now() + READY_TIMEOUT;
         loop {
             if let Some(state) = self.pane_state(session)
-                && state.dead
+                && predicate(&state)
             {
                 return state;
             }
             assert!(
                 Instant::now() < deadline,
-                "yo inside tmux did not exit within {READY_TIMEOUT:?}"
+                "tmux inside SSH did not converge within {READY_TIMEOUT:?}: {context}"
             );
             thread::sleep(std::time::Duration::from_millis(10));
         }
@@ -135,7 +135,7 @@ impl TmuxGuard {
             "-t",
             session,
             "-F",
-            "#{pane_dead}\t#{pane_dead_status}\t#{alternate_on}\t#{pane_current_command}\t#{pane_tty}",
+            "#{pane_dead}\t#{pane_dead_status}\t#{alternate_on}\t#{pane_current_command}\t#{pane_tty}\t#{pane_pid}",
         ]);
         if !output.status.success() {
             return None;
@@ -151,6 +151,11 @@ impl TmuxGuard {
             alternate_screen: fields.next().expect("tmux alternate field") == "1",
             command: fields.next().expect("tmux command field").to_owned(),
             tty: fields.next().expect("tmux tty field").into(),
+            shell_pid: fields
+                .next()
+                .expect("tmux pane pid field")
+                .parse()
+                .expect("tmux pane pid is an integer"),
         };
         assert!(
             fields.next().is_none(),
@@ -196,43 +201,26 @@ struct PaneState {
     alternate_screen: bool,
     command: String,
     tty: std::path::PathBuf,
+    shell_pid: i32,
 }
 
-fn has_noncanonical_no_echo_input(tty_path: &Path) -> bool {
-    let Ok(tty) = OpenOptions::new().read(true).write(true).open(tty_path) else {
-        return false;
-    };
-    let Ok(termios) = tcgetattr(&tty) else {
-        return false;
-    };
-    !termios
-        .local_flags
-        .intersects(LocalFlags::ICANON | LocalFlags::ECHO)
-}
-
-fn remote_command(
+fn remote_tmux_command(
     repository: &Path,
-    yo: &Path,
-    codex: &Path,
     socket: &Path,
     session: &str,
-    option: &str,
+    inner_command: &str,
 ) -> String {
-    let codex_directory = codex.parent().expect("Codex executable has a parent");
     format!(
         "cd {repository} && stty rows 24 cols 80 && before=$(stty -g) && \
          tmux -f /dev/null -S {socket} start-server \\; \
          set-option -g remain-on-exit on \\; \
          new-session -x 80 -y 24 -s {session} \
-         env PATH={codex_directory}:/usr/bin:/bin {yo} {option}; \
+         {inner_command}; \
          result_code=$?; after=$(stty -g); test \"$before\" = \"$after\" || exit 91; \
          printf '\\n{restored}\\n'; exit $result_code",
         repository = shell_quote(repository),
         socket = shell_quote(socket),
         session = shell_quote(Path::new(session)),
-        codex_directory = shell_quote(codex_directory),
-        yo = shell_quote(yo),
-        option = shell_quote(Path::new(option)),
         restored = String::from_utf8_lossy(RESTORED_MARKER),
     )
 }
@@ -247,20 +235,6 @@ fn capture(mut reader: impl Read + Send + 'static) -> thread::JoinHandle<Vec<u8>
     })
 }
 
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|candidate| candidate == needle)
-}
-
 fn require_tmux() {
-    let output = Command::new("tmux")
-        .arg("-V")
-        .output()
-        .expect("required command `tmux` is unavailable");
-    assert!(
-        output.status.success(),
-        "required command `tmux` failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    require_command("tmux", &["-V"]);
 }

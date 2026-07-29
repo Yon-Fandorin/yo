@@ -6,6 +6,8 @@ use server::SshServer;
 mod server;
 #[path = "ssh/session.rs"]
 mod session;
+#[path = "ssh/suspend.rs"]
+mod suspend;
 #[path = "ssh/tmux.rs"]
 mod tmux;
 
