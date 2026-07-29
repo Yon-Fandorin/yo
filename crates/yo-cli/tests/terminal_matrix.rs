@@ -1,10 +1,13 @@
 #![cfg(target_os = "linux")]
 
 use std::{
+    fs::OpenOptions,
     process::{Command, Output},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
+use nix::sys::termios::{LocalFlags, tcgetattr};
 
 const COMMAND_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const CLEAN_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -29,7 +32,7 @@ impl TmuxSession {
         session
     }
 
-    fn run_fullscreen(&self) {
+    fn run_mode(&self, option: &str, alternate_screen: bool) {
         let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(std::path::Path::parent)
@@ -47,13 +50,14 @@ impl TmuxSession {
             "-c",
             repository,
             env!("CARGO_BIN_EXE_yo"),
-            "--fullscreen",
+            option,
         ]);
         self.wait_until(COMMAND_READY_TIMEOUT, |state| {
             !state.dead
-                && state.alternate_screen
+                && state.alternate_screen == alternate_screen
                 && state.command == "yo"
                 && state.cursor_y.checked_add(1) == Some(state.height)
+                && self.has_noncanonical_no_echo_input()
         });
     }
 
@@ -63,6 +67,26 @@ impl TmuxSession {
 
     fn wait_for_clean_exit(&self) -> PaneState {
         self.wait_until(CLEAN_EXIT_TIMEOUT, |state| state.dead)
+    }
+
+    fn has_noncanonical_no_echo_input(&self) -> bool {
+        let tty_path = tmux_output(&["display-message", "-p", "-t", &self.name, "#{pane_tty}"]);
+        let Ok(tty_path) = String::from_utf8(tty_path.stdout) else {
+            return false;
+        };
+        let Ok(tty) = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(tty_path.trim_end())
+        else {
+            return false;
+        };
+        let Ok(termios) = tcgetattr(&tty) else {
+            return false;
+        };
+        !termios
+            .local_flags
+            .intersects(LocalFlags::ICANON | LocalFlags::ECHO)
     }
 
     fn wait_until(&self, timeout: Duration, predicate: impl Fn(&PaneState) -> bool) -> PaneState {
@@ -171,14 +195,9 @@ fn assert_tmux_session_absent(name: &str) {
     );
 }
 
-// 실제 Linux tmux 안에서 Fullscreen을 실행하고 빈 입력 Ctrl+D를 보내면 앱이 상태 0으로
-// 끝나는지 확인한다. 정상 경로에서는 격리 세션을 명시적으로 제거한 뒤 실제 부재까지
-// 검증하며, 중간 실패 시에는 Drop이 best-effort 정리를 시도해 다음 테스트의 오염을 줄인다.
-#[test]
-#[ignore = "requires local tmux and a compatible installed Codex"]
-fn local_tmux_fullscreen_exits_cleanly_from_empty_ctrl_d() {
+fn assert_empty_ctrl_d_exits_cleanly(option: &str, alternate_screen: bool) {
     let session = TmuxSession::create();
-    session.run_fullscreen();
+    session.run_mode(option, alternate_screen);
     session.send_empty_ctrl_d();
 
     let exit = session.wait_for_clean_exit();
@@ -187,4 +206,21 @@ fn local_tmux_fullscreen_exits_cleanly_from_empty_ctrl_d() {
     let session_name = session.name.clone();
     drop(session);
     assert_tmux_session_absent(&session_name);
+}
+
+// 실제 Linux tmux의 main screen에서 Inline이 noncanonical·no-echo 입력 상태에 들어간 뒤
+// 빈 입력 Ctrl+D를 보내면 상태 0으로 끝나고, 격리된 tmux 세션까지 제거하는지 확인한다.
+#[test]
+#[ignore = "requires local tmux and a compatible installed Codex"]
+fn local_tmux_inline_exits_cleanly_from_empty_ctrl_d() {
+    assert_empty_ctrl_d_exits_cleanly("--inline", false);
+}
+
+// 실제 Linux tmux에서 noncanonical·no-echo 입력과 alternate screen을 획득한
+// Fullscreen에 빈 입력 Ctrl+D를 보내면 상태 0으로 끝나고, 격리 세션까지 제거하는지
+// 확인한다. 중간 실패 시에는 Drop이 best-effort 정리를 시도해 다음 테스트의 오염을 줄인다.
+#[test]
+#[ignore = "requires local tmux and a compatible installed Codex"]
+fn local_tmux_fullscreen_exits_cleanly_from_empty_ctrl_d() {
+    assert_empty_ctrl_d_exits_cleanly("--fullscreen", true);
 }
