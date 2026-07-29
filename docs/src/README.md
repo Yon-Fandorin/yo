@@ -17,6 +17,7 @@ contracts. These Developer Docs own code navigation, working explanations, and
 validation guidance. When a contract matters, this guide links to its
 KnowledgeUnit instead of restating it as a second authority.
 
-Start with [Architecture](./architecture/overview.md) for the system map or
+Start with [Architecture](./architecture/overview.md) for the system map, the
+[Code map](./architecture/code-map.md) when choosing a module owner, or
 [Find the change](./workflows/find-the-change.md) when you already know the
 outcome you want.

@@ -27,5 +27,5 @@ agent session boundary without owning terminal policy.
 - [TUI-only crate boundary](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.crate.ui-only-boundary.md)
 - [Module boundary policy](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.architecture.module-boundaries.md)
 
-Continue to [Runtime flow](./runtime-flow.md) for the path followed by one user
-turn.
+Continue to the [Code map](./code-map.md) to choose a module owner or
+[Runtime flow](./runtime-flow.md) for the path followed by one user turn.
