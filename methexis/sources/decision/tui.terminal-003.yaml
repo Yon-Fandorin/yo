@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.terminal-003
+revision: sha256:a2b88dbf64fa1780746fc6afd1fbe5137b1569edc0d8562d3dfdce723e3babc2
+payload:
+  kind: decision
+  content: Ctrl+Z requests job-control suspension rather than session exit; after terminal restoration closes the current process-host cleanup lease, a termination selected at that lease boundary wins over suspension, otherwise the host performs the default stop and SIGCONT opens a fresh lease that transactionally reacquires the same presenter, preserves application state, and forces a full redraw.

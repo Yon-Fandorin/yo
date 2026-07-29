@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:26ff93d139f5e415b96e5b542fc6e3707879ead6be22bbe4151a72e89bbd02ee",
+  "candidate_set_id": "sha256:b6eb0f4cd0d87e8cfab56ee3ddafa1b2459a12fc9ac7af7c6736f99e5fd6d127",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:5698b820f4bcb667ad57814e5acc3c98044e55d4eb3e0863beff67178109281e",
+  "catalog_hash": "sha256:a03b6dc3ac5f160c37a432ce1a1be5d5debea1c3d9d5f4d608b02276cc016530",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -297,6 +297,23 @@
         {
           "kind": "relation",
           "via": "tui.surface.terminal-ops",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.terminal.job-control-suspend-resume",
+      "path": "methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md",
+      "score": 20,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
           "score": 10
         }
       ]

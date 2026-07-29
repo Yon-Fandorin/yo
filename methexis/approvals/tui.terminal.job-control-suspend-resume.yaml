@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.terminal.job-control-suspend-resume
+revision: sha256:f494d7d5c6af42bc29e68094cce97c55c2692950fa7fa42d80b6cebcea3d73a7
+reviewer: tui-architecture
+reviewed_at: 2026-07-29T11:53:41Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:c8d7df1a4658468f16ba7ee4c0d65ca488d0299a73f241adde92d7b39ea50cce
+request_hash: sha256:e08cd3ed4013ffb6c12bc5f0f01c6ee6e2fef0cca5f529ea5e0fcabead5a4a27
