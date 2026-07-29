@@ -89,6 +89,10 @@ macro 내부 발생은 `rg`로 확인하고 symbol 의미는 rust-analyzer로 �
 | CLI 인자, 작업 디렉터리 확보, 시작 순서, 최상위 failure 취합 변경 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | agent adapter도 바뀌면 `agent`, signal 정책도 바뀌면 `process/termination` | [모듈 및 호스트 경계](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.architecture.module-boundaries.md) |
 | Unix 종료 관찰, signal 우선순위·disposition·복원 변경 | [`yo-cli/src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | 터미널 복원도 바뀌면 `yo-tui/terminal/mode`, typed 관찰도 바뀌면 `yo-tui/runner` | [프로세스 종료 coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md) |
 
+설치된 Codex minor line이 거부되거나 schema가 바뀌었다면 version gate를
+변경하기 전에
+[Codex app-server upstream 따라가기](./codex-upstream.md)를 사용한다.
+
 소유자를 고른 뒤
 [변경 경계별 검사](../validation/#변경된-경계에서-시작하기)에서
 첫 검사를 선택한다. 변경을 승인하기 전

@@ -5,5 +5,6 @@
   - [Code map](./architecture/code-map.md)
   - [Runtime flow](./architecture/runtime-flow.md)
 - [Find the change](./workflows/find-the-change.md)
+- [Follow Codex app-server upstream](./workflows/codex-upstream.md)
 - [Validation](./validation/README.md)
   - [Terminal environment matrix](./validation/terminal-matrix.md)

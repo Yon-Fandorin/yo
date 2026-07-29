@@ -91,6 +91,10 @@ explicit companion check.
 | Change CLI arguments, working-directory capture, startup order, or top-level failure aggregation | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | Agent adaptation changes: `agent`; signal policy changes: `process/termination` | [Module and host boundaries](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.architecture.module-boundaries.md) |
 | Change Unix termination observation, signal priority, disposition, or restoration | [`yo-cli/src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Terminal restoration changes: `yo-tui/terminal/mode`; typed observation changes: `yo-tui/runner` | [Process termination coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md) |
 
+When an installed Codex minor line is rejected or its schema changes, use
+[Follow Codex app-server upstream](./codex-upstream.md) before changing the
+version gate.
+
 After choosing the owner, select the first check from
 [Validation](../validation/#start-from-the-changed-boundary). Run its
 [Slice-close baseline](../validation/#slice-close-baseline) and any
