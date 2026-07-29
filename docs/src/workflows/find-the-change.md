@@ -18,7 +18,7 @@ question:
 |---|---|---|
 | Where is this exact type, function, error text, or event variant named? | `rg` | Fast literal or regular-expression search with no indexing step |
 | What defines this symbol, which references resolve to it, or what survives aliases and macro expansion? | [rust-analyzer definition and reference navigation](https://rust-analyzer.github.io/book/features.html) | Uses Rust project semantics rather than textual coincidence |
-| Where does this syntax shape occur despite different names or formatting? | [ast-grep read-only structural search](https://astgrep.com/reference/cli.html) | Matches parsed Rust nodes with code-like patterns and metavariables |
+| Where does this syntax shape occur despite different names or formatting? | [ast-grep read-only structural search](https://ast-grep.github.io/reference/cli/run.html) | Matches parsed Rust nodes with code-like patterns and metavariables |
 | Which repository responsibility should contain the result? | This page and the [Code map](../architecture/code-map.md) | AST shape and symbol resolution do not decide architectural ownership |
 
 `rust-analyzer` is already selected in `rust-toolchain.toml`; use its editor/LSP
@@ -26,8 +26,8 @@ definition and reference operations for semantic navigation. Its CLI
 subcommands are not the repository interface because rust-analyzer documents
 them as unstable.
 
-ast-grep is a candidate pilot, not a required repository tool. A useful
-read-only trial would search trait implementations independent of concrete type
+ast-grep is an optional navigation aid, not a required repository tool. A
+read-only search can find trait implementations independent of concrete type
 names:
 
 ```bash
@@ -43,11 +43,33 @@ ast-grep outline --lang rust crates/yo-core/src
 
 Structural matches understand parsed syntax, not Rust type resolution or macro
 semantics; confirm an important result with rust-analyzer and the owning tests.
-Do not use structural rewrite during the navigation pilot. If repeated trials
-show that a query saves exploration time without noisy matches, adopt a pinned
-version and checked-in query in a separate Slice. Use the explicit
+Do not use structural rewrite for repository navigation. Use the explicit
 `ast-grep` executable name rather than the `sg` alias, which can refer to an
 unrelated system command.
+
+### Navigation pilot result
+
+A read-only pilot with ast-grep 0.45.0 compared three searches against the
+current workspace:
+
+| Question | ast-grep result | `rg` comparison | Finding |
+|---|---:|---:|---|
+| Which types implement `AgentBackend`? | 6 | 6 | The exact text is regular enough that `rg` is simpler. |
+| Where does `if let Err(...)` handle a failure? | 17 | 17 | Structural matching added no useful discrimination. |
+| Where is a no-argument `shutdown()` method called? | 67 parsed calls | 73 text lines | Six additional calls were inside assertion macros, whose token bodies the structural pattern did not inspect. |
+
+`ast-grep outline` gave a useful compact inventory across 26 `yo-core` source
+files, but the inventory cannot assign repository ownership or resolve Rust
+symbols. The pilot therefore did **not** add a package, configuration, pinned
+version, or checked-in query.
+
+Keep `rg` as the first search. Use an optional ast-grep outline to orient in an
+unfamiliar module, or an ad hoc read-only structural query when text search
+cannot express the syntax shape cleanly. Check macro-contained occurrences
+with `rg` and confirm symbol meaning with rust-analyzer. Reconsider a pinned
+repository tool only after a real Slice repeatedly needs the same structural
+query, the query materially reduces noise, and its macro blind spots have an
+explicit companion check.
 
 ## Choose the first owner
 

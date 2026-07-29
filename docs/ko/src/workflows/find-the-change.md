@@ -17,7 +17,7 @@
 |---|---|---|
 | 이 타입, 함수, 오류 문구, event variant의 정확한 이름은 어디에 있는가? | `rg` | 색인이 필요 없는 빠른 문자열 또는 정규식 검색 |
 | 이 symbol을 어디서 정의하고 어떤 reference가 실제로 연결되는가? alias와 macro 확장 뒤에도 무엇이 남는가? | [rust-analyzer의 definition·reference 탐색](https://rust-analyzer.github.io/book/features.html) | 단순 문자열 일치가 아니라 Rust 프로젝트 의미를 사용 |
-| 이름이나 formatting이 달라도 같은 syntax 형태가 어디에 있는가? | [ast-grep 읽기 전용 구조 검색](https://astgrep.com/reference/cli.html) | parsing된 Rust node를 코드와 비슷한 pattern 및 metavariable로 검색 |
+| 이름이나 formatting이 달라도 같은 syntax 형태가 어디에 있는가? | [ast-grep 읽기 전용 구조 검색](https://ast-grep.github.io/reference/cli/run.html) | parsing된 Rust node를 코드와 비슷한 pattern 및 metavariable로 검색 |
 | 검색 결과는 저장소의 어느 책임에 속해야 하는가? | 이 페이지와 [코드 지도](../architecture/code-map.md) | AST 형태와 symbol resolution만으로 아키텍처 소유권을 결정할 수 없음 |
 
 `rust-analyzer`는 이미 `rust-toolchain.toml`에 선택되어 있다. 의미 기반
@@ -25,9 +25,8 @@
 rust-analyzer가 불안정하다고 명시한 CLI subcommand는 저장소의 공식
 interface로 삼지 않는다.
 
-ast-grep은 필수 저장소 도구가 아니라 도입 후보를 확인하는 pilot이다.
-구체적인 타입 이름과 상관없이 trait 구현을 찾는 읽기 전용 시도는 다음과
-같다.
+ast-grep은 필수 저장소 도구가 아니라 선택적인 탐색 보조 도구다. 구체적인
+타입 이름과 상관없이 trait 구현을 찾는 읽기 전용 검색은 다음과 같다.
 
 ```bash
 ast-grep run --lang rust \
@@ -42,11 +41,33 @@ ast-grep outline --lang rust crates/yo-core/src
 
 구조 검색은 parsing된 syntax를 이해하지만 Rust type resolution이나 macro
 의미까지 이해하지는 않는다. 중요한 결과는 rust-analyzer와 소유 모듈의
-test로 다시 확인한다. 탐색 pilot 중에는 구조 rewrite를 사용하지 않는다.
-반복해서 사용한 query가 잡음 없이 탐색 시간을 줄인다는 증거가 모이면,
-별도 Slice에서 version을 고정하고 query를 저장소에 기록한다. 실행 파일은
-`ast-grep`이라는 정확한 이름을 쓴다. `sg` alias는 전혀 다른 시스템
-명령일 수 있다.
+test로 다시 확인한다. 저장소 탐색에서는 구조 rewrite를 사용하지 않는다.
+실행 파일은 `ast-grep`이라는 정확한 이름을 쓴다. `sg` alias는 전혀 다른
+시스템 명령일 수 있다.
+
+### 탐색 pilot 결과
+
+ast-grep 0.45.0으로 읽기 전용 pilot을 실행해 현재 workspace에서 세 가지
+검색을 비교했다.
+
+| 질문 | ast-grep 결과 | `rg` 비교 | 판단 |
+|---|---:|---:|---|
+| 어떤 타입이 `AgentBackend`를 구현하는가? | 6 | 6 | 정확한 text 형태가 일정해 `rg`가 더 간단하다. |
+| `if let Err(...)`로 failure를 처리하는 곳은 어디인가? | 17 | 17 | 구조 검색이 의미 있는 구분을 더하지 못했다. |
+| 인자 없는 `shutdown()` method를 호출하는 곳은 어디인가? | parsing된 호출 67개 | text 행 73개 | assertion macro 내부 호출 6개를 text 검색에서 추가로 찾았다. 구조 pattern은 이 macro token body를 검사하지 못했다. |
+
+`ast-grep outline`은 `yo-core` source file 26개의 간결한 목록을 만드는 데
+유용했지만, 저장소 소유권을 정하거나 Rust symbol을 resolve할 수는 없다.
+따라서 이 pilot에서는 package, configuration, 고정 version, 저장된 query를
+추가하지 않았다.
+
+첫 검색은 계속 `rg`를 사용한다. 익숙하지 않은 모듈을 빠르게 훑을 때는
+선택적으로 ast-grep outline을 사용하고, text 검색으로 syntax 형태를
+깔끔하게 표현할 수 없을 때만 일회성 읽기 전용 구조 query를 사용한다.
+macro 내부 발생은 `rg`로 확인하고 symbol 의미는 rust-analyzer로 확인한다.
+실제 Slice에서 같은 구조 query가 반복해서 필요하고, query가 잡음을
+실질적으로 줄이며, macro 사각지대를 확인할 보조 검사가 있을 때만 저장소
+도구의 version 고정을 다시 검토한다.
 
 ## 첫 소유자 선택하기
 
