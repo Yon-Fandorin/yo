@@ -12,6 +12,9 @@ use nix::sys::termios::{LocalFlags, tcgetattr};
 const COMMAND_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const CLEAN_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[path = "terminal_matrix/ssh.rs"]
+mod ssh;
+
 struct TmuxSession {
     name: String,
 }
