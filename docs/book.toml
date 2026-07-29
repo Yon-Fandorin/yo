@@ -1,0 +1,18 @@
+[book]
+title = "yo Developer Docs"
+description = "Architecture and working guidance for people and coding agents developing yo."
+authors = ["yo contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "../target/developer-docs"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/Yon-Fandorin/yo"
+edit-url-template = "https://github.com/Yon-Fandorin/yo/edit/develop/docs/{path}"
+
+[output.html.search]
+enable = true
+limit-results = 20

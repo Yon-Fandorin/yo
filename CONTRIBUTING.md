@@ -232,10 +232,27 @@ Install the version selected by `hk.pkl`, then register its repository-local hoo
 
 ```bash
 cargo install hk --version 1.52.0 --locked
+cargo install mdbook --version 0.5.4 --locked
 hk install
 ```
 
-`hk.pkl` owns the hook set. `hk check` verifies changes without editing them; `hk fix` applies available fixes. Git `pre-commit` runs checks only.
+`hk.pkl` owns the hook set. `hk check` verifies changes without editing them;
+`hk fix` applies available fixes. Git `pre-commit` runs repository checks.
+For accepted review commits on `develop`, `main`, or `wave/*` that change code
+under `crates/` or `tools/`, delete code there, or change workspace Cargo
+metadata, Git `commit-msg` requires exactly one trailer:
+
+```text
+Developer-Docs-Impact: updated
+Developer-Docs-Impact: none - <why documented responsibilities and flows remain accurate>
+```
+
+`updated` requires a staged Developer Docs change. `none` requires a concrete
+reason. The trailer forces the Slice review to consider documentation impact;
+it does not claim that semantic accuracy can be decided automatically. Working
+commits on `slice/*`, `task/*`, and `spike/*`, plus merge commits,
+defer the decision to their accepted squash or review commit. Rerun `hk
+install` after the repository adds or changes a hook event.
 
 ## History boundary
 

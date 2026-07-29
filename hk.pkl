@@ -99,6 +99,16 @@ local checks = new Mapping<String, Step> {
         )
         check = "bash tools/validation/yo-cli-unix-matrix.sh"
     }
+    ["developer-docs"] = new Step {
+        glob = List(
+            "docs/**/*.md",
+            "docs/book.toml",
+            "tools/validation/developer-docs.sh",
+            "tools/validation/developer-docs-impact.sh",
+            "tools/validation/developer-docs-impact-tests.sh",
+        )
+        check = "bash tools/validation/developer-docs.sh && bash tools/validation/developer-docs-impact-tests.sh"
+    }
 }
 
 hooks {
@@ -111,5 +121,12 @@ hooks {
     ["fix"] {
         fix = true
         steps = checks
+    }
+    ["commit-msg"] {
+        steps {
+            ["developer-docs-impact"] {
+                check = "bash tools/validation/developer-docs-impact.sh {{commit_msg_file}}"
+            }
+        }
     }
 }
