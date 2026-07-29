@@ -105,3 +105,6 @@ Do not infer one route from another. A passing local tmux run does not mark SSH,
 nested tmux, or macOS as verified.
 
 Contract: [Rendering validation authority](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.validation-matrix.md)
+
+Return to [Validation](./README.md#reading-a-result) to classify the run as
+passed, failed, or unverified.

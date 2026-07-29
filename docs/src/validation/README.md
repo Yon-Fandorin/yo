@@ -2,7 +2,8 @@
 
 Choose evidence by the boundary that changed. Start with the smallest check
 that can distinguish the expected behavior from its important failure, then
-widen before closing the Slice.
+widen before closing the
+[Slice](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#slice-contract).
 
 ## Evidence layers
 
@@ -28,7 +29,13 @@ the assertion or silently skipping it.
 | Session, Turn, Activity, engine, or runtime semantics | `cargo test -p yo-core` | `crates/yo-core/src/tests` and the owning module tests |
 | Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
 | Codex protocol translation or provider-ID correlation | `cargo test -p yo-core backend::codex::tests` | `crates/yo-core/src/backend/codex/tests.rs` |
-| Surface, Unicode width, input, layout, transcript, or presenter policy | `cargo test -p yo-tui` | Tests beside the owning `yo-tui` module |
+| Decoded input, editing, paste, bindings, or exit gestures | `cargo test -p yo-tui input::` | Tests beside `yo-tui/src/input` |
+| Prompt wrapping, cursor visibility, or viewport behavior | `cargo test -p yo-tui prompt::` | Tests beside `yo-tui/src/prompt` |
+| Transcript items, streaming revisions, or scrolling | `cargo test -p yo-tui transcript::` | Tests beside `yo-tui/src/transcript` |
+| Shell composition, layout, Surface, Unicode width, or text flow | `cargo test -p yo-tui` | Tests beside the owning `yo-tui` module |
+| ANSI operations or presentation-mode policy | `cargo test -p yo-tui terminal::` | Tests under `yo-tui/src/terminal` |
+| Inline or Fullscreen mode behavior | `cargo test -p yo-tui terminal::mode::` | Tests under `yo-tui/src/terminal/mode` |
+| Live-loop ordering, backpressure, or event projection | `cargo test -p yo-tui runner::` | Tests under `yo-tui/src/runner` |
 | Terminal and HTML projection of the same completed frame | `cargo test -p yo-tui --test rendering_parity` | `crates/yo-tui/tests/rendering_parity` and its goldens |
 | Process termination or real terminal restoration | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
 | Unix process-coordinator state and compensation | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |
@@ -68,6 +75,8 @@ hk check
 execute ignored environment tests. `hk check` selects repository checks from
 `hk.pkl` according to the changed paths, including formatting, test
 explanations, affected crate checks, Methexis checks, and Developer Docs checks.
+Installation and hook usage belong to
+[`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#local-checks).
 
 If the Slice changes a platform or external-environment boundary, add the
 relevant matrix command rather than claiming the baseline covered it.

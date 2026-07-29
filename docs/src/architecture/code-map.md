@@ -90,20 +90,9 @@ The `surface` is the common completed state. Terminal and HTML projections
 consume it independently; neither projection defines layout meaning for the
 other.
 
-## Closest evidence
-
-Start with the narrow owner, then widen only when the boundary itself changes:
-
-| Change | Closest evidence |
-|---|---|
-| Core state or provider-neutral protocol | [`yo-core/src/tests`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/tests) and the owning module tests |
-| Agent-session concurrency or shutdown | [`yo-core/src/agent_session/tests`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/tests) |
-| Codex translation or correlation | [`yo-core/src/backend/codex/tests.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/tests.rs) |
-| TUI component state, layout, or failure behavior | Tests beside the owning `yo-tui` module |
-| Shared terminal and HTML projection | [`yo-tui/tests/rendering_parity.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/tests/rendering_parity.rs) |
-| Process and real PTY lifecycle | [`yo-cli/src/pty_tests.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/pty_tests.rs) |
-| tmux, SSH, or nested tmux behavior | [`yo-cli/tests/terminal_matrix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/tests/terminal_matrix.rs) |
-
-See [Validation](../validation/README.md) before closing a Slice and the
+After choosing an owner, use [Validation](../validation/README.md) as the
+single map from changed boundary to evidence. Follow the
 [terminal environment matrix](../validation/terminal-matrix.md) when real
-terminal behavior is involved.
+terminal behavior is involved. Before closing a
+[Slice](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#slice-contract),
+widen checks only across the boundaries the change actually crosses.
