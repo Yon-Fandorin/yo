@@ -52,3 +52,16 @@ while IFS= read -r document; do
 done < <(find docs/src -type f -name '*.md' -print)
 
 mdbook build docs
+
+for output in target/developer-docs/index.html target/developer-docs/toc.html; do
+    if ! grep -Eq 'href="theme/yo-[^"]+\.css"' "${output}"; then
+        echo "${output}: built Developer Docs do not reference the yo theme" >&2
+        exit 1
+    fi
+done
+
+if ! find target/developer-docs/theme -maxdepth 1 -type f -name 'yo-*.css' -print -quit |
+    grep -q .; then
+    echo "built Developer Docs do not contain the hashed yo theme asset" >&2
+    exit 1
+fi

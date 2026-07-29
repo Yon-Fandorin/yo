@@ -1,0 +1,379 @@
+/*
+ * yo Developer Docs
+ *
+ * One visual idea: a three-step flow rail for yo-cli -> yo-core -> yo-tui.
+ * Everything else stays quiet so ownership and runtime paths remain the focus.
+ */
+
+:root {
+    --sidebar-target-width: 260px;
+    --content-max-width: 760px;
+    --page-padding: clamp(12px, 2.4vw, 32px);
+    --mono-font: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+    --code-font-size: 0.875em;
+
+    --bg: var(--yo-paper);
+    --fg: var(--yo-ink);
+    --sidebar-bg: var(--yo-paper);
+    --sidebar-fg: var(--yo-mute);
+    --sidebar-non-existant: var(--yo-mute);
+    --sidebar-active: var(--yo-flow);
+    --sidebar-spacer: var(--yo-rule);
+    --sidebar-header-border-color: var(--yo-flow);
+    --scrollbar: var(--yo-rule);
+    --icons: var(--yo-mute);
+    --icons-hover: var(--yo-ink);
+    --links: var(--yo-flow);
+    --inline-code-color: var(--yo-flow);
+    --theme-popup-bg: var(--yo-paper);
+    --theme-popup-border: var(--yo-rule);
+    --theme-hover: var(--yo-well);
+    --quote-bg: var(--yo-well);
+    --quote-border: var(--yo-rule);
+    --table-border-color: var(--yo-rule);
+    --table-header-bg: var(--yo-well);
+    --table-alternate-bg: var(--yo-paper);
+    --searchbar-border-color: var(--yo-rule);
+    --searchbar-bg: var(--yo-well);
+    --searchbar-fg: var(--yo-ink);
+    --searchbar-shadow-color: var(--yo-flow);
+    --searchresults-header-fg: var(--yo-mute);
+    --searchresults-border-color: var(--yo-rule);
+    --searchresults-li-bg: var(--yo-well);
+    --search-mark-bg: var(--yo-rule);
+    --overlay-bg: color-mix(in srgb, var(--yo-ink) 35%, transparent);
+}
+
+.light,
+.rust,
+html:not(.js) {
+    --yo-paper: #fcfcfa;
+    --yo-ink: #1c2430;
+    --yo-mute: #5a6572;
+    --yo-rule: #d9dee4;
+    --yo-flow: #0b5fa5;
+    --yo-well: #f1f3f5;
+    --color-scheme: light;
+}
+
+.navy,
+.coal,
+.ayu {
+    --yo-paper: #16191d;
+    --yo-ink: #e4e8ec;
+    --yo-mute: #9aa4ae;
+    --yo-rule: #333a42;
+    --yo-flow: #7fb3e8;
+    --yo-well: #1e2329;
+    --color-scheme: dark;
+}
+
+html {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--yo-paper);
+    color: var(--yo-ink);
+}
+
+body {
+    font-kerning: normal;
+    text-rendering: optimizeLegibility;
+}
+
+.page-wrapper,
+#mdbook-menu-bar,
+.sidebar,
+.sidebar-iframe-inner {
+    background-color: var(--yo-paper);
+}
+
+#mdbook-menu-bar {
+    border-block-end-color: var(--yo-rule);
+}
+
+.menu-title {
+    font-family: var(--mono-font);
+    font-size: 1.45rem;
+    font-weight: 650;
+    letter-spacing: 0.035em;
+    color: var(--yo-ink);
+}
+
+.content {
+    padding-block-end: 7rem;
+}
+
+.content main {
+    padding-block-start: clamp(2.5rem, 6vw, 6rem);
+}
+
+.content p,
+.content ol,
+.content ul {
+    line-height: 1.68;
+}
+
+.content p,
+.content li {
+    max-width: 68ch;
+}
+
+main > h1 {
+    position: relative;
+    margin-block: 0 1.35em;
+    padding-inline-start: 1.65rem;
+    font-size: clamp(2.8rem, 4vw, 4rem);
+    font-weight: 720;
+    line-height: 1.08;
+    letter-spacing: -0.025em;
+}
+
+main > h1::before {
+    position: absolute;
+    inset-block-start: 0.12em;
+    inset-inline-start: 0;
+    width: 0.42rem;
+    height: 0.28em;
+    content: "";
+    background: var(--yo-flow);
+    box-shadow:
+        0 0.38em 0 color-mix(in srgb, var(--yo-flow) 65%, transparent),
+        0 0.76em 0 color-mix(in srgb, var(--yo-flow) 35%, transparent);
+}
+
+h2,
+h3,
+h4 {
+    color: var(--yo-ink);
+    font-weight: 680;
+    letter-spacing: -0.012em;
+}
+
+h2 {
+    padding-block-end: 0.35em;
+    border-block-end: 1px solid var(--yo-rule);
+}
+
+.content a:link,
+.content a:visited {
+    text-decoration-color: color-mix(in srgb, var(--yo-flow) 38%, transparent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.16em;
+}
+
+.content a:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--yo-flow);
+}
+
+code {
+    font-variant-ligatures: none;
+}
+
+:not(pre) > code,
+:not(pre) > .hljs {
+    padding: 0.12em 0.34em;
+    border: 1px solid var(--yo-rule);
+    border-radius: 3px;
+    background: var(--yo-well);
+}
+
+:not(pre):not(a) > code,
+:not(pre):not(a) > .hljs {
+    color: var(--yo-ink);
+}
+
+pre {
+    border: 1px solid var(--yo-rule);
+    border-inline-start: 3px solid var(--yo-flow);
+    border-radius: 2px;
+    background: var(--yo-well);
+}
+
+pre > code {
+    padding: 1.35rem 1.5rem;
+    line-height: 1.6;
+}
+
+.table-wrapper {
+    margin-block: 2rem;
+    border-block-start: 2px solid var(--yo-ink);
+    border-block-end: 1px solid var(--yo-rule);
+}
+
+table {
+    width: 100%;
+    margin: 0;
+    font-size: 0.94em;
+}
+
+table thead {
+    background: transparent;
+}
+
+table thead tr {
+    border: 0;
+    border-block-end: 1px solid var(--yo-rule);
+}
+
+table thead th {
+    padding: 0.8rem 1rem;
+    color: var(--yo-mute);
+    font-family: var(--mono-font);
+    font-size: 0.78em;
+    font-weight: 650;
+    letter-spacing: 0.055em;
+    text-align: start;
+    text-transform: uppercase;
+}
+
+table td {
+    padding: 1rem;
+    border: 0;
+    border-block-end: 1px solid var(--yo-rule);
+    vertical-align: top;
+}
+
+table tbody tr:nth-child(2n) {
+    background: transparent;
+}
+
+table tbody tr:hover {
+    background: var(--yo-well);
+}
+
+table th:last-child,
+table td:last-child {
+    min-width: 22ch;
+}
+
+blockquote {
+    padding: 0.1rem 1.4rem;
+    border: 0;
+    border-inline-start: 3px solid var(--yo-flow);
+    background: var(--yo-well);
+}
+
+kbd {
+    border-color: var(--yo-rule);
+    border-radius: 3px;
+    background: var(--yo-well);
+    box-shadow: inset 0 -1px 0 var(--yo-rule);
+    color: var(--yo-ink);
+}
+
+.sidebar {
+    border-inline-end: 1px solid var(--yo-rule);
+}
+
+.sidebar .sidebar-scrollbox {
+    padding: 2.4rem 1.8rem 2rem;
+}
+
+.chapter {
+    font-family: var(--mono-font);
+    font-size: 1.35rem;
+    line-height: 1.6;
+}
+
+.chapter li.chapter-item {
+    margin-block-start: 0.35rem;
+}
+
+.chapter li a {
+    display: block;
+    margin-inline-start: -0.9rem;
+    padding: 0.42rem 0.6rem 0.42rem 0.75rem;
+    border-inline-start: 2px solid transparent;
+    border-radius: 0 2px 2px 0;
+}
+
+.chapter li a:hover {
+    background: var(--yo-well);
+    color: var(--yo-ink);
+}
+
+.chapter li a.active {
+    border-inline-start-color: var(--yo-flow);
+    color: var(--yo-flow);
+    font-weight: 650;
+}
+
+.chapter strong[aria-hidden="true"] {
+    color: var(--yo-mute);
+    font-size: 0.78em;
+    font-weight: 500;
+}
+
+.section {
+    padding-inline-start: 1.3rem;
+}
+
+#mdbook-theme-rust,
+#mdbook-theme-coal,
+#mdbook-theme-ayu {
+    display: none;
+}
+
+.theme-popup {
+    border-radius: 2px;
+    box-shadow: 0 10px 30px color-mix(in srgb, var(--yo-ink) 12%, transparent);
+}
+
+.theme-popup .theme {
+    font-family: var(--mono-font);
+}
+
+#mdbook-searchbar {
+    border: 1px solid var(--yo-rule);
+    border-radius: 2px;
+    box-shadow: none;
+    font-family: var(--mono-font);
+}
+
+:where(a, button, input, label[for="mdbook-sidebar-toggle-anchor"]):focus-visible {
+    outline: 2px solid var(--yo-flow);
+    outline-offset: 2px;
+}
+
+@media only screen and (max-width: 620px) {
+    main > h1 {
+        padding-inline-start: 1.25rem;
+    }
+
+    main > h1::before {
+        width: 0.34rem;
+    }
+
+    .content main {
+        padding-block-start: 2.5rem;
+    }
+
+    .table-wrapper {
+        overflow-x: auto;
+    }
+
+    table {
+        min-width: 58rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}
+
+@media print {
+    main > h1 {
+        padding-inline-start: 0;
+    }
+
+    main > h1::before {
+        display: none;
+    }
+}
