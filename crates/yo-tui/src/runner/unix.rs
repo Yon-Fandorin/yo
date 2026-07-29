@@ -154,9 +154,18 @@ where
                     started,
                 )
             });
+            let (operation, output) = match report.operation {
+                // An untrusted restore may leave the last frame visible. Replaying the current
+                // chat projection can then duplicate content, which the recovery contract prefers
+                // to erasing rows whose ownership is no longer provable.
+                Ok(Ok(exit)) => (Ok(Ok(exit)), retained_session_output(&state)),
+                Ok(Err(error)) => (Ok(Err(error)), None),
+                Err(payload) => (Err(payload), None),
+            };
             Ok(LiveRunReport {
-                operation: report.operation,
+                operation,
                 cleanup: LiveCleanup::Inline(report.cleanup),
+                output,
             })
         },
         PresentationMode::Fullscreen => {
@@ -177,9 +186,14 @@ where
             Ok(LiveRunReport {
                 operation: report.operation,
                 cleanup: LiveCleanup::Fullscreen(report.cleanup),
+                output: None,
             })
         },
     }
+}
+
+pub(super) fn retained_session_output(state: &TuiState) -> Option<String> {
+    state.session_output().ok().flatten()
 }
 
 fn drive<B, E, T, A, P>(

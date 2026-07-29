@@ -11,6 +11,7 @@ use crate::{
 
 mod failures;
 mod measurement;
+mod output;
 mod scrolling;
 
 fn id(value: u64) -> TranscriptItemId {

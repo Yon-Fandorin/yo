@@ -19,6 +19,7 @@ use crate::{
 pub(super) struct LiveRunReport {
     pub(super) operation: Result<Result<LoopExit, LoopError>, PanicPayload>,
     pub(super) cleanup: LiveCleanup,
+    pub(super) output: Option<String>,
 }
 
 pub(super) enum LiveCleanup {
@@ -63,6 +64,7 @@ fn finish_report(
     report: LiveRunReport,
     diagnostic: Option<PanicDiagnostic>,
 ) -> Result<RunOutcome, RunError> {
+    let output = report.output;
     let operation = match report.operation {
         Ok(operation) => operation,
         Err(payload) => {
@@ -74,11 +76,11 @@ fn finish_report(
     match operation {
         Ok(LoopExit::UserRequested) => {
             require_clean_close(report.cleanup)?;
-            Ok(RunOutcome::user_requested())
+            Ok(RunOutcome::user_requested(output))
         },
         Ok(LoopExit::TerminationRequested) => {
             require_clean_close(report.cleanup)?;
-            Ok(RunOutcome::termination_requested())
+            Ok(RunOutcome::termination_requested(output))
         },
         Err(error) => {
             let cleanup = cleanup_detail(&report.cleanup);
@@ -173,6 +175,7 @@ mod tests {
                 CleanupFailure, CleanupFailureCause, CleanupFailures, CleanupStep, SessionFailure,
                 SessionFailureCause,
                 panic_route::{PANIC_ROUTE_TEST_OWNER, catch_owner_panic},
+                screen::InlineCloseReport,
             },
         },
     };
@@ -231,6 +234,7 @@ mod tests {
         let report = LiveRunReport {
             operation: Ok(Err(LoopError::Agent("agent disconnected".to_owned()))),
             cleanup,
+            output: None,
         };
 
         let error = finish_report(report, None).unwrap_err().to_string();
@@ -247,6 +251,7 @@ mod tests {
         let report = LiveRunReport {
             operation: Ok(Ok(LoopExit::TerminationRequested)),
             cleanup: failed_fullscreen_cleanup(&["restoring termios"]),
+            output: None,
         };
 
         let error = finish_report(report, None).unwrap_err().to_string();
@@ -267,6 +272,7 @@ mod tests {
         let report = LiveRunReport {
             operation: Err(payload),
             cleanup,
+            output: None,
         };
 
         let resumed = catch_unwind(AssertUnwindSafe(|| {
@@ -283,11 +289,31 @@ mod tests {
     fn clean_termination_preserves_the_termination_exit_reason() {
         let report = LiveRunReport {
             operation: Ok(Ok(LoopExit::TerminationRequested)),
-            cleanup: LiveCleanup::Fullscreen(Ok(())),
+            cleanup: LiveCleanup::Inline(InlineCloseReport {
+                viewport: Ok(crate::terminal::mode::inline::InlineRestoreOutcome::Cleared),
+                terminal: Ok(()),
+            }),
+            output: Some("retained\n".to_owned()),
         };
 
         let outcome = finish_report(report, None).unwrap();
 
         assert_eq!(outcome.reason(), ExitReason::TerminationRequested);
+        assert_eq!(outcome.output(), Some("retained\n"));
+    }
+
+    // Fullscreen 정상 종료는 main screen 복원 뒤 별도 session 출력을 만들지 않는다.
+    #[test]
+    fn clean_fullscreen_exit_has_no_session_output() {
+        let report = LiveRunReport {
+            operation: Ok(Ok(LoopExit::UserRequested)),
+            cleanup: LiveCleanup::Fullscreen(Ok(())),
+            output: None,
+        };
+
+        let outcome = finish_report(report, None).unwrap();
+
+        assert_eq!(outcome.reason(), ExitReason::UserRequested);
+        assert_eq!(outcome.output(), None);
     }
 }

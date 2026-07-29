@@ -1,7 +1,9 @@
 use std::{
+    collections::VecDeque,
     error::Error,
     fs::File,
     io::{self, Read, Write},
+    num::NonZeroU64,
     process::{Command, Stdio},
     sync::mpsc,
     thread,
@@ -16,7 +18,10 @@ use nix::{
     },
     unistd::Pid,
 };
-use yo_core::RuntimePoll;
+use yo_core::{
+    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent,
+    RuntimePoll, SessionId, TurnId, TurnRef,
+};
 use yo_tui::{
     AgentAction, AgentConnection, DispatchOutcome, PendingDispatch, PresentationMode,
     TerminationEvent, TerminationSource,
@@ -54,6 +59,53 @@ impl AgentConnection for PendingAgent {
     }
 }
 
+struct RetainedChatAgent {
+    events: VecDeque<AgentEvent>,
+}
+
+impl RetainedChatAgent {
+    fn new() -> Self {
+        let turn = TurnRef::new(id(SessionId::new), id(TurnId::new));
+        let activity = ActivityRef::new(turn, id(ActivityId::new));
+        Self {
+            events: [
+                AgentEvent::ActivityStarted {
+                    activity,
+                    kind: ActivityKind::AgentMessage,
+                },
+                AgentEvent::ActivityUpdated {
+                    activity,
+                    update: ActivityUpdate::TextSnapshot("YO_INLINE_RETAINED".to_owned()),
+                },
+                AgentEvent::ActivityFinished {
+                    activity,
+                    outcome: ActivityOutcome::Completed,
+                },
+            ]
+            .into(),
+        }
+    }
+}
+
+impl AgentConnection for RetainedChatAgent {
+    type Error = io::Error;
+
+    fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
+        Ok(DispatchOutcome::Accepted)
+    }
+
+    fn retry(&mut self, _pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
+        Ok(DispatchOutcome::Accepted)
+    }
+
+    fn poll(&mut self) -> Result<RuntimePoll, Self::Error> {
+        Ok(self
+            .events
+            .pop_front()
+            .map_or(RuntimePoll::Pending, RuntimePoll::Event))
+    }
+}
+
 struct PtyChild {
     child: std::process::Child,
     input: File,
@@ -64,7 +116,7 @@ struct PtyChild {
 }
 
 impl PtyChild {
-    fn spawn(test_name: &str) -> Self {
+    fn spawn(test_name: &str, ready_marker: &'static [u8]) -> Self {
         let pty = openpty(
             Some(&Winsize {
                 ws_row: 24,
@@ -91,7 +143,7 @@ impl PtyChild {
         let master = File::from(pty.master);
         let input = master.try_clone().unwrap();
         let (entered_tx, entered) = mpsc::sync_channel(1);
-        let output = thread::spawn(move || capture_pty(master, entered_tx));
+        let output = thread::spawn(move || capture_pty(master, entered_tx, ready_marker));
 
         Self {
             child,
@@ -103,10 +155,10 @@ impl PtyChild {
         }
     }
 
-    fn wait_for_fullscreen(&self) {
+    fn wait_until_ready(&self) {
         self.entered
             .recv_timeout(Duration::from_secs(5))
-            .expect("the child must enter alternate-screen mode");
+            .expect("the child must emit its mode-specific ready marker");
     }
 
     fn finish(mut self) -> (std::process::ExitStatus, Vec<u8>) {
@@ -138,7 +190,7 @@ impl PtyChild {
     }
 }
 
-fn capture_pty(mut master: File, entered: mpsc::SyncSender<()>) -> Vec<u8> {
+fn capture_pty(mut master: File, entered: mpsc::SyncSender<()>, ready_marker: &[u8]) -> Vec<u8> {
     let mut output = Vec::new();
     let mut announced = false;
     let mut chunk = [0; 4096];
@@ -147,7 +199,7 @@ fn capture_pty(mut master: File, entered: mpsc::SyncSender<()>) -> Vec<u8> {
             Ok(0) => break,
             Ok(length) => {
                 output.extend_from_slice(&chunk[..length]);
-                if !announced && contains(&output, ENTER_ALTERNATE_SCREEN) {
+                if !announced && contains(&output, ready_marker) {
                     announced = true;
                     let _ = entered.send(());
                 }
@@ -166,6 +218,17 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|candidate| candidate == needle)
+}
+
+fn position(haystack: &[u8], needle: &[u8]) -> usize {
+    haystack
+        .windows(needle.len())
+        .rposition(|candidate| candidate == needle)
+        .expect("expected bytes must be present")
+}
+
+fn id<T>(constructor: impl FnOnce(NonZeroU64) -> T) -> T {
+    constructor(NonZeroU64::MIN)
 }
 
 fn assert_fullscreen_pair(output: &[u8]) {
@@ -201,11 +264,51 @@ fn run_fullscreen(termination: &mut impl TerminationSource) -> Result<(), Box<dy
     Ok(())
 }
 
+fn run_inline_with_retained_chat(
+    termination: &mut impl TerminationSource,
+) -> Result<(), Box<dyn Error>> {
+    let mut agent = RetainedChatAgent::new();
+    let outcome = yo_tui::run_with_mode(termination, &mut agent, PresentationMode::Inline)?;
+    if let Some(output) = outcome.output() {
+        super::write_session_output(output)?;
+    }
+    Ok(())
+}
+
+// 실제 Linux PTY에서 Inline viewport가 지워진 뒤 일반 대화 뷰의 텍스트가 같은 main
+// screen에 다시 출력되어 native scrollback으로 남는지 확인한다.
+#[test]
+fn inline_normal_exit_retains_chat_after_viewport_restoration() {
+    const RETAINED: &[u8] = "⏺ YO_INLINE_RETAINED\r\n".as_bytes();
+    let mut child = PtyChild::spawn(
+        "pty_tests::child_inline_retains_chat",
+        b"YO_INLINE_RETAINED",
+    );
+    child.wait_until_ready();
+    child.input.write_all(&[0x04]).unwrap();
+    child.input.flush().unwrap();
+
+    let (status, output) = child.finish();
+    assert!(
+        status.success(),
+        "child failed:\n{}",
+        String::from_utf8_lossy(&output)
+    );
+    assert!(
+        position(&output, b"\x1b[2K") < position(&output, RETAINED),
+        "plain chat output must follow viewport restoration:\n{}",
+        String::from_utf8_lossy(&output)
+    );
+}
+
 // 실제 Linux PTY에서 Ctrl+D 정상 종료가 대체 화면과 termios를 모두 원래 상태로 복구한다.
 #[test]
 fn fullscreen_normal_exit_restores_real_pty() {
-    let mut child = PtyChild::spawn("pty_tests::child_fullscreen_normal_exit");
-    child.wait_for_fullscreen();
+    let mut child = PtyChild::spawn(
+        "pty_tests::child_fullscreen_normal_exit",
+        ENTER_ALTERNATE_SCREEN,
+    );
+    child.wait_until_ready();
     child.input.write_all(&[0x04]).unwrap();
     child.input.flush().unwrap();
 
@@ -223,8 +326,11 @@ fn fullscreen_normal_exit_restores_real_pty() {
 fn fullscreen_termination_restores_real_pty_before_signal_replay() {
     use std::os::unix::process::ExitStatusExt;
 
-    let child = PtyChild::spawn("pty_tests::child_fullscreen_termination");
-    child.wait_for_fullscreen();
+    let child = PtyChild::spawn(
+        "pty_tests::child_fullscreen_termination",
+        ENTER_ALTERNATE_SCREEN,
+    );
+    child.wait_until_ready();
     kill(
         Pid::from_raw(i32::try_from(child.child.id()).unwrap()),
         Signal::SIGTERM,
@@ -244,6 +350,16 @@ fn child_fullscreen_normal_exit() {
         return;
     }
     run_fullscreen(&mut PendingTermination).unwrap();
+}
+
+// 부모 테스트가 마련한 PTY에서 deterministic 일반 대화를 그린 뒤 Inline 정상 종료한다.
+#[test]
+#[ignore]
+fn child_inline_retains_chat() {
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        return;
+    }
+    run_inline_with_retained_chat(&mut PendingTermination).unwrap();
 }
 
 // 부모 테스트가 마련한 PTY 안에서 실제 process coordinator와 Fullscreen을 함께 실행한다.

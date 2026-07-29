@@ -17,8 +17,8 @@ use crate::{
     shell::{self, AgentShellRenderError, AgentShellStyles, AgentShellViewState},
     surface::{Point, Rect, Size, Style, Surface, SurfaceError},
     transcript::{
-        TranscriptItemId, TranscriptLayoutConfig, TranscriptState, TranscriptStateError,
-        TranscriptStyles,
+        TranscriptItemId, TranscriptLayoutConfig, TranscriptMeasureError, TranscriptState,
+        TranscriptStateError, TranscriptStyles,
     },
 };
 
@@ -211,6 +211,13 @@ impl TuiState {
             cursor: frame.cursor,
             view_state,
         })
+    }
+
+    // This is the currently rendered Chat projection. Future Transcript and Request views select
+    // their own projections above this state instead of changing the generic RunOutcome boundary.
+    pub(super) fn session_output(&self) -> Result<Option<String>, TranscriptMeasureError> {
+        self.transcript
+            .plain_output(&TranscriptLayoutConfig::default())
     }
 
     pub(super) fn has_pending_request(&self) -> bool {

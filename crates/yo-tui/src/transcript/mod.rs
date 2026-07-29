@@ -136,6 +136,13 @@ impl TranscriptState {
         &self.items
     }
 
+    pub(crate) fn plain_output(
+        &self,
+        config: &TranscriptLayoutConfig,
+    ) -> Result<Option<String>, TranscriptMeasureError> {
+        prepare(self, u16::MAX, config).map(|prepared| prepared.into_plain_text())
+    }
+
     pub(crate) fn push_user(
         &mut self,
         id: TranscriptItemId,

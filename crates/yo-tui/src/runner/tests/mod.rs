@@ -10,7 +10,7 @@ use yo_core::{
 use super::{
     AgentAction, AgentConnection, ExitReason, RunOutcome,
     state::{StateEffect, StateError, TuiState},
-    unix::{drain_agent, handle_backpressured_input, prepare_resize},
+    unix::{drain_agent, handle_backpressured_input, prepare_resize, retained_session_output},
 };
 use crate::{
     input::event::{InputEvent, KeyAction, KeyCode, KeyEvent as YoKeyEvent, KeyState},
@@ -77,6 +77,49 @@ fn submitted_prompt_becomes_one_user_transcript_item() {
     assert_eq!(state.editor().text(), "");
     assert_eq!(state.transcript().items().len(), 1);
     assert_eq!(rendered_row(&state, Size::new(12, 3), 0), "❯ question");
+}
+
+// 종료용 출력은 prompt를 섞지 않고 현재 일반 대화 뷰를 terminal-independent text로 만든다.
+#[test]
+fn session_output_contains_the_current_chat_without_the_prompt() {
+    let mut state = TuiState::new();
+    state
+        .handle(InputEvent::Paste("question".to_owned()), Duration::ZERO)
+        .unwrap();
+    state
+        .handle(
+            key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+            Duration::ZERO,
+        )
+        .unwrap();
+    state
+        .handle(InputEvent::Paste("draft".to_owned()), Duration::ZERO)
+        .unwrap();
+
+    let output = state.session_output().unwrap().unwrap();
+
+    assert_eq!(output, "❯ question\n");
+}
+
+// 보존용 투영의 u16 행 한계를 넘겨도 이미 끝난 사용자 세션을 실패로 바꾸지 않고 출력을
+// 생략한다.
+#[test]
+fn oversized_session_output_does_not_replace_a_successful_exit() {
+    let mut state = TuiState::new();
+    state
+        .handle(
+            InputEvent::Paste("\n".repeat(usize::from(u16::MAX) + 1)),
+            Duration::ZERO,
+        )
+        .unwrap();
+    state
+        .handle(
+            key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+    assert_eq!(retained_session_output(&state), None);
 }
 
 // Resize는 editor의 Ctrl+C 연속 입력 상태를 건드리지 않고 geometry effect로 분리된다.
@@ -167,7 +210,7 @@ fn item_id_overflow_preserves_empty_transcript() {
 #[test]
 fn public_outcome_exposes_user_exit_reason() {
     assert_eq!(
-        RunOutcome::user_requested().reason(),
+        RunOutcome::user_requested(None).reason(),
         ExitReason::UserRequested
     );
 }
@@ -176,7 +219,7 @@ fn public_outcome_exposes_user_exit_reason() {
 #[test]
 fn public_outcome_exposes_host_termination_reason() {
     assert_eq!(
-        RunOutcome::termination_requested().reason(),
+        RunOutcome::termination_requested(None).reason(),
         ExitReason::TerminationRequested
     );
 }

@@ -54,27 +54,36 @@ pub enum ExitReason {
 }
 
 /// The normal result of a completed live TUI session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunOutcome {
     reason: ExitReason,
+    output: Option<String>,
 }
 
 impl RunOutcome {
     /// Returns why the session ended normally.
     #[must_use]
-    pub const fn reason(self) -> ExitReason {
+    pub const fn reason(&self) -> ExitReason {
         self.reason
     }
 
-    const fn user_requested() -> Self {
+    /// Returns terminal-independent session output prepared for the caller.
+    #[must_use]
+    pub fn output(&self) -> Option<&str> {
+        self.output.as_deref()
+    }
+
+    const fn user_requested(output: Option<String>) -> Self {
         Self {
             reason: ExitReason::UserRequested,
+            output,
         }
     }
 
-    const fn termination_requested() -> Self {
+    const fn termination_requested(output: Option<String>) -> Self {
         Self {
             reason: ExitReason::TerminationRequested,
+            output,
         }
     }
 }

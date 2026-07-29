@@ -1,6 +1,7 @@
 //! Width-dependent transcript projection into a bounded Surface view.
 
 mod config;
+mod output;
 
 use std::num::NonZeroU16;
 

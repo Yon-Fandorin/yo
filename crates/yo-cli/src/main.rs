@@ -59,12 +59,19 @@ fn run_agent_session(
         return Ok(());
     };
     let terminal = yo_tui::run_with_mode(termination, &mut agent, mode);
-    let cleanup = agent.shutdown();
 
     let mut failures = Vec::new();
-    if let Err(error) = terminal {
-        failures.push(format!("terminal session: {error}"));
+    match terminal {
+        Ok(outcome) => {
+            if let Some(output) = outcome.output()
+                && let Err(error) = write_session_output(output)
+            {
+                failures.push(format!("writing session output: {error}"));
+            }
+        },
+        Err(error) => failures.push(format!("terminal session: {error}")),
     }
+    let cleanup = agent.shutdown();
     if let Err(error) = cleanup {
         failures.push(format!("agent cleanup: {error}"));
     }
@@ -73,6 +80,13 @@ fn run_agent_session(
     } else {
         Err(AppError::many(failures))
     }
+}
+
+#[cfg(unix)]
+fn write_session_output(output: &str) -> std::io::Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(output.as_bytes())?;
+    stdout.flush()
 }
 
 #[cfg(unix)]
