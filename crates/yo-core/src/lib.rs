@@ -10,7 +10,8 @@ mod runtime;
 mod session;
 
 pub use agent_session::{
-    AgentIntent, AgentSession, AgentSessionError, CommandAdmission, PendingCommand,
+    AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, CommandAdmission,
+    PendingCommand,
 };
 pub use backend::{
     AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,

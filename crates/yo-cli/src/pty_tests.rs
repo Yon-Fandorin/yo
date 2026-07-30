@@ -20,11 +20,11 @@ use nix::{
     unistd::{Pid, setpgid},
 };
 use yo_core::{
-    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent,
-    RuntimePoll, SessionId, TurnId, TurnRef,
+    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent, SessionId,
+    TranscriptRecord, TurnId, TurnRef,
 };
 use yo_tui::{
-    AgentAction, AgentConnection, DispatchOutcome, PendingDispatch, PresentationMode,
+    AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch, PresentationMode,
     TerminationEvent, TerminationSource,
 };
 
@@ -55,13 +55,13 @@ impl AgentConnection for PendingAgent {
         Ok(DispatchOutcome::Accepted)
     }
 
-    fn poll(&mut self) -> Result<RuntimePoll, Self::Error> {
-        Ok(RuntimePoll::Pending)
+    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
+        Ok(AgentPoll::Pending)
     }
 }
 
 struct RetainedChatAgent {
-    events: VecDeque<AgentEvent>,
+    records: VecDeque<TranscriptRecord>,
 }
 
 impl RetainedChatAgent {
@@ -69,7 +69,7 @@ impl RetainedChatAgent {
         let turn = TurnRef::new(id(SessionId::new), id(TurnId::new));
         let activity = ActivityRef::new(turn, id(ActivityId::new));
         Self {
-            events: [
+            records: [
                 AgentEvent::ActivityStarted {
                     activity,
                     kind: ActivityKind::AgentMessage,
@@ -83,6 +83,7 @@ impl RetainedChatAgent {
                     outcome: ActivityOutcome::Completed,
                 },
             ]
+            .map(TranscriptRecord::EventCommitted)
             .into(),
         }
     }
@@ -99,11 +100,11 @@ impl AgentConnection for RetainedChatAgent {
         Ok(DispatchOutcome::Accepted)
     }
 
-    fn poll(&mut self) -> Result<RuntimePoll, Self::Error> {
+    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
         Ok(self
-            .events
+            .records
             .pop_front()
-            .map_or(RuntimePoll::Pending, RuntimePoll::Event))
+            .map_or(AgentPoll::Pending, AgentPoll::Record))
     }
 }
 

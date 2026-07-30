@@ -70,10 +70,12 @@ Codex app-server adapter
     ↓ BackendEvent
 AgentRuntime
     ↓ commit and append to SessionJournal
-    ↓ AgentEvent
-bounded event lane
+AgentSession coalescible change lane
+    ↓ wake-up only
+TuiAgentConnection + TranscriptReader
+    ↓ ordered AgentPoll::Record
     ↓
-TuiState::observe → transcript → completed Surface
+TuiState::observe_record → Chat transcript → completed Surface
     ↓
 Inline or Fullscreen presenter
 ```
@@ -81,11 +83,13 @@ Inline or Fullscreen presenter
 The useful inspection points are:
 
 1. [`TuiState::handle`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/state.rs)
-   records the user's submitted text and emits the frontend-neutral
-   `AgentIntent::Submit`.
+   clears the submitted prompt and emits the frontend-neutral
+   `AgentIntent::Submit`. It does not display that input as committed history.
 2. [`TuiAgentConnection`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs)
-   is a narrow adapter. It forwards dispatch, retry, and poll operations without
-   owning Session or provider semantics.
+   is a narrow local adapter. It forwards dispatch and retry operations, turns
+   a coalesced Session change notification into bounded `TranscriptReader`
+   suffix reads, and exposes ordered records to the TUI. It owns no Session or
+   provider semantics.
 3. [`agent_session/admission.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/admission.rs)
    resolves Submit to `StartTurn` or `SteerTurn`. A busy state lock or full
    bounded lane returns an opaque pending command for the TUI loop to retry.
@@ -95,19 +99,23 @@ The useful inspection points are:
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)
    orders command validation, backend acceptance, semantic commit, and
    in-memory Journal capture. It also translates a provider observation through
-   the semantic engine and appends the committed event before publishing an
-   `AgentEvent`. Rejected commands and invalid backend events are not recorded
-   as committed semantics; terminal events created while closing a failure are.
+   the semantic engine and appends the committed event before publishing a
+   change notification. Rejected commands and invalid backend events are not
+   recorded as committed semantics; terminal events created while closing a
+   failure are.
    `AgentSession::transcript_reader` exposes bounded, read-only suffix copies
    from that same Journal without exposing its lock or storage layout.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
-   consume already available semantic events, update TUI state, compose a
-   completed `Surface`, and send it to the active presenter.
+   consume already committed Transcript records, update TUI state, compose a
+   completed `Surface`, and send it to the active presenter. Chat shows user
+   input only when its `StartTurn` or `SteerTurn` command appears in that
+   sequence.
 
-The current Chat surface still follows the bounded live-event lane in step 6;
-it does not consume `TranscriptReader` yet. Moving Chat to Journal replay and
-reducing that lane to a coalescible wake-up notification must happen together
-in a later Slice so one committed event cannot be applied through both paths.
+The change lane carries no command or event payload and has capacity one.
+Multiple commits may therefore share one unread wake-up without losing
+history: the concrete local reader continues by Journal sequence until it
+reaches the observed head. A terminal backend failure is reported only after
+the adapter has exposed the failure records already committed to the Journal.
 
 Codex JSON and provider identifiers end at the backend adapter. Terminal input
 events and rendering types end in `yo-tui`. The command and event types crossing

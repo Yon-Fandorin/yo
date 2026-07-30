@@ -68,10 +68,12 @@ Codex app-server adapter
     ↓ BackendEvent
 AgentRuntime
     ↓ commit한 뒤 SessionJournal에 추가
-    ↓ AgentEvent
-bounded event lane
+AgentSession의 합칠 수 있는 change lane
+    ↓ 내용 없는 깨우기 알림
+TuiAgentConnection + TranscriptReader
+    ↓ 순서가 보장된 AgentPoll::Record
     ↓
-TuiState::observe → transcript → completed Surface
+TuiState::observe_record → Chat transcript → completed Surface
     ↓
 Inline 또는 Fullscreen presenter
 ```
@@ -79,11 +81,13 @@ Inline 또는 Fullscreen presenter
 조사할 때 유용한 지점은 다음과 같다.
 
 1. [`TuiState::handle`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/state.rs)는
-   사용자가 제출한 text를 기록하고 frontend에 독립적인
-   `AgentIntent::Submit`을 만든다.
+   제출된 prompt를 비우고 frontend에 독립적인 `AgentIntent::Submit`을
+   만든다. 이 시점에는 입력을 확정된 이력으로 표시하지 않는다.
 2. [`TuiAgentConnection`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs)은
-   좁은 adapter다. Session이나 provider 의미를 소유하지 않고 dispatch,
-   retry, poll 연산을 전달한다.
+   좁은 local adapter다. dispatch와 retry를 전달하고, 하나로 합쳐진
+   Session 변경 알림을 `TranscriptReader`의 크기가 제한된 suffix 읽기로
+   바꿔 순서가 보장된 record를 TUI에 제공한다. Session이나 provider
+   의미는 소유하지 않는다.
 3. [`agent_session/admission.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/admission.rs)는
    Submit을 `StartTurn` 또는 `SteerTurn`으로 결정한다. state lock이
    사용 중이거나 크기가 제한된 lane이 가득 찼다면, TUI loop가 다시
@@ -94,19 +98,22 @@ Inline 또는 Fullscreen presenter
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)은
    command 검증, backend 수락, semantic commit, in-memory Journal capture
    순서를 보장한다. provider 관찰 결과도 semantic engine을 통해 변환하고
-   commit된 event를 Journal에 추가한 뒤 `AgentEvent`로 공개한다. 거절된
+   commit된 event를 Journal에 추가한 뒤 변경 알림을 공개한다. 거절된
    command와 잘못된 backend event는 commit된 의미로 기록하지 않지만,
    실패를 닫으며 만들어진 terminal event는 기록한다.
    `AgentSession::transcript_reader`는 같은 Journal에서 크기가 제한된 읽기
    전용 suffix 복사본을 제공하며 내부 lock이나 저장 구조는 노출하지 않는다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
-   이미 도착한 semantic event를 소비하고 TUI 상태를 갱신한다. 완성된
-   `Surface`를 조합해 활성 presenter로 보낸다.
+   이미 확정된 Transcript record를 소비하고 TUI 상태를 갱신한다.
+   완성된 `Surface`를 조합해 활성 presenter로 보낸다. Chat의 사용자
+   입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난 뒤에만
+   표시된다.
 
-현재 Chat 화면은 여전히 6단계의 bounded live-event lane을 사용하며
-`TranscriptReader`를 소비하지 않는다. 같은 commit event가 두 경로에서
-중복 적용되지 않도록, Chat을 Journal replay로 옮기는 작업과 event lane을
-합칠 수 있는 깨우기 알림으로 축소하는 작업은 후속 Slice에서 함께 해야 한다.
+change lane은 command나 event 내용을 싣지 않으며 용량은 하나다. 따라서
+여러 commit이 읽지 않은 알림 하나로 합쳐져도 이력은 사라지지 않는다.
+구체적인 local reader가 Journal sequence를 따라 당시 확인한 head까지
+계속 읽기 때문이다. backend가 최종 실패해도 adapter는 Journal에 이미
+확정된 실패 record를 먼저 모두 공개한 뒤 연결 오류를 보고한다.
 
 Codex JSON과 provider identifier는 backend adapter 밖으로 나오지 않는다.
 터미널 input event와 rendering type은 `yo-tui` 밖으로 나오지 않는다.

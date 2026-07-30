@@ -13,12 +13,12 @@ use super::{
     WORKER_STOPPING,
 };
 use crate::{
-    ActivityKind, ActivityRequestRef, ActivityUpdate, AgentBackend, AgentCommand, AgentEvent,
-    AgentRuntime, RuntimeError, RuntimePoll, SessionId, TurnRef, journal::SessionJournal,
+    ActivityKind, ActivityRequestRef, AgentBackend, AgentCommand, AgentEvent, AgentRuntime,
+    RuntimeError, RuntimePoll, SessionId, TurnRef, journal::SessionJournal,
 };
 
-pub(super) enum WorkerEvent {
-    Event(AgentEvent),
+pub(super) enum WorkerSignal {
+    Changed,
     Failure(AgentSessionError),
     Closed,
 }
@@ -50,78 +50,40 @@ impl WorkerExit {
     }
 }
 
-pub(super) struct EventLane {
-    sender: SyncSender<WorkerEvent>,
-    pending_replaceable: Option<WorkerEvent>,
+pub(super) struct ChangeLane {
+    sender: SyncSender<WorkerSignal>,
     failure: Arc<Mutex<Option<AgentSessionError>>>,
 }
 
-impl EventLane {
+impl ChangeLane {
     pub(super) fn new(
-        sender: SyncSender<WorkerEvent>,
+        sender: SyncSender<WorkerSignal>,
         failure: Arc<Mutex<Option<AgentSessionError>>>,
     ) -> Self {
-        Self {
-            sender,
-            pending_replaceable: None,
-            failure,
+        Self { sender, failure }
+    }
+
+    /// Publishes a level-triggered wake-up. One unread notification represents
+    /// every committed suffix the reader has not consumed yet.
+    pub(super) fn changed(&mut self) -> bool {
+        match self.sender.try_send(WorkerSignal::Changed) {
+            Ok(()) | Err(TrySendError::Full(WorkerSignal::Changed)) => true,
+            Err(TrySendError::Disconnected(_)) => false,
+            Err(TrySendError::Full(_)) => {
+                unreachable!("a terminal worker signal cannot precede another change")
+            },
         }
     }
 
-    pub(super) fn send_events(&mut self, events: Vec<AgentEvent>) -> bool {
-        events
-            .into_iter()
-            .all(|event| self.send(WorkerEvent::Event(event)))
-    }
-
-    pub(super) fn send(&mut self, event: WorkerEvent) -> bool {
-        if let WorkerEvent::Failure(error) = &event
-            && let Ok(mut failure) = self.failure.lock()
-        {
+    pub(super) fn failure(&mut self, error: AgentSessionError) -> bool {
+        if let Ok(mut failure) = self.failure.lock() {
             *failure = Some(error.clone());
         }
-        if is_replaceable(&event) {
-            if let Some(pending) = self.pending_replaceable.as_mut()
-                && same_replaceable_target(pending, &event)
-            {
-                *pending = event;
-                return true;
-            }
-            if !self.flush_pending() {
-                return false;
-            }
-            match self.sender.try_send(event) {
-                Ok(()) => true,
-                Err(TrySendError::Full(event)) => {
-                    self.pending_replaceable = Some(event);
-                    true
-                },
-                Err(TrySendError::Disconnected(_)) => false,
-            }
-        } else {
-            self.flush_pending() && self.sender.send(event).is_ok()
-        }
+        self.sender.send(WorkerSignal::Failure(error)).is_ok()
     }
 
-    fn flush_pending(&mut self) -> bool {
-        let Some(event) = self.pending_replaceable.take() else {
-            return true;
-        };
-        self.sender.send(event).is_ok()
-    }
-
-    pub(super) fn flush_available(&mut self) -> bool {
-        let Some(event) = self.pending_replaceable.take() else {
-            return true;
-        };
-        match self.sender.try_send(event) {
-            Ok(()) => true,
-            Err(TrySendError::Full(event)) => {
-                self.pending_replaceable = Some(event);
-                true
-            },
-            Err(TrySendError::Disconnected(_)) => false,
-        }
+    pub(super) fn close(&mut self) -> bool {
+        self.sender.send(WorkerSignal::Closed).is_ok()
     }
 }
 
@@ -167,16 +129,13 @@ impl<B: AgentBackend> AgentWorker<B> {
         &mut self,
         commands: Receiver<AgentCommand>,
         urgent_commands: Receiver<AgentCommand>,
-        events: &mut EventLane,
+        changes: &mut ChangeLane,
         processed: &(Mutex<u64>, Condvar),
         lifecycle: &AtomicU8,
     ) -> WorkerExit {
         let mut deferred_commands = VecDeque::new();
         let mut deferred_urgent = VecDeque::new();
         loop {
-            if !events.flush_available() {
-                return WorkerExit::from_cleanup(self.runtime.shutdown());
-            }
             if lifecycle.load(Ordering::Acquire) == WORKER_STOPPING {
                 return WorkerExit::from_cleanup(self.runtime.shutdown());
             }
@@ -221,14 +180,13 @@ impl<B: AgentBackend> AgentWorker<B> {
                         )
                         .is_err();
                     match result {
-                        Ok(immediate) => {
-                            if !events.send_events(immediate) {
+                        Ok(_) => {
+                            if !changes.changed() {
                                 return WorkerExit::from_cleanup(self.runtime.shutdown());
                             }
                         },
                         Err(error) => {
-                            let _ = events.send(WorkerEvent::Failure(error));
-                            return WorkerExit::from_cleanup(self.runtime.shutdown());
+                            return self.finish_after_failure(error, changes);
                         },
                     }
                     if stopping {
@@ -243,28 +201,27 @@ impl<B: AgentBackend> AgentWorker<B> {
 
             match self.poll() {
                 Ok(RuntimePoll::Pending) => {},
-                Ok(RuntimePoll::Event(event)) => {
-                    if !events.send(WorkerEvent::Event(event)) {
+                Ok(RuntimePoll::Event(_)) => {
+                    if !changes.changed() {
                         return WorkerExit::from_cleanup(self.runtime.shutdown());
                     }
                 },
                 Ok(RuntimePoll::Closed) => {
                     return match self.runtime.shutdown().map_err(AgentSessionError::Runtime) {
                         Ok(terminal) => {
-                            let _ =
-                                events.send_events(terminal) && events.send(WorkerEvent::Closed);
+                            let published = terminal.is_empty() || changes.changed();
+                            let _ = published && changes.close();
                             WorkerExit::success()
                         },
                         Err(error) => {
-                            let _ = events.send(WorkerEvent::Failure(error));
+                            let _ = changes.failure(error);
                             WorkerExit::success()
                         },
                     };
                 },
                 Err(error) => {
                     let primary = AgentSessionError::Runtime(error);
-                    let _ = events.send(WorkerEvent::Failure(primary));
-                    return WorkerExit::from_cleanup(self.runtime.shutdown());
+                    return self.finish_after_failure(primary, changes);
                 },
             }
 
@@ -290,6 +247,27 @@ impl<B: AgentBackend> AgentWorker<B> {
             apply_event(&mut state, &self.active_turn_id, event);
         }
         Ok(poll)
+    }
+
+    fn finish_after_failure(
+        &mut self,
+        primary: AgentSessionError,
+        changes: &mut ChangeLane,
+    ) -> WorkerExit {
+        let primary_changed = matches!(
+            &primary,
+            AgentSessionError::Runtime(error) if !error.terminal_events().is_empty()
+        );
+        let cleanup = self.runtime.shutdown();
+        let cleanup_changed = match &cleanup {
+            Ok(events) => !events.is_empty(),
+            Err(error) => !error.terminal_events().is_empty(),
+        };
+        if primary_changed || cleanup_changed {
+            let _ = changes.changed();
+        }
+        let _ = changes.failure(primary);
+        WorkerExit::from_cleanup(cleanup)
     }
 }
 
@@ -355,30 +333,4 @@ fn command_turn(command: &AgentCommand) -> Option<TurnRef> {
         | AgentCommand::InterruptTurn { turn } => Some(*turn),
         AgentCommand::RespondToActivity { request, .. } => Some(request.activity().turn()),
     }
-}
-
-fn is_replaceable(event: &WorkerEvent) -> bool {
-    matches!(
-        event,
-        WorkerEvent::Event(AgentEvent::ActivityUpdated {
-            update: ActivityUpdate::TextSnapshot(_),
-            ..
-        })
-    )
-}
-
-fn same_replaceable_target(left: &WorkerEvent, right: &WorkerEvent) -> bool {
-    matches!(
-        (left, right),
-        (
-            WorkerEvent::Event(AgentEvent::ActivityUpdated {
-                activity: left,
-                update: ActivityUpdate::TextSnapshot(_),
-            }),
-            WorkerEvent::Event(AgentEvent::ActivityUpdated {
-                activity: right,
-                update: ActivityUpdate::TextSnapshot(_),
-            }),
-        ) if left == right
-    )
 }

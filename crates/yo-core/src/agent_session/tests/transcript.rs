@@ -7,10 +7,10 @@ use crate::{
     UserInput,
 };
 
-// frontend가 live event를 한 번도 poll하지 않아도 Journal reader는 Worker가 의미적으로
+// frontend가 변경 알림을 한 번도 poll하지 않아도 Journal reader는 Worker가 의미적으로
 // commit한 명령과 이벤트를 순서대로 읽어야 Transcript replay의 독립된 근거가 된다.
 #[test]
-fn reads_worker_commits_without_consuming_the_live_event_lane() {
+fn reads_worker_commits_without_consuming_the_change_notification() {
     let first = turn(1);
     let backend = ScriptedBackend::new([
         BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {

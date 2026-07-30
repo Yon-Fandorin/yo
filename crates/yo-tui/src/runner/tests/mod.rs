@@ -3,12 +3,12 @@ use std::{num::NonZeroU64, time::Duration};
 use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate,
     AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendEvent, BackendScriptStep,
-    RequestId, RuntimeError, RuntimePoll, ScriptedBackend, SessionId, TurnId, TurnOutcome, TurnRef,
-    UserInput,
+    RequestId, RuntimeError, RuntimePoll, ScriptedBackend, SessionId, TranscriptRecord, TurnId,
+    TurnOutcome, TurnRef, UserInput,
 };
 
 use super::{
-    AgentAction, AgentConnection, ExitReason, RunOutcome,
+    AgentAction, AgentConnection, AgentPoll, ExitReason, RunOutcome,
     state::{StateEffect, StateError, TuiState},
     unix::{drain_agent, handle_backpressured_input, prepare_resize, retained_session_output},
 };
@@ -58,9 +58,10 @@ fn edits_prompt_without_creating_transcript_items() {
     assert!(state.transcript().items().is_empty());
 }
 
-// Enter로 제출한 입력은 user transcript에 한 번 남고 prompt는 비워진다.
+// Enter는 prompt만 비우며, 같은 입력의 StartTurn 명령이 저널에 확정된 뒤에만 Chat에
+// 한 번 나타난다.
 #[test]
-fn submitted_prompt_becomes_one_user_transcript_item() {
+fn committed_submitted_prompt_becomes_one_user_transcript_item() {
     let mut state = TuiState::new();
     state
         .handle(InputEvent::Paste("question".to_owned()), Duration::ZERO)
@@ -77,11 +78,22 @@ fn submitted_prompt_becomes_one_user_transcript_item() {
     );
 
     assert_eq!(state.editor().text(), "");
+    assert!(state.transcript().items().is_empty());
+
+    state
+        .observe_record(TranscriptRecord::CommandCommitted(
+            AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("question"),
+            },
+        ))
+        .unwrap();
+
     assert_eq!(state.transcript().items().len(), 1);
     assert_eq!(rendered_row(&state, Size::new(12, 3), 0), "❯ question");
 }
 
-// 종료용 출력은 prompt를 섞지 않고 현재 일반 대화 뷰를 terminal-independent text로 만든다.
+// 종료용 출력은 저널에 확정된 Chat만 포함하고 아직 작성 중인 prompt는 섞지 않는다.
 #[test]
 fn session_output_contains_the_current_chat_without_the_prompt() {
     let mut state = TuiState::new();
@@ -93,6 +105,14 @@ fn session_output_contains_the_current_chat_without_the_prompt() {
             key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
             Duration::ZERO,
         )
+        .unwrap();
+    state
+        .observe_record(TranscriptRecord::CommandCommitted(
+            AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("question"),
+            },
+        ))
         .unwrap();
     state
         .handle(InputEvent::Paste("draft".to_owned()), Duration::ZERO)
@@ -119,6 +139,14 @@ fn oversized_session_output_does_not_replace_a_successful_exit() {
             key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
             Duration::ZERO,
         )
+        .unwrap();
+    state
+        .observe_record(TranscriptRecord::CommandCommitted(
+            AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("\n".repeat(usize::from(u16::MAX) + 1)),
+            },
+        ))
         .unwrap();
 
     assert_eq!(retained_session_output(&state), None);
@@ -188,24 +216,23 @@ fn empty_ctrl_d_requests_normal_exit() {
     );
 }
 
-// transcript ID가 더는 증가할 수 없으면 제출 내용을 중복 ID로 넣지 않고 실패한다.
+// 저널에 확정된 사용자 명령을 표시할 transcript ID가 더는 증가할 수 없으면 중복 ID로
+// 일부만 넣지 않고 실패한다.
 #[test]
 fn item_id_overflow_preserves_empty_transcript() {
     let mut state = TuiState::new();
     state.set_next_item_id(u64::MAX);
-    state
-        .handle(InputEvent::Paste("질문".to_owned()), Duration::ZERO)
-        .unwrap();
 
     assert_eq!(
-        state.handle(
-            key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
-            Duration::ZERO,
-        ),
+        state.observe_record(TranscriptRecord::CommandCommitted(
+            AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("질문"),
+            },
+        )),
         Err(StateError::ItemIdOverflow)
     );
     assert!(state.transcript().items().is_empty());
-    assert_eq!(state.editor().text(), "질문");
 }
 
 // public outcome은 프로세스를 직접 종료하지 않고 정상 종료 이유를 반환한다.
@@ -655,8 +682,12 @@ impl AgentConnection for RuntimeConnection {
         unreachable!("this projection test consumes only backend observations")
     }
 
-    fn poll(&mut self) -> Result<RuntimePoll, Self::Error> {
-        self.runtime.poll_event()
+    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
+        Ok(match self.runtime.poll_event()? {
+            RuntimePoll::Pending => AgentPoll::Pending,
+            RuntimePoll::Event(event) => AgentPoll::Record(TranscriptRecord::EventCommitted(event)),
+            RuntimePoll::Closed => AgentPoll::Closed,
+        })
     }
 }
 

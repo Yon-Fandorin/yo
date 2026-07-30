@@ -108,7 +108,7 @@ The visible failure is not always owned by the module that displays it:
 | Symptom | Trace in this order |
 |---|---|
 | Submitted text appears, but no Turn starts | `yo-tui/runner/state.rs` → `yo-cli/agent` → `yo-core/agent_session/admission.rs` → worker/runtime → backend |
-| Codex accepted work, but the transcript does not update | `backend/codex/events.rs` → `AgentRuntime::poll_event` → agent-session event lane → `TuiState::observe` → transcript |
+| Codex accepted work, but the transcript does not update | `backend/codex/events.rs` → `AgentRuntime::poll_event` and Journal append → agent-session change notification → `yo-cli/agent` Transcript cursor → `TuiState::observe_record` → Chat transcript |
 | Input stalls only while the backend is busy | runner pending dispatch → `AgentSession::dispatch`/`retry` → bounded command lane → worker lifecycle |
 | Terminal state is damaged after a normal exit | terminal mode guard → presenter cleanup → Unix backend; inspect process termination only when a signal path is involved |
 | A signal exits before cleanup is visible | TUI typed termination observation → guarded terminal return → agent shutdown → `TerminationCoordinator::with_active_resource` |

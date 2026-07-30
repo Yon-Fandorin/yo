@@ -6,8 +6,8 @@ use std::{
 
 use super::super::{AgentIntent, AgentSession};
 use crate::{
-    ActivityKind, ActivityOutcome, ActivityRequestRef, AgentEvent, ApprovalDecision, CodexBackend,
-    CodexBackendConfig, RuntimePoll, TurnOutcome,
+    ActivityKind, ActivityOutcome, ActivityRequestRef, AgentEvent, AgentSessionPoll,
+    ApprovalDecision, CodexBackend, CodexBackendConfig, TranscriptRecord, TurnOutcome,
 };
 
 // 호환되는 로컬 Codex와 인증 환경이 있을 때 실제 도구가 disposable workspace에 파일을
@@ -36,6 +36,8 @@ fn run_local_file_change(workspace: &std::path::Path) -> Result<(), String> {
     let backend = CodexBackend::spawn(CodexBackendConfig::new(workspace))
         .map_err(|error| error.to_string())?;
     let mut app = AgentSession::start(backend).map_err(|error| error.to_string())?;
+    let transcript = app.transcript_reader();
+    let mut cursor = None;
     app.dispatch(AgentIntent::Submit(
         "First run `pwd` with the shell command tool and wait for it to complete. Then use the \
          file patch tool to create yo-proof.txt in the current workspace containing exactly \
@@ -48,39 +50,52 @@ fn run_local_file_change(workspace: &std::path::Path) -> Result<(), String> {
     let mut activities = HashMap::new();
     let mut completed_tool = false;
     let mut completed_file_change = false;
-    let turn_outcome = loop {
+    let turn_outcome = 'turn: loop {
         if Instant::now() >= deadline {
             break Err("Codex Turn did not complete within 180 seconds".to_owned());
         }
         match app.poll().map_err(|error| error.to_string())? {
-            RuntimePoll::Pending => thread::sleep(Duration::from_millis(10)),
-            RuntimePoll::Closed => {
+            AgentSessionPoll::Pending => thread::sleep(Duration::from_millis(10)),
+            AgentSessionPoll::Closed => {
                 break Err("Codex closed before the Turn completed".to_owned());
             },
-            RuntimePoll::Event(event) => match event {
-                AgentEvent::ActivityStarted { activity, kind } => {
-                    activities.insert(activity, kind);
-                    if let ActivityKind::ApprovalRequest { request_id } = kind {
-                        app.dispatch(AgentIntent::RespondToApproval {
-                            request: ActivityRequestRef::new(activity, request_id),
-                            decision: ApprovalDecision::Approved,
-                        })
-                        .map_err(|error| error.to_string())?;
+            AgentSessionPoll::Changed => {
+                let slice = transcript.read_after(cursor);
+                if let Some(last) = slice.entries().last() {
+                    cursor = Some(last.sequence());
+                }
+                for entry in slice.entries() {
+                    let TranscriptRecord::EventCommitted(event) = entry.record() else {
+                        continue;
+                    };
+                    match event {
+                        AgentEvent::ActivityStarted { activity, kind } => {
+                            activities.insert(*activity, *kind);
+                            if let ActivityKind::ApprovalRequest { request_id } = kind {
+                                app.dispatch(AgentIntent::RespondToApproval {
+                                    request: ActivityRequestRef::new(*activity, *request_id),
+                                    decision: ApprovalDecision::Approved,
+                                })
+                                .map_err(|error| error.to_string())?;
+                            }
+                        },
+                        AgentEvent::ActivityFinished { activity, outcome } => {
+                            if *outcome == ActivityOutcome::Completed {
+                                match activities.get(activity) {
+                                    Some(ActivityKind::ToolCall) => completed_tool = true,
+                                    Some(ActivityKind::FileChange) => completed_file_change = true,
+                                    _ => {},
+                                }
+                            }
+                        },
+                        AgentEvent::TurnFinished { outcome, .. } => {
+                            break 'turn Ok(outcome.clone());
+                        },
+                        AgentEvent::SessionCreated { .. }
+                        | AgentEvent::TurnStarted { .. }
+                        | AgentEvent::ActivityUpdated { .. } => {},
                     }
-                },
-                AgentEvent::ActivityFinished { activity, outcome } => {
-                    if outcome == ActivityOutcome::Completed {
-                        match activities.get(&activity) {
-                            Some(ActivityKind::ToolCall) => completed_tool = true,
-                            Some(ActivityKind::FileChange) => completed_file_change = true,
-                            _ => {},
-                        }
-                    }
-                },
-                AgentEvent::TurnFinished { outcome, .. } => break Ok(outcome),
-                AgentEvent::SessionCreated { .. }
-                | AgentEvent::TurnStarted { .. }
-                | AgentEvent::ActivityUpdated { .. } => {},
+                }
             },
         }
     };

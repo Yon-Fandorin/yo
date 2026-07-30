@@ -13,14 +13,14 @@ use crossterm::event::{
 };
 use yo_core::{
     AgentBackend, AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionError,
-    BackendCapabilities, BackendFailure, BackendPoll, BackendStopHandle, CommandAdmission,
-    RuntimePoll,
+    AgentSessionPoll, BackendCapabilities, BackendFailure, BackendPoll, BackendStopHandle,
+    CommandAdmission, TranscriptRecord, TurnRef,
 };
 
 use crate::{
     runner::{
-        AgentAction, AgentConnection, DispatchOutcome, PendingDispatch, TerminationEvent,
-        TerminationSource, TuiSession,
+        AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch,
+        TerminationEvent, TerminationSource, TuiSession,
         unix::{FrameViewport, LivePresenter, LoopError, LoopExit, drive},
     },
     surface::{CellContent, Point, Size, Surface},
@@ -143,12 +143,25 @@ impl TerminationSource for StopAfter {
 }
 
 #[derive(Default)]
-struct SimpleAgent;
+struct SimpleAgent {
+    records: VecDeque<TranscriptRecord>,
+}
 
 impl AgentConnection for SimpleAgent {
     type Error = Infallible;
 
-    fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
+    fn dispatch(&mut self, action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
+        if let AgentIntent::Submit(input) = action {
+            self.records.push_back(TranscriptRecord::CommandCommitted(
+                AgentCommand::StartTurn {
+                    turn: TurnRef::new(
+                        yo_core::SessionId::new(std::num::NonZeroU64::MIN),
+                        yo_core::TurnId::new(std::num::NonZeroU64::MIN),
+                    ),
+                    input: input.into(),
+                },
+            ));
+        }
         Ok(DispatchOutcome::Accepted)
     }
 
@@ -156,8 +169,11 @@ impl AgentConnection for SimpleAgent {
         Ok(DispatchOutcome::Accepted)
     }
 
-    fn poll(&mut self) -> Result<RuntimePoll, Self::Error> {
-        Ok(RuntimePoll::Pending)
+    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
+        Ok(self
+            .records
+            .pop_front()
+            .map_or(AgentPoll::Pending, AgentPoll::Record))
     }
 }
 
@@ -288,8 +304,8 @@ impl AgentConnection for CoreAgent {
         self.session.retry(pending)
     }
 
-    fn poll(&mut self) -> Result<RuntimePoll, Self::Error> {
-        self.session.poll()
+    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
+        Ok(AgentPoll::Pending)
     }
 }
 
@@ -298,7 +314,7 @@ impl AgentConnection for CoreAgent {
 #[test]
 fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
     let mut retained = TuiSession::new();
-    let mut agent = SimpleAgent;
+    let mut agent = SimpleAgent::default();
     let first_polls = Rc::new(Cell::new(0));
     let first = run_generation(
         &mut retained,
@@ -348,8 +364,10 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
         processed: processed_tx,
         blocked: false,
     };
+    let session = AgentSession::start(backend).unwrap();
+    let transcript = session.transcript_reader();
     let mut agent = CoreAgent {
-        session: AgentSession::start(backend).unwrap(),
+        session,
         retries: 0,
     };
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -386,14 +404,23 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         match agent.session.poll().unwrap() {
-            RuntimePoll::Event(AgentEvent::TurnStarted { .. }) => break,
-            RuntimePoll::Pending if Instant::now() < deadline => {
-                std::thread::yield_now();
+            AgentSessionPoll::Changed => {
+                if transcript.read_after(None).entries().iter().any(|entry| {
+                    matches!(
+                        entry.record(),
+                        TranscriptRecord::EventCommitted(AgentEvent::TurnStarted { .. })
+                    )
+                }) {
+                    break;
+                }
             },
-            other => assert!(
-                Instant::now() < deadline,
-                "worker did not finish the blocked command: {other:?}"
-            ),
+            AgentSessionPoll::Pending if Instant::now() < deadline => std::thread::yield_now(),
+            other => {
+                assert!(
+                    Instant::now() < deadline,
+                    "worker did not finish the blocked command: {other:?}"
+                );
+            },
         }
     }
     let polls = Rc::new(Cell::new(0));

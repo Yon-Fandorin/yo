@@ -338,8 +338,8 @@ fn retains_session_start_and_cleanup_failures() {
     ));
 }
 
-// fake backend의 실행 중 failure는 worker에서 core의 typed RuntimeError가 된 뒤 frontend
-// poll 오류로 전달되며 shutdown 단계와 섞여 사라지지 않는다.
+// fake backend의 실행 중 failure가 만든 TurnFinished 의미는 Journal에서 먼저 읽히고,
+// worker의 typed RuntimeError도 다음 poll 오류로 남아 shutdown과 섞여 사라지지 않는다.
 #[test]
 fn reports_a_fake_backend_turn_failure_through_the_product_connection() {
     let first = turn(1);
@@ -361,6 +361,13 @@ fn reports_a_fake_backend_turn_failure_through_the_product_connection() {
     app.dispatch(AgentIntent::Submit("fail".to_owned()))
         .unwrap();
     next_poll(&mut app).unwrap();
+    assert!(matches!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnFinished {
+            outcome: TurnOutcome::Failed(_),
+            ..
+        })
+    ));
 
     assert!(matches!(
         next_poll(&mut app),

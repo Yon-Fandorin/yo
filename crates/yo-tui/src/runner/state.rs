@@ -4,8 +4,8 @@ use std::{
 };
 
 use yo_core::{
-    ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate, AgentEvent,
-    ApprovalDecision, TurnOutcome,
+    ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate, AgentCommand,
+    AgentEvent, ApprovalDecision, TranscriptRecord, TurnOutcome,
 };
 
 use crate::{
@@ -104,7 +104,6 @@ impl TuiState {
             return Ok(StateEffect::Suspend);
         }
 
-        let editor_before = self.editor.clone();
         let effect = self.editor.handle(input, self.turn_active, now);
         match effect {
             EditorEffect::BufferChanged => Ok(StateEffect::Redraw),
@@ -112,16 +111,6 @@ impl TuiState {
                 if let Some(request) = self.pending_requests.front().copied() {
                     return self.request_response(request, text);
                 }
-                let id = TranscriptItemId::new(self.next_item_id);
-                let Some(next) = self.next_item_id.checked_add(1) else {
-                    self.editor = editor_before;
-                    return Err(StateError::ItemIdOverflow);
-                };
-                if let Err(error) = self.transcript.push_user(id, text.clone()) {
-                    self.editor = editor_before;
-                    return Err(StateError::Transcript(error));
-                }
-                self.next_item_id = next;
                 Ok(StateEffect::Dispatch(AgentAction::Submit(text)))
             },
             EditorEffect::Exit => Ok(StateEffect::Exit),
@@ -129,6 +118,29 @@ impl TuiState {
             EditorEffect::Unhandled | EditorEffect::NoChange | EditorEffect::ExitArmed => {
                 Ok(StateEffect::Unchanged)
             },
+        }
+    }
+
+    pub(super) fn observe_record(
+        &mut self,
+        record: TranscriptRecord,
+    ) -> Result<StateEffect, StateError> {
+        match record {
+            TranscriptRecord::CommandCommitted(
+                AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. },
+            ) => {
+                let id = self.next_transcript_id()?;
+                self.transcript
+                    .push_user(id, input.into_string())
+                    .map_err(StateError::Transcript)?;
+                Ok(StateEffect::Redraw)
+            },
+            TranscriptRecord::CommandCommitted(
+                AgentCommand::CreateSession { .. }
+                | AgentCommand::RespondToActivity { .. }
+                | AgentCommand::InterruptTurn { .. },
+            ) => Ok(StateEffect::Unchanged),
+            TranscriptRecord::EventCommitted(event) => self.observe(event),
         }
     }
 

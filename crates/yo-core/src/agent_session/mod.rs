@@ -10,8 +10,8 @@ use std::{
 };
 
 use crate::{
-    AgentBackend, AgentCommand, AgentEvent, BackendStopHandle, RuntimePoll, SessionId,
-    TranscriptReader, journal::SessionJournal,
+    AgentBackend, AgentCommand, AgentEvent, BackendStopHandle, SessionId, TranscriptReader,
+    journal::SessionJournal,
 };
 
 mod admission;
@@ -24,14 +24,14 @@ pub use contract::{AgentIntent, CommandAdmission, PendingCommand};
 pub use error::AgentSessionError;
 #[cfg(test)]
 use worker::apply_event;
-use worker::{AgentWorker, EventLane, WorkerEvent, WorkerExit};
+use worker::{AgentWorker, ChangeLane, WorkerExit, WorkerSignal};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const WORKER_GRACEFUL_SHUTDOWN: Duration = Duration::from_millis(50);
 const WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 const COMMAND_CAPACITY: usize = 32;
 const URGENT_COMMAND_CAPACITY: usize = 8;
-const EVENT_CAPACITY: usize = 256;
+const CHANGE_CAPACITY: usize = 1;
 const WORKER_IDLE: u8 = 0;
 const WORKER_EXECUTING: u8 = 1;
 const WORKER_STOPPING: u8 = 2;
@@ -40,7 +40,7 @@ const WORKER_STOPPING: u8 = 2;
 pub struct AgentSession {
     commands: SyncSender<AgentCommand>,
     urgent_commands: SyncSender<AgentCommand>,
-    events: Option<Receiver<WorkerEvent>>,
+    changes: Option<Receiver<WorkerSignal>>,
     finished: Receiver<()>,
     stop: BackendStopHandle,
     failure: Arc<Mutex<Option<AgentSessionError>>>,
@@ -53,6 +53,17 @@ pub struct AgentSession {
     #[cfg(test)]
     processed: Arc<(Mutex<u64>, Condvar)>,
     worker: Option<JoinHandle<WorkerExit>>,
+}
+
+/// Nonblocking status of the live Session's Journal and worker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentSessionPoll {
+    /// No Journal change or terminal worker state is currently available.
+    Pending,
+    /// One or more committed records may be read from [`TranscriptReader`].
+    Changed,
+    /// The worker closed after publishing every preceding Journal change.
+    Closed,
 }
 
 impl AgentSession {
@@ -91,7 +102,7 @@ impl AgentSession {
         let session_id = SessionId::new(NonZeroU64::MIN);
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (urgent_tx, urgent_rx) = mpsc::sync_channel(URGENT_COMMAND_CAPACITY);
-        let (event_tx, event_rx) = mpsc::sync_channel(EVENT_CAPACITY);
+        let (change_tx, change_rx) = mpsc::sync_channel(CHANGE_CAPACITY);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let (finished_tx, finished_rx) = mpsc::sync_channel(1);
         let (backend_tx, backend_rx) = mpsc::sync_channel(1);
@@ -122,12 +133,12 @@ impl AgentSession {
                     journal,
                 );
                 let outcome = match worker.initialize() {
-                    Ok(events) => {
+                    Ok(_) => {
                         if startup_tx.send(Ok(())).is_err() {
                             WorkerExit::from_cleanup(worker.runtime.shutdown())
                         } else {
-                            let mut lane = EventLane::new(event_tx, worker_failure);
-                            if !lane.send_events(events) {
+                            let mut lane = ChangeLane::new(change_tx, worker_failure);
+                            if !lane.changed() {
                                 WorkerExit::from_cleanup(worker.runtime.shutdown())
                             } else {
                                 worker.run(
@@ -207,7 +218,7 @@ impl AgentSession {
                 let mut app = Self {
                     commands: command_tx,
                     urgent_commands: urgent_tx,
-                    events: Some(event_rx),
+                    changes: Some(change_rx),
                     finished: finished_rx,
                     stop,
                     failure,
@@ -259,8 +270,8 @@ impl AgentSession {
         }
 
         let mut failures = Vec::new();
-        if let Some(events) = self.events.take() {
-            drop(events);
+        if let Some(changes) = self.changes.take() {
+            drop(changes);
         }
 
         if !finished_gracefully && self.finished.recv_timeout(WORKER_SHUTDOWN_TIMEOUT).is_err() {
@@ -333,22 +344,25 @@ impl AgentSession {
         }
     }
 
-    /// Observes one already available semantic event without blocking.
-    pub fn poll(&mut self) -> Result<RuntimePoll, AgentSessionError> {
-        let Some(events) = self.events.as_ref() else {
-            return Ok(RuntimePoll::Closed);
+    /// Observes whether committed Journal history or worker state changed.
+    ///
+    /// A `Changed` result carries no semantic data. Frontends read the
+    /// committed suffix through [`Self::transcript_reader`].
+    pub fn poll(&mut self) -> Result<AgentSessionPoll, AgentSessionError> {
+        let Some(changes) = self.changes.as_ref() else {
+            return Ok(AgentSessionPoll::Closed);
         };
-        match events.try_recv() {
-            Ok(WorkerEvent::Event(event)) => Ok(RuntimePoll::Event(event)),
-            Ok(WorkerEvent::Failure(error)) => {
+        match changes.try_recv() {
+            Ok(WorkerSignal::Changed) => Ok(AgentSessionPoll::Changed),
+            Ok(WorkerSignal::Failure(error)) => {
                 if let Ok(mut failure) = self.failure.lock() {
                     failure.take();
                 }
                 Err(error)
             },
-            Ok(WorkerEvent::Closed) => Ok(RuntimePoll::Closed),
-            Err(TryRecvError::Empty) => Ok(RuntimePoll::Pending),
-            Err(TryRecvError::Disconnected) => Ok(RuntimePoll::Closed),
+            Ok(WorkerSignal::Closed) => Ok(AgentSessionPoll::Closed),
+            Err(TryRecvError::Empty) => Ok(AgentSessionPoll::Pending),
+            Err(TryRecvError::Disconnected) => Ok(AgentSessionPoll::Closed),
         }
     }
 

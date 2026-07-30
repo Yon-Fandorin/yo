@@ -5,12 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use yo_core::RuntimePoll;
-
 use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
     runner::{
-        AgentConnection, DispatchOutcome, PresentationMode, RunError, TerminalOutcome,
+        AgentConnection, AgentPoll, DispatchOutcome, PresentationMode, RunError, TerminalOutcome,
         TerminationSource, TuiSession,
         session::SessionParts,
         state::{FrameError, StateEffect, StateError, TuiState},
@@ -413,12 +411,12 @@ where
             .poll()
             .map_err(|error| LoopError::Agent(error.to_string()))?
         {
-            RuntimePoll::Pending => return Ok(changed),
-            RuntimePoll::Event(event) => {
-                state.observe(event).map_err(LoopError::State)?;
+            AgentPoll::Pending => return Ok(changed),
+            AgentPoll::Record(record) => {
+                state.observe_record(record).map_err(LoopError::State)?;
                 changed = true;
             },
-            RuntimePoll::Closed => {
+            AgentPoll::Closed => {
                 return Err(LoopError::Agent(
                     "the agent connection closed unexpectedly".to_owned(),
                 ));

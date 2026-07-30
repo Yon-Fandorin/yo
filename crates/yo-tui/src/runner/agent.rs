@@ -1,10 +1,21 @@
 use std::error::Error;
 
-use yo_core::RuntimePoll;
+use yo_core::TranscriptRecord;
 pub use yo_core::{
     AgentIntent as AgentAction, CommandAdmission as DispatchOutcome,
     PendingCommand as PendingDispatch,
 };
+
+/// One nonblocking observation exposed to the TUI.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AgentPoll {
+    /// No committed record or terminal state is currently available.
+    Pending,
+    /// One record from the Session Journal's ordered Transcript projection.
+    Record(TranscriptRecord),
+    /// The connection closed after exposing every preceding record.
+    Closed,
+}
 
 /// Frontend-facing connection owned by the product entry point.
 ///
@@ -15,13 +26,13 @@ pub trait AgentConnection {
 
     /// Queues one UI intent without waiting for provider acceptance.
     ///
-    /// Immediate semantic events and command failures are observed through
-    /// [`Self::poll`] so the terminal-owning loop never blocks on provider I/O.
+    /// Committed records and command failures are observed through [`Self::poll`]
+    /// so the terminal-owning loop never blocks on provider I/O.
     fn dispatch(&mut self, action: AgentAction) -> Result<DispatchOutcome, Self::Error>;
 
     /// Retries an operation retained by an earlier dispatch attempt.
     fn retry(&mut self, pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error>;
 
-    /// Observes one already available semantic event without blocking.
-    fn poll(&mut self) -> Result<RuntimePoll, Self::Error>;
+    /// Observes one already committed Transcript record without blocking.
+    fn poll(&mut self) -> Result<AgentPoll, Self::Error>;
 }

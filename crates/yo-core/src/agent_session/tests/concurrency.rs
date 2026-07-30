@@ -6,13 +6,13 @@ use std::{
 
 use super::{
     super::{
-        AgentIntent, AgentSession, AgentSessionError, CommandAdmission, EventLane, WorkerEvent,
-        apply_event,
+        AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, ChangeLane,
+        CommandAdmission, WorkerSignal, apply_event,
     },
-    support::{activity, next_poll, session, start_app, turn},
+    support::{next_poll, session, start_app, turn},
 };
 use crate::{
-    ActivityUpdate, AgentBackend, AgentCommand, AgentEvent, BackendCapabilities, BackendFailure,
+    AgentBackend, AgentCommand, AgentEvent, BackendCapabilities, BackendFailure,
     BackendFailureKind, BackendPoll, BackendScriptStep, BackendStopHandle, RuntimeError,
     RuntimePoll, ScriptedBackend, TurnOutcome, UserInput,
 };
@@ -177,7 +177,7 @@ fn provider_wait_never_blocks_the_frontend_connection() {
     app.dispatch(AgentIntent::Submit("wait".to_owned()))
         .unwrap();
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-    assert_eq!(app.poll().unwrap(), RuntimePoll::Pending);
+    assert_eq!(app.poll().unwrap(), AgentSessionPoll::Pending);
 
     release_tx.send(()).unwrap();
     assert!(matches!(
@@ -351,7 +351,7 @@ fn accepted_interrupt_rejects_retained_and_new_steers() {
 }
 
 // backend가 스스로 닫히는 순간 cleanup도 실패하고 frontend 종료가 겹쳐도, 아직 poll되지
-// 않은 cleanup failure를 shutdown이 bounded event lane에서 회수해 성공으로 숨기지 않는다.
+// 않은 cleanup failure를 shutdown이 change lane과 별도로 회수해 성공으로 숨기지 않는다.
 #[test]
 fn shutdown_retains_an_unpolled_worker_cleanup_failure() {
     let backend = ScriptedBackend::new([
@@ -400,37 +400,16 @@ fn shutdown_retains_a_cleanup_failure_that_races_with_receiver_drop() {
     ));
 }
 
-// bounded event lane이 가득 찼을 때 같은 Activity의 중간 TextSnapshot은 무한히 쌓지 않고
-// 가장 최신 값 하나로 합치며, 빈자리가 생기면 그 최신 snapshot을 전달한다.
+// Journal 변경 알림을 frontend가 아직 읽지 않았을 때 후속 commit은 payload나 알림을
+// 무한히 쌓지 않고 같은 level-triggered 신호 하나로 합쳐야 한다.
 #[test]
-fn coalesces_replaceable_snapshots_while_the_event_lane_is_full() {
-    let work = activity(turn(1), 1);
+fn coalesces_journal_changes_while_one_notification_is_unread() {
     let (sender, receiver) = mpsc::sync_channel(1);
-    let mut lane = EventLane::new(sender, Arc::new(Mutex::new(None)));
-    let snapshot = |text: &str| {
-        WorkerEvent::Event(AgentEvent::ActivityUpdated {
-            activity: work,
-            update: ActivityUpdate::TextSnapshot(text.to_owned()),
-        })
-    };
+    let mut lane = ChangeLane::new(sender, Arc::new(Mutex::new(None)));
 
-    assert!(lane.send(snapshot("first")));
-    assert!(lane.send(snapshot("second")));
-    assert!(lane.send(snapshot("latest")));
-    assert!(matches!(
-        receiver.recv().unwrap(),
-        WorkerEvent::Event(AgentEvent::ActivityUpdated {
-            update: ActivityUpdate::TextSnapshot(ref text),
-            ..
-        }) if text == "first"
-    ));
-
-    assert!(lane.flush_available());
-    assert!(matches!(
-        receiver.recv().unwrap(),
-        WorkerEvent::Event(AgentEvent::ActivityUpdated {
-            update: ActivityUpdate::TextSnapshot(ref text),
-            ..
-        }) if text == "latest"
-    ));
+    assert!(lane.changed());
+    assert!(lane.changed());
+    assert!(lane.changed());
+    assert!(matches!(receiver.recv().unwrap(), WorkerSignal::Changed));
+    assert!(receiver.try_recv().is_err());
 }

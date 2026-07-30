@@ -107,7 +107,7 @@ macro 내부 발생은 `rg`로 확인하고 symbol 의미는 rust-analyzer로 �
 | 증상 | 이 순서로 추적 |
 |---|---|
 | 제출한 text는 보이지만 Turn이 시작되지 않음 | `yo-tui/runner/state.rs` → `yo-cli/agent` → `yo-core/agent_session/admission.rs` → worker/runtime → backend |
-| Codex가 작업을 수락했지만 대화 기록이 갱신되지 않음 | `backend/codex/events.rs` → `AgentRuntime::poll_event` → agent-session event lane → `TuiState::observe` → transcript |
+| Codex가 작업을 수락했지만 대화 기록이 갱신되지 않음 | `backend/codex/events.rs` → `AgentRuntime::poll_event`와 Journal 추가 → agent-session 변경 알림 → `yo-cli/agent` Transcript cursor → `TuiState::observe_record` → Chat transcript |
 | backend가 바쁠 때만 input이 멈춤 | runner pending dispatch → `AgentSession::dispatch`/`retry` → bounded command lane → worker lifecycle |
 | 일반 종료 뒤 터미널 상태가 손상됨 | terminal mode guard → presenter cleanup → Unix backend. signal 경로가 관련될 때만 process termination 확인 |
 | 정리가 보이기 전에 signal로 종료됨 | TUI typed termination observation → guarded terminal return → agent shutdown → `TerminationCoordinator::with_active_resource` |

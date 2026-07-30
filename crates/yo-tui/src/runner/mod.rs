@@ -6,7 +6,7 @@ mod session;
 mod state;
 mod unix;
 
-pub use agent::{AgentAction, AgentConnection, DispatchOutcome, PendingDispatch};
+pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch};
 pub use error::RunError;
 pub use session::TuiSession;
 pub use unix::{run, run_session_with_mode, run_with_mode};
