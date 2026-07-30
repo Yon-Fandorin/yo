@@ -1,0 +1,7 @@
+schema: methexis.source/v1alpha1
+id: tui.appearance-002
+revision: sha256:8ffb2bf532c8d5e4b656352ec9cc434eb4747d0c308035593d1907ef68ac97f9
+payload:
+  kind: decision
+  content: >-
+    Each logical frame pins one committed appearance snapshot and revision before measurement and uses it through paint and completed Surface creation. Components receive the selected snapshot explicitly, presenters consume only the completed Surface, and plain session output uses the same committed transcript configuration and glyphs as the screen.

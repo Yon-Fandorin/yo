@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.appearance.frame-consistency
+revision: sha256:5c391df66f82b9f447d1dee86bf3d510d1305910c36ac3042818e6448361ff9a
+reviewer: tui-architecture
+reviewed_at: 2026-07-30T15:50:04Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:7091da4381da4f86364373e7a7fc0f54f6a733b4e48886a0672bcf3048f91aca
+request_hash: sha256:52da621dc117b3e995739f6033211c83dd660c6b044b0d29e27103d886b271b4

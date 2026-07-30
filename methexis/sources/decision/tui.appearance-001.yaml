@@ -1,0 +1,7 @@
+schema: methexis.source/v1alpha1
+id: tui.appearance-001
+revision: sha256:a12559aef8ef3ac565758ae82fcba43e374a86066e9d4154df9aaf57535b03c5
+payload:
+  kind: decision
+  content: >-
+    A TUI session owns one immutable committed appearance snapshot and monotonic revision. The single TUI owner validates a complete candidate outside frame preparation, explicitly rejects invalid candidates without changing committed state, and atomically replaces the whole snapshot for the next logical frame. Appearance is not process-global, and the committed choice survives terminal ownership generations.

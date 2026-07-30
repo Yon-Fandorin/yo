@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:fa94afc5a22be252b89c2ea26c302d498420f3e9436eee8e65df824c65260923",
+  "candidate_set_id": "sha256:d17ee756189de2e837a883ced727b84f5b4e51d0a359456bd16a5e143430a488",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:acd91bed4177c468c6bf97712dbb687608deb7a6666418dafb62e958405ab515",
+  "catalog_hash": "sha256:206e43e7ac475e3904cfa5b35f07395a4f3afbc1730cd4d65dbc55377291a005",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -139,6 +139,25 @@
       ]
     },
     {
+      "id": "tui.appearance.glyph-profiles",
+      "path": "methexis/knowledge/tui-architecture/tui.appearance.glyph-profiles.md",
+      "score": 200,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "ansi",
+          "score": 100
+        },
+        {
+          "kind": "query_token",
+          "field": "projection",
+          "term": "ansi",
+          "score": 100
+        }
+      ]
+    },
+    {
       "id": "tui.terminal.lifecycle-restoration",
       "path": "methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md",
       "score": 130,
@@ -259,6 +278,23 @@
         {
           "kind": "relation",
           "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.appearance.session-publication",
+      "path": "methexis/knowledge/tui-architecture/tui.appearance.session-publication.md",
+      "score": 20,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.appearance.glyph-profiles",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
           "score": 10
         }
       ]
@@ -428,6 +464,18 @@
       ]
     },
     {
+      "id": "tui.appearance.frame-consistency",
+      "path": "methexis/knowledge/tui-architecture/tui.appearance.frame-consistency.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.appearance.glyph-profiles",
+          "score": 10
+        }
+      ]
+    },
+    {
       "id": "tui.crate.ui-only-boundary",
       "path": "methexis/knowledge/tui-architecture/tui.crate.ui-only-boundary.md",
       "score": 10,
@@ -495,6 +543,18 @@
         {
           "kind": "relation",
           "via": "tui.architecture.module-boundaries",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.surface.width-profile",
+      "path": "methexis/knowledge/tui-architecture/tui.surface.width-profile.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.appearance.glyph-profiles",
           "score": 10
         }
       ]

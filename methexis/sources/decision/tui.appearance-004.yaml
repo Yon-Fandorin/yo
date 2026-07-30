@@ -1,0 +1,7 @@
+schema: methexis.source/v1alpha1
+id: tui.appearance-004
+revision: sha256:e61895857e88ee849cbdfa18509a3e2711104a4e84c84f41805ad121981d21ea
+payload:
+  kind: decision
+  content: >-
+    A future settings preview may supply a draft appearance snapshot only to its owning preview subtree while every other subtree keeps the committed snapshot. A non-reusable generation-bearing PreviewId binds the draft to owner lifetime and base committed revision; cancel, close, error, suspend, or a stale base discards it. Save revalidates the durable source baseline and committed revision, persists first, and only then publishes a complete committed snapshot for the next logical frame.
