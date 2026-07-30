@@ -63,11 +63,13 @@ AgentWorker
 AgentRuntime
     ├── validate with AgentEngine
     ├── accept through AgentBackend
-    └── commit with AgentEngine
+    ├── commit with AgentEngine
+    └── append command and events to SessionJournal
           ↓
 Codex app-server adapter
     ↓ BackendEvent
 AgentRuntime
+    ↓ commit and append to SessionJournal
     ↓ AgentEvent
 bounded event lane
     ↓
@@ -91,9 +93,11 @@ The useful inspection points are:
    is the only owner that executes and polls the runtime. The terminal-owning
    thread does not wait on provider I/O.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)
-   orders command validation, backend acceptance, and semantic commit. It also
-   translates a provider observation through the semantic engine before
-   publishing an `AgentEvent`.
+   orders command validation, backend acceptance, semantic commit, and
+   in-memory Journal capture. It also translates a provider observation through
+   the semantic engine and appends the committed event before publishing an
+   `AgentEvent`. Rejected commands and invalid backend events are not recorded
+   as committed semantics; terminal events created while closing a failure are.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
    consume already available semantic events, update TUI state, compose a
    completed `Surface`, and send it to the active presenter.
@@ -193,6 +197,7 @@ independent cleanup boundaries and reports their contexts together.
 - [Command and event boundary](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.command-event-boundary.md)
 - [Session, Turn, and Activity semantics](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.session-turn-activity.md)
 - [Active-Turn input](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.active-turn-input.md)
+- [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)
 - [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)
 - [Typed TUI flow](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md)
 - [Presentation mode selection](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md)

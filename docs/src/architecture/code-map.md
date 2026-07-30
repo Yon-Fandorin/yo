@@ -58,7 +58,8 @@ new shared capability.
 |---|---|---|
 | [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | Provider-neutral commands, observable events, outcomes, and typed identities | `engine` for legal state transitions |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | Deterministic Session, Turn, Activity, and request state transitions | `runtime` when a transition also crosses a provider boundary |
-| [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | Ordering backend acceptance before semantic commit, translating backend observations, and closing active work on failure | `backend/contract.rs` for the provider port |
+| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | One ordered in-memory record of committed commands and semantic events | `runtime` for the live capture point; the durable repository is not implemented yet |
+| [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | Ordering backend acceptance, semantic commit, and Journal capture; translating backend observations; closing active work on failure | `backend/contract.rs` for the provider port |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | Nonblocking frontend access, bounded command and event lanes, worker ownership, startup cancellation, and shutdown coordination | `runtime` for worker-owned semantics |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | Provider capabilities, commands, semantic events, polling, cancellation, failure kinds, and explicit cleanup | A concrete adapter |
 | [`backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `codex app-server` lifecycle, JSON transport and protocol classification, provider-ID correlation, and translation into core events | `backend/contract.rs` before exposing new provider behavior |
@@ -67,7 +68,10 @@ new shared capability.
 `backend/codex`. The
 [command and event boundary](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.command-event-boundary.md)
 and [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)
-own the corresponding behavioral constraints.
+own the corresponding behavioral constraints. The
+[Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)
+owns the replay-source contract; current code captures only semantic records in
+memory and does not yet claim durable storage or backend-exchange coverage.
 
 ## yo-tui: terminal frontend
 

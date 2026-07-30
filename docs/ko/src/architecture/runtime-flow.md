@@ -61,11 +61,13 @@ AgentWorker
 AgentRuntime
     ├── AgentEngine으로 검증
     ├── AgentBackend를 통해 수락
-    └── AgentEngine으로 commit
+    ├── AgentEngine으로 commit
+    └── command와 event를 SessionJournal에 추가
           ↓
 Codex app-server adapter
     ↓ BackendEvent
 AgentRuntime
+    ↓ commit한 뒤 SessionJournal에 추가
     ↓ AgentEvent
 bounded event lane
     ↓
@@ -90,9 +92,11 @@ Inline 또는 Fullscreen presenter
    runtime을 실행하고 polling할 수 있다. 터미널을 소유한 thread는
    provider I/O를 기다리지 않는다.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)은
-   command 검증, backend 수락, semantic commit 순서를 보장한다.
-   provider 관찰 결과도 semantic engine을 통해 변환한 뒤 `AgentEvent`로
-   공개한다.
+   command 검증, backend 수락, semantic commit, in-memory Journal capture
+   순서를 보장한다. provider 관찰 결과도 semantic engine을 통해 변환하고
+   commit된 event를 Journal에 추가한 뒤 `AgentEvent`로 공개한다. 거절된
+   command와 잘못된 backend event는 commit된 의미로 기록하지 않지만,
+   실패를 닫으며 만들어진 terminal event는 기록한다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
    이미 도착한 semantic event를 소비하고 TUI 상태를 갱신한다. 완성된
    `Surface`를 조합해 활성 presenter로 보낸다.
@@ -194,6 +198,7 @@ disposition을 적용한다.
 - [command와 event 경계](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.command-event-boundary.md)
 - [Session, Turn, Activity 의미](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.session-turn-activity.md)
 - [활성 Turn input](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.active-turn-input.md)
+- [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)
 - [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)
 - [typed TUI 흐름](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md)
 - [표시 mode 선택](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md)

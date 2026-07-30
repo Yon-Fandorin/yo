@@ -5,6 +5,7 @@ mod backend;
 mod command;
 mod engine;
 mod event;
+mod journal;
 mod runtime;
 mod session;
 

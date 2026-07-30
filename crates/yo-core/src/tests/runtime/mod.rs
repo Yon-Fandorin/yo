@@ -1,6 +1,7 @@
 mod failure;
 mod flow;
 mod interaction;
+mod journal;
 
 use std::num::NonZeroU64;
 

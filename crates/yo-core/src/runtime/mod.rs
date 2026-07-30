@@ -4,7 +4,7 @@ pub use error::RuntimeError;
 
 use crate::{
     AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendEvent, BackendPoll, Failure,
-    SessionId, TurnRef,
+    SessionId, TurnRef, journal::SessionJournal,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -18,6 +18,7 @@ pub enum RuntimePoll {
 pub struct AgentRuntime<B> {
     engine: AgentEngine,
     backend: B,
+    journal: SessionJournal,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -25,6 +26,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         Self {
             engine: AgentEngine::new(),
             backend,
+            journal: SessionJournal::new(),
         }
     }
 
@@ -52,9 +54,13 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.backend
             .execute_command(command.clone())
             .map_err(RuntimeError::backend)?;
-        self.engine
+        let committed = command.clone();
+        let events = self
+            .engine
             .commit_command(command, supports_steer)
-            .map_err(RuntimeError::StateDiverged)
+            .map_err(RuntimeError::StateDiverged)?;
+        self.journal.append_committed_command(committed, &events);
+        Ok(events)
     }
 
     /// Applies one available backend observation through the semantic engine.
@@ -92,7 +98,11 @@ impl<B: AgentBackend> AgentRuntime<B> {
     /// that Turn and retains the generated terminal events in the returned error.
     pub fn shutdown(&mut self) -> Result<Vec<AgentEvent>, RuntimeError> {
         match self.backend.shutdown() {
-            Ok(()) => Ok(self.engine.interrupt_active_turn()),
+            Ok(()) => {
+                let events = self.engine.interrupt_active_turn();
+                self.journal.append_events(&events);
+                Ok(events)
+            },
             Err(failure) => {
                 let terminal_events = self.fail_active_turn(&failure);
                 Err(RuntimeError::Backend {
@@ -118,7 +128,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
         };
 
         match result {
-            Ok(event) => Ok(RuntimePoll::Event(event)),
+            Ok(event) => {
+                self.journal.append_events(std::slice::from_ref(&event));
+                Ok(RuntimePoll::Event(event))
+            },
             Err(rejection) => {
                 let failure = crate::BackendFailure::new(
                     crate::BackendFailureKind::Protocol,
@@ -135,7 +148,15 @@ impl<B: AgentBackend> AgentRuntime<B> {
     }
 
     fn fail_active_turn(&mut self, failure: &crate::BackendFailure) -> Vec<AgentEvent> {
-        self.engine
-            .fail_active_turn(Failure::new(failure.to_string()))
+        let events = self
+            .engine
+            .fail_active_turn(Failure::new(failure.to_string()));
+        self.journal.append_events(&events);
+        events
+    }
+
+    #[cfg(test)]
+    pub(crate) fn journal(&self) -> &SessionJournal {
+        &self.journal
     }
 }
