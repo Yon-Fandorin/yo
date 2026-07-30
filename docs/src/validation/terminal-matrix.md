@@ -93,8 +93,22 @@ alternate screen for each generation; Inline never entered it.
 The same scenarios passed in tmux 3.6a using `-f /dev/null` and an isolated
 socket. Every stopped interval restored the shell termios, and each `fg`
 reacquired the requested mode. These were explicit real-host observations, not
-part of the normal cross-platform test set. An SSH-owned macOS PTY and tmux
-inside that SSH session were not run.
+part of the normal cross-platform test set.
+
+The SSH routes were then exercised from an 80x24 zsh PTY against the exact tree
+accepted as `develop` commit `af546a5`. An SSH-owned interactive zsh ran both
+modes through empty-`Ctrl+D` exit and two `Ctrl+Z` → stopped job → `fg`
+generations. Inline remained outside the alternate screen; Fullscreen left and
+reacquired it for every generation. The local PTY termios was unchanged after
+the SSH session exited.
+
+The same SSH session shape also attached to tmux 3.6a with `-f /dev/null` and
+an isolated socket. At every stopped interval and final exit, the pane had
+returned to zsh, left the alternate screen, and matched its baseline termios.
+Each `fg` returned the pane to `yo`, reacquired raw terminal settings, and
+restored the requested presentation mode. Exiting the nested session also
+restored the outer local PTY. These SSH observations used a real remote host;
+they are evidence records rather than part of the normal test set.
 
 ## Platform coverage
 
@@ -109,8 +123,8 @@ The executable environment matrix currently covers:
 | macOS compile | — | — | Workspace all-target tests passed on a real macOS 26.2 arm64 host |
 | macOS direct real PTY | Yes | Yes | Real-host run covered clean exit and two shell-driven suspend/resume generations |
 | macOS local tmux | Yes | Yes | Real-host run covered clean exit, two suspend/resume generations, mode reacquisition, and shell termios restoration |
-| macOS SSH | Unverified | Unverified | No SSH-owned macOS PTY run yet |
-| macOS tmux inside SSH | Unverified | Unverified | No nested macOS SSH/tmux run yet |
+| macOS SSH | Yes | Yes | Real-host run covered clean exit, two remote-shell suspend/resume generations, mode reacquisition, and outer PTY restoration |
+| macOS tmux inside SSH | Yes | Yes | Real-host run covered clean exit, two nested suspend/resume generations, pane mode and termios transitions, and outer PTY restoration |
 
 `tools/validation/yo-cli-unix-matrix.sh` checks all `yo-cli` targets on the
 current Unix host and reports the other host as unverified. The CI workflow

@@ -92,8 +92,21 @@ alternate screen에 진입하지 않았다.
 동일한 시나리오는 `-f /dev/null`과 격리된 socket을 사용한 tmux 3.6a에서도
 통과했다. 매 정지 구간에서 shell termios가 복원됐고 각 `fg` 뒤 요청한
 mode를 다시 획득했다. 이는 명시적인 실제 host 관찰이며 일반 cross-platform
-test set에 포함된 검사가 아니다. SSH가 소유한 macOS PTY와 그 SSH session
-내부 tmux는 실행하지 않았다.
+test set에 포함된 검사가 아니다.
+
+그다음 `develop` commit `af546a5`로 수용된 정확한 tree를 대상으로 80x24
+zsh PTY에서 SSH 경로를 실행했다. SSH가 소유한 interactive zsh는 두 mode
+모두 빈 입력 `Ctrl+D` 종료와 두 번의
+`Ctrl+Z` → job 정지 → `fg` 세대를 완료했다. Inline은 alternate screen
+밖에 머물렀고 Fullscreen은 매 세대마다 이를 해제하고 다시 획득했다. SSH
+session 종료 뒤 로컬 PTY termios도 바뀌지 않았다.
+
+동일한 SSH session 구조에서 `-f /dev/null`과 격리된 socket을 사용해 tmux
+3.6a에도 접속했다. 매 정지 구간과 최종 종료 시점에 pane은 zsh로 돌아오고
+alternate screen을 해제했으며 기준 termios와 일치했다. 각 `fg` 뒤에는
+pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다시
+획득했다. 중첩 session 종료 뒤 바깥 로컬 PTY도 복원됐다. 이 SSH 관찰은
+실제 원격 host를 사용했으며 일반 test set이 아니라 증거 기록이다.
 
 ## 플랫폼 검사 범위
 
@@ -108,8 +121,8 @@ test set에 포함된 검사가 아니다. SSH가 소유한 macOS PTY와 그 SSH
 | macOS compile | — | — | 실제 macOS 26.2 arm64 host에서 workspace all-target test 통과 |
 | macOS 직접 실제 PTY | Yes | Yes | 실제 host에서 정상 종료와 두 번의 shell 기반 일시정지/재개를 검사 |
 | macOS 로컬 tmux | Yes | Yes | 실제 host에서 정상 종료, 두 번의 일시정지/재개, mode 재획득, shell termios 복원을 검사 |
-| macOS SSH | Unverified | Unverified | SSH가 소유한 macOS PTY는 아직 실행하지 않음 |
-| macOS SSH 내부 tmux | Unverified | Unverified | 중첩된 macOS SSH/tmux는 아직 실행하지 않음 |
+| macOS SSH | Yes | Yes | 실제 host에서 정상 종료, 두 번의 원격 shell 기반 일시정지/재개, mode 재획득, 바깥 PTY 복원을 검사 |
+| macOS SSH 내부 tmux | Yes | Yes | 실제 host에서 정상 종료, 두 번의 중첩 일시정지/재개, pane mode·termios 전환, 바깥 PTY 복원을 검사 |
 
 `tools/validation/yo-cli-unix-matrix.sh`는 현재 Unix host의 모든 `yo-cli`
 target을 검사하고 다른 host는 unverified로 보고한다. CI workflow는
