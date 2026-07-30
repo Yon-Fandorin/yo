@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.remote.yo-host
-revision: sha256:df2222e83c83b45007b210ea79ea9c568296086d300cd5f6eba4b9b84c9b4e66
+revision: sha256:193b7634a6357d78ba76de4eefedf19c8b444b91315e9fff2664e50761ea968a
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:5f8b14267bd93df54c2bdba4cfedbe239e9564ab051d80f93e44289040745562
+request_hash: sha256:3f78fdf8465056685d9231a2cdb1c4f6f7361a43fd0e7ccb200b91642c7765fc
 ---
 # Korean Review Projection
 
@@ -17,6 +17,8 @@ request_hash: sha256:5f8b14267bd93df54c2bdba4cfedbe239e9564ab051d80f93e442890407
 원격 머신 사용은 아키텍처 제약으로 유지해야 합니다. 로컬 실행은 원격에서 사용하는 것과 동일한 Yo Host 계약을 같은 프로세스에 배치한 형태여야 하며, 별도의 로컬 전용 설계가 되어서는 안 됩니다. Yo Host는 세션 명령 처리와 생명주기를 조정하는 Host 구성요소인 세션 엔진과 함께 워크스페이스, 에이전트 백엔드, 도구, 세션 저널, 세션 저장소를 소유해야 합니다. 프런트엔드는 의도를 보내고 투영을 소비하며, Host의 경로·프로세스·PTY·운영체제 신호 정책을 소유해서는 안 됩니다.
 
 Yo Session Protocol은 버전, 순서, 기능 협상을 지원하고 네트워크 전송 방식과 독립적이어야 합니다. 원격 세션은 클라이언트 연결이 끊겨도 계속 실행되어야 하며, 재연결 시 클라이언트가 마지막으로 수락한 순서 다음의 저널 기록을 요청해야 합니다. 해당 범위가 영속 기록 공백을 가로지르면 Host는 연속된 뒷부분이라고 주장하지 않고 명시적인 공백과 첫 번째 완전한 복구 스냅샷을 전달해야 합니다. 해당 스냅샷이 없으면 Host는 영속 이력을 아직 사용할 수 없다고 알려야 합니다. 첫 원격 전송은 WebSocket이어야 하여 터미널과 미래 브라우저·Tauri 프런트엔드가 프로토콜을 공유할 수 있어야 합니다. 나중에 gRPC를 추가하더라도 세션 의미가 바뀌어서는 안 됩니다. 외부 주소 바인딩은 명시적으로 켜야 하고 인증된 암호화 전송을 요구해야 하며, 인증 없는 외부 바인딩이 기본값이면 안 됩니다. 원격 Yo Host와, 로컬 Host가 커넥터를 통해 원격 위임형 에이전트에 직접 연결하는 구성은 서로 구분해야 합니다.
+
+초기 로컬 Journal Reader는 구체적인 capability로 유지해야 하며, 실제 원격 Reader가 생기기 전에 로컬·원격 공통 인터페이스를 도입해서는 안 됩니다. 이 경계는 동기화 primitive, 저장 표현, 빌린 guard를 노출해서는 안 됩니다. 실제 원격 Reader가 두 번째 구현을 제공하게 되면 공통 인터페이스는 로컬 Reader와 실제로 공유하는 동작에서만 추출해야 하며 sequence, suffix, gap 의미를 보존해야 합니다.
 
 ## 이유
 

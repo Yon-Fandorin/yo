@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:45b7b741a2d70da11e62e987c53fa8f17cce004d410489f5f9538ca1992a1493",
+  "candidate_set_id": "sha256:fa94afc5a22be252b89c2ea26c302d498420f3e9436eee8e65df824c65260923",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:80455deb5298249e3f1d784f9b4e98895a32f50a61bd0dec661baebd1402d3a2",
+  "catalog_hash": "sha256:acd91bed4177c468c6bf97712dbb687608deb7a6666418dafb62e958405ab515",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {

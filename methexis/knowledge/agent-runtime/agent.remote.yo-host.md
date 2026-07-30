@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.remote-001
-    revision: sha256:053c6ea0be4cdc7c27ba6fdcb331fbc061682785e15b540653ecd0508a8548c7
+    revision: sha256:f17c28be3d6456bd08a3579d26f12ec6600c91d2a581436ac3a43cc2adf835ad
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -42,6 +42,14 @@ binding MUST require explicit activation plus authenticated encrypted
 transport; an unauthenticated external bind MUST NOT be a default. A remote
 Yo Host MUST remain distinct from a local Host using a Connector to reach a
 remote delegated-agent target.
+
+The initial local Journal reader MUST remain a concrete capability and MUST
+NOT introduce a shared local-and-remote interface before a real remote reader
+exists. Its boundary MUST NOT expose synchronization primitives, storage
+representation, or borrowed guards. When a real remote reader supplies a
+second implementation, the common interface MUST be extracted only from
+behavior actually shared with the local reader while preserving sequence,
+suffix, and gap semantics.
 
 ## Rationale
 
