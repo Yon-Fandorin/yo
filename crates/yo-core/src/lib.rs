@@ -8,6 +8,7 @@ mod event;
 mod journal;
 mod runtime;
 mod session;
+pub mod session_repository;
 
 pub use agent_session::{
     AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, CommandAdmission,

@@ -105,6 +105,9 @@ The useful inspection points are:
    failure are.
    `AgentSession::transcript_reader` exposes bounded, read-only suffix copies
    from that same Journal without exposing its lock or storage layout.
+   `session_repository` contains the first durable local implementation, but
+   this runtime path does not call it yet. Persistence, storage-pressure
+   notification, and resume are therefore not current runtime behavior.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
    consume already committed Transcript records, update TUI state, compose a
    completed `Surface`, and send it to the active presenter. Chat shows user

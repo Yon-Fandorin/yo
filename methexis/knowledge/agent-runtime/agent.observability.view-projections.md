@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.observability-002
-    revision: sha256:375d5b05cb6592c0b29a38feba51f199e9b46d4b2e838f008b78e87d458a8f77
+    revision: sha256:c3e88747d2b56be976c217839f095dc6bd1a015e49d4a5f0e453346023a69f3c
 relations:
   depends_on:
     - agent.observability.session-journal
@@ -17,10 +17,13 @@ relations:
 
 ## Statement
 
-Chat, Transcript, and Request MUST derive their displayed history from the
-same read-only Session Journal projection and MUST NOT become independent
-authorities. Chat MUST remain the editable default interaction surface. Its
-exposure policy MUST follow established coding-agent
+Chat and Transcript MUST derive their displayed history from the read-only
+semantic Session Journal. Request MUST be a read-only diagnostic projection
+that joins the Journal's bounded correlation and availability records with
+optional Request Audit detail under the same Session lifecycle. Neither the
+projection nor its detail may become an independent authority. Chat MUST
+remain the editable default interaction surface. Its exposure policy MUST
+follow established coding-agent
 interaction: show concise intent, meaningful tool and file activity, tests,
 approvals, failures, and results while collapsing repetitive exploration and
 long output.
@@ -29,14 +32,16 @@ Transcript MUST be the transparent chronological superset of Chat and add
 detailed semantic and Activity lifecycle, context, failures, and explicit
 observation or persistence gaps. Request MUST be a full-page read-only
 projection anchored to the context currently viewed in Chat or Transcript,
-not primarily a request-list browser. It MUST show the correlated backend
-exchange, revisions, attempts, outcomes, redaction, and exact observation
-boundary. A context with no direct request MUST say so instead of selecting a
-nearby request. Returning across linked views MUST restore each view's cursor
-and scroll state.
+not primarily a request-list browser. It MUST show the observable backend
+exchange, revisions, attempts, outcomes, redaction, exact observation boundary,
+and a typed reason when detail is unavailable. A context with no direct request
+MUST say so instead of selecting a nearby request. Returning across linked
+views MUST restore each view's cursor and scroll state. A future remote reader
+MAY fetch detail on demand only after a real remote consumer defines that
+contract; this decision does not create a remote Request Audit interface.
 
 ## Rationale
 
-One replay source keeps concise work, transparent chronology, and wire-level
-diagnosis aligned across TUI and future GUI frontends without forcing all
-detail into the default conversation.
+One semantic replay source keeps concise work and transparent chronology
+aligned, while optional correlated detail permits wire-level diagnosis across
+TUI and future GUI frontends without forcing it into the semantic Journal.

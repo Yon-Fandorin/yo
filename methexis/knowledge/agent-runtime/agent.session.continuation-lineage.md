@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-001
-    revision: sha256:b9dd819ab19710274d1e8e4791ef10c06c340c0f8aa9837712f63094f04872ac
+    revision: sha256:57db178254bbd4eb9334fd039adf4f02bad7994e62e27a0fc6a99648b1b9e3dd
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -21,7 +21,10 @@ History viewing and executable continuation MUST remain separate capabilities.
 A Continuation Anchor MUST identify an accepted backend request, its correlated
 stable resumable outcome, the fully committed semantic Journal boundary, and
 the versioned backend Session locator needed to continue. Resume MUST select
-the newest durable Continuation Anchor. Incomplete,
+the newest durable Continuation Anchor. Those identities and the locator are
+bounded Session Journal correlation data, not optional Request Audit detail.
+Request payloads, headers, revision or attempt evidence, and other diagnostic
+detail MUST NOT be required to construct or validate an Anchor. Incomplete,
 unaccepted, or uncommitted suffixes MUST remain diagnostic evidence and MUST
 NOT become automatic continuation input.
 

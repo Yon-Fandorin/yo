@@ -103,6 +103,9 @@ Inline 또는 Fullscreen presenter
    실패를 닫으며 만들어진 terminal event는 기록한다.
    `AgentSession::transcript_reader`는 같은 Journal에서 크기가 제한된 읽기
    전용 suffix 복사본을 제공하며 내부 lock이나 저장 구조는 노출하지 않는다.
+   `session_repository`에는 첫 durable 로컬 구현이 있지만 이 runtime
+   경로는 아직 호출하지 않는다. 따라서 persistence, storage-pressure
+   알림, resume은 현재 runtime 동작이 아니다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
    이미 확정된 Transcript record를 소비하고 TUI 상태를 갱신한다.
    완성된 `Surface`를 조합해 활성 presenter로 보낸다. Chat의 사용자
