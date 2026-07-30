@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.backend-007
+revision: sha256:368e802dc3b559f2d45737ee31509f0b8deecf5afe6954cd17b2fb12af7409d2
+payload:
+  kind: decision
+  content: Agent integration is classified independently by orchestration ownership, connector, execution target, transport, workspace host, and tool-execution host. A Delegated Agent Backend connects to an external coding-agent host such as Codex app-server or Kimi Code, which owns its agent loop, tools, and backend session. A Yo-managed Backend keeps that ownership in yo and reaches a model service through a Model Connector such as OpenAI or Kimi. Provider names identify model services, not delegated agent processes. Local and Remote are execution placements rather than distinct backend kinds, and transport choices such as stdio, SSH, WebSocket, HTTP, or SSE do not redefine session semantics. Every Agent Backend reports the exact observation boundary available to Request diagnostics, through its Connector where one exists, and never claims visibility into a downstream request owned by another process or service.

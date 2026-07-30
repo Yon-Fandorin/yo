@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:b6eb0f4cd0d87e8cfab56ee3ddafa1b2459a12fc9ac7af7c6736f99e5fd6d127",
+  "candidate_set_id": "sha256:45b7b741a2d70da11e62e987c53fa8f17cce004d410489f5f9538ca1992a1493",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:a03b6dc3ac5f160c37a432ce1a1be5d5debea1c3d9d5f4d608b02276cc016530",
+  "catalog_hash": "sha256:80455deb5298249e3f1d784f9b4e98895a32f50a61bd0dec661baebd1402d3a2",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -185,6 +185,19 @@
       ]
     },
     {
+      "id": "agent.observability.session-journal",
+      "path": "methexis/knowledge/agent-runtime/agent.observability.session-journal.md",
+      "score": 100,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "raw",
+          "score": 100
+        }
+      ]
+    },
+    {
       "id": "tui.runtime.process-termination-coordinator",
       "path": "methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md",
       "score": 30,
@@ -319,6 +332,18 @@
       ]
     },
     {
+      "id": "agent.backend.execution-topology",
+      "path": "methexis/knowledge/agent-runtime/agent.backend.execution-topology.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "agent.observability.session-journal",
+          "score": 10
+        }
+      ]
+    },
+    {
       "id": "agent.core.frontend-independent-boundary",
       "path": "methexis/knowledge/agent-runtime/agent.core.frontend-independent-boundary.md",
       "score": 10,
@@ -338,6 +363,66 @@
         {
           "kind": "relation",
           "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.observability.view-projections",
+      "path": "methexis/knowledge/agent-runtime/agent.observability.view-projections.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "agent.observability.session-journal",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.remote.yo-host",
+      "path": "methexis/knowledge/agent-runtime/agent.remote.yo-host.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "agent.observability.session-journal",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.runtime.session-turn-activity",
+      "path": "methexis/knowledge/agent-runtime/agent.runtime.session-turn-activity.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "agent.observability.session-journal",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.session.continuation-lineage",
+      "path": "methexis/knowledge/agent-runtime/agent.session.continuation-lineage.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "agent.observability.session-journal",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.storage.session-repository",
+      "path": "methexis/knowledge/agent-runtime/agent.storage.session-repository.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "agent.observability.session-journal",
           "score": 10
         }
       ]

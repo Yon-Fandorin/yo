@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-002
-    revision: sha256:adf064cf0c511d0326936d135fc8293878253a2851f09a3441ccf29f83f31a1e
+    revision: sha256:b2671677903e387af78072c5ce520e250013ab6bf9d2a6d7a8f54471686baa38
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -17,8 +17,8 @@ relations:
 ## Statement
 
 Frontends MUST interact with `yo-core` through named typed commands and events
-instead of manipulating session or backend internals. Commands and events MUST
-identify the Session and, when applicable, the Turn they affect. Whenever an
+instead of manipulating Session or Agent Backend internals. Commands and events
+MUST identify the Session and, when applicable, the Turn they affect. Whenever an
 Activity or request-correlation target is applicable, including Activity
 creation, start, update, and response paths, the command or event MUST carry
 that Activity identity or explicit request-correlation identity. `yo-core`
@@ -33,5 +33,5 @@ protocol before a real remote consumer exists.
 ## Rationale
 
 One semantic boundary lets TUI and future GUI clients share behavior while
-keeping provider protocols, rendering, and input policy independently
+keeping backend protocols, rendering, and input policy independently
 replaceable.

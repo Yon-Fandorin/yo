@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.observability-002
+revision: sha256:375d5b05cb6592c0b29a38feba51f199e9b46d4b2e838f008b78e87d458a8f77
+payload:
+  kind: decision
+  content: Chat, Transcript, and Request derive their displayed history from the same read-only Session Journal projection rather than becoming independent authorities. Chat is the editable default interaction surface and follows established commercial coding-agent visibility by showing concise intent, meaningful tool and file activity, tests, approvals, errors, and results while collapsing repetitive exploration and long output. Transcript is the transparent chronological superset, including detailed semantic and activity lifecycle, context, failures, and explicit gaps. Request is one full-page read-only projection anchored to the currently viewed context, not primarily a request-list browser; it shows the correlated backend exchange, revisions, attempts, outcomes, redaction, and the exact observation boundary. An unlinked context reports that it produced no request instead of silently selecting a nearby request, and cross-view navigation restores prior cursor and scroll state.

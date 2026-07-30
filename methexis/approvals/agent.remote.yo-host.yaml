@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: agent.remote.yo-host
+revision: sha256:df2222e83c83b45007b210ea79ea9c568296086d300cd5f6eba4b9b84c9b4e66
+reviewer: agent-runtime
+reviewed_at: 2026-07-30T04:02:48Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:eca61c8a9ecfc499e0ed3ee46e7da69ad7c7576e4e52bdc027b45c916f742c9a
+request_hash: sha256:73e39ea2ab13bc3de20f1aeb602300bc67a7b887655d4ae53bf373bbcb3737df

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.observability-001
+revision: sha256:f62ef22e05e57dfd570a4c70707d5b6685baf84ebf6f7f3bcfe442d02c892e9e
+payload:
+  kind: decision
+  content: One ordered durable Session Journal is the replay source for user-facing views and debugging. It records backend-neutral semantic session events together with correlated, versioned backend-specific exchange events whose envelope identifies backend kind and version, observation boundary, direction, schema, and operation correlation. Requests, responses, notifications, server-initiated requests, retries, and terminal outcomes remain distinguishable. Semantic meaning is committed at capture time rather than reconstructed later from old backend wire payloads. Backend-specific Request evidence remains available for diagnosis, while unsupported or unavailable detail stays explicit. Redaction occurs before durable admission; credentials, complete environment variables, private reasoning payloads, and other prohibited raw values never enter the journal, and meaningful removal remains explicit.

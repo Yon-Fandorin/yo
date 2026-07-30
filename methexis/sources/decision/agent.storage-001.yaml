@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: agent.storage-001
+revision: sha256:caf1d7de62510009a1c4acb30348792650695cb6d04a3132e25b32e922705d28
+payload:
+  kind: decision
+  content: A storage-neutral Session Repository owns durable session records behind one repository interface. The current product provides a local implementation and leaves a remote repository as a later implementation of the same contract without defining replication or conflict semantics now. The local repository is enabled by default, uses user-only filesystem access, and exposes configuration without making files, SQLite, or another physical format part of the public contract. Retention has a configurable capacity ceiling but no time expiry or automatic deletion. On capacity or storage failure, existing records remain unchanged, durable append stops, and the active Session must continue in memory without durable appends. The storage owner emits a typed persistent notification to every connected frontend identifying the durable cutoff. Persistence resumes only through a complete Session snapshot after capacity is restored; later incremental records cannot be presented as a continuous durable suffix across the gap.

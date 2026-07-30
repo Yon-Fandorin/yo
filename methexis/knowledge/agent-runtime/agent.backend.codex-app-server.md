@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-005
-    revision: sha256:529d5579ee8f5a93e7e913770eb70bfa2c023c259d83522cafade0e3f133e7f6
+    revision: sha256:7fa50258cd0b1f42dd8ee113b86810ae821bcb23bb197ea2b0b658e516c91473
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -17,7 +17,7 @@ relations:
 
 ## Statement
 
-The first real agent backend MUST adapt a locally installed
+The first real Agent Backend MUST adapt a locally installed
 `codex app-server` over its default stdio JSONL transport. The adapter MUST
 perform initialization and a protocol-version compatibility check, MAY
 negotiate additional capabilities, MUST fail explicitly on incompatibility,
@@ -26,12 +26,12 @@ and keep all Codex-specific wire types private to the backend boundary.
 
 `yo-cli` selects and wires the backend. The private backend module owns its
 child process and deterministic cleanup in coordination with the product
-process host. The same core contract MUST have a deterministic fake backend for
-contract and failure tests that do not require Codex installation, credentials,
-network access, or nondeterministic model output.
+process host. The same core contract MUST have a deterministic fake Agent
+Backend for contract and failure tests that do not require Codex installation,
+credentials, network access, or nondeterministic model output.
 
-WebSocket transport, remote app-server use, and another provider backend are
-deferred until their own executable evidence exists.
+WebSocket transport, remote app-server use, and another delegated Agent
+Backend are deferred until their own executable evidence exists.
 
 ## Rationale
 
