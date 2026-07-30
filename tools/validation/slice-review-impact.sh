@@ -45,9 +45,11 @@ code_quality_paths=$(
 
 trailers=$(git interpret-trailers --parse <"${message_file}")
 values=$(sed -nE 's/^Slice-Review:[[:space:]]*(.+)$/\1/p' <<<"${trailers}")
-fresh_context=$(grep -E '^fresh-context - .+' <<<"${values}" || true)
-code_quality=$(grep -E '^code-quality - .+' <<<"${values}" || true)
-integration=$(grep -E '^integration - .+' <<<"${values}" || true)
+reviewer='[[:alnum:]][[:alnum:]._/+:-]*'
+outcome='(clear|resolved)'
+fresh_context=$(grep -E "^fresh-context - completed - ${reviewer} - ${outcome}$" <<<"${values}" || true)
+code_quality=$(grep -E "^code-quality - completed - ${reviewer} - ${outcome}$" <<<"${values}" || true)
+integration=$(grep -E "^integration - completed - ${reviewer} - ${outcome}$" <<<"${values}" || true)
 none=$(grep -E '^none - .+' <<<"${values}" || true)
 value_count=$(printf '%s\n' "${values}" | sed '/^$/d' | wc -l | tr -d ' ')
 recognized_count=$(
@@ -60,9 +62,9 @@ recognized_count=$(
 fail_with_usage() {
     echo "$1" >&2
     echo "record completed review evidence with one or more trailers:" >&2
-    echo "  Slice-Review: fresh-context - <reviewer and result>" >&2
-    echo "  Slice-Review: code-quality - <reviewer and result>" >&2
-    echo "  Slice-Review: integration - <reviewer and result>" >&2
+    echo "  Slice-Review: fresh-context - completed - <reviewer-id> - <clear|resolved>" >&2
+    echo "  Slice-Review: code-quality - completed - <reviewer-id> - <clear|resolved>" >&2
+    echo "  Slice-Review: integration - completed - <reviewer-id> - <clear|resolved>" >&2
     echo "or, only when no lens is required:" >&2
     echo "  Slice-Review: none - <why no additional review lens applies>" >&2
     exit 1

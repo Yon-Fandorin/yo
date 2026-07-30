@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# hk may provide a temporary index while running pre-commit checks. The fixture
+# repositories below must not inherit that outer repository context.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
+
 readonly checker="$(pwd)/tools/validation/slice-review-impact.sh"
 fixture=$(mktemp -d)
 trap 'rm -rf "${fixture}"' EXIT
@@ -44,37 +48,103 @@ expect_fail \
 
 expect_pass \
     "production code accepts contract and code-quality evidence" \
-    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - reviewer terminal-ops found no unresolved findings\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings' \
+    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - completed - reviewer/terminal-ops - clear\nSlice-Review: code-quality - completed - reviewer/maintainability - clear' \
     "crates/yo-tui/src/terminal/mode/transaction.rs" \
     "develop"
 
+expect_pass \
+    "completed Codex fallback is independent review evidence" \
+    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - completed - codex/session-123 - clear\nSlice-Review: code-quality - completed - codex/session-123 - clear' \
+    "crates/yo-tui/src/terminal/mode/transaction.rs" \
+    "develop"
+
+expect_pass \
+    "completed human review can replace unavailable agent reviewers" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - completed - human/yon - clear' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_pass \
+    "completed evidence records the reviewer and closed outcome" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - completed - codex/session-123 - resolved' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_fail \
+    "Kimi quota exhaustion cannot masquerade as completed review" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - Kimi quota exhausted; review not performed' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_fail \
+    "pending Codex fallback cannot masquerade as completed review" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - Kimi reviewer unavailable; pending review by Codex' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_fail \
+    "Korean unreviewed status cannot masquerade as completed review" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - Kimi와 Codex 사용량 부족으로 미검수' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_fail \
+    "completed marker cannot contradict an unfinished result" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - completed - Kimi unavailable; review not performed' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_fail \
+    "unknown completed outcomes cannot satisfy a lens" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - completed - codex/session-123 - pending' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_fail \
+    "free-form text cannot follow a completed outcome" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - completed - codex/session-123 - clear - review not performed' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_fail \
+    "legacy accepted trailer grammar is not valid for a new commit" \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - Kimi workflow review found zero findings' \
+    "CONTRIBUTING.md" \
+    "develop"
+
+expect_fail \
+    "unfinished prose variants cannot satisfy Wave lenses" \
+    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - Kimi failed to finish\nSlice-Review: code-quality - no review was performed\nSlice-Review: integration - awaiting reviewer response' \
+    "crates/yo-core/src/runtime/mod.rs" \
+    "wave/w1-runtime"
+
 expect_fail \
     "fresh-context review cannot replace code-quality review" \
-    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - reviewer terminal-ops found no unresolved findings' \
+    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - completed - reviewer/terminal-ops - clear' \
     "crates/yo-tui/src/terminal/mode/transaction.rs" \
     "develop"
 
 expect_fail \
     "code-quality review cannot replace fresh-context review" \
-    $'fix(tui): restore the terminal\n\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings' \
+    $'fix(tui): restore the terminal\n\nSlice-Review: code-quality - completed - reviewer/maintainability - clear' \
     "crates/yo-tui/src/terminal/mode/transaction.rs" \
     "develop"
 
 expect_fail \
     "executable tool scripts require code-quality review" \
-    $'test(validation): revise checker\n\nSlice-Review: fresh-context - reviewer workflow found no unresolved findings' \
+    $'test(validation): revise checker\n\nSlice-Review: fresh-context - completed - reviewer/workflow - clear' \
     "tools/validation/example.sh" \
     "develop"
 
 expect_pass \
     "executable tool scripts accept contract and code-quality evidence" \
-    $'test(validation): revise checker\n\nSlice-Review: fresh-context - reviewer workflow found no unresolved findings\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings' \
+    $'test(validation): revise checker\n\nSlice-Review: fresh-context - completed - reviewer/workflow - clear\nSlice-Review: code-quality - completed - reviewer/maintainability - clear' \
     "tools/validation/example.sh" \
     "develop"
 
 expect_pass \
     "tool configuration requires contract review but not code-quality review" \
-    $'build(tool): revise manifest\n\nSlice-Review: fresh-context - reviewer tool-contract found no unresolved findings' \
+    $'build(tool): revise manifest\n\nSlice-Review: fresh-context - completed - reviewer/tool-contract - clear' \
     "tools/example/Cargo.toml" \
     "develop"
 
@@ -86,7 +156,7 @@ expect_fail \
 
 expect_pass \
     "Developer Docs theme source accepts code-quality evidence alone" \
-    $'docs: revise language switcher\n\nSlice-Review: code-quality - reviewer docs-ui found no unresolved findings' \
+    $'docs: revise language switcher\n\nSlice-Review: code-quality - completed - reviewer/docs-ui - clear' \
     "docs/theme/language-switch.js" \
     "develop"
 
@@ -116,19 +186,19 @@ expect_fail \
 
 expect_fail \
     "Wave commits require integration review as well as fresh-context review" \
-    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - reviewer core-contract found no unresolved findings\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings' \
+    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - completed - reviewer/core-contract - clear\nSlice-Review: code-quality - completed - reviewer/maintainability - clear' \
     "crates/yo-core/src/runtime/mod.rs" \
     "wave/w1-runtime"
 
 expect_pass \
     "Wave commits accept both required review lenses" \
-    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - reviewer core-contract found no unresolved findings\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings\nSlice-Review: integration - reviewer wave-coordinator found no sibling conflict' \
+    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - completed - reviewer/core-contract - clear\nSlice-Review: code-quality - completed - reviewer/maintainability - clear\nSlice-Review: integration - completed - reviewer/wave-coordinator - clear' \
     "crates/yo-core/src/runtime/mod.rs" \
     "wave/w1-runtime"
 
 expect_fail \
     "none cannot hide beside completed review evidence" \
-    $'docs: revise workflow\n\nSlice-Review: fresh-context - reviewer workflow found no unresolved findings\nSlice-Review: none - no review needed' \
+    $'docs: revise workflow\n\nSlice-Review: fresh-context - completed - reviewer/workflow - clear\nSlice-Review: none - no review needed' \
     "CONTRIBUTING.md" \
     "develop"
 
@@ -146,19 +216,19 @@ expect_fail \
 
 expect_fail \
     "duplicate fresh-context evidence remains ambiguous" \
-    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - first reviewer passed\nSlice-Review: fresh-context - second value duplicates the lens\nSlice-Review: code-quality - reviewer maintainability passed' \
+    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - completed - reviewer/first - clear\nSlice-Review: fresh-context - completed - reviewer/second - clear\nSlice-Review: code-quality - completed - reviewer/maintainability - clear' \
     "crates/yo-tui/src/terminal/mode/transaction.rs" \
     "develop"
 
 expect_fail \
     "duplicate code-quality evidence remains ambiguous" \
-    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - reviewer terminal-ops passed\nSlice-Review: code-quality - first reviewer passed\nSlice-Review: code-quality - second value duplicates the lens' \
+    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - completed - reviewer/terminal-ops - clear\nSlice-Review: code-quality - completed - reviewer/first - clear\nSlice-Review: code-quality - completed - reviewer/second - clear' \
     "crates/yo-tui/src/terminal/mode/transaction.rs" \
     "develop"
 
 expect_fail \
     "integration review alone cannot replace fresh-context review for code" \
-    $'feat(core): revise runtime\n\nSlice-Review: integration - sibling integration passed' \
+    $'feat(core): revise runtime\n\nSlice-Review: integration - completed - reviewer/integration - clear' \
     "crates/yo-core/src/runtime/mod.rs" \
     "develop"
 
@@ -192,8 +262,8 @@ expect_actual_git_path_detection() {
         printf '%s\n' \
             "test: remove obsolete tool" \
             "" \
-            "Slice-Review: fresh-context - deletion reviewer passed" \
-            "Slice-Review: code-quality - deletion quality reviewer passed" >message
+            "Slice-Review: fresh-context - completed - reviewer/deletion - clear" \
+            "Slice-Review: code-quality - completed - reviewer/deletion-quality - clear" >message
         if bash "${checker}" message >/dev/null 2>&1; then
             echo "expected actual Wave deletion to require integration review" >&2
             exit 1
@@ -202,9 +272,9 @@ expect_actual_git_path_detection() {
         printf '%s\n' \
             "test: remove obsolete tool" \
             "" \
-            "Slice-Review: fresh-context - deletion reviewer passed" \
-            "Slice-Review: code-quality - deletion quality reviewer passed" \
-            "Slice-Review: integration - Wave integration passed" >message
+            "Slice-Review: fresh-context - completed - reviewer/deletion - clear" \
+            "Slice-Review: code-quality - completed - reviewer/deletion-quality - clear" \
+            "Slice-Review: integration - completed - reviewer/wave - clear" >message
         bash "${checker}" message
     )
 }

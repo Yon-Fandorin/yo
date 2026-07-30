@@ -161,14 +161,36 @@ abstraction, complexity, diagnostics, cleanup, and test maintainability. The
 same fresh-context reviewer may perform both contract and code-quality review,
 but must inspect and record the lenses separately.
 
+For agent-performed independent review, try Kimi first. If Kimi cannot start
+or finish the exact final-diff review because it is unavailable or its usage
+allowance is exhausted, retry the same lens with Codex in a separate
+fresh-context session. The fallback Codex session MUST receive the exact final
+diff, relevant authority, requested lens, and validation evidence; the
+implementing session's self-check is not an independent review. A human may
+perform the exact review at any point.
+
+If no agent or human reviewer completes the lens, mark the lens **unreviewed**
+in the Slice status or handoff, identify each attempted reviewer and the
+concrete availability reason, notify the human, and stop before acceptance or
+integration. Do not treat quota exhaustion, reviewer unavailability, a partial
+response, or an implementing-agent self-check as a completed lens. Do not
+repeat an unavailable reviewer until its availability state changes. Failed
+attempts are operational evidence, not accepted-commit trailers.
+
 The accepted commit records completed lenses as evidence, not as a substitute
 for performing them:
 
 ```text
-Slice-Review: fresh-context - <reviewer and result>
-Slice-Review: code-quality - <reviewer and result>
-Slice-Review: integration - <reviewer and result>
+Slice-Review: fresh-context - completed - <reviewer-id> - <clear|resolved>
+Slice-Review: code-quality - completed - <reviewer-id> - <clear|resolved>
+Slice-Review: integration - completed - <reviewer-id> - <clear|resolved>
 ```
+
+Use `clear` when the completed review found no actionable findings. Use
+`resolved` only after findings were addressed and the same lens re-reviewed the
+final diff with no remaining actionable finding. Reviewer IDs are compact
+tokens such as `kimi/session-id`, `codex/session-id`, or `human/name`; put
+operational detail in the Slice status rather than free text in the trailer.
 
 When no additional lens applies, record `Slice-Review: none - <reason>`.
 `tools/validation/slice-review-impact.sh` fails closed when this disposition is
@@ -180,7 +202,11 @@ on a Wave branch. It reads only the Git trailer block. For a clean-index
 message amend, it conservatively rechecks the current commit's paths. Path
 detection is a minimum safety net: a planner MUST add any semantic lens that
 the changed paths cannot discover. `none` cannot be combined with completed
-lenses.
+lenses. A required lens counts only when its trailer uses the exact
+`<lens> - completed - <reviewer-id> - <clear|resolved>` shape. Unavailable,
+unfinished, pending, or unresolved reviews cannot satisfy a required lens.
+This grammar is prospective: existing accepted commits retain their historical
+trailers, while every new commit or amend after this change uses the new shape.
 
 Classify a Slice as **human-attention** when it introduces or changes a product
 decision, public contract, failure semantics, dependency choice, permissions,
