@@ -125,9 +125,11 @@ pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다
 | macOS SSH 내부 tmux | Yes | Yes | 실제 host에서 정상 종료, 두 번의 중첩 일시정지/재개, pane mode·termios 전환, 바깥 PTY 복원을 검사 |
 
 `tools/validation/yo-cli-unix-matrix.sh`는 현재 Unix host의 모든 `yo-cli`
-target을 검사하고 다른 host는 unverified로 보고한다. CI workflow는
-Linux와 macOS에서 동일한 compile 검사를 독립적으로 실행한다. compile은
-터미널 동작 증거를 대신하지 않는다.
+target을 검사한다. 출력은 해당 실행만 설명한다. 현재 host는 verified이고
+다른 host는 `unverified(not run on current host)`이다. 이는 다른 host를
+사용할 수 없다는 뜻이 아니며, 별도로 기록된 실제 host 증거를 지우지도
+않는다. CI workflow는 Linux와 macOS에서 동일한 compile 검사를 독립적으로
+실행한다. compile은 터미널 동작 증거를 대신하지 않는다.
 
 ## 매트릭스 실행 결과 보고하기
 

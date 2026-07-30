@@ -94,10 +94,11 @@ local checks = new Mapping<String, Step> {
             "crates/yo-tui/Cargo.toml",
             ".github/workflows/unix-compile.yml",
             "tools/validation/yo-cli-unix-matrix.sh",
+            "tools/validation/yo-cli-unix-matrix-tests.sh",
             "Cargo.lock",
             "Cargo.toml",
         )
-        check = "bash tools/validation/yo-cli-unix-matrix.sh"
+        check = "bash tools/validation/yo-cli-unix-matrix-tests.sh && bash tools/validation/yo-cli-unix-matrix.sh"
     }
     ["developer-docs"] = new Step {
         glob = List(

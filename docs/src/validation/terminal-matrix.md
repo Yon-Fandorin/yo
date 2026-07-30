@@ -127,9 +127,12 @@ The executable environment matrix currently covers:
 | macOS tmux inside SSH | Yes | Yes | Real-host run covered clean exit, two nested suspend/resume generations, pane mode and termios transitions, and outer PTY restoration |
 
 `tools/validation/yo-cli-unix-matrix.sh` checks all `yo-cli` targets on the
-current Unix host and reports the other host as unverified. The CI workflow
-runs the equivalent compile check independently on Linux and macOS; compilation
-does not replace terminal behavior evidence.
+current Unix host. Its output describes only that invocation: the current host
+is verified and the other host is `unverified(not run on current host)`. This
+does not mean that another host is unavailable or erase separately recorded
+real-host evidence. The CI workflow runs the equivalent compile check
+independently on Linux and macOS; compilation does not replace terminal
+behavior evidence.
 
 ## Reporting a matrix run
 
