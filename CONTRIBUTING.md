@@ -161,13 +161,20 @@ abstraction, complexity, diagnostics, cleanup, and test maintainability. The
 same fresh-context reviewer may perform both contract and code-quality review,
 but must inspect and record the lenses separately.
 
-For agent-performed independent review, try Kimi first. If Kimi cannot start
-or finish the exact final-diff review because it is unavailable or its usage
-allowance is exhausted, retry the same lens with Codex in a separate
-fresh-context session. The fallback Codex session MUST receive the exact final
-diff, relevant authority, requested lens, and validation evidence; the
-implementing session's self-check is not an independent review. A human may
-perform the exact review at any point.
+Use Codex in a separate fresh-context session for agent-performed independent
+review by default. Use Kimi when the review specifically needs a different
+perspective to search for hidden assumptions, counterexamples, credible
+alternatives, or future costs. A Kimi request MUST ask for the strongest
+counterargument before its verdict instead of asking it to confirm the
+implementer's conclusion.
+
+Every agent reviewer MUST receive the exact final diff, relevant authority,
+requested lens, and validation evidence. If Kimi cannot start or finish its
+different-perspective review because it is unavailable or its usage allowance
+is exhausted, a separate fresh-context Codex session MAY retry the same
+explicit lens. An unavailable default Codex reviewer is not retried until its
+availability state changes. The implementing session's self-check is not an
+independent review. A human may perform the exact review at any point.
 
 If no agent or human reviewer completes the lens, mark the lens **unreviewed**
 in the Slice status or handoff, identify each attempted reviewer and the
