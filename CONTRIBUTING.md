@@ -154,11 +154,19 @@ public-contract, failure-behavior, or shared-ownership impact.
 
 Fresh-context contract review is required for public contracts, terminal lifecycle, concurrency, failure behavior, workflow, and SOT changes. Slice integration review is required for Wave Slices and changes that consume shared interfaces or sibling results. A simple independent docs or configuration Slice may omit an additional lens only with a recorded rationale.
 
+Every Slice that changes implementation code, executable validation code, or
+Developer Docs theme source receives a code-quality review. This lens checks
+responsibility and module boundaries, duplication, naming, unnecessary
+abstraction, complexity, diagnostics, cleanup, and test maintainability. The
+same fresh-context reviewer may perform both contract and code-quality review,
+but must inspect and record the lenses separately.
+
 The accepted commit records completed lenses as evidence, not as a substitute
 for performing them:
 
 ```text
 Slice-Review: fresh-context - <reviewer and result>
+Slice-Review: code-quality - <reviewer and result>
 Slice-Review: integration - <reviewer and result>
 ```
 
@@ -166,11 +174,13 @@ When no additional lens applies, record `Slice-Review: none - <reason>`.
 `tools/validation/slice-review-impact.sh` fails closed when this disposition is
 missing. It conservatively requires fresh-context review for product and tool
 code, build and Cargo metadata, workflow authority, and semantic SOT authority,
-and it requires integration review on a Wave branch. It reads only the Git
-trailer block. For a clean-index message amend, it conservatively rechecks the
-current commit's paths. Path detection is a minimum safety net: a planner MUST
-add any semantic lens that the changed paths cannot discover. `none` cannot be
-combined with completed lenses.
+it requires code-quality review for executable source under `crates/` and
+`tools/` plus Developer Docs theme source, and it requires integration review
+on a Wave branch. It reads only the Git trailer block. For a clean-index
+message amend, it conservatively rechecks the current commit's paths. Path
+detection is a minimum safety net: a planner MUST add any semantic lens that
+the changed paths cannot discover. `none` cannot be combined with completed
+lenses.
 
 Classify a Slice as **human-attention** when it introduces or changes a product
 decision, public contract, failure semantics, dependency choice, permissions,

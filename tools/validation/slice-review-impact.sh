@@ -37,14 +37,21 @@ fresh_context_paths=$(
         <<<"${changed}" || true
 )
 
+code_quality_paths=$(
+    grep -E \
+        '^((crates/|tools/).*\.(rs|sh)|docs/theme/.*\.(css|hbs|html|js))$' \
+        <<<"${changed}" || true
+)
+
 trailers=$(git interpret-trailers --parse <"${message_file}")
 values=$(sed -nE 's/^Slice-Review:[[:space:]]*(.+)$/\1/p' <<<"${trailers}")
 fresh_context=$(grep -E '^fresh-context - .+' <<<"${values}" || true)
+code_quality=$(grep -E '^code-quality - .+' <<<"${values}" || true)
 integration=$(grep -E '^integration - .+' <<<"${values}" || true)
 none=$(grep -E '^none - .+' <<<"${values}" || true)
 value_count=$(printf '%s\n' "${values}" | sed '/^$/d' | wc -l | tr -d ' ')
 recognized_count=$(
-    printf '%s\n' "${fresh_context}" "${integration}" "${none}" |
+    printf '%s\n' "${fresh_context}" "${code_quality}" "${integration}" "${none}" |
         sed '/^$/d' |
         wc -l |
         tr -d ' '
@@ -54,6 +61,7 @@ fail_with_usage() {
     echo "$1" >&2
     echo "record completed review evidence with one or more trailers:" >&2
     echo "  Slice-Review: fresh-context - <reviewer and result>" >&2
+    echo "  Slice-Review: code-quality - <reviewer and result>" >&2
     echo "  Slice-Review: integration - <reviewer and result>" >&2
     echo "or, only when no lens is required:" >&2
     echo "  Slice-Review: none - <why no additional review lens applies>" >&2
@@ -76,6 +84,10 @@ if [[ $(printf '%s\n' "${fresh_context}" | sed '/^$/d' | wc -l | tr -d ' ') -gt 
     fail_with_usage "fresh-context review must be recorded exactly once"
 fi
 
+if [[ $(printf '%s\n' "${code_quality}" | sed '/^$/d' | wc -l | tr -d ' ') -gt 1 ]]; then
+    fail_with_usage "code-quality review must be recorded exactly once"
+fi
+
 if [[ $(printf '%s\n' "${integration}" | sed '/^$/d' | wc -l | tr -d ' ') -gt 1 ]]; then
     fail_with_usage "integration review must be recorded exactly once"
 fi
@@ -86,6 +98,14 @@ if [[ -n "${fresh_context_paths}" && -z "${fresh_context}" ]]; then
         printf '  changed: %s\n' "${path}" >&2
     done <<<"${fresh_context_paths}"
     fail_with_usage "fresh-context review evidence is missing"
+fi
+
+if [[ -n "${code_quality_paths}" && -z "${code_quality}" ]]; then
+    echo "these changes require code-quality review:" >&2
+    while IFS= read -r path; do
+        printf '  changed: %s\n' "${path}" >&2
+    done <<<"${code_quality_paths}"
+    fail_with_usage "code-quality review evidence is missing"
 fi
 
 if [[ "${branch}" == wave/* && -z "${integration}" ]]; then

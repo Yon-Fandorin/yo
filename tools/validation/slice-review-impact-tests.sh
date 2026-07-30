@@ -37,15 +37,57 @@ expect_pass \
     "develop"
 
 expect_fail \
-    "production code requires fresh-context review" \
+    "production code cannot replace required reviews with none" \
     $'fix(tui): restore the terminal\n\nSlice-Review: none - tests pass' \
     "crates/yo-tui/src/terminal/mode/transaction.rs" \
     "develop"
 
 expect_pass \
-    "production code accepts concrete fresh-context evidence" \
+    "production code accepts contract and code-quality evidence" \
+    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - reviewer terminal-ops found no unresolved findings\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings' \
+    "crates/yo-tui/src/terminal/mode/transaction.rs" \
+    "develop"
+
+expect_fail \
+    "fresh-context review cannot replace code-quality review" \
     $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - reviewer terminal-ops found no unresolved findings' \
     "crates/yo-tui/src/terminal/mode/transaction.rs" \
+    "develop"
+
+expect_fail \
+    "code-quality review cannot replace fresh-context review" \
+    $'fix(tui): restore the terminal\n\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings' \
+    "crates/yo-tui/src/terminal/mode/transaction.rs" \
+    "develop"
+
+expect_fail \
+    "executable tool scripts require code-quality review" \
+    $'test(validation): revise checker\n\nSlice-Review: fresh-context - reviewer workflow found no unresolved findings' \
+    "tools/validation/example.sh" \
+    "develop"
+
+expect_pass \
+    "executable tool scripts accept contract and code-quality evidence" \
+    $'test(validation): revise checker\n\nSlice-Review: fresh-context - reviewer workflow found no unresolved findings\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings' \
+    "tools/validation/example.sh" \
+    "develop"
+
+expect_pass \
+    "tool configuration requires contract review but not code-quality review" \
+    $'build(tool): revise manifest\n\nSlice-Review: fresh-context - reviewer tool-contract found no unresolved findings' \
+    "tools/example/Cargo.toml" \
+    "develop"
+
+expect_fail \
+    "Developer Docs theme source requires code-quality review" \
+    $'docs: revise language switcher\n\nSlice-Review: none - docs only' \
+    "docs/theme/language-switch.js" \
+    "develop"
+
+expect_pass \
+    "Developer Docs theme source accepts code-quality evidence alone" \
+    $'docs: revise language switcher\n\nSlice-Review: code-quality - reviewer docs-ui found no unresolved findings' \
+    "docs/theme/language-switch.js" \
     "develop"
 
 expect_fail \
@@ -74,13 +116,13 @@ expect_fail \
 
 expect_fail \
     "Wave commits require integration review as well as fresh-context review" \
-    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - reviewer core-contract found no unresolved findings' \
+    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - reviewer core-contract found no unresolved findings\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings' \
     "crates/yo-core/src/runtime/mod.rs" \
     "wave/w1-runtime"
 
 expect_pass \
     "Wave commits accept both required review lenses" \
-    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - reviewer core-contract found no unresolved findings\nSlice-Review: integration - reviewer wave-coordinator found no sibling conflict' \
+    $'feat(core): revise runtime\n\nSlice-Review: fresh-context - reviewer core-contract found no unresolved findings\nSlice-Review: code-quality - reviewer maintainability found no unresolved findings\nSlice-Review: integration - reviewer wave-coordinator found no sibling conflict' \
     "crates/yo-core/src/runtime/mod.rs" \
     "wave/w1-runtime"
 
@@ -104,7 +146,13 @@ expect_fail \
 
 expect_fail \
     "duplicate fresh-context evidence remains ambiguous" \
-    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - first reviewer passed\nSlice-Review: fresh-context - second value duplicates the lens' \
+    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - first reviewer passed\nSlice-Review: fresh-context - second value duplicates the lens\nSlice-Review: code-quality - reviewer maintainability passed' \
+    "crates/yo-tui/src/terminal/mode/transaction.rs" \
+    "develop"
+
+expect_fail \
+    "duplicate code-quality evidence remains ambiguous" \
+    $'fix(tui): restore the terminal\n\nSlice-Review: fresh-context - reviewer terminal-ops passed\nSlice-Review: code-quality - first reviewer passed\nSlice-Review: code-quality - second value duplicates the lens' \
     "crates/yo-tui/src/terminal/mode/transaction.rs" \
     "develop"
 
@@ -144,7 +192,8 @@ expect_actual_git_path_detection() {
         printf '%s\n' \
             "test: remove obsolete tool" \
             "" \
-            "Slice-Review: fresh-context - deletion reviewer passed" >message
+            "Slice-Review: fresh-context - deletion reviewer passed" \
+            "Slice-Review: code-quality - deletion quality reviewer passed" >message
         if bash "${checker}" message >/dev/null 2>&1; then
             echo "expected actual Wave deletion to require integration review" >&2
             exit 1
@@ -154,6 +203,7 @@ expect_actual_git_path_detection() {
             "test: remove obsolete tool" \
             "" \
             "Slice-Review: fresh-context - deletion reviewer passed" \
+            "Slice-Review: code-quality - deletion quality reviewer passed" \
             "Slice-Review: integration - Wave integration passed" >message
         bash "${checker}" message
     )
