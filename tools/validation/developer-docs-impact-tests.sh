@@ -26,8 +26,21 @@ expect_fail() {
 
 expect_staged_deletion_fail() {
     repository="${fixture}/deletion"
+    inherited_git_dir="${fixture}/inherited.git"
+    inherited_index="${fixture}/inherited.index"
+    inherited_work_tree="${fixture}/inherited-worktree"
     mkdir -p "${repository}/crates/yo-core/src"
     (
+        export GIT_DIR="${inherited_git_dir}"
+        export GIT_INDEX_FILE="${inherited_index}"
+        export GIT_WORK_TREE="${inherited_work_tree}"
+
+        # Git hooks export repository-local context such as GIT_INDEX_FILE. Clear it before
+        # initializing the nested fixture so its commits and config cannot mutate the caller.
+        local_env_vars=$(git rev-parse --local-env-vars)
+        while IFS= read -r name; do
+            unset "${name}"
+        done <<<"${local_env_vars}"
         cd "${repository}"
         git init --quiet
         git config user.name "Developer Docs Test"
@@ -42,6 +55,12 @@ expect_staged_deletion_fail() {
             exit 1
         fi
     )
+    if [[ -e "${inherited_git_dir}" ||
+        -e "${inherited_index}" ||
+        -e "${inherited_work_tree}" ]]; then
+        echo "nested Git fixture mutated inherited repository state" >&2
+        exit 1
+    fi
 }
 
 expect_pass \
