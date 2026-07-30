@@ -9,8 +9,7 @@ local checks = new Mapping<String, Step> {
     ["test-explanations"] = new Step {
         glob = List(
             "crates/**/*.rs",
-            "tools/librarian/**/*.rs",
-            "tools/methexis/**/*.rs",
+            "tools/**/*.rs",
             "tools/validation/test-explanations.sh",
             "CONTRIBUTING.md",
         )
@@ -112,22 +111,23 @@ local checks = new Mapping<String, Step> {
             "docs/ko/source.sha256",
             "tools/validation/developer-docs-build.sh",
             "tools/validation/developer-docs.sh",
-            "tools/validation/developer-docs-impact.sh",
-            "tools/validation/developer-docs-impact-tests.sh",
             "tools/validation/developer-docs-translations.sh",
             "tools/validation/developer-docs-translations-tests.sh",
         )
-        check = "bash tools/validation/developer-docs.sh && bash tools/validation/developer-docs-impact-tests.sh"
+        check = "bash tools/validation/developer-docs.sh"
     }
-    ["slice-review-impact-tests"] = new Step {
+    ["xtask-tests"] = new Step {
         glob = List(
+            ".cargo/config.toml",
             "AGENTS.md",
             "CONTRIBUTING.md",
             "hk.pkl",
-            "tools/validation/slice-review-impact.sh",
-            "tools/validation/slice-review-impact-tests.sh",
+            "tools/xtask/**/*.rs",
+            "tools/xtask/Cargo.toml",
+            "Cargo.lock",
+            "Cargo.toml",
         )
-        check = "bash tools/validation/slice-review-impact-tests.sh"
+        check = "cargo test --quiet --locked -p xtask"
     }
 }
 
@@ -145,10 +145,10 @@ hooks {
     ["commit-msg"] {
         steps {
             ["developer-docs-impact"] {
-                check = "bash tools/validation/developer-docs-impact.sh {{commit_msg_file}}"
+                check = "cargo xtask check developer-docs-impact {{commit_msg_file}}"
             }
             ["slice-review-impact"] {
-                check = "bash tools/validation/slice-review-impact.sh {{commit_msg_file}}"
+                check = "cargo xtask check slice-review-impact {{commit_msg_file}}"
             }
         }
     }

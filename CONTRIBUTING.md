@@ -200,7 +200,7 @@ tokens such as `kimi/session-id`, `codex/session-id`, or `human/name`; put
 operational detail in the Slice status rather than free text in the trailer.
 
 When no additional lens applies, record `Slice-Review: none - <reason>`.
-`tools/validation/slice-review-impact.sh` fails closed when this disposition is
+`cargo xtask check slice-review-impact` fails closed when this disposition is
 missing. It conservatively requires fresh-context review for product and tool
 code, build and Cargo metadata, workflow authority, and semantic SOT authority,
 it requires code-quality review for executable source under `crates/` and
@@ -299,6 +299,9 @@ hk install
 
 `hk.pkl` owns the hook set. `hk check` verifies changes without editing them;
 `hk fix` applies available fixes. Git `pre-commit` runs repository checks.
+Repository-specific structured checks live in `tools/xtask`; `hk` invokes them
+through the repository-local `cargo xtask` alias instead of placing development
+policy in the `yo` product CLI.
 For every accepted review commit, Git `commit-msg` requires the Slice review
 disposition described above. Working commits on `slice/*`, `task/*`, and
 `spike/*` defer it to their accepted squash or review commit. A Wave merge that
@@ -309,7 +312,8 @@ replace the required squash or fast-forward workflow.
 
 For accepted review commits on `develop`, `main`, or `wave/*` that change code
 under `crates/` or `tools/`, delete code there, or change workspace Cargo
-metadata, Git `commit-msg` requires exactly one trailer:
+metadata or repository Cargo command configuration, Git `commit-msg` requires
+exactly one trailer:
 
 ```text
 Developer-Docs-Impact: updated

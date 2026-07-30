@@ -5,6 +5,7 @@ members = [
     "crates/yo-tui",
     "tools/librarian",
     "tools/methexis",
+    "tools/xtask",
 ]
 resolver = "3"
 
