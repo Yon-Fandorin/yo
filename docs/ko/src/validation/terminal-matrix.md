@@ -77,6 +77,24 @@ PTY 복구도 추가로 확인한다.
 필요한 명령이나 assertion을 사용할 수 없으면 test는 실패한다. 빠진 환경을
 성공한 skip으로 바꾸지 않는다.
 
+## macOS 실제 host 증거
+
+2026-07-30에 `develop` commit `085e763`으로 수용된 tree를 macOS 26.2
+arm64에서 실행했다. 해당 host에서
+`cargo test --workspace --all-targets`가 통과했다.
+
+그다음 80x24 실제 zsh PTY에서 두 표시 mode를 실행했다. 두 mode 모두
+raw/no-echo 입력에 진입하고 빈 입력 `Ctrl+D`로 정상 종료했으며,
+`Ctrl+Z` → job 정지 → `fg` 세대를 두 번 완료했다. Fullscreen은 각
+세대마다 alternate screen을 해제하고 다시 획득했으며, Inline은
+alternate screen에 진입하지 않았다.
+
+동일한 시나리오는 `-f /dev/null`과 격리된 socket을 사용한 tmux 3.6a에서도
+통과했다. 매 정지 구간에서 shell termios가 복원됐고 각 `fg` 뒤 요청한
+mode를 다시 획득했다. 이는 명시적인 실제 host 관찰이며 일반 cross-platform
+test set에 포함된 검사가 아니다. SSH가 소유한 macOS PTY와 그 SSH session
+내부 tmux는 실행하지 않았다.
+
 ## 플랫폼 검사 범위
 
 현재 실행 가능한 환경 매트릭스의 범위는 다음과 같다.
@@ -87,8 +105,11 @@ PTY 복구도 추가로 확인한다.
 | Linux 로컬 tmux | Yes | Yes | ignored test가 정상 종료와 두 번의 shell 기반 일시정지/재개를 검사 |
 | Linux SSH | Yes | Yes | ignored test가 정상 종료와 두 번의 원격 shell 기반 일시정지/재개를 검사 |
 | Linux SSH 내부 tmux | Yes | Yes | ignored test가 정상 종료, 두 번의 중첩 일시정지/재개, 바깥 PTY 복구를 검사 |
-| macOS compile | — | — | 실제 macOS CI host의 `cargo check` |
-| macOS 터미널 동작 | Unverified | Unverified | 아직 실제 host 환경 실행이 없음 |
+| macOS compile | — | — | 실제 macOS 26.2 arm64 host에서 workspace all-target test 통과 |
+| macOS 직접 실제 PTY | Yes | Yes | 실제 host에서 정상 종료와 두 번의 shell 기반 일시정지/재개를 검사 |
+| macOS 로컬 tmux | Yes | Yes | 실제 host에서 정상 종료, 두 번의 일시정지/재개, mode 재획득, shell termios 복원을 검사 |
+| macOS SSH | Unverified | Unverified | SSH가 소유한 macOS PTY는 아직 실행하지 않음 |
+| macOS SSH 내부 tmux | Unverified | Unverified | 중첩된 macOS SSH/tmux는 아직 실행하지 않음 |
 
 `tools/validation/yo-cli-unix-matrix.sh`는 현재 Unix host의 모든 `yo-cli`
 target을 검사하고 다른 host는 unverified로 보고한다. CI workflow는
@@ -108,7 +129,7 @@ Observed failure or missing prerequisite:
 ```
 
 한 경로의 결과로 다른 경로를 추정하지 않는다. 로컬 tmux가 통과했다고 해서
-SSH, SSH 내부 tmux, macOS까지 verified로 표시하지 않는다.
+같은 host의 SSH나 SSH 내부 tmux까지 verified로 표시하지 않는다.
 
 계약:
 [rendering 검증 기준](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.validation-matrix.md)

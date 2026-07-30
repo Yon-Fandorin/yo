@@ -79,6 +79,23 @@ Nested tmux additionally verifies restoration of the outer SSH PTY.
 These tests fail when a required command or assertion is unavailable; they do
 not convert a missing environment into a successful skip.
 
+## macOS real-host evidence
+
+On 2026-07-30, the tree accepted as `develop` commit `085e763` was exercised
+on macOS 26.2 arm64. `cargo test --workspace --all-targets` passed on that
+host.
+
+An 80x24 real zsh PTY then exercised both presentation modes. Each mode entered
+raw/no-echo input, exited successfully from empty `Ctrl+D`, and completed two
+`Ctrl+Z` → stopped job → `fg` generations. Fullscreen left and reacquired the
+alternate screen for each generation; Inline never entered it.
+
+The same scenarios passed in tmux 3.6a using `-f /dev/null` and an isolated
+socket. Every stopped interval restored the shell termios, and each `fg`
+reacquired the requested mode. These were explicit real-host observations, not
+part of the normal cross-platform test set. An SSH-owned macOS PTY and tmux
+inside that SSH session were not run.
+
 ## Platform coverage
 
 The executable environment matrix currently covers:
@@ -89,8 +106,11 @@ The executable environment matrix currently covers:
 | Linux local tmux | Yes | Yes | Ignored tests cover clean exit and two shell-driven suspend/resume generations |
 | Linux SSH | Yes | Yes | Ignored tests cover clean exit and two remote-shell suspend/resume generations |
 | Linux tmux inside SSH | Yes | Yes | Ignored tests cover clean exit, two nested suspend/resume generations, and outer PTY restoration |
-| macOS compile | — | — | `cargo check` on a real macOS CI host |
-| macOS terminal behavior | Unverified | Unverified | No real-host environment run yet |
+| macOS compile | — | — | Workspace all-target tests passed on a real macOS 26.2 arm64 host |
+| macOS direct real PTY | Yes | Yes | Real-host run covered clean exit and two shell-driven suspend/resume generations |
+| macOS local tmux | Yes | Yes | Real-host run covered clean exit, two suspend/resume generations, mode reacquisition, and shell termios restoration |
+| macOS SSH | Unverified | Unverified | No SSH-owned macOS PTY run yet |
+| macOS tmux inside SSH | Unverified | Unverified | No nested macOS SSH/tmux run yet |
 
 `tools/validation/yo-cli-unix-matrix.sh` checks all `yo-cli` targets on the
 current Unix host and reports the other host as unverified. The CI workflow
@@ -109,8 +129,8 @@ Result: passed | failed | unverified
 Observed failure or missing prerequisite:
 ```
 
-Do not infer one route from another. A passing local tmux run does not mark SSH,
-nested tmux, or macOS as verified.
+Do not infer one route from another. A passing local tmux run does not mark SSH
+or nested tmux on the same host as verified.
 
 Contract: [Rendering validation authority](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.validation-matrix.md)
 
