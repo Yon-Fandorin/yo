@@ -110,11 +110,12 @@ other.
 
 [`tools/xtask`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/lib.rs)
 owns structured checks that maintain this repository rather than the `yo`
-product. Its first checks classify changed paths and commit trailers for Slice
-review and Developer Docs impact. `hk.pkl` decides when to run them; `xtask`
-implements and tests their rules. Methexis and Librarian retain their separate
-knowledge-domain responsibilities, while simple external-command orchestration
-remains in `hk` or a small validation script.
+product. Its checks classify changed paths and commit trailers for Slice review
+and Developer Docs impact, and verify that Rust tests carry nearby explanatory
+comments. `hk.pkl` decides when to run them; `xtask` implements and tests their
+rules. Methexis and Librarian retain their separate knowledge-domain
+responsibilities, while simple external-command orchestration remains in `hk`
+or a small validation script.
 
 After choosing an owner, use [Validation](../validation/) as the
 single map from changed boundary to evidence. Follow the

@@ -1,13 +1,5 @@
-use std::{
-    ffi::OsStr,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::atomic::{AtomicU64, Ordering},
-};
-
 use super::{ImpactInput, developer_docs, slice_review};
-
-static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
+use crate::test_support::{TestRepository, unique_path};
 
 // staged deletion도 이름 목록에서 빠지지 않아 코드 변경으로 분류되고, 영향 trailer가
 // 없으면 Developer Docs 검사가 실패하는 실제 Git 경로 수집을 검증한다.
@@ -85,11 +77,7 @@ fn developer_docs_does_not_use_slice_review_head_fallback() {
 // 입력 로딩 자체를 실패시켜 검수 정책이 fail-closed로 동작하게 한다.
 #[test]
 fn changed_path_query_failure_is_not_treated_as_an_empty_change() {
-    let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-    let directory = std::env::temp_dir().join(format!(
-        "yo-xtask-not-a-repository-{}-{sequence}",
-        std::process::id()
-    ));
+    let directory = unique_path("not-a-repository");
     std::fs::create_dir_all(&directory).unwrap();
     let message = directory.join("message");
     std::fs::write(&message, "test: invalid repository\n").unwrap();
@@ -152,56 +140,5 @@ fn unreviewed_slice_merges_are_not_exempt() {
             slice_review::check(&input).is_err(),
             "{target} must not exempt an unreviewed Slice merge"
         );
-    }
-}
-
-struct TestRepository {
-    path: PathBuf,
-}
-
-impl TestRepository {
-    fn new(label: &str) -> Self {
-        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "yo-xtask-{label}-{}-{sequence}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&path).unwrap();
-        let repository = Self { path };
-        repository.git(["init", "--quiet", "-b", "develop"]);
-        repository.git(["config", "user.name", "xtask Test"]);
-        repository.git(["config", "user.email", "xtask@example.invalid"]);
-        repository
-    }
-
-    fn write(&self, relative: impl AsRef<Path>, content: &str) -> PathBuf {
-        let path = self.path.join(relative);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
-        std::fs::write(&path, content).unwrap();
-        path
-    }
-
-    fn git<I, S>(&self, arguments: I)
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
-    {
-        let status = Command::new("git")
-            .current_dir(&self.path)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_WORK_TREE")
-            .args(arguments)
-            .status()
-            .unwrap();
-        assert!(status.success());
-    }
-}
-
-impl Drop for TestRepository {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
     }
 }

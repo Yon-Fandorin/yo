@@ -109,12 +109,12 @@ viewport 소유권, frame 이력을 새로 얻으며, 이 자원들은 `TuiSessi
 ## 저장소 개발 도구
 
 [`tools/xtask`](https://github.com/Yon-Fandorin/yo/blob/develop/tools/xtask/src/lib.rs)는
-`yo` 제품이 아니라 이 저장소를 관리하는 구조화된 검사를 소유한다. 첫
-검사들은 변경 경로와 commit trailer를 분류하여 Slice 검수와 Developer
-Docs 영향을 확인한다. `hk.pkl`은 언제 실행할지를 결정하고, `xtask`는
-규칙의 구현과 test를 담당한다. Methexis와 Librarian은 각자의 지식
-domain 책임을 유지하며, 단순한 외부 명령 조합은 `hk` 또는 작은 검증
-script에 남는다.
+`yo` 제품이 아니라 이 저장소를 관리하는 구조화된 검사를 소유한다. 변경
+경로와 commit trailer를 분류하여 Slice 검수와 Developer Docs 영향을
+확인하고, Rust test에 이해 가능한 인접 설명이 있는지도 검사한다.
+`hk.pkl`은 언제 실행할지를 결정하고, `xtask`는 규칙의 구현과 test를
+담당한다. Methexis와 Librarian은 각자의 지식 domain 책임을 유지하며,
+단순한 외부 명령 조합은 `hk` 또는 작은 검증 script에 남는다.
 
 소유자를 골랐다면 [검증](../validation/)을 변경 경계에서 증거로
 이어지는 단일 지도로 사용한다. 실제 터미널 동작이 관련되면

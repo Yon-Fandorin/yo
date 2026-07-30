@@ -9,17 +9,26 @@ pub(crate) fn output_in(
     arguments: &[&str],
     inherit_repository_environment: bool,
 ) -> Result<String, String> {
+    let output = output_bytes_in(directory, arguments, inherit_repository_environment)?;
+    String::from_utf8(output).map_err(|error| {
+        format!(
+            "git {} returned non-UTF-8 output: {error}",
+            arguments.join(" ")
+        )
+    })
+}
+
+pub(crate) fn output_bytes_in(
+    directory: &Path,
+    arguments: &[&str],
+    inherit_repository_environment: bool,
+) -> Result<Vec<u8>, String> {
     let result = command(directory, inherit_repository_environment)
         .args(arguments)
         .output()
         .map_err(|error| format!("cannot run git {}: {error}", arguments.join(" ")))?;
     if result.status.success() {
-        String::from_utf8(result.stdout).map_err(|error| {
-            format!(
-                "git {} returned non-UTF-8 output: {error}",
-                arguments.join(" ")
-            )
-        })
+        Ok(result.stdout)
     } else {
         let stderr = String::from_utf8_lossy(&result.stderr);
         Err(format!(

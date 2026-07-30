@@ -1,5 +1,9 @@
 mod git;
 mod impact;
+mod test_explanations;
+
+#[cfg(test)]
+mod test_support;
 
 use std::{ffi::OsString, path::PathBuf};
 
@@ -10,11 +14,22 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
     match (arguments.next().as_deref(), arguments.next().as_deref()) {
         (Some(command), Some(check)) if command == "check" => {
             let check = check.to_string_lossy();
-            let head_fallback = match check.as_ref() {
-                "developer-docs-impact" => false,
-                "slice-review-impact" => true,
-                _ => return Err(usage(check.as_ref())),
-            };
+            if check == "test-explanations" {
+                if arguments.next().is_some() {
+                    return Err(usage(check.as_ref()));
+                }
+                let repository = std::env::current_dir()
+                    .map_err(|error| format!("cannot locate the repository: {error}"))?;
+                return test_explanations::check(&repository);
+            }
+
+            let head_fallback = check == "slice-review-impact";
+            if !matches!(
+                check.as_ref(),
+                "developer-docs-impact" | "slice-review-impact"
+            ) {
+                return Err(usage(check.as_ref()));
+            }
             let message = arguments
                 .next()
                 .map(PathBuf::from)
@@ -38,6 +53,9 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
 }
 
 fn usage(check: &str) -> String {
+    if check == "test-explanations" {
+        return "usage: cargo xtask check test-explanations".to_owned();
+    }
     format!(
         "usage: cargo xtask check {} <commit-message-file> [changed-paths-file] [branch]",
         check
@@ -45,7 +63,38 @@ fn usage(check: &str) -> String {
 }
 
 fn general_usage() -> String {
-    "usage: cargo xtask check <developer-docs-impact|slice-review-impact> \
+    "usage:\n\
+     cargo xtask check test-explanations\n\
+     cargo xtask check <developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::run;
+
+    // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
+    // 인자 없는 검사와 커밋 입력 검사를 각각 실행 가능한 형태로 안내한다.
+    #[test]
+    fn general_usage_separates_argument_free_and_impact_checks() {
+        let error = run(Vec::<std::ffi::OsString>::new()).unwrap_err();
+
+        assert_eq!(
+            error,
+            "usage:\n\
+             cargo xtask check test-explanations\n\
+             cargo xtask check <developer-docs-impact|slice-review-impact> \
+             <commit-message-file> [changed-paths-file] [branch]"
+        );
+    }
+
+    // test-explanations 뒤의 불필요한 인자는 조용히 무시하지 않고 해당 명령의
+    // 정확한 사용법을 돌려줘 호출자가 잘못 구성한 훅을 바로 고칠 수 있게 한다.
+    #[test]
+    fn test_explanations_rejects_extra_arguments_with_specific_usage() {
+        let error = run(["check", "test-explanations", "unexpected"].map(Into::into)).unwrap_err();
+
+        assert_eq!(error, "usage: cargo xtask check test-explanations");
+    }
 }

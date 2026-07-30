@@ -134,7 +134,7 @@ them as internally verified.
 Every built-in Rust test in the workspace must have an understandable Korean
 line-comment immediately above `#[test]`. Use multiple lines when one line would
 hide the setup, expected result, or reason. Do not merely translate the function
-name or use unexplained jargon. `tools/validation/test-explanations.sh` enforces
+name or use unexplained jargon. `cargo xtask check test-explanations` enforces
 presence; review owns factual accuracy and readability.
 
 Keep small unit tests beside the private behavior they exercise. When fixtures,
