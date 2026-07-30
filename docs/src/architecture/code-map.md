@@ -88,6 +88,7 @@ terminal-operation, and HTML-projection types.
 | Module | Owns | Follow next |
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, input/event orchestration, and final cleanup reporting | `runner/state.rs` for semantic UI transitions; `runner/unix.rs` for live orchestration |
+| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and explicit Rich/ASCII glyph profiles | `runner/session.rs` for ownership; `runner/state.rs` for frame pinning |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | Decoded semantic key events, edit buffer, configurable bindings, exit gestures, and prompt editing | `prompt` for visible cursor layout |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, transcript layout, and scrolling state | `shell` for composition with the prompt |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | Measuring and painting editor content plus cursor visibility | `input/editor` for edit semantics |
@@ -97,11 +98,14 @@ terminal-operation, and HTML-projection types.
 | [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | Shared transactional restoration, Inline and Fullscreen presenters, panic routing, and the crate-private platform boundary | `yo-cli/process` only when process signal policy changes |
 | [`html`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/html/mod.rs) | Deterministic browser projection of completed `Surface` state | `surface` when terminal and browser output disagree |
 
-`runner::TuiSession` owns transcript, editor, pending-request, view, and
-backpressured agent-dispatch state that can outlive one terminal ownership
-generation. Reentry keeps the same agent connection because the retained state
-contains identities from that agent Session. `runner/unix.rs` acquires fresh
-terminal input, presenter, viewport ownership, and frame history for each
+`runner::TuiSession` owns transcript, editor, pending-request, view,
+backpressured agent-dispatch state, and one committed appearance snapshot that
+can outlive one terminal ownership generation. Each redraw pins the appearance
+revision before measurement and uses that same resolved snapshot through paint
+and the completed `Surface`; plain session output pins the same session-owned
+configuration. Reentry keeps the same agent connection because the retained
+state contains identities from that agent Session. `runner/unix.rs` acquires
+fresh terminal input, presenter, viewport ownership, and frame history for each
 generation; those resources never move into `TuiSession`. A clean `Ctrl+Z`
 returns `TerminalOutcome::SuspendRequested` only after those generation-local
 resources are restored.

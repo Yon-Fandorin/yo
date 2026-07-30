@@ -45,6 +45,16 @@ impl TranscriptLayoutConfig {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn user_marker(&self) -> &str {
+        &self.user_marker
+    }
+
+    #[cfg(test)]
+    pub(crate) fn assistant_marker(&self) -> &str {
+        &self.assistant_marker
+    }
+
     pub(super) const fn max_body_width(&self) -> Option<NonZeroU16> {
         self.max_body_width
     }

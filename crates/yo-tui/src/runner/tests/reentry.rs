@@ -18,6 +18,7 @@ use yo_core::{
 };
 
 use crate::{
+    appearance::GlyphProfile,
     runner::{
         AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch,
         TerminationEvent, TerminationSource, TuiSession,
@@ -314,6 +315,8 @@ impl AgentConnection for CoreAgent {
 #[test]
 fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
     let mut retained = TuiSession::new();
+    retained.select_glyph_profile(GlyphProfile::Ascii).unwrap();
+    let appearance_revision = retained.appearance_pin().revision().get();
     let mut agent = SimpleAgent::default();
     let first_polls = Rc::new(Cell::new(0));
     let first = run_generation(
@@ -347,8 +350,18 @@ fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
 
     assert!(!first.previous_on_render[0]);
     assert_eq!(second.previous_on_render, [false]);
-    assert!(second.frames[0].contains("❯ question"));
+    assert!(
+        first
+            .frames
+            .iter()
+            .any(|frame| frame.contains("> question"))
+    );
+    assert!(second.frames[0].contains("> question"));
     assert!(second.frames[0].contains("draft"));
+    assert_eq!(
+        retained.appearance_pin().revision().get(),
+        appearance_revision
+    );
 }
 
 // 실제 yo-core backpressure에서 얻은 두 작업을 TuiSession의 두 slot에 보관하면

@@ -9,15 +9,18 @@ use yo_core::{
 
 use super::{
     AgentAction, AgentConnection, AgentPoll, ExitReason, RunOutcome,
+    session::TuiSession,
     state::{StateEffect, StateError, TuiState},
     unix::{drain_agent, handle_backpressured_input, prepare_resize, retained_session_output},
 };
 use crate::{
+    appearance::AppearanceState,
     input::event::{InputEvent, KeyAction, KeyCode, KeyEvent as YoKeyEvent, KeyState},
     surface::{CellContent, Point, Size},
     terminal::mode::inline::{InlineFramePlan, InlineViewport},
 };
 
+mod appearance;
 mod reentry;
 
 fn key(code: KeyCode, modifiers: crate::input::event::KeyModifiers) -> InputEvent {
@@ -30,7 +33,9 @@ fn key(code: KeyCode, modifiers: crate::input::event::KeyModifiers) -> InputEven
 }
 
 fn rendered_row(state: &TuiState, size: Size, y: u16) -> String {
-    let frame = state.prepare_frame(size).unwrap();
+    let frame = state
+        .prepare_frame(size, &AppearanceState::default().pin())
+        .unwrap();
     (0..size.width)
         .map(
             |x| match frame.surface.cell(Point::new(x, y)).unwrap().content() {
@@ -118,7 +123,10 @@ fn session_output_contains_the_current_chat_without_the_prompt() {
         .handle(InputEvent::Paste("draft".to_owned()), Duration::ZERO)
         .unwrap();
 
-    let output = state.session_output().unwrap().unwrap();
+    let output = state
+        .session_output(&AppearanceState::default().pin())
+        .unwrap()
+        .unwrap();
 
     assert_eq!(output, "❯ question\n");
 }
@@ -127,20 +135,26 @@ fn session_output_contains_the_current_chat_without_the_prompt() {
 // 생략한다.
 #[test]
 fn oversized_session_output_does_not_replace_a_successful_exit() {
-    let mut state = TuiState::new();
-    state
+    let mut retained = TuiSession::new();
+    retained
+        .parts_mut()
+        .state
         .handle(
             InputEvent::Paste("\n".repeat(usize::from(u16::MAX) + 1)),
             Duration::ZERO,
         )
         .unwrap();
-    state
+    retained
+        .parts_mut()
+        .state
         .handle(
             key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
             Duration::ZERO,
         )
         .unwrap();
-    state
+    retained
+        .parts_mut()
+        .state
         .observe_record(TranscriptRecord::CommandCommitted(
             AgentCommand::StartTurn {
                 turn: turn(),
@@ -149,7 +163,7 @@ fn oversized_session_output_does_not_replace_a_successful_exit() {
         ))
         .unwrap();
 
-    assert_eq!(retained_session_output(&state), None);
+    assert_eq!(retained_session_output(&retained), None);
 }
 
 // Resize는 editor의 Ctrl+C 연속 입력 상태를 건드리지 않고 geometry effect로 분리된다.
@@ -750,7 +764,9 @@ fn projects_fake_backend_coding_activities_through_core_into_tui() {
 
     assert!(drain_agent(&mut connection, &mut state).unwrap());
 
-    let frame = state.prepare_frame(Size::new(32, 8)).unwrap();
+    let frame = state
+        .prepare_frame(Size::new(32, 8), &AppearanceState::default().pin())
+        .unwrap();
     let rows = (0..8)
         .map(|y| {
             (0..32)

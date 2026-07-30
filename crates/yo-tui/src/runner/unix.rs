@@ -181,7 +181,7 @@ where
                 // chat projection can then duplicate content, which the recovery contract prefers
                 // to erasing rows whose ownership is no longer provable.
                 Ok(Ok(exit @ (LoopExit::User | LoopExit::Termination))) => {
-                    (Ok(Ok(exit)), retained_session_output(retained.state()))
+                    (Ok(Ok(exit)), retained_session_output(retained))
                 },
                 Ok(Ok(LoopExit::Suspend)) => (Ok(Ok(LoopExit::Suspend)), None),
                 Ok(Err(error)) => (Ok(Err(error)), None),
@@ -217,8 +217,8 @@ where
     }
 }
 
-pub(super) fn retained_session_output(state: &TuiState) -> Option<String> {
-    state.session_output().ok().flatten()
+pub(super) fn retained_session_output(session: &TuiSession) -> Option<String> {
+    session.session_output().ok().flatten()
 }
 
 pub(super) fn drive<B, E, T, A, P>(
@@ -244,13 +244,14 @@ where
     let mut frame_visible = false;
     let SessionParts {
         state,
+        appearance,
         pending_dispatch,
         pending_control,
     } = retained.parts_mut();
 
     loop {
         if drain_agent(agent, state)? && size.width > 0 && size.height > 0 {
-            redraw(session, viewport, state, size, &mut previous)?;
+            redraw(session, viewport, state, appearance, size, &mut previous)?;
             frame_visible = true;
         }
         if let Some(action) = pending_control.take() {
@@ -317,7 +318,7 @@ where
                         },
                         StateEffect::Redraw => {
                             if size.width > 0 && size.height > 0 {
-                                redraw(session, viewport, state, size, &mut previous)?;
+                                redraw(session, viewport, state, appearance, size, &mut previous)?;
                                 frame_visible = true;
                             }
                         },
@@ -343,7 +344,7 @@ where
         {
             UnixEvent::Idle => {
                 if !frame_visible && size.width > 0 && size.height > 0 {
-                    redraw(session, viewport, state, size, &mut previous)?;
+                    redraw(session, viewport, state, appearance, size, &mut previous)?;
                     frame_visible = true;
                 }
             },
@@ -357,7 +358,7 @@ where
                 StateEffect::Suspend => return Ok(LoopExit::Suspend),
                 StateEffect::Redraw => {
                     if size.width > 0 && size.height > 0 {
-                        redraw(session, viewport, state, size, &mut previous)?;
+                        redraw(session, viewport, state, appearance, size, &mut previous)?;
                         frame_visible = true;
                     }
                 },
@@ -372,7 +373,7 @@ where
                         },
                     }
                     if size.width > 0 && size.height > 0 {
-                        redraw(session, viewport, state, size, &mut previous)?;
+                        redraw(session, viewport, state, appearance, size, &mut previous)?;
                         frame_visible = true;
                     }
                 },
@@ -435,6 +436,7 @@ fn redraw<B, P>(
     session: &mut TerminalSession<'_, B>,
     viewport: &mut P,
     state: &mut TuiState,
+    appearance: &crate::appearance::AppearanceState,
     size: Size,
     previous: &mut Option<Surface>,
 ) -> Result<(), LoopError>
@@ -444,7 +446,11 @@ where
     B::Mode: PartialEq,
     P: LivePresenter<B>,
 {
-    let frame = state.prepare_frame(size).map_err(LoopError::Frame)?;
+    let appearance = appearance.pin();
+    let frame = state
+        .prepare_frame(size, &appearance)
+        .map_err(LoopError::Frame)?;
+    debug_assert_eq!(frame.appearance_revision, appearance.revision());
     viewport.render(session, previous.as_ref(), &frame.surface, frame.cursor)?;
     state.commit_frame(&frame);
     *previous = Some(frame.surface);

@@ -35,6 +35,13 @@ pub(crate) struct AgentShellStyles {
     pub(crate) prompt: Style,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AgentShellRenderOptions<'config> {
+    pub(crate) transcript_config: &'config TranscriptLayoutConfig,
+    pub(crate) styles: AgentShellStyles,
+    pub(crate) scroll: Option<TranscriptScrollCommand>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AgentShellFrame {
     pub(crate) transcript_area: Rect,
@@ -63,6 +70,33 @@ pub(crate) fn render(
     state: &mut AgentShellViewState,
     scroll: Option<TranscriptScrollCommand>,
 ) -> Result<AgentShellFrame, AgentShellRenderError> {
+    render_with_measure_hook(
+        transcript,
+        editor,
+        view,
+        AgentShellRenderOptions {
+            transcript_config,
+            styles,
+            scroll,
+        },
+        state,
+        || {},
+    )
+}
+
+pub(crate) fn render_with_measure_hook(
+    transcript: &TranscriptState,
+    editor: &PromptEditor,
+    view: &mut SurfaceView<'_>,
+    options: AgentShellRenderOptions<'_>,
+    state: &mut AgentShellViewState,
+    after_measure: impl FnOnce(),
+) -> Result<AgentShellFrame, AgentShellRenderError> {
+    let AgentShellRenderOptions {
+        transcript_config,
+        styles,
+        scroll,
+    } = options;
     let size = view.size();
     let prompt =
         prepare_prompt(editor, size.width).map_err(AgentShellRenderError::PromptMeasure)?;
@@ -89,6 +123,8 @@ pub(crate) fn render(
                 .map_err(AgentShellRenderError::TranscriptMeasure)?,
         )
     };
+
+    after_measure();
 
     if view.clear(styles.transcript.background) == WriteOutcome::Clipped {
         return Err(AgentShellRenderError::SurfaceConflict);

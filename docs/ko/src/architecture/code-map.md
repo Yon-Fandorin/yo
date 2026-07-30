@@ -89,6 +89,7 @@ reader가 생길 때 local·remote reader 공통 인터페이스를 추출한다
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, input·event 조율, 마지막 정리 결과 보고 | UI의 의미 상태 전이는 `runner/state.rs`, 실행 중 조율은 `runner/unix.rs` |
+| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 명시적 Rich/ASCII glyph profile | 소유권은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집 | 보이는 cursor 배치는 `prompt` |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, 대화 기록 layout, scroll 상태 | prompt와 조합하는 일은 `shell` |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | editor 내용과 cursor가 보이는 상태를 측정하고 그리기 | 편집 의미는 `input/editor` |
@@ -100,7 +101,10 @@ reader가 생길 때 local·remote reader 공통 인터페이스를 추출한다
 
 `runner::TuiSession`은 한 번의 터미널 소유 기간보다 오래 유지할 수 있는
 대화 기록, editor, 대기 중인 요청, view, backpressure로 전달되지 못한
-agent dispatch 상태를 소유한다. 보존된 상태에는 해당 agent Session의
+agent dispatch 상태와 하나의 committed appearance snapshot을 소유한다.
+각 redraw는 측정 전에 appearance revision을 pin하고, paint와 완성된
+`Surface`까지 같은 resolved snapshot을 사용한다. plain session output도
+같은 session-owned 설정을 pin한다. 보존된 상태에는 해당 agent Session의
 식별자가 있으므로 재진입할 때도 같은 agent 연결을 유지한다.
 `runner/unix.rs`는 매 터미널 소유 기간마다 터미널 입력, presenter,
 viewport 소유권, frame 이력을 새로 얻으며, 이 자원들은 `TuiSession`으로

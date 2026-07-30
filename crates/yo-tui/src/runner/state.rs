@@ -9,17 +9,15 @@ use yo_core::{
 };
 
 use crate::{
+    appearance::{AppearancePin, AppearanceRevision},
     input::{
         editor::{EditorEffect, PromptEditor},
         event::InputEvent,
     },
     runner::AgentAction,
-    shell::{self, AgentShellRenderError, AgentShellStyles, AgentShellViewState},
-    surface::{Point, Rect, Size, Style, Surface, SurfaceError},
-    transcript::{
-        TranscriptItemId, TranscriptLayoutConfig, TranscriptMeasureError, TranscriptState,
-        TranscriptStateError, TranscriptStyles,
-    },
+    shell::{self, AgentShellRenderError, AgentShellRenderOptions, AgentShellViewState},
+    surface::{Point, Rect, Size, Surface, SurfaceError},
+    transcript::{TranscriptItemId, TranscriptMeasureError, TranscriptState, TranscriptStateError},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -57,6 +55,7 @@ impl FrameError {
 pub(super) struct PreparedFrame {
     pub(super) surface: Surface,
     pub(super) cursor: Point,
+    pub(super) appearance_revision: AppearanceRevision,
     view_state: AgentShellViewState,
 }
 
@@ -202,22 +201,39 @@ impl TuiState {
         Ok(StateEffect::Redraw)
     }
 
-    pub(super) fn prepare_frame(&self, size: Size) -> Result<PreparedFrame, FrameError> {
+    pub(super) fn prepare_frame(
+        &self,
+        size: Size,
+        appearance: &AppearancePin,
+    ) -> Result<PreparedFrame, FrameError> {
+        self.prepare_frame_with_measure_hook(size, appearance, || {})
+    }
+
+    pub(super) fn prepare_frame_with_measure_hook(
+        &self,
+        size: Size,
+        appearance: &AppearancePin,
+        after_measure: impl FnOnce(),
+    ) -> Result<PreparedFrame, FrameError> {
         let mut surface = Surface::new(size).map_err(FrameError::Allocate)?;
         let mut view_state = self.view;
+        let snapshot = appearance.snapshot();
         let frame = {
             let area = Rect::new(Point::new(0, 0), size);
             let mut view = surface
                 .view(area)
                 .expect("the complete surface is always a valid view");
-            shell::render(
+            shell::render_with_measure_hook(
                 &self.transcript,
                 &self.editor,
                 &mut view,
-                &TranscriptLayoutConfig::default(),
-                default_styles(),
+                AgentShellRenderOptions {
+                    transcript_config: snapshot.transcript_config(),
+                    styles: snapshot.styles(),
+                    scroll: None,
+                },
                 &mut view_state,
-                None,
+                after_measure,
             )
             .map_err(FrameError::Render)?
         };
@@ -225,15 +241,19 @@ impl TuiState {
         Ok(PreparedFrame {
             surface,
             cursor: frame.cursor,
+            appearance_revision: appearance.revision(),
             view_state,
         })
     }
 
     // This is the currently rendered Chat projection. Future Transcript and Request views select
     // their own projections above this state instead of changing the generic RunOutcome boundary.
-    pub(super) fn session_output(&self) -> Result<Option<String>, TranscriptMeasureError> {
+    pub(super) fn session_output(
+        &self,
+        appearance: &AppearancePin,
+    ) -> Result<Option<String>, TranscriptMeasureError> {
         self.transcript
-            .plain_output(&TranscriptLayoutConfig::default())
+            .plain_output(appearance.snapshot().transcript_config())
     }
 
     pub(super) fn has_pending_request(&self) -> bool {
@@ -401,24 +421,6 @@ const fn activity_label(kind: ActivityKind) -> Option<&'static str> {
         ActivityKind::ApprovalResponse { .. } => Some("Approval response sent"),
         ActivityKind::UserInputRequest { .. } => Some("Agent requested input"),
         ActivityKind::UserInputResponse { .. } => Some("Input response sent"),
-    }
-}
-
-const fn default_styles() -> AgentShellStyles {
-    let style = Style::new(
-        crate::surface::Color::Default,
-        crate::surface::Color::Default,
-        crate::surface::Attributes::empty(),
-    );
-    AgentShellStyles {
-        transcript: TranscriptStyles {
-            background: style,
-            user_marker: style,
-            user_body: style,
-            assistant_marker: style,
-            assistant_body: style,
-        },
-        prompt: style,
     }
 }
 

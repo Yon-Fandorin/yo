@@ -145,8 +145,10 @@ yo-cli가 기본 SIGTSTP 동작을 적용하고 프로세스 정지
 프로세스가 정지한 동안 `TuiSession`과 같은 agent 연결은 살아 있다.
 터미널 input, raw mode, presenter, viewport 소유권, frame 이력은 남기지
 않는다. 재개된 세대는 이 자원을 다시 획득하고 첫 화면 전체를 그린다.
-`process/job_control.rs`는 기본 `SIGTSTP` action을 임시로 설치하고,
-재개된 뒤 물려받았던 action과 mask를 복원한다.
+보존된 appearance snapshot과 revision도 재진입 뒤 유지된다. 각 세대의 첫
+redraw는 측정 전에 그 snapshot을 pin하고 완성된 `Surface`까지 그대로
+운반한다. `process/job_control.rs`는 기본 `SIGTSTP` action을 임시로
+설치하고, 재개된 뒤 물려받았던 action과 mask를 복원한다.
 
 `with_active_resource`가 종료 signal 없이 cleanup lease를 최종 확정한
 뒤에만 프로세스를 일시정지할 수 있다. 이 경계에서 설정된 종료 signal이

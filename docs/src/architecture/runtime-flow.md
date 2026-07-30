@@ -147,8 +147,11 @@ open a fresh active lease and terminal ownership generation
 `TuiSession` and the same agent connection remain alive while the process is
 stopped. Terminal input, raw mode, presenter, viewport ownership, and frame
 history do not: each resumed generation reacquires them and starts with a full
-frame. `process/job_control.rs` temporarily installs the default `SIGTSTP`
-action and restores the inherited action and mask after continuation.
+frame. The retained appearance snapshot and revision also survive reentry; each
+generation's first redraw pins that snapshot before measurement and carries it
+unchanged through the completed `Surface`. `process/job_control.rs` temporarily
+installs the default `SIGTSTP` action and restores the inherited action and mask
+after continuation.
 
 The process may suspend only after `with_active_resource` has finalized the
 cleanup lease with no selected termination signal. If a configured termination
