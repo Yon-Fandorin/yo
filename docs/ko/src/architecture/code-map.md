@@ -59,7 +59,7 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 |---|---|---|
 | [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | provider에 독립적인 command, 관찰 가능한 event와 outcome, typed identity | 허용되는 상태 전이는 `engine` |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | 결정론적인 Session, Turn, Activity, request 상태 전이 | 전이가 provider 경계도 지난다면 `runtime` |
-| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 in-memory 기록 | 실행 중 capture 지점은 `runtime`, durable repository는 아직 미구현 |
+| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 in-memory 기록, 공유 lock과 저장 구조를 숨기는 sequence 기반의 제한된 Transcript 읽기 | 실행 중 capture 지점은 `runtime`, durable repository는 아직 미구현 |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | backend 수락, semantic commit, Journal capture 순서, backend 관찰 결과 변환, 실패 시 활성 작업 종료 | provider port는 `backend/contract.rs` |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command·event lane, worker 소유권, 시작 취소, 종료 조율 | worker가 소유한 의미 처리는 `runtime` |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | provider capability, command, semantic event, polling, 취소, failure kind, 명시적 정리 | 구체적인 adapter |
@@ -72,8 +72,9 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 각 동작 제약을 소유한다.
 [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)은
 replay source 계약을 소유한다. 현재 코드는 semantic record만 메모리에
-capture하며 durable storage나 backend exchange까지 지원한다고 주장하지
-않는다.
+capture하고 구체적인 `TranscriptReader`로 공개한다. durable storage,
+backend exchange, local·remote reader 공통 trait까지 지원한다고 주장하지
+않으며, 실제 remote reader가 생길 때 공통 인터페이스를 추출한다.
 
 ## yo-tui: 터미널 frontend
 

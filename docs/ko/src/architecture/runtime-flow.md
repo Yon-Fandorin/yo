@@ -97,9 +97,16 @@ Inline 또는 Fullscreen presenter
    commit된 event를 Journal에 추가한 뒤 `AgentEvent`로 공개한다. 거절된
    command와 잘못된 backend event는 commit된 의미로 기록하지 않지만,
    실패를 닫으며 만들어진 terminal event는 기록한다.
+   `AgentSession::transcript_reader`는 같은 Journal에서 크기가 제한된 읽기
+   전용 suffix 복사본을 제공하며 내부 lock이나 저장 구조는 노출하지 않는다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
    이미 도착한 semantic event를 소비하고 TUI 상태를 갱신한다. 완성된
    `Surface`를 조합해 활성 presenter로 보낸다.
+
+현재 Chat 화면은 여전히 6단계의 bounded live-event lane을 사용하며
+`TranscriptReader`를 소비하지 않는다. 같은 commit event가 두 경로에서
+중복 적용되지 않도록, Chat을 Journal replay로 옮기는 작업과 event lane을
+합칠 수 있는 깨우기 알림으로 축소하는 작업은 후속 Slice에서 함께 해야 한다.
 
 Codex JSON과 provider identifier는 backend adapter 밖으로 나오지 않는다.
 터미널 input event와 rendering type은 `yo-tui` 밖으로 나오지 않는다.

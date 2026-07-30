@@ -20,6 +20,9 @@ pub use backend::{
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision, UserInput};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
 pub use event::{ActivityKind, ActivityOutcome, ActivityUpdate, AgentEvent, Failure, TurnOutcome};
+pub use journal::{
+    JournalSequence, TranscriptEntry, TranscriptReader, TranscriptRecord, TranscriptSlice,
+};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
 pub use session::{
     ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionId, TurnId, TurnRef,

@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     ActivityKind, ActivityRequestRef, ActivityUpdate, AgentBackend, AgentCommand, AgentEvent,
-    AgentRuntime, RuntimeError, RuntimePoll, SessionId, TurnRef,
+    AgentRuntime, RuntimeError, RuntimePoll, SessionId, TurnRef, journal::SessionJournal,
 };
 
 pub(super) enum WorkerEvent {
@@ -138,9 +138,10 @@ impl<B: AgentBackend> AgentWorker<B> {
         session_id: SessionId,
         state: Arc<Mutex<SessionState>>,
         active_turn_id: Arc<AtomicU64>,
+        journal: SessionJournal,
     ) -> Self {
         Self {
-            runtime: AgentRuntime::new(backend),
+            runtime: AgentRuntime::with_journal(backend, journal),
             session_id,
             state,
             active_turn_id,

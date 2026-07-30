@@ -98,9 +98,16 @@ The useful inspection points are:
    the semantic engine and appends the committed event before publishing an
    `AgentEvent`. Rejected commands and invalid backend events are not recorded
    as committed semantics; terminal events created while closing a failure are.
+   `AgentSession::transcript_reader` exposes bounded, read-only suffix copies
+   from that same Journal without exposing its lock or storage layout.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
    consume already available semantic events, update TUI state, compose a
    completed `Surface`, and send it to the active presenter.
+
+The current Chat surface still follows the bounded live-event lane in step 6;
+it does not consume `TranscriptReader` yet. Moving Chat to Journal replay and
+reducing that lane to a coalescible wake-up notification must happen together
+in a later Slice so one committed event cannot be applied through both paths.
 
 Codex JSON and provider identifiers end at the backend adapter. Terminal input
 events and rendering types end in `yo-tui`. The command and event types crossing

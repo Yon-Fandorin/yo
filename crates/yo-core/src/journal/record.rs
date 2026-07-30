@@ -1,7 +1,7 @@
 use crate::{AgentCommand, AgentEvent};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct JournalSequence(u64);
+pub struct JournalSequence(u64);
 
 impl JournalSequence {
     pub(super) fn from_index(index: usize) -> Self {
@@ -12,12 +12,14 @@ impl JournalSequence {
         Self(value)
     }
 
-    #[cfg(test)]
-    pub(crate) const fn get(self) -> u64 {
+    #[must_use]
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
 
+/// Internal Journal meaning mirrored deliberately by the public
+/// `TranscriptRecord` projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SemanticRecord {
     CommandCommitted(AgentCommand),
@@ -35,12 +37,10 @@ impl JournalEntry {
         Self { sequence, record }
     }
 
-    #[cfg(test)]
     pub(crate) const fn sequence(&self) -> JournalSequence {
         self.sequence
     }
 
-    #[cfg(test)]
     pub(crate) const fn record(&self) -> &SemanticRecord {
         &self.record
     }

@@ -23,10 +23,14 @@ pub struct AgentRuntime<B> {
 
 impl<B: AgentBackend> AgentRuntime<B> {
     pub fn new(backend: B) -> Self {
+        Self::with_journal(backend, SessionJournal::new())
+    }
+
+    pub(crate) fn with_journal(backend: B, journal: SessionJournal) -> Self {
         Self {
             engine: AgentEngine::new(),
             backend,
-            journal: SessionJournal::new(),
+            journal,
         }
     }
 

@@ -9,7 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{AgentBackend, AgentCommand, AgentEvent, BackendStopHandle, RuntimePoll, SessionId};
+use crate::{
+    AgentBackend, AgentCommand, AgentEvent, BackendStopHandle, RuntimePoll, SessionId,
+    TranscriptReader, journal::SessionJournal,
+};
 
 mod admission;
 mod contract;
@@ -46,6 +49,7 @@ pub struct AgentSession {
     state: Arc<Mutex<SessionState>>,
     active_turn_id: Arc<AtomicU64>,
     next_turn_id: u64,
+    transcript: TranscriptReader,
     #[cfg(test)]
     processed: Arc<(Mutex<u64>, Condvar)>,
     worker: Option<JoinHandle<WorkerExit>>,
@@ -101,6 +105,8 @@ impl AgentSession {
         let worker_processed = Arc::clone(&processed);
         let lifecycle = Arc::new(AtomicU8::new(WORKER_IDLE));
         let worker_lifecycle = Arc::clone(&lifecycle);
+        let journal = SessionJournal::new();
+        let transcript = journal.transcript_reader();
         let worker = match thread::Builder::new()
             .name("yo-agent-runtime".to_owned())
             .spawn(move || {
@@ -108,8 +114,13 @@ impl AgentSession {
                     let _ = finished_tx.send(());
                     return WorkerExit::success();
                 };
-                let mut worker =
-                    AgentWorker::new(backend, session_id, worker_state, worker_active_turn_id);
+                let mut worker = AgentWorker::new(
+                    backend,
+                    session_id,
+                    worker_state,
+                    worker_active_turn_id,
+                    journal,
+                );
                 let outcome = match worker.initialize() {
                     Ok(events) => {
                         if startup_tx.send(Ok(())).is_err() {
@@ -205,6 +216,7 @@ impl AgentSession {
                     state,
                     active_turn_id,
                     next_turn_id: 1,
+                    transcript,
                     #[cfg(test)]
                     processed,
                     worker: Some(worker),
@@ -338,6 +350,12 @@ impl AgentSession {
             Err(TryRecvError::Empty) => Ok(RuntimePoll::Pending),
             Err(TryRecvError::Disconnected) => Ok(RuntimePoll::Closed),
         }
+    }
+
+    /// Returns read-only access to this Session's committed semantic history.
+    #[must_use]
+    pub fn transcript_reader(&self) -> TranscriptReader {
+        self.transcript.clone()
     }
 }
 
