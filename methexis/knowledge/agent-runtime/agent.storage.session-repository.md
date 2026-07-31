@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.storage-001
-    revision: sha256:4164010fda3703d828f0f52c5dcd104bbaee038518010333f00b91a089ffc086
+    revision: sha256:1c90abd22adf88aab5faa9cda013b5ca364c066e3e7ae94e2aa43be80c3ed5dd
 relations:
   depends_on:
     - agent.runtime.command-event-boundary
@@ -29,6 +29,20 @@ resolution are not part of the local implementation.
 The first local implementation MUST use one append-only, explicitly versioned
 JSON Lines log per Session. JSONL MUST remain a replaceable implementation
 detail behind the repository interface rather than a frontend contract.
+One semantic commit MUST be encoded as one physical repository envelope. A
+command with zero or more resulting events and a batch of observation events
+MUST NOT become partially durable through separate physical appends.
+`JournalSequence` MUST express semantic replay order, while
+`RepositorySequence` MUST express physical append order; neither sequence MAY
+be inferred from the other.
+
+Every newly written physical record MUST carry a versioned CRC32C over an
+explicit preimage containing its schema, Session identity,
+`RepositorySequence`, record kind, and exact payload bytes. Recovery MUST
+continue to read supported older records and MUST validate checksummed records
+before admitting them. The checksum MUST NOT be calculated by recursively
+serializing a record that already contains its checksum.
+
 The two logical record domains therefore share one physical availability
 boundary and one capacity ceiling in this implementation. It is the initial
 durable home for bounded, payload-free Request correlation records. Durable
@@ -48,10 +62,20 @@ When an owner reopens a non-empty Session or recovers after an initial
 Session-state load failure, it MUST require a complete snapshot before
 accepting another incremental record because it cannot prove that no
 in-memory-only gap preceded the reopen or recovery.
-Compression, segmentation, indexes, SQLite projections, alternative encodings,
+Message and tool-output segments present in semantic commits MUST remain
+content persistence detail rather than another Session authority.
+Compression, indexes, SQLite projections, alternative encodings, group commit,
 and a separate Request Audit namespace MUST require measured evidence instead
 of being included in the first implementation. Such a later storage split MUST
 NOT redefine Session meaning or transfer Session lifecycle coordination.
+
+A successfully persisted semantic commit MUST be published to the in-memory
+Journal only after its append and required synchronization complete.
+Process-local presentation updates explicitly marked volatile are outside this
+durable-before-publication rule and MUST NOT be exposed as durable records. If
+semantic work completes but persistence fails, the owner MUST publish the
+result as volatile, latch a durable gap, and MUST NOT report that semantic work
+as rolled back.
 
 The local repository MUST be enabled by default, restrict its directory and
 files to the current user, and provide a configurable capacity ceiling. It
@@ -60,17 +84,23 @@ When the configured ceiling or the underlying storage prevents another
 durable append, existing records MUST remain unchanged, and the active Session
 MUST continue in memory without durable appends. The storage owner MUST emit a
 typed, persistent storage-pressure notification to every connected frontend
-that distinguishes a known sequence, a known empty log, and an unknown durable
-cutoff.
+that distinguishes a known cutoff, a known empty log, and an unknown durable
+cutoff. A known cutoff MUST carry both the last durable `JournalSequence`,
+which MAY be absent when no semantic Journal event is durable, and the last
+`RepositorySequence`; neither coordinate may be inferred from the other.
 The repository MUST NOT claim a continuous suffix after such a gap. Once
 capacity is available again, it MUST publish a complete Session snapshot
 before accepting later incremental records as durable.
 
+The first implementation MUST remain a synchronous single-writer path. It MUST
+NOT add a background writer, generic transaction API, or group commit without
+measured synchronization latency and append-rate evidence.
+
 ## Rationale
 
 A local-first port supports immediate resume and diagnosis without freezing a
-database choice or silently sacrificing old work. Explicit pressure and
-checkpoint recovery preserve honest history while remote storage is still
-future work. Versioned JSONL makes the first durable bytes inspectable and
-stream-recoverable while the repository boundary leaves later storage
-optimization open.
+database choice or silently sacrificing old work. Atomic envelopes, separate
+semantic and physical sequence spaces, and checksummed records make partial or
+corrupted durability explicit. Durable-first publication, explicit pressure,
+and snapshot recovery preserve honest history while transient streaming remains
+responsive and remote storage is still future work.
