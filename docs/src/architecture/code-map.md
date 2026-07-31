@@ -37,7 +37,7 @@ and [UI-only crate boundary](https://github.com/Yon-Fandorin/yo/blob/develop/met
 
 | Boundary | Owns | Does not own |
 |---|---|---|
-| [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | Argument parsing, presentation selection before terminal acquisition, working-directory capture, provider startup, terminal-generation reentry, and top-level cleanup aggregation | Agent semantics or terminal rendering |
+| [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | Argument parsing, presentation and glyph-profile selection before terminal acquisition, working-directory capture, provider startup, terminal-generation reentry, and top-level cleanup aggregation | Agent semantics or terminal rendering |
 | [`src/agent/mod.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs) | Adapting `yo-core::AgentSession` to the TUI's `AgentConnection` port, including the concrete local Transcript cursor | Provider protocol translation or a premature local/remote reader trait |
 | [`src/process/job_control.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/job_control.rs) | Transactionally applying default `SIGTSTP`, suspending the process, and restoring inherited signal state after `SIGCONT` | TUI state or terminal restoration |
 | [`src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Unix signal installation, observation, restoration, and final disposition | Terminal state restoration |
@@ -88,7 +88,7 @@ terminal-operation, and HTML-projection types.
 | Module | Owns | Follow next |
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, input/event orchestration, and final cleanup reporting | `runner/state.rs` for semantic UI transitions; `runner/unix.rs` for live orchestration |
-| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and explicit Rich/ASCII glyph profiles | `runner/session.rs` for ownership; `runner/state.rs` for frame pinning |
+| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and the public built-in Rich/ASCII glyph-profile choice | `runner/session.rs` for profile-aware construction and ownership; `runner/state.rs` for frame pinning |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | Decoded semantic key events, edit buffer, configurable bindings, exit gestures, and prompt editing | `prompt` for visible cursor layout |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, transcript layout, and scrolling state | `shell` for composition with the prompt |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | Measuring and painting editor content plus cursor visibility | `input/editor` for edit semantics |
@@ -103,12 +103,22 @@ backpressured agent-dispatch state, and one committed appearance snapshot that
 can outlive one terminal ownership generation. Each redraw pins the appearance
 revision before measurement and uses that same resolved snapshot through paint
 and the completed `Surface`; plain session output pins the same session-owned
-configuration. Reentry keeps the same agent connection because the retained
-state contains identities from that agent Session. `runner/unix.rs` acquires
-fresh terminal input, presenter, viewport ownership, and frame history for each
-generation; those resources never move into `TuiSession`. A clean `Ctrl+Z`
-returns `TerminalOutcome::SuspendRequested` only after those generation-local
-resources are restored.
+configuration. `TuiSession::new` selects compatibility-default Rich glyphs,
+while `TuiSession::with_glyph_profile` lets the process host choose the built-in
+ASCII profile without exposing mutable theme state. Reentry keeps the same
+agent connection because the retained state contains identities from that agent
+Session. `runner/unix.rs` acquires fresh terminal input, presenter, viewport
+ownership, and frame history for each generation; those resources never move
+into `TuiSession`. A clean `Ctrl+Z` returns
+`TerminalOutcome::SuspendRequested` only after those generation-local resources
+are restored.
+
+Appearance contracts:
+[session publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.session-publication.md),
+[frame consistency](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.frame-consistency.md),
+[glyph profiles](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.glyph-profiles.md),
+and
+[resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
 The `surface` is the common completed state. Terminal and HTML projections
 consume it independently; neither projection defines layout meaning for the

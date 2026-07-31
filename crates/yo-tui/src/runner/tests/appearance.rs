@@ -163,19 +163,42 @@ fn default_profiles_resolve_prompt_glyphs_and_visual_roles() {
     assert_eq!(ascii.surface.cell(Point::new(2, 7)).unwrap().style(), body);
 }
 
-// ASCII snapshot은 화면 transcript와 빈 입력 marker를 함께 ASCII로 그리고, 종료용 plain
-// output은 같은 snapshot의 transcript만 내보내 profile 일관성과 출력 경계를 함께 지킨다.
+// public session 생성자로 선택한 ASCII snapshot은 실제 준비 frame과 종료용 plain output에
+// 함께 쓰여 host가 선택한 profile의 일관성과 출력 경계를 지킨다.
 #[test]
-fn screen_and_session_output_share_the_same_committed_snapshot() {
-    let state = conversation();
-    let appearance =
-        AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii)).unwrap();
-    let pin = appearance.pin();
-    let frame = state.prepare_frame(FRAME_SIZE, &pin).unwrap();
-    let output = state.session_output(&pin).unwrap().unwrap();
+fn public_ascii_session_keeps_frame_and_output_consistent() {
+    let mut session = TuiSession::with_glyph_profile(GlyphProfile::Ascii);
+    *session.parts_mut().state = conversation();
+    let pin = session.appearance_pin();
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame(FRAME_SIZE, &pin)
+        .unwrap();
+    let output = session.session_output().unwrap().unwrap();
 
     assert_eq!(visible_rows(&frame.surface), "> question\n\n* answer\n\n>");
     assert_eq!(output, "> question\n\n* answer\n");
+}
+
+// 기본 public session은 Rich compatibility snapshot을 실제 준비 frame과 plain output에
+// 함께 사용하여 새 host seam이 기존 marker 동작을 바꾸지 않음을 보인다.
+#[test]
+fn public_default_session_keeps_rich_frame_and_output_consistent() {
+    let mut session = TuiSession::new();
+    *session.parts_mut().state = conversation();
+    let pin = session.appearance_pin();
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame(FRAME_SIZE, &pin)
+        .unwrap();
+
+    assert_eq!(visible_rows(&frame.surface), "❯ question\n\n⏺ answer\n\n›");
+    assert_eq!(
+        session.session_output().unwrap().unwrap(),
+        "❯ question\n\n⏺ answer\n"
+    );
 }
 
 // 한 TuiSession의 profile 교체는 다른 세션의 snapshot과 revision에 전파되지 않는다.

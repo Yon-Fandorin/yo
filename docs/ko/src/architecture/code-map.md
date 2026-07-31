@@ -38,7 +38,7 @@ yo-cli main
 
 | 경계 | 소유하는 책임 | 소유하지 않는 책임 |
 |---|---|---|
-| [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | 인자 해석, 터미널 획득 전 표시 방식 선택, 작업 디렉터리 확보, provider 시작, 터미널 세대 재진입, 최상위 정리 결과 취합 | 에이전트 의미나 터미널 렌더링 |
+| [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | 인자 해석, 터미널 획득 전 표시 방식과 glyph profile 선택, 작업 디렉터리 확보, provider 시작, 터미널 세대 재진입, 최상위 정리 결과 취합 | 에이전트 의미나 터미널 렌더링 |
 | [`src/agent/mod.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs) | 구체적인 local Transcript cursor를 포함해 `yo-core::AgentSession`을 TUI의 `AgentConnection` 포트에 맞게 연결 | provider 프로토콜 변환 또는 시기상조인 local·remote reader trait |
 | [`src/process/job_control.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/job_control.rs) | 기본 `SIGTSTP` 동작 적용, 프로세스 일시정지, `SIGCONT` 뒤 물려받은 signal 상태 복원을 하나의 transaction으로 처리 | TUI 상태나 터미널 복원 |
 | [`src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Unix signal 설치·관찰·복원과 마지막 처리 | 터미널 상태 복원 |
@@ -89,7 +89,7 @@ reader가 생길 때 local·remote reader 공통 인터페이스를 추출한다
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, input·event 조율, 마지막 정리 결과 보고 | UI의 의미 상태 전이는 `runner/state.rs`, 실행 중 조율은 `runner/unix.rs` |
-| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 명시적 Rich/ASCII glyph profile | 소유권은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
+| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph profile 선택 | profile을 받는 생성과 소유권은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집 | 보이는 cursor 배치는 `prompt` |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, 대화 기록 layout, scroll 상태 | prompt와 조합하는 일은 `shell` |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | editor 내용과 cursor가 보이는 상태를 측정하고 그리기 | 편집 의미는 `input/editor` |
@@ -104,12 +104,22 @@ reader가 생길 때 local·remote reader 공통 인터페이스를 추출한다
 agent dispatch 상태와 하나의 committed appearance snapshot을 소유한다.
 각 redraw는 측정 전에 appearance revision을 pin하고, paint와 완성된
 `Surface`까지 같은 resolved snapshot을 사용한다. plain session output도
-같은 session-owned 설정을 pin한다. 보존된 상태에는 해당 agent Session의
-식별자가 있으므로 재진입할 때도 같은 agent 연결을 유지한다.
+같은 session-owned 설정을 pin한다. `TuiSession::new`는 호환 기본값인 Rich
+glyph를 선택하고, `TuiSession::with_glyph_profile`은 mutable theme state를
+노출하지 않은 채 process host가 built-in ASCII profile을 선택하게 한다.
+보존된 상태에는 해당 agent Session의 식별자가 있으므로 재진입할 때도 같은
+agent 연결을 유지한다.
 `runner/unix.rs`는 매 터미널 소유 기간마다 터미널 입력, presenter,
 viewport 소유권, frame 이력을 새로 얻으며, 이 자원들은 `TuiSession`으로
 옮기지 않는다. 정리가 성공한 `Ctrl+Z`는 이 세대 전용 자원을 모두 복원한
 뒤에만 `TerminalOutcome::SuspendRequested`를 반환한다.
+
+Appearance 계약:
+[session publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.session-publication.md),
+[frame 일관성](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.frame-consistency.md),
+[glyph profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.glyph-profiles.md),
+그리고
+[resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
 `surface`는 공통으로 완성된 상태다. 터미널과 HTML Projection은 이를
 각자 소비하며, 어느 쪽도 다른 쪽의 layout 의미를 정의하지 않는다.

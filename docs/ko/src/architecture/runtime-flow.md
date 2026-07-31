@@ -10,7 +10,7 @@
 
 ```text
 yo-cli
-  표시 mode 해석과 cwd 확보
+  표시 mode와 glyph profile 해석, cwd 확보
   TerminationCoordinator 설치
   CodexBackend transport 시작
       ↓
@@ -31,7 +31,7 @@ yo-tui
 
 | 단계 | 현재 소유자 | 확인할 내용 |
 |---|---|---|
-| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run`이 표시 mode를 선택하고 작업 디렉터리를 확보한 뒤 프로세스 종료 coordinator를 설치한다. |
+| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run`이 표시 mode와 glyph profile을 선택하고 작업 디렉터리를 확보한 뒤 프로세스 종료 coordinator를 설치한다. |
 | 2 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CodexBackend::spawn`이 설정을 검증하고 stdio transport를 시작한다. provider handshake는 아직 하지 않는다. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable`이 backend를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 `AgentRuntime`을 통해 `CreateSession`을 보낸다. |
@@ -42,6 +42,22 @@ handshake 중에 종료 요청이 오면 `AgentSession::start_inner`가 취소
 callback을 관찰하고 backend 중지를 요청한 뒤 worker 정리를 기다린다.
 그리고 TUI에 Session을 넘기지 않은 채 반환한다. 이 경우 터미널 mode
 코드가 아니라 여기서 조사를 시작한다.
+
+공개 host flag는 표시를 위한 `--inline` 또는 `--fullscreen`과 built-in
+ASCII glyph profile을 위한 `--ascii`이며 순서와 관계없이 사용할 수 있다.
+표시 flag를 생략하면 Inline, `--ascii`를 생략하면 호환 기본값인 Rich를
+사용한다. 알 수 없는 flag, 반복한 `--ascii`, 둘 이상의 표시 flag는
+provider나 터미널을 시작하기 전에 실패한다. 선택한 glyph profile로 보존할
+`TuiSession`을 생성하므로 준비한 frame과 마지막 plain session output은
+같은 committed appearance snapshot을 읽는다. Glyph 선택은 명시적이며
+`TERM`이나 `NO_COLOR`를 검사하지 않는다.
+
+계약:
+[session publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.session-publication.md),
+[frame 일관성](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.frame-consistency.md),
+[glyph profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.glyph-profiles.md),
+그리고
+[resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
 ## 활성 Turn 하나
 
@@ -148,7 +164,8 @@ yo-cli가 기본 SIGTSTP 동작을 적용하고 프로세스 정지
 보존된 appearance snapshot과 revision도 재진입 뒤 유지된다. 각 세대의 첫
 redraw는 측정 전에 그 snapshot을 pin하고 완성된 `Surface`까지 그대로
 운반한다. `process/job_control.rs`는 기본 `SIGTSTP` action을 임시로
-설치하고, 재개된 뒤 물려받았던 action과 mask를 복원한다.
+설치하고, 재개된 뒤 물려받았던 action과 mask를 복원한다. process host는
+resume 때 glyph profile을 다시 만들거나 선택하지 않는다.
 
 `with_active_resource`가 종료 signal 없이 cleanup lease를 최종 확정한
 뒤에만 프로세스를 일시정지할 수 있다. 이 경계에서 설정된 종료 signal이

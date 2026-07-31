@@ -12,7 +12,7 @@ ready:
 
 ```text
 yo-cli
-  parse mode and capture cwd
+  parse presentation mode and glyph profile; capture cwd
   install TerminationCoordinator
   spawn CodexBackend transport
       ↓
@@ -33,7 +33,7 @@ yo-tui
 
 | Step | Current owner | What to follow |
 |---|---|---|
-| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run` selects the presentation mode, captures the working directory, and installs the process termination coordinator. |
+| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run` selects the presentation mode and glyph profile, captures the working directory, and installs the process termination coordinator. |
 | 2 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CodexBackend::spawn` validates configuration and starts the stdio transport. It defers the provider handshake. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable` transfers the backend to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` sends `CreateSession` through `AgentRuntime`. |
@@ -44,6 +44,23 @@ If termination arrives during the handshake, `AgentSession::start_inner`
 observes the cancellation callback, requests the backend stop, waits for worker
 cleanup, and returns without giving the TUI a Session. Start investigation
 there, not in terminal mode code.
+
+The public host flags are `--inline` or `--fullscreen` for presentation and
+`--ascii` for the built-in ASCII glyph profile; flags may appear in either
+order. Omitting the presentation flag keeps the Inline default, and omitting
+`--ascii` keeps the Rich compatibility default. Unknown flags, repeated
+`--ascii`, and multiple presentation flags fail before provider or terminal
+startup. The selected glyph profile constructs the retained `TuiSession`, so
+prepared frames and final plain session output read the same committed
+appearance snapshot. Glyph selection is explicit and does not inspect `TERM` or
+`NO_COLOR`.
+
+Contracts:
+[session publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.session-publication.md),
+[frame consistency](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.frame-consistency.md),
+[glyph profiles](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.glyph-profiles.md),
+and
+[resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
 ## One active turn
 
@@ -151,7 +168,8 @@ frame. The retained appearance snapshot and revision also survive reentry; each
 generation's first redraw pins that snapshot before measurement and carries it
 unchanged through the completed `Surface`. `process/job_control.rs` temporarily
 installs the default `SIGTSTP` action and restores the inherited action and mask
-after continuation.
+after continuation. The process host does not reconstruct or reselect the glyph
+profile on resume.
 
 The process may suspend only after `with_active_resource` has finalized the
 cleanup lease with no selected termination signal. If a configured termination

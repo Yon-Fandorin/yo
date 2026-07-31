@@ -4,7 +4,7 @@
     not(test),
     expect(
         dead_code,
-        reason = "the first Slice keeps replacement and ASCII selection crate-private"
+        reason = "live appearance replacement remains crate-private until it has a host consumer"
     )
 )]
 
@@ -22,8 +22,11 @@ use crate::{
 const BODY_INDENT: u16 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum GlyphProfile {
+#[non_exhaustive]
+pub enum GlyphProfile {
+    /// Rich Unicode transcript and prompt markers.
     Rich,
+    /// ASCII-only transcript and prompt markers.
     Ascii,
 }
 

@@ -314,8 +314,7 @@ impl AgentConnection for CoreAgent {
 // TuiSession의 두 번째 generation이 다시 그리며, 이전 frame은 재사용하지 않는다.
 #[test]
 fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
-    let mut retained = TuiSession::new();
-    retained.select_glyph_profile(GlyphProfile::Ascii).unwrap();
+    let mut retained = TuiSession::with_glyph_profile(GlyphProfile::Ascii);
     let appearance_revision = retained.appearance_pin().revision().get();
     let mut agent = SimpleAgent::default();
     let first_polls = Rc::new(Cell::new(0));

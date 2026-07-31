@@ -20,7 +20,7 @@ fn main() -> ExitCode {
 
 #[cfg(unix)]
 fn run() -> Result<(), AppError> {
-    let mode = parse_presentation_mode(std::env::args_os().skip(1))?;
+    let options = parse_options(std::env::args_os().skip(1))?;
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
@@ -32,7 +32,7 @@ fn run() -> Result<(), AppError> {
     loop {
         let generation = host.with_active_resource(
             &mut live,
-            |termination, live| run_agent_generation(termination, live, &cwd, mode),
+            |termination, live| run_agent_generation(termination, live, &cwd, options),
             shutdown_live_session,
         );
         match generation {
@@ -80,11 +80,18 @@ enum SessionStep {
 }
 
 #[cfg(unix)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Options {
+    mode: yo_tui::PresentationMode,
+    glyph_profile: yo_tui::GlyphProfile,
+}
+
+#[cfg(unix)]
 fn run_agent_generation(
     termination: &mut impl yo_tui::TerminationSource,
     live: &mut Option<LiveSession>,
     cwd: &std::path::Path,
-    mode: yo_tui::PresentationMode,
+    options: Options,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {
         let backend = yo_core::CodexBackend::spawn(yo_core::CodexBackendConfig::new(cwd))
@@ -96,14 +103,18 @@ fn run_agent_generation(
         };
         *live = Some(LiveSession {
             agent,
-            tui: yo_tui::TuiSession::new(),
+            tui: yo_tui::TuiSession::with_glyph_profile(options.glyph_profile),
         });
     }
     let session = live
         .as_mut()
         .expect("live session is initialized before terminal acquisition");
-    let terminal =
-        yo_tui::run_session_with_mode(termination, &mut session.agent, &mut session.tui, mode);
+    let terminal = yo_tui::run_session_with_mode(
+        termination,
+        &mut session.agent,
+        &mut session.tui,
+        options.mode,
+    );
 
     let mut failures = Vec::new();
     match terminal {
@@ -148,28 +159,44 @@ fn write_session_output(output: &str) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn parse_presentation_mode(
+fn parse_options(
     arguments: impl IntoIterator<Item = std::ffi::OsString>,
-) -> Result<yo_tui::PresentationMode, AppError> {
-    let mut arguments = arguments.into_iter();
-    let mode = match arguments.next().as_deref() {
-        None => yo_tui::PresentationMode::Inline,
-        Some(argument) if argument == "--inline" => yo_tui::PresentationMode::Inline,
-        Some(argument) if argument == "--fullscreen" => yo_tui::PresentationMode::Fullscreen,
-        Some(argument) => {
+) -> Result<Options, AppError> {
+    const USAGE: &str = "yo [--inline | --fullscreen] [--ascii]";
+
+    let mut mode = None;
+    let mut glyph_profile = None;
+    for argument in arguments {
+        let selected_mode = match argument.as_os_str() {
+            value if value == "--inline" => Some(yo_tui::PresentationMode::Inline),
+            value if value == "--fullscreen" => Some(yo_tui::PresentationMode::Fullscreen),
+            value if value == "--ascii" => {
+                if glyph_profile.replace(yo_tui::GlyphProfile::Ascii).is_some() {
+                    return Err(AppError::many([format!(
+                        "duplicate argument `--ascii`; usage: {USAGE}"
+                    )]));
+                }
+                None
+            },
+            _ => {
+                return Err(AppError::many([format!(
+                    "unknown argument `{}`; usage: {USAGE}",
+                    argument.to_string_lossy()
+                )]));
+            },
+        };
+        if let Some(selected_mode) = selected_mode
+            && mode.replace(selected_mode).is_some()
+        {
             return Err(AppError::many([format!(
-                "unknown argument `{}`; usage: yo [--inline | --fullscreen]",
-                argument.to_string_lossy()
+                "multiple presentation modes; usage: {USAGE}"
             )]));
-        },
-    };
-    if let Some(argument) = arguments.next() {
-        return Err(AppError::many([format!(
-            "unexpected argument `{}`; usage: yo [--inline | --fullscreen]",
-            argument.to_string_lossy()
-        )]));
+        }
     }
-    Ok(mode)
+    Ok(Options {
+        mode: mode.unwrap_or(yo_tui::PresentationMode::Inline),
+        glyph_profile: glyph_profile.unwrap_or(yo_tui::GlyphProfile::Rich),
+    })
 }
 
 #[cfg(unix)]
@@ -212,48 +239,68 @@ fn main() -> ExitCode {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use yo_tui::PresentationMode;
+    use yo_tui::{GlyphProfile, PresentationMode};
 
-    use super::parse_presentation_mode;
+    use super::{Options, parse_options};
 
-    // option이 없는 기존 실행은 Auto로 추측하지 않고 임시 호환 정책인 Inline을 선택한다.
+    // option이 없는 기존 실행은 Inline 표시와 Rich glyph라는 두 호환 기본값을 함께 유지한다.
     #[test]
-    fn no_option_preserves_inline_compatibility() {
+    fn no_option_preserves_compatibility_defaults() {
         assert_eq!(
-            parse_presentation_mode([]).unwrap(),
-            PresentationMode::Inline
+            parse_options([]).unwrap(),
+            Options {
+                mode: PresentationMode::Inline,
+                glyph_profile: GlyphProfile::Rich,
+            }
         );
     }
 
-    // 명시적인 두 option은 terminal을 획득하기 전에 대응 presenter를 정확히 선택한다.
+    // 표시 mode와 ASCII glyph option은 순서와 무관하게 terminal 획득 전 하나의 선택으로 해석된다.
     #[test]
-    fn explicit_options_select_the_requested_presenter() {
+    fn explicit_options_select_presentation_and_glyphs() {
         assert_eq!(
-            parse_presentation_mode(["--inline".into()]).unwrap(),
-            PresentationMode::Inline
+            parse_options(["--ascii".into(), "--fullscreen".into()]).unwrap(),
+            Options {
+                mode: PresentationMode::Fullscreen,
+                glyph_profile: GlyphProfile::Ascii,
+            }
         );
         assert_eq!(
-            parse_presentation_mode(["--fullscreen".into()]).unwrap(),
-            PresentationMode::Fullscreen
+            parse_options(["--inline".into(), "--ascii".into()]).unwrap(),
+            Options {
+                mode: PresentationMode::Inline,
+                glyph_profile: GlyphProfile::Ascii,
+            }
         );
     }
 
     // 둘 이상의 mode argument는 우선순위를 임의로 정하지 않고 사용법 오류로 거부한다.
     #[test]
     fn multiple_mode_arguments_are_rejected() {
-        let error =
-            parse_presentation_mode(["--inline".into(), "--fullscreen".into()]).unwrap_err();
+        let error = parse_options(["--inline".into(), "--fullscreen".into()]).unwrap_err();
 
-        assert!(error.to_string().contains("unexpected argument"));
+        assert!(error.to_string().contains("multiple presentation modes"));
+    }
+
+    // ASCII option의 중복은 숨은 우선순위 없이 명시적인 사용법 오류로 거부한다.
+    #[test]
+    fn duplicate_ascii_argument_is_rejected() {
+        let error = parse_options(["--ascii".into(), "--ascii".into()]).unwrap_err();
+
+        assert!(error.to_string().contains("duplicate argument `--ascii`"));
     }
 
     // 알 수 없는 option은 조용히 Inline으로 fallback하지 않고 지원하는 선택지를 안내한다.
     #[test]
     fn unknown_option_is_rejected_without_fallback() {
-        let error = parse_presentation_mode(["--auto".into()]).unwrap_err();
+        let error = parse_options(["--auto".into()]).unwrap_err();
 
         assert!(error.to_string().contains("unknown argument `--auto`"));
-        assert!(error.to_string().contains("yo [--inline | --fullscreen]"));
+        assert!(
+            error
+                .to_string()
+                .contains("yo [--inline | --fullscreen] [--ascii]")
+        );
     }
 }
 

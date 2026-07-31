@@ -13,6 +13,7 @@ pub mod terminal;
 pub(crate) mod text;
 pub(crate) mod transcript;
 
+pub use appearance::GlyphProfile;
 #[cfg(unix)]
 pub use runner::{
     AgentAction, AgentConnection, AgentPoll, DispatchOutcome, ExitReason, PendingDispatch,

@@ -30,12 +30,19 @@ pub(super) struct SessionParts<'session> {
 }
 
 impl TuiSession {
-    /// Creates an empty TUI session.
+    /// Creates an empty TUI session with the compatibility-default Rich glyphs.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_glyph_profile(GlyphProfile::Rich)
+    }
+
+    /// Creates an empty TUI session with an explicit built-in glyph profile.
+    #[must_use]
+    pub fn with_glyph_profile(profile: GlyphProfile) -> Self {
         Self {
             state: TuiState::new(),
-            appearance: AppearanceState::default(),
+            appearance: AppearanceState::new(AppearanceCandidate::for_profile(profile))
+                .expect("built-in appearance profiles must always be valid"),
             pending_dispatch: None,
             pending_control: None,
         }
@@ -68,13 +75,7 @@ impl TuiSession {
         self.appearance.commit(candidate)
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the first Slice reserves explicit ASCII selection without a public facade"
-        )
-    )]
+    #[cfg(test)]
     pub(crate) fn select_glyph_profile(
         &mut self,
         profile: GlyphProfile,
