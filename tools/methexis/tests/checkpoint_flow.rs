@@ -4,6 +4,8 @@ mod contract;
 mod failures;
 #[path = "checkpoint_flow/lineage.rs"]
 mod lineage;
+#[path = "checkpoint_flow/prospective.rs"]
+mod prospective;
 #[path = "checkpoint_flow/replacement.rs"]
 mod replacement;
 #[path = "checkpoint_flow/support.rs"]

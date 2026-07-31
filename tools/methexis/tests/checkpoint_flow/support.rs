@@ -1,6 +1,7 @@
 //! Git-backed isolated repository fixture and structured CLI assertions.
 
 use std::{
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -168,7 +169,10 @@ impl GitRepository {
 
     pub(super) fn run_with_env(&self, args: &[&str], environment: &[(&str, &Path)]) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_methexis"));
-        command.current_dir(&self.path).args(args);
+        command
+            .current_dir(&self.path)
+            .env_remove("GIT_INDEX_FILE")
+            .args(args);
         for (key, value) in environment {
             command.env(key, value);
         }
@@ -176,6 +180,10 @@ impl GitRepository {
     }
 
     pub(super) fn git(&self, args: &[&str]) -> Output {
+        self.git_os(&args.iter().map(OsStr::new).collect::<Vec<_>>())
+    }
+
+    pub(super) fn git_os(&self, args: &[&OsStr]) -> Output {
         let output = Command::new("/usr/bin/git")
             .env_clear()
             .env("GIT_CONFIG_NOSYSTEM", "1")

@@ -1,7 +1,10 @@
 use std::{
     ffi::OsString,
+    fs,
     io::{self, Write},
+    path::{Path, PathBuf},
     process::Command,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const HELP: &str = concat!(
@@ -13,6 +16,7 @@ Methexis SOT Pilot
 USAGE:
     methexis [--help | --version]
     methexis check [--only <class>[,<class>...]]...
+    methexis check --staged-activation
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis approve <request.json>
@@ -21,7 +25,7 @@ USAGE:
     methexis resolve-context <request.json>
 
 COMMANDS:
-    check             Validate SOT integrity; classes: records, relations, authority, artifacts
+    check             Validate current SOT integrity or one exact staged activation
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal
@@ -37,6 +41,85 @@ from local develop, then uses current Source observations only to demote it.
 
 fn methexis() -> Command {
     Command::new(env!("CARGO_BIN_EXE_methexis"))
+}
+
+struct CorpusRepository {
+    path: PathBuf,
+}
+
+impl CorpusRepository {
+    fn without_active_checkpoint() -> Self {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("crate is under <repository>/tools/methexis");
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "methexis-cli-corpus-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).unwrap();
+        copy_directory(&source.join("methexis"), &path.join("methexis"));
+        fs::remove_file(path.join("methexis/active-checkpoint.yaml")).unwrap();
+        fs::remove_dir_all(path.join("methexis/checkpoints")).unwrap();
+        let repository = Self { path };
+        repository.git(&[
+            "init",
+            "--initial-branch=develop",
+            "--object-format=sha1",
+            "--template=",
+        ]);
+        repository.git(&["config", "user.email", "fixture@example.invalid"]);
+        repository.git(&["config", "user.name", "Methexis Fixture"]);
+        repository.git(&["add", "methexis"]);
+        repository.git(&["commit", "-m", "repository corpus without activation"]);
+        repository
+    }
+
+    fn git(&self, args: &[&str]) {
+        let output = Command::new("/usr/bin/git")
+            .env_clear()
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_GRAFT_FILE", "/dev/null")
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .env("LC_ALL", "C")
+            .arg("--no-replace-objects")
+            .current_dir(&self.path)
+            .env("GIT_AUTHOR_DATE", "2026-07-31T12:00:00Z")
+            .env("GIT_COMMITTER_DATE", "2026-07-31T12:00:00Z")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+impl Drop for CorpusRepository {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+fn copy_directory(source: &Path, target: &Path) {
+    fs::create_dir(target).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_directory(&source_path, &target_path);
+        } else {
+            fs::copy(source_path, target_path).unwrap();
+        }
+    }
 }
 
 // --help가 성공 상태로 Source-aware check를 포함한 전체 명령 표면을 정확히 출력하는지 확인한다.
@@ -121,16 +204,14 @@ fn stream_failures_are_returned_to_the_binary_boundary() {
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
 }
 
-// `methexis check`의 stdout이 결정적인 순서로 전체 저장소 corpus를 보고하고,
-// 기존 seed와 검수 가능한 14개 Surface Draft를 빠짐없이 포함하는지 검증한다.
+// active record만 제거한 독립 trusted corpus에서 `methexis check`의 stdout 순서와
+// exact approval을 검증한다. 실제 저장소의 activation 전환 상태가 CLI 단위 테스트 답안이 되지 않게
+// 한다. 기존 seed와 검수 가능한 14개 Surface Draft도 빠짐없이 포함해야 한다.
 #[test]
 fn check_reports_the_repository_corpus_on_stdout() {
-    let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("crate is under <repository>/tools/methexis");
+    let repository = CorpusRepository::without_active_checkpoint();
     let output = methexis()
-        .current_dir(repository_root)
+        .current_dir(&repository.path)
         .arg("check")
         .output()
         .expect("run methexis check");
@@ -257,17 +338,14 @@ fn check_reports_the_repository_corpus_on_stdout() {
 // 쉼표 목록과 반복된 --only가 같은 정규화된 요청과 선행 검사 계획으로 실행되는지 확인한다.
 #[test]
 fn check_only_accepts_comma_lists_and_repeated_flags_equivalently() {
-    let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("crate is under <repository>/tools/methexis");
+    let repository = CorpusRepository::without_active_checkpoint();
     let comma = methexis()
-        .current_dir(repository_root)
+        .current_dir(&repository.path)
         .args(["check", "--only", " authority, artifacts "])
         .output()
         .expect("run comma-separated selection");
     let repeated = methexis()
-        .current_dir(repository_root)
+        .current_dir(&repository.path)
         .args([
             "check",
             "--only=authority",

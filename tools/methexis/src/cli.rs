@@ -8,7 +8,9 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    CheckClass, check_repository_selected, checkpoint::CheckpointService, context::ContextService,
+    CheckClass, check_repository_selected,
+    checkpoint::{CheckpointService, StagedTransition},
+    context::ContextService,
     review::ReviewService,
 };
 
@@ -21,6 +23,7 @@ Methexis SOT Pilot
 USAGE:
     methexis [--help | --version]
     methexis check [--only <class>[,<class>...]]...
+    methexis check --staged-activation
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis approve <request.json>
@@ -29,7 +32,7 @@ USAGE:
     methexis resolve-context <request.json>
 
 COMMANDS:
-    check             Validate SOT integrity; classes: records, relations, authority, artifacts
+    check             Validate current SOT integrity or one exact staged activation
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal
@@ -119,6 +122,26 @@ fn run_check(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> io::Result<ExitCode> {
+    if args == [OsString::from("--staged-activation")] {
+        let root = env::current_dir()?;
+        let service = CheckpointService::new(&root);
+        return match service.check_staged_transition() {
+            Ok(StagedTransition::Prospective(report)) => {
+                write_json(stdout, &report, ExitCode::SUCCESS)
+            },
+            Ok(StagedTransition::Ordinary(fallback)) => {
+                let report = check_repository_selected(&root, &CheckClass::ALL);
+                if let Err(error) = service.finish_staged_fallback(fallback) {
+                    write_json(stderr, &error, ExitCode::from(2))
+                } else if report.ok {
+                    write_json(stdout, &report, ExitCode::SUCCESS)
+                } else {
+                    write_json(stderr, &report, ExitCode::from(2))
+                }
+            },
+            Err(error) => write_json(stderr, &error, ExitCode::from(2)),
+        };
+    }
     let requested = match parse_check_selection(args) {
         Ok(requested) => requested,
         Err(()) => {

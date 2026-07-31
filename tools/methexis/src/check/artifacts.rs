@@ -1,6 +1,7 @@
 //! Read-only validation for tracked examples derived from trusted authority.
 
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::Read,
     path::{Component, Path},
@@ -12,7 +13,7 @@ use serde::Deserialize;
 use super::{Diagnostic, global_diagnostic};
 use crate::checkpoint::ActiveCheckpoint;
 
-const TRACKED_ARTIFACTS: &[&str] = &[
+pub(crate) const TRACKED_ARTIFACTS: &[&str] = &[
     "tools/methexis/examples/context-contract/manifest.json",
     "tools/methexis/examples/context-contract/stable-leaf-manifest.json",
 ];
@@ -60,33 +61,71 @@ pub(super) fn validate(repository_root: &Path, active: &ActiveCheckpoint) -> Vec
                 continue;
             },
         };
-        let artifact: TrackedArtifact = match serde_json::from_slice(&bytes) {
-            Ok(artifact) => artifact,
-            Err(error) => {
-                diagnostics.push(global_diagnostic(
-                    (*relative).to_owned(),
-                    "invalid_tracked_artifact",
-                    format!("cannot parse tracked authority-derived artifact: {error}"),
-                    Vec::new(),
-                ));
-                continue;
-            },
-        };
-        let checkpoint = artifact.plan.checkpoint;
-        if checkpoint.id != active.id
-            || checkpoint.hash != active.hash
-            || checkpoint.authority_basis_commit != active.authority_basis_commit
-        {
+        validate_bytes(relative, &bytes, active, &mut diagnostics);
+    }
+    diagnostics
+}
+
+pub(crate) fn validate_candidate(
+    artifacts: &BTreeMap<String, Vec<u8>>,
+    active: &ActiveCheckpoint,
+) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    for relative in TRACKED_ARTIFACTS {
+        let Some(bytes) = artifacts.get(*relative) else {
             diagnostics.push(global_diagnostic(
                 (*relative).to_owned(),
-                "stale_tracked_artifact",
-                "tracked artifact Checkpoint provenance differs from active trusted authority"
+                "tracked_artifact_candidate_missing",
+                "prospective activation must stage every registered authority-derived artifact"
                     .to_owned(),
                 Vec::new(),
             ));
-        }
+            continue;
+        };
+        validate_bytes(relative, bytes, active, &mut diagnostics);
     }
     diagnostics
+}
+
+fn validate_bytes(
+    relative: &str,
+    bytes: &[u8],
+    active: &ActiveCheckpoint,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    if bytes.len() > MAX_ARTIFACT_BYTES {
+        diagnostics.push(global_diagnostic(
+            relative.to_owned(),
+            "tracked_artifact_unreadable",
+            format!("artifact exceeds the {MAX_ARTIFACT_BYTES}-byte limit"),
+            Vec::new(),
+        ));
+        return;
+    }
+    let artifact: TrackedArtifact = match serde_json::from_slice(bytes) {
+        Ok(artifact) => artifact,
+        Err(error) => {
+            diagnostics.push(global_diagnostic(
+                relative.to_owned(),
+                "invalid_tracked_artifact",
+                format!("cannot parse tracked authority-derived artifact: {error}"),
+                Vec::new(),
+            ));
+            return;
+        },
+    };
+    let checkpoint = artifact.plan.checkpoint;
+    if checkpoint.id != active.id
+        || checkpoint.hash != active.hash
+        || checkpoint.authority_basis_commit != active.authority_basis_commit
+    {
+        diagnostics.push(global_diagnostic(
+            relative.to_owned(),
+            "stale_tracked_artifact",
+            "tracked artifact Checkpoint provenance differs from selected authority".to_owned(),
+            Vec::new(),
+        ));
+    }
 }
 
 fn read_bounded(repository_root: &Path, relative: &Path) -> Result<Vec<u8>, String> {

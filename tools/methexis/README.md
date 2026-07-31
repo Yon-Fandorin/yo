@@ -23,6 +23,7 @@ methexis propose-activation <activation-request.json>
 methexis resolve-context <context-request.json>
 methexis check
 methexis check --only authority,artifacts
+methexis check --staged-activation
 ```
 
 `check` is read-only. Without selectors it runs all ordered classes:
@@ -31,6 +32,18 @@ or contain comma-separated names; requested downstream classes automatically
 run their prerequisites. The JSON result separates `requested_checks` from
 `executed_checks` and marks every planned class `passed`, `failed`, or
 `blocked`.
+
+`check --staged-activation` is the fail-closed repository-hook entry point.
+When the index does not contain an active-record change it runs the ordinary
+all-class check. When it does, the index must contain exactly one new immutable
+Checkpoint, the active record, and both registered context manifests. The
+command reproduces that candidate from current trusted `develop`, verifies the
+active record's persisted compare-and-swap predecessor, validates Source
+freshness and staged artifact provenance, pins the exact commit-selected Git
+index (including `GIT_INDEX_FILE`), rechecks it before return, and reports
+`authority: prospective`. A degraded candidate fails. The command neither
+changes authority nor permits unrelated staged files; ordinary `check` remains
+required after integration.
 
 `artifacts` covers the tracked context-contract manifests registered by the
 Pilot. It verifies their Checkpoint provenance against active trusted
@@ -51,7 +64,10 @@ system Git process, disables replacement refs, reads exact Git objects without
 switching branches, and writes an immutable Checkpoint proposal containing the
 requested roots plus their `depends_on` and `constrained_by` closure.
 `propose-activation` reproduces that exact Checkpoint from its claimed commit,
-then writes the active-record proposal with compare-and-swap.
+then writes the active-record proposal with compare-and-swap. Replacements
+persist the exact prior active-record hash as deterministic lineage, allowing a
+later staged check to reproduce the transition without trusting invocation
+history.
 Both files become authority only after repository review integrates them into
 `develop`. `check` reports a fully fresh integrated active record as `active`;
 stable Source drift yields `degraded`, while a concurrent Source change returns
@@ -92,7 +108,10 @@ src/checkpoint/
   context.rs     Context authority capture and final revalidation guard
   context_tests.rs final concurrent authority-change regression
   operations.rs  Checkpoint and activation-proposal orchestration
+  prospective.rs exact staged activation and artifact validation
   git.rs         isolated pinned trusted-ref Git-object snapshot
+  git/proposal.rs read-only captured-index and parent snapshot for hook validation
+  git/tests.rs   captured proposal mutation regression
   validation.rs  approved required-closure selection
   records.rs     deterministic record encoding and validation
   storage.rs     immutable publication and active-record CAS
@@ -136,6 +155,7 @@ src/context/
 tests/checkpoint_flow/
   contract.rs  executable agent fixtures and authority transition
   lineage.rs   claimed Git provenance reproduction
+  prospective.rs exact staged transition and scope rejection
   replacement.rs active-record compare-and-swap scenarios
   failures.rs  approval, integrity, and trust-movement failures
   support.rs   deterministic Git-backed repository fixture

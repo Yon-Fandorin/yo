@@ -37,6 +37,7 @@ pub(super) fn build_checkpoint(
 pub(super) fn build_active(
     checkpoint: &CheckpointRecord,
     checkpoint_hash: &str,
+    replaces_active_hash: Option<&str>,
 ) -> Result<(ActiveRecord, Vec<u8>, String), OperationFailure> {
     const OPERATION: &str = "propose_activation";
     let request_hash = semantic_hash(&ActiveIdentity {
@@ -44,12 +45,14 @@ pub(super) fn build_active(
         checkpoint_id: &checkpoint.checkpoint_id,
         checkpoint_hash,
         trusted_commit: &checkpoint.trusted_commit,
+        replaces_active_hash,
     });
     let record = ActiveRecord {
         schema: ACTIVE_SCHEMA.to_owned(),
         checkpoint_id: checkpoint.checkpoint_id.clone(),
         checkpoint_hash: checkpoint_hash.to_owned(),
         trusted_commit: checkpoint.trusted_commit.clone(),
+        replaces_active_hash: replaces_active_hash.map(str::to_owned),
         request_hash,
     };
     let bytes = yaml_bytes(&record, OPERATION, Some(checkpoint.trusted_commit.clone()))?;
@@ -62,7 +65,15 @@ pub(super) fn read_checkpoint(
     operation: &'static str,
 ) -> Result<(CheckpointRecord, Vec<u8>), OperationFailure> {
     let bytes = read_bounded(path, operation, "checkpoint_unreadable")?;
-    let record: CheckpointRecord = serde_norway::from_slice(&bytes).map_err(|error| {
+    let record = parse_checkpoint_bytes(&bytes, operation)?;
+    Ok((record, bytes))
+}
+
+pub(super) fn parse_checkpoint_bytes(
+    bytes: &[u8],
+    operation: &'static str,
+) -> Result<CheckpointRecord, OperationFailure> {
+    let record: CheckpointRecord = serde_norway::from_slice(bytes).map_err(|error| {
         failure(
             operation,
             None,
@@ -82,7 +93,7 @@ pub(super) fn read_checkpoint(
             "recreate the Checkpoint",
         ));
     }
-    Ok((record, bytes))
+    Ok(record)
 }
 
 pub(super) fn parse_active_bytes(
@@ -103,12 +114,17 @@ pub(super) fn parse_active_bytes(
         || !valid_hash(&record.checkpoint_hash)
         || !valid_hash(&record.request_hash)
         || !valid_commit(&record.trusted_commit)
+        || record
+            .replaces_active_hash
+            .as_ref()
+            .is_some_and(|hash| !valid_hash(hash))
         || record.request_hash
             != semantic_hash(&ActiveIdentity {
                 schema: ACTIVE_SCHEMA,
                 checkpoint_id: &record.checkpoint_id,
                 checkpoint_hash: &record.checkpoint_hash,
                 trusted_commit: &record.trusted_commit,
+                replaces_active_hash: record.replaces_active_hash.as_deref(),
             })
     {
         return Err(failure(

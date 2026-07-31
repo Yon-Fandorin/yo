@@ -281,6 +281,12 @@ Checkpoint and active record in one commit. It becomes authoritative only when
 that commit is reachable from the configured trust anchor. That accepted Git
 commit is the atomic authority transition.
 
+An active-record replacement also stores the exact prior trusted active-record
+hash used as its compare-and-swap predecessor. The initial activation stores no
+predecessor. This lineage is part of the deterministic active-record identity,
+so repository review and pre-integration validation can reproduce the
+transition instead of trusting that a particular CLI invocation created it.
+
 Any local active pointer is only a reconstructible cache. It MUST be bound to
 the Git tree identity and active-Checkpoint hash, replaced crash-safely, and
 discarded on mismatch. Concurrent authority changes are serialized by the
@@ -459,6 +465,35 @@ active record becomes `active` only when all selected Source guards pass; a
 stable freshness failure yields `degraded` and marks only affected required
 closures stale or invalid. Fast editing validation SHOULD be available through
 the repository `hk` workflow.
+
+`methexis check --staged-activation` is the repository-hook path for the
+otherwise unavoidable interval after revised approvals reach trusted
+`develop` and before their replacement Checkpoint is integrated. Without a
+staged active-record change it has exactly the ordinary all-class `check`
+behavior. With one, it accepts only one new immutable Checkpoint, the active
+record, and the complete registered tracked-artifact set in the Git index;
+unrelated staged paths fail closed.
+
+The staged path is read-only and prospective, never trusted authority. It
+resolves `develop` once, reproduces the proposed Checkpoint from that exact
+trusted commit, verifies the active record's exact predecessor hash and
+canonical bytes, requires every selected Source to remain fresh, checks staged
+artifact provenance, and revalidates Source, proposal-index, and trusted-ref
+stability before returning. It pins the exact Git index selected by the commit
+invocation, including an explicit `GIT_INDEX_FILE`, and rejects non-regular or
+non-stage-zero entries. Success
+labels the candidate `prospective` and requires ordinary full `check` after the
+exact reviewed transition is integrated. It MUST NOT accept caller-selected
+refs, arbitrary future trees, working-tree-only candidate bytes, or a general
+hook exception.
+
+This check mechanizes the second half of a two-commit authority transition; it
+does not make revised approvals and their Checkpoint one authority commit. The
+trusted ref may therefore be intentionally inconsistent between the accepted
+approval commit and its exact back-to-back activation commit. During that
+bounded interval ordinary `check` and authority-consuming operations continue
+to fail or use only the prior still-valid active authority; prospective success
+never grants approval, activation, or context eligibility.
 
 The `artifacts` class validates only tracked contract artifacts derived from
 trusted authority. In this Pilot it checks the registered context manifests'
@@ -740,6 +775,7 @@ create-checkpoint <request.json> -> immutable trusted-revision Checkpoint propos
 propose-activation <request.json> -> active-record proposal with compare-and-swap
 check [--only <class>[,<class>...]]...
                                 -> selected SOT integrity classes and their prerequisites
+check --staged-activation       -> ordinary check or one exact staged prospective transition
 resolve-context <request.json>  -> immutable ContextBuild locator and hashes
 ```
 

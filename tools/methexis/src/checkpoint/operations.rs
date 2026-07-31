@@ -86,12 +86,18 @@ pub(super) fn propose_activation(
             "regenerate the versioned request",
         ));
     }
-    if !valid_hash(&request.checkpoint_id) || !valid_hash(&request.checkpoint_hash) {
+    if !valid_hash(&request.checkpoint_id)
+        || !valid_hash(&request.checkpoint_hash)
+        || request
+            .replace_active_hash
+            .as_ref()
+            .is_some_and(|hash| !valid_hash(hash))
+    {
         return Err(failure(
             OPERATION,
             None,
             "invalid_activation_request",
-            "Checkpoint ID and hash must be lowercase sha256 values",
+            "Checkpoint ID, hash, and optional active predecessor must be lowercase sha256 values",
             vec![request.checkpoint_id],
             "use the exact values returned by create-checkpoint",
         ));
@@ -100,6 +106,7 @@ pub(super) fn propose_activation(
         schema: ACTIVATE_REQUEST_SCHEMA,
         checkpoint_id: &request.checkpoint_id,
         checkpoint_hash: &request.checkpoint_hash,
+        replace_active_hash: request.replace_active_hash.as_deref(),
     });
     let filename = request
         .checkpoint_id
@@ -132,7 +139,11 @@ pub(super) fn propose_activation(
             "use the exact Checkpoint ID and hash",
         ));
     }
-    let (_, bytes, hash) = build_active(&checkpoint, &actual_hash)?;
+    let (_, bytes, hash) = build_active(
+        &checkpoint,
+        &actual_hash,
+        request.replace_active_hash.as_deref(),
+    )?;
     let target = repository_root.join("methexis/active-checkpoint.yaml");
     let status = publish_active(
         repository_root,

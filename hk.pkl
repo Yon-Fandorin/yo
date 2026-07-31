@@ -38,7 +38,7 @@ local checks = new Mapping<String, Step> {
             "Cargo.lock",
             "Cargo.toml",
         )
-        check = "cargo run --quiet --locked -p methexis -- check"
+        check = "cargo run --quiet --locked -p methexis -- check --staged-activation"
     }
     ["methexis-tests"] = new Step {
         glob = List(

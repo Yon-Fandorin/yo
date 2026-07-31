@@ -18,6 +18,7 @@ mod context;
 mod evaluation;
 mod git;
 mod operations;
+mod prospective;
 mod records;
 mod storage;
 mod validation;
@@ -27,6 +28,15 @@ pub(crate) use context::{
     resolve as resolve_context_authority,
 };
 pub(crate) use evaluation::{ActiveCheckpoint, AuthorityFailure};
+
+pub(crate) enum StagedTransition {
+    Prospective(prospective::ProspectiveActivation),
+    Ordinary(StagedFallback),
+}
+
+pub(crate) struct StagedFallback {
+    index: git::ProposalIndex,
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +66,8 @@ struct ActivationInput<'a> {
     schema: &'static str,
     checkpoint_id: &'a str,
     checkpoint_hash: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replace_active_hash: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -93,6 +105,8 @@ struct ActiveRecord {
     checkpoint_id: String,
     checkpoint_hash: String,
     trusted_commit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replaces_active_hash: Option<String>,
     request_hash: String,
 }
 
@@ -102,6 +116,8 @@ struct ActiveIdentity<'a> {
     checkpoint_id: &'a str,
     checkpoint_hash: &'a str,
     trusted_commit: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    replaces_active_hash: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -191,6 +207,21 @@ impl<'a> CheckpointService<'a> {
     ) -> Result<OperationSuccess, OperationFailure> {
         operations::propose_activation(self.repository_root, self.trusted_ref, request_path)
     }
+
+    pub(crate) fn check_staged_transition(&self) -> Result<StagedTransition, OperationFailure> {
+        prospective::check_staged(self.repository_root, self.trusted_ref)
+    }
+
+    pub(crate) fn finish_staged_fallback(
+        &self,
+        fallback: StagedFallback,
+    ) -> Result<(), OperationFailure> {
+        git::ensure_index_unchanged(
+            self.repository_root,
+            &fallback.index,
+            prospective::OPERATION,
+        )
+    }
 }
 
 fn semantic_hash(value: &impl Serialize) -> String {
@@ -227,6 +258,10 @@ fn relative_path(repository_root: &Path, path: &Path) -> String {
 #[cfg(test)]
 #[path = "context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;
 
 struct SelectedCheckpoint {
     roots: Vec<String>,

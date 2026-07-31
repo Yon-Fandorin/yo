@@ -16,7 +16,7 @@ const CHECK_SCHEMA: &str = "methexis.check/v1alpha1";
 const REVISION_DOMAIN: &[u8] = b"methexis.knowledge-revision/v1alpha1";
 const SNAPSHOT_DOMAIN: &[u8] = b"methexis.knowledge-snapshot/v1alpha1";
 const MAX_RECORD_BYTES: usize = 256 * 1024;
-mod artifacts;
+pub(crate) mod artifacts;
 mod runner;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]

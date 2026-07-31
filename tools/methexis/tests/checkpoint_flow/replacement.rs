@@ -33,6 +33,19 @@ fn activation_replacement_requires_the_exact_active_record_hash() {
     let second_create = repository.request("checkpoint-second.json", &checkpoint_request());
     let second =
         success_json(repository.run(&["create-checkpoint", second_create.to_str().unwrap()]));
+    let malformed = repository.request(
+        "activation-malformed-predecessor.json",
+        &json!({
+            "schema": "methexis.activation-request/v1alpha1",
+            "checkpoint_id": second["checkpoint_id"],
+            "checkpoint_hash": second["hash"],
+            "replace_active_hash": "not-a-sha256"
+        }),
+    );
+    let malformed =
+        failure_json(repository.run(&["propose-activation", malformed.to_str().unwrap()]));
+    assert_eq!(malformed["error"]["code"], "invalid_activation_request");
+
     let conflicting = repository.request(
         "activation-conflicting.json",
         &json!({
@@ -62,4 +75,10 @@ fn activation_replacement_requires_the_exact_active_record_hash() {
         success_json(repository.run(&["propose-activation", replacement.to_str().unwrap()]));
     assert_eq!(replaced["status"], "written");
     assert_eq!(replaced["checkpoint_id"], second["checkpoint_id"]);
+    let active_record: serde_json::Value = serde_norway::from_slice(
+        &std::fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap(),
+    )
+    .unwrap();
+    // persisted active lineage가 요청의 정확한 CAS 전임자를 보존해야 staged 검사가 재현할 수 있다.
+    assert_eq!(active_record["replaces_active_hash"], active["hash"]);
 }

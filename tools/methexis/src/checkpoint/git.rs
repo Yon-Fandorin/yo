@@ -1,6 +1,7 @@
 //! Exact Git-object snapshot resolution without checkout mutation.
 
 use std::{
+    ffi::OsStr,
     fs,
     path::{Component, Path, PathBuf},
     process::Command,
@@ -11,6 +12,14 @@ use super::{MAX_RECORD_BYTES, OperationFailure};
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const SYSTEM_GIT: &str = "/usr/bin/git";
+
+mod proposal;
+#[cfg(test)]
+pub(super) use proposal::capture_index_from;
+pub(super) use proposal::{
+    ProposalIndex, StagedEntry, capture_index, ensure_index_unchanged, read_index_blob,
+    staged_entries,
+};
 
 pub(super) struct TrustedSnapshot {
     pub(super) commit: String,
@@ -129,6 +138,36 @@ pub(super) fn require_ancestor(
         "checkpoint_trust_mismatch",
     )
     .map(|_| ())
+}
+
+pub(super) fn ensure_ref_unchanged(
+    repository_root: &Path,
+    trusted_ref: &str,
+    expected: &str,
+    operation: &'static str,
+) -> Result<(), OperationFailure> {
+    let current = git_output(
+        repository_root,
+        &[
+            "rev-parse",
+            "--verify",
+            &format!("{trusted_ref}^{{commit}}"),
+        ],
+        operation,
+        Some(expected.to_owned()),
+        "trusted_ref_unavailable",
+    )?;
+    if String::from_utf8_lossy(&current).trim() != expected {
+        return Err(OperationFailure::new(
+            operation,
+            Some(expected.to_owned()),
+            "authority_changed_during_validation",
+            "trusted integration moved during prospective activation validation",
+            Vec::new(),
+            "retry the prospective activation check from the new trusted integration",
+        ));
+    }
+    Ok(())
 }
 
 fn materialize(
@@ -280,7 +319,19 @@ fn git_output(
     commit: Option<String>,
     code: &'static str,
 ) -> Result<Vec<u8>, OperationFailure> {
-    let output = Command::new(SYSTEM_GIT)
+    git_output_with_index(repository_root, args, None, operation, commit, code)
+}
+
+fn git_output_with_index(
+    repository_root: &Path,
+    args: &[&str],
+    index_file: Option<&OsStr>,
+    operation: &'static str,
+    commit: Option<String>,
+    code: &'static str,
+) -> Result<Vec<u8>, OperationFailure> {
+    let mut command = Command::new(SYSTEM_GIT);
+    command
         .env_clear()
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -290,18 +341,20 @@ fn git_output(
         .arg("--no-replace-objects")
         .arg("-C")
         .arg(repository_root)
-        .args(args)
-        .output()
-        .map_err(|error| {
-            OperationFailure::new(
-                operation,
-                commit.clone(),
-                code,
-                error.to_string(),
-                Vec::new(),
-                "repair the Git repository and retry",
-            )
-        })?;
+        .args(args);
+    if let Some(index_file) = index_file {
+        command.env("GIT_INDEX_FILE", index_file);
+    }
+    let output = command.output().map_err(|error| {
+        OperationFailure::new(
+            operation,
+            commit.clone(),
+            code,
+            error.to_string(),
+            Vec::new(),
+            "repair the Git repository and retry",
+        )
+    })?;
     if !output.status.success() {
         return Err(OperationFailure::new(
             operation,
@@ -344,3 +397,7 @@ fn failure(
         "repair the trusted snapshot and retry",
     )
 }
+
+#[cfg(test)]
+#[path = "git/tests.rs"]
+mod tests;
