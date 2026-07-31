@@ -168,6 +168,46 @@ alternatives, or future costs. A Kimi request MUST ask for the strongest
 counterargument before its verdict instead of asking it to confirm the
 implementer's conclusion.
 
+Run a Kimi review from the Slice worktree in a new non-interactive prompt
+session:
+
+```bash
+kimi -p 'Perform a read-only independent review. Do not edit files.
+Exact final diff: <base>..<candidate>.
+Authority: <paths and owned contracts>.
+Review lens: <lens and concrete questions>.
+Validation evidence: <commands, environments, and results>.
+Before the verdict, present the strongest counterargument and credible
+alternatives. Return path-specific findings, the verdict, and unresolved
+uncertainty.'
+```
+
+Replace every placeholder with exact immutable Git commits; do not ask the
+reviewer to infer which changes are final. Commit the candidate on its Slice
+branch before review and require a clean worktree so `<base>..<candidate>`
+includes the complete review surface. Dirty staged, unstaged, or untracked
+changes are not an exact review candidate. If findings change the candidate,
+update its working commit and review the new commit range again.
+
+Plain `kimi -p` starts the fresh prompt-mode session required here. Do not use
+`--continue` or `--session`, because either reuses earlier context. Omit
+`--model` unless the review contract requires a model whose exact configured
+alias is known; a model name displayed by an interactive UI is not necessarily
+a valid CLI alias. Consult the installed `kimi --help` rather than combining
+prompt mode with guessed interactive or permission flags. Run
+`git status --short --untracked-files=all` immediately before and after Kimi;
+both results MUST be empty. Any reviewer-created change invalidates that
+attempt and must be resolved before a new review starts.
+
+An invalid option, unknown model alias, or other local invocation error is a
+setup failure, not reviewer unavailability: correct the invocation and retry
+the same review. A completed text-mode prompt ends with
+`To resume this session: kimi -r <session-id>`; record that value as
+`kimi/<session-id>`. If the hint is absent, do not invent an identity or count
+the attempt as completed. Apply the Codex fallback below only when a correctly
+invoked Kimi session cannot start or finish because the service or usage
+allowance is unavailable.
+
 Every agent reviewer MUST receive the exact final diff, relevant authority,
 requested lens, and validation evidence. If Kimi cannot start or finish its
 different-perspective review because it is unavailable or its usage allowance
