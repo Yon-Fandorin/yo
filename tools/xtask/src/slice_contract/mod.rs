@@ -9,6 +9,7 @@ use serde::Deserialize;
 use crate::git;
 
 const SCHEMA: &str = "yo.slice-contract/v1";
+const BINDING_FILE: &str = "yo-slice-contract";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -32,15 +33,63 @@ enum PathRule {
 }
 
 pub(crate) fn check_scope(repository: &Path, contract_path: &Path) -> Result<(), String> {
-    let index_file = std::env::var_os("GIT_INDEX_FILE").map(|value| {
+    let index_file = selected_index(repository);
+    check_scope_with_index(repository, contract_path, index_file.as_deref())
+}
+
+fn selected_index(repository: &Path) -> Option<PathBuf> {
+    std::env::var_os("GIT_INDEX_FILE").map(|value| {
         let path = PathBuf::from(value);
         if path.is_absolute() {
             path
         } else {
             repository.join(path)
         }
-    });
-    check_scope_with_index(repository, contract_path, index_file.as_deref())
+    })
+}
+
+pub(crate) fn check_bound_scope(repository: &Path) -> Result<(), String> {
+    let index_file = selected_index(repository);
+    check_bound_scope_with_index(repository, index_file.as_deref())
+}
+
+fn check_bound_scope_with_index(
+    repository: &Path,
+    index_file: Option<&Path>,
+) -> Result<(), String> {
+    let contract_path = bound_contract_path(repository)?;
+    let contract = load(&contract_path)?;
+    let repository = repository_root(repository)?;
+    validate_slice_branch(&repository, &contract)?;
+    check_scope_with_index(&repository, &contract_path, index_file)
+}
+
+pub(crate) fn bind(repository: &Path, contract_path: &Path) -> Result<(), String> {
+    let contract_path = std::fs::canonicalize(contract_path).map_err(|error| {
+        format!(
+            "cannot resolve Slice contract {}: {error}",
+            contract_path.display()
+        )
+    })?;
+    let contract = load(&contract_path)?;
+    let repository = repository_root(repository)?;
+    validate(&repository, &contract)?;
+    validate_slice_branch(&repository, &contract)?;
+
+    let binding = binding_path(&repository)?;
+    std::fs::write(&binding, format!("{}\n", contract_path.display())).map_err(|error| {
+        format!(
+            "cannot bind Slice contract at {}: {error}",
+            binding.display()
+        )
+    })?;
+
+    println!(
+        "{{\"schema\":\"yo.slice-contract-binding/v1\",\"ok\":true,\"slice\":{},\"contract_path\":{}}}",
+        json(&contract.slice)?,
+        json(&contract_path)?
+    );
+    Ok(())
 }
 
 fn check_scope_with_index(
@@ -73,8 +122,9 @@ fn check_scope_with_index(
     }
 
     println!(
-        "{{\"schema\":\"yo.slice-scope-check/v1\",\"ok\":true,\"slice\":{},\"base\":{},\"changed_paths\":{}}}",
+        "{{\"schema\":\"yo.slice-scope-check/v1\",\"ok\":true,\"slice\":{},\"contract_path\":{},\"base\":{},\"changed_paths\":{}}}",
         json(&contract.slice)?,
+        json(&contract_path)?,
         json(&contract.base)?,
         json(&changed)?
     );
@@ -179,6 +229,92 @@ fn repository_root(directory: &Path) -> Result<PathBuf, String> {
         return Err("git rev-parse --show-toplevel returned an empty path".to_owned());
     }
     Ok(PathBuf::from(root))
+}
+
+fn binding_path(repository: &Path) -> Result<PathBuf, String> {
+    let output = git::output_in(
+        repository,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            BINDING_FILE,
+        ],
+        false,
+    )?;
+    let path = output.trim();
+    if path.is_empty() {
+        return Err("git rev-parse --git-path returned an empty binding path".to_owned());
+    }
+    Ok(PathBuf::from(path))
+}
+
+fn bound_contract_path(repository: &Path) -> Result<PathBuf, String> {
+    let repository = repository_root(repository)?;
+    let binding = binding_path(&repository)?;
+    let value = std::fs::read_to_string(&binding).map_err(|error| {
+        format!(
+            "this worktree has no readable Slice contract binding at {}: {error}\n\
+             ask the planner to run `cargo xtask slice-contract bind <slice-contract.json>`",
+            binding.display()
+        )
+    })?;
+    let path = value.trim();
+    if path.is_empty() || value.lines().count() != 1 {
+        return Err(format!(
+            "Slice contract binding {} must contain exactly one non-empty path",
+            binding.display()
+        ));
+    }
+    Ok(PathBuf::from(path))
+}
+
+fn validate_slice_branch(repository: &Path, contract: &SliceContract) -> Result<(), String> {
+    let branch = git::output_in(
+        repository,
+        &["symbolic-ref", "--quiet", "--short", "HEAD"],
+        false,
+    )
+    .map_err(|_| {
+        format!(
+            "Slice contract `{}` requires a named Slice or Task branch; HEAD is detached",
+            contract.slice
+        )
+    })?;
+    let branch = branch.trim();
+    let segments = branch.split('/').collect::<Vec<_>>();
+    let branch_base_ref = match segments.as_slice() {
+        ["slice", "direct", slice] if *slice == contract.slice => "refs/heads/develop".to_owned(),
+        ["task", "direct", slice, task] if *slice == contract.slice && !task.is_empty() => {
+            "refs/heads/develop".to_owned()
+        },
+        ["slice", wave, slice]
+            if !wave.is_empty() && *wave != "direct" && *slice == contract.slice =>
+        {
+            format!("refs/heads/wave/{wave}")
+        },
+        ["task", wave, slice, task]
+            if !wave.is_empty()
+                && *wave != "direct"
+                && *slice == contract.slice
+                && !task.is_empty() =>
+        {
+            format!("refs/heads/wave/{wave}")
+        },
+        _ => {
+            return Err(format!(
+                "Slice contract `{}` does not match current Slice or Task branch `{branch}`",
+                contract.slice
+            ));
+        },
+    };
+    if branch_base_ref != contract.base_ref {
+        return Err(format!(
+            "branch `{branch}` belongs to `{branch_base_ref}`, but Slice contract `{}` declares `{}`",
+            contract.slice, contract.base_ref
+        ));
+    }
+    Ok(())
 }
 
 fn validate(repository: &Path, contract: &SliceContract) -> Result<(), String> {

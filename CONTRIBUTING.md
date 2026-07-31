@@ -128,15 +128,29 @@ integration base—`refs/heads/develop` for direct Slices or their
 `refs/heads/wave/<wave>` branch for Wave Slices—and it rejects overlapping
 write leases or contract ownership. The planner still confirms dependencies,
 capacity, independent completion gates, and any Wave join required by the
-dispatch checklist above. During work, each Slice runs:
+dispatch checklist above. The planner then binds each contract once in its
+Slice worktree:
 
 ```bash
-cargo xtask check slice-scope <its-contract.json>
+cargo xtask slice-contract bind <its-contract.json>
 ```
 
-This compares tracked, staged, working-tree, and untracked changes since the
-declared base with the closed write-set. A newly required shared path is a
-coordination decision, not a reason to widen the contract silently.
+The binding lives inside that worktree's Git metadata, outside repository
+history. At the start of every new coding-agent session, run the following
+before planning or editing:
+
+```bash
+cargo xtask check slice-scope
+```
+
+The command discovers and reports the bound contract. A missing or invalid
+binding stops work instead of guessing a scope. Run the same check during
+implementation and before review. It compares tracked, staged, working-tree,
+and untracked changes since the declared base with the closed write-set. A
+newly required shared path is a coordination decision, not a reason to widen
+the contract silently. The explicit
+`cargo xtask check slice-scope <contract.json>` form remains available for
+one-off validation before a binding exists.
 
 ### Task Brief
 

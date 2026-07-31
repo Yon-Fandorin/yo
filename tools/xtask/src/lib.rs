@@ -14,6 +14,18 @@ use impact::ImpactInput;
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let mut arguments = arguments.into_iter();
     match (arguments.next().as_deref(), arguments.next().as_deref()) {
+        (Some(command), Some(action)) if command == "slice-contract" && action == "bind" => {
+            let contract = arguments
+                .next()
+                .map(PathBuf::from)
+                .ok_or_else(slice_contract_usage)?;
+            if arguments.next().is_some() {
+                return Err(slice_contract_usage());
+            }
+            let repository = std::env::current_dir()
+                .map_err(|error| format!("cannot locate the repository: {error}"))?;
+            slice_contract::bind(&repository, &contract)
+        },
         (Some(command), Some(check)) if command == "check" => {
             let check = check.to_string_lossy();
             if check == "test-explanations" {
@@ -25,16 +37,16 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
                 return test_explanations::check(&repository);
             }
             if check == "slice-scope" {
-                let contract = arguments
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or_else(|| usage(check.as_ref()))?;
+                let contract = arguments.next().map(PathBuf::from);
                 if arguments.next().is_some() {
                     return Err(usage(check.as_ref()));
                 }
                 let repository = std::env::current_dir()
                     .map_err(|error| format!("cannot locate the repository: {error}"))?;
-                return slice_contract::check_scope(&repository, &contract);
+                return match contract {
+                    Some(contract) => slice_contract::check_scope(&repository, &contract),
+                    None => slice_contract::check_bound_scope(&repository),
+                };
             }
             if check == "slice-parallel" {
                 let left = arguments
@@ -96,7 +108,7 @@ fn usage(check: &str) -> String {
             return format!("usage: cargo xtask check {check}");
         },
         "slice-scope" => {
-            return "usage: cargo xtask check slice-scope <slice-contract.json>".to_owned();
+            return "usage: cargo xtask check slice-scope [slice-contract.json]".to_owned();
         },
         "slice-parallel" => {
             return "usage: cargo xtask check slice-parallel <left.json> <right.json>".to_owned();
@@ -111,13 +123,18 @@ fn usage(check: &str) -> String {
 
 fn general_usage() -> String {
     "usage:\n\
+     cargo xtask slice-contract bind <slice-contract.json>\n\
      cargo xtask check test-explanations\n\
      cargo xtask check methexis-tests-for-stage\n\
-     cargo xtask check slice-scope <slice-contract.json>\n\
+     cargo xtask check slice-scope [slice-contract.json]\n\
      cargo xtask check slice-parallel <left.json> <right.json>\n\
      cargo xtask check <developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
+}
+
+fn slice_contract_usage() -> String {
+    "usage: cargo xtask slice-contract bind <slice-contract.json>".to_owned()
 }
 
 #[cfg(test)]
@@ -133,9 +150,10 @@ mod cli_tests {
         assert_eq!(
             error,
             "usage:\n\
+             cargo xtask slice-contract bind <slice-contract.json>\n\
              cargo xtask check test-explanations\n\
              cargo xtask check methexis-tests-for-stage\n\
-             cargo xtask check slice-scope <slice-contract.json>\n\
+             cargo xtask check slice-scope [slice-contract.json]\n\
              cargo xtask check slice-parallel <left.json> <right.json>\n\
              cargo xtask check <developer-docs-impact|slice-review-impact> \
              <commit-message-file> [changed-paths-file] [branch]"
