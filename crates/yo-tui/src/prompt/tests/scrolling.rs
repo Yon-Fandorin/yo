@@ -1,8 +1,8 @@
 use super::{
-    PromptFrame, PromptViewState, editor_with, move_left, move_right, prompt_style, render,
+    PromptFrame, PromptViewState, editor_with, move_left, move_right, prompt_styles, render,
     rendered_text,
 };
-use crate::surface::{Point, Rect, Size, Surface};
+use crate::surface::{CellContent, Point, Rect, Size, Surface};
 
 fn render_at(
     editor: &crate::input::editor::PromptEditor,
@@ -12,7 +12,7 @@ fn render_at(
     let mut surface = Surface::new(size).unwrap();
     let frame = {
         let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
-        render(editor, &mut view, prompt_style(), state).unwrap()
+        render(editor, &mut view, prompt_styles(), state).unwrap()
     };
     (frame, surface)
 }
@@ -113,4 +113,35 @@ fn resets_saved_scroll_when_all_content_fits() {
     assert_eq!(frame.first_visible_row, 0);
     assert_eq!(frame.cursor, Point::new(0, 3));
     assert_eq!(rendered_text(&surface, 0), "a");
+}
+
+// 장식된 폭 3 입력을 아래로 scroll하면 위·아래 rule은 유지하되 논리 첫 행의 marker는
+// 숨기고, 보이는 본문과 cursor를 예약된 2칸 prefix 뒤에 정확히 투영한다.
+#[test]
+fn decorated_scroll_preserves_rules_and_prefix_without_repeating_marker() {
+    let mut editor = editor_with("abc");
+    move_left(&mut editor, 1);
+    let mut state = PromptViewState::default();
+
+    let (frame, surface) = render_at(&editor, &mut state, Size::new(3, 3));
+
+    assert_eq!(
+        frame,
+        PromptFrame {
+            cursor: Point::new(2, 1),
+            content_height: std::num::NonZeroU16::new(3).unwrap(),
+            first_visible_row: 2,
+        }
+    );
+    assert_eq!(rendered_text(&surface, 0), "───");
+    assert_eq!(rendered_text(&surface, 1), "c");
+    assert_eq!(rendered_text(&surface, 2), "───");
+    assert!(matches!(
+        surface.cell(Point::new(0, 1)).unwrap().content(),
+        CellContent::Blank
+    ));
+    assert!(matches!(
+        surface.cell(Point::new(2, 1)).unwrap().content(),
+        CellContent::Grapheme { text, .. } if text.as_ref() == "c"
+    ));
 }

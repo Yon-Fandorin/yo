@@ -6,6 +6,7 @@ use super::{TuiSession, TuiState, activity, turn};
 use crate::{
     appearance::{AppearanceCandidate, AppearanceState, GlyphProfile},
     html::HtmlSurface,
+    prompt::{PromptGlyphs, PromptStyles},
     shell::AgentShellStyles,
     surface::{Attributes, CellContent, Color, FrameDiff, Point, Size, Style, Surface},
     terminal::{TerminalOp, TerminalOps},
@@ -136,7 +137,34 @@ fn rich_and_ascii_profiles_keep_body_columns_stable() {
     }
 }
 
-// 종료용 plain output은 화면 frame과 동일한 committed profile과 행 배치를 사용한다.
+// 기본 Rich와 ASCII profile은 충분한 높이에서 각각의 prompt marker/rule glyph를 쓰고,
+// terminal-default 본문·bold marker·dim rule 역할을 resolved Surface에 그대로 남긴다.
+#[test]
+fn default_profiles_resolve_prompt_glyphs_and_visual_roles() {
+    let state = TuiState::new();
+    let size = Size::new(10, 9);
+    let rich = state
+        .prepare_frame(size, &AppearanceState::default().pin())
+        .unwrap();
+    let ascii_state =
+        AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii)).unwrap();
+    let ascii = state.prepare_frame(size, &ascii_state.pin()).unwrap();
+    let body = Style::default();
+    let marker_style = Style::new(Color::Default, Color::Default, Attributes::BOLD);
+    let rule_style = Style::new(Color::Default, Color::Default, Attributes::DIM);
+
+    assert_eq!(marker(&rich.surface, 6), ("─", 1, rule_style));
+    assert_eq!(marker(&rich.surface, 7), ("›", 1, marker_style));
+    assert_eq!(marker(&rich.surface, 8), ("─", 1, rule_style));
+    assert_eq!(marker(&ascii.surface, 6), ("-", 1, rule_style));
+    assert_eq!(marker(&ascii.surface, 7), (">", 1, marker_style));
+    assert_eq!(marker(&ascii.surface, 8), ("-", 1, rule_style));
+    assert_eq!(rich.surface.cell(Point::new(2, 7)).unwrap().style(), body);
+    assert_eq!(ascii.surface.cell(Point::new(2, 7)).unwrap().style(), body);
+}
+
+// ASCII snapshot은 화면 transcript와 빈 입력 marker를 함께 ASCII로 그리고, 종료용 plain
+// output은 같은 snapshot의 transcript만 내보내 profile 일관성과 출력 경계를 함께 지킨다.
 #[test]
 fn screen_and_session_output_share_the_same_committed_snapshot() {
     let state = conversation();
@@ -146,7 +174,7 @@ fn screen_and_session_output_share_the_same_committed_snapshot() {
     let frame = state.prepare_frame(FRAME_SIZE, &pin).unwrap();
     let output = state.session_output(&pin).unwrap().unwrap();
 
-    assert_eq!(visible_rows(&frame.surface), output.trim_end());
+    assert_eq!(visible_rows(&frame.surface), "> question\n\n* answer\n\n>");
     assert_eq!(output, "> question\n\n* answer\n");
 }
 
@@ -198,7 +226,12 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
             assistant_marker: default,
             assistant_body: default,
         },
-        prompt: default,
+        prompt: PromptStyles {
+            body: default,
+            marker: default,
+            rule: default,
+            glyphs: PromptGlyphs::ascii(),
+        },
     };
     let appearance = AppearanceState::new(
         AppearanceCandidate::for_profile(GlyphProfile::Ascii).with_styles_for_test(styles),

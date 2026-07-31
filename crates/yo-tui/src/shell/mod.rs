@@ -12,16 +12,18 @@ use crate::{
     input::editor::PromptEditor,
     layout::vertical::{VerticalLayoutError, VerticalTrack, solve_vertical},
     prompt::{
-        PromptFrame, PromptMeasureError, PromptPaintError, PromptViewState,
+        PromptFrame, PromptMeasureError, PromptPaintError, PromptStyles, PromptViewState,
         paint_prepared as paint_prompt, prepare as prepare_prompt,
     },
-    surface::{Point, Rect, Style, SurfaceView, WriteOutcome},
+    surface::{Point, Rect, SurfaceView, WriteOutcome},
     transcript::{
         TranscriptLayoutConfig, TranscriptMeasureError, TranscriptPaintError,
         TranscriptRenderFrame, TranscriptScrollCommand, TranscriptState, TranscriptStyles,
         TranscriptViewState, paint_prepared as paint_transcript, prepare as prepare_transcript,
     },
 };
+
+const MIN_FRAMED_PROMPT_HEIGHT: u16 = 9;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AgentShellViewState {
@@ -32,7 +34,7 @@ pub(crate) struct AgentShellViewState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct AgentShellStyles {
     pub(crate) transcript: TranscriptStyles,
-    pub(crate) prompt: Style,
+    pub(crate) prompt: PromptStyles,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -98,8 +100,9 @@ pub(crate) fn render_with_measure_hook(
         scroll,
     } = options;
     let size = view.size();
-    let prompt =
-        prepare_prompt(editor, size.width).map_err(AgentShellRenderError::PromptMeasure)?;
+    let prompt = prepare_prompt(editor, size.width)
+        .map_err(AgentShellRenderError::PromptMeasure)?
+        .with_frame(size.height >= MIN_FRAMED_PROMPT_HEIGHT);
 
     let shell_area = Rect::new(Point::new(0, 0), size);
     let layout = solve_vertical(

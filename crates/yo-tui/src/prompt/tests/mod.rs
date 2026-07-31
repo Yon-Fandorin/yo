@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use super::{PromptFrame, PromptRenderError, PromptViewState, measure, render};
+use super::{
+    PromptFrame, PromptGlyphs, PromptRenderError, PromptStyles, PromptViewState, measure, render,
+};
 use crate::{
     input::{
         editor::{EditorEffect, PromptEditor},
@@ -54,6 +56,21 @@ fn prompt_style() -> Style {
     }
 }
 
+fn prompt_styles() -> PromptStyles {
+    PromptStyles {
+        body: prompt_style(),
+        marker: Style {
+            foreground: Color::Indexed(3),
+            ..Style::default()
+        },
+        rule: Style {
+            foreground: Color::Indexed(8),
+            ..Style::default()
+        },
+        glyphs: PromptGlyphs::rich(),
+    }
+}
+
 fn rendered_text(surface: &Surface, y: u16) -> String {
     (0..surface.size().width)
         .filter_map(|x| match surface.cell(Point::new(x, y))?.content() {
@@ -63,43 +80,55 @@ fn rendered_text(surface: &Surface, y: u16) -> String {
         .collect()
 }
 
-// 검증된 layout은 grapheme footprint와 cursor를 Surface 좌표로 정확히 투영한다.
+// Rich 입력 chrome은 위·아래 rule 사이 첫 행에 `› ` 2칸 prefix를 두고,
+// 검증된 본문 grapheme과 cursor를 그 안쪽 좌표로 옮겨 입력창의 시각 계약을 보호한다.
 #[test]
 fn projects_prompt_content_and_cursor() {
     let editor = editor_with("A가B");
     let style = prompt_style();
-    let size = Size::new(4, 3);
+    let size = Size::new(6, 4);
     let mut state = PromptViewState::default();
     let mut surface = Surface::new(size).unwrap();
     let measurement = measure(&editor, size.width).unwrap();
     let frame = {
         let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
-        render(&editor, &mut view, style, &mut state).unwrap()
+        render(&editor, &mut view, prompt_styles(), &mut state).unwrap()
     };
 
     assert_eq!(
         frame,
         PromptFrame {
-            cursor: Point::new(0, 1),
+            cursor: Point::new(2, 2),
             content_height: std::num::NonZeroU16::new(2).unwrap(),
             first_visible_row: 0,
         }
     );
-    assert_eq!(frame.content_height, measurement.desired_height);
+    assert_eq!(
+        measurement.desired_height,
+        std::num::NonZeroU16::new(4).unwrap()
+    );
     assert!(matches!(
         surface.cell(Point::new(0, 0)).unwrap().content(),
+        CellContent::Grapheme { text, .. } if text.as_ref() == "─"
+    ));
+    assert!(matches!(
+        surface.cell(Point::new(0, 1)).unwrap().content(),
+        CellContent::Grapheme { text, .. } if text.as_ref() == "›"
+    ));
+    assert!(matches!(
+        surface.cell(Point::new(2, 1)).unwrap().content(),
         CellContent::Grapheme { text, .. } if text.as_ref() == "A"
     ));
     assert!(matches!(
-        surface.cell(Point::new(1, 0)).unwrap().content(),
+        surface.cell(Point::new(3, 1)).unwrap().content(),
         CellContent::Grapheme { text, .. } if text.as_ref() == "가"
     ));
     assert!(matches!(
-        surface.cell(Point::new(2, 0)).unwrap().content(),
+        surface.cell(Point::new(4, 1)).unwrap().content(),
         CellContent::Continuation { .. }
     ));
     assert!(matches!(
-        surface.cell(Point::new(3, 0)).unwrap().content(),
+        surface.cell(Point::new(5, 1)).unwrap().content(),
         CellContent::Grapheme { text, .. } if text.as_ref() == "B"
     ));
     assert_eq!(surface.cell(Point::new(3, 2)).unwrap().style(), style);

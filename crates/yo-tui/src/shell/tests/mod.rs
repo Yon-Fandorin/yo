@@ -8,6 +8,7 @@ use crate::{
         editor::{EditorEffect, PromptEditor},
         event::InputEvent,
     },
+    prompt::{PromptGlyphs, PromptStyles},
     surface::{CellContent, Color, Point, Rect, Size, Style, Surface},
     transcript::{
         TranscriptItemId, TranscriptLayoutConfig, TranscriptScrollCommand, TranscriptState,
@@ -50,7 +51,12 @@ fn styles() -> AgentShellStyles {
             assistant_marker: style(3),
             assistant_body: style(4),
         },
-        prompt: style(5),
+        prompt: PromptStyles {
+            body: style(5),
+            marker: style(6),
+            rule: style(7),
+            glyphs: PromptGlyphs::rich(),
+        },
     }
 }
 
@@ -91,7 +97,8 @@ fn rendered_row(surface: &Surface, y: u16) -> String {
         .to_owned()
 }
 
-// transcript는 남는 Flexible 영역을 쓰고 prompt는 측정된 Preferred 높이를 아래에 유지한다.
+// transcript는 남는 Flexible 영역을 쓰고 prompt는 본문 두 행과 위·아래 rule을 포함한
+// Preferred 높이를 아래에 유지해 입력 컨테이너가 transcript와 분리되어 보이게 한다.
 #[test]
 fn composes_flexible_transcript_above_preferred_prompt() {
     let mut transcript = TranscriptState::new();
@@ -105,19 +112,29 @@ fn composes_flexible_transcript_above_preferred_prompt() {
     let editor = editor_with("ab\ncd");
     let mut state = AgentShellViewState::default();
 
-    let (surface, frame) = render_into(&transcript, &editor, Size::new(8, 7), &mut state, None);
+    let (surface, frame) = render_into(&transcript, &editor, Size::new(8, 9), &mut state, None);
 
     assert_eq!(frame.transcript_area.size.height, 5);
     assert_eq!(frame.prompt_area.origin.y, 5);
-    assert_eq!(frame.prompt_area.size.height, 2);
-    assert_eq!(frame.cursor, Point::new(2, 6));
+    assert_eq!(frame.prompt_area.size.height, 4);
+    assert_eq!(frame.cursor, Point::new(4, 7));
     assert_eq!(rendered_row(&surface, 0), "❯ q");
     assert_eq!(rendered_row(&surface, 2), "⏺ answer");
-    assert_eq!(rendered_row(&surface, 5), "ab");
-    assert_eq!(rendered_row(&surface, 6), "cd");
+    assert_eq!(rendered_row(&surface, 5), "────────");
+    assert_eq!(rendered_row(&surface, 6), "› ab");
+    assert_eq!(rendered_row(&surface, 7), "  cd");
+    assert_eq!(rendered_row(&surface, 8), "────────");
+    assert_eq!(
+        surface.cell(Point::new(2, 6)).unwrap().style(),
+        styles().prompt.body
+    );
+    assert_eq!(
+        surface.cell(Point::new(0, 6)).unwrap().style(),
+        styles().prompt.marker
+    );
     assert_eq!(
         surface.cell(Point::new(0, 5)).unwrap().style(),
-        styles().prompt
+        styles().prompt.rule
     );
 }
 
@@ -151,6 +168,6 @@ fn one_row_shell_preserves_prompt_and_transcript_state() {
     assert_eq!(frame.transcript_area.size.height, 0);
     assert_eq!(frame.transcript, None);
     assert_eq!(frame.prompt_area.size.height, 1);
-    assert_eq!(rendered_row(&surface, 0), "x");
+    assert_eq!(rendered_row(&surface, 0), "› x");
     assert_eq!(state, before_state);
 }

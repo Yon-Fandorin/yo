@@ -13,6 +13,7 @@ use std::sync::Arc;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
+    prompt::{PromptGlyphs, PromptStyles},
     shell::AgentShellStyles,
     surface::{Attributes, Color, Grapheme, GraphemeError, Style},
     transcript::{TranscriptLayoutConfig, TranscriptStyles},
@@ -97,7 +98,7 @@ impl AppearanceCandidate {
         Self {
             user_marker: user_marker.to_owned(),
             assistant_marker: assistant_marker.to_owned(),
-            styles: default_styles(),
+            styles: default_styles(profile),
         }
     }
 
@@ -238,7 +239,7 @@ fn validate_marker(
     Ok(())
 }
 
-const fn default_styles() -> AgentShellStyles {
+const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
     let style = Style::new(Color::Default, Color::Default, Attributes::empty());
     AgentShellStyles {
         transcript: TranscriptStyles {
@@ -248,7 +249,15 @@ const fn default_styles() -> AgentShellStyles {
             assistant_marker: style,
             assistant_body: style,
         },
-        prompt: style,
+        prompt: PromptStyles {
+            body: style,
+            marker: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+            rule: Style::new(Color::Default, Color::Default, Attributes::DIM),
+            glyphs: match profile {
+                GlyphProfile::Rich => PromptGlyphs::rich(),
+                GlyphProfile::Ascii => PromptGlyphs::ascii(),
+            },
+        },
     }
 }
 

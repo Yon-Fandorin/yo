@@ -1,4 +1,4 @@
-use super::{PromptRenderError, PromptViewState, editor_with, prompt_style, render};
+use super::{PromptRenderError, PromptViewState, editor_with, prompt_style, prompt_styles, render};
 use crate::{
     input::editor::{PromptEditor, layout::LayoutError},
     prompt::{PromptPaintError, paint_prepared, prepare},
@@ -13,7 +13,7 @@ fn scrolled_state() -> PromptViewState {
         .view(Rect::new(Point::new(0, 0), Size::new(1, 1)))
         .unwrap();
 
-    let frame = render(&editor, &mut view, prompt_style(), &mut state).unwrap();
+    let frame = render(&editor, &mut view, prompt_styles(), &mut state).unwrap();
     assert_eq!(frame.first_visible_row, 2);
     state
 }
@@ -31,7 +31,7 @@ fn zero_width_preserves_surface_and_view_state() {
         let mut view = surface
             .view(Rect::new(Point::new(0, 0), Size::new(0, 1)))
             .unwrap();
-        render(&editor, &mut view, prompt_style(), &mut state).unwrap_err()
+        render(&editor, &mut view, prompt_styles(), &mut state).unwrap_err()
     };
 
     assert_eq!(error, PromptRenderError::ZeroWidth);
@@ -52,7 +52,7 @@ fn zero_height_preserves_surface_and_view_state() {
         let mut view = surface
             .view(Rect::new(Point::new(0, 0), Size::new(1, 0)))
             .unwrap();
-        render(&editor, &mut view, prompt_style(), &mut state).unwrap_err()
+        render(&editor, &mut view, prompt_styles(), &mut state).unwrap_err()
     };
 
     assert_eq!(error, PromptRenderError::ZeroHeight);
@@ -72,7 +72,7 @@ fn layout_failure_preserves_surface_and_view_state() {
 
     let error = {
         let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
-        render(&editor, &mut view, prompt_style(), &mut state).unwrap_err()
+        render(&editor, &mut view, prompt_styles(), &mut state).unwrap_err()
     };
 
     assert_eq!(
@@ -112,7 +112,18 @@ fn crossing_surface_footprint_preserves_surface_and_view_state() {
         let mut component = surface
             .view(Rect::new(Point::new(1, 0), Size::new(1, 1)))
             .unwrap();
-        render(&editor, &mut component, Style::default(), &mut state).unwrap_err()
+        render(
+            &editor,
+            &mut component,
+            crate::prompt::PromptStyles {
+                body: Style::default(),
+                marker: Style::default(),
+                rule: Style::default(),
+                glyphs: crate::prompt::PromptGlyphs::rich(),
+            },
+            &mut state,
+        )
+        .unwrap_err()
     };
 
     assert_eq!(error, PromptRenderError::SurfaceConflict);
@@ -134,7 +145,7 @@ fn prepared_width_mismatch_is_rejected_before_painting() {
         let mut view = surface
             .view(Rect::new(Point::new(0, 0), Size::new(2, 1)))
             .unwrap();
-        paint_prepared(prepared, &mut view, prompt_style(), &mut state).unwrap_err()
+        paint_prepared(prepared, &mut view, prompt_styles(), &mut state).unwrap_err()
     };
 
     assert_eq!(

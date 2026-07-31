@@ -134,7 +134,7 @@ fn hidden_transcript_defers_its_preflight_failure() {
     );
 
     assert_eq!(frame.transcript, None);
-    assert_eq!(super::rendered_row(&surface, 0), "x");
+    assert_eq!(super::rendered_row(&surface, 0), "› x");
 }
 
 // 높이 0은 prompt 최소 한 행을 만족하지 못하므로 layout 단계에서 원자적으로 거절한다.
@@ -187,7 +187,7 @@ fn outer_crossing_footprint_preserves_surface_and_state() {
             full.write(
                 Point::new(0, 0),
                 Grapheme::try_from("가").unwrap(),
-                styles().prompt
+                styles().prompt.body
             ),
             WriteOutcome::Written
         );
