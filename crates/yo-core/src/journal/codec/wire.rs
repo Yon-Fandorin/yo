@@ -7,16 +7,17 @@ use std::fmt;
 
 use command::WireCommand;
 use event::WireEvent;
-use message::{WireMessageEnded, WireMessageSegment};
+use message::{WireMessageEnded, WireMessageReset, WireMessageSegment};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    JournalCommit, JournalCommitKind, JournalRecord, MessageEnded, MessageSegment, MessageTerminal,
-    SequencedJournalRecord, recover,
+    JournalCommit, JournalCommitKind, JournalRecord, MessageEnded, MessageReset, MessageSegment,
+    MessageTerminal, ReplaySequence, SequencedJournalRecord, recover,
 };
 use crate::{AgentCommand, AgentEvent, JournalSequence};
 
-const SCHEMA: &str = "yo.semantic-journal-commit/v1";
+const SCHEMA: &str = "yo.semantic-journal-commit/v2";
+const LEGACY_SCHEMA: &str = "yo.semantic-journal-commit/v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCodecError {
@@ -62,6 +63,8 @@ impl std::error::Error for JournalCodecError {}
 struct WireCommit {
     schema: String,
     kind: WireCommitKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    journal_cutoff: Option<u64>,
     first_sequence: u64,
     records: Vec<WireRecord>,
 }
@@ -82,6 +85,9 @@ enum WireRecord {
     EventCommitted {
         event: WireEvent,
     },
+    MessageReset {
+        reset: WireMessageReset,
+    },
     MessageSegment {
         segment: WireMessageSegment,
     },
@@ -90,6 +96,27 @@ enum WireRecord {
         final_segment: Option<WireMessageSegment>,
         ended: WireMessageEnded,
     },
+}
+
+impl WireRecord {
+    fn admit_legacy_revision(&mut self) -> Result<(), JournalCodecError> {
+        match self {
+            Self::MessageReset { .. } => Err(JournalCodecError::new(
+                "legacy Journal commits cannot contain MessageReset records",
+            )),
+            Self::MessageSegment { segment } => segment.admit_legacy_revision(),
+            Self::MessageEnded {
+                final_segment,
+                ended,
+            } => {
+                if let Some(segment) = final_segment {
+                    segment.admit_legacy_revision()?;
+                }
+                ended.admit_legacy_revision()
+            },
+            Self::CommandCommitted { .. } | Self::EventCommitted { .. } => Ok(()),
+        }
+    }
 }
 
 pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError> {
@@ -106,6 +133,7 @@ pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError
             JournalCommitKind::Incremental => WireCommitKind::Incremental,
             JournalCommitKind::Snapshot => WireCommitKind::Snapshot,
         },
+        journal_cutoff: Some(commit.semantic_cutoff().get()),
         first_sequence,
         records: commit
             .records()
@@ -119,13 +147,31 @@ pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError
 }
 
 pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> {
-    let wire: WireCommit = serde_json::from_str(payload)
+    let mut wire: WireCommit = serde_json::from_str(payload)
         .map_err(|error| JournalCodecError::new(format!("invalid Journal commit JSON: {error}")))?;
-    if wire.schema != SCHEMA {
-        return Err(JournalCodecError::new(format!(
-            "unsupported Journal commit schema {:?}",
-            wire.schema
-        )));
+    let legacy = match wire.schema.as_str() {
+        SCHEMA => false,
+        LEGACY_SCHEMA => true,
+        _ => {
+            return Err(JournalCodecError::new(format!(
+                "unsupported Journal commit schema {:?}",
+                wire.schema
+            )));
+        },
+    };
+    if legacy {
+        if wire.journal_cutoff.is_some() {
+            return Err(JournalCodecError::new(
+                "legacy Journal commit must not declare a semantic cutoff",
+            ));
+        }
+        for record in &mut wire.records {
+            record.admit_legacy_revision()?;
+        }
+    } else if wire.journal_cutoff.is_none() {
+        return Err(JournalCodecError::new(
+            "current Journal commit is missing its semantic cutoff",
+        ));
     }
     let records = wire
         .records
@@ -139,15 +185,30 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
                 .checked_add(offset)
                 .ok_or_else(|| JournalCodecError::new("Journal sequence is exhausted"))?;
             Ok(SequencedJournalRecord::new(
-                JournalSequence::new(sequence),
+                ReplaySequence::new(sequence),
                 JournalRecord::try_from(record)?,
             ))
         })
         .collect::<Result<Vec<_>, JournalCodecError>>()?;
-    let commit = match wire.kind {
-        WireCommitKind::Incremental => JournalCommit::incremental(records),
-        WireCommitKind::Snapshot => JournalCommit::snapshot(records),
+    let journal_cutoff = match wire.journal_cutoff {
+        Some(journal_cutoff) => journal_cutoff,
+        None => records
+            .last()
+            .ok_or_else(|| JournalCodecError::new("a semantic commit must contain a record"))?
+            .sequence()
+            .get(),
     };
+    let mut commit = match wire.kind {
+        WireCommitKind::Incremental => {
+            JournalCommit::incremental_through(JournalSequence::new(journal_cutoff), records)
+        },
+        WireCommitKind::Snapshot => {
+            JournalCommit::snapshot_through(JournalSequence::new(journal_cutoff), records)
+        },
+    };
+    if legacy {
+        commit = commit.into_legacy_v1();
+    }
     validate_commit(&commit)?;
     Ok(commit)
 }
@@ -161,6 +222,11 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
     if first.sequence().get() == 0 {
         return Err(JournalCodecError::new(
             "Journal sequence must start with a positive value",
+        ));
+    }
+    if commit.semantic_cutoff().get() == 0 {
+        return Err(JournalCodecError::new(
+            "Journal cutoff must be a positive semantic sequence",
         ));
     }
     if commit.kind() == JournalCommitKind::Snapshot && first.sequence().get() != 1 {
@@ -192,6 +258,13 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
     }
     for entry in commit.records() {
         match entry.record() {
+            JournalRecord::MessageReset(reset) => {
+                if reset.revision() == 0 {
+                    return Err(JournalCodecError::new(
+                        "MessageReset revision must be positive",
+                    ));
+                }
+            },
             JournalRecord::MessageSegment(segment) => validate_segment(segment)?,
             JournalRecord::MessageEnded(terminal) => {
                 let ended = terminal.ended();
@@ -273,6 +346,9 @@ impl From<&JournalRecord> for WireRecord {
             JournalRecord::EventCommitted(event) => Self::EventCommitted {
                 event: WireEvent::from(event),
             },
+            JournalRecord::MessageReset(reset) => Self::MessageReset {
+                reset: WireMessageReset::from(reset),
+            },
             JournalRecord::MessageSegment(segment) => Self::MessageSegment {
                 segment: WireMessageSegment::from(segment),
             },
@@ -294,6 +370,9 @@ impl TryFrom<WireRecord> for JournalRecord {
             },
             WireRecord::EventCommitted { event } => {
                 Ok(Self::EventCommitted(AgentEvent::try_from(event)?))
+            },
+            WireRecord::MessageReset { reset } => {
+                Ok(Self::MessageReset(MessageReset::try_from(reset)?))
             },
             WireRecord::MessageSegment { segment } => {
                 Ok(Self::MessageSegment(MessageSegment::try_from(segment)?))

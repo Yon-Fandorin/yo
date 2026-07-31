@@ -3,13 +3,21 @@ use serde::{Deserialize, Serialize};
 use super::{JournalCodecError, event::WireOutcome, identity::WireActivityRef};
 use crate::{
     ActivityRef,
-    journal::codec::{MessageEnded, MessageOutcome, MessageSegment, MessageStream},
+    journal::codec::{MessageEnded, MessageOutcome, MessageReset, MessageSegment, MessageStream},
 };
+
+#[derive(Deserialize, Serialize)]
+pub(super) struct WireMessageReset {
+    activity: WireActivityRef,
+    stream: WireMessageStream,
+    revision: u64,
+}
 
 #[derive(Deserialize, Serialize)]
 pub(super) struct WireMessageSegment {
     activity: WireActivityRef,
     stream: WireMessageStream,
+    revision: Option<u64>,
     index: u64,
     text: String,
 }
@@ -18,6 +26,7 @@ pub(super) struct WireMessageSegment {
 pub(super) struct WireMessageEnded {
     activity: WireActivityRef,
     stream: WireMessageStream,
+    revision: Option<u64>,
     outcome: WireOutcome,
     segment_count: u64,
     utf8_bytes: u64,
@@ -30,11 +39,39 @@ pub(super) enum WireMessageStream {
     ToolOutput,
 }
 
+impl From<&MessageReset> for WireMessageReset {
+    fn from(reset: &MessageReset) -> Self {
+        Self {
+            activity: WireActivityRef::from(reset.activity()),
+            stream: WireMessageStream::from(reset.stream()),
+            revision: reset.revision(),
+        }
+    }
+}
+
+impl TryFrom<WireMessageReset> for MessageReset {
+    type Error = JournalCodecError;
+
+    fn try_from(reset: WireMessageReset) -> Result<Self, Self::Error> {
+        if reset.revision == 0 {
+            return Err(JournalCodecError::new(
+                "MessageReset revision must be positive",
+            ));
+        }
+        Ok(Self::new(
+            ActivityRef::try_from(reset.activity)?,
+            MessageStream::from(reset.stream),
+            reset.revision,
+        ))
+    }
+}
+
 impl From<&MessageSegment> for WireMessageSegment {
     fn from(segment: &MessageSegment) -> Self {
         Self {
             activity: WireActivityRef::from(segment.activity()),
             stream: WireMessageStream::from(segment.stream()),
+            revision: Some(segment.revision()),
             index: segment.index(),
             text: segment.text().to_owned(),
         }
@@ -45,9 +82,12 @@ impl TryFrom<WireMessageSegment> for MessageSegment {
     type Error = JournalCodecError;
 
     fn try_from(segment: WireMessageSegment) -> Result<Self, Self::Error> {
-        if segment.index == 0 {
+        let revision = segment.revision.ok_or_else(|| {
+            JournalCodecError::new("MessageSegment revision is required by the current schema")
+        })?;
+        if revision == 0 || segment.index == 0 {
             return Err(JournalCodecError::new(
-                "MessageSegment index must be positive",
+                "MessageSegment revision and index must be positive",
             ));
         }
         if segment.text.is_empty() {
@@ -61,9 +101,10 @@ impl TryFrom<WireMessageSegment> for MessageSegment {
                 "MessageSegment exceeds its UTF-8 byte bound",
             ));
         }
-        Ok(Self::new(
+        Ok(Self::for_revision(
             ActivityRef::try_from(segment.activity)?,
             stream,
+            revision,
             segment.index,
             segment.text,
         ))
@@ -75,6 +116,7 @@ impl From<&MessageEnded> for WireMessageEnded {
         Self {
             activity: WireActivityRef::from(ended.activity()),
             stream: WireMessageStream::from(ended.stream()),
+            revision: Some(ended.revision()),
             outcome: WireOutcome::from(ended.outcome()),
             segment_count: ended.segment_count(),
             utf8_bytes: ended.utf8_bytes(),
@@ -86,13 +128,44 @@ impl TryFrom<WireMessageEnded> for MessageEnded {
     type Error = JournalCodecError;
 
     fn try_from(ended: WireMessageEnded) -> Result<Self, Self::Error> {
-        Ok(Self::new(
+        let revision = ended.revision.ok_or_else(|| {
+            JournalCodecError::new("MessageEnded revision is required by the current schema")
+        })?;
+        if revision == 0 {
+            return Err(JournalCodecError::new(
+                "MessageEnded revision must be positive",
+            ));
+        }
+        Ok(Self::for_revision(
             ActivityRef::try_from(ended.activity)?,
             MessageStream::from(ended.stream),
+            revision,
             MessageOutcome::from(ended.outcome),
             ended.segment_count,
             ended.utf8_bytes,
         ))
+    }
+}
+
+impl WireMessageSegment {
+    pub(super) fn admit_legacy_revision(&mut self) -> Result<(), JournalCodecError> {
+        if self.revision.replace(1).is_some() {
+            return Err(JournalCodecError::new(
+                "legacy MessageSegment must not declare a revision",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl WireMessageEnded {
+    pub(super) fn admit_legacy_revision(&mut self) -> Result<(), JournalCodecError> {
+        if self.revision.replace(1).is_some() {
+            return Err(JournalCodecError::new(
+                "legacy MessageEnded must not declare a revision",
+            ));
+        }
+        Ok(())
     }
 }
 

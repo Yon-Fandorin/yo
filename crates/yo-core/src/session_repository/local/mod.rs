@@ -1,7 +1,7 @@
 mod file;
 mod wire;
 
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{collections::HashMap, fs, num::NonZeroU64, path::PathBuf};
 
 use file::{WriterLock, append_line, prepare_root, scan_entries};
 use wire::WireEntry;
@@ -44,6 +44,46 @@ impl LocalSessionRepository {
 
     pub const fn set_capacity_bytes(&mut self, capacity_bytes: u64) {
         self.capacity_bytes = capacity_bytes;
+    }
+
+    /// Allocates the next local Session identity while this repository owns the writer lock.
+    pub fn next_session_id(&self) -> Result<SessionId, RepositoryError> {
+        let mut maximum = 0_u64;
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path
+                .extension()
+                .is_none_or(|extension| extension != "jsonl")
+            {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .ok_or_else(|| RepositoryError::Unavailable {
+                    message: "Session repository contains a non-UTF-8 log name".to_owned(),
+                })?;
+            let value = stem
+                .parse::<u64>()
+                .map_err(|_| RepositoryError::Unavailable {
+                    message: format!("Session repository contains an invalid log name `{stem}`"),
+                })?;
+            if value == 0 {
+                return Err(RepositoryError::Unavailable {
+                    message: "Session repository contains the reserved log name `0.jsonl`"
+                        .to_owned(),
+                });
+            }
+            maximum = maximum.max(value);
+        }
+        let next = maximum
+            .checked_add(1)
+            .and_then(NonZeroU64::new)
+            .ok_or_else(|| RepositoryError::Unavailable {
+                message: "Session identity space is exhausted".to_owned(),
+            })?;
+        Ok(SessionId::new(next))
     }
 
     #[cfg(test)]
@@ -90,14 +130,14 @@ impl LocalSessionRepository {
                 state.snapshot_required = true;
                 state.reload_required = true;
                 Err(AppendError::StoragePressure {
-                    pressure: StoragePressure {
-                        durable_cutoff: if state.cutoff_known {
+                    pressure: StoragePressure::new(
+                        if state.cutoff_known {
                             known_cutoff(*state)
                         } else {
                             DurableCutoff::Unknown
                         },
-                        cause: StoragePressureCause::Storage,
-                    },
+                        StoragePressureCause::Storage,
+                    ),
                     source: Some(error),
                 })
             },
@@ -144,10 +184,7 @@ impl LocalSessionRepository {
             .expect("storage pressure is marked only after Session state loads");
         state.snapshot_required = true;
         AppendError::StoragePressure {
-            pressure: StoragePressure {
-                durable_cutoff: known_cutoff(*state),
-                cause,
-            },
+            pressure: StoragePressure::new(known_cutoff(*state), cause),
             source,
         }
     }

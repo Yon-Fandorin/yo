@@ -1,43 +1,35 @@
 use std::time::Duration;
 
 use super::{
-    JournalRecord, MessageEnded, MessageOutcome, MessageSegment, MessageStream, MessageTerminal,
+    JournalRecord, MessageEnded, MessageOutcome, MessageReset, MessageSegment, MessageStream,
+    MessageTerminal,
 };
 use crate::ActivityRef;
 
 const MAX_UNCOMMITTED_AGE: Duration = Duration::from_secs(1);
 
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "runtime segment capture is owned by a later Slice"
-    )
-)]
 pub(crate) struct MessageSegmenter {
     activity: ActivityRef,
     stream: MessageStream,
     pending: String,
+    revision: u64,
+    revision_published: bool,
     oldest_pending_at: Option<Duration>,
     segment_count: u64,
     total_bytes: u64,
     ended: bool,
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "runtime segment capture is owned by a later Slice"
-    )
-)]
 impl MessageSegmenter {
     pub(crate) fn new(activity: ActivityRef, stream: MessageStream) -> Self {
         Self {
             activity,
             stream,
             pending: String::new(),
+            revision: 1,
+            // ActivityStarted establishes revision 1 even before its first text segment.
+            revision_published: true,
             oldest_pending_at: None,
             segment_count: 0,
             total_bytes: 0,
@@ -45,9 +37,26 @@ impl MessageSegmenter {
         }
     }
 
+    /// Starts an authoritative replacement revision for a backend snapshot.
+    pub(crate) fn replace_text(&mut self, text: &str, now: Duration) -> Vec<MessageSegment> {
+        assert!(!self.ended, "a terminated message cannot accept a snapshot");
+        if self.revision_published {
+            self.revision = self
+                .revision
+                .checked_add(1)
+                .expect("one message cannot contain more than u64 revisions");
+            self.revision_published = false;
+        }
+        self.pending.clear();
+        self.oldest_pending_at = Some(now);
+        self.segment_count = 0;
+        self.total_bytes = 0;
+        self.push_text(text, now)
+    }
+
     pub(crate) fn push_text(&mut self, text: &str, now: Duration) -> Vec<MessageSegment> {
         assert!(!self.ended, "a terminated message cannot accept more text");
-        let mut segments = self.flush_due(now).into_iter().collect::<Vec<_>>();
+        let mut segments = self.flush_due_segment(now).into_iter().collect::<Vec<_>>();
         if text.is_empty() {
             return segments;
         }
@@ -69,25 +78,26 @@ impl MessageSegmenter {
         segments
     }
 
-    pub(crate) fn flush_due(&mut self, now: Duration) -> Option<MessageSegment> {
+    pub(crate) fn flush_due(&mut self, now: Duration) -> Option<JournalRecord> {
         let due = self.oldest_pending_at.is_some_and(|oldest| {
             now.checked_sub(oldest)
                 .is_some_and(|age| age >= MAX_UNCOMMITTED_AGE)
         });
-        if due { self.flush_non_empty() } else { None }
+        if due { self.flush_record() } else { None }
     }
 
-    pub(crate) fn flush_boundary(&mut self) -> Option<MessageSegment> {
-        self.flush_non_empty()
+    pub(crate) fn flush_boundary(&mut self) -> Option<JournalRecord> {
+        self.flush_record()
     }
 
     pub(crate) fn finish(&mut self, outcome: MessageOutcome) -> JournalRecord {
         assert!(!self.ended, "a message can be terminated only once");
         self.ended = true;
         let final_segment = self.flush_non_empty();
-        let ended = MessageEnded::new(
+        let ended = MessageEnded::for_revision(
             self.activity,
             self.stream,
+            self.revision,
             outcome,
             self.segment_count,
             self.total_bytes,
@@ -101,6 +111,31 @@ impl MessageSegmenter {
         } else {
             Some(self.take_segment(self.pending.len()))
         }
+    }
+
+    fn flush_due_segment(&mut self, now: Duration) -> Option<MessageSegment> {
+        let due = !self.pending.is_empty()
+            && self.oldest_pending_at.is_some_and(|oldest| {
+                now.checked_sub(oldest)
+                    .is_some_and(|age| age >= MAX_UNCOMMITTED_AGE)
+            });
+        if due { self.flush_non_empty() } else { None }
+    }
+
+    fn flush_record(&mut self) -> Option<JournalRecord> {
+        if let Some(segment) = self.flush_non_empty() {
+            return Some(JournalRecord::MessageSegment(segment));
+        }
+        if self.revision_published {
+            return None;
+        }
+        self.revision_published = true;
+        self.oldest_pending_at = None;
+        Some(JournalRecord::MessageReset(MessageReset::new(
+            self.activity,
+            self.stream,
+            self.revision,
+        )))
     }
 
     fn take_bounded_segment(&mut self) -> MessageSegment {
@@ -120,9 +155,16 @@ impl MessageSegmenter {
             .segment_count
             .checked_add(1)
             .expect("one message cannot contain more than u64 segments");
+        self.revision_published = true;
         if self.pending.is_empty() {
             self.oldest_pending_at = None;
         }
-        MessageSegment::new(self.activity, self.stream, self.segment_count, text)
+        MessageSegment::for_revision(
+            self.activity,
+            self.stream,
+            self.revision,
+            self.segment_count,
+            text,
+        )
     }
 }

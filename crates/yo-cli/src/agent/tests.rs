@@ -1,5 +1,6 @@
 use std::{
     num::NonZeroU64,
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -7,14 +8,93 @@ use std::{
 use yo_core::{
     ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentCommand, AgentEvent, AgentIntent,
     BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind, BackendScriptStep,
-    CommandAdmission, ScriptedBackend, SessionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef,
-    UserInput,
+    CommandAdmission, DurabilityGapCause, JournalDurability, ScriptedBackend, SessionId,
+    TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput,
+    session_repository::{
+        AppendError, AppendReceipt, DurableCutoff, DurableRecord, RepositoryEntry, RepositoryError,
+        RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
+    },
 };
 use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
 
 use super::TuiAgentConnection;
 
 struct NeverTerminated;
+
+struct CapacityPressureRepository;
+
+#[derive(Clone, Default)]
+struct RecoveringPressureRepository {
+    state: Arc<Mutex<Vec<RepositoryEntry>>>,
+    attempts: Arc<Mutex<usize>>,
+}
+
+impl SessionRepository for RecoveringPressureRepository {
+    fn append(
+        &mut self,
+        _session_id: SessionId,
+        record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        let mut attempts = self.attempts.lock().unwrap();
+        *attempts += 1;
+        let mut state = self.state.lock().unwrap();
+        if *attempts == 2 {
+            return Err(AppendError::StoragePressure {
+                pressure: StoragePressure::new(
+                    DurableCutoff::Unknown,
+                    StoragePressureCause::Capacity,
+                ),
+                source: None,
+            });
+        }
+        let sequence = RepositorySequence::new(u64::try_from(state.len()).unwrap() + 1);
+        state.push(RepositoryEntry::new(sequence, record));
+        Ok(AppendReceipt::new(sequence))
+    }
+
+    fn read_after(
+        &self,
+        _session_id: SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        let after = sequence.map_or(0, RepositorySequence::get);
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry.sequence().get() > after)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+}
+
+impl SessionRepository for CapacityPressureRepository {
+    fn append(
+        &mut self,
+        _session_id: SessionId,
+        _record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        Err(AppendError::StoragePressure {
+            pressure: StoragePressure::new(
+                DurableCutoff::KnownEmpty,
+                StoragePressureCause::Capacity,
+            ),
+            source: None,
+        })
+    }
+
+    fn read_after(
+        &self,
+        _session_id: SessionId,
+        _sequence: Option<RepositorySequence>,
+        _limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        Ok(Vec::new())
+    }
+}
 
 impl TerminationSource for NeverTerminated {
     fn poll_termination(&mut self) -> TerminationEvent {
@@ -114,6 +194,152 @@ fn exposes_committed_commands_and_events_in_journal_order() {
             }),
         ]
     );
+    connection.shutdown().unwrap();
+}
+
+// startup의 첫 durable append부터 용량 압력이 발생해도 CLI 연결은 내부 query로만 남기지
+// 않고 TUI가 소비할 typed durability 사건을 전달해야 한다. cutoff가 KnownEmpty인 것도
+// 보존해야 사용자가 "저장된 것이 없음"과 "확인 불가"를 구분할 수 있다.
+#[test]
+fn exposes_initial_storage_pressure_to_the_connected_frontend() {
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session_id(),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut termination = NeverTerminated;
+    let mut connection = TuiAgentConnection::start_persistent(
+        backend,
+        session_id(),
+        CapacityPressureRepository,
+        &mut termination,
+    )
+    .unwrap()
+    .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match connection.poll().unwrap() {
+            AgentPoll::Durability(JournalDurability::Gap {
+                durable_cutoff: DurableCutoff::KnownEmpty,
+                cause: DurabilityGapCause::Capacity,
+            }) => break,
+            AgentPoll::Pending | AgentPoll::Record(_) | AgentPoll::Durability(_) => {},
+            AgentPoll::Closed => panic!("connection closed before reporting storage pressure"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "storage pressure was not delivered"
+        );
+        thread::yield_now();
+    }
+    connection.shutdown().unwrap();
+}
+
+// frontend가 첫 poll을 늦게 해 Gap과 복구가 하나의 worker wake-up으로 합쳐져도 두 상태
+// 전환은 사라지지 않아야 한다. 특히 volatile record보다 Gap이 먼저, 복구 뒤 record보다
+// Durable이 먼저 전달되어 화면 계층이 각 record의 저장 여부를 추측하지 않게 한다.
+#[test]
+fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session_id(),
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("inspect"),
+        }),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: turn(),
+            outcome: TurnOutcome::Completed,
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut termination = NeverTerminated;
+    let mut connection = TuiAgentConnection::start_persistent(
+        backend,
+        session_id(),
+        RecoveringPressureRepository::default(),
+        &mut termination,
+    )
+    .unwrap()
+    .unwrap();
+    connection
+        .dispatch(AgentIntent::Submit("inspect".to_owned()))
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while connection.transcript.head_sequence().map(|head| head.get()) != Some(5) {
+        assert!(
+            Instant::now() < deadline,
+            "worker did not complete the scripted Turn"
+        );
+        thread::yield_now();
+    }
+
+    let mut observations = Vec::new();
+    while !observations.iter().any(|observation| {
+        matches!(
+            observation,
+            AgentPoll::Record(TranscriptRecord::EventCommitted(
+                AgentEvent::TurnFinished { .. }
+            ))
+        )
+    }) {
+        match connection.poll().unwrap() {
+            AgentPoll::Pending => thread::yield_now(),
+            AgentPoll::Closed => panic!("connection closed before draining observations"),
+            observation => observations.push(observation),
+        }
+    }
+
+    let gap = observations
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                AgentPoll::Durability(JournalDurability::Gap {
+                    cause: DurabilityGapCause::Capacity,
+                    ..
+                })
+            )
+        })
+        .expect("the capacity gap remains observable");
+    let volatile_start = observations
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                AgentPoll::Record(TranscriptRecord::CommandCommitted(
+                    AgentCommand::StartTurn { .. }
+                ))
+            )
+        })
+        .unwrap();
+    let recovered = observations
+        .iter()
+        .rposition(|observation| {
+            matches!(
+                observation,
+                AgentPoll::Durability(JournalDurability::Durable { .. })
+            )
+        })
+        .expect("the recovery remains observable");
+    let finished = observations
+        .iter()
+        .position(|observation| {
+            matches!(
+                observation,
+                AgentPoll::Record(TranscriptRecord::EventCommitted(
+                    AgentEvent::TurnFinished { .. }
+                ))
+            )
+        })
+        .unwrap();
+    assert!(gap < volatile_start);
+    assert!(volatile_start < recovered);
+    assert!(recovered < finished);
     connection.shutdown().unwrap();
 }
 

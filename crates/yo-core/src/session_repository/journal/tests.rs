@@ -251,26 +251,26 @@ fn rejects_a_terminal_that_mismatches_the_durable_prefix() {
     assert_eq!(inner.appended.len(), 1);
 }
 
-// 열린 durable message 다음에 command commit이 오면 recovery 때까지 손상을 미루지 말고
-// later-event 경계에서 두 번째 physical append를 거부해야 한다.
+// 열린 message의 pending text가 경계에서 segment로 먼저 저장된 뒤에는 command가 같은
+// Session 순서로 이어질 수 있어야 한다. crash recovery는 command를 지우지 않고 열린
+// message에 interrupted seal을 제안한다.
 #[test]
-fn rejects_a_command_behind_an_open_durable_message() {
+fn accepts_a_command_after_a_forced_message_segment() {
     let mut repository = JournalRepository::new(RecordingRepository::default());
     repository
         .append(session(), &message_segment_commit(1))
         .expect("the bounded segment persists");
 
-    let error = repository
+    repository
         .append(session(), &command_commit_at(2))
-        .expect_err("an open message must be sealed before the command");
+        .expect("the forced segment establishes the non-text ordering boundary");
     let recovered = repository
         .recover(session())
-        .expect("the rejected command leaves an interruptible prefix");
+        .expect("the accepted command leaves an interruptible message prefix");
     let inner = repository.into_inner();
 
-    assert!(matches!(error, JournalRepositoryError::Codec(_)));
     assert!(recovered.recovery_commit().is_some());
-    assert_eq!(inner.appended.len(), 1);
+    assert_eq!(inner.appended.len(), 2);
 }
 
 // 종료 직전의 non-empty tail을 MessageEnded record 안에 넣어 저장하면 둘이 하나의

@@ -2,7 +2,8 @@ use std::collections::VecDeque;
 
 use yo_core::{
     AgentBackend, AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, CommandAdmission,
-    JournalSequence, PendingCommand, TranscriptReader, TranscriptRecord,
+    PendingCommand, SessionId, TranscriptObservation, TranscriptObservationSequence,
+    TranscriptReader, session_repository::SessionRepository,
 };
 use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
 
@@ -10,14 +11,15 @@ use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
 pub(crate) struct TuiAgentConnection {
     session: AgentSession,
     transcript: TranscriptReader,
-    cursor: Option<JournalSequence>,
-    pending: VecDeque<TranscriptRecord>,
+    cursor: Option<TranscriptObservationSequence>,
+    pending: VecDeque<AgentPoll>,
     journal_changed: bool,
     closed: bool,
     failure: Option<AgentSessionError>,
 }
 
 impl TuiAgentConnection {
+    #[cfg(test)]
     pub(crate) fn start<B>(
         backend: B,
         termination: &mut impl TerminationSource,
@@ -26,6 +28,35 @@ impl TuiAgentConnection {
         B: AgentBackend + Send + 'static,
     {
         AgentSession::start_cancellable(backend, || {
+            termination.poll_termination() == TerminationEvent::Requested
+        })
+        .map(|session| {
+            session.map(|session| {
+                let transcript = session.transcript_reader();
+                Self {
+                    session,
+                    transcript,
+                    cursor: None,
+                    pending: VecDeque::new(),
+                    journal_changed: false,
+                    closed: false,
+                    failure: None,
+                }
+            })
+        })
+    }
+
+    pub(crate) fn start_persistent<B, R>(
+        backend: B,
+        session_id: SessionId,
+        repository: R,
+        termination: &mut impl TerminationSource,
+    ) -> Result<Option<Self>, AgentSessionError>
+    where
+        B: AgentBackend + Send + 'static,
+        R: SessionRepository + Send + 'static,
+    {
+        AgentSession::start_cancellable_with_repository(backend, session_id, repository, || {
             termination.poll_termination() == TerminationEvent::Requested
         })
         .map(|session| {
@@ -76,17 +107,22 @@ impl AgentConnection for TuiAgentConnection {
         }
 
         if self.pending.is_empty() && self.journal_changed {
-            let slice = self.transcript.read_after(self.cursor);
+            let slice = self.transcript.read_observations_after(self.cursor);
             let head = slice.head();
             for entry in slice.into_entries() {
                 self.cursor = Some(entry.sequence());
-                self.pending.push_back(entry.record().clone());
+                self.pending.push_back(match entry.observation() {
+                    TranscriptObservation::Durability(durability) => {
+                        AgentPoll::Durability(*durability)
+                    },
+                    TranscriptObservation::Record(record) => AgentPoll::Record(record.clone()),
+                });
             }
             self.journal_changed = self.cursor != head;
         }
 
-        if let Some(record) = self.pending.pop_front() {
-            return Ok(AgentPoll::Record(record));
+        if let Some(observation) = self.pending.pop_front() {
+            return Ok(observation);
         }
         if let Some(error) = self.failure.take() {
             return Err(error);

@@ -33,7 +33,7 @@ yo-tui
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run`이 표시 mode와 glyph profile을 선택하고 작업 디렉터리를 확보한 뒤 프로세스 종료 coordinator를 설치한다. |
 | 2 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CodexBackend::spawn`이 설정을 검증하고 stdio transport를 시작한다. provider handshake는 아직 하지 않는다. |
-| 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable`이 backend를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
+| 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 `AgentRuntime`을 통해 `CreateSession`을 보낸다. |
 | 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CreateSession`이 `initialize`와 `thread/start`를 수행하고 semantic engine이 `SessionCreated`를 만든다. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode`가 첫 터미널 소유 세대의 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
@@ -116,16 +116,34 @@ Inline 또는 Fullscreen presenter
    runtime을 실행하고 polling할 수 있다. 터미널을 소유한 thread는
    provider I/O를 기다리지 않는다.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)은
-   command 검증, backend 수락, semantic commit, in-memory Journal capture
-   순서를 보장한다. provider 관찰 결과도 semantic engine을 통해 변환하고
-   commit된 event를 Journal에 추가한 뒤 변경 알림을 공개한다. 거절된
+   command 검증, backend 수락, semantic commit, Journal publication 순서를
+   보장한다. worker가 소유한 durable writer는 text update를 크기가 제한된
+   immutable segment로 바꾸고, commit된 record를 공개하기 전에 semantic
+   commit을 동기식으로 append한다. 권위 있는 backend snapshot은 이미
+   durable한 segment를 수정하지 않고 새 message revision을 시작한다. 아직 segment를
+   내보내지 않은 연속 replacement는 같은 unpublished revision을 공유하고, 빈 최종
+   replacement는 zero-byte terminal seal로 표현한다.
+   provider 관찰 결과도 semantic engine을 통해 변환한 뒤 변경 알림을
+   공개한다. 거절된
    command와 잘못된 backend event는 commit된 의미로 기록하지 않지만,
    실패를 닫으며 만들어진 terminal event는 기록한다.
    `AgentSession::transcript_reader`는 같은 Journal에서 크기가 제한된 읽기
    전용 suffix 복사본을 제공하며 내부 lock이나 저장 구조는 노출하지 않는다.
-   semantic Journal codec과 `JournalRepository` durable adapter가 있지만
-   이 runtime 경로는 아직 호출하지 않는다. 따라서 persistence,
-   storage-pressure 알림, resume은 현재 runtime 동작이 아니다.
+   capacity나 storage 실패가 나면 semantic 결과를 volatile live suffix로
+   공개하고 `JournalDurability::Gap`을 유지한다. storage가 다시 write를 받고 열린
+   모든 message에 실제 terminal seal이 생기면 같은 writer가 complete snapshot
+   하나를 공개한 뒤 incremental commit으로 돌아간다. 빈 message도 zero-byte
+   terminal seal을 받고, `ActivityStarted` 뒤 첫 text segment 전에 crash가 나면
+   recovery가 interrupted zero-byte seal을 만든다. segment가 없는 empty replacement는
+   시간이나 ordering 경계에서 `MessageReset`으로 저장하고, 종료 시에는 zero-byte
+   terminal seal로 표현한다. adapter가 semantic `ModelWork`로 승인한 관찰 가능한 plan이나
+   reasoning summary도 같은 segment와 seal 경로를 쓴다. yo가 받지 않은 숨겨진 reasoning과
+   승인하지 않은 backend-specific Request Audit payload는 이 semantic 경로 밖에 남는다. 공유 observation stream은 각 typed
+   durability 전환을 영향을 받는 semantic record보다 먼저 정렬하므로 coalesced worker
+   wake-up도 Gap-to-Durable 전환을 지우지 못한다. CLI adapter는 이 순서를 정확한 cutoff
+   종류와 함께 TUI 상태에 전달한다. Chat·status 행·banner 중 어떤 방식으로 표현할지는
+   별도 product 계약으로 남긴다. 저장된 Session 탐색과 resume도
+   아직 현재 runtime 동작이 아니다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
    이미 확정된 Transcript record를 소비하고 TUI 상태를 갱신한다.
    완성된 `Surface`를 조합해 활성 presenter로 보낸다. `runner/view.rs`는
@@ -171,18 +189,19 @@ layout·Surface primitive를 쓴다. status 행은 활성 mode와 key를 표시�
 전용 mode이므로 input 경로가 prompt editor에 도달하거나 submission을
 만들지 않는다.
 
-현재 TUI adapter는 semantic `TranscriptRecord`를 공개하지만 reader의
-`JournalSequence`는 버리고 durability-gap metadata나 Request Audit
-detail은 공개하지 않는다. Transcript는 이 observation boundary를
+현재 TUI adapter는 semantic `TranscriptRecord`와 typed durability 전환을
+공개하지만 reader record별 `JournalSequence`는 버리고 Request Audit detail은
+공개하지 않는다. Transcript는 이 observation boundary를
 출력한다. Request는 정확히 anchor된 record가 가진 correlation만 사용하며,
 없으면 `no_associated_request`를 보고한다. 정확한
 `ActivityRequestRef`가 있으면 `request_audit_detail_unavailable`을
-보고하며 인접 record의 correlation을 빌리지 않는다. durable repository는
-계속 실행 중인 `AgentSession` 경로 밖에 있다.
+보고하며 인접 record의 correlation을 빌리지 않는다. repository는 이제 live
+worker 경로 안에 있지만, 이 추가 observation 좌표는 아직 frontend 계약에
+연결하지 않았다.
 
 ## Durable Journal 조합 seam
 
-실행 중인 `AgentSession` 흐름 밖에 구현된 local 조합은 다음과 같다.
+실행 중인 `AgentSession`은 다음 local 조합을 사용한다.
 
 ```text
 semantic Journal record
@@ -203,18 +222,30 @@ Journal recovery
 RecoveredJournal 또는 명시적인 recovery 오류
 ```
 
-recovery 경로는 열린 message 뒤에 later durable command나 event가 있으면
-interrupted seal을 그 event 뒤로 옮기지 않고 거부한다. replay가 recovery
-record를 합성해야 하거나 기존 durable prefix와 필요한 recovery seal을
-생략한 snapshot은 physical append 전에 거부한다. 이는 구현된 failure
+pending message text는 non-text 순서 경계 전에 immutable segment로 강제
+저장되므로 동시 Activity event의 원래 순서를 보존할 수 있다. crash 뒤 열린
+message가 남으면 recovery는 그 event를 버리지 않고 마지막 durable record 뒤에
+interrupted seal을 제안한다. replay가 recovery
+record를 합성해야 하거나, reopen 뒤 기존 durable prefix와 필요한 recovery
+seal을 생략한 snapshot은 physical append 전에 거부한다. 자기 append 실패를
+직접 관찰한 writer는 열린 모든 message가 실제 terminal seal을 받은 뒤 live-gap
+snapshot 하나로 그 prefix를 완성할 수 있다. 그전까지 뒤따르는 record는 volatile
+suffix에 남아 정상적인 snapshot 연기가 integrity 실패로 바뀌지 않는다. capacity
+또는 storage-pressure 실패만 이 자동 재시도 경로에 들어간다.
+integrity gap이나 예상하지 못한 snapshot gate는 현재 writer에서 memory-only로
+남겨 증명할 수 없는 authority를 반복 제안하지 않으며, 이후 recovery owner가
+repository에서 명시적으로 다시 구성해야 한다. 이는 구현된 failure
 경계를 찾기 위한 설명이며, 동작 계약은
 [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)과
 [Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)
 KnowledgeUnit가 계속 소유한다.
 
-실행 중인 `AgentSession` owner는 아직 이 조합을 호출하지 않는다. 또한
-remote storage, Request Audit persistence, database나 compression backend,
-durable transport를 추가하지 않는다.
+CLI는 local repository를 기본으로 활성화한다. `YO_SESSION_REPOSITORY`로 root를,
+`YO_SESSION_CAPACITY_BYTES`로 기본 1 GiB 상한을 바꿀 수 있다. Linux는 그 외에
+`$XDG_STATE_HOME/yo/sessions` 또는 `$HOME/.local/state/yo/sessions`를 쓰고,
+macOS는 `$HOME/Library/Application Support/yo/sessions`를 쓴다. 이 조합은 아직
+저장된 Session 열기, remote storage, Request Audit persistence, database나
+compression backend, durable transport를 추가하지 않는다.
 
 ## 일시정지와 재개
 

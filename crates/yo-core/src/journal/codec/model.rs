@@ -1,4 +1,4 @@
-use crate::{ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionId};
+use crate::{ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum JournalCommitKind {
@@ -6,23 +6,65 @@ pub(crate) enum JournalCommitKind {
     Snapshot,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum JournalCommitFormat {
+    Current,
+    LegacyV1,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCommit {
     kind: JournalCommitKind,
+    format: JournalCommitFormat,
+    journal_cutoff: JournalSequence,
     records: Vec<SequencedJournalRecord>,
 }
 
 impl JournalCommit {
+    #[cfg(test)]
     pub(crate) fn incremental(records: Vec<SequencedJournalRecord>) -> Self {
+        let cutoff = JournalSequence::new(
+            records
+                .last()
+                .expect("a Journal commit cannot be empty")
+                .sequence()
+                .get(),
+        );
+        Self::incremental_through(cutoff, records)
+    }
+
+    pub(crate) fn incremental_through(
+        journal_cutoff: JournalSequence,
+        records: Vec<SequencedJournalRecord>,
+    ) -> Self {
         Self {
             kind: JournalCommitKind::Incremental,
+            format: JournalCommitFormat::Current,
+            journal_cutoff,
             records,
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn snapshot(records: Vec<SequencedJournalRecord>) -> Self {
+        let cutoff = JournalSequence::new(
+            records
+                .last()
+                .expect("a Journal commit cannot be empty")
+                .sequence()
+                .get(),
+        );
+        Self::snapshot_through(cutoff, records)
+    }
+
+    pub(crate) fn snapshot_through(
+        journal_cutoff: JournalSequence,
+        records: Vec<SequencedJournalRecord>,
+    ) -> Self {
         Self {
             kind: JournalCommitKind::Snapshot,
+            format: JournalCommitFormat::Current,
+            journal_cutoff,
             records,
         }
     }
@@ -31,12 +73,25 @@ impl JournalCommit {
         self.kind
     }
 
+    pub(crate) const fn format(&self) -> JournalCommitFormat {
+        self.format
+    }
+
+    pub(crate) const fn into_legacy_v1(mut self) -> Self {
+        self.format = JournalCommitFormat::LegacyV1;
+        self
+    }
+
     pub(crate) fn records(&self) -> &[SequencedJournalRecord] {
         &self.records
     }
 
-    pub(crate) fn journal_cutoff(&self) -> Option<JournalSequence> {
-        self.records.last().map(SequencedJournalRecord::sequence)
+    pub(crate) const fn semantic_cutoff(&self) -> JournalSequence {
+        self.journal_cutoff
+    }
+
+    pub(crate) const fn journal_cutoff(&self) -> Option<JournalSequence> {
+        Some(self.journal_cutoff)
     }
 
     pub(crate) fn session_id(&self) -> Option<SessionId> {
@@ -48,16 +103,19 @@ impl JournalCommit {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SequencedJournalRecord {
-    sequence: JournalSequence,
+    sequence: ReplaySequence,
     record: JournalRecord,
 }
 
 impl SequencedJournalRecord {
-    pub(crate) const fn new(sequence: JournalSequence, record: JournalRecord) -> Self {
-        Self { sequence, record }
+    pub(crate) fn new(sequence: impl Into<ReplaySequence>, record: JournalRecord) -> Self {
+        Self {
+            sequence: sequence.into(),
+            record,
+        }
     }
 
-    pub(crate) const fn sequence(&self) -> JournalSequence {
+    pub(crate) const fn sequence(&self) -> ReplaySequence {
         self.sequence
     }
 
@@ -66,10 +124,34 @@ impl SequencedJournalRecord {
     }
 }
 
+/// Private order of normalized persistence records.
+///
+/// This coordinate is deliberately not `JournalSequence`: segment boundaries are a storage
+/// detail and must not alter the semantic cutoff observed by frontends.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ReplaySequence(u64);
+
+impl ReplaySequence {
+    pub(crate) const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub(crate) const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<JournalSequence> for ReplaySequence {
+    fn from(value: JournalSequence) -> Self {
+        Self(value.get())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum JournalRecord {
     CommandCommitted(AgentCommand),
     EventCommitted(AgentEvent),
+    MessageReset(MessageReset),
     MessageSegment(MessageSegment),
     MessageEnded(MessageTerminal),
 }
@@ -93,9 +175,40 @@ impl JournalRecord {
                 | AgentEvent::ActivityUpdated { activity, .. }
                 | AgentEvent::ActivityFinished { activity, .. } => activity.session_id(),
             },
+            Self::MessageReset(reset) => reset.activity().session_id(),
             Self::MessageSegment(segment) => segment.activity().session_id(),
             Self::MessageEnded(terminal) => terminal.ended().activity().session_id(),
         }
+    }
+}
+
+/// Durable declaration that an authoritative replacement revision is empty.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct MessageReset {
+    activity: ActivityRef,
+    stream: MessageStream,
+    revision: u64,
+}
+
+impl MessageReset {
+    pub(crate) const fn new(activity: ActivityRef, stream: MessageStream, revision: u64) -> Self {
+        Self {
+            activity,
+            stream,
+            revision,
+        }
+    }
+
+    pub(crate) const fn activity(&self) -> ActivityRef {
+        self.activity
+    }
+
+    pub(crate) const fn stream(&self) -> MessageStream {
+        self.stream
+    }
+
+    pub(crate) const fn revision(&self) -> u64 {
+        self.revision
     }
 }
 
@@ -106,6 +219,20 @@ pub(crate) enum MessageStream {
 }
 
 impl MessageStream {
+    pub(crate) const fn for_activity(kind: ActivityKind) -> Self {
+        match kind {
+            ActivityKind::AgentMessage => Self::Agent,
+            ActivityKind::ModelWork
+            | ActivityKind::ToolCall
+            | ActivityKind::ToolResult
+            | ActivityKind::FileChange
+            | ActivityKind::ApprovalRequest { .. }
+            | ActivityKind::ApprovalResponse { .. }
+            | ActivityKind::UserInputRequest { .. }
+            | ActivityKind::UserInputResponse { .. } => Self::ToolOutput,
+        }
+    }
+
     pub(crate) const fn segment_limit(self) -> usize {
         match self {
             Self::Agent => 16 * 1024,
@@ -118,20 +245,33 @@ impl MessageStream {
 pub(crate) struct MessageSegment {
     activity: ActivityRef,
     stream: MessageStream,
+    revision: u64,
     index: u64,
     text: String,
 }
 
 impl MessageSegment {
+    #[cfg(test)]
     pub(crate) fn new(
         activity: ActivityRef,
         stream: MessageStream,
         index: u64,
         text: String,
     ) -> Self {
+        Self::for_revision(activity, stream, 1, index, text)
+    }
+
+    pub(crate) fn for_revision(
+        activity: ActivityRef,
+        stream: MessageStream,
+        revision: u64,
+        index: u64,
+        text: String,
+    ) -> Self {
         Self {
             activity,
             stream,
+            revision,
             index,
             text,
         }
@@ -143,6 +283,10 @@ impl MessageSegment {
 
     pub(crate) const fn stream(&self) -> MessageStream {
         self.stream
+    }
+
+    pub(crate) const fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub(crate) const fn index(&self) -> u64 {
@@ -165,6 +309,7 @@ pub(crate) enum MessageOutcome {
 pub(crate) struct MessageEnded {
     activity: ActivityRef,
     stream: MessageStream,
+    revision: u64,
     outcome: MessageOutcome,
     segment_count: u64,
     utf8_bytes: u64,
@@ -194,6 +339,7 @@ impl MessageTerminal {
 }
 
 impl MessageEnded {
+    #[cfg(test)]
     pub(crate) fn new(
         activity: ActivityRef,
         stream: MessageStream,
@@ -201,9 +347,21 @@ impl MessageEnded {
         segment_count: u64,
         utf8_bytes: u64,
     ) -> Self {
+        Self::for_revision(activity, stream, 1, outcome, segment_count, utf8_bytes)
+    }
+
+    pub(crate) fn for_revision(
+        activity: ActivityRef,
+        stream: MessageStream,
+        revision: u64,
+        outcome: MessageOutcome,
+        segment_count: u64,
+        utf8_bytes: u64,
+    ) -> Self {
         Self {
             activity,
             stream,
+            revision,
             outcome,
             segment_count,
             utf8_bytes,
@@ -216,6 +374,10 @@ impl MessageEnded {
 
     pub(crate) const fn stream(&self) -> MessageStream {
         self.stream
+    }
+
+    pub(crate) const fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub(crate) const fn outcome(&self) -> &MessageOutcome {

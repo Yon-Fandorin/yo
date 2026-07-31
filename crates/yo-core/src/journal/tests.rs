@@ -1,7 +1,185 @@
-use std::num::NonZeroU64;
+use std::{
+    num::NonZeroU64,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
-use super::{SemanticRecord, SessionJournal};
-use crate::{AgentCommand, AgentEvent, SessionId, TurnId, TurnRef, UserInput};
+use super::{
+    JournalDurability, SemanticRecord, SessionJournal,
+    codec::{decode, recover},
+};
+use crate::{
+    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
+    AgentEvent, SessionId, TurnId, TurnRef, UserInput,
+    session_repository::{
+        AppendError, AppendReceipt, DurableCutoff, DurableRecord, DurableRecordKind,
+        RepositoryEntry, RepositoryError, RepositorySequence, SessionRepository, StoragePressure,
+        StoragePressureCause,
+    },
+};
+
+mod durable_messages;
+mod gap_recovery;
+
+#[derive(Default)]
+struct RepositoryState {
+    entries: Vec<RepositoryEntry>,
+}
+
+#[derive(Clone)]
+struct SnapshotGateRepository {
+    state: Arc<Mutex<RepositoryState>>,
+    fail_on_append: usize,
+    attempts: Arc<Mutex<usize>>,
+}
+
+impl SessionRepository for SnapshotGateRepository {
+    fn append(
+        &mut self,
+        _session_id: SessionId,
+        record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        let mut attempts = self.attempts.lock().unwrap();
+        *attempts += 1;
+        if *attempts == self.fail_on_append {
+            let state = self.state.lock().unwrap();
+            return Err(AppendError::SnapshotRequired {
+                durable_cutoff: state
+                    .entries
+                    .last()
+                    .map_or(DurableCutoff::KnownEmpty, |entry| DurableCutoff::Known {
+                        journal_sequence: entry.record().journal_cutoff(),
+                        repository_sequence: entry.sequence(),
+                    }),
+            });
+        }
+        let mut state = self.state.lock().unwrap();
+        let sequence = RepositorySequence::new(
+            u64::try_from(state.entries.len()).expect("test entries fit u64") + 1,
+        );
+        state.entries.push(RepositoryEntry::new(sequence, record));
+        Ok(AppendReceipt::new(sequence))
+    }
+
+    fn read_after(
+        &self,
+        _session_id: SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        let after = sequence.map_or(0, RepositorySequence::get);
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .entries
+            .iter()
+            .filter(|entry| entry.sequence().get() > after)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+}
+
+#[derive(Clone, Default)]
+struct SharedRepository {
+    state: Arc<Mutex<RepositoryState>>,
+    pressure: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Default)]
+struct TransientReadRepository {
+    state: Arc<Mutex<RepositoryState>>,
+    fail_next_read: Arc<AtomicBool>,
+}
+
+impl SessionRepository for TransientReadRepository {
+    fn append(
+        &mut self,
+        _session_id: SessionId,
+        record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        let mut state = self.state.lock().unwrap();
+        let sequence = RepositorySequence::new(
+            u64::try_from(state.entries.len()).expect("test entries fit u64") + 1,
+        );
+        state.entries.push(RepositoryEntry::new(sequence, record));
+        Ok(AppendReceipt::new(sequence))
+    }
+
+    fn read_after(
+        &self,
+        _session_id: SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        if self.fail_next_read.swap(false, Ordering::AcqRel) {
+            return Err(RepositoryError::Unavailable {
+                message: "temporary test read failure".to_owned(),
+            });
+        }
+        let after = sequence.map_or(0, RepositorySequence::get);
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .entries
+            .iter()
+            .filter(|entry| entry.sequence().get() > after)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+}
+
+impl SessionRepository for SharedRepository {
+    fn append(
+        &mut self,
+        _session_id: SessionId,
+        record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        let mut state = self.state.lock().unwrap();
+        if self.pressure.load(Ordering::Acquire) {
+            let durable_cutoff = state
+                .entries
+                .last()
+                .map_or(DurableCutoff::KnownEmpty, |entry| DurableCutoff::Known {
+                    journal_sequence: entry.record().journal_cutoff(),
+                    repository_sequence: entry.sequence(),
+                });
+            return Err(AppendError::StoragePressure {
+                pressure: StoragePressure::new(durable_cutoff, StoragePressureCause::Capacity),
+                source: None,
+            });
+        }
+        let sequence = RepositorySequence::new(
+            u64::try_from(state.entries.len()).expect("test entries fit u64") + 1,
+        );
+        state.entries.push(RepositoryEntry::new(sequence, record));
+        Ok(AppendReceipt::new(sequence))
+    }
+
+    fn read_after(
+        &self,
+        _session_id: SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        let after = sequence.map_or(0, RepositorySequence::get);
+        Ok(self
+            .state
+            .lock()
+            .unwrap()
+            .entries
+            .iter()
+            .filter(|entry| entry.sequence().get() > after)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+}
 
 fn session(value: u64) -> SessionId {
     SessionId::new(NonZeroU64::new(value).unwrap())

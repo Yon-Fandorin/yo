@@ -417,6 +417,12 @@ where
                 state.observe_record(record).map_err(LoopError::State)?;
                 changed = true;
             },
+            AgentPoll::Durability(durability) => {
+                state
+                    .observe_durability(durability)
+                    .map_err(LoopError::State)?;
+                changed = true;
+            },
             AgentPoll::Closed => {
                 return Err(LoopError::Agent(
                     "the agent connection closed unexpectedly".to_owned(),

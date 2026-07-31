@@ -199,8 +199,15 @@ impl<B: AgentBackend> AgentWorker<B> {
                 Err(TryRecvError::Empty) => {},
             }
 
-            match self.poll() {
-                Ok(RuntimePoll::Pending) => {},
+            let durability_before = self.runtime.durability();
+            let poll = self.poll();
+            let durability_changed = self.runtime.durability() != durability_before;
+            match poll {
+                Ok(RuntimePoll::Pending) => {
+                    if durability_changed && !changes.changed() {
+                        return WorkerExit::from_cleanup(self.runtime.shutdown());
+                    }
+                },
                 Ok(RuntimePoll::Event(_)) => {
                     if !changes.changed() {
                         return WorkerExit::from_cleanup(self.runtime.shutdown());

@@ -59,8 +59,8 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 |---|---|---|
 | [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | provider에 독립적인 command, 관찰 가능한 event와 outcome, typed identity | 허용되는 상태 전이는 `engine` |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | 결정론적인 Session, Turn, Activity, request 상태 전이 | 전이가 provider 경계도 지난다면 `runtime` |
-| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 in-memory 기록, sequence 기반의 제한된 Transcript 읽기, durable semantic Journal codec, 크기가 제한된 `MessageSegment` 구성, recovery 검증 | 실행 중 capture 지점은 `runtime`, physical durability는 `session_repository` |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·suffix 읽기 계약, snapshot 복구 gate, typed storage pressure, 첫 single-writer versioned-JSONL 로컬 구현. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | 실행 중인 `AgentSession` 연결, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
+| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 live Projection, sequence 기반의 제한된 Transcript 읽기, 동기식 durable publication, typed gap 상태, revision을 인식하는 크기 제한 `MessageSegment` 구성, recovery 검증 | capture 지점은 `runtime`, physical durability는 `session_repository` |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·suffix 읽기 계약, snapshot 복구 gate, typed storage pressure, 첫 single-writer versioned-JSONL 로컬 구현. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | 저장된 Session 탐색, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | backend 수락, semantic commit, Journal capture 순서, backend 관찰 결과 변환, 실패 시 활성 작업 종료 | provider port는 `backend/contract.rs` |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command lane, 용량 1의 Journal 변경 알림, worker 소유권, 시작 취소, 종료 조율 | worker가 소유한 의미 처리는 `runtime` |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | provider capability, command, semantic event, polling, 취소, failure kind, 명시적 정리 | 구체적인 adapter |
@@ -75,16 +75,41 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 [Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)가
 durable replay와 storage 계약을 소유한다. 구현된 조합은 semantic commit을
 encoding하고 message content를 크기가 제한된 `MessageSegment` record로
-만든다. 열린 message 뒤에 later durable event가 남는 recovery 순서를
-거부하고, recovery repair가 필요 없는 snapshot만 받아들인다.
-`JournalRepository`는 이 경계를 durable semantic prefix와 검증한 뒤 local
-repository에 연결한다. replacement snapshot은 그 prefix와 필요한 recovery
-seal을 보존해야 한다.
+만든다. 권위 있는 replacement snapshot은 이미 durable한 segment를 바꾸지
+않고 새 immutable message revision을 시작한다. non-text 순서 경계보다 먼저
+pending text를 강제 저장하며, 같은 writer의 live gap snapshot과 reopen
+recovery를 구분한다. codec은 semantic commit v2를 쓰면서 v1 읽기를 명시적으로
+지원한다. v1에만 revision 1과 마지막 record 좌표에서 추론한 semantic cutoff를
+적용한다. frontend에 보이는 `JournalSequence`는 semantic cutoff만
+나타내고 normalized segment record는 비공개 replay 좌표로 정렬한다.
+`JournalRepository`는 JSONL을 append마다 다시 읽지 않고 복구한 상태에 새
+suffix만 증분 검증한 뒤 local repository에 연결한다. 자기
+storage-pressure 실패를 직접 관찰한 live writer는 snapshot 하나로 보존한
+prefix를 완성할 수 있지만, reopen 뒤의 replacement snapshot은 그 prefix와
+필요한 recovery seal도 보존해야 한다.
 
-실행 중인 `AgentSession` 경로는 여전히 in-memory Journal에 capture하고
-구체적인 `TranscriptReader`로 공개하며 `JournalRepository`를 호출하지
-않는다. 따라서 이 구현만으로 현재 Session을 재개할 수는 없다. remote
-storage, Request Audit persistence, database나 compression 선택, durable
+이제 실행 중인 `AgentSession` worker가 `JournalRepository` 호출 경로를
+소유한다. CLI는 기본으로 local repository를 열고 새 Session identity를
+배정하며, commit된 semantic 결과를 공개하기 전에 durable record를 쓴다.
+streaming text는 크기·시간·ordering·종료 경계가 durable segment나 empty
+revision의 `MessageReset`을 강제하기 전까지 process-local live revision으로 남는다.
+명확히 append를 거부한 capacity나 storage-pressure가 발생하면 Session은 memory에서
+계속 실행하면서 typed gap을 유지하고, 열린 message가 실제 terminal seal을 받은 뒤
+complete snapshot이 성공하면 durability를 복구한다. 결과가 모호한 repository 실패는
+현재 writer가 자동 재시도하지 않는 integrity gap으로 바뀔 수 있다. 공유
+Transcript observation stream은 gap과 복구 전환을 그 영향을 받는 semantic record보다
+먼저 순서대로 보존한다. CLI 연결은 이 typed observation을 전달하고 TUI 상태는 시각적 표현 정책을 선택하지
+않은 채 최신 값을 보존한다. 저장된 Session 탐색과 resume은
+아직 연결하지 않았으므로 durability만으로 현재 CLI를 재개할 수는 없다.
+local repository는 root 전체에 single-writer lock을 두므로 두 번째 live `yo`
+process가 같은 default root를 열 수 없다. multi-process writer coordination은 현재
+구현 범위가 아니다.
+
+backend adapter가 semantic `ModelWork`로 승인한 관찰 가능한 plan이나 reasoning
+summary도 같은 durable message 경로를 따른다. yo가 받지 않은 숨겨진 model
+reasoning과 승인하지 않은 backend-specific Request Audit payload는 이 semantic
+경로 밖에 남는다.
+remote storage, Request Audit persistence, database나 compression 선택, durable
 transport는 이 경로의 범위 밖이다. 실제 remote reader가 생길 때만
 local·remote reader 공통 인터페이스를 추출한다.
 
@@ -121,12 +146,12 @@ record를 검색하는 대신 `no_associated_request` 또는
 prompt를 대체하며 editor submission을 dispatch하지 않고 input을 소비한다.
 각 view는 자체 context와 viewport 상태를 보존한다.
 
-현재 실행 중인 `AgentConnection`은 `JournalSequence`, durability-gap
-metadata, Request Audit detail 없이 `TranscriptRecord`를 제공한다.
-Transcript는 이 observation boundary를 명시하고 Request는 값을 추론하지
-않고 unavailable field로 표시한다. 이 view layer는 Request Audit을
-persist하지 않고, 또 다른 Journal owner를 만들지 않으며, durable
-repository를 실행 중인 Session에 연결하지 않는다.
+현재 실행 중인 `AgentConnection`은 순서 있는 Transcript record와 별도의
+durability transition을 제공한다. adapter는 아직 각 record의
+`JournalSequence`를 버리고 Request Audit detail도 제공하지 않으므로, view는
+누락된 값을 추론하지 않고 이 제한을 드러낸다. 이 view layer는 Request
+Audit을 persist하거나 또 다른 Journal owner를 만들지 않으며, worker가
+소유한 repository 연결은 frontend 경계 아래에 남는다.
 
 각 redraw는 측정 전에 appearance revision을 pin하고, paint와 완성된
 `Surface`까지 같은 resolved snapshot을 사용한다. plain session output도

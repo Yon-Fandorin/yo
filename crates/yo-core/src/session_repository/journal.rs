@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use super::{
     AppendError, AppendReceipt, DurableRecord, DurableRecordKind, RepositoryError,
@@ -13,30 +13,24 @@ use crate::{
 };
 
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "runtime repository ownership is explicitly outside this Slice"
-    )
-)]
 pub(crate) struct JournalRepository<R> {
     repository: R,
+    live_gaps: HashSet<SessionId>,
+    loaded_sessions: HashSet<SessionId>,
+    recovered: std::collections::HashMap<SessionId, RecoveredJournal>,
 }
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "runtime repository ownership is explicitly outside this Slice"
-    )
-)]
 impl<R> JournalRepository<R>
 where
     R: SessionRepository,
 {
-    pub(crate) const fn new(repository: R) -> Self {
-        Self { repository }
+    pub(crate) fn new(repository: R) -> Self {
+        Self {
+            repository,
+            live_gaps: HashSet::new(),
+            loaded_sessions: HashSet::new(),
+            recovered: std::collections::HashMap::new(),
+        }
     }
 
     pub(crate) fn append(
@@ -46,14 +40,23 @@ where
     ) -> Result<AppendReceipt, JournalRepositoryError> {
         require_session(commit, session_id).map_err(JournalRepositoryError::Codec)?;
         let payload = encode(commit).map_err(JournalRepositoryError::Codec)?;
-        let (mut commits, origins) = self.load_commits(session_id)?;
+        self.ensure_loaded(session_id)?;
         if commit.kind() == JournalCommitKind::Snapshot {
-            let recovered_prefix = recover(&commits).map_err(|error| {
-                let context = recovery_context(&error, &origins);
-                JournalRepositoryError::Codec(error.context(context))
-            })?;
-            let required_prefix = recovered_prefix.complete_snapshot();
-            if !commit.records().starts_with(required_prefix.records()) {
+            let recovered_snapshot;
+            let required_prefix = if self.live_gaps.contains(&session_id) {
+                self.recovered
+                    .get(&session_id)
+                    .map_or(&[][..], RecoveredJournal::records)
+            } else {
+                recovered_snapshot = self
+                    .recovered
+                    .get(&session_id)
+                    .map(RecoveredJournal::complete_snapshot);
+                recovered_snapshot
+                    .as_ref()
+                    .map_or(&[][..], JournalCommit::records)
+            };
+            if !commit.records().starts_with(required_prefix) {
                 return Err(JournalRepositoryError::Codec(
                     JournalCodecError::new(
                         "a complete snapshot must preserve the durable semantic prefix and its recovery seals",
@@ -62,26 +65,53 @@ where
                 ));
             }
         }
-        let candidate_index = commits.len();
-        commits.push(commit.clone());
-        recover(&commits).map_err(|error| {
-            let context = if error.commit_index() == Some(candidate_index) {
-                "candidate semantic commit".to_owned()
-            } else {
-                recovery_context(&error, &origins)
-            };
-            JournalRepositoryError::Codec(error.context(context))
-        })?;
+        let replacement = if commit.kind() == JournalCommitKind::Snapshot
+            || !self.recovered.contains_key(&session_id)
+        {
+            Some(recover(std::slice::from_ref(commit)).map_err(|error| {
+                JournalRepositoryError::Codec(error.context("candidate semantic commit"))
+            })?)
+        } else {
+            self.recovered[&session_id]
+                .validate_incremental(commit)
+                .map_err(|error| {
+                    JournalRepositoryError::Codec(error.context("candidate semantic commit"))
+                })?;
+            None
+        };
         let record = match commit.kind() {
             JournalCommitKind::Incremental => DurableRecord::incremental(payload),
             JournalCommitKind::Snapshot => DurableRecord::snapshot(payload),
         }
         .with_journal_cutoff(commit.journal_cutoff());
-        self.repository
-            .append(session_id, record)
-            .map_err(JournalRepositoryError::Append)
+        match self.repository.append(session_id, record) {
+            Ok(receipt) => {
+                if let Some(replacement) = replacement {
+                    self.recovered.insert(session_id, replacement);
+                } else {
+                    self.recovered
+                        .get_mut(&session_id)
+                        .expect("the incremental prefix was validated above")
+                        .append_validated(commit);
+                }
+                if commit.kind() == JournalCommitKind::Snapshot {
+                    self.live_gaps.remove(&session_id);
+                }
+                Ok(receipt)
+            },
+            Err(error) => {
+                if matches!(error, AppendError::StoragePressure { .. }) {
+                    self.live_gaps.insert(session_id);
+                }
+                Err(JournalRepositoryError::Append(error))
+            },
+        }
     }
 
+    #[allow(
+        dead_code,
+        reason = "stored Session opening consumes recovery in the next approved Slice"
+    )]
     pub(crate) fn recover(
         &self,
         session_id: SessionId,
@@ -147,6 +177,22 @@ where
             }
         }
         Ok((commits, origins))
+    }
+
+    fn ensure_loaded(&mut self, session_id: SessionId) -> Result<(), JournalRepositoryError> {
+        if self.loaded_sessions.contains(&session_id) {
+            return Ok(());
+        }
+        let (commits, origins) = self.load_commits(session_id)?;
+        if !commits.is_empty() {
+            let recovered = recover(&commits).map_err(|error| {
+                let context = recovery_context(&error, &origins);
+                JournalRepositoryError::Codec(error.context(context))
+            })?;
+            self.recovered.insert(session_id, recovered);
+        }
+        self.loaded_sessions.insert(session_id);
+        Ok(())
     }
 
     #[cfg(test)]

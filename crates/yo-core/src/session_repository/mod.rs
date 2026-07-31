@@ -1,6 +1,6 @@
 //! Storage-neutral durable Session records.
 
-mod journal;
+pub(crate) mod journal;
 mod local;
 mod record;
 
@@ -28,6 +28,28 @@ pub trait SessionRepository {
     ) -> Result<Vec<RepositoryEntry>, RepositoryError>;
 }
 
+impl<R> SessionRepository for Box<R>
+where
+    R: SessionRepository + ?Sized,
+{
+    fn append(
+        &mut self,
+        session_id: SessionId,
+        record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        (**self).append(session_id, record)
+    }
+
+    fn read_after(
+        &self,
+        session_id: SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        (**self).read_after(session_id, sequence, limit)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoragePressureCause {
     Capacity,
@@ -51,6 +73,13 @@ pub struct StoragePressure {
 }
 
 impl StoragePressure {
+    pub const fn new(durable_cutoff: DurableCutoff, cause: StoragePressureCause) -> Self {
+        Self {
+            durable_cutoff,
+            cause,
+        }
+    }
+
     pub const fn durable_cutoff(&self) -> DurableCutoff {
         self.durable_cutoff
     }

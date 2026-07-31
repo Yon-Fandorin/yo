@@ -1,10 +1,10 @@
 use std::error::Error;
 
-use yo_core::TranscriptRecord;
 pub use yo_core::{
     AgentIntent as AgentAction, CommandAdmission as DispatchOutcome,
     PendingCommand as PendingDispatch,
 };
+use yo_core::{JournalDurability, TranscriptRecord};
 
 /// One nonblocking observation exposed to the TUI.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13,6 +13,8 @@ pub enum AgentPoll {
     Pending,
     /// One record from the Session Journal's ordered Transcript projection.
     Record(TranscriptRecord),
+    /// A persistent durability-state transition for the visible Session.
+    Durability(JournalDurability),
     /// The connection closed after exposing every preceding record.
     Closed,
 }

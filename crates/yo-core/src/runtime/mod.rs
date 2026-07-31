@@ -46,6 +46,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
         &self.backend
     }
 
+    pub(crate) fn durability(&self) -> crate::JournalDurability {
+        self.journal.transcript_reader().durability()
+    }
+
     /// Validates a command, lets the backend accept it, then commits its semantic transition.
     pub fn execute_command(
         &mut self,
@@ -69,6 +73,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
     /// Applies one available backend observation through the semantic engine.
     pub fn poll_event(&mut self) -> Result<RuntimePoll, RuntimeError> {
+        self.journal.flush_due();
         match self.backend.poll_event() {
             Ok(BackendPoll::Pending) => Ok(RuntimePoll::Pending),
             Ok(BackendPoll::Closed) if self.engine.active_turn().is_none() => {

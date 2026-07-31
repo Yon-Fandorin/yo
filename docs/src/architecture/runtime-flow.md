@@ -35,7 +35,7 @@ yo-tui
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run` selects the presentation mode and glyph profile, captures the working directory, and installs the process termination coordinator. |
 | 2 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CodexBackend::spawn` validates configuration and starts the stdio transport. It defers the provider handshake. |
-| 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable` transfers the backend to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
+| 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` sends `CreateSession` through `AgentRuntime`. |
 | 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CreateSession` performs `initialize` and `thread/start`; the semantic engine produces `SessionCreated`. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode` acquires input and terminal state for the first terminal ownership generation, then enters the already selected presentation mode. |
@@ -118,17 +118,35 @@ The useful inspection points are:
    is the only owner that executes and polls the runtime. The terminal-owning
    thread does not wait on provider I/O.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)
-   orders command validation, backend acceptance, semantic commit, and
-   in-memory Journal capture. It also translates a provider observation through
-   the semantic engine and appends the committed event before publishing a
-   change notification. Rejected commands and invalid backend events are not
+   orders command validation, backend acceptance, semantic commit, and Journal
+   publication. The worker-owned durable writer maps text updates to bounded
+   immutable segments and synchronously appends a semantic commit before its
+   committed record is exposed. Authoritative backend snapshots start a new
+   message revision instead of mutating an already durable segment. Consecutive
+   replacements that have emitted no segment share that unpublished revision;
+   an empty replacement is represented by `MessageReset` when a time or ordering
+   boundary makes it durable, or by its zero-byte terminal seal at termination. It also
+   translates provider observations through the semantic engine before
+   publishing a change notification. Rejected commands and invalid backend events are not
    recorded as committed semantics; terminal events created while closing a
    failure are.
    `AgentSession::transcript_reader` exposes bounded, read-only suffix copies
    from that same Journal without exposing its lock or storage layout.
-   The semantic Journal codec and `JournalRepository` durable adapter exist,
-   but this runtime path does not call them yet. Persistence, storage-pressure
-   notification, and resume are therefore not current runtime behavior.
+   Capacity or storage failure publishes the semantic result as a volatile live
+   suffix and latches `JournalDurability::Gap`. Once storage accepts writes
+   again and every open message has a real terminal seal, the same writer
+   publishes one complete snapshot before returning to incremental commits.
+   Empty messages still receive a zero-byte terminal seal, and recovery derives
+   an interrupted zero-byte seal when a crash follows `ActivityStarted` before
+   the first text segment. Observable plan or reasoning-summary text admitted
+   by an adapter as semantic `ModelWork` uses the same segment and seal path.
+   Hidden reasoning yo never receives and unadmitted backend-specific Request
+   Audit payloads remain outside this semantic path. The shared observation stream orders every typed
+   durability transition before the semantic records affected by it, so a
+   coalesced worker wake-up cannot erase a Gap-to-Durable transition. The CLI
+   adapter forwards that order to TUI state with the exact cutoff class. Chat, status-row, or banner presentation
+   remains a separate product contract. Stored-Session
+   discovery and resume are also not current runtime behavior.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
    consume already committed Transcript records, update TUI state, compose a
    completed `Surface`, and send it to the active presenter. `runner/view.rs`
@@ -175,18 +193,19 @@ frames, and remains renderable when only one terminal row is available.
 Transcript and Request are full-page read-only modes: their input path never
 reaches the prompt editor or emits a submission.
 
-The current TUI adapter exposes semantic `TranscriptRecord` values but drops
-the reader's `JournalSequence` and does not expose durability-gap metadata or
-Request Audit detail. Transcript prints that observation boundary. Request
+The current TUI adapter exposes semantic `TranscriptRecord` values and typed
+durability transitions, but still drops the reader's per-record `JournalSequence`
+and does not expose Request Audit detail. Transcript prints that observation boundary. Request
 uses only a correlation carried by its exact record and otherwise reports
 `no_associated_request`; when an exact `ActivityRequestRef` exists it reports
 `request_audit_detail_unavailable`. It never borrows a correlation from an
-adjacent record. The durable repository remains outside the live
-`AgentSession` path.
+adjacent record. The repository is now inside the live worker path, while these
+additional observation coordinates remain to be wired into the frontend
+contract.
 
 ## Durable Journal composition seam
 
-Outside the live `AgentSession` flow, the implemented local composition is:
+The live `AgentSession` uses this local composition:
 
 ```text
 semantic Journal records
@@ -207,20 +226,35 @@ Journal recovery
 RecoveredJournal or an explicit recovery error
 ```
 
-The recovery path rejects a later durable command or event behind an open
-message instead of moving an interrupted seal after that event. A snapshot is
+Pending message text is forced into an immutable segment before a non-text
+ordering boundary, so concurrent Activity events can retain their original order.
+If a crash leaves a message open, recovery proposes an interrupted seal after the
+last durable record without discarding those interleaved events. A snapshot is
 rejected before physical append when replay would need to synthesize a recovery
-record, or when it omits the existing durable prefix and its required recovery
-seals. These are navigation notes for the implemented failure boundaries; the
+record, or after reopen when it omits the existing durable prefix and its
+required recovery seals. A writer that directly observed its own failed append
+may instead complete that retained prefix in one live-gap snapshot after all
+open messages receive their actual terminal seals. Until then, later records
+remain in the volatile suffix instead of turning expected snapshot deferral
+into an integrity failure. Only capacity or storage-pressure failures enter
+that automatic retry path. An
+integrity gap or unexpected snapshot gate remains memory-only for the current
+writer, so it cannot repeatedly propose an authority it cannot prove; a future
+recovery owner must rebuild explicitly from the repository. These are
+navigation notes for the implemented failure boundaries; the
 owning behavior remains in the
 [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)
 and
 [Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)
 KnowledgeUnits.
 
-No live `AgentSession` owner invokes this composition yet. It also does not add
-remote storage, Request Audit persistence, database or compression backends, or
-a durable transport.
+The CLI enables the local repository by default. `YO_SESSION_REPOSITORY`
+overrides its root and `YO_SESSION_CAPACITY_BYTES` overrides the 1 GiB ceiling.
+Linux otherwise uses `$XDG_STATE_HOME/yo/sessions` or
+`$HOME/.local/state/yo/sessions`; macOS uses
+`$HOME/Library/Application Support/yo/sessions`. This composition does not yet
+add stored-Session opening, remote storage, Request Audit persistence, database
+or compression backends, or a durable transport.
 
 ## Suspend and resume
 

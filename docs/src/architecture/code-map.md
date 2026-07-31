@@ -58,8 +58,8 @@ new shared capability.
 |---|---|---|
 | [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | Provider-neutral commands, observable events, outcomes, and typed identities | `engine` for legal state transitions |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | Deterministic Session, Turn, Activity, and request state transitions | `runtime` when a transition also crosses a provider boundary |
-| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | One ordered in-memory record of committed commands and semantic events; bounded sequence-based Transcript reads; the durable semantic Journal codec, bounded `MessageSegment` construction, and recovery validation | `runtime` for the live capture point; `session_repository` for physical durability |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append and suffix-read contract, snapshot recovery gate, typed storage pressure, and the first single-writer local versioned-JSONL implementation; `JournalRepository` validates a candidate against the durable semantic prefix and composes one semantic commit with one physical append | Live `AgentSession` wiring, remote storage or transport, Request Audit persistence, and database or compression alternatives |
+| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | One ordered live projection of committed commands and semantic events; bounded sequence-based Transcript reads; synchronous durable publication, typed gap state, bounded revision-aware `MessageSegment` construction, and recovery validation | `runtime` for the capture point; `session_repository` for physical durability |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append and suffix-read contract, snapshot recovery gate, typed storage pressure, and the first single-writer local versioned-JSONL implementation; `JournalRepository` validates a candidate against the durable semantic prefix and composes one semantic commit with one physical append | Stored-Session discovery, remote storage or transport, Request Audit persistence, and database or compression alternatives |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | Ordering backend acceptance, semantic commit, and Journal capture; translating backend observations; closing active work on failure | `backend/contract.rs` for the provider port |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | Nonblocking frontend access, bounded command lanes, a capacity-one Journal-change notification, worker ownership, startup cancellation, and shutdown coordination | `runtime` for worker-owned semantics |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | Provider capabilities, commands, semantic events, polling, cancellation, failure kinds, and explicit cleanup | A concrete adapter |
@@ -75,15 +75,42 @@ and
 [Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)
 own the durable replay and storage contracts. The implemented composition
 encodes semantic commits, bounds message content as `MessageSegment` records,
-rejects recovery ordering that leaves an open message behind a later durable
-event, and admits snapshots only when they need no recovery repair.
-`JournalRepository` validates that boundary against the durable semantic prefix
-before mapping it to the local repository; a replacement snapshot must retain
-that prefix and any recovery seal it requires.
+starts a new immutable message revision for an authoritative replacement
+snapshot, forces pending text before a non-text ordering boundary, and
+distinguishes same-writer live-gap snapshots from reopen recovery.
+The codec writes semantic commit v2 and explicitly retains v1 read support;
+only that legacy schema infers revision 1 and its semantic cutoff from the last
+record coordinate.
+`JournalSequence` remains the frontend-visible semantic cutoff while a private
+replay coordinate orders normalized segment records. `JournalRepository`
+validates new suffixes incrementally against its recovered state before mapping
+them to the local repository instead of re-reading the JSONL log per append. A live writer that
+observed its own storage-pressure failure may complete the retained prefix in
+one snapshot; after reopen, a replacement snapshot must also retain required
+recovery seals.
 
-The live `AgentSession` path still captures into its in-memory Journal and
-exposes a concrete `TranscriptReader`; it does not call `JournalRepository`.
-Current Sessions are therefore not made resumable by this implementation.
+The live `AgentSession` worker now owns the `JournalRepository` call path. The
+CLI opens one local repository by default, allocates a new Session identity,
+and publishes durable records before their committed semantic result is
+exposed. Streaming text remains a process-local live revision until a size,
+time, ordering, or terminal boundary forces a durable segment or empty-revision
+`MessageReset`. A known-clean capacity or storage-pressure refusal latches a
+typed gap while the Session continues in memory; after open messages receive
+real terminal seals, a later successful complete snapshot restores durability.
+An ambiguous repository failure may instead become an integrity gap that this
+writer does not retry automatically. The shared Transcript observation stream retains gap and
+recovery transitions in order before their affected semantic records. The CLI
+connection forwards those typed observations, and TUI state retains
+the latest value without choosing a visual presentation policy. Stored-Session discovery and
+resume are not yet connected, so durability alone does not make the current
+CLI resumable.
+The local repository's root-wide single-writer lock also means a second live
+`yo` process cannot open the same default root. Separate multi-process writer
+coordination is not part of this implementation.
+Text admitted by a backend adapter as semantic `ModelWork`, including an
+observable plan or reasoning summary, follows the same durable message path.
+Hidden model reasoning yo never receives and unadmitted backend-specific
+Request Audit payloads remain outside that semantic path.
 Remote storage, Request Audit persistence, database or compression choices,
 and a durable transport remain outside this path. Extract a local/remote
 reader interface only when a real remote reader exists.
@@ -120,12 +147,12 @@ selected in Chat or Transcript and reports `no_associated_request` or
 Transcript and Request replace the prompt and consume input without dispatching
 editor submissions. Each view retains its own context and viewport state.
 
-The live `AgentConnection` currently supplies `TranscriptRecord` without
-`JournalSequence`, durability-gap metadata, or Request Audit detail. Transcript
-states that observation boundary explicitly, and Request shows unavailable
-fields rather than inferring them. This view layer does not persist Request
-Audit, create another Journal owner, or connect the durable repository to the
-live Session.
+The live `AgentConnection` now supplies ordered Transcript records and separate
+durability transitions. The adapter still drops each record's `JournalSequence`,
+and Request Audit detail is unavailable, so the views expose those limits rather
+than inferring missing values. This view layer does not persist Request Audit or
+create another Journal owner; the worker-owned repository connection remains
+below the frontend boundary.
 
 Each redraw pins the appearance
 revision before measurement and uses that same resolved snapshot through paint

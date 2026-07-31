@@ -11,7 +11,7 @@ use std::{
 
 use crate::{
     AgentBackend, AgentCommand, AgentEvent, BackendStopHandle, SessionId, TranscriptReader,
-    journal::SessionJournal,
+    journal::SessionJournal, session_repository::SessionRepository,
 };
 
 mod admission;
@@ -73,8 +73,13 @@ impl AgentSession {
         B: AgentBackend + Send + 'static,
     {
         let mut never_cancelled = || false;
-        Ok(Self::start_inner(backend, &mut never_cancelled)?
-            .expect("a callback that always returns false cannot cancel startup"))
+        Ok(Self::start_inner(
+            backend,
+            SessionId::new(NonZeroU64::MIN),
+            SessionJournal::new(),
+            &mut never_cancelled,
+        )?
+        .expect("a callback that always returns false cannot cancel startup"))
     }
 
     /// Starts a Session while allowing its frontend host to cancel the handshake.
@@ -88,18 +93,43 @@ impl AgentSession {
     where
         B: AgentBackend + Send + 'static,
     {
-        Self::start_inner(backend, &mut is_cancelled)
+        Self::start_inner(
+            backend,
+            SessionId::new(NonZeroU64::MIN),
+            SessionJournal::new(),
+            &mut is_cancelled,
+        )
+    }
+
+    /// Starts a Session whose committed semantics are written through `repository`.
+    pub fn start_cancellable_with_repository<B, R>(
+        backend: B,
+        session_id: SessionId,
+        repository: R,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<Self>, AgentSessionError>
+    where
+        B: AgentBackend + Send + 'static,
+        R: SessionRepository + Send + 'static,
+    {
+        Self::start_inner(
+            backend,
+            session_id,
+            SessionJournal::with_repository(Box::new(repository)),
+            &mut is_cancelled,
+        )
     }
 
     fn start_inner<B>(
         backend: B,
+        session_id: SessionId,
+        journal: SessionJournal,
         is_cancelled: &mut dyn FnMut() -> bool,
     ) -> Result<Option<Self>, AgentSessionError>
     where
         B: AgentBackend + Send + 'static,
     {
         let stop = backend.stop_handle();
-        let session_id = SessionId::new(NonZeroU64::MIN);
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (urgent_tx, urgent_rx) = mpsc::sync_channel(URGENT_COMMAND_CAPACITY);
         let (change_tx, change_rx) = mpsc::sync_channel(CHANGE_CAPACITY);
@@ -116,7 +146,6 @@ impl AgentSession {
         let worker_processed = Arc::clone(&processed);
         let lifecycle = Arc::new(AtomicU8::new(WORKER_IDLE));
         let worker_lifecycle = Arc::clone(&lifecycle);
-        let journal = SessionJournal::new();
         let transcript = journal.transcript_reader();
         let worker = match thread::Builder::new()
             .name("yo-agent-runtime".to_owned())

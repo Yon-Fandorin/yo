@@ -83,6 +83,28 @@ fn reopens_and_replays_an_ordered_session_log() {
     assert_eq!(entries[1].record().payload(), "complete state");
 }
 
+// writer lock을 가진 local repository가 기존 숫자 log 이름을 확인해 다음 Session ID를
+// 배정하면 프로세스를 다시 시작해도 예전 Session 파일을 새 실행이 덮어쓰지 않는다.
+#[test]
+fn allocates_the_next_session_identity_after_existing_logs() {
+    let directory = TestDirectory::new("next-session-id");
+    let mut repository =
+        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+    let first = repository
+        .next_session_id()
+        .expect("the first identity allocates");
+    repository
+        .append(first, DurableRecord::incremental("first session"))
+        .expect("the first Session creates its log");
+
+    let second = repository
+        .next_session_id()
+        .expect("the next identity observes the existing log");
+
+    assert_eq!(first.get().get(), 1);
+    assert_eq!(second.get().get(), 2);
+}
+
 // 용량 초과가 기존 파일을 바꾸지 않고 durable cutoff를 정확히 알려주는지 검증합니다.
 #[test]
 fn capacity_pressure_preserves_the_durable_prefix() {

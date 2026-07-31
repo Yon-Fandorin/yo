@@ -3,8 +3,9 @@ use std::{num::NonZeroU64, time::Duration};
 use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate,
     AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendEvent, BackendScriptStep,
-    RequestId, RuntimeError, RuntimePoll, ScriptedBackend, SessionId, TranscriptRecord, TurnId,
-    TurnOutcome, TurnRef, UserInput,
+    DurabilityGapCause, JournalDurability, RequestId, RuntimeError, RuntimePoll, ScriptedBackend,
+    SessionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput,
+    session_repository::DurableCutoff,
 };
 
 use super::{
@@ -63,6 +64,23 @@ fn edits_prompt_without_creating_transcript_items() {
     );
     assert_eq!(state.editor().text(), "질문");
     assert!(state.transcript().items().is_empty());
+}
+
+// 저장 공간 압력의 구체적인 화면 표현은 별도 SOT가 소유한다. 이 단계에서는 typed cutoff를
+// 잃지 않고 TUI 상태까지 전달해 이후 presenter가 Chat·status·banner 정책을 선택할 수 있다.
+#[test]
+fn retains_storage_pressure_for_a_future_presentation_policy() {
+    let mut state = TuiState::new();
+    let durability = JournalDurability::Gap {
+        durable_cutoff: DurableCutoff::KnownEmpty,
+        cause: DurabilityGapCause::Capacity,
+    };
+
+    assert_eq!(
+        state.observe_durability(durability).unwrap(),
+        StateEffect::Unchanged
+    );
+    assert_eq!(state.durability(), Some(durability));
 }
 
 // Enter는 prompt만 비우며, 같은 입력의 StartTurn 명령이 저널에 확정된 뒤에만 Chat에

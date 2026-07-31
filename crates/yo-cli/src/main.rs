@@ -6,6 +6,8 @@ use std::{io::Write, process::ExitCode};
 mod agent;
 #[cfg(unix)]
 mod process;
+#[cfg(unix)]
+mod storage;
 
 #[cfg(unix)]
 fn main() -> ExitCode {
@@ -94,10 +96,20 @@ fn run_agent_generation(
     options: Options,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {
+        let repository = storage::open_default()
+            .map_err(|error| AppError::single("opening the Session repository", error))?;
+        let session_id = repository
+            .next_session_id()
+            .map_err(|error| AppError::single("allocating a Session identity", error))?;
         let backend = yo_core::CodexBackend::spawn(yo_core::CodexBackendConfig::new(cwd))
             .map_err(|error| AppError::single("starting Codex", error))?;
-        let Some(agent) = agent::TuiAgentConnection::start(backend, termination)
-            .map_err(|error| AppError::single("creating the agent Session", error))?
+        let Some(agent) = agent::TuiAgentConnection::start_persistent(
+            backend,
+            session_id,
+            repository,
+            termination,
+        )
+        .map_err(|error| AppError::single("creating the agent Session", error))?
         else {
             return Ok(SessionStep::Complete);
         };

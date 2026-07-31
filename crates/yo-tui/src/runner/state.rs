@@ -5,7 +5,7 @@ use std::{
 
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate, AgentCommand,
-    AgentEvent, ApprovalDecision, TranscriptRecord, TurnOutcome,
+    AgentEvent, ApprovalDecision, JournalDurability, TranscriptRecord, TurnOutcome,
 };
 
 use crate::{
@@ -72,6 +72,7 @@ pub(super) struct TuiState {
     activities: HashMap<ActivityRef, ActivityPresentation>,
     pending_requests: VecDeque<PendingRequest>,
     turn_active: bool,
+    durability: Option<JournalDurability>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -168,6 +169,19 @@ impl TuiState {
             )
             .map_err(StateError::Transcript)?;
         Ok(effect)
+    }
+
+    pub(super) fn observe_durability(
+        &mut self,
+        durability: JournalDurability,
+    ) -> Result<StateEffect, StateError> {
+        self.durability = Some(durability);
+        Ok(StateEffect::Unchanged)
+    }
+
+    #[cfg(test)]
+    pub(super) const fn durability(&self) -> Option<JournalDurability> {
+        self.durability
     }
 
     #[cfg(test)]

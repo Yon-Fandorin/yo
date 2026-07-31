@@ -5,9 +5,11 @@ use super::{
     SequencedJournalRecord, decode, encode, recover,
 };
 use crate::{
-    ActivityId, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionId, TurnId, TurnRef,
-    UserInput,
+    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, AgentCommand, AgentEvent,
+    JournalSequence, SessionId, TurnId, TurnRef, UserInput,
 };
+
+mod wire_compatibility;
 
 fn activity() -> ActivityRef {
     let session_id = SessionId::new(NonZeroU64::new(1).unwrap());
@@ -31,6 +33,13 @@ fn sequenced(
         .collect()
 }
 
+fn expect_segment(record: JournalRecord) -> MessageSegment {
+    let JournalRecord::MessageSegment(segment) = record else {
+        panic!("the boundary must emit a text segment");
+    };
+    segment
+}
+
 // 16KiB 경계에 걸친 다중 바이트 UTF-8 입력을 agent message로 나누어도 각 segment가
 // 유효한 UTF-8 bound 안에 있고 다시 이으면 원문과 바이트 단위로 같아야 한다.
 #[test]
@@ -39,7 +48,9 @@ fn splits_agent_text_at_valid_utf8_boundaries_without_changing_content() {
     let mut segmenter = MessageSegmenter::new(activity(), MessageStream::Agent);
 
     let mut segments = segmenter.push_text(&text, Duration::ZERO);
-    segments.extend(segmenter.flush_boundary());
+    if let Some(record) = segmenter.flush_boundary() {
+        segments.push(expect_segment(record));
+    }
 
     assert_eq!(
         segments
@@ -64,9 +75,11 @@ fn uses_the_larger_bound_for_tool_output() {
     let mut segmenter = MessageSegmenter::new(activity(), MessageStream::ToolOutput);
 
     assert!(segmenter.push_text(&text, Duration::ZERO).is_empty());
-    let segment = segmenter
-        .flush_boundary()
-        .expect("a non-text boundary forces the buffered tool output");
+    let segment = expect_segment(
+        segmenter
+            .flush_boundary()
+            .expect("a non-text boundary forces the buffered tool output"),
+    );
 
     assert_eq!(segment.text(), text);
 }
@@ -80,10 +93,12 @@ fn flushes_a_small_tail_when_it_reaches_one_second() {
 
     assert!(segmenter.flush_due(Duration::from_millis(1009)).is_none());
     assert_eq!(
-        segmenter
-            .flush_due(Duration::from_millis(1010))
-            .expect("the oldest byte reached one second")
-            .text(),
+        expect_segment(
+            segmenter
+                .flush_due(Duration::from_millis(1010))
+                .expect("the oldest byte reached one second"),
+        )
+        .text(),
         "tail"
     );
 }
@@ -108,30 +123,6 @@ fn seals_the_final_tail_with_exact_reconstruction_counts() {
     assert_eq!(ended.segment_count(), 1);
     assert_eq!(ended.utf8_bytes(), "안녕".len() as u64);
     assert_eq!(ended.outcome(), &MessageOutcome::Completed);
-}
-
-// command와 그 결과 event를 한 semantic commit으로 codec 왕복해도 record 순서와
-// 독립 JournalSequence가 그대로 남아야 한 physical append가 원자적 원인·결과가 된다.
-#[test]
-fn round_trips_one_atomic_command_commit() {
-    let session_id = activity().session_id();
-    let turn = activity().turn();
-    let commit = JournalCommit::incremental(sequenced(
-        7,
-        [
-            JournalRecord::CommandCommitted(AgentCommand::StartTurn {
-                turn,
-                input: UserInput::new("검사"),
-            }),
-            JournalRecord::EventCommitted(AgentEvent::TurnStarted { turn }),
-        ],
-    ));
-
-    let decoded = decode(&encode(&commit).expect("commit encodes")).expect("commit decodes");
-
-    assert_eq!(decoded, commit);
-    assert_eq!(decoded.journal_cutoff().map(JournalSequence::get), Some(8));
-    assert_eq!(session_id, turn.session_id());
 }
 
 // complete snapshot이 sequence 1이 아닌 중간 suffix에서 시작하면 저장 후 recovery gate를
@@ -251,10 +242,103 @@ fn recovery_seals_an_unterminated_message_as_interrupted() {
     assert_eq!(snapshot.records()[1].sequence().get(), 2);
 }
 
-// 열린 durable message 뒤의 commit에 later event가 이미 기록되어 있으면 끝에서 seal을
-// 덧붙여 순서를 바꾸지 말고, event보다 먼저 interrupted seal할 수 없던 기록으로 거부해야 한다.
+// 이미 durable segment가 나온 뒤 backend가 권위 있는 TextSnapshot으로 내용을 교체해도
+// 새 revision이 index를 다시 시작하고 terminal seal이 그 최종 revision만 검증해야 한다.
+// 그래야 이전 전송 조각은 진단 이력으로 남기면서 재생 결과를 낡은 prefix와 섞지 않는다.
 #[test]
-fn recovery_rejects_a_later_event_after_an_unterminated_message() {
+fn replacement_revision_supersedes_an_earlier_segment_without_mutating_it() {
+    let activity = activity();
+    let mut segmenter = MessageSegmenter::new(activity, MessageStream::Agent);
+    let first = segmenter
+        .push_text(&"a".repeat(16 * 1024), Duration::ZERO)
+        .pop()
+        .expect("the first revision reaches its size boundary");
+    let replacement = segmenter.replace_text("authoritative", Duration::from_millis(1));
+    assert!(
+        replacement.is_empty(),
+        "the short replacement remains buffered"
+    );
+    let terminal = segmenter.finish(MessageOutcome::Completed);
+    let commit = JournalCommit::incremental(sequenced(
+        1,
+        [JournalRecord::MessageSegment(first), terminal],
+    ));
+
+    let recovered = recover(&[commit]).expect("the replacement revision is replayable");
+    let JournalRecord::MessageSegment(first) = recovered.records()[0].record() else {
+        panic!("the original immutable segment remains visible");
+    };
+    let JournalRecord::MessageEnded(terminal) = recovered.records()[1].record() else {
+        panic!("the replacement is sealed atomically");
+    };
+    let final_segment = terminal
+        .final_segment()
+        .expect("the terminal carries the short replacement tail");
+
+    assert_eq!(first.revision(), 1);
+    assert_eq!(final_segment.revision(), 2);
+    assert_eq!(final_segment.index(), 1);
+    assert_eq!(final_segment.text(), "authoritative");
+    assert_eq!(terminal.ended().revision(), 2);
+    assert_eq!(terminal.ended().segment_count(), 1);
+    assert_eq!(terminal.ended().utf8_bytes(), 13);
+}
+
+// 권위 있는 empty snapshot은 이전 revision을 빈 본문으로 교체한다. text segment가 없어도
+// 다음 revision의 zero-byte terminal이 그 교체를 완전히 표현하고 복구에 성공해야 한다.
+#[test]
+fn empty_replacement_snapshot_is_a_recoverable_zero_byte_revision() {
+    let activity = activity();
+    let mut segmenter = MessageSegmenter::new(activity, MessageStream::Agent);
+    assert!(segmenter.replace_text("", Duration::ZERO).is_empty());
+    let terminal = segmenter.finish(MessageOutcome::Completed);
+    let commit = JournalCommit::incremental(sequenced(
+        1,
+        [
+            JournalRecord::EventCommitted(AgentEvent::ActivityStarted {
+                activity,
+                kind: crate::ActivityKind::AgentMessage,
+            }),
+            terminal,
+            JournalRecord::EventCommitted(AgentEvent::ActivityFinished {
+                activity,
+                outcome: crate::ActivityOutcome::Completed,
+            }),
+        ],
+    ));
+
+    let recovered = recover(&[commit]).expect("the empty replacement is a complete revision");
+    let JournalRecord::MessageEnded(terminal) = recovered.records()[1].record() else {
+        panic!("the empty replacement has a typed terminal");
+    };
+
+    assert_eq!(terminal.ended().revision(), 2);
+    assert_eq!(terminal.ended().segment_count(), 0);
+    assert_eq!(terminal.ended().utf8_bytes(), 0);
+    assert!(recovered.recovery_commit().is_none());
+}
+
+// 아직 segment가 나오지 않은 replacement snapshot들은 같은 unpublished revision을
+// 덮어쓴다. 빈 snapshot 뒤 최종 text가 와도 revision gap 없이 하나의 revision 2가 된다.
+#[test]
+fn consecutive_unpublished_snapshots_share_the_next_revision() {
+    let mut segmenter = MessageSegmenter::new(activity(), MessageStream::Agent);
+    segmenter.replace_text("", Duration::ZERO);
+    segmenter.replace_text("final", Duration::from_millis(1));
+    let JournalRecord::MessageEnded(terminal) = segmenter.finish(MessageOutcome::Completed) else {
+        panic!("the final replacement has a typed terminal");
+    };
+
+    assert_eq!(terminal.final_segment().unwrap().revision(), 2);
+    assert_eq!(terminal.ended().revision(), 2);
+    assert_eq!(terminal.final_segment().unwrap().text(), "final");
+}
+
+// non-text 경계에서 pending text가 segment로 먼저 강제 저장되면 message가 아직 끝나지
+// 않았더라도 다른 Activity 사건을 기록할 수 있어야 한다. 재시작 시에는 마지막 durable
+// 위치에서 열린 message만 interrupted로 봉인해 동시 Activity의 원래 순서를 보존한다.
+#[test]
+fn recovery_preserves_an_event_after_a_forced_message_segment() {
     let activity = activity();
     let message = JournalCommit::incremental(sequenced(
         1,
@@ -267,19 +351,42 @@ fn recovery_rejects_a_later_event_after_an_unterminated_message() {
     ));
     let later_event = JournalCommit::incremental(sequenced(
         2,
-        [JournalRecord::EventCommitted(
-            AgentEvent::ActivityFinished {
-                activity,
-                outcome: crate::ActivityOutcome::Completed,
-            },
-        )],
+        [JournalRecord::EventCommitted(AgentEvent::TurnFinished {
+            turn: activity.turn(),
+            outcome: crate::TurnOutcome::Interrupted,
+        })],
     ));
 
-    let error =
-        recover(&[message, later_event]).expect_err("the later event crossed an open message");
+    let recovered = recover(&[message, later_event]).expect("the ordering boundary is replayable");
 
-    assert!(error.to_string().contains("sealed before"));
-    assert_eq!(error.commit_index(), Some(1));
+    assert_eq!(recovered.records().len(), 2);
+    assert!(recovered.recovery_commit().is_some());
+}
+
+// ActivityStarted 뒤 첫 text segment가 저장되기 전에 crash가 나도 durable activity 자체가
+// 열린 zero-byte message를 증명한다. 복구는 이를 completed로 꾸미지 않고 interrupted
+// MessageEnded(0 segments, 0 bytes)로 봉인해야 한다.
+#[test]
+fn recovery_seals_a_started_message_before_its_first_text() {
+    let activity = activity();
+    let started = JournalCommit::incremental(sequenced(
+        1,
+        [JournalRecord::EventCommitted(AgentEvent::ActivityStarted {
+            activity,
+            kind: crate::ActivityKind::AgentMessage,
+        })],
+    ));
+
+    let recovered = recover(&[started]).expect("the zero-byte live message is recoverable");
+    let seal = recovered
+        .recovery_commit()
+        .expect("the crash leaves one interrupted seal");
+    let JournalRecord::MessageEnded(terminal) = seal.records()[0].record() else {
+        panic!("recovery emits a typed message terminal");
+    };
+    assert_eq!(terminal.ended().segment_count(), 0);
+    assert_eq!(terminal.ended().utf8_bytes(), 0);
+    assert_eq!(terminal.ended().outcome(), &MessageOutcome::Interrupted);
 }
 
 // sequence 1부터 시작해도 terminal seal이 없는 snapshot은 복구 시 interrupted record를

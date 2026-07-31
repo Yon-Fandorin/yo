@@ -23,7 +23,9 @@ pub use command::{ActivityResponse, AgentCommand, ApprovalDecision, UserInput};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
 pub use event::{ActivityKind, ActivityOutcome, ActivityUpdate, AgentEvent, Failure, TurnOutcome};
 pub use journal::{
-    JournalSequence, TranscriptEntry, TranscriptReader, TranscriptRecord, TranscriptSlice,
+    DurabilityGapCause, JournalDurability, JournalSequence, TranscriptEntry, TranscriptObservation,
+    TranscriptObservationEntry, TranscriptObservationSequence, TranscriptObservationSlice,
+    TranscriptReader, TranscriptRecord, TranscriptSlice,
 };
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
 pub use session::{
