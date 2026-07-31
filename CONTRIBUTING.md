@@ -286,12 +286,14 @@ repeat an unavailable reviewer until its availability state changes. Failed
 attempts are operational evidence, not accepted-commit trailers.
 
 The accepted commit records completed lenses as evidence, not as a substitute
-for performing them:
+for performing them. Put every trailer in one contiguous block at the very end
+of the commit message, with no blank lines between trailers and no body text
+after them. For example, when all three review lenses apply, the final block is:
 
 ```text
-Slice-Review: fresh-context - completed - <reviewer-id> - <clear|resolved>
-Slice-Review: code-quality - completed - <reviewer-id> - <clear|resolved>
-Slice-Review: integration - completed - <reviewer-id> - <clear|resolved>
+Slice-Review: fresh-context - completed - codex/7f3a91 - clear
+Slice-Review: code-quality - completed - kimi/2b8c44 - resolved
+Slice-Review: integration - completed - human/minseo - clear
 ```
 
 Use `clear` when the completed review found no actionable findings. Use
@@ -416,6 +418,15 @@ brings a commit already reachable from current `develop` into the Wave is
 exempt because its component commits were already reviewed. Other merges into a
 Wave, and every merge commit on `develop` or `main`, are not exempt and do not
 replace the required squash or fast-forward workflow.
+
+When constructing an accepted commit message programmatically, write the
+complete message to a temporary file and validate that prepared file before
+invoking `git commit`:
+
+```bash
+cargo xtask check slice-review-impact /tmp/yo-commit-message
+git commit --file /tmp/yo-commit-message
+```
 
 For accepted review commits on `develop`, `main`, or `wave/*` that change code
 under `crates/` or `tools/`, delete code there, or change workspace Cargo
