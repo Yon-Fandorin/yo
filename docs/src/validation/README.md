@@ -40,6 +40,8 @@ the assertion or silently skipping it.
 | Process termination or real terminal restoration | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
 | Unix process-coordinator state and compensation | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |
 | Required explanations immediately above Rust tests | `cargo xtask check test-explanations` | Rust sources under `crates/` and `tools/` |
+| Slice changes remain inside their declared local write-set | `cargo xtask check slice-scope <contract.json>` | One active Slice worktree |
+| Two Slice contracts have a common current integration base and disjoint declared ownership | `cargo xtask check slice-parallel <left.json> <right.json>` | Direct Slices use `develop`; Wave Slices use their Wave branch |
 | Repository hook policy or structured development checks | `cargo test -p xtask` | `tools/xtask/src` |
 | Linux/macOS conditional compilation | `bash tools/validation/yo-cli-unix-matrix.sh` | Local host result plus `.github/workflows/unix-compile.yml` for both hosts |
 | tmux, SSH, or nested tmux behavior | See the [terminal environment matrix](./terminal-matrix.md) | Ignored `yo-cli` environment tests |
@@ -79,6 +81,12 @@ execute ignored environment tests. `hk check` selects repository checks from
 explanations, affected crate checks, Methexis checks, and Developer Docs checks.
 Installation and hook usage belong to
 [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#local-checks).
+
+Use focused checks from the local Slice contract while editing, then run this
+Slice-close baseline once the outcome is complete. For the exact staged
+Methexis activation interval, `hk` uses prospective validation and defers the
+ordinary Methexis tests; immediately after integration, run the ordinary full
+Methexis check and tests against trusted `develop`.
 
 If the Slice changes a platform or external-environment boundary, add the
 relevant matrix command rather than claiming the baseline covered it.

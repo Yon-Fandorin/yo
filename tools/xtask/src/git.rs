@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     io::Write,
     path::Path,
     process::{Command, Stdio},
@@ -24,6 +25,36 @@ pub(crate) fn output_bytes_in(
     inherit_repository_environment: bool,
 ) -> Result<Vec<u8>, String> {
     let result = command(directory, inherit_repository_environment)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("cannot run git {}: {error}", arguments.join(" ")))?;
+    if result.status.success() {
+        Ok(result.stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        Err(format!(
+            "git {} failed with {}{}",
+            arguments.join(" "),
+            result.status,
+            if stderr.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr.trim())
+            }
+        ))
+    }
+}
+
+pub(crate) fn output_bytes_in_with_index(
+    directory: &Path,
+    arguments: &[&str],
+    index_file: Option<&OsStr>,
+) -> Result<Vec<u8>, String> {
+    let mut command = command(directory, false);
+    if let Some(index_file) = index_file {
+        command.env("GIT_INDEX_FILE", index_file);
+    }
+    let result = command
         .args(arguments)
         .output()
         .map_err(|error| format!("cannot run git {}: {error}", arguments.join(" ")))?;

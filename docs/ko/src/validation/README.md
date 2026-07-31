@@ -40,6 +40,8 @@ command, host, credential, platform을 기록한다.
 | process termination이나 실제 터미널 복원 | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
 | Unix process coordinator 상태와 보상 | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |
 | Rust test 바로 위에 필요한 설명 | `cargo xtask check test-explanations` | `crates/`와 `tools/` 아래 Rust source |
+| Slice 변경이 선언한 로컬 write-set 안에 머무는지 | `cargo xtask check slice-scope <contract.json>` | 하나의 활성 Slice worktree |
+| 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
 | 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | `tools/xtask/src` |
 | Linux/macOS 조건부 compile | `bash tools/validation/yo-cli-unix-matrix.sh` | 로컬 host 결과와 두 host를 위한 `.github/workflows/unix-compile.yml` |
 | tmux, SSH, SSH 내부 tmux 동작 | [터미널 환경 매트릭스](./terminal-matrix.md) 참고 | ignored `yo-cli` 환경 test |
@@ -78,6 +80,12 @@ crate 검사, Methexis 검사, Developer Docs 검사가 여기에 포함된다.
 설치와 hook 사용법은
 [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#local-checks)가
 소유한다.
+
+편집 중에는 로컬 Slice contract에 선언한 집중 검사를 사용하고, 결과가
+완성되면 이 Slice 종료 기준선을 한 번 실행한다. 정확한 Methexis activation
+후보가 staged된 구간에는 `hk`가 prospective validation을 사용하고 일반
+Methexis test를 잠시 미룬다. 통합 직후에는 trusted `develop`에서 일반 전체
+Methexis check와 test를 실행한다.
 
 Slice가 platform이나 외부 환경 경계를 바꾼다면 기준선이 이를 검사했다고
 주장하지 말고 관련 matrix 명령을 추가한다.

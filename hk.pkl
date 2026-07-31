@@ -27,7 +27,7 @@ local checks = new Mapping<String, Step> {
         )
         check = "cargo test --quiet --locked -p librarian"
     }
-    ["methexis-draft"] = new Step {
+    ["methexis-validation"] = new Step {
         glob = List(
             "methexis/**/*.md",
             "methexis/**/*.yaml",
@@ -38,20 +38,7 @@ local checks = new Mapping<String, Step> {
             "Cargo.lock",
             "Cargo.toml",
         )
-        check = "cargo run --quiet --locked -p methexis -- check --staged-activation"
-    }
-    ["methexis-tests"] = new Step {
-        glob = List(
-            "methexis/**/*.md",
-            "methexis/**/*.yaml",
-            "tools/methexis/**/*.json",
-            "tools/methexis/**/*.md",
-            "tools/methexis/**/*.rs",
-            "tools/methexis/Cargo.toml",
-            "Cargo.lock",
-            "Cargo.toml",
-        )
-        check = "cargo test --quiet --locked -p methexis"
+        check = "cargo xtask check methexis-tests-for-stage"
     }
     ["yo-tui-tests"] = new Step {
         glob = List(

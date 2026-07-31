@@ -91,6 +91,53 @@ Required review lenses:
 Omitted lenses and rationale:
 ```
 
+Keep active coordination contracts outside Git, normally below
+`.local-exclude/coordination/`. When concurrent Slices need a mechanical
+preflight, represent only their coordination boundary as
+`yo.slice-contract/v1` JSON:
+
+```json
+{
+  "schema": "yo.slice-contract/v1",
+  "slice": "tui-visual-polish",
+  "base": "<full integration-base commit ID>",
+  "base_ref": "refs/heads/develop",
+  "owned_contracts": ["tui.visual-presentation"],
+  "dependencies": ["active TUI appearance contracts"],
+  "allowed_write_set": [
+    "crates/yo-tui/src/appearance/**",
+    "crates/yo-tui/tests/**"
+  ],
+  "focused_checks": ["cargo test -p yo-tui appearance"],
+  "slice_close_checks": ["cargo test -p yo-tui", "hk check"]
+}
+```
+
+The JSON is transient coordination metadata, not a second design authority.
+Paths are repository-relative exact files or subtrees ending in `/**`; the
+allowed write-set is closed, so every omitted path is forbidden. Commands in
+the check lists are reviewable evidence declarations and are never executed
+from the JSON. Before dispatch, run:
+
+```bash
+cargo xtask check slice-parallel <left.json> <right.json>
+```
+
+It is one mechanical preflight: both contracts must name the same current
+integration base—`refs/heads/develop` for direct Slices or their
+`refs/heads/wave/<wave>` branch for Wave Slices—and it rejects overlapping
+write leases or contract ownership. The planner still confirms dependencies,
+capacity, independent completion gates, and any Wave join required by the
+dispatch checklist above. During work, each Slice runs:
+
+```bash
+cargo xtask check slice-scope <its-contract.json>
+```
+
+This compares tracked, staged, working-tree, and untracked changes since the
+declared base with the closed write-set. A newly required shared path is a
+coordination decision, not a reason to widen the contract silently.
+
 ### Task Brief
 
 ```text
@@ -342,6 +389,12 @@ hk install
 Repository-specific structured checks live in `tools/xtask`; `hk` invokes them
 through the repository-local `cargo xtask` alias instead of placing development
 policy in the `yo` product CLI.
+For a staged Methexis activation, the Methexis `hk` route reads one
+`check --staged-activation` report and defers the ordinary Methexis test suite
+only when that exact report identifies prospective authority. This is not a
+test exemption: after integration, ordinary
+`methexis check` and the full Methexis tests are required against trusted
+`develop`. Other Methexis changes continue to run the ordinary test suite.
 For every accepted review commit, Git `commit-msg` requires the Slice review
 disposition described above. Working commits on `slice/*`, `task/*`, and
 `spike/*` defer it to their accepted squash or review commit. A Wave merge that

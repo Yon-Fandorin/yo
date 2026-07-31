@@ -1,6 +1,8 @@
 mod git;
 mod impact;
+mod slice_contract;
 mod test_explanations;
+mod validation_stage;
 
 #[cfg(test)]
 mod test_support;
@@ -21,6 +23,42 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
                 let repository = std::env::current_dir()
                     .map_err(|error| format!("cannot locate the repository: {error}"))?;
                 return test_explanations::check(&repository);
+            }
+            if check == "slice-scope" {
+                let contract = arguments
+                    .next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| usage(check.as_ref()))?;
+                if arguments.next().is_some() {
+                    return Err(usage(check.as_ref()));
+                }
+                let repository = std::env::current_dir()
+                    .map_err(|error| format!("cannot locate the repository: {error}"))?;
+                return slice_contract::check_scope(&repository, &contract);
+            }
+            if check == "slice-parallel" {
+                let left = arguments
+                    .next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| usage(check.as_ref()))?;
+                let right = arguments
+                    .next()
+                    .map(PathBuf::from)
+                    .ok_or_else(|| usage(check.as_ref()))?;
+                if arguments.next().is_some() {
+                    return Err(usage(check.as_ref()));
+                }
+                let repository = std::env::current_dir()
+                    .map_err(|error| format!("cannot locate the repository: {error}"))?;
+                return slice_contract::check_parallel(&repository, &left, &right);
+            }
+            if check == "methexis-tests-for-stage" {
+                if arguments.next().is_some() {
+                    return Err(usage(check.as_ref()));
+                }
+                let repository = std::env::current_dir()
+                    .map_err(|error| format!("cannot locate the repository: {error}"))?;
+                return validation_stage::run_methexis_tests(&repository);
             }
 
             let head_fallback = check == "slice-review-impact";
@@ -53,8 +91,17 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
 }
 
 fn usage(check: &str) -> String {
-    if check == "test-explanations" {
-        return "usage: cargo xtask check test-explanations".to_owned();
+    match check {
+        "test-explanations" | "methexis-tests-for-stage" => {
+            return format!("usage: cargo xtask check {check}");
+        },
+        "slice-scope" => {
+            return "usage: cargo xtask check slice-scope <slice-contract.json>".to_owned();
+        },
+        "slice-parallel" => {
+            return "usage: cargo xtask check slice-parallel <left.json> <right.json>".to_owned();
+        },
+        _ => {},
     }
     format!(
         "usage: cargo xtask check {} <commit-message-file> [changed-paths-file] [branch]",
@@ -65,6 +112,9 @@ fn usage(check: &str) -> String {
 fn general_usage() -> String {
     "usage:\n\
      cargo xtask check test-explanations\n\
+     cargo xtask check methexis-tests-for-stage\n\
+     cargo xtask check slice-scope <slice-contract.json>\n\
+     cargo xtask check slice-parallel <left.json> <right.json>\n\
      cargo xtask check <developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
@@ -84,6 +134,9 @@ mod cli_tests {
             error,
             "usage:\n\
              cargo xtask check test-explanations\n\
+             cargo xtask check methexis-tests-for-stage\n\
+             cargo xtask check slice-scope <slice-contract.json>\n\
+             cargo xtask check slice-parallel <left.json> <right.json>\n\
              cargo xtask check <developer-docs-impact|slice-review-impact> \
              <commit-message-file> [changed-paths-file] [branch]"
         );
