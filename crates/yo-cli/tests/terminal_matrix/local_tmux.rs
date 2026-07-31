@@ -68,7 +68,6 @@ impl TmuxSession {
             !state.dead
                 && state.alternate_screen == alternate_screen
                 && state.command == "yo"
-                && state.cursor_y.checked_add(1) == Some(state.height)
                 && self.has_noncanonical_no_echo_input()
         });
     }
@@ -112,7 +111,6 @@ impl TmuxSession {
             !state.dead
                 && state.alternate_screen == alternate_screen
                 && state.command == "yo"
-                && state.cursor_y.checked_add(1) == Some(state.height)
                 && self.has_noncanonical_no_echo_input()
         });
     }
@@ -228,31 +226,10 @@ impl TmuxSession {
             "-t",
             &self.name,
             "-F",
-            "#{pane_dead}\t#{pane_dead_status}\t#{alternate_on}\t#{pane_current_command}\t#{cursor_y}\t#{pane_height}",
+            "#{pane_dead}|#{pane_dead_status}|#{alternate_on}|#{pane_current_command}",
         ]);
         let line = String::from_utf8(output.stdout).unwrap();
-        let mut fields = line.trim_end().split('\t');
-        let dead = fields.next().unwrap() == "1";
-        let status = fields
-            .next()
-            .filter(|value| !value.is_empty())
-            .map(|value| value.parse::<i32>().unwrap());
-        let alternate_screen = fields.next().unwrap() == "1";
-        let command = fields.next().unwrap_or_default().to_owned();
-        let cursor_y = fields.next().unwrap().parse::<u16>().unwrap();
-        let height = fields.next().unwrap().parse::<u16>().unwrap();
-        assert!(
-            fields.next().is_none(),
-            "unexpected tmux pane state: {line:?}"
-        );
-        PaneState {
-            dead,
-            status,
-            alternate_screen,
-            command,
-            cursor_y,
-            height,
-        }
+        PaneState::parse(&line)
     }
 
     fn run_tmux(&self, arguments: &[&str]) {
@@ -294,8 +271,45 @@ struct PaneState {
     status: Option<i32>,
     alternate_screen: bool,
     command: String,
-    cursor_y: u16,
-    height: u16,
+}
+
+impl PaneState {
+    fn parse(line: &str) -> Self {
+        // macOS tmux normalizes control-character format separators to `_`.
+        // A printable delimiter keeps empty status and command fields distinct
+        // on both supported hosts.
+        let line = line.trim_end_matches(['\r', '\n']);
+        if line.is_empty() {
+            return Self {
+                dead: false,
+                status: None,
+                alternate_screen: false,
+                command: String::new(),
+            };
+        }
+        let mut fields = line.split('|');
+        let dead = fields.next().expect("pane_dead field") == "1";
+        let status = fields
+            .next()
+            .expect("pane_dead_status field")
+            .parse::<i32>()
+            .ok();
+        let alternate_screen = fields.next().expect("alternate_on field") == "1";
+        let command = fields
+            .next()
+            .expect("pane_current_command field")
+            .to_owned();
+        assert!(
+            fields.next().is_none(),
+            "unexpected tmux pane state: {line:?}"
+        );
+        Self {
+            dead,
+            status,
+            alternate_screen,
+            command,
+        }
+    }
 }
 
 fn run_tmux(socket: &std::path::Path, arguments: &[&str]) {
@@ -349,7 +363,31 @@ fn assert_empty_ctrl_d_exits_cleanly(option: &str, alternate_screen: bool) {
     assert_tmux_server_absent(&socket, &session_name);
 }
 
-// 실제 Linux tmux의 main screen에서 Inline이 noncanonical·no-echo 입력 상태에 들어간 뒤
+// macOS tmux에서 살아 있는 pane의 빈 dead-status와 command 필드도 printable 구분자로
+// 보존해, 정상적인 빈 값을 필드 누락으로 오인하지 않고 준비 전 상태로 해석한다.
+#[test]
+fn pane_state_preserves_empty_trailing_tmux_fields() {
+    let state = PaneState::parse("0||0|\n");
+
+    assert!(!state.dead);
+    assert_eq!(state.status, None);
+    assert!(!state.alternate_screen);
+    assert!(state.command.is_empty());
+}
+
+// macOS tmux가 respawn 직후 pane 행을 아직 반환하지 않아도 준비 전 상태로 해석해
+// 대기 루프가 다음 관찰을 시도하고, 일시적인 빈 출력 때문에 panic하지 않는다.
+#[test]
+fn pane_state_treats_an_empty_tmux_observation_as_not_ready() {
+    let state = PaneState::parse("\n");
+
+    assert!(!state.dead);
+    assert_eq!(state.status, None);
+    assert!(!state.alternate_screen);
+    assert!(state.command.is_empty());
+}
+
+// 실제 Unix tmux의 main screen에서 Inline이 noncanonical·no-echo 입력 상태에 들어간 뒤
 // 빈 입력 Ctrl+D를 보내면 상태 0으로 끝나고, 격리된 tmux 세션까지 제거하는지 확인한다.
 #[test]
 #[ignore = "requires local tmux and a compatible installed Codex"]
@@ -357,7 +395,7 @@ fn local_tmux_inline_exits_cleanly_from_empty_ctrl_d() {
     assert_empty_ctrl_d_exits_cleanly("--inline", false);
 }
 
-// 실제 Linux tmux에서 noncanonical·no-echo 입력과 alternate screen을 획득한
+// 실제 Unix tmux에서 noncanonical·no-echo 입력과 alternate screen을 획득한
 // Fullscreen에 빈 입력 Ctrl+D를 보내면 상태 0으로 끝나고, 격리 세션까지 제거하는지
 // 확인한다. 중간 실패 시에는 Drop이 best-effort 정리를 시도해 다음 테스트의 오염을 줄인다.
 #[test]

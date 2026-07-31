@@ -41,10 +41,7 @@ pub(super) fn check_staged(
 ) -> Result<StagedTransition, OperationFailure> {
     let index = git::capture_index(repository_root, OPERATION)?;
     let entries = git::staged_entries(repository_root, &index, OPERATION)?;
-    if !entries
-        .iter()
-        .any(|entry| entry.path == ACTIVE_PATH.as_bytes())
-    {
+    if !contains_staged_active_record(&entries) {
         return Ok(StagedTransition::Ordinary(StagedFallback { index }));
     }
     let entries = decode_candidate_paths(entries)?;
@@ -239,6 +236,12 @@ pub(super) fn check_staged(
     }))
 }
 
+fn contains_staged_active_record(entries: &[git::StagedEntry]) -> bool {
+    entries
+        .iter()
+        .any(|entry| entry.path == ACTIVE_PATH.as_bytes())
+}
+
 fn decode_candidate_paths(
     entries: Vec<git::StagedEntry>,
 ) -> Result<Vec<CandidatePath>, OperationFailure> {
@@ -321,4 +324,21 @@ fn failure(
         affected_ids,
         next_action,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{contains_staged_active_record, git};
+
+    // 파일시스템이 invalid UTF-8 이름을 만들 수 없는 host에서도 unrelated raw Git path는
+    // active record로 오인하지 않아 staged activation이 ordinary fallback을 유지한다.
+    #[test]
+    fn unrelated_non_utf8_raw_path_does_not_select_staged_activation() {
+        let entries = [git::StagedEntry {
+            status: 'A',
+            path: b"unrelated-\xff".to_vec(),
+        }];
+
+        assert!(!contains_staged_active_record(&entries));
+    }
 }

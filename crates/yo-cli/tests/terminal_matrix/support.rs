@@ -36,39 +36,53 @@ pub(crate) fn has_noncanonical_no_echo_input(tty_path: &Path) -> bool {
 }
 
 pub(crate) fn only_child(parent: Pid) -> Option<Pid> {
-    let children =
-        std::fs::read_to_string(format!("/proc/{0}/task/{0}/children", parent.as_raw())).ok()?;
-    let mut children = children.split_whitespace();
-    let child = children.next()?.parse::<i32>().ok()?;
-    children.next().is_none().then(|| Pid::from_raw(child))
+    let output = Command::new("/bin/ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let rows = String::from_utf8(output.stdout).ok()?;
+    let mut children = rows.lines().filter_map(|line| {
+        let mut fields = line.split_whitespace();
+        let pid = fields.next()?.parse::<i32>().ok()?;
+        let ppid = fields.next()?.parse::<i32>().ok()?;
+        (ppid == parent.as_raw()).then_some(Pid::from_raw(pid))
+    });
+    let child = children.next()?;
+    children.next().is_none().then_some(child)
 }
 
 pub(crate) fn process_is_stopped(pid: Pid) -> bool {
-    std::fs::read_to_string(format!("/proc/{}/stat", pid.as_raw()))
+    Command::new("/bin/ps")
+        .args(["-o", "stat=", "-p", &pid.as_raw().to_string()])
+        .output()
         .ok()
-        .is_some_and(|stat| {
-            stat.rsplit_once(')')
-                .and_then(|(_, fields)| fields.split_whitespace().next())
-                == Some("T")
-        })
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .is_some_and(|state| state.trim_start().starts_with('T'))
 }
 
 pub(crate) fn process_exists(pid: Pid) -> bool {
-    Path::new(&format!("/proc/{}", pid.as_raw())).exists()
+    nix::sys::signal::kill(pid, None).is_ok()
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn position(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|candidate| candidate == needle)
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn last_position(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .rposition(|candidate| candidate == needle)
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn count(haystack: &[u8], needle: &[u8]) -> usize {
     haystack
         .windows(needle.len())
@@ -76,6 +90,7 @@ pub(crate) fn count(haystack: &[u8], needle: &[u8]) -> usize {
         .count()
 }
 
+#[cfg(target_os = "linux")]
 pub(crate) fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     position(haystack, needle).is_some()
 }

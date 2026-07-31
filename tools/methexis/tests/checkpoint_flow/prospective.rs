@@ -24,9 +24,10 @@ fn staged_activation_flag_falls_back_to_the_ordinary_check() {
     assert_eq!(hook, ordinary);
 }
 
-#[cfg(unix)]
-// activation과 무관한 non-UTF-8 파일이 staged되어도 active 경로 판별은 raw bytes로
-// 먼저 끝내므로 hook은 오류를 만들지 않고 ordinary 전체 check와 같은 결과를 낸다.
+#[cfg(target_os = "linux")]
+// Linux 실제 파일시스템에서 activation과 무관한 non-UTF-8 파일이 staged되어도 active
+// 경로 판별은 raw bytes로 먼저 끝나 ordinary 전체 check와 같은 결과를 낸다. macOS처럼
+// invalid-byte 파일명을 만들 수 없는 host의 동일 계약은 crate unit test가 raw entry로 검증한다.
 #[test]
 fn unrelated_non_utf8_staged_path_still_uses_the_ordinary_fallback() {
     use std::{

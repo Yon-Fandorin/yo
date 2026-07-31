@@ -1,7 +1,12 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    io::ErrorKind,
     path::PathBuf,
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -13,6 +18,9 @@ use crate::{
         SourcePayload, SourceRecord, SourceRef,
     },
 };
+
+static TEMPORARY_REPOSITORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static TEMPORARY_REPOSITORY_NONCE: OnceLock<u128> = OnceLock::new();
 
 // code Source의 line_hint가 달라도 revision은 같게 계산된다.
 #[test]
@@ -649,16 +657,24 @@ struct TemporaryRepository {
 
 impl TemporaryRepository {
     fn new() -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "methexis-source-test-{}-{unique}",
-            std::process::id()
-        ));
-        fs::create_dir(&path).unwrap();
-        Self { path }
+        let nonce = TEMPORARY_REPOSITORY_NONCE.get_or_init(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        });
+        loop {
+            let sequence = TEMPORARY_REPOSITORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "methexis-source-test-{}-{nonce}-{sequence}",
+                std::process::id(),
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return Self { path },
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {},
+                Err(error) => panic!("create temporary repository: {error}"),
+            }
+        }
     }
 }
 

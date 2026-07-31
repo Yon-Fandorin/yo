@@ -47,27 +47,28 @@ at 180 seconds; total runtime also includes Codex startup and shutdown. Run it
 only where compatible Codex authentication and writable Codex state are
 available.
 
-## Linux tmux and SSH checks
+## Local tmux and Linux SSH checks
 
-Local tmux, both presentation modes:
+Local tmux on Linux or macOS, both presentation modes:
 
 ```bash
 cargo test -p yo-cli --test terminal_matrix local_tmux_ \
   -- --ignored --nocapture --test-threads=1
 ```
 
-SSH and tmux inside SSH, both presentation modes:
+Linux SSH and tmux inside SSH, both presentation modes:
 
 ```bash
 cargo test -p yo-cli --test terminal_matrix ssh:: \
   -- --ignored --nocapture --test-threads=1
 ```
 
-The local tmux tests require compatible installed `tmux` and Codex. The SSH
-tests start an isolated localhost `sshd`, generate temporary keys, and remove
-their fixture directory. They require compatible local `ssh`, `sshd`,
-`ssh-keygen`, Codex, a set `USER` naming the local SSH account, and, for the
-nested cases, tmux.
+The local tmux tests are available on both supported Unix hosts and require
+compatible installed `tmux` and Codex. The SSH tests remain Linux-only: they
+start an isolated localhost `sshd`, generate temporary keys, and remove their
+fixture directory. They require compatible local `ssh`, `sshd`, `ssh-keygen`,
+Codex, a set `USER` naming the local SSH account, and, for the nested cases,
+tmux.
 
 Each route checks both the empty-`Ctrl+D` exit path and two consecutive
 `Ctrl+Z` → stopped job → `fg` generations. The job-control checks compare the
@@ -122,7 +123,7 @@ The executable environment matrix currently covers:
 | Linux tmux inside SSH | Yes | Yes | Ignored tests cover clean exit, two nested suspend/resume generations, and outer PTY restoration |
 | macOS compile | — | — | Workspace all-target tests passed on a real macOS 26.2 arm64 host |
 | macOS direct real PTY | Yes | Yes | Real-host run covered clean exit and two shell-driven suspend/resume generations |
-| macOS local tmux | Yes | Yes | Real-host run covered clean exit, two suspend/resume generations, mode reacquisition, and shell termios restoration |
+| macOS local tmux | Yes | Yes | Ignored tests cover clean exit and two shell-driven suspend/resume generations; a real-host run also covered mode reacquisition and shell termios restoration |
 | macOS SSH | Yes | Yes | Real-host run covered clean exit, two remote-shell suspend/resume generations, mode reacquisition, and outer PTY restoration |
 | macOS tmux inside SSH | Yes | Yes | Real-host run covered clean exit, two nested suspend/resume generations, pane mode and termios transitions, and outer PTY restoration |
 

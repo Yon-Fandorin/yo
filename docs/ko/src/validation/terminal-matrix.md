@@ -45,27 +45,28 @@ cargo test -p yo-core local_codex_completes_a_real_file_change \
 전체 실행 시간에는 Codex 시작과 종료도 포함된다. 호환되는 Codex 인증과
 쓰기 가능한 Codex 상태가 있는 환경에서만 실행한다.
 
-## Linux tmux와 SSH 검사
+## 로컬 tmux와 Linux SSH 검사
 
-두 표시 mode에서 로컬 tmux를 검사한다.
+Linux 또는 macOS의 두 표시 mode에서 로컬 tmux를 검사한다.
 
 ```bash
 cargo test -p yo-cli --test terminal_matrix local_tmux_ \
   -- --ignored --nocapture --test-threads=1
 ```
 
-두 표시 mode에서 SSH와 SSH 내부 tmux를 검사한다.
+Linux의 두 표시 mode에서 SSH와 SSH 내부 tmux를 검사한다.
 
 ```bash
 cargo test -p yo-cli --test terminal_matrix ssh:: \
   -- --ignored --nocapture --test-threads=1
 ```
 
-로컬 tmux test에는 호환되는 `tmux`와 Codex가 설치되어 있어야 한다. SSH
-test는 localhost에 격리된 `sshd`를 시작하고 임시 key를 생성한 뒤 fixture
+로컬 tmux test는 지원하는 두 Unix host에서 실행할 수 있으며 호환되는
+`tmux`와 Codex가 설치되어 있어야 한다. SSH test는 Linux 전용이다.
+localhost에 격리된 `sshd`를 시작하고 임시 key를 생성한 뒤 fixture
 디렉터리를 제거한다. 호환되는 로컬 `ssh`, `sshd`, `ssh-keygen`, Codex,
-`USER`가 로컬 SSH account 이름으로 설정되어 있어야 한다. 중첩된
-경우에는 tmux도 필요하다.
+`USER`가 로컬 SSH account 이름으로 설정되어 있어야 한다. 중첩된 경우에는
+tmux도 필요하다.
 
 각 경로는 빈 입력 `Ctrl+D` 종료와 두 번 연속
 `Ctrl+Z` → job 정지 → `fg` terminal generation을 모두 검사한다.
@@ -120,7 +121,7 @@ pane이 `yo`로 돌아오고 raw terminal 설정과 요청한 표시 mode를 다
 | Linux SSH 내부 tmux | Yes | Yes | ignored test가 정상 종료, 두 번의 중첩 일시정지/재개, 바깥 PTY 복구를 검사 |
 | macOS compile | — | — | 실제 macOS 26.2 arm64 host에서 workspace all-target test 통과 |
 | macOS 직접 실제 PTY | Yes | Yes | 실제 host에서 정상 종료와 두 번의 shell 기반 일시정지/재개를 검사 |
-| macOS 로컬 tmux | Yes | Yes | 실제 host에서 정상 종료, 두 번의 일시정지/재개, mode 재획득, shell termios 복원을 검사 |
+| macOS 로컬 tmux | Yes | Yes | ignored test가 정상 종료와 두 번의 shell 기반 일시정지/재개를 검사하며, 실제 host 실행으로 mode 재획득과 shell termios 복원도 확인 |
 | macOS SSH | Yes | Yes | 실제 host에서 정상 종료, 두 번의 원격 shell 기반 일시정지/재개, mode 재획득, 바깥 PTY 복원을 검사 |
 | macOS SSH 내부 tmux | Yes | Yes | 실제 host에서 정상 종료, 두 번의 중첩 일시정지/재개, pane mode·termios 전환, 바깥 PTY 복원을 검사 |
 

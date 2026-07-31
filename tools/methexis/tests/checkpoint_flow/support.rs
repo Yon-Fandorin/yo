@@ -3,14 +3,21 @@
 use std::{
     ffi::OsStr,
     fs,
+    io::ErrorKind,
     path::{Path, PathBuf},
     process::{Command, Output},
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{Value, json};
 
 pub(super) const KNOWLEDGE_ID: &str = "tui.relocated";
+static TEMPORARY_REPOSITORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static TEMPORARY_REPOSITORY_NONCE: OnceLock<u128> = OnceLock::new();
 
 pub(super) struct GitRepository {
     pub(super) path: PathBuf,
@@ -26,15 +33,7 @@ impl GitRepository {
     }
 
     pub(super) fn from_fixture(fixture: &str) -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "methexis-checkpoint-flow-{}-{unique}",
-            std::process::id()
-        ));
-        fs::create_dir(&path).unwrap();
+        let path = allocate_temporary_repository();
         copy_directory(
             &Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures")
@@ -204,6 +203,27 @@ impl GitRepository {
             String::from_utf8_lossy(&output.stderr)
         );
         output
+    }
+}
+
+fn allocate_temporary_repository() -> PathBuf {
+    let nonce = TEMPORARY_REPOSITORY_NONCE.get_or_init(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    });
+    loop {
+        let sequence = TEMPORARY_REPOSITORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "methexis-checkpoint-flow-{}-{nonce}-{sequence}",
+            std::process::id(),
+        ));
+        match fs::create_dir(&path) {
+            Ok(()) => return path,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {},
+            Err(error) => panic!("create temporary repository: {error}"),
+        }
     }
 }
 
