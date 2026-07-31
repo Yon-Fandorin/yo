@@ -22,6 +22,7 @@ use crate::{
 
 mod appearance;
 mod reentry;
+mod views;
 
 fn key(code: KeyCode, modifiers: crate::input::event::KeyModifiers) -> InputEvent {
     InputEvent::Key(YoKeyEvent {
@@ -36,6 +37,7 @@ fn rendered_row(state: &TuiState, size: Size, y: u16) -> String {
     let frame = state
         .prepare_frame(size, &AppearanceState::default().pin())
         .unwrap();
+    let y = y + 1;
     (0..size.width)
         .map(
             |x| match frame.surface.cell(Point::new(x, y)).unwrap().content() {
@@ -365,9 +367,9 @@ fn retains_completed_tool_and_file_change_observations() {
             .unwrap();
     }
 
-    assert_eq!(rendered_row(&state, Size::new(30, 4), 0), "⏺ Running tool…");
+    assert_eq!(rendered_row(&state, Size::new(30, 5), 0), "⏺ Running tool…");
     assert_eq!(
-        rendered_row(&state, Size::new(30, 4), 2),
+        rendered_row(&state, Size::new(30, 5), 2),
         "⏺ File change observed"
     );
 }

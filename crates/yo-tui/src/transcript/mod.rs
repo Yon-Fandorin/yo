@@ -28,6 +28,10 @@ impl TranscriptItemId {
     pub(crate) const fn new(value: u64) -> Self {
         Self(value)
     }
+
+    pub(crate) const fn get(self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,13 +190,21 @@ impl TranscriptState {
         id: TranscriptItemId,
         text: String,
     ) -> Result<(), TranscriptStateError> {
+        self.replace_text_changed(id, text).map(|_| ())
+    }
+
+    pub(crate) fn replace_text_changed(
+        &mut self,
+        id: TranscriptItemId,
+        text: String,
+    ) -> Result<bool, TranscriptStateError> {
         let item = self.item_mut(id)?;
         if item.phase == TranscriptPhase::Final {
             return Err(TranscriptStateError::FinalItem(id));
         }
         let TranscriptBody::Message(message) = &mut item.body;
         if message.text == text {
-            return Ok(());
+            return Ok(false);
         }
 
         item.revision = item
@@ -200,7 +212,7 @@ impl TranscriptState {
             .checked_add(1)
             .ok_or(TranscriptStateError::RevisionOverflow(id))?;
         message.text = text;
-        Ok(())
+        Ok(true)
     }
 
     pub(crate) fn finalize(&mut self, id: TranscriptItemId) -> Result<(), TranscriptStateError> {

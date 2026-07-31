@@ -8,7 +8,7 @@ use std::num::NonZeroU16;
 pub(crate) use config::{TranscriptLayoutConfig, TranscriptLayoutConfigError};
 
 use super::{
-    MessageRole, TranscriptBody, TranscriptPhase, TranscriptState,
+    MessageRole, TranscriptBody, TranscriptItemId, TranscriptPhase, TranscriptState,
     viewport::{TranscriptScrollCommand, TranscriptViewState, VisibleRows},
 };
 use crate::{
@@ -29,6 +29,7 @@ pub(crate) struct TranscriptStyles {
 pub(crate) struct TranscriptRenderFrame {
     pub(crate) content_height: u16,
     pub(crate) first_visible_row: u16,
+    pub(crate) context_item: Option<TranscriptItemId>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,7 +87,15 @@ enum GlyphRole {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct TranscriptLayout {
     glyphs: Vec<PositionedTranscriptGrapheme>,
+    items: Vec<PositionedTranscriptItem>,
     height: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PositionedTranscriptItem {
+    id: TranscriptItemId,
+    first_row: u16,
+    end_row: u16,
 }
 
 pub(crate) fn measure(
@@ -155,6 +164,7 @@ pub(crate) fn paint_prepared(
     }
     let height = NonZeroU16::new(view.size().height).ok_or(TranscriptPaintError::ZeroHeight)?;
     let visible = VisibleRows::resolve(prepared.layout.height, height, *state, command);
+    let context_item = prepared.layout.context_item(visible);
 
     for positioned in prepared
         .layout
@@ -173,6 +183,7 @@ pub(crate) fn paint_prepared(
     Ok(TranscriptRenderFrame {
         content_height: prepared.layout.height,
         first_visible_row: visible.first(),
+        context_item,
     })
 }
 
@@ -227,6 +238,7 @@ fn layout(
         .checked_sub(config.body_indent())
         .and_then(NonZeroU16::new);
     let mut glyphs = Vec::new();
+    let mut items = Vec::new();
     let mut height = 0_u16;
     let mut has_visible_item = false;
 
@@ -276,10 +288,33 @@ fn layout(
                 .checked_add(1)
                 .ok_or(TranscriptRenderError::HeightOverflow)?;
         }
+        items.push(PositionedTranscriptItem {
+            id: item.id(),
+            first_row: item_y,
+            end_row: height,
+        });
         has_visible_item = true;
     }
 
-    Ok(TranscriptLayout { glyphs, height })
+    Ok(TranscriptLayout {
+        glyphs,
+        items,
+        height,
+    })
+}
+
+impl TranscriptLayout {
+    fn context_item(&self, visible: VisibleRows) -> Option<TranscriptItemId> {
+        let mut visible_items = self
+            .items
+            .iter()
+            .filter(|item| item.first_row < visible.end() && item.end_row > visible.first());
+        if visible.follows_tail() {
+            visible_items.next_back().map(|item| item.id)
+        } else {
+            visible_items.map(|item| item.id).next()
+        }
+    }
 }
 
 fn configured_body_width(

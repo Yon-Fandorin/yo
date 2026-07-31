@@ -106,14 +106,14 @@ fn frame_pins_one_snapshot_across_measure_and_paint() {
         .unwrap();
 
     assert_eq!(frame.appearance_revision, rich.revision());
-    assert_eq!(marker(&frame.surface, 0).0, "❯");
-    assert_eq!(marker(&frame.surface, 2).0, "⏺");
+    assert_eq!(marker(&frame.surface, 1).0, "❯");
+    assert_eq!(marker(&frame.surface, 3).0, "⏺");
 
     let ascii = appearance.pin();
     let next = state.prepare_frame(FRAME_SIZE, &ascii).unwrap();
     assert_eq!(ascii.revision().get(), rich.revision().get() + 1);
-    assert_eq!(marker(&next.surface, 0).0, ">");
-    assert_eq!(marker(&next.surface, 2).0, "*");
+    assert_eq!(marker(&next.surface, 1).0, ">");
+    assert_eq!(marker(&next.surface, 3).0, "*");
 }
 
 // Rich와 ASCII profile 모두 marker 폭과 무관하게 사용자·assistant 본문을 같은 열에 둔다.
@@ -127,13 +127,13 @@ fn rich_and_ascii_profiles_keep_body_columns_stable() {
         AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii)).unwrap();
     let ascii = state.prepare_frame(FRAME_SIZE, &ascii_state.pin()).unwrap();
 
-    assert_eq!(marker(&rich.surface, 0).1, 1);
-    assert_eq!(marker(&rich.surface, 2).1, 1);
-    assert_eq!(marker(&ascii.surface, 0).1, 1);
-    assert_eq!(marker(&ascii.surface, 2).1, 1);
+    assert_eq!(marker(&rich.surface, 1).1, 1);
+    assert_eq!(marker(&rich.surface, 3).1, 1);
+    assert_eq!(marker(&ascii.surface, 1).1, 1);
+    assert_eq!(marker(&ascii.surface, 3).1, 1);
     for surface in [&rich.surface, &ascii.surface] {
-        assert_eq!(grapheme_at(surface, Point::new(2, 0)), "q");
-        assert_eq!(grapheme_at(surface, Point::new(2, 2)), "a");
+        assert_eq!(grapheme_at(surface, Point::new(2, 1)), "q");
+        assert_eq!(grapheme_at(surface, Point::new(2, 3)), "a");
     }
 }
 
@@ -177,7 +177,10 @@ fn public_ascii_session_keeps_frame_and_output_consistent() {
         .unwrap();
     let output = session.session_output().unwrap().unwrap();
 
-    assert_eq!(visible_rows(&frame.surface), "> question\n\n* answer\n\n>");
+    assert_eq!(
+        visible_rows(&frame.surface),
+        "Chat · F1/F2/F3\n> question\n\n* answer\n>"
+    );
     assert_eq!(output, "> question\n\n* answer\n");
 }
 
@@ -194,7 +197,10 @@ fn public_default_session_keeps_rich_frame_and_output_consistent() {
         .prepare_frame(FRAME_SIZE, &pin)
         .unwrap();
 
-    assert_eq!(visible_rows(&frame.surface), "❯ question\n\n⏺ answer\n\n›");
+    assert_eq!(
+        visible_rows(&frame.surface),
+        "Chat · F1/F2/F3\n❯ question\n\n⏺ answer\n›"
+    );
     assert_eq!(
         session.session_output().unwrap().unwrap(),
         "❯ question\n\n⏺ answer\n"
@@ -224,9 +230,9 @@ fn appearance_replacement_is_isolated_per_session() {
         .unwrap();
     let second_next = second.appearance_pin();
 
-    assert_eq!(marker(&first_frame.surface, 0).0, ">");
+    assert_eq!(marker(&first_frame.surface, 1).0, ">");
     assert_eq!(first.session_output().unwrap().unwrap(), "> question\n");
-    assert_eq!(marker(&second_current_frame.surface, 0).0, "❯");
+    assert_eq!(marker(&second_current_frame.surface, 1).0, "❯");
     assert_eq!(second.session_output().unwrap().unwrap(), "❯ question\n");
     assert_eq!(second_next, second_before);
     assert_eq!(
@@ -265,7 +271,7 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
     let operations = TerminalOps::from_diff(&diff);
     let html = HtmlSurface::render(&frame.surface);
 
-    assert_eq!(marker(&frame.surface, 0), (">", 1, marker_style));
+    assert_eq!(marker(&frame.surface, 1), (">", 1, marker_style));
     assert!(operations.as_slice().windows(2).any(|pair| {
         matches!(
             pair,

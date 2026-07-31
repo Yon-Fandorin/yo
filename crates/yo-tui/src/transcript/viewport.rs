@@ -21,6 +21,11 @@ impl TranscriptViewState {
     pub(crate) const fn mode(self) -> TranscriptViewMode {
         self.mode
     }
+
+    #[cfg(test)]
+    pub(crate) const fn first_visible_row(self) -> u16 {
+        self.first_visible_row
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,6 +80,14 @@ impl VisibleRows {
 
     pub(super) const fn first(self) -> u16 {
         self.first
+    }
+
+    pub(super) const fn end(self) -> u16 {
+        self.end
+    }
+
+    pub(super) const fn follows_tail(self) -> bool {
+        matches!(self.mode, TranscriptViewMode::FollowTail)
     }
 
     pub(super) const fn contains(self, row: u16) -> bool {

@@ -98,8 +98,9 @@ local·remote reader 공통 인터페이스를 추출한다.
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, input·event 조율, 마지막 정리 결과 보고 | UI의 의미 상태 전이는 `runner/state.rs`, 실행 중 조율은 `runner/unix.rs` |
 | [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph profile 선택 | profile을 받는 생성과 소유권은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
-| [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집 | 보이는 cursor 배치는 `prompt` |
+| [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집, typed view-switch 표시 정책 | 보이는 cursor 배치는 `prompt`, 선택한 Projection은 `runner/view.rs` |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, 대화 기록 layout, scroll 상태 | prompt와 조합하는 일은 `shell` |
+| [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | 읽기 전용 Chat·Transcript·Request 선택, 전체 Journal record Projection, 정확한 Request anchor와 typed unavailable 사유, mode별 context·viewport 상태, compact mode chrome | Journal 관찰과 editor dispatch는 `runner/state.rs`, 공통 layout·scroll은 `transcript` |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | editor 내용과 cursor가 보이는 상태를 측정하고 그리기 | 편집 의미는 `input/editor` |
 | [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs), [`layout`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/layout/mod.rs) | 대화 기록과 prompt 영역 배분, 완성된 frame 하나 조합, cursor 위치 보고 | cell 쓰기는 `surface` |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | adapter에 독립적인 cell 상태, Unicode grapheme과 너비, 경계가 있는 view, diff span, 터미널에 독립적인 text flow | Projection은 `terminal` 또는 `html` |
@@ -108,8 +109,25 @@ local·remote reader 공통 인터페이스를 추출한다.
 | [`html`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/html/mod.rs) | 완성된 `Surface` 상태를 결정론적으로 브라우저에 Projection | 터미널과 브라우저 출력이 다르면 `surface` |
 
 `runner::TuiSession`은 한 번의 터미널 소유 기간보다 오래 유지할 수 있는
-대화 기록, editor, 대기 중인 요청, view, backpressure로 전달되지 못한
-agent dispatch 상태와 하나의 committed appearance snapshot을 소유한다.
+간결한 Chat 대화 기록, editor, 대기 중인 요청, 세 observability view,
+backpressure로 전달되지 못한 agent dispatch 상태와 하나의 committed
+appearance snapshot을 소유한다. Chat은 편집 가능한 기본 mode다. 현재
+Chat, Transcript, Request의 typed 표시 정책 binding은 각각 F1, F2, F3이며
+Projection 상태는 이 key 선택을 소유하지 않는다. Transcript는 같은 읽기
+전용 Journal 경로에서 받은 모든 committed command와 event를 그린다.
+Request는 Chat이나 Transcript에서 선택한 정확한 context를 유지하며 인접
+record를 검색하는 대신 `no_associated_request` 또는
+`request_audit_detail_unavailable`을 보고한다. Transcript와 Request는
+prompt를 대체하며 editor submission을 dispatch하지 않고 input을 소비한다.
+각 view는 자체 context와 viewport 상태를 보존한다.
+
+현재 실행 중인 `AgentConnection`은 `JournalSequence`, durability-gap
+metadata, Request Audit detail 없이 `TranscriptRecord`를 제공한다.
+Transcript는 이 observation boundary를 명시하고 Request는 값을 추론하지
+않고 unavailable field로 표시한다. 이 view layer는 Request Audit을
+persist하지 않고, 또 다른 Journal owner를 만들지 않으며, durable
+repository를 실행 중인 Session에 연결하지 않는다.
+
 각 redraw는 측정 전에 appearance revision을 pin하고, paint와 완성된
 `Surface`까지 같은 resolved snapshot을 사용한다. plain session output도
 같은 session-owned 설정을 pin한다. `TuiSession::new`는 호환 기본값인 Rich

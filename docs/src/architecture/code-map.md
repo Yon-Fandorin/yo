@@ -98,8 +98,9 @@ terminal-operation, and HTML-projection types.
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, input/event orchestration, and final cleanup reporting | `runner/state.rs` for semantic UI transitions; `runner/unix.rs` for live orchestration |
 | [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and the public built-in Rich/ASCII glyph-profile choice | `runner/session.rs` for profile-aware construction and ownership; `runner/state.rs` for frame pinning |
-| [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | Decoded semantic key events, edit buffer, configurable bindings, exit gestures, and prompt editing | `prompt` for visible cursor layout |
+| [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | Decoded semantic key events, edit buffer, configurable bindings, exit gestures, prompt editing, and the typed view-switch presentation policy | `prompt` for visible cursor layout; `runner/view.rs` for the selected projection |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, transcript layout, and scrolling state | `shell` for composition with the prompt |
+| [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Read-only Chat, Transcript, and Request selection; full Journal-record projection; exact Request anchoring and typed unavailable reasons; mode-local context and viewport state; compact mode chrome | `runner/state.rs` for Journal observation and editor dispatch; `transcript` for shared layout and scrolling |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | Measuring and painting editor content plus cursor visibility | `input/editor` for edit semantics |
 | [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs), [`layout`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/layout/mod.rs) | Allocating transcript and prompt regions, composing one completed frame, and reporting its cursor | `surface` for cell writes |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | Adapter-independent cell state, Unicode graphemes and width, bounded views, diff spans, and terminal-independent text flow | `terminal` or `html` for projection |
@@ -107,9 +108,26 @@ terminal-operation, and HTML-projection types.
 | [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | Shared transactional restoration, Inline and Fullscreen presenters, panic routing, and the crate-private platform boundary | `yo-cli/process` only when process signal policy changes |
 | [`html`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/html/mod.rs) | Deterministic browser projection of completed `Surface` state | `surface` when terminal and browser output disagree |
 
-`runner::TuiSession` owns transcript, editor, pending-request, view,
-backpressured agent-dispatch state, and one committed appearance snapshot that
-can outlive one terminal ownership generation. Each redraw pins the appearance
+`runner::TuiSession` owns the concise Chat transcript, editor, pending request,
+three observability views, backpressured agent-dispatch state, and one committed
+appearance snapshot that can outlive one terminal ownership generation. Chat is
+the editable default. F1, F2, and F3 are the current typed presentation-policy
+bindings for Chat, Transcript, and Request; the projection state does not own
+those key choices. Transcript renders every committed command and event received
+from the same read-only Journal path. Request remains on the exact context
+selected in Chat or Transcript and reports `no_associated_request` or
+`request_audit_detail_unavailable` rather than searching adjacent records.
+Transcript and Request replace the prompt and consume input without dispatching
+editor submissions. Each view retains its own context and viewport state.
+
+The live `AgentConnection` currently supplies `TranscriptRecord` without
+`JournalSequence`, durability-gap metadata, or Request Audit detail. Transcript
+states that observation boundary explicitly, and Request shows unavailable
+fields rather than inferring them. This view layer does not persist Request
+Audit, create another Journal owner, or connect the durable repository to the
+live Session.
+
+Each redraw pins the appearance
 revision before measurement and uses that same resolved snapshot through paint
 and the completed `Surface`; plain session output pins the same session-owned
 configuration. `TuiSession::new` selects compatibility-default Rich glyphs,

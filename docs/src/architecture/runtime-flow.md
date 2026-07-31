@@ -92,7 +92,11 @@ AgentSession coalescible change lane
 TuiAgentConnection + TranscriptReader
     ↓ ordered AgentPoll::Record
     ↓
-TuiState::observe_record → Chat transcript → completed Surface
+TuiState::observe_record
+    ├── concise Chat projection
+    └── chronological Transcript / anchored Request projections
+          ↓ selected view
+completed Surface
     ↓
 Inline or Fullscreen presenter
 ```
@@ -127,8 +131,9 @@ The useful inspection points are:
    notification, and resume are therefore not current runtime behavior.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
    consume already committed Transcript records, update TUI state, compose a
-   completed `Surface`, and send it to the active presenter. Chat shows user
-   input only when its `StartTurn` or `SteerTurn` command appears in that
+   completed `Surface`, and send it to the active presenter. `runner/view.rs`
+   selects Chat, Transcript, or Request from the same record stream. Chat shows
+   user input only when its `StartTurn` or `SteerTurn` command appears in that
    sequence.
 
 The change lane carries no command or event payload and has capacity one.
@@ -140,6 +145,44 @@ the adapter has exposed the failure records already committed to the Journal.
 Codex JSON and provider identifiers end at the backend adapter. Terminal input
 events and rendering types end in `yo-tui`. The command and event types crossing
 the middle are owned by `yo-core`.
+
+## Live observation views
+
+The selected TUI projection changes presentation, not Session authority:
+
+```text
+read-only AgentPoll::Record stream
+    ├── Chat: concise activity/message projection + editable prompt
+    └── full semantic record projection
+          ├── Transcript: chronological command/event and Activity detail
+          └── Request: exact Chat/Transcript context anchor
+                ├── direct ActivityRequestRef → Request Audit unavailable
+                └── no direct correlation → no associated request
+```
+
+F1/F2/F3 currently select Chat/Transcript/Request through
+`input/view_binding.rs`. That mapping is a typed presentation-policy seam, not
+projection state. Page and line navigation update the active view's own
+viewport; Chat and Transcript also retain their own context cursor. Request
+navigation scrolls only the anchored diagnostic page, so it cannot become a
+nearby-request browser. Returning to a view restores its retained state when
+its anchor is unchanged.
+
+All three modes use the session's pinned appearance snapshot and the existing
+Transcript layout and Surface primitives. The status row shows the active mode
+and keys, switches to a compact `[C]123`, `[T]123`, or `[R]123` form on narrow
+frames, and remains renderable when only one terminal row is available.
+Transcript and Request are full-page read-only modes: their input path never
+reaches the prompt editor or emits a submission.
+
+The current TUI adapter exposes semantic `TranscriptRecord` values but drops
+the reader's `JournalSequence` and does not expose durability-gap metadata or
+Request Audit detail. Transcript prints that observation boundary. Request
+uses only a correlation carried by its exact record and otherwise reports
+`no_associated_request`; when an exact `ActivityRequestRef` exists it reports
+`request_audit_detail_unavailable`. It never borrows a correlation from an
+adjacent record. The durable repository remains outside the live
+`AgentSession` path.
 
 ## Durable Journal composition seam
 

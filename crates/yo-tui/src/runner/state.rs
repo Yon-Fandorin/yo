@@ -14,8 +14,12 @@ use crate::{
         editor::{EditorEffect, PromptEditor},
         event::InputEvent,
     },
-    runner::AgentAction,
-    shell::{self, AgentShellRenderError, AgentShellRenderOptions, AgentShellViewState},
+    runner::{
+        AgentAction,
+        view::{
+            ObservabilityRenderError, ObservabilityViewState, ObservabilityViews, ViewInputEffect,
+        },
+    },
     surface::{Point, Rect, Size, Surface, SurfaceError},
     transcript::{TranscriptItemId, TranscriptMeasureError, TranscriptState, TranscriptStateError},
 };
@@ -40,7 +44,7 @@ pub(super) enum StateError {
 #[derive(Debug)]
 pub(super) enum FrameError {
     Allocate(SurfaceError),
-    Render(AgentShellRenderError),
+    Render(ObservabilityRenderError),
 }
 
 impl FrameError {
@@ -56,14 +60,14 @@ pub(super) struct PreparedFrame {
     pub(super) surface: Surface,
     pub(super) cursor: Point,
     pub(super) appearance_revision: AppearanceRevision,
-    view_state: AgentShellViewState,
+    view_state: ObservabilityViewState,
 }
 
 #[derive(Debug, Default)]
 pub(super) struct TuiState {
     transcript: TranscriptState,
     editor: PromptEditor,
-    view: AgentShellViewState,
+    views: ObservabilityViews,
     next_item_id: u64,
     activities: HashMap<ActivityRef, ActivityPresentation>,
     pending_requests: VecDeque<PendingRequest>,
@@ -75,12 +79,19 @@ struct ActivityPresentation {
     item: TranscriptItemId,
     kind: ActivityKind,
     has_payload: bool,
+    visible: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PendingRequest {
     Approval(ActivityRequestRef),
     UserInput(ActivityRequestRef),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChatProjectionChange {
+    Unchanged,
+    VisibleItem(TranscriptItemId),
 }
 
 impl TuiState {
@@ -101,6 +112,11 @@ impl TuiState {
         }
         if input.is_ctrl_z_press() {
             return Ok(StateEffect::Suspend);
+        }
+        match self.views.handle(&input) {
+            ViewInputEffect::Unhandled => {},
+            ViewInputEffect::Consumed => return Ok(StateEffect::Unchanged),
+            ViewInputEffect::Redraw => return Ok(StateEffect::Redraw),
         }
 
         let effect = self.editor.handle(input, self.turn_active, now);
@@ -124,7 +140,8 @@ impl TuiState {
         &mut self,
         record: TranscriptRecord,
     ) -> Result<StateEffect, StateError> {
-        match record {
+        let projection_record = record.clone();
+        let (effect, chat_change) = match record {
             TranscriptRecord::CommandCommitted(
                 AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. },
             ) => {
@@ -132,26 +149,52 @@ impl TuiState {
                 self.transcript
                     .push_user(id, input.into_string())
                     .map_err(StateError::Transcript)?;
-                Ok(StateEffect::Redraw)
+                (StateEffect::Redraw, ChatProjectionChange::VisibleItem(id))
             },
             TranscriptRecord::CommandCommitted(
                 AgentCommand::CreateSession { .. }
                 | AgentCommand::RespondToActivity { .. }
                 | AgentCommand::InterruptTurn { .. },
-            ) => Ok(StateEffect::Unchanged),
-            TranscriptRecord::EventCommitted(event) => self.observe(event),
-        }
+            ) => (StateEffect::Unchanged, ChatProjectionChange::Unchanged),
+            TranscriptRecord::EventCommitted(event) => self.observe_event(event)?,
+        };
+        self.views
+            .observe_record(
+                &projection_record,
+                match chat_change {
+                    ChatProjectionChange::Unchanged => None,
+                    ChatProjectionChange::VisibleItem(item) => Some(item),
+                },
+            )
+            .map_err(StateError::Transcript)?;
+        Ok(effect)
     }
 
+    #[cfg(test)]
     pub(super) fn observe(&mut self, event: AgentEvent) -> Result<StateEffect, StateError> {
+        self.observe_event(event).map(|(effect, _)| effect)
+    }
+
+    fn observe_event(
+        &mut self,
+        event: AgentEvent,
+    ) -> Result<(StateEffect, ChatProjectionChange), StateError> {
         match event {
-            AgentEvent::SessionCreated { .. } => return Ok(StateEffect::Unchanged),
+            AgentEvent::SessionCreated { .. } => {
+                Ok((StateEffect::Unchanged, ChatProjectionChange::Unchanged))
+            },
             AgentEvent::TurnStarted { .. } => {
                 self.turn_active = true;
-                return Ok(StateEffect::Redraw);
+                Ok((StateEffect::Redraw, ChatProjectionChange::Unchanged))
             },
             AgentEvent::ActivityStarted { activity, kind } => {
-                self.start_activity(activity, kind)?;
+                let (item, visible) = self.start_activity(activity, kind)?;
+                let change = if visible {
+                    ChatProjectionChange::VisibleItem(item)
+                } else {
+                    ChatProjectionChange::Unchanged
+                };
+                Ok((StateEffect::Redraw, change))
             },
             AgentEvent::ActivityUpdated { activity, update } => {
                 let Some(presentation) = self.activities.get_mut(&activity) else {
@@ -160,7 +203,7 @@ impl TuiState {
                 match update {
                     ActivityUpdate::TextDelta(text) => {
                         if text.is_empty() {
-                            return Ok(StateEffect::Unchanged);
+                            return Ok((StateEffect::Unchanged, ChatProjectionChange::Unchanged));
                         }
                         if !presentation.has_payload && activity_label(presentation.kind).is_some()
                         {
@@ -172,33 +215,53 @@ impl TuiState {
                             .append_text(presentation.item, &text)
                             .map_err(StateError::Transcript)?;
                         presentation.has_payload = true;
+                        presentation.visible = true;
+                        Ok((
+                            StateEffect::Redraw,
+                            ChatProjectionChange::VisibleItem(presentation.item),
+                        ))
                     },
                     ActivityUpdate::TextSnapshot(text) => {
                         let text = project_snapshot(presentation.kind, text);
-                        self.transcript
-                            .replace_text(presentation.item, text)
+                        let visible = !text.is_empty();
+                        let changed = self
+                            .transcript
+                            .replace_text_changed(presentation.item, text)
                             .map_err(StateError::Transcript)?;
                         presentation.has_payload = true;
+                        presentation.visible = visible;
+                        let change = if changed {
+                            ChatProjectionChange::VisibleItem(presentation.item)
+                        } else {
+                            ChatProjectionChange::Unchanged
+                        };
+                        Ok((StateEffect::Redraw, change))
                     },
                 }
             },
             AgentEvent::ActivityFinished { activity, outcome } => {
-                self.finish_activity(activity, outcome)?;
+                let (item, visible) = self.finish_activity(activity, outcome)?;
+                let change = if visible {
+                    ChatProjectionChange::VisibleItem(item)
+                } else {
+                    ChatProjectionChange::Unchanged
+                };
+                Ok((StateEffect::Redraw, change))
             },
             AgentEvent::TurnFinished { outcome, .. } => {
                 self.turn_active = false;
-                match outcome {
-                    TurnOutcome::Completed => {},
-                    TurnOutcome::Interrupted => {
-                        self.push_notice("Turn interrupted".to_owned())?;
-                    },
-                    TurnOutcome::Failed(failure) => {
-                        self.push_notice(format!("Turn failed: {}", failure.message()))?;
-                    },
-                }
+                let change = match outcome {
+                    TurnOutcome::Completed => ChatProjectionChange::Unchanged,
+                    TurnOutcome::Interrupted => ChatProjectionChange::VisibleItem(
+                        self.push_notice("Turn interrupted".to_owned())?,
+                    ),
+                    TurnOutcome::Failed(failure) => ChatProjectionChange::VisibleItem(
+                        self.push_notice(format!("Turn failed: {}", failure.message()))?,
+                    ),
+                };
+                Ok((StateEffect::Redraw, change))
             },
         }
-        Ok(StateEffect::Redraw)
     }
 
     pub(super) fn prepare_frame(
@@ -216,33 +279,28 @@ impl TuiState {
         after_measure: impl FnOnce(),
     ) -> Result<PreparedFrame, FrameError> {
         let mut surface = Surface::new(size).map_err(FrameError::Allocate)?;
-        let mut view_state = self.view;
         let snapshot = appearance.snapshot();
         let frame = {
             let area = Rect::new(Point::new(0, 0), size);
             let mut view = surface
                 .view(area)
                 .expect("the complete surface is always a valid view");
-            shell::render_with_measure_hook(
-                &self.transcript,
-                &self.editor,
-                &mut view,
-                AgentShellRenderOptions {
-                    transcript_config: snapshot.transcript_config(),
-                    styles: snapshot.styles(),
-                    scroll: None,
-                },
-                &mut view_state,
-                after_measure,
-            )
-            .map_err(FrameError::Render)?
+            self.views
+                .render(
+                    &self.transcript,
+                    &self.editor,
+                    &mut view,
+                    snapshot,
+                    after_measure,
+                )
+                .map_err(FrameError::Render)?
         };
 
         Ok(PreparedFrame {
             surface,
             cursor: frame.cursor,
             appearance_revision: appearance.revision(),
-            view_state,
+            view_state: frame.state,
         })
     }
 
@@ -261,7 +319,7 @@ impl TuiState {
     }
 
     pub(super) fn commit_frame(&mut self, frame: &PreparedFrame) {
-        self.view = frame.view_state;
+        self.views.commit(frame.view_state);
     }
 
     fn request_response(
@@ -307,12 +365,13 @@ impl TuiState {
         &mut self,
         activity: ActivityRef,
         kind: ActivityKind,
-    ) -> Result<(), StateError> {
+    ) -> Result<(TranscriptItemId, bool), StateError> {
         let id = self.next_transcript_id()?;
         self.transcript
             .start_assistant(id)
             .map_err(StateError::Transcript)?;
-        if let Some(label) = activity_label(kind) {
+        let label = activity_label(kind);
+        if let Some(label) = label {
             self.transcript
                 .append_text(id, label)
                 .map_err(StateError::Transcript)?;
@@ -323,6 +382,7 @@ impl TuiState {
                 item: id,
                 kind,
                 has_payload: false,
+                visible: label.is_some(),
             },
         );
         let request = match kind {
@@ -337,38 +397,40 @@ impl TuiState {
         if let Some(request) = request {
             self.pending_requests.push_back(request);
         }
-        Ok(())
+        Ok((id, label.is_some()))
     }
 
     fn finish_activity(
         &mut self,
         activity: ActivityRef,
         outcome: ActivityOutcome,
-    ) -> Result<(), StateError> {
+    ) -> Result<(TranscriptItemId, bool), StateError> {
         let Some(presentation) = self.activities.remove(&activity) else {
             return Err(StateError::UnknownActivity(activity));
         };
         let id = presentation.item;
-        match outcome {
-            ActivityOutcome::Completed => {},
+        let visible = match outcome {
+            ActivityOutcome::Completed => !presentation.visible,
             ActivityOutcome::Interrupted => self
                 .transcript
                 .append_text(id, "\nInterrupted")
+                .map(|()| true)
                 .map_err(StateError::Transcript)?,
             ActivityOutcome::Failed(failure) => self
                 .transcript
                 .append_text(id, &format!("\nFailed: {}", failure.message()))
+                .map(|()| true)
                 .map_err(StateError::Transcript)?,
-        }
+        };
         self.transcript
             .finalize(id)
             .map_err(StateError::Transcript)?;
         self.pending_requests
             .retain(|request| request.activity() != activity);
-        Ok(())
+        Ok((id, visible))
     }
 
-    fn push_notice(&mut self, text: String) -> Result<(), StateError> {
+    fn push_notice(&mut self, text: String) -> Result<TranscriptItemId, StateError> {
         let id = self.next_transcript_id()?;
         self.transcript
             .start_assistant(id)
@@ -376,7 +438,10 @@ impl TuiState {
         self.transcript
             .append_text(id, &text)
             .map_err(StateError::Transcript)?;
-        self.transcript.finalize(id).map_err(StateError::Transcript)
+        self.transcript
+            .finalize(id)
+            .map_err(StateError::Transcript)?;
+        Ok(id)
     }
 
     fn next_transcript_id(&mut self) -> Result<TranscriptItemId, StateError> {
@@ -440,5 +505,9 @@ impl TuiState {
 
     pub(super) const fn turn_active(&self) -> bool {
         self.turn_active
+    }
+
+    pub(super) fn views(&self) -> &ObservabilityViews {
+        &self.views
     }
 }

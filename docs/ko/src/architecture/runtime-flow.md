@@ -89,7 +89,11 @@ AgentSession의 합칠 수 있는 change lane
 TuiAgentConnection + TranscriptReader
     ↓ 순서가 보장된 AgentPoll::Record
     ↓
-TuiState::observe_record → Chat transcript → completed Surface
+TuiState::observe_record
+    ├── 간결한 Chat Projection
+    └── chronological Transcript / anchored Request Projection
+          ↓ 선택된 view
+completed Surface
     ↓
 Inline 또는 Fullscreen presenter
 ```
@@ -124,9 +128,10 @@ Inline 또는 Fullscreen presenter
    storage-pressure 알림, resume은 현재 runtime 동작이 아니다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
    이미 확정된 Transcript record를 소비하고 TUI 상태를 갱신한다.
-   완성된 `Surface`를 조합해 활성 presenter로 보낸다. Chat의 사용자
-   입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난 뒤에만
-   표시된다.
+   완성된 `Surface`를 조합해 활성 presenter로 보낸다. `runner/view.rs`는
+   같은 record stream에서 Chat, Transcript, Request를 선택한다. Chat의
+   사용자 입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난
+   뒤에만 표시된다.
 
 change lane은 command나 event 내용을 싣지 않으며 용량은 하나다. 따라서
 여러 commit이 읽지 않은 알림 하나로 합쳐져도 이력은 사라지지 않는다.
@@ -137,6 +142,43 @@ change lane은 command나 event 내용을 싣지 않으며 용량은 하나다. 
 Codex JSON과 provider identifier는 backend adapter 밖으로 나오지 않는다.
 터미널 input event와 rendering type은 `yo-tui` 밖으로 나오지 않는다.
 그 사이를 지나는 command와 event type은 `yo-core`가 소유한다.
+
+## 실행 중인 observation view
+
+선택한 TUI Projection은 표시만 바꾸며 Session authority를 바꾸지 않는다.
+
+```text
+읽기 전용 AgentPoll::Record stream
+    ├── Chat: 간결한 activity/message Projection + 편집 가능한 prompt
+    └── 전체 semantic record Projection
+          ├── Transcript: chronological command/event와 Activity detail
+          └── Request: 정확한 Chat/Transcript context anchor
+                ├── 직접 ActivityRequestRef → Request Audit unavailable
+                └── 직접 correlation 없음 → associated request 없음
+```
+
+현재 `input/view_binding.rs`의 F1/F2/F3가 Chat/Transcript/Request를
+선택한다. 이 mapping은 typed 표시 정책 seam이며 Projection 상태가 아니다.
+page·line 이동은 활성 view 자체의 viewport를 갱신하고, Chat과 Transcript는
+각자의 context cursor도 보존한다. Request 이동은 anchor된 diagnostic
+page 안에서만 scroll하므로 가까운 request를 탐색하는 browser가 되지
+않는다. anchor가 같다면 view로 돌아올 때 보존한 상태를 복원한다.
+
+세 mode 모두 session에서 pin한 appearance snapshot과 기존 Transcript
+layout·Surface primitive를 쓴다. status 행은 활성 mode와 key를 표시하고,
+좁은 frame에서는 `[C]123`, `[T]123`, `[R]123`으로 줄어든다. terminal
+행이 하나뿐이어도 그릴 수 있다. Transcript와 Request는 full-page 읽기
+전용 mode이므로 input 경로가 prompt editor에 도달하거나 submission을
+만들지 않는다.
+
+현재 TUI adapter는 semantic `TranscriptRecord`를 공개하지만 reader의
+`JournalSequence`는 버리고 durability-gap metadata나 Request Audit
+detail은 공개하지 않는다. Transcript는 이 observation boundary를
+출력한다. Request는 정확히 anchor된 record가 가진 correlation만 사용하며,
+없으면 `no_associated_request`를 보고한다. 정확한
+`ActivityRequestRef`가 있으면 `request_audit_detail_unavailable`을
+보고하며 인접 record의 correlation을 빌리지 않는다. durable repository는
+계속 실행 중인 `AgentSession` 경로 밖에 있다.
 
 ## Durable Journal 조합 seam
 

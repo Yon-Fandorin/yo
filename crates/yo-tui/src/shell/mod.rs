@@ -23,12 +23,19 @@ use crate::{
     },
 };
 
-const MIN_FRAMED_PROMPT_HEIGHT: u16 = 9;
+pub(crate) const MIN_FRAMED_PROMPT_HEIGHT: u16 = 9;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct AgentShellViewState {
     transcript: TranscriptViewState,
     prompt: PromptViewState,
+}
+
+#[cfg(test)]
+impl AgentShellViewState {
+    pub(crate) const fn transcript_first_visible_row(self) -> u16 {
+        self.transcript.first_visible_row()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,6 +49,7 @@ pub(crate) struct AgentShellRenderOptions<'config> {
     pub(crate) transcript_config: &'config TranscriptLayoutConfig,
     pub(crate) styles: AgentShellStyles,
     pub(crate) scroll: Option<TranscriptScrollCommand>,
+    pub(crate) frame_prompt: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +88,7 @@ pub(crate) fn render(
             transcript_config,
             styles,
             scroll,
+            frame_prompt: view.size().height >= MIN_FRAMED_PROMPT_HEIGHT,
         },
         state,
         || {},
@@ -98,11 +107,12 @@ pub(crate) fn render_with_measure_hook(
         transcript_config,
         styles,
         scroll,
+        frame_prompt,
     } = options;
     let size = view.size();
     let prompt = prepare_prompt(editor, size.width)
         .map_err(AgentShellRenderError::PromptMeasure)?
-        .with_frame(size.height >= MIN_FRAMED_PROMPT_HEIGHT);
+        .with_frame(frame_prompt);
 
     let shell_area = Rect::new(Point::new(0, 0), size);
     let layout = solve_vertical(

@@ -186,6 +186,93 @@ fn no_op_upward_commands_keep_following_short_content() {
     }
 }
 
+// assistant 앞의 한 separator 행만 보이는 viewport는 아직 그 item을 표시하지 않았으므로
+// 다음 item을 context로 잡지 않고, 실제 marker 행에 도달한 뒤에만 해당 ID를 보고한다.
+#[test]
+fn one_row_assistant_separator_has_no_following_item_context() {
+    let mut transcript = TranscriptState::new();
+    transcript
+        .push_user(id(1), "first".into())
+        .expect("unique user item");
+    transcript.start_assistant(id(2)).expect("unique assistant");
+    transcript
+        .append_text(id(2), "second")
+        .expect("streaming assistant");
+    transcript.finalize(id(2)).expect("final assistant");
+    let config = TranscriptLayoutConfig::default();
+    let mut state = TranscriptViewState::default();
+
+    let (separator, frame) = render_into(
+        &transcript,
+        Size::new(12, 1),
+        &config,
+        &mut state,
+        Some(TranscriptScrollCommand::LineUp),
+    );
+    assert_eq!(frame.first_visible_row, 1);
+    assert_eq!(rendered_row(&separator, 0), "");
+    assert_eq!(frame.context_item, None);
+
+    let (_, frame) = render_into(
+        &transcript,
+        Size::new(12, 1),
+        &config,
+        &mut state,
+        Some(TranscriptScrollCommand::LineDown),
+    );
+    assert_eq!(frame.first_visible_row, 2);
+    assert_eq!(frame.context_item, Some(id(2)));
+}
+
+// user 앞의 두 separator 행은 각각 독립적인 한 행 viewport에서도 context가 없고,
+// 이전·다음 item의 실제 marker 행만 정확한 item ID에 속한다.
+#[test]
+fn two_row_user_separator_excludes_both_blank_boundary_rows() {
+    let mut transcript = TranscriptState::new();
+    transcript.start_assistant(id(1)).expect("unique assistant");
+    transcript
+        .append_text(id(1), "first")
+        .expect("streaming assistant");
+    transcript.finalize(id(1)).expect("final assistant");
+    transcript
+        .push_user(id(2), "second".into())
+        .expect("unique user item");
+    let config = TranscriptLayoutConfig::default();
+    let mut state = TranscriptViewState::default();
+
+    let (_, first) = render_into(
+        &transcript,
+        Size::new(12, 1),
+        &config,
+        &mut state,
+        Some(TranscriptScrollCommand::JumpToStart),
+    );
+    assert_eq!(first.context_item, Some(id(1)));
+
+    for expected_row in [1, 2] {
+        let (separator, frame) = render_into(
+            &transcript,
+            Size::new(12, 1),
+            &config,
+            &mut state,
+            Some(TranscriptScrollCommand::LineDown),
+        );
+        assert_eq!(frame.first_visible_row, expected_row);
+        assert_eq!(rendered_row(&separator, 0), "");
+        assert_eq!(frame.context_item, None);
+    }
+
+    let (_, second) = render_into(
+        &transcript,
+        Size::new(12, 1),
+        &config,
+        &mut state,
+        Some(TranscriptScrollCommand::LineDown),
+    );
+    assert_eq!(second.first_visible_row, 3);
+    assert_eq!(second.context_item, Some(id(2)));
+}
+
 // resize는 FollowTail을 새 tail에 맞추고 Detached offset은 clamp하되 읽기 의도는 유지한다.
 #[test]
 fn resize_reflows_following_and_clamps_detached_state() {

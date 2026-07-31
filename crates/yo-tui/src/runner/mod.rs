@@ -5,6 +5,7 @@ mod error;
 mod session;
 mod state;
 mod unix;
+mod view;
 
 pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch};
 pub use error::RunError;
