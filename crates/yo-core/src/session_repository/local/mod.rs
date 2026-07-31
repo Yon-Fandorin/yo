@@ -10,11 +10,12 @@ use super::{
     AppendError, AppendReceipt, DurableCutoff, DurableRecord, DurableRecordKind, RepositoryEntry,
     RepositoryError, RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
 };
-use crate::SessionId;
+use crate::{JournalSequence, SessionId};
 
 #[derive(Clone, Copy, Debug, Default)]
 struct SessionState {
     durable_cutoff: Option<RepositorySequence>,
+    journal_cutoff: Option<JournalSequence>,
     cutoff_known: bool,
     snapshot_required: bool,
     reload_required: bool,
@@ -58,6 +59,7 @@ impl LocalSessionRepository {
         let scan = scan_entries(&self.session_path(session_id), session_id, true, 0, 0)?;
         Ok(SessionState {
             durable_cutoff: scan.durable_cutoff,
+            journal_cutoff: scan.journal_cutoff,
             cutoff_known: true,
             // The repository cannot prove that no in-memory gap occurred
             // before its owner stopped. Reopen through a complete snapshot.
@@ -90,7 +92,7 @@ impl LocalSessionRepository {
                 Err(AppendError::StoragePressure {
                     pressure: StoragePressure {
                         durable_cutoff: if state.cutoff_known {
-                            DurableCutoff::Known(state.durable_cutoff)
+                            known_cutoff(*state)
                         } else {
                             DurableCutoff::Unknown
                         },
@@ -143,7 +145,7 @@ impl LocalSessionRepository {
         state.snapshot_required = true;
         AppendError::StoragePressure {
             pressure: StoragePressure {
-                durable_cutoff: DurableCutoff::Known(state.durable_cutoff),
+                durable_cutoff: known_cutoff(*state),
                 cause,
             },
             source,
@@ -166,8 +168,16 @@ impl SessionRepository for LocalSessionRepository {
             .expect("the Session state was inserted above");
         if state.snapshot_required && record.kind() != DurableRecordKind::Snapshot {
             return Err(AppendError::SnapshotRequired {
-                durable_cutoff: state.durable_cutoff,
+                durable_cutoff: known_cutoff(state),
             });
+        }
+        if let (Some(previous), Some(next)) = (state.journal_cutoff, record.journal_cutoff())
+            && (next < previous
+                || (next == previous && record.kind() != DurableRecordKind::Snapshot))
+        {
+            return Err(AppendError::Repository(RepositoryError::Unavailable {
+                message: "Journal cutoff does not advance for an incremental record".to_owned(),
+            }));
         }
 
         let next = state
@@ -222,6 +232,9 @@ impl SessionRepository for LocalSessionRepository {
             .get_mut(&session_id)
             .expect("the Session state was inserted above");
         state.durable_cutoff = Some(sequence);
+        if let Some(journal_cutoff) = record.journal_cutoff() {
+            state.journal_cutoff = Some(journal_cutoff);
+        }
         state.cutoff_known = true;
         state.snapshot_required = false;
         Ok(AppendReceipt::new(sequence))
@@ -242,5 +255,15 @@ impl SessionRepository for LocalSessionRepository {
             limit,
         )?
         .entries)
+    }
+}
+
+fn known_cutoff(state: SessionState) -> DurableCutoff {
+    match state.durable_cutoff {
+        Some(repository_sequence) => DurableCutoff::Known {
+            journal_sequence: state.journal_cutoff,
+            repository_sequence,
+        },
+        None => DurableCutoff::KnownEmpty,
     }
 }

@@ -1,5 +1,6 @@
 //! Storage-neutral durable Session records.
 
+mod journal;
 mod local;
 mod record;
 
@@ -10,7 +11,7 @@ pub use record::{
     AppendReceipt, DurableRecord, DurableRecordKind, RepositoryEntry, RepositorySequence,
 };
 
-use crate::SessionId;
+use crate::{JournalSequence, SessionId};
 
 pub trait SessionRepository {
     fn append(
@@ -36,7 +37,11 @@ pub enum StoragePressureCause {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DurableCutoff {
     Unknown,
-    Known(Option<RepositorySequence>),
+    KnownEmpty,
+    Known {
+        journal_sequence: Option<JournalSequence>,
+        repository_sequence: RepositorySequence,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,7 +63,7 @@ impl StoragePressure {
 #[derive(Debug)]
 pub enum AppendError {
     SnapshotRequired {
-        durable_cutoff: Option<RepositorySequence>,
+        durable_cutoff: DurableCutoff,
     },
     StoragePressure {
         pressure: StoragePressure,

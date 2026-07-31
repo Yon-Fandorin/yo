@@ -10,7 +10,7 @@ use super::{
     AppendError, DurableCutoff, DurableRecord, DurableRecordKind, LocalSessionRepository,
     RepositorySequence, SessionRepository, StoragePressureCause,
 };
-use crate::SessionId;
+use crate::{JournalSequence, SessionId};
 
 struct TestDirectory(PathBuf);
 
@@ -89,7 +89,7 @@ fn capacity_pressure_preserves_the_durable_prefix() {
     let directory = TestDirectory::new("capacity");
     let session_id = session(8);
     let mut repository =
-        LocalSessionRepository::open(directory.path(), 140).expect("repository opens");
+        LocalSessionRepository::open(directory.path(), 320).expect("repository opens");
     repository
         .append(session_id, DurableRecord::incremental("small"))
         .expect("the first record fits");
@@ -105,7 +105,10 @@ fn capacity_pressure_preserves_the_durable_prefix() {
     assert_eq!(pressure.cause(), StoragePressureCause::Capacity);
     assert_eq!(
         pressure.durable_cutoff(),
-        DurableCutoff::Known(Some(RepositorySequence::new(1)))
+        DurableCutoff::Known {
+            journal_sequence: None,
+            repository_sequence: RepositorySequence::new(1),
+        }
     );
     assert_eq!(
         fs::read(directory.path().join("8.jsonl")).expect("log remains readable"),
@@ -114,7 +117,7 @@ fn capacity_pressure_preserves_the_durable_prefix() {
 }
 
 // 빈 로그를 정상적으로 확인한 뒤 용량이 부족한 경우에는 Unknown이 아니라
-// `Known(None)`으로 보고해 "확인된 빈 상태"와 "읽지 못한 상태"를 구분하는지 검증합니다.
+// `KnownEmpty`로 보고해 "확인된 빈 상태"와 "읽지 못한 상태"를 구분하는지 검증합니다.
 #[test]
 fn reports_a_known_empty_cutoff_before_the_first_record() {
     let directory = TestDirectory::new("known-empty-cutoff");
@@ -128,7 +131,46 @@ fn reports_a_known_empty_cutoff_before_the_first_record() {
         .storage_pressure()
         .expect("capacity failure reports storage pressure");
 
-    assert_eq!(pressure.durable_cutoff(), DurableCutoff::Known(None));
+    assert_eq!(pressure.durable_cutoff(), DurableCutoff::KnownEmpty);
+}
+
+// semantic Journal cutoff 5를 쓴 뒤 payload-only physical record가 하나 더 생겨도 두
+// sequence를 서로 추론하지 않고 pressure가 Journal 5와 Repository 2를 함께 보고해야 합니다.
+#[test]
+fn reports_independent_journal_and_repository_cutoffs() {
+    let directory = TestDirectory::new("independent-cutoffs");
+    let session_id = session(23);
+    let mut repository =
+        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+    repository
+        .append(
+            session_id,
+            DurableRecord::incremental("semantic")
+                .with_journal_cutoff(Some(JournalSequence::new(5))),
+        )
+        .expect("semantic record is durable");
+    repository
+        .append(session_id, DurableRecord::incremental("opaque audit"))
+        .expect("non-Journal record shares the physical log");
+    let used = fs::metadata(directory.path().join("23.jsonl"))
+        .expect("log exists")
+        .len();
+    repository.set_capacity_bytes(used);
+
+    let error = repository
+        .append(session_id, DurableRecord::incremental("later"))
+        .expect_err("no capacity remains");
+    let pressure = error
+        .storage_pressure()
+        .expect("capacity failure reports both durable coordinates");
+
+    assert_eq!(
+        pressure.durable_cutoff(),
+        DurableCutoff::Known {
+            journal_sequence: Some(JournalSequence::new(5)),
+            repository_sequence: RepositorySequence::new(2),
+        }
+    );
 }
 
 // 내구 기록이 끊긴 뒤에는 증분 레코드를 거부하고 완전한 스냅샷으로만 재개하는지 검증합니다.
@@ -137,7 +179,7 @@ fn requires_a_snapshot_after_storage_pressure() {
     let directory = TestDirectory::new("snapshot-gate");
     let session_id = session(9);
     let mut repository =
-        LocalSessionRepository::open(directory.path(), 150).expect("repository opens");
+        LocalSessionRepository::open(directory.path(), 320).expect("repository opens");
     repository
         .append(session_id, DurableRecord::incremental("prefix"))
         .expect("the prefix fits");
@@ -309,7 +351,7 @@ fn retries_session_state_after_a_transient_load_failure() {
     assert!(matches!(
         repository.append(session_id, DurableRecord::incremental("later")),
         Err(AppendError::SnapshotRequired {
-            durable_cutoff: Some(_)
+            durable_cutoff: DurableCutoff::Known { .. }
         })
     ));
     let receipt = repository
@@ -338,7 +380,7 @@ fn requires_a_snapshot_after_an_initial_load_failure_recovers_to_an_empty_log() 
     assert!(matches!(
         repository.append(session_id, DurableRecord::incremental("later")),
         Err(AppendError::SnapshotRequired {
-            durable_cutoff: None
+            durable_cutoff: DurableCutoff::KnownEmpty
         })
     ));
     let receipt = repository
@@ -470,11 +512,71 @@ fn writes_an_explicit_versioned_jsonl_envelope() {
     let contents = fs::read_to_string(directory.path().join("12.jsonl")).expect("log is readable");
     let value: serde_json::Value = serde_json::from_str(contents.trim()).expect("valid JSON");
 
-    assert_eq!(value["schema"], "yo.session-record/v1");
+    assert_eq!(value["schema"], "yo.session-record/v2");
     assert_eq!(value["session_id"], 12);
     assert_eq!(value["sequence"], 1);
     assert_eq!(value["kind"], "snapshot");
     assert_eq!(value["payload"], "state");
+    assert_eq!(value["checksum"]["schema"], "crc32c/v1");
+    assert_eq!(
+        value["checksum"]["value"]
+            .as_str()
+            .expect("checksum is hexadecimal")
+            .len(),
+        8
+    );
+}
+
+// 새 writer가 남긴 checksummed v2 record의 payload 한 글자만 바뀌어도 JSON 자체는
+// 유효하지만 CRC32C가 달라지므로 replay 전에 complete-line 손상으로 거부해야 합니다.
+#[test]
+fn rejects_a_checksummed_record_whose_payload_was_changed() {
+    let directory = TestDirectory::new("checksum-corruption");
+    let session_id = session(21);
+    {
+        let mut repository =
+            LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+        repository
+            .append(session_id, DurableRecord::incremental("alpha"))
+            .expect("record is written");
+    }
+    let path = directory.path().join("21.jsonl");
+    let contents = fs::read_to_string(&path).expect("log is readable");
+    fs::write(&path, contents.replace("alpha", "omega")).expect("payload is tampered");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        .expect("fixture permissions remain restricted");
+    let repository =
+        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+
+    let error = repository
+        .read_after(session_id, None, 8)
+        .expect_err("checksum mismatch is corruption");
+
+    assert!(error.to_string().contains("CRC32C"));
+}
+
+// checksummed v2 도입 뒤에도 지원 대상인 기존 v1 complete line은 checksum이 없다는
+// 이유만으로 잃지 않고 동일한 opaque payload로 복구해야 합니다.
+#[test]
+fn continues_to_read_legacy_v1_records() {
+    let directory = TestDirectory::new("legacy-v1");
+    let path = directory.path().join("22.jsonl");
+    fs::write(
+        &path,
+        b"{\"schema\":\"yo.session-record/v1\",\"session_id\":22,\"sequence\":1,\"kind\":\"incremental\",\"payload\":\"legacy\"}\n",
+    )
+    .expect("legacy fixture is written");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        .expect("fixture permissions are restricted");
+    let repository =
+        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+
+    let entries = repository
+        .read_after(session(22), None, 8)
+        .expect("legacy record remains supported");
+
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].record().payload(), "legacy");
 }
 
 // 테스트가 사용하는 레코드 종류도 실제 계약의 두 가지 값과 일치하는지 확인합니다.

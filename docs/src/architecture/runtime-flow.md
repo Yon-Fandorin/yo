@@ -122,8 +122,8 @@ The useful inspection points are:
    failure are.
    `AgentSession::transcript_reader` exposes bounded, read-only suffix copies
    from that same Journal without exposing its lock or storage layout.
-   `session_repository` contains the first durable local implementation, but
-   this runtime path does not call it yet. Persistence, storage-pressure
+   The semantic Journal codec and `JournalRepository` durable adapter exist,
+   but this runtime path does not call them yet. Persistence, storage-pressure
    notification, and resume are therefore not current runtime behavior.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
    consume already committed Transcript records, update TUI state, compose a
@@ -140,6 +140,44 @@ the adapter has exposed the failure records already committed to the Journal.
 Codex JSON and provider identifiers end at the backend adapter. Terminal input
 events and rendering types end in `yo-tui`. The command and event types crossing
 the middle are owned by `yo-core`.
+
+## Durable Journal composition seam
+
+Outside the live `AgentSession` flow, the implemented local composition is:
+
+```text
+semantic Journal records
+    ↓ bounded MessageSegment construction
+JournalCommit codec
+    ↓ one semantic commit
+JournalRepository
+    ↓ validate with durable semantic prefix
+    ↓ one physical append
+SessionRepository
+    ↓
+single-writer versioned JSONL
+
+versioned JSONL
+    ↓ bounded suffix read + semantic decode
+Journal recovery
+    ↓
+RecoveredJournal or an explicit recovery error
+```
+
+The recovery path rejects a later durable command or event behind an open
+message instead of moving an interrupted seal after that event. A snapshot is
+rejected before physical append when replay would need to synthesize a recovery
+record, or when it omits the existing durable prefix and its required recovery
+seals. These are navigation notes for the implemented failure boundaries; the
+owning behavior remains in the
+[Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)
+and
+[Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)
+KnowledgeUnits.
+
+No live `AgentSession` owner invokes this composition yet. It also does not add
+remote storage, Request Audit persistence, database or compression backends, or
+a durable transport.
 
 ## Suspend and resume
 
@@ -237,6 +275,7 @@ independent cleanup boundaries and reports their contexts together.
 - [Session, Turn, and Activity semantics](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.session-turn-activity.md)
 - [Active-Turn input](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.active-turn-input.md)
 - [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)
+- [Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)
 - [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)
 - [Typed TUI flow](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md)
 - [Presentation mode selection](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md)

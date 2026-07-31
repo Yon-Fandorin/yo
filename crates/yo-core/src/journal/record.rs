@@ -4,6 +4,10 @@ use crate::{AgentCommand, AgentEvent};
 pub struct JournalSequence(u64);
 
 impl JournalSequence {
+    pub(crate) const fn new(value: u64) -> Self {
+        Self(value)
+    }
+
     pub(super) fn from_index(index: usize) -> Self {
         let value = index
             .checked_add(1)

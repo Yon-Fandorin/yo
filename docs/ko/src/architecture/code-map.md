@@ -59,8 +59,8 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 |---|---|---|
 | [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | provider에 독립적인 command, 관찰 가능한 event와 outcome, typed identity | 허용되는 상태 전이는 `engine` |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | 결정론적인 Session, Turn, Activity, request 상태 전이 | 전이가 provider 경계도 지난다면 `runtime` |
-| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 in-memory 기록, 공유 lock과 저장 구조를 숨기는 sequence 기반의 제한된 Transcript 읽기 | 실행 중 capture 지점은 `runtime`, durable byte는 `session_repository` |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·suffix 읽기 계약, snapshot 복구 gate, typed storage pressure, 첫 single-writer versioned-JSONL 로컬 구현. rollback이 불확실한 append는 내구 pending marker로 격리 | semantic payload를 맡을 향후 Journal codec과 runtime owner, 지속적인 frontend 알림. 현재 synchronous Rust trait은 local 조립 seam이며 고정된 remote transport 계약이 아니고, 아직 실행 중인 Session에는 연결되지 않음 |
+| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 in-memory 기록, sequence 기반의 제한된 Transcript 읽기, durable semantic Journal codec, 크기가 제한된 `MessageSegment` 구성, recovery 검증 | 실행 중 capture 지점은 `runtime`, physical durability는 `session_repository` |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·suffix 읽기 계약, snapshot 복구 gate, typed storage pressure, 첫 single-writer versioned-JSONL 로컬 구현. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | 실행 중인 `AgentSession` 연결, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | backend 수락, semantic commit, Journal capture 순서, backend 관찰 결과 변환, 실패 시 활성 작업 종료 | provider port는 `backend/contract.rs` |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command lane, 용량 1의 Journal 변경 알림, worker 소유권, 시작 취소, 종료 조율 | worker가 소유한 의미 처리는 `runtime` |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | provider capability, command, semantic event, polling, 취소, failure kind, 명시적 정리 | 구체적인 adapter |
@@ -71,14 +71,22 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 [command와 event 경계](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.command-event-boundary.md)와
 [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)가
 각 동작 제약을 소유한다.
-[Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)은
-replay source 계약을 소유한다. 현재 코드는 semantic record만 메모리에
-capture하고 구체적인 `TranscriptReader`로 공개한다. 별도의
-`SessionRepository`가 durable opaque record를 제공하지만, 실행 중인
-runtime은 아직 이 저장소에 쓰지 않는다. 따라서 현재 Session을 재개할 수
-있거나 backend exchange까지 기록한다고 주장하지 않는다. 제품 범위를
-바꾸기 전에 semantic codec과 runtime 소유권을 추가하고, 실제 remote
-reader가 생길 때 local·remote reader 공통 인터페이스를 추출한다.
+[Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)과
+[Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)가
+durable replay와 storage 계약을 소유한다. 구현된 조합은 semantic commit을
+encoding하고 message content를 크기가 제한된 `MessageSegment` record로
+만든다. 열린 message 뒤에 later durable event가 남는 recovery 순서를
+거부하고, recovery repair가 필요 없는 snapshot만 받아들인다.
+`JournalRepository`는 이 경계를 durable semantic prefix와 검증한 뒤 local
+repository에 연결한다. replacement snapshot은 그 prefix와 필요한 recovery
+seal을 보존해야 한다.
+
+실행 중인 `AgentSession` 경로는 여전히 in-memory Journal에 capture하고
+구체적인 `TranscriptReader`로 공개하며 `JournalRepository`를 호출하지
+않는다. 따라서 이 구현만으로 현재 Session을 재개할 수는 없다. remote
+storage, Request Audit persistence, database나 compression 선택, durable
+transport는 이 경로의 범위 밖이다. 실제 remote reader가 생길 때만
+local·remote reader 공통 인터페이스를 추출한다.
 
 ## yo-tui: 터미널 frontend
 

@@ -1,5 +1,6 @@
 //! Ordered in-memory capture of committed agent semantics.
 
+pub(crate) mod codec;
 mod record;
 mod transcript;
 

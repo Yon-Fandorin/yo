@@ -119,9 +119,9 @@ Inline 또는 Fullscreen presenter
    실패를 닫으며 만들어진 terminal event는 기록한다.
    `AgentSession::transcript_reader`는 같은 Journal에서 크기가 제한된 읽기
    전용 suffix 복사본을 제공하며 내부 lock이나 저장 구조는 노출하지 않는다.
-   `session_repository`에는 첫 durable 로컬 구현이 있지만 이 runtime
-   경로는 아직 호출하지 않는다. 따라서 persistence, storage-pressure
-   알림, resume은 현재 runtime 동작이 아니다.
+   semantic Journal codec과 `JournalRepository` durable adapter가 있지만
+   이 runtime 경로는 아직 호출하지 않는다. 따라서 persistence,
+   storage-pressure 알림, resume은 현재 runtime 동작이 아니다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
    이미 확정된 Transcript record를 소비하고 TUI 상태를 갱신한다.
    완성된 `Surface`를 조합해 활성 presenter로 보낸다. Chat의 사용자
@@ -137,6 +137,42 @@ change lane은 command나 event 내용을 싣지 않으며 용량은 하나다. 
 Codex JSON과 provider identifier는 backend adapter 밖으로 나오지 않는다.
 터미널 input event와 rendering type은 `yo-tui` 밖으로 나오지 않는다.
 그 사이를 지나는 command와 event type은 `yo-core`가 소유한다.
+
+## Durable Journal 조합 seam
+
+실행 중인 `AgentSession` 흐름 밖에 구현된 local 조합은 다음과 같다.
+
+```text
+semantic Journal record
+    ↓ 크기가 제한된 MessageSegment 구성
+JournalCommit codec
+    ↓ semantic commit 하나
+JournalRepository
+    ↓ durable semantic prefix와 검증
+    ↓ physical append 하나
+SessionRepository
+    ↓
+single-writer versioned JSONL
+
+versioned JSONL
+    ↓ 제한된 suffix 읽기 + semantic decode
+Journal recovery
+    ↓
+RecoveredJournal 또는 명시적인 recovery 오류
+```
+
+recovery 경로는 열린 message 뒤에 later durable command나 event가 있으면
+interrupted seal을 그 event 뒤로 옮기지 않고 거부한다. replay가 recovery
+record를 합성해야 하거나 기존 durable prefix와 필요한 recovery seal을
+생략한 snapshot은 physical append 전에 거부한다. 이는 구현된 failure
+경계를 찾기 위한 설명이며, 동작 계약은
+[Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)과
+[Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)
+KnowledgeUnit가 계속 소유한다.
+
+실행 중인 `AgentSession` owner는 아직 이 조합을 호출하지 않는다. 또한
+remote storage, Request Audit persistence, database나 compression backend,
+durable transport를 추가하지 않는다.
 
 ## 일시정지와 재개
 
@@ -235,6 +271,7 @@ disposition을 적용한다.
 - [Session, Turn, Activity 의미](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.session-turn-activity.md)
 - [활성 Turn input](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.active-turn-input.md)
 - [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)
+- [Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)
 - [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)
 - [typed TUI 흐름](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md)
 - [표시 mode 선택](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md)

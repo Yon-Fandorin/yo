@@ -58,8 +58,8 @@ new shared capability.
 |---|---|---|
 | [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | Provider-neutral commands, observable events, outcomes, and typed identities | `engine` for legal state transitions |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | Deterministic Session, Turn, Activity, and request state transitions | `runtime` when a transition also crosses a provider boundary |
-| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | One ordered in-memory record of committed commands and semantic events; bounded sequence-based Transcript reads that hide the shared lock and storage layout | `runtime` for the live capture point; `session_repository` for durable bytes |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append and suffix-read contract, snapshot recovery gate, typed storage pressure, and the first single-writer local versioned-JSONL implementation; a durable pending marker quarantines an append whose rollback is uncertain | A future Journal codec and runtime owner for semantic payloads and persistent frontend notification; the current synchronous Rust trait is a local composition seam, not a frozen remote transport contract, and is not wired into live Sessions yet |
+| [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | One ordered in-memory record of committed commands and semantic events; bounded sequence-based Transcript reads; the durable semantic Journal codec, bounded `MessageSegment` construction, and recovery validation | `runtime` for the live capture point; `session_repository` for physical durability |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append and suffix-read contract, snapshot recovery gate, typed storage pressure, and the first single-writer local versioned-JSONL implementation; `JournalRepository` validates a candidate against the durable semantic prefix and composes one semantic commit with one physical append | Live `AgentSession` wiring, remote storage or transport, Request Audit persistence, and database or compression alternatives |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | Ordering backend acceptance, semantic commit, and Journal capture; translating backend observations; closing active work on failure | `backend/contract.rs` for the provider port |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | Nonblocking frontend access, bounded command lanes, a capacity-one Journal-change notification, worker ownership, startup cancellation, and shutdown coordination | `runtime` for worker-owned semantics |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | Provider capabilities, commands, semantic events, polling, cancellation, failure kinds, and explicit cleanup | A concrete adapter |
@@ -71,13 +71,22 @@ new shared capability.
 and [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)
 own the corresponding behavioral constraints. The
 [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)
-owns the replay-source contract; current code captures only semantic records in
-memory and exposes them through a concrete `TranscriptReader`. The separate
-`SessionRepository` now provides durable opaque records, but no live runtime
-path writes to it yet. It therefore does not make current Sessions resumable
-or claim backend-exchange coverage. Add the semantic codec and runtime
-ownership before changing that product claim; extract a local/remote reader
-interface only when a real remote reader exists.
+and
+[Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)
+own the durable replay and storage contracts. The implemented composition
+encodes semantic commits, bounds message content as `MessageSegment` records,
+rejects recovery ordering that leaves an open message behind a later durable
+event, and admits snapshots only when they need no recovery repair.
+`JournalRepository` validates that boundary against the durable semantic prefix
+before mapping it to the local repository; a replacement snapshot must retain
+that prefix and any recovery seal it requires.
+
+The live `AgentSession` path still captures into its in-memory Journal and
+exposes a concrete `TranscriptReader`; it does not call `JournalRepository`.
+Current Sessions are therefore not made resumable by this implementation.
+Remote storage, Request Audit persistence, database or compression choices,
+and a durable transport remain outside this path. Extract a local/remote
+reader interface only when a real remote reader exists.
 
 ## yo-tui: terminal frontend
 

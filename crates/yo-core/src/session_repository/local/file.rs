@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{
-    super::{RepositoryEntry, RepositoryError, RepositorySequence},
+    super::{DurableRecordKind, RepositoryEntry, RepositoryError, RepositorySequence},
     WireEntry,
 };
 use crate::SessionId;
@@ -40,6 +40,7 @@ impl WriterLock {
 
 pub(super) struct ScanResult {
     pub(super) durable_cutoff: Option<RepositorySequence>,
+    pub(super) journal_cutoff: Option<crate::JournalSequence>,
     pub(super) entries: Vec<RepositoryEntry>,
 }
 
@@ -126,6 +127,7 @@ pub(super) fn scan_entries(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(ScanResult {
                 durable_cutoff: None,
+                journal_cutoff: None,
                 entries: Vec::new(),
             });
         },
@@ -139,6 +141,7 @@ pub(super) fn scan_entries(
     let mut durable_bytes = 0_u64;
     let mut line_number = 0_usize;
     let mut durable_cutoff = None;
+    let mut journal_cutoff = None;
 
     loop {
         line.clear();
@@ -166,6 +169,20 @@ pub(super) fn scan_entries(
         });
         let entry = wire.into_record(expected_session, expected_sequence, line_number)?;
         durable_cutoff = Some(entry.sequence());
+        if let Some(sequence) = entry.record().journal_cutoff() {
+            let invalid = journal_cutoff.is_some_and(|previous| {
+                sequence < previous
+                    || (sequence == previous
+                        && entry.record().kind() != DurableRecordKind::Snapshot)
+            });
+            if invalid {
+                return Err(RepositoryError::CorruptLog {
+                    line: line_number,
+                    reason: "Journal sequence does not advance independently".to_owned(),
+                });
+            }
+            journal_cutoff = Some(sequence);
+        }
         if entry.sequence().get() > after && entries.len() < limit {
             entries.push(entry);
         }
@@ -174,6 +191,7 @@ pub(super) fn scan_entries(
 
     Ok(ScanResult {
         durable_cutoff,
+        journal_cutoff,
         entries,
     })
 }

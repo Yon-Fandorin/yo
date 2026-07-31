@@ -1,3 +1,5 @@
+use crate::JournalSequence;
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RepositorySequence(u64);
 
@@ -21,6 +23,7 @@ pub enum DurableRecordKind {
 pub struct DurableRecord {
     kind: DurableRecordKind,
     payload: String,
+    journal_cutoff: Option<JournalSequence>,
 }
 
 impl DurableRecord {
@@ -28,6 +31,7 @@ impl DurableRecord {
         Self {
             kind: DurableRecordKind::Incremental,
             payload: payload.into(),
+            journal_cutoff: None,
         }
     }
 
@@ -35,6 +39,7 @@ impl DurableRecord {
         Self {
             kind: DurableRecordKind::Snapshot,
             payload: payload.into(),
+            journal_cutoff: None,
         }
     }
 
@@ -44,6 +49,18 @@ impl DurableRecord {
 
     pub fn payload(&self) -> &str {
         &self.payload
+    }
+
+    pub(crate) const fn with_journal_cutoff(
+        mut self,
+        journal_cutoff: Option<JournalSequence>,
+    ) -> Self {
+        self.journal_cutoff = journal_cutoff;
+        self
+    }
+
+    pub(crate) const fn journal_cutoff(&self) -> Option<JournalSequence> {
+        self.journal_cutoff
     }
 }
 
