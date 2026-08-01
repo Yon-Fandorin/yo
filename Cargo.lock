@@ -903,6 +903,8 @@ name = "yo-core"
 version = "0.0.0"
 dependencies = [
  "getrandom",
+ "libc",
+ "rustix",
  "serde",
  "serde_json",
  "uuid",

@@ -39,6 +39,7 @@ and [UI-only crate boundary](https://github.com/Yon-Fandorin/yo/blob/develop/met
 |---|---|---|
 | [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | Argument parsing, presentation and glyph-profile selection before terminal acquisition, working-directory capture, provider startup, terminal-generation reentry, and top-level cleanup aggregation | Agent semantics or terminal rendering |
 | [`src/agent/mod.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs) | Adapting `yo-core::AgentSession` to the TUI's `AgentConnection` port, including the concrete local Transcript cursor | Provider protocol translation or a premature local/remote reader trait |
+| [`src/storage.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/storage.rs) | Selecting the per-user platform state root, establishing the local Workspace Host identity, applying a separately overridable Session repository root, and composing local storage | Host identity meaning or physical Session record semantics |
 | [`src/process/job_control.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/job_control.rs) | Transactionally applying default `SIGTSTP`, suspending the process, and restoring inherited signal state after `SIGCONT` | TUI state or terminal restoration |
 | [`src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Unix signal installation, observation, restoration, and final disposition | Terminal state restoration |
 
@@ -57,6 +58,7 @@ new shared capability.
 | Module | Owns | Follow next |
 |---|---|---|
 | [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | Provider-neutral commands, observable events, outcomes, and typed identities; new Session identities are storage-independent UUIDv7 values, while the numeric legacy form exists only for honest recovery of older Journal records | `engine` for legal state transitions |
+| [`host`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/host/mod.rs) | An opaque random UUIDv4 `WorkspaceHostId` and its atomically created, permission-restricted local per-user identity file | Session discovery descriptors and remote Host transport |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | Deterministic Session, Turn, Activity, and request state transitions | `runtime` when a transition also crosses a provider boundary |
 | [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | One ordered live projection of committed commands and semantic events; bounded sequence-based Transcript reads; synchronous durable publication, typed gap state, bounded revision-aware `MessageSegment` construction, and recovery validation | `runtime` for the capture point; `session_repository` for physical durability |
 | [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append and suffix-read contract, snapshot recovery gate, typed storage pressure, and the first single-writer local versioned-JSONL implementation with UUIDv7 filenames and versioned legacy reads; `JournalRepository` validates a candidate against the durable semantic prefix and composes one semantic commit with one physical append | Stored-Session discovery, remote storage or transport, Request Audit persistence, and database or compression alternatives |
@@ -90,9 +92,12 @@ one snapshot; after reopen, a replacement snapshot must also retain required
 recovery seals.
 
 The live `AgentSession` worker now owns the `JournalRepository` call path. The
-CLI opens one local repository by default, generates a new Session identity,
-and publishes durable records before their committed semantic result is
-exposed. Streaming text remains a process-local live revision until a size,
+CLI first establishes one durable local Workspace Host identity below the
+per-user platform state root, then opens one local repository by default and
+generates a new Session identity. `YO_SESSION_REPOSITORY` may relocate Session
+records without changing that Host identity. Writing the Host ID into a
+discovery descriptor remains a follow-up boundary. The worker publishes durable
+records before their committed semantic result is exposed. Streaming text remains a process-local live revision until a size,
 time, ordering, or terminal boundary forces a durable segment or empty-revision
 `MessageReset`. A known-clean capacity or storage-pressure refusal latches a
 typed gap while the Session continues in memory; after open messages receive

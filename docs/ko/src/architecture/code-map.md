@@ -40,6 +40,7 @@ yo-cli main
 |---|---|---|
 | [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | 인자 해석, 터미널 획득 전 표시 방식과 glyph profile 선택, 작업 디렉터리 확보, provider 시작, 터미널 세대 재진입, 최상위 정리 결과 취합 | 에이전트 의미나 터미널 렌더링 |
 | [`src/agent/mod.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs) | 구체적인 local Transcript cursor를 포함해 `yo-core::AgentSession`을 TUI의 `AgentConnection` 포트에 맞게 연결 | provider 프로토콜 변환 또는 시기상조인 local·remote reader trait |
+| [`src/storage.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/storage.rs) | 사용자별 플랫폼 상태 루트 선택, local Workspace Host identity 확립, 별도로 override 가능한 Session repository 루트 적용, local storage 조합 | Host identity의 의미나 physical Session record 의미 |
 | [`src/process/job_control.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/job_control.rs) | 기본 `SIGTSTP` 동작 적용, 프로세스 일시정지, `SIGCONT` 뒤 물려받은 signal 상태 복원을 하나의 transaction으로 처리 | TUI 상태나 터미널 복원 |
 | [`src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Unix signal 설치·관찰·복원과 마지막 처리 | 터미널 상태 복원 |
 
@@ -58,6 +59,7 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
 | [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | provider에 독립적인 command, 관찰 가능한 event와 outcome, typed identity. 새 Session identity는 저장소와 독립적인 UUIDv7이며 숫자 legacy 형식은 이전 Journal 기록을 사실대로 복구할 때만 표현한다 | 허용되는 상태 전이는 `engine` |
+| [`host`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/host/mod.rs) | 불투명한 random UUIDv4 `WorkspaceHostId`와 원자적으로 만들고 권한을 제한한 local 사용자별 identity 파일 | Session 탐색 descriptor와 remote Host transport |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | 결정론적인 Session, Turn, Activity, request 상태 전이 | 전이가 provider 경계도 지난다면 `runtime` |
 | [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 live Projection, sequence 기반의 제한된 Transcript 읽기, 동기식 durable publication, typed gap 상태, revision을 인식하는 크기 제한 `MessageSegment` 구성, recovery 검증 | capture 지점은 `runtime`, physical durability는 `session_repository` |
 | [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·suffix 읽기 계약, snapshot 복구 gate, typed storage pressure, UUIDv7 파일명과 versioned legacy 읽기를 제공하는 첫 single-writer versioned-JSONL 로컬 구현. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | 저장된 Session 탐색, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
@@ -89,8 +91,12 @@ prefix를 완성할 수 있지만, reopen 뒤의 replacement snapshot은 그 pre
 필요한 recovery seal도 보존해야 한다.
 
 이제 실행 중인 `AgentSession` worker가 `JournalRepository` 호출 경로를
-소유한다. CLI는 기본으로 local repository를 열고 새 Session identity를
-배정하며, commit된 semantic 결과를 공개하기 전에 durable record를 쓴다.
+소유한다. CLI는 먼저 사용자별 플랫폼 상태 루트 아래에서 durable한 local
+Workspace Host identity 하나를 확립한 다음, 기본 local repository를 열고 새
+Session identity를 배정한다. `YO_SESSION_REPOSITORY`로 Session record 위치를
+옮겨도 Host identity는 바뀌지 않는다. Host ID를 탐색 descriptor에 쓰는 일은
+아직 연결하지 않은 후속 경계다. worker는 commit된 semantic 결과를 공개하기
+전에 durable record를 쓴다.
 streaming text는 크기·시간·ordering·종료 경계가 durable segment나 empty
 revision의 `MessageReset`을 강제하기 전까지 process-local live revision으로 남는다.
 명확히 append를 거부한 capacity나 storage-pressure가 발생하면 Session은 memory에서

@@ -96,8 +96,9 @@ fn run_agent_generation(
     options: Options,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {
-        let repository = storage::open_default()
-            .map_err(|error| AppError::single("opening the Session repository", error))?;
+        let storage = storage::open_default()
+            .map_err(|error| AppError::single("opening local Yo storage", error))?;
+        let (repository, _workspace_host_id) = storage.into_parts();
         let session_id = yo_core::SessionId::new()
             .map_err(|error| AppError::single("generating a Session identity", error))?;
         let backend = yo_core::CodexBackend::spawn(yo_core::CodexBackendConfig::new(cwd))

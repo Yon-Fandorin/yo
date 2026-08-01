@@ -1,50 +1,79 @@
 use std::{ffi::OsString, path::PathBuf};
 
-use yo_core::session_repository::{LocalSessionRepository, RepositoryError};
+use yo_core::{
+    LocalWorkspaceHostIdentity, LocalWorkspaceHostIdentityError, WorkspaceHostId,
+    session_repository::{LocalSessionRepository, RepositoryError},
+};
 
 const DEFAULT_CAPACITY_BYTES: u64 = 1024 * 1024 * 1024;
 
-pub(crate) fn open_default() -> Result<LocalSessionRepository, StorageConfigError> {
-    let root = repository_root()?;
-    let capacity = capacity_bytes()?;
-    LocalSessionRepository::open(root, capacity).map_err(StorageConfigError::Repository)
+pub(crate) struct LocalStorage {
+    repository: LocalSessionRepository,
+    workspace_host_id: WorkspaceHostId,
 }
 
-fn repository_root() -> Result<PathBuf, StorageConfigError> {
-    repository_root_from(
-        std::env::var_os("YO_SESSION_REPOSITORY"),
-        std::env::var_os("XDG_STATE_HOME"),
-        std::env::var_os("HOME"),
-    )
+impl LocalStorage {
+    pub(crate) fn into_parts(self) -> (LocalSessionRepository, WorkspaceHostId) {
+        (self.repository, self.workspace_host_id)
+    }
+}
+
+pub(crate) fn open_default() -> Result<LocalStorage, StorageConfigError> {
+    let state_root = platform_state_root()?;
+    let repository_root =
+        repository_root_from(std::env::var_os("YO_SESSION_REPOSITORY"), &state_root)?;
+    let capacity = capacity_bytes()?;
+    open_at(state_root, repository_root, capacity)
+}
+
+fn platform_state_root() -> Result<PathBuf, StorageConfigError> {
+    platform_state_root_from(std::env::var_os("XDG_STATE_HOME"), std::env::var_os("HOME"))
 }
 
 fn repository_root_from(
     override_root: Option<OsString>,
-    xdg_state_home: Option<OsString>,
-    home: Option<OsString>,
+    state_root: &std::path::Path,
 ) -> Result<PathBuf, StorageConfigError> {
     if let Some(root) = override_root {
         return non_empty_path("YO_SESSION_REPOSITORY", root);
     }
+    Ok(state_root.join("sessions"))
+}
 
+fn platform_state_root_from(
+    xdg_state_home: Option<OsString>,
+    home: Option<OsString>,
+) -> Result<PathBuf, StorageConfigError> {
     #[cfg(target_os = "macos")]
     {
         let _ = xdg_state_home;
-        let home = required_path_value("HOME", home)?;
-        return Ok(home
-            .join("Library")
-            .join("Application Support")
-            .join("yo")
-            .join("sessions"));
+        let home = required_absolute_path_value("HOME", home)?;
+        Ok(home.join("Library").join("Application Support").join("yo"))
     }
 
     #[cfg(not(target_os = "macos"))]
     {
         if let Some(state) = xdg_state_home {
-            return Ok(non_empty_path("XDG_STATE_HOME", state)?.join("yo/sessions"));
+            return Ok(absolute_path("XDG_STATE_HOME", state)?.join("yo"));
         }
-        Ok(required_path_value("HOME", home)?.join(".local/state/yo/sessions"))
+        Ok(required_absolute_path_value("HOME", home)?.join(".local/state/yo"))
     }
+}
+
+fn open_at(
+    state_root: PathBuf,
+    repository_root: PathBuf,
+    capacity: u64,
+) -> Result<LocalStorage, StorageConfigError> {
+    let workspace_host_id = LocalWorkspaceHostIdentity::open(state_root.join("host"))
+        .map_err(StorageConfigError::HostIdentity)?
+        .id();
+    let repository = LocalSessionRepository::open(repository_root, capacity)
+        .map_err(StorageConfigError::Repository)?;
+    Ok(LocalStorage {
+        repository,
+        workspace_host_id,
+    })
 }
 
 fn capacity_bytes() -> Result<u64, StorageConfigError> {
@@ -69,7 +98,7 @@ fn capacity_bytes_from(value: Option<OsString>) -> Result<u64, StorageConfigErro
         })
 }
 
-fn required_path_value(
+fn required_absolute_path_value(
     name: &'static str,
     value: Option<OsString>,
 ) -> Result<PathBuf, StorageConfigError> {
@@ -77,7 +106,19 @@ fn required_path_value(
         name,
         reason: "value is not set".to_owned(),
     })?;
-    non_empty_path(name, value)
+    absolute_path(name, value)
+}
+
+fn absolute_path(name: &'static str, value: OsString) -> Result<PathBuf, StorageConfigError> {
+    let path = non_empty_path(name, value)?;
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(StorageConfigError::InvalidEnvironment {
+            name,
+            reason: "path is not absolute".to_owned(),
+        })
+    }
 }
 
 fn non_empty_path(name: &'static str, value: OsString) -> Result<PathBuf, StorageConfigError> {
@@ -94,6 +135,7 @@ fn non_empty_path(name: &'static str, value: OsString) -> Result<PathBuf, Storag
 #[derive(Debug)]
 pub(crate) enum StorageConfigError {
     InvalidEnvironment { name: &'static str, reason: String },
+    HostIdentity(LocalWorkspaceHostIdentityError),
     Repository(RepositoryError),
 }
 
@@ -103,6 +145,7 @@ impl std::fmt::Display for StorageConfigError {
             Self::InvalidEnvironment { name, reason } => {
                 write!(formatter, "invalid {name}: {reason}")
             },
+            Self::HostIdentity(error) => error.fmt(formatter),
             Self::Repository(error) => error.fmt(formatter),
         }
     }
@@ -112,68 +155,11 @@ impl std::error::Error for StorageConfigError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidEnvironment { .. } => None,
+            Self::HostIdentity(error) => Some(error),
             Self::Repository(error) => Some(error),
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{ffi::OsString, path::PathBuf};
-
-    use super::{DEFAULT_CAPACITY_BYTES, capacity_bytes_from, repository_root_from};
-
-    // 명시적인 repository override는 OS 기본 위치보다 먼저 선택되어 test와 운영자가
-    // 같은 단일 writer root를 의도적으로 지정할 수 있어야 한다.
-    #[test]
-    fn explicit_repository_root_has_priority() {
-        let root = repository_root_from(
-            Some(OsString::from("/tmp/yo-explicit")),
-            Some(OsString::from("/tmp/xdg")),
-            Some(OsString::from("/tmp/home")),
-        )
-        .unwrap();
-
-        assert_eq!(root, PathBuf::from("/tmp/yo-explicit"));
-    }
-
-    // capacity 환경값이 없으면 제품 기본 1 GiB를 사용하고, 숫자가 아닌 값은 조용히
-    // fallback하지 않아 사용자가 잘못된 저장 한도를 즉시 알 수 있어야 한다.
-    #[test]
-    fn capacity_uses_the_default_and_rejects_invalid_input() {
-        assert_eq!(capacity_bytes_from(None).unwrap(), DEFAULT_CAPACITY_BYTES);
-        assert!(capacity_bytes_from(Some(OsString::from("1GiB"))).is_err());
-        assert_eq!(
-            capacity_bytes_from(Some(OsString::from("4096"))).unwrap(),
-            4096
-        );
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    // Linux에서는 XDG state 위치가 HOME fallback보다 우선해 다른 XDG-aware CLI와
-    // 동일한 사용자 상태 디렉터리 규칙을 지킨다.
-    #[test]
-    fn linux_prefers_xdg_state_home() {
-        let root = repository_root_from(
-            None,
-            Some(OsString::from("/tmp/xdg")),
-            Some(OsString::from("/tmp/home")),
-        )
-        .unwrap();
-
-        assert_eq!(root, PathBuf::from("/tmp/xdg/yo/sessions"));
-    }
-
-    #[cfg(target_os = "macos")]
-    // macOS에서는 별도 override가 없으면 사용자 Library의 Application Support 아래를
-    // 사용해 Session 파일이 일반 문서나 project 디렉터리에 섞이지 않게 한다.
-    #[test]
-    fn macos_uses_application_support() {
-        let root = repository_root_from(None, None, Some(OsString::from("/tmp/home"))).unwrap();
-
-        assert_eq!(
-            root,
-            PathBuf::from("/tmp/home/Library/Application Support/yo/sessions")
-        );
-    }
-}
+mod tests;
