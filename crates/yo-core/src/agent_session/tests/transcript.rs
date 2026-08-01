@@ -26,7 +26,7 @@ fn reads_worker_commits_without_consuming_the_change_notification() {
         }),
         BackendScriptStep::Shutdown(Ok(())),
     ]);
-    let mut app = AgentSession::start(backend).unwrap();
+    let mut app = AgentSession::start_for_test(backend, session()).unwrap();
     let transcript = app.transcript_reader();
     let startup = transcript.read_after(None);
     let startup_cursor = startup.entries().last().unwrap().sequence();

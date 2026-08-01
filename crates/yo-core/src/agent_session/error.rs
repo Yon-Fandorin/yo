@@ -1,6 +1,6 @@
 use std::{error::Error, fmt};
 
-use crate::{BackendFailure, RuntimeError};
+use crate::{BackendFailure, RuntimeError, SessionIdGenerationError};
 
 /// Failure while starting, using, or stopping an [`super::AgentSession`].
 #[derive(Clone, Debug)]
@@ -20,6 +20,7 @@ pub enum AgentSessionError {
     TurnNoLongerActive,
     TurnInterruptPending,
     TurnIdExhausted,
+    SessionIdentityUnavailable(SessionIdGenerationError),
     WorkerUnavailable(String),
     WorkerShutdownTimedOut,
     WorkerPanicked,
@@ -53,6 +54,12 @@ impl fmt::Display for AgentSessionError {
                 formatter.write_str("the active Turn is already being interrupted")
             },
             Self::TurnIdExhausted => formatter.write_str("the Turn identity space was exhausted"),
+            Self::SessionIdentityUnavailable(error) => {
+                write!(
+                    formatter,
+                    "a Session identity could not be generated: {error}"
+                )
+            },
             Self::WorkerUnavailable(detail) => {
                 write!(
                     formatter,
@@ -82,6 +89,7 @@ impl Error for AgentSessionError {
             | Self::WorkerUnavailable(_)
             | Self::WorkerShutdownTimedOut
             | Self::WorkerPanicked => None,
+            Self::SessionIdentityUnavailable(error) => Some(error),
         }
     }
 }

@@ -11,7 +11,7 @@ fn id(value: u64) -> NonZeroU64 {
 }
 
 fn references() -> (SessionId, TurnRef, ActivityRef) {
-    let session_id = SessionId::new(id(1));
+    let session_id = crate::fixture_session(1);
     let turn = TurnRef::new(session_id, TurnId::new(id(2)));
     let activity = ActivityRef::new(turn, ActivityId::new(id(3)));
     (session_id, turn, activity)
@@ -46,7 +46,7 @@ fn commands_carry_the_identity_of_their_target() {
     assert_ne!(
         AgentCommand::InterruptTurn { turn },
         AgentCommand::InterruptTurn {
-            turn: TurnRef::new(SessionId::new(id(9)), TurnId::new(id(9))),
+            turn: TurnRef::new(crate::fixture_session(9), TurnId::new(id(9))),
         }
     );
 }

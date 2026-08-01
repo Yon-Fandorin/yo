@@ -1,5 +1,3 @@
-use std::num::NonZeroU64;
-
 use super::{READ_LIMIT, TranscriptRecord};
 use crate::{
     AgentCommand, AgentEvent, SessionId,
@@ -7,7 +5,7 @@ use crate::{
 };
 
 fn session(value: u64) -> SessionId {
-    SessionId::new(NonZeroU64::new(value).unwrap())
+    crate::fixture_session(value)
 }
 
 // Reader를 먼저 만들어 둔 뒤 Worker 역할의 Journal writer가 기록을 추가해도 같은

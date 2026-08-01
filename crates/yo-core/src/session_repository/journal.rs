@@ -220,7 +220,7 @@ fn require_session(
     } else {
         Err(JournalCodecError::new(format!(
             "semantic Journal commit does not belong to Session {}",
-            expected_session.get()
+            expected_session
         )))
     }
 }

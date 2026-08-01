@@ -156,7 +156,9 @@ impl AgentConnection for SimpleAgent {
             self.records.push_back(TranscriptRecord::CommandCommitted(
                 AgentCommand::StartTurn {
                     turn: TurnRef::new(
-                        yo_core::SessionId::new(std::num::NonZeroU64::MIN),
+                        "01890f00-0000-7000-8000-000000000001"
+                            .parse()
+                            .expect("the fixture is a UUIDv7"),
                         yo_core::TurnId::new(std::num::NonZeroU64::MIN),
                     ),
                     input: input.into(),

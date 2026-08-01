@@ -4,8 +4,7 @@ use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate,
     AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendEvent, BackendScriptStep,
     DurabilityGapCause, JournalDurability, RequestId, RuntimeError, RuntimePoll, ScriptedBackend,
-    SessionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput,
-    session_repository::DurableCutoff,
+    TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput, session_repository::DurableCutoff,
 };
 
 use super::{
@@ -292,7 +291,10 @@ fn nonzero(value: u64) -> NonZeroU64 {
 }
 
 fn turn() -> TurnRef {
-    TurnRef::new(SessionId::new(nonzero(1)), TurnId::new(nonzero(1)))
+    let session_id = "01890f00-0000-7000-8000-000000000001"
+        .parse()
+        .expect("the fixture is a UUIDv7");
+    TurnRef::new(session_id, TurnId::new(nonzero(1)))
 }
 
 fn activity(value: u64) -> ActivityRef {

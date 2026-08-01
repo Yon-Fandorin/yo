@@ -318,7 +318,7 @@ fn retains_session_start_and_cleanup_failures() {
         ))),
     ]);
 
-    let error = match AgentSession::start(backend) {
+    let error = match AgentSession::start_for_test(backend, session()) {
         Ok(_) => panic!("Session and cleanup failures must reject startup"),
         Err(error) => error,
     };

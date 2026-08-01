@@ -39,7 +39,7 @@ pub(super) fn id(value: u64) -> NonZeroU64 {
 }
 
 pub(super) fn session() -> SessionId {
-    SessionId::new(id(1))
+    crate::fixture_session(1)
 }
 
 pub(super) fn turn(value: u64) -> TurnRef {
@@ -51,7 +51,7 @@ pub(super) fn activity(turn: TurnRef, value: u64) -> ActivityRef {
 }
 
 pub(super) fn start_app(backend: impl AgentBackend + Send + 'static) -> TestApp {
-    let agent_session = AgentSession::start(backend).unwrap();
+    let agent_session = AgentSession::start_for_test(backend, session()).unwrap();
     let transcript = agent_session.transcript_reader();
     let mut app = TestApp {
         session: agent_session,

@@ -57,10 +57,10 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
-| [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | provider에 독립적인 command, 관찰 가능한 event와 outcome, typed identity | 허용되는 상태 전이는 `engine` |
+| [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | provider에 독립적인 command, 관찰 가능한 event와 outcome, typed identity. 새 Session identity는 저장소와 독립적인 UUIDv7이며 숫자 legacy 형식은 이전 Journal 기록을 사실대로 복구할 때만 표현한다 | 허용되는 상태 전이는 `engine` |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | 결정론적인 Session, Turn, Activity, request 상태 전이 | 전이가 provider 경계도 지난다면 `runtime` |
 | [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 live Projection, sequence 기반의 제한된 Transcript 읽기, 동기식 durable publication, typed gap 상태, revision을 인식하는 크기 제한 `MessageSegment` 구성, recovery 검증 | capture 지점은 `runtime`, physical durability는 `session_repository` |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·suffix 읽기 계약, snapshot 복구 gate, typed storage pressure, 첫 single-writer versioned-JSONL 로컬 구현. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | 저장된 Session 탐색, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·suffix 읽기 계약, snapshot 복구 gate, typed storage pressure, UUIDv7 파일명과 versioned legacy 읽기를 제공하는 첫 single-writer versioned-JSONL 로컬 구현. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | 저장된 Session 탐색, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | backend 수락, semantic commit, Journal capture 순서, backend 관찰 결과 변환, 실패 시 활성 작업 종료 | provider port는 `backend/contract.rs` |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command lane, 용량 1의 Journal 변경 알림, worker 소유권, 시작 취소, 종료 조율 | worker가 소유한 의미 처리는 `runtime` |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | provider capability, command, semantic event, polling, 취소, failure kind, 명시적 정리 | 구체적인 adapter |
@@ -78,7 +78,7 @@ encoding하고 message content를 크기가 제한된 `MessageSegment` record로
 만든다. 권위 있는 replacement snapshot은 이미 durable한 segment를 바꾸지
 않고 새 immutable message revision을 시작한다. non-text 순서 경계보다 먼저
 pending text를 강제 저장하며, 같은 writer의 live gap snapshot과 reopen
-recovery를 구분한다. codec은 semantic commit v2를 쓰면서 v1 읽기를 명시적으로
+recovery를 구분한다. codec은 semantic commit v3를 쓰면서 v2와 v1 읽기를 명시적으로
 지원한다. v1에만 revision 1과 마지막 record 좌표에서 추론한 semantic cutoff를
 적용한다. frontend에 보이는 `JournalSequence`는 semantic cutoff만
 나타내고 normalized segment record는 비공개 replay 좌표로 정렬한다.

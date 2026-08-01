@@ -1,7 +1,7 @@
 mod file;
 mod wire;
 
-use std::{collections::HashMap, fs, num::NonZeroU64, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use file::{WriterLock, append_line, prepare_root, scan_entries};
 use wire::WireEntry;
@@ -46,53 +46,16 @@ impl LocalSessionRepository {
         self.capacity_bytes = capacity_bytes;
     }
 
-    /// Allocates the next local Session identity while this repository owns the writer lock.
-    pub fn next_session_id(&self) -> Result<SessionId, RepositoryError> {
-        let mut maximum = 0_u64;
-        for entry in fs::read_dir(&self.root)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path
-                .extension()
-                .is_none_or(|extension| extension != "jsonl")
-            {
-                continue;
-            }
-            let stem = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .ok_or_else(|| RepositoryError::Unavailable {
-                    message: "Session repository contains a non-UTF-8 log name".to_owned(),
-                })?;
-            let value = stem
-                .parse::<u64>()
-                .map_err(|_| RepositoryError::Unavailable {
-                    message: format!("Session repository contains an invalid log name `{stem}`"),
-                })?;
-            if value == 0 {
-                return Err(RepositoryError::Unavailable {
-                    message: "Session repository contains the reserved log name `0.jsonl`"
-                        .to_owned(),
-                });
-            }
-            maximum = maximum.max(value);
-        }
-        let next = maximum
-            .checked_add(1)
-            .and_then(NonZeroU64::new)
-            .ok_or_else(|| RepositoryError::Unavailable {
-                message: "Session identity space is exhausted".to_owned(),
-            })?;
-        Ok(SessionId::new(next))
-    }
-
     #[cfg(test)]
     pub(super) fn root_path(&self) -> &std::path::Path {
         &self.root
     }
 
     fn session_path(&self, session_id: SessionId) -> PathBuf {
-        self.root.join(format!("{}.jsonl", session_id.get().get()))
+        let name = session_id
+            .legacy_value()
+            .map_or_else(|| session_id.to_string(), |legacy| legacy.get().to_string());
+        self.root.join(format!("{name}.jsonl"))
     }
 
     fn load_state(&self, session_id: SessionId) -> Result<SessionState, RepositoryError> {
@@ -196,6 +159,11 @@ impl SessionRepository for LocalSessionRepository {
         session_id: SessionId,
         record: DurableRecord,
     ) -> Result<AppendReceipt, AppendError> {
+        if session_id.as_uuid().is_none() {
+            return Err(AppendError::Repository(RepositoryError::Unavailable {
+                message: "legacy numeric Sessions are read-only".to_owned(),
+            }));
+        }
         self.ensure_session_state(session_id)?;
 
         let state = self

@@ -7,8 +7,15 @@ use crate::{ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionId, T
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 pub(super) struct WireTurnRef {
-    pub(super) session_id: u64,
+    pub(super) session_id: WireSessionId,
     pub(super) turn_id: u64,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(untagged)]
+pub(super) enum WireSessionId {
+    Uuid(uuid::Uuid),
+    Legacy(u64),
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
@@ -26,7 +33,7 @@ pub(super) struct WireActivityRequestRef {
 impl From<TurnRef> for WireTurnRef {
     fn from(turn: TurnRef) -> Self {
         Self {
-            session_id: turn.session_id().get().get(),
+            session_id: WireSessionId::from(turn.session_id()),
             turn_id: turn.turn_id().get().get(),
         }
     }
@@ -83,8 +90,29 @@ impl TryFrom<WireActivityRequestRef> for ActivityRequestRef {
     }
 }
 
-pub(super) fn session_id_from(value: u64, name: &str) -> Result<SessionId, JournalCodecError> {
-    Ok(SessionId::new(non_zero(value, name)?))
+impl From<SessionId> for WireSessionId {
+    fn from(value: SessionId) -> Self {
+        match value.as_uuid() {
+            Some(uuid) => Self::Uuid(uuid),
+            None => Self::Legacy(
+                value
+                    .legacy_value()
+                    .expect("a Session identity has one representation")
+                    .get(),
+            ),
+        }
+    }
+}
+
+pub(super) fn session_id_from(
+    value: WireSessionId,
+    name: &str,
+) -> Result<SessionId, JournalCodecError> {
+    match value {
+        WireSessionId::Uuid(uuid) => SessionId::from_uuid(uuid)
+            .map_err(|_| JournalCodecError::new(format!("{name} identity must be a UUIDv7"))),
+        WireSessionId::Legacy(value) => Ok(SessionId::from_legacy(non_zero(value, name)?)),
+    }
 }
 
 pub(super) fn request_id_from(value: u64) -> Result<RequestId, JournalCodecError> {

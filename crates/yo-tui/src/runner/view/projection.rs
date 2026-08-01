@@ -27,7 +27,7 @@ pub(super) fn request_text(records: &[TranscriptRecord], anchor: Option<usize>) 
             RequestUnavailableReason::RequestAuditDetailUnavailable.code(),
             index + 1,
             record_name(record),
-            request.activity().session_id().get().get(),
+            request.activity().session_id(),
             request.activity().turn_id().get().get(),
             request.activity().activity_id().get().get(),
             request.request_id().get().get(),
@@ -109,19 +109,19 @@ pub(super) fn format_record(index: usize, record: &TranscriptRecord) -> String {
     match record {
         TranscriptRecord::CommandCommitted(command) => match command {
             AgentCommand::CreateSession { session_id } => {
-                format!("{prefix}\nsession={}", session_id.get().get())
+                format!("{prefix}\nsession={session_id}")
             },
             AgentCommand::StartTurn { turn, input } | AgentCommand::SteerTurn { turn, input } => {
                 format!(
                     "{prefix}\nsession={} turn={}\ninput={:?}",
-                    turn.session_id().get().get(),
+                    turn.session_id(),
                     turn.turn_id().get().get(),
                     input.as_str()
                 )
             },
             AgentCommand::RespondToActivity { request, response } => format!(
                 "{prefix}\nsession={} turn={} activity={} request={}\nresponse={}",
-                request.activity().session_id().get().get(),
+                request.activity().session_id(),
                 request.activity().turn_id().get().get(),
                 request.activity().activity_id().get().get(),
                 request.request_id().get().get(),
@@ -129,43 +129,43 @@ pub(super) fn format_record(index: usize, record: &TranscriptRecord) -> String {
             ),
             AgentCommand::InterruptTurn { turn } => format!(
                 "{prefix}\nsession={} turn={}",
-                turn.session_id().get().get(),
+                turn.session_id(),
                 turn.turn_id().get().get()
             ),
         },
         TranscriptRecord::EventCommitted(event) => match event {
             AgentEvent::SessionCreated { session_id } => {
-                format!("{prefix}\nsession={}", session_id.get().get())
+                format!("{prefix}\nsession={session_id}")
             },
             AgentEvent::TurnStarted { turn } => format!(
                 "{prefix}\nsession={} turn={}",
-                turn.session_id().get().get(),
+                turn.session_id(),
                 turn.turn_id().get().get()
             ),
             AgentEvent::ActivityStarted { activity, kind } => format!(
                 "{prefix}\nsession={} turn={} activity={}\nkind={}",
-                activity.session_id().get().get(),
+                activity.session_id(),
                 activity.turn_id().get().get(),
                 activity.activity_id().get().get(),
                 activity_kind_name(*kind)
             ),
             AgentEvent::ActivityUpdated { activity, update } => format!(
                 "{prefix}\nsession={} turn={} activity={}\n{}",
-                activity.session_id().get().get(),
+                activity.session_id(),
                 activity.turn_id().get().get(),
                 activity.activity_id().get().get(),
                 update_text(update)
             ),
             AgentEvent::ActivityFinished { activity, outcome } => format!(
                 "{prefix}\nsession={} turn={} activity={}\noutcome={}",
-                activity.session_id().get().get(),
+                activity.session_id(),
                 activity.turn_id().get().get(),
                 activity.activity_id().get().get(),
                 activity_outcome_name(outcome)
             ),
             AgentEvent::TurnFinished { turn, outcome } => format!(
                 "{prefix}\nsession={} turn={}\noutcome={}",
-                turn.session_id().get().get(),
+                turn.session_id(),
                 turn.turn_id().get().get(),
                 turn_outcome_name(outcome)
             ),

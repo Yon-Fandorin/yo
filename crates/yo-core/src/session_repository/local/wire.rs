@@ -1,3 +1,5 @@
+use std::num::NonZeroU64;
+
 use serde::{Deserialize, Serialize};
 
 use super::super::{
@@ -6,7 +8,8 @@ use super::super::{
 use crate::{JournalSequence, SessionId};
 
 const LEGACY_SCHEMA: &str = "yo.session-record/v1";
-const SCHEMA: &str = "yo.session-record/v2";
+const PREVIOUS_SCHEMA: &str = "yo.session-record/v2";
+const SCHEMA: &str = "yo.session-record/v3";
 const CHECKSUM_SCHEMA: &str = "crc32c/v1";
 const CHECKSUM_DOMAIN: &[u8] = b"yo.session-record.checksum/v1";
 
@@ -14,7 +17,7 @@ const CHECKSUM_DOMAIN: &[u8] = b"yo.session-record.checksum/v1";
 #[serde(deny_unknown_fields)]
 pub(super) struct WireEntry {
     schema: String,
-    session_id: u64,
+    session_id: WireSessionId,
     sequence: u64,
     kind: WireRecordKind,
     payload: String,
@@ -38,6 +41,18 @@ enum WireRecordKind {
     Snapshot,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum WireSessionId {
+    Uuid(String),
+    Legacy(u64),
+}
+
+enum WireSessionIdBytes {
+    Legacy([u8; 8]),
+    Uuid([u8; 16]),
+}
+
 impl WireRecordKind {
     const fn tag(self) -> u8 {
         match self {
@@ -58,9 +73,10 @@ impl WireEntry {
             DurableRecordKind::Snapshot => WireRecordKind::Snapshot,
         };
         let journal_sequence = record.journal_cutoff().map(JournalSequence::get);
+        let session_id = WireSessionId::from_session(session_id);
         let checksum = checksum(
             SCHEMA,
-            session_id.get().get(),
+            session_id.bytes(),
             sequence.get(),
             kind,
             journal_sequence,
@@ -68,7 +84,7 @@ impl WireEntry {
         );
         Self {
             schema: SCHEMA.to_owned(),
-            session_id: session_id.get().get(),
+            session_id,
             sequence: sequence.get(),
             kind,
             payload: record.payload().to_owned(),
@@ -86,19 +102,19 @@ impl WireEntry {
         expected_sequence: u64,
         line: usize,
     ) -> Result<RepositoryEntry, RepositoryError> {
-        if self.schema != LEGACY_SCHEMA && self.schema != SCHEMA {
+        if self.schema != LEGACY_SCHEMA && self.schema != PREVIOUS_SCHEMA && self.schema != SCHEMA {
             return Err(corrupt(
                 line,
                 format!("unsupported schema {:?}", self.schema),
             ));
         }
-        if self.session_id != expected_session.get().get() {
+        let actual_session = self.session_id.to_session(&self.schema, line)?;
+        if actual_session != expected_session {
             return Err(corrupt(
                 line,
                 format!(
                     "expected Session {}, found {}",
-                    expected_session.get(),
-                    self.session_id
+                    expected_session, actual_session
                 ),
             ));
         }
@@ -147,7 +163,7 @@ impl WireEntry {
         }
         let expected = checksum(
             &self.schema,
-            self.session_id,
+            self.session_id.bytes(),
             self.sequence,
             self.kind,
             self.journal_sequence,
@@ -164,7 +180,7 @@ impl WireEntry {
 
 fn checksum(
     schema: &str,
-    session_id: u64,
+    session_id: WireSessionIdBytes,
     sequence: u64,
     kind: WireRecordKind,
     journal_sequence: Option<u64>,
@@ -179,7 +195,10 @@ fn checksum(
     );
     append_field(&mut preimage, CHECKSUM_DOMAIN);
     append_field(&mut preimage, schema.as_bytes());
-    append_field(&mut preimage, &session_id.to_be_bytes());
+    match session_id {
+        WireSessionIdBytes::Legacy(bytes) => append_field(&mut preimage, &bytes),
+        WireSessionIdBytes::Uuid(bytes) => append_field(&mut preimage, &bytes),
+    }
     append_field(&mut preimage, &sequence.to_be_bytes());
     append_field(&mut preimage, &[kind.tag()]);
     match journal_sequence {
@@ -191,6 +210,56 @@ fn checksum(
     }
     append_field(&mut preimage, payload);
     crc32c(&preimage)
+}
+
+impl WireSessionId {
+    fn from_session(session_id: SessionId) -> Self {
+        match session_id.as_uuid() {
+            Some(uuid) => Self::Uuid(uuid.to_string()),
+            None => Self::Legacy(
+                session_id
+                    .legacy_value()
+                    .expect("a Session identity has one representation")
+                    .get(),
+            ),
+        }
+    }
+
+    fn to_session(&self, schema: &str, line: usize) -> Result<SessionId, RepositoryError> {
+        match (schema, self) {
+            (SCHEMA, Self::Uuid(value)) => value.parse().map_err(|_| {
+                corrupt(
+                    line,
+                    "current Session record identity is not a UUIDv7".to_owned(),
+                )
+            }),
+            (LEGACY_SCHEMA | PREVIOUS_SCHEMA, Self::Legacy(value)) => NonZeroU64::new(*value)
+                .map(SessionId::from_legacy)
+                .ok_or_else(|| {
+                    corrupt(line, "legacy Session identity must be non-zero".to_owned())
+                }),
+            (SCHEMA, Self::Legacy(_)) => Err(corrupt(
+                line,
+                "current Session record cannot carry a numeric identity".to_owned(),
+            )),
+            (LEGACY_SCHEMA | PREVIOUS_SCHEMA, Self::Uuid(_)) => Err(corrupt(
+                line,
+                "legacy Session record cannot carry a UUID identity".to_owned(),
+            )),
+            _ => Err(corrupt(line, format!("unsupported schema {schema:?}"))),
+        }
+    }
+
+    fn bytes(&self) -> WireSessionIdBytes {
+        match self {
+            Self::Legacy(value) => WireSessionIdBytes::Legacy(value.to_be_bytes()),
+            Self::Uuid(value) => {
+                let uuid = uuid::Uuid::parse_str(value)
+                    .expect("new records are constructed from a validated UUID");
+                WireSessionIdBytes::Uuid(*uuid.as_bytes())
+            },
+        }
+    }
 }
 
 fn append_field(preimage: &mut Vec<u8>, bytes: &[u8]) {

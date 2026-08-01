@@ -182,7 +182,7 @@ impl SessionRepository for SharedRepository {
 }
 
 fn session(value: u64) -> SessionId {
-    SessionId::new(NonZeroU64::new(value).unwrap())
+    crate::fixture_session(value)
 }
 
 fn turn(session_id: SessionId, value: u64) -> TurnRef {

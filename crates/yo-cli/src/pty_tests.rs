@@ -20,7 +20,7 @@ use nix::{
     unistd::{Pid, setpgid},
 };
 use yo_core::{
-    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent, SessionId,
+    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent,
     TranscriptRecord, TurnId, TurnRef,
 };
 use yo_tui::{
@@ -66,7 +66,10 @@ struct RetainedChatAgent {
 
 impl RetainedChatAgent {
     fn new() -> Self {
-        let turn = TurnRef::new(id(SessionId::new), id(TurnId::new));
+        let session_id = "01890f00-0000-7000-8000-000000000001"
+            .parse()
+            .expect("the fixture is a UUIDv7");
+        let turn = TurnRef::new(session_id, id(TurnId::new));
         let activity = ActivityRef::new(turn, id(ActivityId::new));
         Self {
             records: [

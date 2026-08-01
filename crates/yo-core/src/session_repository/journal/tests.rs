@@ -87,7 +87,7 @@ impl SessionRepository for RecordingRepository {
 }
 
 fn session() -> SessionId {
-    SessionId::new(NonZeroU64::new(1).unwrap())
+    crate::fixture_session(1)
 }
 
 fn activity() -> ActivityRef {
@@ -414,7 +414,7 @@ fn replacement_snapshot_cannot_erase_an_open_durable_message() {
 // repository를 호출하기 전에 거부해 cross-Session replay authority를 만들지 않아야 한다.
 #[test]
 fn rejects_a_commit_for_a_different_physical_session() {
-    let other_session = SessionId::new(NonZeroU64::new(9).unwrap());
+    let other_session = crate::fixture_session(9);
     let mut repository = JournalRepository::new(RecordingRepository::default());
 
     let error = repository
@@ -463,7 +463,7 @@ fn recovery_diagnostics_include_the_physical_sequence() {
         ..RecordingRepository::default()
     };
     let repository = JournalRepository::new(repository);
-    let other_session = SessionId::new(NonZeroU64::new(9).unwrap());
+    let other_session = crate::fixture_session(9);
 
     let error = repository
         .recover(other_session)

@@ -1,5 +1,4 @@
 use std::{
-    num::NonZeroU64,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicU8, AtomicU64, Ordering},
@@ -75,11 +74,25 @@ impl AgentSession {
         let mut never_cancelled = || false;
         Ok(Self::start_inner(
             backend,
-            SessionId::new(NonZeroU64::MIN),
+            SessionId::new().map_err(AgentSessionError::SessionIdentityUnavailable)?,
             SessionJournal::new(),
             &mut never_cancelled,
         )?
         .expect("a callback that always returns false cannot cancel startup"))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn start_for_test<B>(
+        backend: B,
+        session_id: SessionId,
+    ) -> Result<Self, AgentSessionError>
+    where
+        B: AgentBackend + Send + 'static,
+    {
+        Ok(
+            Self::start_cancellable_with_id(backend, session_id, || false)?
+                .expect("a callback that always returns false cannot cancel startup"),
+        )
     }
 
     /// Starts a Session while allowing its frontend host to cancel the handshake.
@@ -95,7 +108,24 @@ impl AgentSession {
     {
         Self::start_inner(
             backend,
-            SessionId::new(NonZeroU64::MIN),
+            SessionId::new().map_err(AgentSessionError::SessionIdentityUnavailable)?,
+            SessionJournal::new(),
+            &mut is_cancelled,
+        )
+    }
+
+    /// Starts a non-persistent Session with an identity owned by the caller.
+    pub fn start_cancellable_with_id<B>(
+        backend: B,
+        session_id: SessionId,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<Self>, AgentSessionError>
+    where
+        B: AgentBackend + Send + 'static,
+    {
+        Self::start_inner(
+            backend,
+            session_id,
             SessionJournal::new(),
             &mut is_cancelled,
         )

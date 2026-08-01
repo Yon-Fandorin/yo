@@ -29,8 +29,15 @@ pub use journal::{
 };
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
 pub use session::{
-    ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionId, TurnId, TurnRef,
+    ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionId, SessionIdError,
+    SessionIdGenerationError, TurnId, TurnRef,
 };
+
+#[cfg(test)]
+pub(crate) fn fixture_session(value: u64) -> SessionId {
+    let uuid = uuid::Uuid::from_u128(0x0189_0f00_0000_7000_8000_0000_0000_0000 | u128::from(value));
+    SessionId::from_uuid(uuid).expect("the test Session fixture is a UUIDv7")
+}
 
 #[cfg(test)]
 mod tests;

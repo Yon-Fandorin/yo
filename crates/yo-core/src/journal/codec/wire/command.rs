@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     JournalCodecError,
-    identity::{WireActivityRequestRef, WireTurnRef, session_id_from},
+    identity::{WireActivityRequestRef, WireSessionId, WireTurnRef, session_id_from},
 };
 use crate::{
     ActivityRequestRef, ActivityResponse, AgentCommand, ApprovalDecision, TurnRef, UserInput,
@@ -12,7 +12,7 @@ use crate::{
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum WireCommand {
     CreateSession {
-        session_id: u64,
+        session_id: WireSessionId,
     },
     StartTurn {
         turn: WireTurnRef,
@@ -49,7 +49,7 @@ impl From<&AgentCommand> for WireCommand {
     fn from(command: &AgentCommand) -> Self {
         match command {
             AgentCommand::CreateSession { session_id } => Self::CreateSession {
-                session_id: session_id.get().get(),
+                session_id: WireSessionId::from(*session_id),
             },
             AgentCommand::StartTurn { turn, input } => Self::StartTurn {
                 turn: WireTurnRef::from(*turn),

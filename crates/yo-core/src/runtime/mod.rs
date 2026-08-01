@@ -148,7 +148,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 );
                 let terminal_events = self.fail_active_turn(&failure);
                 Err(RuntimeError::EventRejected {
-                    event,
+                    event: Box::new(event),
                     rejection,
                     terminal_events,
                 })

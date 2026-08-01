@@ -22,12 +22,13 @@ impl TuiAgentConnection {
     #[cfg(test)]
     pub(crate) fn start<B>(
         backend: B,
+        session_id: SessionId,
         termination: &mut impl TerminationSource,
     ) -> Result<Option<Self>, AgentSessionError>
     where
         B: AgentBackend + Send + 'static,
     {
-        AgentSession::start_cancellable(backend, || {
+        AgentSession::start_cancellable_with_id(backend, session_id, || {
             termination.poll_termination() == TerminationEvent::Requested
         })
         .map(|session| {

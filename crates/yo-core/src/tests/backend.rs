@@ -11,7 +11,7 @@ fn id(value: u64) -> NonZeroU64 {
 }
 
 fn references() -> (SessionId, TurnRef, ActivityRef) {
-    let session_id = SessionId::new(id(1));
+    let session_id = crate::fixture_session(1);
     let turn = TurnRef::new(session_id, TurnId::new(id(1)));
     let activity = ActivityRef::new(turn, ActivityId::new(id(1)));
     (session_id, turn, activity)

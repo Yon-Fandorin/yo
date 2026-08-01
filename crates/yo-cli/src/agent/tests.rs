@@ -103,7 +103,9 @@ impl TerminationSource for NeverTerminated {
 }
 
 fn session_id() -> SessionId {
-    SessionId::new(NonZeroU64::MIN)
+    "01890f00-0000-7000-8000-000000000001"
+        .parse()
+        .expect("the fixture is a UUIDv7")
 }
 
 fn turn() -> TurnRef {
@@ -159,7 +161,7 @@ fn exposes_committed_commands_and_events_in_journal_order() {
         BackendScriptStep::Shutdown(Ok(())),
     ]);
     let mut termination = NeverTerminated;
-    let mut connection = TuiAgentConnection::start(backend, &mut termination)
+    let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
         .unwrap()
         .unwrap();
 
@@ -373,9 +375,10 @@ fn drains_more_than_one_bounded_page_from_one_coalesced_wake() {
     script.push(BackendScriptStep::Shutdown(Ok(())));
 
     let mut termination = NeverTerminated;
-    let mut connection = TuiAgentConnection::start(ScriptedBackend::new(script), &mut termination)
-        .unwrap()
-        .unwrap();
+    let mut connection =
+        TuiAgentConnection::start(ScriptedBackend::new(script), session_id(), &mut termination)
+            .unwrap()
+            .unwrap();
     connection
         .dispatch(AgentIntent::Submit("inspect".to_owned()))
         .unwrap();
@@ -430,7 +433,7 @@ fn drains_committed_failure_record_before_reporting_connection_failure() {
         BackendScriptStep::Shutdown(Ok(())),
     ]);
     let mut termination = NeverTerminated;
-    let mut connection = TuiAgentConnection::start(backend, &mut termination)
+    let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
         .unwrap()
         .unwrap();
     connection
@@ -488,7 +491,7 @@ fn drains_cleanup_record_before_reporting_command_failure() {
     ])
     .with_capabilities(BackendCapabilities::none().with_steer());
     let mut termination = NeverTerminated;
-    let mut connection = TuiAgentConnection::start(backend, &mut termination)
+    let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
         .unwrap()
         .unwrap();
     connection

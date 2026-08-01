@@ -10,7 +10,7 @@ pub enum RuntimeError {
         terminal_events: Vec<AgentEvent>,
     },
     EventRejected {
-        event: BackendEvent,
+        event: Box<BackendEvent>,
         rejection: AgentRejection,
         terminal_events: Vec<AgentEvent>,
     },

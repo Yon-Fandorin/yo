@@ -6,13 +6,13 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, AgentCommand, AgentEvent,
-    JournalSequence, SessionId, TurnId, TurnRef, UserInput,
+    JournalSequence, TurnId, TurnRef, UserInput,
 };
 
 mod wire_compatibility;
 
 fn activity() -> ActivityRef {
-    let session_id = SessionId::new(NonZeroU64::new(1).unwrap());
+    let session_id = crate::fixture_session(1);
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
     ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(3).unwrap()))
 }
@@ -146,7 +146,7 @@ fn rejects_a_snapshot_that_does_not_begin_with_the_complete_journal() {
 #[test]
 fn rejects_records_from_different_sessions_in_one_commit() {
     let first = activity().session_id();
-    let second = SessionId::new(NonZeroU64::new(9).unwrap());
+    let second = crate::fixture_session(9);
     let commit = JournalCommit::incremental(sequenced(
         1,
         [

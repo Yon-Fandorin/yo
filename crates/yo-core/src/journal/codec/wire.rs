@@ -16,7 +16,8 @@ use super::{
 };
 use crate::{AgentCommand, AgentEvent, JournalSequence};
 
-const SCHEMA: &str = "yo.semantic-journal-commit/v2";
+const SCHEMA: &str = "yo.semantic-journal-commit/v3";
+const PREVIOUS_SCHEMA: &str = "yo.semantic-journal-commit/v2";
 const LEGACY_SCHEMA: &str = "yo.semantic-journal-commit/v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -121,6 +122,14 @@ impl WireRecord {
 
 pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError> {
     validate_commit(commit)?;
+    if commit
+        .session_id()
+        .is_some_and(|session| session.as_uuid().is_none())
+    {
+        return Err(JournalCodecError::new(
+            "legacy numeric Sessions are read-only and cannot produce a new Journal commit",
+        ));
+    }
     let first_sequence = commit
         .records()
         .first()
@@ -149,9 +158,10 @@ pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError
 pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> {
     let mut wire: WireCommit = serde_json::from_str(payload)
         .map_err(|error| JournalCodecError::new(format!("invalid Journal commit JSON: {error}")))?;
-    let legacy = match wire.schema.as_str() {
-        SCHEMA => false,
-        LEGACY_SCHEMA => true,
+    let schema = match wire.schema.as_str() {
+        SCHEMA => WireSchema::Current,
+        PREVIOUS_SCHEMA => WireSchema::Previous,
+        LEGACY_SCHEMA => WireSchema::Legacy,
         _ => {
             return Err(JournalCodecError::new(format!(
                 "unsupported Journal commit schema {:?}",
@@ -159,7 +169,7 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
             )));
         },
     };
-    if legacy {
+    if schema == WireSchema::Legacy {
         if wire.journal_cutoff.is_some() {
             return Err(JournalCodecError::new(
                 "legacy Journal commit must not declare a semantic cutoff",
@@ -206,11 +216,31 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
             JournalCommit::snapshot_through(JournalSequence::new(journal_cutoff), records)
         },
     };
-    if legacy {
+    let Some(session_id) = commit.session_id() else {
+        return Err(JournalCodecError::new(
+            "a semantic commit must contain at least one Journal record",
+        ));
+    };
+    if (schema == WireSchema::Current) != session_id.as_uuid().is_some() {
+        return Err(JournalCodecError::new(match schema {
+            WireSchema::Current => "current Journal commits must carry UUIDv7 Session identities",
+            WireSchema::Previous | WireSchema::Legacy => {
+                "legacy Journal commits must carry numeric Session identities"
+            },
+        }));
+    }
+    if schema == WireSchema::Legacy {
         commit = commit.into_legacy_v1();
     }
     validate_commit(&commit)?;
     Ok(commit)
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum WireSchema {
+    Current,
+    Previous,
+    Legacy,
 }
 
 fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
