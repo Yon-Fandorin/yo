@@ -1,14 +1,23 @@
 mod file;
+mod reader;
 mod wire;
 
-use std::{collections::HashMap, fs, path::PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    path::PathBuf,
+    str::FromStr,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use file::{WriterLock, append_line, prepare_root, scan_entries};
+use reader::{open_existing_root, read_snapshot_entries, read_tail_discovery};
 use wire::WireEntry;
 
 use super::{
     AppendError, AppendReceipt, DurableCutoff, DurableRecord, DurableRecordKind, RepositoryEntry,
     RepositoryError, RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
+    StoredSession, StoredSessionReader, StoredSessionSummary, StoredSessionUnavailableReason,
 };
 use crate::{JournalSequence, SessionId};
 
@@ -27,6 +36,125 @@ pub struct LocalSessionRepository {
     capacity_bytes: u64,
     sessions: HashMap<SessionId, SessionState>,
     _writer_lock: WriterLock,
+}
+
+#[derive(Debug)]
+pub struct LocalSessionReader {
+    root: PathBuf,
+}
+
+impl LocalSessionReader {
+    pub fn open(root: impl Into<PathBuf>) -> Result<Self, RepositoryError> {
+        Ok(Self {
+            root: open_existing_root(&root.into())?,
+        })
+    }
+
+    fn session_path(&self, session_id: SessionId) -> PathBuf {
+        self.root.join(format!("{session_id}.jsonl"))
+    }
+}
+
+impl StoredSessionReader for LocalSessionReader {
+    fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError> {
+        let mut sessions = Vec::new();
+        for entry in fs::read_dir(&self.root)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path
+                .extension()
+                .is_none_or(|extension| extension != "jsonl")
+            {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            let Ok(session_id) = SessionId::from_str(stem) else {
+                continue;
+            };
+            match read_tail_discovery(&self.root, &path, session_id) {
+                Ok(Some((sequence, version, discovery))) => {
+                    sessions.push(StoredSession::Available(StoredSessionSummary::new(
+                        sequence, version, discovery,
+                    )))
+                },
+                Ok(None) => sessions.push(StoredSession::Unavailable {
+                    session_id,
+                    reason: StoredSessionUnavailableReason::NoCompleteEnvelope,
+                }),
+                Err(RepositoryError::Quarantined { message }) => {
+                    sessions.push(StoredSession::Unavailable {
+                        session_id,
+                        reason: StoredSessionUnavailableReason::Quarantined { message },
+                    });
+                },
+                Err(RepositoryError::UnsupportedSchema { schema }) => {
+                    sessions.push(StoredSession::Unavailable {
+                        session_id,
+                        reason: StoredSessionUnavailableReason::UnsupportedSchema { schema },
+                    });
+                },
+                Err(
+                    error @ (RepositoryError::CorruptLog { .. }
+                    | RepositoryError::CorruptTail { .. }),
+                ) => {
+                    sessions.push(StoredSession::Unavailable {
+                        session_id,
+                        reason: StoredSessionUnavailableReason::Corrupt {
+                            message: error.to_string(),
+                        },
+                    });
+                },
+                Err(error @ RepositoryError::Unavailable { .. }) => {
+                    sessions.push(StoredSession::Unavailable {
+                        session_id,
+                        reason: StoredSessionUnavailableReason::Unreadable {
+                            message: error.to_string(),
+                        },
+                    });
+                },
+            }
+        }
+        sessions.sort_by(|left, right| match (left.summary(), right.summary()) {
+            (Some(left), Some(right)) => right
+                .discovery()
+                .updated_unix_millis()
+                .cmp(&left.discovery().updated_unix_millis())
+                .then_with(|| {
+                    right
+                        .discovery()
+                        .descriptor()
+                        .started_at()
+                        .cmp(&left.discovery().descriptor().started_at())
+                })
+                .then_with(|| {
+                    left.discovery()
+                        .descriptor()
+                        .session_id()
+                        .cmp(&right.discovery().descriptor().session_id())
+                }),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => left.session_id().cmp(&right.session_id()),
+        });
+        Ok(sessions)
+    }
+
+    fn read_after(
+        &self,
+        session_id: SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        read_snapshot_entries(
+            &self.root,
+            &self.session_path(session_id),
+            session_id,
+            sequence.map_or(0, RepositorySequence::get),
+            limit,
+        )
+    }
 }
 
 impl LocalSessionRepository {
@@ -85,7 +213,9 @@ impl LocalSessionRepository {
                 self.sessions.insert(session_id, state);
                 Ok(())
             },
-            Err(error @ RepositoryError::Unavailable { .. }) => {
+            Err(
+                error @ (RepositoryError::Unavailable { .. } | RepositoryError::Quarantined { .. }),
+            ) => {
                 let state = self.sessions.entry(session_id).or_default();
                 state.snapshot_required = true;
                 state.reload_required = true;
@@ -101,7 +231,11 @@ impl LocalSessionRepository {
                     source: Some(error),
                 })
             },
-            Err(error @ RepositoryError::CorruptLog { .. }) => Err(AppendError::Repository(error)),
+            Err(
+                error @ (RepositoryError::CorruptLog { .. }
+                | RepositoryError::CorruptTail { .. }
+                | RepositoryError::UnsupportedSchema { .. }),
+            ) => Err(AppendError::Repository(error)),
         }
     }
 
@@ -196,7 +330,12 @@ impl SessionRepository for LocalSessionRepository {
                     Some(error),
                 ));
             },
-            Err(error @ RepositoryError::CorruptLog { .. }) => {
+            Err(
+                error @ (RepositoryError::Quarantined { .. }
+                | RepositoryError::UnsupportedSchema { .. }
+                | RepositoryError::CorruptLog { .. }
+                | RepositoryError::CorruptTail { .. }),
+            ) => {
                 return Err(AppendError::Repository(error));
             },
         };
@@ -207,7 +346,18 @@ impl SessionRepository for LocalSessionRepository {
             return Err(self.mark_pressure(session_id, StoragePressureCause::Capacity, None));
         }
 
-        let wire = WireEntry::from_record(session_id, sequence, &record);
+        let updated_unix_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| {
+                AppendError::Repository(RepositoryError::Unavailable {
+                    message: format!("failed to timestamp a Session record: {error}"),
+                })
+            })?
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let wire = WireEntry::from_record(session_id, sequence, &record, updated_unix_millis)
+            .map_err(AppendError::Repository)?;
         let mut encoded = serde_json::to_vec(&wire).map_err(|error| {
             AppendError::Repository(RepositoryError::Unavailable {
                 message: format!("failed to encode a Session record: {error}"),

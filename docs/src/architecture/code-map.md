@@ -61,7 +61,7 @@ new shared capability.
 | [`host`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/host/mod.rs) | An opaque random UUIDv4 `WorkspaceHostId`, its atomically created permission-restricted local per-user identity file, and the producing Host's lossless canonical workspace-path value | Remote Host transport and workspace comparison by matching Host identity |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | Deterministic Session, Turn, Activity, and request state transitions | `runtime` when a transition also crosses a provider boundary |
 | [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | One ordered live projection of committed commands and semantic events; bounded sequence-based Transcript reads; synchronous durable publication, typed gap state, bounded revision-aware `MessageSegment` construction, and recovery validation | `runtime` for the capture point; `session_repository` for physical durability |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append and suffix-read contract, snapshot recovery gate, typed storage pressure, and the first single-writer local versioned-JSONL implementation with UUIDv7 filenames; before the first release, the checksummed UUIDv7 envelope is the sole `v1` baseline and development-only predecessor formats are unsupported; `JournalRepository` validates a candidate against the durable semantic prefix and composes one semantic commit with one physical append | Stored-Session discovery, remote storage or transport, Request Audit persistence, and database or compression alternatives |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append, replay, and stored-Session discovery ports; snapshot recovery gate; typed storage pressure; and the first single-writer local versioned-JSONL implementation. Every current physical `v1` envelope carries a checksummed discovery summary. `LocalSessionReader` opens existing storage without a writer lease or mutation, lists from one validated tail envelope per Session, and reports typed quarantine, corruption, unsupported-schema, and missing-envelope outcomes without aborting the whole list. Shared streaming validation keeps read-only history and writer recovery on the same sequence rules; the local `reader` and `file` modules separate observation from mutation. `JournalRepository` validates a candidate against the durable semantic prefix and composes one semantic commit with one physical append | CLI list/history presentation, executable continuation, remote storage or transport, Request Audit persistence, and database or compression alternatives |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | Ordering backend acceptance, semantic commit, and Journal capture; translating backend observations; closing active work on failure | `backend/contract.rs` for the provider port |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | Nonblocking frontend access, bounded command lanes, a capacity-one Journal-change notification, worker ownership, startup cancellation, and shutdown coordination | `runtime` for worker-owned semantics |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | Provider capabilities, commands, semantic events, polling, cancellation, failure kinds, and explicit cleanup | A concrete adapter |
@@ -88,7 +88,9 @@ The descriptor consumes replay sequence 1 without inventing a semantic
 `JournalSequence`; its own first physical envelope therefore has no semantic
 cutoff. `JournalRepository`
 validates new suffixes incrementally against its recovered state before mapping
-them to the local repository instead of re-reading the JSONL log per append. A live writer that
+them to the local repository instead of re-reading the JSONL log per append. It also derives the
+descriptor carried by every physical discovery summary from that validated semantic prefix; the
+local writer adds `updated_unix_millis` immediately before the same checksummed append. A live writer that
 observed its own storage-pressure failure may complete the retained prefix in
 one snapshot; after reopen, a replacement snapshot must also retain required
 recovery seals.
@@ -101,8 +103,10 @@ creates a `SessionDescriptor` from one UUIDv7 clock reading.
 identity. The worker attempts the descriptor as the first Journal envelope
 before backend `CreateSession`; if that append is unavailable, later activity
 remains memory-only until one complete snapshot can publish the descriptor and
-semantic prefix together. Stored-Session listing and bounded discovery summaries
-remain follow-up boundaries.
+semantic prefix together. The storage-neutral `StoredSessionReader` now provides
+bounded discovery, typed continuation eligibility, and durable history replay.
+Unsupported schemas remain inspectable as unknown while quarantine and supported
+records without an Anchor are unavailable; no CLI command consumes the port yet.
 
 `yo-core` is still a `0.0.0` internal Pilot API. This Slice deliberately makes
 persistent startup require a complete `SessionDescriptor` instead of a bare
@@ -134,8 +138,9 @@ observable plan or reasoning summary, follows the same durable message path.
 Hidden model reasoning yo never receives and unadmitted backend-specific
 Request Audit payloads remain outside that semantic path.
 Remote storage, Request Audit persistence, database or compression choices,
-and a durable transport remain outside this path. Extract a local/remote
-reader interface only when a real remote reader exists.
+and a durable transport remain outside this path. `StoredSessionReader` is the
+Session-specific read port, not a claimed common local/remote implementation;
+extract transport-sharing machinery only when a real remote reader exists.
 
 ## yo-tui: terminal frontend
 

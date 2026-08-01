@@ -221,15 +221,27 @@ JournalRepository
     ↓ validate with durable semantic prefix
     ↓ one physical append
 SessionRepository
-    ↓
-single-writer versioned JSONL
+    ↓ add writer timestamp; checksum payload + complete discovery summary
+single-writer versioned JSONL physical v1
 
 versioned JSONL
     ↓ bounded suffix read + semantic decode
 Journal recovery
     ↓
 RecoveredJournal or an explicit recovery error
+
+existing repository root
+    ↓ LocalSessionReader (no create, repair, or writer lease)
+last complete envelope of each Session
+    ↓ validate closed v1 shape + CRC32C
+available discovery summary or typed per-Session unavailability
 ```
+
+The reader classifies quarantine, corruption, unsupported schema, and a missing
+complete envelope without parsing diagnostic strings. A supported summary with
+no Continuation Anchor is `unavailable`; an unsupported schema is `unknown`.
+An inherited pending marker blocks a successor writer, so only the writer that
+created an in-flight marker can make its pre-append cutoff visible.
 
 Before the backend receives `CreateSession`, the worker attempts one
 descriptor-only incremental envelope containing the UUIDv7 Session identity,
@@ -266,9 +278,10 @@ The CLI enables the local repository by default. `YO_SESSION_REPOSITORY`
 overrides its root and `YO_SESSION_CAPACITY_BYTES` overrides the 1 GiB ceiling.
 Linux otherwise uses `$XDG_STATE_HOME/yo/sessions` or
 `$HOME/.local/state/yo/sessions`; macOS uses
-`$HOME/Library/Application Support/yo/sessions`. This composition does not yet
-add stored-Session opening, remote storage, Request Audit persistence, database
-or compression backends, or a durable transport.
+`$HOME/Library/Application Support/yo/sessions`. The read port exists, but this
+composition does not yet add CLI stored-Session opening, executable continuation,
+remote storage, Request Audit persistence, database or compression backends, or
+a durable transport.
 
 ## Suspend and resume
 

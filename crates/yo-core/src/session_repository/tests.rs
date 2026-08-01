@@ -1,13 +1,15 @@
 use std::{
     fs::{self, OpenOptions},
+    io::Write,
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use super::{
-    AppendError, DurableCutoff, DurableRecord, DurableRecordKind, LocalSessionRepository,
-    RepositorySequence, SessionRepository, StoragePressureCause,
+    AppendError, ContinuationEligibility, DurableCutoff, DurableRecord, DurableRecordKind,
+    LocalSessionReader, LocalSessionRepository, RecordDiscovery, RepositorySequence,
+    SessionRepository, StoragePressureCause, StoredSessionReader, StoredSessionUnavailableReason,
 };
 use crate::{JournalSequence, SessionId};
 
@@ -46,6 +48,10 @@ fn log_path(root: &std::path::Path, session_id: SessionId) -> PathBuf {
     root.join(format!("{session_id}.jsonl"))
 }
 
+fn discovered(session_id: SessionId, record: DurableRecord) -> DurableRecord {
+    record.with_discovery(RecordDiscovery::new(crate::fixture_descriptor(session_id)))
+}
+
 // 재실행하면 기존 기록을 읽되 먼저 완전한 snapshot을 요구하고 다음 번호부터 이어 쓰는지 검증합니다.
 #[test]
 fn reopens_and_replays_an_ordered_session_log() {
@@ -55,10 +61,16 @@ fn reopens_and_replays_an_ordered_session_log() {
         let mut repository =
             LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
         let first = repository
-            .append(session_id, DurableRecord::incremental("first"))
+            .append(
+                session_id,
+                discovered(session_id, DurableRecord::incremental("first")),
+            )
             .expect("first append succeeds");
         let second = repository
-            .append(session_id, DurableRecord::incremental("second"))
+            .append(
+                session_id,
+                discovered(session_id, DurableRecord::incremental("second")),
+            )
             .expect("second append succeeds");
         assert_eq!(first.sequence().get(), 1);
         assert_eq!(second.sequence().get(), 2);
@@ -69,12 +81,18 @@ fn reopens_and_replays_an_ordered_session_log() {
     assert!(matches!(
         repository.append(
             session_id,
-            DurableRecord::incremental("unsafe continuation")
+            discovered(
+                session_id,
+                DurableRecord::incremental("unsafe continuation")
+            )
         ),
         Err(AppendError::SnapshotRequired { .. })
     ));
     let third = repository
-        .append(session_id, DurableRecord::snapshot("complete state"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("complete state")),
+        )
         .expect("snapshot after reopen succeeds");
     let entries = repository
         .read_after(session_id, Some(RepositorySequence::new(1)), 8)
@@ -92,14 +110,20 @@ fn capacity_pressure_preserves_the_durable_prefix() {
     let directory = TestDirectory::new("capacity");
     let session_id = session(8);
     let mut repository =
-        LocalSessionRepository::open(directory.path(), 320).expect("repository opens");
+        LocalSessionRepository::open(directory.path(), 2_048).expect("repository opens");
     repository
-        .append(session_id, DurableRecord::incremental("small"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("small")),
+        )
         .expect("the first record fits");
     let before = fs::read(log_path(directory.path(), session_id)).expect("log exists");
 
     let error = repository
-        .append(session_id, DurableRecord::incremental("x".repeat(256)))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("x".repeat(4_096))),
+        )
         .expect_err("the second record exceeds capacity");
     let pressure = error
         .storage_pressure()
@@ -128,7 +152,10 @@ fn reports_a_known_empty_cutoff_before_the_first_record() {
         LocalSessionRepository::open(directory.path(), 0).expect("repository opens");
 
     let error = repository
-        .append(session(20), DurableRecord::incremental("record"))
+        .append(
+            session(20),
+            discovered(session(20), DurableRecord::incremental("record")),
+        )
         .expect_err("zero capacity prevents the first record");
     let pressure = error
         .storage_pressure()
@@ -148,12 +175,18 @@ fn reports_independent_journal_and_repository_cutoffs() {
     repository
         .append(
             session_id,
-            DurableRecord::incremental("semantic")
-                .with_journal_cutoff(Some(JournalSequence::new(5))),
+            discovered(
+                session_id,
+                DurableRecord::incremental("semantic")
+                    .with_journal_cutoff(Some(JournalSequence::new(5))),
+            ),
         )
         .expect("semantic record is durable");
     repository
-        .append(session_id, DurableRecord::incremental("opaque audit"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("opaque audit")),
+        )
         .expect("non-Journal record shares the physical log");
     let used = fs::metadata(log_path(directory.path(), session_id))
         .expect("log exists")
@@ -161,7 +194,10 @@ fn reports_independent_journal_and_repository_cutoffs() {
     repository.set_capacity_bytes(used);
 
     let error = repository
-        .append(session_id, DurableRecord::incremental("later"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("later")),
+        )
         .expect_err("no capacity remains");
     let pressure = error
         .storage_pressure()
@@ -182,25 +218,40 @@ fn requires_a_snapshot_after_storage_pressure() {
     let directory = TestDirectory::new("snapshot-gate");
     let session_id = session(9);
     let mut repository =
-        LocalSessionRepository::open(directory.path(), 320).expect("repository opens");
+        LocalSessionRepository::open(directory.path(), 2_048).expect("repository opens");
     repository
-        .append(session_id, DurableRecord::incremental("prefix"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("prefix")),
+        )
         .expect("the prefix fits");
     repository
-        .append(session_id, DurableRecord::incremental("x".repeat(256)))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("x".repeat(4_096))),
+        )
         .expect_err("the oversized record creates a gap");
 
     assert!(matches!(
-        repository.append(session_id, DurableRecord::incremental("later")),
+        repository.append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("later"))
+        ),
         Err(AppendError::SnapshotRequired { .. })
     ));
 
     repository.set_capacity_bytes(32_768);
     let snapshot = repository
-        .append(session_id, DurableRecord::snapshot("complete state"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("complete state")),
+        )
         .expect("a complete snapshot closes the gap");
     let later = repository
-        .append(session_id, DurableRecord::incremental("later"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("later")),
+        )
         .expect("incremental persistence resumes after the snapshot");
 
     assert_eq!(snapshot.sequence().get(), 2);
@@ -216,7 +267,10 @@ fn repairs_an_incomplete_final_line_before_appending() {
         let mut repository =
             LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
         repository
-            .append(session_id, DurableRecord::incremental("durable"))
+            .append(
+                session_id,
+                discovered(session_id, DurableRecord::incremental("durable")),
+            )
             .expect("the durable record is written");
     }
     let path = log_path(directory.path(), session_id);
@@ -231,7 +285,10 @@ fn repairs_an_incomplete_final_line_before_appending() {
     let mut repository =
         LocalSessionRepository::open(directory.path(), 32_768).expect("repository reopens");
     repository
-        .append(session_id, DurableRecord::snapshot("after recovery"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("after recovery")),
+        )
         .expect("snapshot repairs the partial tail");
     let entries = repository
         .read_after(session_id, None, 8)
@@ -250,7 +307,10 @@ fn read_only_replay_does_not_repair_the_physical_file() {
         let mut repository =
             LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
         repository
-            .append(session_id, DurableRecord::incremental("durable"))
+            .append(
+                session_id,
+                discovered(session_id, DurableRecord::incremental("durable")),
+            )
             .expect("the durable record is written");
     }
     let path = log_path(directory.path(), session_id);
@@ -304,7 +364,10 @@ fn classifies_filesystem_append_failures_as_storage_pressure() {
         LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
 
     let error = repository
-        .append(session_id, DurableRecord::incremental("record"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("record")),
+        )
         .expect_err("the conflicting path prevents append");
     let pressure = error
         .storage_pressure()
@@ -340,7 +403,10 @@ fn retries_session_state_after_a_transient_load_failure() {
         let mut repository =
             LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
         repository
-            .append(session_id, DurableRecord::incremental("existing"))
+            .append(
+                session_id,
+                discovered(session_id, DurableRecord::incremental("existing")),
+            )
             .expect("existing record is written");
     }
     let path = log_path(directory.path(), session_id);
@@ -349,19 +415,28 @@ fn retries_session_state_after_a_transient_load_failure() {
     let mut repository =
         LocalSessionRepository::open(directory.path(), 32_768).expect("repository root opens");
     repository
-        .append(session_id, DurableRecord::snapshot("unsafe"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("unsafe")),
+        )
         .expect_err("the first load is unavailable");
 
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
         .expect("fixture becomes readable again");
     assert!(matches!(
-        repository.append(session_id, DurableRecord::incremental("later")),
+        repository.append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("later"))
+        ),
         Err(AppendError::SnapshotRequired {
             durable_cutoff: DurableCutoff::Known { .. }
         })
     ));
     let receipt = repository
-        .append(session_id, DurableRecord::snapshot("complete state"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("complete state")),
+        )
         .expect("the retried load preserves the existing cutoff");
 
     assert_eq!(receipt.sequence().get(), 2);
@@ -379,24 +454,33 @@ fn requires_a_snapshot_after_an_initial_load_failure_recovers_to_an_empty_log() 
         LocalSessionRepository::open(directory.path(), 32_768).expect("repository root opens");
 
     repository
-        .append(session_id, DurableRecord::incremental("not durable"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("not durable")),
+        )
         .expect_err("the first load is unavailable");
     fs::remove_dir(&path).expect("the transient conflict is removed");
 
     assert!(matches!(
-        repository.append(session_id, DurableRecord::incremental("later")),
+        repository.append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("later"))
+        ),
         Err(AppendError::SnapshotRequired {
             durable_cutoff: DurableCutoff::KnownEmpty
         })
     ));
     let receipt = repository
-        .append(session_id, DurableRecord::snapshot("complete state"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("complete state")),
+        )
         .expect("a complete snapshot restarts durable history");
     assert_eq!(receipt.sequence().get(), 1);
 }
 
 // append 도중 rollback을 확인할 수 없다는 pending marker가 남으면 완결된 JSONL 줄도
-// committed 기록으로 재생하지 않고 해당 세션 로그를 격리하는지 검증합니다.
+// committed 기록으로 재생하지 않고 reader와 후속 writer가 모두 격리하는지 검증합니다.
 #[test]
 fn quarantines_a_complete_line_when_an_append_marker_remains() {
     let directory = TestDirectory::new("pending-append");
@@ -406,34 +490,28 @@ fn quarantines_a_complete_line_when_an_append_marker_remains() {
         let mut repository =
             LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
         repository
-            .append(session_id, DurableRecord::incremental("uncertain"))
+            .append(
+                session_id,
+                discovered(session_id, DurableRecord::incremental("uncertain")),
+            )
             .expect("a complete v1 line is written");
     }
     let pending = path.with_extension("jsonl.pending");
     fs::write(&pending, b"pending\n").expect("the durable pending marker is written");
     fs::set_permissions(&pending, fs::Permissions::from_mode(0o600))
         .expect("marker permissions are restricted");
-    let mut repository =
-        LocalSessionRepository::open(directory.path(), 32_768).expect("repository root opens");
-
-    let read_error = repository
+    let reader = LocalSessionReader::open(directory.path()).expect("read-only root opens");
+    let read_error = reader
         .read_after(session_id, None, 8)
         .expect_err("an ambiguous complete line must not be replayed");
-    assert!(read_error.to_string().contains("quarantined"));
+    assert!(matches!(
+        read_error,
+        crate::session_repository::RepositoryError::Quarantined { .. }
+    ));
 
-    let append_error = repository
-        .append(session_id, DurableRecord::snapshot("replacement"))
-        .expect_err("a quarantined log must not accept another append");
-    assert_eq!(
-        append_error
-            .storage_pressure()
-            .map(|pressure| pressure.cause()),
-        Some(StoragePressureCause::Storage)
-    );
-    assert!(
-        std::error::Error::source(&append_error)
-            .is_some_and(|source| source.to_string().contains("quarantined"))
-    );
+    let open_error = LocalSessionRepository::open(directory.path(), 32_768)
+        .expect_err("a successor writer must not adopt an abandoned marker");
+    assert!(open_error.to_string().contains("unfinished append marker"));
 }
 
 // `..`가 포함된 입력 경로도 open 시점에 절대 경로로 고정해 이후 현재 디렉터리 변화가
@@ -471,7 +549,10 @@ fn rejects_a_symbolic_link_at_a_session_log_path() {
         LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
 
     let error = repository
-        .append(session_id, DurableRecord::incremental("record"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::incremental("record")),
+        )
         .expect_err("the symlink must not be followed");
 
     assert_eq!(
@@ -492,7 +573,10 @@ fn restricts_repository_permissions_to_the_current_user() {
     let mut repository =
         LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
     repository
-        .append(session_id, DurableRecord::snapshot("state"))
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("state")),
+        )
         .expect("record is written");
 
     let directory_mode = fs::metadata(directory.path())
@@ -510,125 +594,4 @@ fn restricts_repository_permissions_to_the_current_user() {
     assert_eq!(file_mode, 0o600);
 }
 
-// v1 와이어 형식이 버전, 세션, 순번, 종류와 독립 계산한 고정 checksum 답안을 남겨
-// 향후 구현 변경이 같은 코드로 기대값까지 다시 계산해 오류를 숨기지 않게 합니다.
-#[test]
-fn writes_an_explicit_versioned_jsonl_envelope() {
-    let directory = TestDirectory::new("wire");
-    let session_id = session(12);
-    let mut repository =
-        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
-    repository
-        .append(session_id, DurableRecord::snapshot("state"))
-        .expect("record is written");
-
-    let contents =
-        fs::read_to_string(log_path(directory.path(), session_id)).expect("log is readable");
-    let value: serde_json::Value = serde_json::from_str(contents.trim()).expect("valid JSON");
-
-    assert_eq!(value["schema"], "yo.session-record/v1");
-    assert_eq!(value["session_id"], session_id.to_string());
-    assert_eq!(value["sequence"], 1);
-    assert_eq!(value["kind"], "snapshot");
-    assert_eq!(value["payload"], "state");
-    assert_eq!(value["checksum"]["schema"], "crc32c/v1");
-    assert_eq!(value["checksum"]["value"], "a5f55567");
-}
-
-// v2와 v3는 공개 호환 형식이 아니라 개발 중간 산출물이므로 새 v1 reader가 이력을
-// 암묵적으로 떠안지 않고 unsupported schema로 거부해야 합니다.
-#[test]
-fn rejects_pre_release_session_record_versions() {
-    let directory = TestDirectory::new("pre-release-schema");
-    let session_id = session(13);
-    let path = log_path(directory.path(), session_id);
-    for schema in ["yo.session-record/v2", "yo.session-record/v3"] {
-        fs::write(
-            &path,
-            format!(
-                "{{\"schema\":\"{schema}\",\"session_id\":\"{session_id}\",\"sequence\":1,\"kind\":\"incremental\",\"payload\":\"old\"}}\n"
-            ),
-        )
-        .expect("the pre-release fixture is written");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-            .expect("fixture permissions remain restricted");
-        let repository =
-            LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
-
-        let error = repository
-            .read_after(session_id, None, 8)
-            .expect_err("pre-release schema is unsupported");
-
-        assert!(error.to_string().contains("unsupported schema"));
-    }
-}
-
-// 새 v1은 UUIDv7 Session만 정식 identity로 인정하므로 과거 숫자 표현을 같은 schema로
-// 위장한 record를 복구하지 않아야 합니다.
-#[test]
-fn rejects_a_numeric_session_identity_in_v1() {
-    let directory = TestDirectory::new("numeric-v1");
-    let session_id = session(14);
-    let path = log_path(directory.path(), session_id);
-    fs::write(
-        &path,
-        b"{\"schema\":\"yo.session-record/v1\",\"session_id\":14,\"sequence\":1,\"kind\":\"incremental\",\"payload\":\"invalid\"}\n",
-    )
-    .expect("the invalid fixture is written");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .expect("fixture permissions remain restricted");
-    let repository =
-        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
-
-    let error = repository
-        .read_after(session_id, None, 8)
-        .expect_err("numeric Session identity is unsupported");
-
-    assert!(
-        error
-            .to_string()
-            .contains("expected a formatted UUID string"),
-        "{error}"
-    );
-}
-
-// 새 writer가 남긴 checksummed v1 record의 payload 한 글자만 바뀌어도 JSON 자체는
-// 유효하지만 CRC32C가 달라지므로 replay 전에 complete-line 손상으로 거부해야 합니다.
-#[test]
-fn rejects_a_checksummed_record_whose_payload_was_changed() {
-    let directory = TestDirectory::new("checksum-corruption");
-    let session_id = session(21);
-    {
-        let mut repository =
-            LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
-        repository
-            .append(session_id, DurableRecord::incremental("alpha"))
-            .expect("record is written");
-    }
-    let path = log_path(directory.path(), session_id);
-    let contents = fs::read_to_string(&path).expect("log is readable");
-    fs::write(&path, contents.replace("alpha", "omega")).expect("payload is tampered");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .expect("fixture permissions remain restricted");
-    let repository =
-        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
-
-    let error = repository
-        .read_after(session_id, None, 8)
-        .expect_err("checksum mismatch is corruption");
-
-    assert!(error.to_string().contains("CRC32C"));
-}
-
-// 테스트가 사용하는 레코드 종류도 실제 계약의 두 가지 값과 일치하는지 확인합니다.
-#[test]
-fn exposes_both_record_kinds_without_storage_details() {
-    assert_eq!(
-        DurableRecord::incremental("delta").kind(),
-        DurableRecordKind::Incremental
-    );
-    assert_eq!(
-        DurableRecord::snapshot("state").kind(),
-        DurableRecordKind::Snapshot
-    );
-}
+mod discovery;

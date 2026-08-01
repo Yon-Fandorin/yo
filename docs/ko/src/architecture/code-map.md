@@ -62,7 +62,7 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | [`host`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/host/mod.rs) | 불투명한 random UUIDv4 `WorkspaceHostId`, 원자적으로 만들고 권한을 제한한 local 사용자별 identity 파일, 생성 Host가 만든 lossless canonical workspace path 값 | Host identity가 일치할 때의 workspace 비교와 remote Host transport |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | 결정론적인 Session, Turn, Activity, request 상태 전이 | 전이가 provider 경계도 지난다면 `runtime` |
 | [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 live Projection, sequence 기반의 제한된 Transcript 읽기, 동기식 durable publication, typed gap 상태, revision을 인식하는 크기 제한 `MessageSegment` 구성, recovery 검증 | capture 지점은 `runtime`, physical durability는 `session_repository` |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·suffix 읽기 계약, snapshot 복구 gate, typed storage pressure, UUIDv7 파일명을 제공하는 첫 single-writer versioned-JSONL 로컬 구현. 첫 릴리스 전에는 checksummed UUIDv7 envelope만 `v1` 기준이며 개발 중간 형식은 지원하지 않는다. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | 저장된 Session 탐색, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·replay·저장 Session 탐색 포트, snapshot 복구 gate, typed storage pressure, 첫 single-writer versioned-JSONL 로컬 구현. 현재 physical `v1` envelope는 모두 checksum이 적용된 discovery summary를 가진다. `LocalSessionReader`는 writer lease나 변경 없이 기존 저장소를 열고 Session마다 검증한 tail envelope 하나로 목록을 만들며, 격리·손상·미지원 schema·완결 envelope 없음 결과를 타입으로 보고해 한 Session이 전체 목록을 중단하지 않게 한다. 공통 streaming 검증이 읽기 전용 history와 writer recovery에 같은 순번 규칙을 적용하고, local `reader`와 `file` 모듈은 관찰과 변경 책임을 나눈다. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | CLI 목록·history 표현, 실행 가능한 continuation, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | backend 수락, semantic commit, Journal capture 순서, backend 관찰 결과 변환, 실패 시 활성 작업 종료 | provider port는 `backend/contract.rs` |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command lane, 용량 1의 Journal 변경 알림, worker 소유권, 시작 취소, 종료 조율 | worker가 소유한 의미 처리는 `runtime` |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | provider capability, command, semantic event, polling, 취소, failure kind, 명시적 정리 | 구체적인 adapter |
@@ -86,7 +86,9 @@ recovery를 구분한다. 첫 릴리스 전 codec은 semantic commit `v1`만 쓰
 descriptor는 replay sequence 1을 쓰지만 semantic `JournalSequence`를 만들지 않으므로
 descriptor-only 첫 physical envelope에는 semantic cutoff가 없다.
 `JournalRepository`는 JSONL을 append마다 다시 읽지 않고 복구한 상태에 새
-suffix만 증분 검증한 뒤 local repository에 연결한다. 자기
+suffix만 증분 검증한 뒤 local repository에 연결한다. 각 physical discovery
+summary의 descriptor도 이 검증된 semantic prefix에서 만들고, local writer는 같은
+checksummed append 직전에 `updated_unix_millis`를 추가한다. 자기
 storage-pressure 실패를 직접 관찰한 live writer는 snapshot 하나로 보존한
 prefix를 완성할 수 있지만, reopen 뒤의 replacement snapshot은 그 prefix와
 필요한 recovery seal도 보존해야 한다.
@@ -98,8 +100,11 @@ UUIDv7 시계 읽기 한 번으로 `SessionDescriptor`를 만든다.
 `YO_SESSION_REPOSITORY`로 Session record 위치를 옮겨도 Host identity는 바뀌지
 않는다. worker는 backend `CreateSession` 전에 descriptor를 첫 Journal envelope로
 시도한다. 이 append를 할 수 없으면 descriptor와 semantic prefix를 complete
-snapshot 하나로 함께 저장할 때까지 뒤의 activity도 memory-only로 남는다. 저장된
-Session 목록과 제한된 discovery summary는 아직 후속 경계다.
+snapshot 하나로 함께 저장할 때까지 뒤의 activity도 memory-only로 남는다.
+저장 형식에 독립적인 `StoredSessionReader`는 이제 제한된 discovery, typed
+continuation eligibility, durable history replay를 제공한다. 미지원 schema는
+`unknown`으로 계속 살펴볼 수 있고, 격리 상태와 Anchor가 없는 지원 record는
+`unavailable`이다. 아직 CLI command가 이 포트를 사용하지는 않는다.
 
 `yo-core`는 아직 `0.0.0` 내부 Pilot API다. 이 Slice는 persistent startup이 bare
 `SessionId` 대신 완전한 `SessionDescriptor`를 요구하도록 의도적으로 바꾸고,
@@ -131,8 +136,9 @@ summary도 같은 durable message 경로를 따른다. yo가 받지 않은 숨�
 reasoning과 승인하지 않은 backend-specific Request Audit payload는 이 semantic
 경로 밖에 남는다.
 remote storage, Request Audit persistence, database나 compression 선택, durable
-transport는 이 경로의 범위 밖이다. 실제 remote reader가 생길 때만
-local·remote reader 공통 인터페이스를 추출한다.
+transport는 이 경로의 범위 밖이다. `StoredSessionReader`는 Session 전용 read port이며
+local·remote 공통 구현을 미리 주장하지 않는다. 실제 remote reader가 생길 때만
+transport 공유 구조를 추출한다.
 
 ## yo-tui: 터미널 frontend
 

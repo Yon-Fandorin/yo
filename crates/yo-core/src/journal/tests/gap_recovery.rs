@@ -10,10 +10,6 @@ fn transient_initial_read_failure_retries_with_the_complete_live_snapshot() {
     let observed = Arc::clone(&repository.state);
     let mut journal = SessionJournal::with_repository(Box::new(repository));
 
-    journal.append_committed_command(
-        AgentCommand::CreateSession { session_id },
-        &[AgentEvent::SessionCreated { session_id }],
-    );
     assert_eq!(
         journal.transcript_reader().durability(),
         JournalDurability::Gap {
@@ -21,14 +17,9 @@ fn transient_initial_read_failure_retries_with_the_complete_live_snapshot() {
             cause: super::super::DurabilityGapCause::Storage,
         }
     );
-
-    let turn = turn(session_id, 1);
     journal.append_committed_command(
-        AgentCommand::StartTurn {
-            turn,
-            input: UserInput::from("retry"),
-        },
-        &[AgentEvent::TurnStarted { turn }],
+        AgentCommand::CreateSession { session_id },
+        &[AgentEvent::SessionCreated { session_id }],
     );
 
     assert!(matches!(
@@ -42,7 +33,7 @@ fn transient_initial_read_failure_retries_with_the_complete_live_snapshot() {
         DurableRecordKind::Snapshot
     );
     let commit = decode(state.entries[0].record().payload()).unwrap();
-    assert_eq!(commit.records().len(), 4);
+    assert_eq!(commit.records().len(), 3);
     assert!(recover(&[commit]).unwrap().recovery_commit().is_none());
 }
 
@@ -88,9 +79,9 @@ fn capacity_gap_recovers_with_one_complete_live_snapshot() {
         JournalDurability::Durable { .. }
     ));
     let state = observed.lock().unwrap();
-    assert_eq!(state.entries.len(), 2);
+    assert_eq!(state.entries.len(), 3);
     assert_eq!(
-        state.entries[1].record().kind(),
+        state.entries[2].record().kind(),
         DurableRecordKind::Snapshot
     );
 }
@@ -166,7 +157,7 @@ fn integrity_gap_stops_automatic_snapshot_retries() {
     let attempts = Arc::new(Mutex::new(0));
     let repository = SnapshotGateRepository {
         state,
-        fail_on_append: 4,
+        fail_on_append: 5,
         attempts: Arc::clone(&attempts),
     };
     let mut journal = SessionJournal::with_repository(Box::new(repository));
@@ -196,5 +187,5 @@ fn integrity_gap_stops_automatic_snapshot_retries() {
         activity: message,
         update: ActivityUpdate::TextDelta("volatile".to_owned()),
     }]);
-    assert_eq!(*attempts.lock().unwrap(), 4);
+    assert_eq!(*attempts.lock().unwrap(), 5);
 }

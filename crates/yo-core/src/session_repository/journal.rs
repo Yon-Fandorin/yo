@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fmt};
 
 use super::{
-    AppendError, AppendReceipt, DurableRecord, DurableRecordKind, RepositoryError,
+    AppendError, AppendReceipt, DurableRecord, DurableRecordKind, RecordDiscovery, RepositoryError,
     RepositorySequence, SessionRepository,
 };
 use crate::{
@@ -79,11 +79,25 @@ where
                 })?;
             None
         };
+        let descriptor = replacement
+            .as_ref()
+            .or_else(|| self.recovered.get(&session_id))
+            .and_then(RecoveredJournal::descriptor)
+            .cloned()
+            .ok_or_else(|| {
+                JournalRepositoryError::Codec(
+                    JournalCodecError::new(
+                        "a physical Session record requires a durable Session descriptor",
+                    )
+                    .context("candidate semantic commit"),
+                )
+            })?;
         let record = match commit.kind() {
             JournalCommitKind::Incremental => DurableRecord::incremental(payload),
             JournalCommitKind::Snapshot => DurableRecord::snapshot(payload),
         }
-        .with_journal_cutoff(commit.journal_cutoff());
+        .with_journal_cutoff(commit.journal_cutoff())
+        .with_discovery(RecordDiscovery::new(descriptor));
         match self.repository.append(session_id, record) {
             Ok(receipt) => {
                 if let Some(replacement) = replacement {

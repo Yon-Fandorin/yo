@@ -217,15 +217,27 @@ JournalRepository
     ↓ durable semantic prefix와 검증
     ↓ physical append 하나
 SessionRepository
-    ↓
-single-writer versioned JSONL
+    ↓ writer 시각 추가; payload와 완전한 discovery summary를 함께 checksum
+single-writer versioned JSONL physical v1
 
 versioned JSONL
     ↓ 제한된 suffix 읽기 + semantic decode
 Journal recovery
     ↓
 RecoveredJournal 또는 명시적인 recovery 오류
+
+기존 repository root
+    ↓ LocalSessionReader (생성·수리·writer lease 없음)
+각 Session의 마지막 완결 envelope
+    ↓ 닫힌 v1 shape와 CRC32C 검증
+사용 가능한 discovery summary 또는 typed Session별 unavailable 결과
 ```
+
+reader는 진단 문자열을 다시 해석하지 않고 격리, 손상, 미지원 schema, 완결 envelope
+없음을 구분한다. 지원되는 summary에 Continuation Anchor가 없으면 `unavailable`,
+미지원 schema면 `unknown`이다. 이전 writer가 남긴 pending marker가 있으면 후속
+writer가 열리지 않으므로, 진행 중 marker를 만든 바로 그 writer만 append 전 cutoff를
+보이게 할 수 있다.
 
 backend가 `CreateSession`을 받기 전에 worker는 UUIDv7 Session identity, Workspace
 Host identity, 생성 Host의 canonical path bytes, UUID와 일치하는 시작 시각을 담은
@@ -256,9 +268,10 @@ KnowledgeUnit가 계속 소유한다.
 CLI는 local repository를 기본으로 활성화한다. `YO_SESSION_REPOSITORY`로 root를,
 `YO_SESSION_CAPACITY_BYTES`로 기본 1 GiB 상한을 바꿀 수 있다. Linux는 그 외에
 `$XDG_STATE_HOME/yo/sessions` 또는 `$HOME/.local/state/yo/sessions`를 쓰고,
-macOS는 `$HOME/Library/Application Support/yo/sessions`를 쓴다. 이 조합은 아직
-저장된 Session 열기, remote storage, Request Audit persistence, database나
-compression backend, durable transport를 추가하지 않는다.
+macOS는 `$HOME/Library/Application Support/yo/sessions`를 쓴다. read port는
+존재하지만 이 조합은 아직 CLI 저장 Session 열기, 실행 가능한 continuation,
+remote storage, Request Audit persistence, database나 compression backend,
+durable transport를 추가하지 않는다.
 
 ## 일시정지와 재개
 

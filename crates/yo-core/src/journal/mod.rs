@@ -69,10 +69,12 @@ impl SessionJournal {
 
     #[cfg(test)]
     pub(crate) fn with_repository(repository: Box<dyn SessionRepository + Send>) -> Self {
-        Self::with_repository_and_descriptor(
+        let mut journal = Self::with_repository_and_descriptor(
             repository,
             crate::fixture_descriptor(crate::fixture_session(1)),
-        )
+        );
+        journal.initialize_durability();
+        journal
     }
 
     pub(crate) fn initialize_durability(&mut self) {

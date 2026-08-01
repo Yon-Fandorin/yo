@@ -34,6 +34,20 @@ impl WriterLock {
             .map_err(|error| RepositoryError::Unavailable {
                 message: format!("another writer owns the Session repository: {error}"),
             })?;
+        for entry in fs::read_dir(root)? {
+            let path = entry?.path();
+            if path
+                .extension()
+                .is_some_and(|extension| extension == "pending")
+            {
+                return Err(RepositoryError::Quarantined {
+                    message: format!(
+                        "Session repository contains an unfinished append marker at {}",
+                        path.display()
+                    ),
+                });
+            }
+        }
         Ok(Self { _file: file })
     }
 }
@@ -42,6 +56,7 @@ pub(super) struct ScanResult {
     pub(super) durable_cutoff: Option<RepositorySequence>,
     pub(super) journal_cutoff: Option<crate::JournalSequence>,
     pub(super) entries: Vec<RepositoryEntry>,
+    durable_bytes: u64,
 }
 
 pub(super) fn prepare_root(root: &Path) -> Result<PathBuf, RepositoryError> {
@@ -66,23 +81,16 @@ pub(super) fn prepare_root(root: &Path) -> Result<PathBuf, RepositoryError> {
 
 pub(super) fn append_line(root: &Path, path: &Path, encoded: &[u8]) -> Result<(), RepositoryError> {
     reject_symlink(path)?;
-    let pending = pending_path(path);
-    begin_pending_append(root, &pending)?;
     let existed = path.try_exists()?;
-    let mut file = match OpenOptions::new()
+    let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .mode(FILE_MODE)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(error) => {
-            clear_pending_append(root, &pending)?;
-            return Err(error.into());
-        },
-    };
+        .open(path)?;
     require_user_only_file(&file)?;
     let durable_bytes = file.metadata()?.len();
+    let pending = pending_path(path);
+    begin_pending_append(root, &pending, durable_bytes)?;
     let append = file
         .write_all(encoded)
         .and_then(|()| file.sync_data())
@@ -129,6 +137,7 @@ pub(super) fn scan_entries(
                 durable_cutoff: None,
                 journal_cutoff: None,
                 entries: Vec::new(),
+                durable_bytes: 0,
             });
         },
         Err(error) => return Err(error.into()),
@@ -136,13 +145,27 @@ pub(super) fn scan_entries(
     require_user_only_file(&file)?;
 
     let mut reader = BufReader::new(file);
+    let scan = scan_complete_entries(&mut reader, expected_session, after, limit)?;
+    if repair_tail && reader.get_ref().metadata()?.len() > scan.durable_bytes {
+        reader.get_mut().set_len(scan.durable_bytes)?;
+        reader.get_mut().seek(SeekFrom::Start(scan.durable_bytes))?;
+        reader.get_mut().sync_data()?;
+    }
+    Ok(scan)
+}
+
+pub(super) fn scan_complete_entries<R: BufRead>(
+    reader: &mut R,
+    expected_session: SessionId,
+    after: u64,
+    limit: usize,
+) -> Result<ScanResult, RepositoryError> {
     let mut entries = Vec::with_capacity(limit.min(256));
     let mut line = Vec::new();
     let mut durable_bytes = 0_u64;
     let mut line_number = 0_usize;
     let mut durable_cutoff = None;
     let mut journal_cutoff = None;
-
     loop {
         line.clear();
         let bytes = reader.read_until(b'\n', &mut line)?;
@@ -151,23 +174,14 @@ pub(super) fn scan_entries(
         }
         line_number = line_number.saturating_add(1);
         if !line.ends_with(b"\n") {
-            if repair_tail {
-                reader.get_mut().set_len(durable_bytes)?;
-                reader.get_mut().seek(SeekFrom::Start(durable_bytes))?;
-                reader.get_mut().sync_data()?;
-            }
             break;
         }
-
-        let wire: WireEntry =
-            serde_json::from_slice(&line).map_err(|error| RepositoryError::CorruptLog {
-                line: line_number,
-                reason: error.to_string(),
-            })?;
+        let wire = WireEntry::decode(&line, line_number)?;
         let expected_sequence = durable_cutoff.map_or(1, |sequence: RepositorySequence| {
             sequence.get().saturating_add(1)
         });
-        let entry = wire.into_record(expected_session, expected_sequence, line_number)?;
+        let decoded = wire.into_record(expected_session, expected_sequence, line_number)?;
+        let entry = decoded.entry;
         durable_cutoff = Some(entry.sequence());
         if let Some(sequence) = entry.record().journal_cutoff() {
             let invalid = journal_cutoff.is_some_and(|previous| {
@@ -188,11 +202,11 @@ pub(super) fn scan_entries(
         }
         durable_bytes = durable_bytes.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
     }
-
     Ok(ScanResult {
         durable_cutoff,
         journal_cutoff,
         entries,
+        durable_bytes,
     })
 }
 
@@ -200,29 +214,46 @@ fn pending_path(path: &Path) -> PathBuf {
     path.with_extension("jsonl.pending")
 }
 
-fn begin_pending_append(root: &Path, pending: &Path) -> Result<(), RepositoryError> {
+fn begin_pending_append(
+    root: &Path,
+    pending: &Path,
+    durable_bytes: u64,
+) -> Result<(), RepositoryError> {
     reject_symlink(pending)?;
+    if pending.try_exists()? {
+        return Err(RepositoryError::Quarantined {
+            message: format!(
+                "Session log is quarantined by an unfinished append at {}",
+                pending.display()
+            ),
+        });
+    }
+    let preparing = pending.with_extension("pending.preparing");
+    reject_symlink(&preparing)?;
+    if preparing.try_exists()? {
+        fs::remove_file(&preparing)?;
+    }
     let mut marker = OpenOptions::new()
         .create_new(true)
         .write(true)
         .mode(FILE_MODE)
-        .open(pending)
+        .open(&preparing)
         .map_err(|error| RepositoryError::Unavailable {
-            message: if error.kind() == std::io::ErrorKind::AlreadyExists {
-                format!(
-                    "Session log is quarantined by an unfinished append at {}",
-                    pending.display()
-                )
-            } else {
-                format!(
-                    "failed to create the Session append marker at {}: {error}",
-                    pending.display()
-                )
-            },
+            message: format!(
+                "failed to prepare the Session append marker at {}: {error}",
+                preparing.display()
+            ),
         })?;
-    marker.write_all(b"pending\n")?;
+    writeln!(marker, "{durable_bytes}")?;
     marker.sync_data()?;
+    fs::hard_link(&preparing, pending).map_err(|error| RepositoryError::Quarantined {
+        message: format!(
+            "failed to publish the Session append marker at {}: {error}",
+            pending.display()
+        ),
+    })?;
     File::open(root)?.sync_all()?;
+    fs::remove_file(preparing)?;
     Ok(())
 }
 
@@ -239,7 +270,7 @@ fn reject_pending_append(path: &Path) -> Result<(), RepositoryError> {
     let pending = pending_path(path);
     reject_symlink(&pending)?;
     if pending.try_exists()? {
-        Err(RepositoryError::Unavailable {
+        Err(RepositoryError::Quarantined {
             message: format!(
                 "Session log is quarantined by an unfinished append at {}",
                 pending.display()
@@ -250,7 +281,7 @@ fn reject_pending_append(path: &Path) -> Result<(), RepositoryError> {
     }
 }
 
-fn reject_symlink(path: &Path) -> Result<(), RepositoryError> {
+pub(super) fn reject_symlink(path: &Path) -> Result<(), RepositoryError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(RepositoryError::Unavailable {
             message: format!("symbolic links are not allowed at {}", path.display()),
@@ -261,7 +292,7 @@ fn reject_symlink(path: &Path) -> Result<(), RepositoryError> {
     }
 }
 
-fn require_user_only_file(file: &File) -> Result<(), RepositoryError> {
+pub(super) fn require_user_only_file(file: &File) -> Result<(), RepositoryError> {
     let mode = file.metadata()?.permissions().mode() & 0o777;
     if mode & 0o077 == 0 {
         Ok(())

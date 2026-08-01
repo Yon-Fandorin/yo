@@ -283,7 +283,12 @@ fn gap_from(error: JournalRepositoryError) -> JournalDurability {
         JournalRepositoryError::Repository(RepositoryError::Unavailable { .. }) => {
             (DurableCutoff::Unknown, DurabilityGapCause::Storage)
         },
-        JournalRepositoryError::Repository(RepositoryError::CorruptLog { .. })
+        JournalRepositoryError::Repository(
+            RepositoryError::Quarantined { .. }
+            | RepositoryError::UnsupportedSchema { .. }
+            | RepositoryError::CorruptLog { .. }
+            | RepositoryError::CorruptTail { .. },
+        )
         | JournalRepositoryError::Codec(_) => {
             (DurableCutoff::Unknown, DurabilityGapCause::Integrity)
         },
@@ -301,7 +306,10 @@ fn gap_from(error: JournalRepositoryError) -> JournalDurability {
             RepositoryError::Unavailable { .. } => {
                 (DurableCutoff::Unknown, DurabilityGapCause::Storage)
             },
-            RepositoryError::CorruptLog { .. } => {
+            RepositoryError::Quarantined { .. }
+            | RepositoryError::UnsupportedSchema { .. }
+            | RepositoryError::CorruptLog { .. }
+            | RepositoryError::CorruptTail { .. } => {
                 (DurableCutoff::Unknown, DurabilityGapCause::Integrity)
             },
         },

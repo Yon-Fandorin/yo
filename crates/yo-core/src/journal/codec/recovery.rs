@@ -56,10 +56,6 @@ impl RecoveredJournal {
         self.journal_cutoff
     }
 
-    #[allow(
-        dead_code,
-        reason = "stored Session discovery consumes recovered descriptor metadata in its follow-up Slice"
-    )]
     pub(crate) const fn descriptor(&self) -> Option<&SessionDescriptor> {
         self.descriptor.as_ref()
     }

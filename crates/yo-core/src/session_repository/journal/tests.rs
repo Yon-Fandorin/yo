@@ -90,13 +90,27 @@ fn session() -> SessionId {
     crate::fixture_session(1)
 }
 
+fn repository_with_descriptor<R>(repository: R) -> JournalRepository<R>
+where
+    R: SessionRepository,
+{
+    let mut repository = JournalRepository::new(repository);
+    repository
+        .append(
+            session(),
+            &JournalCommit::descriptor(crate::fixture_descriptor(session())),
+        )
+        .expect("the Session descriptor persists first");
+    repository
+}
+
 fn activity() -> ActivityRef {
     let turn = TurnRef::new(session(), TurnId::new(NonZeroU64::new(2).unwrap()));
     ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(3).unwrap()))
 }
 
 fn command_commit() -> JournalCommit {
-    command_commit_at(1)
+    command_commit_at(2)
 }
 
 fn command_commit_at(first_sequence: u64) -> JournalCommit {
@@ -118,24 +132,36 @@ fn command_commit_at(first_sequence: u64) -> JournalCommit {
 }
 
 fn unterminated_snapshot() -> JournalCommit {
-    JournalCommit::snapshot(vec![SequencedJournalRecord::new(
-        JournalSequence::new(1),
-        JournalRecord::MessageSegment(MessageSegment::new(
-            activity(),
-            MessageStream::Agent,
-            1,
-            "partial".to_owned(),
-        )),
-    )])
+    JournalCommit::snapshot(vec![
+        SequencedJournalRecord::new(
+            JournalSequence::new(1),
+            JournalRecord::SessionDescriptor(crate::fixture_descriptor(session())),
+        ),
+        SequencedJournalRecord::new(
+            JournalSequence::new(2),
+            JournalRecord::MessageSegment(MessageSegment::new(
+                activity(),
+                MessageStream::Agent,
+                1,
+                "partial".to_owned(),
+            )),
+        ),
+    ])
 }
 
 fn snapshot_without_durable_message() -> JournalCommit {
-    JournalCommit::snapshot(vec![SequencedJournalRecord::new(
-        JournalSequence::new(1),
-        JournalRecord::EventCommitted(AgentEvent::SessionCreated {
-            session_id: session(),
-        }),
-    )])
+    JournalCommit::snapshot(vec![
+        SequencedJournalRecord::new(
+            JournalSequence::new(1),
+            JournalRecord::SessionDescriptor(crate::fixture_descriptor(session())),
+        ),
+        SequencedJournalRecord::new(
+            JournalSequence::new(2),
+            JournalRecord::EventCommitted(AgentEvent::SessionCreated {
+                session_id: session(),
+            }),
+        ),
+    ])
 }
 
 fn message_segment_commit(sequence: u64) -> JournalCommit {
@@ -170,24 +196,24 @@ fn terminal_commit(sequence: u64, segment_count: u64) -> JournalCommit {
 // 한 번만 호출되고 envelope의 Journal cutoff는 physical sequence와 별도로 2를 보존해야 한다.
 #[test]
 fn maps_one_semantic_commit_to_one_physical_append() {
-    let mut repository = JournalRepository::new(RecordingRepository::default());
+    let mut repository = repository_with_descriptor(RecordingRepository::default());
 
     let receipt = repository
         .append(session(), &command_commit())
         .expect("the semantic commit persists");
     let inner = repository.into_inner();
 
-    assert_eq!(receipt.sequence().get(), 1);
-    assert_eq!(inner.appended.len(), 1);
+    assert_eq!(receipt.sequence().get(), 2);
+    assert_eq!(inner.appended.len(), 2);
     assert_eq!(
-        inner.appended[0]
+        inner.appended[1]
             .1
             .journal_cutoff()
             .map(JournalSequence::get),
-        Some(2)
+        Some(3)
     );
     assert_eq!(
-        decode(inner.appended[0].1.payload()).expect("payload is a Journal commit"),
+        decode(inner.appended[1].1.payload()).expect("payload is a Journal commit"),
         command_commit()
     );
 }
@@ -211,35 +237,35 @@ fn rejects_a_noninitial_sequence_before_the_first_physical_append() {
 // commit을 함께 검증해 두 번째 append를 거부하고 기존 prefix는 계속 복구해야 한다.
 #[test]
 fn rejects_a_sequence_gap_against_the_durable_prefix() {
-    let mut repository = JournalRepository::new(RecordingRepository::default());
+    let mut repository = repository_with_descriptor(RecordingRepository::default());
     repository
-        .append(session(), &command_commit_at(1))
+        .append(session(), &command_commit_at(2))
         .expect("the contiguous prefix persists");
 
     let error = repository
-        .append(session(), &command_commit_at(4))
-        .expect_err("the candidate cannot skip Journal sequence 3");
+        .append(session(), &command_commit_at(5))
+        .expect_err("the candidate cannot skip replay sequence 4");
     let recovered = repository
         .recover(session())
         .expect("the rejected candidate leaves the prefix recoverable");
     let inner = repository.into_inner();
 
     assert!(matches!(error, JournalRepositoryError::Codec(_)));
-    assert_eq!(recovered.records().len(), 2);
-    assert_eq!(inner.appended.len(), 1);
+    assert_eq!(recovered.records().len(), 3);
+    assert_eq!(inner.appended.len(), 2);
 }
 
 // durable segment 하나 뒤에 전체 count를 2라고 주장하는 terminal을 붙이면 앞 commit과
 // 맞지 않으므로 candidate를 append하지 않고 열린 prefix의 interrupted recovery를 보존한다.
 #[test]
 fn rejects_a_terminal_that_mismatches_the_durable_prefix() {
-    let mut repository = JournalRepository::new(RecordingRepository::default());
+    let mut repository = repository_with_descriptor(RecordingRepository::default());
     repository
-        .append(session(), &message_segment_commit(1))
+        .append(session(), &message_segment_commit(2))
         .expect("the bounded segment persists");
 
     let error = repository
-        .append(session(), &terminal_commit(2, 2))
+        .append(session(), &terminal_commit(3, 2))
         .expect_err("the terminal counts must match the durable prefix");
     let recovered = repository
         .recover(session())
@@ -248,7 +274,7 @@ fn rejects_a_terminal_that_mismatches_the_durable_prefix() {
 
     assert!(matches!(error, JournalRepositoryError::Codec(_)));
     assert!(recovered.recovery_commit().is_some());
-    assert_eq!(inner.appended.len(), 1);
+    assert_eq!(inner.appended.len(), 2);
 }
 
 // 열린 message의 pending text가 경계에서 segment로 먼저 저장된 뒤에는 command가 같은
@@ -256,13 +282,13 @@ fn rejects_a_terminal_that_mismatches_the_durable_prefix() {
 // message에 interrupted seal을 제안한다.
 #[test]
 fn accepts_a_command_after_a_forced_message_segment() {
-    let mut repository = JournalRepository::new(RecordingRepository::default());
+    let mut repository = repository_with_descriptor(RecordingRepository::default());
     repository
-        .append(session(), &message_segment_commit(1))
+        .append(session(), &message_segment_commit(2))
         .expect("the bounded segment persists");
 
     repository
-        .append(session(), &command_commit_at(2))
+        .append(session(), &command_commit_at(3))
         .expect("the forced segment establishes the non-text ordering boundary");
     let recovered = repository
         .recover(session())
@@ -270,7 +296,7 @@ fn accepts_a_command_after_a_forced_message_segment() {
     let inner = repository.into_inner();
 
     assert!(recovered.recovery_commit().is_some());
-    assert_eq!(inner.appended.len(), 2);
+    assert_eq!(inner.appended.len(), 3);
 }
 
 // 종료 직전의 non-empty tail을 MessageEnded record 안에 넣어 저장하면 둘이 하나의
@@ -284,19 +310,19 @@ fn persists_the_final_message_tail_and_terminal_seal_atomically() {
     let mut segmenter = MessageSegmenter::new(activity, MessageStream::Agent);
     segmenter.push_text("final tail", Duration::ZERO);
     let commit = JournalCommit::incremental(vec![SequencedJournalRecord::new(
-        JournalSequence::new(1),
+        JournalSequence::new(2),
         segmenter.finish(MessageOutcome::Completed),
     )]);
-    let mut repository = JournalRepository::new(RecordingRepository::default());
+    let mut repository = repository_with_descriptor(RecordingRepository::default());
 
     repository
         .append(session_id, &commit)
         .expect("the terminal commit persists");
     let inner = repository.into_inner();
     let decoded =
-        decode(inner.appended[0].1.payload()).expect("the physical payload is semantic JSON");
+        decode(inner.appended[1].1.payload()).expect("the physical payload is semantic JSON");
 
-    assert_eq!(inner.appended.len(), 1);
+    assert_eq!(inner.appended.len(), 2);
     assert_eq!(decoded.records().len(), 1);
     let JournalRecord::MessageEnded(terminal) = decoded.records()[0].record() else {
         panic!("the terminal record remains atomic");
@@ -314,11 +340,8 @@ fn persists_the_final_message_tail_and_terminal_seal_atomically() {
 // 재시도하지 않아야 호출자가 semantic 결과를 volatile로 명시적으로 처리할 수 있다.
 #[test]
 fn leaves_a_failed_semantic_commit_unpublished_by_the_durable_adapter() {
-    let repository = RecordingRepository {
-        fail_append: true,
-        ..RecordingRepository::default()
-    };
-    let mut repository = JournalRepository::new(repository);
+    let mut repository = repository_with_descriptor(RecordingRepository::default());
+    repository.repository.fail_append = true;
 
     let error = repository
         .append(session(), &command_commit())
@@ -326,7 +349,7 @@ fn leaves_a_failed_semantic_commit_unpublished_by_the_durable_adapter() {
     let inner = repository.into_inner();
 
     assert!(matches!(error, JournalRepositoryError::Append(_)));
-    assert!(inner.appended.is_empty());
+    assert_eq!(inner.appended.len(), 1);
 }
 
 // complete snapshot이 sequence 1부터 시작하지 않으면 Local repository의 snapshot gate를
@@ -358,9 +381,9 @@ fn unterminated_snapshot_cannot_release_the_local_recovery_gate() {
     {
         let local = LocalSessionRepository::open(directory.path(), 32_768)
             .expect("the local repository opens");
-        let mut repository = JournalRepository::new(local);
+        let mut repository = repository_with_descriptor(local);
         repository
-            .append(session(), &command_commit_at(1))
+            .append(session(), &command_commit_at(2))
             .expect("the initial semantic commit persists");
     }
     let local = LocalSessionRepository::open(directory.path(), 32_768)
@@ -371,7 +394,7 @@ fn unterminated_snapshot_cannot_release_the_local_recovery_gate() {
         .append(session(), &unterminated_snapshot())
         .expect_err("the incomplete snapshot is rejected before local append");
     let later_error = repository
-        .append(session(), &command_commit_at(3))
+        .append(session(), &command_commit_at(4))
         .expect_err("the rejected snapshot cannot release the local gate");
 
     assert!(matches!(snapshot_error, JournalRepositoryError::Codec(_)));
@@ -389,9 +412,9 @@ fn replacement_snapshot_cannot_erase_an_open_durable_message() {
     {
         let local = LocalSessionRepository::open(directory.path(), 32_768)
             .expect("the local repository opens");
-        let mut repository = JournalRepository::new(local);
+        let mut repository = repository_with_descriptor(local);
         repository
-            .append(session(), &message_segment_commit(1))
+            .append(session(), &message_segment_commit(2))
             .expect("the durable message prefix persists");
     }
     let local = LocalSessionRepository::open(directory.path(), 32_768)
@@ -403,7 +426,11 @@ fn replacement_snapshot_cannot_erase_an_open_durable_message() {
         .expect_err("the replacement snapshot cannot erase the partial message");
     let mut local = repository.into_inner();
     let gate_error = local
-        .append(session(), DurableRecord::incremental("gate probe"))
+        .append(
+            session(),
+            DurableRecord::incremental("gate probe")
+                .with_discovery(RecordDiscovery::new(crate::fixture_descriptor(session()))),
+        )
         .expect_err("the rejected snapshot cannot release the physical gate");
 
     assert!(matches!(snapshot_error, JournalRepositoryError::Codec(_)));

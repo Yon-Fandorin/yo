@@ -6,9 +6,11 @@ mod record;
 
 use std::fmt;
 
-pub use local::LocalSessionRepository;
+pub use local::{LocalSessionReader, LocalSessionRepository};
 pub use record::{
-    AppendReceipt, DurableRecord, DurableRecordKind, RepositoryEntry, RepositorySequence,
+    AppendReceipt, ContinuationEligibility, DurableRecord, DurableRecordKind, RecordDiscovery,
+    RepositoryEntry, RepositorySequence, SessionDiscovery, SessionRecordVersion, StoredSession,
+    StoredSessionSummary, StoredSessionUnavailableReason,
 };
 
 use crate::{JournalSequence, SessionId};
@@ -19,6 +21,18 @@ pub trait SessionRepository {
         session_id: SessionId,
         record: DurableRecord,
     ) -> Result<AppendReceipt, AppendError>;
+
+    fn read_after(
+        &self,
+        session_id: SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError>;
+}
+
+/// Read-only access to durable Sessions without executable continuation.
+pub trait StoredSessionReader {
+    fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError>;
 
     fn read_after(
         &self,
@@ -147,15 +161,25 @@ impl std::error::Error for AppendError {
 #[derive(Debug)]
 pub enum RepositoryError {
     Unavailable { message: String },
+    Quarantined { message: String },
+    UnsupportedSchema { schema: String },
     CorruptLog { line: usize, reason: String },
+    CorruptTail { reason: String },
 }
 
 impl fmt::Display for RepositoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unavailable { message } => formatter.write_str(message),
+            Self::Quarantined { message } => formatter.write_str(message),
+            Self::UnsupportedSchema { schema } => {
+                write!(formatter, "unsupported Session record schema {schema:?}")
+            },
             Self::CorruptLog { line, reason } => {
                 write!(formatter, "corrupt Session log at line {line}: {reason}")
+            },
+            Self::CorruptTail { reason } => {
+                write!(formatter, "corrupt Session log at tail envelope: {reason}")
             },
         }
     }
@@ -164,7 +188,11 @@ impl fmt::Display for RepositoryError {
 impl std::error::Error for RepositoryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Unavailable { .. } | Self::CorruptLog { .. } => None,
+            Self::Unavailable { .. }
+            | Self::Quarantined { .. }
+            | Self::UnsupportedSchema { .. }
+            | Self::CorruptLog { .. }
+            | Self::CorruptTail { .. } => None,
         }
     }
 }
