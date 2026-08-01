@@ -1,0 +1,211 @@
+schema: methexis.checkpoint/v1alpha1
+checkpoint_id: sha256:e89b8fa689ec8e3f0030c3d9616e7f244bf7e926982e5c214a9d24d3e1b41dd5
+trusted_commit: 3901bfd902bd29f8df61da31c7aa09f88b36522e
+source_status: not_evaluated
+roots:
+- agent.delivery.first-coding-loop
+- agent.remote.yo-host
+- agent.session.continuation-lineage
+- agent.session.history-discovery
+- tui.architecture.evidence-based-split
+- tui.dependencies.selection-gate
+- tui.dependencies.terminal-backend-selection
+- tui.runtime.mode-selection
+- tui.runtime.typed-flow
+- tui.terminal.job-control-suspend-resume
+- tui.terminal.lifecycle-restoration
+units:
+- id: agent.backend.codex-app-server
+  revision: sha256:2cdd82d1f384ddd65e70d99297bfdb738031fc625b317f38c15d80dc20c9435c
+  reasons:
+  - required_by:agent.delivery.first-coding-loop
+- id: agent.backend.execution-topology
+  revision: sha256:70819655552fdb0e13a9bebd452ac5626967f6e747097247fb12e66f2c4208e4
+  reasons:
+  - required_by:agent.observability.session-journal
+  - required_by:agent.remote.yo-host
+  - required_by:agent.session.continuation-lineage
+- id: agent.core.frontend-independent-boundary
+  revision: sha256:48bdc83d2ff51aec31703a19c69bfe7cf8767eff6f55c488f531ff247b5dbdce
+  reasons:
+  - required_by:agent.backend.codex-app-server
+  - required_by:agent.backend.execution-topology
+  - required_by:agent.observability.view-projections
+  - required_by:agent.remote.yo-host
+  - required_by:agent.runtime.command-event-boundary
+  - required_by:agent.runtime.session-turn-activity
+- id: agent.delivery.first-coding-loop
+  revision: sha256:032c41cd0a0d6d0ac462c99223b6744850f6061519d8a209f1032689e194b549
+  reasons:
+  - root:agent.delivery.first-coding-loop
+- id: agent.observability.session-journal
+  revision: sha256:c130b09df8b8309b32a0bd4e3ce1693e4475ec7b7e84496be22e318575304638
+  reasons:
+  - required_by:agent.observability.view-projections
+  - required_by:agent.remote.yo-host
+  - required_by:agent.session.continuation-lineage
+  - required_by:agent.session.history-discovery
+- id: agent.observability.view-projections
+  revision: sha256:0021ccceb49cb3c171dd87cdf4e7e6b888a31116e1114fc162da3f52deeec948
+  reasons:
+  - required_by:agent.remote.yo-host
+  - required_by:agent.session.history-discovery
+- id: agent.persistence.format-compatibility
+  revision: sha256:cf5fe8494ac485238c4f5efa9f5e6a145ab75710b4b309dea5761da91e836e6c
+  reasons:
+  - required_by:agent.observability.session-journal
+  - required_by:agent.storage.session-repository
+- id: agent.remote.yo-host
+  revision: sha256:193b7634a6357d78ba76de4eefedf19c8b444b91315e9fff2664e50761ea968a
+  reasons:
+  - required_by:agent.session.history-discovery
+  - root:agent.remote.yo-host
+- id: agent.runtime.active-turn-input
+  revision: sha256:39aa3a6547d3c30c50ae361dd884d9ce66b20262d2b62bdd3936f216f5a5735e
+  reasons:
+  - required_by:agent.delivery.first-coding-loop
+- id: agent.runtime.command-event-boundary
+  revision: sha256:3fdc1fe8302195d1aac087bb723f14080a782f50076f25ae50bd0c7d8533c9b2
+  reasons:
+  - required_by:agent.remote.yo-host
+  - required_by:agent.runtime.active-turn-input
+  - required_by:agent.storage.session-repository
+- id: agent.runtime.session-turn-activity
+  revision: sha256:f2711f638f3fc4c25bf22c5f043a8b12510507472b838288d6db0a0dbe12d66a
+  reasons:
+  - required_by:agent.backend.codex-app-server
+  - required_by:agent.observability.session-journal
+  - required_by:agent.runtime.command-event-boundary
+  - required_by:agent.session.continuation-lineage
+  - required_by:agent.storage.session-repository
+- id: agent.session.continuation-lineage
+  revision: sha256:1fabb0dbaacd6ab08321fc4b888175f44e57b9bdd54f8c858951f13419a796e5
+  reasons:
+  - required_by:agent.session.history-discovery
+  - root:agent.session.continuation-lineage
+- id: agent.session.history-discovery
+  revision: sha256:b12b9746a6a35caaf064e3100ffa068fdb675b8f5fb39bc55b6da8ccf1f879a5
+  reasons:
+  - root:agent.session.history-discovery
+- id: agent.storage.session-repository
+  revision: sha256:d5ea34e4593ea0bb42b6ec72489e51f7713bad9c5af503edd7372d18106643b3
+  reasons:
+  - required_by:agent.observability.session-journal
+  - required_by:agent.remote.yo-host
+  - required_by:agent.session.continuation-lineage
+  - required_by:agent.session.history-discovery
+- id: tui.architecture.evidence-based-split
+  revision: sha256:b8022eaed3bf1313bb75a4e7c15bb3aa698550415f3845e9daa0e9544c8a2b42
+  reasons:
+  - root:tui.architecture.evidence-based-split
+- id: tui.architecture.module-boundaries
+  revision: sha256:95366906f598718e308296d25ff8e765ba6fc8dd602eff8ce4eaea95eb249ffb
+  reasons:
+  - required_by:agent.core.frontend-independent-boundary
+  - required_by:tui.dependencies.terminal-backend-selection
+  - required_by:tui.runtime.mode-selection
+  - required_by:tui.runtime.process-termination-coordinator
+  - required_by:tui.runtime.typed-flow
+  - required_by:tui.surface.geometry
+  - required_by:tui.surface.model-ownership
+  - required_by:tui.surface.resolved-style
+  - required_by:tui.surface.terminal-ops
+  - required_by:tui.terminal.inline-viewport
+  - required_by:tui.terminal.job-control-suspend-resume
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.crate.ui-only-boundary
+  revision: sha256:890ea5c07e508f9b29a01edeb5e274fffa4750e3cfe22d1fc1ef53546988d2a4
+  reasons:
+  - required_by:agent.core.frontend-independent-boundary
+  - required_by:agent.observability.view-projections
+  - required_by:tui.architecture.evidence-based-split
+  - required_by:tui.architecture.module-boundaries
+  - required_by:tui.runtime.typed-flow
+  - required_by:tui.surface.model-ownership
+  - required_by:tui.surface.text-segmentation
+  - required_by:tui.surface.width-profile
+- id: tui.dependencies.selection-gate
+  revision: sha256:11a84ded112fda98eee50b4b6230b3291a51f65791f2370ccbcd8ca7f142a208
+  reasons:
+  - required_by:tui.dependencies.terminal-backend-selection
+  - root:tui.dependencies.selection-gate
+- id: tui.dependencies.terminal-backend-selection
+  revision: sha256:263b9b9a27a07bbcae8c1bb5bb6144fba5ef69e7857ca0698152bbf458692312
+  reasons:
+  - root:tui.dependencies.terminal-backend-selection
+- id: tui.runtime.mode-selection
+  revision: sha256:da04bd60dc60009bb82238da9fe97af2dd5c6afa772b653e6cac594147d3ff1d
+  reasons:
+  - root:tui.runtime.mode-selection
+- id: tui.runtime.process-termination-coordinator
+  revision: sha256:cbb78b65c659e052ec0683d5f9052bfedc769738dc4d94b8bcfee39f894a11e7
+  reasons:
+  - required_by:agent.backend.codex-app-server
+  - required_by:tui.dependencies.terminal-backend-selection
+  - required_by:tui.terminal.job-control-suspend-resume
+- id: tui.runtime.typed-flow
+  revision: sha256:191d3c5030c6e2e161556232cd548bccf8b375cb52a85a586db14fb6aa6dac49
+  reasons:
+  - required_by:agent.runtime.command-event-boundary
+  - required_by:tui.runtime.process-termination-coordinator
+  - required_by:tui.surface.terminal-ops
+  - required_by:tui.terminal.lifecycle-restoration
+  - root:tui.runtime.typed-flow
+- id: tui.surface.blank-cell
+  revision: sha256:ec8988e176bf90cbe93c8c0d19c547dbf20fe006e08d79fc89ceb7d052d7ba85
+  reasons:
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.deterministic-diff
+  revision: sha256:269a7815cb3c6b213295b70da7c26ddc2dded7a776bfbe12353d5b2ebff41e4c
+  reasons:
+  - required_by:tui.surface.terminal-ops
+- id: tui.surface.geometry
+  revision: sha256:41f9fe004f1a95d1d95b6810cd05408e5e356e17858ee3f7f0002164d2abff8f
+  reasons:
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.grapheme-cells
+  revision: sha256:f0c1a62e8e1121618003f8b5c264fc77945afb7bec087037813ce2bbba6d72ff
+  reasons:
+  - required_by:tui.surface.deterministic-diff
+- id: tui.surface.model-ownership
+  revision: sha256:d1529670a39e3d9ca4cda0fcaf822c2afee833043334b1894931f25e821bcd24
+  reasons:
+  - required_by:tui.surface.deterministic-diff
+  - required_by:tui.surface.grapheme-cells
+- id: tui.surface.resolved-style
+  revision: sha256:7210c4f0cdb9a5f7382c0e7edb7ea24d40b42181259854d2e4ae558b284ac33e
+  reasons:
+  - required_by:tui.surface.blank-cell
+  - required_by:tui.surface.grapheme-cells
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.terminal-ops
+  revision: sha256:ad84fe74ecf5998e0f5f20c92ac793d02550bc114b0836d580d916b47d63c1b1
+  reasons:
+  - required_by:tui.terminal.inline-viewport
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.surface.text-segmentation
+  revision: sha256:a4911404c56747266cada0136602123dc0c06115f330f8bd6e7fbd355bdd46f3
+  reasons:
+  - required_by:tui.surface.grapheme-cells
+  - required_by:tui.surface.width-profile
+- id: tui.surface.width-profile
+  revision: sha256:6f83deba02e9cce6473c947191acca41e160fe9a78a3a2b9e1646ecd5aac0883
+  reasons:
+  - required_by:tui.surface.grapheme-cells
+- id: tui.terminal.inline-viewport
+  revision: sha256:dad59a7d08cb9afc9466bdc9e675d2d497d51f623b24a7b726c0cb01fd61cb2c
+  reasons:
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.terminal.job-control-suspend-resume
+  revision: sha256:f494d7d5c6af42bc29e68094cce97c55c2692950fa7fa42d80b6cebcea3d73a7
+  reasons:
+  - root:tui.terminal.job-control-suspend-resume
+- id: tui.terminal.lifecycle-restoration
+  revision: sha256:4403451e95ae089a621b9699d0801a6cb34300d73948a18a171ac722e06fbd19
+  reasons:
+  - required_by:agent.delivery.first-coding-loop
+  - required_by:tui.dependencies.terminal-backend-selection
+  - required_by:tui.runtime.mode-selection
+  - required_by:tui.runtime.process-termination-coordinator
+  - required_by:tui.terminal.job-control-suspend-resume
+  - root:tui.terminal.lifecycle-restoration
