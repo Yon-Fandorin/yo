@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:bbfeb09badd0d52475c9b2f303c4d5b0ac46fec1faa173749e9dc79a3fbbb208",
+  "candidate_set_id": "sha256:15d93b7271b4d10a58d23b363067100edc2fb932d8875185b16214094a989e10",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:8703ceb89da3b17a4f58ec663e96dbec5b860e0fa30cfe1a684f36a49a086617",
+  "catalog_hash": "sha256:ba7bcd16ab6f147232684994afa914d06d549bfd6c8e34cd02eb68eb287e7ea5",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -406,6 +406,18 @@
     {
       "id": "agent.observability.view-projections",
       "path": "methexis/knowledge/agent-runtime/agent.observability.view-projections.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "agent.observability.session-journal",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.persistence.format-compatibility",
+      "path": "methexis/knowledge/agent-runtime/agent.persistence.format-compatibility.md",
       "score": 10,
       "reasons": [
         {

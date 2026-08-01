@@ -8,6 +8,7 @@ sources:
     revision: sha256:1c90abd22adf88aab5faa9cda013b5ca364c066e3e7ae94e2aa43be80c3ed5dd
 relations:
   depends_on:
+    - agent.persistence.format-compatibility
     - agent.runtime.command-event-boundary
     - agent.runtime.session-turn-activity
 ---
@@ -38,8 +39,9 @@ be inferred from the other.
 
 Every newly written physical record MUST carry a versioned CRC32C over an
 explicit preimage containing its schema, Session identity,
-`RepositorySequence`, record kind, and exact payload bytes. Recovery MUST
-continue to read supported older records and MUST validate checksummed records
+`RepositorySequence`, record kind, and exact payload bytes. Recovery MUST read
+older records only when the format-compatibility contract explicitly supports
+them and MUST validate checksummed records
 before admitting them. The checksum MUST NOT be calculated by recursively
 serializing a record that already contains its checksum.
 

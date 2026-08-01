@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.storage.session-repository
-revision: sha256:575552455cb8eda84b92a61d9ea8ecb449a1db35cd99266e0f147595053bfad2
+revision: sha256:d5ea34e4593ea0bb42b6ec72489e51f7713bad9c5af503edd7372d18106643b3
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:af92f3df130eebaba002d2284cce277bae4d11e51066f42d2baffdb0fd9b8a19
+request_hash: sha256:53e033ac8c07ba018bc75b86831cdc7a824b9ebcb468c86873d3b54ede2a3bf1
 ---
 # Korean Review Projection
 
@@ -18,7 +18,7 @@ request_hash: sha256:af92f3df130eebaba002d2284cce277bae4d11e51066f42d2baffdb0fd9
 
 첫 로컬 구현은 Session마다 하나의 추가 전용 버전 JSON Lines 로그를 사용하고, JSONL은 프런트엔드 계약이 아닌 교체 가능한 저장 세부사항으로 남아야 합니다. 하나의 의미 커밋은 하나의 물리 repository 봉투로 인코딩해야 합니다. 0개 이상의 결과 사건을 가진 명령이나 관찰 사건 묶음의 일부만 별도 물리 append로 영속되어서는 안 됩니다. JournalSequence는 의미 재생 순서를 나타내고 RepositorySequence는 물리 append 순서를 나타내며, 어느 한쪽을 다른 쪽에서 추론하면 안 됩니다.
 
-새로 쓰는 모든 물리 레코드는 스키마, Session ID, RepositorySequence, 레코드 종류, 정확한 페이로드 바이트를 명시적으로 연결한 입력에 대해 버전이 있는 CRC32C를 가져야 합니다. 복구는 지원하는 이전 레코드를 계속 읽되, 체크섬이 있는 레코드는 받아들이기 전에 검증해야 합니다. 체크섬 필드 자체가 들어 있는 전체 JSON을 다시 직렬화해 체크섬을 계산해서는 안 됩니다.
+새로 쓰는 모든 물리 레코드는 스키마, Session ID, RepositorySequence, 레코드 종류, 정확한 페이로드 바이트를 명시적으로 연결한 입력에 대해 버전이 있는 CRC32C를 가져야 합니다. 복구는 포맷 호환성 계약이 명시적으로 지원하는 이전 레코드만 읽어야 하며, 체크섬이 있는 레코드는 받아들이기 전에 검증해야 합니다. 체크섬 필드 자체가 들어 있는 전체 JSON을 다시 직렬화해 체크섬을 계산해서는 안 됩니다.
 
 두 논리 도메인은 첫 구현에서 하나의 물리 가용성 경계와 용량 상한을 공유합니다. 저장소는 제한된 페이로드 없는 Request 상관관계의 초기 영속 위치입니다. Request 상세는 영속 저장 전에 민감정보를 제거하는 수용 게이트가 구현되기 전까지 프로세스 로컬의 휘발성 데이터로 남고, 첫 구현에서는 독립적인 보존·축출 정책을 갖지 않습니다.
 

@@ -9,6 +9,7 @@ sources:
 relations:
   depends_on:
     - agent.backend.execution-topology
+    - agent.persistence.format-compatibility
     - agent.runtime.session-turn-activity
     - agent.storage.session-repository
 ---

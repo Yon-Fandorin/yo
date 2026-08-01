@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.observability.session-journal
-revision: sha256:631b36574f5f9d46a772cf6e680e2d7ec5dc409e71eb44a9f60ff9ba2d475a9e
+revision: sha256:c130b09df8b8309b32a0bd4e3ce1693e4475ec7b7e84496be22e318575304638
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:8a786556a32b333a4543060379c2fc6dc41db0703db578a5609e5f0b0a81391e
+request_hash: sha256:2be2ba65c4bde5a9fd4fb6bc09d1e1adf2949cc60f0a2b450873cc30d372c6fc
 ---
 # Korean Review Projection
 

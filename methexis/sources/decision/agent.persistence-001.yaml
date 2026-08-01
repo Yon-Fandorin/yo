@@ -1,0 +1,20 @@
+schema: methexis.source/v1alpha1
+id: agent.persistence-001
+revision: sha256:6955bc840b83ee18a401a1fc530708ce3ae11e255fda52ee03954f10e04c247e
+payload:
+  kind: decision
+  content: >-
+    The UUIDv7-only, descriptor-aware semantic Session Journal and checksummed
+    physical Session-record envelope are yo's initial public-format candidates,
+    both named version 1. This explicitly replaces the development-only semantic
+    v1 through v4 and physical v1 through v3 meanings. A reused v1 tag does not
+    admit an old record: the exact closed shape and UUIDv7 identity are part of
+    the baseline, so legacy numeric-v1 and every named development predecessor
+    fail closed before semantic admission. Recovery reads only formats explicitly
+    supported by an accepted compatibility contract. This contract governs only
+    Session Journal and Session-record persistence; other persistent formats,
+    including workspace Host identity, remain under their own owning contracts.
+    Any further pre-release replacement under the same tag requires another
+    explicit SOT decision that accepts its data impact; after the first public
+    release, evolution preserves published versions or supplies an explicitly
+    reviewed compatibility or migration contract.
