@@ -9,8 +9,8 @@ use std::{
 };
 
 use crate::{
-    AgentBackend, AgentCommand, AgentEvent, BackendStopHandle, SessionId, TranscriptReader,
-    journal::SessionJournal, session_repository::SessionRepository,
+    AgentBackend, AgentCommand, AgentEvent, BackendStopHandle, SessionDescriptor, SessionId,
+    TranscriptReader, journal::SessionJournal, session_repository::SessionRepository,
 };
 
 mod admission;
@@ -134,7 +134,7 @@ impl AgentSession {
     /// Starts a Session whose committed semantics are written through `repository`.
     pub fn start_cancellable_with_repository<B, R>(
         backend: B,
-        session_id: SessionId,
+        descriptor: SessionDescriptor,
         repository: R,
         mut is_cancelled: impl FnMut() -> bool,
     ) -> Result<Option<Self>, AgentSessionError>
@@ -142,10 +142,11 @@ impl AgentSession {
         B: AgentBackend + Send + 'static,
         R: SessionRepository + Send + 'static,
     {
+        let session_id = descriptor.session_id();
         Self::start_inner(
             backend,
             session_id,
-            SessionJournal::with_repository(Box::new(repository)),
+            SessionJournal::with_repository_and_descriptor(Box::new(repository), descriptor),
             &mut is_cancelled,
         )
     }

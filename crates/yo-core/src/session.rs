@@ -1,11 +1,10 @@
-use std::{
-    fmt,
-    num::NonZeroU64,
-    str::FromStr,
-    time::{SystemTime, SystemTimeError, UNIX_EPOCH},
-};
+use std::{fmt, num::NonZeroU64, str::FromStr, time::SystemTimeError};
 
 use uuid::{Builder, Uuid, Variant, Version};
+
+mod descriptor;
+
+pub use descriptor::{SessionDescriptor, SessionStartTime};
 
 macro_rules! identity {
     ($name:ident) => {
@@ -36,28 +35,21 @@ identity!(RequestId);
 
 /// Stable identity of one Yo Session.
 ///
-/// Newly created Sessions always use UUIDv7. The legacy numeric form remains
-/// representable only so pre-contract Journal records can be read without
-/// inventing a false UUID or rewriting durable history.
+/// The release baseline admits UUIDv7 identities only.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SessionId(Uuid);
-
-const LEGACY_PREFIX: [u8; 8] = *b"YOLEGACY";
 
 impl SessionId {
     /// Generates a new UUIDv7 Session identity without hiding clock or entropy failure.
     pub fn new() -> Result<Self, SessionIdGenerationError> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(SessionIdGenerationError::Clock)?;
-        let millis = timestamp
-            .as_secs()
-            .saturating_mul(1_000)
-            .saturating_add(u64::from(timestamp.subsec_millis()));
+        Self::at(SessionStartTime::now()?)
+    }
+
+    pub(super) fn at(started_at: SessionStartTime) -> Result<Self, SessionIdGenerationError> {
         let mut random = [0_u8; 10];
         getrandom::fill(&mut random).map_err(SessionIdGenerationError::Entropy)?;
         Ok(Self(
-            Builder::from_unix_timestamp_millis(millis, &random).into_uuid(),
+            Builder::from_unix_timestamp_millis(started_at.unix_millis(), &random).into_uuid(),
         ))
     }
 
@@ -70,41 +62,15 @@ impl SessionId {
         }
     }
 
-    /// Returns the public UUID of a conforming Session.
-    pub fn as_uuid(self) -> Option<Uuid> {
-        if self.0.get_version() == Some(Version::SortRand)
-            && self.0.get_variant() == Variant::RFC4122
-        {
-            Some(self.0)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn from_legacy(value: NonZeroU64) -> Self {
-        let mut bytes = [0_u8; 16];
-        bytes[..8].copy_from_slice(&LEGACY_PREFIX);
-        bytes[8..].copy_from_slice(&value.get().to_be_bytes());
-        Self(Uuid::from_bytes(bytes))
-    }
-
-    pub(crate) fn legacy_value(self) -> Option<NonZeroU64> {
-        let bytes = self.0.as_bytes();
-        if bytes[..8] != LEGACY_PREFIX {
-            return None;
-        }
-        let mut value = [0_u8; 8];
-        value.copy_from_slice(&bytes[8..]);
-        NonZeroU64::new(u64::from_be_bytes(value))
+    /// Returns the public UUIDv7 identity.
+    pub const fn as_uuid(self) -> Uuid {
+        self.0
     }
 }
 
 impl fmt::Display for SessionId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.legacy_value() {
-            Some(value) => write!(formatter, "legacy:{value}"),
-            None => self.0.fmt(formatter),
-        }
+        self.0.fmt(formatter)
     }
 }
 

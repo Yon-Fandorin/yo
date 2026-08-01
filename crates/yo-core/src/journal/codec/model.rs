@@ -1,4 +1,7 @@
-use crate::{ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionId};
+use crate::{
+    ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionDescriptor,
+    SessionId,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum JournalCommitKind {
@@ -6,17 +9,10 @@ pub(crate) enum JournalCommitKind {
     Snapshot,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum JournalCommitFormat {
-    Current,
-    LegacyV1,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCommit {
     kind: JournalCommitKind,
-    format: JournalCommitFormat,
-    journal_cutoff: JournalSequence,
+    journal_cutoff: Option<JournalSequence>,
     records: Vec<SequencedJournalRecord>,
 }
 
@@ -39,8 +35,7 @@ impl JournalCommit {
     ) -> Self {
         Self {
             kind: JournalCommitKind::Incremental,
-            format: JournalCommitFormat::Current,
-            journal_cutoff,
+            journal_cutoff: Some(journal_cutoff),
             records,
         }
     }
@@ -63,7 +58,29 @@ impl JournalCommit {
     ) -> Self {
         Self {
             kind: JournalCommitKind::Snapshot,
-            format: JournalCommitFormat::Current,
+            journal_cutoff: Some(journal_cutoff),
+            records,
+        }
+    }
+
+    pub(crate) fn descriptor(descriptor: SessionDescriptor) -> Self {
+        Self {
+            kind: JournalCommitKind::Incremental,
+            journal_cutoff: None,
+            records: vec![SequencedJournalRecord::new(
+                ReplaySequence::new(1),
+                JournalRecord::SessionDescriptor(descriptor),
+            )],
+        }
+    }
+
+    pub(super) fn decoded(
+        kind: JournalCommitKind,
+        journal_cutoff: Option<JournalSequence>,
+        records: Vec<SequencedJournalRecord>,
+    ) -> Self {
+        Self {
+            kind,
             journal_cutoff,
             records,
         }
@@ -73,25 +90,12 @@ impl JournalCommit {
         self.kind
     }
 
-    pub(crate) const fn format(&self) -> JournalCommitFormat {
-        self.format
-    }
-
-    pub(crate) const fn into_legacy_v1(mut self) -> Self {
-        self.format = JournalCommitFormat::LegacyV1;
-        self
-    }
-
     pub(crate) fn records(&self) -> &[SequencedJournalRecord] {
         &self.records
     }
 
-    pub(crate) const fn semantic_cutoff(&self) -> JournalSequence {
-        self.journal_cutoff
-    }
-
     pub(crate) const fn journal_cutoff(&self) -> Option<JournalSequence> {
-        Some(self.journal_cutoff)
+        self.journal_cutoff
     }
 
     pub(crate) fn session_id(&self) -> Option<SessionId> {
@@ -149,6 +153,7 @@ impl From<JournalSequence> for ReplaySequence {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum JournalRecord {
+    SessionDescriptor(SessionDescriptor),
     CommandCommitted(AgentCommand),
     EventCommitted(AgentEvent),
     MessageReset(MessageReset),
@@ -159,6 +164,7 @@ pub(crate) enum JournalRecord {
 impl JournalRecord {
     pub(crate) const fn session_id(&self) -> SessionId {
         match self {
+            Self::SessionDescriptor(descriptor) => descriptor.session_id(),
             Self::CommandCommitted(command) => match command {
                 AgentCommand::CreateSession { session_id } => *session_id,
                 AgentCommand::StartTurn { turn, .. }

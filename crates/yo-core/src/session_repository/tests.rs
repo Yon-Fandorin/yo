@@ -1,6 +1,5 @@
 use std::{
     fs::{self, OpenOptions},
-    num::NonZeroU64,
     os::unix::fs::PermissionsExt,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
@@ -43,15 +42,8 @@ fn session(value: u64) -> SessionId {
     crate::fixture_session(value)
 }
 
-fn legacy_session(value: u64) -> SessionId {
-    SessionId::from_legacy(NonZeroU64::new(value).expect("legacy fixture IDs are non-zero"))
-}
-
 fn log_path(root: &std::path::Path, session_id: SessionId) -> PathBuf {
-    let name = session_id
-        .legacy_value()
-        .map_or_else(|| session_id.to_string(), |legacy| legacy.get().to_string());
-    root.join(format!("{name}.jsonl"))
+    root.join(format!("{session_id}.jsonl"))
 }
 
 // 재실행하면 기존 기록을 읽되 먼저 완전한 snapshot을 요구하고 다음 번호부터 이어 쓰는지 검증합니다.
@@ -415,7 +407,7 @@ fn quarantines_a_complete_line_when_an_append_marker_remains() {
             LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
         repository
             .append(session_id, DurableRecord::incremental("uncertain"))
-            .expect("a complete v3 line is written");
+            .expect("a complete v1 line is written");
     }
     let pending = path.with_extension("jsonl.pending");
     fs::write(&pending, b"pending\n").expect("the durable pending marker is written");
@@ -518,7 +510,8 @@ fn restricts_repository_permissions_to_the_current_user() {
     assert_eq!(file_mode, 0o600);
 }
 
-// 와이어 형식이 버전, 세션, 순번, 종류를 명시해 향후 마이그레이션 근거를 남기는지 검증합니다.
+// v1 와이어 형식이 버전, 세션, 순번, 종류와 독립 계산한 고정 checksum 답안을 남겨
+// 향후 구현 변경이 같은 코드로 기대값까지 다시 계산해 오류를 숨기지 않게 합니다.
 #[test]
 fn writes_an_explicit_versioned_jsonl_envelope() {
     let directory = TestDirectory::new("wire");
@@ -533,22 +526,73 @@ fn writes_an_explicit_versioned_jsonl_envelope() {
         fs::read_to_string(log_path(directory.path(), session_id)).expect("log is readable");
     let value: serde_json::Value = serde_json::from_str(contents.trim()).expect("valid JSON");
 
-    assert_eq!(value["schema"], "yo.session-record/v3");
+    assert_eq!(value["schema"], "yo.session-record/v1");
     assert_eq!(value["session_id"], session_id.to_string());
     assert_eq!(value["sequence"], 1);
     assert_eq!(value["kind"], "snapshot");
     assert_eq!(value["payload"], "state");
     assert_eq!(value["checksum"]["schema"], "crc32c/v1");
-    assert_eq!(
-        value["checksum"]["value"]
-            .as_str()
-            .expect("checksum is hexadecimal")
-            .len(),
-        8
+    assert_eq!(value["checksum"]["value"], "a5f55567");
+}
+
+// v2와 v3는 공개 호환 형식이 아니라 개발 중간 산출물이므로 새 v1 reader가 이력을
+// 암묵적으로 떠안지 않고 unsupported schema로 거부해야 합니다.
+#[test]
+fn rejects_pre_release_session_record_versions() {
+    let directory = TestDirectory::new("pre-release-schema");
+    let session_id = session(13);
+    let path = log_path(directory.path(), session_id);
+    for schema in ["yo.session-record/v2", "yo.session-record/v3"] {
+        fs::write(
+            &path,
+            format!(
+                "{{\"schema\":\"{schema}\",\"session_id\":\"{session_id}\",\"sequence\":1,\"kind\":\"incremental\",\"payload\":\"old\"}}\n"
+            ),
+        )
+        .expect("the pre-release fixture is written");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .expect("fixture permissions remain restricted");
+        let repository =
+            LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+
+        let error = repository
+            .read_after(session_id, None, 8)
+            .expect_err("pre-release schema is unsupported");
+
+        assert!(error.to_string().contains("unsupported schema"));
+    }
+}
+
+// 새 v1은 UUIDv7 Session만 정식 identity로 인정하므로 과거 숫자 표현을 같은 schema로
+// 위장한 record를 복구하지 않아야 합니다.
+#[test]
+fn rejects_a_numeric_session_identity_in_v1() {
+    let directory = TestDirectory::new("numeric-v1");
+    let session_id = session(14);
+    let path = log_path(directory.path(), session_id);
+    fs::write(
+        &path,
+        b"{\"schema\":\"yo.session-record/v1\",\"session_id\":14,\"sequence\":1,\"kind\":\"incremental\",\"payload\":\"invalid\"}\n",
+    )
+    .expect("the invalid fixture is written");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        .expect("fixture permissions remain restricted");
+    let repository =
+        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
+
+    let error = repository
+        .read_after(session_id, None, 8)
+        .expect_err("numeric Session identity is unsupported");
+
+    assert!(
+        error
+            .to_string()
+            .contains("expected a formatted UUID string"),
+        "{error}"
     );
 }
 
-// 새 writer가 남긴 checksummed v3 record의 payload 한 글자만 바뀌어도 JSON 자체는
+// 새 writer가 남긴 checksummed v1 record의 payload 한 글자만 바뀌어도 JSON 자체는
 // 유효하지만 CRC32C가 달라지므로 replay 전에 complete-line 손상으로 거부해야 합니다.
 #[test]
 fn rejects_a_checksummed_record_whose_payload_was_changed() {
@@ -574,85 +618,6 @@ fn rejects_a_checksummed_record_whose_payload_was_changed() {
         .expect_err("checksum mismatch is corruption");
 
     assert!(error.to_string().contains("CRC32C"));
-}
-
-// checksummed envelope 도입 뒤에도 지원 대상인 기존 v1 complete line은 checksum이 없다는
-// 이유만으로 잃지 않고 동일한 opaque payload로 복구해야 합니다.
-#[test]
-fn continues_to_read_legacy_v1_records() {
-    let directory = TestDirectory::new("legacy-v1");
-    let session_id = legacy_session(22);
-    let path = log_path(directory.path(), session_id);
-    fs::write(
-        &path,
-        b"{\"schema\":\"yo.session-record/v1\",\"session_id\":22,\"sequence\":1,\"kind\":\"incremental\",\"payload\":\"legacy\"}\n",
-    )
-    .expect("legacy fixture is written");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .expect("fixture permissions are restricted");
-    let repository =
-        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
-
-    let entries = repository
-        .read_after(session_id, None, 8)
-        .expect("legacy record remains supported");
-
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].record().payload(), "legacy");
-}
-
-// UUIDv7 전환 전 실제 v2 JSONL 형태와 고정 checksum을 저장소 경계에서 읽어야 현재
-// checksum 구현이 잘못 바뀌어도 과거 답안을 새 구현으로 다시 계산해 테스트를 통과시키지 못합니다.
-#[test]
-fn continues_to_read_a_fixed_checksummed_v2_record() {
-    let directory = TestDirectory::new("legacy-v2");
-    let session_id = legacy_session(7);
-    let path = log_path(directory.path(), session_id);
-    fs::write(
-        &path,
-        b"{\"schema\":\"yo.session-record/v2\",\"session_id\":7,\"sequence\":1,\"kind\":\"incremental\",\"payload\":\"legacy\",\"checksum\":{\"schema\":\"crc32c/v1\",\"value\":\"7ca69e92\"}}\n",
-    )
-    .expect("the fixed historical v2 fixture is written");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .expect("fixture permissions are restricted");
-    let repository =
-        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
-
-    let entries = repository
-        .read_after(session_id, None, 8)
-        .expect("the fixed v2 record remains supported");
-
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].record().payload(), "legacy");
-}
-
-// 이전 숫자 Session 기록은 읽을 수 있어도 새 v3 envelope로 이어 쓰면 UUIDv7 계약을
-// 위반하므로 명시적으로 거부하고 기존 legacy 파일을 그대로 보존해야 한다.
-#[test]
-fn keeps_legacy_numeric_sessions_read_only() {
-    let directory = TestDirectory::new("legacy-read-only");
-    let session_id = legacy_session(24);
-    let path = log_path(directory.path(), session_id);
-    fs::write(
-        &path,
-        b"{\"schema\":\"yo.session-record/v1\",\"session_id\":24,\"sequence\":1,\"kind\":\"incremental\",\"payload\":\"legacy\"}\n",
-    )
-    .expect("legacy fixture is written");
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .expect("fixture permissions are restricted");
-    let before = fs::read(&path).expect("legacy fixture is readable");
-    let mut repository =
-        LocalSessionRepository::open(directory.path(), 32_768).expect("repository opens");
-
-    let error = repository
-        .append(session_id, DurableRecord::snapshot("replacement"))
-        .expect_err("legacy Session writes are rejected");
-
-    assert!(error.to_string().contains("read-only"));
-    assert_eq!(
-        fs::read(path).expect("legacy file remains readable"),
-        before
-    );
 }
 
 // 테스트가 사용하는 레코드 종류도 실제 계약의 두 가지 값과 일치하는지 확인합니다.

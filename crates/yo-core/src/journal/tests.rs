@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
-    AgentEvent, SessionId, TurnId, TurnRef, UserInput,
+    AgentEvent, JournalSequence, SessionId, TurnId, TurnRef, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableCutoff, DurableRecord, DurableRecordKind,
         RepositoryEntry, RepositoryError, RepositorySequence, SessionRepository, StoragePressure,
@@ -179,6 +179,86 @@ impl SessionRepository for SharedRepository {
             .cloned()
             .collect())
     }
+}
+
+// persistent Session 초기화는 backend CreateSession보다 먼저 descriptor-only envelope를
+// 기록하고, 이 physical record에는 아직 semantic JournalSequence가 없어야 한다.
+#[test]
+fn initializes_persistence_with_a_descriptor_only_envelope() {
+    let repository = SharedRepository::default();
+    let observed = Arc::clone(&repository.state);
+    let descriptor = crate::fixture_descriptor(crate::fixture_session(1));
+    let mut journal =
+        SessionJournal::with_repository_and_descriptor(Box::new(repository), descriptor.clone());
+
+    journal.initialize_durability();
+
+    assert!(matches!(
+        journal.transcript_reader().durability(),
+        JournalDurability::Durable {
+            journal_sequence: None,
+            repository_sequence,
+        } if repository_sequence.get() == 1
+    ));
+    let state = observed.lock().unwrap();
+    assert_eq!(state.entries.len(), 1);
+    assert_eq!(state.entries[0].record().journal_cutoff(), None);
+    let commit = decode(state.entries[0].record().payload()).unwrap();
+    assert!(matches!(
+        commit.records()[0].record(),
+        super::codec::JournalRecord::SessionDescriptor(observed) if observed == &descriptor
+    ));
+}
+
+// 첫 descriptor append가 용량 압력으로 실패해도 Session은 memory-only로 계속되고,
+// 공간이 돌아오면 descriptor와 그동안의 semantic prefix를 한 snapshot으로 먼저 복구한다.
+#[test]
+fn recovers_an_initial_descriptor_gap_with_the_complete_session_snapshot() {
+    let session_id = crate::fixture_session(1);
+    let repository = SharedRepository::default();
+    repository.pressure.store(true, Ordering::Release);
+    let pressure = Arc::clone(&repository.pressure);
+    let observed = Arc::clone(&repository.state);
+    let descriptor = crate::fixture_descriptor(session_id);
+    let mut journal =
+        SessionJournal::with_repository_and_descriptor(Box::new(repository), descriptor.clone());
+
+    journal.initialize_durability();
+    journal.append_committed_command(
+        AgentCommand::CreateSession { session_id },
+        &[AgentEvent::SessionCreated { session_id }],
+    );
+    assert!(matches!(
+        journal.transcript_reader().durability(),
+        JournalDurability::Gap {
+            durable_cutoff: DurableCutoff::KnownEmpty,
+            cause: super::DurabilityGapCause::Capacity,
+        }
+    ));
+
+    pressure.store(false, Ordering::Release);
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::MIN));
+    journal.append_committed_command(
+        AgentCommand::StartTurn {
+            turn,
+            input: UserInput::from("recover"),
+        },
+        &[AgentEvent::TurnStarted { turn }],
+    );
+
+    let state = observed.lock().unwrap();
+    assert_eq!(state.entries.len(), 1);
+    assert_eq!(
+        state.entries[0].record().kind(),
+        DurableRecordKind::Snapshot
+    );
+    let commit = decode(state.entries[0].record().payload()).unwrap();
+    let recovered = recover(std::slice::from_ref(&commit)).unwrap();
+    assert_eq!(recovered.descriptor(), Some(&descriptor));
+    assert_eq!(
+        recovered.journal_cutoff().map(JournalSequence::get),
+        Some(4)
+    );
 }
 
 fn session(value: u64) -> SessionId {

@@ -111,6 +111,7 @@ impl<B: AgentBackend> AgentWorker<B> {
     }
 
     pub(super) fn initialize(&mut self) -> Result<Vec<AgentEvent>, AgentSessionError> {
+        self.runtime.initialize_durability();
         match self.execute(AgentCommand::CreateSession {
             session_id: self.session_id,
         }) {

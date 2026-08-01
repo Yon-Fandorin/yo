@@ -14,10 +14,13 @@ ready:
 yo-cli
   parse presentation mode and glyph profile; capture cwd
   install TerminationCoordinator
+  open Host identity and Session repository
+  normalize workspace and create SessionDescriptor
   spawn CodexBackend transport
       ↓
 yo-core AgentSession
   start worker
+  attempt descriptor envelope
   CreateSession
       ↓
 Codex app-server
@@ -33,10 +36,10 @@ yo-tui
 
 | Step | Current owner | What to follow |
 |---|---|---|
-| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run` selects the presentation mode and glyph profile, captures the working directory, and installs the process termination coordinator. |
+| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run` selects presentation options, captures the working directory, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`. |
 | 2 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CodexBackend::spawn` validates configuration and starts the stdio transport. It defers the provider handshake. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
-| 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` sends `CreateSession` through `AgentRuntime`. |
+| 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` first attempts the descriptor-only Journal envelope, then sends `CreateSession` through `AgentRuntime`; storage pressure keeps both the descriptor and later activity in the recoverable volatile prefix. |
 | 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CreateSession` performs `initialize` and `thread/start`; the semantic engine produces `SessionCreated`. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode` acquires input and terminal state for the first terminal ownership generation, then enters the already selected presentation mode. |
 
@@ -208,6 +211,8 @@ contract.
 The live `AgentSession` uses this local composition:
 
 ```text
+initial SessionDescriptor (replay sequence 1, no semantic cutoff)
+    ↓
 semantic Journal records
     ↓ bounded MessageSegment construction
 JournalCommit codec
@@ -225,6 +230,15 @@ Journal recovery
     ↓
 RecoveredJournal or an explicit recovery error
 ```
+
+Before the backend receives `CreateSession`, the worker attempts one
+descriptor-only incremental envelope containing the UUIDv7 Session identity,
+Workspace Host identity, the producing Host's canonical path bytes, and the
+matching start time. The descriptor is Journal-resident discovery data but does
+not enter the frontend Transcript or consume a semantic `JournalSequence`. If
+its first append meets storage pressure, the existing gap policy keeps later
+work volatile; the first successful recovery snapshot begins with the descriptor
+and includes the complete semantic prefix.
 
 Pending message text is forced into an immutable segment before a non-text
 ordering boundary, so concurrent Activity events can retain their original order.

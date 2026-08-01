@@ -1,4 +1,5 @@
 mod command;
+mod descriptor;
 mod event;
 mod identity;
 mod message;
@@ -6,6 +7,7 @@ mod message;
 use std::fmt;
 
 use command::WireCommand;
+use descriptor::WireSessionDescriptor;
 use event::WireEvent;
 use message::{WireMessageEnded, WireMessageReset, WireMessageSegment};
 use serde::{Deserialize, Serialize};
@@ -14,11 +16,9 @@ use super::{
     JournalCommit, JournalCommitKind, JournalRecord, MessageEnded, MessageReset, MessageSegment,
     MessageTerminal, ReplaySequence, SequencedJournalRecord, recover,
 };
-use crate::{AgentCommand, AgentEvent, JournalSequence};
+use crate::{AgentCommand, AgentEvent, JournalSequence, SessionDescriptor};
 
-const SCHEMA: &str = "yo.semantic-journal-commit/v3";
-const PREVIOUS_SCHEMA: &str = "yo.semantic-journal-commit/v2";
-const LEGACY_SCHEMA: &str = "yo.semantic-journal-commit/v1";
+const SCHEMA: &str = "yo.semantic-journal-commit/v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCodecError {
@@ -78,8 +78,11 @@ enum WireCommitKind {
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum WireRecord {
+    SessionDescriptor {
+        descriptor: WireSessionDescriptor,
+    },
     CommandCommitted {
         command: WireCommand,
     },
@@ -99,37 +102,8 @@ enum WireRecord {
     },
 }
 
-impl WireRecord {
-    fn admit_legacy_revision(&mut self) -> Result<(), JournalCodecError> {
-        match self {
-            Self::MessageReset { .. } => Err(JournalCodecError::new(
-                "legacy Journal commits cannot contain MessageReset records",
-            )),
-            Self::MessageSegment { segment } => segment.admit_legacy_revision(),
-            Self::MessageEnded {
-                final_segment,
-                ended,
-            } => {
-                if let Some(segment) = final_segment {
-                    segment.admit_legacy_revision()?;
-                }
-                ended.admit_legacy_revision()
-            },
-            Self::CommandCommitted { .. } | Self::EventCommitted { .. } => Ok(()),
-        }
-    }
-}
-
 pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError> {
     validate_commit(commit)?;
-    if commit
-        .session_id()
-        .is_some_and(|session| session.as_uuid().is_none())
-    {
-        return Err(JournalCodecError::new(
-            "legacy numeric Sessions are read-only and cannot produce a new Journal commit",
-        ));
-    }
     let first_sequence = commit
         .records()
         .first()
@@ -142,7 +116,7 @@ pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError
             JournalCommitKind::Incremental => WireCommitKind::Incremental,
             JournalCommitKind::Snapshot => WireCommitKind::Snapshot,
         },
-        journal_cutoff: Some(commit.semantic_cutoff().get()),
+        journal_cutoff: commit.journal_cutoff().map(JournalSequence::get),
         first_sequence,
         records: commit
             .records()
@@ -156,32 +130,13 @@ pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError
 }
 
 pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> {
-    let mut wire: WireCommit = serde_json::from_str(payload)
+    let wire: WireCommit = serde_json::from_str(payload)
         .map_err(|error| JournalCodecError::new(format!("invalid Journal commit JSON: {error}")))?;
-    let schema = match wire.schema.as_str() {
-        SCHEMA => WireSchema::Current,
-        PREVIOUS_SCHEMA => WireSchema::Previous,
-        LEGACY_SCHEMA => WireSchema::Legacy,
-        _ => {
-            return Err(JournalCodecError::new(format!(
-                "unsupported Journal commit schema {:?}",
-                wire.schema
-            )));
-        },
-    };
-    if schema == WireSchema::Legacy {
-        if wire.journal_cutoff.is_some() {
-            return Err(JournalCodecError::new(
-                "legacy Journal commit must not declare a semantic cutoff",
-            ));
-        }
-        for record in &mut wire.records {
-            record.admit_legacy_revision()?;
-        }
-    } else if wire.journal_cutoff.is_none() {
-        return Err(JournalCodecError::new(
-            "current Journal commit is missing its semantic cutoff",
-        ));
+    if wire.schema != SCHEMA {
+        return Err(JournalCodecError::new(format!(
+            "unsupported Journal commit schema {:?}",
+            wire.schema
+        )));
     }
     let records = wire
         .records
@@ -200,47 +155,19 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
             ))
         })
         .collect::<Result<Vec<_>, JournalCodecError>>()?;
-    let journal_cutoff = match wire.journal_cutoff {
-        Some(journal_cutoff) => journal_cutoff,
-        None => records
-            .last()
-            .ok_or_else(|| JournalCodecError::new("a semantic commit must contain a record"))?
-            .sequence()
-            .get(),
+    let journal_cutoff = wire.journal_cutoff.map(JournalSequence::new);
+    let kind = match wire.kind {
+        WireCommitKind::Incremental => JournalCommitKind::Incremental,
+        WireCommitKind::Snapshot => JournalCommitKind::Snapshot,
     };
-    let mut commit = match wire.kind {
-        WireCommitKind::Incremental => {
-            JournalCommit::incremental_through(JournalSequence::new(journal_cutoff), records)
-        },
-        WireCommitKind::Snapshot => {
-            JournalCommit::snapshot_through(JournalSequence::new(journal_cutoff), records)
-        },
-    };
-    let Some(session_id) = commit.session_id() else {
+    let commit = JournalCommit::decoded(kind, journal_cutoff, records);
+    if commit.session_id().is_none() {
         return Err(JournalCodecError::new(
             "a semantic commit must contain at least one Journal record",
         ));
-    };
-    if (schema == WireSchema::Current) != session_id.as_uuid().is_some() {
-        return Err(JournalCodecError::new(match schema {
-            WireSchema::Current => "current Journal commits must carry UUIDv7 Session identities",
-            WireSchema::Previous | WireSchema::Legacy => {
-                "legacy Journal commits must carry numeric Session identities"
-            },
-        }));
-    }
-    if schema == WireSchema::Legacy {
-        commit = commit.into_legacy_v1();
     }
     validate_commit(&commit)?;
     Ok(commit)
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum WireSchema {
-    Current,
-    Previous,
-    Legacy,
 }
 
 fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
@@ -254,9 +181,19 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
             "Journal sequence must start with a positive value",
         ));
     }
-    if commit.semantic_cutoff().get() == 0 {
+    if let Some(cutoff) = commit.journal_cutoff() {
+        if cutoff.get() == 0 {
+            return Err(JournalCodecError::new(
+                "Journal cutoff must be a positive semantic sequence",
+            ));
+        }
+    } else if commit.kind() != JournalCommitKind::Incremental
+        || commit.records().len() != 1
+        || !matches!(first.record(), JournalRecord::SessionDescriptor(_))
+        || first.sequence().get() != 1
+    {
         return Err(JournalCodecError::new(
-            "Journal cutoff must be a positive semantic sequence",
+            "only the initial descriptor commit may omit its semantic cutoff",
         ));
     }
     if commit.kind() == JournalCommitKind::Snapshot && first.sequence().get() != 1 {
@@ -286,8 +223,23 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
             ));
         }
     }
+    let descriptor_count = commit
+        .records()
+        .iter()
+        .filter(|entry| matches!(entry.record(), JournalRecord::SessionDescriptor(_)))
+        .count();
+    if descriptor_count > 0
+        && (descriptor_count != 1
+            || first.sequence().get() != 1
+            || !matches!(first.record(), JournalRecord::SessionDescriptor(_)))
+    {
+        return Err(JournalCodecError::new(
+            "a Session descriptor must be the single replay-sequence-one prefix record",
+        ));
+    }
     for entry in commit.records() {
         match entry.record() {
+            JournalRecord::SessionDescriptor(_) => {},
             JournalRecord::MessageReset(reset) => {
                 if reset.revision() == 0 {
                     return Err(JournalCodecError::new(
@@ -370,6 +322,9 @@ fn validate_segment(segment: &MessageSegment) -> Result<(), JournalCodecError> {
 impl From<&JournalRecord> for WireRecord {
     fn from(record: &JournalRecord) -> Self {
         match record {
+            JournalRecord::SessionDescriptor(descriptor) => Self::SessionDescriptor {
+                descriptor: WireSessionDescriptor::from(descriptor),
+            },
             JournalRecord::CommandCommitted(command) => Self::CommandCommitted {
                 command: WireCommand::from(command),
             },
@@ -395,6 +350,9 @@ impl TryFrom<WireRecord> for JournalRecord {
 
     fn try_from(record: WireRecord) -> Result<Self, Self::Error> {
         match record {
+            WireRecord::SessionDescriptor { descriptor } => Ok(Self::SessionDescriptor(
+                SessionDescriptor::try_from(descriptor)?,
+            )),
             WireRecord::CommandCommitted { command } => {
                 Ok(Self::CommandCommitted(AgentCommand::try_from(command)?))
             },

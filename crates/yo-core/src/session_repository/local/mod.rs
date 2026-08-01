@@ -52,10 +52,7 @@ impl LocalSessionRepository {
     }
 
     fn session_path(&self, session_id: SessionId) -> PathBuf {
-        let name = session_id
-            .legacy_value()
-            .map_or_else(|| session_id.to_string(), |legacy| legacy.get().to_string());
-        self.root.join(format!("{name}.jsonl"))
+        self.root.join(format!("{session_id}.jsonl"))
     }
 
     fn load_state(&self, session_id: SessionId) -> Result<SessionState, RepositoryError> {
@@ -159,11 +156,6 @@ impl SessionRepository for LocalSessionRepository {
         session_id: SessionId,
         record: DurableRecord,
     ) -> Result<AppendReceipt, AppendError> {
-        if session_id.as_uuid().is_none() {
-            return Err(AppendError::Repository(RepositoryError::Unavailable {
-                message: "legacy numeric Sessions are read-only".to_owned(),
-            }));
-        }
         self.ensure_session_state(session_id)?;
 
         let state = self

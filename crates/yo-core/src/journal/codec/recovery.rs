@@ -1,15 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::{
-    JournalCodecError, JournalCommit, JournalCommitFormat, JournalCommitKind, JournalRecord,
-    MessageEnded, MessageOutcome, MessageStream, ReplaySequence, SequencedJournalRecord,
+    JournalCodecError, JournalCommit, JournalCommitKind, JournalRecord, MessageEnded,
+    MessageOutcome, MessageStream, ReplaySequence, SequencedJournalRecord,
 };
-use crate::{ActivityRef, AgentEvent, JournalSequence};
+use crate::{ActivityRef, AgentEvent, JournalSequence, SessionDescriptor};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RecoveredJournal {
     records: Vec<SequencedJournalRecord>,
-    journal_cutoff: JournalSequence,
+    journal_cutoff: Option<JournalSequence>,
+    descriptor: Option<SessionDescriptor>,
     recovery_commit: Option<JournalCommit>,
     open_messages: BTreeMap<ActivityRef, OpenMessage>,
     ended_messages: BTreeSet<ActivityRef>,
@@ -37,11 +38,30 @@ impl RecoveredJournal {
         if let Some(recovery_commit) = &self.recovery_commit {
             records.extend(recovery_commit.records().iter().cloned());
         }
-        JournalCommit::snapshot_through(self.journal_cutoff(), records)
+        match self.journal_cutoff {
+            Some(cutoff) => JournalCommit::snapshot_through(cutoff, records),
+            None => JournalCommit::descriptor(
+                self.descriptor
+                    .clone()
+                    .expect("a cutoff-less recovered Journal contains its descriptor"),
+            ),
+        }
     }
 
-    pub(crate) fn journal_cutoff(&self) -> JournalSequence {
+    #[allow(
+        dead_code,
+        reason = "stored Session discovery consumes recovered descriptor metadata in its follow-up Slice"
+    )]
+    pub(crate) fn journal_cutoff(&self) -> Option<JournalSequence> {
         self.journal_cutoff
+    }
+
+    #[allow(
+        dead_code,
+        reason = "stored Session discovery consumes recovered descriptor metadata in its follow-up Slice"
+    )]
+    pub(crate) const fn descriptor(&self) -> Option<&SessionDescriptor> {
+        self.descriptor.as_ref()
     }
 
     pub(crate) fn validate_incremental(
@@ -53,13 +73,16 @@ impl RecoveredJournal {
                 "incremental recovery cannot apply a snapshot",
             ));
         }
-        if commit.semantic_cutoff() < self.journal_cutoff {
+        if let (Some(next), Some(current)) = (commit.journal_cutoff(), self.journal_cutoff)
+            && next < current
+        {
             return Err(JournalCodecError::new(
                 "semantic Journal cutoff moved backwards",
             ));
         }
         let mut open_messages = self.open_messages.clone();
         let mut ended_messages = self.ended_messages.clone();
+        let mut descriptor = self.descriptor.clone();
         let mut head = self.head;
         for entry in commit.records() {
             let expected = head.map_or(1, |value| value.get().checked_add(1).unwrap_or(0));
@@ -69,15 +92,15 @@ impl RecoveredJournal {
                     entry.sequence().get()
                 )));
             }
-            apply_message_record(
+            apply_record(
                 entry.record(),
-                commit.format(),
+                &mut descriptor,
                 &mut open_messages,
                 &mut ended_messages,
             )?;
             head = Some(entry.sequence());
         }
-        recovery_seals(head, commit.semantic_cutoff(), &open_messages)?;
+        recovery_seals(head, commit.journal_cutoff(), &open_messages)?;
         Ok(())
     }
 
@@ -98,12 +121,13 @@ struct OpenMessage {
 }
 
 pub(crate) fn recover(commits: &[JournalCommit]) -> Result<RecoveredJournal, JournalCodecError> {
-    let first = commits
+    commits
         .first()
         .ok_or_else(|| JournalCodecError::new("Journal recovery requires a semantic commit"))?;
     let mut recovered = RecoveredJournal {
         records: Vec::new(),
-        journal_cutoff: first.semantic_cutoff(),
+        journal_cutoff: None,
+        descriptor: None,
         recovery_commit: None,
         open_messages: BTreeMap::new(),
         ended_messages: BTreeSet::new(),
@@ -127,7 +151,9 @@ fn apply_commit(
     recovered: &mut RecoveredJournal,
     commit: &JournalCommit,
 ) -> Result<(), JournalCodecError> {
-    if !recovered.records.is_empty() && commit.semantic_cutoff() < recovered.journal_cutoff {
+    if let (Some(next), Some(current)) = (commit.journal_cutoff(), recovered.journal_cutoff)
+        && next < current
+    {
         return Err(JournalCodecError::new(
             "semantic Journal cutoff moved backwards",
         ));
@@ -142,11 +168,14 @@ fn apply_commit(
             ));
         }
         recovered.records.clear();
+        recovered.descriptor = None;
         recovered.open_messages.clear();
         recovered.ended_messages.clear();
         recovered.head = None;
     }
-    recovered.journal_cutoff = commit.semantic_cutoff();
+    if let Some(cutoff) = commit.journal_cutoff() {
+        recovered.journal_cutoff = Some(cutoff);
+    }
     for entry in commit.records() {
         let expected = recovered
             .head
@@ -157,9 +186,9 @@ fn apply_commit(
                 entry.sequence().get()
             )));
         }
-        apply_message_record(
+        apply_record(
             entry.record(),
-            commit.format(),
+            &mut recovered.descriptor,
             &mut recovered.open_messages,
             &mut recovered.ended_messages,
         )?;
@@ -169,23 +198,28 @@ fn apply_commit(
     Ok(())
 }
 
-fn apply_message_record(
+fn apply_record(
     record: &JournalRecord,
-    format: JournalCommitFormat,
+    descriptor: &mut Option<SessionDescriptor>,
     open_messages: &mut BTreeMap<ActivityRef, OpenMessage>,
     ended_messages: &mut BTreeSet<ActivityRef>,
 ) -> Result<(), JournalCodecError> {
-    if format == JournalCommitFormat::LegacyV1
-        && !open_messages.is_empty()
-        && matches!(
-            record,
-            JournalRecord::CommandCommitted(_) | JournalRecord::EventCommitted(_)
-        )
-    {
-        return Err(JournalCodecError::new(
-            "an unterminated durable message must be sealed before a later durable event",
-        ));
+    if let JournalRecord::SessionDescriptor(candidate) = record {
+        if descriptor.replace(candidate.clone()).is_some() {
+            return Err(JournalCodecError::new(
+                "a recovered Session cannot contain more than one descriptor",
+            ));
+        }
+        return Ok(());
     }
+    apply_message_record(record, open_messages, ended_messages)
+}
+
+fn apply_message_record(
+    record: &JournalRecord,
+    open_messages: &mut BTreeMap<ActivityRef, OpenMessage>,
+    ended_messages: &mut BTreeSet<ActivityRef>,
+) -> Result<(), JournalCodecError> {
     match record {
         JournalRecord::MessageReset(reset) => {
             if ended_messages.contains(&reset.activity()) {
@@ -249,9 +283,7 @@ fn apply_message_record(
                 ));
             }
         },
-        JournalRecord::EventCommitted(AgentEvent::ActivityStarted { activity, kind })
-            if format == JournalCommitFormat::Current =>
-        {
+        JournalRecord::EventCommitted(AgentEvent::ActivityStarted { activity, kind }) => {
             if ended_messages.contains(activity)
                 || open_messages
                     .insert(
@@ -270,9 +302,7 @@ fn apply_message_record(
                 ));
             }
         },
-        JournalRecord::EventCommitted(AgentEvent::ActivityFinished { activity, .. })
-            if format == JournalCommitFormat::Current =>
-        {
+        JournalRecord::EventCommitted(AgentEvent::ActivityFinished { activity, .. }) => {
             if open_messages.contains_key(activity) {
                 return Err(JournalCodecError::new(
                     "a finished message activity requires a preceding MessageEnded record",
@@ -284,6 +314,7 @@ fn apply_message_record(
                 ));
             }
         },
+        JournalRecord::SessionDescriptor(_) => unreachable!("descriptors are handled above"),
         JournalRecord::CommandCommitted(_) | JournalRecord::EventCommitted(_) => {},
     }
     Ok(())
@@ -351,12 +382,15 @@ fn apply_segment(
 
 fn recovery_seals(
     head: Option<ReplaySequence>,
-    journal_cutoff: JournalSequence,
+    journal_cutoff: Option<JournalSequence>,
     open_messages: &BTreeMap<ActivityRef, OpenMessage>,
 ) -> Result<Option<JournalCommit>, JournalCodecError> {
     if open_messages.is_empty() {
         return Ok(None);
     }
+    let journal_cutoff = journal_cutoff.ok_or_else(|| {
+        JournalCodecError::new("an open durable message requires a semantic Journal cutoff")
+    })?;
     let mut next = head
         .map_or(1, ReplaySequence::get)
         .checked_add(u64::from(head.is_some()))

@@ -9,7 +9,7 @@ use crate::{
 };
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireCommand {
     CreateSession {
         session_id: WireSessionId,
@@ -32,7 +32,7 @@ pub(super) enum WireCommand {
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireActivityResponse {
     Approval { decision: WireApprovalDecision },
     UserInput { text: String },

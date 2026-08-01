@@ -17,7 +17,7 @@ pub use transcript::{
     TranscriptSlice,
 };
 
-use crate::{AgentCommand, AgentEvent, session_repository::SessionRepository};
+use crate::{AgentCommand, AgentEvent, SessionDescriptor, session_repository::SessionRepository};
 
 #[derive(Debug)]
 struct SessionJournalState {
@@ -57,11 +57,30 @@ impl SessionJournal {
         Self::default()
     }
 
-    pub(crate) fn with_repository(repository: Box<dyn SessionRepository + Send>) -> Self {
+    pub(crate) fn with_repository_and_descriptor(
+        repository: Box<dyn SessionRepository + Send>,
+        descriptor: SessionDescriptor,
+    ) -> Self {
         Self {
             state: Arc::new(RwLock::new(SessionJournalState::default())),
-            durable: Some(durable::DurableJournal::new(repository)),
+            durable: Some(durable::DurableJournal::new(repository, descriptor)),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_repository(repository: Box<dyn SessionRepository + Send>) -> Self {
+        Self::with_repository_and_descriptor(
+            repository,
+            crate::fixture_descriptor(crate::fixture_session(1)),
+        )
+    }
+
+    pub(crate) fn initialize_durability(&mut self) {
+        let Some(durable) = &mut self.durable else {
+            return;
+        };
+        let durability = durable.initialize();
+        write_state(&self.state).observe_durability(durability);
     }
 
     pub(crate) fn transcript_reader(&self) -> TranscriptReader {

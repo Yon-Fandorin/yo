@@ -108,6 +108,17 @@ fn session_id() -> SessionId {
         .expect("the fixture is a UUIDv7")
 }
 
+fn session_descriptor() -> yo_core::SessionDescriptor {
+    yo_core::SessionDescriptor::for_session(
+        session_id(),
+        "10000000-0000-4000-8000-000000000001"
+            .parse()
+            .expect("the test Host fixture is a UUIDv4"),
+        yo_core::HostWorkspacePath::normalize_local("/")
+            .expect("the filesystem root is a canonical workspace path"),
+    )
+}
+
 fn turn() -> TurnRef {
     TurnRef::new(session_id(), TurnId::new(NonZeroU64::MIN))
 }
@@ -213,7 +224,7 @@ fn exposes_initial_storage_pressure_to_the_connected_frontend() {
     let mut termination = NeverTerminated;
     let mut connection = TuiAgentConnection::start_persistent(
         backend,
-        session_id(),
+        session_descriptor(),
         CapacityPressureRepository,
         &mut termination,
     )
@@ -261,7 +272,7 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
     let mut termination = NeverTerminated;
     let mut connection = TuiAgentConnection::start_persistent(
         backend,
-        session_id(),
+        session_descriptor(),
         RecoveringPressureRepository::default(),
         &mut termination,
     )

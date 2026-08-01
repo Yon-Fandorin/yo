@@ -6,9 +6,8 @@ mod segmenter;
 mod wire;
 
 pub(crate) use model::{
-    JournalCommit, JournalCommitFormat, JournalCommitKind, JournalRecord, MessageEnded,
-    MessageOutcome, MessageReset, MessageSegment, MessageStream, MessageTerminal, ReplaySequence,
-    SequencedJournalRecord,
+    JournalCommit, JournalCommitKind, JournalRecord, MessageEnded, MessageOutcome, MessageReset,
+    MessageSegment, MessageStream, MessageTerminal, ReplaySequence, SequencedJournalRecord,
 };
 pub(crate) use recovery::{RecoveredJournal, recover};
 pub(crate) use segmenter::MessageSegmenter;

@@ -57,11 +57,11 @@ new shared capability.
 
 | Module | Owns | Follow next |
 |---|---|---|
-| [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | Provider-neutral commands, observable events, outcomes, and typed identities; new Session identities are storage-independent UUIDv7 values, while the numeric legacy form exists only for honest recovery of older Journal records | `engine` for legal state transitions |
-| [`host`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/host/mod.rs) | An opaque random UUIDv4 `WorkspaceHostId` and its atomically created, permission-restricted local per-user identity file | Session discovery descriptors and remote Host transport |
+| [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/command.rs), [`event.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/event.rs), [`session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session.rs) | Provider-neutral commands, observable events, outcomes, typed identities, and the versioned `SessionDescriptor`; release-baseline Session identities are storage-independent UUIDv7 values whose embedded time matches the descriptor start time | `engine` for legal state transitions |
+| [`host`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/host/mod.rs) | An opaque random UUIDv4 `WorkspaceHostId`, its atomically created permission-restricted local per-user identity file, and the producing Host's lossless canonical workspace-path value | Remote Host transport and workspace comparison by matching Host identity |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | Deterministic Session, Turn, Activity, and request state transitions | `runtime` when a transition also crosses a provider boundary |
 | [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | One ordered live projection of committed commands and semantic events; bounded sequence-based Transcript reads; synchronous durable publication, typed gap state, bounded revision-aware `MessageSegment` construction, and recovery validation | `runtime` for the capture point; `session_repository` for physical durability |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append and suffix-read contract, snapshot recovery gate, typed storage pressure, and the first single-writer local versioned-JSONL implementation with UUIDv7 filenames and versioned legacy reads; `JournalRepository` validates a candidate against the durable semantic prefix and composes one semantic commit with one physical append | Stored-Session discovery, remote storage or transport, Request Audit persistence, and database or compression alternatives |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | Storage-neutral append and suffix-read contract, snapshot recovery gate, typed storage pressure, and the first single-writer local versioned-JSONL implementation with UUIDv7 filenames; before the first release, the checksummed UUIDv7 envelope is the sole `v1` baseline and development-only predecessor formats are unsupported; `JournalRepository` validates a candidate against the durable semantic prefix and composes one semantic commit with one physical append | Stored-Session discovery, remote storage or transport, Request Audit persistence, and database or compression alternatives |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | Ordering backend acceptance, semantic commit, and Journal capture; translating backend observations; closing active work on failure | `backend/contract.rs` for the provider port |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | Nonblocking frontend access, bounded command lanes, a capacity-one Journal-change notification, worker ownership, startup cancellation, and shutdown coordination | `runtime` for worker-owned semantics |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | Provider capabilities, commands, semantic events, polling, cancellation, failure kinds, and explicit cleanup | A concrete adapter |
@@ -80,11 +80,13 @@ encodes semantic commits, bounds message content as `MessageSegment` records,
 starts a new immutable message revision for an authoritative replacement
 snapshot, forces pending text before a non-text ordering boundary, and
 distinguishes same-writer live-gap snapshots from reopen recovery.
-The codec writes semantic commit v3 and explicitly retains v2 and v1 read support;
-only v1 infers revision 1 and its semantic cutoff from the last
-record coordinate.
+Before the first release, the codec writes and reads only semantic commit `v1`;
+development-only predecessor formats are not compatibility promises.
 `JournalSequence` remains the frontend-visible semantic cutoff while a private
-replay coordinate orders normalized segment records. `JournalRepository`
+replay coordinate orders the leading descriptor and normalized segment records.
+The descriptor consumes replay sequence 1 without inventing a semantic
+`JournalSequence`; its own first physical envelope therefore has no semantic
+cutoff. `JournalRepository`
 validates new suffixes incrementally against its recovered state before mapping
 them to the local repository instead of re-reading the JSONL log per append. A live writer that
 observed its own storage-pressure failure may complete the retained prefix in
@@ -92,12 +94,27 @@ one snapshot; after reopen, a replacement snapshot must also retain required
 recovery seals.
 
 The live `AgentSession` worker now owns the `JournalRepository` call path. The
-CLI first establishes one durable local Workspace Host identity below the
-per-user platform state root, then opens one local repository by default and
-generates a new Session identity. `YO_SESSION_REPOSITORY` may relocate Session
-records without changing that Host identity. Writing the Host ID into a
-discovery descriptor remains a follow-up boundary. The worker publishes durable
-records before their committed semantic result is exposed. Streaming text remains a process-local live revision until a size,
+CLI establishes one durable local Workspace Host identity, opens the local
+repository, canonicalizes the workspace without lossy UTF-8 conversion, and
+creates a `SessionDescriptor` from one UUIDv7 clock reading.
+`YO_SESSION_REPOSITORY` may relocate Session records without changing that Host
+identity. The worker attempts the descriptor as the first Journal envelope
+before backend `CreateSession`; if that append is unavailable, later activity
+remains memory-only until one complete snapshot can publish the descriptor and
+semantic prefix together. Stored-Session listing and bounded discovery summaries
+remain follow-up boundaries.
+
+`yo-core` is still a `0.0.0` internal Pilot API. This Slice deliberately makes
+persistent startup require a complete `SessionDescriptor` instead of a bare
+`SessionId`, and lets `JournalDurability::Durable` carry no semantic cutoff while
+only that descriptor is durable. `SessionId` is now UUIDv7-only, `as_uuid`
+therefore returns a UUID directly, and `SessionDescriptor::for_session` is
+infallible for an admitted identity. These are intentional source-breaking contract
+corrections rather than compatibility shims; callers must migrate with this
+repository before a public API is frozen.
+
+The worker publishes durable records before their
+committed semantic result is exposed. Streaming text remains a process-local live revision until a size,
 time, ordering, or terminal boundary forces a durable segment or empty-revision
 `MessageReset`. A known-clean capacity or storage-pressure refusal latches a
 typed gap while the Session continues in memory; after open messages receive

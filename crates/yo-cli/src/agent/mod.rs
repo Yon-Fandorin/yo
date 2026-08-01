@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 
+#[cfg(test)]
+use yo_core::SessionId;
 use yo_core::{
     AgentBackend, AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, CommandAdmission,
-    PendingCommand, SessionId, TranscriptObservation, TranscriptObservationSequence,
+    PendingCommand, SessionDescriptor, TranscriptObservation, TranscriptObservationSequence,
     TranscriptReader, session_repository::SessionRepository,
 };
 use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
@@ -49,7 +51,7 @@ impl TuiAgentConnection {
 
     pub(crate) fn start_persistent<B, R>(
         backend: B,
-        session_id: SessionId,
+        descriptor: SessionDescriptor,
         repository: R,
         termination: &mut impl TerminationSource,
     ) -> Result<Option<Self>, AgentSessionError>
@@ -57,7 +59,7 @@ impl TuiAgentConnection {
         B: AgentBackend + Send + 'static,
         R: SessionRepository + Send + 'static,
     {
-        AgentSession::start_cancellable_with_repository(backend, session_id, repository, || {
+        AgentSession::start_cancellable_with_repository(backend, descriptor, repository, || {
             termination.poll_termination() == TerminationEvent::Requested
         })
         .map(|session| {

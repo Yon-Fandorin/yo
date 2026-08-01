@@ -1,9 +1,11 @@
 mod local;
+mod workspace;
 
 use std::{fmt, str::FromStr};
 
 pub use local::{LocalWorkspaceHostIdentity, LocalWorkspaceHostIdentityError};
 use uuid::{Builder, Uuid, Variant, Version};
+pub use workspace::{HostWorkspacePath, HostWorkspacePathError};
 
 /// Stable opaque identity of one per-user Yo Host installation.
 ///

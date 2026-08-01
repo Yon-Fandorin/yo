@@ -10,7 +10,7 @@ use crate::{
 };
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireEvent {
     SessionCreated {
         session_id: WireSessionId,
@@ -37,7 +37,7 @@ pub(super) enum WireEvent {
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireActivityKind {
     ModelWork,
     AgentMessage,
@@ -51,14 +51,14 @@ pub(super) enum WireActivityKind {
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireActivityUpdate {
     TextDelta { text: String },
     TextSnapshot { text: String },
 }
 
 #[derive(Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireOutcome {
     Completed,
     Interrupted,

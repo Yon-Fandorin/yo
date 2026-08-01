@@ -6,25 +6,25 @@ use super::JournalCodecError;
 use crate::{ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionId, TurnId, TurnRef};
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WireTurnRef {
     pub(super) session_id: WireSessionId,
     pub(super) turn_id: u64,
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(untagged)]
-pub(super) enum WireSessionId {
-    Uuid(uuid::Uuid),
-    Legacy(u64),
-}
+#[serde(transparent)]
+pub(super) struct WireSessionId(uuid::Uuid);
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WireActivityRef {
     pub(super) turn: WireTurnRef,
     pub(super) activity_id: u64,
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WireActivityRequestRef {
     pub(super) activity: WireActivityRef,
     pub(super) request_id: u64,
@@ -92,15 +92,7 @@ impl TryFrom<WireActivityRequestRef> for ActivityRequestRef {
 
 impl From<SessionId> for WireSessionId {
     fn from(value: SessionId) -> Self {
-        match value.as_uuid() {
-            Some(uuid) => Self::Uuid(uuid),
-            None => Self::Legacy(
-                value
-                    .legacy_value()
-                    .expect("a Session identity has one representation")
-                    .get(),
-            ),
-        }
+        Self(value.as_uuid())
     }
 }
 
@@ -108,11 +100,8 @@ pub(super) fn session_id_from(
     value: WireSessionId,
     name: &str,
 ) -> Result<SessionId, JournalCodecError> {
-    match value {
-        WireSessionId::Uuid(uuid) => SessionId::from_uuid(uuid)
-            .map_err(|_| JournalCodecError::new(format!("{name} identity must be a UUIDv7"))),
-        WireSessionId::Legacy(value) => Ok(SessionId::from_legacy(non_zero(value, name)?)),
-    }
+    SessionId::from_uuid(value.0)
+        .map_err(|_| JournalCodecError::new(format!("{name} identity must be a UUIDv7")))
 }
 
 pub(super) fn request_id_from(value: u64) -> Result<RequestId, JournalCodecError> {

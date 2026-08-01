@@ -12,10 +12,13 @@
 yo-cli
   표시 mode와 glyph profile 해석, cwd 확보
   TerminationCoordinator 설치
+  Host identity와 Session repository 열기
+  workspace 정규화와 SessionDescriptor 생성
   CodexBackend transport 시작
       ↓
 yo-core AgentSession
   worker 시작
+  descriptor envelope 시도
   CreateSession
       ↓
 Codex app-server
@@ -31,10 +34,10 @@ yo-tui
 
 | 단계 | 현재 소유자 | 확인할 내용 |
 |---|---|---|
-| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run`이 표시 mode와 glyph profile을 선택하고 작업 디렉터리를 확보한 뒤 프로세스 종료 coordinator를 설치한다. |
+| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run`이 표시 옵션과 작업 디렉터리를 확보하고 종료 coordinator를 설치한다. Host identity와 Session storage를 열고 workspace를 canonicalize한 뒤 시각이 일치하는 UUIDv7 `SessionDescriptor`를 만든다. |
 | 2 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CodexBackend::spawn`이 설정을 검증하고 stdio transport를 시작한다. provider handshake는 아직 하지 않는다. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
-| 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 `AgentRuntime`을 통해 `CreateSession`을 보낸다. |
+| 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 descriptor-only Journal envelope를 먼저 시도한 뒤 `AgentRuntime`을 통해 `CreateSession`을 보낸다. storage pressure가 있으면 descriptor와 이후 activity를 복구 가능한 volatile prefix로 함께 유지한다. |
 | 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CreateSession`이 `initialize`와 `thread/start`를 수행하고 semantic engine이 `SessionCreated`를 만든다. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode`가 첫 터미널 소유 세대의 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
 
@@ -204,6 +207,8 @@ worker 경로 안에 있지만, 이 추가 observation 좌표는 아직 frontend
 실행 중인 `AgentSession`은 다음 local 조합을 사용한다.
 
 ```text
+최초 SessionDescriptor (replay sequence 1, semantic cutoff 없음)
+    ↓
 semantic Journal record
     ↓ 크기가 제한된 MessageSegment 구성
 JournalCommit codec
@@ -221,6 +226,14 @@ Journal recovery
     ↓
 RecoveredJournal 또는 명시적인 recovery 오류
 ```
+
+backend가 `CreateSession`을 받기 전에 worker는 UUIDv7 Session identity, Workspace
+Host identity, 생성 Host의 canonical path bytes, UUID와 일치하는 시작 시각을 담은
+descriptor-only incremental envelope 하나를 먼저 시도한다. descriptor는 Journal에
+속한 탐색 데이터지만 frontend Transcript에 들어가거나 semantic `JournalSequence`를
+소비하지 않는다. 첫 append가 storage pressure를 만나면 기존 gap 정책에 따라 이후
+작업도 volatile하게 유지한다. 처음 성공하는 recovery snapshot은 descriptor로
+시작하고 그동안의 complete semantic prefix를 함께 담는다.
 
 pending message text는 non-text 순서 경계 전에 immutable segment로 강제
 저장되므로 동시 Activity event의 원래 순서를 보존할 수 있다. crash 뒤 열린

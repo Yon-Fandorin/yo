@@ -7,6 +7,7 @@ use crate::{
 };
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WireMessageReset {
     activity: WireActivityRef,
     stream: WireMessageStream,
@@ -14,6 +15,7 @@ pub(super) struct WireMessageReset {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WireMessageSegment {
     activity: WireActivityRef,
     stream: WireMessageStream,
@@ -23,6 +25,7 @@ pub(super) struct WireMessageSegment {
 }
 
 #[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct WireMessageEnded {
     activity: WireActivityRef,
     stream: WireMessageStream,
@@ -144,28 +147,6 @@ impl TryFrom<WireMessageEnded> for MessageEnded {
             ended.segment_count,
             ended.utf8_bytes,
         ))
-    }
-}
-
-impl WireMessageSegment {
-    pub(super) fn admit_legacy_revision(&mut self) -> Result<(), JournalCodecError> {
-        if self.revision.replace(1).is_some() {
-            return Err(JournalCodecError::new(
-                "legacy MessageSegment must not declare a revision",
-            ));
-        }
-        Ok(())
-    }
-}
-
-impl WireMessageEnded {
-    pub(super) fn admit_legacy_revision(&mut self) -> Result<(), JournalCodecError> {
-        if self.revision.replace(1).is_some() {
-            return Err(JournalCodecError::new(
-                "legacy MessageEnded must not declare a revision",
-            ));
-        }
-        Ok(())
     }
 }
 

@@ -10,7 +10,7 @@ use std::{
 
 use uuid::{Uuid, Variant, Version};
 
-use super::{LocalWorkspaceHostIdentity, WorkspaceHostId};
+use super::{HostWorkspacePath, LocalWorkspaceHostIdentity, WorkspaceHostId};
 
 struct TestDirectory(PathBuf);
 
@@ -56,6 +56,22 @@ fn generated_workspace_host_identity_is_a_round_trippable_uuidv4() {
             .to_string()
             .parse::<WorkspaceHostId>()
             .is_err()
+    );
+}
+
+// 같은 workspace를 symlink 경로와 실제 경로로 열어도 Host가 canonical path 하나로
+// 정규화해야 향후 기본 Session 목록이 같은 파일을 서로 다른 workspace로 나누지 않는다.
+#[test]
+fn local_workspace_normalization_collapses_a_symlink_alias() {
+    let directory = TestDirectory::new("workspace-symlink");
+    let workspace = directory.path().join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    let alias = directory.path().join("alias");
+    symlink(&workspace, &alias).unwrap();
+
+    assert_eq!(
+        HostWorkspacePath::normalize_local(&workspace).unwrap(),
+        HostWorkspacePath::normalize_local(&alias).unwrap()
     );
 }
 

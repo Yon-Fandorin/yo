@@ -50,6 +50,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.journal.transcript_reader().durability()
     }
 
+    pub(crate) fn initialize_durability(&mut self) {
+        self.journal.initialize_durability();
+    }
+
     /// Validates a command, lets the backend accept it, then commits its semantic transition.
     pub fn execute_command(
         &mut self,

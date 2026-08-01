@@ -98,14 +98,16 @@ fn run_agent_generation(
     if live.is_none() {
         let storage = storage::open_default()
             .map_err(|error| AppError::single("opening local Yo storage", error))?;
-        let (repository, _workspace_host_id) = storage.into_parts();
-        let session_id = yo_core::SessionId::new()
-            .map_err(|error| AppError::single("generating a Session identity", error))?;
+        let (repository, workspace_host_id) = storage.into_parts();
+        let workspace_path = yo_core::HostWorkspacePath::normalize_local(cwd)
+            .map_err(|error| AppError::single("normalizing the workspace path", error))?;
+        let descriptor = yo_core::SessionDescriptor::new(workspace_host_id, workspace_path)
+            .map_err(|error| AppError::single("generating a Session descriptor", error))?;
         let backend = yo_core::CodexBackend::spawn(yo_core::CodexBackendConfig::new(cwd))
             .map_err(|error| AppError::single("starting Codex", error))?;
         let Some(agent) = agent::TuiAgentConnection::start_persistent(
             backend,
-            session_id,
+            descriptor,
             repository,
             termination,
         )

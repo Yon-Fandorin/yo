@@ -6,7 +6,7 @@ use message::MessageTracker;
 
 use super::{JournalEntry, JournalSequence, SemanticRecord};
 use crate::{
-    ActivityRef, AgentEvent,
+    ActivityRef, AgentEvent, SessionDescriptor,
     journal::codec::{
         JournalCommit, JournalCommitKind, JournalRecord, ReplaySequence, SequencedJournalRecord,
     },
@@ -22,9 +22,10 @@ use crate::{
 pub enum JournalDurability {
     /// This Session was started without a durable repository.
     MemoryOnly,
-    /// Every durable Journal record through this cutoff reached storage.
+    /// Every durable Journal record reached storage. The semantic cutoff is
+    /// absent while only the initial Session descriptor is durable.
     Durable {
-        journal_sequence: JournalSequence,
+        journal_sequence: Option<JournalSequence>,
         repository_sequence: RepositorySequence,
     },
     /// The live Session continued after durable publication stopped.
@@ -49,6 +50,7 @@ pub(super) struct DurableJournal {
     started: Instant,
     live_cutoff: Option<JournalSequence>,
     status: JournalDurability,
+    descriptor: Option<SessionDescriptor>,
 }
 
 impl fmt::Debug for DurableJournal {
@@ -63,7 +65,10 @@ impl fmt::Debug for DurableJournal {
 }
 
 impl DurableJournal {
-    pub(super) fn new(repository: Box<dyn SessionRepository + Send>) -> Self {
+    pub(super) fn new(
+        repository: Box<dyn SessionRepository + Send>,
+        descriptor: SessionDescriptor,
+    ) -> Self {
         Self {
             repository: JournalRepository::new(repository),
             records: Vec::new(),
@@ -71,7 +76,20 @@ impl DurableJournal {
             started: Instant::now(),
             live_cutoff: None,
             status: JournalDurability::MemoryOnly,
+            descriptor: Some(descriptor),
         }
+    }
+
+    /// Attempts the descriptor before any backend Session command is executed.
+    ///
+    /// A storage failure latches the ordinary durability gap. Later semantic work
+    /// remains memory-only until a complete snapshot containing this descriptor
+    /// can be published.
+    pub(super) fn initialize(&mut self) -> JournalDurability {
+        let Some(descriptor) = self.descriptor.take() else {
+            return self.status;
+        };
+        self.publish_records(vec![JournalRecord::SessionDescriptor(descriptor)], None)
     }
 
     /// Captures semantic records and publishes any newly forced durable records.
@@ -160,8 +178,6 @@ impl DurableJournal {
         if records.is_empty() {
             return self.status;
         }
-        let journal_cutoff = journal_cutoff
-            .expect("durable records are derived only after a semantic Journal entry");
         let first = self.records.len();
         let sequenced = records
             .into_iter()
@@ -196,11 +212,21 @@ impl DurableJournal {
             return self.status;
         }
         let commit = if recovering_gap {
+            let journal_cutoff = journal_cutoff
+                .expect("a recovery snapshot follows at least one semantic Journal entry");
             let mut complete = self.records.clone();
             complete.extend(sequenced);
             JournalCommit::snapshot_through(journal_cutoff, complete)
+        } else if journal_cutoff.is_none() {
+            let descriptor = match &sequenced[0].record() {
+                JournalRecord::SessionDescriptor(descriptor) if sequenced.len() == 1 => {
+                    descriptor.clone()
+                },
+                _ => unreachable!("only descriptor initialization has no semantic cutoff"),
+            };
+            JournalCommit::descriptor(descriptor)
         } else {
-            JournalCommit::incremental_through(journal_cutoff, sequenced)
+            JournalCommit::incremental_through(journal_cutoff.expect("checked above"), sequenced)
         };
 
         match self.repository.append(session_id, &commit) {
@@ -211,7 +237,7 @@ impl DurableJournal {
                     self.records.extend(commit.records().iter().cloned());
                 }
                 self.status = JournalDurability::Durable {
-                    journal_sequence: commit.semantic_cutoff(),
+                    journal_sequence: commit.journal_cutoff(),
                     repository_sequence: receipt.sequence(),
                 };
             },
@@ -244,7 +270,7 @@ fn durable_cutoff(status: JournalDurability) -> DurableCutoff {
             journal_sequence,
             repository_sequence,
         } => DurableCutoff::Known {
-            journal_sequence: Some(journal_sequence),
+            journal_sequence,
             repository_sequence,
         },
         JournalDurability::MemoryOnly => DurableCutoff::KnownEmpty,
