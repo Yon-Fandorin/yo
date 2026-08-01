@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-002
-    revision: sha256:3ffff21d3a46821f9f4fce131655f66023f13144f7f5f244f988929a1702a8b9
+    revision: sha256:a8bc8794a88abaa186895595f4851bbf1f1b58fc6e625e9ba22df3324b8b4b20
 relations:
   depends_on:
     - agent.observability.session-journal
@@ -26,17 +26,23 @@ the workspace defines normalization; clients MUST compare the host identity and
 that host's normalized path rather than applying local path rules to a remote
 path. The descriptor is semantic Session Journal data under the existing
 Session Repository lifecycle, not a filesystem index or a second Session
-authority. Older Sessions without a descriptor MUST remain readable with
-explicitly unknown metadata.
+authority. A future compatibility contract MAY admit a descriptor-less format
+as readable with explicitly unknown metadata; development formats rejected by
+the current compatibility baseline are not readable Sessions.
 
-Every durable Journal envelope MUST carry a bounded, recomputable discovery
-summary in the same physical commit. The summary MUST identify the envelope's
-durable timestamp, its binding epoch, and whether a valid Continuation Anchor
-exists at or before that boundary. It is derived from the committed Journal
-prefix, MUST NOT be written through a second append or mutable side index, and
-MUST NOT replace the Journal as authority. A reader obtains current discovery
-metadata from a bounded tail read and validates its envelope; it never scans a
-complete log merely to list Sessions.
+Every supported physical Session record MUST carry a bounded discovery summary
+in the same physical commit. The summary MUST contain the complete Session
+descriptor, a writer-assigned `updated_unix_millis`, an optional binding epoch,
+and an optional latest valid Continuation Anchor `JournalSequence`. The writer
+MUST assign the timestamp immediately before append; it becomes durable only
+with the checksummed envelope and is not inferred from filesystem metadata.
+The descriptor, binding epoch, and anchor reference MUST be recomputable from
+the committed Journal prefix. The summary MUST NOT be written through a second
+append or mutable side index and MUST NOT replace the Journal as authority. A
+reader obtains current discovery metadata by locating and validating the last
+complete envelope through a bounded tail read; it never scans a complete log
+merely to list Sessions. “Bounded” limits discovery to the tail envelope rather
+than promising that a single valid envelope has a fixed byte size.
 The summary is a discovery hint, not semantic proof. Executable continuation
 MUST validate the referenced Anchor from the Journal. Any detected disagreement
 between summary and Journal MUST treat the Journal as authoritative, report the
@@ -45,10 +51,11 @@ until writer-owned recovery publishes a consistent envelope.
 
 `yo session` and the `yo --resume` picker MUST default to Sessions whose
 recorded workspace-host identity and normalized path equal the current
-workspace. Descriptor-less Sessions have unknown workspace and MUST be
-reachable through `--all` and direct full-UUID selection, not inserted into
-every workspace's default list. `--all` additionally includes other and unknown
-workspaces and is the only ordinary list form that displays a workspace column.
+workspace. An explicitly supported descriptor-less Session has unknown
+workspace and MUST be reachable through `--all` and direct full-UUID selection,
+not inserted into every workspace's default list. `--all` additionally includes
+other and unknown workspaces and is the only ordinary list form that displays a
+workspace column.
 `--details` MUST expose the record schema version, continuation eligibility,
 and full recorded path without changing the selected set. `UPDATED` MUST mean
 the timestamp of the last valid durable envelope, never volatile screen
@@ -58,11 +65,12 @@ ordering; unavailable legacy values remain visibly unknown.
 
 Continuation eligibility is durable evidence, not a promise that a backend is
 currently reachable. Quarantine or a detected summary disagreement takes
-precedence over every summary value. Otherwise it is `eligible` only when the bounded summary identifies
-a valid Continuation Anchor in a supported record schema, `unavailable` when a
-supported record proves that no valid anchor exists or the committed prefix is
-quarantined, and `unknown` when an older or unsupported format cannot provide
-bounded evidence. Actual native resume, replay support, transport reachability,
+precedence over every summary value. Otherwise it is `eligible` only when the
+bounded summary identifies a valid Continuation Anchor by `JournalSequence` in
+a supported record schema, `unavailable` when a supported record proves that no
+valid anchor exists or the committed prefix is quarantined, and `unknown` when
+an older or unsupported format cannot provide bounded evidence. Actual native
+resume, replay support, transport reachability,
 and lossy-handoff availability are evaluated only by executable continuation.
 The picker MUST dim and prevent selection of `unavailable` entries; `unknown`
 entries remain inspectable and require continuation-time evaluation rather than

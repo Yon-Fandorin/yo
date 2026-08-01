@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.storage-001
-revision: sha256:1c90abd22adf88aab5faa9cda013b5ca364c066e3e7ae94e2aa43be80c3ed5dd
+revision: sha256:babaa8fe5a5d034539e75fbc46cf698f639b58a0e744b86b9f088da52873eec6
 payload:
   kind: decision
   content: >-
@@ -24,7 +24,15 @@ payload:
     RepositorySequence expresses physical append order; neither is derived
     from the other. Every newly written physical record carries a versioned
     CRC32C over an explicit preimage containing schema, Session identity,
-    RepositorySequence, record kind, and exact payload bytes. Recovery accepts
+    RepositorySequence, record kind, exact payload bytes, and the complete
+    discovery object. The repository writer assigns the discovery timestamp
+    immediately before append, derives the descriptor, binding epoch, and latest
+    valid Continuation Anchor JournalSequence from the semantic prefix being
+    committed, and writes the summary inside the same checksummed envelope. The
+    timestamp becomes durable only when that envelope does. A read-only discovery
+    port validates the last complete envelope of each Session with a bounded tail
+    read and exposes storage-neutral summaries without acquiring the writer lease,
+    creating storage, or exposing JSONL paths. Recovery accepts
     supported older records, validates checksummed records before admission,
     and never computes a checksum by serializing a record containing that
     checksum. Recovery

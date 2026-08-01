@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.storage-001
-    revision: sha256:1c90abd22adf88aab5faa9cda013b5ca364c066e3e7ae94e2aa43be80c3ed5dd
+    revision: sha256:babaa8fe5a5d034539e75fbc46cf698f639b58a0e744b86b9f088da52873eec6
 relations:
   depends_on:
     - agent.persistence.format-compatibility
@@ -39,11 +39,24 @@ be inferred from the other.
 
 Every newly written physical record MUST carry a versioned CRC32C over an
 explicit preimage containing its schema, Session identity,
-`RepositorySequence`, record kind, and exact payload bytes. Recovery MUST read
+`RepositorySequence`, record kind, exact payload bytes, and the complete
+discovery object required by the format-compatibility contract. The repository
+writer MUST assign the discovery timestamp immediately before append and MUST
+derive the descriptor, optional binding epoch, and optional latest valid
+Continuation Anchor `JournalSequence` from the semantic prefix being committed.
+It MUST write that summary in the same checksummed envelope; the timestamp
+becomes durable only when the envelope does. Recovery MUST read
 older records only when the format-compatibility contract explicitly supports
 them and MUST validate checksummed records
 before admitting them. The checksum MUST NOT be calculated by recursively
 serializing a record that already contains its checksum.
+
+The repository boundary MUST provide a read-only discovery port that locates
+and validates the last complete envelope of each Session through a bounded tail
+read and returns storage-neutral discovery summaries. Opening or using this port
+MUST NOT acquire the writer lease, create repository storage, repair records, or
+expose JSONL paths. It MAY use an independent read lock only to distinguish an
+active writer from an abandoned pending marker; that lock is not a writer lease.
 
 The two logical record domains therefore share one physical availability
 boundary and one capacity ceiling in this implementation. It is the initial
