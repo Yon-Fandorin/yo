@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.chrome-001
+revision: sha256:0569e99201112c9af64cbce8db9b11766dbb5c0d0938e64904c04f1cdaa27eee
+payload:
+  kind: decision
+  content: The initial static TUI input chrome reserves a transient work row above the prompt and places host-known metrics plus presentation mode below it. Active Esc and Ctrl+C both interrupt; unavailable status data is omitted; narrow layouts drop typed low-priority segments without wrapping; time-driven motion remains a later Slice.
