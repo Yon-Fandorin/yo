@@ -227,6 +227,19 @@ fn key(code: CrosstermKeyCode) -> Event {
     Event::Key(CrosstermKeyEvent::new(code, KeyModifiers::NONE))
 }
 
+fn wait_for_session_change(session: &mut AgentSession) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        match session.poll().unwrap() {
+            AgentSessionPoll::Changed => return,
+            AgentSessionPoll::Pending if Instant::now() < deadline => {
+                std::thread::yield_now();
+            },
+            other => panic!("worker did not publish the expected change: {other:?}"),
+        }
+    }
+}
+
 fn run_generation(
     retained: &mut TuiSession,
     agent: &mut impl AgentConnection,
@@ -385,6 +398,7 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
         retries: 0,
     };
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    wait_for_session_change(&mut agent.session);
 
     assert_eq!(
         agent
@@ -415,28 +429,13 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
     }
 
     release_tx.send(()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        match agent.session.poll().unwrap() {
-            AgentSessionPoll::Changed => {
-                if transcript.read_after(None).entries().iter().any(|entry| {
-                    matches!(
-                        entry.record(),
-                        TranscriptRecord::EventCommitted(AgentEvent::TurnStarted { .. })
-                    )
-                }) {
-                    break;
-                }
-            },
-            AgentSessionPoll::Pending if Instant::now() < deadline => std::thread::yield_now(),
-            other => {
-                assert!(
-                    Instant::now() < deadline,
-                    "worker did not finish the blocked command: {other:?}"
-                );
-            },
-        }
-    }
+    wait_for_session_change(&mut agent.session);
+    assert!(transcript.read_after(None).entries().iter().any(|entry| {
+        matches!(
+            entry.record(),
+            TranscriptRecord::EventCommitted(AgentEvent::TurnStarted { .. })
+        )
+    }));
     let polls = Rc::new(Cell::new(0));
     run_generation(
         &mut retained,
