@@ -98,13 +98,19 @@ struct ApprovalBinding {
     request_activity: ActivityRef,
 }
 
+#[derive(Clone, Copy)]
+struct WireTurnBinding {
+    turn: TurnRef,
+    interrupted: bool,
+}
+
 struct Backend<P> {
     client: AppServerClient<P>,
     initialized: bool,
     cwd: String,
     session: Option<SessionBinding>,
     turns: HashMap<TurnRef, String>,
-    wire_turns: HashMap<String, TurnRef>,
+    wire_turns: HashMap<String, WireTurnBinding>,
     items: HashMap<String, ItemBinding>,
     approvals: HashMap<ActivityRequestRef, ApprovalBinding>,
     wire_approvals: HashMap<String, ActivityRequestRef>,
@@ -152,7 +158,13 @@ impl<P: JsonPeer> Backend<P> {
                 )?;
                 let wire_turn = protocol::string_at(&result, &["turn", "id"])?.to_owned();
                 self.turns.insert(turn, wire_turn.clone());
-                self.wire_turns.insert(wire_turn, turn);
+                self.wire_turns.insert(
+                    wire_turn,
+                    WireTurnBinding {
+                        turn,
+                        interrupted: false,
+                    },
+                );
                 Ok(())
             },
             AgentCommand::SteerTurn { turn, input } => {

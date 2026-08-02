@@ -64,9 +64,13 @@ impl<P: JsonPeer> Backend<P> {
     fn item_started(&mut self, params: &Value) -> Result<Option<BackendEvent>, BackendFailure> {
         self.validate_thread(params)?;
         let wire_turn = protocol::string_at(params, &["turnId"])?;
-        let turn = self.wire_turns.get(wire_turn).copied().ok_or_else(|| {
-            protocol::protocol_failure(format!("unknown Codex Turn `{wire_turn}`"))
-        })?;
+        let turn = self
+            .wire_turns
+            .get(wire_turn)
+            .map(|binding| binding.turn)
+            .ok_or_else(|| {
+                protocol::protocol_failure(format!("unknown Codex Turn `{wire_turn}`"))
+            })?;
         let item_id = protocol::string_at(params, &["item", "id"])?.to_owned();
         let item_type = protocol::string_at(params, &["item", "type"])?;
         let Some(kind) = activity_kind(item_type) else {
@@ -88,12 +92,26 @@ impl<P: JsonPeer> Backend<P> {
     fn item_completed(&mut self, params: &Value) -> Result<Option<BackendEvent>, BackendFailure> {
         self.validate_thread(params)?;
         let wire_turn = protocol::string_at(params, &["turnId"])?;
-        let turn = self.wire_turns.get(wire_turn).copied().ok_or_else(|| {
+        let wire_binding = self.wire_turns.get(wire_turn).copied().ok_or_else(|| {
             protocol::protocol_failure(format!("unknown Codex Turn `{wire_turn}`"))
         })?;
+        let turn = wire_binding.turn;
         let item_id = protocol::string_at(params, &["item", "id"])?;
         let item_type = protocol::string_at(params, &["item", "type"])?;
+        let supported = activity_kind(item_type).is_some();
+        let binding = self.items.get(item_id);
+        if binding.is_some_and(|binding| binding.activity.turn() != turn) {
+            if supported && wire_binding.interrupted {
+                return Ok(None);
+            }
+            return Err(protocol::protocol_failure(format!(
+                "completed Codex item `{item_id}` changed Turn"
+            )));
+        }
         let Some(binding) = self.items.remove(item_id) else {
+            if supported && wire_binding.interrupted {
+                return Ok(None);
+            }
             return if activity_kind(item_type).is_some() {
                 Err(protocol::protocol_failure(format!(
                     "completed Codex item `{item_id}` was not started"
@@ -102,11 +120,6 @@ impl<P: JsonPeer> Backend<P> {
                 Ok(None)
             };
         };
-        if binding.activity.turn() != turn {
-            return Err(protocol::protocol_failure(format!(
-                "completed Codex item `{item_id}` changed Turn"
-            )));
-        }
         let status = params
             .pointer("/item/status")
             .and_then(Value::as_str)
@@ -140,9 +153,13 @@ impl<P: JsonPeer> Backend<P> {
     fn item_delta(&self, params: &Value) -> Result<Option<BackendEvent>, BackendFailure> {
         self.validate_thread(params)?;
         let wire_turn = protocol::string_at(params, &["turnId"])?;
-        let turn = self.wire_turns.get(wire_turn).copied().ok_or_else(|| {
-            protocol::protocol_failure(format!("unknown Codex Turn `{wire_turn}`"))
-        })?;
+        let turn = self
+            .wire_turns
+            .get(wire_turn)
+            .map(|binding| binding.turn)
+            .ok_or_else(|| {
+                protocol::protocol_failure(format!("unknown Codex Turn `{wire_turn}`"))
+            })?;
         let item_id = protocol::string_at(params, &["itemId"])?;
         let Some(binding) = self.items.get(item_id) else {
             return Err(protocol::protocol_failure(format!(
@@ -164,9 +181,13 @@ impl<P: JsonPeer> Backend<P> {
     fn turn_completed(&mut self, params: &Value) -> Result<Option<BackendEvent>, BackendFailure> {
         self.validate_thread(params)?;
         let wire_turn = protocol::string_at(params, &["turn", "id"])?;
-        let turn = self.wire_turns.get(wire_turn).copied().ok_or_else(|| {
-            protocol::protocol_failure(format!("unknown completed Codex Turn `{wire_turn}`"))
-        })?;
+        let turn = self
+            .wire_turns
+            .get(wire_turn)
+            .map(|binding| binding.turn)
+            .ok_or_else(|| {
+                protocol::protocol_failure(format!("unknown completed Codex Turn `{wire_turn}`"))
+            })?;
         let status = protocol::string_at(params, &["turn", "status"])?;
         let outcome = match status {
             "completed" => TurnOutcome::Completed,
@@ -187,7 +208,60 @@ impl<P: JsonPeer> Backend<P> {
                 )));
             },
         };
-        Ok(Some(BackendEvent::TurnFinished { turn, outcome }))
+        let turn_finished = BackendEvent::TurnFinished {
+            turn,
+            outcome: outcome.clone(),
+        };
+        if outcome != TurnOutcome::Interrupted {
+            return Ok(Some(turn_finished));
+        }
+        self.wire_turns
+            .get_mut(wire_turn)
+            .expect("the completed Codex Turn binding was resolved above")
+            .interrupted = true;
+
+        let interrupted_items = self
+            .items
+            .iter()
+            .filter(|(_, binding)| binding.activity.turn() == turn)
+            .map(|(item_id, binding)| (item_id.clone(), binding.activity))
+            .collect::<Vec<_>>();
+        let interrupted_approvals = self
+            .approvals
+            .iter()
+            .filter(|(_, binding)| binding.request_activity.turn() == turn)
+            .map(|(request, binding)| (*request, binding.request_activity))
+            .collect::<Vec<_>>();
+
+        let mut interrupted_activities =
+            Vec::with_capacity(interrupted_items.len() + interrupted_approvals.len());
+        for (item_id, activity) in interrupted_items {
+            self.items.remove(&item_id);
+            interrupted_activities.push(activity);
+        }
+        for (request, activity) in interrupted_approvals {
+            let approval = self
+                .approvals
+                .remove(&request)
+                .expect("collected approval binding must still exist");
+            let key = wire_key(&approval.wire_id)?;
+            self.wire_approvals.remove(&key);
+            interrupted_activities.push(activity);
+        }
+        interrupted_activities.sort_unstable();
+
+        let mut terminal_events = interrupted_activities
+            .into_iter()
+            .map(|activity| BackendEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Interrupted,
+            })
+            .chain(std::iter::once(turn_finished));
+        let first = terminal_events
+            .next()
+            .expect("an interrupted Turn always has its own terminal event");
+        self.pending_events.extend(terminal_events);
+        Ok(Some(first))
     }
 
     fn record_turn_error(
@@ -227,9 +301,13 @@ impl<P: JsonPeer> Backend<P> {
         }
         self.validate_thread(&params)?;
         let wire_turn = protocol::string_at(&params, &["turnId"])?;
-        let turn = self.wire_turns.get(wire_turn).copied().ok_or_else(|| {
-            protocol::protocol_failure(format!("approval targets unknown Turn `{wire_turn}`"))
-        })?;
+        let turn = self
+            .wire_turns
+            .get(wire_turn)
+            .map(|binding| binding.turn)
+            .ok_or_else(|| {
+                protocol::protocol_failure(format!("approval targets unknown Turn `{wire_turn}`"))
+            })?;
         let activity = self.next_activity(turn)?;
         let request_id = self.next_request()?;
         let request = ActivityRequestRef::new(activity, request_id);
