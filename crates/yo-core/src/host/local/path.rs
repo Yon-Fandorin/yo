@@ -28,6 +28,28 @@ pub(super) fn prepare_state_root(root: &Path) -> Result<PathBuf, LocalWorkspaceH
     if existing_ancestor != root {
         create_directory_path(root, &existing_ancestor)?;
     }
+    let resolved_root = validate_existing_state_root(root)?;
+    sync_directory_entry(&resolved_root)?;
+    Ok(resolved_root)
+}
+
+pub(super) fn open_existing_state_root(
+    root: &Path,
+) -> Result<Option<PathBuf>, LocalWorkspaceHostIdentityError> {
+    match fs::symlink_metadata(root) {
+        Ok(_) => validate_existing_state_root(root).map(Some),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(io_error("inspect", root, source)),
+    }
+}
+
+fn validate_existing_state_root(root: &Path) -> Result<PathBuf, LocalWorkspaceHostIdentityError> {
+    if !root.is_absolute() {
+        return Err(LocalWorkspaceHostIdentityError::Invalid {
+            path: root.to_owned(),
+            reason: "the Workspace Host state root must be an absolute path".to_owned(),
+        });
+    }
     let resolved_root = resolve_trusted_existing_path(root, true)?;
     let metadata =
         fs::symlink_metadata(&resolved_root).map_err(|source| io_error("inspect", root, source))?;
@@ -50,7 +72,6 @@ pub(super) fn prepare_state_root(root: &Path) -> Result<PathBuf, LocalWorkspaceH
             reason: "the Workspace Host state root is not owned by the current user".to_owned(),
         });
     }
-    sync_directory_entry(&resolved_root)?;
     Ok(resolved_root)
 }
 

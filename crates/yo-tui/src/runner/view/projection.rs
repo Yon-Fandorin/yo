@@ -106,6 +106,17 @@ pub(super) fn format_record(index: usize, record: &TranscriptRecord) -> String {
     } else {
         record_prefix
     };
+    format_record_body(prefix, record)
+}
+
+pub(in crate::runner) fn format_archival_record(index: usize, record: &TranscriptRecord) -> String {
+    format_record_body(
+        format!("[#{:03}] {}", index + 1, record_name(record)),
+        record,
+    )
+}
+
+fn format_record_body(prefix: String, record: &TranscriptRecord) -> String {
     match record {
         TranscriptRecord::CommandCommitted(command) => match command {
             AgentCommand::CreateSession { session_id } => {

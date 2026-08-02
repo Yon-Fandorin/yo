@@ -68,11 +68,11 @@ pub(super) fn read_snapshot_entries(
     expected_session: SessionId,
     after: u64,
     limit: usize,
-) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+) -> Result<Option<Vec<RepositoryEntry>>, RepositoryError> {
     reject_symlink(path)?;
     let file = match OpenOptions::new().read(true).open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error.into()),
     };
     require_user_only_file(&file)?;
@@ -84,7 +84,9 @@ pub(super) fn read_snapshot_entries(
         });
     }
     let mut reader = BufReader::new(file.take(cutoff));
-    Ok(scan_complete_entries(&mut reader, expected_session, after, limit)?.entries)
+    Ok(Some(
+        scan_complete_entries(&mut reader, expected_session, after, limit)?.entries,
+    ))
 }
 
 fn guarded_cutoff(root: &Path, path: &Path) -> Result<Option<u64>, RepositoryError> {

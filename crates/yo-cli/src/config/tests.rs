@@ -1,0 +1,112 @@
+use std::path::Path;
+
+use super::*;
+
+// 설정 파일이 아직 없는 사용자는 파일이나 디렉터리를 새로 만들지 않아도 기본 날짜
+// 형식을 사용할 수 있어, 읽기 전용 `yo session` 계약이 유지됩니다.
+#[test]
+fn missing_configuration_uses_defaults_without_creating_a_file() {
+    let root = std::env::temp_dir().join(format!("yo-config-missing-{}", std::process::id()));
+    let path = root.join("config.yaml");
+
+    assert!(
+        !path.exists(),
+        "test path unexpectedly exists: {}",
+        path.display()
+    );
+    let config = load_from(&path).unwrap();
+
+    assert!(config.date_formatter().is_ok());
+    assert!(!path.exists());
+}
+
+// 사용자가 지정한 날짜 형식은 UPDATED와 STARTED가 공유할 하나의 검증된 formatter로
+// 해석되어, 숫자 millisecond 대신 같은 규칙의 읽을 수 있는 시각을 만듭니다.
+#[test]
+fn custom_date_format_is_validated_and_applied() {
+    let config = parse(
+        Path::new("config.yaml"),
+        "version: 1\nsession:\n  list:\n    date_format: '%Y'\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        config
+            .date_formatter()
+            .unwrap()
+            .format_unix_millis(15_724_800_000)
+            .unwrap(),
+        "1970"
+    );
+}
+
+// 기본 위치를 정하는 HOME과 XDG_CONFIG_HOME은 현재 directory에 따라 의미가 바뀌는
+// 상대경로를 거절해, 의도하지 않은 workspace 설정을 읽지 않습니다.
+#[test]
+fn default_configuration_roots_require_absolute_paths() {
+    assert!(environment_root("HOME", OsString::from("")).is_err());
+    assert!(environment_root("HOME", OsString::from("relative")).is_err());
+    assert!(environment_root("XDG_CONFIG_HOME", OsString::from("config")).is_err());
+    assert_eq!(
+        environment_root("HOME", OsString::from("/home/user")).unwrap(),
+        PathBuf::from("/home/user")
+    );
+}
+
+// 파일을 여는 시점의 크기와 무관하게 최대 크기보다 한 byte만 더 읽어 상한 초과를
+// 판별하므로, 큰 설정을 YAML parser에 넘기거나 제한 없이 메모리에 올리지 않습니다.
+#[test]
+fn oversized_configuration_is_bounded_during_the_read() {
+    let path = std::env::temp_dir().join(format!("yo-config-large-{}", std::process::id()));
+    fs::write(&path, vec![b'a'; MAX_CONFIG_BYTES as usize + 1]).unwrap();
+
+    let error = load_from(&path).unwrap_err();
+
+    fs::remove_file(&path).unwrap();
+    assert!(matches!(error, ConfigError::TooLarge(found) if found == path));
+}
+
+// FIFO를 regular file처럼 blocking open하면 writer가 나타날 때까지 `yo session`이
+// 멈출 수 있으므로, nonblocking으로 연 descriptor의 타입을 확인해 즉시 거절합니다.
+#[test]
+fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {
+    let path = std::env::temp_dir().join(format!("yo-config-fifo-{}", std::process::id()));
+    nix::unistd::mkfifo(
+        &path,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .unwrap();
+
+    let error = load_from(&path).unwrap_err();
+
+    fs::remove_file(&path).unwrap();
+    assert!(matches!(error, ConfigError::UnsupportedFileType(found) if found == path));
+}
+
+// 오타 난 설정 키를 무시하면 사용자는 형식이 적용됐다고 오해하므로, 정확한 파일
+// 위치를 포함한 오류로 거절해 잘못된 설정을 즉시 고칠 수 있게 합니다.
+#[test]
+fn unknown_configuration_field_is_rejected() {
+    let error = parse(
+        Path::new("/tmp/yo-config.yaml"),
+        "version: 1\nsession:\n  list:\n    date_formt: '%Y'\n",
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("/tmp/yo-config.yaml"));
+    assert!(error.to_string().contains("unknown field"));
+}
+
+// 끝나지 않은 `%`처럼 잘못된 strftime 문법은 실행 때 조용히 그대로 출력하지 않고
+// 해당 설정 필드를 가리키는 명시적 오류로 막습니다.
+#[test]
+fn invalid_date_format_is_rejected() {
+    let error = parse(
+        Path::new("config.yaml"),
+        "version: 1\nsession:\n  list:\n    date_format: '%Y %'\n",
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("config.yaml"));
+    assert!(error.to_string().contains("session.list.date_format"));
+}

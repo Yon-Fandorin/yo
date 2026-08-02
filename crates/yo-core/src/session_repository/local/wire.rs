@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::super::{
-    DurableRecord, DurableRecordKind, RepositoryEntry, RepositoryError, RepositorySequence,
-    SessionDiscovery, SessionRecordVersion,
+    DurableRecord, DurableRecordKind, RecordDiscovery, RepositoryEntry, RepositoryError,
+    RepositorySequence, SessionDiscovery, SessionRecordVersion,
 };
 use crate::{
     HostWorkspacePath, JournalSequence, SessionDescriptor, SessionId, SessionStartTime,
@@ -201,11 +201,19 @@ impl WireEntry {
         self.validate_checksum(line)?;
         let discovery = self.discovery.into_domain(actual_session, line)?;
 
+        let mut record_discovery = RecordDiscovery::new(discovery.descriptor().clone());
+        if let Some(binding_epoch) = discovery.binding_epoch() {
+            record_discovery = record_discovery.with_binding_epoch(binding_epoch);
+        }
+        if let Some(anchor) = discovery.continuation_anchor() {
+            record_discovery = record_discovery.with_continuation_anchor(anchor);
+        }
         let record = match self.kind {
             WireRecordKind::Incremental => DurableRecord::incremental(self.payload),
             WireRecordKind::Snapshot => DurableRecord::snapshot(self.payload),
         }
-        .with_journal_cutoff(self.journal_sequence.map(JournalSequence::new));
+        .with_journal_cutoff(self.journal_sequence.map(JournalSequence::new))
+        .with_discovery(record_discovery);
         Ok(DecodedEntry {
             entry: RepositoryEntry::new(RepositorySequence::new(self.sequence), record),
             discovery,

@@ -17,7 +17,8 @@ use wire::WireEntry;
 use super::{
     AppendError, AppendReceipt, DurableCutoff, DurableRecord, DurableRecordKind, RepositoryEntry,
     RepositoryError, RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
-    StoredSession, StoredSessionReader, StoredSessionSummary, StoredSessionUnavailableReason,
+    StoredSession, StoredSessionReader, StoredSessionSnapshot, StoredSessionSummary,
+    StoredSessionUnavailableReason,
 };
 use crate::{JournalSequence, SessionId};
 
@@ -141,6 +142,25 @@ impl StoredSessionReader for LocalSessionReader {
         Ok(sessions)
     }
 
+    fn read_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<StoredSessionSnapshot, RepositoryError> {
+        read_snapshot_entries(
+            &self.root,
+            &self.session_path(session_id),
+            session_id,
+            0,
+            usize::MAX,
+        )
+        .map(|entries| {
+            entries.map_or(
+                StoredSessionSnapshot::Missing,
+                StoredSessionSnapshot::Present,
+            )
+        })
+    }
+
     fn read_after(
         &self,
         session_id: SessionId,
@@ -154,6 +174,7 @@ impl StoredSessionReader for LocalSessionReader {
             sequence.map_or(0, RepositorySequence::get),
             limit,
         )
+        .map(Option::unwrap_or_default)
     }
 }
 

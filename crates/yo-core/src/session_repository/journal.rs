@@ -141,56 +141,9 @@ where
         &self,
         session_id: SessionId,
     ) -> Result<(Vec<JournalCommit>, Vec<RepositorySequence>), JournalRepositoryError> {
-        let mut after = None;
-        let mut commits = Vec::new();
-        let mut origins = Vec::new();
-        loop {
-            let entries = self
-                .repository
-                .read_after(session_id, after, 256)
-                .map_err(JournalRepositoryError::Repository)?;
-            if entries.is_empty() {
-                break;
-            }
-            for entry in &entries {
-                let physical_sequence = entry.sequence();
-                let commit = decode(entry.record().payload())
-                    .and_then(|commit| {
-                        require_session(&commit, session_id)?;
-                        Ok(commit)
-                    })
-                    .map_err(|error| {
-                        JournalRepositoryError::Codec(error.context(format_args!(
-                            "repository sequence {}",
-                            physical_sequence.get()
-                        )))
-                    })?;
-                let expected_kind = match commit.kind() {
-                    JournalCommitKind::Incremental => DurableRecordKind::Incremental,
-                    JournalCommitKind::Snapshot => DurableRecordKind::Snapshot,
-                };
-                if entry.record().kind() != expected_kind
-                    || entry.record().journal_cutoff() != commit.journal_cutoff()
-                {
-                    return Err(JournalRepositoryError::Codec(
-                        JournalCodecError::new(
-                            "repository envelope does not match its semantic Journal commit",
-                        )
-                        .context(format_args!(
-                            "repository sequence {}",
-                            physical_sequence.get()
-                        )),
-                    ));
-                }
-                commits.push(commit);
-                origins.push(physical_sequence);
-            }
-            after = entries.last().map(|entry| entry.sequence());
-            if entries.len() < 256 {
-                break;
-            }
-        }
-        Ok((commits, origins))
+        load_commits(session_id, |after, limit| {
+            self.repository.read_after(session_id, after, limit)
+        })
     }
 
     fn ensure_loaded(&mut self, session_id: SessionId) -> Result<(), JournalRepositoryError> {
@@ -213,6 +166,89 @@ where
     pub(crate) fn into_inner(self) -> R {
         self.repository
     }
+}
+
+fn load_commits(
+    session_id: SessionId,
+    mut read_after: impl FnMut(
+        Option<RepositorySequence>,
+        usize,
+    ) -> Result<Vec<super::RepositoryEntry>, RepositoryError>,
+) -> Result<(Vec<JournalCommit>, Vec<RepositorySequence>), JournalRepositoryError> {
+    let mut after = None;
+    let mut commits = Vec::new();
+    let mut origins = Vec::new();
+    loop {
+        let entries = read_after(after, 256).map_err(JournalRepositoryError::Repository)?;
+        if entries.is_empty() {
+            break;
+        }
+        for entry in &entries {
+            let physical_sequence = entry.sequence();
+            let commit = decode_entry(session_id, entry)?;
+            commits.push(commit);
+            origins.push(physical_sequence);
+        }
+        after = entries.last().map(|entry| entry.sequence());
+        if entries.len() < 256 {
+            break;
+        }
+    }
+    Ok((commits, origins))
+}
+
+pub(super) fn recover_entries(
+    session_id: SessionId,
+    entries: &[super::RepositoryEntry],
+) -> Result<RecoveredJournal, JournalRepositoryError> {
+    let origins = entries
+        .iter()
+        .map(|entry| entry.sequence())
+        .collect::<Vec<_>>();
+    let commits = entries
+        .iter()
+        .map(|entry| decode_entry(session_id, entry))
+        .collect::<Result<Vec<_>, _>>()?;
+    recover(&commits).map_err(|error| {
+        let context = recovery_context(&error, &origins);
+        JournalRepositoryError::Codec(error.context(context))
+    })
+}
+
+fn decode_entry(
+    session_id: SessionId,
+    entry: &super::RepositoryEntry,
+) -> Result<JournalCommit, JournalRepositoryError> {
+    let physical_sequence = entry.sequence();
+    let commit = decode(entry.record().payload())
+        .and_then(|commit| {
+            require_session(&commit, session_id)?;
+            Ok(commit)
+        })
+        .map_err(|error| {
+            JournalRepositoryError::Codec(error.context(format_args!(
+                "repository sequence {}",
+                physical_sequence.get()
+            )))
+        })?;
+    let expected_kind = match commit.kind() {
+        JournalCommitKind::Incremental => DurableRecordKind::Incremental,
+        JournalCommitKind::Snapshot => DurableRecordKind::Snapshot,
+    };
+    if entry.record().kind() != expected_kind
+        || entry.record().journal_cutoff() != commit.journal_cutoff()
+    {
+        return Err(JournalRepositoryError::Codec(
+            JournalCodecError::new(
+                "repository envelope does not match its semantic Journal commit",
+            )
+            .context(format_args!(
+                "repository sequence {}",
+                physical_sequence.get()
+            )),
+        ));
+    }
+    Ok(commit)
 }
 
 fn recovery_context(error: &JournalCodecError, origins: &[RepositorySequence]) -> String {

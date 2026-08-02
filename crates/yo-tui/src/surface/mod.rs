@@ -13,7 +13,7 @@ pub use diff::{FrameDiff, RowSpan};
 pub use geometry::{GeometryError, Point, Rect, Size};
 pub use storage::{Surface, SurfaceError};
 pub use style::{Attributes, Color, Style};
-pub use text::{Grapheme, GraphemeError, WIDTH_PROFILE};
+pub use text::{Grapheme, GraphemeError, WIDTH_PROFILE, cell_width};
 pub use view::{SurfaceView, WriteOutcome};
 
 #[cfg(test)]

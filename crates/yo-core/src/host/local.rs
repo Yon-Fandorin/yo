@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use path::prepare_state_root;
+use path::{open_existing_state_root, prepare_state_root};
 
 use super::{WorkspaceHostId, WorkspaceHostIdGenerationError};
 
@@ -35,6 +35,25 @@ impl LocalWorkspaceHostIdentity {
                 if source.kind() == io::ErrorKind::NotFound =>
             {
                 create_identity(&state_root, &path).map(|id| Self { id })
+            },
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Reads an existing identity without creating the state root or identity file.
+    pub fn open_existing(
+        state_root: impl AsRef<Path>,
+    ) -> Result<Option<Self>, LocalWorkspaceHostIdentityError> {
+        let Some(state_root) = open_existing_state_root(state_root.as_ref())? else {
+            return Ok(None);
+        };
+        let path = state_root.join(ID_FILE);
+        match read_identity(&path) {
+            Ok(id) => Ok(Some(Self { id })),
+            Err(LocalWorkspaceHostIdentityError::Io { source, .. })
+                if source.kind() == io::ErrorKind::NotFound =>
+            {
+                Ok(None)
             },
             Err(error) => Err(error),
         }

@@ -1,11 +1,16 @@
 //! Storage-neutral durable Session records.
 
+mod history;
 pub(crate) mod journal;
 mod local;
 mod record;
 
 use std::fmt;
 
+pub use history::{
+    StoredSessionContinuity, StoredSessionHistory, StoredSessionReadError, StoredSessionRecovery,
+    read_stored_session,
+};
 pub use local::{LocalSessionReader, LocalSessionRepository};
 pub use record::{
     AppendReceipt, ContinuationEligibility, DurableRecord, DurableRecordKind, RecordDiscovery,
@@ -34,12 +39,48 @@ pub trait SessionRepository {
 pub trait StoredSessionReader {
     fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError>;
 
+    /// Captures all committed physical records for one point-in-time Session view.
+    fn read_session(&self, session_id: SessionId)
+    -> Result<StoredSessionSnapshot, RepositoryError>;
+
     fn read_after(
         &self,
         session_id: SessionId,
         sequence: Option<RepositorySequence>,
         limit: usize,
     ) -> Result<Vec<RepositoryEntry>, RepositoryError>;
+}
+
+/// One presence-aware, point-in-time capture of a Session's physical records.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StoredSessionSnapshot {
+    Missing,
+    Present(Vec<RepositoryEntry>),
+}
+
+impl<R> StoredSessionReader for Box<R>
+where
+    R: StoredSessionReader + ?Sized,
+{
+    fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError> {
+        (**self).discover()
+    }
+
+    fn read_session(
+        &self,
+        session_id: SessionId,
+    ) -> Result<StoredSessionSnapshot, RepositoryError> {
+        (**self).read_session(session_id)
+    }
+
+    fn read_after(
+        &self,
+        session_id: SessionId,
+        sequence: Option<RepositorySequence>,
+        limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        (**self).read_after(session_id, sequence, limit)
+    }
 }
 
 impl<R> SessionRepository for Box<R>

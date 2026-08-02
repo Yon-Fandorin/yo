@@ -2,7 +2,7 @@ use std::{ffi::OsString, path::PathBuf};
 
 use yo_core::{
     LocalWorkspaceHostIdentity, LocalWorkspaceHostIdentityError, WorkspaceHostId,
-    session_repository::{LocalSessionRepository, RepositoryError},
+    session_repository::{LocalSessionReader, LocalSessionRepository, RepositoryError},
 };
 
 const DEFAULT_CAPACITY_BYTES: u64 = 1024 * 1024 * 1024;
@@ -10,6 +10,21 @@ const DEFAULT_CAPACITY_BYTES: u64 = 1024 * 1024 * 1024;
 pub(crate) struct LocalStorage {
     repository: LocalSessionRepository,
     workspace_host_id: WorkspaceHostId,
+}
+
+pub(crate) struct LocalReadStorage {
+    reader: Option<LocalSessionReader>,
+    workspace_host_id: Option<WorkspaceHostId>,
+}
+
+impl LocalReadStorage {
+    pub(crate) const fn reader(&self) -> Option<&LocalSessionReader> {
+        self.reader.as_ref()
+    }
+
+    pub(crate) const fn workspace_host_id(&self) -> Option<WorkspaceHostId> {
+        self.workspace_host_id
+    }
 }
 
 impl LocalStorage {
@@ -24,6 +39,13 @@ pub(crate) fn open_default() -> Result<LocalStorage, StorageConfigError> {
         repository_root_from(std::env::var_os("YO_SESSION_REPOSITORY"), &state_root)?;
     let capacity = capacity_bytes()?;
     open_at(state_root, repository_root, capacity)
+}
+
+pub(crate) fn open_default_reader() -> Result<LocalReadStorage, StorageConfigError> {
+    let state_root = platform_state_root()?;
+    let repository_root =
+        repository_root_from(std::env::var_os("YO_SESSION_REPOSITORY"), &state_root)?;
+    open_reader_at(state_root, repository_root)
 }
 
 fn platform_state_root() -> Result<PathBuf, StorageConfigError> {
@@ -72,6 +94,26 @@ fn open_at(
         .map_err(StorageConfigError::Repository)?;
     Ok(LocalStorage {
         repository,
+        workspace_host_id,
+    })
+}
+
+fn open_reader_at(
+    state_root: PathBuf,
+    repository_root: PathBuf,
+) -> Result<LocalReadStorage, StorageConfigError> {
+    let workspace_host_id = LocalWorkspaceHostIdentity::open_existing(state_root.join("host"))
+        .map_err(StorageConfigError::HostIdentity)?
+        .map(LocalWorkspaceHostIdentity::id);
+    let reader = match std::fs::symlink_metadata(&repository_root) {
+        Ok(_) => Some(
+            LocalSessionReader::open(repository_root).map_err(StorageConfigError::Repository)?,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(StorageConfigError::Repository(error.into())),
+    };
+    Ok(LocalReadStorage {
+        reader,
         workspace_host_id,
     })
 }

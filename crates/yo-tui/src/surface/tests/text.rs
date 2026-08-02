@@ -1,4 +1,4 @@
-use super::super::{Grapheme, GraphemeError, WIDTH_PROFILE};
+use super::super::{Grapheme, GraphemeError, WIDTH_PROFILE, cell_width};
 
 // 고정한 Unicode 폭 프로필의 식별자가 외부 adapter에도 관찰 가능한지 확인한다.
 #[test]
@@ -17,6 +17,14 @@ fn resolves_non_emoji_grapheme_widths() {
     for (text, width) in cases {
         assert_eq!(Grapheme::try_from(text).unwrap().width().get(), width);
     }
+}
+
+// CLI 표와 Surface가 ASCII, 한글, 결합문자의 합성 폭을 서로 다르게 계산하지 않도록
+// 여러 grapheme으로 이루어진 문자열도 같은 고정 프로필로 합산합니다.
+#[test]
+fn measures_complete_text_with_the_surface_width_profile() {
+    assert_eq!(cell_width("A가e\u{301}").unwrap(), 4);
+    assert_eq!(cell_width("\u{301}").unwrap(), 0);
 }
 
 // ZWJ emoji, 국기, 기본 emoji 표현과 표준 VS16 표현을 폭 2로 확정한다.

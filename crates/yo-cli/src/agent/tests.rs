@@ -282,7 +282,9 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
         .dispatch(AgentIntent::Submit("inspect".to_owned()))
         .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(1);
+    // hk runs several Rust suites concurrently; allow scheduler delay without weakening the
+    // semantic head-sequence assertion that follows.
+    let deadline = Instant::now() + Duration::from_secs(4);
     while connection.transcript.head_sequence().map(|head| head.get()) != Some(5) {
         assert!(
             Instant::now() < deadline,

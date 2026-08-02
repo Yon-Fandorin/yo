@@ -54,6 +54,49 @@ impl HostWorkspacePath {
     }
 }
 
+impl fmt::Display for HostWorkspacePath {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut remaining = self.as_unix_bytes();
+        while !remaining.is_empty() {
+            match std::str::from_utf8(remaining) {
+                Ok(valid) => {
+                    write_escaped(valid, formatter)?;
+                    break;
+                },
+                Err(error) => {
+                    let (valid, invalid) = remaining.split_at(error.valid_up_to());
+                    write_escaped(
+                        std::str::from_utf8(valid)
+                            .expect("the UTF-8 validator reported this prefix"),
+                        formatter,
+                    )?;
+                    let invalid_length = error.error_len().unwrap_or(1);
+                    for byte in &invalid[..invalid_length] {
+                        write!(formatter, "\\x{byte:02X}")?;
+                    }
+                    remaining = &invalid[invalid_length..];
+                },
+            }
+        }
+        Ok(())
+    }
+}
+
+fn write_escaped(value: &str, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    for character in value.chars() {
+        match character {
+            '\\' => formatter.write_str("\\\\")?,
+            character if character.is_control() => {
+                for escaped in character.escape_default() {
+                    write!(formatter, "{escaped}")?;
+                }
+            },
+            character => write!(formatter, "{character}")?,
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct HostWorkspacePathError {
     path: PathBuf,

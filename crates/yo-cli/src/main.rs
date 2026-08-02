@@ -5,7 +5,13 @@ use std::{io::Write, process::ExitCode};
 #[cfg(unix)]
 mod agent;
 #[cfg(unix)]
+mod command;
+#[cfg(unix)]
+mod config;
+#[cfg(unix)]
 mod process;
+#[cfg(unix)]
+mod session;
 #[cfg(unix)]
 mod storage;
 
@@ -22,7 +28,15 @@ fn main() -> ExitCode {
 
 #[cfg(unix)]
 fn run() -> Result<(), AppError> {
-    let options = parse_options(std::env::args_os().skip(1))?;
+    let command = command::parse(std::env::args_os().skip(1))?;
+    let options = match command {
+        command::Command::Session(command) => {
+            let output = session::run(command)?;
+            write_session_command_output(output)?;
+            return Ok(());
+        },
+        command::Command::Live(options) => options,
+    };
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
@@ -82,18 +96,11 @@ enum SessionStep {
 }
 
 #[cfg(unix)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Options {
-    mode: yo_tui::PresentationMode,
-    glyph_profile: yo_tui::GlyphProfile,
-}
-
-#[cfg(unix)]
 fn run_agent_generation(
     termination: &mut impl yo_tui::TerminationSource,
     live: &mut Option<LiveSession>,
     cwd: &std::path::Path,
-    options: Options,
+    options: command::LiveOptions,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {
         let storage = storage::open_default()
@@ -173,44 +180,23 @@ fn write_session_output(output: &str) -> std::io::Result<()> {
 }
 
 #[cfg(unix)]
-fn parse_options(
-    arguments: impl IntoIterator<Item = std::ffi::OsString>,
-) -> Result<Options, AppError> {
-    const USAGE: &str = "yo [--inline | --fullscreen] [--ascii]";
-
-    let mut mode = None;
-    let mut glyph_profile = None;
-    for argument in arguments {
-        let selected_mode = match argument.as_os_str() {
-            value if value == "--inline" => Some(yo_tui::PresentationMode::Inline),
-            value if value == "--fullscreen" => Some(yo_tui::PresentationMode::Fullscreen),
-            value if value == "--ascii" => {
-                if glyph_profile.replace(yo_tui::GlyphProfile::Ascii).is_some() {
-                    return Err(AppError::many([format!(
-                        "duplicate argument `--ascii`; usage: {USAGE}"
-                    )]));
-                }
-                None
-            },
-            _ => {
-                return Err(AppError::many([format!(
-                    "unknown argument `{}`; usage: {USAGE}",
-                    argument.to_string_lossy()
-                )]));
-            },
-        };
-        if let Some(selected_mode) = selected_mode
-            && mode.replace(selected_mode).is_some()
-        {
-            return Err(AppError::many([format!(
-                "multiple presentation modes; usage: {USAGE}"
-            )]));
+fn write_session_command_output(output: session::Output) -> Result<(), AppError> {
+    let mut failures = Vec::new();
+    if let Err(error) = write_session_output(&output.stdout) {
+        failures.push(format!("writing Session command output: {error}"));
+    }
+    let mut stderr = std::io::stderr().lock();
+    for diagnostic in output.diagnostics {
+        if let Err(error) = writeln!(stderr, "yo: warning: {diagnostic}") {
+            failures.push(format!("writing Session command diagnostic: {error}"));
+            break;
         }
     }
-    Ok(Options {
-        mode: mode.unwrap_or(yo_tui::PresentationMode::Inline),
-        glyph_profile: glyph_profile.unwrap_or(yo_tui::GlyphProfile::Rich),
-    })
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::many(failures))
+    }
 }
 
 #[cfg(unix)]
@@ -249,73 +235,6 @@ fn main() -> ExitCode {
         "yo: this build currently supports macOS and Linux only"
     );
     ExitCode::FAILURE
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use yo_tui::{GlyphProfile, PresentationMode};
-
-    use super::{Options, parse_options};
-
-    // option이 없는 기존 실행은 Inline 표시와 Rich glyph라는 두 호환 기본값을 함께 유지한다.
-    #[test]
-    fn no_option_preserves_compatibility_defaults() {
-        assert_eq!(
-            parse_options([]).unwrap(),
-            Options {
-                mode: PresentationMode::Inline,
-                glyph_profile: GlyphProfile::Rich,
-            }
-        );
-    }
-
-    // 표시 mode와 ASCII glyph option은 순서와 무관하게 terminal 획득 전 하나의 선택으로 해석된다.
-    #[test]
-    fn explicit_options_select_presentation_and_glyphs() {
-        assert_eq!(
-            parse_options(["--ascii".into(), "--fullscreen".into()]).unwrap(),
-            Options {
-                mode: PresentationMode::Fullscreen,
-                glyph_profile: GlyphProfile::Ascii,
-            }
-        );
-        assert_eq!(
-            parse_options(["--inline".into(), "--ascii".into()]).unwrap(),
-            Options {
-                mode: PresentationMode::Inline,
-                glyph_profile: GlyphProfile::Ascii,
-            }
-        );
-    }
-
-    // 둘 이상의 mode argument는 우선순위를 임의로 정하지 않고 사용법 오류로 거부한다.
-    #[test]
-    fn multiple_mode_arguments_are_rejected() {
-        let error = parse_options(["--inline".into(), "--fullscreen".into()]).unwrap_err();
-
-        assert!(error.to_string().contains("multiple presentation modes"));
-    }
-
-    // ASCII option의 중복은 숨은 우선순위 없이 명시적인 사용법 오류로 거부한다.
-    #[test]
-    fn duplicate_ascii_argument_is_rejected() {
-        let error = parse_options(["--ascii".into(), "--ascii".into()]).unwrap_err();
-
-        assert!(error.to_string().contains("duplicate argument `--ascii`"));
-    }
-
-    // 알 수 없는 option은 조용히 Inline으로 fallback하지 않고 지원하는 선택지를 안내한다.
-    #[test]
-    fn unknown_option_is_rejected_without_fallback() {
-        let error = parse_options(["--auto".into()]).unwrap_err();
-
-        assert!(error.to_string().contains("unknown argument `--auto`"));
-        assert!(
-            error
-                .to_string()
-                .contains("yo [--inline | --fullscreen] [--ascii]")
-        );
-    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

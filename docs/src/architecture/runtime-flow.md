@@ -148,8 +148,8 @@ The useful inspection points are:
    durability transition before the semantic records affected by it, so a
    coalesced worker wake-up cannot erase a Gap-to-Durable transition. The CLI
    adapter forwards that order to TUI state with the exact cutoff class. Chat, status-row, or banner presentation
-   remains a separate product contract. Stored-Session
-   discovery and resume are also not current runtime behavior.
+   remains a separate product contract. Stored-Session inspection follows the
+   separate read-only path below; resume is not current runtime behavior.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
    consume already committed Transcript records, update TUI state, compose a
    completed `Surface`, and send it to the active presenter. `runner/view.rs`
@@ -166,6 +166,80 @@ the adapter has exposed the failure records already committed to the Journal.
 Codex JSON and provider identifiers end at the backend adapter. Terminal input
 events and rendering types end in `yo-tui`. The command and event types crossing
 the middle are owned by `yo-core`.
+
+## Stored Session inspection
+
+Stored history never enters the live startup path:
+
+```text
+yo session [--all] [--details]
+  ↓ read existing Host identity and repository without creating either
+LocalSessionReader::discover
+  ↓ validated tail summaries
+workspace-filtered metadata table on stdout
+
+yo session SESSION_ID [--view chat|transcript]
+  ↓ one point-in-time physical snapshot, no writer lease
+yo-core read_stored_session
+  ↓ envelope validation + Journal recovery + message normalization
+StoredSessionHistory
+  ↓ yo-tui archived projection
+plain stdout
+```
+
+`yo-cli/src/command.rs` owns the command grammar, `session.rs` owns selection
+and table/output routing, `config.rs` owns date-format configuration, and
+`storage.rs::open_default_reader` is deliberately separate from writer startup.
+For terminal stdout, `session.rs` supplies the observed width and Session-specific
+column priorities and continuation hints to the generic `yo-tui::plain`
+renderer. It first folds PATH and DETAIL, then continuation/version, started
+time, and workspace. Short folded label/value pairs flow left to right below
+their primary row and move as complete pairs when the next one cannot fit.
+PATH and DETAIL flush that flow and take an independent row. Their label and
+value stay inline when the pair fits, and split into a wrapped labeled block
+only when needed; an oversized flow pair is promoted to that wrapped block
+form. Records with folded
+details are separated by exactly one blank line. If the pinned identity,
+status, and updated time still cannot fit, every field becomes a labeled
+vertical card and the shared table header disappears. Folded values wrap at
+terminal grapheme-cell boundaries and are never truncated. If a single atomic
+grapheme is wider than the entire reported terminal, rendering fails explicitly
+instead of splitting or dropping it. Terminal headings start at the left edge
+in bold, with only their values indented by two cells. Non-terminal stdout
+uses an unbounded one-line table so pipes and redirected files do not depend on
+the invoking terminal's width and never contains ANSI styling.
+
+The optional configuration file is read but never created. Linux uses
+`${XDG_CONFIG_HOME:-$HOME/.config}/yo/config.yaml`; macOS uses
+`$HOME/Library/Application Support/yo/config.yaml`. `YO_CONFIG` selects an
+explicit path. The first schema is:
+
+```yaml
+version: 1
+session:
+  list:
+    date_format: "%Y-%m-%d %H:%M %:z"
+```
+
+The date syntax is strftime-compatible and both UPDATED and STARTED are shown
+in the viewing machine's local timezone. Missing configuration uses the shown
+default. Unreadable files, unsupported versions, unknown fields, oversized
+files, and invalid date formats are explicit failures rather than silent
+fallbacks. The reader opens one nonblocking descriptor, requires it to be a
+regular file, and consumes at most 64 KiB plus one sentinel byte, so a FIFO
+cannot stall the command and concurrent file growth cannot bypass the bound. A
+missing repository produces an empty list and does not create state. Direct
+history reads preserve a message-recovery
+interruption in the semantic records and send discovery disagreement
+diagnostics to stderr. The physical `v1` format cannot prove whether a stopped
+writer had an unpersisted volatile suffix, so stored history records durability
+continuity as `not-observable` instead of claiming completeness. The Chat
+projection remains concise and pipeable while its default direct command emits
+that continuity boundary on stderr. Transcript adds the captured Journal cutoff,
+message-recovery state, durability-continuity boundary, discovery consistency,
+and chronological semantic records. Missing and present-but-incomplete physical
+histories remain distinct direct-read failures. Neither form starts a backend,
+follows later appends, repairs storage, or offers continuation.
 
 ## Live observation views
 
@@ -278,10 +352,10 @@ The CLI enables the local repository by default. `YO_SESSION_REPOSITORY`
 overrides its root and `YO_SESSION_CAPACITY_BYTES` overrides the 1 GiB ceiling.
 Linux otherwise uses `$XDG_STATE_HOME/yo/sessions` or
 `$HOME/.local/state/yo/sessions`; macOS uses
-`$HOME/Library/Application Support/yo/sessions`. The read port exists, but this
-composition does not yet add CLI stored-Session opening, executable continuation,
-remote storage, Request Audit persistence, database or compression backends, or
-a durable transport.
+`$HOME/Library/Application Support/yo/sessions`. The same root is opened without
+creation or a writer lease by `yo session`; executable continuation, remote
+storage, Request Audit persistence, database or compression backends, and a
+durable transport remain outside this composition.
 
 ## Suspend and resume
 

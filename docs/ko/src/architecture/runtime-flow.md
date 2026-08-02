@@ -145,8 +145,8 @@ Inline 또는 Fullscreen presenter
    durability 전환을 영향을 받는 semantic record보다 먼저 정렬하므로 coalesced worker
    wake-up도 Gap-to-Durable 전환을 지우지 못한다. CLI adapter는 이 순서를 정확한 cutoff
    종류와 함께 TUI 상태에 전달한다. Chat·status 행·banner 중 어떤 방식으로 표현할지는
-   별도 product 계약으로 남긴다. 저장된 Session 탐색과 resume도
-   아직 현재 runtime 동작이 아니다.
+   별도 product 계약으로 남긴다. 저장된 Session 검사는 아래의 별도 read-only
+   경로를 따르며 resume은 아직 현재 runtime 동작이 아니다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
    이미 확정된 Transcript record를 소비하고 TUI 상태를 갱신한다.
    완성된 `Surface`를 조합해 활성 presenter로 보낸다. `runner/view.rs`는
@@ -163,6 +163,73 @@ change lane은 command나 event 내용을 싣지 않으며 용량은 하나다. 
 Codex JSON과 provider identifier는 backend adapter 밖으로 나오지 않는다.
 터미널 input event와 rendering type은 `yo-tui` 밖으로 나오지 않는다.
 그 사이를 지나는 command와 event type은 `yo-core`가 소유한다.
+
+## 저장된 Session 검사
+
+저장 history는 live startup 경로에 들어가지 않는다.
+
+```text
+yo session [--all] [--details]
+  ↓ 기존 Host identity와 repository를 만들지 않고 읽기
+LocalSessionReader::discover
+  ↓ 검증된 tail summary
+workspace로 거른 metadata table을 stdout에 출력
+
+yo session SESSION_ID [--view chat|transcript]
+  ↓ writer lease 없는 한 시점의 physical snapshot
+yo-core read_stored_session
+  ↓ envelope 검증 + Journal recovery + message normalization
+StoredSessionHistory
+  ↓ yo-tui archived Projection
+plain stdout
+```
+
+`yo-cli/src/command.rs`는 command 문법, `session.rs`는 선택과 table/output routing,
+`config.rs`는 날짜 형식 설정, `storage.rs::open_default_reader`는 writer startup과
+분리된 읽기 전용 조합을 소유한다. stdout이 terminal이면 `session.rs`가 관찰한 폭,
+Session 전용 열 우선순위와 continuation hint를 범용 `yo-tui::plain` renderer에
+전달한다. 먼저 PATH와 DETAIL, 다음으로 continuation/version, 시작 시각, workspace를
+접는다. 짧은 label/value pair는 주 행 아래를 왼쪽부터 채우고, 다음 pair 전체가
+들어가지 않을 때만 다음 줄로 옮긴다. PATH와 DETAIL은 진행 중인 flow를 끝내고
+독립된 한 줄을 사용한다. label/value pair가 전체 폭에 들어가면 같은 줄에 두고,
+부족할 때만 개행하는 label block으로 바꾼다. 너무 긴 flow pair도 같은 block 형태로 승격한다.
+접힌 상세가 있는 record 사이는 빈 줄 하나로 구분한다. 고정된
+identity/status/updated 시각도 들어가지 않으면 공유 table header를 없애고 모든
+필드를 label이 있는 세로 card로 바꾼다. 접힌 값은 terminal grapheme cell 경계에서 개행하며
+잘라내지 않는다. 하나의 atomic grapheme이 terminal 전체 폭보다 넓으면 쪼개거나
+버리지 않고 명시적으로 실패한다. terminal의 heading은 왼쪽 끝에서 굵게 표시하고
+값만 두 cell 들여쓴다. stdout이 terminal이 아니면 파이프와 파일 결과가 terminal
+폭에 따라 달라지지 않도록 ANSI style이 없는 한 줄 표를 유지한다.
+
+선택 설정 파일은 읽기만 하고 만들지 않는다. Linux는
+`${XDG_CONFIG_HOME:-$HOME/.config}/yo/config.yaml`, macOS는
+`$HOME/Library/Application Support/yo/config.yaml`을 사용하며, `YO_CONFIG`로
+명시적인 경로를 고를 수 있다. 첫 schema는 다음과 같다.
+
+```yaml
+version: 1
+session:
+  list:
+    date_format: "%Y-%m-%d %H:%M %:z"
+```
+
+날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
+timezone으로 표시한다. 설정 파일이 없으면 위 기본값을 사용한다. 파일을 읽을 수
+없거나 version/field/크기/date format이 잘못되면 조용히 기본값으로 대체하지 않고
+명시적으로 실패한다. reader는 nonblocking descriptor 하나를 열어 regular file인지
+확인하고 64 KiB와 판별용 한 byte까지만 읽으므로 FIFO가 command를 멈추거나 동시에
+커지는 파일이 상한을 우회하지 못한다. repository가
+없으면 빈 목록을 반환하고 상태를 만들지 않는다.
+직접 history 읽기는
+message-recovery interruption을 semantic record에 보존하며 discovery 불일치 진단은
+stderr로 보낸다. Physical `v1` 형식만으로는 종료된 writer에 저장되지 않은 volatile
+suffix가 있었는지 증명할 수 없으므로, 저장 history는 완전하다고 단정하지 않고
+durability continuity를 `not-observable`로 기록한다. Chat은 간결하고 pipe 가능한
+출력을 유지하며 기본 direct command는 이 continuity 경계를 stderr로 알린다. Transcript는
+확인한 Journal cutoff, message-recovery 상태, durability-continuity 경계, discovery
+consistency, 시간순 semantic record를 더한다. 파일 없음과 파일은 있지만 complete
+envelope가 없는 상태도 서로 다른 direct-read failure로 유지한다. 어느 쪽도 backend를
+시작하거나 이후 append를 구독하거나 저장소를 고치거나 continuation을 제공하지 않는다.
 
 ## 실행 중인 observation view
 
@@ -268,10 +335,10 @@ KnowledgeUnit가 계속 소유한다.
 CLI는 local repository를 기본으로 활성화한다. `YO_SESSION_REPOSITORY`로 root를,
 `YO_SESSION_CAPACITY_BYTES`로 기본 1 GiB 상한을 바꿀 수 있다. Linux는 그 외에
 `$XDG_STATE_HOME/yo/sessions` 또는 `$HOME/.local/state/yo/sessions`를 쓰고,
-macOS는 `$HOME/Library/Application Support/yo/sessions`를 쓴다. read port는
-존재하지만 이 조합은 아직 CLI 저장 Session 열기, 실행 가능한 continuation,
-remote storage, Request Audit persistence, database나 compression backend,
-durable transport를 추가하지 않는다.
+macOS는 `$HOME/Library/Application Support/yo/sessions`를 쓴다. `yo session`은
+같은 root를 생성이나 writer lease 없이 연다. 실행 가능한 continuation, remote
+storage, Request Audit persistence, database나 compression backend, durable
+transport는 이 조합 밖에 남는다.
 
 ## 일시정지와 재개
 

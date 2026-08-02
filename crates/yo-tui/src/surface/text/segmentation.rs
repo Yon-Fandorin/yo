@@ -50,6 +50,17 @@ impl TryFrom<&str> for Grapheme {
     }
 }
 
+/// Measures text with the same grapheme and cell-width profile as the terminal surface.
+pub fn cell_width(value: &str) -> Result<usize, GraphemeError> {
+    value.graphemes(true).try_fold(0_usize, |width, cluster| {
+        match Grapheme::try_from(cluster) {
+            Ok(grapheme) => Ok(width + usize::from(grapheme.width().get())),
+            Err(GraphemeError::ZeroWidth) => Ok(width),
+            Err(error) => Err(error),
+        }
+    })
+}
+
 /// Why text cannot become one physical grapheme.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GraphemeError {

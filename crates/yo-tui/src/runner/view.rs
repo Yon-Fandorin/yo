@@ -21,6 +21,7 @@ use crate::{
 };
 
 mod projection;
+pub(super) use projection::format_archival_record;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum ObservabilityView {

@@ -1,6 +1,8 @@
 //! Narrow live TUI facade for the `yo` application entry point.
 
 mod agent;
+mod archival;
+mod chat;
 mod error;
 mod session;
 mod state;
@@ -8,6 +10,7 @@ mod unix;
 mod view;
 
 pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch};
+pub use archival::{ArchivedProjectionError, ArchivedSessionView, project_archived_session};
 pub use error::RunError;
 pub use session::TuiSession;
 pub use unix::{run, run_session_with_mode, run_with_mode};

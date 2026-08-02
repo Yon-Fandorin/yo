@@ -10,15 +10,19 @@ name = "yo"
 path = "src/main.rs"
 
 [dependencies]
+jiff = { version = "=0.2.35", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
+serde = { version = "1.0.219", features = ["derive"] }
+serde_norway = "=0.9.42"
 yo-core = { path = "../yo-core" }
 yo-tui = { path = "../yo-tui" }
 
 [target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
 nix = { version = "=0.31.3", default-features = false, features = ["signal"] }
 signal-hook = { version = "=0.3.18", default-features = false }
 
 [target.'cfg(unix)'.dev-dependencies]
-nix = { version = "=0.31.3", default-features = false, features = ["process", "term"] }
+nix = { version = "=0.31.3", default-features = false, features = ["fs", "process", "term"] }
 
 # The workspace defaults are repeated so only disposition.rs can lower
 # unsafe_code from deny to allow for the reviewed Nix sigaction boundary.

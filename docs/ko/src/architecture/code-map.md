@@ -40,7 +40,8 @@ yo-cli main
 |---|---|---|
 | [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | 인자 해석, 터미널 획득 전 표시 방식과 glyph profile 선택, 작업 디렉터리 확보, provider 시작, 터미널 세대 재진입, 최상위 정리 결과 취합 | 에이전트 의미나 터미널 렌더링 |
 | [`src/agent/mod.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs) | 구체적인 local Transcript cursor를 포함해 `yo-core::AgentSession`을 TUI의 `AgentConnection` 포트에 맞게 연결 | provider 프로토콜 변환 또는 시기상조인 local·remote reader trait |
-| [`src/storage.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/storage.rs) | 사용자별 플랫폼 상태 루트 선택, local Workspace Host identity 확립, 별도로 override 가능한 Session repository 루트 적용, local storage 조합 | Host identity의 의미나 physical Session record 의미 |
+| [`src/command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command.rs), [`src/session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/session.rs), [`src/config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs) | live startup과 `yo session` 목록/직접 읽기 문법 분리, 현재 workspace 또는 `--all` 선택, Session 목록 날짜 설정, TTY 폭에 따른 열 우선순위, 저장 Chat/Transcript의 stdout/stderr routing | physical Session decode, semantic recovery, 범용 반응형 plain-text layout, 실행 가능한 continuation |
+| [`src/storage.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/storage.rs) | 사용자별 플랫폼 상태 루트와 별도 override 가능한 Session repository 루트 선택, local writer와 생성하지 않는 reader 경로를 분리해 조합. writer startup은 Host identity를 확립하지만 read-only command는 기존 identity와 repository만 관찰 | Host identity의 의미나 physical Session record 의미 |
 | [`src/process/job_control.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/job_control.rs) | 기본 `SIGTSTP` 동작 적용, 프로세스 일시정지, `SIGCONT` 뒤 물려받은 signal 상태 복원을 하나의 transaction으로 처리 | TUI 상태나 터미널 복원 |
 | [`src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Unix signal 설치·관찰·복원과 마지막 처리 | 터미널 상태 복원 |
 
@@ -62,7 +63,7 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | [`host`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/host/mod.rs) | 불투명한 random UUIDv4 `WorkspaceHostId`, 원자적으로 만들고 권한을 제한한 local 사용자별 identity 파일, 생성 Host가 만든 lossless canonical workspace path 값 | Host identity가 일치할 때의 workspace 비교와 remote Host transport |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | 결정론적인 Session, Turn, Activity, request 상태 전이 | 전이가 provider 경계도 지난다면 `runtime` |
 | [`journal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/mod.rs) | commit된 command와 semantic event를 하나의 순서로 보존하는 live Projection, sequence 기반의 제한된 Transcript 읽기, 동기식 durable publication, typed gap 상태, revision을 인식하는 크기 제한 `MessageSegment` 구성, recovery 검증 | capture 지점은 `runtime`, physical durability는 `session_repository` |
-| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·replay·저장 Session 탐색 포트, snapshot 복구 gate, typed storage pressure, 첫 single-writer versioned-JSONL 로컬 구현. 현재 physical `v1` envelope는 모두 checksum이 적용된 discovery summary를 가진다. `LocalSessionReader`는 writer lease나 변경 없이 기존 저장소를 열고 Session마다 검증한 tail envelope 하나로 목록을 만들며, 격리·손상·미지원 schema·완결 envelope 없음 결과를 타입으로 보고해 한 Session이 전체 목록을 중단하지 않게 한다. 공통 streaming 검증이 읽기 전용 history와 writer recovery에 같은 순번 규칙을 적용하고, local `reader`와 `file` 모듈은 관찰과 변경 책임을 나눈다. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | CLI 목록·history 표현, 실행 가능한 continuation, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
+| [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·replay·저장 Session 탐색/읽기 포트, snapshot 복구 gate, typed storage pressure, 첫 single-writer versioned-JSONL 로컬 구현. `LocalSessionReader`는 writer lease나 변경 없이 기존 저장소를 열고 Session마다 검증한 tail envelope 하나로 목록을 만들며, 존재 여부를 포함해 한 시점으로 고정된 history를 읽는다. `read_stored_session`은 파일 없음과 파일은 있지만 complete envelope가 없음을 구분하고, physical envelope와 semantic recovery를 검증하고 저장 전용 message segment를 semantic snapshot으로 합치며, message-recovery interruption, discovery 불일치, `v1`만으로는 종료 뒤 durability continuity를 관찰할 수 없다는 사실을 typed history metadata로 보존한다. local `reader`와 `file` 모듈은 관찰과 변경 책임을 나눈다. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | 실행 가능한 continuation, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | backend 수락, semantic commit, Journal capture 순서, backend 관찰 결과 변환, 실패 시 활성 작업 종료 | provider port는 `backend/contract.rs` |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command lane, 용량 1의 Journal 변경 알림, worker 소유권, 시작 취소, 종료 조율 | worker가 소유한 의미 처리는 `runtime` |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | provider capability, command, semantic event, polling, 취소, failure kind, 명시적 정리 | 구체적인 adapter |
@@ -104,7 +105,8 @@ snapshot 하나로 함께 저장할 때까지 뒤의 activity도 memory-only로 
 저장 형식에 독립적인 `StoredSessionReader`는 이제 제한된 discovery, typed
 continuation eligibility, durable history replay를 제공한다. 미지원 schema는
 `unknown`으로 계속 살펴볼 수 있고, 격리 상태와 Anchor가 없는 지원 record는
-`unavailable`이다. 아직 CLI command가 이 포트를 사용하지는 않는다.
+`unavailable`이다. `yo session`은 현재 workspace 목록, `--all` 탐색, full UUID
+직접 지정의 읽기 전용 Chat/Transcript 출력에 이 포트를 사용하지만 어떤 항목도 실행 가능하게 만들지는 않는다.
 
 `yo-core`는 아직 `0.0.0` 내부 Pilot API다. 이 Slice는 persistent startup이 bare
 `SessionId` 대신 완전한 `SessionDescriptor`를 요구하도록 의도적으로 바꾸고,
@@ -125,8 +127,8 @@ complete snapshot이 성공하면 durability를 복구한다. 결과가 모호�
 현재 writer가 자동 재시도하지 않는 integrity gap으로 바뀔 수 있다. 공유
 Transcript observation stream은 gap과 복구 전환을 그 영향을 받는 semantic record보다
 먼저 순서대로 보존한다. CLI 연결은 이 typed observation을 전달하고 TUI 상태는 시각적 표현 정책을 선택하지
-않은 채 최신 값을 보존한다. 저장된 Session 탐색과 resume은
-아직 연결하지 않았으므로 durability만으로 현재 CLI를 재개할 수는 없다.
+않은 채 최신 값을 보존한다. 저장된 Session 탐색과 읽기 전용 history는 연결했지만
+resume은 아직 연결하지 않았으므로 durability만으로 현재 CLI를 재개할 수는 없다.
 local repository는 root 전체에 single-writer lock을 두므로 두 번째 live `yo`
 process가 같은 default root를 열 수 없다. multi-process writer coordination은 현재
 구현 범위가 아니다.
@@ -148,8 +150,9 @@ transport 공유 구조를 추출한다.
 
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
-| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, input·event 조율, 마지막 정리 결과 보고 | UI의 의미 상태 전이는 `runner/state.rs`, 실행 중 조율은 `runner/unix.rs` |
+| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, input·event 조율, 마지막 정리 결과 보고, 터미널에 독립적인 저장 Chat/Transcript Projection | UI의 의미 상태 전이는 `runner/state.rs`, 저장 출력은 `runner/archival.rs`, 실행 중 조율은 `runner/unix.rs` |
 | [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph profile 선택 | profile을 받는 생성과 소유권은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
+| [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | terminal cell 폭에 맞춰 고정 열을 유지하고 짧은 접힌 label/value pair는 폭 안에서 flow로 채우며 block 값은 독립된 한 줄을 사용하되 필요할 때만 label과 값을 분리하고, grapheme을 자르지 않고 개행한 뒤 필요하면 세로 card layout으로 전환하는 plain 목록 | 열의 의미와 접기 우선순위 또는 continuation hint, 설정, stdout TTY 정책, terminal 소유권 |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집, typed view-switch 표시 정책 | 보이는 cursor 배치는 `prompt`, 선택한 Projection은 `runner/view.rs` |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, 대화 기록 layout, scroll 상태 | prompt와 조합하는 일은 `shell` |
 | [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | 읽기 전용 Chat·Transcript·Request 선택, 전체 Journal record Projection, 정확한 Request anchor와 typed unavailable 사유, mode별 context·viewport 상태, compact mode chrome | Journal 관찰과 editor dispatch는 `runner/state.rs`, 공통 layout·scroll은 `transcript` |

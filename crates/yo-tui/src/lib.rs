@@ -4,6 +4,7 @@ pub(crate) mod appearance;
 pub mod html;
 pub(crate) mod input;
 pub(crate) mod layout;
+pub mod plain;
 pub(crate) mod prompt;
 #[cfg(unix)]
 mod runner;
@@ -16,7 +17,8 @@ pub(crate) mod transcript;
 pub use appearance::GlyphProfile;
 #[cfg(unix)]
 pub use runner::{
-    AgentAction, AgentConnection, AgentPoll, DispatchOutcome, ExitReason, PendingDispatch,
-    PresentationMode, RunError, RunOutcome, TerminalOutcome, TerminationEvent, TerminationSource,
-    TuiSession, run, run_session_with_mode, run_with_mode,
+    AgentAction, AgentConnection, AgentPoll, ArchivedProjectionError, ArchivedSessionView,
+    DispatchOutcome, ExitReason, PendingDispatch, PresentationMode, RunError, RunOutcome,
+    TerminalOutcome, TerminationEvent, TerminationSource, TuiSession, project_archived_session,
+    run, run_session_with_mode, run_with_mode,
 };

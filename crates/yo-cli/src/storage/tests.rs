@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{
-    DEFAULT_CAPACITY_BYTES, capacity_bytes_from, open_at, platform_state_root_from,
+    DEFAULT_CAPACITY_BYTES, capacity_bytes_from, open_at, open_reader_at, platform_state_root_from,
     repository_root_from,
 };
 
@@ -122,6 +122,22 @@ fn existing_repository_parent_does_not_block_host_identity_creation() {
             .unwrap()
             .contains(&host_id.to_string())
     );
+}
+
+// 읽기 전용 Session 명령을 새 머신 상태에 실행하면 writer용 host identity나 repository
+// 디렉터리를 만들지 않고 둘 다 없는 snapshot으로 성공해야 조회가 상태를 변경하지 않는다.
+#[test]
+fn read_only_storage_open_does_not_create_missing_paths() {
+    let directory = TestDirectory::new("read-only-missing");
+    let state_root = directory.path().join("state");
+    let repository_root = directory.path().join("sessions");
+
+    let storage = open_reader_at(state_root.clone(), repository_root.clone()).unwrap();
+
+    assert!(storage.reader().is_none());
+    assert!(storage.workspace_host_id().is_none());
+    assert!(!state_root.exists());
+    assert!(!repository_root.exists());
 }
 
 #[cfg(not(target_os = "macos"))]
