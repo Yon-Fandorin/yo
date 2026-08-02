@@ -22,6 +22,7 @@ mod suspend;
 struct TmuxSession {
     name: String,
     socket: std::path::PathBuf,
+    session_repository: std::path::PathBuf,
 }
 
 struct ShellJob {
@@ -40,11 +41,16 @@ impl TmuxSession {
             .as_nanos();
         let name = format!("yo-matrix-{}-{unique}", std::process::id());
         let socket = std::env::temp_dir().join(format!("{name}.sock"));
+        let session_repository = std::env::temp_dir().join(format!("{name}-sessions"));
         run_tmux(
             &socket,
             &["new-session", "-d", "-s", &name, "-x", "80", "-y", "24"],
         );
-        let session = Self { name, socket };
+        let session = Self {
+            name,
+            socket,
+            session_repository,
+        };
         session.run_tmux(&["set-option", "-t", &session.name, "remain-on-exit", "on"]);
         session
     }
@@ -61,6 +67,11 @@ impl TmuxSession {
             &self.name,
             "-c",
             repository,
+            "/usr/bin/env",
+            &format!(
+                "YO_SESSION_REPOSITORY={}",
+                self.session_repository.display()
+            ),
             env!("CARGO_BIN_EXE_yo"),
             option,
         ]);
@@ -96,7 +107,8 @@ impl TmuxSession {
         thread::sleep(Duration::from_secs(1));
         let baseline = self.termios().expect("read shell terminal state");
         let yo = shell_quote(std::path::Path::new(env!("CARGO_BIN_EXE_yo")));
-        let command = format!("{yo} {option}");
+        let session_repository = shell_quote(&self.session_repository);
+        let command = format!("YO_SESSION_REPOSITORY={session_repository} {yo} {option}");
         self.send_literal(&command);
         self.send_enter();
         self.wait_for_mode(alternate_screen);
@@ -262,6 +274,7 @@ impl Drop for TmuxSession {
         if server_is_absent {
             let _ = std::fs::remove_file(&self.socket);
         }
+        let _ = std::fs::remove_dir_all(&self.session_repository);
     }
 }
 
@@ -359,8 +372,13 @@ fn assert_empty_ctrl_d_exits_cleanly(option: &str, alternate_screen: bool) {
     assert_eq!(exit.status, Some(0));
     let session_name = session.name.clone();
     let socket = session.socket.clone();
+    let session_repository = session.session_repository.clone();
     drop(session);
     assert_tmux_server_absent(&socket, &session_name);
+    assert!(
+        !session_repository.exists(),
+        "isolated Session repository remained after cleanup: {session_repository:?}"
+    );
 }
 
 // macOS tmux에서 살아 있는 pane의 빈 dead-status와 command 필드도 printable 구분자로
