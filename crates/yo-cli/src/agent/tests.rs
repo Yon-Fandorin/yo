@@ -1,15 +1,16 @@
 use std::{
     num::NonZeroU64,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
 
 use yo_core::{
-    ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentCommand, AgentEvent, AgentIntent,
-    BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind, BackendScriptStep,
-    CommandAdmission, DurabilityGapCause, JournalDurability, ScriptedBackend, SessionId,
-    TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput,
+    ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentBackend, AgentCommand, AgentEvent,
+    AgentIntent, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
+    BackendPoll, BackendScriptStep, BackendStopHandle, CommandAdmission, DurabilityGapCause,
+    JournalDurability, ScriptedBackend, SessionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef,
+    UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableCutoff, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
@@ -22,6 +23,62 @@ use super::TuiAgentConnection;
 struct NeverTerminated;
 
 struct CapacityPressureRepository;
+
+struct CompletionSignalingBackend {
+    inner: ScriptedBackend,
+    remaining_events: usize,
+    completion: Option<mpsc::Sender<()>>,
+}
+
+impl CompletionSignalingBackend {
+    fn new(inner: ScriptedBackend, event_count: usize) -> (Self, mpsc::Receiver<()>) {
+        let (completion, completed) = mpsc::channel();
+        (
+            Self {
+                inner,
+                remaining_events: event_count,
+                completion: Some(completion),
+            },
+            completed,
+        )
+    }
+}
+
+impl AgentBackend for CompletionSignalingBackend {
+    fn stop_handle(&self) -> BackendStopHandle {
+        self.inner.stop_handle()
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        self.inner.capabilities()
+    }
+
+    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+        self.inner.execute_command(command)
+    }
+
+    fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
+        if self.remaining_events == 0
+            && let Some(completion) = self.completion.take()
+        {
+            completion
+                .send(())
+                .expect("the completion receiver remains alive");
+        }
+        let poll = self.inner.poll_event()?;
+        if matches!(poll, BackendPoll::Event(_)) {
+            self.remaining_events = self
+                .remaining_events
+                .checked_sub(1)
+                .expect("the script emits no undeclared event");
+        }
+        Ok(poll)
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        self.inner.shutdown()
+    }
+}
 
 #[derive(Clone, Default)]
 struct RecoveringPressureRepository {
@@ -387,27 +444,24 @@ fn drains_more_than_one_bounded_page_from_one_coalesced_wake() {
     }));
     script.push(BackendScriptStep::Shutdown(Ok(())));
 
+    let (backend, completed) =
+        CompletionSignalingBackend::new(ScriptedBackend::new(script), UPDATE_COUNT + 1);
     let mut termination = NeverTerminated;
-    let mut connection =
-        TuiAgentConnection::start(ScriptedBackend::new(script), session_id(), &mut termination)
-            .unwrap()
-            .unwrap();
+    let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
+        .unwrap()
+        .unwrap();
     connection
         .dispatch(AgentIntent::Submit("inspect".to_owned()))
         .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(4);
-    while connection
-        .transcript
-        .head_sequence()
-        .is_none_or(|head| head.get() < EXPECTED_RECORDS as u64)
-    {
-        assert!(
-            Instant::now() < deadline,
-            "worker did not commit the complete coalesced Journal suffix"
-        );
-        thread::yield_now();
-    }
+    completed
+        .recv_timeout(Duration::from_secs(10))
+        .expect("worker did not finish the scripted Journal suffix");
+    assert_eq!(
+        connection.transcript.head_sequence().map(|head| head.get()),
+        Some(EXPECTED_RECORDS as u64),
+        "worker completion must make the complete Journal suffix observable"
+    );
 
     let records =
         collect_until(&mut connection, |records| records.len() == EXPECTED_RECORDS).unwrap();
