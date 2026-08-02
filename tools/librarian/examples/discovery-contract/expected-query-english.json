@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:8276b3a1857d02ced740f41c30e53858523e135f38be534714fc15ddbc05a882",
+  "candidate_set_id": "sha256:ef3e2c04ba33dfc7311cd4a3342997f313d87e572efa6d731aa794e79ceeb9b2",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:e0ddec9bacfb8492ed7fc5449125437d7bc30d5e62fbeb3cfdf31421a6345b92",
+  "catalog_hash": "sha256:a8976cd3b77a79cbbbc130e7a1d9ea34270cb9ba689dc3675f6454bccaf38676",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -519,6 +519,18 @@
         {
           "kind": "relation",
           "via": "tui.dependencies.terminal-backend-selection",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.runtime.activity-motion-scheduling",
+      "path": "methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
           "score": 10
         }
       ]

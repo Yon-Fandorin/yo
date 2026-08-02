@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.motion-002
+revision: sha256:343e7e7b6d0ee34f9c281965e95779ba15be9eba7871d630221dbdd3ba8fe0f8
+payload:
+  kind: decision
+  content: The initial built-in activity-motion profile holds each marker frame for 120 milliseconds. Rich uses the exact ping-pong cycle ·, ✢, ✳, ✶, ✻, ✽, ✽, ✻, ✶, ✳, ✢, · and ASCII uses the exact cycle ., *. Motion changes only the decorative marker and preserves independently supplied non-marker chrome semantics. The profile model permits a one-frame non-animated future candidate without changing runner scheduling.

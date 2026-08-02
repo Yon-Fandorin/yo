@@ -2,7 +2,7 @@
   "schema": "methexis.context-request/v1alpha1",
   "candidates": {
     "path": "tools/librarian/examples/discovery-contract/expected-query-english.json",
-    "hash": "sha256:3b14ce65f8f4b2b31c57be9d0891fd4290617ef136c1c92382f003f4d8e5d4f0"
+    "hash": "sha256:acccd5750b7045dfe420d4472c66ee344d08d191767fb6df0c98e4394405491c"
   },
   "tokenizer_profile": "o200k_base/v1",
   "max_tokens": 8000

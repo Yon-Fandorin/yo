@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.motion-001
+revision: sha256:6ec2c20974fa89e63ebae65bb310fb2d065884e80f24db14c7abf9765affbab4
+payload:
+  kind: decision
+  content: Live TUI activity motion uses one runner-owned monotonic epoch per terminal generation. Terminal-independent frame preparation receives an explicit elapsed sample and reports whether a dynamic marker was actually painted; only that demand arms deadline-derived redraws. Late wakes skip missed frames, event and time redraws coalesce, idle and zero-size surfaces do not churn, completed Surface consumers remain clock-free, and no background animation thread is introduced.
