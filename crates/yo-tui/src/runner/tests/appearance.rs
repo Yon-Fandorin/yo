@@ -4,16 +4,17 @@ use yo_core::{
 
 use super::{TuiSession, TuiState, activity, turn};
 use crate::{
+    PresentationMode, TuiSessionInfo,
     appearance::{AppearanceCandidate, AppearanceState, GlyphProfile},
     html::HtmlSurface,
     prompt::{PromptGlyphs, PromptStyles},
-    shell::AgentShellStyles,
+    shell::{AgentShellStyles, ShellChromeStyles},
     surface::{Attributes, CellContent, Color, FrameDiff, Point, Size, Style, Surface},
     terminal::{TerminalOp, TerminalOps},
     transcript::TranscriptStyles,
 };
 
-const FRAME_SIZE: Size = Size::new(20, 5);
+const FRAME_SIZE: Size = Size::new(20, 11);
 
 fn conversation() -> TuiState {
     let mut state = TuiState::new();
@@ -106,14 +107,14 @@ fn frame_pins_one_snapshot_across_measure_and_paint() {
         .unwrap();
 
     assert_eq!(frame.appearance_revision, rich.revision());
-    assert_eq!(marker(&frame.surface, 1).0, "❯");
-    assert_eq!(marker(&frame.surface, 3).0, "⏺");
+    assert_eq!(marker(&frame.surface, 0).0, "❯");
+    assert_eq!(marker(&frame.surface, 2).0, "⏺");
 
     let ascii = appearance.pin();
     let next = state.prepare_frame(FRAME_SIZE, &ascii).unwrap();
     assert_eq!(ascii.revision().get(), rich.revision().get() + 1);
-    assert_eq!(marker(&next.surface, 1).0, ">");
-    assert_eq!(marker(&next.surface, 3).0, "*");
+    assert_eq!(marker(&next.surface, 0).0, ">");
+    assert_eq!(marker(&next.surface, 2).0, "*");
 }
 
 // Rich와 ASCII profile 모두 marker 폭과 무관하게 사용자·assistant 본문을 같은 열에 둔다.
@@ -127,13 +128,13 @@ fn rich_and_ascii_profiles_keep_body_columns_stable() {
         AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii)).unwrap();
     let ascii = state.prepare_frame(FRAME_SIZE, &ascii_state.pin()).unwrap();
 
-    assert_eq!(marker(&rich.surface, 1).1, 1);
-    assert_eq!(marker(&rich.surface, 3).1, 1);
-    assert_eq!(marker(&ascii.surface, 1).1, 1);
-    assert_eq!(marker(&ascii.surface, 3).1, 1);
+    assert_eq!(marker(&rich.surface, 0).1, 1);
+    assert_eq!(marker(&rich.surface, 2).1, 1);
+    assert_eq!(marker(&ascii.surface, 0).1, 1);
+    assert_eq!(marker(&ascii.surface, 2).1, 1);
     for surface in [&rich.surface, &ascii.surface] {
-        assert_eq!(grapheme_at(surface, Point::new(2, 1)), "q");
-        assert_eq!(grapheme_at(surface, Point::new(2, 3)), "a");
+        assert_eq!(grapheme_at(surface, Point::new(2, 0)), "q");
+        assert_eq!(grapheme_at(surface, Point::new(2, 2)), "a");
     }
 }
 
@@ -153,14 +154,14 @@ fn default_profiles_resolve_prompt_glyphs_and_visual_roles() {
     let marker_style = Style::new(Color::Default, Color::Default, Attributes::BOLD);
     let rule_style = Style::new(Color::Default, Color::Default, Attributes::DIM);
 
+    assert_eq!(marker(&rich.surface, 4), ("─", 1, rule_style));
+    assert_eq!(marker(&rich.surface, 5), ("›", 1, marker_style));
     assert_eq!(marker(&rich.surface, 6), ("─", 1, rule_style));
-    assert_eq!(marker(&rich.surface, 7), ("›", 1, marker_style));
-    assert_eq!(marker(&rich.surface, 8), ("─", 1, rule_style));
+    assert_eq!(marker(&ascii.surface, 4), ("-", 1, rule_style));
+    assert_eq!(marker(&ascii.surface, 5), (">", 1, marker_style));
     assert_eq!(marker(&ascii.surface, 6), ("-", 1, rule_style));
-    assert_eq!(marker(&ascii.surface, 7), (">", 1, marker_style));
-    assert_eq!(marker(&ascii.surface, 8), ("-", 1, rule_style));
-    assert_eq!(rich.surface.cell(Point::new(2, 7)).unwrap().style(), body);
-    assert_eq!(ascii.surface.cell(Point::new(2, 7)).unwrap().style(), body);
+    assert_eq!(rich.surface.cell(Point::new(2, 5)).unwrap().style(), body);
+    assert_eq!(ascii.surface.cell(Point::new(2, 5)).unwrap().style(), body);
 }
 
 // public session 생성자로 선택한 ASCII snapshot은 실제 준비 frame과 종료용 plain output에
@@ -179,7 +180,7 @@ fn public_ascii_session_keeps_frame_and_output_consistent() {
 
     assert_eq!(
         visible_rows(&frame.surface),
-        "Chat · F1/F2/F3\n> question\n\n* answer\n>"
+        "> question\n\n* answer\n\n\n\n--------------------\n>\n--------------------\n\ninline"
     );
     assert_eq!(output, "> question\n\n* answer\n");
 }
@@ -199,12 +200,40 @@ fn public_default_session_keeps_rich_frame_and_output_consistent() {
 
     assert_eq!(
         visible_rows(&frame.surface),
-        "Chat · F1/F2/F3\n❯ question\n\n⏺ answer\n›"
+        "❯ question\n\n⏺ answer\n\n\n\n────────────────────\n›\n────────────────────\n\ninline"
     );
     assert_eq!(
         session.session_output().unwrap().unwrap(),
         "❯ question\n\n⏺ answer\n"
     );
+}
+
+// host가 제공한 실제 metadata와 active lifecycle은 같은 frame의 작업 행·metrics·mode로
+// 전달되며, compatibility 기본값을 backend처럼 꾸며내지 않는다.
+#[test]
+fn session_projects_host_metadata_active_work_and_presentation_mode() {
+    let mut session = TuiSession::with_session_info(
+        GlyphProfile::Rich,
+        TuiSessionInfo::new("codex", "~/projects/yo"),
+    );
+    session.set_presentation_mode(PresentationMode::Fullscreen);
+    session
+        .parts_mut()
+        .state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    let pin = session.appearance_pin();
+
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame(Size::new(48, 12), &pin)
+        .unwrap();
+    let rows = visible_rows(&frame.surface);
+
+    assert!(rows.contains("◐ Working… (Esc / ^C interrupt)"));
+    assert!(rows.contains("codex · ~/projects/yo"));
+    assert!(rows.ends_with("fullscreen"));
 }
 
 // 한 TuiSession의 profile 교체는 다른 세션의 snapshot과 revision에 전파되지 않는다.
@@ -230,9 +259,9 @@ fn appearance_replacement_is_isolated_per_session() {
         .unwrap();
     let second_next = second.appearance_pin();
 
-    assert_eq!(marker(&first_frame.surface, 1).0, ">");
+    assert_eq!(marker(&first_frame.surface, 0).0, ">");
     assert_eq!(first.session_output().unwrap().unwrap(), "> question\n");
-    assert_eq!(marker(&second_current_frame.surface, 1).0, "❯");
+    assert_eq!(marker(&second_current_frame.surface, 0).0, "❯");
     assert_eq!(second.session_output().unwrap().unwrap(), "❯ question\n");
     assert_eq!(second_next, second_before);
     assert_eq!(
@@ -261,6 +290,12 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
             rule: default,
             glyphs: PromptGlyphs::ascii(),
         },
+        chrome: ShellChromeStyles {
+            activity: default,
+            metrics: default,
+            mode: default,
+            rich_glyphs: false,
+        },
     };
     let appearance = AppearanceState::new(
         AppearanceCandidate::for_profile(GlyphProfile::Ascii).with_styles_for_test(styles),
@@ -271,7 +306,7 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
     let operations = TerminalOps::from_diff(&diff);
     let html = HtmlSurface::render(&frame.surface);
 
-    assert_eq!(marker(&frame.surface, 1), (">", 1, marker_style));
+    assert_eq!(marker(&frame.surface, 0), (">", 1, marker_style));
     assert!(operations.as_slice().windows(2).any(|pair| {
         matches!(
             pair,

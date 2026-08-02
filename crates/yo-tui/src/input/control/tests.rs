@@ -26,6 +26,44 @@ fn plain_key(character: char) -> KeyEvent {
     }
 }
 
+fn escape(action: KeyAction) -> KeyEvent {
+    KeyEvent {
+        code: KeyCode::Escape,
+        modifiers: KeyModifiers::NONE,
+        action,
+        state: KeyState::NONE,
+    }
+}
+
+// 실행 중인 작업에서 Esc press는 Ctrl+C와 같은 중단 요청이며 입력 내용은 보존한다.
+#[test]
+fn escape_interrupts_an_active_task_without_editing_input() {
+    let mut policy = ControlKeyPolicy::new();
+    let mut buffer = TextBuffer::new();
+    buffer.insert("keep");
+
+    let effect = policy.handle(escape(KeyAction::Press), true, &mut buffer, NOW);
+
+    assert_eq!(effect, ControlEffect::InterruptTask);
+    assert_eq!(buffer.as_str(), "keep");
+}
+
+// 유휴 상태의 Esc는 종료나 편집 명령으로 해석하지 않고 상위 overlay 계층이 사용할 수 있게 돌려준다.
+#[test]
+fn idle_escape_remains_unhandled() {
+    let mut policy = ControlKeyPolicy::new();
+    let mut buffer = TextBuffer::new();
+
+    assert_eq!(
+        policy.handle(escape(KeyAction::Press), false, &mut buffer, NOW),
+        ControlEffect::Unhandled
+    );
+    assert_eq!(
+        policy.handle(escape(KeyAction::Repeat), false, &mut buffer, NOW),
+        ControlEffect::NoChange
+    );
+}
+
 // 실행 중인 작업이 있으면 Ctrl+C는 입력을 지우거나 종료하지 않고 작업 중단을 요청한다.
 #[test]
 fn ctrl_c_interrupts_an_active_task_first() {

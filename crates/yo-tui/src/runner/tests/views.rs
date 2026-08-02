@@ -86,7 +86,7 @@ fn observed_conversation() -> TuiState {
 fn three_modes_render_distinct_visible_projections_from_one_journal() {
     let mut state = observed_conversation();
     let chat = render_and_commit(&mut state, Size::new(72, 12));
-    assert!(chat.contains("Chat · context 4/5 · F1 Chat · F2 Transcript · F3 Request"));
+    assert!(!chat.contains("Chat ·"));
     assert!(chat.contains("❯ inspect the repository"));
     assert!(chat.contains("⏺ Running tool…"));
     assert!(!chat.contains("event.activity_started"));
@@ -372,7 +372,7 @@ fn chat_context_ignores_hidden_records_after_the_visible_item() {
         .unwrap();
 
     let chat = render_and_commit(&mut state, Size::new(40, 8));
-    assert!(chat.contains("Chat · F1/F2/F3"));
+    assert!(!chat.contains("Chat ·"));
     state
         .handle(function(3, KeyAction::Press), Duration::ZERO)
         .unwrap();
@@ -445,7 +445,7 @@ fn high_frequency_stream_updates_one_local_chat_context_entry() {
 
     assert_eq!(state.views().chat_context_count(), 1);
     let chat = render_and_commit(&mut state, Size::new(20, 5));
-    assert!(chat.contains("Chat · F1/F2/F3"));
+    assert!(!chat.contains("Chat ·"));
 }
 
 // 줄바꿈된 Chat item에서 한 줄 위로 이동하면 record 수가 아니라 실제 viewport 행으로
@@ -471,18 +471,18 @@ fn wrapped_chat_rows_map_to_the_visible_record_context() {
             },
         ))
         .unwrap();
-    let size = Size::new(18, 6);
+    let size = Size::new(18, 12);
     render_and_commit(&mut state, size);
     state
         .handle(key(KeyCode::PageUp, KeyModifiers::NONE), Duration::ZERO)
         .unwrap();
     let chat = render_and_commit(&mut state, size);
-    assert!(chat.contains("Chat · F1/F2/F3"));
+    assert!(!chat.contains("Chat ·"));
 
     state
         .handle(function(3, KeyAction::Press), Duration::ZERO)
         .unwrap();
-    let request = render_and_commit(&mut state, Size::new(72, 10));
+    let request = render_and_commit(&mut state, Size::new(72, 16));
     assert!(request.contains("anchor: observed record #1 (command.start_turn)"));
     assert!(request.contains("reason: no_associated_request"));
     assert!(!request.contains("request=14"));

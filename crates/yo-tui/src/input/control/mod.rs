@@ -44,6 +44,17 @@ impl ControlKeyPolicy {
             return self.handle_ctrl_c(key.action, task_active, buffer, now);
         }
 
+        if key.code == KeyCode::Escape && key.modifiers == KeyModifiers::NONE {
+            self.empty_ctrl_c_at = None;
+            return if task_active && key.action == KeyAction::Press {
+                ControlEffect::InterruptTask
+            } else if key.action == KeyAction::Repeat {
+                ControlEffect::NoChange
+            } else {
+                ControlEffect::Unhandled
+            };
+        }
+
         self.empty_ctrl_c_at = None;
 
         if is_control_character(key, 'd') {

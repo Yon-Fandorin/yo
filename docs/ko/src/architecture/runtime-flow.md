@@ -53,7 +53,10 @@ ASCII glyph profile을 위한 `--ascii`이며 순서와 관계없이 사용할 �
 provider나 터미널을 시작하기 전에 실패한다. 선택한 glyph profile로 보존할
 `TuiSession`을 생성하므로 준비한 frame과 마지막 plain session output은
 같은 committed appearance snapshot을 읽는다. Glyph 선택은 명시적이며
-`TERM`이나 `NO_COLOR`를 검사하지 않는다.
+`TERM`이나 `NO_COLOR`를 검사하지 않는다. CLI는 자신이 아는 backend 이름과
+홈 경로를 줄여 쓴 작업 디렉터리 label도 보존되는 session에 전달한다. 이
+label은 화면 표시용 metadata일 뿐 backend Session을 선택하거나 식별하지
+않는다.
 
 계약:
 [session publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.session-publication.md),
@@ -153,6 +156,12 @@ Inline 또는 Fullscreen presenter
    같은 record stream에서 Chat, Transcript, Request를 선택한다. Chat의
    사용자 입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난
    뒤에만 표시된다.
+
+승인된 순서, 중단 gesture, 정직한 status 데이터, 반응형 맞춤 정책은
+[정적 입력 chrome 계약](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md)이
+소유한다. 이 runtime에서 `shell::chrome`은 활성 상태와 `TuiSessionInfo`로
+typed 행을 계산하고 폭에 맞춘다. `shell`은 그 영역을 prompt 주변에
+조합하고, `input::control`은 mapping된 interrupt intent를 dispatch한다.
 
 change lane은 command나 event 내용을 싣지 않으며 용량은 하나다. 따라서
 여러 commit이 읽지 않은 알림 하나로 합쳐져도 이력은 사라지지 않는다.

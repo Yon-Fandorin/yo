@@ -11,7 +11,10 @@ use crate::{
         event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
         view_binding::{ViewSwitchBindings, ViewSwitchTarget},
     },
-    shell::{self, AgentShellRenderError, AgentShellRenderOptions, AgentShellViewState},
+    shell::{
+        self, AgentShellRenderError, AgentShellRenderOptions, AgentShellViewState,
+        ShellChromeSnapshot,
+    },
     surface::{Point, Rect, Style, SurfaceView, WriteOutcome},
     text::flow::{TextFlowError, flow_text},
     transcript::{
@@ -156,6 +159,10 @@ impl ObservabilityViews {
             };
         }
 
+        if input.is_interrupt_key() {
+            return ViewInputEffect::Unhandled;
+        }
+
         let InputEvent::Key(key) = input else {
             return if self.state.active == ObservabilityView::Chat {
                 ViewInputEffect::Unhandled
@@ -189,6 +196,7 @@ impl ObservabilityViews {
         editor: &PromptEditor,
         view: &mut SurfaceView<'_>,
         appearance: &AppearanceSnapshot,
+        chrome: ShellChromeSnapshot<'_>,
         after_measure: impl FnOnce(),
     ) -> Result<ObservabilityFrame, ObservabilityRenderError> {
         let size = view.size();
@@ -198,6 +206,32 @@ impl ObservabilityViews {
             return Err(ObservabilityRenderError::BodyHeightUnavailable);
         }
         let mut next = self.state;
+        if self.state.active == ObservabilityView::Chat {
+            let frame = shell::render_with_measure_hook(
+                chat,
+                editor,
+                view,
+                AgentShellRenderOptions {
+                    transcript_config: appearance.transcript_config(),
+                    styles: appearance.styles(),
+                    scroll: self.state.chat.pending_scroll,
+                    frame_prompt: size.height >= shell::MIN_FRAMED_PROMPT_HEIGHT,
+                    chrome,
+                },
+                &mut next.chat_shell,
+                after_measure,
+            )
+            .map_err(ObservabilityRenderError::Chat)?;
+            next.chat.pending_scroll = None;
+            next.chat.context = frame
+                .transcript
+                .and_then(|transcript| transcript.context_item)
+                .and_then(|item| self.chat_contexts.get(&item).copied());
+            return Ok(ObservabilityFrame {
+                cursor: frame.cursor,
+                state: next,
+            });
+        }
         let context = match self.state.active {
             ObservabilityView::Request => self.state.request_anchor,
             _ => self.active_local().context,
@@ -220,28 +254,7 @@ impl ObservabilityViews {
             .expect("the status row leaves a body inside the complete frame");
 
         let cursor = match self.state.active {
-            ObservabilityView::Chat => {
-                let frame = shell::render_with_measure_hook(
-                    chat,
-                    editor,
-                    &mut body,
-                    AgentShellRenderOptions {
-                        transcript_config: appearance.transcript_config(),
-                        styles: appearance.styles(),
-                        scroll: self.state.chat.pending_scroll,
-                        frame_prompt: size.height >= shell::MIN_FRAMED_PROMPT_HEIGHT,
-                    },
-                    &mut next.chat_shell,
-                    after_measure,
-                )
-                .map_err(ObservabilityRenderError::Chat)?;
-                next.chat.pending_scroll = None;
-                next.chat.context = frame
-                    .transcript
-                    .and_then(|transcript| transcript.context_item)
-                    .and_then(|item| self.chat_contexts.get(&item).copied());
-                Point::new(frame.cursor.x, frame.cursor.y + 1)
-            },
+            ObservabilityView::Chat => unreachable!("Chat renders without a view header"),
             ObservabilityView::Transcript => {
                 after_measure();
                 let frame = crate::transcript::render(

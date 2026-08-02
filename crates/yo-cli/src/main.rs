@@ -124,7 +124,10 @@ fn run_agent_generation(
         };
         *live = Some(LiveSession {
             agent,
-            tui: yo_tui::TuiSession::with_glyph_profile(options.glyph_profile),
+            tui: yo_tui::TuiSession::with_session_info(
+                options.glyph_profile,
+                yo_tui::TuiSessionInfo::new("codex", compact_workspace_label(cwd)),
+            ),
         });
     }
     let session = live
@@ -157,6 +160,69 @@ fn run_agent_generation(
         Ok(SessionStep::Complete)
     } else {
         Err(AppError::many(failures))
+    }
+}
+
+#[cfg(unix)]
+fn compact_workspace_label(cwd: &std::path::Path) -> String {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    compact_workspace_label_with_home(cwd, home.as_deref())
+}
+
+#[cfg(unix)]
+fn compact_workspace_label_with_home(
+    cwd: &std::path::Path,
+    home: Option<&std::path::Path>,
+) -> String {
+    let Some(home) = home else {
+        return cwd.to_string_lossy().into_owned();
+    };
+    let Ok(relative) = cwd.strip_prefix(home) else {
+        return cwd.to_string_lossy().into_owned();
+    };
+    if relative.as_os_str().is_empty() {
+        "~".to_owned()
+    } else {
+        format!("~/{}", relative.to_string_lossy())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod workspace_label_tests {
+    use std::path::Path;
+
+    use super::compact_workspace_label_with_home;
+
+    // 홈 아래 작업공간은 사용자가 익숙한 `~/...` 표기로 줄이되 경로의 나머지는 보존한다.
+    #[test]
+    fn home_workspace_uses_tilde_without_losing_the_relative_path() {
+        assert_eq!(
+            compact_workspace_label_with_home(
+                Path::new("/home/yon/projects/yo"),
+                Some(Path::new("/home/yon")),
+            ),
+            "~/projects/yo"
+        );
+        assert_eq!(
+            compact_workspace_label_with_home(Path::new("/home/yon"), Some(Path::new("/home/yon"))),
+            "~"
+        );
+    }
+
+    // 홈 밖 경로이거나 홈 정보를 모르는 경우에는 의미가 달라지지 않도록 절대 경로를 유지한다.
+    #[test]
+    fn external_workspace_remains_an_absolute_path() {
+        assert_eq!(
+            compact_workspace_label_with_home(
+                Path::new("/srv/work/yo"),
+                Some(Path::new("/home/yon")),
+            ),
+            "/srv/work/yo"
+        );
+        assert_eq!(
+            compact_workspace_label_with_home(Path::new("/srv/work/yo"), None),
+            "/srv/work/yo"
+        );
     }
 }
 

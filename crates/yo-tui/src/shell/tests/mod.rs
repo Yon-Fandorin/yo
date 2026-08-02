@@ -9,6 +9,7 @@ use crate::{
         event::InputEvent,
     },
     prompt::{PromptGlyphs, PromptStyles},
+    shell::ShellChromeStyles,
     surface::{CellContent, Color, Point, Rect, Size, Style, Surface},
     transcript::{
         TranscriptItemId, TranscriptLayoutConfig, TranscriptScrollCommand, TranscriptState,
@@ -56,6 +57,12 @@ fn styles() -> AgentShellStyles {
             marker: style(6),
             rule: style(7),
             glyphs: PromptGlyphs::rich(),
+        },
+        chrome: ShellChromeStyles {
+            activity: style(8),
+            metrics: style(9),
+            mode: style(10),
+            rich_glyphs: true,
         },
     }
 }
@@ -112,28 +119,34 @@ fn composes_flexible_transcript_above_preferred_prompt() {
     let editor = editor_with("ab\ncd");
     let mut state = AgentShellViewState::default();
 
-    let (surface, frame) = render_into(&transcript, &editor, Size::new(8, 9), &mut state, None);
+    let (surface, frame) = render_into(&transcript, &editor, Size::new(8, 13), &mut state, None);
 
     assert_eq!(frame.transcript_area.size.height, 5);
-    assert_eq!(frame.prompt_area.origin.y, 5);
+    assert_eq!(frame.transient_area.origin.y, 5);
+    assert_eq!(frame.transient_area.size.height, 2);
+    assert_eq!(frame.prompt_area.origin.y, 7);
     assert_eq!(frame.prompt_area.size.height, 4);
-    assert_eq!(frame.cursor, Point::new(4, 7));
+    assert_eq!(frame.metrics_area.origin.y, 11);
+    assert_eq!(frame.mode_area.origin.y, 12);
+    assert_eq!(frame.cursor, Point::new(4, 9));
     assert_eq!(rendered_row(&surface, 0), "❯ q");
     assert_eq!(rendered_row(&surface, 2), "⏺ answer");
-    assert_eq!(rendered_row(&surface, 5), "────────");
-    assert_eq!(rendered_row(&surface, 6), "› ab");
-    assert_eq!(rendered_row(&surface, 7), "  cd");
-    assert_eq!(rendered_row(&surface, 8), "────────");
+    assert_eq!(rendered_row(&surface, 7), "────────");
+    assert_eq!(rendered_row(&surface, 8), "› ab");
+    assert_eq!(rendered_row(&surface, 9), "  cd");
+    assert_eq!(rendered_row(&surface, 10), "────────");
+    assert_eq!(rendered_row(&surface, 11), "");
+    assert_eq!(rendered_row(&surface, 12), "inline");
     assert_eq!(
-        surface.cell(Point::new(2, 6)).unwrap().style(),
+        surface.cell(Point::new(2, 8)).unwrap().style(),
         styles().prompt.body
     );
     assert_eq!(
-        surface.cell(Point::new(0, 6)).unwrap().style(),
+        surface.cell(Point::new(0, 8)).unwrap().style(),
         styles().prompt.marker
     );
     assert_eq!(
-        surface.cell(Point::new(0, 5)).unwrap().style(),
+        surface.cell(Point::new(0, 7)).unwrap().style(),
         styles().prompt.rule
     );
 }

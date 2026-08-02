@@ -158,9 +158,9 @@ terminal-operation, and HTML-projection types.
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | Terminal-cell-aware plain lists that preserve pinned columns, pack short collapsed label/value pairs as a width-bounded flow, give block values an independent row and split their label from the value only when needed, wrap grapheme clusters without truncation, and fall back to a vertical card layout | Which columns mean what, their fold priorities or continuation hints, configuration, stdout TTY policy, or terminal ownership |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | Decoded semantic key events, edit buffer, configurable bindings, exit gestures, prompt editing, and the typed view-switch presentation policy | `prompt` for visible cursor layout; `runner/view.rs` for the selected projection |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, transcript layout, and scrolling state | `shell` for composition with the prompt |
-| [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Read-only Chat, Transcript, and Request selection; full Journal-record projection; exact Request anchoring and typed unavailable reasons; mode-local context and viewport state; compact mode chrome | `runner/state.rs` for Journal observation and editor dispatch; `transcript` for shared layout and scrolling |
+| [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Chat, Transcript, and Request selection; a header-free editable Chat surface; read-only mode headers; full Journal-record projection; exact Request anchoring and typed unavailable reasons; mode-local context and viewport state | `runner/state.rs` for Journal observation and editor dispatch; `transcript` for shared layout and scrolling |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | Measuring and painting editor content plus cursor visibility | `input/editor` for edit semantics |
-| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs), [`layout`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/layout/mod.rs) | Allocating transcript and prompt regions, composing one completed frame, and reporting its cursor | `surface` for cell writes |
+| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | Implementing the [static input chrome contract](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md) through `shell::chrome` region allocation and typed status fitting, then composing one completed frame and reporting its cursor | `surface` for cell writes; `runner/session.rs` for honest host-known status labels |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | Adapter-independent cell state, Unicode graphemes and width, bounded views, diff spans, and terminal-independent text flow | `terminal` or `html` for projection |
 | [`terminal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mod.rs) | Typed terminal operations and ANSI encoding | `terminal/mode` for presentation policy; `terminal/backend` for Unix effects |
 | [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | Shared transactional restoration, Inline and Fullscreen presenters, panic routing, and the crate-private platform boundary | `yo-cli/process` only when process signal policy changes |
@@ -178,6 +178,13 @@ selected in Chat or Transcript and reports `no_associated_request` or
 Transcript and Request replace the prompt and consume input without dispatching
 editor submissions. Each view retains its own context and viewport state.
 
+The accepted view semantics are owned by the
+[Chat, Transcript, and Request projections](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.view-projections.md)
+contract; the prompt-adjacent regions and interruption affordances are owned by
+the
+[static input chrome](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md)
+contract.
+
 The live `AgentConnection` now supplies ordered Transcript records and separate
 durability transitions. The adapter still drops each record's `JournalSequence`,
 and Request Audit detail is unavailable, so the views expose those limits rather
@@ -190,7 +197,10 @@ revision before measurement and uses that same resolved snapshot through paint
 and the completed `Surface`; plain session output pins the same session-owned
 configuration. `TuiSession::new` selects compatibility-default Rich glyphs,
 while `TuiSession::with_glyph_profile` lets the process host choose the built-in
-ASCII profile without exposing mutable theme state. Reentry keeps the same
+ASCII profile without exposing mutable theme state. `TuiSession::with_session_info`
+also accepts the backend and workspace labels already known by the process host;
+the chrome omits unavailable model, context, Git, and permission values instead
+of inventing them. Reentry keeps the same
 agent connection because the retained state contains identities from that agent
 Session. `runner/unix.rs` acquires fresh terminal input, presenter, viewport
 ownership, and frame history for each generation; those resources never move

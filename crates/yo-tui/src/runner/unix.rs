@@ -147,6 +147,7 @@ fn run_routed<A>(
 where
     A: AgentConnection,
 {
+    retained.set_presentation_mode(mode);
     let source = CrosstermEventSource::acquire()
         .map_err(|error| RunError::new("acquiring terminal input failed", format!("{error:?}")))?;
     let size = terminal_size()

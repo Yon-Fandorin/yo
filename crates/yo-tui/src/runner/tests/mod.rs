@@ -37,7 +37,6 @@ fn rendered_row(state: &TuiState, size: Size, y: u16) -> String {
     let frame = state
         .prepare_frame(size, &AppearanceState::default().pin())
         .unwrap();
-    let y = y + 1;
     (0..size.width)
         .map(
             |x| match frame.surface.cell(Point::new(x, y)).unwrap().content() {
@@ -387,9 +386,12 @@ fn retains_completed_tool_and_file_change_observations() {
             .unwrap();
     }
 
-    assert_eq!(rendered_row(&state, Size::new(30, 5), 0), "⏺ Running tool…");
     assert_eq!(
-        rendered_row(&state, Size::new(30, 5), 2),
+        rendered_row(&state, Size::new(30, 12), 0),
+        "⏺ Running tool…"
+    );
+    assert_eq!(
+        rendered_row(&state, Size::new(30, 12), 2),
         "⏺ File change observed"
     );
 }
@@ -482,6 +484,25 @@ fn active_turn_ctrl_c_dispatches_interrupt() {
     );
 }
 
+// TurnStarted 뒤 Esc도 Ctrl+C와 같은 interrupt intent를 전달하며 종료 동작으로 새지 않는다.
+#[test]
+fn active_turn_escape_dispatches_interrupt() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Escape, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::Interrupt)
+    );
+}
+
 // command lane이 가득 찬 동안에도 runner의 제한 입력 경로는 Ctrl+C를 버리지 않고 활성
 // Turn interrupt로 해석해 우선 control lane에 전달할 수 있게 한다.
 #[test]
@@ -498,6 +519,26 @@ fn backpressure_still_services_active_turn_ctrl_c() {
                 KeyCode::Character('c'),
                 crate::input::event::KeyModifiers::CONTROL,
             ),
+            Duration::ZERO,
+            false,
+        )
+        .unwrap(),
+        StateEffect::Dispatch(AgentAction::Interrupt)
+    );
+}
+
+// command lane이 가득 차도 활성 Turn의 Esc는 일반 입력처럼 버려지지 않고 control lane으로 간다.
+#[test]
+fn backpressure_still_services_active_turn_escape() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+
+    assert_eq!(
+        handle_backpressured_input(
+            &mut state,
+            key(KeyCode::Escape, crate::input::event::KeyModifiers::NONE),
             Duration::ZERO,
             false,
         )
@@ -787,9 +828,9 @@ fn projects_fake_backend_coding_activities_through_core_into_tui() {
     assert!(drain_agent(&mut connection, &mut state).unwrap());
 
     let frame = state
-        .prepare_frame(Size::new(32, 8), &AppearanceState::default().pin())
+        .prepare_frame(Size::new(32, 18), &AppearanceState::default().pin())
         .unwrap();
-    let rows = (0..8)
+    let rows = (0..18)
         .map(|y| {
             (0..32)
                 .map(

@@ -12,12 +12,14 @@ use crate::{
         event::InputEvent,
     },
     runner::{
-        AgentAction,
+        AgentAction, PresentationMode,
         chat::{ChatProjection, ChatProjectionChange},
+        session::TuiSessionInfo,
         view::{
             ObservabilityRenderError, ObservabilityViewState, ObservabilityViews, ViewInputEffect,
         },
     },
+    shell::ShellChromeSnapshot,
     surface::{Point, Rect, Size, Surface, SurfaceError},
     transcript::{TranscriptMeasureError, TranscriptStateError},
 };
@@ -69,6 +71,8 @@ pub(super) struct TuiState {
     pending_requests: VecDeque<PendingRequest>,
     turn_active: bool,
     durability: Option<JournalDurability>,
+    session_info: TuiSessionInfo,
+    presentation_mode: PresentationMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -78,11 +82,21 @@ enum PendingRequest {
 }
 
 impl TuiState {
+    #[cfg(test)]
     pub(super) fn new() -> Self {
+        Self::with_session_info(TuiSessionInfo::default())
+    }
+
+    pub(super) fn with_session_info(session_info: TuiSessionInfo) -> Self {
         Self {
             chat: ChatProjection::new(),
+            session_info,
             ..Self::default()
         }
+    }
+
+    pub(super) fn set_presentation_mode(&mut self, mode: PresentationMode) {
+        self.presentation_mode = mode;
     }
 
     pub(super) fn handle(
@@ -212,6 +226,7 @@ impl TuiState {
                     &self.editor,
                     &mut view,
                     snapshot,
+                    self.chrome_snapshot(),
                     after_measure,
                 )
                 .map_err(FrameError::Render)?
@@ -223,6 +238,15 @@ impl TuiState {
             appearance_revision: appearance.revision(),
             view_state: frame.state,
         })
+    }
+
+    fn chrome_snapshot(&self) -> ShellChromeSnapshot<'_> {
+        ShellChromeSnapshot {
+            turn_active: self.turn_active,
+            backend: self.session_info.backend(),
+            workspace: self.session_info.workspace(),
+            mode: self.presentation_mode,
+        }
     }
 
     // This is the currently rendered Chat projection. Future Transcript and Request views select

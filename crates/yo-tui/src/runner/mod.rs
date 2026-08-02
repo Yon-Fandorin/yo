@@ -12,14 +12,15 @@ mod view;
 pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch};
 pub use archival::{ArchivedProjectionError, ArchivedSessionView, project_archived_session};
 pub use error::RunError;
-pub use session::TuiSession;
+pub use session::{TuiSession, TuiSessionInfo};
 pub use unix::{run, run_session_with_mode, run_with_mode};
 
 /// Terminal presentation selected before the live session acquires terminal state.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum PresentationMode {
     /// Renders on the main screen and preserves native terminal scrollback.
+    #[default]
     Inline,
     /// Owns the alternate screen for the duration of the live session.
     Fullscreen,

@@ -14,7 +14,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     prompt::{PromptGlyphs, PromptStyles},
-    shell::AgentShellStyles,
+    shell::{AgentShellStyles, ShellChromeStyles},
     surface::{Attributes, Color, Grapheme, GraphemeError, Style},
     transcript::{TranscriptLayoutConfig, TranscriptStyles},
 };
@@ -260,6 +260,12 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
                 GlyphProfile::Rich => PromptGlyphs::rich(),
                 GlyphProfile::Ascii => PromptGlyphs::ascii(),
             },
+        },
+        chrome: ShellChromeStyles {
+            activity: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+            metrics: Style::new(Color::Default, Color::Default, Attributes::DIM),
+            mode: Style::new(Color::Default, Color::Default, Attributes::DIM),
+            rich_glyphs: matches!(profile, GlyphProfile::Rich),
         },
     }
 }

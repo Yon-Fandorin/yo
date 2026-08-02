@@ -19,6 +19,6 @@ pub use appearance::GlyphProfile;
 pub use runner::{
     AgentAction, AgentConnection, AgentPoll, ArchivedProjectionError, ArchivedSessionView,
     DispatchOutcome, ExitReason, PendingDispatch, PresentationMode, RunError, RunOutcome,
-    TerminalOutcome, TerminationEvent, TerminationSource, TuiSession, project_archived_session,
-    run, run_session_with_mode, run_with_mode,
+    TerminalOutcome, TerminationEvent, TerminationSource, TuiSession, TuiSessionInfo,
+    project_archived_session, run, run_session_with_mode, run_with_mode,
 };

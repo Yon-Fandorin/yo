@@ -1,0 +1,194 @@
+use std::num::NonZeroU16;
+
+use super::{
+    ShellChromeSnapshot, ShellChromeStyles, StatusGroups, StatusSegment, layout, paint_metrics,
+    paint_status_groups, paint_transient,
+};
+use crate::{
+    runner::PresentationMode,
+    surface::{CellContent, Point, Rect, Size, Style, Surface},
+};
+
+fn row(surface: &Surface) -> String {
+    (0..surface.size().width)
+        .map(
+            |x| match surface.cell(Point::new(x, 0)).unwrap().content() {
+                CellContent::Blank | CellContent::Continuation { .. } => ' ',
+                CellContent::Grapheme { text, .. } => text.chars().next().unwrap(),
+            },
+        )
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+fn snapshot<'a>(backend: &'a str, workspace: &'a str) -> ShellChromeSnapshot<'a> {
+    ShellChromeSnapshot {
+        turn_active: true,
+        backend: Some(backend),
+        workspace,
+        mode: PresentationMode::Inline,
+    }
+}
+
+// 충분한 높이는 구분·작업·prompt·metrics·mode를 모두 보존하고 남은 행만 transcript에 준다.
+#[test]
+fn full_layout_reserves_the_complete_prompt_chrome_stack() {
+    let layout = layout(
+        Rect::new(Point::new(0, 0), Size::new(80, 12)),
+        NonZeroU16::new(3).unwrap(),
+        true,
+    );
+
+    assert_eq!(layout.transcript.size.height, 5);
+    assert_eq!(
+        layout.transient,
+        Rect::new(Point::new(0, 5), Size::new(80, 2))
+    );
+    assert_eq!(layout.prompt, Rect::new(Point::new(0, 7), Size::new(80, 3)));
+    assert_eq!(
+        layout.metrics,
+        Rect::new(Point::new(0, 10), Size::new(80, 1))
+    );
+    assert_eq!(layout.mode, Rect::new(Point::new(0, 11), Size::new(80, 1)));
+}
+
+// 낮은 Chat 화면도 두 줄의 대화 기록을 읽을 transcript 바닥을 먼저 보존한다.
+#[test]
+fn compact_layout_keeps_prompt_and_interrupt_before_footer_detail() {
+    let layout = layout(
+        Rect::new(Point::new(0, 0), Size::new(40, 4)),
+        NonZeroU16::new(4).unwrap(),
+        true,
+    );
+
+    assert_eq!(layout.transcript.size.height, 2);
+    assert_eq!(layout.transient.size.height, 1);
+    assert_eq!(layout.prompt.size.height, 1);
+    assert_eq!(layout.metrics.size.height, 0);
+    assert_eq!(layout.mode.size.height, 0);
+}
+
+// 같은 높이에서 idle과 active 전환은 예약된 작업 행의 내용만 바꾸고 prompt 위치는 움직이지 않는다.
+#[test]
+fn idle_and_active_layouts_keep_the_same_prompt_origin() {
+    for height in 2..=12 {
+        let area = Rect::new(Point::new(0, 0), Size::new(40, height));
+        let prompt = NonZeroU16::new(3).unwrap();
+        let idle = layout(area, prompt, false);
+        let active = layout(area, prompt, true);
+
+        assert_eq!(idle, active, "height {height} changed shell geometry");
+    }
+}
+
+// 작업 행은 넓은 화면에서 의미와 두 중단 키를 모두 보여주고 좁아지면 한 줄 안에서 단계적으로
+// 축약한다.
+#[test]
+fn activity_row_drops_description_without_wrapping_interrupt_keys() {
+    let styles = ShellChromeStyles {
+        activity: Style::default(),
+        metrics: Style::default(),
+        mode: Style::default(),
+        rich_glyphs: true,
+    };
+    let mut wide = Surface::new(Size::new(48, 1)).unwrap();
+    paint_transient(
+        &mut wide
+            .view(Rect::new(Point::new(0, 0), Size::new(48, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo"),
+        styles,
+    )
+    .unwrap();
+    let mut narrow = Surface::new(Size::new(14, 1)).unwrap();
+    paint_transient(
+        &mut narrow
+            .view(Rect::new(Point::new(0, 0), Size::new(14, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo"),
+        styles,
+    )
+    .unwrap();
+
+    assert_eq!(row(&wide), "◐ Working… (Esc / ^C interrupt)");
+    assert_eq!(row(&narrow), "◐ Esc/^C");
+
+    let mut minimal = Surface::new(Size::new(6, 1)).unwrap();
+    paint_transient(
+        &mut minimal
+            .view(Rect::new(Point::new(0, 0), Size::new(6, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo"),
+        styles,
+    )
+    .unwrap();
+    assert_eq!(row(&minimal), "Esc/^C");
+}
+
+// metrics는 전체 작업 경로가 한 줄에 맞지 않으면 backend만 남겨 경로를 중간에서 잘라 오해시키지
+// 않는다.
+#[test]
+fn metrics_drop_workspace_as_one_segment_when_width_is_insufficient() {
+    let mut wide = Surface::new(Size::new(40, 1)).unwrap();
+    paint_metrics(
+        &mut wide
+            .view(Rect::new(Point::new(0, 0), Size::new(40, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo"),
+        Style::default(),
+    )
+    .unwrap();
+    let mut narrow = Surface::new(Size::new(12, 1)).unwrap();
+    paint_metrics(
+        &mut narrow
+            .view(Rect::new(Point::new(0, 0), Size::new(12, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo/with-a-long-tail"),
+        Style::default(),
+    )
+    .unwrap();
+
+    assert_eq!(row(&wide), "codex · ~/projects/yo");
+    assert_eq!(row(&narrow), "codex");
+}
+
+// 좌우 status 그룹은 같은 행의 양끝을 소유해 이후 model/context 같은 우측 segment를 추가해도
+// 하나의 고정 문자열 포맷으로 되돌아가지 않게 한다.
+#[test]
+fn status_groups_keep_independent_left_and_right_alignment() {
+    let mut surface = Surface::new(Size::new(24, 1)).unwrap();
+    let groups = StatusGroups {
+        left: vec![StatusSegment::new("codex", 100)],
+        right: vec![StatusSegment::new("42%", 80)],
+    };
+
+    paint_status_groups(
+        &mut surface
+            .view(Rect::new(Point::new(0, 0), Size::new(24, 1)))
+            .unwrap(),
+        groups,
+        Style::default(),
+    )
+    .unwrap();
+
+    assert_eq!(row(&surface), "codex                42%");
+}
+
+// 한 셀 화면에서 표현할 수 없는 고우선순위 segment는 그 항목만 생략하여, 표시 가능한
+// 저우선순위 fallback을 함께 잃거나 frame 전체를 실패시키지 않는다.
+#[test]
+fn unrenderable_status_segments_are_omitted_instead_of_failing_the_frame() {
+    for backend in ["가", "\u{301}"] {
+        let mut surface = Surface::new(Size::new(1, 1)).unwrap();
+        paint_metrics(
+            &mut surface
+                .view(Rect::new(Point::new(0, 0), Size::new(1, 1)))
+                .unwrap(),
+            snapshot(backend, "x"),
+            Style::default(),
+        )
+        .unwrap();
+        assert_eq!(row(&surface), "x");
+    }
+}

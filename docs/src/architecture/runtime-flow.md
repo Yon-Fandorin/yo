@@ -56,7 +56,9 @@ order. Omitting the presentation flag keeps the Inline default, and omitting
 startup. The selected glyph profile constructs the retained `TuiSession`, so
 prepared frames and final plain session output read the same committed
 appearance snapshot. Glyph selection is explicit and does not inspect `TERM` or
-`NO_COLOR`.
+`NO_COLOR`. The CLI also passes its known backend name and a home-compacted
+working-directory label into that retained session. These labels are display
+metadata only; they do not select or identify the backend Session.
 
 Contracts:
 [session publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.session-publication.md),
@@ -156,6 +158,13 @@ The useful inspection points are:
    selects Chat, Transcript, or Request from the same record stream. Chat shows
    user input only when its `StartTurn` or `SteerTurn` command appears in that
    sequence.
+
+The accepted ordering, interruption gestures, honest status data, and
+responsive fitting policy are owned by the
+[static input chrome contract](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md).
+In this runtime, `shell::chrome` calculates and fits typed rows from active
+state and `TuiSessionInfo`, `shell` composes those regions around the prompt,
+and `input::control` dispatches the mapped interrupt intent.
 
 The change lane carries no command or event payload and has capacity one.
 Multiple commits may therefore share one unread wake-up without losing
