@@ -16,7 +16,8 @@ use crate::{
         chat::{ChatProjection, ChatProjectionChange},
         session::TuiSessionInfo,
         view::{
-            ObservabilityRenderError, ObservabilityViewState, ObservabilityViews, ViewInputEffect,
+            ObservabilityRenderError, ObservabilityRenderOptions, ObservabilityViewState,
+            ObservabilityViews, ViewInputEffect,
         },
     },
     shell::ShellChromeSnapshot,
@@ -60,7 +61,13 @@ pub(super) struct PreparedFrame {
     pub(super) surface: Surface,
     pub(super) cursor: Point,
     pub(super) appearance_revision: AppearanceRevision,
+    pub(super) motion_demand: Option<MotionDemand>,
     view_state: ObservabilityViewState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct MotionDemand {
+    period: Duration,
 }
 
 #[derive(Debug, Default)]
@@ -199,18 +206,39 @@ impl TuiState {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn prepare_frame(
         &self,
         size: Size,
         appearance: &AppearancePin,
     ) -> Result<PreparedFrame, FrameError> {
-        self.prepare_frame_with_measure_hook(size, appearance, || {})
+        self.prepare_frame_at(size, appearance, Duration::ZERO)
     }
 
+    pub(super) fn prepare_frame_at(
+        &self,
+        size: Size,
+        appearance: &AppearancePin,
+        elapsed: Duration,
+    ) -> Result<PreparedFrame, FrameError> {
+        self.prepare_frame_at_with_measure_hook(size, appearance, elapsed, || {})
+    }
+
+    #[cfg(test)]
     pub(super) fn prepare_frame_with_measure_hook(
         &self,
         size: Size,
         appearance: &AppearancePin,
+        after_measure: impl FnOnce(),
+    ) -> Result<PreparedFrame, FrameError> {
+        self.prepare_frame_at_with_measure_hook(size, appearance, Duration::ZERO, after_measure)
+    }
+
+    fn prepare_frame_at_with_measure_hook(
+        &self,
+        size: Size,
+        appearance: &AppearancePin,
+        elapsed: Duration,
         after_measure: impl FnOnce(),
     ) -> Result<PreparedFrame, FrameError> {
         let mut surface = Surface::new(size).map_err(FrameError::Allocate)?;
@@ -225,8 +253,11 @@ impl TuiState {
                     self.chat.transcript(),
                     &self.editor,
                     &mut view,
-                    snapshot,
-                    self.chrome_snapshot(),
+                    ObservabilityRenderOptions {
+                        appearance: snapshot,
+                        chrome: self.chrome_snapshot(),
+                        elapsed,
+                    },
                     after_measure,
                 )
                 .map_err(FrameError::Render)?
@@ -236,6 +267,9 @@ impl TuiState {
             surface,
             cursor: frame.cursor,
             appearance_revision: appearance.revision(),
+            motion_demand: frame
+                .activity_motion_period
+                .map(|period| MotionDemand { period }),
             view_state: frame.state,
         })
     }
@@ -305,6 +339,12 @@ impl TuiState {
             request,
             decision,
         }))
+    }
+}
+
+impl MotionDemand {
+    pub(super) const fn period(self) -> Duration {
+        self.period
     }
 }
 

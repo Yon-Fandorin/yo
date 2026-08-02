@@ -103,3 +103,79 @@ fn marker_wider_than_the_body_indent_is_rejected() {
         })
     );
 }
+
+// Rich와 ASCII의 내장 cycle은 120ms 논리 tick마다 승인된 순서의 한 grapheme을 선택한다.
+#[test]
+fn built_in_activity_cycles_follow_the_approved_order_and_period() {
+    let rich = AppearanceState::default().pin();
+    let expected_rich = ["·", "✢", "✳", "✶", "✻", "✽", "✽", "✻", "✶", "✳", "✢", "·"];
+    for (tick, expected) in expected_rich.into_iter().enumerate() {
+        let frame = rich
+            .snapshot()
+            .activity_motion_frame(Duration::from_millis(u64::try_from(tick).unwrap() * 120));
+        assert_eq!(frame.marker(), expected);
+        assert_eq!(frame.period(), Some(Duration::from_millis(120)));
+    }
+
+    let ascii = AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii))
+        .unwrap()
+        .pin();
+    assert_eq!(
+        ascii
+            .snapshot()
+            .activity_motion_frame(Duration::ZERO)
+            .marker(),
+        "."
+    );
+    assert_eq!(
+        ascii
+            .snapshot()
+            .activity_motion_frame(Duration::from_millis(120))
+            .marker(),
+        "*"
+    );
+}
+
+// 한 frame 후보는 같은 검증·선택 경로를 쓰지만 period를 요구하지 않아 runner timer를 끈다.
+#[test]
+fn one_frame_activity_profile_is_valid_but_does_not_demand_motion() {
+    let candidate = AppearanceCandidate::for_profile(GlyphProfile::Ascii)
+        .with_activity_motion_for_test(Duration::from_millis(120), &["."])
+        .unwrap();
+    let state = AppearanceState::new(candidate).unwrap();
+    let pin = state.pin();
+    let frame = pin.snapshot().activity_motion_frame(Duration::from_secs(9));
+
+    assert_eq!(frame.marker(), ".");
+    assert_eq!(frame.period(), None);
+}
+
+// 빈 cycle·0ms·복수 grapheme·서로 다른 cell 폭은 publication 전에 구체적 오류로 거부한다.
+#[test]
+fn invalid_activity_profiles_are_rejected_before_publication() {
+    let base = AppearanceCandidate::for_profile(GlyphProfile::Rich);
+    assert_eq!(
+        base.clone()
+            .with_activity_motion_for_test(Duration::from_millis(120), &[]),
+        Err(AppearanceCandidateError::EmptyActivityFrames)
+    );
+    assert_eq!(
+        base.clone()
+            .with_activity_motion_for_test(Duration::ZERO, &["."]),
+        Err(AppearanceCandidateError::ZeroActivityFramePeriod)
+    );
+    assert_eq!(
+        base.clone()
+            .with_activity_motion_for_test(Duration::from_millis(120), &["ab"]),
+        Err(AppearanceCandidateError::ActivityFrameMustBeOneGrapheme { index: 0 })
+    );
+    assert_eq!(
+        base.with_activity_motion_for_test(Duration::from_millis(120), &[".", "한"]),
+        Err(AppearanceCandidateError::UnequalActivityFrameWidth {
+            index: 1,
+            expected: 1,
+            actual: 2,
+        })
+    );
+}
+use std::time::Duration;

@@ -1,8 +1,9 @@
 //! Static rows surrounding the prompt inside the agent shell.
 
-use std::num::NonZeroU16;
+use std::{num::NonZeroU16, time::Duration};
 
 use crate::{
+    appearance::ActivityMotionFrame,
     runner::PresentationMode,
     surface::{Point, Rect, Size, Style, SurfaceView, WriteOutcome},
     text::flow::{TextFlowError, flow_text},
@@ -21,7 +22,6 @@ pub(crate) struct ShellChromeStyles {
     pub(crate) activity: Style,
     pub(crate) metrics: Style,
     pub(crate) mode: Style,
-    pub(crate) rich_glyphs: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -112,11 +112,12 @@ pub(super) fn paint_transient(
     view: &mut SurfaceView<'_>,
     snapshot: ShellChromeSnapshot<'_>,
     styles: ShellChromeStyles,
-) -> Result<(), ShellChromeError> {
+    motion: ActivityMotionFrame<'_>,
+) -> Result<Option<Duration>, ShellChromeError> {
     if view.size().height == 0 || !snapshot.turn_active {
-        return Ok(());
+        return Ok(None);
     }
-    let marker = if styles.rich_glyphs { "◐" } else { "*" };
+    let marker = motion.marker();
     let full = format!("{marker} Working… (Esc / ^C interrupt)");
     let compact = format!("{marker} Working… Esc/^C");
     let minimal = format!("{marker} Esc/^C");
@@ -127,7 +128,7 @@ pub(super) fn paint_transient(
             Size::new(view.size().width, 1),
         ))
         .expect("the transient content row is inside its reserved area");
-    paint_fitting_row(
+    let selected = paint_fitting_row(
         &mut content,
         &[
             full,
@@ -137,7 +138,11 @@ pub(super) fn paint_transient(
             marker.to_owned(),
         ],
         styles.activity,
-    )
+    )?;
+    Ok(selected
+        .is_some_and(|index| index != 3)
+        .then(|| motion.period())
+        .flatten())
 }
 
 pub(super) fn paint_metrics(
@@ -170,27 +175,27 @@ pub(super) fn paint_mode(
         PresentationMode::Inline => "inline",
         PresentationMode::Fullscreen => "fullscreen",
     };
-    paint_fitting_row(view, &[mode.to_owned()], style)
+    paint_fitting_row(view, &[mode.to_owned()], style).map(|_| ())
 }
 
 fn paint_fitting_row(
     view: &mut SurfaceView<'_>,
     candidates: &[String],
     style: Style,
-) -> Result<(), ShellChromeError> {
+) -> Result<Option<usize>, ShellChromeError> {
     let Some(width) = NonZeroU16::new(view.size().width) else {
-        return Ok(());
+        return Ok(None);
     };
     let mut selected = None;
-    for candidate in candidates {
+    for (index, candidate) in candidates.iter().enumerate() {
         let flow = flow_text(candidate, width).map_err(ShellChromeError::Text)?;
         if flow.height <= 1 {
-            selected = Some(flow);
+            selected = Some((index, flow));
             break;
         }
     }
-    let Some(flow) = selected else {
-        return Ok(());
+    let Some((index, flow)) = selected else {
+        return Ok(None);
     };
     if view.clear(style) == WriteOutcome::Clipped {
         return Err(ShellChromeError::SurfaceConflict);
@@ -200,7 +205,7 @@ fn paint_fitting_row(
             return Err(ShellChromeError::SurfaceConflict);
         }
     }
-    Ok(())
+    Ok(Some(index))
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

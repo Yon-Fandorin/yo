@@ -9,6 +9,7 @@
 )]
 
 use crate::{
+    appearance::ActivityMotionFrame,
     input::editor::PromptEditor,
     layout::vertical::VerticalLayoutError,
     prompt::{
@@ -55,6 +56,7 @@ pub(crate) struct AgentShellRenderOptions<'config> {
     pub(crate) scroll: Option<TranscriptScrollCommand>,
     pub(crate) frame_prompt: bool,
     pub(crate) chrome: ShellChromeSnapshot<'config>,
+    pub(crate) activity_motion: ActivityMotionFrame<'config>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -67,6 +69,7 @@ pub(crate) struct AgentShellFrame {
     pub(crate) transcript: Option<TranscriptRenderFrame>,
     pub(crate) prompt: PromptFrame,
     pub(crate) cursor: Point,
+    pub(crate) activity_motion_period: Option<std::time::Duration>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,6 +107,7 @@ pub(crate) fn render(
                 workspace: "",
                 mode: crate::runner::PresentationMode::Inline,
             },
+            activity_motion: ActivityMotionFrame::still("·"),
         },
         state,
         || {},
@@ -124,6 +128,7 @@ pub(crate) fn render_with_measure_hook(
         scroll,
         frame_prompt,
         chrome,
+        activity_motion,
     } = options;
     let size = view.size();
     let prompt = prepare_prompt(editor, size.width)
@@ -175,12 +180,14 @@ pub(crate) fn render_with_measure_hook(
         None
     };
 
+    let mut activity_motion_period = None;
     if layout.transient.size.height > 0 {
         let mut transient = view
             .subview(layout.transient)
             .expect("chrome transient area stays inside the shell view");
-        chrome::paint_transient(&mut transient, chrome, styles.chrome)
-            .map_err(AgentShellRenderError::Chrome)?;
+        activity_motion_period =
+            chrome::paint_transient(&mut transient, chrome, styles.chrome, activity_motion)
+                .map_err(AgentShellRenderError::Chrome)?;
     }
 
     let prompt_frame = {
@@ -219,6 +226,7 @@ pub(crate) fn render_with_measure_hook(
         transcript: transcript_frame,
         prompt: prompt_frame,
         cursor,
+        activity_motion_period,
     })
 }
 

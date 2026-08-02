@@ -155,13 +155,20 @@ Inline 또는 Fullscreen presenter
    완성된 `Surface`를 조합해 활성 presenter로 보낸다. `runner/view.rs`는
    같은 record stream에서 Chat, Transcript, Request를 선택한다. Chat의
    사용자 입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난
-   뒤에만 표시된다.
+   뒤에만 표시된다. animated 작업 marker를 실제로 그린 Chat frame은 period를
+   반환하고, runner는 터미널 세대 epoch의 다음 경계를 예약해 event redraw와
+   합친다. marker가 숨겨진 좁은·낮은·다른 view와 idle·zero-size frame은 timer를
+   활성화하지 않는다.
 
 승인된 순서, 중단 gesture, 정직한 status 데이터, 반응형 맞춤 정책은
 [정적 입력 chrome 계약](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md)이
 소유한다. 이 runtime에서 `shell::chrome`은 활성 상태와 `TuiSessionInfo`로
 typed 행을 계산하고 폭에 맞춘다. `shell`은 그 영역을 prompt 주변에
 조합하고, `input::control`은 mapping된 interrupt intent를 dispatch한다.
+정확한 marker cycle과 runner 시간 경계는
+[activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)과
+[activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)
+계약이 소유한다.
 
 change lane은 command나 event 내용을 싣지 않으며 용량은 하나다. 따라서
 여러 commit이 읽지 않은 알림 하나로 합쳐져도 이력은 사라지지 않는다.

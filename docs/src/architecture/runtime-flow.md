@@ -157,7 +157,10 @@ The useful inspection points are:
    completed `Surface`, and send it to the active presenter. `runner/view.rs`
    selects Chat, Transcript, or Request from the same record stream. Chat shows
    user input only when its `StartTurn` or `SteerTurn` command appears in that
-   sequence.
+   sequence. A Chat frame that actually paints the animated work marker returns
+   its period; the runner schedules the next generation-epoch boundary and
+   coalesces it with event redraw. Hidden, narrow, short, idle, and zero-size
+   frames do not arm that timer.
 
 The accepted ordering, interruption gestures, honest status data, and
 responsive fitting policy are owned by the
@@ -165,6 +168,11 @@ responsive fitting policy are owned by the
 In this runtime, `shell::chrome` calculates and fits typed rows from active
 state and `TuiSessionInfo`, `shell` composes those regions around the prompt,
 and `input::control` dispatches the mapped interrupt intent.
+The exact marker cycles and runner timing boundary are owned by the
+[activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)
+and
+[activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)
+contracts.
 
 The change lane carries no command or event payload and has capacity one.
 Multiple commits may therefore share one unread wake-up without losing

@@ -231,9 +231,57 @@ fn session_projects_host_metadata_active_work_and_presentation_mode() {
         .unwrap();
     let rows = visible_rows(&frame.surface);
 
-    assert!(rows.contains("◐ Working… (Esc / ^C interrupt)"));
+    assert!(rows.contains("· Working… (Esc / ^C interrupt)"));
     assert!(rows.contains("codex · ~/projects/yo"));
     assert!(rows.ends_with("fullscreen"));
+}
+
+// 실제 Chat 작업 marker가 보일 때만 PreparedFrame이 120ms motion demand를 보고하고,
+// 같은 epoch의 다음 tick은 geometry나 중단 안내를 바꾸지 않고 marker만 교체한다.
+#[test]
+fn visible_activity_marker_alone_demands_timed_motion() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    let appearance = AppearanceState::default().pin();
+
+    let first = state
+        .prepare_frame_at(Size::new(48, 12), &appearance, Duration::ZERO)
+        .unwrap();
+    let second = state
+        .prepare_frame_at(Size::new(48, 12), &appearance, Duration::from_millis(120))
+        .unwrap();
+
+    assert_eq!(
+        first.motion_demand.unwrap().period(),
+        Duration::from_millis(120)
+    );
+    assert_eq!(second.motion_demand, first.motion_demand);
+    assert!(visible_rows(&first.surface).contains("· Working… (Esc / ^C interrupt)"));
+    assert!(visible_rows(&second.surface).contains("✢ Working… (Esc / ^C interrupt)"));
+}
+
+// 작업 중이어도 marker를 생략하는 좁은 fallback이나 작업 행 자체가 없는 낮은 화면은
+// 보이지 않는 애니메이션을 위해 timer를 요구하지 않는다.
+#[test]
+fn hidden_activity_marker_does_not_demand_timed_motion() {
+    let mut state = TuiState::new();
+    state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    let appearance = AppearanceState::default().pin();
+
+    let narrow = state
+        .prepare_frame_at(Size::new(6, 12), &appearance, Duration::ZERO)
+        .unwrap();
+    let short = state
+        .prepare_frame_at(Size::new(48, 2), &appearance, Duration::ZERO)
+        .unwrap();
+
+    assert!(visible_rows(&narrow.surface).contains("Esc/^C"));
+    assert_eq!(narrow.motion_demand, None);
+    assert_eq!(short.motion_demand, None);
 }
 
 // 한 TuiSession의 profile 교체는 다른 세션의 snapshot과 revision에 전파되지 않는다.
@@ -294,7 +342,6 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
             activity: default,
             metrics: default,
             mode: default,
-            rich_glyphs: false,
         },
     };
     let appearance = AppearanceState::new(
@@ -323,3 +370,4 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
     assert!(html.contains("<span class=\"yo-glyph\""));
     assert!(html.contains("\">"));
 }
+use std::time::Duration;

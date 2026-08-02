@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     convert::Infallible,
     io,
@@ -18,7 +18,7 @@ use yo_core::{
 };
 
 use crate::{
-    appearance::GlyphProfile,
+    appearance::{AppearanceCandidate, GlyphProfile},
     runner::{
         AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch,
         TerminationEvent, TerminationSource, TuiSession,
@@ -96,6 +96,8 @@ struct Events {
     events: VecDeque<Event>,
     polls: Rc<Cell<usize>>,
     reads: Rc<Cell<usize>>,
+    timeouts: Rc<RefCell<Vec<Duration>>>,
+    sleep_budget: usize,
 }
 
 impl Events {
@@ -108,6 +110,23 @@ impl Events {
             events: events.into_iter().collect(),
             polls,
             reads,
+            timeouts: Rc::new(RefCell::new(Vec::new())),
+            sleep_budget: 0,
+        }
+    }
+
+    fn timed(
+        events: impl IntoIterator<Item = Event>,
+        polls: Rc<Cell<usize>>,
+        timeouts: Rc<RefCell<Vec<Duration>>>,
+        sleep_budget: usize,
+    ) -> Self {
+        Self {
+            events: events.into_iter().collect(),
+            polls,
+            reads: Rc::new(Cell::new(0)),
+            timeouts,
+            sleep_budget,
         }
     }
 }
@@ -115,8 +134,13 @@ impl Events {
 impl EventSource for Events {
     type Error = io::Error;
 
-    fn poll(&mut self, _timeout: Duration) -> Result<bool, Self::Error> {
+    fn poll(&mut self, timeout: Duration) -> Result<bool, Self::Error> {
+        self.timeouts.borrow_mut().push(timeout);
         self.polls.set(self.polls.get() + 1);
+        if !timeout.is_zero() && self.sleep_budget > 0 {
+            self.sleep_budget -= 1;
+            std::thread::sleep(timeout);
+        }
         Ok(!self.events.is_empty())
     }
 
@@ -146,6 +170,28 @@ impl TerminationSource for StopAfter {
 #[derive(Default)]
 struct SimpleAgent {
     records: VecDeque<TranscriptRecord>,
+}
+
+#[derive(Default)]
+struct RetainingAgent {
+    retries: usize,
+}
+
+impl AgentConnection for RetainingAgent {
+    type Error = Infallible;
+
+    fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
+        Ok(DispatchOutcome::Accepted)
+    }
+
+    fn retry(&mut self, pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
+        self.retries += 1;
+        Ok(DispatchOutcome::Backpressured(pending))
+    }
+
+    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
+        Ok(AgentPoll::Pending)
+    }
 }
 
 impl AgentConnection for SimpleAgent {
@@ -266,6 +312,29 @@ fn run_generation(
     ));
     terminal.close().unwrap();
     presenter
+}
+
+fn turn() -> TurnRef {
+    TurnRef::new(
+        "01890f00-0000-7000-8000-000000000001"
+            .parse()
+            .expect("the fixture is a UUIDv7"),
+        yo_core::TurnId::new(std::num::NonZeroU64::MIN),
+    )
+}
+
+fn active_motion_session(period: Duration) -> TuiSession {
+    let mut retained = TuiSession::with_glyph_profile(GlyphProfile::Ascii);
+    let candidate = AppearanceCandidate::for_profile(GlyphProfile::Ascii)
+        .with_activity_motion_for_test(period, &[".", "*"])
+        .unwrap();
+    retained.commit_appearance(candidate).unwrap();
+    retained
+        .parts_mut()
+        .state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    retained
 }
 
 struct BlockingAgentBackend {
@@ -452,4 +521,180 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
     assert!(parts.pending_control.is_none());
     assert!(parts.pending_dispatch.is_none());
     agent.session.shutdown().unwrap();
+}
+
+// motion 마감과 paste 입력이 같은 wakeup에서 만났을 때 입력 결과만 한 번 그린다.
+// 따라서 시간 tick용 중간 frame이 중복으로 끼어들지 않는다.
+#[test]
+fn normal_wait_coalesces_input_and_due_motion_into_one_redraw() {
+    let period = Duration::from_millis(100);
+    let mut retained = active_motion_session(period);
+    let mut agent = SimpleAgent::default();
+    let polls = Rc::new(Cell::new(0));
+    let timeouts = Rc::new(RefCell::new(Vec::new()));
+    let presenter = run_generation(
+        &mut retained,
+        &mut agent,
+        Events::timed(
+            [Event::Paste("x".to_owned())],
+            Rc::clone(&polls),
+            Rc::clone(&timeouts),
+            1,
+        ),
+        StopAfter {
+            counter: polls,
+            threshold: 2,
+        },
+    );
+
+    assert_eq!(presenter.frames.len(), 2);
+    let waits = timeouts.borrow();
+    assert!(!waits.is_empty());
+    assert!(waits[0] > Duration::ZERO);
+    assert!(waits[0] <= period);
+}
+
+// 전송 재시도 중에도 10ms backpressure poll만 반복하지 않고, 더 가까운 motion
+// 마감에 맞춰 깨어나 실제 marker frame을 갱신한다.
+#[test]
+fn backpressure_wait_keeps_visible_motion_deadline() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (processed_tx, processed_rx) = mpsc::channel();
+    let backend = BlockingAgentBackend {
+        entered: entered_tx,
+        release: release_rx,
+        processed: processed_tx,
+        blocked: false,
+    };
+    let mut core = AgentSession::start(backend).unwrap();
+    processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    wait_for_session_change(&mut core);
+    assert_eq!(
+        core.dispatch(AgentIntent::Submit("block".to_owned()))
+            .unwrap(),
+        CommandAdmission::Accepted
+    );
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let CommandAdmission::Backpressured(pending) = core
+        .dispatch(AgentIntent::Submit("pending".to_owned()))
+        .unwrap()
+    else {
+        panic!("the full normal lane must return an opaque pending dispatch");
+    };
+
+    let period = Duration::from_millis(5);
+    let mut retained = active_motion_session(period);
+    *retained.parts_mut().pending_dispatch = Some(pending);
+    let mut agent = RetainingAgent::default();
+    let polls = Rc::new(Cell::new(0));
+    let timeouts = Rc::new(RefCell::new(Vec::new()));
+    let presenter = run_generation(
+        &mut retained,
+        &mut agent,
+        Events::timed([], Rc::clone(&polls), Rc::clone(&timeouts), 2),
+        StopAfter {
+            counter: polls,
+            threshold: 3,
+        },
+    );
+
+    release_tx.send(()).unwrap();
+    wait_for_session_change(&mut core);
+    core.shutdown().unwrap();
+
+    assert!(agent.retries >= 3);
+    assert!(presenter.frames.len() >= 2);
+    assert!(presenter.frames[0].contains(". Esc/^C"));
+    assert!(
+        timeouts
+            .borrow()
+            .iter()
+            .all(|timeout| *timeout <= Duration::from_millis(10))
+    );
+    assert!(
+        timeouts
+            .borrow()
+            .iter()
+            .any(|timeout| *timeout < Duration::from_millis(10))
+    );
+}
+
+// terminal이 잠시 0x0이 되어 frame을 숨겨도 generation epoch는 유지한다.
+// 다시 보이는 순간에는 resize 시점부터가 아니라 원래 경과 시간의 frame을 고른다.
+#[test]
+fn zero_size_resize_preserves_the_generation_motion_epoch() {
+    let period = Duration::from_secs(1);
+    let mut retained = active_motion_session(period);
+    let mut agent = SimpleAgent::default();
+    let polls = Rc::new(Cell::new(0));
+    let events = Events::new(
+        [Event::Resize(16, 6)],
+        Rc::clone(&polls),
+        Rc::new(Cell::new(0)),
+    );
+    let termination = StopAfter {
+        counter: polls,
+        threshold: 2,
+    };
+    let mut backend = Backend::default();
+    let mut terminal = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
+    let mut presenter = Presenter::default();
+    let mut reader = UnixEventReader::new(events, termination);
+    let started = Instant::now()
+        .checked_sub(period + Duration::from_millis(100))
+        .unwrap();
+
+    assert!(matches!(
+        drive(
+            &mut terminal,
+            &mut presenter,
+            &mut reader,
+            &mut retained,
+            &mut agent,
+            Size::new(0, 0),
+            started,
+        )
+        .unwrap(),
+        LoopExit::Termination
+    ));
+    terminal.close().unwrap();
+
+    assert_eq!(presenter.frames.len(), 1);
+    assert!(presenter.frames[0].contains("* Esc/^C"));
+}
+
+// 같은 semantic turn을 재진입해도 terminal ownership generation마다 motion epoch는
+// 새로 시작하므로 첫 frame은 매번 profile의 첫 marker다.
+#[test]
+fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
+    let period = Duration::from_millis(100);
+    let mut retained = active_motion_session(period);
+    let mut agent = SimpleAgent::default();
+
+    let first_polls = Rc::new(Cell::new(0));
+    let first = run_generation(
+        &mut retained,
+        &mut agent,
+        Events::new([], Rc::clone(&first_polls), Rc::new(Cell::new(0))),
+        StopAfter {
+            counter: first_polls,
+            threshold: 1,
+        },
+    );
+    std::thread::sleep(period + Duration::from_millis(50));
+    let second_polls = Rc::new(Cell::new(0));
+    let second = run_generation(
+        &mut retained,
+        &mut agent,
+        Events::new([], Rc::clone(&second_polls), Rc::new(Cell::new(0))),
+        StopAfter {
+            counter: second_polls,
+            threshold: 1,
+        },
+    );
+
+    assert!(first.frames[0].contains(". Esc/^C"));
+    assert!(second.frames[0].contains(". Esc/^C"));
 }

@@ -1,6 +1,6 @@
 //! Read-only Journal projections and view-local navigation for the live runner.
 
-use std::{collections::HashMap, num::NonZeroU16};
+use std::{collections::HashMap, num::NonZeroU16, time::Duration};
 
 use yo_core::TranscriptRecord;
 
@@ -124,6 +124,14 @@ pub(super) enum ObservabilityRenderError {
 pub(super) struct ObservabilityFrame {
     pub(super) cursor: Point,
     pub(super) state: ObservabilityViewState,
+    pub(super) activity_motion_period: Option<Duration>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ObservabilityRenderOptions<'frame> {
+    pub(super) appearance: &'frame AppearanceSnapshot,
+    pub(super) chrome: ShellChromeSnapshot<'frame>,
+    pub(super) elapsed: Duration,
 }
 
 impl ObservabilityViews {
@@ -195,10 +203,14 @@ impl ObservabilityViews {
         chat: &TranscriptState,
         editor: &PromptEditor,
         view: &mut SurfaceView<'_>,
-        appearance: &AppearanceSnapshot,
-        chrome: ShellChromeSnapshot<'_>,
+        options: ObservabilityRenderOptions<'_>,
         after_measure: impl FnOnce(),
     ) -> Result<ObservabilityFrame, ObservabilityRenderError> {
+        let ObservabilityRenderOptions {
+            appearance,
+            chrome,
+            elapsed,
+        } = options;
         let size = view.size();
         let width =
             NonZeroU16::new(size.width).ok_or(ObservabilityRenderError::HeaderWidthUnavailable)?;
@@ -217,6 +229,7 @@ impl ObservabilityViews {
                     scroll: self.state.chat.pending_scroll,
                     frame_prompt: size.height >= shell::MIN_FRAMED_PROMPT_HEIGHT,
                     chrome,
+                    activity_motion: appearance.activity_motion_frame(elapsed),
                 },
                 &mut next.chat_shell,
                 after_measure,
@@ -230,6 +243,7 @@ impl ObservabilityViews {
             return Ok(ObservabilityFrame {
                 cursor: frame.cursor,
                 state: next,
+                activity_motion_period: frame.activity_motion_period,
             });
         }
         let context = match self.state.active {
@@ -243,6 +257,7 @@ impl ObservabilityViews {
             return Ok(ObservabilityFrame {
                 cursor: Point::new(0, 0),
                 state: next,
+                activity_motion_period: None,
             });
         }
         let body_area = Rect::new(
@@ -296,6 +311,7 @@ impl ObservabilityViews {
         Ok(ObservabilityFrame {
             cursor,
             state: next,
+            activity_motion_period: None,
         })
     }
 

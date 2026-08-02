@@ -8,7 +8,7 @@
     )
 )]
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -20,6 +20,7 @@ use crate::{
 };
 
 const BODY_INDENT: u16 = 2;
+const ACTIVITY_FRAME_PERIOD: Duration = Duration::from_millis(120);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -56,6 +57,23 @@ pub(crate) enum AppearanceCandidateError {
         marker_width: u16,
         body_indent: u16,
     },
+    EmptyActivityFrames,
+    ZeroActivityFramePeriod,
+    InvalidActivityFrame {
+        index: usize,
+        cause: GraphemeError,
+    },
+    ActivityFrameContainsControl {
+        index: usize,
+    },
+    ActivityFrameMustBeOneGrapheme {
+        index: usize,
+    },
+    UnequalActivityFrameWidth {
+        index: usize,
+        expected: u16,
+        actual: u16,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,12 +90,26 @@ pub(crate) struct AppearanceCandidate {
     user_marker: String,
     assistant_marker: String,
     styles: AgentShellStyles,
+    activity_motion: ActivityMotionProfile,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AppearanceSnapshot {
     transcript_config: TranscriptLayoutConfig,
     styles: AgentShellStyles,
+    activity_motion: ActivityMotionProfile,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ActivityMotionProfile {
+    period: Duration,
+    frames: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ActivityMotionFrame<'frame> {
+    marker: &'frame str,
+    period: Option<Duration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,14 +126,24 @@ pub(crate) struct AppearanceState {
 
 impl AppearanceCandidate {
     pub(crate) fn for_profile(profile: GlyphProfile) -> Self {
-        let (user_marker, assistant_marker) = match profile {
-            GlyphProfile::Rich => ("❯", "⏺"),
-            GlyphProfile::Ascii => (">", "*"),
+        let (user_marker, assistant_marker, activity_frames) = match profile {
+            GlyphProfile::Rich => (
+                "❯",
+                "⏺",
+                vec!["·", "✢", "✳", "✶", "✻", "✽", "✽", "✻", "✶", "✳", "✢", "·"],
+            ),
+            GlyphProfile::Ascii => (">", "*", vec![".", "*"]),
         };
+        let activity_motion = validate_activity_motion(
+            ACTIVITY_FRAME_PERIOD,
+            activity_frames.into_iter().map(str::to_owned).collect(),
+        )
+        .expect("the built-in activity motion profile must always be valid");
         Self {
             user_marker: user_marker.to_owned(),
             assistant_marker: assistant_marker.to_owned(),
             styles: default_styles(profile),
+            activity_motion,
         }
     }
 
@@ -122,6 +164,7 @@ impl AppearanceCandidate {
                 .with_user_marker(self.user_marker)
                 .with_assistant_marker(self.assistant_marker),
             styles: self.styles,
+            activity_motion: self.activity_motion,
         })
     }
 
@@ -141,6 +184,19 @@ impl AppearanceCandidate {
         self.styles = styles;
         self
     }
+
+    #[cfg(test)]
+    pub(crate) fn with_activity_motion_for_test(
+        mut self,
+        period: Duration,
+        frames: &[&str],
+    ) -> Result<Self, AppearanceCandidateError> {
+        self.activity_motion = validate_activity_motion(
+            period,
+            frames.iter().map(|frame| (*frame).to_owned()).collect(),
+        )?;
+        Ok(self)
+    }
 }
 
 impl AppearanceSnapshot {
@@ -150,6 +206,39 @@ impl AppearanceSnapshot {
 
     pub(crate) const fn styles(&self) -> AgentShellStyles {
         self.styles
+    }
+
+    pub(crate) fn activity_motion_frame(&self, elapsed: Duration) -> ActivityMotionFrame<'_> {
+        self.activity_motion.frame_at(elapsed)
+    }
+}
+
+impl ActivityMotionProfile {
+    fn frame_at(&self, elapsed: Duration) -> ActivityMotionFrame<'_> {
+        let tick = elapsed.as_nanos() / self.period.as_nanos();
+        let index = usize::try_from(tick % self.frames.len() as u128)
+            .expect("a frame index is always representable as usize");
+        ActivityMotionFrame {
+            marker: &self.frames[index],
+            period: (self.frames.len() > 1).then_some(self.period),
+        }
+    }
+}
+
+impl<'frame> ActivityMotionFrame<'frame> {
+    pub(crate) const fn still(marker: &'frame str) -> Self {
+        Self {
+            marker,
+            period: None,
+        }
+    }
+
+    pub(crate) const fn marker(self) -> &'frame str {
+        self.marker
+    }
+
+    pub(crate) const fn period(self) -> Option<Duration> {
+        self.period
     }
 }
 
@@ -242,6 +331,48 @@ fn validate_marker(
     Ok(())
 }
 
+fn validate_activity_motion(
+    period: Duration,
+    frames: Vec<String>,
+) -> Result<ActivityMotionProfile, AppearanceCandidateError> {
+    if period.is_zero() {
+        return Err(AppearanceCandidateError::ZeroActivityFramePeriod);
+    }
+    if frames.is_empty() {
+        return Err(AppearanceCandidateError::EmptyActivityFrames);
+    }
+    let mut expected_width = None;
+    for (index, frame) in frames.iter().enumerate() {
+        if frame.chars().any(char::is_control) {
+            return Err(AppearanceCandidateError::ActivityFrameContainsControl { index });
+        }
+        let mut clusters = frame.graphemes(true);
+        let text = clusters
+            .next()
+            .ok_or(AppearanceCandidateError::InvalidActivityFrame {
+                index,
+                cause: GraphemeError::Empty,
+            })?;
+        if clusters.next().is_some() {
+            return Err(AppearanceCandidateError::ActivityFrameMustBeOneGrapheme { index });
+        }
+        let grapheme = Grapheme::try_from(text)
+            .map_err(|cause| AppearanceCandidateError::InvalidActivityFrame { index, cause })?;
+        let actual = grapheme.width().get();
+        if let Some(expected) = expected_width
+            && actual != expected
+        {
+            return Err(AppearanceCandidateError::UnequalActivityFrameWidth {
+                index,
+                expected,
+                actual,
+            });
+        }
+        expected_width = Some(actual);
+    }
+    Ok(ActivityMotionProfile { period, frames })
+}
+
 const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
     let style = Style::new(Color::Default, Color::Default, Attributes::empty());
     AgentShellStyles {
@@ -265,7 +396,6 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
             activity: Style::new(Color::Default, Color::Default, Attributes::BOLD),
             metrics: Style::new(Color::Default, Color::Default, Attributes::DIM),
             mode: Style::new(Color::Default, Color::Default, Attributes::DIM),
-            rich_glyphs: matches!(profile, GlyphProfile::Rich),
         },
     }
 }

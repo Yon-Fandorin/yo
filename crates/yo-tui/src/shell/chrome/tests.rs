@@ -5,6 +5,7 @@ use super::{
     paint_status_groups, paint_transient,
 };
 use crate::{
+    appearance::ActivityMotionFrame,
     runner::PresentationMode,
     surface::{CellContent, Point, Rect, Size, Style, Surface},
 };
@@ -90,7 +91,6 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
         activity: Style::default(),
         metrics: Style::default(),
         mode: Style::default(),
-        rich_glyphs: true,
     };
     let mut wide = Surface::new(Size::new(48, 1)).unwrap();
     paint_transient(
@@ -99,6 +99,7 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
             .unwrap(),
         snapshot("codex", "~/projects/yo"),
         styles,
+        ActivityMotionFrame::still("◐"),
     )
     .unwrap();
     let mut narrow = Surface::new(Size::new(14, 1)).unwrap();
@@ -108,6 +109,7 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
             .unwrap(),
         snapshot("codex", "~/projects/yo"),
         styles,
+        ActivityMotionFrame::still("◐"),
     )
     .unwrap();
 
@@ -121,6 +123,7 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
             .unwrap(),
         snapshot("codex", "~/projects/yo"),
         styles,
+        ActivityMotionFrame::still("◐"),
     )
     .unwrap();
     assert_eq!(row(&minimal), "Esc/^C");

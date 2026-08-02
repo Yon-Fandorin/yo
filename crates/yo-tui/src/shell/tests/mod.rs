@@ -62,7 +62,6 @@ fn styles() -> AgentShellStyles {
             activity: style(8),
             metrics: style(9),
             mode: style(10),
-            rich_glyphs: true,
         },
     }
 }

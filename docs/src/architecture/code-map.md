@@ -154,13 +154,13 @@ terminal-operation, and HTML-projection types.
 | Module | Owns | Follow next |
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, input/event orchestration, final cleanup reporting, and terminal-independent archived Chat/Transcript projection | `runner/state.rs` for semantic UI transitions; `runner/archival.rs` for stored output; `runner/unix.rs` for live orchestration |
-| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and the public built-in Rich/ASCII glyph-profile choice | `runner/session.rs` for profile-aware construction and ownership; `runner/state.rs` for frame pinning |
+| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and the public built-in Rich/ASCII glyph and activity-motion profiles | `runner/session.rs` for profile-aware construction and ownership; `runner/state.rs` for frame pinning |
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | Terminal-cell-aware plain lists that preserve pinned columns, pack short collapsed label/value pairs as a width-bounded flow, give block values an independent row and split their label from the value only when needed, wrap grapheme clusters without truncation, and fall back to a vertical card layout | Which columns mean what, their fold priorities or continuation hints, configuration, stdout TTY policy, or terminal ownership |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | Decoded semantic key events, edit buffer, configurable bindings, exit gestures, prompt editing, and the typed view-switch presentation policy | `prompt` for visible cursor layout; `runner/view.rs` for the selected projection |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, transcript layout, and scrolling state | `shell` for composition with the prompt |
 | [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Chat, Transcript, and Request selection; a header-free editable Chat surface; read-only mode headers; full Journal-record projection; exact Request anchoring and typed unavailable reasons; mode-local context and viewport state | `runner/state.rs` for Journal observation and editor dispatch; `transcript` for shared layout and scrolling |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | Measuring and painting editor content plus cursor visibility | `input/editor` for edit semantics |
-| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | Implementing the [static input chrome contract](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md) through `shell::chrome` region allocation and typed status fitting, then composing one completed frame and reporting its cursor | `surface` for cell writes; `runner/session.rs` for honest host-known status labels |
+| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | Allocating prompt-adjacent chrome, fitting typed status, painting the pinned activity marker, and reporting both the cursor and visible motion demand from one completed frame | `surface` for cell writes; `runner/unix.rs` for deadline scheduling; `runner/session.rs` for honest host-known status labels |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | Adapter-independent cell state, Unicode graphemes and width, bounded views, diff spans, and terminal-independent text flow | `terminal` or `html` for projection |
 | [`terminal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mod.rs) | Typed terminal operations and ANSI encoding | `terminal/mode` for presentation policy; `terminal/backend` for Unix effects |
 | [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | Shared transactional restoration, Inline and Fullscreen presenters, panic routing, and the crate-private platform boundary | `yo-cli/process` only when process signal policy changes |
@@ -195,7 +195,11 @@ below the frontend boundary.
 Each redraw pins the appearance
 revision before measurement and uses that same resolved snapshot through paint
 and the completed `Surface`; plain session output pins the same session-owned
-configuration. `TuiSession::new` selects compatibility-default Rich glyphs,
+configuration. The runner supplies one generation-local elapsed sample, and only
+a frame that actually painted an animated marker returns a 120 ms motion demand.
+`runner/unix.rs` derives the next epoch boundary, skips missed ticks, and folds
+that deadline into normal and backpressured input waits; presenters and HTML
+continue to consume only the completed `Surface`. `TuiSession::new` selects compatibility-default Rich glyphs,
 while `TuiSession::with_glyph_profile` lets the process host choose the built-in
 ASCII profile without exposing mutable theme state. `TuiSession::with_session_info`
 also accepts the backend and workspace labels already known by the process host;
@@ -212,6 +216,8 @@ Appearance contracts:
 [session publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.session-publication.md),
 [frame consistency](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.frame-consistency.md),
 [glyph profiles](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.glyph-profiles.md),
+[activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md),
+[activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md),
 and
 [resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 

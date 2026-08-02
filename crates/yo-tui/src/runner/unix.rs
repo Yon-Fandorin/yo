@@ -11,7 +11,7 @@ use crate::{
         AgentConnection, AgentPoll, DispatchOutcome, PresentationMode, RunError, TerminalOutcome,
         TerminationSource, TuiSession,
         session::SessionParts,
-        state::{FrameError, StateEffect, StateError, TuiState},
+        state::{FrameError, MotionDemand, StateEffect, StateError, TuiState},
     },
     surface::{Size, Surface},
     terminal::{
@@ -243,6 +243,8 @@ where
 {
     let mut previous = None;
     let mut frame_visible = false;
+    let epoch = started;
+    let mut motion_deadline = None;
     let SessionParts {
         state,
         appearance,
@@ -251,8 +253,17 @@ where
     } = retained.parts_mut();
 
     loop {
-        if drain_agent(agent, state)? && size.width > 0 && size.height > 0 {
-            redraw(session, viewport, state, appearance, size, &mut previous)?;
+        let agent_changed = drain_agent(agent, state)?;
+        if (agent_changed || !frame_visible) && size.width > 0 && size.height > 0 {
+            motion_deadline = redraw(
+                session,
+                viewport,
+                state,
+                appearance,
+                size,
+                &mut previous,
+                epoch,
+            )?;
             frame_visible = true;
         }
         if let Some(action) = pending_control.take() {
@@ -281,7 +292,7 @@ where
         }
         if pending_control.is_some() || pending_dispatch.is_some() {
             match events
-                .next(WORKER_RETRY_INTERVAL)
+                .next(wait_timeout(WORKER_RETRY_INTERVAL, motion_deadline))
                 .map_err(|error| LoopError::Input(format!("{error:?}")))?
             {
                 UnixEvent::Terminate => return Ok(LoopExit::Termination),
@@ -319,7 +330,15 @@ where
                         },
                         StateEffect::Redraw => {
                             if size.width > 0 && size.height > 0 {
-                                redraw(session, viewport, state, appearance, size, &mut previous)?;
+                                motion_deadline = redraw(
+                                    session,
+                                    viewport,
+                                    state,
+                                    appearance,
+                                    size,
+                                    &mut previous,
+                                    epoch,
+                                )?;
                                 frame_visible = true;
                             }
                         },
@@ -327,25 +346,45 @@ where
                         StateEffect::Resize(next) => {
                             prepare_resize(viewport, &mut size, next);
                             frame_visible = false;
+                            motion_deadline = None;
                         },
                     }
                 },
                 UnixEvent::Idle => {},
             }
+            if frame_visible && motion_is_due(motion_deadline) && size.width > 0 && size.height > 0
+            {
+                motion_deadline = redraw(
+                    session,
+                    viewport,
+                    state,
+                    appearance,
+                    size,
+                    &mut previous,
+                    epoch,
+                )?;
+            }
             continue;
         }
-        let timeout = if !frame_visible && size.width > 0 && size.height > 0 {
-            Duration::ZERO
-        } else {
-            INPUT_POLL_INTERVAL
-        };
+        let timeout = wait_timeout(INPUT_POLL_INTERVAL, motion_deadline);
         match events
             .next(timeout)
             .map_err(|error| LoopError::Input(format!("{error:?}")))?
         {
             UnixEvent::Idle => {
-                if !frame_visible && size.width > 0 && size.height > 0 {
-                    redraw(session, viewport, state, appearance, size, &mut previous)?;
+                if (!frame_visible || motion_is_due(motion_deadline))
+                    && size.width > 0
+                    && size.height > 0
+                {
+                    motion_deadline = redraw(
+                        session,
+                        viewport,
+                        state,
+                        appearance,
+                        size,
+                        &mut previous,
+                        epoch,
+                    )?;
                     frame_visible = true;
                 }
             },
@@ -359,7 +398,15 @@ where
                 StateEffect::Suspend => return Ok(LoopExit::Suspend),
                 StateEffect::Redraw => {
                     if size.width > 0 && size.height > 0 {
-                        redraw(session, viewport, state, appearance, size, &mut previous)?;
+                        motion_deadline = redraw(
+                            session,
+                            viewport,
+                            state,
+                            appearance,
+                            size,
+                            &mut previous,
+                            epoch,
+                        )?;
                         frame_visible = true;
                     }
                 },
@@ -374,15 +421,35 @@ where
                         },
                     }
                     if size.width > 0 && size.height > 0 {
-                        redraw(session, viewport, state, appearance, size, &mut previous)?;
+                        motion_deadline = redraw(
+                            session,
+                            viewport,
+                            state,
+                            appearance,
+                            size,
+                            &mut previous,
+                            epoch,
+                        )?;
                         frame_visible = true;
                     }
                 },
                 StateEffect::Resize(next) => {
                     prepare_resize(viewport, &mut size, next);
                     frame_visible = false;
+                    motion_deadline = None;
                 },
             },
+        }
+        if frame_visible && motion_is_due(motion_deadline) && size.width > 0 && size.height > 0 {
+            motion_deadline = redraw(
+                session,
+                viewport,
+                state,
+                appearance,
+                size,
+                &mut previous,
+                epoch,
+            )?;
         }
     }
 }
@@ -446,7 +513,8 @@ fn redraw<B, P>(
     appearance: &crate::appearance::AppearanceState,
     size: Size,
     previous: &mut Option<Surface>,
-) -> Result<(), LoopError>
+    epoch: Instant,
+) -> Result<Option<Instant>, LoopError>
 where
     B: crate::terminal::backend::ScreenModeBackend
         + crate::terminal::backend::TerminalOutputBackend,
@@ -454,14 +522,49 @@ where
     P: LivePresenter<B>,
 {
     let appearance = appearance.pin();
+    let elapsed = epoch.elapsed();
     let frame = state
-        .prepare_frame(size, &appearance)
+        .prepare_frame_at(size, &appearance, elapsed)
         .map_err(LoopError::Frame)?;
     debug_assert_eq!(frame.appearance_revision, appearance.revision());
     viewport.render(session, previous.as_ref(), &frame.surface, frame.cursor)?;
     state.commit_frame(&frame);
+    let deadline = next_motion_deadline(
+        epoch,
+        elapsed,
+        frame.motion_demand.map(MotionDemand::period),
+    );
     *previous = Some(frame.surface);
-    Ok(())
+    Ok(deadline)
+}
+
+fn next_motion_deadline(
+    epoch: Instant,
+    elapsed: Duration,
+    period: Option<Duration>,
+) -> Option<Instant> {
+    let period = period?;
+    if period.is_zero() {
+        return None;
+    }
+    let remainder = elapsed.as_nanos() % period.as_nanos();
+    let remainder = Duration::new(
+        u64::try_from(remainder / 1_000_000_000).ok()?,
+        u32::try_from(remainder % 1_000_000_000).ok()?,
+    );
+    let current_tick_start = elapsed.checked_sub(remainder)?;
+    epoch.checked_add(current_tick_start.checked_add(period)?)
+}
+
+fn wait_timeout(base: Duration, deadline: Option<Instant>) -> Duration {
+    let Some(deadline) = deadline else {
+        return base;
+    };
+    base.min(deadline.saturating_duration_since(Instant::now()))
+}
+
+fn motion_is_due(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
 }
 
 pub(super) trait FrameViewport {
@@ -537,5 +640,49 @@ fn validate_size(size: Size) -> Result<(), RunError> {
         ))
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod motion_tests {
+    use std::time::{Duration, Instant};
+
+    use super::next_motion_deadline;
+
+    // 늦게 깨어난 frame은 놓친 tick을 재생하지 않고 epoch 기준 다음 경계 하나만 예약한다.
+    #[test]
+    fn late_frame_skips_missed_ticks_and_targets_the_next_epoch_boundary() {
+        let epoch = Instant::now();
+        let deadline = next_motion_deadline(
+            epoch,
+            Duration::from_millis(370),
+            Some(Duration::from_millis(120)),
+        )
+        .unwrap();
+
+        assert_eq!(deadline.duration_since(epoch), Duration::from_millis(480));
+    }
+
+    // 정확한 tick 경계에서 그린 frame도 같은 경계를 다시 요구하지 않고 다음 tick을 예약한다.
+    #[test]
+    fn exact_tick_boundary_schedules_the_following_tick() {
+        let epoch = Instant::now();
+        let deadline = next_motion_deadline(
+            epoch,
+            Duration::from_millis(120),
+            Some(Duration::from_millis(120)),
+        )
+        .unwrap();
+
+        assert_eq!(deadline.duration_since(epoch), Duration::from_millis(240));
+    }
+
+    // frame이 motion을 요구하지 않으면 runner는 별도의 시간 기반 wakeup을 만들지 않는다.
+    #[test]
+    fn absent_motion_demand_disarms_the_deadline() {
+        assert_eq!(
+            next_motion_deadline(Instant::now(), Duration::from_secs(1), None),
+            None
+        );
     }
 }
