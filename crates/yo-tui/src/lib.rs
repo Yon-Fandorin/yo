@@ -4,6 +4,7 @@ pub(crate) mod appearance;
 pub mod html;
 pub(crate) mod input;
 pub(crate) mod layout;
+pub(crate) mod overlay;
 pub mod plain;
 pub(crate) mod prompt;
 #[cfg(unix)]

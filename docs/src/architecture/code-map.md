@@ -160,6 +160,7 @@ terminal-operation, and HTML-projection types.
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, transcript layout, and scrolling state | `shell` for composition with the prompt |
 | [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Chat, Transcript, and Request selection; a header-free editable Chat surface; read-only mode headers; full Journal-record projection; exact Request anchoring and typed unavailable reasons; mode-local context and viewport state | `runner/state.rs` for Journal observation and editor dispatch; `transcript` for shared layout and scrolling |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | Measuring and painting editor content plus cursor visibility | `input/editor` for edit semantics |
+| [`overlay`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/overlay/mod.rs) | Validated selectable-panel snapshots, enabled-entry navigation and fitting, atomic `Surface` paint, and a token-scoped single prompt-overlay slot | Providers retain query, filtering, preview, and accepted product effects; `runner/state.rs` owns routing and receipts; `shell` owns the bottom-anchored destination |
 | [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | Allocating prompt-adjacent chrome, fitting typed status, painting the pinned activity marker, and reporting both the cursor and visible motion demand from one completed frame | `surface` for cell writes; `runner/unix.rs` for deadline scheduling; `runner/session.rs` for honest host-known status labels |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | Adapter-independent cell state, Unicode graphemes and width, bounded views, diff spans, and terminal-independent text flow | `terminal` or `html` for projection |
 | [`terminal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mod.rs) | Typed terminal operations and ANSI encoding | `terminal/mode` for presentation policy; `terminal/backend` for Unix effects |
@@ -167,7 +168,8 @@ terminal-operation, and HTML-projection types.
 | [`html`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/html/mod.rs) | Deterministic browser projection of completed `Surface` state | `surface` when terminal and browser output disagree |
 
 `runner::TuiSession` owns the concise Chat transcript, editor, pending request,
-three observability views, backpressured agent-dispatch state, and one committed
+three observability views, one token-scoped prompt-overlay slot and its pending
+acceptance receipts, backpressured agent-dispatch state, and one committed
 appearance snapshot that can outlive one terminal ownership generation. Chat is
 the editable default. F1, F2, and F3 are the current typed presentation-policy
 bindings for Chat, Transcript, and Request; the projection state does not own
@@ -183,6 +185,10 @@ The accepted view semantics are owned by the
 contract; the prompt-adjacent regions and interruption affordances are owned by
 the
 [static input chrome](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md)
+contract. Panel validation and paint are owned by the
+[selection overlay](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.overlay.selection-panel.md)
+contract, while token lifetime and input priority are owned by the
+[prompt overlay routing](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.overlay.prompt-slot-routing.md)
 contract.
 
 The live `AgentConnection` now supplies ordered Transcript records and separate

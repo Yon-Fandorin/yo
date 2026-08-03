@@ -11,6 +11,10 @@ use crate::{
         editor::{EditorEffect, PromptEditor},
         event::InputEvent,
     },
+    overlay::{
+        AcceptanceReceipt, OverlayInputEffect, OverlayInstanceToken, PanelSnapshot,
+        PromptOverlaySlot, SlotError,
+    },
     runner::{
         AgentAction, PresentationMode,
         chat::{ChatProjection, ChatProjectionChange},
@@ -62,6 +66,7 @@ pub(super) struct PreparedFrame {
     pub(super) cursor: Point,
     pub(super) appearance_revision: AppearanceRevision,
     pub(super) motion_demand: Option<MotionDemand>,
+    pub(super) overlay_presented: bool,
     view_state: ObservabilityViewState,
 }
 
@@ -80,6 +85,8 @@ pub(super) struct TuiState {
     durability: Option<JournalDurability>,
     session_info: TuiSessionInfo,
     presentation_mode: PresentationMode,
+    overlay: PromptOverlaySlot,
+    accepted_overlays: VecDeque<AcceptanceReceipt>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,7 +124,29 @@ impl TuiState {
         if input.is_ctrl_z_press() {
             return Ok(StateEffect::Suspend);
         }
-        match self.views.handle(&input) {
+        let active_before = self.views.active();
+        match self.views.handle_global(&input) {
+            ViewInputEffect::Unhandled => {},
+            ViewInputEffect::Consumed => return Ok(StateEffect::Unchanged),
+            ViewInputEffect::Redraw => {
+                if self.views.active() != active_before {
+                    self.overlay.close_current();
+                }
+                return Ok(StateEffect::Redraw);
+            },
+        }
+
+        match self.overlay.handle(&input) {
+            OverlayInputEffect::Unhandled => {},
+            OverlayInputEffect::Consumed => return Ok(StateEffect::Unchanged),
+            OverlayInputEffect::Redraw => return Ok(StateEffect::Redraw),
+            OverlayInputEffect::Accepted(receipt) => {
+                self.accepted_overlays.push_back(receipt);
+                return Ok(StateEffect::Redraw);
+            },
+        }
+
+        match self.views.handle_local(&input) {
             ViewInputEffect::Unhandled => {},
             ViewInputEffect::Consumed => return Ok(StateEffect::Unchanged),
             ViewInputEffect::Redraw => return Ok(StateEffect::Redraw),
@@ -194,6 +223,7 @@ impl TuiState {
                     _ => None,
                 };
                 if let Some(request) = request {
+                    self.overlay.close_current();
                     self.pending_requests.push_back(request);
                 }
             },
@@ -257,6 +287,8 @@ impl TuiState {
                         appearance: snapshot,
                         chrome: self.chrome_snapshot(),
                         elapsed,
+                        overlay: self.overlay.panel(),
+                        overlay_bindings: self.overlay.bindings(),
                     },
                     after_measure,
                 )
@@ -271,6 +303,7 @@ impl TuiState {
                 .activity_motion_period
                 .map(|period| MotionDemand { period }),
             view_state: frame.state,
+            overlay_presented: frame.overlay_presented,
         })
     }
 
@@ -298,8 +331,46 @@ impl TuiState {
         !self.pending_requests.is_empty()
     }
 
+    pub(super) fn wants_overlay_input(&self, input: &InputEvent) -> bool {
+        self.overlay.wants_input(input)
+    }
+
+    pub(super) fn wants_global_input(&self, input: &InputEvent) -> bool {
+        self.views.wants_global_input(input)
+    }
+
+    pub(super) fn open_overlay(
+        &mut self,
+        snapshot: PanelSnapshot,
+    ) -> Result<OverlayInstanceToken, SlotError> {
+        if self.views.active() != crate::runner::view::ObservabilityView::Chat {
+            return Err(SlotError::ChatNotVisible);
+        }
+        if self.has_pending_request() {
+            return Err(SlotError::AgentInteractionPending);
+        }
+        self.overlay.open(snapshot)
+    }
+
+    pub(super) fn refresh_overlay(
+        &mut self,
+        token: OverlayInstanceToken,
+        snapshot: PanelSnapshot,
+    ) -> Result<(), SlotError> {
+        self.overlay.refresh(token, snapshot)
+    }
+
+    pub(super) fn close_overlay(&mut self, token: OverlayInstanceToken) -> Result<(), SlotError> {
+        self.overlay.close(token)
+    }
+
+    pub(super) fn take_overlay_acceptance(&mut self) -> Option<AcceptanceReceipt> {
+        self.accepted_overlays.pop_front()
+    }
+
     pub(super) fn commit_frame(&mut self, frame: &PreparedFrame) {
         self.views.commit(frame.view_state);
+        self.overlay.set_presented(frame.overlay_presented);
     }
 
     fn request_response(

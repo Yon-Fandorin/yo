@@ -12,6 +12,7 @@ use crate::{
     appearance::ActivityMotionFrame,
     input::editor::PromptEditor,
     layout::vertical::VerticalLayoutError,
+    overlay::{OverlayBindings, PanelPaintError, SelectionPanel},
     prompt::{
         PromptFrame, PromptMeasureError, PromptPaintError, PromptStyles, PromptViewState,
         paint_prepared as paint_prompt, prepare as prepare_prompt,
@@ -47,6 +48,7 @@ pub(crate) struct AgentShellStyles {
     pub(crate) transcript: TranscriptStyles,
     pub(crate) prompt: PromptStyles,
     pub(crate) chrome: ShellChromeStyles,
+    pub(crate) overlay: crate::overlay::SelectionPanelAppearance,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,6 +59,8 @@ pub(crate) struct AgentShellRenderOptions<'config> {
     pub(crate) frame_prompt: bool,
     pub(crate) chrome: ShellChromeSnapshot<'config>,
     pub(crate) activity_motion: ActivityMotionFrame<'config>,
+    pub(crate) overlay: Option<&'config SelectionPanel>,
+    pub(crate) overlay_bindings: &'config OverlayBindings,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -70,6 +74,7 @@ pub(crate) struct AgentShellFrame {
     pub(crate) prompt: PromptFrame,
     pub(crate) cursor: Point,
     pub(crate) activity_motion_period: Option<std::time::Duration>,
+    pub(crate) overlay_area: Option<Rect>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,6 +85,7 @@ pub(crate) enum AgentShellRenderError {
     SurfaceConflict,
     TranscriptPaint(TranscriptPaintError),
     PromptPaint(PromptPaintError),
+    OverlayPaint(PanelPaintError),
     Chrome(chrome::ShellChromeError),
 }
 
@@ -108,6 +114,8 @@ pub(crate) fn render(
                 mode: crate::runner::PresentationMode::Inline,
             },
             activity_motion: ActivityMotionFrame::still("·"),
+            overlay: None,
+            overlay_bindings: &OverlayBindings::default(),
         },
         state,
         || {},
@@ -129,6 +137,8 @@ pub(crate) fn render_with_measure_hook(
         frame_prompt,
         chrome,
         activity_motion,
+        overlay,
+        overlay_bindings,
     } = options;
     let size = view.size();
     let prompt = prepare_prompt(editor, size.width)
@@ -155,6 +165,14 @@ pub(crate) fn render_with_measure_hook(
                 .map_err(AgentShellRenderError::TranscriptMeasure)?,
         )
     };
+    let prepared_overlay = overlay.and_then(|panel| {
+        panel.prepare(
+            crate::surface::Size::new(size.width, layout.prompt.origin.y),
+            styles.overlay,
+            overlay_bindings,
+            chrome.turn_active,
+        )
+    });
 
     after_measure();
 
@@ -181,7 +199,7 @@ pub(crate) fn render_with_measure_hook(
     };
 
     let mut activity_motion_period = None;
-    if layout.transient.size.height > 0 {
+    if prepared_overlay.is_none() && layout.transient.size.height > 0 {
         let mut transient = view
             .subview(layout.transient)
             .expect("chrome transient area stays inside the shell view");
@@ -189,6 +207,23 @@ pub(crate) fn render_with_measure_hook(
             chrome::paint_transient(&mut transient, chrome, styles.chrome, activity_motion)
                 .map_err(AgentShellRenderError::Chrome)?;
     }
+
+    let overlay_area = if let Some(prepared) = prepared_overlay {
+        let panel_size = prepared.size();
+        let area = Rect::new(
+            Point::new(0, layout.prompt.origin.y - panel_size.height),
+            panel_size,
+        );
+        let mut overlay_view = view
+            .subview(area)
+            .expect("the bottom-anchored overlay stays above the prompt");
+        prepared
+            .paint(&mut overlay_view)
+            .map_err(AgentShellRenderError::OverlayPaint)?;
+        Some(area)
+    } else {
+        None
+    };
 
     let prompt_frame = {
         let mut prompt_view = view
@@ -227,6 +262,7 @@ pub(crate) fn render_with_measure_hook(
         prompt: prompt_frame,
         cursor,
         activity_motion_period,
+        overlay_area,
     })
 }
 

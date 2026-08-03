@@ -11,6 +11,7 @@ use crate::{
         event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
         view_binding::{ViewSwitchBindings, ViewSwitchTarget},
     },
+    overlay::{OverlayBindings, SelectionPanel},
     shell::{
         self, AgentShellRenderError, AgentShellRenderOptions, AgentShellViewState,
         ShellChromeSnapshot,
@@ -125,6 +126,7 @@ pub(super) struct ObservabilityFrame {
     pub(super) cursor: Point,
     pub(super) state: ObservabilityViewState,
     pub(super) activity_motion_period: Option<Duration>,
+    pub(super) overlay_presented: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -132,9 +134,15 @@ pub(super) struct ObservabilityRenderOptions<'frame> {
     pub(super) appearance: &'frame AppearanceSnapshot,
     pub(super) chrome: ShellChromeSnapshot<'frame>,
     pub(super) elapsed: Duration,
+    pub(super) overlay: Option<&'frame SelectionPanel>,
+    pub(super) overlay_bindings: &'frame OverlayBindings,
 }
 
 impl ObservabilityViews {
+    pub(super) fn wants_global_input(&self, input: &InputEvent) -> bool {
+        self.bindings.target(input).is_some()
+    }
+
     pub(super) fn observe_record(
         &mut self,
         record: &TranscriptRecord,
@@ -158,7 +166,7 @@ impl ObservabilityViews {
         Ok(())
     }
 
-    pub(super) fn handle(&mut self, input: &InputEvent) -> ViewInputEffect {
+    pub(super) fn handle_global(&mut self, input: &InputEvent) -> ViewInputEffect {
         if let Some(target) = self.bindings.target(input) {
             return if self.switch_to(target.into()) {
                 ViewInputEffect::Redraw
@@ -167,6 +175,10 @@ impl ObservabilityViews {
             };
         }
 
+        ViewInputEffect::Unhandled
+    }
+
+    pub(super) fn handle_local(&mut self, input: &InputEvent) -> ViewInputEffect {
         if input.is_interrupt_key() {
             return ViewInputEffect::Unhandled;
         }
@@ -210,6 +222,8 @@ impl ObservabilityViews {
             appearance,
             chrome,
             elapsed,
+            overlay,
+            overlay_bindings,
         } = options;
         let size = view.size();
         let width =
@@ -230,6 +244,8 @@ impl ObservabilityViews {
                     frame_prompt: size.height >= shell::MIN_FRAMED_PROMPT_HEIGHT,
                     chrome,
                     activity_motion: appearance.activity_motion_frame(elapsed),
+                    overlay,
+                    overlay_bindings,
                 },
                 &mut next.chat_shell,
                 after_measure,
@@ -244,6 +260,7 @@ impl ObservabilityViews {
                 cursor: frame.cursor,
                 state: next,
                 activity_motion_period: frame.activity_motion_period,
+                overlay_presented: frame.overlay_area.is_some(),
             });
         }
         let context = match self.state.active {
@@ -258,6 +275,7 @@ impl ObservabilityViews {
                 cursor: Point::new(0, 0),
                 state: next,
                 activity_motion_period: None,
+                overlay_presented: false,
             });
         }
         let body_area = Rect::new(
@@ -312,6 +330,7 @@ impl ObservabilityViews {
             cursor,
             state: next,
             activity_motion_period: None,
+            overlay_presented: false,
         })
     }
 
@@ -370,7 +389,6 @@ impl ObservabilityViews {
         projection
     }
 
-    #[cfg(test)]
     pub(super) const fn active(&self) -> ObservabilityView {
         self.state.active
     }
@@ -387,6 +405,11 @@ impl ObservabilityViews {
             self.state.transcript.viewport.first_visible_row(),
             self.state.request.viewport.first_visible_row(),
         )
+    }
+
+    #[cfg(test)]
+    pub(super) const fn chat_has_pending_scroll(&self) -> bool {
+        self.state.chat.pending_scroll.is_some()
     }
 
     #[cfg(test)]

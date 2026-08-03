@@ -21,6 +21,7 @@ use crate::{
 };
 
 mod appearance;
+mod overlay;
 mod reentry;
 mod views;
 

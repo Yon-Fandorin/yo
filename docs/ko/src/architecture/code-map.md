@@ -157,6 +157,7 @@ transport 공유 구조를 추출한다.
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, 대화 기록 layout, scroll 상태 | prompt와 조합하는 일은 `shell` |
 | [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Chat·Transcript·Request 선택, 상단 헤더가 없는 편집 가능한 Chat 화면, 읽기 전용 mode 헤더, 전체 Journal record Projection, 정확한 Request anchor와 typed unavailable 사유, mode별 context·viewport 상태 | Journal 관찰과 editor dispatch는 `runner/state.rs`, 공통 layout·scroll은 `transcript` |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | editor 내용과 cursor가 보이는 상태를 측정하고 그리기 | 편집 의미는 `input/editor` |
+| [`overlay`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/overlay/mod.rs) | 검증된 선택 panel snapshot, enabled 항목 navigation·fitting, 원자적인 `Surface` paint, token 범위의 단일 prompt-overlay slot | provider는 query·filtering·preview와 accept된 제품 effect를 유지하고, routing·receipt는 `runner/state.rs`, 아래에 고정된 목적지는 `shell`이 소유한다 |
 | [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | prompt 인접 chrome 영역을 배분하고 typed status를 폭에 맞추며 pinned activity marker를 그린 뒤, 완성된 frame의 cursor와 실제로 보이는 motion demand를 보고 | cell 쓰기는 `surface`, deadline scheduling은 `runner/unix.rs`, host가 실제로 아는 status label은 `runner/session.rs` |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | adapter에 독립적인 cell 상태, Unicode grapheme과 너비, 경계가 있는 view, diff span, 터미널에 독립적인 text flow | Projection은 `terminal` 또는 `html` |
 | [`terminal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mod.rs) | typed terminal operation과 ANSI encoding | 표시 정책은 `terminal/mode`, Unix effect는 `terminal/backend` |
@@ -165,6 +166,7 @@ transport 공유 구조를 추출한다.
 
 `runner::TuiSession`은 한 번의 터미널 소유 기간보다 오래 유지할 수 있는
 간결한 Chat 대화 기록, editor, 대기 중인 요청, 세 observability view,
+token 범위의 prompt-overlay slot 하나와 대기 중인 acceptance receipt,
 backpressure로 전달되지 못한 agent dispatch 상태와 하나의 committed
 appearance snapshot을 소유한다. Chat은 편집 가능한 기본 mode다. 현재
 Chat, Transcript, Request의 typed 표시 정책 binding은 각각 F1, F2, F3이며
@@ -180,6 +182,10 @@ prompt를 대체하며 editor submission을 dispatch하지 않고 input을 소�
 [Chat, Transcript, Request Projection](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.view-projections.md)
 계약이 소유하고, prompt 주변 영역과 중단 affordance는
 [정적 입력 chrome](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md)
+계약이 소유한다. Panel 검증과 paint는
+[selection overlay](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.overlay.selection-panel.md)
+계약이, token 수명과 input 우선순위는
+[prompt overlay routing](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.overlay.prompt-slot-routing.md)
 계약이 소유한다.
 
 현재 실행 중인 `AgentConnection`은 순서 있는 Transcript record와 별도의

@@ -13,6 +13,7 @@ use std::{sync::Arc, time::Duration};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
+    overlay::{SelectionPanelAppearance, SelectionPanelGlyphs, SelectionPanelStyles},
     prompt::{PromptGlyphs, PromptStyles},
     shell::{AgentShellStyles, ShellChromeStyles},
     surface::{Attributes, Color, Grapheme, GraphemeError, Style},
@@ -396,6 +397,22 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
             activity: Style::new(Color::Default, Color::Default, Attributes::BOLD),
             metrics: Style::new(Color::Default, Color::Default, Attributes::DIM),
             mode: Style::new(Color::Default, Color::Default, Attributes::DIM),
+        },
+        overlay: SelectionPanelAppearance {
+            styles: SelectionPanelStyles {
+                background: style,
+                frame: Style::new(Color::Default, Color::Default, Attributes::DIM),
+                title: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+                hint: Style::new(Color::Default, Color::Default, Attributes::DIM),
+                label: style,
+                detail: Style::new(Color::Default, Color::Default, Attributes::DIM),
+                selected: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+                disabled: Style::new(Color::Default, Color::Default, Attributes::DIM),
+            },
+            glyphs: match profile {
+                GlyphProfile::Rich => SelectionPanelGlyphs::rich(),
+                GlyphProfile::Ascii => SelectionPanelGlyphs::ascii(),
+            },
         },
     }
 }

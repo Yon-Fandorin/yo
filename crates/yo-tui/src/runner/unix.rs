@@ -461,6 +461,8 @@ pub(super) fn handle_backpressured_input(
     allow_pending_request: bool,
 ) -> Result<StateEffect, StateError> {
     if (allow_pending_request && state.has_pending_request())
+        || state.wants_global_input(&input)
+        || state.wants_overlay_input(&input)
         || input.is_control_flow_key()
         || matches!(input, crate::input::event::InputEvent::Resize(_))
     {

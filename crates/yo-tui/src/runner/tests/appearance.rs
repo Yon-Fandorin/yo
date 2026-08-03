@@ -343,6 +343,19 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
             metrics: default,
             mode: default,
         },
+        overlay: crate::overlay::SelectionPanelAppearance {
+            styles: crate::overlay::SelectionPanelStyles {
+                background: default,
+                frame: default,
+                title: default,
+                hint: default,
+                label: default,
+                detail: default,
+                selected: default,
+                disabled: default,
+            },
+            glyphs: crate::overlay::SelectionPanelGlyphs::ascii(),
+        },
     };
     let appearance = AppearanceState::new(
         AppearanceCandidate::for_profile(GlyphProfile::Ascii).with_styles_for_test(styles),

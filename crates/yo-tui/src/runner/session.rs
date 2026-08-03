@@ -6,6 +6,7 @@ use crate::{
         AppearanceCandidate, AppearanceCommitError, AppearanceRevision, AppearanceState,
         GlyphProfile,
     },
+    overlay::{AcceptanceReceipt, OverlayInstanceToken, PanelSnapshot, SlotError},
     transcript::TranscriptMeasureError,
 };
 
@@ -82,6 +83,60 @@ impl TuiSession {
         not(test),
         expect(
             dead_code,
+            reason = "prompt providers consume this reserved session seam"
+        )
+    )]
+    pub(crate) fn open_prompt_overlay(
+        &mut self,
+        snapshot: PanelSnapshot,
+    ) -> Result<OverlayInstanceToken, SlotError> {
+        self.state.open_overlay(snapshot)
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "prompt providers consume this reserved session seam"
+        )
+    )]
+    pub(crate) fn refresh_prompt_overlay(
+        &mut self,
+        token: OverlayInstanceToken,
+        snapshot: PanelSnapshot,
+    ) -> Result<(), SlotError> {
+        self.state.refresh_overlay(token, snapshot)
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "prompt providers consume this reserved session seam"
+        )
+    )]
+    pub(crate) fn close_prompt_overlay(
+        &mut self,
+        token: OverlayInstanceToken,
+    ) -> Result<(), SlotError> {
+        self.state.close_overlay(token)
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "prompt providers consume this reserved session seam"
+        )
+    )]
+    pub(crate) fn take_prompt_overlay_acceptance(&mut self) -> Option<AcceptanceReceipt> {
+        self.state.take_overlay_acceptance()
+    }
+
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
             reason = "the first Slice reserves a crate-private runtime replacement seam"
         )
     )]
@@ -150,7 +205,16 @@ impl Default for TuiSession {
 
 #[cfg(test)]
 mod tests {
-    use super::TuiSessionInfo;
+    use super::{TuiSession, TuiSessionInfo};
+    use crate::overlay::{PanelSnapshot, SelectionEntry, SlotError};
+
+    fn panel(label: &str) -> PanelSnapshot {
+        PanelSnapshot::new(
+            "Commands",
+            vec![SelectionEntry::enabled("entry", label, None)],
+        )
+        .unwrap()
+    }
 
     // 외부 backend가 전달한 제어 문자는 status line의 행 구조를 바꾸지 못하고 보이는 표기로 바뀐다.
     #[test]
@@ -159,5 +223,24 @@ mod tests {
 
         assert_eq!(info.backend(), Some("co\\ndex"));
         assert_eq!(info.workspace(), "work\\tspace");
+    }
+
+    // TuiSession facade는 provider가 발급받은 token을 state slot에 그대로 전달하고,
+    // close 뒤 같은 token의 refresh를 stale로 거절한다.
+    #[test]
+    fn session_facade_preserves_overlay_token_scope() {
+        let mut session = TuiSession::new();
+        let token = session.open_prompt_overlay(panel("First")).unwrap();
+
+        session
+            .refresh_prompt_overlay(token, panel("Updated"))
+            .unwrap();
+        session.close_prompt_overlay(token).unwrap();
+        assert_eq!(session.take_prompt_overlay_acceptance(), None);
+
+        assert_eq!(
+            session.refresh_prompt_overlay(token, panel("Late")),
+            Err(SlotError::StaleToken)
+        );
     }
 }

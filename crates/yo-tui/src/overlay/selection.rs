@@ -1,0 +1,352 @@
+use std::collections::HashSet;
+
+use unicode_segmentation::UnicodeSegmentation;
+
+use crate::surface::{Grapheme, GraphemeError, Style};
+
+const VISIBLE_ENTRY_CAP: usize = 8;
+
+mod render;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct EntryIdentity(String);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "prompt providers construct typed availability")
+)]
+pub(crate) enum EntryAvailability {
+    Enabled,
+    Disabled { reason: String },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SelectionEntry {
+    identity: EntryIdentity,
+    label: String,
+    detail: Option<String>,
+    availability: EntryAvailability,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PanelSnapshot {
+    title: String,
+    entries: Vec<SelectionEntry>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SelectionPanel {
+    snapshot: PanelSnapshot,
+    selected: Option<EntryIdentity>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SelectionPanelStyles {
+    pub(crate) background: Style,
+    pub(crate) frame: Style,
+    pub(crate) title: Style,
+    pub(crate) hint: Style,
+    pub(crate) label: Style,
+    pub(crate) detail: Style,
+    pub(crate) selected: Style,
+    pub(crate) disabled: Style,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SelectionPanelGlyphs {
+    horizontal: &'static str,
+    vertical: &'static str,
+    top_left: &'static str,
+    top_right: &'static str,
+    bottom_left: &'static str,
+    bottom_right: &'static str,
+    selected_marker: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SelectionPanelAppearance {
+    pub(crate) styles: SelectionPanelStyles,
+    pub(crate) glyphs: SelectionPanelGlyphs,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NavigationOutcome {
+    SelectionChanged,
+    HandledNoSelection,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PanelValidationError {
+    EmptyTitle,
+    EmptyEntries,
+    EmptyIdentity {
+        index: usize,
+    },
+    DuplicateIdentity {
+        index: usize,
+    },
+    EmptyLabel {
+        index: usize,
+    },
+    EmptyDisabledReason {
+        index: usize,
+    },
+    UnsafeText {
+        field: TextField,
+        cause: GraphemeError,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TextField {
+    Title,
+    Label { index: usize },
+    Detail { index: usize },
+    DisabledReason { index: usize },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PanelPaintError {
+    SurfaceConflict,
+}
+
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "prompt providers construct and consume opaque identities"
+    )
+)]
+impl EntryIdentity {
+    pub(crate) fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "prompt providers construct semantic entries")
+)]
+impl SelectionEntry {
+    pub(crate) fn enabled(
+        identity: impl Into<String>,
+        label: impl Into<String>,
+        detail: Option<String>,
+    ) -> Self {
+        Self {
+            identity: EntryIdentity::new(identity),
+            label: label.into(),
+            detail,
+            availability: EntryAvailability::Enabled,
+        }
+    }
+
+    pub(crate) fn disabled(
+        identity: impl Into<String>,
+        label: impl Into<String>,
+        detail: Option<String>,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            identity: EntryIdentity::new(identity),
+            label: label.into(),
+            detail,
+            availability: EntryAvailability::Disabled {
+                reason: reason.into(),
+            },
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        matches!(self.availability, EntryAvailability::Enabled)
+    }
+}
+
+impl PanelSnapshot {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "prompt providers publish snapshots through this seam"
+        )
+    )]
+    pub(crate) fn new(
+        title: impl Into<String>,
+        entries: Vec<SelectionEntry>,
+    ) -> Result<Self, PanelValidationError> {
+        let snapshot = Self {
+            title: title.into(),
+            entries,
+        };
+        snapshot.validate()?;
+        Ok(snapshot)
+    }
+
+    fn validate(&self) -> Result<(), PanelValidationError> {
+        if self.title.is_empty() {
+            return Err(PanelValidationError::EmptyTitle);
+        }
+        validate_text(&self.title, TextField::Title)?;
+        if self.entries.is_empty() {
+            return Err(PanelValidationError::EmptyEntries);
+        }
+        let mut identities = HashSet::with_capacity(self.entries.len());
+        for (index, entry) in self.entries.iter().enumerate() {
+            if entry.identity.0.is_empty() {
+                return Err(PanelValidationError::EmptyIdentity { index });
+            }
+            if !identities.insert(entry.identity.clone()) {
+                return Err(PanelValidationError::DuplicateIdentity { index });
+            }
+            if entry.label.is_empty() {
+                return Err(PanelValidationError::EmptyLabel { index });
+            }
+            validate_text(&entry.label, TextField::Label { index })?;
+            if let Some(detail) = &entry.detail {
+                validate_text(detail, TextField::Detail { index })?;
+            }
+            if let EntryAvailability::Disabled { reason } = &entry.availability {
+                if reason.is_empty() {
+                    return Err(PanelValidationError::EmptyDisabledReason { index });
+                }
+                validate_text(reason, TextField::DisabledReason { index })?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl SelectionPanel {
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "prompt providers publish snapshots through this seam"
+        )
+    )]
+    pub(crate) fn new(snapshot: PanelSnapshot) -> Self {
+        let selected = snapshot
+            .entries
+            .iter()
+            .find(|entry| entry.is_enabled())
+            .map(|entry| entry.identity.clone());
+        Self { snapshot, selected }
+    }
+
+    pub(crate) fn refresh(&mut self, snapshot: PanelSnapshot) {
+        let selected = self.selected.as_ref().and_then(|selected| {
+            snapshot
+                .entries
+                .iter()
+                .find(|entry| entry.identity == *selected && entry.is_enabled())
+                .map(|entry| entry.identity.clone())
+        });
+        self.selected = selected.or_else(|| {
+            snapshot
+                .entries
+                .iter()
+                .find(|entry| entry.is_enabled())
+                .map(|entry| entry.identity.clone())
+        });
+        self.snapshot = snapshot;
+    }
+
+    pub(crate) fn previous(&mut self) -> NavigationOutcome {
+        self.move_selection(Direction::Previous)
+    }
+
+    pub(crate) fn next(&mut self) -> NavigationOutcome {
+        self.move_selection(Direction::Next)
+    }
+
+    pub(crate) fn selected_identity(&self) -> Option<&EntryIdentity> {
+        self.selected.as_ref()
+    }
+
+    fn move_selection(&mut self, direction: Direction) -> NavigationOutcome {
+        let enabled = self
+            .snapshot
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.is_enabled())
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        if enabled.is_empty() {
+            self.selected = None;
+            return NavigationOutcome::HandledNoSelection;
+        }
+        let current = self.selected.as_ref().and_then(|selected| {
+            enabled
+                .iter()
+                .position(|index| self.snapshot.entries[*index].identity == *selected)
+        });
+        let position = match (direction, current) {
+            (Direction::Next, Some(position)) => (position + 1) % enabled.len(),
+            (Direction::Previous, Some(0)) => enabled.len() - 1,
+            (Direction::Previous, Some(position)) => position - 1,
+            (_, None) => 0,
+        };
+        self.selected = Some(self.snapshot.entries[enabled[position]].identity.clone());
+        NavigationOutcome::SelectionChanged
+    }
+
+    fn visible_window(&self, visible_rows: usize) -> (usize, usize) {
+        let selected = self.selected.as_ref().and_then(|identity| {
+            self.snapshot
+                .entries
+                .iter()
+                .position(|entry| entry.identity == *identity)
+        });
+        let start = selected
+            .map(|index| index.saturating_sub(visible_rows - 1))
+            .unwrap_or(0)
+            .min(self.snapshot.entries.len() - visible_rows);
+        (start, start + visible_rows)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Direction {
+    Previous,
+    Next,
+}
+
+fn validate_text(value: &str, field: TextField) -> Result<(), PanelValidationError> {
+    for cluster in value.graphemes(true) {
+        Grapheme::try_from(cluster)
+            .map_err(|cause| PanelValidationError::UnsafeText { field, cause })?;
+    }
+    Ok(())
+}
+
+impl SelectionPanelGlyphs {
+    pub(crate) const fn rich() -> Self {
+        Self {
+            horizontal: "─",
+            vertical: "│",
+            top_left: "╭",
+            top_right: "╮",
+            bottom_left: "╰",
+            bottom_right: "╯",
+            selected_marker: "›",
+        }
+    }
+
+    pub(crate) const fn ascii() -> Self {
+        Self {
+            horizontal: "-",
+            vertical: "|",
+            top_left: "+",
+            top_right: "+",
+            bottom_left: "+",
+            bottom_right: "+",
+            selected_marker: ">",
+        }
+    }
+}
