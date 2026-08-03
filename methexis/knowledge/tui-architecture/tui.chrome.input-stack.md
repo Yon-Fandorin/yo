@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.chrome-001
-    revision: sha256:0569e99201112c9af64cbce8db9b11766dbb5c0d0938e64904c04f1cdaa27eee
+    revision: sha256:9b7d120ff6e23a9641885659b22bc01212acfb988e1e508d24f4e03b0a03d359
 relations:
   depends_on:
     - agent.runtime.active-turn-input
@@ -28,12 +28,17 @@ so a Turn lifecycle change changes its content rather than moving the prompt.
 When the terminal is too short for every region, the shell MUST preserve the
 prompt plus a readable transcript floor before optional chrome detail.
 
-While a Turn is active, the transient region MUST expose both plain `Esc` and
-`Ctrl+C` as interruption affordances and both keys MUST dispatch the same
-interrupt intent. Idle `Esc` MUST remain unhandled for a future overlay owner.
-Idle `Ctrl+C` MUST retain the separate clear and double-press exit policy.
-Overlay-first Escape precedence requires a concrete overlay and remains a later
-contract.
+Ordinarily while a Turn is active, the transient region MUST expose both plain
+`Esc` and `Ctrl+C` as interruption affordances and both keys MUST dispatch the
+same interrupt intent. A concrete visible prompt overlay MAY reuse the reserved
+work row plus adjacent transcript cells without relayout. Fitting MUST be
+decided before suppressing the ordinary work row. Its keymap-derived hints MUST
+expose `Esc` close and `Ctrl+C` interrupt; `Esc` MUST dismiss only the overlay,
+while `Ctrl+C` MUST bypass overlay bindings and interrupt the active Turn.
+Closing the overlay, or deciding that no panel row fits, MUST restore the work
+row from current state. Idle `Esc` MUST remain unhandled without a concrete
+overlay owner. Idle `Ctrl+C` MUST retain the separate clear and double-press
+exit policy.
 
 Status rows MUST contain only values an owning host or runtime source actually
 knows. An unavailable backend, workspace, model, context, Git state, or
@@ -49,7 +54,8 @@ additional status data sources require later contracts.
 
 ## Rationale
 
-A stable prompt anchor keeps typing visually predictable while the work row
-makes interruption discoverable. Honest typed segments allow the status line
-to grow with real runtime data and future GUI consumers without freezing one
-formatted string or presenting guesses as state.
+A stable prompt anchor keeps typing visually predictable. The ordinary work row
+makes interruption discoverable, while a focused overlay may carry the same
+critical `Ctrl+C` affordance without competing chrome. Honest typed segments
+allow the status line to grow with real runtime data and future GUI consumers
+without freezing one formatted string or presenting guesses as state.

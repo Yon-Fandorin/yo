@@ -1,6 +1,7 @@
 schema: methexis.source/v1alpha1
 id: tui.chrome-001
-revision: sha256:0569e99201112c9af64cbce8db9b11766dbb5c0d0938e64904c04f1cdaa27eee
+revision: sha256:9b7d120ff6e23a9641885659b22bc01212acfb988e1e508d24f4e03b0a03d359
 payload:
   kind: decision
-  content: The initial static TUI input chrome reserves a transient work row above the prompt and places host-known metrics plus presentation mode below it. Active Esc and Ctrl+C both interrupt; unavailable status data is omitted; narrow layouts drop typed low-priority segments without wrapping; time-driven motion remains a later Slice.
+  content: >-
+    The static TUI input chrome reserves a transient work row above the prompt and places host-known metrics plus presentation mode below it. Ordinarily, active Esc and Ctrl+C both interrupt. A concrete visible prompt overlay may reuse the reserved work row plus adjacent transcript cells without relayout: fitting is decided before suppression, its keymap-derived hints expose Esc close and Ctrl+C interrupt, Esc dismisses only the overlay, and Ctrl+C bypasses overlay bindings to interrupt the active Turn. Closing or non-presentation restores the work row from current state. Unavailable status data is omitted; narrow layouts drop typed low-priority segments without wrapping; time-driven motion is governed separately.

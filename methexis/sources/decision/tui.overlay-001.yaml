@@ -1,0 +1,7 @@
+schema: methexis.source/v1alpha1
+id: tui.overlay-001
+revision: sha256:de6d55d11499f4c9be696c941c3e55a778e635989568c153f9aec046ff9dd0b5
+payload:
+  kind: decision
+  content: >-
+    The first reusable overlay presentation component is a pure selectable panel based on Rib's prompt completion panel. It receives validated semantic entries and resolved binding hints, owns selected-identity viewport fitting and presentation, and returns typed navigation outcomes without discovering candidates or executing effects. Entries have unique opaque identities and typed enabled or disabled availability; disabled rows are dimmed, skipped by navigation, and never accepted. The full prompt-width muted frame shows a title, current keymap-derived hints, an appearance-resolved selected marker and accent row, optional detail, and hidden-above or hidden-below counts. Narrow fitting removes detail before grapheme-safe primary truncation, the selected enabled identity remains visible, and insufficient geometry hides the panel atomically.
