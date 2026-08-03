@@ -14,31 +14,46 @@ local checks = new Mapping<String, Step> {
         )
         check = "cargo xtask check test-explanations"
     }
-    ["librarian-discovery"] = new Step {
+    ["librarian-corpus-integrity"] = new Step {
         glob = List(
             "methexis/knowledge/**/*.md",
             "methexis/review-projections/**/*.md",
+            "methexis/owners/**/*.yaml",
+            "methexis/sources/**/*.yaml",
+        )
+        check = "cargo test --quiet --locked -p librarian --test live_corpus"
+    }
+    ["librarian-discovery"] = new Step {
+        glob = List(
             "tools/librarian/**/*.json",
             "tools/librarian/**/*.md",
             "tools/librarian/**/*.rs",
+            "tools/librarian/**/*.yaml",
             "tools/librarian/Cargo.toml",
             "Cargo.lock",
             "Cargo.toml",
         )
         check = "cargo test --quiet --locked -p librarian"
     }
-    ["methexis-validation"] = new Step {
+    ["methexis-corpus-integrity"] = new Step {
         glob = List(
             "methexis/**/*.md",
             "methexis/**/*.yaml",
+        )
+        check = "cargo xtask check methexis-check-for-stage"
+    }
+    ["methexis-validation"] = new Step {
+        glob = List(
             "tools/methexis/**/*.json",
             "tools/methexis/**/*.md",
             "tools/methexis/**/*.rs",
+            "tools/methexis/**/*.yaml",
+            "tools/methexis/tests/fixtures/**/*",
             "tools/methexis/Cargo.toml",
             "Cargo.lock",
             "Cargo.toml",
         )
-        check = "cargo xtask check methexis-tests-for-stage"
+        check = "cargo test --quiet --locked -p methexis"
     }
     ["yo-tui-tests"] = new Step {
         glob = List(

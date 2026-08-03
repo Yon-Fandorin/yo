@@ -6,21 +6,19 @@ use std::{
 
 use serde::{Deserialize, Serialize, de::IgnoredAny};
 
-pub(crate) fn run_methexis_tests(repository: &Path) -> Result<(), String> {
+pub(crate) fn run_methexis_check(repository: &Path) -> Result<(), String> {
     let authority = run_staged_activation_check(repository)?;
+    report_prospective_activation(authority);
+    Ok(())
+}
+
+fn report_prospective_activation(authority: Authority) {
     if authority == Authority::Prospective {
         println!(
             "prospective Methexis activation validated; ordinary Methexis tests are \
              deferred for this exact staged interval and must run after integration"
         );
-        return Ok(());
     }
-
-    run_cargo(
-        repository,
-        &["test", "--quiet", "--locked", "-p", "methexis"],
-        "Methexis tests",
-    )
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -118,20 +116,6 @@ fn handle_staged_check_output(
     writeln!(forwarded_stdout, "{summary}")
         .map_err(|error| format!("cannot forward Methexis validation summary: {error}"))?;
     Ok(report.authority)
-}
-
-fn run_cargo(repository: &Path, arguments: &[&str], label: &str) -> Result<(), String> {
-    let status = Command::new("cargo")
-        .args(arguments)
-        .current_dir(repository)
-        .stdin(Stdio::null())
-        .status()
-        .map_err(|error| format!("cannot run {label}: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{label} failed with {status}"))
-    }
 }
 
 #[cfg(test)]

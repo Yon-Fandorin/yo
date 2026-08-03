@@ -64,13 +64,13 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
                     .map_err(|error| format!("cannot locate the repository: {error}"))?;
                 return slice_contract::check_parallel(&repository, &left, &right);
             }
-            if check == "methexis-tests-for-stage" {
+            if check == "methexis-check-for-stage" {
                 if arguments.next().is_some() {
                     return Err(usage(check.as_ref()));
                 }
                 let repository = std::env::current_dir()
                     .map_err(|error| format!("cannot locate the repository: {error}"))?;
-                return validation_stage::run_methexis_tests(&repository);
+                return validation_stage::run_methexis_check(&repository);
             }
 
             let head_fallback = check == "slice-review-impact";
@@ -104,7 +104,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
 
 fn usage(check: &str) -> String {
     match check {
-        "test-explanations" | "methexis-tests-for-stage" => {
+        "test-explanations" | "methexis-check-for-stage" => {
             return format!("usage: cargo xtask check {check}");
         },
         "slice-scope" => {
@@ -125,7 +125,7 @@ fn general_usage() -> String {
     "usage:\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
      cargo xtask check test-explanations\n\
-     cargo xtask check methexis-tests-for-stage\n\
+     cargo xtask check methexis-check-for-stage\n\
      cargo xtask check slice-scope [slice-contract.json]\n\
      cargo xtask check slice-parallel <left.json> <right.json>\n\
      cargo xtask check <developer-docs-impact|slice-review-impact> \
@@ -152,7 +152,7 @@ mod cli_tests {
             "usage:\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
              cargo xtask check test-explanations\n\
-             cargo xtask check methexis-tests-for-stage\n\
+             cargo xtask check methexis-check-for-stage\n\
              cargo xtask check slice-scope [slice-contract.json]\n\
              cargo xtask check slice-parallel <left.json> <right.json>\n\
              cargo xtask check <developer-docs-impact|slice-review-impact> \

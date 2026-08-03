@@ -405,12 +405,14 @@ hk install
 Repository-specific structured checks live in `tools/xtask`; `hk` invokes them
 through the repository-local `cargo xtask` alias instead of placing development
 policy in the `yo` product CLI.
-For a staged Methexis activation, the Methexis `hk` route reads one
-`check --staged-activation` report and defers the ordinary Methexis test suite
-only when that exact report identifies prospective authority. This is not a
-test exemption: after integration, ordinary
-`methexis check` and the full Methexis tests are required against trusted
-`develop`. Other Methexis changes continue to run the ordinary test suite.
+Semantic SOT files and tool implementation use separate `hk` routes. SOT
+changes run one staged Methexis integrity report plus the focused Librarian
+live-corpus compatibility test; they do not rerun either tool's implementation
+suite. Changes below `tools/methexis/` or `tools/librarian/` continue to run the
+respective full suite. For a staged Methexis activation, the integrity route
+reads one `check --staged-activation` report and reports prospective authority.
+This is not a test exemption: after integration, ordinary `methexis check` and
+the full Methexis tests are required against trusted `develop`.
 For every accepted review commit, Git `commit-msg` requires the Slice review
 disposition described above. Working commits on `slice/*`, `task/*`, and
 `spike/*` defer it to their accepted squash or review commit. A Wave merge that
