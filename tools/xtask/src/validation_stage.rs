@@ -29,12 +29,22 @@ enum Authority {
 }
 
 #[derive(Deserialize)]
-struct CheckReport {
-    ok: bool,
-    authority: Authority,
-    checks: Vec<IgnoredAny>,
-    units: Vec<IgnoredAny>,
-    diagnostics: Vec<IgnoredAny>,
+#[serde(tag = "schema")]
+enum StageReport {
+    #[serde(rename = "methexis.check/v1alpha1")]
+    Ordinary {
+        ok: bool,
+        authority: Authority,
+        checks: Vec<IgnoredAny>,
+        units: Vec<IgnoredAny>,
+        diagnostics: Vec<IgnoredAny>,
+    },
+    #[serde(rename = "methexis.prospective-activation/v1alpha1")]
+    Prospective {
+        ok: bool,
+        authority: Authority,
+        affected_ids: Vec<IgnoredAny>,
+    },
 }
 
 #[derive(Serialize)]
@@ -47,16 +57,43 @@ struct CheckSummary {
     diagnostics: usize,
 }
 
-impl CheckReport {
-    fn summary(&self) -> CheckSummary {
-        CheckSummary {
-            schema: "yo.methexis-stage-summary/v1",
-            ok: self.ok,
-            authority: self.authority,
-            checks: self.checks.len(),
-            units: self.units.len(),
-            diagnostics: self.diagnostics.len(),
+impl StageReport {
+    fn summary(&self) -> Result<CheckSummary, String> {
+        let (ok, authority, checks, units, diagnostics) = match self {
+            Self::Ordinary {
+                ok,
+                authority,
+                checks,
+                units,
+                diagnostics,
+            } => (
+                *ok,
+                *authority,
+                checks.len(),
+                units.len(),
+                diagnostics.len(),
+            ),
+            Self::Prospective {
+                ok,
+                authority,
+                affected_ids,
+            } => (*ok, *authority, 1, affected_ids.len(), 0),
+        };
+        let expected_authority = match self {
+            Self::Ordinary { .. } => Authority::Draft,
+            Self::Prospective { .. } => Authority::Prospective,
+        };
+        if authority != expected_authority {
+            return Err("staged Methexis report schema and authority disagree".to_owned());
         }
+        Ok(CheckSummary {
+            schema: "yo.methexis-stage-summary/v1",
+            ok,
+            authority,
+            checks,
+            units,
+            diagnostics,
+        })
     }
 }
 
@@ -105,17 +142,19 @@ fn handle_staged_check_output(
         return Err(format!("staged Methexis validation failed with {status}"));
     }
 
-    let report = serde_json::from_slice::<CheckReport>(captured_stdout).map_err(|error| {
+    let report = serde_json::from_slice::<StageReport>(captured_stdout).map_err(|error| {
         format!("staged Methexis validation returned an invalid report: {error}")
     })?;
-    if !report.ok {
+    let summary = report.summary()?;
+    if !summary.ok {
         return Err("successful Methexis process returned `ok: false`".to_owned());
     }
-    let summary = serde_json::to_string(&report.summary())
+    let authority = summary.authority;
+    let summary = serde_json::to_string(&summary)
         .map_err(|error| format!("cannot encode Methexis validation summary: {error}"))?;
     writeln!(forwarded_stdout, "{summary}")
         .map_err(|error| format!("cannot forward Methexis validation summary: {error}"))?;
-    Ok(report.authority)
+    Ok(authority)
 }
 
 #[cfg(test)]
