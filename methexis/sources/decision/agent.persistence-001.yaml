@@ -1,28 +1,49 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:77882dbeaed4e00ab2af2de7f2bfdbd282fa5269619910c153c82412e549688b
+revision: sha256:49893e382fcc289fd8effe783a408ea9d6b5ae013bbdb737353d7fb74caae8a6
 payload:
   kind: decision
   content: >-
     The UUIDv7-only, descriptor-aware semantic Session Journal and checksummed
     physical Session-record envelope are yo's initial public-format candidates,
-    both named version 1. The semantic v1 shape remains unchanged. Before the
-    first public release, this decision replaces the immediately preceding,
-    summary-less physical yo.session-record/v1 shape with a closed physical v1
-    shape that requires a discovery object on every record. The discovery object
-    contains the Session descriptor, writer-assigned updated Unix milliseconds,
-    optional binding epoch, and an optional Continuation Anchor JournalSequence.
-    The record's existing CRC32C binds these discovery fields in the same explicit
-    checksum preimage as the schema, Session identity, RepositorySequence, kind,
-    and exact payload bytes. The replaced summary-less physical v1, legacy
-    numeric-v1, semantic v2 through v4, and physical v2 and v3 all fail closed
-    before semantic admission; there is no migration, dual reader, or compatibility
-    shim for development data. Rejection fixtures may remain only as evidence of
-    this boundary, not as legacy parsers or models. Recovery reads only formats
-    explicitly supported by an accepted compatibility contract. This contract
-    governs only Session Journal and Session-record persistence; other persistent
-    formats, including workspace Host identity, remain under their own owning
-    contracts. Any further pre-release replacement under the same tag requires
-    another explicit SOT decision that accepts its data impact; after the first
-    public release, evolution preserves published versions or supplies an
-    explicitly reviewed compatibility or migration contract.
+    both named version 1. Before the first public release, this decision replaces
+    the immediately preceding string-input yo.semantic-journal-commit/v1 shape
+    with one closed semantic v1 shape that preserves an accepted SubmissionId,
+    exact input text, and ordered typed workspace and skill reference occurrences.
+    StartTurn and SteerTurn commands require a UUIDv4 SubmissionId and the shared
+    structured input object. Every semantic v1 commit, including a descriptor-only
+    commit, requires the exact `format: structured-input` discriminator so every
+    displaced same-tag commit fails closed. The Journal replay domain preserves
+    command kind, Turn, SubmissionId, and UserInput as one committed submission;
+    SubmissionId is unique per Session and remains internal correlation rather
+    than default display. A correlated Activity user-input response uses the same
+    structured input object without a second SubmissionId. Every input requires
+    the immutable `yo.structured-input/v1` profile. Each occurrence stores unsigned
+    64-bit half-open UTF-8 byte offsets, a `type` discriminator, its captured
+    accepted projection, and a typed identity; decode verifies that projection
+    exactly equals the referenced text bytes but never parses visible @path or
+    $name text to recover identity. Workspace identity stores
+    the opaque reference identity, execution environment, workspace, root,
+    normalized relative path, and file-or-directory kind. Skill identity stores
+    the opaque reference identity, execution environment, locator, name,
+    provenance scope, positive unsigned 64-bit catalog generation, and entry
+    revision. The frozen profile rejects unaddressable offsets, invalid UTF-8
+    boundaries, empty or overlapping spans, unordered occurrences, missing
+    metadata, non-canonical root-relative paths, and more than one skill. Future
+    display policy changes affect new capture only and never reinterpret stored
+    projection bytes. Unknown fields, unknown tags, and the displaced
+    string-input semantic v1 fail closed. The physical yo.session-record/v1 shape
+    remains unchanged because its CRC32C already binds the exact semantic payload.
+    Every physical record still carries the complete Session descriptor,
+    updated Unix milliseconds, optional binding epoch, and optional Continuation
+    Anchor in its discovery object, all bound by that CRC32C.
+    The earlier summary-less physical v1, legacy numeric-v1, semantic v2 through
+    v4, physical v2 and v3, and the displaced string-input semantic v1 all remain
+    unreadable development data with no migration, dual reader, or compatibility
+    shim. Rejection fixtures may remain only as evidence. Recovery reads only
+    formats named by an accepted compatibility contract. This contract governs
+    Session Journal and Session-record persistence only. Any further pre-release
+    same-tag replacement requires another explicit SOT decision accepting its
+    data impact; after the first public release, evolution preserves published
+    versions or supplies an explicitly reviewed compatibility or migration
+    contract.
