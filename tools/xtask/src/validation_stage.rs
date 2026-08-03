@@ -4,7 +4,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, de::IgnoredAny};
 
 pub(crate) fn run_methexis_tests(repository: &Path) -> Result<(), String> {
     let authority = run_staged_activation_check(repository)?;
@@ -23,7 +23,7 @@ pub(crate) fn run_methexis_tests(repository: &Path) -> Result<(), String> {
     )
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Authority {
     Draft,
@@ -32,7 +32,34 @@ enum Authority {
 
 #[derive(Deserialize)]
 struct CheckReport {
+    ok: bool,
     authority: Authority,
+    checks: Vec<IgnoredAny>,
+    units: Vec<IgnoredAny>,
+    diagnostics: Vec<IgnoredAny>,
+}
+
+#[derive(Serialize)]
+struct CheckSummary {
+    schema: &'static str,
+    ok: bool,
+    authority: Authority,
+    checks: usize,
+    units: usize,
+    diagnostics: usize,
+}
+
+impl CheckReport {
+    fn summary(&self) -> CheckSummary {
+        CheckSummary {
+            schema: "yo.methexis-stage-summary/v1",
+            ok: self.ok,
+            authority: self.authority,
+            checks: self.checks.len(),
+            units: self.units.len(),
+            diagnostics: self.diagnostics.len(),
+        }
+    }
 }
 
 fn run_staged_activation_check(repository: &Path) -> Result<Authority, String> {
@@ -52,22 +79,45 @@ fn run_staged_activation_check(repository: &Path) -> Result<Authority, String> {
         .output()
         .map_err(|error| format!("cannot run staged Methexis validation: {error}"))?;
 
-    std::io::stdout()
-        .write_all(&output.stdout)
-        .map_err(|error| format!("cannot forward Methexis validation output: {error}"))?;
-    std::io::stderr()
-        .write_all(&output.stderr)
+    handle_staged_check_output(
+        output.status.success(),
+        &output.status.to_string(),
+        &output.stdout,
+        &output.stderr,
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+    )
+}
+
+fn handle_staged_check_output(
+    succeeded: bool,
+    status: &str,
+    captured_stdout: &[u8],
+    captured_stderr: &[u8],
+    forwarded_stdout: &mut impl Write,
+    forwarded_stderr: &mut impl Write,
+) -> Result<Authority, String> {
+    forwarded_stderr
+        .write_all(captured_stderr)
         .map_err(|error| format!("cannot forward Methexis validation diagnostics: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "staged Methexis validation failed with {}",
-            output.status
-        ));
+    if !succeeded {
+        forwarded_stdout
+            .write_all(captured_stdout)
+            .map_err(|error| format!("cannot forward Methexis validation output: {error}"))?;
+        return Err(format!("staged Methexis validation failed with {status}"));
     }
 
-    serde_json::from_slice::<CheckReport>(&output.stdout)
-        .map(|report| report.authority)
-        .map_err(|error| format!("staged Methexis validation returned an invalid report: {error}"))
+    let report = serde_json::from_slice::<CheckReport>(captured_stdout).map_err(|error| {
+        format!("staged Methexis validation returned an invalid report: {error}")
+    })?;
+    if !report.ok {
+        return Err("successful Methexis process returned `ok: false`".to_owned());
+    }
+    let summary = serde_json::to_string(&report.summary())
+        .map_err(|error| format!("cannot encode Methexis validation summary: {error}"))?;
+    writeln!(forwarded_stdout, "{summary}")
+        .map_err(|error| format!("cannot forward Methexis validation summary: {error}"))?;
+    Ok(report.authority)
 }
 
 fn run_cargo(repository: &Path, arguments: &[&str], label: &str) -> Result<(), String> {
@@ -85,18 +135,4 @@ fn run_cargo(repository: &Path, arguments: &[&str], label: &str) -> Result<(), S
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{Authority, CheckReport};
-
-    // Methexis가 실제 prospective authority를 보고한 경우만 activation
-    // 구간으로 분류하여, 별도 Git index 사전 읽기와의 불일치가 생기지 않는다.
-    #[test]
-    fn trusts_only_the_authority_in_the_single_methexis_report() {
-        let prospective: CheckReport =
-            serde_json::from_str(r#"{"authority":"prospective"}"#).unwrap();
-        let ordinary: CheckReport = serde_json::from_str(r#"{"authority":"draft"}"#).unwrap();
-
-        assert_eq!(prospective.authority, Authority::Prospective);
-        assert_eq!(ordinary.authority, Authority::Draft);
-    }
-}
+mod tests;
