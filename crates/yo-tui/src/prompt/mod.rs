@@ -183,3 +183,4 @@ impl PreparedPrompt {
 
 #[cfg(test)]
 mod tests;
+pub(crate) mod workspace_reference;

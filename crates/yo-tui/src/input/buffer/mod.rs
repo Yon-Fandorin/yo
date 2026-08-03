@@ -56,6 +56,27 @@ impl TextBuffer {
         true
     }
 
+    pub(crate) fn replace_range(
+        &mut self,
+        range: std::ops::Range<usize>,
+        replacement: &str,
+    ) -> bool {
+        if range.start > range.end
+            || range.end > self.text.len()
+            || !self.text.is_char_boundary(range.start)
+            || !self.text.is_char_boundary(range.end)
+        {
+            return false;
+        }
+        if self.text[range.clone()] == *replacement {
+            self.cursor = range.start + replacement.len();
+            return false;
+        }
+        self.text.replace_range(range.clone(), replacement);
+        self.cursor = boundary_at_or_after(&self.text, range.start + replacement.len());
+        true
+    }
+
     pub(crate) fn move_left(&mut self) -> bool {
         let Some(previous) = self.text[..self.cursor]
             .grapheme_indices(true)

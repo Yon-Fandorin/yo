@@ -52,6 +52,15 @@ impl PromptEditor {
         self.buffer.cursor_byte_index()
     }
 
+    pub(crate) fn replace_range(
+        &mut self,
+        range: std::ops::Range<usize>,
+        replacement: &str,
+    ) -> bool {
+        self.control.cancel_exit_sequence();
+        self.buffer.replace_range(range, replacement)
+    }
+
     pub(crate) fn layout(&self, width: NonZeroU16) -> Result<TextLayout, LayoutError> {
         layout::layout_text(self.text(), self.cursor_byte_index(), width)
     }

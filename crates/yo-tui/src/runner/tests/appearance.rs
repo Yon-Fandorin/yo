@@ -348,6 +348,7 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
                 background: default,
                 frame: default,
                 title: default,
+                key_hint: default,
                 hint: default,
                 label: default,
                 detail: default,

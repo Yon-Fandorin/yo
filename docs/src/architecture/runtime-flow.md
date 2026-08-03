@@ -67,6 +67,44 @@ Contracts:
 and
 [resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
+## Workspace reference assistance
+
+Typing an eligible `@query` in Chat follows a separate nonblocking route:
+
+```text
+PromptEditor + cursor
+  ↓ revision-bound trigger snapshot
+yo-core local execution workspace provider
+  ↓ Git-ignore-aware files/directories + deterministic Unicode-normalized ranking
+TuiState prompt overlay
+  ↓ Tab or Enter
+replace the exact @query span and retain its typed identity
+```
+
+`yo-tui` owns scanning, stale-result rejection, overlay input, and editor-span
+transforms. `yo-core::LocalWorkspaceReferenceProvider` owns local execution
+discovery semantics and performs Git and filesystem work on its worker thread;
+`yo-cli` only constructs and connects that capability.
+The candidate and request/update types live in `yo-core`, so a remote execution
+provider can replace the local connection without moving filesystem authority
+into the frontend. The inventory includes visible files and directories,
+honors nested Git ignore, repository exclude, and configured global excludes,
+and does not follow directory symlinks. Each row keeps its basename and dimmed
+parent path together in the left reading flow and reserves the right edge for
+the neutral `File` or `Dir` kind. Directory labels and accepted tokens end in
+`/` so their kind remains visible while typing. The first query may show a
+searching state in the header; continuous typing keeps the current panel until the newest
+result arrives, then redraws once instead of flashing an intermediate loading
+frame. The panel title is `Files`; its header derives hints from the active
+bindings, emphasizing keys while dimming captions. Rich glyphs use `↑↓` for
+movement, ASCII uses `Up/Down`, and familiar terminal names such as `Enter`,
+`Esc`, and `^C` remain literal.
+
+This Slice deliberately stops before structured submission admission. Selecting
+a row visibly replaces the token and retains the typed reference, but a later
+Enter preserves the draft and reports that structured submission is not yet
+connected. It never silently degrades an accepted identity into plain text.
+
 ## One active turn
 
 A submitted prompt follows this route:

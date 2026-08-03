@@ -2,7 +2,7 @@ use std::{collections::VecDeque, time::Duration};
 
 use yo_core::{
     ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent, ApprovalDecision, JournalDurability,
-    TranscriptRecord,
+    TranscriptRecord, WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchUpdate,
 };
 
 use crate::{
@@ -15,6 +15,7 @@ use crate::{
         AcceptanceReceipt, OverlayInputEffect, OverlayInstanceToken, PanelSnapshot,
         PromptOverlaySlot, SlotError,
     },
+    prompt::workspace_reference::{WorkspaceEdit, WorkspaceReferenceAssist},
     runner::{
         AgentAction, PresentationMode,
         chat::{ChatProjection, ChatProjectionChange},
@@ -37,6 +38,10 @@ pub(super) enum StateEffect {
     Suspend,
     Exit,
     Resize(Size),
+    WorkspaceSearch {
+        request: WorkspaceReferenceSearchRequest,
+        show_loading: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,6 +92,7 @@ pub(super) struct TuiState {
     presentation_mode: PresentationMode,
     overlay: PromptOverlaySlot,
     accepted_overlays: VecDeque<AcceptanceReceipt>,
+    workspace_references: WorkspaceReferenceAssist,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,6 +137,7 @@ impl TuiState {
             ViewInputEffect::Redraw => {
                 if self.views.active() != active_before {
                     self.overlay.close_current();
+                    self.workspace_references.cancel();
                 }
                 return Ok(StateEffect::Redraw);
             },
@@ -139,8 +146,16 @@ impl TuiState {
         match self.overlay.handle(&input) {
             OverlayInputEffect::Unhandled => {},
             OverlayInputEffect::Consumed => return Ok(StateEffect::Unchanged),
-            OverlayInputEffect::Redraw => return Ok(StateEffect::Redraw),
+            OverlayInputEffect::Redraw => {
+                if !self.overlay.is_open() {
+                    self.workspace_references.cancel();
+                }
+                return Ok(StateEffect::Redraw);
+            },
             OverlayInputEffect::Accepted(receipt) => {
+                if self.workspace_references.accept(&receipt, &mut self.editor) {
+                    return Ok(StateEffect::Redraw);
+                }
                 self.accepted_overlays.push_back(receipt);
                 return Ok(StateEffect::Redraw);
             },
@@ -152,10 +167,44 @@ impl TuiState {
             ViewInputEffect::Redraw => return Ok(StateEffect::Redraw),
         }
 
+        let previous_text = self.editor.text().to_owned();
+        let previous_cursor = self.editor.cursor_byte_index();
         let effect = self.editor.handle(input, self.turn_active, now);
         match effect {
-            EditorEffect::BufferChanged => Ok(StateEffect::Redraw),
+            EditorEffect::BufferChanged => {
+                let edit = WorkspaceEdit::between(
+                    &previous_text,
+                    previous_cursor,
+                    self.editor.text(),
+                    self.editor.cursor_byte_index(),
+                );
+                let assist_eligible = self.views.active()
+                    == crate::runner::view::ObservabilityView::Chat
+                    && !self.has_pending_request();
+                Ok(self
+                    .workspace_references
+                    .prompt_changed(
+                        &self.editor,
+                        &mut self.overlay,
+                        edit.as_ref(),
+                        assist_eligible,
+                    )
+                    .map_or(StateEffect::Redraw, |(request, show_loading)| {
+                        StateEffect::WorkspaceSearch {
+                            request,
+                            show_loading,
+                        }
+                    }))
+            },
             EditorEffect::Submitted(text) => {
+                if self.workspace_references.has_accepted_references() {
+                    self.editor.replace_range(0..0, &text);
+                    self.chat.push_notice(
+                        "Workspace reference selected. Structured submission is not connected yet; the draft was preserved."
+                            .to_owned(),
+                    )?;
+                    return Ok(StateEffect::Redraw);
+                }
                 if let Some(request) = self.pending_requests.front().copied() {
                     return self.request_response(request, text);
                 }
@@ -196,6 +245,32 @@ impl TuiState {
         Ok(StateEffect::Unchanged)
     }
 
+    pub(super) fn enable_workspace_references(&mut self) {
+        self.workspace_references.enable();
+    }
+
+    pub(super) fn observe_workspace_reference_update(
+        &mut self,
+        update: WorkspaceReferenceSearchUpdate,
+    ) -> StateEffect {
+        if self.workspace_references.observe(update, &mut self.overlay) {
+            StateEffect::Redraw
+        } else {
+            StateEffect::Unchanged
+        }
+    }
+
+    pub(super) fn observe_workspace_reference_failure(&mut self, reason: String) -> StateEffect {
+        if self
+            .workspace_references
+            .provider_failed(reason, &mut self.overlay)
+        {
+            StateEffect::Redraw
+        } else {
+            StateEffect::Unchanged
+        }
+    }
+
     #[cfg(test)]
     pub(super) const fn durability(&self) -> Option<JournalDurability> {
         self.durability
@@ -224,6 +299,7 @@ impl TuiState {
                 };
                 if let Some(request) = request {
                     self.overlay.close_current();
+                    self.workspace_references.cancel();
                     self.pending_requests.push_back(request);
                 }
             },

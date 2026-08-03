@@ -12,10 +12,6 @@ mod render;
 pub(crate) struct EntryIdentity(String);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "prompt providers construct typed availability")
-)]
 pub(crate) enum EntryAvailability {
     Enabled,
     Disabled { reason: String },
@@ -25,6 +21,7 @@ pub(crate) enum EntryAvailability {
 pub(crate) struct SelectionEntry {
     identity: EntryIdentity,
     label: String,
+    context: Option<String>,
     detail: Option<String>,
     availability: EntryAvailability,
 }
@@ -32,6 +29,7 @@ pub(crate) struct SelectionEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PanelSnapshot {
     title: String,
+    title_status: Option<String>,
     entries: Vec<SelectionEntry>,
 }
 
@@ -46,6 +44,7 @@ pub(crate) struct SelectionPanelStyles {
     pub(crate) background: Style,
     pub(crate) frame: Style,
     pub(crate) title: Style,
+    pub(crate) key_hint: Style,
     pub(crate) hint: Style,
     pub(crate) label: Style,
     pub(crate) detail: Style,
@@ -62,6 +61,7 @@ pub(crate) struct SelectionPanelGlyphs {
     bottom_left: &'static str,
     bottom_right: &'static str,
     selected_marker: &'static str,
+    rich_keys: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,7 +101,9 @@ pub(crate) enum PanelValidationError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TextField {
     Title,
+    TitleStatus,
     Label { index: usize },
+    Context { index: usize },
     Detail { index: usize },
     DisabledReason { index: usize },
 }
@@ -111,13 +113,6 @@ pub(crate) enum PanelPaintError {
     SurfaceConflict,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "prompt providers construct and consume opaque identities"
-    )
-)]
 impl EntryIdentity {
     pub(crate) fn new(value: impl Into<String>) -> Self {
         Self(value.into())
@@ -128,11 +123,8 @@ impl EntryIdentity {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "prompt providers construct semantic entries")
-)]
 impl SelectionEntry {
+    #[cfg(test)]
     pub(crate) fn enabled(
         identity: impl Into<String>,
         label: impl Into<String>,
@@ -141,6 +133,22 @@ impl SelectionEntry {
         Self {
             identity: EntryIdentity::new(identity),
             label: label.into(),
+            context: None,
+            detail,
+            availability: EntryAvailability::Enabled,
+        }
+    }
+
+    pub(crate) fn enabled_with_context(
+        identity: impl Into<String>,
+        label: impl Into<String>,
+        context: Option<String>,
+        detail: Option<String>,
+    ) -> Self {
+        Self {
+            identity: EntryIdentity::new(identity),
+            label: label.into(),
+            context,
             detail,
             availability: EntryAvailability::Enabled,
         }
@@ -155,6 +163,7 @@ impl SelectionEntry {
         Self {
             identity: EntryIdentity::new(identity),
             label: label.into(),
+            context: None,
             detail,
             availability: EntryAvailability::Disabled {
                 reason: reason.into(),
@@ -168,23 +177,26 @@ impl SelectionEntry {
 }
 
 impl PanelSnapshot {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "prompt providers publish snapshots through this seam"
-        )
-    )]
     pub(crate) fn new(
         title: impl Into<String>,
         entries: Vec<SelectionEntry>,
     ) -> Result<Self, PanelValidationError> {
         let snapshot = Self {
             title: title.into(),
+            title_status: None,
             entries,
         };
         snapshot.validate()?;
         Ok(snapshot)
+    }
+
+    pub(crate) fn with_title_status(
+        mut self,
+        status: impl Into<String>,
+    ) -> Result<Self, PanelValidationError> {
+        self.title_status = Some(status.into());
+        self.validate()?;
+        Ok(self)
     }
 
     fn validate(&self) -> Result<(), PanelValidationError> {
@@ -192,6 +204,9 @@ impl PanelSnapshot {
             return Err(PanelValidationError::EmptyTitle);
         }
         validate_text(&self.title, TextField::Title)?;
+        if let Some(status) = &self.title_status {
+            validate_text(status, TextField::TitleStatus)?;
+        }
         if self.entries.is_empty() {
             return Err(PanelValidationError::EmptyEntries);
         }
@@ -207,6 +222,9 @@ impl PanelSnapshot {
                 return Err(PanelValidationError::EmptyLabel { index });
             }
             validate_text(&entry.label, TextField::Label { index })?;
+            if let Some(context) = &entry.context {
+                validate_text(context, TextField::Context { index })?;
+            }
             if let Some(detail) = &entry.detail {
                 validate_text(detail, TextField::Detail { index })?;
             }
@@ -222,13 +240,6 @@ impl PanelSnapshot {
 }
 
 impl SelectionPanel {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "prompt providers publish snapshots through this seam"
-        )
-    )]
     pub(crate) fn new(snapshot: PanelSnapshot) -> Self {
         let selected = snapshot
             .entries
@@ -335,6 +346,7 @@ impl SelectionPanelGlyphs {
             bottom_left: "╰",
             bottom_right: "╯",
             selected_marker: "›",
+            rich_keys: true,
         }
     }
 
@@ -347,6 +359,7 @@ impl SelectionPanelGlyphs {
             bottom_left: "+",
             bottom_right: "+",
             selected_marker: ">",
+            rich_keys: false,
         }
     }
 }

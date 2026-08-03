@@ -8,12 +8,14 @@ mod session;
 mod state;
 mod unix;
 mod view;
+mod workspace;
 
 pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch};
 pub use archival::{ArchivedProjectionError, ArchivedSessionView, project_archived_session};
 pub use error::RunError;
 pub use session::{TuiSession, TuiSessionInfo};
 pub use unix::{run, run_session_with_mode, run_with_mode};
+pub use workspace::{WorkspaceReferenceConnection, WorkspaceReferencePoll};
 
 /// Terminal presentation selected before the live session acquires terminal state.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

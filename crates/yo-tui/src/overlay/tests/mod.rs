@@ -27,6 +27,7 @@ fn appearance() -> SelectionPanelAppearance {
             background: plain,
             frame: Style::new(Color::Default, Color::Default, Attributes::DIM),
             title: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+            key_hint: Style::new(Color::Default, Color::Default, Attributes::BOLD),
             hint: Style::new(Color::Default, Color::Default, Attributes::DIM),
             label: plain,
             detail: Style::new(Color::Default, Color::Default, Attributes::DIM),
@@ -90,12 +91,42 @@ fn renders_rib_shaped_selection_panel_from_semantic_entries() {
 
     assert_eq!(size, Size::new(54, 4));
     assert!(row(&surface, 0).contains("Commands"));
-    assert!(row(&surface, 0).contains("Esc close · Ctrl+C interrupt"));
+    assert!(row(&surface, 0).contains("[Esc] close · [^C] interrupt"));
     assert!(row(&surface, 1).contains("› Resume session"));
     assert!(row(&surface, 1).contains("continue locally"));
     assert!(row(&surface, 2).contains("Remote session"));
     assert!(row(&surface, 2).contains("not connected"));
     assert_eq!(panel.selected_identity().unwrap().as_str(), "resume");
+}
+
+// workspace형 후보는 이름과 부모 경로를 왼쪽 읽기 흐름으로 붙이고 종류만 오른쪽 끝에 둔다.
+// 선택 강조는 marker가 담당하므로 파일 이름 자체에는 별도 selected 색을 입히지 않는다.
+#[test]
+fn renders_codex_shaped_path_context_with_a_trailing_kind() {
+    let panel = SelectionPanel::new(snapshot(vec![
+        SelectionEntry::enabled_with_context(
+            "main",
+            "main.rs",
+            Some("crates/yo-cli/src/".into()),
+            Some("File".into()),
+        ),
+        SelectionEntry::enabled_with_context(
+            "directory",
+            "workspace/",
+            Some("crates/yo-core/src/".into()),
+            Some("Dir".into()),
+        ),
+    ]));
+
+    let (surface, _) = render(&panel, Size::new(64, 4)).unwrap();
+
+    assert!(row(&surface, 1).contains("› main.rs     crates/yo-cli/src/"));
+    assert!(row(&surface, 1).ends_with("File│"));
+    assert!(row(&surface, 2).contains("  workspace/  crates/yo-core/src/"));
+    assert_eq!(
+        surface.cell(Point::new(3, 1)).unwrap().style(),
+        Style::default()
+    );
 }
 
 // 좁은 panel은 detail과 disabled reason을 먼저 버리고 label만 grapheme 경계에서 줄여,

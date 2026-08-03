@@ -65,6 +65,44 @@ label은 화면 표시용 metadata일 뿐 backend Session을 선택하거나 식
 그리고
 [resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
+## Workspace reference 도움
+
+Chat에서 유효한 `@query`를 입력하면 agent command와 분리된 다음
+nonblocking 경로를 따른다.
+
+```text
+PromptEditor + cursor
+  ↓ revision에 묶인 trigger snapshot
+yo-core local 실행 workspace provider
+  ↓ Git ignore를 따르는 파일·디렉터리 + 결정적인 Unicode 정규화 순위
+TuiState prompt overlay
+  ↓ Tab 또는 Enter
+정확한 @query span을 바꾸고 typed identity 보존
+```
+
+`yo-tui`는 scan, stale 결과 거절, overlay 입력, editor span 변환을
+소유한다. `yo-core::LocalWorkspaceReferenceProvider`가 local 실행 탐색
+의미와 background Git·filesystem 작업을 소유하고, `yo-cli`는 이 capability를
+생성해 연결만 한다.
+candidate와 request/update type은 `yo-core`에 있으므로 remote 실행
+provider를 연결해도 filesystem 권한이 frontend로 이동하지 않는다.
+inventory는 보이는 파일과 디렉터리를 포함하고 nested Git ignore,
+repository exclude, 설정된 global exclude를 따르며 directory symlink를
+따라가지 않는다. 각 행은 basename과 dimmed 부모 경로를 왼쪽 읽기 흐름에
+함께 두고, 오른쪽 끝은 중립적인 `File` 또는 `Dir` 종류에만 사용한다.
+디렉터리 label과 선택 후 token은 `/`로 끝나 입력 중에도 종류가 눈에 보인다.
+첫 query는 header에 검색 중 상태를 보여줄 수 있지만 연속 입력 중에는 현재 panel을 유지하고
+최신 결과가 도착할 때 한 번만 다시 그려 중간 loading frame이 깜빡이지 않게 한다.
+panel title은 `Files`이며 header hint는 활성 binding에서 도출해 key만 강조하고
+caption은 dim 처리한다. Rich glyph는 이동에 `↑↓`, ASCII는 `Up/Down`을 쓰고,
+익숙한 terminal 표기인 `Enter`, `Esc`, `^C`는 문자 그대로 유지한다.
+
+이 Slice는 structured submission admission 직전에서 의도적으로 멈춘다.
+항목을 고르면 token은 눈에 보이게 치환되고 typed reference가 남지만,
+그 뒤 Enter를 누르면 draft를 보존하고 아직 structured submission이
+연결되지 않았다고 알린다. 승인한 identity를 몰래 plain text로 낮추지
+않는다.
+
 ## 활성 Turn 하나
 
 제출된 prompt는 다음 경로를 지난다.

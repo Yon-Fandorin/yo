@@ -17,8 +17,9 @@ pub(super) struct BindingMatch {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BindingHint {
-    physical: &'static str,
+    physical: String,
     caption: &'static str,
+    optional: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -31,7 +32,6 @@ struct ResolvedBinding {
     action: OverlayAction,
     code: KeyCode,
     modifiers: KeyModifiers,
-    physical: &'static str,
 }
 
 impl OverlayBindings {
@@ -51,33 +51,68 @@ impl OverlayBindings {
             })
     }
 
-    pub(super) fn hints(&self, turn_active: bool) -> Vec<BindingHint> {
+    pub(super) fn hints(&self, turn_active: bool, rich_keys: bool) -> Vec<BindingHint> {
+        let mut hints = Vec::new();
+        let previous = self.binding(OverlayAction::Previous);
+        let next = self.binding(OverlayAction::Next);
+        if let (Some(previous), Some(next)) = (previous, next) {
+            hints.push(BindingHint {
+                physical: if rich_keys {
+                    format!(
+                        "{}{}",
+                        key_notation(previous, true),
+                        key_notation(next, true)
+                    )
+                } else {
+                    format!(
+                        "{}/{}",
+                        key_notation(previous, false),
+                        key_notation(next, false)
+                    )
+                },
+                caption: "move",
+                optional: true,
+            });
+        }
+        if let Some(accept) = self.binding(OverlayAction::Accept) {
+            hints.push(BindingHint {
+                physical: key_notation(accept, rich_keys),
+                caption: "insert",
+                optional: true,
+            });
+        }
         let mut actions = vec![OverlayAction::Dismiss];
         if turn_active {
             actions.push(OverlayAction::Interrupt);
         }
-        actions
-            .into_iter()
-            .filter_map(|action| {
-                self.bindings
-                    .iter()
-                    .find(|binding| binding.action == action)
-            })
-            .map(|binding| BindingHint {
-                physical: binding.physical,
+        hints.extend(actions.into_iter().filter_map(|action| {
+            self.binding(action).map(|binding| BindingHint {
+                physical: key_notation(binding, rich_keys),
                 caption: binding.action.caption(),
+                optional: false,
             })
-            .collect()
+        }));
+        hints
+    }
+
+    fn binding(&self, action: OverlayAction) -> Option<&ResolvedBinding> {
+        self.bindings
+            .iter()
+            .find(|binding| binding.action == action)
     }
 }
 
 impl BindingHint {
-    pub(super) const fn physical(&self) -> &'static str {
-        self.physical
+    pub(super) fn physical(&self) -> &str {
+        &self.physical
     }
 
     pub(super) const fn caption(&self) -> &'static str {
         self.caption
+    }
+
+    pub(super) const fn is_optional(&self) -> bool {
+        self.optional
     }
 }
 
@@ -101,47 +136,94 @@ impl Default for OverlayBindings {
                     action: OverlayAction::Dismiss,
                     code: KeyCode::Escape,
                     modifiers: KeyModifiers::NONE,
-                    physical: "Esc",
                 },
                 ResolvedBinding {
                     action: OverlayAction::Previous,
                     code: KeyCode::Up,
                     modifiers: KeyModifiers::NONE,
-                    physical: "↑",
                 },
                 ResolvedBinding {
                     action: OverlayAction::Next,
                     code: KeyCode::Down,
                     modifiers: KeyModifiers::NONE,
-                    physical: "↓",
                 },
                 ResolvedBinding {
                     action: OverlayAction::Accept,
                     code: KeyCode::Enter,
                     modifiers: KeyModifiers::NONE,
-                    physical: "Enter",
                 },
                 ResolvedBinding {
                     action: OverlayAction::Accept,
                     code: KeyCode::Tab,
                     modifiers: KeyModifiers::NONE,
-                    physical: "Tab",
                 },
                 ResolvedBinding {
                     action: OverlayAction::Interrupt,
                     code: KeyCode::Character('c'),
                     modifiers: KeyModifiers::CONTROL,
-                    physical: "Ctrl+C",
                 },
                 ResolvedBinding {
                     action: OverlayAction::Interrupt,
                     code: KeyCode::Character('C'),
                     modifiers: KeyModifiers::CONTROL,
-                    physical: "Ctrl+C",
                 },
             ],
         }
     }
+}
+
+fn key_notation(binding: &ResolvedBinding, rich_keys: bool) -> String {
+    if binding.modifiers.contains(KeyModifiers::CONTROL)
+        && let KeyCode::Character(character) = binding.code
+    {
+        return format!("^{}", character.to_uppercase().collect::<String>());
+    }
+    let mut notation = String::new();
+    if binding.modifiers.contains(KeyModifiers::CONTROL) {
+        notation.push_str("C-");
+    }
+    if binding.modifiers.contains(KeyModifiers::ALT)
+        || binding.modifiers.contains(KeyModifiers::META)
+    {
+        notation.push_str("M-");
+    }
+    if binding.modifiers.contains(KeyModifiers::SHIFT) {
+        notation.push_str("S-");
+    }
+    notation.push_str(match binding.code {
+        KeyCode::Character(character) => return format!("{notation}{character}"),
+        KeyCode::Enter => "Enter",
+        KeyCode::Tab => "Tab",
+        KeyCode::BackTab => "BackTab",
+        KeyCode::Backspace => "Backspace",
+        KeyCode::Delete => "Delete",
+        KeyCode::Escape => "Esc",
+        KeyCode::Up if rich_keys => "↑",
+        KeyCode::Down if rich_keys => "↓",
+        KeyCode::Left if rich_keys => "←",
+        KeyCode::Right if rich_keys => "→",
+        KeyCode::Up => "Up",
+        KeyCode::Down => "Down",
+        KeyCode::Left => "Left",
+        KeyCode::Right => "Right",
+        KeyCode::Home => "Home",
+        KeyCode::End => "End",
+        KeyCode::PageUp => "PageUp",
+        KeyCode::PageDown => "PageDown",
+        KeyCode::Insert => "Insert",
+        KeyCode::Function(_)
+        | KeyCode::Null
+        | KeyCode::CapsLock
+        | KeyCode::ScrollLock
+        | KeyCode::NumLock
+        | KeyCode::PrintScreen
+        | KeyCode::Pause
+        | KeyCode::Menu
+        | KeyCode::KeypadBegin
+        | KeyCode::Media(_)
+        | KeyCode::Modifier(_) => "Key",
+    });
+    notation
 }
 
 #[cfg(test)]
@@ -166,11 +248,24 @@ mod tests {
 
         assert_eq!(
             bindings
-                .hints(true)
+                .hints(true, true)
                 .iter()
                 .map(|hint| (hint.physical(), hint.caption()))
                 .collect::<Vec<_>>(),
-            vec![("Esc", "close"), ("Ctrl+C", "interrupt")]
+            vec![
+                ("↑↓", "move"),
+                ("Enter", "insert"),
+                ("Esc", "close"),
+                ("^C", "interrupt"),
+            ]
+        );
+        assert_eq!(
+            bindings
+                .hints(false, false)
+                .iter()
+                .map(|hint| (hint.physical(), hint.caption()))
+                .collect::<Vec<_>>(),
+            vec![("Up/Down", "move"), ("Enter", "insert"), ("Esc", "close"),]
         );
         assert_eq!(
             bindings

@@ -42,6 +42,7 @@ pub(crate) struct PromptOverlaySlot {
 struct OverlayInstance {
     token: OverlayInstanceToken,
     panel: SelectionPanel,
+    acceptance_enabled: bool,
 }
 
 impl PromptOverlaySlot {
@@ -57,6 +58,7 @@ impl PromptOverlaySlot {
         self.current = Some(OverlayInstance {
             token,
             panel: SelectionPanel::new(snapshot),
+            acceptance_enabled: true,
         });
         self.presented = false;
         Ok(token)
@@ -87,12 +89,17 @@ impl PromptOverlaySlot {
         &mut self,
         token: OverlayInstanceToken,
     ) -> Result<AcceptanceReceipt, SlotError> {
-        let identity = self
-            .matching(token)?
-            .panel
-            .selected_identity()
-            .cloned()
-            .ok_or(SlotError::NoSelection)?;
+        let identity = {
+            let current = self.matching(token)?;
+            if !current.acceptance_enabled {
+                return Err(SlotError::NoSelection);
+            }
+            current
+                .panel
+                .selected_identity()
+                .cloned()
+                .ok_or(SlotError::NoSelection)?
+        };
         self.close_current();
         Ok(AcceptanceReceipt { token, identity })
     }
@@ -146,12 +153,25 @@ impl PromptOverlaySlot {
         self.current.as_ref().map(|current| &current.panel)
     }
 
+    pub(crate) const fn is_open(&self) -> bool {
+        self.current.is_some()
+    }
+
     pub(crate) const fn bindings(&self) -> &OverlayBindings {
         &self.bindings
     }
 
     pub(crate) fn set_presented(&mut self, presented: bool) {
         self.presented = presented && self.current.is_some();
+    }
+
+    pub(crate) fn set_acceptance_enabled(
+        &mut self,
+        token: OverlayInstanceToken,
+        enabled: bool,
+    ) -> Result<(), SlotError> {
+        self.matching_mut(token)?.acceptance_enabled = enabled;
+        Ok(())
     }
 
     fn matching(&self, token: OverlayInstanceToken) -> Result<&OverlayInstance, SlotError> {
@@ -180,10 +200,6 @@ impl PromptOverlaySlot {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "prompt providers consume acceptance receipts")
-)]
 impl AcceptanceReceipt {
     pub(crate) const fn token(&self) -> OverlayInstanceToken {
         self.token

@@ -46,8 +46,12 @@ impl SelectionPanel {
         if visible_rows == 0 {
             return None;
         }
-        let hints = bindings.hints(turn_active);
-        if !header_fits(width, &hints) {
+        let hints = fitting_hints(
+            width,
+            bindings.hints(turn_active, appearance.glyphs.rich_keys),
+            &self.snapshot.title,
+        )?;
+        if hints.is_empty() {
             return None;
         }
         let (start, end) = self.visible_window(visible_rows);
@@ -61,16 +65,24 @@ impl SelectionPanel {
         prepared.prepare_frame(
             appearance,
             &self.snapshot.title,
+            self.snapshot.title_status.as_deref(),
             &hints,
             start,
             self.snapshot.entries.len() - end,
         );
+        let label_column_width = self.snapshot.entries[start..end]
+            .iter()
+            .filter(|entry| entry.context.is_some())
+            .map(|entry| text_width(&entry.label))
+            .max()
+            .unwrap_or(0);
         for (row, entry) in self.snapshot.entries[start..end].iter().enumerate() {
             prepared.prepare_entry(
                 u16::try_from(row + 1).expect("visible cap fits u16"),
                 entry,
                 self.selected.as_ref() == Some(&entry.identity),
                 appearance,
+                label_column_width,
             );
         }
         Some(prepared)
@@ -98,6 +110,7 @@ impl PreparedSelectionPanel {
         &mut self,
         appearance: SelectionPanelAppearance,
         title: &str,
+        title_status: Option<&str>,
         hints: &[BindingHint],
         hidden_above: usize,
         hidden_below: usize,
@@ -130,27 +143,47 @@ impl PreparedSelectionPanel {
         }
 
         let content_end = last_x;
-        let title = format!(" {title} ");
-        let hints = hints
-            .iter()
-            .map(|hint| format!("{} {}", hint.physical(), hint.caption()))
-            .collect::<Vec<_>>()
-            .join(" · ");
-        let hint_width = text_width(&hints);
+        let hint_width = hints_width(hints);
         let hint_start = usize::from(content_end)
             .checked_sub(hint_width + 1)
             .expect("header fitting reserves mandatory hint width");
+        let title_end = u16::try_from(hint_start.saturating_sub(1)).expect("panel width fits u16");
+        let title = format!(" {title}");
         self.push_truncated_text(
             Point::new(2.min(content_end), 0),
             &title,
-            u16::try_from(hint_start.saturating_sub(1)).expect("panel width fits u16"),
+            title_end,
             styles.title,
         );
-        self.push_text(
-            Point::new(u16::try_from(hint_start).expect("panel width fits u16"), 0),
-            &hints,
+        if let Some(status) = title_status {
+            let status_start = 2_usize.saturating_add(text_width(&title));
+            if status_start < usize::from(title_end) {
+                self.push_truncated_text(
+                    Point::new(
+                        u16::try_from(status_start).expect("panel width fits u16"),
+                        0,
+                    ),
+                    &format!(" · {status} "),
+                    title_end,
+                    styles.hint,
+                );
+            }
+        } else {
+            let trailing = 2_usize.saturating_add(text_width(&title));
+            if trailing < usize::from(title_end) {
+                self.push_text(
+                    Point::new(u16::try_from(trailing).expect("panel width fits u16"), 0),
+                    " ",
+                    title_end,
+                    styles.title,
+                );
+            }
+        }
+        self.prepare_hints(
+            u16::try_from(hint_start).expect("panel width fits u16"),
             content_end,
-            styles.hint,
+            hints,
+            appearance,
         );
         let counts = match (hidden_above, hidden_below) {
             (0, 0) => String::new(),
@@ -171,12 +204,45 @@ impl PreparedSelectionPanel {
         }
     }
 
+    fn prepare_hints(
+        &mut self,
+        mut x: u16,
+        content_end: u16,
+        hints: &[BindingHint],
+        appearance: SelectionPanelAppearance,
+    ) {
+        for (index, hint) in hints.iter().enumerate() {
+            if index > 0 {
+                self.push_text(Point::new(x, 0), " · ", content_end, appearance.styles.hint);
+                x = x.saturating_add(3);
+            }
+            let key = format!("[{}]", hint.physical());
+            self.push_text(
+                Point::new(x, 0),
+                &key,
+                content_end,
+                appearance.styles.key_hint,
+            );
+            x = x.saturating_add(u16::try_from(text_width(&key)).unwrap_or(u16::MAX));
+            self.push_text(Point::new(x, 0), " ", content_end, appearance.styles.hint);
+            x = x.saturating_add(1);
+            self.push_text(
+                Point::new(x, 0),
+                hint.caption(),
+                content_end,
+                appearance.styles.hint,
+            );
+            x = x.saturating_add(u16::try_from(text_width(hint.caption())).unwrap_or(u16::MAX));
+        }
+    }
+
     fn prepare_entry(
         &mut self,
         row: u16,
         entry: &SelectionEntry,
         selected: bool,
         appearance: SelectionPanelAppearance,
+        label_column_width: usize,
     ) {
         let content_end = self.size.width - 1;
         if content_end <= 1 {
@@ -195,7 +261,6 @@ impl PreparedSelectionPanel {
         };
         self.push_text(Point::new(1, row), marker, content_end, marker_style);
         let label_style = match entry.availability {
-            EntryAvailability::Enabled if selected => styles.selected,
             EntryAvailability::Enabled => styles.label,
             EntryAvailability::Disabled { .. } => styles.disabled,
         };
@@ -210,16 +275,13 @@ impl PreparedSelectionPanel {
             (None, EntryAvailability::Enabled) => None,
         };
         let label_width = text_width(&entry.label);
+        let mut primary_end = content_end;
         if let Some(suffix) = suffix {
             let suffix_width = text_width(suffix);
-            if label_width + suffix_width + 2 <= available {
-                self.push_text(
-                    Point::new(label_start, row),
-                    &entry.label,
-                    content_end,
-                    label_style,
-                );
+            if suffix_width + 2 < available {
                 let suffix_start = usize::from(content_end).saturating_sub(suffix_width);
+                primary_end =
+                    u16::try_from(suffix_start.saturating_sub(2)).expect("panel width fits u16");
                 let suffix_style = if entry.is_enabled() {
                     styles.detail
                 } else {
@@ -234,15 +296,36 @@ impl PreparedSelectionPanel {
                     content_end,
                     suffix_style,
                 );
-                return;
             }
         }
-        self.push_truncated_text(
+        if label_width > usize::from(primary_end.saturating_sub(label_start)) {
+            self.push_truncated_text(
+                Point::new(label_start, row),
+                &entry.label,
+                primary_end,
+                label_style,
+            );
+            return;
+        }
+        self.push_text(
             Point::new(label_start, row),
             &entry.label,
-            content_end,
+            primary_end,
             label_style,
         );
+        if let Some(context) = &entry.context {
+            let context_start = label_start
+                .saturating_add(u16::try_from(label_column_width).unwrap_or(u16::MAX))
+                .saturating_add(2);
+            if context_start < primary_end {
+                self.push_truncated_text(
+                    Point::new(context_start, row),
+                    context,
+                    primary_end,
+                    styles.detail,
+                );
+            }
+        }
     }
 
     fn push_truncated_text(&mut self, point: Point, text: &str, end_x: u16, style: Style) {
@@ -306,14 +389,36 @@ fn text_width(value: &str) -> usize {
     value.graphemes(true).map(grapheme_width).sum()
 }
 
-fn header_fits(width: NonZeroU16, hints: &[BindingHint]) -> bool {
-    let hint_text = hints
+fn fitting_hints(
+    width: NonZeroU16,
+    mut hints: Vec<BindingHint>,
+    title: &str,
+) -> Option<Vec<BindingHint>> {
+    let full_title_reserve = text_width(title).saturating_add(5);
+    while !header_fits(width, &hints, full_title_reserve) {
+        let Some(optional) = hints.iter().position(BindingHint::is_optional) else {
+            break;
+        };
+        hints.remove(optional);
+    }
+    if header_fits(width, &hints, full_title_reserve) {
+        return Some(hints);
+    }
+    let interrupt_is_visible = hints.iter().any(|hint| hint.caption() == "interrupt");
+    let compact_title_reserve = if interrupt_is_visible { 8 } else { 5 };
+    header_fits(width, &hints, compact_title_reserve).then_some(hints)
+}
+
+fn header_fits(width: NonZeroU16, hints: &[BindingHint], title_reserve: usize) -> bool {
+    hints_width(hints) + title_reserve <= usize::from(width.get())
+}
+
+fn hints_width(hints: &[BindingHint]) -> usize {
+    hints
         .iter()
-        .map(|hint| format!("{} {}", hint.physical(), hint.caption()))
-        .collect::<Vec<_>>()
-        .join(" · ");
-    // Two borders, one visible title cell, and one separating cell stay reserved.
-    text_width(&hint_text) + 5 < usize::from(width.get())
+        .map(|hint| text_width(hint.physical()) + text_width(hint.caption()) + 3)
+        .sum::<usize>()
+        + hints.len().saturating_sub(1) * 3
 }
 
 fn grapheme_width(value: &str) -> usize {

@@ -21,5 +21,6 @@ pub use runner::{
     AgentAction, AgentConnection, AgentPoll, ArchivedProjectionError, ArchivedSessionView,
     DispatchOutcome, ExitReason, PendingDispatch, PresentationMode, RunError, RunOutcome,
     TerminalOutcome, TerminationEvent, TerminationSource, TuiSession, TuiSessionInfo,
-    project_archived_session, run, run_session_with_mode, run_with_mode,
+    WorkspaceReferenceConnection, WorkspaceReferencePoll, project_archived_session, run,
+    run_session_with_mode, run_with_mode,
 };

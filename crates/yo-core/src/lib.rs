@@ -10,6 +10,7 @@ mod journal;
 mod runtime;
 mod session;
 pub mod session_repository;
+mod workspace_reference;
 
 pub use agent_session::{
     AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, CommandAdmission,
@@ -37,6 +38,12 @@ pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
 pub use session::{
     ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionDescriptor, SessionId,
     SessionIdError, SessionIdGenerationError, SessionStartTime, TurnId, TurnRef,
+};
+pub use workspace_reference::{
+    LocalWorkspaceReferenceProvider, WorkspaceReference, WorkspaceReferenceCandidate,
+    WorkspaceReferenceKind, WorkspaceReferenceProvider, WorkspaceReferenceProviderPoll,
+    WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchStatus,
+    WorkspaceReferenceSearchUpdate, normalized_search_key,
 };
 
 #[cfg(test)]

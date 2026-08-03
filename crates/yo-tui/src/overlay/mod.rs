@@ -5,11 +5,9 @@ pub(crate) mod selection;
 mod slot;
 
 pub(crate) use binding::OverlayBindings;
-#[cfg(test)]
-pub(crate) use selection::SelectionEntry;
 pub(crate) use selection::{
-    PanelPaintError, PanelSnapshot, SelectionPanel, SelectionPanelAppearance, SelectionPanelGlyphs,
-    SelectionPanelStyles,
+    PanelPaintError, PanelSnapshot, SelectionEntry, SelectionPanel, SelectionPanelAppearance,
+    SelectionPanelGlyphs, SelectionPanelStyles,
 };
 pub(crate) use slot::{
     AcceptanceReceipt, OverlayInputEffect, OverlayInstanceToken, PromptOverlaySlot, SlotError,

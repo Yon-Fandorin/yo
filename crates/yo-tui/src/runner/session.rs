@@ -1,4 +1,4 @@
-use super::{PendingDispatch, PresentationMode, state::TuiState};
+use super::{PendingDispatch, PresentationMode, WorkspaceReferenceConnection, state::TuiState};
 #[cfg(test)]
 use crate::appearance::AppearancePin;
 use crate::{
@@ -15,12 +15,12 @@ use crate::{
 /// A process host can release and reacquire the terminal while keeping the
 /// same session value alive. Terminal modes, presenters, and frame history are
 /// deliberately not stored here.
-#[derive(Debug)]
 pub struct TuiSession {
     state: TuiState,
     appearance: AppearanceState,
     pending_dispatch: Option<PendingDispatch>,
     pending_control: Option<PendingDispatch>,
+    workspace_references: Option<Box<dyn WorkspaceReferenceConnection>>,
 }
 
 /// Host-known labels displayed in the TUI status line.
@@ -35,6 +35,7 @@ pub(super) struct SessionParts<'session> {
     pub(super) appearance: &'session AppearanceState,
     pub(super) pending_dispatch: &'session mut Option<PendingDispatch>,
     pub(super) pending_control: &'session mut Option<PendingDispatch>,
+    pub(super) workspace_references: &'session mut Option<Box<dyn WorkspaceReferenceConnection>>,
 }
 
 impl TuiSession {
@@ -59,7 +60,19 @@ impl TuiSession {
                 .expect("built-in appearance profiles must always be valid"),
             pending_dispatch: None,
             pending_control: None,
+            workspace_references: None,
         }
+    }
+
+    /// Installs the execution environment's nonblocking workspace provider.
+    #[must_use]
+    pub fn with_workspace_references(
+        mut self,
+        connection: impl WorkspaceReferenceConnection + 'static,
+    ) -> Self {
+        self.workspace_references = Some(Box::new(connection));
+        self.state.enable_workspace_references();
+        self
     }
 
     pub(super) fn set_presentation_mode(&mut self, mode: PresentationMode) {
@@ -76,6 +89,7 @@ impl TuiSession {
             appearance: &self.appearance,
             pending_dispatch: &mut self.pending_dispatch,
             pending_control: &mut self.pending_control,
+            workspace_references: &mut self.workspace_references,
         }
     }
 

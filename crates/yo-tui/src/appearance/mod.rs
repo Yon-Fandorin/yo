@@ -403,6 +403,7 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
                 background: style,
                 frame: Style::new(Color::Default, Color::Default, Attributes::DIM),
                 title: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+                key_hint: Style::new(Color::Default, Color::Default, Attributes::BOLD),
                 hint: Style::new(Color::Default, Color::Default, Attributes::DIM),
                 label: style,
                 detail: Style::new(Color::Default, Color::Default, Attributes::DIM),
