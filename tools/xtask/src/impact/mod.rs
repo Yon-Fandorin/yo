@@ -1,4 +1,5 @@
 pub(crate) mod developer_docs;
+pub(crate) mod preflight;
 pub(crate) mod slice_review;
 
 use std::path::{Path, PathBuf};

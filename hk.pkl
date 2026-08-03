@@ -145,11 +145,8 @@ hooks {
     }
     ["commit-msg"] {
         steps {
-            ["developer-docs-impact"] {
-                check = "cargo xtask check developer-docs-impact {{commit_msg_file}}"
-            }
-            ["slice-review-impact"] {
-                check = "cargo xtask check slice-review-impact {{commit_msg_file}}"
+            ["commit-preflight"] {
+                check = "cargo xtask check commit-preflight {{commit_msg_file}}"
             }
         }
     }

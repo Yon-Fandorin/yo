@@ -73,10 +73,11 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
                 return validation_stage::run_methexis_check(&repository);
             }
 
-            let head_fallback = check == "slice-review-impact";
+            let head_fallback =
+                matches!(check.as_ref(), "commit-preflight" | "slice-review-impact");
             if !matches!(
                 check.as_ref(),
-                "developer-docs-impact" | "slice-review-impact"
+                "commit-preflight" | "developer-docs-impact" | "slice-review-impact"
             ) {
                 return Err(usage(check.as_ref()));
             }
@@ -93,6 +94,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
             }
             let input = ImpactInput::load(message, changed_paths, branch, head_fallback)?;
             match check.as_ref() {
+                "commit-preflight" => impact::preflight::check(&input),
                 "developer-docs-impact" => impact::developer_docs::check(&input),
                 "slice-review-impact" => impact::slice_review::check(&input),
                 _ => unreachable!("the check name was validated before loading input"),
@@ -128,7 +130,7 @@ fn general_usage() -> String {
      cargo xtask check methexis-check-for-stage\n\
      cargo xtask check slice-scope [slice-contract.json]\n\
      cargo xtask check slice-parallel <left.json> <right.json>\n\
-     cargo xtask check <developer-docs-impact|slice-review-impact> \
+     cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
 }
@@ -155,7 +157,7 @@ mod cli_tests {
              cargo xtask check methexis-check-for-stage\n\
              cargo xtask check slice-scope [slice-contract.json]\n\
              cargo xtask check slice-parallel <left.json> <right.json>\n\
-             cargo xtask check <developer-docs-impact|slice-review-impact> \
+             cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
              <commit-message-file> [changed-paths-file] [branch]"
         );
     }

@@ -426,9 +426,14 @@ complete message to a temporary file and validate that prepared file before
 invoking `git commit`:
 
 ```bash
-cargo xtask check slice-review-impact /tmp/yo-commit-message
+cargo xtask check commit-preflight /tmp/yo-commit-message
 git commit --file /tmp/yo-commit-message
 ```
+
+The preflight loads the staged impact once and reports both Slice review and
+Developer Docs trailer failures together. Git `commit-msg` repeats that same
+combined check as the final enforcement boundary; the explicit preflight is
+what catches message errors before expensive `pre-commit` checks run.
 
 For accepted review commits on `develop`, `main`, or `wave/*` that change code
 under `crates/` or `tools/`, delete code there, or change workspace Cargo
