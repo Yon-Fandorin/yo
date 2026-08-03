@@ -1,0 +1,7 @@
+schema: methexis.source/v1alpha1
+id: agent.input-002
+revision: sha256:e089ea64856fe347087b7f8db6e10a474d8200e632edea495d6e57653133f7c1
+payload:
+  kind: decision
+  content: >-
+    An accepted `$` candidate enters an ordered typed explicit-skill collection. Version 1 admits at most one item, while a later reviewed policy may raise that limit without replacing the input shape. The environment that owns the skill assets publishes compact descriptors with stable identity, provenance, availability, catalog generation, and per-entry revision; duplicate names remain distinct and disabled entries explain why they cannot be selected. Selection does not load or invoke the skill. Whole-request admission atomically revalidates and loads the exact entry revision, and stale or unavailable resolution blocks dispatch while the frontend retains the unchanged draft.

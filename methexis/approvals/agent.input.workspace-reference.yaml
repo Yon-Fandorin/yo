@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: agent.input.workspace-reference
+revision: sha256:24966d483a66fdd183618dcae270f1395c4cca452a5f60f5bea130da96fae4e4
+reviewer: agent-runtime
+reviewed_at: 2026-08-03T06:13:37Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:58153f4c6a5f1e2a40e81ad749fc20594cf59f648e0a3b2a06a3e66bbeec24aa
+request_hash: sha256:a0898b74b151cb06eb0e986dc761431f277fa2c5bdd2aadd5859f8f4d90b1dc8

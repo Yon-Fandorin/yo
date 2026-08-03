@@ -1,9 +1,9 @@
 {
   "schema": "librarian.candidate-set/v1alpha1",
   "ok": true,
-  "candidate_set_id": "sha256:1207ce0e7dc5d90e4aa6f6967cc717d02df08bf3ac843c29af1b56f25e5ffdfb",
+  "candidate_set_id": "sha256:82a075653ff36c5b29b4ae14dff5207ad5703e1ed5535cf614e9386a362cd9e3",
   "request_hash": "sha256:c3a043ae20eca3fa0e7af55bbec53bbf6a6932d0a1555ef67a51c9ce2b0c206f",
-  "catalog_hash": "sha256:0061a2bb350594f996d087b2d1a0d103587ef0f76375ddefd5cb2b69bbf6837c",
+  "catalog_hash": "sha256:15df43dde6624fda50472e47593f77671ae29c8cc1ad1d61dd4c127b9aebfb80",
   "compiler": "librarian/0.0.0",
   "candidates": [
     {
@@ -217,6 +217,46 @@
       ]
     },
     {
+      "id": "tui.prompt-assist.trigger-lifecycle",
+      "path": "methexis/knowledge/tui-architecture/tui.prompt-assist.trigger-lifecycle.md",
+      "score": 100,
+      "reasons": [
+        {
+          "kind": "query_token",
+          "field": "body",
+          "term": "raw",
+          "score": 100
+        }
+      ]
+    },
+    {
+      "id": "tui.runtime.typed-flow",
+      "path": "methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md",
+      "score": 40,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.architecture.module-boundaries",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.prompt-assist.trigger-lifecycle",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.surface.terminal-ops",
+          "score": 10
+        },
+        {
+          "kind": "relation",
+          "via": "tui.terminal.lifecycle-restoration",
+          "score": 10
+        }
+      ]
+    },
+    {
       "id": "tui.runtime.process-termination-coordinator",
       "path": "methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md",
       "score": 30,
@@ -229,28 +269,6 @@
         {
           "kind": "relation",
           "via": "tui.dependencies.terminal-backend-selection",
-          "score": 10
-        },
-        {
-          "kind": "relation",
-          "via": "tui.terminal.lifecycle-restoration",
-          "score": 10
-        }
-      ]
-    },
-    {
-      "id": "tui.runtime.typed-flow",
-      "path": "methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md",
-      "score": 30,
-      "reasons": [
-        {
-          "kind": "relation",
-          "via": "tui.architecture.module-boundaries",
-          "score": 10
-        },
-        {
-          "kind": "relation",
-          "via": "tui.surface.terminal-ops",
           "score": 10
         },
         {
@@ -404,6 +422,30 @@
       ]
     },
     {
+      "id": "agent.input.explicit-skill-reference",
+      "path": "methexis/knowledge/agent-runtime/agent.input.explicit-skill-reference.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.prompt-assist.trigger-lifecycle",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "agent.input.workspace-reference",
+      "path": "methexis/knowledge/agent-runtime/agent.input.workspace-reference.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.prompt-assist.trigger-lifecycle",
+          "score": 10
+        }
+      ]
+    },
+    {
       "id": "agent.observability.view-projections",
       "path": "methexis/knowledge/agent-runtime/agent.observability.view-projections.md",
       "score": 10,
@@ -500,6 +542,18 @@
       ]
     },
     {
+      "id": "tui.chrome.input-stack",
+      "path": "methexis/knowledge/tui-architecture/tui.chrome.input-stack.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.prompt-assist.trigger-lifecycle",
+          "score": 10
+        }
+      ]
+    },
+    {
       "id": "tui.crate.ui-only-boundary",
       "path": "methexis/knowledge/tui-architecture/tui.crate.ui-only-boundary.md",
       "score": 10,
@@ -519,6 +573,30 @@
         {
           "kind": "relation",
           "via": "tui.dependencies.terminal-backend-selection",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.overlay.prompt-slot-routing",
+      "path": "methexis/knowledge/tui-architecture/tui.overlay.prompt-slot-routing.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.prompt-assist.trigger-lifecycle",
+          "score": 10
+        }
+      ]
+    },
+    {
+      "id": "tui.overlay.selection-panel",
+      "path": "methexis/knowledge/tui-architecture/tui.overlay.selection-panel.md",
+      "score": 10,
+      "reasons": [
+        {
+          "kind": "relation",
+          "via": "tui.prompt-assist.trigger-lifecycle",
           "score": 10
         }
       ]

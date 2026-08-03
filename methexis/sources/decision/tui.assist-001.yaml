@@ -1,0 +1,7 @@
+schema: methexis.source/v1alpha1
+id: tui.assist-001
+revision: sha256:2abc8454671150a52ffe2348c63cb1ed8e24205e3281d3536d9d305094e04d07
+payload:
+  kind: decision
+  content: >-
+    Prompt assistance uses one cursor-local scanner and controller for `@` workspace references and `$` explicit skills. A trigger begins only at the draft start or after Unicode whitespace, and an intact accepted annotation is never rescanned as a trigger. Accepting an enabled candidate replaces the complete trigger token, retains a typed opaque identity behind the visible token, and never submits the draft; Tab or Enter accepts, Esc dismisses only the current menu, and later edits scan again. Manually typed lookalikes remain plain text. Async updates belong to one request and immutable draft snapshot, advance monotonically to one terminal state, and cannot update or edit a newer draft.

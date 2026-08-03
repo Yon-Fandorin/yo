@@ -1,0 +1,7 @@
+schema: methexis.source/v1alpha1
+id: agent.input-001
+revision: sha256:d3801b346e909779fb4e85d8242afdcfa6daefdb1632178c0308520ad3f82c38
+payload:
+  kind: decision
+  content: >-
+    An accepted `@` candidate becomes a typed file or directory reference to an exact workspace environment, root, and path while remaining visibly projected as `@path`. The environment that owns that workspace discovers candidates asynchronously, applies Git ignore and exclude only as discovery relevance, separately enforces authorization, excludes Git internals and workspace-escaping symlinks, and does not preload file contents or recursively attach a directory. Whole-request admission revalidates the exact reference; failure blocks dispatch while the frontend retains the unchanged draft.

@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: agent.input.explicit-skill-reference
+revision: sha256:c94ff484148533a2ef4dfa543c0d94fa058df07acaaa5cc8f106940dd8aa2879
+reviewer: agent-runtime
+reviewed_at: 2026-08-03T06:13:37Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:5998608a68e9abe1050b4ee46b8475eed204d52afb978a439e4d2f2678e60a64
+request_hash: sha256:50341c67988bb72f501c8a0f0684327540b40961c7b8a7762d5079df4be87dcd
