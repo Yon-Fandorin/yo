@@ -5,7 +5,12 @@ use std::{
 };
 
 use super::{CandidateReference, CandidateSet, capture, final_revalidate_after_read, validation};
-use crate::context::hash::digest;
+use crate::context::{
+    hash::{StableHasher, digest},
+    wire::CandidateReason,
+};
+
+const RESULT_ID_DOMAIN: &[u8] = b"librarian.candidate-set/v1alpha1";
 
 // candidate를 선택한 뒤 파일이 바뀌면 새 내용으로 선택 결과를 몰래 다시 해석하지 않는다.
 // 같은 snapshot을 유지할 수 없으므로 candidate_changed_during_resolution로 다시 시도하게 한다.
@@ -52,6 +57,14 @@ fn independent_decoder_rejects_score_order_duplicate_and_unknown_field_drift() {
     );
 
     let mut order = valid.clone();
+    let mut lower_score_candidate = order.candidates[0].clone();
+    lower_score_candidate.id = "tui.dependencies.selection-gate-secondary".to_owned();
+    lower_score_candidate.path =
+        "methexis/knowledge/tui-architecture/tui.dependencies.selection-gate-secondary.md"
+            .to_owned();
+    lower_score_candidate.reasons.truncate(1);
+    lower_score_candidate.score = lower_score_candidate.reasons[0].score();
+    order.candidates.push(lower_score_candidate);
     order.candidates.reverse();
     assert_eq!(
         validation::validate(&order, "candidate.json")
@@ -74,6 +87,34 @@ fn independent_decoder_rejects_score_order_duplicate_and_unknown_field_drift() {
     assert!(serde_json::from_value::<CandidateSet>(unknown).is_err());
 }
 
+// Librarian wire의 `relation` reason을 독립 decoder가 실제 enum으로 복원하고, 점수와
+// candidate_set_id까지 일치하는 완전한 후보 집합으로 검증하는지 확인한다.
+#[test]
+fn independent_decoder_accepts_a_relation_wire_reason() {
+    let bytes = fs::read(librarian_fixture()).unwrap();
+    let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    wire["candidates"][0]["reasons"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "kind": "relation",
+            "via": "tui.architecture.module-boundaries",
+            "score": 10
+        }));
+    let score = wire["candidates"][0]["score"].as_u64().unwrap();
+    wire["candidates"][0]["score"] = serde_json::Value::from(score + 10);
+
+    let mut decoded: CandidateSet = serde_json::from_value(wire).unwrap();
+    refresh_candidate_set_id(&mut decoded);
+
+    assert!(matches!(
+        decoded.candidates[0].reasons.last(),
+        Some(CandidateReason::Relation { via, score })
+            if via == "tui.architecture.module-boundaries" && *score == 10
+    ));
+    validation::validate(&decoded, "candidate.json").unwrap();
+}
+
 // candidate 경로는 정규화 과정에서 다른 표기로 바뀌지 않는 명확한 상대 경로여야 한다.
 // `.`이나 빈 구성 요소가 있는 경로는 거부하고 평범한 상대 경로만 허용한다.
 #[test]
@@ -87,6 +128,16 @@ fn librarian_fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("librarian/examples/discovery-contract/expected-query-english.json")
+}
+
+fn refresh_candidate_set_id(set: &mut CandidateSet) {
+    let candidate_bytes = serde_json::to_vec(&set.candidates).unwrap();
+    let mut identity = StableHasher::new(RESULT_ID_DOMAIN);
+    identity.part(b"request_hash", set.request_hash.as_bytes());
+    identity.part(b"catalog_hash", set.catalog_hash.as_bytes());
+    identity.part(b"compiler", set.compiler.as_bytes());
+    identity.part(b"candidates", &candidate_bytes);
+    set.candidate_set_id = identity.finish();
 }
 
 fn temporary_root() -> PathBuf {

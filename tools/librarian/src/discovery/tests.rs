@@ -148,6 +148,49 @@ fn repeated_term_across_relation_targets_has_one_explained_contribution() {
     );
 }
 
+// 직접 매칭된 지식의 한 단계 관계 이웃에는 `relation` reason을 만들고, JSON wire에도
+// 관계를 따라간 기준 ID와 고정 점수를 숨김없이 직렬화하는지 확인한다.
+#[test]
+fn one_hop_neighbor_has_an_explicit_relation_wire_reason() {
+    let mut catalog = catalog();
+    catalog
+        .units
+        .get_mut("test.alpha")
+        .expect("alpha unit")
+        .relations
+        .depends_on = vec!["test.beta".to_owned()];
+    let request = DiscoveryRequest {
+        schema: REQUEST_SCHEMA.to_owned(),
+        query: None,
+        anchors: vec![Anchor::KnowledgeId {
+            value: "test.alpha".to_owned(),
+        }],
+    };
+
+    let result = discover(request, &catalog).expect("discovery succeeds");
+    let beta = result
+        .candidates
+        .iter()
+        .find(|candidate| candidate.id == "test.beta")
+        .expect("relation neighbor");
+    assert!(matches!(
+        beta.reasons.as_slice(),
+        [CandidateReason::Relation { via, score }] if via == "test.alpha" && *score == 10
+    ));
+
+    let wire = serde_json::to_value(&result).expect("candidate-set JSON");
+    let beta_wire = wire["candidates"]
+        .as_array()
+        .expect("candidate array")
+        .iter()
+        .find(|candidate| candidate["id"] == "test.beta")
+        .expect("serialized relation neighbor");
+    assert_eq!(
+        beta_wire["reasons"][0],
+        serde_json::json!({"kind": "relation", "via": "test.alpha", "score": 10})
+    );
+}
+
 // 여러 anchor 중 일부만 지식을 찾더라도 성공한 결과를 버리거나 실패한 항목을 숨기지 않는다.
 // 찾은 지식은 candidates에, 찾지 못한 anchor는 unresolved_anchors에 각각 남긴다.
 #[test]

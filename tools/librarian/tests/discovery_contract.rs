@@ -8,15 +8,20 @@ fn repository_root() -> PathBuf {
         .to_owned()
 }
 
+fn contract_root() -> PathBuf {
+    repository_root().join("tools/librarian/examples/discovery-contract")
+}
+
+fn corpus_root() -> PathBuf {
+    contract_root().join("corpus")
+}
+
 fn run_example(name: &str) -> (ExitCode, Vec<u8>, Vec<u8>) {
-    let root = repository_root();
-    let request = root
-        .join("tools/librarian/examples/discovery-contract")
-        .join(name);
+    let request = contract_root().join(name);
     let arguments = vec![
         OsString::from("discover"),
         OsString::from("--repository"),
-        root.into_os_string(),
+        corpus_root().into_os_string(),
         request.into_os_string(),
     ];
     let mut stdout = Vec::new();
@@ -41,7 +46,7 @@ fn canonical_english_returns_explained_candidates() {
 
     assert_eq!(
         result["candidates"][0]["id"],
-        "tui.architecture.module-boundaries"
+        "tui.dependencies.selection-gate"
     );
     assert!(
         result["candidates"][0]["reasons"]
@@ -49,15 +54,6 @@ fn canonical_english_returns_explained_candidates() {
             .expect("reasons")
             .iter()
             .any(|reason| reason["kind"] == "query_phrase")
-    );
-    assert!(
-        result["candidates"]
-            .as_array()
-            .expect("candidates")
-            .iter()
-            .skip(1)
-            .flat_map(|candidate| candidate["reasons"].as_array().expect("reasons"))
-            .any(|reason| reason["kind"] == "relation")
     );
     assert!(result.get("approval").is_none());
     assert!(result.get("eligibility").is_none());
@@ -90,7 +86,8 @@ fn exact_revision_korean_projection_is_searchable() {
     );
 }
 
-// 코드 경로 앵커가 정확히 일치한 지식 단위를 관계 이웃보다 우선하는지 확인한다.
+// 코드 경로 앵커가 `applies_to`에 정확히 일치하면 명시적인 anchor reason과 고정 점수를
+// 반환하는지 확인한다. 관계 후보의 순위 규칙은 discovery 단위 테스트가 별도로 다룬다.
 #[test]
 fn applies_to_path_anchor_is_an_exact_signal() {
     let (result, _) = success("anchor-path.json");
@@ -101,22 +98,18 @@ fn applies_to_path_anchor_is_an_exact_signal() {
     );
     assert_eq!(result["candidates"][0]["score"], 8_000);
     assert_eq!(result["candidates"][0]["reasons"][0]["kind"], "anchor");
-    assert!(
-        result["candidates"]
-            .as_array()
-            .expect("candidates")
-            .iter()
-            .skip(1)
-            .all(|candidate| candidate["score"].as_u64().expect("score") < 8_000)
-    );
 }
 
-// knowledge_id 앵커가 정확히 일치하는 지식 단위를 최고 점수로 관계 이웃보다 우선시키는지 확인한다.
+// knowledge_id 앵커가 정확히 일치하면 해당 지식 단위에 명시적인 anchor reason과 최고 고정
+// 점수를 부여하는지 확인한다. 이 wire fixture는 다른 SOT와 무관하게 한 단위만 유지한다.
 #[test]
-fn exact_knowledge_id_anchor_outranks_relation_neighbors() {
+fn exact_knowledge_id_anchor_is_an_exact_signal() {
     let (result, _) = success("anchor-id.json");
 
-    assert_eq!(result["candidates"][0]["id"], "tui.runtime.typed-flow");
+    assert_eq!(
+        result["candidates"][0]["id"],
+        "tui.dependencies.selection-gate"
+    );
     assert_eq!(result["candidates"][0]["score"], 10_000);
     assert_eq!(
         result["candidates"][0]["reasons"][0]["anchor_kind"],
@@ -177,28 +170,37 @@ fn identical_snapshot_and_request_are_byte_deterministic() {
 #[test]
 fn complete_success_wire_output_matches_the_golden_fixture() {
     let (_, stdout) = success("query-english.json");
-    let expected = std::fs::read(
-        repository_root()
-            .join("tools/librarian/examples/discovery-contract")
-            .join("expected-query-english.json"),
-    )
-    .expect("success fixture");
+    let expected = std::fs::read(contract_root().join("expected-query-english.json"))
+        .expect("success fixture");
 
-    assert_eq!(stdout, expected);
+    assert_wire_bytes(&stdout, &expected);
 }
 
 // 실패 시 종료 코드 2, 빈 stdout, 그리고 golden fixture와 일치하는 stderr를 검증한다.
 #[test]
 fn complete_failure_wire_output_matches_the_golden_fixture() {
     let (code, stdout, stderr) = run_example("failure-duplicate-anchor.json");
-    let expected = std::fs::read(
-        repository_root()
-            .join("tools/librarian/examples/discovery-contract")
-            .join("expected-failure-duplicate-anchor.json"),
-    )
-    .expect("failure fixture");
+    let expected = std::fs::read(contract_root().join("expected-failure-duplicate-anchor.json"))
+        .expect("failure fixture");
 
     assert_eq!(code, ExitCode::from(2));
     assert!(stdout.is_empty());
-    assert_eq!(stderr, expected);
+    assert_wire_bytes(&stderr, &expected);
+}
+
+fn assert_wire_bytes(actual: &[u8], expected: &[u8]) {
+    if actual == expected {
+        return;
+    }
+
+    let first_difference = actual
+        .iter()
+        .zip(expected)
+        .position(|(actual, expected)| actual != expected)
+        .unwrap_or_else(|| actual.len().min(expected.len()));
+    panic!(
+        "wire fixture differs at byte {first_difference}; actual length {}, expected length {}",
+        actual.len(),
+        expected.len()
+    );
 }

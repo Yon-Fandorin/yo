@@ -3,11 +3,11 @@
   "anchors": [
     {
       "kind": "knowledge_id",
-      "value": "tui.runtime.typed-flow"
+      "value": "tui.dependencies.selection-gate"
     },
     {
       "kind": "knowledge_id",
-      "value": "tui.runtime.typed-flow"
+      "value": "tui.dependencies.selection-gate"
     }
   ]
 }

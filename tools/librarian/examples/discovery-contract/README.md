@@ -4,6 +4,7 @@ Run a request from the repository root:
 
 ```console
 cargo run --quiet --locked -p librarian -- discover \
+  --repository tools/librarian/examples/discovery-contract/corpus \
   tools/librarian/examples/discovery-contract/query-english.json
 ```
 
@@ -12,6 +13,7 @@ with normal shell composition when a file is useful:
 
 ```console
 cargo run --quiet --locked -p librarian -- discover \
+  --repository tools/librarian/examples/discovery-contract/corpus \
   tools/librarian/examples/discovery-contract/query-english.json > candidates.json
 ```
 
@@ -24,3 +26,8 @@ Librarian-owned candidate artifacts.
 `expected-failure-duplicate-anchor.json` are complete golden wire outputs.
 Tests compare them byte-for-byte with stdout and stderr respectively; they make
 schema, hashes, reason shapes, ordering, and failure isolation inspectable.
+
+`corpus/` is a deliberately small, frozen protocol fixture. It is not Methexis
+authority and must not grow with the live repository SOT. Its one real
+Knowledge ID and revision let Methexis consume the Librarian golden while
+unrelated SOT additions leave this wire contract unchanged.
