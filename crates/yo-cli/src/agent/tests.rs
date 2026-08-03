@@ -194,7 +194,9 @@ fn collect_until(
                     return Ok(records);
                 }
             },
-            Ok(AgentPoll::Pending) if Instant::now() < deadline => thread::yield_now(),
+            Ok(AgentPoll::Pending | AgentPoll::Submission(_)) if Instant::now() < deadline => {
+                thread::yield_now();
+            },
             Ok(other) => {
                 return Err(format!(
                     "connection ended before the expected records: {other:?}"
@@ -235,9 +237,9 @@ fn exposes_committed_commands_and_events_in_journal_order() {
 
     assert_eq!(
         connection
-            .dispatch(AgentIntent::Submit("inspect".to_owned()))
+            .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
             .unwrap(),
-        CommandAdmission::Accepted
+        CommandAdmission::Queued
     );
     let records = collect_until(&mut connection, |records| {
         records.iter().any(|record| {
@@ -295,7 +297,10 @@ fn exposes_initial_storage_pressure_to_the_connected_frontend() {
                 durable_cutoff: DurableCutoff::KnownEmpty,
                 cause: DurabilityGapCause::Capacity,
             }) => break,
-            AgentPoll::Pending | AgentPoll::Record(_) | AgentPoll::Durability(_) => {},
+            AgentPoll::Pending
+            | AgentPoll::Record(_)
+            | AgentPoll::Durability(_)
+            | AgentPoll::Submission(_) => {},
             AgentPoll::Closed => panic!("connection closed before reporting storage pressure"),
         }
         assert!(
@@ -336,7 +341,7 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
     .unwrap()
     .unwrap();
     connection
-        .dispatch(AgentIntent::Submit("inspect".to_owned()))
+        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
         .unwrap();
 
     // hk runs several Rust suites concurrently; allow scheduler delay without weakening the
@@ -360,7 +365,7 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
         )
     }) {
         match connection.poll().unwrap() {
-            AgentPoll::Pending => thread::yield_now(),
+            AgentPoll::Pending | AgentPoll::Submission(_) => thread::yield_now(),
             AgentPoll::Closed => panic!("connection closed before draining observations"),
             observation => observations.push(observation),
         }
@@ -451,7 +456,7 @@ fn drains_more_than_one_bounded_page_from_one_coalesced_wake() {
         .unwrap()
         .unwrap();
     connection
-        .dispatch(AgentIntent::Submit("inspect".to_owned()))
+        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
         .unwrap();
 
     completed
@@ -504,7 +509,7 @@ fn drains_committed_failure_record_before_reporting_connection_failure() {
         .unwrap()
         .unwrap();
     connection
-        .dispatch(AgentIntent::Submit("inspect".to_owned()))
+        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
         .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(1);
@@ -515,7 +520,7 @@ fn drains_committed_failure_record_before_reporting_connection_failure() {
                 outcome: TurnOutcome::Failed(_),
                 ..
             }))) => saw_failed_turn = true,
-            Ok(AgentPoll::Record(_)) | Ok(AgentPoll::Pending) => {},
+            Ok(AgentPoll::Record(_) | AgentPoll::Pending | AgentPoll::Submission(_)) => {},
             Ok(other) => panic!("connection closed without its failure: {other:?}"),
             Err(error) => {
                 assert!(saw_failed_turn);
@@ -562,7 +567,7 @@ fn drains_cleanup_record_before_reporting_command_failure() {
         .unwrap()
         .unwrap();
     connection
-        .dispatch(AgentIntent::Submit("inspect".to_owned()))
+        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
         .unwrap();
     collect_until(&mut connection, |records| {
         records.iter().any(|record| {
@@ -574,7 +579,7 @@ fn drains_cleanup_record_before_reporting_command_failure() {
     })
     .unwrap();
     connection
-        .dispatch(AgentIntent::Submit("focus".to_owned()))
+        .dispatch(AgentIntent::submit("focus".to_owned()).unwrap())
         .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(1);
@@ -582,7 +587,7 @@ fn drains_cleanup_record_before_reporting_command_failure() {
     loop {
         match connection.poll() {
             Ok(AgentPoll::Record(record)) => records.push(record),
-            Ok(AgentPoll::Pending) => {},
+            Ok(AgentPoll::Pending | AgentPoll::Submission(_)) => {},
             Ok(other) => panic!("connection closed without its failure: {other:?}"),
             Err(error) => {
                 assert!(error.to_string().contains("steer was rejected"));

@@ -1,21 +1,107 @@
 use std::{
-    sync::{Arc, Mutex, mpsc},
+    collections::VecDeque,
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicU8, AtomicU64},
+        mpsc,
+    },
     thread,
     time::{Duration, Instant},
 };
 
 use super::{
     super::{
-        AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, ChangeLane,
-        CommandAdmission, WorkerSignal, apply_event,
+        AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, AgentWorker, ChangeLane,
+        CommandAdmission, PendingCommand, SessionState, WORKER_IDLE, WorkerSignal, apply_event,
     },
     support::{next_poll, session, start_app, turn},
 };
 use crate::{
     AgentBackend, AgentCommand, AgentEvent, BackendCapabilities, BackendFailure,
     BackendFailureKind, BackendPoll, BackendScriptStep, BackendStopHandle, RuntimeError,
-    RuntimePoll, ScriptedBackend, TurnOutcome, UserInput,
+    RuntimePoll, ScriptedBackend, SubmissionOutcome, SubmissionRejectionKind, TurnOutcome,
+    UserInput, journal::SessionJournal,
 };
+
+// urgent interrupt가 normal lane에 이미 queue된 steer보다 먼저 실행되면 worker가 그
+// steer를 Backend에 보내지 않고 같은 ID의 TargetChanged 거절을 실제 outcome lane에 남긴다.
+#[test]
+fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
+    let active_turn = turn(1);
+    let canceled_id = crate::SubmissionId::new().unwrap();
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("start"),
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::InterruptTurn { turn: active_turn }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let state = Arc::new(Mutex::new(SessionState {
+        active_turn: Some(active_turn),
+        turn_started: true,
+        ..SessionState::default()
+    }));
+    let active_turn_id = Arc::new(AtomicU64::new(active_turn.turn_id().get().get()));
+    let outcomes = Arc::new(Mutex::new(VecDeque::new()));
+    let mut worker = AgentWorker::new(
+        backend,
+        session(),
+        Arc::clone(&state),
+        Arc::clone(&active_turn_id),
+        SessionJournal::new(),
+        Arc::clone(&outcomes),
+    );
+    worker.initialize().unwrap();
+    worker
+        .runtime
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("start"),
+        })
+        .unwrap();
+
+    let (normal_tx, normal_rx) = mpsc::sync_channel(1);
+    let (urgent_tx, urgent_rx) = mpsc::sync_channel(1);
+    normal_tx
+        .send(PendingCommand::from_submission(
+            AgentCommand::SteerTurn {
+                turn: active_turn,
+                input: UserInput::from("canceled"),
+            },
+            canceled_id,
+        ))
+        .unwrap();
+    urgent_tx
+        .send(PendingCommand::from_command(AgentCommand::InterruptTurn {
+            turn: active_turn,
+        }))
+        .unwrap();
+    drop(normal_tx);
+    drop(urgent_tx);
+    let (changes_tx, _changes_rx) = mpsc::sync_channel(1);
+    let mut changes = ChangeLane::new(changes_tx, Arc::new(Mutex::new(None)));
+    let processed = (Mutex::new(0), Condvar::new());
+    let lifecycle = AtomicU8::new(WORKER_IDLE);
+
+    let exit = worker.run(normal_rx, urgent_rx, &mut changes, &processed, &lifecycle);
+
+    assert!(exit.failure.is_none());
+    assert_eq!(
+        outcomes.lock().unwrap().pop_front(),
+        Some(SubmissionOutcome::Rejected {
+            id: canceled_id,
+            rejection: crate::SubmissionRejection::new(
+                SubmissionRejectionKind::TargetChanged,
+                "the target Turn was interrupted before this submission ran",
+            ),
+        })
+    );
+    assert!(outcomes.lock().unwrap().is_empty());
+}
 
 struct BlockingBackend {
     entered: mpsc::Sender<()>,
@@ -174,7 +260,7 @@ fn provider_wait_never_blocks_the_frontend_connection() {
     };
     let mut app = start_app(backend);
 
-    app.dispatch(AgentIntent::Submit("wait".to_owned()))
+    app.dispatch(AgentIntent::submit("wait".to_owned()).unwrap())
         .unwrap();
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     assert_eq!(app.poll().unwrap(), AgentSessionPoll::Pending);
@@ -199,7 +285,7 @@ fn shutdown_stops_an_in_flight_provider_call() {
         stop: stop_tx,
     };
     let mut app = start_app(backend);
-    app.dispatch(AgentIntent::Submit("wait".to_owned()))
+    app.dispatch(AgentIntent::submit("wait".to_owned()).unwrap())
         .unwrap();
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
@@ -241,21 +327,31 @@ fn retains_the_temporal_target_while_the_runtime_is_busy() {
         stop: stop_tx.clone(),
     };
     let mut app = start_app(backend);
-    app.dispatch(AgentIntent::Submit("wait".to_owned()))
+    app.dispatch(AgentIntent::submit("wait".to_owned()).unwrap())
         .unwrap();
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
 
-    let CommandAdmission::Backpressured(retained) = app
-        .dispatch(AgentIntent::Submit("retain me".to_owned()))
-        .unwrap()
+    let submission = crate::InputSubmission::new(
+        crate::SubmissionId::new().unwrap(),
+        UserInput::from("retain me"),
+    );
+    let submission_id = submission.id();
+    let CommandAdmission::Backpressured(retained) =
+        app.dispatch(AgentIntent::Submit(submission)).unwrap()
     else {
         panic!("a busy runtime must retain the identified command");
     };
+    assert_eq!(retained.submission_id(), Some(submission_id));
     assert!(matches!(
         retained.command(),
         AgentCommand::SteerTurn { turn: target, input }
             if *target == turn(1) && input == &UserInput::from("retain me")
     ));
+
+    let CommandAdmission::Backpressured(retained) = app.retry(retained).unwrap() else {
+        panic!("retry while the worker is busy must retain the same submission");
+    };
+    assert_eq!(retained.submission_id(), Some(submission_id));
 
     stop_tx.send(()).unwrap();
     app.wait_until_processed(1);
@@ -291,18 +387,18 @@ fn accepted_interrupt_rejects_retained_and_new_steers() {
         blocked_once: false,
     };
     let mut app = start_app(backend);
-    app.dispatch(AgentIntent::Submit("start".to_owned()))
+    app.dispatch(AgentIntent::submit("start".to_owned()).unwrap())
         .unwrap();
     assert!(matches!(
         next_poll(&mut app).unwrap(),
         RuntimePoll::Event(AgentEvent::TurnStarted { .. })
     ));
 
-    app.dispatch(AgentIntent::Submit("block".to_owned()))
+    app.dispatch(AgentIntent::submit("block".to_owned()).unwrap())
         .unwrap();
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     let CommandAdmission::Backpressured(retained_steer) = app
-        .dispatch(AgentIntent::Submit("cancel one".to_owned()))
+        .dispatch(AgentIntent::submit("cancel one".to_owned()).unwrap())
         .unwrap()
     else {
         panic!("the busy runtime must retain the steer");
@@ -316,7 +412,7 @@ fn accepted_interrupt_rejects_retained_and_new_steers() {
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         match app.retry(retained_interrupt).unwrap() {
-            CommandAdmission::Accepted => break,
+            CommandAdmission::Queued => break,
             CommandAdmission::Backpressured(pending) => {
                 assert!(
                     Instant::now() < deadline,
@@ -332,7 +428,7 @@ fn accepted_interrupt_rejects_retained_and_new_steers() {
         Err(AgentSessionError::TurnInterruptPending)
     ));
     assert!(matches!(
-        app.dispatch(AgentIntent::Submit("too late".to_owned())),
+        app.dispatch(AgentIntent::submit("too late".to_owned()).unwrap()),
         Err(AgentSessionError::TurnInterruptPending)
     ));
     app.wait_until_processed(3);

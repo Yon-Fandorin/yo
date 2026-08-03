@@ -1,9 +1,10 @@
 use std::{collections::VecDeque, time::Duration};
 
 use yo_core::{
-    ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent, ApprovalDecision, JournalDurability,
-    SkillReferenceSearchRequest, SkillReferenceSearchUpdate, TranscriptRecord,
-    WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchUpdate,
+    ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent, ApprovalDecision, InputSubmission,
+    JournalDurability, SkillReferenceSearchRequest, SkillReferenceSearchUpdate, SubmissionId,
+    SubmissionOutcome, TranscriptRecord, UserInput, WorkspaceReferenceSearchRequest,
+    WorkspaceReferenceSearchUpdate,
 };
 
 use crate::{
@@ -57,6 +58,7 @@ pub(super) enum StateError {
     Transcript(TranscriptStateError),
     UnknownActivity(ActivityRef),
     ItemIdOverflow,
+    SubmissionIdentityUnavailable,
 }
 
 #[derive(Debug)]
@@ -101,6 +103,7 @@ pub(super) struct TuiState {
     overlay: PromptOverlaySlot,
     accepted_overlays: VecDeque<AcceptanceReceipt>,
     prompt_assist: PromptAssistController,
+    pending_submissions: VecDeque<InputSubmission>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -230,12 +233,59 @@ impl TuiState {
                 if let Some(request) = self.pending_requests.front().copied() {
                     return self.request_response(request, text);
                 }
-                Ok(StateEffect::Dispatch(AgentAction::Submit(text)))
+                if self
+                    .pending_submissions
+                    .iter()
+                    .any(|submission| submission.input().as_str() == text)
+                {
+                    self.editor.replace_range(0..0, &text);
+                    self.chat.push_notice(
+                        "This exact draft is already waiting for admission.".to_owned(),
+                    )?;
+                    return Ok(StateEffect::Redraw);
+                }
+                let id =
+                    SubmissionId::new().map_err(|_| StateError::SubmissionIdentityUnavailable)?;
+                let submission = InputSubmission::new(id, UserInput::new(text.clone()));
+                self.pending_submissions.push_back(submission.clone());
+                self.editor.replace_range(0..0, &text);
+                Ok(StateEffect::Dispatch(AgentAction::Submit(submission)))
             },
             EditorEffect::Exit => Ok(StateEffect::Exit),
             EditorEffect::InterruptTask => Ok(StateEffect::Dispatch(AgentAction::Interrupt)),
             EditorEffect::Unhandled | EditorEffect::NoChange | EditorEffect::ExitArmed => {
                 Ok(StateEffect::Unchanged)
+            },
+        }
+    }
+
+    pub(super) fn observe_submission_outcome(
+        &mut self,
+        outcome: SubmissionOutcome,
+    ) -> Result<StateEffect, StateError> {
+        let Some(index) = self
+            .pending_submissions
+            .iter()
+            .position(|submission| submission.id() == outcome.id())
+        else {
+            return Ok(StateEffect::Unchanged);
+        };
+        let submission = self
+            .pending_submissions
+            .remove(index)
+            .expect("the located submission must still exist");
+        match outcome {
+            SubmissionOutcome::Accepted { .. } => {
+                if self.editor.text() == submission.input().as_str() {
+                    let length = self.editor.text().len();
+                    self.editor.replace_range(0..length, "");
+                }
+                Ok(StateEffect::Redraw)
+            },
+            SubmissionOutcome::Rejected { rejection, .. } => {
+                self.chat
+                    .push_notice(format!("Submission rejected: {}", rejection.message()))?;
+                Ok(StateEffect::Redraw)
             },
         }
     }

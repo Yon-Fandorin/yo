@@ -242,7 +242,7 @@ impl SkillReferenceAssist {
         {
             return false;
         }
-        let replacement = format!("${}", display_candidate_text(candidate.reference().name()));
+        let replacement = yo_core::skill_reference_projection(candidate.reference());
         let start = active.trigger.span.start;
         editor.replace_range(active.trigger.span, &replacement);
         self.accepted = Some(AcceptedAnnotation {

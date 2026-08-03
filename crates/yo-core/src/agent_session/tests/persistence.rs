@@ -90,7 +90,7 @@ fn live_worker_persists_a_recoverable_session_journal() {
     .unwrap();
 
     let mut admission = app
-        .dispatch(AgentIntent::Submit("inspect".to_owned()))
+        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
         .unwrap();
     let admission_deadline = Instant::now() + Duration::from_secs(1);
     while let CommandAdmission::Backpressured(pending) = admission {

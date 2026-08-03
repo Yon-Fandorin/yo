@@ -1040,12 +1040,14 @@ name = "yo-core"
 version = "0.0.0"
 dependencies = [
  "getrandom",
+ "icu_properties",
  "libc",
  "rustix",
  "serde",
  "serde_json",
  "sha2",
  "unicode-normalization",
+ "unicode-segmentation",
  "uuid",
 ]
 

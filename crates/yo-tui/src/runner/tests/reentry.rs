@@ -181,7 +181,7 @@ impl AgentConnection for RetainingAgent {
     type Error = Infallible;
 
     fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Accepted)
+        Ok(DispatchOutcome::Queued)
     }
 
     fn retry(&mut self, pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
@@ -207,15 +207,15 @@ impl AgentConnection for SimpleAgent {
                             .expect("the fixture is a UUIDv7"),
                         yo_core::TurnId::new(std::num::NonZeroU64::MIN),
                     ),
-                    input: input.into(),
+                    input: input.into_input(),
                 },
             ));
         }
-        Ok(DispatchOutcome::Accepted)
+        Ok(DispatchOutcome::Queued)
     }
 
     fn retry(&mut self, _pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Accepted)
+        Ok(DispatchOutcome::Queued)
     }
 
     fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
@@ -471,20 +471,20 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
 
     assert_eq!(
         agent
-            .dispatch(AgentIntent::Submit("block".to_owned()))
+            .dispatch(AgentIntent::submit("block".to_owned()).unwrap())
             .unwrap(),
-        CommandAdmission::Accepted
+        CommandAdmission::Queued
     );
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     let CommandAdmission::Backpressured(normal) = agent
-        .dispatch(AgentIntent::Submit("normal-pending".to_owned()))
+        .dispatch(AgentIntent::submit("normal-pending".to_owned()).unwrap())
         .unwrap()
     else {
         panic!("the full normal lane must retain the next command");
     };
     let CommandAdmission::Backpressured(control) = agent
-        .dispatch(AgentIntent::Submit("control-slot-pending".to_owned()))
+        .dispatch(AgentIntent::submit("control-slot-pending".to_owned()).unwrap())
         .unwrap()
     else {
         panic!("the full normal lane must retain another command");
@@ -571,14 +571,14 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     wait_for_session_change(&mut core);
     assert_eq!(
-        core.dispatch(AgentIntent::Submit("block".to_owned()))
+        core.dispatch(AgentIntent::submit("block".to_owned()).unwrap())
             .unwrap(),
-        CommandAdmission::Accepted
+        CommandAdmission::Queued
     );
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     let CommandAdmission::Backpressured(pending) = core
-        .dispatch(AgentIntent::Submit("pending".to_owned()))
+        .dispatch(AgentIntent::submit("pending".to_owned()).unwrap())
         .unwrap()
     else {
         panic!("the full normal lane must return an opaque pending dispatch");

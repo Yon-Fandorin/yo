@@ -92,6 +92,83 @@ fn rejects_unknown_fields_at_each_v1_record_boundary() {
     }
 }
 
+// 현재 semantic v1은 plain input 문자열로 고정되어 있으므로 구조화된 reference를
+// 조용히 문자열로 낮추지 않는다. 새 wire shape의 SOT 승인이 있기 전에는 encode가 막힌다.
+#[test]
+fn fixed_v1_rejects_structured_input_instead_of_dropping_reference_identity() {
+    let workspace = crate::WorkspaceReference::new(
+        "workspace:src/lib.rs",
+        "host:one",
+        "workspace:one",
+        "root:one",
+        "src/lib.rs",
+        crate::WorkspaceReferenceKind::File,
+    )
+    .unwrap();
+    let skill = crate::SkillReference::new(
+        "skill:review",
+        "host:one",
+        "/skills/review/SKILL.md",
+        "review",
+        crate::SkillReferenceScope::User,
+        7,
+        "sha256:exact",
+    );
+    let input = crate::UserInput::with_references(
+        "use @src/lib.rs with $review",
+        vec![
+            crate::InputReference::workspace(4..15, workspace),
+            crate::InputReference::skill(21..28, skill),
+        ],
+    )
+    .unwrap();
+    let command = AgentCommand::StartTurn {
+        turn: activity().turn(),
+        input,
+    };
+    let commit = JournalCommit::incremental(sequenced(
+        1,
+        [JournalRecord::CommandCommitted(command.clone())],
+    ));
+
+    let error = encode(&commit).expect_err("fixed semantic v1 cannot lose typed references");
+
+    assert!(error.to_string().contains("structured input"), "{error}");
+}
+
+// Activity response도 같은 UserInput domain을 쓰므로 fixed v1 writer가 reference를
+// 문자열로 낮추지 않고 Start/Steer와 같은 실패-폐쇄 경계를 적용한다.
+#[test]
+fn fixed_v1_also_rejects_structured_activity_user_input() {
+    let workspace = crate::WorkspaceReference::new(
+        "workspace:src/lib.rs",
+        "host:one",
+        "workspace:one",
+        "root:one",
+        "src/lib.rs",
+        crate::WorkspaceReferenceKind::File,
+    )
+    .unwrap();
+    let input = crate::UserInput::with_references(
+        "@src/lib.rs",
+        vec![crate::InputReference::workspace(0..11, workspace)],
+    )
+    .unwrap();
+    let command = AgentCommand::RespondToActivity {
+        request: crate::ActivityRequestRef::new(
+            activity(),
+            crate::RequestId::new(std::num::NonZeroU64::new(9).unwrap()),
+        ),
+        response: crate::ActivityResponse::UserInput(input),
+    };
+    let commit =
+        JournalCommit::incremental(sequenced(1, [JournalRecord::CommandCommitted(command)]));
+
+    let error = encode(&commit).expect_err("fixed semantic v1 cannot lose response references");
+
+    assert!(error.to_string().contains("structured input"), "{error}");
+}
+
 // workspace path의 tagged 표현도 encoding과 value 외의 필드를 허용하면 미래 의미를
 // 현재 v1 reader가 버릴 수 있으므로 descriptor 내부 경계까지 엄격하게 검증해야 한다.
 #[test]

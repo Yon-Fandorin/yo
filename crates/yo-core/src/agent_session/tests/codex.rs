@@ -38,12 +38,14 @@ fn run_local_file_change(workspace: &std::path::Path) -> Result<(), String> {
     let mut app = AgentSession::start(backend).map_err(|error| error.to_string())?;
     let transcript = app.transcript_reader();
     let mut cursor = None;
-    app.dispatch(AgentIntent::Submit(
-        "First run `pwd` with the shell command tool and wait for it to complete. Then use the \
+    app.dispatch(
+        AgentIntent::submit(
+            "First run `pwd` with the shell command tool and wait for it to complete. Then use the \
          file patch tool to create yo-proof.txt in the current workspace containing exactly \
-         YO_CODEX_INTEGRATION_OK followed by one newline. Perform both actions, then stop."
-            .to_owned(),
-    ))
+         YO_CODEX_INTEGRATION_OK followed by one newline. Perform both actions, then stop.",
+        )
+        .map_err(|error| error.to_string())?,
+    )
     .map_err(|error| error.to_string())?;
 
     let deadline = Instant::now() + Duration::from_secs(180);

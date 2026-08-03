@@ -145,12 +145,13 @@ draft를 보존하고 실패-폐쇄하며, 보이는 `$name`만으로 충분한 
 terminal input
     ↓
 TuiState::handle
-    ↓ AgentIntent::Submit
+    ↓ 변경 불가능한 InputSubmission
 TuiAgentConnection
     ↓
-AgentSession admission and bounded command lane
+AgentSession queue와 bounded command lane
     ↓
 AgentWorker
+    ↓ 같은 SubmissionId를 수락 또는 거절
     ↓ AgentCommand::StartTurn or SteerTurn
 AgentRuntime
     ├── AgentEngine으로 검증
@@ -179,20 +180,26 @@ Inline 또는 Fullscreen presenter
 조사할 때 유용한 지점은 다음과 같다.
 
 1. [`TuiState::handle`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/state.rs)는
-   제출된 prompt를 비우고 frontend에 독립적인 `AgentIntent::Submit`을
-   만든다. 이 시점에는 입력을 확정된 이력으로 표시하지 않는다.
+   변경 불가능한 `InputSubmission` 하나를 캡처한다. 같은 `SubmissionId`의
+   `Accepted` outcome이 올 때까지 plain text를 입력창에 보존한다. 그사이
+   사용자가 새 draft를 편집했다면 그 새 text는 지우지 않는다. 거절은 draft를
+   보존하며, 중복되거나 오래된 outcome은 아무 영향도 주지 않는다.
 2. [`TuiAgentConnection`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs)은
-   좁은 local adapter다. dispatch와 retry를 전달하고, 하나로 합쳐진
+   좁은 local adapter다. dispatch, retry, submission outcome을 전달하고, 하나로 합쳐진
    Session 변경 알림을 `TranscriptReader`의 크기가 제한된 suffix 읽기로
    바꿔 순서가 보장된 record를 TUI에 제공한다. Session이나 provider
    의미는 소유하지 않는다.
 3. [`agent_session/admission.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/admission.rs)는
-   Submit을 `StartTurn` 또는 `SteerTurn`으로 결정한다. state lock이
-   사용 중이거나 크기가 제한된 lane이 가득 찼다면, TUI loop가 다시
-   시도할 수 있도록 내부가 드러나지 않는 pending command를 반환한다.
+   Submit을 `StartTurn` 또는 `SteerTurn`으로 결정한다. `Queued`는 bounded
+   worker lane이 command 소유권을 받았다는 뜻일 뿐 최종 수락이 아니다.
+   state lock이 사용 중이거나 lane이 가득 찼다면, 같은 `SubmissionId`를
+   가진 내부가 드러나지 않는 pending command를 TUI loop가 다시 시도하도록 반환한다.
 4. [`AgentWorker`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs)만
-   runtime을 실행하고 polling할 수 있다. 터미널을 소유한 thread는
-   provider I/O를 기다리지 않는다.
+   runtime을 실행하고 polling할 수 있다. runtime과 backend 수락이 성공한 뒤
+   정확한 ID의 `SubmissionOutcome::Accepted`를 공개한다. typed rejection
+   channel은 다음 reference-admission Slice를 위해 준비되어 있다. 그전까지
+   structured `@`, `$` draft는 실패-폐쇄 상태를 유지한다. 터미널을 소유한
+   thread는 provider I/O를 기다리지 않는다.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)은
    command 검증, backend 수락, semantic commit, Journal publication 순서를
    보장한다. worker가 소유한 durable writer는 text update를 크기가 제한된

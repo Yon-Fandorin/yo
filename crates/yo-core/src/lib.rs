@@ -6,6 +6,7 @@ mod command;
 mod engine;
 mod event;
 mod host;
+mod input;
 mod journal;
 mod runtime;
 mod session;
@@ -22,13 +23,18 @@ pub use backend::{
     BackendPoll, BackendScriptStep, BackendStopHandle, CodexBackend, CodexBackendConfig,
     CodexSkillReferenceProvider, ScriptedBackend,
 };
-pub use command::{ActivityResponse, AgentCommand, ApprovalDecision, UserInput};
+pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
 pub use event::{ActivityKind, ActivityOutcome, ActivityUpdate, AgentEvent, Failure, TurnOutcome};
 pub use host::{
     HostWorkspacePath, HostWorkspacePathError, LocalWorkspaceHostIdentity,
     LocalWorkspaceHostIdentityError, WorkspaceHostId, WorkspaceHostIdError,
     WorkspaceHostIdGenerationError,
+};
+pub use input::{
+    InputReference, InputSubmission, SubmissionId, SubmissionIdError, SubmissionIdGenerationError,
+    SubmissionOutcome, SubmissionRejection, SubmissionRejectionKind, UserInput, UserInputError,
+    skill_reference_projection, workspace_reference_projection,
 };
 pub use journal::{
     DurabilityGapCause, JournalDurability, JournalSequence, TranscriptEntry, TranscriptObservation,

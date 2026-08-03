@@ -149,12 +149,13 @@ A submitted prompt follows this route:
 terminal input
     ↓
 TuiState::handle
-    ↓ AgentIntent::Submit
+    ↓ immutable InputSubmission
 TuiAgentConnection
     ↓
-AgentSession admission and bounded command lane
+AgentSession queueing and bounded command lane
     ↓
 AgentWorker
+    ↓ accept or reject the same SubmissionId
     ↓ AgentCommand::StartTurn or SteerTurn
 AgentRuntime
     ├── validate with AgentEngine
@@ -183,19 +184,27 @@ Inline or Fullscreen presenter
 The useful inspection points are:
 
 1. [`TuiState::handle`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/state.rs)
-   clears the submitted prompt and emits the frontend-neutral
-   `AgentIntent::Submit`. It does not display that input as committed history.
+   captures one immutable `InputSubmission`. Plain text stays visible until an
+   `Accepted` outcome with the matching `SubmissionId` arrives. If the user has
+   edited a newer draft meanwhile, that newer text is not cleared. A rejection
+   preserves the draft, and duplicate or stale outcomes have no effect.
 2. [`TuiAgentConnection`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs)
-   is a narrow local adapter. It forwards dispatch and retry operations, turns
+   is a narrow local adapter. It forwards dispatch, retry, and submission
+   outcomes; turns
    a coalesced Session change notification into bounded `TranscriptReader`
    suffix reads, and exposes ordered records to the TUI. It owns no Session or
    provider semantics.
 3. [`agent_session/admission.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/admission.rs)
-   resolves Submit to `StartTurn` or `SteerTurn`. A busy state lock or full
-   bounded lane returns an opaque pending command for the TUI loop to retry.
+   resolves Submit to `StartTurn` or `SteerTurn`. `Queued` means only that the
+   bounded worker lane now owns the command; it is not final acceptance. A busy
+   state lock or full lane returns an opaque pending command carrying the same
+   `SubmissionId` for the TUI loop to retry.
 4. [`AgentWorker`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs)
-   is the only owner that executes and polls the runtime. The terminal-owning
-   thread does not wait on provider I/O.
+   is the only owner that executes and polls the runtime. After runtime and
+   backend acceptance succeed, it publishes `SubmissionOutcome::Accepted` for
+   the exact ID. The typed rejection channel exists for the next reference-
+   admission Slice; structured `@` and `$` drafts remain fail-closed until then.
+   The terminal-owning thread does not wait on provider I/O.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)
    orders command validation, backend acceptance, semantic commit, and Journal
    publication. The worker-owned durable writer maps text updates to bounded

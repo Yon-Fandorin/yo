@@ -20,54 +20,68 @@ impl AgentSession {
         &mut self,
         action: AgentIntent,
         state: &mut SessionState,
-    ) -> Result<AgentCommand, AgentSessionError> {
+    ) -> Result<PendingCommand, AgentSessionError> {
         match action {
-            AgentIntent::Submit(text) => {
-                let input = UserInput::new(text);
+            AgentIntent::Submit(submission) => {
+                let submission_id = submission.id();
+                let input = submission.into_input();
                 if let Some(turn) = state.active_turn {
                     if state.interrupted_turns.contains(&turn) {
                         return Err(AgentSessionError::TurnInterruptPending);
                     }
-                    Ok(AgentCommand::SteerTurn { turn, input })
+                    Ok(PendingCommand::from_submission(
+                        AgentCommand::SteerTurn { turn, input },
+                        submission_id,
+                    ))
                 } else {
                     let turn = self.next_turn()?;
                     state.active_turn = Some(turn);
                     state.turn_started = false;
                     self.active_turn_id
                         .store(turn.turn_id().get().get(), Ordering::Release);
-                    Ok(AgentCommand::StartTurn { turn, input })
+                    Ok(PendingCommand::from_submission(
+                        AgentCommand::StartTurn { turn, input },
+                        submission_id,
+                    ))
                 }
             },
-            AgentIntent::Interrupt => Ok(AgentCommand::InterruptTurn {
-                turn: state.active_turn.ok_or(AgentSessionError::NoActiveTurn)?,
-            }),
+            AgentIntent::Interrupt => {
+                Ok(PendingCommand::from_command(AgentCommand::InterruptTurn {
+                    turn: state.active_turn.ok_or(AgentSessionError::NoActiveTurn)?,
+                }))
+            },
             AgentIntent::RespondToApproval { request, decision } => {
                 if !state.outstanding_requests.contains(&request) {
                     return Err(AgentSessionError::NoOutstandingRequest);
                 }
-                Ok(AgentCommand::RespondToActivity {
-                    request,
-                    response: ActivityResponse::Approval(decision),
-                })
+                Ok(PendingCommand::from_command(
+                    AgentCommand::RespondToActivity {
+                        request,
+                        response: ActivityResponse::Approval(decision),
+                    },
+                ))
             },
             AgentIntent::RespondToUserInput { request, input } => {
                 if !state.outstanding_requests.contains(&request) {
                     return Err(AgentSessionError::NoOutstandingRequest);
                 }
-                Ok(AgentCommand::RespondToActivity {
-                    request,
-                    response: ActivityResponse::UserInput(UserInput::new(input)),
-                })
+                Ok(PendingCommand::from_command(
+                    AgentCommand::RespondToActivity {
+                        request,
+                        response: ActivityResponse::UserInput(UserInput::new(input)),
+                    },
+                ))
             },
         }
     }
 
     fn queue_command(
         &mut self,
-        command: AgentCommand,
+        pending: PendingCommand,
         state: &mut SessionState,
     ) -> Result<CommandAdmission, AgentSessionError> {
-        match &command {
+        let command = pending.command();
+        match command {
             AgentCommand::StartTurn { turn, .. } => match state.active_turn {
                 None => {
                     state.active_turn = Some(*turn);
@@ -85,7 +99,7 @@ impl AgentSession {
             },
             _ => {},
         }
-        let response_request = match &command {
+        let response_request = match command {
             AgentCommand::RespondToActivity { request, .. } => Some(*request),
             _ => None,
         };
@@ -95,11 +109,11 @@ impl AgentSession {
         if matches!(
             command,
             AgentCommand::SteerTurn { turn, .. }
-                if state.interrupted_turns.contains(&turn)
+                if state.interrupted_turns.contains(turn)
         ) {
             return Err(AgentSessionError::TurnInterruptPending);
         }
-        let interrupted = match &command {
+        let interrupted = match command {
             AgentCommand::InterruptTurn { turn } => Some(*turn),
             _ => None,
         };
@@ -107,14 +121,14 @@ impl AgentSession {
             || matches!(
                 command,
                 AgentCommand::InterruptTurn { turn }
-                    if state.turn_started && state.active_turn == Some(turn)
+                    if state.turn_started && state.active_turn == Some(*turn)
             );
         let sender = if urgent {
             &self.urgent_commands
         } else {
             &self.commands
         };
-        match sender.try_send(command) {
+        match sender.try_send(pending) {
             Ok(()) => {
                 if let Some(turn) = interrupted {
                     state.interrupted_turns.insert(turn);
@@ -122,11 +136,9 @@ impl AgentSession {
                 if let Some(request) = response_request {
                     state.outstanding_requests.remove(&request);
                 }
-                Ok(CommandAdmission::Accepted)
+                Ok(CommandAdmission::Queued)
             },
-            Err(TrySendError::Full(command)) => Ok(CommandAdmission::Backpressured(
-                PendingCommand::from_command(command),
-            )),
+            Err(TrySendError::Full(pending)) => Ok(CommandAdmission::Backpressured(pending)),
             Err(TrySendError::Disconnected(_)) => Err(AgentSessionError::WorkerUnavailable(
                 "the runtime worker closed before accepting an action".to_owned(),
             )),
@@ -139,36 +151,48 @@ impl AgentSession {
         Ok(TurnRef::new(self.session_id, TurnId::new(id)))
     }
 
-    fn resolve_snapshot(&mut self, action: AgentIntent) -> Result<AgentCommand, AgentSessionError> {
+    fn resolve_snapshot(
+        &mut self,
+        action: AgentIntent,
+    ) -> Result<PendingCommand, AgentSessionError> {
         let active_turn = NonZeroU64::new(self.active_turn_id.load(Ordering::Acquire))
             .map(|id| TurnRef::new(self.session_id, TurnId::new(id)));
         match action {
-            AgentIntent::Submit(text) => {
-                let input = UserInput::new(text);
+            AgentIntent::Submit(submission) => {
+                let submission_id = submission.id();
+                let input = submission.into_input();
                 if let Some(turn) = active_turn {
-                    Ok(AgentCommand::SteerTurn { turn, input })
+                    Ok(PendingCommand::from_submission(
+                        AgentCommand::SteerTurn { turn, input },
+                        submission_id,
+                    ))
                 } else {
-                    Ok(AgentCommand::StartTurn {
-                        turn: self.next_turn()?,
-                        input,
-                    })
+                    Ok(PendingCommand::from_submission(
+                        AgentCommand::StartTurn {
+                            turn: self.next_turn()?,
+                            input,
+                        },
+                        submission_id,
+                    ))
                 }
             },
-            AgentIntent::Interrupt => Ok(AgentCommand::InterruptTurn {
-                turn: active_turn.ok_or(AgentSessionError::NoActiveTurn)?,
-            }),
-            AgentIntent::RespondToApproval { request, decision } => {
-                Ok(AgentCommand::RespondToActivity {
+            AgentIntent::Interrupt => {
+                Ok(PendingCommand::from_command(AgentCommand::InterruptTurn {
+                    turn: active_turn.ok_or(AgentSessionError::NoActiveTurn)?,
+                }))
+            },
+            AgentIntent::RespondToApproval { request, decision } => Ok(
+                PendingCommand::from_command(AgentCommand::RespondToActivity {
                     request,
                     response: ActivityResponse::Approval(decision),
-                })
-            },
-            AgentIntent::RespondToUserInput { request, input } => {
-                Ok(AgentCommand::RespondToActivity {
+                }),
+            ),
+            AgentIntent::RespondToUserInput { request, input } => Ok(PendingCommand::from_command(
+                AgentCommand::RespondToActivity {
                     request,
                     response: ActivityResponse::UserInput(UserInput::new(input)),
-                })
-            },
+                },
+            )),
         }
     }
 
@@ -178,10 +202,8 @@ impl AgentSession {
         let mut state = match state.try_lock() {
             Ok(state) => state,
             Err(TryLockError::WouldBlock) => {
-                let command = self.resolve_snapshot(action)?;
-                return Ok(CommandAdmission::Backpressured(
-                    PendingCommand::from_command(command),
-                ));
+                let pending = self.resolve_snapshot(action)?;
+                return Ok(CommandAdmission::Backpressured(pending));
             },
             Err(TryLockError::Poisoned(error)) => error.into_inner(),
         };
@@ -194,17 +216,14 @@ impl AgentSession {
         &mut self,
         pending: PendingCommand,
     ) -> Result<CommandAdmission, AgentSessionError> {
-        let command = pending.into_command();
         let state = Arc::clone(&self.state);
         let mut state = match state.try_lock() {
             Ok(state) => state,
             Err(TryLockError::WouldBlock) => {
-                return Ok(CommandAdmission::Backpressured(
-                    PendingCommand::from_command(command),
-                ));
+                return Ok(CommandAdmission::Backpressured(pending));
             },
             Err(TryLockError::Poisoned(error)) => error.into_inner(),
         };
-        self.queue_command(command, &mut state)
+        self.queue_command(pending, &mut state)
     }
 }

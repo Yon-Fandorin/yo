@@ -27,6 +27,7 @@ the assertion or silently skipping it.
 | Change area | First useful command | Closest evidence |
 |---|---|---|
 | Session, Turn, Activity, engine, or runtime semantics | `cargo test -p yo-core` | `crates/yo-core/src/tests` and the owning module tests |
+| Typed input spans, submission identity, or fixed-v1 structured-reference rejection | `cargo test -p yo-core input::tests` and `cargo test -p yo-core journal::codec` | `crates/yo-core/src/input/tests.rs` and Journal wire-compatibility tests |
 | Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
 | Codex protocol translation or provider-ID correlation | `cargo test -p yo-core backend::codex::tests` | `crates/yo-core/src/backend/codex/tests.rs` |
 | Decoded input, editing, paste, bindings, or exit gestures | `cargo test -p yo-tui input::` | Tests beside `yo-tui/src/input` |
@@ -37,7 +38,7 @@ the assertion or silently skipping it.
 | Shell composition, layout, Surface, Unicode width, or text flow | `cargo test -p yo-tui` | Tests beside the owning `yo-tui` module |
 | ANSI operations or presentation-mode policy | `cargo test -p yo-tui terminal::` | Tests under `yo-tui/src/terminal` |
 | Inline or Fullscreen mode behavior | `cargo test -p yo-tui terminal::mode::` | Tests under `yo-tui/src/terminal/mode` |
-| Live-loop ordering, backpressure, or event projection | `cargo test -p yo-tui runner::` | Tests under `yo-tui/src/runner` |
+| Live-loop ordering, backpressure, submission draft ownership, or event projection | `cargo test -p yo-tui runner::` | Tests under `yo-tui/src/runner` |
 | Terminal and HTML projection of the same completed frame | `cargo test -p yo-tui --test rendering_parity` | `crates/yo-tui/tests/rendering_parity` and its goldens |
 | Process termination or real terminal restoration | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
 | Unix process-coordinator state and compensation | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |

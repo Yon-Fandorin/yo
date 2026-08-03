@@ -2,7 +2,7 @@ use std::error::Error;
 
 pub use yo_core::{
     AgentIntent as AgentAction, CommandAdmission as DispatchOutcome,
-    PendingCommand as PendingDispatch,
+    PendingCommand as PendingDispatch, SubmissionOutcome,
 };
 use yo_core::{JournalDurability, TranscriptRecord};
 
@@ -15,6 +15,8 @@ pub enum AgentPoll {
     Record(TranscriptRecord),
     /// A persistent durability-state transition for the visible Session.
     Durability(JournalDurability),
+    /// Whole-request admission resolved for one immutable frontend snapshot.
+    Submission(SubmissionOutcome),
     /// The connection closed after exposing every preceding record.
     Closed,
 }

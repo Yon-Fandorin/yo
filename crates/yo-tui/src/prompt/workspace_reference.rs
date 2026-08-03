@@ -269,12 +269,7 @@ impl WorkspaceReferenceAssist {
         {
             return false;
         }
-        let suffix = match candidate.reference().kind() {
-            yo_core::WorkspaceReferenceKind::Directory => "/",
-            yo_core::WorkspaceReferenceKind::File => "",
-        };
-        let visible_path = display_candidate_text(candidate.reference().relative_path());
-        let replacement = format!("@{visible_path}{suffix}");
+        let replacement = yo_core::workspace_reference_projection(candidate.reference());
         let start = active.trigger.span.start;
         editor.replace_range(active.trigger.span, &replacement);
         self.accepted.push(AcceptedAnnotation {

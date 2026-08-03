@@ -109,6 +109,10 @@ impl AgentConnection for TuiAgentConnection {
             },
         }
 
+        while let Some(outcome) = self.session.take_submission_outcome() {
+            self.pending.push_back(AgentPoll::Submission(outcome));
+        }
+
         if self.pending.is_empty() && self.journal_changed {
             let slice = self.transcript.read_observations_after(self.cursor);
             let head = slice.head();

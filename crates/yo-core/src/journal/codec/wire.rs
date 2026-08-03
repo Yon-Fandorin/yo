@@ -275,6 +275,21 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
                     "durable text updates must be encoded as bounded MessageSegments",
                 ));
             },
+            JournalRecord::CommandCommitted(
+                AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. },
+            ) if !input.references().is_empty() => {
+                return Err(JournalCodecError::new(
+                    "semantic Journal v1 cannot encode structured input references",
+                ));
+            },
+            JournalRecord::CommandCommitted(AgentCommand::RespondToActivity {
+                response: crate::ActivityResponse::UserInput(input),
+                ..
+            }) if !input.references().is_empty() => {
+                return Err(JournalCodecError::new(
+                    "semantic Journal v1 cannot encode structured input references",
+                ));
+            },
             JournalRecord::CommandCommitted(_) | JournalRecord::EventCommitted(_) => {},
         }
     }

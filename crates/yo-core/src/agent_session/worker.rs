@@ -9,12 +9,13 @@ use std::{
 };
 
 use super::{
-    AgentSessionError, SessionState, WORKER_EXECUTING, WORKER_IDLE, WORKER_POLL_INTERVAL,
-    WORKER_STOPPING,
+    AgentSessionError, PendingCommand, SessionState, WORKER_EXECUTING, WORKER_IDLE,
+    WORKER_POLL_INTERVAL, WORKER_STOPPING,
 };
 use crate::{
     ActivityKind, ActivityRequestRef, AgentBackend, AgentCommand, AgentEvent, AgentRuntime,
-    RuntimeError, RuntimePoll, SessionId, TurnRef, journal::SessionJournal,
+    RuntimeError, RuntimePoll, SessionId, SubmissionOutcome, SubmissionRejection,
+    SubmissionRejectionKind, TurnRef, journal::SessionJournal,
 };
 
 pub(super) enum WorkerSignal {
@@ -92,6 +93,7 @@ pub(super) struct AgentWorker<B> {
     session_id: SessionId,
     state: Arc<Mutex<SessionState>>,
     active_turn_id: Arc<AtomicU64>,
+    submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
 }
 
 impl<B: AgentBackend> AgentWorker<B> {
@@ -101,12 +103,14 @@ impl<B: AgentBackend> AgentWorker<B> {
         state: Arc<Mutex<SessionState>>,
         active_turn_id: Arc<AtomicU64>,
         journal: SessionJournal,
+        submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
     ) -> Self {
         Self {
             runtime: AgentRuntime::with_journal(backend, journal),
             session_id,
             state,
             active_turn_id,
+            submission_outcomes,
         }
     }
 
@@ -128,8 +132,8 @@ impl<B: AgentBackend> AgentWorker<B> {
 
     pub(super) fn run(
         &mut self,
-        commands: Receiver<AgentCommand>,
-        urgent_commands: Receiver<AgentCommand>,
+        commands: Receiver<PendingCommand>,
+        urgent_commands: Receiver<PendingCommand>,
         changes: &mut ChangeLane,
         processed: &(Mutex<u64>, Condvar),
         lifecycle: &AtomicU8,
@@ -151,10 +155,25 @@ impl<B: AgentBackend> AgentWorker<B> {
                     .map_or_else(|| commands.try_recv(), Ok),
             };
             match command {
-                Ok(command) => {
-                    if let AgentCommand::InterruptTurn { turn } = &command {
-                        cancel_queued_turn_commands(*turn, &commands, &mut deferred_commands);
-                        cancel_queued_turn_commands(*turn, &urgent_commands, &mut deferred_urgent);
+                Ok(pending) => {
+                    if let AgentCommand::InterruptTurn { turn } = pending.command() {
+                        let canceled =
+                            cancel_queued_turn_commands(*turn, &commands, &mut deferred_commands)
+                                .into_iter()
+                                .chain(cancel_queued_turn_commands(
+                                    *turn,
+                                    &urgent_commands,
+                                    &mut deferred_urgent,
+                                ));
+                        for id in canceled {
+                            self.record_submission_outcome(SubmissionOutcome::Rejected {
+                                id,
+                                rejection: SubmissionRejection::new(
+                                    SubmissionRejectionKind::TargetChanged,
+                                    "the target Turn was interrupted before this submission ran",
+                                ),
+                            });
+                        }
                     }
                     if lifecycle
                         .compare_exchange(
@@ -167,6 +186,8 @@ impl<B: AgentBackend> AgentWorker<B> {
                     {
                         return WorkerExit::from_cleanup(self.runtime.shutdown());
                     }
+                    let submission_id = pending.submission_id();
+                    let (command, _) = pending.into_parts();
                     let result = self.dispatch(command);
                     if let Ok(mut count) = processed.0.lock() {
                         *count += 1;
@@ -182,6 +203,9 @@ impl<B: AgentBackend> AgentWorker<B> {
                         .is_err();
                     match result {
                         Ok(_) => {
+                            if let Some(id) = submission_id {
+                                self.record_submission_outcome(SubmissionOutcome::Accepted { id });
+                            }
                             if !changes.changed() {
                                 return WorkerExit::from_cleanup(self.runtime.shutdown());
                             }
@@ -235,6 +259,13 @@ impl<B: AgentBackend> AgentWorker<B> {
 
             thread::sleep(WORKER_POLL_INTERVAL);
         }
+    }
+
+    fn record_submission_outcome(&self, outcome: SubmissionOutcome) {
+        self.submission_outcomes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(outcome);
     }
 
     fn dispatch(&mut self, command: AgentCommand) -> Result<Vec<AgentEvent>, AgentSessionError> {
@@ -323,14 +354,18 @@ pub(super) fn apply_event(
 
 fn cancel_queued_turn_commands(
     interrupted: TurnRef,
-    commands: &Receiver<AgentCommand>,
-    retained: &mut VecDeque<AgentCommand>,
-) {
-    while let Ok(command) = commands.try_recv() {
-        if command_turn(&command) != Some(interrupted) {
-            retained.push_back(command);
+    commands: &Receiver<PendingCommand>,
+    retained: &mut VecDeque<PendingCommand>,
+) -> Vec<crate::SubmissionId> {
+    let mut canceled_submissions = Vec::new();
+    while let Ok(pending) = commands.try_recv() {
+        if command_turn(pending.command()) != Some(interrupted) {
+            retained.push_back(pending);
+        } else if let Some(id) = pending.submission_id() {
+            canceled_submissions.push(id);
         }
     }
+    canceled_submissions
 }
 
 fn command_turn(command: &AgentCommand) -> Option<TurnRef> {

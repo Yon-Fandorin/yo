@@ -176,12 +176,14 @@ fn non_chat_modes_enforce_read_only_input_without_dispatch() {
     state
         .handle(function(1, KeyAction::Press), Duration::ZERO)
         .unwrap();
-    assert_eq!(
-        state.handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO),
-        Ok(StateEffect::Dispatch(crate::runner::AgentAction::Submit(
-            "draft".to_owned()
-        )))
-    );
+    let StateEffect::Dispatch(crate::runner::AgentAction::Submit(submission)) = state
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("Chat Enter should queue one immutable submission");
+    };
+    assert_eq!(submission.input().as_str(), "draft");
+    assert_eq!(state.editor().text(), "draft");
 }
 
 // 직접 request correlation이 없는 Journal 문맥은 no_associated_request이고, 정확한

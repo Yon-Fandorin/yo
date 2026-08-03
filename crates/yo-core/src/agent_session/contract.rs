@@ -1,10 +1,13 @@
-use crate::{ActivityRequestRef, AgentCommand, ApprovalDecision};
+use crate::{
+    ActivityRequestRef, AgentCommand, ApprovalDecision, InputSubmission, SubmissionId,
+    SubmissionIdGenerationError, UserInput,
+};
 
 /// A frontend intent directed at an agent Session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AgentIntent {
     /// Starts a Turn or steers the active Turn.
-    Submit(String),
+    Submit(InputSubmission),
     /// Requests interruption of the active Turn.
     Interrupt,
     /// Answers one correlated approval request.
@@ -23,30 +26,56 @@ pub enum AgentIntent {
     },
 }
 
+impl AgentIntent {
+    /// Captures one plain-text immutable submission with a fresh correlation identity.
+    pub fn submit(text: impl Into<String>) -> Result<Self, SubmissionIdGenerationError> {
+        Ok(Self::Submit(InputSubmission::new(
+            SubmissionId::new()?,
+            UserInput::new(text),
+        )))
+    }
+}
+
 /// Immediate result of placing an intent on an agent Session.
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandAdmission {
     /// The Session retained the command for delivery.
-    Accepted,
+    Queued,
     /// The Session is busy; the frontend retains and retries this operation.
     Backpressured(PendingCommand),
 }
 
 /// An opaque, single-use operation retained across nonblocking backpressure.
 #[derive(Debug, Eq, PartialEq)]
-pub struct PendingCommand(AgentCommand);
+pub struct PendingCommand {
+    command: AgentCommand,
+    submission_id: Option<SubmissionId>,
+}
 
 impl PendingCommand {
     pub(super) fn from_command(command: AgentCommand) -> Self {
-        Self(command)
+        Self {
+            command,
+            submission_id: None,
+        }
     }
 
-    pub(super) fn into_command(self) -> AgentCommand {
-        self.0
+    pub(super) fn from_submission(command: AgentCommand, submission_id: SubmissionId) -> Self {
+        Self {
+            command,
+            submission_id: Some(submission_id),
+        }
     }
 
-    #[cfg(test)]
+    pub(super) fn into_parts(self) -> (AgentCommand, Option<SubmissionId>) {
+        (self.command, self.submission_id)
+    }
+
+    pub(super) const fn submission_id(&self) -> Option<SubmissionId> {
+        self.submission_id
+    }
+
     pub(super) const fn command(&self) -> &AgentCommand {
-        &self.0
+        &self.command
     }
 }

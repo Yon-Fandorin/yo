@@ -48,11 +48,11 @@ impl AgentConnection for PendingAgent {
     type Error = io::Error;
 
     fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Accepted)
+        Ok(DispatchOutcome::Queued)
     }
 
     fn retry(&mut self, _pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Accepted)
+        Ok(DispatchOutcome::Queued)
     }
 
     fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
@@ -96,11 +96,11 @@ impl AgentConnection for RetainedChatAgent {
     type Error = io::Error;
 
     fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Accepted)
+        Ok(DispatchOutcome::Queued)
     }
 
     fn retry(&mut self, _pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Accepted)
+        Ok(DispatchOutcome::Queued)
     }
 
     fn poll(&mut self) -> Result<AgentPoll, Self::Error> {

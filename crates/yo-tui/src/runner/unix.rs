@@ -70,6 +70,9 @@ impl LoopError {
             Self::State(StateError::ItemIdOverflow) => {
                 "allocating the next transcript item ID failed".to_owned()
             },
+            Self::State(StateError::SubmissionIdentityUnavailable) => {
+                "allocating a submission identity failed".to_owned()
+            },
             Self::Frame(error) => error.detail(),
             Self::InlineRender(error) => format!("rendering the inline frame failed: {error}"),
             Self::FullscreenRender(error) => {
@@ -279,7 +282,7 @@ where
                 .retry(action)
                 .map_err(|error| LoopError::Agent(error.to_string()))?
             {
-                DispatchOutcome::Accepted => {},
+                DispatchOutcome::Queued => {},
                 DispatchOutcome::Backpressured(action) => {
                     *pending_control = Some(action);
                 },
@@ -292,7 +295,7 @@ where
                 .retry(action)
                 .map_err(|error| LoopError::Agent(error.to_string()))?
             {
-                DispatchOutcome::Accepted => {},
+                DispatchOutcome::Queued => {},
                 DispatchOutcome::Backpressured(action) => {
                     *pending_dispatch = Some(action);
                 },
@@ -325,7 +328,7 @@ where
                                 .dispatch(action)
                                 .map_err(|error| LoopError::Agent(error.to_string()))?
                             {
-                                DispatchOutcome::Accepted => {},
+                                DispatchOutcome::Queued => {},
                                 DispatchOutcome::Backpressured(action) => {
                                     if is_interrupt {
                                         *pending_control = Some(action);
@@ -459,7 +462,7 @@ where
                         .dispatch(action)
                         .map_err(|error| LoopError::Agent(error.to_string()))?
                     {
-                        DispatchOutcome::Accepted => {},
+                        DispatchOutcome::Queued => {},
                         DispatchOutcome::Backpressured(action) => {
                             *pending_dispatch = Some(action);
                         },
@@ -570,6 +573,12 @@ where
             AgentPoll::Durability(durability) => {
                 state
                     .observe_durability(durability)
+                    .map_err(LoopError::State)?;
+                changed = true;
+            },
+            AgentPoll::Submission(outcome) => {
+                state
+                    .observe_submission_outcome(outcome)
                     .map_err(LoopError::State)?;
                 changed = true;
             },

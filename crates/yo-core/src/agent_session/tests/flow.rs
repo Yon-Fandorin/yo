@@ -5,8 +5,8 @@ use super::{
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand, AgentEvent,
     ApprovalDecision, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendScriptStep, RequestId, RuntimeError, RuntimePoll, ScriptedBackend, TurnOutcome,
-    UserInput,
+    BackendScriptStep, InputSubmission, RequestId, RuntimeError, RuntimePoll, ScriptedBackend,
+    SubmissionId, SubmissionOutcome, TurnOutcome, UserInput,
 };
 
 // 첫 prompt는 Session을 한 번 만든 뒤 Turn 1을 시작하고 backend의 완료 event를 그대로
@@ -30,8 +30,14 @@ fn starts_the_first_turn_and_forwards_completion() {
     ]);
     let mut app = start_app(backend);
 
-    app.dispatch(AgentIntent::Submit("inspect".to_owned()))
-        .unwrap();
+    let submission = InputSubmission::new(SubmissionId::new().unwrap(), UserInput::from("inspect"));
+    let submission_id = submission.id();
+    app.dispatch(AgentIntent::Submit(submission)).unwrap();
+    app.wait_until_processed(1);
+    assert_eq!(
+        app.take_submission_outcome(),
+        Some(SubmissionOutcome::Accepted { id: submission_id })
+    );
     assert_eq!(
         next_poll(&mut app).unwrap(),
         RuntimePoll::Event(AgentEvent::TurnStarted { turn: first })
@@ -72,11 +78,11 @@ fn starts_a_new_turn_before_the_frontend_polls_completion() {
     ]);
     let mut app = start_app(backend);
 
-    app.dispatch(AgentIntent::Submit("first".to_owned()))
+    app.dispatch(AgentIntent::submit("first".to_owned()).unwrap())
         .unwrap();
     app.wait_until_processed(1);
     app.wait_until_no_active_turn();
-    app.dispatch(AgentIntent::Submit("second".to_owned()))
+    app.dispatch(AgentIntent::submit("second".to_owned()).unwrap())
         .unwrap();
     app.wait_until_processed(2);
 
@@ -119,14 +125,14 @@ fn submits_active_turn_input_as_steer() {
     ])
     .with_capabilities(BackendCapabilities::none().with_steer());
     let mut app = start_app(backend);
-    app.dispatch(AgentIntent::Submit("inspect".to_owned()))
+    app.dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
         .unwrap();
     assert_eq!(
         next_poll(&mut app).unwrap(),
         RuntimePoll::Event(AgentEvent::TurnStarted { turn: first })
     );
 
-    app.dispatch(AgentIntent::Submit("focus on tests".to_owned()))
+    app.dispatch(AgentIntent::submit("focus on tests".to_owned()).unwrap())
         .unwrap();
     app.wait_until_processed(2);
     app.shutdown().unwrap();
@@ -159,7 +165,7 @@ fn correlates_an_approval_response_with_its_request() {
         BackendScriptStep::Shutdown(Ok(())),
     ]);
     let mut app = start_app(backend);
-    app.dispatch(AgentIntent::Submit("edit".to_owned()))
+    app.dispatch(AgentIntent::submit("edit".to_owned()).unwrap())
         .unwrap();
     next_poll(&mut app).unwrap();
     assert!(matches!(
@@ -216,7 +222,7 @@ fn interrupts_only_the_active_turn() {
         BackendScriptStep::Shutdown(Ok(())),
     ]);
     let mut app = start_app(backend);
-    app.dispatch(AgentIntent::Submit("long task".to_owned()))
+    app.dispatch(AgentIntent::submit("long task".to_owned()).unwrap())
         .unwrap();
     next_poll(&mut app).unwrap();
     next_poll(&mut app).unwrap();
@@ -285,7 +291,7 @@ fn correlates_agent_requested_input_instead_of_steering() {
         BackendScriptStep::Shutdown(Ok(())),
     ]);
     let mut app = start_app(backend);
-    app.dispatch(AgentIntent::Submit("ask me".to_owned()))
+    app.dispatch(AgentIntent::submit("ask me".to_owned()).unwrap())
         .unwrap();
     next_poll(&mut app).unwrap();
     next_poll(&mut app).unwrap();
@@ -358,7 +364,7 @@ fn reports_a_fake_backend_turn_failure_through_the_product_connection() {
         BackendScriptStep::Shutdown(Ok(())),
     ]);
     let mut app = start_app(backend);
-    app.dispatch(AgentIntent::Submit("fail".to_owned()))
+    app.dispatch(AgentIntent::submit("fail".to_owned()).unwrap())
         .unwrap();
     next_poll(&mut app).unwrap();
     assert!(matches!(

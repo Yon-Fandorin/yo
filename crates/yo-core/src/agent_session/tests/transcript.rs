@@ -31,7 +31,7 @@ fn reads_worker_commits_without_consuming_the_change_notification() {
     let startup = transcript.read_after(None);
     let startup_cursor = startup.entries().last().unwrap().sequence();
 
-    app.dispatch(AgentIntent::Submit("inspect".to_owned()))
+    app.dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
         .unwrap();
     app.wait_until_processed(1);
     app.wait_until_no_active_turn();

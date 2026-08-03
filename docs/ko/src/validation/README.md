@@ -27,6 +27,7 @@ command, host, credential, platform을 기록한다.
 | 변경 영역 | 처음 실행할 유용한 명령 | 가장 가까운 증거 |
 |---|---|---|
 | Session, Turn, Activity, engine, runtime 의미 | `cargo test -p yo-core` | `crates/yo-core/src/tests`와 소유 모듈 test |
+| typed input span, submission identity, 고정된 v1의 structured-reference 거절 | `cargo test -p yo-core input::tests`와 `cargo test -p yo-core journal::codec` | `crates/yo-core/src/input/tests.rs`와 Journal wire-compatibility test |
 | Agent-session admission, concurrency, 시작, 종료 | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
 | Codex protocol 변환이나 provider ID 연결 | `cargo test -p yo-core backend::codex::tests` | `crates/yo-core/src/backend/codex/tests.rs` |
 | 해석된 input, 편집, paste, binding, 종료 gesture | `cargo test -p yo-tui input::` | `yo-tui/src/input` 곁의 test |
@@ -37,7 +38,7 @@ command, host, credential, platform을 기록한다.
 | shell 조합, layout, Surface, Unicode 너비, text flow | `cargo test -p yo-tui` | 소유 `yo-tui` 모듈 곁의 test |
 | ANSI operation이나 표시 mode 정책 | `cargo test -p yo-tui terminal::` | `yo-tui/src/terminal` 아래 test |
 | Inline 또는 Fullscreen mode 동작 | `cargo test -p yo-tui terminal::mode::` | `yo-tui/src/terminal/mode` 아래 test |
-| live loop 순서, backpressure, event Projection | `cargo test -p yo-tui runner::` | `yo-tui/src/runner` 아래 test |
+| live loop 순서, backpressure, submission draft 소유권, event Projection | `cargo test -p yo-tui runner::` | `yo-tui/src/runner` 아래 test |
 | 같은 완성 frame의 터미널·HTML Projection | `cargo test -p yo-tui --test rendering_parity` | `crates/yo-tui/tests/rendering_parity`와 golden |
 | process termination이나 실제 터미널 복원 | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
 | Unix process coordinator 상태와 보상 | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |

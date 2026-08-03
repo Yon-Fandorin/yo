@@ -1,4 +1,5 @@
 use std::{
+    collections::VecDeque,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicU8, AtomicU64, Ordering},
@@ -9,7 +10,7 @@ use std::{
 };
 
 use crate::{
-    AgentBackend, AgentCommand, AgentEvent, BackendStopHandle, SessionDescriptor, SessionId,
+    AgentBackend, AgentEvent, BackendStopHandle, SessionDescriptor, SessionId, SubmissionOutcome,
     TranscriptReader, journal::SessionJournal, session_repository::SessionRepository,
 };
 
@@ -37,8 +38,8 @@ const WORKER_STOPPING: u8 = 2;
 
 /// Nonblocking frontend-independent connection to one worker-owned agent runtime.
 pub struct AgentSession {
-    commands: SyncSender<AgentCommand>,
-    urgent_commands: SyncSender<AgentCommand>,
+    commands: SyncSender<PendingCommand>,
+    urgent_commands: SyncSender<PendingCommand>,
     changes: Option<Receiver<WorkerSignal>>,
     finished: Receiver<()>,
     stop: BackendStopHandle,
@@ -49,6 +50,7 @@ pub struct AgentSession {
     active_turn_id: Arc<AtomicU64>,
     next_turn_id: u64,
     transcript: TranscriptReader,
+    submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
     #[cfg(test)]
     processed: Arc<(Mutex<u64>, Condvar)>,
     worker: Option<JoinHandle<WorkerExit>>,
@@ -178,6 +180,8 @@ impl AgentSession {
         let lifecycle = Arc::new(AtomicU8::new(WORKER_IDLE));
         let worker_lifecycle = Arc::clone(&lifecycle);
         let transcript = journal.transcript_reader();
+        let submission_outcomes = Arc::new(Mutex::new(VecDeque::new()));
+        let worker_submission_outcomes = Arc::clone(&submission_outcomes);
         let worker = match thread::Builder::new()
             .name("yo-agent-runtime".to_owned())
             .spawn(move || {
@@ -191,6 +195,7 @@ impl AgentSession {
                     worker_state,
                     worker_active_turn_id,
                     journal,
+                    worker_submission_outcomes,
                 );
                 let outcome = match worker.initialize() {
                     Ok(_) => {
@@ -288,6 +293,7 @@ impl AgentSession {
                     active_turn_id,
                     next_turn_id: 1,
                     transcript,
+                    submission_outcomes,
                     #[cfg(test)]
                     processed,
                     worker: Some(worker),
@@ -430,6 +436,11 @@ impl AgentSession {
     #[must_use]
     pub fn transcript_reader(&self) -> TranscriptReader {
         self.transcript.clone()
+    }
+
+    /// Takes the oldest whole-request admission result, if one is available.
+    pub fn take_submission_outcome(&mut self) -> Option<SubmissionOutcome> {
+        self.submission_outcomes.lock().ok()?.pop_front()
     }
 }
 
