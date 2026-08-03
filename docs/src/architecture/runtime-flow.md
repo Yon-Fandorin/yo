@@ -105,6 +105,42 @@ a row visibly replaces the token and retains the typed reference, but a later
 Enter preserves the draft and reports that structured submission is not yet
 connected. It never silently degrades an accepted identity into plain text.
 
+## Explicit skill assistance
+
+Typing an eligible `$query` reuses the prompt trigger lifecycle but discovers
+metadata through a separate frontend-neutral skill port:
+
+```text
+PromptEditor + cursor
+  ↓ revision-bound $ trigger
+CodexSkillReferenceProvider worker
+  ↓ Codex skills/list descriptors for the current cwd
+Skills overlay
+  ↔ Left/Right filters cached rows by All, Workspace, User, System, or Admin
+  ↓ Tab or Enter
+replace the exact $query span and retain the catalog identity and revision selectors
+```
+
+The catalog worker owns a short-lived Codex app-server connection and never
+blocks the terminal event loop. It uses only the `repo`, `user`, `system`, and
+`admin` scopes reported by Codex; Yo does not infer provenance from filesystem
+paths. Duplicate names remain separate identities, and disabled skills remain
+visible with a reason but cannot be selected. The local adapter hashes the
+exact `SKILL.md` bytes into the entry revision; an unreadable revision disables
+that row instead of issuing a selector that admission cannot later verify. A
+newly opened Skills overlay forces a fresh `skills/list` snapshot and advances
+its catalog generation; continuous typing coalesces queries against that same
+snapshot. The optional scope filter lives
+only in the bottom-left panel footer. Left and Right operate on the already
+received candidates, so changing the filter neither reruns discovery nor
+reflows the prompt.
+
+V1 retains at most one accepted explicit skill. Selection does not read the
+skill body, execute it, inject it into model context, or submit the draft.
+Until submission-time admission can reload and revalidate the exact selected
+entry, Enter preserves the draft and fails closed rather than treating the
+visible `$name` as sufficient authority.
+
 ## One active turn
 
 A submitted prompt follows this route:

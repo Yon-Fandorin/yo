@@ -15,6 +15,7 @@ use crate::{
     surface::{Point, Rect, SurfaceView, WriteOutcome},
 };
 
+pub(crate) mod assist;
 mod chrome;
 mod viewport;
 
@@ -181,6 +182,7 @@ impl PreparedPrompt {
     }
 }
 
+pub(crate) mod skill_reference;
 #[cfg(test)]
 mod tests;
 pub(crate) mod workspace_reference;

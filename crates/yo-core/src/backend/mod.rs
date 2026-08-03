@@ -2,7 +2,7 @@ mod codex;
 mod contract;
 mod scripted;
 
-pub use codex::{CodexBackend, CodexBackendConfig};
+pub use codex::{CodexBackend, CodexBackendConfig, CodexSkillReferenceProvider};
 pub use contract::{
     AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
     BackendPoll, BackendStopHandle,

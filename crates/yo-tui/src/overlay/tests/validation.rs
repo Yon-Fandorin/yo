@@ -17,6 +17,24 @@ fn rejects_empty_required_structure() {
     );
 }
 
+// filter footer는 최소 한 항목과 범위 안의 선택 인덱스를 요구해 rendering 단계에서
+// 잘못된 UI 상태를 추측하거나 보정하지 않는다.
+#[test]
+fn rejects_invalid_filter_structure() {
+    assert_eq!(
+        PanelSnapshot::new("Title", vec![SelectionEntry::enabled("a", "A", None)])
+            .unwrap()
+            .with_filter_bar(Vec::<String>::new(), 0),
+        Err(PanelValidationError::EmptyFilterLabels)
+    );
+    assert_eq!(
+        PanelSnapshot::new("Title", vec![SelectionEntry::enabled("a", "A", None)])
+            .unwrap()
+            .with_filter_bar(["All"], 1),
+        Err(PanelValidationError::FilterSelectionOutOfRange)
+    );
+}
+
 // 한 snapshot 안의 opaque identity는 유일해야 late refresh와 accept가 같은 항목을
 // 모호하게 가리키지 않는다.
 #[test]

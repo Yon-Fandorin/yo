@@ -103,6 +103,40 @@ caption은 dim 처리한다. Rich glyph는 이동에 `↑↓`, ASCII는 `Up/Down
 연결되지 않았다고 알린다. 승인한 identity를 몰래 plain text로 낮추지
 않는다.
 
+## 명시적 skill 지원
+
+유효한 `$query`를 입력하면 같은 prompt trigger 생명주기를 재사용하되,
+별도의 frontend 중립 skill port에서 metadata를 찾는다.
+
+```text
+PromptEditor + cursor
+  ↓ revision-bound $ trigger
+CodexSkillReferenceProvider worker
+  ↓ 현재 cwd에 대한 Codex skills/list descriptor
+Skills overlay
+  ↔ Left/Right로 cached 행을 All, Workspace, User, System, Admin 중 하나로 filter
+  ↓ Tab 또는 Enter
+정확한 $query span을 바꾸고 catalog identity와 revision selector 보존
+```
+
+catalog worker는 수명이 짧은 Codex app-server 연결을 소유하며 terminal event
+loop를 막지 않는다. Codex가 보고한 `repo`, `user`, `system`, `admin` scope만
+사용하고 filesystem path에서 provenance를 추측하지 않는다. 같은 이름도
+identity가 다르면 별도 행으로 남고, 비활성 skill은 이유와 함께 보이지만
+선택할 수 없다. local adapter는 정확한 `SKILL.md` byte를 hash해 entry revision으로
+사용한다. revision을 읽을 수 없는 행은 admission이 나중에 검증할 수 없는
+selector를 만들지 않도록 비활성화한다. 새 Skills overlay를 열 때는 새
+`skills/list` snapshot을 강제로 읽고 catalog generation을 올린다. 연속 입력은
+같은 snapshot을 대상으로 최신 query로 합친다. 선택적인 scope filter는 panel 왼쪽 하단에만 둔다. Left와
+Right는 이미 받은 후보만 좁히므로 discovery를 다시 실행하거나 prompt를
+재배치하지 않는다.
+
+V1은 accept된 명시적 skill을 최대 하나만 보존한다. 선택은 skill 본문을
+읽거나 실행하거나 model context에 주입하거나 draft를 제출하지 않는다.
+제출 시점 admission이 정확한 항목을 다시 읽고 검증할 수 있을 때까지 Enter는
+draft를 보존하고 실패-폐쇄하며, 보이는 `$name`만으로 충분한 권위라고
+간주하지 않는다.
+
 ## 활성 Turn 하나
 
 제출된 prompt는 다음 경로를 지난다.

@@ -114,7 +114,11 @@ fn run_agent_generation(
             yo_core::LocalWorkspaceReferenceProvider::start(cwd, workspace_host_id).map_err(
                 |error| AppError::single("starting workspace reference discovery", error),
             )?;
-        let backend = yo_core::CodexBackend::spawn(yo_core::CodexBackendConfig::new(cwd))
+        let codex_config = yo_core::CodexBackendConfig::new(cwd);
+        let skill_references =
+            yo_core::CodexSkillReferenceProvider::start(codex_config.clone(), workspace_host_id)
+                .map_err(|error| AppError::single("starting Codex skill discovery", error))?;
+        let backend = yo_core::CodexBackend::spawn(codex_config)
             .map_err(|error| AppError::single("starting Codex", error))?;
         let Some(agent) = agent::TuiAgentConnection::start_persistent(
             backend,
@@ -132,7 +136,8 @@ fn run_agent_generation(
                 options.glyph_profile,
                 yo_tui::TuiSessionInfo::new("codex", compact_workspace_label(cwd)),
             )
-            .with_workspace_references(workspace_references),
+            .with_workspace_references(workspace_references)
+            .with_skill_references(skill_references),
         });
     }
     let session = live

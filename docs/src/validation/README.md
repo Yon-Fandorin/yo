@@ -32,6 +32,7 @@ the assertion or silently skipping it.
 | Decoded input, editing, paste, bindings, or exit gestures | `cargo test -p yo-tui input::` | Tests beside `yo-tui/src/input` |
 | Prompt wrapping, cursor visibility, or viewport behavior | `cargo test -p yo-tui prompt::` | Tests beside `yo-tui/src/prompt` |
 | `@` trigger, stale result, selection replacement, local ranking, or Git-ignore discovery | `cargo test -p yo-tui workspace_reference` and `cargo test -p yo-core workspace_reference` | `yo-tui/src/prompt/workspace_reference.rs` and `yo-core/src/workspace_reference` |
+| `$` trigger, Codex catalog decoding, scope filtering, disabled rows, or typed skill selection | `cargo test -p yo-tui skill_reference` and `cargo test -p yo-core skill_reference` and `cargo test -p yo-core backend::codex::skill_catalog` | `yo-tui/src/prompt/skill_reference`, `yo-core/src/skill_reference`, and `yo-core/src/backend/codex/skill_catalog.rs` |
 | Transcript items, streaming revisions, or scrolling | `cargo test -p yo-tui transcript::` | Tests beside `yo-tui/src/transcript` |
 | Shell composition, layout, Surface, Unicode width, or text flow | `cargo test -p yo-tui` | Tests beside the owning `yo-tui` module |
 | ANSI operations or presentation-mode policy | `cargo test -p yo-tui terminal::` | Tests under `yo-tui/src/terminal` |

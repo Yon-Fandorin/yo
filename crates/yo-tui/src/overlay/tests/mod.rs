@@ -129,6 +129,28 @@ fn renders_codex_shaped_path_context_with_a_trailing_kind() {
     );
 }
 
+// provenance filter는 bottom-left 한 영역에만 나타나며 선택한 항목을 강조한다.
+// 좁은 폭에서는 frame과 오른쪽 hidden count를 침범하지 않고 안전하게 잘린다.
+#[test]
+fn renders_optional_filters_only_in_the_bottom_left_footer() {
+    let panel = SelectionPanel::new(
+        snapshot(vec![enabled("one", "One")])
+            .with_filter_bar(["All", "Workspace", "User", "System", "Admin"], 1)
+            .unwrap(),
+    );
+
+    let (wide, _) = render(&panel, Size::new(58, 4)).unwrap();
+    assert!(
+        row(&wide, 2).contains("← All · Workspace · User · System · Admin →"),
+        "{}",
+        row(&wide, 2)
+    );
+    assert!(!row(&wide, 0).contains("Workspace"));
+    let (narrow, _) = render(&panel, Size::new(28, 4)).unwrap();
+    assert!(row(&narrow, 2).starts_with("╰─← All · Workspace"));
+    assert!(row(&narrow, 2).ends_with('╯'));
+}
+
 // 좁은 panel은 detail과 disabled reason을 먼저 버리고 label만 grapheme 경계에서 줄여,
 // 한글 wide cell이나 frame 밖을 침범하지 않는다.
 #[test]
@@ -328,6 +350,34 @@ fn hidden_panel_does_not_claim_navigation_or_dismissal() {
     );
     assert!(!slot.wants_input(&key(KeyCode::Down, KeyModifiers::NONE)));
     assert!(slot.panel().is_some());
+}
+
+// filter가 없는 기존 overlay는 Left/Right를 가로채지 않고 editor나 다른 화면 정책에
+// 그대로 전달하지만, filter가 있는 panel은 좌우 전환 결과를 명시적으로 반환한다.
+#[test]
+fn left_and_right_are_claimed_only_by_panels_with_filters() {
+    let mut plain = PromptOverlaySlot::default();
+    plain.open(snapshot(vec![enabled("one", "One")])).unwrap();
+    plain.set_presented(true);
+    assert!(!plain.wants_input(&key(KeyCode::Left, KeyModifiers::NONE)));
+    assert_eq!(
+        plain.handle(&key(KeyCode::Left, KeyModifiers::NONE)),
+        OverlayInputEffect::Unhandled
+    );
+
+    let mut filtered = PromptOverlaySlot::default();
+    filtered
+        .open(
+            snapshot(vec![enabled("one", "One")])
+                .with_filter_bar(["All", "User"], 0)
+                .unwrap(),
+        )
+        .unwrap();
+    filtered.set_presented(true);
+    assert_eq!(
+        filtered.handle(&key(KeyCode::Right, KeyModifiers::NONE)),
+        OverlayInputEffect::FilterChanged(1)
+    );
 }
 
 // repeat navigation은 연속 이동을 허용하지만 Enter repeat는 한 선택을 중복 소비하지 않는다.

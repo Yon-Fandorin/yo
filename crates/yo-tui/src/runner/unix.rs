@@ -8,8 +8,9 @@ use std::{
 use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
     runner::{
-        AgentConnection, AgentPoll, DispatchOutcome, PresentationMode, RunError, TerminalOutcome,
-        TerminationSource, TuiSession, WorkspaceReferenceConnection, WorkspaceReferencePoll,
+        AgentConnection, AgentPoll, DispatchOutcome, PresentationMode, RunError,
+        SkillReferenceConnection, SkillReferencePoll, TerminalOutcome, TerminationSource,
+        TuiSession, WorkspaceReferenceConnection, WorkspaceReferencePoll,
         session::SessionParts,
         state::{FrameError, MotionDemand, StateEffect, StateError, TuiState},
     },
@@ -251,12 +252,14 @@ where
         pending_dispatch,
         pending_control,
         workspace_references,
+        skill_references,
     } = retained.parts_mut();
 
     loop {
         let agent_changed = drain_agent(agent, state)?;
         let workspace_changed = drain_workspace_references(workspace_references, state);
-        if (agent_changed || workspace_changed || !frame_visible)
+        let skill_changed = drain_skill_references(skill_references, state);
+        if (agent_changed || workspace_changed || skill_changed || !frame_visible)
             && size.width > 0
             && size.height > 0
         {
@@ -352,6 +355,24 @@ where
                             show_loading,
                         } => {
                             dispatch_workspace_search(workspace_references, state, request);
+                            if show_loading && size.width > 0 && size.height > 0 {
+                                motion_deadline = redraw(
+                                    session,
+                                    viewport,
+                                    state,
+                                    appearance,
+                                    size,
+                                    &mut previous,
+                                    epoch,
+                                )?;
+                                frame_visible = true;
+                            }
+                        },
+                        StateEffect::SkillSearch {
+                            request,
+                            show_loading,
+                        } => {
+                            dispatch_skill_search(skill_references, state, request);
                             if show_loading && size.width > 0 && size.height > 0 {
                                 motion_deadline = redraw(
                                     session,
@@ -474,6 +495,24 @@ where
                         frame_visible = true;
                     }
                 },
+                StateEffect::SkillSearch {
+                    request,
+                    show_loading,
+                } => {
+                    dispatch_skill_search(skill_references, state, request);
+                    if show_loading && size.width > 0 && size.height > 0 {
+                        motion_deadline = redraw(
+                            session,
+                            viewport,
+                            state,
+                            appearance,
+                            size,
+                            &mut previous,
+                            epoch,
+                        )?;
+                        frame_visible = true;
+                    }
+                },
                 StateEffect::Resize(next) => {
                     prepare_resize(viewport, &mut size, next);
                     frame_visible = false;
@@ -579,6 +618,54 @@ fn drain_workspace_references(
             Err(error) => {
                 changed |= matches!(
                     state.observe_workspace_reference_failure(error),
+                    StateEffect::Redraw
+                );
+                disconnected = true;
+                break;
+            },
+        }
+    }
+    if disconnected {
+        *connection = None;
+    }
+    changed
+}
+
+fn dispatch_skill_search(
+    connection: &mut Option<Box<dyn SkillReferenceConnection>>,
+    state: &mut TuiState,
+    request: yo_core::SkillReferenceSearchRequest,
+) {
+    let result = connection
+        .as_deref_mut()
+        .ok_or_else(|| "skill search is unavailable".to_owned())
+        .and_then(|connection| connection.search(request));
+    if let Err(error) = result {
+        state.observe_skill_reference_failure(error);
+    }
+}
+
+fn drain_skill_references(
+    connection: &mut Option<Box<dyn SkillReferenceConnection>>,
+    state: &mut TuiState,
+) -> bool {
+    let Some(active_connection) = connection.as_deref_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    let mut disconnected = false;
+    for _ in 0..MAX_AGENT_EVENTS_PER_TICK {
+        match active_connection.poll() {
+            Ok(SkillReferencePoll::Pending) => break,
+            Ok(SkillReferencePoll::Update(update)) => {
+                changed |= matches!(
+                    state.observe_skill_reference_update(update),
+                    StateEffect::Redraw
+                );
+            },
+            Err(error) => {
+                changed |= matches!(
+                    state.observe_skill_reference_failure(error),
                     StateEffect::Redraw
                 );
                 disconnected = true;

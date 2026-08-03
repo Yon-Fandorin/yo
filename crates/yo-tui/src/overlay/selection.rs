@@ -31,6 +31,13 @@ pub(crate) struct PanelSnapshot {
     title: String,
     title_status: Option<String>,
     entries: Vec<SelectionEntry>,
+    filter_bar: Option<FilterBar>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FilterBar {
+    labels: Vec<String>,
+    selected: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,6 +99,8 @@ pub(crate) enum PanelValidationError {
     EmptyDisabledReason {
         index: usize,
     },
+    EmptyFilterLabels,
+    FilterSelectionOutOfRange,
     UnsafeText {
         field: TextField,
         cause: GraphemeError,
@@ -106,6 +115,7 @@ pub(crate) enum TextField {
     Context { index: usize },
     Detail { index: usize },
     DisabledReason { index: usize },
+    FilterLabel { index: usize },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -185,6 +195,7 @@ impl PanelSnapshot {
             title: title.into(),
             title_status: None,
             entries,
+            filter_bar: None,
         };
         snapshot.validate()?;
         Ok(snapshot)
@@ -199,6 +210,19 @@ impl PanelSnapshot {
         Ok(self)
     }
 
+    pub(crate) fn with_filter_bar(
+        mut self,
+        labels: impl IntoIterator<Item = impl Into<String>>,
+        selected: usize,
+    ) -> Result<Self, PanelValidationError> {
+        self.filter_bar = Some(FilterBar {
+            labels: labels.into_iter().map(Into::into).collect(),
+            selected,
+        });
+        self.validate()?;
+        Ok(self)
+    }
+
     fn validate(&self) -> Result<(), PanelValidationError> {
         if self.title.is_empty() {
             return Err(PanelValidationError::EmptyTitle);
@@ -209,6 +233,20 @@ impl PanelSnapshot {
         }
         if self.entries.is_empty() {
             return Err(PanelValidationError::EmptyEntries);
+        }
+        if let Some(filter_bar) = &self.filter_bar {
+            if filter_bar.labels.is_empty() {
+                return Err(PanelValidationError::EmptyFilterLabels);
+            }
+            if filter_bar.selected >= filter_bar.labels.len() {
+                return Err(PanelValidationError::FilterSelectionOutOfRange);
+            }
+            for (index, label) in filter_bar.labels.iter().enumerate() {
+                if label.is_empty() {
+                    return Err(PanelValidationError::EmptyFilterLabels);
+                }
+                validate_text(label, TextField::FilterLabel { index })?;
+            }
         }
         let mut identities = HashSet::with_capacity(self.entries.len());
         for (index, entry) in self.entries.iter().enumerate() {
@@ -277,6 +315,26 @@ impl SelectionPanel {
 
     pub(crate) fn selected_identity(&self) -> Option<&EntryIdentity> {
         self.selected.as_ref()
+    }
+
+    pub(crate) fn previous_filter(&mut self) -> Option<usize> {
+        let filter = self.snapshot.filter_bar.as_mut()?;
+        filter.selected = if filter.selected == 0 {
+            filter.labels.len() - 1
+        } else {
+            filter.selected - 1
+        };
+        Some(filter.selected)
+    }
+
+    pub(crate) fn next_filter(&mut self) -> Option<usize> {
+        let filter = self.snapshot.filter_bar.as_mut()?;
+        filter.selected = (filter.selected + 1) % filter.labels.len();
+        Some(filter.selected)
+    }
+
+    pub(crate) const fn has_filter_bar(&self) -> bool {
+        self.snapshot.filter_bar.is_some()
     }
 
     fn move_selection(&mut self, direction: Direction) -> NavigationOutcome {

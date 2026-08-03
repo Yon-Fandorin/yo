@@ -67,8 +67,8 @@ impl SelectionPanel {
             &self.snapshot.title,
             self.snapshot.title_status.as_deref(),
             &hints,
-            start,
-            self.snapshot.entries.len() - end,
+            (start, self.snapshot.entries.len() - end),
+            self.snapshot.filter_bar.as_ref(),
         );
         let label_column_width = self.snapshot.entries[start..end]
             .iter()
@@ -112,8 +112,8 @@ impl PreparedSelectionPanel {
         title: &str,
         title_status: Option<&str>,
         hints: &[BindingHint],
-        hidden_above: usize,
-        hidden_below: usize,
+        hidden: (usize, usize),
+        filter_bar: Option<&super::FilterBar>,
     ) {
         let glyphs = appearance.glyphs;
         let styles = appearance.styles;
@@ -185,7 +185,7 @@ impl PreparedSelectionPanel {
             hints,
             appearance,
         );
-        let counts = match (hidden_above, hidden_below) {
+        let counts = match hidden {
             (0, 0) => String::new(),
             (above, 0) => format!(" ↑{above} "),
             (0, below) => format!(" {below}↓ "),
@@ -202,6 +202,56 @@ impl PreparedSelectionPanel {
                 styles.hint,
             );
         }
+        if let Some(filter_bar) = filter_bar {
+            self.prepare_filters(filter_bar, &counts, appearance);
+        }
+    }
+
+    fn prepare_filters(
+        &mut self,
+        filter_bar: &super::FilterBar,
+        counts: &str,
+        appearance: SelectionPanelAppearance,
+    ) {
+        let last_y = self.size.height - 1;
+        let end = self
+            .size
+            .width
+            .saturating_sub(u16::try_from(text_width(counts)).unwrap_or(u16::MAX))
+            .saturating_sub(2);
+        if end <= 3 {
+            return;
+        }
+        let (left, right) = if appearance.glyphs.rich_keys {
+            ("← ", " →")
+        } else {
+            ("< ", " >")
+        };
+        let mut x = 2;
+        self.push_text(Point::new(x, last_y), left, end, appearance.styles.key_hint);
+        x = x.saturating_add(2);
+        for (index, label) in filter_bar.labels.iter().enumerate() {
+            if index > 0 {
+                self.push_text(Point::new(x, last_y), " · ", end, appearance.styles.hint);
+                x = x.saturating_add(3);
+            }
+            let style = if index == filter_bar.selected {
+                appearance.styles.key_hint
+            } else {
+                appearance.styles.hint
+            };
+            self.push_truncated_text(Point::new(x, last_y), label, end, style);
+            x = x.saturating_add(u16::try_from(text_width(label)).unwrap_or(u16::MAX));
+            if x >= end {
+                return;
+            }
+        }
+        self.push_text(
+            Point::new(x, last_y),
+            right,
+            end,
+            appearance.styles.key_hint,
+        );
     }
 
     fn prepare_hints(

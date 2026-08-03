@@ -18,6 +18,7 @@ pub(crate) enum OverlayInputEffect {
     Unhandled,
     Consumed,
     Redraw,
+    FilterChanged(usize),
     Accepted(AcceptanceReceipt),
 }
 
@@ -128,6 +129,14 @@ impl PromptOverlaySlot {
                 self.current_mut().panel.next();
                 OverlayInputEffect::Redraw
             },
+            OverlayAction::FilterPrevious => self.current_mut().panel.previous_filter().map_or(
+                OverlayInputEffect::Unhandled,
+                OverlayInputEffect::FilterChanged,
+            ),
+            OverlayAction::FilterNext => self.current_mut().panel.next_filter().map_or(
+                OverlayInputEffect::Unhandled,
+                OverlayInputEffect::FilterChanged,
+            ),
             OverlayAction::Accept => {
                 if binding.key_action == KeyAction::Press {
                     let token = self.current().token;
@@ -143,10 +152,13 @@ impl PromptOverlaySlot {
 
     pub(crate) fn wants_input(&self, input: &InputEvent) -> bool {
         self.presented
-            && self
-                .bindings
-                .classify(input)
-                .is_some_and(|binding| binding.action != OverlayAction::Interrupt)
+            && self.bindings.classify(input).is_some_and(|binding| {
+                binding.action != OverlayAction::Interrupt
+                    && (!matches!(
+                        binding.action,
+                        OverlayAction::FilterPrevious | OverlayAction::FilterNext
+                    ) || self.current().panel.has_filter_bar())
+            })
     }
 
     pub(crate) fn panel(&self) -> Option<&SelectionPanel> {

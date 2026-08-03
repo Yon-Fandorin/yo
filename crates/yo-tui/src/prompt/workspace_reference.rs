@@ -18,9 +18,9 @@ use crate::{
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AssistTrigger {
-    kind: AssistTriggerKind,
-    span: Range<usize>,
-    query: String,
+    pub(super) kind: AssistTriggerKind,
+    pub(super) span: Range<usize>,
+    pub(super) query: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,18 +31,19 @@ pub(crate) enum AssistTriggerKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct WorkspaceEdit {
-    old: Range<usize>,
-    new: Range<usize>,
+    pub(super) old: Range<usize>,
+    pub(super) new: Range<usize>,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct WorkspaceReferenceAssist {
-    enabled: bool,
-    editor_revision: u64,
-    next_request_id: u64,
     active: Option<ActiveSearch>,
     accepted: Vec<AcceptedAnnotation>,
     last_text: String,
+    #[cfg(test)]
+    test_editor_revision: u64,
+    #[cfg(test)]
+    test_next_request_id: u64,
 }
 
 #[derive(Debug)]
@@ -64,10 +65,10 @@ struct AcceptedAnnotation {
 }
 
 impl WorkspaceReferenceAssist {
-    pub(crate) fn enable(&mut self) {
-        self.enabled = true;
-    }
+    #[cfg(test)]
+    pub(crate) const fn enable(&mut self) {}
 
+    #[cfg(test)]
     pub(crate) fn prompt_changed(
         &mut self,
         editor: &PromptEditor,
@@ -75,21 +76,35 @@ impl WorkspaceReferenceAssist {
         edit: Option<&WorkspaceEdit>,
         eligible: bool,
     ) -> Option<(WorkspaceReferenceSearchRequest, bool)> {
-        if !self.enabled || !eligible {
+        self.update_annotations(editor.text(), edit);
+        self.test_editor_revision = self.test_editor_revision.saturating_add(1);
+        if !eligible {
             self.close(overlay);
             return None;
         }
-        self.transform_annotations(editor.text(), edit);
-        self.editor_revision = self.editor_revision.saturating_add(1);
-        let trigger = scan_prompt_trigger(editor.text(), editor.cursor_byte_index());
-        let Some(trigger) = trigger else {
-            self.close(overlay);
-            return None;
-        };
+        let trigger = scan_prompt_trigger(editor.text(), editor.cursor_byte_index())?;
         if trigger.kind != AssistTriggerKind::Workspace {
             self.close(overlay);
             return None;
         }
+        self.test_next_request_id = self.test_next_request_id.saturating_add(1);
+        self.begin(
+            editor,
+            overlay,
+            trigger,
+            self.test_next_request_id,
+            self.test_editor_revision,
+        )
+    }
+
+    pub(super) fn begin(
+        &mut self,
+        editor: &PromptEditor,
+        overlay: &mut PromptOverlaySlot,
+        trigger: AssistTrigger,
+        request_id: u64,
+        editor_revision: u64,
+    ) -> Option<(WorkspaceReferenceSearchRequest, bool)> {
         if self.accepted.iter().any(|annotation| {
             ranges_intersect(&annotation.span, &trigger.span)
                 || editor.cursor_byte_index() == annotation.span.end
@@ -97,8 +112,6 @@ impl WorkspaceReferenceAssist {
             self.close(overlay);
             return None;
         }
-        self.next_request_id = self.next_request_id.saturating_add(1);
-        let request_id = self.next_request_id;
         let expected_trigger = editor.text()[trigger.span.clone()].to_owned();
         let (token, show_loading) = if let Some(active) = self.active.take() {
             (active.token, false)
@@ -111,7 +124,7 @@ impl WorkspaceReferenceAssist {
         overlay.set_acceptance_enabled(token, false).ok()?;
         let request = WorkspaceReferenceSearchRequest::new(
             request_id,
-            self.editor_revision,
+            editor_revision,
             editor.cursor_byte_index(),
             trigger.span.clone(),
             expected_trigger.clone(),
@@ -138,7 +151,6 @@ impl WorkspaceReferenceAssist {
             return false;
         };
         if active.request_id != update.request_id()
-            || self.editor_revision != update.editor_revision()
             || active.terminal
             || active
                 .sequence
@@ -282,7 +294,11 @@ impl WorkspaceReferenceAssist {
         self.active = None;
     }
 
-    fn close(&mut self, overlay: &mut PromptOverlaySlot) {
+    pub(super) fn update_annotations(&mut self, text: &str, edit: Option<&WorkspaceEdit>) {
+        self.transform_annotations(text, edit);
+    }
+
+    pub(super) fn close(&mut self, overlay: &mut PromptOverlaySlot) {
         if let Some(active) = self.active.take() {
             let _ = overlay.close(active.token);
         }
@@ -389,7 +405,7 @@ fn status_snapshot(title: &str, message: &str) -> PanelSnapshot {
     .expect("built-in workspace status rows are valid")
 }
 
-fn display_candidate_text(text: &str) -> String {
+pub(super) fn display_candidate_text(text: &str) -> String {
     text.graphemes(true)
         .map(|cluster| {
             if Grapheme::try_from(cluster).is_ok() {

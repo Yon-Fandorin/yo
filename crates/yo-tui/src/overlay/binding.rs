@@ -5,6 +5,8 @@ pub(super) enum OverlayAction {
     Dismiss,
     Previous,
     Next,
+    FilterPrevious,
+    FilterNext,
     Accept,
     Interrupt,
 }
@@ -122,6 +124,8 @@ impl OverlayAction {
             Self::Dismiss => "close",
             Self::Previous => "previous",
             Self::Next => "next",
+            Self::FilterPrevious => "previous filter",
+            Self::FilterNext => "next filter",
             Self::Accept => "select",
             Self::Interrupt => "interrupt",
         }
@@ -145,6 +149,16 @@ impl Default for OverlayBindings {
                 ResolvedBinding {
                     action: OverlayAction::Next,
                     code: KeyCode::Down,
+                    modifiers: KeyModifiers::NONE,
+                },
+                ResolvedBinding {
+                    action: OverlayAction::FilterPrevious,
+                    code: KeyCode::Left,
+                    modifiers: KeyModifiers::NONE,
+                },
+                ResolvedBinding {
+                    action: OverlayAction::FilterNext,
+                    code: KeyCode::Right,
                     modifiers: KeyModifiers::NONE,
                 },
                 ResolvedBinding {

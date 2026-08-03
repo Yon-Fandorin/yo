@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod events;
 mod protocol;
+mod skill_catalog;
 mod transport;
 
 #[cfg(test)]
@@ -15,6 +16,7 @@ use std::{
 use client::AppServerClient;
 pub use config::CodexBackendConfig;
 use serde_json::{Value, json};
+pub use skill_catalog::CodexSkillReferenceProvider;
 use transport::{JsonPeer, StdioPeer};
 
 use crate::{

@@ -5,6 +5,7 @@ mod archival;
 mod chat;
 mod error;
 mod session;
+mod skill;
 mod state;
 mod unix;
 mod view;
@@ -14,6 +15,7 @@ pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, Pendin
 pub use archival::{ArchivedProjectionError, ArchivedSessionView, project_archived_session};
 pub use error::RunError;
 pub use session::{TuiSession, TuiSessionInfo};
+pub use skill::{SkillReferenceConnection, SkillReferencePoll};
 pub use unix::{run, run_session_with_mode, run_with_mode};
 pub use workspace::{WorkspaceReferenceConnection, WorkspaceReferencePoll};
 

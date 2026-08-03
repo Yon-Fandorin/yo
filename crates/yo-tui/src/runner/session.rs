@@ -1,4 +1,7 @@
-use super::{PendingDispatch, PresentationMode, WorkspaceReferenceConnection, state::TuiState};
+use super::{
+    PendingDispatch, PresentationMode, SkillReferenceConnection, WorkspaceReferenceConnection,
+    state::TuiState,
+};
 #[cfg(test)]
 use crate::appearance::AppearancePin;
 use crate::{
@@ -21,6 +24,7 @@ pub struct TuiSession {
     pending_dispatch: Option<PendingDispatch>,
     pending_control: Option<PendingDispatch>,
     workspace_references: Option<Box<dyn WorkspaceReferenceConnection>>,
+    skill_references: Option<Box<dyn SkillReferenceConnection>>,
 }
 
 /// Host-known labels displayed in the TUI status line.
@@ -36,6 +40,7 @@ pub(super) struct SessionParts<'session> {
     pub(super) pending_dispatch: &'session mut Option<PendingDispatch>,
     pub(super) pending_control: &'session mut Option<PendingDispatch>,
     pub(super) workspace_references: &'session mut Option<Box<dyn WorkspaceReferenceConnection>>,
+    pub(super) skill_references: &'session mut Option<Box<dyn SkillReferenceConnection>>,
 }
 
 impl TuiSession {
@@ -61,6 +66,7 @@ impl TuiSession {
             pending_dispatch: None,
             pending_control: None,
             workspace_references: None,
+            skill_references: None,
         }
     }
 
@@ -72,6 +78,17 @@ impl TuiSession {
     ) -> Self {
         self.workspace_references = Some(Box::new(connection));
         self.state.enable_workspace_references();
+        self
+    }
+
+    /// Installs the execution environment's nonblocking skill catalog provider.
+    #[must_use]
+    pub fn with_skill_references(
+        mut self,
+        connection: impl SkillReferenceConnection + 'static,
+    ) -> Self {
+        self.skill_references = Some(Box::new(connection));
+        self.state.enable_skill_references();
         self
     }
 
@@ -90,6 +107,7 @@ impl TuiSession {
             pending_dispatch: &mut self.pending_dispatch,
             pending_control: &mut self.pending_control,
             workspace_references: &mut self.workspace_references,
+            skill_references: &mut self.skill_references,
         }
     }
 

@@ -10,6 +10,7 @@ mod journal;
 mod runtime;
 mod session;
 pub mod session_repository;
+mod skill_reference;
 mod workspace_reference;
 
 pub use agent_session::{
@@ -19,7 +20,7 @@ pub use agent_session::{
 pub use backend::{
     AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
     BackendPoll, BackendScriptStep, BackendStopHandle, CodexBackend, CodexBackendConfig,
-    ScriptedBackend,
+    CodexSkillReferenceProvider, ScriptedBackend,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision, UserInput};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
@@ -38,6 +39,11 @@ pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
 pub use session::{
     ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionDescriptor, SessionId,
     SessionIdError, SessionIdGenerationError, SessionStartTime, TurnId, TurnRef,
+};
+pub use skill_reference::{
+    SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceProvider,
+    SkillReferenceProviderPoll, SkillReferenceScope, SkillReferenceSearchRequest,
+    SkillReferenceSearchStatus, SkillReferenceSearchUpdate,
 };
 pub use workspace_reference::{
     LocalWorkspaceReferenceProvider, WorkspaceReference, WorkspaceReferenceCandidate,
