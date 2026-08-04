@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:3ae1182cac32e14286e340fdbb41373d9c26106a64b1fe1f7b4d56aaed7a61a1
+revision: sha256:8fc78cf2d5cf768ee502cbd6da45e80c6afed51e88eb0771eec23b410063b2e9
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:2227cd7267de6e8d0a6da6d1aac68ce78f80718d06e9bd6d9bc1e180798dfe0a
+request_hash: sha256:580de52d9252c3569b5d2c6185fdee95cecac76d7dbe0bd3f57cb423b63acc7a
 ---
 # Korean Review Projection
 
@@ -14,26 +14,132 @@ request_hash: sha256:2227cd7267de6e8d0a6da6d1aac68ce78f80718d06e9bd6d9bc1e180798
 
 ## 계약
 
-UUIDv7만 사용하는 descriptor-aware 의미 Session Journal `yo.semantic-journal-commit/v1`과 체크섬이 있는 물리 Session 레코드 `yo.session-record/v1`을 yo의 첫 공개 포맷 후보로 정합니다. 첫 공개 릴리스 전인 지금, 바로 앞의 문자열 입력 의미 `/v1`을 아래의 닫힌 구조화 입력 의미 `/v1`로 교체합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며, schema 태그가 같다는 이유만으로 레코드를 받아들이지 않습니다.
+UUIDv7만 사용하는 descriptor-aware 의미 Session Journal
+`yo.semantic-journal-commit/v1`과 체크섬이 있는 물리 Session 레코드
+`yo.session-record/v1`을 yo의 첫 공개 포맷 후보로 유지합니다. 첫 공개 릴리스 전인
+지금, 바로 앞의 structured-input 의미 `/v1`을 아래의 닫힌 anchored-session 의미
+`/v1`로 교체합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며 schema
+태그가 같다는 이유만으로 레코드를 받아들이지 않습니다.
 
-Descriptor만 있는 commit을 포함해 모든 의미 `/v1` commit은 top-level에 정확히 `format: structured-input`을 가져야 합니다. 이 값이 없거나 알 수 없거나 한 Session 이력에 서로 다른 format 세대가 섞이면 의미 데이터로 받아들이기 전에 fail closed 합니다.
+Descriptor만 있는 commit을 포함한 모든 의미 `/v1` commit은 top-level에 정확히
+`format: anchored-session`을 가져야 합니다. 이 값이 없거나 알 수 없거나 한 Session
+이력에 서로 다른 format 세대가 섞이면 의미 데이터로 받아들이기 전에 fail closed
+합니다.
 
-`StartTurn`과 `SteerTurn` 명령 레코드는 canonical UUIDv4 문자열인 `submission_id`와 `input` 객체를 가져야 합니다. 상관관계가 있는 Activity 사용자 입력 응답은 request identity가 이미 연결을 소유하므로 별도 SubmissionId 없이 같은 `input` 객체를 사용합니다. 닫힌 input 객체는 정확한 `profile: yo.structured-input/v1`, 제출된 정확한 UTF-8 문자열인 `text`, 0개 이상의 타입화된 occurrence를 순서대로 담는 `references` 배열로 구성됩니다.
+기존 structured input 계약은 그대로 포함됩니다. `StartTurn`과 `SteerTurn` 명령은
+canonical UUIDv4 `submission_id`와 `input` 객체를 가지며, input은 정확히
+`profile: yo.structured-input/v1`, 제출된 UTF-8 `text`, 순서가 있는 typed
+`references` 배열을 포함합니다. 상관관계가 있는 Activity 사용자 입력 응답은 별도
+SubmissionId 없이 같은 input 구조를 사용합니다. 의미 재생은 명령 종류, 대상 Turn,
+SubmissionId, `UserInput`을 하나의 수락된 submission으로 보존하고, 한 Session에서
+같은 SubmissionId의 두 번째 commit을 거부합니다. SubmissionId는 내부 상관관계이며
+별도 표시 계약 전에는 일반 Chat과 Transcript에 노출하지 않습니다.
 
-의미 재생 domain은 committed submission을 명령 종류(`StartTurn` 또는 `SteerTurn`), 대상 Turn, SubmissionId, `UserInput`으로 함께 보존해야 합니다. 이 레코드 자체가 정확한 submission이 수락되었다는 증거입니다. Recovery와 snapshot은 그 상관관계를 유지해야 합니다. 각 SubmissionId는 한 Session에서 committed submission 레코드 하나만 식별할 수 있고, 나머지 field가 byte 단위로 같더라도 두 번째 committed occurrence는 유효하지 않습니다. SubmissionId는 내부 상관관계이며 추후 표시 계약이 명시적으로 선택하기 전에는 일반 Chat이나 Transcript에 노출하지 않습니다.
+각 reference occurrence는 `text`를 가리키는 unsigned 64-bit 반개구간 UTF-8 byte
+offset `start`·`end`, capture 당시의 정확한 `projection`, typed identity를
+보존합니다. 구간은 비어 있지 않고 UTF-8 경계에 있으며 엄격한 비중첩 순서를
+지켜야 하고, projection은 해당 text bytes와 같아야 합니다. Replay는 보이는
+`@path`나 `$name`을 다시 파싱하지 않습니다. Workspace occurrence는 identity,
+execution environment, workspace, root, 정규화한 relative path, file 또는 directory
+kind를 보존합니다. Skill occurrence는 identity, execution environment, locator, name,
+workspace·user·system·admin scope, 양의 catalog generation, entry revision을
+보존하며 최대 하나만 허용합니다. 알 수 없는 field·tag·kind·scope, 빈 metadata,
+0 generation, 잘못된 root-relative path와 profile은 fail closed 합니다.
 
-각 occurrence는 `text`를 가리키는 반개구간 UTF-8 byte offset `start`와 `end`, live capture에서 수락한 정확한 `projection`을 포함합니다. Offset은 unsigned 64-bit 범위의 JSON 정수이고 decoder가 주소로 표현할 수 없으면 거부합니다. 구간은 비어 있지 않고 UTF-8 경계에 있으며 겹치지 않는 엄격한 순서를 지켜야 합니다. `projection`은 비어 있지 않고 해당 `text` 구간과 byte 단위로 같아야 합니다. Live writer는 commit 전에 이 projection과 typed reference의 일치를 검증해야 합니다. Replay에서는 projection 문자열이 아니라 typed identity가 권위이며 보이는 `@path`나 `$name`을 파싱해 identity를 복구하면 안 됩니다. 미래의 표시 정책 변경은 새 capture에만 적용되고 저장된 projection bytes를 다시 해석하지 않습니다.
+새 의미 `/v1`은 payload를 담지 않는 일반 exchange record 하나와 재개 전용 record
+다섯 종류를 추가합니다.
 
-`workspace` occurrence는 정확히 `type: workspace`, `start`, `end`, `projection`, `identity`, `execution_environment_identity`, `workspace_identity`, `root_identity`, `relative_path`, `kind`를 포함합니다. `kind`는 `file` 또는 `directory`입니다. `skill` occurrence는 정확히 `type: skill`, `start`, `end`, `projection`, `identity`, `execution_environment_identity`, `locator`, `name`, `scope`, `catalog_generation`, `entry_revision`을 포함합니다. `scope`는 `workspace`, `user`, `system`, `admin` 중 하나이고 `catalog_generation`은 양의 unsigned 64-bit JSON 정수입니다.
+- `backend_exchange_observed`: 양의 `epoch`, UUIDv4 `operation_id`, exchange 종류와
+  방향, payload schema, 선택적인 상관 sequence와 backend identity, Request Audit
+  detail의 가용 상태
+- `backend_binding_opened`: 양의 `epoch`, `backend_kind`, `backend_version`,
+  versioned binding·model·Session locator identity와 전환 정보
+- `backend_binding_closed`: 닫는 양의 `epoch`와 `replaced`, `revoked`, `exhausted` 중
+  하나인 이유
+- `backend_request_accepted`: 양의 `epoch`·`turn_id`, 수락된 SubmissionId와 같은
+  canonical UUIDv4 `operation_id`, matching outbound exchange sequence,
+  `schema`와 `value`로 된 `request_identity`
+- `backend_resumable_outcome`: 양의 `epoch`·`turn_id`·`accepted_request_sequence`,
+  정확한 `status: completed`, backend가 제공할 때만 존재하는 `outcome_identity`
+- `continuation_anchor`: 양의 `epoch`·`accepted_request_sequence`·
+  `resumable_outcome_sequence`·`journal_boundary`
 
-변경 불가능한 `yo.structured-input/v1` profile은 occurrence에 해당하는 모든 identity, execution-environment identity, workspace identity, root identity, locator, name, entry revision이 비어 있지 않을 것을 요구합니다. Workspace `relative_path`는 비어 있지 않은 root-relative `/` 구분 경로이고, 앞뒤 `/`나 빈 component, `.`, `..` component를 허용하지 않습니다. Skill occurrence는 최대 하나입니다. 알 수 없는 input·occurrence field, tag, kind, scope, 0인 skill generation, 잘못된 metadata·profile 값은 fail closed 합니다. 이후 live domain 규칙 변경이 저장된 `/v1` decoder를 암묵적으로 바꾸면 안 됩니다.
+Exchange 종류는 request, response, notification, server request, retry, terminal
+outcome을 구분하고 방향은 yo에서 backend 또는 backend에서 yo를 구분합니다. Detail
+가용 상태는 persisted, volatile, missing, unsupported, unpersisted, redacted 중
+하나입니다. 각 operation의 첫 exchange가 Session에서 유일한 operation ID를 가집니다.
+`StartTurn`·`SteerTurn`에서 나온 request는 SubmissionId를 사용하고, 그 밖의 request,
+notification, server request는 writer가 UUIDv4를 부여합니다. Backend ID가 있으면 별도
+`exchange_identity`에 저장합니다.
 
-모든 물리 `/v1` 레코드는 전체 UUIDv7 Session ID, workspace-host identity, host-normalized workspace path, start time으로 이루어진 Session descriptor, writer가 지정한 `updated_unix_millis`, 선택적인 binding epoch, 선택적인 최신 유효 Continuation Anchor `JournalSequence`를 담은 `discovery` 객체를 가져야 합니다. 기존 CRC32C 하나가 schema, Session ID, `RepositorySequence`, kind, 정확한 payload bytes와 함께 discovery 전체를 같은 checksum preimage로 묶으며 두 번째 checksum이나 append를 만들지 않습니다.
+Root request·notification·server request는 상관 sequence가 없습니다. 이후 exchange는
+참조한 앞 exchange와 같은 operation ID를 사용합니다. Response는 반대 방향의 request
+또는 server request만, retry는 같은 방향의 request·server request·retry만,
+terminal outcome은 같은 operation chain의 request·server request·retry·response만
+가리킬 수 있습니다. Notification은 상관 edge를 만들지 않습니다. 모든 edge는 같은
+epoch 안에서 뒤에서 앞으로만 향하고 하나의 operation ID로 두 번째 root를 만들 수
+없습니다. 이 record 자신의 JournalSequence가 관찰 경계이므로 payload detail이 없어도
+각 흐름이 섞이지 않습니다.
 
-이번 초기화는 필수 `format: structured-input`이 없는 모든 의미 `/v1`을 대체하며, 여기에는 문자열 입력 의미 `/v1`도 포함됩니다. 또한 summary 없는 물리 `/v1`, 개발 단계 의미 `/v1`부터 `/v4`, 물리 `/v1`부터 `/v3`, 숫자 Session ID를 사용한 옛 `/v1`을 대체합니다. 새 닫힌 구조가 아닌 개발 데이터는 의미 데이터로 받아들이기 전에 fail closed 하며 migration, dual reader, compatibility shim, 옛 wire model을 남기지 않습니다. 대체된 구조가 거부되는지 증명하는 최소 fixture만 남길 수 있습니다. 현재 복구가 지원하는 것은 이 계약이 명시한 최신 의미 `/v1`과 물리 `/v1`뿐입니다.
+Binding, model, Session locator와 각 exchange·request·outcome identity는 `schema`와
+`value`로 된 versioned opaque 객체입니다. `payload_schema`, `backend_kind`, 모든
+identity schema는 비어 있지 않은 최대 128-byte ASCII 문자열입니다.
+`backend_version`과 locator·identity value는 비어 있지 않은 최대 4096-byte UTF-8
+문자열입니다. 공통 codec은 닫힌 구조, 크기, 순서, record 관계만 검증하고 각 adapter가
+값의 해석과 native resume 때 binding identity 비교를 소유합니다.
 
-현재 체크섬이 있는 물리 `yo.session-record/v1` envelope는 정확한 의미 payload bytes를 이미 CRC32C로 묶으므로 바꾸지 않습니다. 이 계약은 Session Journal과 Session 레코드 영속화만 다룹니다. `yo.workspace-host-id/v1` 같은 다른 영속 포맷은 각 소유 계약을 따릅니다. 공개 전이라도 같은 태그를 다시 교체하려면 데이터 영향을 수용하는 새 SOT 검토가 필요합니다. 첫 공개 릴리스 뒤에는 공개 버전을 보존하거나 명시적으로 검토한 호환성·migration 계약을 제공해야 합니다.
+Binding 전환에는 initial, exact replay, lossy handoff 중 하나와 cache 상태, 선택적인
+source Anchor sequence를 기록합니다. Initial에는 source가 없고 cache가 해당 없음이며,
+두 replacement 방식은 닫힌 앞 epoch의 Anchor를 요구합니다. Exact replay는 cache
+손실을 기록하고 lossy handoff는 cache 손실 또는 알 수 없음을 기록하면서 눈에 보이는
+context-loss 경계가 됩니다.
+
+첫 binding epoch는 backend Session 생성과 matching `SessionCreated` commit 뒤에 1로
+열리고 이후 정확히 1씩 증가합니다. 동시에 하나만 열리며 replacement는 기존 epoch를
+`replaced`로 닫고 다음을 엽니다. 프로세스 종료나 재시작은 열린 epoch를 닫지 않습니다.
+Native resume은 새 binding-open record를 만들지 않고 기록된 binding identity를 먼저
+검증합니다. 불일치하면 기존 epoch를 닫고 허용된 replacement epoch를 열기 전에는 다음
+request를 수락할 수 없습니다. Accepted request는 matching `StartTurn` 또는
+`SteerTurn`과 outbound request exchange 뒤에 기록하며, command·exchange·accepted
+record의 `operation_id`는 모두 같은 SubmissionId입니다. 하나의 Turn에 여러 submission이
+수락될 수 있지만 완료 outcome은 같은 epoch와 Turn에서 가장 최근 accepted request를
+참조해야 합니다.
+
+`backend_resumable_outcome`은 matching semantic `TurnFinished(completed)` 뒤에만
+유효합니다. Backend가 별도의 안정된 결과 identity를 제공하면 `outcome_identity`에
+저장하고, 제공하지 않으면 명시적으로 생략한 채 참조한 accepted request identity를
+backend operation identity로 유지합니다. Writer는 가짜 결과 ID를 만들지 않습니다.
+실패하거나 중단된 Turn은 resumable outcome과 Anchor를 만들지 않습니다.
+
+`continuation_anchor`는 참조한 outcome 바로 뒤에 같은 semantic commit으로 기록합니다.
+여섯 record의 모든 sequence 참조는 storage ReplaySequence가 아니라 semantic
+JournalSequence입니다. Request와 outcome sequence는 같은 epoch의 상관 record를
+가리키고 `journal_boundary`는 outcome의 JournalSequence와 같아야 합니다. Anchor
+record 자신의 JournalSequence가 물리 discovery metadata에 투영됩니다. 따라서 완료된
+Turn, resumable outcome, Anchor가 그 순서로 하나의 물리 append가 되면서도 Anchor가
+자기 자신을
+완료 경계라고 순환해서 주장하지 않습니다. Recovery와 snapshot은 전체 binding·
+correlation graph를 보존하고 다시 검증하며, 완료 Turn·discovery summary·backend wire
+payload·Request Audit detail에서 Anchor를 추측해 만들지 않습니다.
+
+모든 물리 `/v1` record는 전체 Session descriptor, writer가 지정한
+`updated_unix_millis`, 선택적인 binding epoch, 선택적인 최신 유효 Anchor
+`JournalSequence`를 discovery 객체에 포함합니다. 기존 CRC32C가 schema, Session ID,
+RepositorySequence, record kind, 정확한 payload와 discovery 전체를 함께 묶습니다.
+
+이번 초기화는 `format: anchored-session`이 없는 바로 앞의 structured-input과
+string-input 의미 `/v1`, summary 없는 물리 `/v1`, 개발 단계 semantic `/v1`부터
+`/v4`, physical `/v1`부터 `/v3`, 숫자 identity를 사용한 옛 `/v1`을 대체합니다.
+새 닫힌 구조가 아닌 개발 데이터는 migration, dual reader, compatibility shim 없이
+fail closed 합니다. 현재 checksummed physical envelope 자체는 정확한 새 payload를 이미
+묶을 수 있으므로 바꾸지 않습니다. 공개 전 같은 `/v1`을 다시 교체하려면 데이터 영향을
+수용하는 별도 SOT 검토가 필요하고, 첫 공개 뒤에는 공개 버전을 보존하거나 명시적인
+호환성·migration 계약을 제공해야 합니다.
 
 ## 이유
 
-첫 릴리스 전 `v1` 재사용은 실험 번호를 공개 호환성 부담으로 만들지 않습니다. 모든 commit의 format 판별자는 같은 태그를 가진 옛 레코드까지 확실히 거부합니다. SubmissionId, capture 당시 projection, typed reference occurrence를 수집 시점에 보존하면 실행된 입력을 표시 문자열에서 추측하거나 미래 표시 정책으로 다시 해석하지 않고 재생할 수 있습니다. 기존 물리 envelope checksum은 별도의 저장 권위 없이 새 의미 payload도 그대로 보호합니다.
+첫 릴리스 전 `/v1`을 다시 닫으면 실험 번호를 공개 호환성 부담으로 남기지 않습니다.
+Binding, accepted request, resumable outcome을 별도 record로 보존하면 Codex처럼 요청과
+결과 ID가 같은 backend와 Kimi처럼 다를 수 있는 backend를 같은 의미 계약으로 다룰 수
+있습니다. Anchor는 문자열을 복사하지 않고 앞 record의 JournalSequence를 참조하므로
+작고 검증 가능하며, 기존 물리 envelope checksum만으로 새 의미 payload까지 보호합니다.
