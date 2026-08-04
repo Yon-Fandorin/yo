@@ -167,6 +167,42 @@ Wave Charters and Slice Contracts are human-reviewable branch artifacts. Task Br
 
 Exact storage, schema, and generation remain experimental until the W0 exercise is reviewed.
 
+## Alignment and human checkpoints
+
+Do not turn one Slice into a sequence of routine confirmation requests. Before
+implementation, collect unresolved product and contract choices into one
+alignment checkpoint with their concrete effects and examples. Once the human
+accepts the exact contract and scope, continue through Slice setup,
+implementation, validation, review fixes, and review without asking again for
+the same decision.
+
+Classify the required review lenses and reviewer routing during the initial
+alignment, not for the first time after implementation. For architecture or
+workflow changes, explicitly evaluate whether the different-perspective
+reviewer criterion below applies and record a concrete rationale when it does
+not. This classification selects the reviewer; it does not dispatch one early.
+Independent review starts only from a clean, immutable candidate commit under
+the review protocol below. A review of a dirty working diff is preparation, not
+completed evidence.
+
+If implementation reveals new impact, escalate risk and update the required
+lenses or routing. That update is not another human checkpoint unless resolving
+it requires one of the human-owned choices below.
+
+Pause and return to the human only when new evidence creates a choice that can
+change the product, durable contract, failure behavior, compatibility, security,
+permissions, destructive or external effects, or long-term ownership; when the
+accepted authorities conflict; or when required validation or review cannot be
+made clear. State the newly discovered choice, its practical alternatives, and
+the effect of each. Use the human-attention classification below for the final
+integration disposition.
+
+Implementation details that remain inside the accepted contract—module
+boundaries, mechanical refactoring, test coverage, diagnostics, and fixes for
+review findings—do not create another human checkpoint. Resolve them, rerun the
+affected review lens, and continue. A reviewer finding becomes a checkpoint
+only when resolving it requires one of the human-owned choices above.
+
 ## Ownership and reconciliation
 
 One public contract or design decision has one active owner; concurrent work never shares it. Workers must not silently expand scope, decide a shared interface, or edit outside the allowed write-set. Return a focused proposal and evidence when an out-of-scope decision is required.
@@ -223,11 +259,19 @@ same fresh-context reviewer may perform both contract and code-quality review,
 but must inspect and record the lenses separately.
 
 Use Codex in a separate fresh-context session for agent-performed independent
-review by default. Use Kimi when the review specifically needs a different
-perspective to search for hidden assumptions, counterexamples, credible
-alternatives, or future costs. A Kimi request MUST ask for the strongest
-counterargument before its verdict instead of asking it to confirm the
-implementer's conclusion.
+review by default. Use a configured different-perspective reviewer when the
+review specifically needs another model or provider to search for hidden
+assumptions, counterexamples, credible alternatives, or future costs. Kimi is
+the current preferred route, not a permanent product dependency. Such a request
+MUST ask for the strongest counterargument before its verdict instead of asking
+it to confirm the implementer's conclusion.
+
+A different-perspective reviewer is configured only when the human has selected
+the route and local operating guidance defines its invocation, stable review
+identity, and setup-failure and unavailability handling. The Kimi-specific
+protocol below is the current provider profile. Add or replace that profile when
+the configured route changes; do not invent commands for a hypothetical
+provider.
 
 Run a Kimi review from the Slice worktree in a new non-interactive prompt
 session:
@@ -270,12 +314,16 @@ invoked Kimi session cannot start or finish because the service or usage
 allowance is unavailable.
 
 Every agent reviewer MUST receive the exact final diff, relevant authority,
-requested lens, and validation evidence. If Kimi cannot start or finish its
-different-perspective review because it is unavailable or its usage allowance
-is exhausted, a separate fresh-context Codex session MAY retry the same
-explicit lens. An unavailable default Codex reviewer is not retried until its
-availability state changes. The implementing session's self-check is not an
-independent review. A human may perform the exact review at any point.
+requested lens, and validation evidence. If the preferred
+different-perspective reviewer cannot start or finish because it is unavailable
+or its usage allowance is exhausted, a separate fresh-context Codex session MAY
+retry the same explicit lens. The Slice status or handoff MUST identify the
+requested reviewer, the availability reason, and the provider and model that
+actually performed the fallback; when the exact model identifier is not
+exposed, say so rather than guessing. An unavailable default Codex reviewer is
+not retried until its availability state changes. The implementing session's
+self-check is not an independent review. A human may perform the exact review at
+any point.
 
 If no agent or human reviewer completes the lens, mark the lens **unreviewed**
 in the Slice status or handoff, identify each attempted reviewer and the
