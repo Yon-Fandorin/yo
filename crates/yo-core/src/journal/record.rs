@@ -1,6 +1,6 @@
 use super::codec::{
-    BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted, BackendResumableOutcome,
-    ContinuationAnchor,
+    BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
+    BackendResumableOutcome, ContinuationAnchor,
 };
 use crate::{AgentCommand, AgentEvent, SubmissionId};
 
@@ -20,6 +20,15 @@ impl JournalSequence {
         Self(value)
     }
 
+    pub(super) fn advance_by(self, offset: usize) -> Self {
+        let offset = u64::try_from(offset).expect("a Journal offset must fit u64");
+        Self(
+            self.0
+                .checked_add(offset)
+                .expect("a Journal sequence must not overflow u64"),
+        )
+    }
+
     #[must_use]
     pub const fn get(self) -> u64 {
         self.0
@@ -34,6 +43,7 @@ pub(crate) enum SemanticRecord {
     EventCommitted(AgentEvent),
     BackendExchangeObserved(BackendExchangeObserved),
     BackendBindingOpened(BackendBindingOpened),
+    BackendBindingClosed(BackendBindingClosed),
     BackendRequestAccepted(BackendRequestAccepted),
     BackendResumableOutcome(BackendResumableOutcome),
     ContinuationAnchor(ContinuationAnchor),

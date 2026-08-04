@@ -23,7 +23,8 @@ use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
     AgentBackend, AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
-    BackendPoll, BackendRequestEvidence, BackendStopHandle, RequestId, SessionId, TurnRef,
+    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle, RequestId,
+    SessionId, TurnRef,
 };
 
 /// Local stdio adapter for a compatible `codex app-server` process.
@@ -71,6 +72,13 @@ impl AgentBackend for CodexBackend {
 
     fn capabilities(&self) -> BackendCapabilities {
         self.inner.capabilities()
+    }
+
+    fn resume_session(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        self.inner.resume_session(target)
     }
 
     fn execute_command(
@@ -227,11 +235,7 @@ impl<P: JsonPeer> Backend<P> {
         &mut self,
         session_id: SessionId,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
-        if !self.initialized {
-            let initialize = self.client.initialize()?;
-            self.backend_version = Some(initialize.user_agent);
-            self.initialized = true;
-        }
+        self.initialize()?;
         let result = self
             .client
             .call(
@@ -272,6 +276,81 @@ impl<P: JsonPeer> Backend<P> {
                 BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
             ),
         ))
+    }
+
+    fn initialize(&mut self) -> Result<(), BackendFailure> {
+        if !self.initialized {
+            let initialize = self.client.initialize()?;
+            self.backend_version = Some(initialize.user_agent);
+            self.initialized = true;
+        }
+        Ok(())
+    }
+
+    fn resume_session(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        if target.binding().backend_kind() != "codex-app-server" {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                format!(
+                    "Codex cannot resume backend kind `{}`",
+                    target.binding().backend_kind()
+                ),
+            ));
+        }
+        let locator = target.binding().session_locator();
+        if locator.schema() != "codex.app-server/thread-locator/v1" {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                format!("unsupported Codex Session locator `{}`", locator.schema()),
+            ));
+        }
+        let thread_id = locator.value();
+        self.initialize()?;
+        let result = self
+            .client
+            .call("thread/resume", json!({ "threadId": thread_id }))?
+            .result;
+        let resumed_thread = protocol::string_at(&result, &["thread", "id"])?;
+        let backend_session_id = protocol::string_at(&result, &["thread", "sessionId"])?;
+        let model = protocol::string_at(&result, &["model"])?;
+        let model_provider = protocol::string_at(&result, &["modelProvider"])?;
+        let binding_identity = BackendIdentity::new(
+            "codex.app-server/thread-binding/v1",
+            json!({
+                "sessionId": backend_session_id,
+                "threadId": resumed_thread,
+            })
+            .to_string(),
+        );
+        let model_identity = BackendIdentity::new(
+            "codex.app-server/model-and-provider/v1",
+            json!({ "model": model, "provider": model_provider }).to_string(),
+        );
+        let evidence = BackendBindingEvidence::new(
+            "codex-app-server",
+            self.backend_version.clone().ok_or_else(|| {
+                protocol::protocol_failure(
+                    "Codex backend version was not retained after resume initialize",
+                )
+            })?,
+            binding_identity,
+            model_identity,
+            BackendIdentity::new("codex.app-server/thread-locator/v1", resumed_thread),
+        );
+        if !target.binding().same_resume_identity(&evidence) {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "Codex resumed a binding whose thread, Session, model, or provider identity differs from the durable Continuation Anchor",
+            ));
+        }
+        self.session = Some(SessionBinding {
+            yo: target.session_id(),
+            codex: resumed_thread.to_owned(),
+        });
+        Ok(evidence)
     }
 
     fn respond_to_activity(
@@ -367,6 +446,13 @@ impl<P: JsonPeer> AgentBackend for Backend<P> {
 
     fn capabilities(&self) -> BackendCapabilities {
         self.capabilities()
+    }
+
+    fn resume_session(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        self.resume_session(target)
     }
 
     fn execute_command(

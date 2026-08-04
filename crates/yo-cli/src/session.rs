@@ -22,6 +22,39 @@ use super::{
     command::{SessionCommand, SessionView},
 };
 
+pub(crate) fn resume_read_only(
+    session_id: SessionId,
+    glyph_profile: yo_tui::GlyphProfile,
+    reason: &str,
+) -> Result<Output, AppError> {
+    let storage = super::storage::open_default_reader()
+        .map_err(|error| AppError::single("opening read-only local Yo storage", error))?;
+    read_only_resume_from(&storage, session_id, glyph_profile, reason)
+}
+
+pub(crate) fn read_only_resume_from(
+    storage: &super::storage::LocalReadStorage,
+    session_id: SessionId,
+    glyph_profile: yo_tui::GlyphProfile,
+    reason: &str,
+) -> Result<Output, AppError> {
+    let mut output = show(
+        storage,
+        session_id,
+        SessionCommand {
+            session_id: Some(session_id),
+            all: false,
+            details: false,
+            view: SessionView::Chat,
+            glyph_profile,
+        },
+    )?;
+    output.diagnostics.push(format!(
+        "stored Session {session_id} continuation is unavailable ({reason}); opened durable history read-only"
+    ));
+    Ok(output)
+}
+
 pub(crate) struct Output {
     pub(crate) stdout: String,
     pub(crate) diagnostics: Vec<String>,

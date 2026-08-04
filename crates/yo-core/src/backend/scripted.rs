@@ -1,14 +1,19 @@
 use std::collections::VecDeque;
 
 use super::{
-    AgentBackend, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
-    BackendFailureKind, BackendPoll, BackendStopHandle,
+    AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
+    BackendEvent, BackendFailure, BackendFailureKind, BackendPoll, BackendResumeTarget,
+    BackendStopHandle,
 };
 use crate::AgentCommand;
 
 /// One deterministic expectation or observation in a [`ScriptedBackend`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BackendScriptStep {
+    Resume {
+        target: BackendResumeTarget,
+        evidence: BackendBindingEvidence,
+    },
     AcceptCommand(AgentCommand),
     AcceptCommandWithEvidence {
         command: AgentCommand,
@@ -68,6 +73,29 @@ impl AgentBackend for ScriptedBackend {
 
     fn capabilities(&self) -> BackendCapabilities {
         self.capabilities
+    }
+
+    fn resume_session(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        match self.steps.front() {
+            Some(BackendScriptStep::Resume {
+                target: expected, ..
+            }) if expected == target => {
+                let Some(BackendScriptStep::Resume { evidence, .. }) = self.steps.pop_front()
+                else {
+                    unreachable!("the front script step was native resume")
+                };
+                Ok(evidence)
+            },
+            Some(step) => Err(Self::protocol_failure(format!(
+                "unexpected native resume while awaiting {step:?}"
+            ))),
+            None => Err(Self::protocol_failure(
+                "unexpected native resume after the script was exhausted",
+            )),
+        }
     }
 
     fn execute_command(
@@ -148,7 +176,8 @@ impl AgentBackend for ScriptedBackend {
                 Ok(BackendPoll::Closed)
             },
             Some(
-                BackendScriptStep::AcceptCommand(_)
+                BackendScriptStep::Resume { .. }
+                | BackendScriptStep::AcceptCommand(_)
                 | BackendScriptStep::AcceptCommandWithEvidence { .. }
                 | BackendScriptStep::RejectCommand { .. }
                 | BackendScriptStep::Shutdown(_),

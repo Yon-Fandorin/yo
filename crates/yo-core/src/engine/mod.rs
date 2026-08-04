@@ -1,4 +1,5 @@
 mod error;
+mod recovery;
 mod state;
 
 pub use error::{AgentRejection, ExpectedResponse, ResponseKind};

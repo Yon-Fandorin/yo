@@ -218,6 +218,38 @@ pub(crate) enum JournalRecord {
 }
 
 impl JournalRecord {
+    pub(crate) fn semantic_record(&self) -> Option<crate::journal::SemanticRecord> {
+        use crate::journal::SemanticRecord;
+        match self {
+            Self::CommandCommitted(record) => {
+                Some(SemanticRecord::CommandCommitted(record.clone()))
+            },
+            Self::EventCommitted(record) => Some(SemanticRecord::EventCommitted(record.clone())),
+            Self::BackendExchangeObserved(record) => {
+                Some(SemanticRecord::BackendExchangeObserved(record.clone()))
+            },
+            Self::BackendBindingOpened(record) => {
+                Some(SemanticRecord::BackendBindingOpened(record.clone()))
+            },
+            Self::BackendBindingClosed(record) => {
+                Some(SemanticRecord::BackendBindingClosed(record.clone()))
+            },
+            Self::BackendRequestAccepted(record) => {
+                Some(SemanticRecord::BackendRequestAccepted(record.clone()))
+            },
+            Self::BackendResumableOutcome(record) => {
+                Some(SemanticRecord::BackendResumableOutcome(record.clone()))
+            },
+            Self::ContinuationAnchor(record) => {
+                Some(SemanticRecord::ContinuationAnchor(record.clone()))
+            },
+            Self::SessionDescriptor(_)
+            | Self::MessageReset(_)
+            | Self::MessageSegment(_)
+            | Self::MessageEnded(_) => None,
+        }
+    }
+
     pub(crate) const fn session_id(&self) -> Option<SessionId> {
         match self {
             Self::SessionDescriptor(descriptor) => Some(descriptor.session_id()),

@@ -2,7 +2,8 @@ use std::{fmt, sync::Arc};
 
 use super::{BackendCommandEvidence, BackendOutcomeEvidence};
 use crate::{
-    ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand, TurnOutcome, TurnRef,
+    ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
+    BackendBindingEvidence, BackendResumeTarget, TurnOutcome, TurnRef,
 };
 
 /// Frontend-independent port implemented by an agent provider adapter.
@@ -18,6 +19,19 @@ pub trait AgentBackend {
 
     /// Returns provider-neutral capabilities fixed for this initialized backend.
     fn capabilities(&self) -> BackendCapabilities;
+
+    /// Reconnects an existing durable binding before ordinary command admission begins.
+    ///
+    /// Adapters that do not support native resume fail closed through the default implementation.
+    fn resume_session(
+        &mut self,
+        _target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        Err(BackendFailure::new(
+            BackendFailureKind::Unsupported,
+            "this backend does not support native Session resume",
+        ))
+    }
 
     /// Executes a command far enough to know whether the backend accepted it.
     ///

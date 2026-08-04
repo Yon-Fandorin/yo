@@ -237,7 +237,9 @@ The useful inspection points are:
    coalesced worker wake-up cannot erase a Gap-to-Durable transition. The CLI
    adapter forwards that order to TUI state with the exact cutoff class. Chat, status-row, or banner presentation
    remains a separate product contract. Stored-Session inspection follows the
-   separate read-only path below; resume is not current runtime behavior.
+   separate read-only path below. Executable continuation uses the separately
+   validated recovery path below rather than deriving state from that frontend
+   history projection.
 6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
    consume already committed Transcript records, update TUI state, compose a
    completed `Surface`, and send it to the active presenter. `runner/view.rs`
@@ -341,8 +343,10 @@ projection remains concise and pipeable while its default direct command emits
 that continuity boundary on stderr. Transcript adds the captured Journal cutoff,
 message-recovery state, durability-continuity boundary, discovery consistency,
 and chronological semantic records. Missing and present-but-incomplete physical
-histories remain distinct direct-read failures. Neither form starts a backend,
-follows later appends, repairs storage, or offers continuation.
+histories remain distinct direct-read failures. Neither archived form starts a
+backend, follows later appends, repairs storage, or itself offers continuation.
+The live `yo --resume UUID` and `yo --continue` paths instead use the dedicated
+typed continuation recovery described below.
 
 ## Live observation views
 
@@ -450,9 +454,11 @@ the correlation-only records.
 
 The Codex adapter preserves the user's effective model selection by omitting a
 model override and records the `model` and `modelProvider` returned by
-`thread/start`. It creates a persisted thread rather than an ephemeral one, so
-the stored locator can support a later verified `thread/resume`. Executable
-resume itself remains a later composition step.
+`thread/start`. It creates a persisted thread rather than an ephemeral one.
+On continuation it decodes only its versioned Codex locator, sends exactly one
+`thread/resume`, and verifies the returned thread, model-provider, and model
+identities against the newest durable Anchor before the runtime publishes any
+resumed state.
 
 Pending message text is forced into an immutable segment before a non-text
 ordering boundary, so concurrent Activity events can retain their original order.
@@ -481,9 +487,16 @@ overrides its root and `YO_SESSION_CAPACITY_BYTES` overrides the 1 GiB ceiling.
 Linux otherwise uses `$XDG_STATE_HOME/yo/sessions` or
 `$HOME/.local/state/yo/sessions`; macOS uses
 `$HOME/Library/Application Support/yo/sessions`. The same root is opened without
-creation or a writer lease by `yo session`; executable continuation, remote
-storage, Request Audit persistence, database or compression backends, and a
-durable transport remain outside this composition.
+creation or a writer lease by `yo session`. `yo --resume UUID` validates the
+selected Session read-only first; an unavailable direct target opens its
+archived Chat with a diagnostic instead of mutating storage. `yo --continue`
+selects the newest eligible Session for the current Host and normalized
+workspace and fails without creating a Session when none exists. A runnable
+target is revalidated under the single-writer lease, restores the same Yo
+Session identity, and resumes only its newest durable Anchor—there is no
+fallback to an older Anchor. Remote storage, Request Audit persistence,
+database or compression backends, and a durable transport remain outside this
+composition.
 
 ## Suspend and resume
 

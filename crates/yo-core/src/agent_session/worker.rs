@@ -14,8 +14,8 @@ use super::{
 };
 use crate::{
     ActivityKind, ActivityRequestRef, AgentBackend, AgentCommand, AgentEvent, AgentRuntime,
-    RuntimeError, RuntimePoll, SessionId, SubmissionOutcome, SubmissionRejection,
-    SubmissionRejectionKind, TurnRef, journal::SessionJournal,
+    BackendResumeTarget, RuntimeError, RuntimePoll, SessionId, SubmissionOutcome,
+    SubmissionRejection, SubmissionRejectionKind, TurnRef, journal::SessionJournal,
 };
 
 pub(super) enum WorkerSignal {
@@ -94,6 +94,7 @@ pub(super) struct AgentWorker<B> {
     state: Arc<Mutex<SessionState>>,
     active_turn_id: Arc<AtomicU64>,
     submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
+    resume_target: Option<BackendResumeTarget>,
 }
 
 impl<B: AgentBackend> AgentWorker<B> {
@@ -104,6 +105,7 @@ impl<B: AgentBackend> AgentWorker<B> {
         active_turn_id: Arc<AtomicU64>,
         journal: SessionJournal,
         submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
+        resume_target: Option<BackendResumeTarget>,
     ) -> Self {
         Self {
             runtime: AgentRuntime::with_journal(backend, journal),
@@ -111,10 +113,23 @@ impl<B: AgentBackend> AgentWorker<B> {
             state,
             active_turn_id,
             submission_outcomes,
+            resume_target,
         }
     }
 
     pub(super) fn initialize(&mut self) -> Result<Vec<AgentEvent>, AgentSessionError> {
+        if let Some(target) = self.resume_target.take() {
+            return match self.runtime.initialize_resume(&target) {
+                Ok(()) => Ok(Vec::new()),
+                Err(start) => match self.runtime.shutdown() {
+                    Ok(_) => Err(AgentSessionError::Runtime(start)),
+                    Err(cleanup) => Err(AgentSessionError::StartAndCleanup {
+                        start: Box::new(start),
+                        cleanup: Box::new(cleanup),
+                    }),
+                },
+            };
+        }
         self.runtime.initialize_durability();
         match self.execute(
             AgentCommand::CreateSession {

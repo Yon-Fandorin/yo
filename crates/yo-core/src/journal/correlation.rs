@@ -51,9 +51,9 @@ impl SessionJournal {
         let turn = submission_turn(&command);
         let committed = CommittedCommand::submission(command, submission_id)
             .expect("only StartTurn or SteerTurn may carry accepted request evidence");
-        let first_index = read_state(&self.state).entries.len();
-        let exchange_sequence = JournalSequence::from_index(first_index + events.len() + 1);
-        let accepted_sequence = JournalSequence::from_index(first_index + events.len() + 2);
+        let first_sequence = read_state(&self.state).next_sequence();
+        let exchange_sequence = first_sequence.advance_by(events.len() + 1);
+        let accepted_sequence = first_sequence.advance_by(events.len() + 2);
         let operation_id = OperationId::from(submission_id);
         let records = std::iter::once(SemanticRecord::CommandCommitted(committed))
             .chain(events.iter().cloned().map(SemanticRecord::EventCommitted))
@@ -95,8 +95,7 @@ impl SessionJournal {
         else {
             panic!("only a completed Turn may publish a resumable outcome");
         };
-        let first_index = read_state(&self.state).entries.len();
-        let outcome_sequence = JournalSequence::from_index(first_index + 1);
+        let outcome_sequence = read_state(&self.state).next_sequence().advance_by(1);
         self.append_records(vec![
             SemanticRecord::EventCommitted(event.clone()),
             SemanticRecord::BackendResumableOutcome(BackendResumableOutcome::new(

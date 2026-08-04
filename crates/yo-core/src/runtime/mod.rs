@@ -6,8 +6,8 @@ pub use error::RuntimeError;
 
 use crate::{
     AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendCommandEvidence, BackendEvent,
-    BackendPoll, Failure, JournalSequence, SessionId, SubmissionId, TurnOutcome, TurnRef,
-    journal::SessionJournal,
+    BackendPoll, BackendResumeTarget, Failure, JournalSequence, SessionId, SubmissionId,
+    TurnOutcome, TurnRef, journal::SessionJournal,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,6 +41,51 @@ impl<B: AgentBackend> AgentRuntime<B> {
             binding_epoch: None,
             accepted_requests: HashMap::new(),
         }
+    }
+
+    pub(crate) fn initialize_resume(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<(), RuntimeError> {
+        let entries = self.journal.semantic_entries();
+        self.engine =
+            AgentEngine::from_journal(&entries, self.backend.capabilities().supports_steer())
+                .map_err(|detail| {
+                    RuntimeError::backend(crate::BackendFailure::new(
+                        crate::BackendFailureKind::Protocol,
+                        detail,
+                    ))
+                })?;
+        self.submission_ids = entries
+            .iter()
+            .filter_map(|entry| match entry.record() {
+                crate::journal::SemanticRecord::CommandCommitted(committed) => {
+                    committed.submission_id()
+                },
+                _ => None,
+            })
+            .collect();
+        self.binding_epoch = Some(target.epoch());
+        self.accepted_requests.clear();
+        let evidence = self
+            .backend
+            .resume_session(target)
+            .map_err(RuntimeError::backend)?;
+        let expected = target.binding();
+        if !expected.same_resume_identity(&evidence) {
+            return Err(RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Session,
+                "native resume returned a binding identity different from the durable Continuation Anchor",
+            )));
+        }
+        self.journal.initialize_durability();
+        if !matches!(self.durability(), crate::JournalDurability::Durable { .. }) {
+            return Err(RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Session,
+                "native resume could not publish its required complete Journal snapshot",
+            )));
+        }
+        Ok(())
     }
 
     pub fn session_id(&self) -> Option<SessionId> {

@@ -4,12 +4,21 @@ use yo_tui::{GlyphProfile, PresentationMode};
 
 use super::AppError;
 
-const USAGE: &str = "yo [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript] [--ascii]";
+const USAGE: &str = "yo [--resume SESSION_ID | --continue] [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript] [--ascii]";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LiveOptions {
     pub(crate) mode: PresentationMode,
     pub(crate) glyph_profile: GlyphProfile,
+    pub(crate) selection: LiveSelection,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum LiveSelection {
+    #[default]
+    New,
+    Resume(yo_core::SessionId),
+    Continue,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,12 +58,35 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
 fn parse_live(arguments: impl IntoIterator<Item = OsString>) -> Result<LiveOptions, AppError> {
     let mut mode = None;
     let mut glyph_profile = None;
-    for argument in arguments {
+    let mut selection = None;
+    let mut arguments = arguments.into_iter();
+    while let Some(argument) = arguments.next() {
         let selected_mode = match argument.as_os_str() {
             value if value == "--inline" => Some(PresentationMode::Inline),
             value if value == "--fullscreen" => Some(PresentationMode::Fullscreen),
             value if value == "--ascii" => {
                 set_once(&mut glyph_profile, GlyphProfile::Ascii, "--ascii")?;
+                None
+            },
+            value if value == "--continue" => {
+                set_once(&mut selection, LiveSelection::Continue, "--continue")?;
+                None
+            },
+            value if value == "--resume" => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| usage_error("`--resume` requires a Session ID"))?;
+                let value = value
+                    .to_str()
+                    .ok_or_else(|| usage_error("Session ID is not UTF-8"))?;
+                let session_id = value
+                    .parse()
+                    .map_err(|_| usage_error(format!("invalid Session ID `{value}`")))?;
+                set_once(
+                    &mut selection,
+                    LiveSelection::Resume(session_id),
+                    "--resume",
+                )?;
                 None
             },
             _ => {
@@ -73,6 +105,7 @@ fn parse_live(arguments: impl IntoIterator<Item = OsString>) -> Result<LiveOptio
     Ok(LiveOptions {
         mode: mode.unwrap_or(PresentationMode::Inline),
         glyph_profile: glyph_profile.unwrap_or(GlyphProfile::Rich),
+        selection: selection.unwrap_or_default(),
     })
 }
 

@@ -290,6 +290,7 @@ impl TranscriptRecord {
             SemanticRecord::EventCommitted(event) => Self::EventCommitted(event.clone()),
             SemanticRecord::BackendExchangeObserved(_)
             | SemanticRecord::BackendBindingOpened(_)
+            | SemanticRecord::BackendBindingClosed(_)
             | SemanticRecord::BackendRequestAccepted(_)
             | SemanticRecord::BackendResumableOutcome(_)
             | SemanticRecord::ContinuationAnchor(_) => return None,

@@ -1,4 +1,6 @@
 #[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
 use std::{error::Error, fmt};
 use std::{io::Write, process::ExitCode};
 
@@ -8,6 +10,8 @@ mod agent;
 mod command;
 #[cfg(unix)]
 mod config;
+#[cfg(unix)]
+mod live;
 #[cfg(unix)]
 mod process;
 #[cfg(unix)]
@@ -29,7 +33,7 @@ fn main() -> ExitCode {
 #[cfg(unix)]
 fn run() -> Result<(), AppError> {
     let command = command::parse(std::env::args_os().skip(1))?;
-    let options = match command {
+    let mut options = match command {
         command::Command::Session(command) => {
             let output = session::run(command)?;
             write_session_command_output(output)?;
@@ -39,6 +43,21 @@ fn run() -> Result<(), AppError> {
     };
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
+    let launch_failure_selection =
+        match live::prepare(options.selection, &cwd, options.glyph_profile)? {
+            live::LivePreparation::New => command::LiveSelection::New,
+            live::LivePreparation::Resume {
+                session_id,
+                failure_selection,
+            } => {
+                options.selection = command::LiveSelection::Resume(session_id);
+                failure_selection
+            },
+            live::LivePreparation::ReadOnly(output) => {
+                write_session_command_output(output)?;
+                return Ok(());
+            },
+        };
     let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
         AppError::single("installing the process termination coordinator", error)
     })?;
@@ -48,7 +67,9 @@ fn run() -> Result<(), AppError> {
     loop {
         let generation = host.with_active_resource(
             &mut live,
-            |termination, live| run_agent_generation(termination, live, &cwd, options),
+            |termination, live| {
+                run_agent_generation(termination, live, &cwd, options, launch_failure_selection)
+            },
             shutdown_live_session,
         );
         match generation {
@@ -101,40 +122,174 @@ fn run_agent_generation(
     live: &mut Option<LiveSession>,
     cwd: &std::path::Path,
     options: command::LiveOptions,
+    launch_failure_selection: command::LiveSelection,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {
-        let storage = storage::open_default()
-            .map_err(|error| AppError::single("opening local Yo storage", error))?;
+        let storage = match storage::open_default() {
+            Ok(storage) => storage,
+            Err(error) => {
+                return handle_launch_failure(
+                    launch_failure_selection,
+                    options.glyph_profile,
+                    live::ResumeFailureStage::WritableStorage,
+                    error,
+                );
+            },
+        };
         let (repository, workspace_host_id) = storage.into_parts();
-        let workspace_path = yo_core::HostWorkspacePath::normalize_local(cwd)
-            .map_err(|error| AppError::single("normalizing the workspace path", error))?;
-        let descriptor = yo_core::SessionDescriptor::new(workspace_host_id, workspace_path)
-            .map_err(|error| AppError::single("generating a Session descriptor", error))?;
-        let workspace_references =
-            yo_core::LocalWorkspaceReferenceProvider::start(cwd, workspace_host_id).map_err(
-                |error| AppError::single("starting workspace reference discovery", error),
-            )?;
-        let codex_config = yo_core::CodexBackendConfig::new(cwd);
-        let skill_references =
-            yo_core::CodexSkillReferenceProvider::start(codex_config.clone(), workspace_host_id)
-                .map_err(|error| AppError::single("starting Codex skill discovery", error))?;
-        let backend = yo_core::CodexBackend::spawn(codex_config)
-            .map_err(|error| AppError::single("starting Codex", error))?;
-        let Some(agent) = agent::TuiAgentConnection::start_persistent(
-            backend,
-            descriptor,
-            repository,
-            termination,
-        )
-        .map_err(|error| AppError::single("creating the agent Session", error))?
-        else {
+        let launch = match options.selection {
+            command::LiveSelection::New => {
+                let workspace_path = yo_core::HostWorkspacePath::normalize_local(cwd)
+                    .map_err(|error| AppError::single("normalizing the workspace path", error))?;
+                Launch::New(
+                    yo_core::SessionDescriptor::new(workspace_host_id, workspace_path).map_err(
+                        |error| AppError::single("generating a Session descriptor", error),
+                    )?,
+                )
+            },
+            command::LiveSelection::Resume(session_id) => {
+                let continuation =
+                    match yo_core::session_repository::recover_stored_session_continuation(
+                        &repository,
+                        session_id,
+                    ) {
+                        Ok(continuation) => continuation,
+                        Err(error) => {
+                            drop(repository);
+                            return handle_launch_failure(
+                                launch_failure_selection,
+                                options.glyph_profile,
+                                live::ResumeFailureStage::Revalidation,
+                                error,
+                            );
+                        },
+                    };
+                if continuation.descriptor().workspace_host_id() != workspace_host_id {
+                    drop(repository);
+                    return handle_launch_failure(
+                        launch_failure_selection,
+                        options.glyph_profile,
+                        live::ResumeFailureStage::Revalidation,
+                        "the Session belongs to another workspace host",
+                    );
+                }
+                Launch::Resume(Box::new(continuation))
+            },
+            command::LiveSelection::Continue => {
+                unreachable!("--continue is resolved before the live generation")
+            },
+        };
+        let session_cwd = match &launch {
+            Launch::New(_) => cwd.to_owned(),
+            Launch::Resume(continuation) => std::path::PathBuf::from(std::ffi::OsStr::from_bytes(
+                continuation.descriptor().workspace_path().as_unix_bytes(),
+            )),
+        };
+        if !session_cwd.is_dir() {
+            if matches!(&launch, Launch::Resume(_)) {
+                drop(repository);
+                return handle_launch_failure(
+                    launch_failure_selection,
+                    options.glyph_profile,
+                    live::ResumeFailureStage::RecordedWorkspace,
+                    session_cwd.display(),
+                );
+            }
+            return Err(AppError::many([format!(
+                "workspace is unavailable at {}",
+                session_cwd.display()
+            )]));
+        }
+        let workspace_references = match yo_core::LocalWorkspaceReferenceProvider::start(
+            &session_cwd,
+            workspace_host_id,
+        ) {
+            Ok(provider) => provider,
+            Err(error) => {
+                if launch.resume_id().is_some() {
+                    drop(repository);
+                    return handle_launch_failure(
+                        launch_failure_selection,
+                        options.glyph_profile,
+                        live::ResumeFailureStage::WorkspaceReferences,
+                        error,
+                    );
+                }
+                return Err(AppError::single(
+                    "starting workspace reference discovery",
+                    error,
+                ));
+            },
+        };
+        let codex_config = yo_core::CodexBackendConfig::new(&session_cwd);
+        let skill_references = match yo_core::CodexSkillReferenceProvider::start(
+            codex_config.clone(),
+            workspace_host_id,
+        ) {
+            Ok(provider) => provider,
+            Err(error) => {
+                if launch.resume_id().is_some() {
+                    drop(repository);
+                    return handle_launch_failure(
+                        launch_failure_selection,
+                        options.glyph_profile,
+                        live::ResumeFailureStage::SkillReferences,
+                        error,
+                    );
+                }
+                return Err(AppError::single("starting Codex skill discovery", error));
+            },
+        };
+        let backend = match yo_core::CodexBackend::spawn(codex_config) {
+            Ok(backend) => backend,
+            Err(error) => {
+                if matches!(&launch, Launch::Resume(_)) {
+                    drop(repository);
+                    return handle_launch_failure(
+                        launch_failure_selection,
+                        options.glyph_profile,
+                        live::ResumeFailureStage::BackendSpawn,
+                        error,
+                    );
+                }
+                return Err(AppError::single("starting Codex", error));
+            },
+        };
+        let agent = match launch {
+            Launch::New(descriptor) => agent::TuiAgentConnection::start_persistent(
+                backend,
+                descriptor,
+                repository,
+                termination,
+            ),
+            Launch::Resume(continuation) => {
+                match agent::TuiAgentConnection::start_resumed(
+                    backend,
+                    *continuation,
+                    repository,
+                    termination,
+                ) {
+                    Ok(agent) => Ok(agent),
+                    Err(error) => {
+                        return handle_launch_failure(
+                            launch_failure_selection,
+                            options.glyph_profile,
+                            live::ResumeFailureStage::NativeResume,
+                            error,
+                        );
+                    },
+                }
+            },
+        }
+        .map_err(|error| AppError::single("creating the agent Session", error))?;
+        let Some(agent) = agent else {
             return Ok(SessionStep::Complete);
         };
         *live = Some(LiveSession {
             agent,
             tui: yo_tui::TuiSession::with_session_info(
                 options.glyph_profile,
-                yo_tui::TuiSessionInfo::new("codex", compact_workspace_label(cwd)),
+                yo_tui::TuiSessionInfo::new("codex", compact_workspace_label(&session_cwd)),
             )
             .with_workspace_references(workspace_references)
             .with_skill_references(skill_references),
@@ -170,6 +325,48 @@ fn run_agent_generation(
         Ok(SessionStep::Complete)
     } else {
         Err(AppError::many(failures))
+    }
+}
+
+#[cfg(unix)]
+fn complete_with_read_only_resume(
+    session_id: yo_core::SessionId,
+    glyph_profile: yo_tui::GlyphProfile,
+    reason: &str,
+) -> Result<SessionStep, AppError> {
+    let output = session::resume_read_only(session_id, glyph_profile, reason)?;
+    write_session_command_output(output)?;
+    Ok(SessionStep::Complete)
+}
+
+#[cfg(unix)]
+fn handle_launch_failure(
+    selection: command::LiveSelection,
+    glyph_profile: yo_tui::GlyphProfile,
+    stage: live::ResumeFailureStage,
+    detail: impl fmt::Display,
+) -> Result<SessionStep, AppError> {
+    match live::classify_launch_failure(selection, stage, detail) {
+        live::ResumeFailureDisposition::Abort(reason) => Err(AppError::many([reason])),
+        live::ResumeFailureDisposition::ReadOnly { session_id, reason } => {
+            complete_with_read_only_resume(session_id, glyph_profile, &reason)
+        },
+    }
+}
+
+#[cfg(unix)]
+enum Launch {
+    New(yo_core::SessionDescriptor),
+    Resume(Box<yo_core::session_repository::StoredSessionContinuation>),
+}
+
+#[cfg(unix)]
+impl Launch {
+    fn resume_id(&self) -> Option<yo_core::SessionId> {
+        match self {
+            Self::New(_) => None,
+            Self::Resume(continuation) => Some(continuation.descriptor().session_id()),
+        }
     }
 }
 

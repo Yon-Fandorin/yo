@@ -9,8 +9,28 @@ fn no_argument_keeps_the_live_defaults() {
         Command::Live(LiveOptions {
             mode: PresentationMode::Inline,
             glyph_profile: GlyphProfile::Rich,
+            selection: LiveSelection::New,
         })
     );
+}
+
+// 명시한 UUID 재개와 현재 작업공간의 최근 세션 재개는 새 Session 시작과 구분되고,
+// 동시에 지정하면 어느 쪽도 임의로 우선하지 않는다.
+#[test]
+fn live_continuation_options_are_explicit_and_mutually_exclusive() {
+    let id = "01890f00-0000-7000-8000-000000000001";
+    let Command::Live(resume) = parse(["--resume".into(), id.into()]).unwrap() else {
+        panic!("--resume remains a live startup option");
+    };
+    assert_eq!(resume.selection, LiveSelection::Resume(id.parse().unwrap()));
+
+    let Command::Live(continuation) = parse(["--continue".into()]).unwrap() else {
+        panic!("--continue remains a live startup option");
+    };
+    assert_eq!(continuation.selection, LiveSelection::Continue);
+
+    let error = parse(["--continue".into(), "--resume".into(), id.into()]).unwrap_err();
+    assert!(error.to_string().contains("--resume"));
 }
 
 // 목록 option은 Session ID 없이 조합할 수 있고 `--details`가 선택 집합을 바꾸는 별도

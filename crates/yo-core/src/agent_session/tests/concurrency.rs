@@ -54,6 +54,7 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
         Arc::clone(&active_turn_id),
         SessionJournal::new(),
         Arc::clone(&outcomes),
+        None,
     );
     worker.initialize().unwrap();
     worker

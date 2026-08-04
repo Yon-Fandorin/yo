@@ -10,8 +10,10 @@ use std::{
 };
 
 use crate::{
-    AgentBackend, AgentEvent, BackendStopHandle, SessionDescriptor, SessionId, SubmissionOutcome,
-    TranscriptReader, journal::SessionJournal, session_repository::SessionRepository,
+    AgentBackend, AgentEvent, BackendResumeTarget, BackendStopHandle, SessionDescriptor, SessionId,
+    SubmissionOutcome, TranscriptReader,
+    journal::SessionJournal,
+    session_repository::{SessionRepository, StoredSessionContinuation},
 };
 
 mod admission;
@@ -79,6 +81,9 @@ impl AgentSession {
             backend,
             SessionId::new().map_err(AgentSessionError::SessionIdentityUnavailable)?,
             SessionJournal::new(),
+            None,
+            1,
+            HashSet::new(),
             &mut never_cancelled,
         )?
         .expect("a callback that always returns false cannot cancel startup"))
@@ -113,6 +118,9 @@ impl AgentSession {
             backend,
             SessionId::new().map_err(AgentSessionError::SessionIdentityUnavailable)?,
             SessionJournal::new(),
+            None,
+            1,
+            HashSet::new(),
             &mut is_cancelled,
         )
     }
@@ -130,6 +138,9 @@ impl AgentSession {
             backend,
             session_id,
             SessionJournal::new(),
+            None,
+            1,
+            HashSet::new(),
             &mut is_cancelled,
         )
     }
@@ -150,6 +161,37 @@ impl AgentSession {
             backend,
             session_id,
             SessionJournal::with_repository_and_descriptor(Box::new(repository), descriptor),
+            None,
+            1,
+            HashSet::new(),
+            &mut is_cancelled,
+        )
+    }
+
+    /// Reopens one fully validated durable Session without creating or replaying backend work.
+    pub fn start_cancellable_with_continuation<B, R>(
+        backend: B,
+        continuation: StoredSessionContinuation,
+        repository: R,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<Self>, AgentSessionError>
+    where
+        B: AgentBackend + Send + 'static,
+        R: SessionRepository + Send + 'static,
+    {
+        let session_id = continuation.descriptor().session_id();
+        let target = continuation.target().clone();
+        let next_turn_id = continuation.next_turn_id();
+        let submission_ids = continuation.submission_ids();
+        let journal =
+            SessionJournal::with_repository_and_continuation(Box::new(repository), &continuation);
+        Self::start_inner(
+            backend,
+            session_id,
+            journal,
+            Some(target),
+            next_turn_id,
+            submission_ids,
             &mut is_cancelled,
         )
     }
@@ -158,6 +200,9 @@ impl AgentSession {
         backend: B,
         session_id: SessionId,
         journal: SessionJournal,
+        resume_target: Option<BackendResumeTarget>,
+        next_turn_id: u64,
+        submission_ids: HashSet<crate::SubmissionId>,
         is_cancelled: &mut dyn FnMut() -> bool,
     ) -> Result<Option<Self>, AgentSessionError>
     where
@@ -197,6 +242,7 @@ impl AgentSession {
                     worker_active_turn_id,
                     journal,
                     worker_submission_outcomes,
+                    resume_target,
                 );
                 let outcome = match worker.initialize() {
                     Ok(_) => {
@@ -292,10 +338,10 @@ impl AgentSession {
                     session_id,
                     state,
                     active_turn_id,
-                    next_turn_id: 1,
+                    next_turn_id,
                     transcript,
                     submission_outcomes,
-                    submission_ids: HashSet::new(),
+                    submission_ids,
                     #[cfg(test)]
                     processed,
                     worker: Some(worker),

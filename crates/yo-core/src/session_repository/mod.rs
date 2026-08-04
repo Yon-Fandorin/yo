@@ -1,5 +1,6 @@
 //! Storage-neutral durable Session records.
 
+mod continuation;
 mod history;
 pub(crate) mod journal;
 mod local;
@@ -7,6 +8,10 @@ mod record;
 
 use std::fmt;
 
+pub use continuation::{
+    StoredSessionContinuation, StoredSessionContinuationError, read_stored_session_continuation,
+    recover_stored_session_continuation,
+};
 pub use history::{
     StoredDiscoveryMismatch, StoredDiscoveryMismatchKind, StoredDiscoveryValidation,
     StoredSessionContinuity, StoredSessionHistory, StoredSessionReadError, StoredSessionRecovery,

@@ -179,7 +179,7 @@ impl<P: JsonPeer> AppServerClient<P> {
 fn failure_kind_for(method: &str) -> BackendFailureKind {
     match method {
         "initialize" => BackendFailureKind::Initialization,
-        "thread/start" => BackendFailureKind::Session,
+        "thread/start" | "thread/resume" => BackendFailureKind::Session,
         "turn/start" | "turn/steer" | "turn/interrupt" => BackendFailureKind::Turn,
         _ => BackendFailureKind::Protocol,
     }

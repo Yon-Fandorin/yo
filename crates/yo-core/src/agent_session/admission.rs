@@ -37,6 +37,7 @@ impl AgentSession {
                         submission_id,
                     ))
                 } else {
+                    self.ensure_submission_available(submission_id)?;
                     let turn = self.next_turn()?;
                     self.reserve_submission(submission_id)?;
                     state.active_turn = Some(turn);
@@ -162,6 +163,14 @@ impl AgentSession {
         Ok(())
     }
 
+    fn ensure_submission_available(&self, id: SubmissionId) -> Result<(), AgentSessionError> {
+        if self.submission_ids.contains(&id) {
+            Err(AgentSessionError::DuplicateSubmissionId(id))
+        } else {
+            Ok(())
+        }
+    }
+
     fn resolve_snapshot(
         &mut self,
         action: AgentIntent,
@@ -179,6 +188,7 @@ impl AgentSession {
                         submission_id,
                     ))
                 } else {
+                    self.ensure_submission_available(submission_id)?;
                     let turn = self.next_turn()?;
                     self.reserve_submission(submission_id)?;
                     Ok(PendingCommand::from_submission(

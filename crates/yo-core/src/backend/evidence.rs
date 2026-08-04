@@ -36,6 +36,43 @@ pub struct BackendBindingEvidence {
     session_locator: BackendIdentity,
 }
 
+/// Durable provider-neutral coordinates required to reconnect one existing binding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackendResumeTarget {
+    session_id: crate::SessionId,
+    epoch: u64,
+    binding: BackendBindingEvidence,
+}
+
+impl BackendResumeTarget {
+    pub(crate) const fn new(
+        session_id: crate::SessionId,
+        epoch: u64,
+        binding: BackendBindingEvidence,
+    ) -> Self {
+        Self {
+            session_id,
+            epoch,
+            binding,
+        }
+    }
+
+    #[must_use]
+    pub const fn session_id(&self) -> crate::SessionId {
+        self.session_id
+    }
+
+    #[must_use]
+    pub const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    #[must_use]
+    pub const fn binding(&self) -> &BackendBindingEvidence {
+        &self.binding
+    }
+}
+
 impl BackendBindingEvidence {
     pub fn new(
         backend_kind: impl Into<String>,
@@ -71,6 +108,13 @@ impl BackendBindingEvidence {
 
     pub const fn session_locator(&self) -> &BackendIdentity {
         &self.session_locator
+    }
+
+    pub(crate) fn same_resume_identity(&self, other: &Self) -> bool {
+        self.backend_kind == other.backend_kind
+            && self.binding_identity == other.binding_identity
+            && self.model_identity == other.model_identity
+            && self.session_locator == other.session_locator
     }
 
     pub(crate) fn is_valid(&self) -> bool {

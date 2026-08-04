@@ -52,6 +52,7 @@ pub(super) struct DurableJournal {
     live_cutoff: Option<JournalSequence>,
     status: JournalDurability,
     descriptor: Option<SessionDescriptor>,
+    resume_snapshot: Option<JournalCommit>,
 }
 
 struct PendingJournalRecord {
@@ -100,6 +101,25 @@ impl DurableJournal {
             live_cutoff: None,
             status: JournalDurability::MemoryOnly,
             descriptor: Some(descriptor),
+            resume_snapshot: None,
+        }
+    }
+
+    pub(super) fn resume(
+        repository: Box<dyn SessionRepository + Send>,
+        session_id: crate::SessionId,
+        snapshot: JournalCommit,
+    ) -> Self {
+        Self {
+            repository: JournalRepository::new(repository),
+            session_id,
+            records: snapshot.records().to_vec(),
+            messages: MessageTracker::default(),
+            started: Instant::now(),
+            live_cutoff: snapshot.journal_cutoff(),
+            status: JournalDurability::MemoryOnly,
+            descriptor: None,
+            resume_snapshot: Some(snapshot),
         }
     }
 
@@ -109,6 +129,16 @@ impl DurableJournal {
     /// remains memory-only until a complete snapshot containing this descriptor
     /// can be published.
     pub(super) fn initialize(&mut self) -> JournalDurability {
+        if let Some(snapshot) = self.resume_snapshot.take() {
+            self.status = match self.repository.append(self.session_id, &snapshot) {
+                Ok(receipt) => JournalDurability::Durable {
+                    journal_sequence: snapshot.journal_cutoff(),
+                    repository_sequence: receipt.sequence(),
+                },
+                Err(error) => gap_from(error),
+            };
+            return self.status;
+        }
         let Some(descriptor) = self.descriptor.take() else {
             return self.status;
         };
@@ -214,6 +244,13 @@ impl DurableJournal {
                 durable.push(PendingJournalRecord::semantic(
                     entry.sequence(),
                     JournalRecord::BackendBindingOpened(binding.clone()),
+                ));
+            },
+            SemanticRecord::BackendBindingClosed(binding) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::BackendBindingClosed(binding.clone()),
                 ));
             },
             SemanticRecord::BackendRequestAccepted(request) => {

@@ -9,9 +9,8 @@ mod transcript;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub use durable::{DurabilityGapCause, JournalDurability};
-use record::JournalEntry;
 pub use record::JournalSequence;
-pub(crate) use record::{CommittedCommand, SemanticRecord};
+pub(crate) use record::{CommittedCommand, JournalEntry, SemanticRecord};
 pub use transcript::{
     TranscriptEntry, TranscriptObservation, TranscriptObservationEntry,
     TranscriptObservationSequence, TranscriptObservationSlice, TranscriptReader, TranscriptRecord,
@@ -20,7 +19,7 @@ pub use transcript::{
 
 use crate::{
     AgentCommand, AgentEvent, SessionDescriptor, SubmissionId,
-    session_repository::SessionRepository,
+    session_repository::{SessionRepository, StoredSessionContinuation},
 };
 
 #[derive(Debug)]
@@ -69,6 +68,35 @@ impl SessionJournal {
             state: Arc::new(RwLock::new(SessionJournalState::default())),
             durable: Some(durable::DurableJournal::new(repository, descriptor)),
         }
+    }
+
+    pub(crate) fn with_repository_and_continuation(
+        repository: Box<dyn SessionRepository + Send>,
+        continuation: &StoredSessionContinuation,
+    ) -> Self {
+        let entries = continuation.semantic_entries();
+        let mut state = SessionJournalState::default();
+        for record in continuation.transcript_records() {
+            state
+                .observations
+                .push(transcript::JournalObservationEntry::record(
+                    transcript::TranscriptObservationSequence::from_index(state.observations.len()),
+                    record.clone(),
+                ));
+        }
+        state.entries = entries;
+        Self {
+            state: Arc::new(RwLock::new(state)),
+            durable: Some(durable::DurableJournal::resume(
+                repository,
+                continuation.descriptor().session_id(),
+                continuation.snapshot(),
+            )),
+        }
+    }
+
+    pub(crate) fn semantic_entries(&self) -> Vec<JournalEntry> {
+        read_state(&self.state).entries.clone()
     }
 
     #[cfg(test)]
@@ -144,16 +172,11 @@ impl SessionJournal {
     }
 
     fn append_records(&mut self, records: Vec<SemanticRecord>) {
-        let first_index = read_state(&self.state).entries.len();
+        let first_sequence = read_state(&self.state).next_sequence();
         let entries = records
             .into_iter()
             .enumerate()
-            .map(|(offset, record)| {
-                let index = first_index
-                    .checked_add(offset)
-                    .expect("a Journal cannot contain more entries than usize can address");
-                JournalEntry::new(JournalSequence::from_index(index), record)
-            })
+            .map(|(offset, record)| JournalEntry::new(first_sequence.advance_by(offset), record))
             .collect::<Vec<_>>();
         let durability = if let Some(durable) = &mut self.durable {
             durable.publish(&entries)
@@ -175,6 +198,13 @@ impl SessionJournal {
 }
 
 impl SessionJournalState {
+    fn next_sequence(&self) -> JournalSequence {
+        self.entries.last().map_or_else(
+            || JournalSequence::from_index(0),
+            |entry| entry.sequence().advance_by(1),
+        )
+    }
+
     fn observe_durability(&mut self, durability: JournalDurability) {
         if self.durability == durability {
             return;

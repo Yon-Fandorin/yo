@@ -12,6 +12,12 @@ use super::{
 };
 use crate::{JournalSequence, SessionDescriptor, SessionId, TranscriptRecord};
 
+pub(super) fn normalize_recovered(
+    recovered: &crate::journal::codec::RecoveredJournal,
+) -> Result<Vec<TranscriptRecord>, String> {
+    normalize(recovered)
+}
+
 /// One validated, point-in-time semantic projection of a stored Session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoredSessionHistory {

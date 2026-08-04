@@ -78,6 +78,35 @@ impl TuiAgentConnection {
         })
     }
 
+    pub(crate) fn start_resumed<B, R>(
+        backend: B,
+        continuation: yo_core::session_repository::StoredSessionContinuation,
+        repository: R,
+        termination: &mut impl TerminationSource,
+    ) -> Result<Option<Self>, AgentSessionError>
+    where
+        B: AgentBackend + Send + 'static,
+        R: SessionRepository + Send + 'static,
+    {
+        AgentSession::start_cancellable_with_continuation(backend, continuation, repository, || {
+            termination.poll_termination() == TerminationEvent::Requested
+        })
+        .map(|session| {
+            session.map(|session| {
+                let transcript = session.transcript_reader();
+                Self {
+                    session,
+                    transcript,
+                    cursor: None,
+                    pending: VecDeque::new(),
+                    journal_changed: false,
+                    closed: false,
+                    failure: None,
+                }
+            })
+        })
+    }
+
     pub(crate) fn shutdown(&mut self) -> Result<Vec<yo_core::AgentEvent>, AgentSessionError> {
         self.session.shutdown()
     }

@@ -232,7 +232,8 @@ Inline 또는 Fullscreen presenter
    wake-up도 Gap-to-Durable 전환을 지우지 못한다. CLI adapter는 이 순서를 정확한 cutoff
    종류와 함께 TUI 상태에 전달한다. Chat·status 행·banner 중 어떤 방식으로 표현할지는
    별도 product 계약으로 남긴다. 저장된 Session 검사는 아래의 별도 read-only
-   경로를 따르며 resume은 아직 현재 runtime 동작이 아니다.
+   경로를 따른다. 실행 가능한 continuation은 frontend history Projection에서
+   상태를 만들지 않고, 아래의 별도 검증된 recovery 경로를 사용한다.
 6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
    이미 확정된 Transcript record를 소비하고 TUI 상태를 갱신한다.
    완성된 `Surface`를 조합해 활성 presenter로 보낸다. `runner/view.rs`는
@@ -327,8 +328,10 @@ durability continuity를 `not-observable`로 기록한다. Chat은 간결하고 
 출력을 유지하며 기본 direct command는 이 continuity 경계를 stderr로 알린다. Transcript는
 확인한 Journal cutoff, message-recovery 상태, durability-continuity 경계, discovery
 consistency, 시간순 semantic record를 더한다. 파일 없음과 파일은 있지만 complete
-envelope가 없는 상태도 서로 다른 direct-read failure로 유지한다. 어느 쪽도 backend를
-시작하거나 이후 append를 구독하거나 저장소를 고치거나 continuation을 제공하지 않는다.
+envelope가 없는 상태도 서로 다른 direct-read failure로 유지한다. 어느 archived
+출력도 backend를 시작하거나 이후 append를 구독하거나 저장소를 고치거나 그 자체로
+continuation을 제공하지 않는다. live `yo --resume UUID`와 `yo --continue`는 대신
+아래의 전용 typed continuation recovery를 사용한다.
 
 ## 실행 중인 observation view
 
@@ -432,8 +435,9 @@ evidence만 반환한다. runtime이 그 semantic identity를 소유하고 Journ
 
 Codex adapter는 model override를 보내지 않아 사용자의 effective model 선택을 보존하고,
 `thread/start`가 반환한 `model`과 `modelProvider`를 기록한다. ephemeral thread가 아니라
-저장되는 thread를 만들므로 locator가 이후 검증된 `thread/resume`을 지원할 수 있다.
-실행 가능한 resume 연결 자체는 다음 composition 단계에 남는다.
+저장되는 thread를 만든다. continuation에서는 versioned Codex locator만 decode하고
+`thread/resume`을 정확히 한 번 보낸 뒤, runtime이 재개 상태를 공개하기 전에 반환된
+thread·model provider·model identity를 최신 durable Anchor와 검증한다.
 
 pending message text는 non-text 순서 경계 전에 immutable segment로 강제
 저장되므로 동시 Activity event의 원래 순서를 보존할 수 있다. crash 뒤 열린
@@ -457,9 +461,14 @@ CLI는 local repository를 기본으로 활성화한다. `YO_SESSION_REPOSITORY`
 `YO_SESSION_CAPACITY_BYTES`로 기본 1 GiB 상한을 바꿀 수 있다. Linux는 그 외에
 `$XDG_STATE_HOME/yo/sessions` 또는 `$HOME/.local/state/yo/sessions`를 쓰고,
 macOS는 `$HOME/Library/Application Support/yo/sessions`를 쓴다. `yo session`은
-같은 root를 생성이나 writer lease 없이 연다. 실행 가능한 continuation, remote
-storage, Request Audit persistence, database나 compression backend, durable
-transport는 이 조합 밖에 남는다.
+같은 root를 생성이나 writer lease 없이 연다. `yo --resume UUID`는 먼저 선택한
+Session을 read-only로 검증하며, 직접 지정한 대상이 실행 불가능하면 저장소를
+변경하지 않고 진단과 함께 archived Chat을 연다. `yo --continue`는 현재 Host와
+정규화된 workspace에서 가장 최근 eligible Session을 고르고, 후보가 없으면 새
+Session을 만들지 않고 실패한다. 실행 가능한 대상은 single-writer lease 안에서
+다시 검증하고 같은 Yo Session identity를 복원하며, 최신 durable Anchor 하나만
+재개한다. 이전 Anchor로 fallback하지 않는다. remote storage, Request Audit
+persistence, database나 compression backend, durable transport는 이 조합 밖에 남는다.
 
 ## 일시정지와 재개
 

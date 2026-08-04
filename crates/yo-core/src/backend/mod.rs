@@ -10,6 +10,6 @@ pub use contract::{
 };
 pub use evidence::{
     BackendBindingEvidence, BackendCommandEvidence, BackendIdentity, BackendOutcomeEvidence,
-    BackendRequestEvidence,
+    BackendRequestEvidence, BackendResumeTarget,
 };
 pub use scripted::{BackendScriptStep, ScriptedBackend};

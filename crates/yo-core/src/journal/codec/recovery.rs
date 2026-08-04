@@ -95,6 +95,23 @@ impl RecoveredJournal {
         &self.discovery_states
     }
 
+    pub(crate) fn submission_ids(&self) -> &BTreeSet<SubmissionId> {
+        &self.submission_ids
+    }
+
+    pub(crate) fn semantic_entries(&self) -> Vec<crate::journal::JournalEntry> {
+        self.records
+            .iter()
+            .filter_map(|entry| {
+                let sequence = entry.journal_sequence()?;
+                entry
+                    .record()
+                    .semantic_record()
+                    .map(|record| crate::journal::JournalEntry::new(sequence, record))
+            })
+            .collect()
+    }
+
     pub(crate) fn with_incremental(
         &self,
         commit: &JournalCommit,

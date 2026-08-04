@@ -209,6 +209,19 @@ pub(super) fn recover_entries(
     })
 }
 
+pub(super) fn recover_repository(
+    repository: &(impl SessionRepository + ?Sized),
+    session_id: SessionId,
+) -> Result<RecoveredJournal, JournalRepositoryError> {
+    let (commits, origins) = load_commits(session_id, |after, limit| {
+        repository.read_after(session_id, after, limit)
+    })?;
+    recover(&commits).map_err(|error| {
+        let context = recovery_context(&error, &origins);
+        JournalRepositoryError::Codec(error.context(context))
+    })
+}
+
 fn decode_entry(
     session_id: SessionId,
     entry: &super::RepositoryEntry,

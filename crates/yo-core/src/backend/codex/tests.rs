@@ -9,9 +9,10 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentBackend, AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendCommandEvidence,
-    BackendFailure, BackendFailureKind, RequestId, RuntimePoll, SessionId, TurnId, TurnOutcome,
-    TurnRef, UserInput,
+    AgentBackend, AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendBindingEvidence,
+    BackendCommandEvidence, BackendFailure, BackendFailureKind, BackendIdentity,
+    BackendResumeTarget, RequestId, RuntimePoll, SessionId, TurnId, TurnOutcome, TurnRef,
+    UserInput,
 };
 
 #[derive(Clone)]
@@ -84,6 +85,26 @@ fn thread_start_response(id: u64, thread_id: &str) -> Value {
     })
 }
 
+fn resume_target(session_id: SessionId, thread_id: &str) -> BackendResumeTarget {
+    BackendResumeTarget::new(
+        session_id,
+        1,
+        BackendBindingEvidence::new(
+            "codex-app-server",
+            "codex_cli_rs/0.145.0 (recorded)",
+            BackendIdentity::new(
+                "codex.app-server/thread-binding/v1",
+                json!({ "sessionId": thread_id, "threadId": thread_id }).to_string(),
+            ),
+            BackendIdentity::new(
+                "codex.app-server/model-and-provider/v1",
+                json!({ "model": "gpt-test", "provider": "openai" }).to_string(),
+            ),
+            BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
+        ),
+    )
+}
+
 fn id(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap()
 }
@@ -146,6 +167,47 @@ fn initializes_before_starting_a_thread() {
     assert_eq!(sent[2]["method"], "thread/start");
     assert_eq!(sent[2]["params"]["cwd"], "/workspace");
     assert!(sent[2]["params"].get("ephemeral").is_none());
+}
+
+// 저장된 locator로 재개할 때 새 thread를 만들지 않고 `thread/resume` 한 번만 보내며,
+// app-server 버전이 달라도 thread·Session·model·provider 신원이 같으면 같은 binding이다.
+#[test]
+fn resumes_one_verified_thread_without_starting_another() {
+    let (mut backend, sent) = backend([thread_start_response(2, "thread-a")]);
+    let target = resume_target(session(1), "thread-a");
+
+    let evidence = backend.resume_session(&target).unwrap();
+
+    assert_eq!(evidence.backend_version(), "codex_cli_rs/0.146.0 (test)");
+    let sent = sent.0.borrow();
+    assert_eq!(sent[2]["method"], "thread/resume");
+    assert_eq!(sent[2]["params"], json!({ "threadId": "thread-a" }));
+    assert!(
+        sent.iter()
+            .all(|message| message["method"] != "thread/start")
+    );
+}
+
+// locator가 가리킨 thread라도 반환된 model 신원이 저장된 binding과 다르면 같은 epoch로
+// 가장하지 않고 입력이 허용되기 전 Session 재개 실패로 닫는다.
+#[test]
+fn rejects_a_resumed_thread_with_different_model_identity() {
+    let response = json!({
+        "id": 2,
+        "result": {
+            "thread": { "id": "thread-a", "sessionId": "thread-a" },
+            "model": "different-model",
+            "modelProvider": "openai"
+        }
+    });
+    let (mut backend, sent) = backend([response]);
+
+    let failure = backend
+        .resume_session(&resume_target(session(1), "thread-a"))
+        .unwrap_err();
+
+    assert_eq!(failure.kind(), BackendFailureKind::Session);
+    assert_eq!(sent.0.borrow()[2]["method"], "thread/resume");
 }
 
 // 검증하지 않은 Codex minor 버전이면 initialized 알림이나 Session 명령을 보내기 전에
