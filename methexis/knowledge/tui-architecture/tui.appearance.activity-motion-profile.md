@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.motion-002
-    revision: sha256:e6a023cb0c8dbad56ccf4875f601dcaffaf7b488e55a219dc03c2a358350e78c
+    revision: sha256:0b58c256cc9fb7a3b4751e840846674e80b12f2fddb5d191175427cfc1ec8250
 relations:
   depends_on:
     - tui.runtime.activity-motion-scheduling
@@ -43,12 +43,33 @@ extended grapheme cluster with the same cell width as every other frame in
 that profile. Candidate validation MUST reject an empty frame sequence, a zero
 period, an invalid frame, or unequal frame widths before publication.
 
-The same logical frame MAY additionally move one emphasized grapheme at a time
-across the visible `Working` label or a typed activity title-status published by a
-selection panel. The sheen MUST change style only: it MUST preserve every
-grapheme, cell width, row and panel geometry, fitting result, input behavior,
-and interruption affordance. Ordinary non-busy title status MUST remain static.
-The marker and every visible sheen MUST derive from the same elapsed sample.
+The built-in marker MUST use a stable appearance-resolved accent without bold
+or dim attributes. Frame changes MUST NOT also change its font weight. This
+avoids adding font-weight distortion to the one-cell star silhouette while
+preserving the exact marker sequences above; it does not claim to control a
+terminal font's own glyph overhang.
+
+The same logical frame MAY additionally move one peak grapheme at a time
+across the visible `Working` label or a typed activity title-status published
+by a selection panel. Up to one adjacent grapheme on each side MUST use an
+appearance-resolved intermediate trail style; the trail MUST clip at the label
+edges rather than wrap. All remaining label graphemes MUST use the muted
+activity style. Muted, trail, peak, and marker styles MUST remain separate
+appearance roles so a profile can tune color without changing layout code.
+The peak MUST advance from the first visible grapheme through the last and
+then wrap to the first. One shared `ActivityMotionFrame` resolver MUST return
+the peak and optional left and right trail indices for both shell chrome and
+selection-panel rendering.
+
+Built-in muted, trail, peak, and marker roles MUST use only the terminal
+default foreground or palette-indexed colors. Hard-coded RGB colors are
+reserved for future explicit theme configuration, where foreground and
+background can be resolved together.
+
+The sheen MUST change style only: it MUST preserve every grapheme, cell width,
+row and panel geometry, fitting result, input behavior, and interruption
+affordance. Ordinary non-busy title status MUST remain static. The marker and
+every visible sheen MUST derive from the same elapsed sample.
 
 A profile with one valid frame MUST disable marker and sheen motion and MUST
 NOT arm timed redraw, leaving a future reduced-motion host choice open without
@@ -64,10 +85,13 @@ frame.
 ## Rationale
 
 The exact built-in sequences deliberately make the first motion behavior
-reviewable while keeping cosmetic policy out of the runner. Equal-width frames
-and style-only sheen ensure that animation changes cells rather than geometry, and a one-frame
-candidate creates a compact reduced-motion seam without prematurely exposing
-configuration. Activating this profile also selects its already-approved
+reviewable while keeping cosmetic policy out of the runner. A stable marker
+weight avoids adding font-weight distortion, while the peak and adjacent trail
+turn the label into one controlled scan instead of a flashing character.
+Equal-width frames and style-only sheen ensure that animation changes cells
+rather than geometry, and a one-frame candidate creates a compact
+reduced-motion seam without prematurely exposing configuration. Activating
+this profile also selects its already-approved
 `tui.appearance.frame-consistency` constraint and that unit's
 `tui.appearance.session-publication` dependency; that broader eligibility
 transition MUST remain explicit in the separate activation review.

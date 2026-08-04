@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: tui.appearance.activity-motion-profile
-revision: sha256:499e5d926c3cc7d57e1c0724522192d35b6b61f9f3c1ab053990e7e854dc2509
+revision: sha256:5597da77815e00d30e2c2503f9cc2a1c94e87b0e99e1c58eafef9130f0eb3db2
 reviewer: tui-architecture
-reviewed_at: 2026-08-04T14:59:06Z
+reviewed_at: 2026-08-04T16:35:42Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:92962360adb440d6020779972cbbd9c6c99d42f9174dd0d2e459f542dca6f071
-request_hash: sha256:8a2e72595ffa46db77819dff146c82a99d7d74526bab3986030e9ee428e8fdc9
+projection_hash: sha256:52a9581d3bddfba6c90e04270bd0853697ac3d8fdad4ce62cc9aa3bda23bda42
+request_hash: sha256:6c731aba0d3a1e8540df3408074b63b87fabac9d921fe75d2168f83a3cd4cbda
