@@ -7,7 +7,7 @@ use std::num::NonZeroU64;
 
 use crate::{
     ActivityId, ActivityRef, AgentCommand, AgentRuntime, BackendScriptStep, ScriptedBackend,
-    SessionId, TurnId, TurnRef, UserInput,
+    SessionId, SubmissionId, TurnId, TurnRef, UserInput,
 };
 
 fn id(value: u64) -> NonZeroU64 {
@@ -24,6 +24,11 @@ fn turn(session_id: SessionId, value: u64) -> TurnRef {
 
 fn activity(turn: TurnRef, value: u64) -> ActivityRef {
     ActivityRef::new(turn, ActivityId::new(id(value)))
+}
+
+fn submission(value: u8) -> SubmissionId {
+    SubmissionId::from_uuid(uuid::Builder::from_random_bytes([value; 16]).into_uuid())
+        .expect("the test submission fixture is a UUIDv4")
 }
 
 fn runtime_with_active_turn(
@@ -46,6 +51,6 @@ fn runtime_with_active_turn(
     .concat();
     let mut runtime = AgentRuntime::new(ScriptedBackend::new(steps));
     runtime.execute_command(create).unwrap();
-    runtime.execute_command(start).unwrap();
+    runtime.execute_submission(start, submission(1)).unwrap();
     (runtime, turn)
 }

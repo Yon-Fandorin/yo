@@ -1,10 +1,12 @@
 mod error;
 
+use std::collections::HashSet;
+
 pub use error::RuntimeError;
 
 use crate::{
     AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendEvent, BackendPoll, Failure,
-    SessionId, TurnRef, journal::SessionJournal,
+    SessionId, SubmissionId, TurnRef, journal::SessionJournal,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,6 +21,7 @@ pub struct AgentRuntime<B> {
     engine: AgentEngine,
     backend: B,
     journal: SessionJournal,
+    submission_ids: HashSet<SubmissionId>,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -31,6 +34,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             engine: AgentEngine::new(),
             backend,
             journal,
+            submission_ids: HashSet::new(),
         }
     }
 
@@ -59,6 +63,37 @@ impl<B: AgentBackend> AgentRuntime<B> {
         &mut self,
         command: AgentCommand,
     ) -> Result<Vec<AgentEvent>, RuntimeError> {
+        if matches!(
+            command,
+            AgentCommand::StartTurn { .. } | AgentCommand::SteerTurn { .. }
+        ) {
+            return Err(RuntimeError::SubmissionIdentityRequired);
+        }
+        self.execute(command, None)
+    }
+
+    pub fn execute_submission(
+        &mut self,
+        command: AgentCommand,
+        submission_id: SubmissionId,
+    ) -> Result<Vec<AgentEvent>, RuntimeError> {
+        if !matches!(
+            command,
+            AgentCommand::StartTurn { .. } | AgentCommand::SteerTurn { .. }
+        ) {
+            return Err(RuntimeError::SubmissionIdentityUnexpected);
+        }
+        if self.submission_ids.contains(&submission_id) {
+            return Err(RuntimeError::DuplicateSubmissionIdentity(submission_id));
+        }
+        self.execute(command, Some(submission_id))
+    }
+
+    fn execute(
+        &mut self,
+        command: AgentCommand,
+        submission_id: Option<SubmissionId>,
+    ) -> Result<Vec<AgentEvent>, RuntimeError> {
         let supports_steer = self.backend.capabilities().supports_steer();
         self.engine
             .validate_command(&command, supports_steer)
@@ -71,7 +106,14 @@ impl<B: AgentBackend> AgentRuntime<B> {
             .engine
             .commit_command(command, supports_steer)
             .map_err(RuntimeError::StateDiverged)?;
-        self.journal.append_committed_command(committed, &events);
+        if let Some(submission_id) = submission_id {
+            let inserted = self.submission_ids.insert(submission_id);
+            debug_assert!(inserted, "a duplicate submission cannot pass validation");
+            self.journal
+                .append_committed_submission(committed, submission_id, &events);
+        } else {
+            self.journal.append_committed_command(committed, &events);
+        }
         Ok(events)
     }
 

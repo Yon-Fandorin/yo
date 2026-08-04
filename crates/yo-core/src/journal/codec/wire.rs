@@ -2,6 +2,7 @@ mod command;
 mod descriptor;
 mod event;
 mod identity;
+mod input;
 mod message;
 
 use std::fmt;
@@ -16,9 +17,10 @@ use super::{
     JournalCommit, JournalCommitKind, JournalRecord, MessageEnded, MessageReset, MessageSegment,
     MessageTerminal, ReplaySequence, SequencedJournalRecord, recover,
 };
-use crate::{AgentCommand, AgentEvent, JournalSequence, SessionDescriptor};
+use crate::{AgentEvent, JournalSequence, SessionDescriptor};
 
 const SCHEMA: &str = "yo.semantic-journal-commit/v1";
+const FORMAT: &str = "structured-input";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCodecError {
@@ -63,6 +65,7 @@ impl std::error::Error for JournalCodecError {}
 #[serde(deny_unknown_fields)]
 struct WireCommit {
     schema: String,
+    format: String,
     kind: WireCommitKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     journal_cutoff: Option<u64>,
@@ -112,6 +115,7 @@ pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError
         .get();
     let wire = WireCommit {
         schema: SCHEMA.to_owned(),
+        format: FORMAT.to_owned(),
         kind: match commit.kind() {
             JournalCommitKind::Incremental => WireCommitKind::Incremental,
             JournalCommitKind::Snapshot => WireCommitKind::Snapshot,
@@ -121,8 +125,8 @@ pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError
         records: commit
             .records()
             .iter()
-            .map(|record| WireRecord::from(record.record()))
-            .collect(),
+            .map(|record| WireRecord::try_from(record.record()))
+            .collect::<Result<Vec<_>, _>>()?,
     };
     serde_json::to_string(&wire).map_err(|error| {
         JournalCodecError::new(format!("failed to encode Journal commit: {error}"))
@@ -136,6 +140,12 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
         return Err(JournalCodecError::new(format!(
             "unsupported Journal commit schema {:?}",
             wire.schema
+        )));
+    }
+    if wire.format != FORMAT {
+        return Err(JournalCodecError::new(format!(
+            "unsupported Journal commit format {:?}",
+            wire.format
         )));
     }
     let records = wire
@@ -275,22 +285,8 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
                     "durable text updates must be encoded as bounded MessageSegments",
                 ));
             },
-            JournalRecord::CommandCommitted(
-                AgentCommand::StartTurn { input, .. } | AgentCommand::SteerTurn { input, .. },
-            ) if !input.references().is_empty() => {
-                return Err(JournalCodecError::new(
-                    "semantic Journal v1 cannot encode structured input references",
-                ));
-            },
-            JournalRecord::CommandCommitted(AgentCommand::RespondToActivity {
-                response: crate::ActivityResponse::UserInput(input),
-                ..
-            }) if !input.references().is_empty() => {
-                return Err(JournalCodecError::new(
-                    "semantic Journal v1 cannot encode structured input references",
-                ));
-            },
-            JournalRecord::CommandCommitted(_) | JournalRecord::EventCommitted(_) => {},
+            JournalRecord::CommandCommitted(_) => {},
+            JournalRecord::EventCommitted(_) => {},
         }
     }
     if commit.kind() == JournalCommitKind::Snapshot {
@@ -334,14 +330,16 @@ fn validate_segment(segment: &MessageSegment) -> Result<(), JournalCodecError> {
     Ok(())
 }
 
-impl From<&JournalRecord> for WireRecord {
-    fn from(record: &JournalRecord) -> Self {
-        match record {
+impl TryFrom<&JournalRecord> for WireRecord {
+    type Error = JournalCodecError;
+
+    fn try_from(record: &JournalRecord) -> Result<Self, Self::Error> {
+        Ok(match record {
             JournalRecord::SessionDescriptor(descriptor) => Self::SessionDescriptor {
                 descriptor: WireSessionDescriptor::from(descriptor),
             },
             JournalRecord::CommandCommitted(command) => Self::CommandCommitted {
-                command: WireCommand::from(command),
+                command: WireCommand::try_from(command)?,
             },
             JournalRecord::EventCommitted(event) => Self::EventCommitted {
                 event: WireEvent::from(event),
@@ -356,7 +354,7 @@ impl From<&JournalRecord> for WireRecord {
                 final_segment: terminal.final_segment().map(WireMessageSegment::from),
                 ended: WireMessageEnded::from(terminal.ended()),
             },
-        }
+        })
     }
 }
 
@@ -369,7 +367,7 @@ impl TryFrom<WireRecord> for JournalRecord {
                 SessionDescriptor::try_from(descriptor)?,
             )),
             WireRecord::CommandCommitted { command } => {
-                Ok(Self::CommandCommitted(AgentCommand::try_from(command)?))
+                Ok(Self::CommandCommitted(command.try_into()?))
             },
             WireRecord::EventCommitted { event } => {
                 Ok(Self::EventCommitted(AgentEvent::try_from(event)?))

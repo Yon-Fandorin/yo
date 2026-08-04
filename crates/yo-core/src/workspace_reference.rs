@@ -110,6 +110,24 @@ impl WorkspaceReference {
         })
     }
 
+    pub(crate) fn from_validated_persisted_v1(
+        identity: String,
+        execution_environment_identity: String,
+        workspace_identity: String,
+        root_identity: String,
+        relative_path: String,
+        kind: WorkspaceReferenceKind,
+    ) -> Self {
+        Self {
+            identity,
+            execution_environment_identity,
+            workspace_identity,
+            root_identity,
+            relative_path,
+            kind,
+        }
+    }
+
     #[must_use]
     pub fn identity(&self) -> &str {
         &self.identity

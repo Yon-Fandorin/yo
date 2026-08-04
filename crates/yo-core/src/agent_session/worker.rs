@@ -116,9 +116,12 @@ impl<B: AgentBackend> AgentWorker<B> {
 
     pub(super) fn initialize(&mut self) -> Result<Vec<AgentEvent>, AgentSessionError> {
         self.runtime.initialize_durability();
-        match self.execute(AgentCommand::CreateSession {
-            session_id: self.session_id,
-        }) {
+        match self.execute(
+            AgentCommand::CreateSession {
+                session_id: self.session_id,
+            },
+            None,
+        ) {
             Ok(events) => Ok(events),
             Err(start) => match self.runtime.shutdown() {
                 Ok(_) => Err(AgentSessionError::Runtime(start)),
@@ -186,9 +189,8 @@ impl<B: AgentBackend> AgentWorker<B> {
                     {
                         return WorkerExit::from_cleanup(self.runtime.shutdown());
                     }
-                    let submission_id = pending.submission_id();
-                    let (command, _) = pending.into_parts();
-                    let result = self.dispatch(command);
+                    let (command, submission_id) = pending.into_parts();
+                    let result = self.dispatch(command, submission_id);
                     if let Ok(mut count) = processed.0.lock() {
                         *count += 1;
                         processed.1.notify_all();
@@ -268,13 +270,26 @@ impl<B: AgentBackend> AgentWorker<B> {
             .push_back(outcome);
     }
 
-    fn dispatch(&mut self, command: AgentCommand) -> Result<Vec<AgentEvent>, AgentSessionError> {
-        self.execute(command).map_err(AgentSessionError::Runtime)
+    fn dispatch(
+        &mut self,
+        command: AgentCommand,
+        submission_id: Option<crate::SubmissionId>,
+    ) -> Result<Vec<AgentEvent>, AgentSessionError> {
+        self.execute(command, submission_id)
+            .map_err(AgentSessionError::Runtime)
     }
 
-    fn execute(&mut self, command: AgentCommand) -> Result<Vec<AgentEvent>, RuntimeError> {
+    fn execute(
+        &mut self,
+        command: AgentCommand,
+        submission_id: Option<crate::SubmissionId>,
+    ) -> Result<Vec<AgentEvent>, RuntimeError> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let events = self.runtime.execute_command(command)?;
+        let events = if let Some(submission_id) = submission_id {
+            self.runtime.execute_submission(command, submission_id)?
+        } else {
+            self.runtime.execute_command(command)?
+        };
         apply_events(&mut state, &self.active_turn_id, &events);
         Ok(events)
     }

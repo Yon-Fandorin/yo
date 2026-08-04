@@ -274,7 +274,9 @@ impl From<&JournalEntry> for TranscriptEntry {
 impl From<&JournalEntry> for TranscriptRecord {
     fn from(entry: &JournalEntry) -> Self {
         match entry.record() {
-            SemanticRecord::CommandCommitted(command) => Self::CommandCommitted(command.clone()),
+            SemanticRecord::CommandCommitted(command) => {
+                Self::CommandCommitted(command.command().clone())
+            },
             SemanticRecord::EventCommitted(event) => Self::EventCommitted(event.clone()),
         }
     }

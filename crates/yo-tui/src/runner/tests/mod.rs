@@ -4,7 +4,8 @@ use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate,
     AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendEvent, BackendScriptStep,
     DurabilityGapCause, JournalDurability, RequestId, RuntimeError, RuntimePoll, ScriptedBackend,
-    TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput, session_repository::DurableCutoff,
+    SubmissionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput,
+    session_repository::DurableCutoff,
 };
 
 use super::{
@@ -905,7 +906,10 @@ fn projects_fake_backend_coding_activities_through_core_into_tui() {
     for event in runtime.execute_command(create).unwrap() {
         state.observe(event).unwrap();
     }
-    for event in runtime.execute_command(start).unwrap() {
+    for event in runtime
+        .execute_submission(start, SubmissionId::new().unwrap())
+        .unwrap()
+    {
         state.observe(event).unwrap();
     }
     let mut connection = RuntimeConnection { runtime };

@@ -6,7 +6,7 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityRef, AgentCommand, AgentEvent, HostWorkspacePath, JournalSequence,
-    SessionDescriptor, TurnId, TurnRef,
+    SessionDescriptor, SubmissionId, TurnId, TurnRef,
 };
 
 mod wire_compatibility;
@@ -15,6 +15,11 @@ fn activity() -> ActivityRef {
     let session_id = crate::fixture_session(1);
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
     ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(3).unwrap()))
+}
+
+fn submission(value: u8) -> SubmissionId {
+    SubmissionId::from_uuid(uuid::Builder::from_random_bytes([value; 16]).into_uuid())
+        .expect("the test submission fixture is a UUIDv4")
 }
 
 fn sequenced(
@@ -49,6 +54,35 @@ fn descriptor_with_path(path: Vec<u8>) -> SessionDescriptor {
         HostWorkspacePath::from_unix_bytes(path)
             .expect("the test workspace path is absolute and NUL-free"),
     )
+}
+
+// 한 Session에서 같은 SubmissionId가 두 replay sequence에 나타나면 byte-identical
+// command라도 두 번 수락된 것으로 해석하지 않고 recovery 전체를 실패시켜야 한다.
+#[test]
+fn recovery_rejects_a_duplicate_submission_identity_across_commits() {
+    let descriptor = JournalCommit::descriptor(descriptor_with_path(b"/workspace".to_vec()));
+    let command = AgentCommand::StartTurn {
+        turn: activity().turn(),
+        input: crate::UserInput::new("inspect"),
+    };
+    let first = JournalCommit::incremental(sequenced(
+        2,
+        [JournalRecord::CommandCommitted(
+            crate::journal::CommittedCommand::submission(command.clone(), submission(9)).unwrap(),
+        )],
+    ));
+    let duplicate = JournalCommit::incremental(sequenced(
+        3,
+        [JournalRecord::CommandCommitted(
+            crate::journal::CommittedCommand::submission(command, submission(9)).unwrap(),
+        )],
+    ));
+
+    let error = recover(&[descriptor, first, duplicate])
+        .expect_err("one SubmissionId cannot identify two committed submissions");
+
+    assert_eq!(error.commit_index(), Some(2));
+    assert!(error.to_string().contains("only one committed submission"));
 }
 
 // descriptor-only 첫 commit은 semantic JournalSequence를 만들지 않으면서도 UUIDv7 Session,
@@ -247,7 +281,12 @@ fn rejects_records_from_different_sessions_in_one_commit() {
     let commit = JournalCommit::incremental(sequenced(
         1,
         [
-            JournalRecord::CommandCommitted(AgentCommand::CreateSession { session_id: first }),
+            JournalRecord::CommandCommitted(
+                crate::journal::CommittedCommand::uncorrelated(AgentCommand::CreateSession {
+                    session_id: first,
+                })
+                .unwrap(),
+            ),
             JournalRecord::EventCommitted(AgentEvent::SessionCreated { session_id: second }),
         ],
     ));

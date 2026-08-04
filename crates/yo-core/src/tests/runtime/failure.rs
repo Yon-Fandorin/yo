@@ -1,4 +1,4 @@
-use super::{activity, runtime_with_active_turn, session};
+use super::{activity, runtime_with_active_turn, session, submission};
 use crate::{
     ActivityKind, ActivityOutcome, AgentCommand, AgentEvent, AgentRejection, BackendEvent,
     BackendFailure, BackendFailureKind, BackendScriptStep, RuntimeError, TurnOutcome, UserInput,
@@ -49,10 +49,13 @@ fn invalid_core_command_never_reaches_the_backend() {
     let foreign_turn = super::turn(session(2), 1);
 
     let error = runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: foreign_turn,
-            input: UserInput::from("invalid"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: foreign_turn,
+                input: UserInput::from("invalid"),
+            },
+            submission(5),
+        )
         .unwrap_err();
 
     assert_eq!(

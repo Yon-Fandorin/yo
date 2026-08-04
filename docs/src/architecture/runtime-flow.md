@@ -198,7 +198,8 @@ The useful inspection points are:
    resolves Submit to `StartTurn` or `SteerTurn`. `Queued` means only that the
    bounded worker lane now owns the command; it is not final acceptance. A busy
    state lock or full lane returns an opaque pending command carrying the same
-   `SubmissionId` for the TUI loop to retry.
+   `SubmissionId` for the TUI loop to retry. The first dispatch reserves that ID
+   for the Session; reusing it is rejected before another backend command can run.
 4. [`AgentWorker`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs)
    is the only owner that executes and polls the runtime. After runtime and
    backend acceptance succeed, it publishes `SubmissionOutcome::Accepted` for
@@ -207,7 +208,9 @@ The useful inspection points are:
    The terminal-owning thread does not wait on provider I/O.
 5. [`AgentRuntime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs)
    orders command validation, backend acceptance, semantic commit, and Journal
-   publication. The worker-owned durable writer maps text updates to bounded
+   publication. `StartTurn` and `SteerTurn` enter through the correlated
+   submission boundary; the ordinary command boundary rejects them without a
+   `SubmissionId`. The worker-owned durable writer maps text updates to bounded
    immutable segments and synchronously appends a semantic commit before its
    committed record is exposed. Authoritative backend snapshots start a new
    message revision instead of mutating an already durable segment. Consecutive

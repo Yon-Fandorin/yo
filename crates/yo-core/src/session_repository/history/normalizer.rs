@@ -57,8 +57,9 @@ impl HistoryNormalizer {
             JournalRecord::SessionDescriptor(_) => Ok(()),
             JournalRecord::CommandCommitted(command) => {
                 self.flush_dirty();
-                self.output
-                    .push(TranscriptRecord::CommandCommitted(command.clone()));
+                self.output.push(TranscriptRecord::CommandCommitted(
+                    command.command().clone(),
+                ));
                 Ok(())
             },
             JournalRecord::EventCommitted(AgentEvent::ActivityStarted { activity, .. }) => {

@@ -1,6 +1,6 @@
 use crate::{
     ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionDescriptor,
-    SessionId,
+    SessionId, journal::CommittedCommand,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,7 +154,7 @@ impl From<JournalSequence> for ReplaySequence {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum JournalRecord {
     SessionDescriptor(SessionDescriptor),
-    CommandCommitted(AgentCommand),
+    CommandCommitted(CommittedCommand),
     EventCommitted(AgentEvent),
     MessageReset(MessageReset),
     MessageSegment(MessageSegment),
@@ -162,10 +162,21 @@ pub(crate) enum JournalRecord {
 }
 
 impl JournalRecord {
+    pub(crate) const fn submission_id(&self) -> Option<crate::SubmissionId> {
+        match self {
+            Self::CommandCommitted(command) => command.submission_id(),
+            Self::SessionDescriptor(_)
+            | Self::EventCommitted(_)
+            | Self::MessageReset(_)
+            | Self::MessageSegment(_)
+            | Self::MessageEnded(_) => None,
+        }
+    }
+
     pub(crate) const fn session_id(&self) -> SessionId {
         match self {
             Self::SessionDescriptor(descriptor) => descriptor.session_id(),
-            Self::CommandCommitted(command) => match command {
+            Self::CommandCommitted(committed) => match committed.command() {
                 AgentCommand::CreateSession { session_id } => *session_id,
                 AgentCommand::StartTurn { turn, .. }
                 | AgentCommand::SteerTurn { turn, .. }

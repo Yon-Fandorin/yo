@@ -5,7 +5,9 @@ use std::{
 };
 
 use super::{AgentIntent, AgentSession, AgentSessionError, CommandAdmission, PendingCommand};
-use crate::{ActivityRequestRef, ActivityResponse, AgentCommand, TurnId, TurnRef, UserInput};
+use crate::{
+    ActivityRequestRef, ActivityResponse, AgentCommand, SubmissionId, TurnId, TurnRef, UserInput,
+};
 
 #[derive(Default)]
 pub(super) struct SessionState {
@@ -29,12 +31,14 @@ impl AgentSession {
                     if state.interrupted_turns.contains(&turn) {
                         return Err(AgentSessionError::TurnInterruptPending);
                     }
+                    self.reserve_submission(submission_id)?;
                     Ok(PendingCommand::from_submission(
                         AgentCommand::SteerTurn { turn, input },
                         submission_id,
                     ))
                 } else {
                     let turn = self.next_turn()?;
+                    self.reserve_submission(submission_id)?;
                     state.active_turn = Some(turn);
                     state.turn_started = false;
                     self.active_turn_id
@@ -151,6 +155,13 @@ impl AgentSession {
         Ok(TurnRef::new(self.session_id, TurnId::new(id)))
     }
 
+    fn reserve_submission(&mut self, id: SubmissionId) -> Result<(), AgentSessionError> {
+        if !self.submission_ids.insert(id) {
+            return Err(AgentSessionError::DuplicateSubmissionId(id));
+        }
+        Ok(())
+    }
+
     fn resolve_snapshot(
         &mut self,
         action: AgentIntent,
@@ -162,16 +173,16 @@ impl AgentSession {
                 let submission_id = submission.id();
                 let input = submission.into_input();
                 if let Some(turn) = active_turn {
+                    self.reserve_submission(submission_id)?;
                     Ok(PendingCommand::from_submission(
                         AgentCommand::SteerTurn { turn, input },
                         submission_id,
                     ))
                 } else {
+                    let turn = self.next_turn()?;
+                    self.reserve_submission(submission_id)?;
                     Ok(PendingCommand::from_submission(
-                        AgentCommand::StartTurn {
-                            turn: self.next_turn()?,
-                            input,
-                        },
+                        AgentCommand::StartTurn { turn, input },
                         submission_id,
                     ))
                 }

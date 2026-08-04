@@ -107,6 +107,26 @@ impl SkillReference {
         }
     }
 
+    pub(crate) fn from_validated_persisted_v1(
+        identity: String,
+        execution_environment_identity: String,
+        locator: String,
+        name: String,
+        scope: SkillReferenceScope,
+        catalog_generation: u64,
+        entry_revision: String,
+    ) -> Self {
+        Self {
+            identity,
+            execution_environment_identity,
+            locator,
+            name,
+            scope,
+            catalog_generation,
+            entry_revision,
+        }
+    }
+
     #[must_use]
     pub fn identity(&self) -> &str {
         &self.identity

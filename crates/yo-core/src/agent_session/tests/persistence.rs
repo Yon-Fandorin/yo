@@ -11,7 +11,8 @@ use super::{
 };
 use crate::{
     ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, BackendEvent, BackendScriptStep,
-    ScriptedBackend, TurnOutcome, UserInput,
+    InputReference, InputSubmission, ScriptedBackend, TurnOutcome, UserInput, WorkspaceReference,
+    WorkspaceReferenceKind,
     journal::codec::JournalRecord,
     session_repository::{LocalSessionRepository, SessionRepository, journal::JournalRepository},
 };
@@ -42,7 +43,8 @@ impl Drop for TestDirectory {
 // 실제 AgentSession worker는 semantic record보다 먼저 cutoff 없는 descriptor envelope를
 // 저장해야 한다. frontend가 정상적인 backpressure를 재시도한 뒤 command, streaming
 // delta, replacement snapshot, 종료를 처리하고 local JSONL을 다시 열어도 같은
-// descriptor, 최종 message revision과 Turn 완료가 함께 복구되는지 검증한다.
+// descriptor, SubmissionId가 붙은 structured input, 최종 message revision과 Turn 완료가
+// 함께 복구되는지 검증한다.
 #[test]
 fn live_worker_persists_a_recoverable_session_journal() {
     let directory = TestDirectory::new();
@@ -50,13 +52,32 @@ fn live_worker_persists_a_recoverable_session_journal() {
     let descriptor = crate::fixture_descriptor(session());
     let first_turn = turn(1);
     let answer = activity(first_turn, 1);
+    let submission_id = "10000000-0000-4000-8000-000000000021"
+        .parse()
+        .expect("the test submission fixture is a UUIDv4");
+    let input = UserInput::with_references(
+        "inspect @src/lib.rs",
+        vec![InputReference::workspace(
+            8..19,
+            WorkspaceReference::new(
+                "workspace:src/lib.rs",
+                "host:one",
+                "workspace:one",
+                "root:one",
+                "src/lib.rs",
+                WorkspaceReferenceKind::File,
+            )
+            .unwrap(),
+        )],
+    )
+    .unwrap();
     let backend = ScriptedBackend::new([
         BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
             session_id: session(),
         }),
         BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
             turn: first_turn,
-            input: UserInput::from("inspect"),
+            input: input.clone(),
         }),
         BackendScriptStep::Emit(BackendEvent::ActivityStarted {
             activity: answer,
@@ -90,7 +111,10 @@ fn live_worker_persists_a_recoverable_session_journal() {
     .unwrap();
 
     let mut admission = app
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
+        .dispatch(AgentIntent::Submit(InputSubmission::new(
+            submission_id,
+            input.clone(),
+        )))
         .unwrap();
     let admission_deadline = Instant::now() + Duration::from_secs(1);
     while let CommandAdmission::Backpressured(pending) = admission {
@@ -122,6 +146,23 @@ fn live_worker_persists_a_recoverable_session_journal() {
         .unwrap();
     assert_eq!(recovered.descriptor(), Some(&descriptor));
     assert!(recovered.recovery_commit().is_none());
+    let committed = recovered
+        .records()
+        .iter()
+        .find_map(|entry| match entry.record() {
+            JournalRecord::CommandCommitted(committed)
+                if matches!(committed.command(), AgentCommand::StartTurn { .. }) =>
+            {
+                Some(committed)
+            },
+            _ => None,
+        })
+        .expect("the accepted structured submission is durable");
+    assert_eq!(committed.submission_id(), Some(submission_id));
+    assert!(matches!(
+        committed.command(),
+        AgentCommand::StartTurn { input: observed, .. } if observed == &input
+    ));
     let terminal = recovered
         .records()
         .iter()

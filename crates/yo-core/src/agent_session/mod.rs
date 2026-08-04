@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicU8, AtomicU64, Ordering},
@@ -51,6 +51,7 @@ pub struct AgentSession {
     next_turn_id: u64,
     transcript: TranscriptReader,
     submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
+    submission_ids: HashSet<crate::SubmissionId>,
     #[cfg(test)]
     processed: Arc<(Mutex<u64>, Condvar)>,
     worker: Option<JoinHandle<WorkerExit>>,
@@ -294,6 +295,7 @@ impl AgentSession {
                     next_turn_id: 1,
                     transcript,
                     submission_outcomes,
+                    submission_ids: HashSet::new(),
                     #[cfg(test)]
                     processed,
                     worker: Some(worker),

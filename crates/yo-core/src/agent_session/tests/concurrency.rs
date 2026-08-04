@@ -58,10 +58,13 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
     worker.initialize().unwrap();
     worker
         .runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: active_turn,
-            input: UserInput::from("start"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("start"),
+            },
+            crate::SubmissionId::new().unwrap(),
+        )
         .unwrap();
 
     let (normal_tx, normal_rx) = mpsc::sync_channel(1);

@@ -238,11 +238,14 @@ fn recovers_an_initial_descriptor_gap_with_the_complete_session_snapshot() {
 
     pressure.store(false, Ordering::Release);
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::MIN));
-    journal.append_committed_command(
+    journal.append_committed_submission(
         AgentCommand::StartTurn {
             turn,
             input: UserInput::from("recover"),
         },
+        "10000000-0000-4000-8000-000000000012"
+            .parse()
+            .expect("the test submission fixture is a UUIDv4"),
         &[AgentEvent::TurnStarted { turn }],
     );
 
@@ -282,12 +285,15 @@ fn appends_a_committed_command_before_its_committed_events() {
     let events = vec![AgentEvent::TurnStarted { turn }];
     let mut journal = SessionJournal::new();
 
-    journal.append_committed_command(command.clone(), &events);
+    let submission_id = crate::SubmissionId::new().unwrap();
+    journal.append_committed_submission(command.clone(), submission_id, &events);
 
     assert_eq!(journal.entries().len(), 2);
     assert_eq!(
         journal.entries()[0].record(),
-        &SemanticRecord::CommandCommitted(command)
+        &SemanticRecord::CommandCommitted(
+            super::CommittedCommand::submission(command, submission_id).unwrap()
+        )
     );
     assert_eq!(
         journal.entries()[1].record(),

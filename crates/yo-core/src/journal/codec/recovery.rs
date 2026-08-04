@@ -4,7 +4,7 @@ use super::{
     JournalCodecError, JournalCommit, JournalCommitKind, JournalRecord, MessageEnded,
     MessageOutcome, MessageStream, ReplaySequence, SequencedJournalRecord,
 };
-use crate::{ActivityRef, AgentEvent, JournalSequence, SessionDescriptor};
+use crate::{ActivityRef, AgentEvent, JournalSequence, SessionDescriptor, SubmissionId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RecoveredJournal {
@@ -14,6 +14,7 @@ pub(crate) struct RecoveredJournal {
     recovery_commit: Option<JournalCommit>,
     open_messages: BTreeMap<ActivityRef, OpenMessage>,
     ended_messages: BTreeSet<ActivityRef>,
+    submission_ids: BTreeSet<SubmissionId>,
     head: Option<ReplaySequence>,
 }
 
@@ -79,6 +80,7 @@ impl RecoveredJournal {
         let mut open_messages = self.open_messages.clone();
         let mut ended_messages = self.ended_messages.clone();
         let mut descriptor = self.descriptor.clone();
+        let mut submission_ids = BTreeSet::new();
         let mut head = self.head;
         for entry in commit.records() {
             let expected = head.map_or(1, |value| value.get().checked_add(1).unwrap_or(0));
@@ -88,11 +90,19 @@ impl RecoveredJournal {
                     entry.sequence().get()
                 )));
             }
+            if entry
+                .record()
+                .submission_id()
+                .is_some_and(|id| self.submission_ids.contains(&id))
+            {
+                return Err(duplicate_submission_id());
+            }
             apply_record(
                 entry.record(),
                 &mut descriptor,
                 &mut open_messages,
                 &mut ended_messages,
+                &mut submission_ids,
             )?;
             head = Some(entry.sequence());
         }
@@ -127,6 +137,7 @@ pub(crate) fn recover(commits: &[JournalCommit]) -> Result<RecoveredJournal, Jou
         recovery_commit: None,
         open_messages: BTreeMap::new(),
         ended_messages: BTreeSet::new(),
+        submission_ids: BTreeSet::new(),
         head: None,
     };
 
@@ -167,6 +178,7 @@ fn apply_commit(
         recovered.descriptor = None;
         recovered.open_messages.clear();
         recovered.ended_messages.clear();
+        recovered.submission_ids.clear();
         recovered.head = None;
     }
     if let Some(cutoff) = commit.journal_cutoff() {
@@ -187,6 +199,7 @@ fn apply_commit(
             &mut recovered.descriptor,
             &mut recovered.open_messages,
             &mut recovered.ended_messages,
+            &mut recovered.submission_ids,
         )?;
         recovered.records.push(entry.clone());
         recovered.head = Some(entry.sequence());
@@ -199,6 +212,7 @@ fn apply_record(
     descriptor: &mut Option<SessionDescriptor>,
     open_messages: &mut BTreeMap<ActivityRef, OpenMessage>,
     ended_messages: &mut BTreeSet<ActivityRef>,
+    submission_ids: &mut BTreeSet<SubmissionId>,
 ) -> Result<(), JournalCodecError> {
     if let JournalRecord::SessionDescriptor(candidate) = record {
         if descriptor.replace(candidate.clone()).is_some() {
@@ -208,7 +222,17 @@ fn apply_record(
         }
         return Ok(());
     }
+    if let JournalRecord::CommandCommitted(committed) = record
+        && let Some(submission_id) = committed.submission_id()
+        && !submission_ids.insert(submission_id)
+    {
+        return Err(duplicate_submission_id());
+    }
     apply_message_record(record, open_messages, ended_messages)
+}
+
+fn duplicate_submission_id() -> JournalCodecError {
+    JournalCodecError::new("a SubmissionId may identify only one committed submission per Session")
 }
 
 fn apply_message_record(

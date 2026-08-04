@@ -1,9 +1,12 @@
 use std::fmt;
 
-use crate::{AgentEvent, AgentRejection, BackendEvent, BackendFailure};
+use crate::{AgentEvent, AgentRejection, BackendEvent, BackendFailure, SubmissionId};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RuntimeError {
+    SubmissionIdentityRequired,
+    SubmissionIdentityUnexpected,
+    DuplicateSubmissionIdentity(SubmissionId),
     CommandRejected(AgentRejection),
     Backend {
         failure: BackendFailure,
@@ -33,7 +36,11 @@ impl RuntimeError {
             | Self::EventRejected {
                 terminal_events, ..
             } => terminal_events,
-            Self::CommandRejected(_) | Self::StateDiverged(_) => &[],
+            Self::SubmissionIdentityRequired
+            | Self::SubmissionIdentityUnexpected
+            | Self::DuplicateSubmissionIdentity(_)
+            | Self::CommandRejected(_)
+            | Self::StateDiverged(_) => &[],
         }
     }
 }
@@ -41,6 +48,18 @@ impl RuntimeError {
 impl fmt::Display for RuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::SubmissionIdentityRequired => {
+                formatter.write_str("StartTurn and SteerTurn require a SubmissionId")
+            },
+            Self::SubmissionIdentityUnexpected => formatter.write_str(
+                "only StartTurn and SteerTurn may be executed as a correlated submission",
+            ),
+            Self::DuplicateSubmissionIdentity(id) => {
+                write!(
+                    formatter,
+                    "SubmissionId {id} was already committed by this runtime"
+                )
+            },
             Self::CommandRejected(rejection) => write!(formatter, "command rejected: {rejection}"),
             Self::Backend { failure, .. } => write!(formatter, "backend: {failure}"),
             Self::EventRejected { rejection, .. } => {

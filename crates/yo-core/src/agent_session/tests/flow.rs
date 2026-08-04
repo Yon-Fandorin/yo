@@ -52,6 +52,48 @@ fn starts_the_first_turn_and_forwards_completion() {
     app.shutdown().unwrap();
 }
 
+// 같은 SubmissionId를 다시 제출하면 두 번째 입력은 backend나 semantic Journal에 닿기
+// 전에 동기적으로 거절되어, 이미 수락된 correlation identity를 재사용하지 않습니다.
+#[test]
+fn rejects_a_duplicate_submission_identity_before_backend_execution() {
+    let first = turn(1);
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: first,
+            input: UserInput::from("first"),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = start_app(backend);
+    let submission_id = SubmissionId::new().unwrap();
+
+    app.dispatch(AgentIntent::Submit(InputSubmission::new(
+        submission_id,
+        UserInput::from("first"),
+    )))
+    .unwrap();
+    app.wait_until_processed(1);
+    let error = app
+        .dispatch(AgentIntent::Submit(InputSubmission::new(
+            submission_id,
+            UserInput::from("duplicate"),
+        )))
+        .expect_err("a Session rejects a reused submission identity");
+
+    assert!(matches!(
+        error,
+        AgentSessionError::DuplicateSubmissionId(id) if id == submission_id
+    ));
+    assert_eq!(
+        app.take_submission_outcome(),
+        Some(SubmissionOutcome::Accepted { id: submission_id })
+    );
+    app.shutdown().unwrap();
+}
+
 // frontend가 첫 TurnFinished를 아직 poll하지 않았더라도 worker가 이미 완료를 적용했다면
 // 다음 prompt는 끝난 Turn의 steer가 아니라 새 Turn으로 시작되어야 한다.
 #[test]

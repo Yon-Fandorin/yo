@@ -53,11 +53,14 @@ fn capacity_gap_recovers_with_one_complete_live_snapshot() {
         &[AgentEvent::SessionCreated { session_id }],
     );
     pressure.store(true, Ordering::Release);
-    journal.append_committed_command(
+    journal.append_committed_submission(
         AgentCommand::StartTurn {
             turn,
             input: UserInput::from("inspect"),
         },
+        "10000000-0000-4000-8000-000000000011"
+            .parse()
+            .expect("the test submission fixture is a UUIDv4"),
         &[AgentEvent::TurnStarted { turn }],
     );
     assert!(matches!(

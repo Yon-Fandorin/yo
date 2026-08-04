@@ -57,6 +57,30 @@ impl InputReference {
         }
     }
 
+    pub(crate) fn persisted_workspace(
+        span: Range<usize>,
+        projection: String,
+        reference: WorkspaceReference,
+    ) -> Self {
+        Self::Workspace {
+            span,
+            projection,
+            reference,
+        }
+    }
+
+    pub(crate) fn persisted_skill(
+        span: Range<usize>,
+        projection: String,
+        reference: SkillReference,
+    ) -> Self {
+        Self::Skill {
+            span,
+            projection,
+            reference,
+        }
+    }
+
     #[must_use]
     pub fn span(&self) -> &Range<usize> {
         match self {
@@ -80,7 +104,7 @@ impl InputReference {
         }
     }
 
-    fn projection(&self) -> &str {
+    pub(crate) fn projection(&self) -> &str {
         match self {
             Self::Workspace { projection, .. } | Self::Skill { projection, .. } => projection,
         }
@@ -140,6 +164,13 @@ impl UserInput {
         };
         input.validate()?;
         Ok(input)
+    }
+
+    pub(crate) fn from_validated_persisted_v1(
+        text: String,
+        references: Vec<InputReference>,
+    ) -> Self {
+        Self { text, references }
     }
 
     #[must_use]

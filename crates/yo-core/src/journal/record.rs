@@ -1,4 +1,4 @@
-use crate::{AgentCommand, AgentEvent};
+use crate::{AgentCommand, AgentEvent, SubmissionId};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct JournalSequence(u64);
@@ -26,8 +26,55 @@ impl JournalSequence {
 /// `TranscriptRecord` projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SemanticRecord {
-    CommandCommitted(AgentCommand),
+    CommandCommitted(CommittedCommand),
     EventCommitted(AgentEvent),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CommittedCommand {
+    command: AgentCommand,
+    correlation: CommandCorrelation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommandCorrelation {
+    Submission(SubmissionId),
+    Uncorrelated,
+}
+
+impl CommittedCommand {
+    pub(crate) fn submission(command: AgentCommand, submission_id: SubmissionId) -> Option<Self> {
+        matches!(
+            command,
+            AgentCommand::StartTurn { .. } | AgentCommand::SteerTurn { .. }
+        )
+        .then_some(Self {
+            command,
+            correlation: CommandCorrelation::Submission(submission_id),
+        })
+    }
+
+    pub(crate) fn uncorrelated(command: AgentCommand) -> Option<Self> {
+        (!matches!(
+            command,
+            AgentCommand::StartTurn { .. } | AgentCommand::SteerTurn { .. }
+        ))
+        .then_some(Self {
+            command,
+            correlation: CommandCorrelation::Uncorrelated,
+        })
+    }
+
+    pub(crate) const fn command(&self) -> &AgentCommand {
+        &self.command
+    }
+
+    pub(crate) const fn submission_id(&self) -> Option<SubmissionId> {
+        match self.correlation {
+            CommandCorrelation::Submission(submission_id) => Some(submission_id),
+            CommandCorrelation::Uncorrelated => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

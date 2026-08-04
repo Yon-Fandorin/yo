@@ -119,10 +119,24 @@ fn command_commit_at(first_sequence: u64) -> JournalCommit {
     JournalCommit::incremental(vec![
         SequencedJournalRecord::new(
             JournalSequence::new(first_sequence),
-            JournalRecord::CommandCommitted(AgentCommand::StartTurn {
-                turn,
-                input: UserInput::new("inspect"),
-            }),
+            JournalRecord::CommandCommitted(
+                crate::journal::CommittedCommand::submission(
+                    AgentCommand::StartTurn {
+                        turn,
+                        input: UserInput::new("inspect"),
+                    },
+                    crate::SubmissionId::from_uuid(
+                        uuid::Builder::from_random_bytes(
+                            [u8::try_from(first_sequence)
+                                .expect("the test replay sequence fits in one byte");
+                                16],
+                        )
+                        .into_uuid(),
+                    )
+                    .expect("the test submission fixture is a UUIDv4"),
+                )
+                .unwrap(),
+            ),
         ),
         SequencedJournalRecord::new(
             JournalSequence::new(first_sequence + 1),
@@ -398,10 +412,13 @@ fn unterminated_snapshot_cannot_release_the_local_recovery_gate() {
         .expect_err("the rejected snapshot cannot release the local gate");
 
     assert!(matches!(snapshot_error, JournalRepositoryError::Codec(_)));
-    assert!(matches!(
-        later_error,
-        JournalRepositoryError::Append(AppendError::SnapshotRequired { .. })
-    ));
+    assert!(
+        matches!(
+            later_error,
+            JournalRepositoryError::Append(AppendError::SnapshotRequired { .. })
+        ),
+        "unexpected later error: {later_error:?}"
+    );
 }
 
 // reopen 전 durable segment를 생략한 채 다른 sequence-1 event만 담은 snapshot은 자체로는

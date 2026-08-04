@@ -76,6 +76,11 @@ fn id(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap()
 }
 
+fn submission(value: u8) -> crate::SubmissionId {
+    crate::SubmissionId::from_uuid(uuid::Builder::from_random_bytes([value; 16]).into_uuid())
+        .expect("the test submission fixture is a UUIDv4")
+}
+
 fn session(value: u64) -> SessionId {
     crate::fixture_session(value)
 }
@@ -223,10 +228,13 @@ fn maps_a_coding_turn_into_semantic_events() {
         .execute_command(AgentCommand::CreateSession { session_id })
         .unwrap();
     runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: active_turn,
-            input: UserInput::from("run tests"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("run tests"),
+            },
+            submission(1),
+        )
         .unwrap();
 
     assert_eq!(
@@ -318,10 +326,13 @@ fn correlates_an_approval_round_trip() {
         .execute_command(AgentCommand::CreateSession { session_id })
         .unwrap();
     runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: active_turn,
-            input: UserInput::from("inspect"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("inspect"),
+            },
+            submission(2),
+        )
         .unwrap();
     let request = ActivityRequestRef::new(activity(active_turn, 1), RequestId::new(id(1)));
 
@@ -522,10 +533,13 @@ fn folds_an_error_notification_into_the_failed_turn() {
         .execute_command(AgentCommand::CreateSession { session_id })
         .unwrap();
     runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: active_turn,
-            input: UserInput::from("inspect"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("inspect"),
+            },
+            submission(4),
+        )
         .unwrap();
 
     assert_eq!(
@@ -624,10 +638,13 @@ fn interrupted_turn_closes_open_items_before_the_turn() {
         .execute_command(AgentCommand::CreateSession { session_id })
         .unwrap();
     runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: active_turn,
-            input: UserInput::from("inspect"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("inspect"),
+            },
+            submission(8),
+        )
         .unwrap();
 
     assert!(matches!(
@@ -704,10 +721,13 @@ fn interrupted_turn_sorts_items_and_approvals_before_the_turn() {
         .execute_command(AgentCommand::CreateSession { session_id })
         .unwrap();
     runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: active_turn,
-            input: UserInput::from("inspect"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: active_turn,
+                input: UserInput::from("inspect"),
+            },
+            submission(9),
+        )
         .unwrap();
 
     assert!(matches!(
@@ -813,10 +833,13 @@ fn interrupted_turn_state_isolated_from_a_later_item() {
         .execute_command(AgentCommand::CreateSession { session_id })
         .unwrap();
     runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: first_turn,
-            input: UserInput::from("first"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: first_turn,
+                input: UserInput::from("first"),
+            },
+            submission(6),
+        )
         .unwrap();
 
     assert!(matches!(
@@ -839,10 +862,13 @@ fn interrupted_turn_state_isolated_from_a_later_item() {
     );
 
     runtime
-        .execute_command(AgentCommand::StartTurn {
-            turn: second_turn,
-            input: UserInput::from("second"),
-        })
+        .execute_submission(
+            AgentCommand::StartTurn {
+                turn: second_turn,
+                input: UserInput::from("second"),
+            },
+            submission(7),
+        )
         .unwrap();
     assert_eq!(
         runtime.poll_event().unwrap(),

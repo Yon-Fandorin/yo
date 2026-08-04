@@ -10,14 +10,17 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 pub use durable::{DurabilityGapCause, JournalDurability};
 use record::JournalEntry;
 pub use record::JournalSequence;
-pub(crate) use record::SemanticRecord;
+pub(crate) use record::{CommittedCommand, SemanticRecord};
 pub use transcript::{
     TranscriptEntry, TranscriptObservation, TranscriptObservationEntry,
     TranscriptObservationSequence, TranscriptObservationSlice, TranscriptReader, TranscriptRecord,
     TranscriptSlice,
 };
 
-use crate::{AgentCommand, AgentEvent, SessionDescriptor, session_repository::SessionRepository};
+use crate::{
+    AgentCommand, AgentEvent, SessionDescriptor, SubmissionId,
+    session_repository::SessionRepository,
+};
 
 #[derive(Debug)]
 struct SessionJournalState {
@@ -96,6 +99,23 @@ impl SessionJournal {
         command: AgentCommand,
         events: &[AgentEvent],
     ) {
+        let committed = CommittedCommand::uncorrelated(command)
+            .expect("a submission command must use append_committed_submission");
+        self.append_committed(committed, events);
+    }
+
+    pub(crate) fn append_committed_submission(
+        &mut self,
+        command: AgentCommand,
+        submission_id: SubmissionId,
+        events: &[AgentEvent],
+    ) {
+        let committed = CommittedCommand::submission(command, submission_id)
+            .expect("only a submission command may carry a SubmissionId");
+        self.append_committed(committed, events);
+    }
+
+    fn append_committed(&mut self, command: CommittedCommand, events: &[AgentEvent]) {
         let mut records = Vec::with_capacity(events.len() + 1);
         records.push(SemanticRecord::CommandCommitted(command));
         records.extend(events.iter().cloned().map(SemanticRecord::EventCommitted));

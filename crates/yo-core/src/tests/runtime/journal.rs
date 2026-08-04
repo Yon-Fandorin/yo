@@ -1,8 +1,63 @@
-use super::{activity, runtime_with_active_turn, session, turn};
+use super::{activity, runtime_with_active_turn, session, submission, turn};
 use crate::{
-    ActivityKind, AgentCommand, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendScriptStep, RuntimeError, journal::SemanticRecord,
+    ActivityKind, AgentCommand, AgentRuntime, BackendEvent, BackendFailure, BackendFailureKind,
+    BackendScriptStep, RuntimeError, ScriptedBackend, UserInput, journal::SemanticRecord,
 };
+
+// Runtime의 공개 경계도 Start/Steer와 SubmissionId를 분리해서 받을 수 없게 막아,
+// backend 호출 전에 Journal이 표현할 수 없는 command correlation을 거절합니다.
+#[test]
+fn rejects_a_runtime_command_with_the_wrong_submission_correlation_shape() {
+    let session_id = session(1);
+    let turn = turn(session_id, 1);
+    let mut runtime =
+        AgentRuntime::new(ScriptedBackend::new([BackendScriptStep::Shutdown(Ok(()))]));
+
+    assert_eq!(
+        runtime
+            .execute_command(AgentCommand::StartTurn {
+                turn,
+                input: UserInput::new("missing identity"),
+            })
+            .unwrap_err(),
+        RuntimeError::SubmissionIdentityRequired
+    );
+    assert_eq!(
+        runtime
+            .execute_submission(AgentCommand::CreateSession { session_id }, submission(10),)
+            .unwrap_err(),
+        RuntimeError::SubmissionIdentityUnexpected
+    );
+    assert!(runtime.journal().entries().is_empty());
+    runtime.shutdown().unwrap();
+}
+
+// AgentSession을 우회해 공개 Runtime API를 직접 사용해도 이미 commit된 SubmissionId는
+// backend와 Journal에 두 번째로 전달되지 않아 Session 단위 correlation이 유지됩니다.
+#[test]
+fn rejects_a_duplicate_submission_identity_at_the_runtime_boundary() {
+    let (mut runtime, active_turn) =
+        runtime_with_active_turn([BackendScriptStep::Shutdown(Ok(()))]);
+    let before = runtime.journal().entries().len();
+
+    let error = runtime
+        .execute_submission(
+            AgentCommand::SteerTurn {
+                turn: active_turn,
+                input: UserInput::new("duplicate"),
+            },
+            submission(1),
+        )
+        .expect_err("a committed SubmissionId cannot be reused");
+
+    assert_eq!(
+        error,
+        RuntimeError::DuplicateSubmissionIdentity(submission(1))
+    );
+    assert_eq!(runtime.journal().entries().len(), before);
+    assert_eq!(runtime.backend().remaining_steps(), 1);
+    runtime.shutdown().unwrap();
+}
 
 // Runtime이 backend에서 수락되고 core에 commit된 명령만 Journal에 남겨야 하므로,
 // 거절된 중단 명령은 기록하지 않고 뒤이어 수락된 같은 명령만 정확히 한 번 기록한다.
@@ -40,7 +95,9 @@ fn records_only_commands_that_reach_semantic_commit() {
     assert_eq!(runtime.journal().entries().len(), before + 1);
     assert_eq!(
         runtime.journal().entries().last().unwrap().record(),
-        &SemanticRecord::CommandCommitted(interrupt)
+        &SemanticRecord::CommandCommitted(
+            crate::journal::CommittedCommand::uncorrelated(interrupt).unwrap()
+        )
     );
 }
 

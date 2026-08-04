@@ -1,4 +1,4 @@
-use super::{activity, id, runtime_with_active_turn, session, turn};
+use super::{activity, id, runtime_with_active_turn, session, submission, turn};
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand, AgentEvent,
     AgentRejection, AgentRuntime, ApprovalDecision, BackendCapabilities, BackendEvent,
@@ -86,10 +86,13 @@ fn unsupported_steer_never_reaches_the_backend() {
     let (mut runtime, _) = runtime_with_active_turn(steps);
 
     let error = runtime
-        .execute_command(AgentCommand::SteerTurn {
-            turn: active_turn,
-            input: UserInput::from("change direction"),
-        })
+        .execute_submission(
+            AgentCommand::SteerTurn {
+                turn: active_turn,
+                input: UserInput::from("change direction"),
+            },
+            submission(2),
+        )
         .unwrap_err();
 
     assert_eq!(
@@ -125,9 +128,9 @@ fn supported_steer_is_forwarded_without_creating_a_turn() {
     .with_capabilities(BackendCapabilities::none().with_steer());
     let mut runtime = AgentRuntime::new(backend);
     runtime.execute_command(create).unwrap();
-    runtime.execute_command(start).unwrap();
+    runtime.execute_submission(start, submission(3)).unwrap();
 
-    let events = runtime.execute_command(steer).unwrap();
+    let events = runtime.execute_submission(steer, submission(4)).unwrap();
 
     assert!(events.is_empty());
     assert_eq!(runtime.active_turn(), Some(active_turn));
