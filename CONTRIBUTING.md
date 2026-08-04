@@ -413,6 +413,17 @@ respective full suite. For a staged Methexis activation, the integrity route
 reads one `check --staged-activation` report and reports prospective authority.
 This is not a test exemption: after integration, ordinary `methexis check` and
 the full Methexis tests are required against trusted `develop`.
+
+At every Slice close, include a compact Methexis/Librarian token retrospective
+in the Slice status or handoff. State whether either tool was invoked. Group
+invocations that share the same tool, trigger, and route, and record their count.
+For each materially different group, name its trigger and narrowest route used,
+any reused hash-pinned artifact or context build, and one avoidable repeat or
+next-Slice reduction. When neither tool ran, `not invoked` is sufficient. Do not
+paste full payloads or tool output into the retrospective, and do not promote
+this operational note into durable repository history unless it changes a
+workflow or tool contract.
+
 For every accepted review commit, Git `commit-msg` requires the Slice review
 disposition described above. Working commits on `slice/*`, `task/*`, and
 `spike/*` defer it to their accepted squash or review commit. A Wave merge that
