@@ -66,13 +66,20 @@ fn activity() -> ActivityRef {
 }
 
 fn record(commit: &JournalCommit) -> DurableRecord {
+    record_with_discovery(
+        commit,
+        RecordDiscovery::new(crate::fixture_descriptor(session())),
+    )
+}
+
+fn record_with_discovery(commit: &JournalCommit, discovery: RecordDiscovery) -> DurableRecord {
     let record = match commit.kind() {
         JournalCommitKind::Incremental => DurableRecord::incremental(encode(commit).unwrap()),
         JournalCommitKind::Snapshot => DurableRecord::snapshot(encode(commit).unwrap()),
     };
     record
         .with_journal_cutoff(commit.journal_cutoff())
-        .with_discovery(RecordDiscovery::new(crate::fixture_descriptor(session())))
+        .with_discovery(discovery)
 }
 
 fn reader(commits: &[JournalCommit]) -> MemoryReader {
@@ -184,8 +191,197 @@ fn coalesces_segments_and_superseded_revisions() {
         [&ActivityUpdate::TextSnapshot("new answer".to_owned())]
     );
     assert!(history.discovery_consistent());
+    assert_eq!(
+        history.discovery_validation(),
+        StoredDiscoveryValidation::Consistent
+    );
     assert_eq!(history.recovery(), StoredSessionRecovery::NotRequired);
     assert_eq!(history.continuity(), StoredSessionContinuity::NotObservable);
+}
+
+// 현재 semantic v1에는 accepted outcome·binding·locator 증거가 없으므로 summary가
+// Anchor를 주장해도 재개 가능으로 추측하지 않고 최초 physical 순번을 보존합니다.
+#[test]
+fn reports_a_summary_anchor_without_semantic_anchor_evidence() {
+    let commit = JournalCommit::descriptor(crate::fixture_descriptor(session()));
+    let referenced = JournalSequence::new(1);
+    let reader = MemoryReader {
+        entries: vec![RepositoryEntry::new(
+            RepositorySequence::new(1),
+            record_with_discovery(
+                &commit,
+                RecordDiscovery::new(crate::fixture_descriptor(session()))
+                    .with_continuation_anchor(referenced),
+            ),
+        )],
+        missing: false,
+    };
+
+    let history = read_stored_session(&reader, session()).unwrap();
+
+    assert_eq!(
+        history.discovery_validation(),
+        StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch {
+            repository_sequence: RepositorySequence::new(1),
+            kind: StoredDiscoveryMismatchKind::ContinuationAnchor { referenced },
+        })
+    );
+    assert!(!history.discovery_consistent());
+}
+
+// mismatch가 원인별 typed 좌표를 직접 소유하므로 서로 다른 두 sequence가 같은 숫자여도
+// CLI 진단에서 repository 위치와 Journal 참조 위치를 구분할 수 있습니다.
+#[test]
+fn discovery_mismatch_diagnostics_preserve_typed_coordinates_and_causes() {
+    let cases = [
+        (
+            StoredDiscoveryMismatch {
+                repository_sequence: RepositorySequence::new(7),
+                kind: StoredDiscoveryMismatchKind::Missing,
+            },
+            "metadata is missing at repository sequence 7",
+        ),
+        (
+            StoredDiscoveryMismatch {
+                repository_sequence: RepositorySequence::new(8),
+                kind: StoredDiscoveryMismatchKind::Descriptor,
+            },
+            "descriptor disagrees with its semantic Journal at repository sequence 8",
+        ),
+        (
+            StoredDiscoveryMismatch {
+                repository_sequence: RepositorySequence::new(9),
+                kind: StoredDiscoveryMismatchKind::BindingEpoch { claimed: 3 },
+            },
+            "binding epoch 3 at repository sequence 9 has no semantic Journal binding evidence",
+        ),
+        (
+            StoredDiscoveryMismatch {
+                repository_sequence: RepositorySequence::new(10),
+                kind: StoredDiscoveryMismatchKind::ContinuationAnchor {
+                    referenced: JournalSequence::new(4),
+                },
+            },
+            "Continuation Anchor Journal sequence 4 at repository sequence 10 has no semantic Journal anchor evidence",
+        ),
+    ];
+
+    for (mismatch, expected) in cases {
+        assert_eq!(mismatch.to_string(), expected);
+    }
+}
+
+// semantic v1에는 backend binding record가 없으므로 epoch만 기록한 summary 역시
+// Anchor의 일부로 인정하지 않고 해당 physical envelope의 불일치로 보고합니다.
+#[test]
+fn reports_a_summary_binding_epoch_without_semantic_binding_evidence() {
+    let commit = JournalCommit::descriptor(crate::fixture_descriptor(session()));
+    let reader = MemoryReader {
+        entries: vec![RepositoryEntry::new(
+            RepositorySequence::new(4),
+            record_with_discovery(
+                &commit,
+                RecordDiscovery::new(crate::fixture_descriptor(session())).with_binding_epoch(7),
+            ),
+        )],
+        missing: false,
+    };
+
+    let history = read_stored_session(&reader, session()).unwrap();
+
+    assert_eq!(
+        history.discovery_validation(),
+        StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch {
+            repository_sequence: RepositorySequence::new(4),
+            kind: StoredDiscoveryMismatchKind::BindingEpoch { claimed: 7 },
+        })
+    );
+}
+
+// tail summary가 비어 있어도 앞 envelope의 근거 없는 Anchor 주장은 사라지지 않으므로
+// 전체 history 검증은 처음 잘못된 physical sequence를 계속 보고합니다.
+#[test]
+fn reports_an_earlier_summary_anchor_even_when_the_tail_clears_it() {
+    let descriptor = JournalCommit::descriptor(crate::fixture_descriptor(session()));
+    let later = JournalCommit::incremental(vec![started(2)]);
+    let referenced = JournalSequence::new(1);
+    let reader = MemoryReader {
+        entries: vec![
+            RepositoryEntry::new(
+                RepositorySequence::new(1),
+                record_with_discovery(
+                    &descriptor,
+                    RecordDiscovery::new(crate::fixture_descriptor(session()))
+                        .with_continuation_anchor(referenced),
+                ),
+            ),
+            RepositoryEntry::new(RepositorySequence::new(2), record(&later)),
+        ],
+        missing: false,
+    };
+
+    let history = read_stored_session(&reader, session()).unwrap();
+
+    assert_eq!(
+        history.discovery_validation(),
+        StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch {
+            repository_sequence: RepositorySequence::new(1),
+            kind: StoredDiscoveryMismatchKind::ContinuationAnchor { referenced },
+        })
+    );
+}
+
+// semantic commit이 읽혀도 physical envelope에 필수 discovery summary가 없다면
+// 해당 repository sequence를 typed mismatch로 식별합니다.
+#[test]
+fn identifies_the_envelope_that_is_missing_discovery() {
+    let commit = JournalCommit::snapshot(vec![SequencedJournalRecord::new(
+        JournalSequence::new(1),
+        JournalRecord::SessionDescriptor(crate::fixture_descriptor(session())),
+    )]);
+    let record = DurableRecord::snapshot(encode(&commit).unwrap())
+        .with_journal_cutoff(commit.journal_cutoff());
+    let reader = MemoryReader {
+        entries: vec![RepositoryEntry::new(RepositorySequence::new(6), record)],
+        missing: false,
+    };
+
+    let history = read_stored_session(&reader, session()).unwrap();
+
+    assert_eq!(
+        history.discovery_validation(),
+        StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch {
+            repository_sequence: RepositorySequence::new(6),
+            kind: StoredDiscoveryMismatchKind::Missing,
+        })
+    );
+}
+
+// physical summary의 descriptor가 semantic descriptor와 다르면 backend 주장보다 먼저
+// 그 envelope의 descriptor 불일치를 정확히 보고합니다.
+#[test]
+fn identifies_the_envelope_with_a_mismatched_descriptor() {
+    let commit = JournalCommit::descriptor(crate::fixture_descriptor(session()));
+    let reader = MemoryReader {
+        entries: vec![RepositoryEntry::new(
+            RepositorySequence::new(9),
+            record_with_discovery(
+                &commit,
+                RecordDiscovery::new(crate::fixture_descriptor(crate::fixture_session(2))),
+            ),
+        )],
+        missing: false,
+    };
+
+    let history = read_stored_session(&reader, session()).unwrap();
+
+    assert_eq!(
+        history.discovery_validation(),
+        StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch {
+            repository_sequence: RepositorySequence::new(9),
+            kind: StoredDiscoveryMismatchKind::Descriptor,
+        })
+    );
 }
 
 // 이전 revision에 text가 있더라도 다음 revision의 zero-byte terminal은 "빈 답변"이라는

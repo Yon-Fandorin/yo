@@ -7,7 +7,8 @@ use std::fmt;
 use normalizer::normalize;
 
 use super::{
-    RepositoryError, StoredSessionReader, StoredSessionSnapshot, journal::recover_entries,
+    RepositoryEntry, RepositoryError, RepositorySequence, StoredSessionReader,
+    StoredSessionSnapshot, journal::recover_entries,
 };
 use crate::{JournalSequence, SessionDescriptor, SessionId, TranscriptRecord};
 
@@ -18,7 +19,7 @@ pub struct StoredSessionHistory {
     journal_cutoff: Option<JournalSequence>,
     recovery: StoredSessionRecovery,
     continuity: StoredSessionContinuity,
-    discovery_consistent: bool,
+    discovery_validation: StoredDiscoveryValidation,
     records: Vec<TranscriptRecord>,
 }
 
@@ -44,9 +45,18 @@ impl StoredSessionHistory {
         self.continuity
     }
 
+    /// Result of validating every physical discovery summary against semantic Journal authority.
+    #[must_use]
+    pub const fn discovery_validation(&self) -> StoredDiscoveryValidation {
+        self.discovery_validation
+    }
+
     #[must_use]
     pub const fn discovery_consistent(&self) -> bool {
-        self.discovery_consistent
+        matches!(
+            self.discovery_validation,
+            StoredDiscoveryValidation::Consistent
+        )
     }
 
     /// Returns the recovered frontend-independent records in durable order.
@@ -68,6 +78,77 @@ pub enum StoredSessionRecovery {
 pub enum StoredSessionContinuity {
     /// The current v1 format cannot prove whether a stopped writer lost volatile records.
     NotObservable,
+}
+
+/// Result of validating the physical discovery summaries in one stored Session history.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StoredDiscoveryValidation {
+    Consistent,
+    Mismatch(StoredDiscoveryMismatch),
+}
+
+/// First physical discovery summary that disagrees with semantic Journal authority.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StoredDiscoveryMismatch {
+    repository_sequence: RepositorySequence,
+    kind: StoredDiscoveryMismatchKind,
+}
+
+impl StoredDiscoveryMismatch {
+    #[must_use]
+    pub const fn new(
+        repository_sequence: RepositorySequence,
+        kind: StoredDiscoveryMismatchKind,
+    ) -> Self {
+        Self {
+            repository_sequence,
+            kind,
+        }
+    }
+
+    #[must_use]
+    pub const fn repository_sequence(self) -> RepositorySequence {
+        self.repository_sequence
+    }
+
+    #[must_use]
+    pub const fn kind(self) -> StoredDiscoveryMismatchKind {
+        self.kind
+    }
+}
+
+impl fmt::Display for StoredDiscoveryMismatch {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let repository_sequence = self.repository_sequence.get();
+        match self.kind {
+            StoredDiscoveryMismatchKind::Missing => write!(
+                formatter,
+                "metadata is missing at repository sequence {repository_sequence}"
+            ),
+            StoredDiscoveryMismatchKind::Descriptor => write!(
+                formatter,
+                "descriptor disagrees with its semantic Journal at repository sequence {repository_sequence}"
+            ),
+            StoredDiscoveryMismatchKind::BindingEpoch { claimed } => write!(
+                formatter,
+                "binding epoch {claimed} at repository sequence {repository_sequence} has no semantic Journal binding evidence"
+            ),
+            StoredDiscoveryMismatchKind::ContinuationAnchor { referenced } => write!(
+                formatter,
+                "Continuation Anchor Journal sequence {} at repository sequence {repository_sequence} has no semantic Journal anchor evidence",
+                referenced.get()
+            ),
+        }
+    }
+}
+
+/// Reason a physical discovery summary cannot be derived from its semantic Journal prefix.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StoredDiscoveryMismatchKind {
+    Missing,
+    Descriptor,
+    BindingEpoch { claimed: u64 },
+    ContinuationAnchor { referenced: JournalSequence },
 }
 
 /// Failure to validate and recover one stored Session's semantic Journal.
@@ -123,21 +204,13 @@ pub fn read_stored_session(
         },
         StoredSessionSnapshot::Present(entries) => entries,
     };
-    let discovery = entries
-        .iter()
-        .map(|entry| entry.record().discovery().cloned())
-        .collect::<Vec<_>>();
     let recovered =
         recover_entries(session_id, &entries).map_err(|error| invalid_stored(error.to_string()))?;
     let descriptor = recovered
         .descriptor()
         .cloned()
         .ok_or_else(|| invalid_stored(format!("stored Session {session_id} has no descriptor")))?;
-    let discovery_consistent = discovery.iter().all(|candidate| {
-        candidate
-            .as_ref()
-            .is_some_and(|candidate| candidate.descriptor() == &descriptor)
-    });
+    let discovery_validation = validate_discovery(&entries, &descriptor);
     let recovery = if recovered.recovery_commit().is_some() {
         StoredSessionRecovery::Interrupted
     } else {
@@ -149,9 +222,43 @@ pub fn read_stored_session(
         journal_cutoff: recovered.journal_cutoff(),
         recovery,
         continuity: StoredSessionContinuity::NotObservable,
-        discovery_consistent,
+        discovery_validation,
         records,
     })
+}
+
+fn validate_discovery(
+    entries: &[RepositoryEntry],
+    descriptor: &SessionDescriptor,
+) -> StoredDiscoveryValidation {
+    for entry in entries {
+        let repository_sequence = entry.sequence();
+        let Some(discovery) = entry.record().discovery() else {
+            return StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch::new(
+                repository_sequence,
+                StoredDiscoveryMismatchKind::Missing,
+            ));
+        };
+        let kind = if discovery.descriptor() != descriptor {
+            Some(StoredDiscoveryMismatchKind::Descriptor)
+        } else if let Some(claimed) = discovery.binding_epoch() {
+            // Semantic v1 has no binding record from which this value can be derived.
+            Some(StoredDiscoveryMismatchKind::BindingEpoch { claimed })
+        } else {
+            // Semantic v1 likewise has no accepted outcome, binding, or locator records from
+            // which a complete Continuation Anchor can be validated.
+            discovery
+                .continuation_anchor()
+                .map(|referenced| StoredDiscoveryMismatchKind::ContinuationAnchor { referenced })
+        };
+        if let Some(kind) = kind {
+            return StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch::new(
+                repository_sequence,
+                kind,
+            ));
+        }
+    }
+    StoredDiscoveryValidation::Consistent
 }
 
 fn invalid_stored(detail: impl Into<String>) -> StoredSessionReadError {

@@ -8,6 +8,7 @@ mod record;
 use std::fmt;
 
 pub use history::{
+    StoredDiscoveryMismatch, StoredDiscoveryMismatchKind, StoredDiscoveryValidation,
     StoredSessionContinuity, StoredSessionHistory, StoredSessionReadError, StoredSessionRecovery,
     read_stored_session,
 };

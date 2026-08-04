@@ -127,16 +127,39 @@ fn chat_warns_when_durability_continuity_is_not_observable() {
         session_id,
         SessionView::Chat,
         StoredSessionContinuity::NotObservable,
-        true,
+        StoredDiscoveryValidation::Consistent,
     );
     let transcript = archival_diagnostics(
         session_id,
         SessionView::Transcript,
         StoredSessionContinuity::NotObservable,
-        true,
+        StoredDiscoveryValidation::Consistent,
     );
 
     assert_eq!(chat.len(), 1);
     assert!(chat[0].contains("volatile suffix"));
     assert!(transcript.is_empty());
+}
+
+// Chat의 continuity 경고와 discovery 불일치는 서로 다른 복구 단서이므로 함께 남고,
+// core가 만든 typed 원인과 physical 위치도 CLI stderr 경계에서 유실되지 않습니다.
+#[test]
+fn chat_preserves_continuity_and_typed_discovery_diagnostics_together() {
+    let session_id = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
+    let mismatch = StoredDiscoveryMismatch::new(
+        yo_core::session_repository::RepositorySequence::new(10),
+        yo_core::session_repository::StoredDiscoveryMismatchKind::BindingEpoch { claimed: 4 },
+    );
+
+    let diagnostics = archival_diagnostics(
+        session_id,
+        SessionView::Chat,
+        StoredSessionContinuity::NotObservable,
+        StoredDiscoveryValidation::Mismatch(mismatch),
+    );
+
+    assert_eq!(diagnostics.len(), 2);
+    assert!(diagnostics[0].contains("volatile suffix"));
+    assert!(diagnostics[1].contains("binding epoch 4"));
+    assert!(diagnostics[1].contains("repository sequence 10"));
 }

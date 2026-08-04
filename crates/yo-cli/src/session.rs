@@ -3,8 +3,9 @@ use std::{io::IsTerminal, num::NonZeroU16, path::Path};
 use yo_core::{
     HostWorkspacePath, SessionId,
     session_repository::{
-        ContinuationEligibility, StoredSession, StoredSessionContinuity, StoredSessionReadError,
-        StoredSessionReader, StoredSessionUnavailableReason, read_stored_session,
+        ContinuationEligibility, StoredDiscoveryMismatch, StoredDiscoveryValidation, StoredSession,
+        StoredSessionContinuity, StoredSessionReadError, StoredSessionReader,
+        StoredSessionUnavailableReason, read_stored_session,
     },
 };
 use yo_tui::{
@@ -61,7 +62,7 @@ fn show(
         session_id,
         command.view,
         history.continuity(),
-        history.discovery_consistent(),
+        history.discovery_validation(),
     );
     Ok(Output {
         stdout: with_final_newline(stdout),
@@ -73,7 +74,7 @@ fn archival_diagnostics(
     session_id: SessionId,
     view: SessionView,
     continuity: StoredSessionContinuity,
-    discovery_consistent: bool,
+    discovery_validation: StoredDiscoveryValidation,
 ) -> Vec<String> {
     let mut diagnostics = Vec::new();
     if view == SessionView::Chat && continuity == StoredSessionContinuity::NotObservable {
@@ -81,12 +82,17 @@ fn archival_diagnostics(
             "stored Session {session_id} may omit a volatile suffix; v1 durability continuity is not observable"
         ));
     }
-    if !discovery_consistent {
-        diagnostics.push(format!(
-            "stored Session {session_id} discovery metadata disagrees with its Journal descriptor"
-        ));
+    if let StoredDiscoveryValidation::Mismatch(mismatch) = discovery_validation {
+        diagnostics.push(discovery_mismatch_diagnostic(session_id, mismatch));
     }
     diagnostics
+}
+
+fn discovery_mismatch_diagnostic(
+    session_id: SessionId,
+    mismatch: StoredDiscoveryMismatch,
+) -> String {
+    format!("stored Session {session_id} discovery {mismatch}")
 }
 
 fn list(
