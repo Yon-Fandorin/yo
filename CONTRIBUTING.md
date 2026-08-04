@@ -314,16 +314,20 @@ invoked Kimi session cannot start or finish because the service or usage
 allowance is unavailable.
 
 Every agent reviewer MUST receive the exact final diff, relevant authority,
-requested lens, and validation evidence. If the preferred
-different-perspective reviewer cannot start or finish because it is unavailable
-or its usage allowance is exhausted, a separate fresh-context Codex session MAY
-retry the same explicit lens. The Slice status or handoff MUST identify the
-requested reviewer, the availability reason, and the provider and model that
-actually performed the fallback; when the exact model identifier is not
-exposed, say so rather than guessing. An unavailable default Codex reviewer is
-not retried until its availability state changes. The implementing session's
-self-check is not an independent review. A human may perform the exact review at
-any point.
+requested lens, and validation evidence. For every completed agent review, the
+Slice status or handoff MUST record the requested lens, actual provider, exact
+model identifier and reviewer session identity when exposed, and verdict. When
+closing the Slice, report the actual provider and model to the human. If either
+identifier is not exposed, record and report that fact rather than guessing.
+
+If the preferred different-perspective reviewer cannot start or finish because
+it is unavailable or its usage allowance is exhausted, a separate fresh-context
+Codex session MAY retry the same explicit lens. When the fallback starts, record
+the requested reviewer and concrete availability reason; after it completes,
+record and report the actual fallback provider and model under the rule above.
+An unavailable default Codex reviewer is not retried until its availability
+state changes. The implementing session's self-check is not an independent
+review. A human may perform the exact review at any point.
 
 If no agent or human reviewer completes the lens, mark the lens **unreviewed**
 in the Slice status or handoff, identify each attempted reviewer and the
