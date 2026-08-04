@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:8fc78cf2d5cf768ee502cbd6da45e80c6afed51e88eb0771eec23b410063b2e9
+revision: sha256:a5f222e1183901fc9db819de2afd18c73a7c203c146c4cd2028458754a227579
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:580de52d9252c3569b5d2c6185fdee95cecac76d7dbe0bd3f57cb423b63acc7a
+request_hash: sha256:05f0ce020f86bfe52e9face31cbe2d29b9069888dabd686598091fb0b84b343a
 ---
 # Korean Review Projection
 
@@ -25,6 +25,26 @@ Descriptor만 있는 commit을 포함한 모든 의미 `/v1` commit은 top-level
 `format: anchored-session`을 가져야 합니다. 이 값이 없거나 알 수 없거나 한 Session
 이력에 서로 다른 format 세대가 섞이면 의미 데이터로 받아들이기 전에 fail closed
 합니다.
+
+저장되는 `command_committed`, `event_committed`와 여섯 correlation record는 각각
+필수 양의 `journal_sequence`를 가집니다. 이 값은 유일한 Session Journal writer가
+semantic commit 시점에 부여하며 codec, repository, retry, snapshot, remote transport는
+새 값을 만들거나 번호를 다시 매기지 않습니다. 반대로 `session_descriptor`,
+`message_reset`, `message_segment`, `message_ended`는 이 field를 nullable로 두지 않고
+구조적으로 갖지 않습니다. 명시적인 sequence는 한 Session에서 유일하고 엄격히
+증가하지만, 여러 live text update가 하나의 segment로 정규화될 수 있으므로 연속일
+필요는 없습니다. Descriptor가 아닌 commit의 양의 `journal_cutoff`는 뒤로 가지 않고
+그 commit 안의 모든 명시적인 sequence 이상이어야 합니다.
+새 incremental commit이 도입하는 모든 sequence는 직전의 durable `journal_cutoff`보다
+커야 합니다. Complete snapshot은 incremental commit이 아니며 자신이 대체하는 prefix의
+정확한 sequence 값만 다시 기록할 수 있습니다. Recovery는 sequence를 그대로 보존하고
+빈 번호를 채우거나 delta 개수를 추측하거나 번호를 다시 매기지 않으며, snapshot도 값과
+cutoff를 정확히 보존합니다. Recovery는 이 정보로 메모리 안의
+`JournalSequence -> semantic record` 인덱스를 다시 만들되 인덱스 자체는 저장하지
+않습니다. 중복·역순 sequence, 직전 cutoff 안에 새로 들어온 incremental sequence,
+현재 cutoff를 넘는 sequence, 뒤로 간 cutoff, 없거나 종류가 틀린 참조는 fail closed
+합니다. ReplaySequence는 semantic payload 안의 normalized record를 정렬하는 내부
+좌표이고, 별도의 RepositorySequence가 물리 Session record append 순서를 나타냅니다.
 
 기존 structured input 계약은 그대로 포함됩니다. `StartTurn`과 `SteerTurn` 명령은
 canonical UUIDv4 `submission_id`와 `input` 객체를 가지며, input은 정확히

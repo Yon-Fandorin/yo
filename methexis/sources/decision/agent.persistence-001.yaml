@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:75d5a1071096ddee50e3a3a5ce2913265d96fa9cc265f1bbb7502c763c2c2c90
+revision: sha256:0ade2fa8646f07f8af9afc894fb749a10618c807e863942d44641b70d599bfc7
 payload:
   kind: decision
   content: >-
@@ -11,7 +11,24 @@ payload:
     with one closed anchored-session semantic v1. Every semantic commit requires
     the exact `format: anchored-session` discriminator, while preserving the
     existing UUIDv4 SubmissionId, exact UserInput text, and ordered typed
-    workspace and skill reference occurrences. The replacement adds one general
+    workspace and skill reference occurrences. Every persisted command, event,
+    exchange, binding, accepted request, resumable outcome, and Anchor carries a
+    required positive JournalSequence assigned only by the sole semantic writer
+    at commit time. Descriptor and normalized message persistence records
+    structurally omit it. Explicit semantic sequences are Session-unique and
+    strictly increasing but may have gaps where live text updates were normalized
+    into bounded message records; codec, recovery, snapshots, retries, and remote
+    transports never allocate, fill, or renumber them. The monotonic commit cutoff
+    is the semantic boundary covered after the commit and cannot precede an
+    explicit sequence. Every sequence newly introduced by an incremental commit
+    is greater than the preceding cutoff; complete snapshots may only restate the
+    exact sequence values of the prefix they replace. Recovery rebuilds a
+    non-persistent sequence-to-record index and fails closed on duplicate or
+    decreasing sequences, incremental sequences inside the preceding cutoff,
+    backward or undersized cutoffs, and missing or wrong-kind correlation targets.
+    Storage-only ReplaySequence remains a separate internal coordinate for
+    normalized records within semantic payloads, while RepositorySequence orders
+    physical Session-record appends. The replacement adds one general
     backend_exchange_observed record and exactly five continuation-specific
     records: backend_binding_opened, backend_binding_closed,
     backend_request_accepted, backend_resumable_outcome, and

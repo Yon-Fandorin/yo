@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:75d5a1071096ddee50e3a3a5ce2913265d96fa9cc265f1bbb7502c763c2c2c90
+    revision: sha256:0ade2fa8646f07f8af9afc894fb749a10618c807e863942d44641b70d599bfc7
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -32,6 +32,46 @@ Every semantic `/v1` commit, including a descriptor-only commit, MUST contain
 the exact top-level discriminator `format: anchored-session`. A missing or
 unknown value, or a Session history containing mixed format generations, MUST
 fail closed before semantic admission.
+
+Every persisted `command_committed`, `event_committed`,
+`backend_exchange_observed`, `backend_binding_opened`,
+`backend_binding_closed`, `backend_request_accepted`,
+`backend_resumable_outcome`, and `continuation_anchor` record contains a
+required positive `journal_sequence`. The sole Session Journal writer assigns
+that identity when it commits the backend-neutral semantic record; a codec,
+repository, retry, snapshot builder, or remote transport MUST NOT allocate or
+renumber it. `session_descriptor`, `message_reset`, `message_segment`, and
+`message_ended` are structurally separate persistence records and MUST NOT
+contain `journal_sequence`. The field is required or forbidden by record type,
+never nullable.
+
+Persisted semantic JournalSequences MUST be unique and strictly increasing in
+replay order across the Session, but they need not be contiguous. One or more
+live text-update observations may be normalized into bounded message records,
+so an intentional gap can represent semantic observations whose exact transport
+chunk boundaries are not replay authority. `journal_cutoff` is the monotonic
+semantic boundary durably covered after applying the commit. It is absent only
+from the initial descriptor commit, MUST be positive otherwise, and MUST be no
+less than every explicit `journal_sequence` represented by that durable state.
+Every explicit sequence newly introduced by an incremental commit MUST be
+strictly greater than the preceding durable `journal_cutoff`; a complete
+snapshot is not an incremental commit and may restate only the exact sequence
+values of the prefix it replaces.
+Recovery MUST preserve explicit sequence values and MUST NOT fill gaps, infer
+how many live deltas a message record represents, or renumber records to make a
+contiguous projection.
+
+A complete snapshot preserves the exact explicit JournalSequences and cutoff
+of the state it replaces. Recovery rebuilds an in-memory
+`JournalSequence -> semantic record` index from validated records; that index is
+derived and MUST NOT be persisted as another authority. Duplicate or decreasing
+explicit sequences, an incremental sequence at or below the preceding cutoff,
+an explicit sequence beyond the current cutoff, a cutoff that moves backwards,
+or any correlation or Anchor reference whose exact sequence is absent or has
+the wrong record kind MUST fail closed. This makes JournalSequence the stable
+semantic reference while storage-only ReplaySequence remains an internal
+coordinate for normalized records within semantic payloads; RepositorySequence
+separately orders physical Session-record appends.
 
 `StartTurn` and `SteerTurn` command records MUST contain a `submission_id`
 encoded as a canonical UUIDv4 string and an `input` object. A correlated
