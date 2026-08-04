@@ -82,6 +82,77 @@ fn left_and_right_cycle_provenance_filters_over_cached_candidates() {
     assert_eq!(receipt.identity(), "repo");
 }
 
+// 기존 skill 결과를 보여 주는 중 새 검색이 시작되면 Left/Right도 필터를 바꾸지 않고
+// 소비한다. 따라서 새 응답 전에는 이전 목록과 선택이 남고 Enter 역시 accept하지 않는다.
+#[test]
+fn pending_replacement_blocks_filter_changes_until_matching_skill_results_arrive() {
+    let mut editor = PromptEditor::new();
+    editor.handle(
+        InputEvent::Paste("$review".to_owned()),
+        false,
+        Duration::ZERO,
+    );
+    let mut overlay = PromptOverlaySlot::default();
+    let mut assist = SkillReferenceAssist::default();
+    assist.enable();
+    let (initial, _) = assist
+        .prompt_changed(&editor, &mut overlay, None, true)
+        .unwrap();
+    assist.observe(
+        SkillReferenceSearchUpdate::final_result(
+            &initial,
+            SkillReferenceSearchStatus::Complete,
+            vec![candidate("repo", "review", SkillReferenceScope::Workspace)],
+        ),
+        &mut overlay,
+    );
+    overlay.set_presented(true);
+
+    let old = editor.text().to_owned();
+    let old_cursor = editor.cursor_byte_index();
+    editor.handle(InputEvent::Paste("x".to_owned()), false, Duration::ZERO);
+    let edit = WorkspaceEdit::between(&old, old_cursor, editor.text(), editor.cursor_byte_index());
+    let (replacement, refresh_catalog) = assist
+        .prompt_changed(&editor, &mut overlay, edit.as_ref(), true)
+        .unwrap();
+    assert!(!refresh_catalog);
+
+    assert_eq!(
+        overlay.handle(&key(KeyCode::Right)),
+        OverlayInputEffect::Consumed
+    );
+    assert_eq!(
+        overlay
+            .panel()
+            .unwrap()
+            .selected_identity()
+            .unwrap()
+            .as_str(),
+        "repo"
+    );
+    assert_eq!(
+        overlay.handle(&key(KeyCode::Enter)),
+        OverlayInputEffect::Consumed
+    );
+
+    assist.observe(
+        SkillReferenceSearchUpdate::final_result(
+            &replacement,
+            SkillReferenceSearchStatus::Complete,
+            vec![candidate(
+                "repo-x",
+                "reviewx",
+                SkillReferenceScope::Workspace,
+            )],
+        ),
+        &mut overlay,
+    );
+    let OverlayInputEffect::Accepted(receipt) = overlay.handle(&key(KeyCode::Enter)) else {
+        panic!("matching replacement results must reopen acceptance");
+    };
+    assert_eq!(receipt.identity(), "repo-x");
+}
+
 // 선택은 보이는 `$name`만 편집기에 투영하되 typed identity를 별도로 보존하고,
 // V1의 두 번째 명시적 skill trigger는 열지 않는다.
 #[test]

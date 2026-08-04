@@ -109,7 +109,6 @@ impl SkillReferenceAssist {
                 SkillFilter::All,
             );
             let token = overlay.open(snapshot).ok()?;
-            overlay.set_acceptance_enabled(token, false).ok()?;
             self.active = Some(ActiveSearch {
                 expected_trigger: editor.text()[trigger.span.clone()].to_owned(),
                 trigger,
@@ -131,11 +130,11 @@ impl SkillReferenceAssist {
             (active.token, false)
         } else {
             let snapshot = filtered_status_snapshot("Preparing results…", SkillFilter::All)
-                .with_title_status("Searching…")
+                .with_activity_title_status("Searching…")
                 .ok()?;
             (overlay.open(snapshot).ok()?, true)
         };
-        overlay.set_acceptance_enabled(token, false).ok()?;
+        overlay.set_pending(token, "Searching…").ok()?;
         let request = SkillReferenceSearchRequest::new(
             request_id,
             editor_revision,
@@ -366,16 +365,7 @@ fn refresh_active(active: &mut ActiveSearch, overlay: &mut PromptOverlaySlot) ->
         .unwrap_or_else(|_| {
             filtered_status_snapshot("Skill results cannot be displayed safely", active.filter)
         });
-    let selectable = !matches!(active.status, SkillReferenceSearchStatus::Failed(_))
-        && active
-            .visible
-            .values()
-            .any(|candidate| matches!(candidate.availability(), SkillAvailability::Enabled));
-    let refreshed = overlay.refresh(active.token, snapshot).is_ok();
-    if refreshed {
-        let _ = overlay.set_acceptance_enabled(active.token, selectable);
-    }
-    refreshed
+    overlay.refresh(active.token, snapshot).is_ok()
 }
 
 fn filtered_status_snapshot(message: &str, filter: SkillFilter) -> PanelSnapshot {

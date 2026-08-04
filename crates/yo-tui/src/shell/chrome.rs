@@ -12,6 +12,8 @@ use crate::{
 
 mod help;
 
+const WORKING_GRAPHEMES: usize = 7;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ShellChromeSnapshot<'value> {
     pub(crate) turn_active: bool,
@@ -23,6 +25,7 @@ pub(crate) struct ShellChromeSnapshot<'value> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ShellChromeStyles {
     pub(crate) activity: Style,
+    pub(crate) activity_muted: Style,
     pub(crate) metrics: Style,
     pub(crate) mode: Style,
     pub(crate) key_hint: Style,
@@ -126,13 +129,24 @@ pub(super) fn paint_transient(
     let interrupt = interrupt_notation();
     let candidates = if show_shortcuts {
         vec![
-            format!("{marker} Working  ·  {interrupt} interrupt"),
-            format!("{marker} {interrupt}"),
-            interrupt,
-            marker.to_owned(),
+            ActivityRowCandidate::new(
+                format!("{marker} Working  ·  {interrupt} interrupt"),
+                true,
+                Some((2, WORKING_GRAPHEMES)),
+            ),
+            ActivityRowCandidate::new(format!("{marker} {interrupt}"), true, None),
+            ActivityRowCandidate::new(interrupt, false, None),
+            ActivityRowCandidate::new(marker, true, None),
         ]
     } else {
-        vec![format!("{marker} Working"), "Working".to_owned()]
+        vec![
+            ActivityRowCandidate::new(
+                format!("{marker} Working"),
+                true,
+                Some((2, WORKING_GRAPHEMES)),
+            ),
+            ActivityRowCandidate::new("Working", false, Some((0, WORKING_GRAPHEMES))),
+        ]
     };
     let row = view.size().height - 1;
     let mut content = view
@@ -141,11 +155,7 @@ pub(super) fn paint_transient(
             Size::new(view.size().width, 1),
         ))
         .expect("the transient content row is inside its reserved area");
-    let selected = paint_fitting_row(&mut content, &candidates, styles.activity)?;
-    Ok(selected
-        .is_some_and(|index| candidates[index].starts_with(marker))
-        .then(|| motion.period())
-        .flatten())
+    paint_fitting_activity_row(&mut content, &candidates, styles, motion)
 }
 
 pub(super) fn paint_metrics(
@@ -204,6 +214,73 @@ fn paint_fitting_row(
         }
     }
     Ok(Some(index))
+}
+
+fn paint_fitting_activity_row(
+    view: &mut SurfaceView<'_>,
+    candidates: &[ActivityRowCandidate],
+    styles: ShellChromeStyles,
+    motion: ActivityMotionFrame<'_>,
+) -> Result<Option<Duration>, ShellChromeError> {
+    let Some(width) = NonZeroU16::new(view.size().width) else {
+        return Ok(None);
+    };
+    let mut selected = None;
+    for (index, candidate) in candidates.iter().enumerate() {
+        let flow = flow_text(&candidate.text, width).map_err(ShellChromeError::Text)?;
+        if flow.height <= 1 {
+            selected = Some((index, flow));
+            break;
+        }
+    }
+    let Some((index, flow)) = selected else {
+        return Ok(None);
+    };
+    let candidate = &candidates[index];
+    let emphasis = candidate.working.and_then(|(start, count)| {
+        motion
+            .emphasis_index(count)
+            .map(|offset| start.saturating_add(offset))
+    });
+    let base = if candidate.marker_visible || candidate.working.is_some() {
+        styles.activity_muted
+    } else {
+        styles.activity
+    };
+    if view.clear(base) == WriteOutcome::Clipped {
+        return Err(ShellChromeError::SurfaceConflict);
+    }
+    for (grapheme_index, positioned) in flow.glyphs.into_iter().enumerate() {
+        let style = if (candidate.marker_visible && grapheme_index == 0)
+            || emphasis == Some(grapheme_index)
+        {
+            styles.activity
+        } else {
+            base
+        };
+        if view.write(positioned.point, positioned.grapheme, style) == WriteOutcome::Clipped {
+            return Err(ShellChromeError::SurfaceConflict);
+        }
+    }
+    Ok((candidate.marker_visible || emphasis.is_some())
+        .then(|| motion.period())
+        .flatten())
+}
+
+struct ActivityRowCandidate {
+    text: String,
+    marker_visible: bool,
+    working: Option<(usize, usize)>,
+}
+
+impl ActivityRowCandidate {
+    fn new(text: impl Into<String>, marker_visible: bool, working: Option<(usize, usize)>) -> Self {
+        Self {
+            text: text.into(),
+            marker_visible,
+            working,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

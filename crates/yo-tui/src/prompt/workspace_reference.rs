@@ -117,11 +117,11 @@ impl WorkspaceReferenceAssist {
             (active.token, false)
         } else {
             let snapshot = status_snapshot("Files", "Preparing results…")
-                .with_title_status("Searching…")
+                .with_activity_title_status("Searching…")
                 .ok()?;
             (overlay.open(snapshot).ok()?, true)
         };
-        overlay.set_acceptance_enabled(token, false).ok()?;
+        overlay.set_pending(token, "Searching…").ok()?;
         let request = WorkspaceReferenceSearchRequest::new(
             request_id,
             editor_revision,
@@ -165,9 +165,6 @@ impl WorkspaceReferenceAssist {
             let refreshed = overlay
                 .refresh(active.token, status_snapshot("Files", reason))
                 .is_ok();
-            if refreshed {
-                let _ = overlay.set_acceptance_enabled(active.token, false);
-            }
             return refreshed;
         }
         let mut entries = Vec::new();
@@ -217,12 +214,7 @@ impl WorkspaceReferenceAssist {
             active.candidates.clear();
             status_snapshot("Files", "Workspace results cannot be displayed safely")
         });
-        let selectable = !active.candidates.is_empty();
-        let refreshed = overlay.refresh(active.token, snapshot).is_ok();
-        if refreshed {
-            let _ = overlay.set_acceptance_enabled(active.token, selectable);
-        }
-        refreshed
+        overlay.refresh(active.token, snapshot).is_ok()
     }
 
     pub(crate) fn provider_failed(
@@ -238,13 +230,9 @@ impl WorkspaceReferenceAssist {
         }
         active.terminal = true;
         active.candidates.clear();
-        let refreshed = overlay
+        overlay
             .refresh(active.token, status_snapshot("Files", &reason))
-            .is_ok();
-        if refreshed {
-            let _ = overlay.set_acceptance_enabled(active.token, false);
-        }
-        refreshed
+            .is_ok()
     }
 
     pub(crate) fn accept(

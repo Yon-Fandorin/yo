@@ -1,14 +1,14 @@
-use std::num::NonZeroU16;
+use std::{num::NonZeroU16, time::Duration};
 
 use super::{
     ShellChromeSnapshot, ShellChromeStyles, StatusGroups, StatusSegment, layout, paint_metrics,
     paint_mode, paint_status_groups, paint_transient,
 };
 use crate::{
-    appearance::ActivityMotionFrame,
+    appearance::{ActivityMotionFrame, AppearanceState},
     input::editor::binding::NewlineBinding,
     runner::PresentationMode,
-    surface::{CellContent, Point, Rect, Size, Style, Surface},
+    surface::{Attributes, CellContent, Color, Point, Rect, Size, Style, Surface},
 };
 
 fn row(surface: &Surface) -> String {
@@ -90,6 +90,7 @@ fn idle_and_active_layouts_keep_the_same_prompt_origin() {
 fn activity_row_drops_description_without_wrapping_interrupt_keys() {
     let styles = ShellChromeStyles {
         activity: Style::default(),
+        activity_muted: Style::default(),
         metrics: Style::default(),
         mode: Style::default(),
         key_hint: Style::default(),
@@ -134,12 +135,59 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
     assert_eq!(row(&minimal), "Esc/^C");
 }
 
+// Working 문구는 marker와 같은 activity phase를 사용해 한 글자의 style만 이동한다.
+// 두 frame의 문자열과 폭은 같고, 실제로 보일 때만 120ms demand를 반환한다.
+#[test]
+fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
+    let styles = ShellChromeStyles {
+        activity: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+        activity_muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
+        metrics: Style::default(),
+        mode: Style::default(),
+        key_hint: Style::default(),
+    };
+    let appearance = AppearanceState::default();
+    let pin = appearance.pin();
+    let mut first = Surface::new(Size::new(32, 1)).unwrap();
+    let first_period = paint_transient(
+        &mut first
+            .view(Rect::new(Point::new(0, 0), Size::new(32, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo"),
+        styles,
+        pin.snapshot().activity_motion_frame(Duration::ZERO),
+        false,
+    )
+    .unwrap();
+    let mut second = Surface::new(Size::new(32, 1)).unwrap();
+    let second_period = paint_transient(
+        &mut second
+            .view(Rect::new(Point::new(0, 0), Size::new(32, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo"),
+        styles,
+        pin.snapshot()
+            .activity_motion_frame(Duration::from_millis(120)),
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(
+        row(&first).split_once(' ').unwrap().1,
+        row(&second).split_once(' ').unwrap().1
+    );
+    assert_ne!(first, second);
+    assert_eq!(first_period, Some(Duration::from_millis(120)));
+    assert_eq!(second_period, first_period);
+}
+
 // 충분한 폭의 하단 도움말은 실제 newline binding과 종료·중단 키를 관례 표기로 보여주고,
 // 현재 presentation mode는 같은 행 오른쪽에 남겨 입력창 아래 정보를 한눈에 읽게 한다.
 #[test]
 fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
     let styles = ShellChromeStyles {
         activity: Style::default(),
+        activity_muted: Style::default(),
         metrics: Style::default(),
         mode: Style::default(),
         key_hint: Style::default(),
@@ -168,6 +216,7 @@ fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
 fn footer_omits_ctrl_d_exit_while_the_prompt_has_a_draft() {
     let styles = ShellChromeStyles {
         activity: Style::default(),
+        activity_muted: Style::default(),
         metrics: Style::default(),
         mode: Style::default(),
         key_hint: Style::default(),

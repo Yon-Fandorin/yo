@@ -4,6 +4,7 @@ use super::{
     selection::PanelPaintError, slot::OverlayInputEffect,
 };
 use crate::{
+    appearance::AppearanceState,
     input::event::{InputEvent, KeyAction, KeyCode, KeyEvent, KeyModifiers, KeyState},
     surface::{
         Attributes, CellContent, Color, Grapheme, Point, Rect, Size, Style, Surface, WriteOutcome,
@@ -66,6 +67,30 @@ fn render_for_turn(
     Some((surface, prepared_size))
 }
 
+fn render_with_motion(
+    panel: &SelectionPanel,
+    size: Size,
+    elapsed: std::time::Duration,
+) -> Option<(Surface, Size, Option<std::time::Duration>)> {
+    let appearance_state = AppearanceState::default();
+    let pin = appearance_state.pin();
+    let prepared = panel.prepare_with_motion(
+        size,
+        appearance(),
+        &OverlayBindings::default(),
+        false,
+        pin.snapshot().activity_motion_frame(elapsed),
+    )?;
+    let prepared_size = prepared.size();
+    let motion_period = prepared.motion_period();
+    let mut surface = Surface::new(prepared_size).unwrap();
+    let mut view = surface
+        .view(Rect::new(Point::new(0, 0), prepared_size))
+        .unwrap();
+    prepared.paint(&mut view).unwrap();
+    Some((surface, prepared_size, motion_period))
+}
+
 fn row(surface: &Surface, y: u16) -> String {
     let mut rendered = String::new();
     for x in 0..surface.size().width {
@@ -76,6 +101,61 @@ fn row(surface: &Surface, y: u16) -> String {
         }
     }
     rendered.trim_end().to_owned()
+}
+
+// activity title status는 글자를 바꾸지 않고 같은 120ms phase로 강조 cell만 이동한다.
+// 따라서 두 frame의 문구와 geometry는 같고 motion demand와 강조 위치만 달라진다.
+#[test]
+fn activity_title_status_moves_a_style_only_sheen_without_relayout() {
+    let panel = SelectionPanel::new(
+        snapshot(vec![enabled("src", "src/")])
+            .with_activity_title_status("Searching")
+            .unwrap(),
+    );
+
+    let (first, first_size, first_period) =
+        render_with_motion(&panel, Size::new(48, 6), std::time::Duration::ZERO).unwrap();
+    let (second, second_size, second_period) = render_with_motion(
+        &panel,
+        Size::new(48, 6),
+        std::time::Duration::from_millis(120),
+    )
+    .unwrap();
+
+    assert_eq!(row(&first, 0), row(&second, 0));
+    assert_eq!(first_size, second_size);
+    assert_eq!(first_period, Some(std::time::Duration::from_millis(120)));
+    assert_eq!(second_period, first_period);
+    assert_ne!(first, second);
+}
+
+// static status와 한 grapheme뿐인 activity status는 이후 phase가 화면을 바꿀 수 없으므로
+// timer를 요구하지 않는다. 한 frame profile과 같은 no-op 경계다.
+#[test]
+fn static_or_single_grapheme_status_does_not_demand_motion() {
+    let static_panel = SelectionPanel::new(
+        snapshot(vec![enabled("src", "src/")])
+            .with_title_status("Ready")
+            .unwrap(),
+    );
+    let single_panel = SelectionPanel::new(
+        snapshot(vec![enabled("src", "src/")])
+            .with_activity_title_status("S")
+            .unwrap(),
+    );
+
+    assert_eq!(
+        render_with_motion(&static_panel, Size::new(48, 6), std::time::Duration::ZERO)
+            .unwrap()
+            .2,
+        None
+    );
+    assert_eq!(
+        render_with_motion(&single_panel, Size::new(48, 6), std::time::Duration::ZERO)
+            .unwrap()
+            .2,
+        None
+    );
 }
 
 // panel은 title·현재 key hint·선택 marker·상세 설명을 같은 폭 안에 그리고,
@@ -402,4 +482,33 @@ fn acceptance_requires_a_press_and_is_single_consumer() {
     assert_eq!(receipt.token(), token);
     assert_eq!(receipt.identity(), "one");
     assert_eq!(slot.accept(token), Err(SlotError::StaleToken));
+}
+
+// replacement 검색 중인 snapshot은 기존 enabled 항목과 선택을 그대로 보여 주지만 Enter를
+// 소비만 한다. 일치하는 결과가 도착해 fresh로 돌아간 뒤에만 같은 선택을 accept한다.
+#[test]
+fn pending_snapshot_gate_blocks_acceptance_without_changing_entry_availability() {
+    let mut slot = PromptOverlaySlot::default();
+    let token = slot.open(snapshot(vec![enabled("one", "One")])).unwrap();
+    slot.set_presented(true);
+    slot.set_pending(token, "Searching…").unwrap();
+
+    assert_eq!(
+        slot.handle(&key(KeyCode::Enter, KeyModifiers::NONE)),
+        OverlayInputEffect::Consumed
+    );
+    assert!(slot.is_open());
+    assert_eq!(
+        slot.panel().unwrap().selected_identity().unwrap().as_str(),
+        "one"
+    );
+
+    slot.refresh(token, snapshot(vec![enabled("one", "One")]))
+        .unwrap();
+    let OverlayInputEffect::Accepted(receipt) =
+        slot.handle(&key(KeyCode::Enter, KeyModifiers::NONE))
+    else {
+        panic!("fresh snapshot must accept its preserved enabled selection");
+    };
+    assert_eq!(receipt.identity(), "one");
 }

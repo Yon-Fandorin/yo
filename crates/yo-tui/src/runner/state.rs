@@ -43,14 +43,8 @@ pub(super) enum StateEffect {
     Suspend,
     Exit,
     Resize(Size),
-    WorkspaceSearch {
-        request: WorkspaceReferenceSearchRequest,
-        show_loading: bool,
-    },
-    SkillSearch {
-        request: SkillReferenceSearchRequest,
-        show_loading: bool,
-    },
+    WorkspaceSearch(WorkspaceReferenceSearchRequest),
+    SkillSearch(SkillReferenceSearchRequest),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -205,21 +199,12 @@ impl TuiState {
                         edit.as_ref(),
                         assist_eligible,
                     )
-                    .map_or(
-                        StateEffect::Redraw,
-                        |(request, show_loading)| match request {
-                            PromptAssistRequest::Workspace(request) => {
-                                StateEffect::WorkspaceSearch {
-                                    request,
-                                    show_loading,
-                                }
-                            },
-                            PromptAssistRequest::Skill(request) => StateEffect::SkillSearch {
-                                request,
-                                show_loading,
-                            },
+                    .map_or(StateEffect::Redraw, |request| match request {
+                        PromptAssistRequest::Workspace(request) => {
+                            StateEffect::WorkspaceSearch(request)
                         },
-                    ))
+                        PromptAssistRequest::Skill(request) => StateEffect::SkillSearch(request),
+                    }))
             },
             EditorEffect::Submitted(text) => {
                 if self.prompt_assist.has_accepted_references() {
@@ -473,9 +458,7 @@ impl TuiState {
             surface,
             cursor: frame.cursor,
             appearance_revision: appearance.revision(),
-            motion_demand: frame
-                .activity_motion_period
-                .map(|period| MotionDemand { period }),
+            motion_demand: frame.motion_period.map(|period| MotionDemand { period }),
             view_state: frame.state,
             overlay_presented: frame.overlay_presented,
         })

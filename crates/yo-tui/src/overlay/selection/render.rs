@@ -1,12 +1,13 @@
-use std::num::NonZeroU16;
+use std::{num::NonZeroU16, time::Duration};
 
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    EntryAvailability, PanelPaintError, SelectionEntry, SelectionPanel, SelectionPanelAppearance,
-    VISIBLE_ENTRY_CAP,
+    EntryAvailability, PanelPaintError, PanelTitleStatus, SelectionEntry, SelectionPanel,
+    SelectionPanelAppearance, VISIBLE_ENTRY_CAP,
 };
 use crate::{
+    appearance::ActivityMotionFrame,
     overlay::binding::{BindingHint, OverlayBindings},
     surface::{Grapheme, Point, Size, Style, SurfaceView, WriteOutcome},
 };
@@ -16,6 +17,7 @@ pub(crate) struct PreparedSelectionPanel {
     size: Size,
     background: Style,
     writes: Vec<PreparedWrite>,
+    motion_period: Option<Duration>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,13 +27,40 @@ struct PreparedWrite {
     style: Style,
 }
 
+struct FrameContent<'frame> {
+    title: &'frame str,
+    title_status: Option<&'frame PanelTitleStatus>,
+    motion: ActivityMotionFrame<'frame>,
+    hints: &'frame [BindingHint],
+    hidden: (usize, usize),
+    filter_bar: Option<&'frame super::FilterBar>,
+}
+
 impl SelectionPanel {
+    #[cfg(test)]
     pub(crate) fn prepare(
         &self,
         available: Size,
         appearance: SelectionPanelAppearance,
         bindings: &OverlayBindings,
         turn_active: bool,
+    ) -> Option<PreparedSelectionPanel> {
+        self.prepare_with_motion(
+            available,
+            appearance,
+            bindings,
+            turn_active,
+            ActivityMotionFrame::still("·"),
+        )
+    }
+
+    pub(crate) fn prepare_with_motion(
+        &self,
+        available: Size,
+        appearance: SelectionPanelAppearance,
+        bindings: &OverlayBindings,
+        turn_active: bool,
+        motion: ActivityMotionFrame<'_>,
     ) -> Option<PreparedSelectionPanel> {
         let width = NonZeroU16::new(available.width)?;
         if width.get() < 3 || available.height < 3 {
@@ -61,14 +90,18 @@ impl SelectionPanel {
             size,
             background: appearance.styles.background,
             writes: Vec::new(),
+            motion_period: None,
         };
         prepared.prepare_frame(
             appearance,
-            &self.snapshot.title,
-            self.snapshot.title_status.as_deref(),
-            &hints,
-            (start, self.snapshot.entries.len() - end),
-            self.snapshot.filter_bar.as_ref(),
+            FrameContent {
+                title: &self.snapshot.title,
+                title_status: self.snapshot.title_status.as_ref(),
+                motion,
+                hints: &hints,
+                hidden: (start, self.snapshot.entries.len() - end),
+                filter_bar: self.snapshot.filter_bar.as_ref(),
+            },
         );
         let label_column_width = self.snapshot.entries[start..end]
             .iter()
@@ -94,6 +127,10 @@ impl PreparedSelectionPanel {
         self.size
     }
 
+    pub(crate) const fn motion_period(&self) -> Option<Duration> {
+        self.motion_period
+    }
+
     pub(crate) fn paint(self, view: &mut SurfaceView<'_>) -> Result<(), PanelPaintError> {
         if view.size() != self.size || view.clear(self.background) == WriteOutcome::Clipped {
             return Err(PanelPaintError::SurfaceConflict);
@@ -106,15 +143,15 @@ impl PreparedSelectionPanel {
         Ok(())
     }
 
-    fn prepare_frame(
-        &mut self,
-        appearance: SelectionPanelAppearance,
-        title: &str,
-        title_status: Option<&str>,
-        hints: &[BindingHint],
-        hidden: (usize, usize),
-        filter_bar: Option<&super::FilterBar>,
-    ) {
+    fn prepare_frame(&mut self, appearance: SelectionPanelAppearance, content: FrameContent<'_>) {
+        let FrameContent {
+            title,
+            title_status,
+            motion,
+            hints,
+            hidden,
+            filter_bar,
+        } = content;
         let glyphs = appearance.glyphs;
         let styles = appearance.styles;
         let last_x = self.size.width - 1;
@@ -158,15 +195,37 @@ impl PreparedSelectionPanel {
         if let Some(status) = title_status {
             let status_start = 2_usize.saturating_add(text_width(&title));
             if status_start < usize::from(title_end) {
+                let status_text = status.text();
+                let formatted = format!(" · {status_text} ");
                 self.push_truncated_text(
                     Point::new(
                         u16::try_from(status_start).expect("panel width fits u16"),
                         0,
                     ),
-                    &format!(" · {status} "),
+                    &formatted,
                     title_end,
                     styles.hint,
                 );
+                if matches!(status, PanelTitleStatus::Activity(_)) {
+                    let available = usize::from(title_end).saturating_sub(status_start);
+                    let visible_content = if text_width(&formatted) > available {
+                        available.saturating_sub(text_width("…"))
+                    } else {
+                        available
+                    };
+                    let visible_status_cells = visible_content
+                        .saturating_sub(text_width(" · "))
+                        .min(text_width(status_text));
+                    let activity_start = status_start.saturating_add(text_width(" · "));
+                    self.prepare_activity_status(
+                        u16::try_from(activity_start).expect("panel width fits u16"),
+                        u16::try_from(activity_start.saturating_add(visible_status_cells))
+                            .expect("panel width fits u16"),
+                        status_text,
+                        styles.title,
+                        motion,
+                    );
+                }
             }
         } else {
             let trailing = 2_usize.saturating_add(text_width(&title));
@@ -205,6 +264,39 @@ impl PreparedSelectionPanel {
         if let Some(filter_bar) = filter_bar {
             self.prepare_filters(filter_bar, &counts, appearance);
         }
+    }
+
+    fn prepare_activity_status(
+        &mut self,
+        start: u16,
+        end: u16,
+        text: &str,
+        emphasis_style: Style,
+        motion: ActivityMotionFrame<'_>,
+    ) {
+        let mut visible = Vec::new();
+        let mut x = start;
+        for text in text.graphemes(true) {
+            let Ok(grapheme) = Grapheme::try_from(text) else {
+                return;
+            };
+            let next = x.saturating_add(grapheme.width().get());
+            if next > end {
+                break;
+            }
+            visible.push((x, grapheme));
+            x = next;
+        }
+        let Some(index) = motion.emphasis_index(visible.len()) else {
+            return;
+        };
+        let (x, grapheme) = visible.swap_remove(index);
+        self.writes.push(PreparedWrite {
+            point: Point::new(x, 0),
+            grapheme,
+            style: emphasis_style,
+        });
+        self.motion_period = motion.period();
     }
 
     fn prepare_filters(

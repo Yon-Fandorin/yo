@@ -115,6 +115,7 @@ fn built_in_activity_cycles_follow_the_approved_order_and_period() {
             .activity_motion_frame(Duration::from_millis(u64::try_from(tick).unwrap() * 120));
         assert_eq!(frame.marker(), expected);
         assert_eq!(frame.period(), Some(Duration::from_millis(120)));
+        assert_eq!(frame.emphasis_index(7), Some(tick % 7));
     }
 
     let ascii = AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii))
@@ -148,6 +149,20 @@ fn one_frame_activity_profile_is_valid_but_does_not_demand_motion() {
 
     assert_eq!(frame.marker(), ".");
     assert_eq!(frame.period(), None);
+    assert_eq!(frame.emphasis_index(7), None);
+}
+
+// 움직이는 profile이어도 보이는 글자가 하나뿐이면 강조 위치가 달라질 수 없으므로
+// style sheen은 timer demand를 만들지 않는다.
+#[test]
+fn activity_sheen_requires_at_least_two_visible_graphemes() {
+    let state = AppearanceState::default();
+    let pin = state.pin();
+    let frame = pin.snapshot().activity_motion_frame(Duration::ZERO);
+
+    assert_eq!(frame.emphasis_index(0), None);
+    assert_eq!(frame.emphasis_index(1), None);
+    assert_eq!(frame.emphasis_index(2), Some(0));
 }
 
 // 빈 cycle·0ms·복수 grapheme·서로 다른 cell 폭은 publication 전에 구체적 오류로 거부한다.

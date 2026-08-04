@@ -166,10 +166,10 @@ fn annotation_deletions_follow_the_editor_cursor_in_repeated_text() {
     }
 }
 
-// 첫 trigger만 loading frame을 요청하고 연속 입력은 기존 화면을 유지한 채
-// 새 결과가 도착할 때 한 번만 redraw하여 키 입력마다 panel이 깜빡이지 않게 한다.
+// 첫 검색 뒤 입력을 이어가면 별도 loading 행으로 결과를 교체하지 않고 기존 항목과
+// 선택을 유지한다. title만 활동 상태로 바뀌며 Enter는 새 결과 전까지 소비된다.
 #[test]
-fn consecutive_queries_do_not_request_an_intermediate_loading_redraw() {
+fn consecutive_queries_keep_the_usable_panel_pending_without_loading_replacement() {
     let mut editor = PromptEditor::new();
     editor.handle(InputEvent::Paste("@s".to_owned()), false, Duration::ZERO);
     let mut overlay = PromptOverlaySlot::default();
@@ -198,7 +198,7 @@ fn consecutive_queries_do_not_request_an_intermediate_loading_redraw() {
         ),
         &mut overlay,
     ));
-    let visible_results = overlay.panel().cloned();
+    let visible_results = overlay.panel().cloned().unwrap();
 
     let old = editor.text().to_owned();
     let old_cursor = editor.cursor_byte_index();
@@ -208,7 +208,13 @@ fn consecutive_queries_do_not_request_an_intermediate_loading_redraw() {
         .prompt_changed(&editor, &mut overlay, edit.as_ref(), true)
         .unwrap();
     assert!(!second_loading);
-    assert_eq!(overlay.panel(), visible_results.as_ref());
+    let pending = overlay.panel().unwrap();
+    assert_eq!(pending.entries(), visible_results.entries());
+    assert_eq!(
+        pending.selected_identity(),
+        visible_results.selected_identity()
+    );
+    assert!(pending.has_activity_title_status());
     overlay.set_presented(true);
     assert_eq!(
         overlay.handle(&InputEvent::Key(crate::input::event::KeyEvent {

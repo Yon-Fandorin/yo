@@ -245,10 +245,13 @@ The useful inspection points are:
    completed `Surface`, and send it to the active presenter. `runner/view.rs`
    selects Chat, Transcript, or Request from the same record stream. Chat shows
    user input only when its `StartTurn` or `SteerTurn` command appears in that
-   sequence. A Chat frame that actually paints the animated work marker returns
-   its period; the runner schedules the next generation-epoch boundary and
-   coalesces it with event redraw. Hidden, narrow, short, idle, and zero-size
-   frames do not arm that timer.
+   sequence. An editor mutation that dispatches `@` or `$` discovery is redrawn
+   immediately before any provider result; the prior usable panel remains visible
+   behind a pending snapshot gate. A Chat frame that actually paints an animated
+   work marker or fixed-text activity sheen returns the shortest visible period;
+   the runner schedules the next generation-epoch boundary and coalesces it with
+   event redraw. Hidden, narrow, short, idle, one-frame, and zero-size indicators
+   do not arm that timer.
 
 The accepted ordering, interruption gestures, honest status data, and
 responsive fitting policy are owned by the

@@ -125,7 +125,7 @@ pub(super) enum ObservabilityRenderError {
 pub(super) struct ObservabilityFrame {
     pub(super) cursor: Point,
     pub(super) state: ObservabilityViewState,
-    pub(super) activity_motion_period: Option<Duration>,
+    pub(super) motion_period: Option<Duration>,
     pub(super) overlay_presented: bool,
 }
 
@@ -259,7 +259,7 @@ impl ObservabilityViews {
             return Ok(ObservabilityFrame {
                 cursor: frame.cursor,
                 state: next,
-                activity_motion_period: frame.activity_motion_period,
+                motion_period: frame.motion_period,
                 overlay_presented: frame.overlay_area.is_some(),
             });
         }
@@ -274,7 +274,7 @@ impl ObservabilityViews {
             return Ok(ObservabilityFrame {
                 cursor: Point::new(0, 0),
                 state: next,
-                activity_motion_period: None,
+                motion_period: None,
                 overlay_presented: false,
             });
         }
@@ -329,7 +329,7 @@ impl ObservabilityViews {
         Ok(ObservabilityFrame {
             cursor,
             state: next,
-            activity_motion_period: None,
+            motion_period: None,
             overlay_presented: false,
         })
     }

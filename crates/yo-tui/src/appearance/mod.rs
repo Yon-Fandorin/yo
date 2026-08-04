@@ -111,6 +111,7 @@ struct ActivityMotionProfile {
 pub(crate) struct ActivityMotionFrame<'frame> {
     marker: &'frame str,
     period: Option<Duration>,
+    phase: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -222,6 +223,7 @@ impl ActivityMotionProfile {
         ActivityMotionFrame {
             marker: &self.frames[index],
             period: (self.frames.len() > 1).then_some(self.period),
+            phase: index,
         }
     }
 }
@@ -231,6 +233,7 @@ impl<'frame> ActivityMotionFrame<'frame> {
         Self {
             marker,
             period: None,
+            phase: 0,
         }
     }
 
@@ -240,6 +243,14 @@ impl<'frame> ActivityMotionFrame<'frame> {
 
     pub(crate) const fn period(self) -> Option<Duration> {
         self.period
+    }
+
+    pub(crate) fn emphasis_index(self, visible_graphemes: usize) -> Option<usize> {
+        self.period?;
+        if visible_graphemes < 2 {
+            return None;
+        }
+        Some(self.phase % visible_graphemes)
     }
 }
 
@@ -395,6 +406,7 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
         },
         chrome: ShellChromeStyles {
             activity: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+            activity_muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
             metrics: Style::new(Color::Default, Color::Default, Attributes::DIM),
             mode: Style::new(Color::Default, Color::Default, Attributes::DIM),
             key_hint: Style::new(Color::Default, Color::Default, Attributes::BOLD),

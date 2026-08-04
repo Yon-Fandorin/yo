@@ -67,6 +67,7 @@ fn styles() -> AgentShellStyles {
         },
         chrome: ShellChromeStyles {
             activity: style(8),
+            activity_muted: style(18),
             metrics: style(9),
             mode: style(10),
             key_hint: style(19),

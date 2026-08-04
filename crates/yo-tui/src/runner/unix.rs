@@ -353,12 +353,9 @@ where
                                 frame_visible = true;
                             }
                         },
-                        StateEffect::WorkspaceSearch {
-                            request,
-                            show_loading,
-                        } => {
+                        StateEffect::WorkspaceSearch(request) => {
                             dispatch_workspace_search(workspace_references, state, request);
-                            if show_loading && size.width > 0 && size.height > 0 {
+                            if size.width > 0 && size.height > 0 {
                                 motion_deadline = redraw(
                                     session,
                                     viewport,
@@ -371,12 +368,9 @@ where
                                 frame_visible = true;
                             }
                         },
-                        StateEffect::SkillSearch {
-                            request,
-                            show_loading,
-                        } => {
+                        StateEffect::SkillSearch(request) => {
                             dispatch_skill_search(skill_references, state, request);
-                            if show_loading && size.width > 0 && size.height > 0 {
+                            if size.width > 0 && size.height > 0 {
                                 motion_deadline = redraw(
                                     session,
                                     viewport,
@@ -480,12 +474,9 @@ where
                         frame_visible = true;
                     }
                 },
-                StateEffect::WorkspaceSearch {
-                    request,
-                    show_loading,
-                } => {
+                StateEffect::WorkspaceSearch(request) => {
                     dispatch_workspace_search(workspace_references, state, request);
-                    if show_loading && size.width > 0 && size.height > 0 {
+                    if size.width > 0 && size.height > 0 {
                         motion_deadline = redraw(
                             session,
                             viewport,
@@ -498,12 +489,9 @@ where
                         frame_visible = true;
                     }
                 },
-                StateEffect::SkillSearch {
-                    request,
-                    show_loading,
-                } => {
+                StateEffect::SkillSearch(request) => {
                     dispatch_skill_search(skill_references, state, request);
-                    if show_loading && size.width > 0 && size.height > 0 {
+                    if size.width > 0 && size.height > 0 {
                         motion_deadline = redraw(
                             session,
                             viewport,

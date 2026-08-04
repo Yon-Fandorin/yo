@@ -340,6 +340,7 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
         },
         chrome: ShellChromeStyles {
             activity: default,
+            activity_muted: default,
             metrics: default,
             mode: default,
             key_hint: default,

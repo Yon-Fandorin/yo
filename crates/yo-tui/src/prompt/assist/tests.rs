@@ -26,7 +26,7 @@ fn one_controller_fences_updates_across_trigger_kind_changes() {
     let mut editor = PromptEditor::new();
     let mut overlay = PromptOverlaySlot::default();
     editor.handle(InputEvent::Paste("@src".to_owned()), false, Duration::ZERO);
-    let (PromptAssistRequest::Workspace(workspace), _) = controller
+    let PromptAssistRequest::Workspace(workspace) = controller
         .prompt_changed(&editor, &mut overlay, None, true)
         .unwrap()
     else {
@@ -37,7 +37,7 @@ fn one_controller_fences_updates_across_trigger_kind_changes() {
     let old_cursor = editor.cursor_byte_index();
     editor.replace_range(0..old.len(), "$review");
     let edit = WorkspaceEdit::between(&old, old_cursor, editor.text(), editor.cursor_byte_index());
-    let (PromptAssistRequest::Skill(skill), _) = controller
+    let PromptAssistRequest::Skill(skill) = controller
         .prompt_changed(&editor, &mut overlay, edit.as_ref(), true)
         .unwrap()
     else {
@@ -69,7 +69,7 @@ fn accepted_skill_span_is_not_rescanned_into_an_overlay() {
         Duration::ZERO,
     );
     let mut overlay = PromptOverlaySlot::default();
-    let (PromptAssistRequest::Skill(request), _) = controller
+    let PromptAssistRequest::Skill(request) = controller
         .prompt_changed(&editor, &mut overlay, None, true)
         .unwrap()
     else {

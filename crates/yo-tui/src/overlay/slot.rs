@@ -1,6 +1,6 @@
 use super::{
     binding::{OverlayAction, OverlayBindings},
-    selection::{EntryIdentity, PanelSnapshot, SelectionPanel},
+    selection::{EntryIdentity, PanelSnapshot, PanelValidationError, SelectionPanel},
 };
 use crate::input::event::{InputEvent, KeyAction};
 
@@ -29,6 +29,7 @@ pub(crate) enum SlotError {
     NoSelection,
     ChatNotVisible,
     AgentInteractionPending,
+    InvalidPanel(PanelValidationError),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -43,7 +44,6 @@ pub(crate) struct PromptOverlaySlot {
 struct OverlayInstance {
     token: OverlayInstanceToken,
     panel: SelectionPanel,
-    acceptance_enabled: bool,
 }
 
 impl PromptOverlaySlot {
@@ -59,7 +59,6 @@ impl PromptOverlaySlot {
         self.current = Some(OverlayInstance {
             token,
             panel: SelectionPanel::new(snapshot),
-            acceptance_enabled: true,
         });
         self.presented = false;
         Ok(token)
@@ -92,7 +91,7 @@ impl PromptOverlaySlot {
     ) -> Result<AcceptanceReceipt, SlotError> {
         let identity = {
             let current = self.matching(token)?;
-            if !current.acceptance_enabled {
+            if !current.panel.is_fresh() {
                 return Err(SlotError::NoSelection);
             }
             current
@@ -129,10 +128,16 @@ impl PromptOverlaySlot {
                 self.current_mut().panel.next();
                 OverlayInputEffect::Redraw
             },
+            OverlayAction::FilterPrevious if !self.current().panel.is_fresh() => {
+                OverlayInputEffect::Consumed
+            },
             OverlayAction::FilterPrevious => self.current_mut().panel.previous_filter().map_or(
                 OverlayInputEffect::Unhandled,
                 OverlayInputEffect::FilterChanged,
             ),
+            OverlayAction::FilterNext if !self.current().panel.is_fresh() => {
+                OverlayInputEffect::Consumed
+            },
             OverlayAction::FilterNext => self.current_mut().panel.next_filter().map_or(
                 OverlayInputEffect::Unhandled,
                 OverlayInputEffect::FilterChanged,
@@ -177,12 +182,16 @@ impl PromptOverlaySlot {
         self.presented = presented && self.current.is_some();
     }
 
-    pub(crate) fn set_acceptance_enabled(
+    pub(crate) fn set_pending(
         &mut self,
         token: OverlayInstanceToken,
-        enabled: bool,
+        activity_status: impl Into<String>,
     ) -> Result<(), SlotError> {
-        self.matching_mut(token)?.acceptance_enabled = enabled;
+        let current = self.matching_mut(token)?;
+        current
+            .panel
+            .set_pending_activity(activity_status)
+            .map_err(SlotError::InvalidPanel)?;
         Ok(())
     }
 

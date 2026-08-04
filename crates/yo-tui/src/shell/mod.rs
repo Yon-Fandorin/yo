@@ -73,7 +73,7 @@ pub(crate) struct AgentShellFrame {
     pub(crate) transcript: Option<TranscriptRenderFrame>,
     pub(crate) prompt: PromptFrame,
     pub(crate) cursor: Point,
-    pub(crate) activity_motion_period: Option<std::time::Duration>,
+    pub(crate) motion_period: Option<std::time::Duration>,
     pub(crate) overlay_area: Option<Rect>,
 }
 
@@ -166,11 +166,12 @@ pub(crate) fn render_with_measure_hook(
         )
     };
     let prepared_overlay = overlay.and_then(|panel| {
-        panel.prepare(
+        panel.prepare_with_motion(
             crate::surface::Size::new(size.width, layout.prompt.origin.y),
             styles.overlay,
             overlay_bindings,
             chrome.turn_active,
+            activity_motion,
         )
     });
 
@@ -198,19 +199,24 @@ pub(crate) fn render_with_measure_hook(
         None
     };
 
-    let mut activity_motion_period = None;
+    let mut motion_period = prepared_overlay
+        .as_ref()
+        .and_then(|prepared| prepared.motion_period());
     if prepared_overlay.is_none() && layout.transient.size.height > 0 {
         let mut transient = view
             .subview(layout.transient)
             .expect("chrome transient area stays inside the shell view");
-        activity_motion_period = chrome::paint_transient(
-            &mut transient,
-            chrome,
-            styles.chrome,
-            activity_motion,
-            layout.mode.size.height == 0,
-        )
-        .map_err(AgentShellRenderError::Chrome)?;
+        motion_period = earliest_motion_period(
+            motion_period,
+            chrome::paint_transient(
+                &mut transient,
+                chrome,
+                styles.chrome,
+                activity_motion,
+                layout.mode.size.height == 0,
+            )
+            .map_err(AgentShellRenderError::Chrome)?,
+        );
     }
 
     let overlay_area = if let Some(prepared) = prepared_overlay {
@@ -272,9 +278,20 @@ pub(crate) fn render_with_measure_hook(
         transcript: transcript_frame,
         prompt: prompt_frame,
         cursor,
-        activity_motion_period,
+        motion_period,
         overlay_area,
     })
+}
+
+fn earliest_motion_period(
+    left: Option<std::time::Duration>,
+    right: Option<std::time::Duration>,
+) -> Option<std::time::Duration> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.min(right)),
+        (Some(period), None) | (None, Some(period)) => Some(period),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]

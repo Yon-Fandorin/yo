@@ -29,9 +29,16 @@ pub(crate) struct SelectionEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PanelSnapshot {
     title: String,
-    title_status: Option<String>,
+    title_status: Option<PanelTitleStatus>,
     entries: Vec<SelectionEntry>,
     filter_bar: Option<FilterBar>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum PanelTitleStatus {
+    Static(String),
+    Activity(String),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,6 +51,13 @@ struct FilterBar {
 pub(crate) struct SelectionPanel {
     snapshot: PanelSnapshot,
     selected: Option<EntryIdentity>,
+    freshness: SnapshotFreshness,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotFreshness {
+    Fresh,
+    PendingReplacement,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -201,11 +215,21 @@ impl PanelSnapshot {
         Ok(snapshot)
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn with_title_status(
         mut self,
         status: impl Into<String>,
     ) -> Result<Self, PanelValidationError> {
-        self.title_status = Some(status.into());
+        self.title_status = Some(PanelTitleStatus::Static(status.into()));
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub(crate) fn with_activity_title_status(
+        mut self,
+        status: impl Into<String>,
+    ) -> Result<Self, PanelValidationError> {
+        self.title_status = Some(PanelTitleStatus::Activity(status.into()));
         self.validate()?;
         Ok(self)
     }
@@ -229,7 +253,7 @@ impl PanelSnapshot {
         }
         validate_text(&self.title, TextField::Title)?;
         if let Some(status) = &self.title_status {
-            validate_text(status, TextField::TitleStatus)?;
+            validate_text(status.text(), TextField::TitleStatus)?;
         }
         if self.entries.is_empty() {
             return Err(PanelValidationError::EmptyEntries);
@@ -284,7 +308,11 @@ impl SelectionPanel {
             .iter()
             .find(|entry| entry.is_enabled())
             .map(|entry| entry.identity.clone());
-        Self { snapshot, selected }
+        Self {
+            snapshot,
+            selected,
+            freshness: SnapshotFreshness::Fresh,
+        }
     }
 
     pub(crate) fn refresh(&mut self, snapshot: PanelSnapshot) {
@@ -303,6 +331,18 @@ impl SelectionPanel {
                 .map(|entry| entry.identity.clone())
         });
         self.snapshot = snapshot;
+        self.freshness = SnapshotFreshness::Fresh;
+    }
+
+    pub(crate) fn set_pending_activity(
+        &mut self,
+        status: impl Into<String>,
+    ) -> Result<(), PanelValidationError> {
+        let status = PanelTitleStatus::Activity(status.into());
+        validate_text(status.text(), TextField::TitleStatus)?;
+        self.snapshot.title_status = Some(status);
+        self.freshness = SnapshotFreshness::PendingReplacement;
+        Ok(())
     }
 
     pub(crate) fn previous(&mut self) -> NavigationOutcome {
@@ -315,6 +355,23 @@ impl SelectionPanel {
 
     pub(crate) fn selected_identity(&self) -> Option<&EntryIdentity> {
         self.selected.as_ref()
+    }
+
+    pub(crate) fn is_fresh(&self) -> bool {
+        self.freshness == SnapshotFreshness::Fresh
+    }
+
+    #[cfg(test)]
+    pub(crate) fn entries(&self) -> &[SelectionEntry] {
+        &self.snapshot.entries
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_activity_title_status(&self) -> bool {
+        matches!(
+            self.snapshot.title_status,
+            Some(PanelTitleStatus::Activity(_))
+        )
     }
 
     pub(crate) fn previous_filter(&mut self) -> Option<usize> {
@@ -377,6 +434,14 @@ impl SelectionPanel {
             .unwrap_or(0)
             .min(self.snapshot.entries.len() - visible_rows);
         (start, start + visible_rows)
+    }
+}
+
+impl PanelTitleStatus {
+    pub(super) fn text(&self) -> &str {
+        match self {
+            Self::Static(text) | Self::Activity(text) => text,
+        }
     }
 }
 

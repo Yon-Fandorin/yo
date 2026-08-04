@@ -47,7 +47,7 @@ impl PromptAssistController {
         overlay: &mut PromptOverlaySlot,
         edit: Option<&WorkspaceEdit>,
         eligible: bool,
-    ) -> Option<(PromptAssistRequest, bool)> {
+    ) -> Option<PromptAssistRequest> {
         self.workspace.update_annotations(editor.text(), edit);
         self.skill.update_annotation(editor.text(), edit);
         self.editor_revision = self.editor_revision.saturating_add(1);
@@ -66,7 +66,7 @@ impl PromptAssistController {
                 self.skill.close(overlay);
                 self.workspace
                     .begin(editor, overlay, trigger, request_id, self.editor_revision)
-                    .map(|(request, loading)| (PromptAssistRequest::Workspace(request), loading))
+                    .map(|(request, _)| PromptAssistRequest::Workspace(request))
             },
             AssistTriggerKind::Skill if self.skill_enabled => {
                 self.workspace.close(overlay);
@@ -76,7 +76,7 @@ impl PromptAssistController {
                 }
                 self.skill
                     .begin(editor, overlay, trigger, request_id, self.editor_revision)
-                    .map(|(request, loading)| (PromptAssistRequest::Skill(request), loading))
+                    .map(|(request, _)| PromptAssistRequest::Skill(request))
             },
             AssistTriggerKind::Workspace | AssistTriggerKind::Skill => {
                 self.close(overlay);
