@@ -415,14 +415,23 @@ This is not a test exemption: after integration, ordinary `methexis check` and
 the full Methexis tests are required against trusted `develop`.
 
 At every Slice close, include a compact Methexis/Librarian token retrospective
-in the Slice status or handoff. State whether either tool was invoked. Group
-invocations that share the same tool, trigger, and route, and record their count.
-For each materially different group, name its trigger and narrowest route used,
-any reused hash-pinned artifact or context build, and one avoidable repeat or
-next-Slice reduction. When neither tool ran, `not invoked` is sufficient. Do not
-paste full payloads or tool output into the retrospective, and do not promote
-this operational note into durable repository history unless it changes a
-workflow or tool contract.
+in the Slice status or handoff. Use exactly one of these compact shapes:
+
+```text
+Knowledge-tool token retrospective: not invoked
+```
+
+```text
+Knowledge-tool token retrospective:
+- <tool> | trigger=<reason> | route=<narrowest command> | count=<n> | reuse=<hash/build or none>
+- Next reduction: <one concrete change>
+```
+
+Group repeated calls that share the same tool, trigger, and route into one
+counted line; add another group line only when one of those fields differs.
+Never copy full payloads or tool output, and record exactly one next reduction
+for the whole Slice. Do not promote this operational note into durable
+repository history unless it changes a workflow or tool contract.
 
 For every accepted review commit, Git `commit-msg` requires the Slice review
 disposition described above. Working commits on `slice/*`, `task/*`, and
