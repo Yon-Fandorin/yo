@@ -65,7 +65,7 @@ fn rendered_row(surface: &Surface, y: u16) -> String {
 
 // 기본 설정은 rib의 마커와 2열 본문 시작점을 쓰되 본문 폭을 임의로 제한하지 않는다.
 #[test]
-fn defaults_to_rib_markers_without_a_body_width_cap() {
+fn defaults_to_rich_markers_without_a_body_width_cap() {
     let mut transcript = TranscriptState::new();
     transcript
         .push_user(id(1), "x".repeat(101))
@@ -88,7 +88,7 @@ fn defaults_to_rib_markers_without_a_body_width_cap() {
     assert_eq!(frame.content_height, 3);
     assert_eq!(rendered_row(&surface, 0), format!("❯ {}", "x".repeat(101)));
     assert_eq!(rendered_row(&surface, 1), "");
-    assert_eq!(rendered_row(&surface, 2), "⏺ done");
+    assert_eq!(rendered_row(&surface, 2), "• done");
     assert_eq!(
         surface.cell(Point::new(0, 0)).unwrap().style(),
         styles().user_marker
@@ -180,5 +180,5 @@ fn finalized_empty_messages_keep_their_role_markers() {
     assert_eq!(frame.content_height, 3);
     assert_eq!(rendered_row(&surface, 0), "❯");
     assert_eq!(rendered_row(&surface, 1), "");
-    assert_eq!(rendered_row(&surface, 2), "⏺");
+    assert_eq!(rendered_row(&surface, 2), "•");
 }

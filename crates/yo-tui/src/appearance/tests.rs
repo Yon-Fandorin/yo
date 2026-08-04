@@ -12,7 +12,7 @@ fn default_state_starts_with_a_valid_rich_snapshot() {
 
     assert_eq!(pin.revision().get(), 1);
     assert_eq!(pin.snapshot().transcript_config().user_marker(), "❯");
-    assert_eq!(pin.snapshot().transcript_config().assistant_marker(), "⏺");
+    assert_eq!(pin.snapshot().transcript_config().assistant_marker(), "•");
 }
 
 // 유효한 후보만 revision을 증가시키며 Rich snapshot 전체를 ASCII snapshot으로 교체한다.

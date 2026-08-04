@@ -419,7 +419,7 @@ fn renders_the_authoritative_agent_message_snapshot() {
 
     assert_eq!(
         rendered_row(&state, Size::new(24, 3), 0),
-        "⏺ complete answer"
+        "• complete answer"
     );
 }
 
@@ -474,11 +474,11 @@ fn retains_completed_tool_and_file_change_observations() {
 
     assert_eq!(
         rendered_row(&state, Size::new(30, 12), 0),
-        "⏺ Running tool…"
+        "• Running tool…"
     );
     assert_eq!(
         rendered_row(&state, Size::new(30, 12), 2),
-        "⏺ File change observed"
+        "• File change observed"
     );
 }
 
@@ -823,7 +823,7 @@ fn renders_turn_failure_and_clears_active_state() {
     assert!(!state.turn_active());
     assert_eq!(
         rendered_row(&state, Size::new(36, 3), 0),
-        "⏺ Turn failed: provider stopped"
+        "• Turn failed: provider stopped"
     );
 }
 

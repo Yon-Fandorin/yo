@@ -108,7 +108,7 @@ fn frame_pins_one_snapshot_across_measure_and_paint() {
 
     assert_eq!(frame.appearance_revision, rich.revision());
     assert_eq!(marker(&frame.surface, 0).0, "❯");
-    assert_eq!(marker(&frame.surface, 2).0, "⏺");
+    assert_eq!(marker(&frame.surface, 2).0, "•");
 
     let ascii = appearance.pin();
     let next = state.prepare_frame(FRAME_SIZE, &ascii).unwrap();
@@ -180,7 +180,7 @@ fn public_ascii_session_keeps_frame_and_output_consistent() {
 
     assert_eq!(
         visible_rows(&frame.surface),
-        "> question\n\n* answer\n\n\n\n--------------------\n>\n--------------------\n\ninline"
+        "> question\n\n* answer\n\n\n\n--------------------\n>\n--------------------\n\n^D exit       inline"
     );
     assert_eq!(output, "> question\n\n* answer\n");
 }
@@ -200,11 +200,11 @@ fn public_default_session_keeps_rich_frame_and_output_consistent() {
 
     assert_eq!(
         visible_rows(&frame.surface),
-        "❯ question\n\n⏺ answer\n\n\n\n────────────────────\n›\n────────────────────\n\ninline"
+        "❯ question\n\n• answer\n\n\n\n────────────────────\n›\n────────────────────\n\n^D exit       inline"
     );
     assert_eq!(
         session.session_output().unwrap().unwrap(),
-        "❯ question\n\n⏺ answer\n"
+        "❯ question\n\n• answer\n"
     );
 }
 
@@ -231,7 +231,7 @@ fn session_projects_host_metadata_active_work_and_presentation_mode() {
         .unwrap();
     let rows = visible_rows(&frame.surface);
 
-    assert!(rows.contains("· Working… (Esc / ^C interrupt)"));
+    assert!(rows.contains("· Working"));
     assert!(rows.contains("codex · ~/projects/yo"));
     assert!(rows.ends_with("fullscreen"));
 }
@@ -258,8 +258,8 @@ fn visible_activity_marker_alone_demands_timed_motion() {
         Duration::from_millis(120)
     );
     assert_eq!(second.motion_demand, first.motion_demand);
-    assert!(visible_rows(&first.surface).contains("· Working… (Esc / ^C interrupt)"));
-    assert!(visible_rows(&second.surface).contains("✢ Working… (Esc / ^C interrupt)"));
+    assert!(visible_rows(&first.surface).contains("· Working"));
+    assert!(visible_rows(&second.surface).contains("✢ Working"));
 }
 
 // 작업 중이어도 marker를 생략하는 좁은 fallback이나 작업 행 자체가 없는 낮은 화면은
@@ -342,6 +342,7 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
             activity: default,
             metrics: default,
             mode: default,
+            key_hint: default,
         },
         overlay: crate::overlay::SelectionPanelAppearance {
             styles: crate::overlay::SelectionPanelStyles {

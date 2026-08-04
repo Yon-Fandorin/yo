@@ -609,7 +609,7 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
 
     assert!(agent.retries >= 3);
     assert!(presenter.frames.len() >= 2);
-    assert!(presenter.frames[0].contains(". Esc/^C"));
+    assert!(presenter.frames[0].contains(". Working"));
     assert!(
         timeouts
             .borrow()
@@ -665,7 +665,7 @@ fn zero_size_resize_preserves_the_generation_motion_epoch() {
     terminal.close().unwrap();
 
     assert_eq!(presenter.frames.len(), 1);
-    assert!(presenter.frames[0].contains("* Esc/^C"));
+    assert!(presenter.frames[0].contains("* Working"));
 }
 
 // 같은 semantic turn을 재진입해도 terminal ownership generation마다 motion epoch는
@@ -698,6 +698,6 @@ fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
         },
     );
 
-    assert!(first.frames[0].contains(". Esc/^C"));
-    assert!(second.frames[0].contains(". Esc/^C"));
+    assert!(first.frames[0].contains(". Working"));
+    assert!(second.frames[0].contains(". Working"));
 }

@@ -130,7 +130,7 @@ impl AppearanceCandidate {
         let (user_marker, assistant_marker, activity_frames) = match profile {
             GlyphProfile::Rich => (
                 "❯",
-                "⏺",
+                "•",
                 vec!["·", "✢", "✳", "✶", "✻", "✽", "✽", "✻", "✶", "✳", "✢", "·"],
             ),
             GlyphProfile::Ascii => (">", "*", vec![".", "*"]),
@@ -397,6 +397,7 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
             activity: Style::new(Color::Default, Color::Default, Attributes::BOLD),
             metrics: Style::new(Color::Default, Color::Default, Attributes::DIM),
             mode: Style::new(Color::Default, Color::Default, Attributes::DIM),
+            key_hint: Style::new(Color::Default, Color::Default, Attributes::BOLD),
         },
         overlay: SelectionPanelAppearance {
             styles: SelectionPanelStyles {

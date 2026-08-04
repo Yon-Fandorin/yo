@@ -52,6 +52,10 @@ impl PromptEditor {
         self.buffer.cursor_byte_index()
     }
 
+    pub(crate) const fn newline_binding(&self) -> NewlineBinding {
+        self.newline_binding
+    }
+
     pub(crate) fn replace_range(
         &mut self,
         range: std::ops::Range<usize>,

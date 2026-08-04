@@ -247,8 +247,13 @@ Inline 또는 Fullscreen presenter
 승인된 순서, 중단 gesture, 정직한 status 데이터, 반응형 맞춤 정책은
 [정적 입력 chrome 계약](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md)이
 소유한다. 이 runtime에서 `shell::chrome`은 활성 상태와 `TuiSessionInfo`로
-typed 행을 계산하고 폭에 맞춘다. `shell`은 그 영역을 prompt 주변에
-조합하고, `input::control`은 mapping된 interrupt intent를 dispatch한다.
+typed 행을 계산하고 폭에 맞춘다. `shell::chrome::help`는 label을 개행하거나
+자르는 대신 우선순위가 낮은 action 전체를 제거한다. 공용
+`input::key_notation` formatter는 설정된 semantic binding에서 `Esc`, `^C`,
+`^D`, `S-Enter` 같은 terminal 관례 표기를 만들지만, action이 현재 사용
+가능한지는 결정하지 않는다. `shell`은 그 영역을 prompt 주변에 조합하고,
+`input::control`은 아주 작은 frame이 시각 안내를 표시하지 못해도 mapping된
+interrupt intent를 dispatch한다.
 정확한 marker cycle과 runner 시간 경계는
 [activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)과
 [activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)

@@ -4,10 +4,13 @@ use std::{num::NonZeroU16, time::Duration};
 
 use crate::{
     appearance::ActivityMotionFrame,
+    input::{editor::binding::NewlineBinding, key_notation::interrupt_notation},
     runner::PresentationMode,
     surface::{Point, Rect, Size, Style, SurfaceView, WriteOutcome},
     text::flow::{TextFlowError, flow_text},
 };
+
+mod help;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ShellChromeSnapshot<'value> {
@@ -22,6 +25,7 @@ pub(crate) struct ShellChromeStyles {
     pub(crate) activity: Style,
     pub(crate) metrics: Style,
     pub(crate) mode: Style,
+    pub(crate) key_hint: Style,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,14 +117,23 @@ pub(super) fn paint_transient(
     snapshot: ShellChromeSnapshot<'_>,
     styles: ShellChromeStyles,
     motion: ActivityMotionFrame<'_>,
+    show_shortcuts: bool,
 ) -> Result<Option<Duration>, ShellChromeError> {
     if view.size().height == 0 || !snapshot.turn_active {
         return Ok(None);
     }
     let marker = motion.marker();
-    let full = format!("{marker} Working… (Esc / ^C interrupt)");
-    let compact = format!("{marker} Working… Esc/^C");
-    let minimal = format!("{marker} Esc/^C");
+    let interrupt = interrupt_notation();
+    let candidates = if show_shortcuts {
+        vec![
+            format!("{marker} Working  ·  {interrupt} interrupt"),
+            format!("{marker} {interrupt}"),
+            interrupt,
+            marker.to_owned(),
+        ]
+    } else {
+        vec![format!("{marker} Working"), "Working".to_owned()]
+    };
     let row = view.size().height - 1;
     let mut content = view
         .subview(Rect::new(
@@ -128,19 +141,9 @@ pub(super) fn paint_transient(
             Size::new(view.size().width, 1),
         ))
         .expect("the transient content row is inside its reserved area");
-    let selected = paint_fitting_row(
-        &mut content,
-        &[
-            full,
-            compact,
-            minimal,
-            "Esc/^C".to_owned(),
-            marker.to_owned(),
-        ],
-        styles.activity,
-    )?;
+    let selected = paint_fitting_row(&mut content, &candidates, styles.activity)?;
     Ok(selected
-        .is_some_and(|index| index != 3)
+        .is_some_and(|index| candidates[index].starts_with(marker))
         .then(|| motion.period())
         .flatten())
 }
@@ -166,16 +169,11 @@ pub(super) fn paint_metrics(
 pub(super) fn paint_mode(
     view: &mut SurfaceView<'_>,
     snapshot: ShellChromeSnapshot<'_>,
-    style: Style,
+    styles: ShellChromeStyles,
+    newline_binding: NewlineBinding,
+    exit_available: bool,
 ) -> Result<(), ShellChromeError> {
-    if view.size().height == 0 {
-        return Ok(());
-    }
-    let mode = match snapshot.mode {
-        PresentationMode::Inline => "inline",
-        PresentationMode::Fullscreen => "fullscreen",
-    };
-    paint_fitting_row(view, &[mode.to_owned()], style).map(|_| ())
+    help::paint(view, snapshot, styles, newline_binding, exit_available)
 }
 
 fn paint_fitting_row(

@@ -254,8 +254,13 @@ The accepted ordering, interruption gestures, honest status data, and
 responsive fitting policy are owned by the
 [static input chrome contract](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md).
 In this runtime, `shell::chrome` calculates and fits typed rows from active
-state and `TuiSessionInfo`, `shell` composes those regions around the prompt,
-and `input::control` dispatches the mapped interrupt intent.
+state and `TuiSessionInfo`, and `shell::chrome::help` removes complete
+low-priority actions rather than wrapping or truncating their labels. The
+shared `input::key_notation` formatter renders terminal conventions such as
+`Esc`, `^C`, `^D`, and `S-Enter` from the configured semantic bindings; it does
+not decide whether an action is currently available. `shell` composes those
+regions around the prompt, and `input::control` dispatches the mapped interrupt
+intent even when a tiny frame cannot show the visual hint.
 The exact marker cycles and runner timing boundary are owned by the
 [activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)
 and

@@ -19,7 +19,7 @@ impl Default for TranscriptLayoutConfig {
             max_body_width: None,
             body_indent: 2,
             user_marker: "❯".to_owned(),
-            assistant_marker: "⏺".to_owned(),
+            assistant_marker: "•".to_owned(),
         }
     }
 }

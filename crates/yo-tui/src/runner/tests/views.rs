@@ -88,7 +88,7 @@ fn three_modes_render_distinct_visible_projections_from_one_journal() {
     let chat = render_and_commit(&mut state, Size::new(72, 12));
     assert!(!chat.contains("Chat ·"));
     assert!(chat.contains("❯ inspect the repository"));
-    assert!(chat.contains("⏺ Running tool…"));
+    assert!(chat.contains("• Running tool…"));
     assert!(!chat.contains("event.activity_started"));
 
     assert_eq!(

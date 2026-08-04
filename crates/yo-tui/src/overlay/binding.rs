@@ -1,4 +1,7 @@
-use crate::input::event::{InputEvent, KeyAction, KeyCode, KeyModifiers};
+use crate::input::{
+    event::{InputEvent, KeyAction, KeyCode, KeyModifiers},
+    key_notation::key_notation,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum OverlayAction {
@@ -62,14 +65,14 @@ impl OverlayBindings {
                 physical: if rich_keys {
                     format!(
                         "{}{}",
-                        key_notation(previous, true),
-                        key_notation(next, true)
+                        binding_notation(previous, true),
+                        binding_notation(next, true)
                     )
                 } else {
                     format!(
                         "{}/{}",
-                        key_notation(previous, false),
-                        key_notation(next, false)
+                        binding_notation(previous, false),
+                        binding_notation(next, false)
                     )
                 },
                 caption: "move",
@@ -78,7 +81,7 @@ impl OverlayBindings {
         }
         if let Some(accept) = self.binding(OverlayAction::Accept) {
             hints.push(BindingHint {
-                physical: key_notation(accept, rich_keys),
+                physical: binding_notation(accept, rich_keys),
                 caption: "insert",
                 optional: true,
             });
@@ -89,7 +92,7 @@ impl OverlayBindings {
         }
         hints.extend(actions.into_iter().filter_map(|action| {
             self.binding(action).map(|binding| BindingHint {
-                physical: key_notation(binding, rich_keys),
+                physical: binding_notation(binding, rich_keys),
                 caption: binding.action.caption(),
                 optional: false,
             })
@@ -186,58 +189,8 @@ impl Default for OverlayBindings {
     }
 }
 
-fn key_notation(binding: &ResolvedBinding, rich_keys: bool) -> String {
-    if binding.modifiers.contains(KeyModifiers::CONTROL)
-        && let KeyCode::Character(character) = binding.code
-    {
-        return format!("^{}", character.to_uppercase().collect::<String>());
-    }
-    let mut notation = String::new();
-    if binding.modifiers.contains(KeyModifiers::CONTROL) {
-        notation.push_str("C-");
-    }
-    if binding.modifiers.contains(KeyModifiers::ALT)
-        || binding.modifiers.contains(KeyModifiers::META)
-    {
-        notation.push_str("M-");
-    }
-    if binding.modifiers.contains(KeyModifiers::SHIFT) {
-        notation.push_str("S-");
-    }
-    notation.push_str(match binding.code {
-        KeyCode::Character(character) => return format!("{notation}{character}"),
-        KeyCode::Enter => "Enter",
-        KeyCode::Tab => "Tab",
-        KeyCode::BackTab => "BackTab",
-        KeyCode::Backspace => "Backspace",
-        KeyCode::Delete => "Delete",
-        KeyCode::Escape => "Esc",
-        KeyCode::Up if rich_keys => "↑",
-        KeyCode::Down if rich_keys => "↓",
-        KeyCode::Left if rich_keys => "←",
-        KeyCode::Right if rich_keys => "→",
-        KeyCode::Up => "Up",
-        KeyCode::Down => "Down",
-        KeyCode::Left => "Left",
-        KeyCode::Right => "Right",
-        KeyCode::Home => "Home",
-        KeyCode::End => "End",
-        KeyCode::PageUp => "PageUp",
-        KeyCode::PageDown => "PageDown",
-        KeyCode::Insert => "Insert",
-        KeyCode::Function(_)
-        | KeyCode::Null
-        | KeyCode::CapsLock
-        | KeyCode::ScrollLock
-        | KeyCode::NumLock
-        | KeyCode::PrintScreen
-        | KeyCode::Pause
-        | KeyCode::Menu
-        | KeyCode::KeypadBegin
-        | KeyCode::Media(_)
-        | KeyCode::Modifier(_) => "Key",
-    });
-    notation
+fn binding_notation(binding: &ResolvedBinding, rich_keys: bool) -> String {
+    key_notation(binding.code, binding.modifiers, rich_keys)
 }
 
 #[cfg(test)]

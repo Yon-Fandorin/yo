@@ -203,9 +203,14 @@ pub(crate) fn render_with_measure_hook(
         let mut transient = view
             .subview(layout.transient)
             .expect("chrome transient area stays inside the shell view");
-        activity_motion_period =
-            chrome::paint_transient(&mut transient, chrome, styles.chrome, activity_motion)
-                .map_err(AgentShellRenderError::Chrome)?;
+        activity_motion_period = chrome::paint_transient(
+            &mut transient,
+            chrome,
+            styles.chrome,
+            activity_motion,
+            layout.mode.size.height == 0,
+        )
+        .map_err(AgentShellRenderError::Chrome)?;
     }
 
     let overlay_area = if let Some(prepared) = prepared_overlay {
@@ -248,8 +253,14 @@ pub(crate) fn render_with_measure_hook(
         let mut mode = view
             .subview(layout.mode)
             .expect("chrome mode area stays inside the shell view");
-        chrome::paint_mode(&mut mode, chrome, styles.chrome.mode)
-            .map_err(AgentShellRenderError::Chrome)?;
+        chrome::paint_mode(
+            &mut mode,
+            chrome,
+            styles.chrome,
+            editor.newline_binding(),
+            editor.text().is_empty(),
+        )
+        .map_err(AgentShellRenderError::Chrome)?;
     }
 
     Ok(AgentShellFrame {

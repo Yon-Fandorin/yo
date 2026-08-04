@@ -17,7 +17,7 @@ fn plain_output_preserves_the_transcript_projection() {
         .plain_output(&TranscriptLayoutConfig::default())
         .unwrap();
 
-    assert_eq!(output.as_deref(), Some("❯ 가\n  나\n\n⏺ 답\n"));
+    assert_eq!(output.as_deref(), Some("❯ 가\n  나\n\n• 답\n"));
 }
 
 // 빈 streaming 항목만 있으면 종료 뒤 의미 없는 marker나 빈 줄을 출력하지 않는다.

@@ -69,6 +69,7 @@ fn styles() -> AgentShellStyles {
             activity: style(8),
             metrics: style(9),
             mode: style(10),
+            key_hint: style(19),
         },
         overlay: SelectionPanelAppearance {
             styles: SelectionPanelStyles {
@@ -201,7 +202,7 @@ fn composes_flexible_transcript_above_preferred_prompt() {
     assert_eq!(frame.mode_area.origin.y, 12);
     assert_eq!(frame.cursor, Point::new(4, 9));
     assert_eq!(rendered_row(&surface, 0), "❯ q");
-    assert_eq!(rendered_row(&surface, 2), "⏺ answer");
+    assert_eq!(rendered_row(&surface, 2), "• answer");
     assert_eq!(rendered_row(&surface, 7), "────────");
     assert_eq!(rendered_row(&surface, 8), "› ab");
     assert_eq!(rendered_row(&surface, 9), "  cd");

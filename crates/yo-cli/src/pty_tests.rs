@@ -350,7 +350,7 @@ fn run_inline_with_retained_chat(
 // screen에 다시 출력되어 native scrollback으로 남는지 확인한다.
 #[test]
 fn inline_normal_exit_retains_chat_after_viewport_restoration() {
-    const RETAINED: &[u8] = "⏺ YO_INLINE_RETAINED\r\n".as_bytes();
+    const RETAINED: &[u8] = "• YO_INLINE_RETAINED\r\n".as_bytes();
     let mut child = PtyChild::spawn(
         "pty_tests::child_inline_retains_chat",
         b"YO_INLINE_RETAINED",

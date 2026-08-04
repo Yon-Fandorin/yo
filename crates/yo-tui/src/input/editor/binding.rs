@@ -19,6 +19,10 @@ impl NewlineBinding {
     pub(crate) fn matches(self, modifiers: KeyModifiers) -> bool {
         self.modifiers == modifiers
     }
+
+    pub(crate) const fn modifiers(self) -> KeyModifiers {
+        self.modifiers
+    }
 }
 
 impl Default for NewlineBinding {

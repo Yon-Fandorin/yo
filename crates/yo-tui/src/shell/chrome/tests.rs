@@ -2,10 +2,11 @@ use std::num::NonZeroU16;
 
 use super::{
     ShellChromeSnapshot, ShellChromeStyles, StatusGroups, StatusSegment, layout, paint_metrics,
-    paint_status_groups, paint_transient,
+    paint_mode, paint_status_groups, paint_transient,
 };
 use crate::{
     appearance::ActivityMotionFrame,
+    input::editor::binding::NewlineBinding,
     runner::PresentationMode,
     surface::{CellContent, Point, Rect, Size, Style, Surface},
 };
@@ -91,6 +92,7 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
         activity: Style::default(),
         metrics: Style::default(),
         mode: Style::default(),
+        key_hint: Style::default(),
     };
     let mut wide = Surface::new(Size::new(48, 1)).unwrap();
     paint_transient(
@@ -100,6 +102,7 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
         snapshot("codex", "~/projects/yo"),
         styles,
         ActivityMotionFrame::still("◐"),
+        false,
     )
     .unwrap();
     let mut narrow = Surface::new(Size::new(14, 1)).unwrap();
@@ -110,11 +113,12 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
         snapshot("codex", "~/projects/yo"),
         styles,
         ActivityMotionFrame::still("◐"),
+        false,
     )
     .unwrap();
 
-    assert_eq!(row(&wide), "◐ Working… (Esc / ^C interrupt)");
-    assert_eq!(row(&narrow), "◐ Esc/^C");
+    assert_eq!(row(&wide), "◐ Working");
+    assert_eq!(row(&narrow), "◐ Working");
 
     let mut minimal = Surface::new(Size::new(6, 1)).unwrap();
     paint_transient(
@@ -124,9 +128,66 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
         snapshot("codex", "~/projects/yo"),
         styles,
         ActivityMotionFrame::still("◐"),
+        true,
     )
     .unwrap();
     assert_eq!(row(&minimal), "Esc/^C");
+}
+
+// 충분한 폭의 하단 도움말은 실제 newline binding과 종료·중단 키를 관례 표기로 보여주고,
+// 현재 presentation mode는 같은 행 오른쪽에 남겨 입력창 아래 정보를 한눈에 읽게 한다.
+#[test]
+fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
+    let styles = ShellChromeStyles {
+        activity: Style::default(),
+        metrics: Style::default(),
+        mode: Style::default(),
+        key_hint: Style::default(),
+    };
+    let mut surface = Surface::new(Size::new(72, 1)).unwrap();
+    paint_mode(
+        &mut surface
+            .view(Rect::new(Point::new(0, 0), Size::new(72, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo"),
+        styles,
+        NewlineBinding::default(),
+        true,
+    )
+    .unwrap();
+
+    assert_eq!(
+        row(&surface),
+        "Esc/^C interrupt  ·  S-Enter newline  ·  ^D exit                  inline"
+    );
+}
+
+// 입력 초안이 비어 있지 않으면 Ctrl+D는 종료 명령이 아니므로 하단 도움말에서 exit를
+// 광고하지 않고, 실제로 유효한 newline binding과 mode만 남긴다.
+#[test]
+fn footer_omits_ctrl_d_exit_while_the_prompt_has_a_draft() {
+    let styles = ShellChromeStyles {
+        activity: Style::default(),
+        metrics: Style::default(),
+        mode: Style::default(),
+        key_hint: Style::default(),
+    };
+    let mut surface = Surface::new(Size::new(48, 1)).unwrap();
+    paint_mode(
+        &mut surface
+            .view(Rect::new(Point::new(0, 0), Size::new(48, 1)))
+            .unwrap(),
+        snapshot("codex", "~/projects/yo"),
+        styles,
+        NewlineBinding::default(),
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(
+        row(&surface),
+        "Esc/^C interrupt  ·  S-Enter newline      inline"
+    );
 }
 
 // metrics는 전체 작업 경로가 한 줄에 맞지 않으면 backend만 남겨 경로를 중간에서 잘라 오해시키지
