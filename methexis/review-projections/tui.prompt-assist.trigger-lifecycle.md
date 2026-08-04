@@ -1,21 +1,19 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: tui.prompt-assist.trigger-lifecycle
-revision: sha256:087e8b6b94440fd139eb1594610d5a5aacd90d3b6021d5e6ce8e0e935f9fd15a
+revision: sha256:a7a8721bee4e81a1f20f25c4abee067a3fcfffef2bdd88e0e142739298440fb9
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:5963b635bdeddc041d61c645757f6991b69ff43d6ba4335beb9af681e8b99415
+request_hash: sha256:83fd7dc5f0e965f92749855b6e8471d4417ecd04dc91ec70e4294bd31db11b2b
 ---
 # Korean Review Projection
 
 ## Translation
 
-# 프롬프트 보조 트리거 수명주기
+하나의 scanner와 controller가 Chat draft의 cursor 위치에서 `@` workspace reference와 `$` skill trigger 중 하나만 찾습니다. trigger는 draft 시작이나 Unicode whitespace 뒤에서만 시작하고, accepted annotation과 겹치거나 끝 경계에 닿은 raw trigger는 다시 열지 않습니다.
 
-`@` 파일 참조와 `$` 스킬 참조는 하나의 순수 스캐너와 컨트롤러를 공유합니다. 트리거는 입력 시작 또는 유니코드 공백 다음에서만 열리며, 직접 입력한 비슷한 문자열은 선택 전까지 일반 텍스트입니다. 이미 선택되어 내부 식별자가 붙은 범위는 다시 탐색하지 않고, 공백이 든 경로도 주석 범위로 안전하게 유지합니다.
+provider request와 update는 request identity와 immutable draft snapshot을 가지며 sequence가 증가해 terminal state 하나로 끝납니다. stale, cancelled, final 이후 update는 새 overlay나 draft를 바꾸지 못합니다. search는 agent backpressure와 독립이고 queued query는 최신 revision으로 합칠 수 있습니다.
 
-컨트롤러는 입력 리비전, 치환 범위, 요청 식별자와 주석을 소유합니다. 비동기 결과는 요청 당시의 입력 스냅샷과 일치해야 하며, 단조 증가 순서와 단 하나의 종료 상태를 가져야 합니다. 늦은 부분 결과나 취소 뒤 결과는 새 메뉴나 입력을 바꿀 수 없습니다.
+editor mutation은 provider 결과를 기다리지 않고 즉시 화면에 반영되어야 합니다. 이미 보이는 trigger를 더 입력하면 기존 panel instance, 최근 usable entries, selection, styling을 그대로 유지합니다. destination geometry가 같으면 panel geometry와 viewport도 유지하지만 terminal resize에서는 selection panel의 일반 fitting과 hiding을 적용합니다. entry availability와 별개인 snapshot-level pending gate가 현재 draft와 일치하는 update 전까지 acceptance receipt를 막습니다. 이때 Tab과 Enter는 선택이나 제출 없이 소비합니다.
 
-활성 후보가 보일 때 Tab 또는 Enter는 선택만 하고 제출하지 않습니다. 선택은 현재 트리거 토큰 전체를 원자적으로 바꾸고 주변 텍스트를 보존합니다. 주석 내부를 편집하면 의미만 제거해 일반 텍스트로 남기며, 경계 밖 편집은 주석을 유지합니다. Esc는 현재 메뉴만 닫고 입력은 보존하며, 이후 편집 시 다시 탐색할 수 있습니다.
-
-TUI는 제스처, 메뉴 표시, 편집 범위 변환만 담당합니다. 탐색 제공자, 타입이 있는 참조, 제출 승인 결과는 yo-core 명령·이벤트 경계를 지나며 yo-cli는 로컬 배선만 담당합니다.
+보이는 enabled result는 fresh 상태에서 Tab 또는 Enter로 accept하며 draft 제출은 다음 Enter에서 이루어집니다. accept는 전체 trigger token을 원자적으로 바꾸고 typed identity를 연결합니다. Esc는 현재 menu만 닫고 Ctrl+C와 global lifecycle 우선순위는 prompt-slot 계약을 따릅니다.

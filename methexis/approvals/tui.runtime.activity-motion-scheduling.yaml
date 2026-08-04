@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: tui.runtime.activity-motion-scheduling
-revision: sha256:669870ee6ec281b4155ff43d5cca2950e2d62adb0ddefba9b82d53f20b642097
+revision: sha256:4b7ecbd05bd0936adc1f49073c392f5428e8b566101d27b06a9e05944a5a50c5
 reviewer: tui-architecture
-reviewed_at: 2026-08-02T17:45:28Z
+reviewed_at: 2026-08-04T14:59:06Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:9e28f56714037539f976684e46cbb1e52f7e4219abc69f11ce3229036e5213e3
-request_hash: sha256:3fb6bdd050d8d3d7e29df9b6e7b0ba506cc1e79b2c5628b7e283e7a2016dd181
+projection_hash: sha256:4faeb449429613f41212b35b24559ce8e3a7c2b45c613fe2e73413801f877e04
+request_hash: sha256:dd641f6511d3b1dc2025a269ac1e045a34655777b65c04f0f7108e3b56edd96f

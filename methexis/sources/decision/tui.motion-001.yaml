@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: tui.motion-001
-revision: sha256:6ec2c20974fa89e63ebae65bb310fb2d065884e80f24db14c7abf9765affbab4
+revision: sha256:6cc09924ed38436dadeaa6e7baa3a4d4fdc3fbc05ac8856a7fe4af1aed79b76d
 payload:
   kind: decision
-  content: Live TUI activity motion uses one runner-owned monotonic epoch per terminal generation. Terminal-independent frame preparation receives an explicit elapsed sample and reports whether a dynamic marker was actually painted; only that demand arms deadline-derived redraws. Late wakes skip missed frames, event and time redraws coalesce, idle and zero-size surfaces do not churn, completed Surface consumers remain clock-free, and no background animation thread is introduced.
+  content: Live TUI decorative motion uses one runner-owned monotonic epoch per terminal generation. Terminal-independent frame preparation receives an explicit elapsed sample and reports whether a visible dynamic indicator can change at least one completed cell on a later logical frame; only that demand arms deadline-derived redraws. Multiple visible indicators share the epoch and request the shortest positive period. Late wakes skip missed frames, event and time redraws coalesce, idle and zero-size surfaces do not churn, completed Surface consumers remain clock-free, and no background animation thread is introduced.

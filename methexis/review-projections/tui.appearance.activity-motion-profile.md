@@ -1,21 +1,17 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: tui.appearance.activity-motion-profile
-revision: sha256:836bae25a568d52e178b9f5e2711296bc23aafd07a279642b0bf40ad9f4082b0
+revision: sha256:499e5d926c3cc7d57e1c0724522192d35b6b61f9f3c1ab053990e7e854dc2509
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:423d781433d11ce1012e92d13f801f5b178be4428c9db7a7ea567ad0fed73b83
+request_hash: sha256:d097e1eadba4bd41d5ffbf346564ee66fb6c188d760d2b61a20b9eb94c7f6bb0
 ---
 # Korean Review Projection
 
 ## Translation
 
-초기 내장 activity marker는 논리 frame 하나를 정확히 120ms 유지합니다. Rich는 `· ✢ ✳ ✶ ✻ ✽ ✽ ✻ ✶ ✳ ✢ ·`, ASCII는 `. *` 순서로 반복합니다.
+초기 내장 모션은 논리 프레임마다 120ms를 사용합니다. Rich marker는 `· ✢ ✳ ✶ ✻ ✽ ✽ ✻ ✶ ✳ ✢ ·`, ASCII marker는 `. *` 순서로 움직이며, 각 marker는 동일한 셀 폭을 가져야 합니다.
 
-각 profile의 모든 frame은 비어 있지 않고 제어 문자가 없는 렌더 가능한 확장 grapheme 하나여야 하며, 같은 profile 안에서는 cell 폭이 모두 같아야 합니다. 빈 frame 목록, 0ms period, 잘못된 frame, 서로 다른 폭은 publication 전에 거부합니다.
+같은 프레임은 보이는 `Working` 문구나 선택 패널이 typed activity로 명시한 제목 상태에서 강조되는 grapheme 하나를 차례로 이동시킬 수 있습니다. 이 sheen은 style만 바꾸며 글자, 셀 폭, 행과 패널의 geometry, fitting 결과, 입력 동작, 중단 안내를 바꾸면 안 됩니다. activity가 아닌 제목 상태는 정적이어야 하고 marker와 sheen은 같은 elapsed sample을 사용합니다.
 
-애니메이션은 장식 activity marker만 변경하고 별도로 공급되는 marker 이외의 문구, 폭 맞춤 동작, 중단 안내를 그대로 보존합니다. 유효한 frame 하나만 가진 profile도 표현할 수 있고 timed redraw를 켜지 않으므로, runner를 바꾸지 않고 추후 reduced-motion 선택을 열 수 있습니다.
-
-하나의 committed appearance snapshot과 revision이 논리 frame에서 선택과 paint에 쓰는 marker cycle·period를 함께 제공합니다. frame 준비 중 replacement가 일어나도 다음 완전한 frame부터 적용합니다.
-
-이 profile을 활성화하면 이미 승인되었지만 비활성인 `tui.appearance.frame-consistency`와 그 의존성 `tui.appearance.session-publication`도 함께 선택됩니다. 이 더 넓은 eligibility 전환은 별도 activation 검수에서 명시적으로 확인해야 합니다.
+유효한 frame 하나만 가진 profile은 marker와 sheen 모션을 모두 끄며 timed redraw를 켜지 않습니다. 보이는 sheen이 두 grapheme보다 짧아 다음 phase에서 셀이 바뀔 수 없어도 redraw를 요청하지 않습니다. 한 committed appearance snapshot과 revision이 한 논리 frame의 marker cycle과 period를 함께 공급하고, frame 준비 중 replacement는 다음 완전한 frame부터 적용됩니다.

@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.assist-001
-    revision: sha256:2abc8454671150a52ffe2348c63cb1ed8e24205e3281d3536d9d305094e04d07
+    revision: sha256:9d69d68cc40af340368a5b68ec51470ef454ccd42b9740ea71a15ba23eef874a
 relations:
   depends_on:
     - tui.overlay.prompt-slot-routing
@@ -58,6 +58,20 @@ and every update after final or cancellation. A stale or cancelled result MUST
 NOT refresh a newer overlay or edit the draft. Search work MUST remain
 independent of agent-command backpressure, and superseded queued queries SHOULD
 coalesce to the newest revision.
+
+Every accepted editor mutation MUST be eligible for immediate presentation
+without waiting for provider work or a matching result. When an already visible
+trigger is refined, the current panel instance, latest usable entries, selected
+identity, and entry styling MUST remain present while the replacement query is
+pending. With unchanged destination geometry, panel geometry and viewport MUST
+also remain stable; terminal resize MUST instead apply the selection-panel's
+normal fitting and hiding rules. A snapshot-level interaction gate, independent of entry
+availability, MUST prevent the slot from issuing an acceptance receipt until an
+update matching the current immutable draft snapshot arrives. `Tab` and `Enter`
+MUST be consumed without acceptance or draft submission while that gate is
+pending. A replacement query MUST NOT replace usable entries with an
+intermediate loading row. Provider scheduling MAY use a bounded coalescing
+delay, but it MUST preserve continuous search and MUST NOT block the input owner.
 
 While a concrete enabled result is visibly presented, `Tab` or `Enter` MUST
 accept it and MUST NOT submit the draft. Submission requires a later `Enter`.

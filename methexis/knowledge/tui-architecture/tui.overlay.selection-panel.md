@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.overlay-001
-    revision: sha256:de6d55d11499f4c9be696c941c3e55a778e635989568c153f9aec046ff9dd0b5
+    revision: sha256:65e8ef9fd3132d421a4b6aa1a5c7e1e46f5bb3a54e68f8d0d755645fac0197df
 relations:
   constrained_by:
     - tui.surface.geometry
@@ -36,6 +36,23 @@ grapheme and control-text validation before publication. Navigation MUST skip
 disabled entries, and accept MUST never return a disabled identity. An
 all-disabled snapshot MUST remain displayable with no selection and accept
 MUST return a handled no-selection outcome.
+
+One snapshot-level interaction gate MUST be independent of per-entry
+availability. A fresh snapshot MAY issue one acceptance receipt for its enabled
+selection. A pending-replacement snapshot MUST preserve the entries, selected
+identity, and entry styling supplied by the last fresh snapshot, but
+`Tab` and `Enter` MUST be handled without issuing a receipt or submitting the
+draft. Returning to fresh state MUST preserve the selected identity when it is
+still enabled. The panel MUST NOT represent snapshot freshness by changing an
+entry's semantic availability. While destination geometry is unchanged, the
+pending viewport MUST remain stable. Resize MUST apply normal fitting,
+selection visibility, and insufficient-geometry hiding rules.
+
+Optional title status MUST be typed as static or activity presentation; render
+code MUST NOT infer activity by parsing its text. The provider or controller
+owns the semantic state and safe status text. The panel owns only validated
+presentation and MAY apply an appearance-resolved style-only sheen to activity
+status without changing its text or geometry.
 
 The panel MUST span the prompt width and use a muted frame, a title at the left
 of the top border, compact current-binding hints at the right, an

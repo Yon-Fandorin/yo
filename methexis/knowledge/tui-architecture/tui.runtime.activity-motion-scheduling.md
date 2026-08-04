@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.motion-001
-    revision: sha256:6ec2c20974fa89e63ebae65bb310fb2d065884e80f24db14c7abf9765affbab4
+    revision: sha256:6cc09924ed38436dadeaa6e7baa3a4d4fdc3fbc05ac8856a7fe4af1aed79b76d
 relations:
   depends_on:
     - tui.chrome.input-stack
@@ -28,10 +28,13 @@ animation thread. Frame preparation MUST receive an explicit elapsed sample
 derived from that epoch.
 
 A prepared frame MUST report typed motion demand only when it actually painted
-a dynamic activity marker. An active semantic Turn alone MUST NOT arm timed
-redraw: a hidden marker caused by another view, insufficient height, or width
-fallback MUST remain free of invisible animation work. Idle frames and
-zero-sized surfaces MUST disarm timed redraw.
+a visible dynamic indicator whose later logical frame can change at least one
+completed cell. An active semantic Turn or pending provider alone
+MUST NOT arm timed redraw: an indicator hidden by another view, overlay state,
+insufficient height, or width fallback MUST remain free of invisible animation
+work. If more than one visible indicator requests motion, the completed frame
+MUST report their shortest positive period. Idle frames and zero-sized surfaces
+MUST disarm timed redraw.
 
 For a demanded positive frame period `P`, the logical tick MUST be
 `floor((now - epoch) / P)` and the next deadline MUST be

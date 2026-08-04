@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: tui.prompt-assist.trigger-lifecycle
-revision: sha256:087e8b6b94440fd139eb1594610d5a5aacd90d3b6021d5e6ce8e0e935f9fd15a
+revision: sha256:a7a8721bee4e81a1f20f25c4abee067a3fcfffef2bdd88e0e142739298440fb9
 reviewer: tui-architecture
-reviewed_at: 2026-08-03T06:13:37Z
+reviewed_at: 2026-08-04T14:59:06Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:2784ebc5f6e28d5b32c916ea1a06bfa7f3a9242dc825082ec35d52fb2036a0b4
-request_hash: sha256:a27d38b8f5605808aa7a395582cac5ebf90e9eaabf04f7d722c592e7289490b4
+projection_hash: sha256:3f53b9bfae56de5cf101cbafe484b4b3cadc9d3767d53c56fc1cf13fdd00d39a
+request_hash: sha256:8273e0434498dc3a9eb034aecf139c24590fa9ce9db8c8e550f60f7d4f827300
