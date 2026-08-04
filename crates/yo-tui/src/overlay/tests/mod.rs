@@ -25,6 +25,12 @@ fn appearance() -> SelectionPanelAppearance {
     let plain = Style::default();
     SelectionPanelAppearance {
         styles: SelectionPanelStyles {
+            activity: crate::appearance::ActivityStyles {
+                marker: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
+                muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
+                trail: Style::new(Color::Indexed(6), Color::Default, Attributes::DIM),
+                peak: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
+            },
             background: plain,
             frame: Style::new(Color::Default, Color::Default, Attributes::DIM),
             title: Style::new(Color::Default, Color::Default, Attributes::BOLD),
@@ -103,8 +109,8 @@ fn row(surface: &Surface, y: u16) -> String {
     rendered.trim_end().to_owned()
 }
 
-// activity title status는 글자를 바꾸지 않고 같은 120ms phase로 강조 cell만 이동한다.
-// 따라서 두 frame의 문구와 geometry는 같고 motion demand와 강조 위치만 달라진다.
+// activity title status는 글자를 바꾸지 않고 같은 120ms phase로 peak와 trail을 이동한다.
+// 따라서 두 frame의 문구와 geometry는 같고, shell과 같은 역할 style만 한 칸씩 전진한다.
 #[test]
 fn activity_title_status_moves_a_style_only_sheen_without_relayout() {
     let panel = SelectionPanel::new(
@@ -127,6 +133,23 @@ fn activity_title_status_moves_a_style_only_sheen_without_relayout() {
     assert_eq!(first_period, Some(std::time::Duration::from_millis(120)));
     assert_eq!(second_period, first_period);
     assert_ne!(first, second);
+    let activity = appearance().styles.activity;
+    assert_eq!(
+        first.cell(Point::new(14, 0)).unwrap().style(),
+        activity.peak
+    );
+    assert_eq!(
+        first.cell(Point::new(15, 0)).unwrap().style(),
+        activity.trail
+    );
+    assert_eq!(
+        second.cell(Point::new(14, 0)).unwrap().style(),
+        activity.trail
+    );
+    assert_eq!(
+        second.cell(Point::new(15, 0)).unwrap().style(),
+        activity.peak
+    );
 }
 
 // static status와 한 grapheme뿐인 activity status는 이후 phase가 화면을 바꿀 수 없으므로

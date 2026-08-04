@@ -339,14 +339,24 @@ fn terminal_and_html_project_the_same_completed_appearance_surface() {
             glyphs: PromptGlyphs::ascii(),
         },
         chrome: ShellChromeStyles {
-            activity: default,
-            activity_muted: default,
+            activity: crate::appearance::ActivityStyles {
+                marker: default,
+                muted: default,
+                trail: default,
+                peak: default,
+            },
             metrics: default,
             mode: default,
             key_hint: default,
         },
         overlay: crate::overlay::SelectionPanelAppearance {
             styles: crate::overlay::SelectionPanelStyles {
+                activity: crate::appearance::ActivityStyles {
+                    marker: default,
+                    muted: default,
+                    trail: default,
+                    peak: default,
+                },
                 background: default,
                 frame: default,
                 title: default,

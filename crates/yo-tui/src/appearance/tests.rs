@@ -1,8 +1,8 @@
 use super::{
-    AppearanceCandidate, AppearanceCandidateError, AppearanceCommitError, AppearanceGlyphRole,
-    AppearanceState, GlyphProfile, validate_marker,
+    ActivityStyles, AppearanceCandidate, AppearanceCandidateError, AppearanceCommitError,
+    AppearanceGlyphRole, AppearanceState, GlyphProfile, validate_marker,
 };
-use crate::surface::GraphemeError;
+use crate::surface::{Attributes, Color, GraphemeError, Style};
 
 // 기본 appearance는 Rich 글리프와 첫 revision을 같은 검증 경로로 확정한다.
 #[test]
@@ -115,7 +115,14 @@ fn built_in_activity_cycles_follow_the_approved_order_and_period() {
             .activity_motion_frame(Duration::from_millis(u64::try_from(tick).unwrap() * 120));
         assert_eq!(frame.marker(), expected);
         assert_eq!(frame.period(), Some(Duration::from_millis(120)));
-        assert_eq!(frame.emphasis_index(7), Some(tick % 7));
+        let sheen = frame.sheen(7).unwrap();
+        let roles = ActivityStyles {
+            marker: Style::default(),
+            muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
+            trail: Style::new(Color::Indexed(6), Color::Default, Attributes::DIM),
+            peak: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
+        };
+        assert_eq!(sheen.style_at(tick % 7, roles), roles.peak);
     }
 
     let ascii = AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii))
@@ -149,7 +156,7 @@ fn one_frame_activity_profile_is_valid_but_does_not_demand_motion() {
 
     assert_eq!(frame.marker(), ".");
     assert_eq!(frame.period(), None);
-    assert_eq!(frame.emphasis_index(7), None);
+    assert_eq!(frame.sheen(7), None);
 }
 
 // 움직이는 profile이어도 보이는 글자가 하나뿐이면 강조 위치가 달라질 수 없으므로
@@ -160,9 +167,64 @@ fn activity_sheen_requires_at_least_two_visible_graphemes() {
     let pin = state.pin();
     let frame = pin.snapshot().activity_motion_frame(Duration::ZERO);
 
-    assert_eq!(frame.emphasis_index(0), None);
-    assert_eq!(frame.emphasis_index(1), None);
-    assert_eq!(frame.emphasis_index(2), Some(0));
+    assert_eq!(frame.sheen(0), None);
+    assert_eq!(frame.sheen(1), None);
+    assert!(frame.sheen(2).is_some());
+}
+
+// 3단계 sheen은 가운데 peak와 화면 안쪽의 이웃 한 칸만 trail로 칠하며,
+// 첫·마지막 글자에서는 반대편으로 trail을 순환시키지 않는다.
+#[test]
+fn activity_sheen_clips_trails_at_visible_label_edges() {
+    let pin = AppearanceState::default().pin();
+    let styles = ActivityStyles {
+        marker: Style::default(),
+        muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
+        trail: Style::new(Color::Indexed(6), Color::Default, Attributes::DIM),
+        peak: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
+    };
+
+    let first = pin
+        .snapshot()
+        .activity_motion_frame(Duration::ZERO)
+        .sheen(4)
+        .unwrap();
+    assert_eq!(first.style_at(0, styles), styles.peak);
+    assert_eq!(first.style_at(1, styles), styles.trail);
+    assert_eq!(first.style_at(3, styles), styles.muted);
+
+    let last = pin
+        .snapshot()
+        .activity_motion_frame(Duration::from_millis(360))
+        .sheen(4)
+        .unwrap();
+    assert_eq!(last.style_at(2, styles), styles.trail);
+    assert_eq!(last.style_at(3, styles), styles.peak);
+    assert_eq!(last.style_at(0, styles), styles.muted);
+}
+
+// 내장 activity 역할은 터미널 기본색 또는 팔레트 색만 사용하고, marker에는
+// 글리프 실루엣을 뭉개는 bold·dim 속성을 붙이지 않는다.
+#[test]
+fn built_in_activity_styles_are_palette_based_and_marker_weight_is_stable() {
+    let styles = AppearanceState::default()
+        .pin()
+        .snapshot()
+        .styles()
+        .chrome
+        .activity;
+
+    for style in [styles.marker, styles.muted, styles.trail, styles.peak] {
+        assert!(matches!(
+            style.foreground,
+            Color::Default | Color::Indexed(_)
+        ));
+        assert!(matches!(
+            style.background,
+            Color::Default | Color::Indexed(_)
+        ));
+    }
+    assert_eq!(styles.marker.attributes, Attributes::empty());
 }
 
 // 빈 cycle·0ms·복수 grapheme·서로 다른 cell 폭은 publication 전에 구체적 오류로 거부한다.

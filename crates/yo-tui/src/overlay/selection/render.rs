@@ -222,7 +222,7 @@ impl PreparedSelectionPanel {
                         u16::try_from(activity_start.saturating_add(visible_status_cells))
                             .expect("panel width fits u16"),
                         status_text,
-                        styles.title,
+                        styles.activity,
                         motion,
                     );
                 }
@@ -271,7 +271,7 @@ impl PreparedSelectionPanel {
         start: u16,
         end: u16,
         text: &str,
-        emphasis_style: Style,
+        activity_styles: crate::appearance::ActivityStyles,
         motion: ActivityMotionFrame<'_>,
     ) {
         let mut visible = Vec::new();
@@ -287,15 +287,16 @@ impl PreparedSelectionPanel {
             visible.push((x, grapheme));
             x = next;
         }
-        let Some(index) = motion.emphasis_index(visible.len()) else {
+        let Some(sheen) = motion.sheen(visible.len()) else {
             return;
         };
-        let (x, grapheme) = visible.swap_remove(index);
-        self.writes.push(PreparedWrite {
-            point: Point::new(x, 0),
-            grapheme,
-            style: emphasis_style,
-        });
+        for (index, (x, grapheme)) in visible.into_iter().enumerate() {
+            self.writes.push(PreparedWrite {
+                point: Point::new(x, 0),
+                grapheme,
+                style: sheen.style_at(index, activity_styles),
+            });
+        }
         self.motion_period = motion.period();
     }
 

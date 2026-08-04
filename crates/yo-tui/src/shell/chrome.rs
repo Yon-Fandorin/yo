@@ -2,8 +2,10 @@
 
 use std::{num::NonZeroU16, time::Duration};
 
+use unicode_segmentation::UnicodeSegmentation;
+
 use crate::{
-    appearance::ActivityMotionFrame,
+    appearance::{ActivityMotionFrame, ActivityStyles},
     input::{editor::binding::NewlineBinding, key_notation::interrupt_notation},
     runner::PresentationMode,
     surface::{Point, Rect, Size, Style, SurfaceView, WriteOutcome},
@@ -12,7 +14,7 @@ use crate::{
 
 mod help;
 
-const WORKING_GRAPHEMES: usize = 7;
+const WORKING_LABEL: &str = "Working";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ShellChromeSnapshot<'value> {
@@ -24,8 +26,7 @@ pub(crate) struct ShellChromeSnapshot<'value> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ShellChromeStyles {
-    pub(crate) activity: Style,
-    pub(crate) activity_muted: Style,
+    pub(crate) activity: ActivityStyles,
     pub(crate) metrics: Style,
     pub(crate) mode: Style,
     pub(crate) key_hint: Style,
@@ -127,12 +128,13 @@ pub(super) fn paint_transient(
     }
     let marker = motion.marker();
     let interrupt = interrupt_notation();
+    let working_graphemes = WORKING_LABEL.graphemes(true).count();
     let candidates = if show_shortcuts {
         vec![
             ActivityRowCandidate::new(
-                format!("{marker} Working  ·  {interrupt} interrupt"),
+                format!("{marker} {WORKING_LABEL}  ·  {interrupt} interrupt"),
                 true,
-                Some((2, WORKING_GRAPHEMES)),
+                Some((2, working_graphemes)),
             ),
             ActivityRowCandidate::new(format!("{marker} {interrupt}"), true, None),
             ActivityRowCandidate::new(interrupt, false, None),
@@ -141,11 +143,11 @@ pub(super) fn paint_transient(
     } else {
         vec![
             ActivityRowCandidate::new(
-                format!("{marker} Working"),
+                format!("{marker} {WORKING_LABEL}"),
                 true,
-                Some((2, WORKING_GRAPHEMES)),
+                Some((2, working_graphemes)),
             ),
-            ActivityRowCandidate::new("Working", false, Some((0, WORKING_GRAPHEMES))),
+            ActivityRowCandidate::new(WORKING_LABEL, false, Some((0, working_graphemes))),
         ]
     };
     let row = view.size().height - 1;
@@ -237,24 +239,25 @@ fn paint_fitting_activity_row(
         return Ok(None);
     };
     let candidate = &candidates[index];
-    let emphasis = candidate.working.and_then(|(start, count)| {
-        motion
-            .emphasis_index(count)
-            .map(|offset| start.saturating_add(offset))
-    });
+    let sheen = candidate.working.and_then(|(_, count)| motion.sheen(count));
     let base = if candidate.marker_visible || candidate.working.is_some() {
-        styles.activity_muted
+        styles.activity.muted
     } else {
-        styles.activity
+        styles.activity.peak
     };
     if view.clear(base) == WriteOutcome::Clipped {
         return Err(ShellChromeError::SurfaceConflict);
     }
     for (grapheme_index, positioned) in flow.glyphs.into_iter().enumerate() {
-        let style = if (candidate.marker_visible && grapheme_index == 0)
-            || emphasis == Some(grapheme_index)
-        {
-            styles.activity
+        let style = if candidate.marker_visible && grapheme_index == 0 {
+            styles.activity.marker
+        } else if let (Some((start, count)), Some(sheen)) = (candidate.working, sheen) {
+            let end = start.saturating_add(count);
+            if (start..end).contains(&grapheme_index) {
+                sheen.style_at(grapheme_index - start, styles.activity)
+            } else {
+                base
+            }
         } else {
             base
         };
@@ -262,7 +265,7 @@ fn paint_fitting_activity_row(
             return Err(ShellChromeError::SurfaceConflict);
         }
     }
-    Ok((candidate.marker_visible || emphasis.is_some())
+    Ok((candidate.marker_visible || sheen.is_some())
         .then(|| motion.period())
         .flatten())
 }

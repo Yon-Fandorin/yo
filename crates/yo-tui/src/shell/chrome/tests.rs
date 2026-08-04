@@ -5,7 +5,7 @@ use super::{
     paint_mode, paint_status_groups, paint_transient,
 };
 use crate::{
-    appearance::{ActivityMotionFrame, AppearanceState},
+    appearance::{ActivityMotionFrame, ActivityStyles, AppearanceState},
     input::editor::binding::NewlineBinding,
     runner::PresentationMode,
     surface::{Attributes, CellContent, Color, Point, Rect, Size, Style, Surface},
@@ -89,8 +89,7 @@ fn idle_and_active_layouts_keep_the_same_prompt_origin() {
 #[test]
 fn activity_row_drops_description_without_wrapping_interrupt_keys() {
     let styles = ShellChromeStyles {
-        activity: Style::default(),
-        activity_muted: Style::default(),
+        activity: ActivityStyles::default(),
         metrics: Style::default(),
         mode: Style::default(),
         key_hint: Style::default(),
@@ -135,13 +134,17 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
     assert_eq!(row(&minimal), "Esc/^C");
 }
 
-// Working 문구는 marker와 같은 activity phase를 사용해 한 글자의 style만 이동한다.
-// 두 frame의 문자열과 폭은 같고, 실제로 보일 때만 120ms demand를 반환한다.
+// Working 문구는 marker와 같은 activity phase를 사용해 peak와 양옆 trail을 이동한다.
+// 두 frame의 문자열과 폭은 같고, marker는 굵기 변화 없이 전용 style을 유지한다.
 #[test]
 fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
     let styles = ShellChromeStyles {
-        activity: Style::new(Color::Default, Color::Default, Attributes::BOLD),
-        activity_muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
+        activity: ActivityStyles {
+            marker: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
+            muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
+            trail: Style::new(Color::Indexed(6), Color::Default, Attributes::DIM),
+            peak: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
+        },
         metrics: Style::default(),
         mode: Style::default(),
         key_hint: Style::default(),
@@ -177,6 +180,34 @@ fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
         row(&second).split_once(' ').unwrap().1
     );
     assert_ne!(first, second);
+    assert_eq!(
+        first.cell(Point::new(0, 0)).unwrap().style(),
+        styles.activity.marker
+    );
+    assert_eq!(
+        first.cell(Point::new(2, 0)).unwrap().style(),
+        styles.activity.peak
+    );
+    assert_eq!(
+        first.cell(Point::new(3, 0)).unwrap().style(),
+        styles.activity.trail
+    );
+    assert_eq!(
+        first.cell(Point::new(4, 0)).unwrap().style(),
+        styles.activity.muted
+    );
+    assert_eq!(
+        second.cell(Point::new(2, 0)).unwrap().style(),
+        styles.activity.trail
+    );
+    assert_eq!(
+        second.cell(Point::new(3, 0)).unwrap().style(),
+        styles.activity.peak
+    );
+    assert_eq!(
+        second.cell(Point::new(4, 0)).unwrap().style(),
+        styles.activity.trail
+    );
     assert_eq!(first_period, Some(Duration::from_millis(120)));
     assert_eq!(second_period, first_period);
 }
@@ -186,8 +217,7 @@ fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
 #[test]
 fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
     let styles = ShellChromeStyles {
-        activity: Style::default(),
-        activity_muted: Style::default(),
+        activity: ActivityStyles::default(),
         metrics: Style::default(),
         mode: Style::default(),
         key_hint: Style::default(),
@@ -215,8 +245,7 @@ fn footer_uses_shared_key_notation_and_keeps_mode_at_the_right_edge() {
 #[test]
 fn footer_omits_ctrl_d_exit_while_the_prompt_has_a_draft() {
     let styles = ShellChromeStyles {
-        activity: Style::default(),
-        activity_muted: Style::default(),
+        activity: ActivityStyles::default(),
         metrics: Style::default(),
         mode: Style::default(),
         key_hint: Style::default(),

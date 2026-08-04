@@ -114,6 +114,21 @@ pub(crate) struct ActivityMotionFrame<'frame> {
     phase: usize,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ActivityStyles {
+    pub(crate) marker: Style,
+    pub(crate) muted: Style,
+    pub(crate) trail: Style,
+    pub(crate) peak: Style,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ActivitySheen {
+    peak: usize,
+    left_trail: Option<usize>,
+    right_trail: Option<usize>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AppearancePin {
     revision: AppearanceRevision,
@@ -245,12 +260,29 @@ impl<'frame> ActivityMotionFrame<'frame> {
         self.period
     }
 
-    pub(crate) fn emphasis_index(self, visible_graphemes: usize) -> Option<usize> {
+    pub(crate) fn sheen(self, visible_graphemes: usize) -> Option<ActivitySheen> {
         self.period?;
         if visible_graphemes < 2 {
             return None;
         }
-        Some(self.phase % visible_graphemes)
+        let peak = self.phase % visible_graphemes;
+        Some(ActivitySheen {
+            peak,
+            left_trail: peak.checked_sub(1),
+            right_trail: (peak + 1 < visible_graphemes).then_some(peak + 1),
+        })
+    }
+}
+
+impl ActivitySheen {
+    pub(crate) fn style_at(self, index: usize, styles: ActivityStyles) -> Style {
+        if index == self.peak {
+            styles.peak
+        } else if self.left_trail == Some(index) || self.right_trail == Some(index) {
+            styles.trail
+        } else {
+            styles.muted
+        }
     }
 }
 
@@ -405,14 +437,14 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
             },
         },
         chrome: ShellChromeStyles {
-            activity: Style::new(Color::Default, Color::Default, Attributes::BOLD),
-            activity_muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
+            activity: default_activity_styles(),
             metrics: Style::new(Color::Default, Color::Default, Attributes::DIM),
             mode: Style::new(Color::Default, Color::Default, Attributes::DIM),
             key_hint: Style::new(Color::Default, Color::Default, Attributes::BOLD),
         },
         overlay: SelectionPanelAppearance {
             styles: SelectionPanelStyles {
+                activity: default_activity_styles(),
                 background: style,
                 frame: Style::new(Color::Default, Color::Default, Attributes::DIM),
                 title: Style::new(Color::Default, Color::Default, Attributes::BOLD),
@@ -428,6 +460,15 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
                 GlyphProfile::Ascii => SelectionPanelGlyphs::ascii(),
             },
         },
+    }
+}
+
+const fn default_activity_styles() -> ActivityStyles {
+    ActivityStyles {
+        marker: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
+        muted: Style::new(Color::Default, Color::Default, Attributes::DIM),
+        trail: Style::new(Color::Indexed(6), Color::Default, Attributes::DIM),
+        peak: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
     }
 }
 

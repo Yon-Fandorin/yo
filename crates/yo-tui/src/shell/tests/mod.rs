@@ -5,7 +5,7 @@ use super::{
     AgentShellViewState, ShellChromeSnapshot, render, render_with_measure_hook,
 };
 use crate::{
-    appearance::ActivityMotionFrame,
+    appearance::{ActivityMotionFrame, ActivityStyles},
     input::{
         editor::{EditorEffect, PromptEditor},
         event::InputEvent,
@@ -66,14 +66,24 @@ fn styles() -> AgentShellStyles {
             glyphs: PromptGlyphs::rich(),
         },
         chrome: ShellChromeStyles {
-            activity: style(8),
-            activity_muted: style(18),
+            activity: ActivityStyles {
+                marker: style(8),
+                muted: style(18),
+                trail: style(28),
+                peak: style(38),
+            },
             metrics: style(9),
             mode: style(10),
             key_hint: style(19),
         },
         overlay: SelectionPanelAppearance {
             styles: SelectionPanelStyles {
+                activity: ActivityStyles {
+                    marker: style(8),
+                    muted: style(18),
+                    trail: style(28),
+                    peak: style(38),
+                },
                 background: style(0),
                 frame: style(11),
                 title: style(12),

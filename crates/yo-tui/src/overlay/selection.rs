@@ -2,7 +2,10 @@ use std::collections::HashSet;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::surface::{Grapheme, GraphemeError, Style};
+use crate::{
+    appearance::ActivityStyles,
+    surface::{Grapheme, GraphemeError, Style},
+};
 
 const VISIBLE_ENTRY_CAP: usize = 8;
 
@@ -62,6 +65,7 @@ enum SnapshotFreshness {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SelectionPanelStyles {
+    pub(crate) activity: ActivityStyles,
     pub(crate) background: Style,
     pub(crate) frame: Style,
     pub(crate) title: Style,
