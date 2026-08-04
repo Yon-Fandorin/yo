@@ -21,9 +21,9 @@ use transport::{JsonPeer, StdioPeer};
 
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentBackend, AgentCommand, ApprovalDecision, BackendCapabilities, BackendEvent,
-    BackendFailure, BackendFailureKind, BackendPoll, BackendStopHandle, RequestId, SessionId,
-    TurnRef,
+    AgentBackend, AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
+    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
+    BackendPoll, BackendRequestEvidence, BackendStopHandle, RequestId, SessionId, TurnRef,
 };
 
 /// Local stdio adapter for a compatible `codex app-server` process.
@@ -73,7 +73,10 @@ impl AgentBackend for CodexBackend {
         self.inner.capabilities()
     }
 
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         self.inner.execute_command(command)
     }
 
@@ -109,6 +112,7 @@ struct WireTurnBinding {
 struct Backend<P> {
     client: AppServerClient<P>,
     initialized: bool,
+    backend_version: Option<String>,
     cwd: String,
     session: Option<SessionBinding>,
     turns: HashMap<TurnRef, String>,
@@ -127,6 +131,7 @@ impl<P: JsonPeer> Backend<P> {
         Self {
             client,
             initialized: false,
+            backend_version: None,
             cwd,
             session: None,
             turns: HashMap::new(),
@@ -145,12 +150,15 @@ impl<P: JsonPeer> Backend<P> {
         BackendCapabilities::none().with_steer()
     }
 
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         match command {
             AgentCommand::CreateSession { session_id } => self.create_session(session_id),
             AgentCommand::StartTurn { turn, input } => {
                 let thread_id = self.thread_id(turn.session_id())?.to_owned();
-                let result = self.client.call(
+                let call = self.client.call(
                     "turn/start",
                     json!({
                         "threadId": thread_id,
@@ -158,21 +166,27 @@ impl<P: JsonPeer> Backend<P> {
                         "cwd": self.cwd,
                     }),
                 )?;
-                let wire_turn = protocol::string_at(&result, &["turn", "id"])?.to_owned();
+                let wire_turn = protocol::string_at(&call.result, &["turn", "id"])?.to_owned();
                 self.turns.insert(turn, wire_turn.clone());
                 self.wire_turns.insert(
-                    wire_turn,
+                    wire_turn.clone(),
                     WireTurnBinding {
                         turn,
                         interrupted: false,
                     },
                 );
-                Ok(())
+                Ok(BackendCommandEvidence::RequestAccepted(
+                    BackendRequestEvidence::new(
+                        "codex.app-server/turn-start/v1",
+                        json_rpc_identity(call.request_id),
+                        accepted_request_identity(call.request_id, &wire_turn),
+                    ),
+                ))
             },
             AgentCommand::SteerTurn { turn, input } => {
                 let thread_id = self.thread_id(turn.session_id())?.to_owned();
                 let turn_id = self.turn_id(turn)?.to_owned();
-                let result = self.client.call(
+                let call = self.client.call(
                     "turn/steer",
                     json!({
                         "threadId": thread_id,
@@ -180,13 +194,19 @@ impl<P: JsonPeer> Backend<P> {
                         "input": [{ "type": "text", "text": input.into_string() }],
                     }),
                 )?;
-                let accepted = protocol::string_at(&result, &["turnId"])?;
+                let accepted = protocol::string_at(&call.result, &["turnId"])?;
                 if accepted != turn_id {
                     return Err(protocol::protocol_failure(format!(
                         "Codex steer accepted Turn `{accepted}` instead of `{turn_id}`"
                     )));
                 }
-                Ok(())
+                Ok(BackendCommandEvidence::RequestAccepted(
+                    BackendRequestEvidence::new(
+                        "codex.app-server/turn-steer/v1",
+                        json_rpc_identity(call.request_id),
+                        accepted_request_identity(call.request_id, accepted),
+                    ),
+                ))
             },
             AgentCommand::InterruptTurn { turn } => {
                 let thread_id = self.thread_id(turn.session_id())?.to_owned();
@@ -195,7 +215,7 @@ impl<P: JsonPeer> Backend<P> {
                     "turn/interrupt",
                     json!({ "threadId": thread_id, "turnId": turn_id }),
                 )?;
-                Ok(())
+                Ok(BackendCommandEvidence::None)
             },
             AgentCommand::RespondToActivity { request, response } => {
                 self.respond_to_activity(request, response)
@@ -203,32 +223,62 @@ impl<P: JsonPeer> Backend<P> {
         }
     }
 
-    fn create_session(&mut self, session_id: SessionId) -> Result<(), BackendFailure> {
+    fn create_session(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         if !self.initialized {
-            self.client.initialize()?;
+            let initialize = self.client.initialize()?;
+            self.backend_version = Some(initialize.user_agent);
             self.initialized = true;
         }
-        let result = self.client.call(
-            "thread/start",
-            json!({
-                "cwd": self.cwd,
-                "serviceName": "yo",
-                "ephemeral": true,
-            }),
-        )?;
+        let result = self
+            .client
+            .call(
+                "thread/start",
+                json!({
+                    "cwd": self.cwd,
+                    "serviceName": "yo",
+                }),
+            )?
+            .result;
         let thread_id = protocol::string_at(&result, &["thread", "id"])?.to_owned();
+        let backend_session_id = protocol::string_at(&result, &["thread", "sessionId"])?;
+        let model = protocol::string_at(&result, &["model"])?;
+        let model_provider = protocol::string_at(&result, &["modelProvider"])?;
+        let backend_version = self.backend_version.clone().ok_or_else(|| {
+            protocol::protocol_failure("Codex backend version was not retained after initialize")
+        })?;
+        let binding_value = json!({
+            "sessionId": backend_session_id,
+            "threadId": thread_id,
+        })
+        .to_string();
+        let model_value = json!({
+            "model": model,
+            "provider": model_provider,
+        })
+        .to_string();
         self.session = Some(SessionBinding {
             yo: session_id,
-            codex: thread_id,
+            codex: thread_id.clone(),
         });
-        Ok(())
+        Ok(BackendCommandEvidence::BindingOpened(
+            BackendBindingEvidence::new(
+                "codex-app-server",
+                backend_version,
+                BackendIdentity::new("codex.app-server/thread-binding/v1", binding_value),
+                BackendIdentity::new("codex.app-server/model-and-provider/v1", model_value),
+                BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
+            ),
+        ))
     }
 
     fn respond_to_activity(
         &mut self,
         request: ActivityRequestRef,
         response: ActivityResponse,
-    ) -> Result<(), BackendFailure> {
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         let approval = self.approvals.get(&request).ok_or_else(|| {
             protocol::protocol_failure("approval response has no matching Codex request")
         })?;
@@ -258,7 +308,7 @@ impl<P: JsonPeer> Backend<P> {
                 activity: response_activity,
                 outcome: ActivityOutcome::Completed,
             });
-        Ok(())
+        Ok(BackendCommandEvidence::None)
     }
 
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
@@ -319,7 +369,10 @@ impl<P: JsonPeer> AgentBackend for Backend<P> {
         self.capabilities()
     }
 
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         self.execute_command(command)
     }
 
@@ -330,4 +383,18 @@ impl<P: JsonPeer> AgentBackend for Backend<P> {
     fn shutdown(&mut self) -> Result<(), BackendFailure> {
         self.shutdown()
     }
+}
+
+fn json_rpc_identity(request_id: u64) -> BackendIdentity {
+    BackendIdentity::new(
+        "codex.app-server/json-rpc-request/v1",
+        request_id.to_string(),
+    )
+}
+
+fn accepted_request_identity(request_id: u64, turn_id: &str) -> BackendIdentity {
+    BackendIdentity::new(
+        "codex.app-server/accepted-request/v1",
+        json!({ "jsonRpcId": request_id, "turnId": turn_id }).to_string(),
+    )
 }

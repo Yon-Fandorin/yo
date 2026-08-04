@@ -13,8 +13,8 @@ use crossterm::event::{
 };
 use yo_core::{
     AgentBackend, AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionError,
-    AgentSessionPoll, BackendCapabilities, BackendFailure, BackendPoll, BackendStopHandle,
-    CommandAdmission, TranscriptRecord, TurnRef,
+    AgentSessionPoll, BackendCapabilities, BackendCommandEvidence, BackendFailure, BackendPoll,
+    BackendStopHandle, CommandAdmission, TranscriptRecord, TurnRef,
 };
 
 use crate::{
@@ -353,14 +353,17 @@ impl AgentBackend for BlockingAgentBackend {
         BackendCapabilities::none().with_steer()
     }
 
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         self.processed.send(()).unwrap();
         if matches!(command, AgentCommand::StartTurn { .. }) && !self.blocked {
             self.blocked = true;
             self.entered.send(()).unwrap();
             self.release.recv().unwrap();
         }
-        Ok(())
+        Ok(BackendCommandEvidence::None)
     }
 
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {

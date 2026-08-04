@@ -1,5 +1,6 @@
 use std::{fmt, sync::Arc};
 
+use super::{BackendCommandEvidence, BackendOutcomeEvidence};
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand, TurnOutcome, TurnRef,
 };
@@ -20,8 +21,14 @@ pub trait AgentBackend {
 
     /// Executes a command far enough to know whether the backend accepted it.
     ///
-    /// Streamed work caused by an accepted command is observed through [`Self::poll_event`].
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure>;
+    /// The returned provider-neutral evidence contains only facts the adapter observed; the
+    /// runtime owns epochs, operation identities, and Journal coordinates. `None` means the
+    /// backend accepted the command without claiming resumable correlation. Streamed work caused
+    /// by an accepted command is observed through [`Self::poll_event`].
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure>;
 
     /// Observes one already available semantic event without waiting for future backend work.
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure>;
@@ -113,6 +120,11 @@ pub enum BackendEvent {
     TurnFinished {
         turn: TurnRef,
         outcome: TurnOutcome,
+    },
+    /// A completed Turn whose backend binding can continue from the accepted request.
+    ResumableTurnFinished {
+        turn: TurnRef,
+        evidence: BackendOutcomeEvidence,
     },
 }
 

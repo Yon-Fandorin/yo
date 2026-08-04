@@ -9,8 +9,9 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentBackend, AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendFailure,
-    BackendFailureKind, RequestId, RuntimePoll, SessionId, TurnId, TurnOutcome, TurnRef, UserInput,
+    AgentBackend, AgentCommand, AgentEvent, AgentRuntime, ApprovalDecision, BackendCommandEvidence,
+    BackendFailure, BackendFailureKind, RequestId, RuntimePoll, SessionId, TurnId, TurnOutcome,
+    TurnRef, UserInput,
 };
 
 #[derive(Clone)]
@@ -72,6 +73,17 @@ fn initialize_response(id: u64, version: &str) -> Value {
     })
 }
 
+fn thread_start_response(id: u64, thread_id: &str) -> Value {
+    json!({
+        "id": id,
+        "result": {
+            "thread": { "id": thread_id, "sessionId": thread_id },
+            "model": "gpt-test",
+            "modelProvider": "openai"
+        }
+    })
+}
+
 fn id(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap()
 }
@@ -101,9 +113,10 @@ fn backend(later_messages: impl IntoIterator<Item = Value>) -> (Backend<FakePeer
     .concat();
     let (peer, sent) = FakePeer::new(messages);
     let mut client = AppServerClient::new(peer, Duration::from_secs(1));
-    client.initialize().unwrap();
+    let initialize = client.initialize().unwrap();
     let mut backend = Backend::new_uninitialized(client, "/workspace".into());
     backend.initialized = true;
+    backend.backend_version = Some(initialize.user_agent);
     (backend, sent)
 }
 
@@ -111,16 +124,20 @@ fn backend(later_messages: impl IntoIterator<Item = Value>) -> (Backend<FakePeer
 // 이후 첫 Session RPC가 다음 request id와 설정된 작업 디렉토리를 사용하는지 확인한다.
 #[test]
 fn initializes_before_starting_a_thread() {
-    let (mut backend, sent) = backend([json!({
-        "id": 2,
-        "result": { "thread": { "id": "thread-a" } }
-    })]);
+    let (mut backend, sent) = backend([thread_start_response(2, "thread-a")]);
 
-    backend
+    let evidence = backend
         .execute_command(AgentCommand::CreateSession {
             session_id: session(1),
         })
         .unwrap();
+
+    let BackendCommandEvidence::BindingOpened(evidence) = evidence else {
+        panic!("thread/start acceptance must expose binding evidence");
+    };
+    assert_eq!(evidence.backend_version(), "codex_cli_rs/0.146.0 (test)");
+    assert!(evidence.model_identity().value().contains("gpt-test"));
+    assert!(evidence.model_identity().value().contains("openai"));
 
     let sent = sent.0.borrow();
     assert_eq!(sent[0]["method"], "initialize");
@@ -128,7 +145,7 @@ fn initializes_before_starting_a_thread() {
     assert_eq!(sent[2]["id"], 2);
     assert_eq!(sent[2]["method"], "thread/start");
     assert_eq!(sent[2]["params"]["cwd"], "/workspace");
-    assert_eq!(sent[2]["params"]["ephemeral"], true);
+    assert!(sent[2]["params"].get("ephemeral").is_none());
 }
 
 // 검증하지 않은 Codex minor 버전이면 initialized 알림이나 Session 명령을 보내기 전에
@@ -139,7 +156,7 @@ fn incompatible_version_fails_during_initialization() {
     let mut client = AppServerClient::new(peer, Duration::from_secs(1));
 
     let failure = match client.initialize() {
-        Ok(()) => panic!("an unverified Codex version must not initialize"),
+        Ok(_) => panic!("an unverified Codex version must not initialize"),
         Err(failure) => failure,
     };
 
@@ -154,7 +171,7 @@ fn maps_a_coding_turn_into_semantic_events() {
     let session_id = session(1);
     let active_turn = turn(session_id, 1);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({
             "method": "turn/started",
             "params": { "threadId": "thread-a", "turn": { "id": "turn-a" } }
@@ -302,7 +319,7 @@ fn correlates_an_approval_round_trip() {
     let session_id = session(1);
     let active_turn = turn(session_id, 1);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
         json!({
             "id": "approval-a",
@@ -416,7 +433,7 @@ fn rejects_a_delta_that_changes_the_items_turn() {
     let first_turn = turn(session_id, 1);
     let second_turn = turn(session_id, 2);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
         json!({ "id": 4, "result": { "turn": { "id": "turn-b" } } }),
         json!({
@@ -467,7 +484,7 @@ fn rejects_a_supported_item_completion_without_start() {
     let session_id = session(1);
     let active_turn = turn(session_id, 1);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
         json!({
             "method": "item/completed",
@@ -505,7 +522,7 @@ fn folds_an_error_notification_into_the_failed_turn() {
     let session_id = session(1);
     let active_turn = turn(session_id, 1);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
         json!({
             "method": "error",
@@ -558,7 +575,7 @@ fn sends_steer_and_interrupt_to_the_bound_turn() {
     let session_id = session(1);
     let active_turn = turn(session_id, 1);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
         json!({ "id": 4, "result": { "turnId": "turn-a" } }),
         json!({ "id": 5, "result": {} }),
@@ -598,7 +615,7 @@ fn interrupted_turn_closes_open_items_before_the_turn() {
     let session_id = session(1);
     let active_turn = turn(session_id, 1);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
         json!({
             "method": "item/started",
@@ -683,7 +700,7 @@ fn interrupted_turn_sorts_items_and_approvals_before_the_turn() {
     let session_id = session(1);
     let active_turn = turn(session_id, 1);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
         json!({
             "id": "approval-a",
@@ -772,7 +789,7 @@ fn interrupted_turn_state_isolated_from_a_later_item() {
     let first_turn = turn(session_id, 1);
     let second_turn = turn(session_id, 2);
     let messages = [
-        json!({ "id": 2, "result": { "thread": { "id": "thread-a" } } }),
+        thread_start_response(2, "thread-a"),
         json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
         json!({
             "method": "item/started",

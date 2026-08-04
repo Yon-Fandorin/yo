@@ -12,7 +12,8 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
-    AgentEvent, JournalSequence, SessionId, TurnId, TurnRef, UserInput,
+    AgentEvent, BackendBindingEvidence, BackendIdentity, BackendOutcomeEvidence,
+    BackendRequestEvidence, JournalSequence, SessionId, TurnId, TurnOutcome, TurnRef, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableCutoff, DurableRecord, DurableRecordKind,
         RepositoryEntry, RepositoryError, RepositorySequence, SessionRepository, StoragePressure,
@@ -262,6 +263,74 @@ fn recovers_an_initial_descriptor_gap_with_the_complete_session_snapshot() {
         recovered.journal_cutoff().map(JournalSequence::get),
         Some(4)
     );
+}
+
+// live writer가 binding, accepted request, 완료 outcome과 Anchor를 각각 한 physical append로
+// 내보내면 repository discovery와 전체 recovery가 같은 최신 Anchor를 가리키는지 확인한다.
+#[test]
+fn durable_live_correlation_publishes_one_recoverable_anchor() {
+    let session_id = session(1);
+    let descriptor = crate::fixture_descriptor(session_id);
+    let repository = SharedRepository::default();
+    let observed = Arc::clone(&repository.state);
+    let mut journal =
+        SessionJournal::with_repository_and_descriptor(Box::new(repository), descriptor);
+    journal.initialize_durability();
+    journal.append_initial_binding(
+        AgentCommand::CreateSession { session_id },
+        &[AgentEvent::SessionCreated { session_id }],
+        1,
+        BackendBindingEvidence::new(
+            "scripted",
+            "1",
+            BackendIdentity::new("scripted/binding/v1", "binding-1"),
+            BackendIdentity::new("scripted/model/v1", "model-1"),
+            BackendIdentity::new("scripted/session/v1", "session-1"),
+        ),
+    );
+    let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::MIN));
+    let submission_id = "10000000-0000-4000-8000-000000000019"
+        .parse()
+        .expect("the test submission fixture is a UUIDv4");
+    let accepted = journal.append_accepted_submission(
+        AgentCommand::StartTurn {
+            turn,
+            input: UserInput::from("persist anchor"),
+        },
+        submission_id,
+        &[AgentEvent::TurnStarted { turn }],
+        1,
+        BackendRequestEvidence::new(
+            "scripted/request/v1",
+            BackendIdentity::new("scripted/exchange/v1", "exchange-1"),
+            BackendIdentity::new("scripted/request/v1", "request-1"),
+        ),
+    );
+    journal.append_resumable_turn(
+        &AgentEvent::TurnFinished {
+            turn,
+            outcome: TurnOutcome::Completed,
+        },
+        1,
+        accepted,
+        BackendOutcomeEvidence::without_identity(),
+    );
+
+    let state = observed.lock().unwrap();
+    assert_eq!(state.entries.len(), 4);
+    let durable_anchor = state.entries[3]
+        .record()
+        .discovery()
+        .and_then(|discovery| discovery.continuation_anchor())
+        .expect("the completed physical append must publish its Anchor");
+    let commits = state
+        .entries
+        .iter()
+        .map(|entry| decode(entry.record().payload()).unwrap())
+        .collect::<Vec<_>>();
+    let recovered = recover(&commits).unwrap();
+    assert_eq!(recovered.continuation_anchor(), Some(durable_anchor));
+    assert_eq!(recovered.binding_epoch(), Some(1));
 }
 
 fn session(value: u64) -> SessionId {

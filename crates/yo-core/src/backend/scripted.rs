@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
 use super::{
-    AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendPoll, BackendStopHandle,
+    AgentBackend, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
+    BackendFailureKind, BackendPoll, BackendStopHandle,
 };
 use crate::AgentCommand;
 
@@ -10,6 +10,10 @@ use crate::AgentCommand;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BackendScriptStep {
     AcceptCommand(AgentCommand),
+    AcceptCommandWithEvidence {
+        command: AgentCommand,
+        evidence: BackendCommandEvidence,
+    },
     RejectCommand {
         command: AgentCommand,
         failure: BackendFailure,
@@ -66,7 +70,10 @@ impl AgentBackend for ScriptedBackend {
         self.capabilities
     }
 
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         if self.shutdown_result.is_some() || self.closed {
             return Err(Self::protocol_failure(
                 "cannot execute a command after the backend closed",
@@ -76,7 +83,17 @@ impl AgentBackend for ScriptedBackend {
         match self.steps.front() {
             Some(BackendScriptStep::AcceptCommand(expected)) if expected == &command => {
                 self.steps.pop_front();
-                Ok(())
+                Ok(BackendCommandEvidence::None)
+            },
+            Some(BackendScriptStep::AcceptCommandWithEvidence {
+                command: expected, ..
+            }) if expected == &command => {
+                let Some(BackendScriptStep::AcceptCommandWithEvidence { evidence, .. }) =
+                    self.steps.pop_front()
+                else {
+                    unreachable!("the front script step carried command evidence");
+                };
+                Ok(evidence)
             },
             Some(BackendScriptStep::RejectCommand {
                 command: expected, ..
@@ -89,6 +106,9 @@ impl AgentBackend for ScriptedBackend {
             },
             Some(
                 BackendScriptStep::AcceptCommand(expected)
+                | BackendScriptStep::AcceptCommandWithEvidence {
+                    command: expected, ..
+                }
                 | BackendScriptStep::RejectCommand {
                     command: expected, ..
                 },
@@ -129,6 +149,7 @@ impl AgentBackend for ScriptedBackend {
             },
             Some(
                 BackendScriptStep::AcceptCommand(_)
+                | BackendScriptStep::AcceptCommandWithEvidence { .. }
                 | BackendScriptStep::RejectCommand { .. }
                 | BackendScriptStep::Shutdown(_),
             )

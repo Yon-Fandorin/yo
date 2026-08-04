@@ -174,7 +174,8 @@ fn load_inventory(
         client.initialize().map_err(|error| error.to_string())?;
         let value = client
             .call("skills/list", json!({ "cwds": [cwd], "forceReload": true }))
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .result;
         serde_json::from_value::<SkillsListResponse>(value)
             .map_err(|error| format!("invalid Codex skills/list response: {error}"))
     })();

@@ -17,10 +17,10 @@ use super::{
     support::{next_poll, session, start_app, turn},
 };
 use crate::{
-    AgentBackend, AgentCommand, AgentEvent, BackendCapabilities, BackendFailure,
-    BackendFailureKind, BackendPoll, BackendScriptStep, BackendStopHandle, RuntimeError,
-    RuntimePoll, ScriptedBackend, SubmissionOutcome, SubmissionRejectionKind, TurnOutcome,
-    UserInput, journal::SessionJournal,
+    AgentBackend, AgentCommand, AgentEvent, BackendCapabilities, BackendCommandEvidence,
+    BackendFailure, BackendFailureKind, BackendPoll, BackendScriptStep, BackendStopHandle,
+    RuntimeError, RuntimePoll, ScriptedBackend, SubmissionOutcome, SubmissionRejectionKind,
+    TurnOutcome, UserInput, journal::SessionJournal,
 };
 
 // urgent interrupt가 normal lane에 이미 queue된 steer보다 먼저 실행되면 worker가 그
@@ -139,7 +139,10 @@ impl AgentBackend for BlockingSteerBackend {
         BackendCapabilities::none().with_steer()
     }
 
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         self.commands.send(command.clone()).unwrap();
         if matches!(
             command,
@@ -153,7 +156,7 @@ impl AgentBackend for BlockingSteerBackend {
             self.entered.send(()).unwrap();
             self.release.recv().unwrap();
         }
-        Ok(())
+        Ok(BackendCommandEvidence::None)
     }
 
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
@@ -177,8 +180,11 @@ impl AgentBackend for ClosingCleanupBackend {
         BackendCapabilities::none()
     }
 
-    fn execute_command(&mut self, _command: AgentCommand) -> Result<(), BackendFailure> {
-        Ok(())
+    fn execute_command(
+        &mut self,
+        _command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        Ok(BackendCommandEvidence::None)
     }
 
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
@@ -206,10 +212,13 @@ impl AgentBackend for StartupBlockingBackend {
         BackendCapabilities::none()
     }
 
-    fn execute_command(&mut self, _command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        _command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         self.entered.send(()).unwrap();
         self.release.recv().unwrap();
-        Ok(())
+        Ok(BackendCommandEvidence::None)
     }
 
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
@@ -233,12 +242,15 @@ impl AgentBackend for BlockingBackend {
         BackendCapabilities::none()
     }
 
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         if matches!(command, AgentCommand::StartTurn { .. }) {
             self.entered.send(()).unwrap();
             self.release.recv().unwrap();
         }
-        Ok(())
+        Ok(BackendCommandEvidence::None)
     }
 
     fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {

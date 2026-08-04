@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityUpdate, BackendEvent,
-    BackendFailure, BackendFailureKind, BackendPoll, Failure, TurnOutcome,
+    BackendFailure, BackendFailureKind, BackendOutcomeEvidence, BackendPoll, Failure, TurnOutcome,
 };
 
 impl<P: JsonPeer> Backend<P> {
@@ -208,9 +208,16 @@ impl<P: JsonPeer> Backend<P> {
                 )));
             },
         };
-        let turn_finished = BackendEvent::TurnFinished {
-            turn,
-            outcome: outcome.clone(),
+        let turn_finished = if outcome == TurnOutcome::Completed {
+            BackendEvent::ResumableTurnFinished {
+                turn,
+                evidence: BackendOutcomeEvidence::without_identity(),
+            }
+        } else {
+            BackendEvent::TurnFinished {
+                turn,
+                outcome: outcome.clone(),
+            }
         };
         if outcome != TurnOutcome::Interrupted {
             return Ok(Some(turn_finished));

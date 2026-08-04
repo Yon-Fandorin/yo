@@ -1,12 +1,13 @@
 mod error;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub use error::RuntimeError;
 
 use crate::{
-    AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendEvent, BackendPoll, Failure,
-    SessionId, SubmissionId, TurnRef, journal::SessionJournal,
+    AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendCommandEvidence, BackendEvent,
+    BackendPoll, Failure, JournalSequence, SessionId, SubmissionId, TurnOutcome, TurnRef,
+    journal::SessionJournal,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,6 +23,8 @@ pub struct AgentRuntime<B> {
     backend: B,
     journal: SessionJournal,
     submission_ids: HashSet<SubmissionId>,
+    binding_epoch: Option<u64>,
+    accepted_requests: HashMap<TurnRef, JournalSequence>,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -35,6 +38,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
             backend,
             journal,
             submission_ids: HashSet::new(),
+            binding_epoch: None,
+            accepted_requests: HashMap::new(),
         }
     }
 
@@ -98,23 +103,92 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.engine
             .validate_command(&command, supports_steer)
             .map_err(RuntimeError::CommandRejected)?;
-        self.backend
+        let evidence = self
+            .backend
             .execute_command(command.clone())
             .map_err(RuntimeError::backend)?;
+        if let Err(error) = self.validate_command_evidence(&command, submission_id, &evidence) {
+            if submission_id.is_some() {
+                self.accepted_requests.remove(&submission_turn(&command));
+            }
+            return Err(error);
+        }
         let committed = command.clone();
         let events = self
             .engine
             .commit_command(command, supports_steer)
             .map_err(RuntimeError::StateDiverged)?;
-        if let Some(submission_id) = submission_id {
-            let inserted = self.submission_ids.insert(submission_id);
-            debug_assert!(inserted, "a duplicate submission cannot pass validation");
-            self.journal
-                .append_committed_submission(committed, submission_id, &events);
-        } else {
-            self.journal.append_committed_command(committed, &events);
+        match (submission_id, evidence) {
+            (Some(submission_id), BackendCommandEvidence::RequestAccepted(evidence)) => {
+                let inserted = self.submission_ids.insert(submission_id);
+                debug_assert!(inserted, "a duplicate submission cannot pass validation");
+                let epoch = self
+                    .binding_epoch
+                    .expect("request evidence validation requires an open binding");
+                let turn = submission_turn(&committed);
+                let accepted = self.journal.append_accepted_submission(
+                    committed,
+                    submission_id,
+                    &events,
+                    epoch,
+                    evidence,
+                );
+                self.accepted_requests.insert(turn, accepted);
+            },
+            (Some(submission_id), BackendCommandEvidence::None) => {
+                let inserted = self.submission_ids.insert(submission_id);
+                debug_assert!(inserted, "a duplicate submission cannot pass validation");
+                self.accepted_requests.remove(&submission_turn(&committed));
+                self.journal
+                    .append_committed_submission(committed, submission_id, &events);
+            },
+            (None, BackendCommandEvidence::BindingOpened(evidence)) => {
+                let epoch = 1;
+                self.journal
+                    .append_initial_binding(committed, &events, epoch, evidence);
+                self.binding_epoch = Some(epoch);
+            },
+            (None, BackendCommandEvidence::None) => {
+                self.journal.append_committed_command(committed, &events);
+            },
+            _ => unreachable!("command evidence was validated before semantic commit"),
         }
         Ok(events)
+    }
+
+    fn validate_command_evidence(
+        &self,
+        command: &AgentCommand,
+        submission_id: Option<SubmissionId>,
+        evidence: &BackendCommandEvidence,
+    ) -> Result<(), RuntimeError> {
+        let valid = match evidence {
+            BackendCommandEvidence::None => true,
+            BackendCommandEvidence::BindingOpened(evidence) => {
+                matches!(command, AgentCommand::CreateSession { .. })
+                    && submission_id.is_none()
+                    && self.binding_epoch.is_none()
+                    && evidence.is_valid()
+            },
+            BackendCommandEvidence::RequestAccepted(evidence) => {
+                matches!(
+                    command,
+                    AgentCommand::StartTurn { .. } | AgentCommand::SteerTurn { .. }
+                ) && submission_id.is_some()
+                    && self.binding_epoch.is_some()
+                    && evidence.is_valid()
+            },
+        };
+        if valid {
+            return Ok(());
+        }
+        Err(RuntimeError::backend(crate::BackendFailure::new(
+            crate::BackendFailureKind::Protocol,
+            format!(
+                "backend returned correlation evidence incompatible with {}",
+                command_kind(command)
+            ),
+        )))
     }
 
     /// Applies one available backend observation through the semantic engine.
@@ -155,6 +229,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         match self.backend.shutdown() {
             Ok(()) => {
                 let events = self.engine.interrupt_active_turn();
+                self.clear_terminal_correlations(&events);
                 self.journal.append_events(&events);
                 Ok(events)
             },
@@ -169,6 +244,48 @@ impl<B: AgentBackend> AgentRuntime<B> {
     }
 
     fn apply_backend_event(&mut self, event: BackendEvent) -> Result<RuntimePoll, RuntimeError> {
+        if let BackendEvent::ResumableTurnFinished { turn, evidence } = event.clone() {
+            if !evidence.is_valid() {
+                return self.reject_correlation_event(
+                    "backend completed a resumable Turn with an invalid outcome identity",
+                );
+            }
+            let Some(epoch) = self.binding_epoch else {
+                return self.reject_correlation_event(
+                    "backend completed a resumable Turn without an open binding",
+                );
+            };
+            let Some(accepted_request_sequence) = self.accepted_requests.get(&turn).copied() else {
+                return self.reject_correlation_event(
+                    "backend completed a resumable Turn without an accepted request",
+                );
+            };
+            return match self.engine.finish_turn(turn, TurnOutcome::Completed) {
+                Ok(event) => {
+                    self.journal.append_resumable_turn(
+                        &event,
+                        epoch,
+                        accepted_request_sequence,
+                        evidence,
+                    );
+                    self.accepted_requests.remove(&turn);
+                    Ok(RuntimePoll::Event(event))
+                },
+                Err(rejection) => {
+                    let failure = crate::BackendFailure::new(
+                        crate::BackendFailureKind::Protocol,
+                        format!("backend event violated core state: {rejection}"),
+                    );
+                    let terminal_events = self.fail_active_turn(&failure);
+                    Err(RuntimeError::EventRejected {
+                        event: Box::new(event),
+                        rejection,
+                        terminal_events,
+                    })
+                },
+            };
+        }
+
         let result = match event.clone() {
             BackendEvent::ActivityStarted { activity, kind } => {
                 self.engine.start_activity(activity, kind)
@@ -180,10 +297,14 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 self.engine.finish_activity(activity, outcome)
             },
             BackendEvent::TurnFinished { turn, outcome } => self.engine.finish_turn(turn, outcome),
+            BackendEvent::ResumableTurnFinished { .. } => {
+                unreachable!("resumable completion is handled before generic events")
+            },
         };
 
         match result {
             Ok(event) => {
+                self.clear_terminal_correlations(std::slice::from_ref(&event));
                 self.journal.append_events(std::slice::from_ref(&event));
                 Ok(RuntimePoll::Event(event))
             },
@@ -202,16 +323,54 @@ impl<B: AgentBackend> AgentRuntime<B> {
         }
     }
 
+    fn reject_correlation_event(
+        &mut self,
+        message: &'static str,
+    ) -> Result<RuntimePoll, RuntimeError> {
+        let failure = crate::BackendFailure::new(crate::BackendFailureKind::Protocol, message);
+        let terminal_events = self.fail_active_turn(&failure);
+        Err(RuntimeError::Backend {
+            failure,
+            terminal_events,
+        })
+    }
+
     fn fail_active_turn(&mut self, failure: &crate::BackendFailure) -> Vec<AgentEvent> {
         let events = self
             .engine
             .fail_active_turn(Failure::new(failure.to_string()));
+        self.clear_terminal_correlations(&events);
         self.journal.append_events(&events);
         events
+    }
+
+    fn clear_terminal_correlations(&mut self, events: &[AgentEvent]) {
+        for event in events {
+            if let AgentEvent::TurnFinished { turn, .. } = event {
+                self.accepted_requests.remove(turn);
+            }
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn journal(&self) -> &SessionJournal {
         &self.journal
+    }
+}
+
+fn submission_turn(command: &AgentCommand) -> TurnRef {
+    match command {
+        AgentCommand::StartTurn { turn, .. } | AgentCommand::SteerTurn { turn, .. } => *turn,
+        _ => unreachable!("only a submission command has an accepted request"),
+    }
+}
+
+fn command_kind(command: &AgentCommand) -> &'static str {
+    match command {
+        AgentCommand::CreateSession { .. } => "CreateSession",
+        AgentCommand::StartTurn { .. } => "StartTurn",
+        AgentCommand::SteerTurn { .. } => "SteerTurn",
+        AgentCommand::InterruptTurn { .. } => "InterruptTurn",
+        AgentCommand::RespondToActivity { .. } => "RespondToActivity",
     }
 }

@@ -24,6 +24,11 @@ pub(super) struct AppServerClient<P> {
     pending: VecDeque<Incoming>,
 }
 
+pub(super) struct CallResult {
+    pub(super) request_id: u64,
+    pub(super) result: Value,
+}
+
 impl<P: JsonPeer> AppServerClient<P> {
     pub(super) fn new(peer: P, request_timeout: Duration) -> Self {
         Self {
@@ -38,22 +43,29 @@ impl<P: JsonPeer> AppServerClient<P> {
         self.peer.stop_handle()
     }
 
-    pub(super) fn initialize(&mut self) -> Result<(), BackendFailure> {
-        let result = self.call(
-            "initialize",
-            json!({
-                "clientInfo": {
-                    "name": "yo",
-                    "title": "yo",
-                    "version": env!("CARGO_PKG_VERSION"),
-                }
-            }),
-        )?;
-        protocol::decode_initialize(result)?;
-        self.peer.send(&protocol::initialized_notification())
+    pub(super) fn initialize(&mut self) -> Result<protocol::InitializeResult, BackendFailure> {
+        let result = self
+            .call(
+                "initialize",
+                json!({
+                    "clientInfo": {
+                        "name": "yo",
+                        "title": "yo",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    }
+                }),
+            )?
+            .result;
+        let initialize = protocol::decode_initialize(result)?;
+        self.peer.send(&protocol::initialized_notification())?;
+        Ok(initialize)
     }
 
-    pub(super) fn call(&mut self, method: &str, params: Value) -> Result<Value, BackendFailure> {
+    pub(super) fn call(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<CallResult, BackendFailure> {
         let id = self.next_request_id;
         self.next_request_id = self
             .next_request_id
@@ -84,7 +96,12 @@ impl<P: JsonPeer> AppServerClient<P> {
                 Incoming::Response {
                     id: response_id,
                     result,
-                } if response_id == id => return Ok(result),
+                } if response_id == id => {
+                    return Ok(CallResult {
+                        request_id: id,
+                        result,
+                    });
+                },
                 Incoming::ResponseError {
                     id: response_id,
                     code,

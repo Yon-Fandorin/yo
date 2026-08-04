@@ -19,9 +19,10 @@ pub use agent_session::{
     PendingCommand,
 };
 pub use backend::{
-    AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendPoll, BackendScriptStep, BackendStopHandle, CodexBackend, CodexBackendConfig,
-    CodexSkillReferenceProvider, ScriptedBackend,
+    AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
+    BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
+    BackendPoll, BackendRequestEvidence, BackendScriptStep, BackendStopHandle, CodexBackend,
+    CodexBackendConfig, CodexSkillReferenceProvider, ScriptedBackend,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};

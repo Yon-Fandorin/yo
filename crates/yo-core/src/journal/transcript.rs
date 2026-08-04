@@ -44,7 +44,12 @@ impl TranscriptReader {
     #[must_use]
     pub fn read_after(&self, sequence: Option<JournalSequence>) -> TranscriptSlice {
         let state = read_state(&self.state);
-        let head = state.entries.last().map(JournalEntry::sequence);
+        let head = state
+            .entries
+            .iter()
+            .rev()
+            .find_map(TranscriptEntry::from_journal)
+            .map(|entry| entry.sequence());
         let start = sequence.map_or(0, |sequence| {
             usize::try_from(sequence.get())
                 .unwrap_or(usize::MAX)
@@ -54,8 +59,8 @@ impl TranscriptReader {
             .entries
             .iter()
             .skip(start)
+            .filter_map(TranscriptEntry::from_journal)
             .take(READ_LIMIT)
-            .map(TranscriptEntry::from)
             .collect::<Vec<_>>();
         drop(state);
 
@@ -100,8 +105,10 @@ impl TranscriptReader {
     pub fn head_sequence(&self) -> Option<JournalSequence> {
         read_state(&self.state)
             .entries
-            .last()
-            .map(JournalEntry::sequence)
+            .iter()
+            .rev()
+            .find_map(TranscriptEntry::from_journal)
+            .map(|entry| entry.sequence())
     }
 }
 
@@ -141,10 +148,13 @@ impl JournalObservationEntry {
         }
     }
 
-    pub(super) fn record(sequence: TranscriptObservationSequence, entry: &JournalEntry) -> Self {
+    pub(super) fn record(
+        sequence: TranscriptObservationSequence,
+        record: TranscriptRecord,
+    ) -> Self {
         Self {
             sequence,
-            observation: TranscriptObservation::Record(TranscriptRecord::from(entry)),
+            observation: TranscriptObservation::Record(record),
         }
     }
 
@@ -261,24 +271,29 @@ impl TranscriptEntry {
     }
 }
 
-impl From<&JournalEntry> for TranscriptEntry {
-    fn from(entry: &JournalEntry) -> Self {
-        let record = TranscriptRecord::from(entry);
-        Self {
+impl TranscriptEntry {
+    fn from_journal(entry: &JournalEntry) -> Option<Self> {
+        let record = TranscriptRecord::from_journal(entry)?;
+        Some(Self {
             sequence: entry.sequence(),
             record,
-        }
+        })
     }
 }
 
-impl From<&JournalEntry> for TranscriptRecord {
-    fn from(entry: &JournalEntry) -> Self {
-        match entry.record() {
+impl TranscriptRecord {
+    pub(super) fn from_journal(entry: &JournalEntry) -> Option<Self> {
+        Some(match entry.record() {
             SemanticRecord::CommandCommitted(command) => {
                 Self::CommandCommitted(command.command().clone())
             },
             SemanticRecord::EventCommitted(event) => Self::EventCommitted(event.clone()),
-        }
+            SemanticRecord::BackendExchangeObserved(_)
+            | SemanticRecord::BackendBindingOpened(_)
+            | SemanticRecord::BackendRequestAccepted(_)
+            | SemanticRecord::BackendResumableOutcome(_)
+            | SemanticRecord::ContinuationAnchor(_) => return None,
+        })
     }
 }
 

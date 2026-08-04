@@ -164,7 +164,7 @@ impl DurableJournal {
                     entry.sequence(),
                     JournalRecord::EventCommitted(match record {
                         SemanticRecord::EventCommitted(event) => event.clone(),
-                        SemanticRecord::CommandCommitted(_) => unreachable!(),
+                        _ => unreachable!(),
                     }),
                 ));
                 if !self.messages.start(*activity, *kind) {
@@ -191,7 +191,7 @@ impl DurableJournal {
                     entry.sequence(),
                     JournalRecord::EventCommitted(match record {
                         SemanticRecord::EventCommitted(event) => event.clone(),
-                        SemanticRecord::CommandCommitted(_) => unreachable!(),
+                        _ => unreachable!(),
                     }),
                 ));
             },
@@ -200,6 +200,41 @@ impl DurableJournal {
                 durable.push(PendingJournalRecord::semantic(
                     entry.sequence(),
                     JournalRecord::EventCommitted(event.clone()),
+                ));
+            },
+            SemanticRecord::BackendExchangeObserved(exchange) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::BackendExchangeObserved(exchange.clone()),
+                ));
+            },
+            SemanticRecord::BackendBindingOpened(binding) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::BackendBindingOpened(binding.clone()),
+                ));
+            },
+            SemanticRecord::BackendRequestAccepted(request) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::BackendRequestAccepted(request.clone()),
+                ));
+            },
+            SemanticRecord::BackendResumableOutcome(outcome) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::BackendResumableOutcome(outcome.clone()),
+                ));
+            },
+            SemanticRecord::ContinuationAnchor(anchor) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::ContinuationAnchor(anchor.clone()),
                 ));
             },
         }

@@ -1,3 +1,7 @@
+use super::codec::{
+    BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted, BackendResumableOutcome,
+    ContinuationAnchor,
+};
 use crate::{AgentCommand, AgentEvent, SubmissionId};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -28,6 +32,11 @@ impl JournalSequence {
 pub(crate) enum SemanticRecord {
     CommandCommitted(CommittedCommand),
     EventCommitted(AgentEvent),
+    BackendExchangeObserved(BackendExchangeObserved),
+    BackendBindingOpened(BackendBindingOpened),
+    BackendRequestAccepted(BackendRequestAccepted),
+    BackendResumableOutcome(BackendResumableOutcome),
+    ContinuationAnchor(ContinuationAnchor),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

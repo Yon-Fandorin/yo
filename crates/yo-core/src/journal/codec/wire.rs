@@ -379,16 +379,20 @@ fn validate_segment(segment: &MessageSegment) -> Result<(), JournalCodecError> {
 }
 
 fn validate_transition(transition: &BindingTransition) -> Result<(), JournalCodecError> {
-    let valid = match (
-        transition.mode(),
-        transition.cache(),
-        transition.source_anchor_sequence(),
-    ) {
-        (TransitionMode::Initial, CacheState::NotApplicable, None) => true,
-        (TransitionMode::ExactReplay, CacheState::Lost, Some(_)) => true,
-        (TransitionMode::LossyHandoff, CacheState::Lost | CacheState::Unknown, Some(_)) => true,
-        _ => false,
-    };
+    let valid = matches!(
+        (
+            transition.mode(),
+            transition.cache(),
+            transition.source_anchor_sequence(),
+        ),
+        (TransitionMode::Initial, CacheState::NotApplicable, None)
+            | (TransitionMode::ExactReplay, CacheState::Lost, Some(_))
+            | (
+                TransitionMode::LossyHandoff,
+                CacheState::Lost | CacheState::Unknown,
+                Some(_),
+            )
+    );
     if valid {
         Ok(())
     } else {

@@ -7,10 +7,10 @@ use std::{
 
 use yo_core::{
     ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentBackend, AgentCommand, AgentEvent,
-    AgentIntent, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendPoll, BackendScriptStep, BackendStopHandle, CommandAdmission, DurabilityGapCause,
-    JournalDurability, ScriptedBackend, SessionId, TranscriptRecord, TurnId, TurnOutcome, TurnRef,
-    UserInput,
+    AgentIntent, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
+    BackendFailureKind, BackendPoll, BackendScriptStep, BackendStopHandle, CommandAdmission,
+    DurabilityGapCause, JournalDurability, ScriptedBackend, SessionId, TranscriptRecord, TurnId,
+    TurnOutcome, TurnRef, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableCutoff, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
@@ -53,7 +53,10 @@ impl AgentBackend for CompletionSignalingBackend {
         self.inner.capabilities()
     }
 
-    fn execute_command(&mut self, command: AgentCommand) -> Result<(), BackendFailure> {
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
         self.inner.execute_command(command)
     }
 

@@ -391,7 +391,8 @@ The live `AgentSession` uses this local composition:
 initial SessionDescriptor (replay sequence 1, no semantic cutoff)
     ↓
 semantic Journal records with explicit JournalSequence
-    ↓ codec/recovery admits correlation records when a producer supplies them
+    ↓ runtime adds binding, accepted-request, outcome, and Anchor correlation
+    ↓ codec/recovery validates the complete correlation graph
     ↓ bounded MessageSegment construction
 JournalCommit codec
     ↓ one semantic commit
@@ -439,10 +440,19 @@ coordinate, validates every reference and binding transition, and publishes a
 Continuation Anchor only when the accepted request and completed Turn are both
 proven in the durable prefix.
 
-This Slice implements the closed correlation wire model, recovery graph, and
-repository discovery projection. The live `AgentSession` producer still emits
-only command and event records; wiring backend observations into these new
-correlation variants is a follow-up runtime Slice.
+The live producer now records the initial backend binding after `SessionCreated`,
+uses each `SubmissionId` as the Start/Steer operation identity, and publishes
+`TurnFinished(completed)`, its resumable outcome, and the Continuation Anchor in
+one semantic commit. Provider adapters return opaque evidence without choosing
+epochs or Journal coordinates; the runtime owns those semantic identities and
+the Journal remains their sole sequence allocator. Transcript projection omits
+the correlation-only records.
+
+The Codex adapter preserves the user's effective model selection by omitting a
+model override and records the `model` and `modelProvider` returned by
+`thread/start`. It creates a persisted thread rather than an ephemeral one, so
+the stored locator can support a later verified `thread/resume`. Executable
+resume itself remains a later composition step.
 
 Pending message text is forced into an immutable segment before a non-text
 ordering boundary, so concurrent Activity events can retain their original order.

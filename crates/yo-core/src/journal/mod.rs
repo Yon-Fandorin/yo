@@ -1,6 +1,7 @@
 //! Ordered in-memory capture of committed agent semantics.
 
 pub(crate) mod codec;
+mod correlation;
 mod durable;
 mod record;
 mod transcript;
@@ -187,10 +188,13 @@ impl SessionJournalState {
     }
 
     fn observe_record(&mut self, entry: &JournalEntry) {
+        let Some(record) = TranscriptRecord::from_journal(entry) else {
+            return;
+        };
         self.observations
             .push(transcript::JournalObservationEntry::record(
                 transcript::TranscriptObservationSequence::from_index(self.observations.len()),
-                entry,
+                record,
             ));
     }
 }

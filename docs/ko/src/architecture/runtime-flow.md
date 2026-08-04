@@ -376,7 +376,8 @@ worker 경로 안에 있지만, 이 추가 observation 좌표는 아직 frontend
 최초 SessionDescriptor (replay sequence 1, semantic cutoff 없음)
     ↓
 명시적 JournalSequence를 가진 semantic Journal record
-    ↓ producer가 제공한 correlation record를 codec/recovery가 검증
+    ↓ runtime이 binding, accepted-request, outcome, Anchor correlation 추가
+    ↓ codec/recovery가 완전한 correlation graph 검증
     ↓ 크기가 제한된 MessageSegment 구성
 JournalCommit codec
     ↓ semantic commit 하나
@@ -422,10 +423,17 @@ recovery는 correlation record를 semantic 좌표로 indexing하고 모든 참�
 transition을 검증한다. accepted request와 완료된 Turn이 durable prefix에서 모두
 증명된 경우에만 Continuation Anchor를 공개한다.
 
-이 Slice는 닫힌 correlation wire model, recovery graph, repository discovery
-Projection을 구현한다. 실행 중인 `AgentSession` producer는 아직 command와 event
-record만 만든다. backend observation을 새 correlation variant에 연결하는 일은 후속
-runtime Slice의 책임이다.
+live producer는 이제 `SessionCreated` 뒤에 최초 backend binding을 기록하고,
+각 `SubmissionId`를 Start/Steer operation identity로 사용하며,
+`TurnFinished(completed)`, resumable outcome, Continuation Anchor를 semantic commit
+하나로 공개한다. provider adapter는 epoch나 Journal 좌표를 정하지 않고 opaque
+evidence만 반환한다. runtime이 그 semantic identity를 소유하고 Journal만 sequence를
+배정한다. Transcript Projection은 correlation 전용 record를 제외한다.
+
+Codex adapter는 model override를 보내지 않아 사용자의 effective model 선택을 보존하고,
+`thread/start`가 반환한 `model`과 `modelProvider`를 기록한다. ephemeral thread가 아니라
+저장되는 thread를 만들므로 locator가 이후 검증된 `thread/resume`을 지원할 수 있다.
+실행 가능한 resume 연결 자체는 다음 composition 단계에 남는다.
 
 pending message text는 non-text 순서 경계 전에 immutable segment로 강제
 저장되므로 동시 Activity event의 원래 순서를 보존할 수 있다. crash 뒤 열린
