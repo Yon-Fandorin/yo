@@ -41,12 +41,12 @@ fn structured_input() -> crate::UserInput {
 // 현재 공개 후보의 schema뿐 아니라 같은 schema 아래 형식 세대를 구분하는 discriminator도
 // descriptor-only commit을 포함한 모든 payload에 기록해야 이전 개발 v1과 섞이지 않는다.
 #[test]
-fn writes_the_structured_input_release_baseline() {
+fn writes_the_anchored_session_release_baseline() {
     let commit = JournalCommit::descriptor(descriptor_with_path(b"/workspace".to_vec()));
     let wire = serde_json::from_str::<serde_json::Value>(&encode(&commit).unwrap()).unwrap();
 
     assert_eq!(wire["schema"], "yo.semantic-journal-commit/v1");
-    assert_eq!(wire["format"], "structured-input");
+    assert_eq!(wire["format"], "anchored-session");
 }
 
 // v2~v4는 공개된 과거 형식이 아니라 개발 중간 산출물이므로, 새 v1 reader가 이를
@@ -111,7 +111,7 @@ fn rejects_the_displaced_string_input_v1() {
 fn rejects_an_empty_v1_commit_without_panicking() {
     let payload = serde_json::json!({
         "schema": "yo.semantic-journal-commit/v1",
-        "format": "structured-input",
+        "format": "anchored-session",
         "kind": "incremental",
         "journal_cutoff": 1,
         "first_sequence": 1,

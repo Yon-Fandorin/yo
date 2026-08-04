@@ -375,7 +375,8 @@ worker 경로 안에 있지만, 이 추가 observation 좌표는 아직 frontend
 ```text
 최초 SessionDescriptor (replay sequence 1, semantic cutoff 없음)
     ↓
-semantic Journal record
+명시적 JournalSequence를 가진 semantic Journal record
+    ↓ producer가 제공한 correlation record를 codec/recovery가 검증
     ↓ 크기가 제한된 MessageSegment 구성
 JournalCommit codec
     ↓ semantic commit 하나
@@ -391,6 +392,7 @@ versioned JSONL
 Journal recovery
     ↓
 RecoveredJournal 또는 명시적인 recovery 오류
+    ↓ physical commit마다 binding epoch와 최신 완결 Anchor 도출
 
 기존 repository root
     ↓ LocalSessionReader (생성·수리·writer lease 없음)
@@ -412,6 +414,18 @@ descriptor-only incremental envelope 하나를 먼저 시도한다. descriptor�
 소비하지 않는다. 첫 append가 storage pressure를 만나면 기존 gap 정책에 따라 이후
 작업도 volatile하게 유지한다. 처음 성공하는 recovery snapshot은 descriptor로
 시작하고 그동안의 complete semantic prefix를 함께 담는다.
+
+replay sequence는 정규화한 모든 저장 record의 순서를 나타내고, `JournalSequence`는
+command, event, backend correlation fact만 정렬한다. wire shape도 이 차이를 구조로
+강제하므로 descriptor와 message record에는 `journal_sequence`를 넣을 수 없다.
+recovery는 correlation record를 semantic 좌표로 indexing하고 모든 참조와 binding
+transition을 검증한다. accepted request와 완료된 Turn이 durable prefix에서 모두
+증명된 경우에만 Continuation Anchor를 공개한다.
+
+이 Slice는 닫힌 correlation wire model, recovery graph, repository discovery
+Projection을 구현한다. 실행 중인 `AgentSession` producer는 아직 command와 event
+record만 만든다. backend observation을 새 correlation variant에 연결하는 일은 후속
+runtime Slice의 책임이다.
 
 pending message text는 non-text 순서 경계 전에 immutable segment로 강제
 저장되므로 동시 Activity event의 원래 순서를 보존할 수 있다. crash 뒤 열린

@@ -1,5 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+mod correlation;
+
+use correlation::CorrelationRecovery;
+
 use super::{
     JournalCodecError, JournalCommit, JournalCommitKind, JournalRecord, MessageEnded,
     MessageOutcome, MessageStream, ReplaySequence, SequencedJournalRecord,
@@ -16,6 +20,24 @@ pub(crate) struct RecoveredJournal {
     ended_messages: BTreeSet<ActivityRef>,
     submission_ids: BTreeSet<SubmissionId>,
     head: Option<ReplaySequence>,
+    correlation: CorrelationRecovery,
+    discovery_states: Vec<RecoveredDiscovery>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RecoveredDiscovery {
+    binding_epoch: Option<u64>,
+    continuation_anchor: Option<JournalSequence>,
+}
+
+impl RecoveredDiscovery {
+    pub(crate) const fn binding_epoch(self) -> Option<u64> {
+        self.binding_epoch
+    }
+
+    pub(crate) const fn continuation_anchor(self) -> Option<JournalSequence> {
+        self.continuation_anchor
+    }
 }
 
 #[cfg_attr(
@@ -61,10 +83,22 @@ impl RecoveredJournal {
         self.descriptor.as_ref()
     }
 
-    pub(crate) fn validate_incremental(
+    pub(crate) const fn binding_epoch(&self) -> Option<u64> {
+        self.correlation.open_epoch()
+    }
+
+    pub(crate) const fn continuation_anchor(&self) -> Option<JournalSequence> {
+        self.correlation.latest_anchor()
+    }
+
+    pub(crate) fn discovery_states(&self) -> &[RecoveredDiscovery] {
+        &self.discovery_states
+    }
+
+    pub(crate) fn with_incremental(
         &self,
         commit: &JournalCommit,
-    ) -> Result<(), JournalCodecError> {
+    ) -> Result<Self, JournalCodecError> {
         if commit.kind() != JournalCommitKind::Incremental {
             return Err(JournalCodecError::new(
                 "incremental recovery cannot apply a snapshot",
@@ -77,44 +111,15 @@ impl RecoveredJournal {
                 "semantic Journal cutoff moved backwards",
             ));
         }
-        let mut open_messages = self.open_messages.clone();
-        let mut ended_messages = self.ended_messages.clone();
-        let mut descriptor = self.descriptor.clone();
-        let mut submission_ids = BTreeSet::new();
-        let mut head = self.head;
-        for entry in commit.records() {
-            let expected = head.map_or(1, |value| value.get().checked_add(1).unwrap_or(0));
-            if entry.sequence().get() != expected {
-                return Err(JournalCodecError::new(format!(
-                    "expected replay sequence {expected}, found {}",
-                    entry.sequence().get()
-                )));
-            }
-            if entry
-                .record()
-                .submission_id()
-                .is_some_and(|id| self.submission_ids.contains(&id))
-            {
-                return Err(duplicate_submission_id());
-            }
-            apply_record(
-                entry.record(),
-                &mut descriptor,
-                &mut open_messages,
-                &mut ended_messages,
-                &mut submission_ids,
-            )?;
-            head = Some(entry.sequence());
-        }
-        recovery_seals(head, commit.journal_cutoff(), &open_messages)?;
-        Ok(())
-    }
-
-    pub(crate) fn append_validated(&mut self, commit: &JournalCommit) {
-        self.recovery_commit = None;
-        apply_commit(self, commit).expect("a prevalidated incremental commit remains valid");
-        self.recovery_commit = recovery_seals(self.head, self.journal_cutoff, &self.open_messages)
-            .expect("a prevalidated recovery seal remains valid");
+        let mut candidate = self.clone();
+        candidate.recovery_commit = None;
+        apply_commit(&mut candidate, commit)?;
+        candidate.recovery_commit = recovery_seals(
+            candidate.head,
+            candidate.journal_cutoff,
+            &candidate.open_messages,
+        )?;
+        Ok(candidate)
     }
 }
 
@@ -139,6 +144,8 @@ pub(crate) fn recover(commits: &[JournalCommit]) -> Result<RecoveredJournal, Jou
         ended_messages: BTreeSet::new(),
         submission_ids: BTreeSet::new(),
         head: None,
+        correlation: CorrelationRecovery::default(),
+        discovery_states: Vec::new(),
     };
 
     for (commit_index, commit) in commits.iter().enumerate() {
@@ -158,14 +165,26 @@ fn apply_commit(
     recovered: &mut RecoveredJournal,
     commit: &JournalCommit,
 ) -> Result<(), JournalCodecError> {
-    if let (Some(next), Some(current)) = (commit.journal_cutoff(), recovered.journal_cutoff)
+    let preceding_cutoff = recovered.journal_cutoff;
+    if let (Some(next), Some(current)) = (commit.journal_cutoff(), preceding_cutoff)
         && next < current
     {
         return Err(JournalCodecError::new(
             "semantic Journal cutoff moved backwards",
         ));
     }
+    validate_semantic_sequences(
+        commit,
+        (commit.kind() == JournalCommitKind::Incremental)
+            .then_some(preceding_cutoff)
+            .flatten(),
+    )?;
     if commit.kind() == JournalCommitKind::Snapshot {
+        if !commit.records().starts_with(&recovered.records) {
+            return Err(JournalCodecError::new(
+                "a complete snapshot must preserve the recovered semantic prefix",
+            ));
+        }
         let first = commit.records().first().ok_or_else(|| {
             JournalCodecError::new("a recovery snapshot must contain Journal state")
         })?;
@@ -180,10 +199,12 @@ fn apply_commit(
         recovered.ended_messages.clear();
         recovered.submission_ids.clear();
         recovered.head = None;
+        recovered.correlation = CorrelationRecovery::default();
     }
     if let Some(cutoff) = commit.journal_cutoff() {
         recovered.journal_cutoff = Some(cutoff);
     }
+    let mut previous_in_commit = None;
     for entry in commit.records() {
         let expected = recovered
             .head
@@ -194,6 +215,11 @@ fn apply_commit(
                 entry.sequence().get()
             )));
         }
+        if let Some(sequence) = entry.journal_sequence() {
+            recovered
+                .correlation
+                .observe(sequence, entry.record(), previous_in_commit)?;
+        }
         apply_record(
             entry.record(),
             &mut recovered.descriptor,
@@ -203,6 +229,60 @@ fn apply_commit(
         )?;
         recovered.records.push(entry.clone());
         recovered.head = Some(entry.sequence());
+        previous_in_commit = entry
+            .journal_sequence()
+            .map(|sequence| (sequence, entry.record()));
+    }
+    recovered.discovery_states.push(RecoveredDiscovery {
+        binding_epoch: recovered.correlation.open_epoch(),
+        continuation_anchor: recovered.correlation.latest_anchor(),
+    });
+    Ok(())
+}
+
+fn validate_semantic_sequences(
+    commit: &JournalCommit,
+    preceding_cutoff: Option<JournalSequence>,
+) -> Result<(), JournalCodecError> {
+    let mut previous = None;
+    for entry in commit.records() {
+        match (
+            entry.record().requires_journal_sequence(),
+            entry.journal_sequence(),
+        ) {
+            (true, Some(sequence)) => {
+                if previous.is_some_and(|prior| sequence <= prior) {
+                    return Err(JournalCodecError::new(
+                        "semantic journal_sequence values must be strictly increasing",
+                    ));
+                }
+                if preceding_cutoff.is_some_and(|cutoff| sequence <= cutoff) {
+                    return Err(JournalCodecError::new(
+                        "incremental journal_sequence must exceed the preceding journal_cutoff",
+                    ));
+                }
+                if commit
+                    .journal_cutoff()
+                    .is_some_and(|cutoff| sequence > cutoff)
+                {
+                    return Err(JournalCodecError::new(
+                        "semantic journal_sequence cannot exceed journal_cutoff",
+                    ));
+                }
+                previous = Some(sequence);
+            },
+            (true, None) => {
+                return Err(JournalCodecError::new(
+                    "semantic Journal record is missing journal_sequence",
+                ));
+            },
+            (false, Some(_)) => {
+                return Err(JournalCodecError::new(
+                    "storage-only Journal record cannot contain journal_sequence",
+                ));
+            },
+            (false, None) => {},
+        }
     }
     Ok(())
 }
@@ -335,7 +415,14 @@ fn apply_message_record(
             }
         },
         JournalRecord::SessionDescriptor(_) => unreachable!("descriptors are handled above"),
-        JournalRecord::CommandCommitted(_) | JournalRecord::EventCommitted(_) => {},
+        JournalRecord::CommandCommitted(_)
+        | JournalRecord::EventCommitted(_)
+        | JournalRecord::BackendExchangeObserved(_)
+        | JournalRecord::BackendBindingOpened(_)
+        | JournalRecord::BackendBindingClosed(_)
+        | JournalRecord::BackendRequestAccepted(_)
+        | JournalRecord::BackendResumableOutcome(_)
+        | JournalRecord::ContinuationAnchor(_) => {},
     }
     Ok(())
 }
@@ -417,7 +504,7 @@ fn recovery_seals(
         .ok_or_else(|| JournalCodecError::new("Journal sequence is exhausted"))?;
     let mut records = Vec::with_capacity(open_messages.len());
     for (activity, state) in open_messages {
-        records.push(SequencedJournalRecord::new(
+        records.push(SequencedJournalRecord::storage(
             ReplaySequence::new(next),
             JournalRecord::MessageEnded(super::MessageTerminal::new(
                 None,

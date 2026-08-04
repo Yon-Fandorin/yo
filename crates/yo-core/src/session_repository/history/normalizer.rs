@@ -89,6 +89,12 @@ impl HistoryNormalizer {
                 self.push_event(record);
                 Ok(())
             },
+            JournalRecord::BackendExchangeObserved(_)
+            | JournalRecord::BackendBindingOpened(_)
+            | JournalRecord::BackendBindingClosed(_)
+            | JournalRecord::BackendRequestAccepted(_)
+            | JournalRecord::BackendResumableOutcome(_)
+            | JournalRecord::ContinuationAnchor(_) => Ok(()),
             JournalRecord::MessageReset(reset) => {
                 let message = self.message_mut(reset.activity())?;
                 message.revision = reset.revision();

@@ -138,6 +138,27 @@ impl fmt::Display for StoredDiscoveryMismatch {
                 "Continuation Anchor Journal sequence {} at repository sequence {repository_sequence} has no semantic Journal anchor evidence",
                 referenced.get()
             ),
+            StoredDiscoveryMismatchKind::BindingEpochDisagreement { expected, claimed } => write!(
+                formatter,
+                "binding epoch {claimed} disagrees with semantic Journal epoch {expected} at repository sequence {repository_sequence}"
+            ),
+            StoredDiscoveryMismatchKind::ContinuationAnchorDisagreement { expected, claimed } => {
+                write!(
+                    formatter,
+                    "Continuation Anchor Journal sequence {} disagrees with semantic Journal sequence {} at repository sequence {repository_sequence}",
+                    claimed.get(),
+                    expected.get()
+                )
+            },
+            StoredDiscoveryMismatchKind::MissingBindingEpoch { expected } => write!(
+                formatter,
+                "binding epoch {expected} is missing at repository sequence {repository_sequence}"
+            ),
+            StoredDiscoveryMismatchKind::MissingContinuationAnchor { expected } => write!(
+                formatter,
+                "Continuation Anchor Journal sequence {} is missing at repository sequence {repository_sequence}",
+                expected.get()
+            ),
         }
     }
 }
@@ -147,8 +168,26 @@ impl fmt::Display for StoredDiscoveryMismatch {
 pub enum StoredDiscoveryMismatchKind {
     Missing,
     Descriptor,
-    BindingEpoch { claimed: u64 },
-    ContinuationAnchor { referenced: JournalSequence },
+    BindingEpoch {
+        claimed: u64,
+    },
+    ContinuationAnchor {
+        referenced: JournalSequence,
+    },
+    BindingEpochDisagreement {
+        expected: u64,
+        claimed: u64,
+    },
+    ContinuationAnchorDisagreement {
+        expected: JournalSequence,
+        claimed: JournalSequence,
+    },
+    MissingBindingEpoch {
+        expected: u64,
+    },
+    MissingContinuationAnchor {
+        expected: JournalSequence,
+    },
 }
 
 /// Failure to validate and recover one stored Session's semantic Journal.
@@ -210,7 +249,7 @@ pub fn read_stored_session(
         .descriptor()
         .cloned()
         .ok_or_else(|| invalid_stored(format!("stored Session {session_id} has no descriptor")))?;
-    let discovery_validation = validate_discovery(&entries, &descriptor);
+    let discovery_validation = validate_discovery(&entries, &descriptor, &recovered);
     let recovery = if recovered.recovery_commit().is_some() {
         StoredSessionRecovery::Interrupted
     } else {
@@ -230,8 +269,9 @@ pub fn read_stored_session(
 fn validate_discovery(
     entries: &[RepositoryEntry],
     descriptor: &SessionDescriptor,
+    recovered: &crate::journal::codec::RecoveredJournal,
 ) -> StoredDiscoveryValidation {
-    for entry in entries {
+    for (entry, expected) in entries.iter().zip(recovered.discovery_states()) {
         let repository_sequence = entry.sequence();
         let Some(discovery) = entry.record().discovery() else {
             return StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch::new(
@@ -241,15 +281,13 @@ fn validate_discovery(
         };
         let kind = if discovery.descriptor() != descriptor {
             Some(StoredDiscoveryMismatchKind::Descriptor)
-        } else if let Some(claimed) = discovery.binding_epoch() {
-            // Semantic v1 has no binding record from which this value can be derived.
-            Some(StoredDiscoveryMismatchKind::BindingEpoch { claimed })
         } else {
-            // Semantic v1 likewise has no accepted outcome, binding, or locator records from
-            // which a complete Continuation Anchor can be validated.
-            discovery
-                .continuation_anchor()
-                .map(|referenced| StoredDiscoveryMismatchKind::ContinuationAnchor { referenced })
+            discovery_coordinates_mismatch(
+                expected.binding_epoch(),
+                discovery.binding_epoch(),
+                expected.continuation_anchor(),
+                discovery.continuation_anchor(),
+            )
         };
         if let Some(kind) = kind {
             return StoredDiscoveryValidation::Mismatch(StoredDiscoveryMismatch::new(
@@ -259,6 +297,39 @@ fn validate_discovery(
         }
     }
     StoredDiscoveryValidation::Consistent
+}
+
+fn discovery_coordinates_mismatch(
+    expected_epoch: Option<u64>,
+    claimed_epoch: Option<u64>,
+    expected_anchor: Option<JournalSequence>,
+    claimed_anchor: Option<JournalSequence>,
+) -> Option<StoredDiscoveryMismatchKind> {
+    if expected_epoch != claimed_epoch {
+        return Some(match (expected_epoch, claimed_epoch) {
+            (None, Some(claimed)) => StoredDiscoveryMismatchKind::BindingEpoch { claimed },
+            (Some(expected), None) => StoredDiscoveryMismatchKind::MissingBindingEpoch { expected },
+            (Some(expected), Some(claimed)) => {
+                StoredDiscoveryMismatchKind::BindingEpochDisagreement { expected, claimed }
+            },
+            (None, None) => unreachable!("equal optional epochs were handled above"),
+        });
+    }
+    if expected_anchor != claimed_anchor {
+        return Some(match (expected_anchor, claimed_anchor) {
+            (None, Some(referenced)) => {
+                StoredDiscoveryMismatchKind::ContinuationAnchor { referenced }
+            },
+            (Some(expected), None) => {
+                StoredDiscoveryMismatchKind::MissingContinuationAnchor { expected }
+            },
+            (Some(expected), Some(claimed)) => {
+                StoredDiscoveryMismatchKind::ContinuationAnchorDisagreement { expected, claimed }
+            },
+            (None, None) => unreachable!("equal optional Anchors were handled above"),
+        });
+    }
+    None
 }
 
 fn invalid_stored(detail: impl Into<String>) -> StoredSessionReadError {

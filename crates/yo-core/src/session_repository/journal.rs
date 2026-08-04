@@ -65,49 +65,43 @@ where
                 ));
             }
         }
-        let replacement = if commit.kind() == JournalCommitKind::Snapshot
+        let candidate_recovery = if commit.kind() == JournalCommitKind::Snapshot
             || !self.recovered.contains_key(&session_id)
         {
-            Some(recover(std::slice::from_ref(commit)).map_err(|error| {
+            recover(std::slice::from_ref(commit)).map_err(|error| {
                 JournalRepositoryError::Codec(error.context("candidate semantic commit"))
-            })?)
+            })?
         } else {
             self.recovered[&session_id]
-                .validate_incremental(commit)
+                .with_incremental(commit)
                 .map_err(|error| {
                     JournalRepositoryError::Codec(error.context("candidate semantic commit"))
-                })?;
-            None
+                })?
         };
-        let descriptor = replacement
-            .as_ref()
-            .or_else(|| self.recovered.get(&session_id))
-            .and_then(RecoveredJournal::descriptor)
-            .cloned()
-            .ok_or_else(|| {
-                JournalRepositoryError::Codec(
-                    JournalCodecError::new(
-                        "a physical Session record requires a durable Session descriptor",
-                    )
-                    .context("candidate semantic commit"),
+        let descriptor = candidate_recovery.descriptor().cloned().ok_or_else(|| {
+            JournalRepositoryError::Codec(
+                JournalCodecError::new(
+                    "a physical Session record requires a durable Session descriptor",
                 )
-            })?;
+                .context("candidate semantic commit"),
+            )
+        })?;
+        let mut discovery = RecordDiscovery::new(descriptor);
+        if let Some(epoch) = candidate_recovery.binding_epoch() {
+            discovery = discovery.with_binding_epoch(epoch);
+        }
+        if let Some(anchor) = candidate_recovery.continuation_anchor() {
+            discovery = discovery.with_continuation_anchor(anchor);
+        }
         let record = match commit.kind() {
             JournalCommitKind::Incremental => DurableRecord::incremental(payload),
             JournalCommitKind::Snapshot => DurableRecord::snapshot(payload),
         }
         .with_journal_cutoff(commit.journal_cutoff())
-        .with_discovery(RecordDiscovery::new(descriptor));
+        .with_discovery(discovery);
         match self.repository.append(session_id, record) {
             Ok(receipt) => {
-                if let Some(replacement) = replacement {
-                    self.recovered.insert(session_id, replacement);
-                } else {
-                    self.recovered
-                        .get_mut(&session_id)
-                        .expect("the incremental prefix was validated above")
-                        .append_validated(commit);
-                }
+                self.recovered.insert(session_id, candidate_recovery);
                 if commit.kind() == JournalCommitKind::Snapshot {
                     self.live_gaps.remove(&session_id);
                 }
@@ -265,7 +259,12 @@ fn require_session(
     commit: &JournalCommit,
     expected_session: SessionId,
 ) -> Result<(), JournalCodecError> {
-    if commit.session_id() == Some(expected_session) {
+    if commit
+        .records()
+        .iter()
+        .filter_map(|entry| entry.record().session_id())
+        .all(|session_id| session_id == expected_session)
+    {
         Ok(())
     } else {
         Err(JournalCodecError::new(format!(

@@ -5,8 +5,9 @@ use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent,
     JournalSequence, TranscriptRecord, TurnId, TurnRef,
     journal::codec::{
-        JournalCommit, JournalCommitKind, JournalRecord, MessageEnded, MessageOutcome,
-        MessageReset, MessageSegment, MessageStream, MessageTerminal, SequencedJournalRecord,
+        BackendBindingOpened, BindingTransition, CacheState, JournalCommit, JournalCommitKind,
+        JournalRecord, MessageEnded, MessageOutcome, MessageReset, MessageSegment, MessageStream,
+        MessageTerminal, ReplaySequence, SequencedJournalRecord, TransitionMode, VersionedIdentity,
         encode,
     },
     session_repository::{
@@ -118,6 +119,22 @@ fn finished(sequence: u64, outcome: ActivityOutcome) -> SequencedJournalRecord {
     )
 }
 
+fn semantic_record(
+    replay_sequence: u64,
+    journal_sequence: u64,
+    record: JournalRecord,
+) -> SequencedJournalRecord {
+    SequencedJournalRecord::with_journal_sequence(
+        ReplaySequence::new(replay_sequence),
+        JournalSequence::new(journal_sequence),
+        record,
+    )
+}
+
+fn identity(name: &str) -> VersionedIdentity {
+    VersionedIdentity::new(format!("yo.test.{name}/v1"), format!("{name}:value"))
+}
+
 // 여러 physical segment와 그 앞의 오래된 revision은 저장 최적화 경계일 뿐이므로,
 // replacement revision의 최종 text snapshot 하나와 종료 event만 frontend에 전달한다.
 #[test]
@@ -199,7 +216,72 @@ fn coalesces_segments_and_superseded_revisions() {
     assert_eq!(history.continuity(), StoredSessionContinuity::NotObservable);
 }
 
-// 현재 semantic v1에는 accepted outcome·binding·locator 증거가 없으므로 summary가
+// semantic binding record가 epoch 1을 열고 physical discovery도 같은 값을 주장하면
+// history reader는 correlation record를 Transcript에 노출하지 않으면서 summary를 검증합니다.
+#[test]
+fn accepts_a_discovery_epoch_derived_from_semantic_binding_evidence() {
+    let descriptor = JournalCommit::descriptor(crate::fixture_descriptor(session()));
+    let binding = JournalCommit::incremental_through(
+        JournalSequence::new(2),
+        vec![
+            semantic_record(
+                2,
+                1,
+                JournalRecord::EventCommitted(AgentEvent::SessionCreated {
+                    session_id: session(),
+                }),
+            ),
+            semantic_record(
+                3,
+                2,
+                JournalRecord::BackendBindingOpened(BackendBindingOpened::new(
+                    1,
+                    "codex",
+                    "1.0.0",
+                    identity("binding"),
+                    identity("model"),
+                    identity("session"),
+                    BindingTransition::new(
+                        TransitionMode::Initial,
+                        CacheState::NotApplicable,
+                        None,
+                    ),
+                )),
+            ),
+        ],
+    );
+    let reader = MemoryReader {
+        entries: vec![
+            RepositoryEntry::new(RepositorySequence::new(1), record(&descriptor)),
+            RepositoryEntry::new(
+                RepositorySequence::new(2),
+                record_with_discovery(
+                    &binding,
+                    RecordDiscovery::new(crate::fixture_descriptor(session()))
+                        .with_binding_epoch(1),
+                ),
+            ),
+        ],
+        missing: false,
+    };
+
+    let history = read_stored_session(&reader, session()).unwrap();
+
+    assert_eq!(
+        history.discovery_validation(),
+        StoredDiscoveryValidation::Consistent
+    );
+    assert_eq!(
+        history.records(),
+        &[TranscriptRecord::EventCommitted(
+            AgentEvent::SessionCreated {
+                session_id: session(),
+            }
+        )]
+    );
+}
+
+// semantic 증거가 없는 descriptor-only history에서 summary가
 // Anchor를 주장해도 재개 가능으로 추측하지 않고 최초 physical 순번을 보존합니다.
 #[test]
 fn reports_a_summary_anchor_without_semantic_anchor_evidence() {
@@ -271,8 +353,35 @@ fn discovery_mismatch_diagnostics_preserve_typed_coordinates_and_causes() {
     }
 }
 
-// semantic v1에는 backend binding record가 없으므로 epoch만 기록한 summary 역시
-// Anchor의 일부로 인정하지 않고 해당 physical envelope의 불일치로 보고합니다.
+// semantic recovery와 physical summary가 모두 값을 가지되 서로 다르면 “근거 없음”이
+// 아니라 expected와 claimed를 함께 보존하는 불일치 원인으로 분류해야 합니다.
+#[test]
+fn distinguishes_coordinate_disagreement_from_missing_evidence() {
+    assert_eq!(
+        discovery_coordinates_mismatch(Some(1), Some(2), None, None),
+        Some(StoredDiscoveryMismatchKind::BindingEpochDisagreement {
+            expected: 1,
+            claimed: 2,
+        })
+    );
+    assert_eq!(
+        discovery_coordinates_mismatch(
+            Some(2),
+            Some(2),
+            Some(JournalSequence::new(8)),
+            Some(JournalSequence::new(9)),
+        ),
+        Some(
+            StoredDiscoveryMismatchKind::ContinuationAnchorDisagreement {
+                expected: JournalSequence::new(8),
+                claimed: JournalSequence::new(9),
+            }
+        )
+    );
+}
+
+// descriptor-only semantic prefix에는 binding record가 없으므로 epoch만 기록한 summary를
+// 근거로 인정하지 않고 해당 physical envelope의 불일치로 보고합니다.
 #[test]
 fn reports_a_summary_binding_epoch_without_semantic_binding_evidence() {
     let commit = JournalCommit::descriptor(crate::fixture_descriptor(session()));

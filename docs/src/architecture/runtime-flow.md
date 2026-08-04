@@ -390,7 +390,8 @@ The live `AgentSession` uses this local composition:
 ```text
 initial SessionDescriptor (replay sequence 1, no semantic cutoff)
     ↓
-semantic Journal records
+semantic Journal records with explicit JournalSequence
+    ↓ codec/recovery admits correlation records when a producer supplies them
     ↓ bounded MessageSegment construction
 JournalCommit codec
     ↓ one semantic commit
@@ -406,6 +407,7 @@ versioned JSONL
 Journal recovery
     ↓
 RecoveredJournal or an explicit recovery error
+    ↓ derive binding epoch and latest complete Anchor per physical commit
 
 existing repository root
     ↓ LocalSessionReader (no create, repair, or writer lease)
@@ -428,6 +430,19 @@ not enter the frontend Transcript or consume a semantic `JournalSequence`. If
 its first append meets storage pressure, the existing gap policy keeps later
 work volatile; the first successful recovery snapshot begins with the descriptor
 and includes the complete semantic prefix.
+
+Replay sequence orders every normalized storage record, while `JournalSequence`
+orders only commands, events, and backend-correlation facts. The wire shape makes
+that distinction structural: descriptors and message records cannot carry a
+`journal_sequence`. Recovery indexes correlation records by their semantic
+coordinate, validates every reference and binding transition, and publishes a
+Continuation Anchor only when the accepted request and completed Turn are both
+proven in the durable prefix.
+
+This Slice implements the closed correlation wire model, recovery graph, and
+repository discovery projection. The live `AgentSession` producer still emits
+only command and event records; wiring backend observations into these new
+correlation variants is a follow-up runtime Slice.
 
 Pending message text is forced into an immutable segment before a non-text
 ordering boundary, so concurrent Activity events can retain their original order.

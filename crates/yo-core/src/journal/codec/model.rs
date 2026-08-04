@@ -1,3 +1,7 @@
+use super::{
+    BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
+    BackendResumableOutcome, ContinuationAnchor,
+};
 use crate::{
     ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionDescriptor,
     SessionId, journal::CommittedCommand,
@@ -19,13 +23,7 @@ pub(crate) struct JournalCommit {
 impl JournalCommit {
     #[cfg(test)]
     pub(crate) fn incremental(records: Vec<SequencedJournalRecord>) -> Self {
-        let cutoff = JournalSequence::new(
-            records
-                .last()
-                .expect("a Journal commit cannot be empty")
-                .sequence()
-                .get(),
-        );
+        let cutoff = inferred_test_cutoff(&records);
         Self::incremental_through(cutoff, records)
     }
 
@@ -42,13 +40,7 @@ impl JournalCommit {
 
     #[cfg(test)]
     pub(crate) fn snapshot(records: Vec<SequencedJournalRecord>) -> Self {
-        let cutoff = JournalSequence::new(
-            records
-                .last()
-                .expect("a Journal commit cannot be empty")
-                .sequence()
-                .get(),
-        );
+        let cutoff = inferred_test_cutoff(&records);
         Self::snapshot_through(cutoff, records)
     }
 
@@ -67,7 +59,7 @@ impl JournalCommit {
         Self {
             kind: JournalCommitKind::Incremental,
             journal_cutoff: None,
-            records: vec![SequencedJournalRecord::new(
+            records: vec![SequencedJournalRecord::storage(
                 ReplaySequence::new(1),
                 JournalRecord::SessionDescriptor(descriptor),
             )],
@@ -97,24 +89,78 @@ impl JournalCommit {
     pub(crate) const fn journal_cutoff(&self) -> Option<JournalSequence> {
         self.journal_cutoff
     }
+}
 
-    pub(crate) fn session_id(&self) -> Option<SessionId> {
-        self.records
-            .first()
-            .map(|entry| entry.record().session_id())
-    }
+#[cfg(test)]
+fn inferred_test_cutoff(records: &[SequencedJournalRecord]) -> JournalSequence {
+    records
+        .iter()
+        .rev()
+        .find_map(SequencedJournalRecord::journal_sequence)
+        .unwrap_or_else(|| {
+            JournalSequence::new(
+                records
+                    .last()
+                    .expect("a Journal commit cannot be empty")
+                    .sequence()
+                    .get(),
+            )
+        })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SequencedJournalRecord {
     sequence: ReplaySequence,
+    journal_sequence: Option<JournalSequence>,
     record: JournalRecord,
 }
 
 impl SequencedJournalRecord {
+    #[cfg(test)]
     pub(crate) fn new(sequence: impl Into<ReplaySequence>, record: JournalRecord) -> Self {
+        let sequence = sequence.into();
+        let journal_sequence = record
+            .requires_journal_sequence()
+            .then_some(JournalSequence::new(sequence.get()));
         Self {
-            sequence: sequence.into(),
+            sequence,
+            journal_sequence,
+            record,
+        }
+    }
+
+    pub(crate) fn storage(sequence: ReplaySequence, record: JournalRecord) -> Self {
+        assert!(
+            !record.requires_journal_sequence(),
+            "a semantic Journal record requires an explicit JournalSequence"
+        );
+        Self {
+            sequence,
+            journal_sequence: None,
+            record,
+        }
+    }
+
+    pub(crate) const fn with_journal_sequence(
+        sequence: ReplaySequence,
+        journal_sequence: JournalSequence,
+        record: JournalRecord,
+    ) -> Self {
+        Self {
+            sequence,
+            journal_sequence: Some(journal_sequence),
+            record,
+        }
+    }
+
+    pub(super) const fn decoded(
+        sequence: ReplaySequence,
+        journal_sequence: Option<JournalSequence>,
+        record: JournalRecord,
+    ) -> Self {
+        Self {
+            sequence,
+            journal_sequence,
             record,
         }
     }
@@ -125,6 +171,10 @@ impl SequencedJournalRecord {
 
     pub(crate) const fn record(&self) -> &JournalRecord {
         &self.record
+    }
+
+    pub(crate) const fn journal_sequence(&self) -> Option<JournalSequence> {
+        self.journal_sequence
     }
 }
 
@@ -156,46 +206,59 @@ pub(crate) enum JournalRecord {
     SessionDescriptor(SessionDescriptor),
     CommandCommitted(CommittedCommand),
     EventCommitted(AgentEvent),
+    BackendExchangeObserved(BackendExchangeObserved),
+    BackendBindingOpened(BackendBindingOpened),
+    BackendBindingClosed(BackendBindingClosed),
+    BackendRequestAccepted(BackendRequestAccepted),
+    BackendResumableOutcome(BackendResumableOutcome),
+    ContinuationAnchor(ContinuationAnchor),
     MessageReset(MessageReset),
     MessageSegment(MessageSegment),
     MessageEnded(MessageTerminal),
 }
 
 impl JournalRecord {
-    pub(crate) const fn submission_id(&self) -> Option<crate::SubmissionId> {
+    pub(crate) const fn session_id(&self) -> Option<SessionId> {
         match self {
-            Self::CommandCommitted(command) => command.submission_id(),
-            Self::SessionDescriptor(_)
-            | Self::EventCommitted(_)
-            | Self::MessageReset(_)
-            | Self::MessageSegment(_)
-            | Self::MessageEnded(_) => None,
-        }
-    }
-
-    pub(crate) const fn session_id(&self) -> SessionId {
-        match self {
-            Self::SessionDescriptor(descriptor) => descriptor.session_id(),
+            Self::SessionDescriptor(descriptor) => Some(descriptor.session_id()),
             Self::CommandCommitted(committed) => match committed.command() {
-                AgentCommand::CreateSession { session_id } => *session_id,
+                AgentCommand::CreateSession { session_id } => Some(*session_id),
                 AgentCommand::StartTurn { turn, .. }
                 | AgentCommand::SteerTurn { turn, .. }
-                | AgentCommand::InterruptTurn { turn } => turn.session_id(),
-                AgentCommand::RespondToActivity { request, .. } => request.activity().session_id(),
+                | AgentCommand::InterruptTurn { turn } => Some(turn.session_id()),
+                AgentCommand::RespondToActivity { request, .. } => {
+                    Some(request.activity().session_id())
+                },
             },
             Self::EventCommitted(event) => match event {
-                AgentEvent::SessionCreated { session_id } => *session_id,
+                AgentEvent::SessionCreated { session_id } => Some(*session_id),
                 AgentEvent::TurnStarted { turn } | AgentEvent::TurnFinished { turn, .. } => {
-                    turn.session_id()
+                    Some(turn.session_id())
                 },
                 AgentEvent::ActivityStarted { activity, .. }
                 | AgentEvent::ActivityUpdated { activity, .. }
-                | AgentEvent::ActivityFinished { activity, .. } => activity.session_id(),
+                | AgentEvent::ActivityFinished { activity, .. } => Some(activity.session_id()),
             },
-            Self::MessageReset(reset) => reset.activity().session_id(),
-            Self::MessageSegment(segment) => segment.activity().session_id(),
-            Self::MessageEnded(terminal) => terminal.ended().activity().session_id(),
+            Self::MessageReset(reset) => Some(reset.activity().session_id()),
+            Self::MessageSegment(segment) => Some(segment.activity().session_id()),
+            Self::MessageEnded(terminal) => Some(terminal.ended().activity().session_id()),
+            Self::BackendExchangeObserved(_)
+            | Self::BackendBindingOpened(_)
+            | Self::BackendBindingClosed(_)
+            | Self::BackendRequestAccepted(_)
+            | Self::BackendResumableOutcome(_)
+            | Self::ContinuationAnchor(_) => None,
         }
+    }
+
+    pub(crate) const fn requires_journal_sequence(&self) -> bool {
+        !matches!(
+            self,
+            Self::SessionDescriptor(_)
+                | Self::MessageReset(_)
+                | Self::MessageSegment(_)
+                | Self::MessageEnded(_)
+        )
     }
 }
 

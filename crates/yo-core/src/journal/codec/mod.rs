@@ -1,5 +1,6 @@
 //! Durable semantic Journal encoding and recovery.
 
+mod correlation;
 mod model;
 mod recovery;
 mod segmenter;
@@ -15,3 +16,9 @@ pub(crate) use wire::{JournalCodecError, decode, encode};
 
 #[cfg(test)]
 mod tests;
+pub(crate) use correlation::{
+    BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
+    BackendResumableOutcome, BindingCloseReason, BindingTransition, CacheState, ContinuationAnchor,
+    DetailAvailability, ExchangeDirection, ExchangeKind, OperationId, TransitionMode,
+    VersionedIdentity,
+};

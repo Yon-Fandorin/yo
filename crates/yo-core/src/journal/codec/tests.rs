@@ -9,6 +9,7 @@ use crate::{
     SessionDescriptor, SubmissionId, TurnId, TurnRef,
 };
 
+mod correlation;
 mod wire_compatibility;
 
 fn activity() -> ActivityRef {
@@ -270,6 +271,38 @@ fn rejects_a_snapshot_that_does_not_begin_with_the_complete_journal() {
     let error = encode(&commit).expect_err("an incomplete snapshot is not durable");
 
     assert!(error.to_string().contains("begin at sequence 1"));
+}
+
+// 뒤 snapshot이 sequence 1부터 다시 시작하더라도 이미 읽은 descriptor를 다른 값으로
+// 바꾸면 과거 semantic prefix 재작성에 해당하므로 recovery가 교체를 거부해야 합니다.
+#[test]
+fn recovery_rejects_a_snapshot_that_rewrites_the_existing_prefix() {
+    let descriptor = JournalCommit::descriptor(descriptor_with_path(b"/workspace".to_vec()));
+    let rewritten = JournalCommit::snapshot_through(
+        JournalSequence::new(1),
+        vec![
+            SequencedJournalRecord::storage(
+                ReplaySequence::new(1),
+                JournalRecord::SessionDescriptor(descriptor_with_path(b"/other".to_vec())),
+            ),
+            SequencedJournalRecord::with_journal_sequence(
+                ReplaySequence::new(2),
+                JournalSequence::new(1),
+                JournalRecord::EventCommitted(AgentEvent::SessionCreated {
+                    session_id: activity().session_id(),
+                }),
+            ),
+        ],
+    );
+
+    let error = recover(&[descriptor, rewritten])
+        .expect_err("a later snapshot cannot replace the recovered descriptor");
+
+    assert!(
+        error
+            .to_string()
+            .contains("preserve the recovered semantic prefix")
+    );
 }
 
 // 한 semantic commit에 서로 다른 Session identity가 섞이면 physical envelope의 Session을

@@ -45,12 +45,34 @@ pub enum DurabilityGapCause {
 
 pub(super) struct DurableJournal {
     repository: JournalRepository<Box<dyn SessionRepository + Send>>,
+    session_id: crate::SessionId,
     records: Vec<SequencedJournalRecord>,
     messages: MessageTracker,
     started: Instant,
     live_cutoff: Option<JournalSequence>,
     status: JournalDurability,
     descriptor: Option<SessionDescriptor>,
+}
+
+struct PendingJournalRecord {
+    journal_sequence: Option<JournalSequence>,
+    record: JournalRecord,
+}
+
+impl PendingJournalRecord {
+    const fn semantic(journal_sequence: JournalSequence, record: JournalRecord) -> Self {
+        Self {
+            journal_sequence: Some(journal_sequence),
+            record,
+        }
+    }
+
+    const fn storage(record: JournalRecord) -> Self {
+        Self {
+            journal_sequence: None,
+            record,
+        }
+    }
 }
 
 impl fmt::Debug for DurableJournal {
@@ -71,6 +93,7 @@ impl DurableJournal {
     ) -> Self {
         Self {
             repository: JournalRepository::new(repository),
+            session_id: descriptor.session_id(),
             records: Vec::new(),
             messages: MessageTracker::default(),
             started: Instant::now(),
@@ -89,7 +112,12 @@ impl DurableJournal {
         let Some(descriptor) = self.descriptor.take() else {
             return self.status;
         };
-        self.publish_records(vec![JournalRecord::SessionDescriptor(descriptor)], None)
+        self.publish_records(
+            vec![PendingJournalRecord::storage(
+                JournalRecord::SessionDescriptor(descriptor),
+            )],
+            None,
+        )
     }
 
     /// Captures semantic records and publishes any newly forced durable records.
@@ -97,7 +125,7 @@ impl DurableJournal {
         let now = self.started.elapsed();
         let mut durable = Vec::new();
         for entry in records {
-            self.translate(entry.record(), now, &mut durable);
+            self.translate(entry, now, &mut durable);
             self.live_cutoff = Some(entry.sequence());
         }
         self.publish_records(durable, self.live_cutoff)
@@ -106,27 +134,39 @@ impl DurableJournal {
     /// Flushes message text whose oldest byte reached the one-second boundary.
     pub(super) fn flush_due(&mut self) -> JournalDurability {
         let now = self.started.elapsed();
-        let durable = self.messages.flush_due(now);
+        let durable = self
+            .messages
+            .flush_due(now)
+            .into_iter()
+            .map(PendingJournalRecord::storage)
+            .collect();
         self.publish_records(durable, self.live_cutoff)
     }
 
     fn translate(
         &mut self,
-        record: &SemanticRecord,
+        entry: &JournalEntry,
         now: std::time::Duration,
-        durable: &mut Vec<JournalRecord>,
+        durable: &mut Vec<PendingJournalRecord>,
     ) {
+        let record = entry.record();
         match record {
             SemanticRecord::CommandCommitted(command) => {
                 self.flush_boundaries(None, durable);
-                durable.push(JournalRecord::CommandCommitted(command.clone()));
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::CommandCommitted(command.clone()),
+                ));
             },
             SemanticRecord::EventCommitted(AgentEvent::ActivityStarted { activity, kind }) => {
                 self.flush_boundaries(None, durable);
-                durable.push(JournalRecord::EventCommitted(match record {
-                    SemanticRecord::EventCommitted(event) => event.clone(),
-                    SemanticRecord::CommandCommitted(_) => unreachable!(),
-                }));
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::EventCommitted(match record {
+                        SemanticRecord::EventCommitted(event) => event.clone(),
+                        SemanticRecord::CommandCommitted(_) => unreachable!(),
+                    }),
+                ));
                 if !self.messages.start(*activity, *kind) {
                     self.latch_integrity_gap();
                 }
@@ -138,29 +178,44 @@ impl DurableJournal {
                     self.latch_integrity_gap();
                     return;
                 };
-                durable.extend(segments);
+                durable.extend(segments.into_iter().map(PendingJournalRecord::storage));
             },
             SemanticRecord::EventCommitted(AgentEvent::ActivityFinished { activity, outcome }) => {
                 self.flush_boundaries(Some(*activity), durable);
                 if let Some(terminal) = self.messages.finish(*activity, outcome) {
-                    durable.push(terminal);
+                    durable.push(PendingJournalRecord::storage(terminal));
                 } else {
                     self.latch_integrity_gap();
                 }
-                durable.push(JournalRecord::EventCommitted(match record {
-                    SemanticRecord::EventCommitted(event) => event.clone(),
-                    SemanticRecord::CommandCommitted(_) => unreachable!(),
-                }));
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::EventCommitted(match record {
+                        SemanticRecord::EventCommitted(event) => event.clone(),
+                        SemanticRecord::CommandCommitted(_) => unreachable!(),
+                    }),
+                ));
             },
             SemanticRecord::EventCommitted(event) => {
                 self.flush_boundaries(None, durable);
-                durable.push(JournalRecord::EventCommitted(event.clone()));
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::EventCommitted(event.clone()),
+                ));
             },
         }
     }
 
-    fn flush_boundaries(&mut self, except: Option<ActivityRef>, durable: &mut Vec<JournalRecord>) {
-        durable.extend(self.messages.flush_boundaries(except));
+    fn flush_boundaries(
+        &mut self,
+        except: Option<ActivityRef>,
+        durable: &mut Vec<PendingJournalRecord>,
+    ) {
+        durable.extend(
+            self.messages
+                .flush_boundaries(except)
+                .into_iter()
+                .map(PendingJournalRecord::storage),
+        );
     }
 
     fn latch_integrity_gap(&mut self) {
@@ -172,7 +227,7 @@ impl DurableJournal {
 
     fn publish_records(
         &mut self,
-        records: Vec<JournalRecord>,
+        records: Vec<PendingJournalRecord>,
         journal_cutoff: Option<JournalSequence>,
     ) -> JournalDurability {
         if records.is_empty() {
@@ -182,11 +237,19 @@ impl DurableJournal {
         let sequenced = records
             .into_iter()
             .enumerate()
-            .map(|(offset, record)| {
+            .map(|(offset, pending)| {
                 let index = first
                     .checked_add(offset)
                     .expect("a Journal cannot contain more records than usize can address");
-                SequencedJournalRecord::new(ReplaySequence::new(replay_sequence(index)), record)
+                let replay_sequence = ReplaySequence::new(replay_sequence(index));
+                match pending.journal_sequence {
+                    Some(journal_sequence) => SequencedJournalRecord::with_journal_sequence(
+                        replay_sequence,
+                        journal_sequence,
+                        pending.record,
+                    ),
+                    None => SequencedJournalRecord::storage(replay_sequence, pending.record),
+                }
             })
             .collect::<Vec<_>>();
         if matches!(
@@ -202,7 +265,7 @@ impl DurableJournal {
             self.records.extend(sequenced);
             return self.status;
         }
-        let session_id = sequenced[0].record().session_id();
+        let session_id = self.session_id;
         let recovering_gap = matches!(self.status, JournalDurability::Gap { .. });
         if recovering_gap && !self.messages.is_empty() {
             // A complete snapshot cannot claim an open live message as recovered. Retain the

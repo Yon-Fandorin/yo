@@ -1,26 +1,25 @@
 mod command;
+mod correlation;
 mod descriptor;
 mod event;
 mod identity;
 mod input;
 mod message;
+mod record;
 
 use std::fmt;
 
-use command::WireCommand;
-use descriptor::WireSessionDescriptor;
-use event::WireEvent;
-use message::{WireMessageEnded, WireMessageReset, WireMessageSegment};
+use record::WireRecord;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    JournalCommit, JournalCommitKind, JournalRecord, MessageEnded, MessageReset, MessageSegment,
-    MessageTerminal, ReplaySequence, SequencedJournalRecord, recover,
+    BindingTransition, CacheState, JournalCommit, JournalCommitKind, JournalRecord, MessageSegment,
+    ReplaySequence, SequencedJournalRecord, TransitionMode, recover,
 };
-use crate::{AgentEvent, JournalSequence, SessionDescriptor};
+use crate::{AgentEvent, JournalSequence};
 
 const SCHEMA: &str = "yo.semantic-journal-commit/v1";
-const FORMAT: &str = "structured-input";
+const FORMAT: &str = "anchored-session";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct JournalCodecError {
@@ -80,31 +79,6 @@ enum WireCommitKind {
     Snapshot,
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
-enum WireRecord {
-    SessionDescriptor {
-        descriptor: WireSessionDescriptor,
-    },
-    CommandCommitted {
-        command: WireCommand,
-    },
-    EventCommitted {
-        event: WireEvent,
-    },
-    MessageReset {
-        reset: WireMessageReset,
-    },
-    MessageSegment {
-        segment: WireMessageSegment,
-    },
-    MessageEnded {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        final_segment: Option<WireMessageSegment>,
-        ended: WireMessageEnded,
-    },
-}
-
 pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError> {
     validate_commit(commit)?;
     let first_sequence = commit
@@ -125,7 +99,7 @@ pub(crate) fn encode(commit: &JournalCommit) -> Result<String, JournalCodecError
         records: commit
             .records()
             .iter()
-            .map(|record| WireRecord::try_from(record.record()))
+            .map(WireRecord::try_from)
             .collect::<Result<Vec<_>, _>>()?,
     };
     serde_json::to_string(&wire).map_err(|error| {
@@ -159,9 +133,11 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
                 .first_sequence
                 .checked_add(offset)
                 .ok_or_else(|| JournalCodecError::new("Journal sequence is exhausted"))?;
-            Ok(SequencedJournalRecord::new(
+            let (journal_sequence, record) = record.try_into()?;
+            Ok(SequencedJournalRecord::decoded(
                 ReplaySequence::new(sequence),
-                JournalRecord::try_from(record)?,
+                journal_sequence,
+                record,
             ))
         })
         .collect::<Result<Vec<_>, JournalCodecError>>()?;
@@ -171,11 +147,6 @@ pub(crate) fn decode(payload: &str) -> Result<JournalCommit, JournalCodecError> 
         WireCommitKind::Snapshot => JournalCommitKind::Snapshot,
     };
     let commit = JournalCommit::decoded(kind, journal_cutoff, records);
-    if commit.session_id().is_none() {
-        return Err(JournalCodecError::new(
-            "a semantic commit must contain at least one Journal record",
-        ));
-    }
     validate_commit(&commit)?;
     Ok(commit)
 }
@@ -211,11 +182,15 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
             "a complete Journal snapshot must begin at sequence 1",
         ));
     }
-    let session_id = first.record().session_id();
+    let session_id = commit
+        .records()
+        .iter()
+        .find_map(|entry| entry.record().session_id());
     if commit
         .records()
         .iter()
-        .any(|entry| entry.record().session_id() != session_id)
+        .filter_map(|entry| entry.record().session_id())
+        .any(|candidate| Some(candidate) != session_id)
     {
         return Err(JournalCodecError::new(
             "one semantic commit cannot contain records from different Sessions",
@@ -229,10 +204,51 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
             .ok_or_else(|| JournalCodecError::new("Journal sequence is exhausted"))?;
         if pair[1].sequence().get() != expected {
             return Err(JournalCodecError::new(
-                "records inside one semantic commit must have contiguous Journal sequences",
+                "records inside one semantic commit must have contiguous ReplaySequences",
             ));
         }
     }
+    let mut previous_journal_sequence = None;
+    for entry in commit.records() {
+        match (
+            entry.record().requires_journal_sequence(),
+            entry.journal_sequence(),
+        ) {
+            (true, Some(sequence)) => {
+                if sequence.get() == 0 {
+                    return Err(JournalCodecError::new("journal_sequence must be positive"));
+                }
+                if previous_journal_sequence
+                    .is_some_and(|previous: JournalSequence| sequence <= previous)
+                {
+                    return Err(JournalCodecError::new(
+                        "semantic journal_sequence values must be strictly increasing",
+                    ));
+                }
+                if commit
+                    .journal_cutoff()
+                    .is_some_and(|cutoff| sequence > cutoff)
+                {
+                    return Err(JournalCodecError::new(
+                        "semantic journal_sequence cannot exceed journal_cutoff",
+                    ));
+                }
+                previous_journal_sequence = Some(sequence);
+            },
+            (true, None) => {
+                return Err(JournalCodecError::new(
+                    "semantic Journal record is missing journal_sequence",
+                ));
+            },
+            (false, Some(_)) => {
+                return Err(JournalCodecError::new(
+                    "storage-only Journal record cannot contain journal_sequence",
+                ));
+            },
+            (false, None) => {},
+        }
+    }
+    validate_correlation_commit_order(commit)?;
     let descriptor_count = commit
         .records()
         .iter()
@@ -287,6 +303,38 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
             },
             JournalRecord::CommandCommitted(_) => {},
             JournalRecord::EventCommitted(_) => {},
+            JournalRecord::BackendExchangeObserved(exchange) => {
+                correlation::positive(exchange.epoch(), "epoch")?;
+                correlation::validate_ascii(exchange.payload_schema(), "payload_schema")?;
+                if let Some(identity) = exchange.exchange_identity() {
+                    correlation::encode_identity(identity)?;
+                }
+            },
+            JournalRecord::BackendBindingOpened(binding) => {
+                correlation::positive(binding.epoch(), "epoch")?;
+                correlation::validate_ascii(binding.backend_kind(), "backend_kind")?;
+                correlation::validate_value(binding.backend_version(), "backend_version")?;
+                correlation::encode_identity(binding.binding_identity())?;
+                correlation::encode_identity(binding.model_identity())?;
+                correlation::encode_identity(binding.session_locator())?;
+                validate_transition(binding.transition())?;
+            },
+            JournalRecord::BackendBindingClosed(binding) => {
+                correlation::positive(binding.epoch(), "epoch")?;
+            },
+            JournalRecord::BackendRequestAccepted(request) => {
+                correlation::positive(request.epoch(), "epoch")?;
+                correlation::encode_identity(request.request_identity())?;
+            },
+            JournalRecord::BackendResumableOutcome(outcome) => {
+                correlation::positive(outcome.epoch(), "epoch")?;
+                if let Some(identity) = outcome.outcome_identity() {
+                    correlation::encode_identity(identity)?;
+                }
+            },
+            JournalRecord::ContinuationAnchor(anchor) => {
+                correlation::positive(anchor.epoch(), "epoch")?;
+            },
         }
     }
     if commit.kind() == JournalCommitKind::Snapshot {
@@ -330,61 +378,75 @@ fn validate_segment(segment: &MessageSegment) -> Result<(), JournalCodecError> {
     Ok(())
 }
 
-impl TryFrom<&JournalRecord> for WireRecord {
-    type Error = JournalCodecError;
-
-    fn try_from(record: &JournalRecord) -> Result<Self, Self::Error> {
-        Ok(match record {
-            JournalRecord::SessionDescriptor(descriptor) => Self::SessionDescriptor {
-                descriptor: WireSessionDescriptor::from(descriptor),
-            },
-            JournalRecord::CommandCommitted(command) => Self::CommandCommitted {
-                command: WireCommand::try_from(command)?,
-            },
-            JournalRecord::EventCommitted(event) => Self::EventCommitted {
-                event: WireEvent::from(event),
-            },
-            JournalRecord::MessageReset(reset) => Self::MessageReset {
-                reset: WireMessageReset::from(reset),
-            },
-            JournalRecord::MessageSegment(segment) => Self::MessageSegment {
-                segment: WireMessageSegment::from(segment),
-            },
-            JournalRecord::MessageEnded(terminal) => Self::MessageEnded {
-                final_segment: terminal.final_segment().map(WireMessageSegment::from),
-                ended: WireMessageEnded::from(terminal.ended()),
-            },
-        })
+fn validate_transition(transition: &BindingTransition) -> Result<(), JournalCodecError> {
+    let valid = match (
+        transition.mode(),
+        transition.cache(),
+        transition.source_anchor_sequence(),
+    ) {
+        (TransitionMode::Initial, CacheState::NotApplicable, None) => true,
+        (TransitionMode::ExactReplay, CacheState::Lost, Some(_)) => true,
+        (TransitionMode::LossyHandoff, CacheState::Lost | CacheState::Unknown, Some(_)) => true,
+        _ => false,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(JournalCodecError::new(
+            "binding transition mode, cache, and source Anchor are inconsistent",
+        ))
     }
 }
 
-impl TryFrom<WireRecord> for JournalRecord {
-    type Error = JournalCodecError;
-
-    fn try_from(record: WireRecord) -> Result<Self, Self::Error> {
-        match record {
-            WireRecord::SessionDescriptor { descriptor } => Ok(Self::SessionDescriptor(
-                SessionDescriptor::try_from(descriptor)?,
-            )),
-            WireRecord::CommandCommitted { command } => {
-                Ok(Self::CommandCommitted(command.try_into()?))
-            },
-            WireRecord::EventCommitted { event } => {
-                Ok(Self::EventCommitted(AgentEvent::try_from(event)?))
-            },
-            WireRecord::MessageReset { reset } => {
-                Ok(Self::MessageReset(MessageReset::try_from(reset)?))
-            },
-            WireRecord::MessageSegment { segment } => {
-                Ok(Self::MessageSegment(MessageSegment::try_from(segment)?))
-            },
-            WireRecord::MessageEnded {
-                final_segment,
-                ended,
-            } => Ok(Self::MessageEnded(MessageTerminal::new(
-                final_segment.map(MessageSegment::try_from).transpose()?,
-                MessageEnded::try_from(ended)?,
-            ))),
+fn validate_correlation_commit_order(commit: &JournalCommit) -> Result<(), JournalCodecError> {
+    for (index, entry) in commit.records().iter().enumerate() {
+        if let JournalRecord::BackendResumableOutcome(outcome) = entry.record() {
+            let completed_in_commit = commit.records()[..index].iter().any(|candidate| {
+                matches!(
+                    candidate.record(),
+                    JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: crate::TurnOutcome::Completed })
+                        if turn.turn_id() == outcome.turn_id()
+                )
+            });
+            if !completed_in_commit {
+                return Err(JournalCodecError::new(
+                    "backend_resumable_outcome requires its completed Turn in the same commit",
+                ));
+            }
+            let Some(next) = commit.records().get(index + 1) else {
+                return Err(JournalCodecError::new(
+                    "backend_resumable_outcome must be followed immediately by continuation_anchor",
+                ));
+            };
+            let Some(outcome_sequence) = entry.journal_sequence() else {
+                return Err(JournalCodecError::new(
+                    "backend_resumable_outcome is missing journal_sequence",
+                ));
+            };
+            let JournalRecord::ContinuationAnchor(anchor) = next.record() else {
+                return Err(JournalCodecError::new(
+                    "backend_resumable_outcome must be followed immediately by continuation_anchor",
+                ));
+            };
+            if anchor.resumable_outcome_sequence() != outcome_sequence
+                || anchor.journal_boundary() != outcome_sequence
+            {
+                return Err(JournalCodecError::new(
+                    "continuation_anchor boundary must identify its immediately preceding outcome",
+                ));
+            }
+        }
+        if matches!(entry.record(), JournalRecord::ContinuationAnchor(_))
+            && (index == 0
+                || !matches!(
+                    commit.records()[index - 1].record(),
+                    JournalRecord::BackendResumableOutcome(_)
+                ))
+        {
+            return Err(JournalCodecError::new(
+                "continuation_anchor must immediately follow backend_resumable_outcome",
+            ));
         }
     }
+    Ok(())
 }

@@ -9,8 +9,9 @@ use super::*;
 use crate::{
     ActivityId, ActivityRef, AgentCommand, AgentEvent, JournalSequence, TurnId, TurnRef, UserInput,
     journal::codec::{
-        JournalRecord, MessageEnded, MessageOutcome, MessageSegment, MessageSegmenter,
-        MessageStream, MessageTerminal, SequencedJournalRecord,
+        BackendBindingOpened, BindingTransition, CacheState, JournalRecord, MessageEnded,
+        MessageOutcome, MessageSegment, MessageSegmenter, MessageStream, MessageTerminal,
+        ReplaySequence, SequencedJournalRecord, TransitionMode, VersionedIdentity,
     },
     session_repository::{LocalSessionRepository, RepositoryEntry, RepositorySequence},
 };
@@ -145,6 +146,22 @@ fn command_commit_at(first_sequence: u64) -> JournalCommit {
     ])
 }
 
+fn semantic_record(
+    replay_sequence: u64,
+    journal_sequence: u64,
+    record: JournalRecord,
+) -> SequencedJournalRecord {
+    SequencedJournalRecord::with_journal_sequence(
+        ReplaySequence::new(replay_sequence),
+        JournalSequence::new(journal_sequence),
+        record,
+    )
+}
+
+fn test_identity(name: &str) -> VersionedIdentity {
+    VersionedIdentity::new(format!("yo.test.{name}/v1"), format!("{name}:value"))
+}
+
 fn unterminated_snapshot() -> JournalCommit {
     JournalCommit::snapshot(vec![
         SequencedJournalRecord::new(
@@ -232,6 +249,56 @@ fn maps_one_semantic_commit_to_one_physical_append() {
     );
 }
 
+// binding-open semantic record가 저장된 append의 discovery에는 recovery가 검증한 현재
+// epoch가 투영되어야 목록 reader가 payload를 추측하지 않고 빠른 후보 탐색을 할 수 있습니다.
+#[test]
+fn projects_the_recovered_binding_epoch_into_discovery() {
+    let mut repository = repository_with_descriptor(RecordingRepository::default());
+    let commit = JournalCommit::incremental_through(
+        JournalSequence::new(2),
+        vec![
+            semantic_record(
+                2,
+                1,
+                JournalRecord::EventCommitted(AgentEvent::SessionCreated {
+                    session_id: session(),
+                }),
+            ),
+            semantic_record(
+                3,
+                2,
+                JournalRecord::BackendBindingOpened(BackendBindingOpened::new(
+                    1,
+                    "codex",
+                    "1.0.0",
+                    test_identity("binding"),
+                    test_identity("model"),
+                    test_identity("session"),
+                    BindingTransition::new(
+                        TransitionMode::Initial,
+                        CacheState::NotApplicable,
+                        None,
+                    ),
+                )),
+            ),
+        ],
+    );
+
+    repository
+        .append(session(), &commit)
+        .expect("the validated binding persists");
+    let inner = repository.into_inner();
+
+    assert_eq!(
+        inner.appended[1]
+            .1
+            .discovery()
+            .expect("durable records include discovery")
+            .binding_epoch(),
+        Some(1)
+    );
+}
+
 // 빈 repository의 첫 incremental이 Journal sequence 1이 아니면 성공 뒤 복구 불가능한
 // 로그가 되므로 semantic prefix 검증이 physical append 전에 거부해야 한다.
 #[test]
@@ -281,14 +348,17 @@ fn rejects_a_terminal_that_mismatches_the_durable_prefix() {
     let error = repository
         .append(session(), &terminal_commit(3, 2))
         .expect_err("the terminal counts must match the durable prefix");
+    repository
+        .append(session(), &terminal_commit(3, 1))
+        .expect("a valid replacement candidate still uses the unchanged recovered prefix");
     let recovered = repository
         .recover(session())
         .expect("the rejected terminal leaves an interruptible prefix");
     let inner = repository.into_inner();
 
     assert!(matches!(error, JournalRepositoryError::Codec(_)));
-    assert!(recovered.recovery_commit().is_some());
-    assert_eq!(inner.appended.len(), 2);
+    assert!(recovered.recovery_commit().is_none());
+    assert_eq!(inner.appended.len(), 3);
 }
 
 // 열린 message의 pending text가 경계에서 segment로 먼저 저장된 뒤에는 command가 같은
