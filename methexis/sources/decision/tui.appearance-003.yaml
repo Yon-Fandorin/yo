@@ -1,7 +1,7 @@
 schema: methexis.source/v1alpha1
 id: tui.appearance-003
-revision: sha256:89224233820eaf4c4a4780172c504c69c425bb0ad9977bee079b4946044d6628
+revision: sha256:cdfe365a90cce5b5539d03d712ce08f4a3e1ec80985343b28ee18dd06c140186
 payload:
   kind: decision
   content: >-
-    The initial glyph vocabulary provides explicit Rich user and assistant markers U+276F and U+23FA, and ASCII markers greater-than sign and asterisk. Rich is the compatibility default and ASCII is selected only through an explicit session appearance candidate; TERM heuristics and NO_COLOR do not select glyphs. Marker validation and layout use the existing versioned Surface grapheme-width profile, and all profiles preserve the same configured body start column.
+    The initial glyph vocabulary provides an explicit Rich user marker U+276F and a quieter Rich assistant marker U+2022, plus ASCII greater-than and asterisk markers. Rich remains the default and ASCII is selected only through an explicit session appearance candidate; TERM heuristics and NO_COLOR do not select glyphs. The U+2022 Rich marker is an intentional pre-release presentation change for rendered screen and plain-output bytes, while semantic message roles remain independent of rendered marker identity. Marker validation and layout use the existing versioned Surface grapheme-width profile, and all profiles preserve the same configured body start column.

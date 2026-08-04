@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: tui.appearance.glyph-profiles
-revision: sha256:fe3666c9aa6a778c41e9b2a6216bb8171b737895d107e95a3bd7710a54cf6a59
+revision: sha256:fcdba9627e4dda4e968aa24837993d2b2247ba9e30a511781ffb6f3a9db334d9
 reviewer: tui-architecture
-reviewed_at: 2026-07-30T15:50:04Z
+reviewed_at: 2026-08-04T12:44:38Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:fe8c295257a759d11f50169cccad258e72fabd3b5be45d9a065a3e46e69e0f0c
-request_hash: sha256:9fcb374060167f8300b6175be092a5a5bc921a77fdec9f5ff5a9483ede3f9389
+projection_hash: sha256:24c6ca45529fa1160394796b77a7cbf849f88716ea6f8c5c4dafaae6e7ea863f
+request_hash: sha256:d76f9b8234acc14350e0f55250ba9f8d59d4d8ec143975928fc9059c37d31807

@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.appearance-003
-    revision: sha256:89224233820eaf4c4a4780172c504c69c425bb0ad9977bee079b4946044d6628
+    revision: sha256:cdfe365a90cce5b5539d03d712ce08f4a3e1ec80985343b28ee18dd06c140186
 relations:
   depends_on:
     - tui.appearance.session-publication
@@ -25,12 +25,18 @@ The initial appearance vocabulary MUST provide these exact transcript markers:
 | Role | Rich | ASCII |
 | --- | --- | --- |
 | user | `❯` (`U+276F`) | `>` (`U+003E`) |
-| assistant | `⏺` (`U+23FA`) | `*` (`U+002A`) |
+| assistant | `•` (`U+2022`) | `*` (`U+002A`) |
 
-`Rich` MUST remain the compatibility default. `Ascii` MUST be selected only by
+`Rich` MUST remain the default profile. `Ascii` MUST be selected only by
 an explicit session appearance candidate. The initial implementation MUST NOT
 infer a profile from `TERM`; color capability and `NO_COLOR` MUST NOT select a
 glyph profile.
+
+Changing the Rich assistant marker to `•` is an intentional presentation
+change for pre-release consumers that compare rendered screen or plain-output
+bytes. Message roles remain semantic input to rendering; a selected appearance
+snapshot supplies their current markers rather than preserving an earlier
+rendered marker as durable identity.
 
 Every candidate marker MUST be one non-empty extended grapheme cluster and
 MUST reject controls, ANSI content, and zero-width clusters before publication.
@@ -45,6 +51,7 @@ their markers from the same committed snapshot.
 
 ## Rationale
 
-Explicit profiles preserve the existing rich glyphs, offer a deterministic
-ASCII path, and avoid coupling color preferences or unreliable environment
-heuristics to terminal glyph capability.
+The Rich profile keeps user input visually prominent while the quieter
+assistant bullet lets response text carry the hierarchy. The explicit ASCII
+path remains deterministic, and neither profile couples color preferences or
+unreliable environment heuristics to terminal glyph capability.
