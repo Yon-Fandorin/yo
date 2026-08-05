@@ -4,9 +4,9 @@
   "plan": {
     "schema": "methexis.context-build-plan/v1alpha1",
     "checkpoint": {
-      "id": "sha256:f9bc9e26615f7a1fd9ed7c5214545c8ee3b437525aed7255460de8a5afab06f9",
-      "hash": "sha256:acde1a05416191e1cdd0246026c15c62dc1b0a23481a89bb21beac66f4ba3b32",
-      "authority_basis_commit": "c9700a8779b1283b00fa3eadeb760e6dd532d69c"
+      "id": "sha256:945feb72d7ccd4b2e45be7e3760ce1ceef0144a81978dcd7cd14fbad224aea3d",
+      "hash": "sha256:b037cd5ae336380ab8e0b1f6b273cf9cb2b6fc578607d5b1ab71022aea8fd939",
+      "authority_basis_commit": "1b6d0fa1dad39e371d78ef95755edb33a261bc48"
     },
     "units": [
       {
