@@ -1,3 +1,4 @@
+mod docs_translation;
 mod git;
 mod impact;
 mod slice_contract;
@@ -14,6 +15,18 @@ use impact::ImpactInput;
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let mut arguments = arguments.into_iter();
     match (arguments.next().as_deref(), arguments.next().as_deref()) {
+        (Some(command), Some(action)) if command == "docs" && action == "accept-translation" => {
+            let page = arguments
+                .next()
+                .map(PathBuf::from)
+                .ok_or_else(docs_accept_translation_usage)?;
+            if arguments.next().is_some() {
+                return Err(docs_accept_translation_usage());
+            }
+            let repository = std::env::current_dir()
+                .map_err(|error| format!("cannot locate the repository: {error}"))?;
+            docs_translation::accept(&repository, &page)
+        },
         (Some(command), Some(action)) if command == "slice-contract" && action == "bind" => {
             let contract = arguments
                 .next()
@@ -125,6 +138,7 @@ fn usage(check: &str) -> String {
 
 fn general_usage() -> String {
     "usage:\n\
+     cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
      cargo xtask check test-explanations\n\
      cargo xtask check methexis-check-for-stage\n\
@@ -135,13 +149,17 @@ fn general_usage() -> String {
         .to_owned()
 }
 
+fn docs_accept_translation_usage() -> String {
+    "usage: cargo xtask docs accept-translation <relative-page.md>".to_owned()
+}
+
 fn slice_contract_usage() -> String {
     "usage: cargo xtask slice-contract bind <slice-contract.json>".to_owned()
 }
 
 #[cfg(test)]
 mod cli_tests {
-    use super::run;
+    use super::{docs_accept_translation_usage, run};
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
     // 인자 없는 검사와 커밋 입력 검사를 각각 실행 가능한 형태로 안내한다.
@@ -152,6 +170,7 @@ mod cli_tests {
         assert_eq!(
             error,
             "usage:\n\
+             cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
              cargo xtask check test-explanations\n\
              cargo xtask check methexis-check-for-stage\n\
@@ -169,5 +188,17 @@ mod cli_tests {
         let error = run(["check", "test-explanations", "unexpected"].map(Into::into)).unwrap_err();
 
         assert_eq!(error, "usage: cargo xtask check test-explanations");
+    }
+
+    // 번역 승인 명령은 검토할 한 페이지를 반드시 요구하고 추가 인자를
+    // 무시하지 않아, 호출자가 의도치 않게 여러 페이지를 승인하지 못하게 한다.
+    #[test]
+    fn docs_accept_translation_requires_exactly_one_page() {
+        let missing = run(["docs", "accept-translation"].map(Into::into)).unwrap_err();
+        let extra = run(["docs", "accept-translation", "README.md", "extra.md"].map(Into::into))
+            .unwrap_err();
+
+        assert_eq!(missing, docs_accept_translation_usage());
+        assert_eq!(extra, docs_accept_translation_usage());
     }
 }

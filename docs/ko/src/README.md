@@ -48,13 +48,18 @@ canonical 페이지가 바뀌면 `docs/ko/src` 아래의 같은 경로에 있는
 검토한다. 페이지 집합, link destination, heading, list, table, code fence는
 서로 맞게 유지한다. 저장소 검증이 이 기계적인 경계를 확인한다.
 
-번역 검토가 끝나면 `docs/src`에서 변경된 canonical 페이지의 해시를
-계산한다.
+한 페이지의 번역 검토가 끝나면 현재 canonical 원문을 다음 명령으로
+승인한다.
 
 ```bash
-(cd docs/src && shasum --algorithm 256 path/to/page.md)
+cargo xtask docs accept-translation path/to/page.md
 ```
 
-출력된 값으로 `docs/ko/source.sha256`에서 해당 페이지의 한 행만 바꾼 뒤
-`bash tools/validation/developer-docs.sh`를 실행한다. stale Projection
-검사를 조용히 통과시키려는 목적으로 해시만 새로 만들면 안 된다.
+이 명령은 서로 대응하는 canonical·한국어 regular file을 확인한 뒤
+`docs/ko/source.sha256`에서 해당 페이지의 해시 한 행만 원자적으로
+교체한다. 명령은 완료된 의미 검토를 기록할 뿐, 번역을 검토하지 않는다.
+이 명령끼리는 저장소 lock으로 직렬화하고 교체 직전에 manifest를 다시
+검증한다. 일반 editor는 이 lock을 따르지 않으므로 manifest를 동시에
+편집하지 않는다. 이후 `bash tools/validation/developer-docs.sh`를 실행한다.
+stale Projection 검사를 조용히 통과시키려는 목적으로 해시만 승인하면 안
+된다.

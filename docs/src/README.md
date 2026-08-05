@@ -47,13 +47,17 @@ When a canonical page changes, update the page at the same path under
 hash. Keep the page set, link destinations, headings, lists, tables, and code
 fences aligned; repository validation checks those mechanical boundaries.
 
-After translation review, compute the changed canonical page's hash from
-`docs/src`:
+After reviewing one translated page, accept its current canonical source with:
 
 ```bash
-(cd docs/src && shasum --algorithm 256 path/to/page.md)
+cargo xtask docs accept-translation path/to/page.md
 ```
 
-Replace only that page's matching line in `docs/ko/source.sha256`, then run
-`bash tools/validation/developer-docs.sh`. Never refresh a hash only to silence
-the stale-Projection check.
+The command verifies the matching canonical and Korean regular files, then
+atomically replaces only that page's recorded hash in
+`docs/ko/source.sha256`. It records a completed semantic review; it does not
+perform one. Invocations of this command serialize through a repository lock
+and revalidate the manifest immediately before replacement. Raw editors do not
+honor that lock, so do not edit the manifest concurrently. Run
+`bash tools/validation/developer-docs.sh` afterward, and never accept a hash
+only to silence the stale-Projection check.
