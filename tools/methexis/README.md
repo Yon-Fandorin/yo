@@ -23,6 +23,8 @@ methexis propose-activation <activation-request.json>
 methexis resolve-context <context-request.json>
 methexis check
 methexis check --only authority,artifacts
+methexis check --summary
+methexis check --summary --unit tui.surface.grapheme-cells
 methexis check --staged-activation
 ```
 
@@ -32,6 +34,16 @@ or contain comma-separated names; requested downstream classes automatically
 run their prerequisites. The JSON result separates `requested_checks` from
 `executed_checks` and marks every planned class `passed`, `failed`, or
 `blocked`.
+
+`--summary` bounds a successful result to the check statuses, authority,
+affected IDs, diagnostic count, and explicitly selected unit. Add `--unit
+<knowledge-id>` when one exact revision is needed. Unit selection requires
+`--summary` plus an `authority` or `artifacts` request because earlier check
+classes do not derive approval and eligibility; invalid combinations and
+unknown IDs fail instead of returning an empty success. Without `--unit`,
+summary output omits the full unit list. Validation failures always retain the
+complete ordinary report and diagnostics on stderr, even when bounded output
+was requested.
 
 `check --staged-activation` is the fail-closed repository-hook entry point.
 When the index does not contain an active-record change it runs the ordinary

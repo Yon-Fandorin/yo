@@ -456,6 +456,17 @@ whitespace is ignored, while unknown names and empty comma segments are usage
 errors. A blocked requested class makes the overall report unsuccessful because
 the requested validation did not complete.
 
+An agent MAY request bounded successful output with `--summary`. That result
+retains the requested and executed classes, their statuses, authority,
+affected IDs, and diagnostic count, but omits the complete KnowledgeUnit list
+unless one exact ID is selected with `--unit <knowledge-id>`. Unit selection
+requires summary output and a requested `authority` or `artifacts` class,
+because earlier classes do not derive approval and eligibility. An invalid
+combination or unknown unit is a usage failure rather than an empty success.
+Output bounding MUST NOT hide validation evidence: every unsuccessful check
+returns the complete ordinary report and diagnostics regardless of these
+selectors.
+
 Working-tree `methexis check` validates Draft Knowledge, typed Source records,
 and any tracked Projection and approval proposals. It MAY report `matching_proposal`,
 `stale_proposal`, or missing working-tree evidence, but MUST NOT promote that
@@ -773,7 +784,7 @@ build-review <request.json>    -> local packet and manifest
 approve <request.json>         -> tracked exact-revision approval proposal
 create-checkpoint <request.json> -> immutable trusted-revision Checkpoint proposal
 propose-activation <request.json> -> active-record proposal with compare-and-swap
-check [--only <class>[,<class>...]]...
+check [--only <class>[,<class>...]]... [--summary] [--unit <knowledge-id>]
                                 -> selected SOT integrity classes and their prerequisites
 check --staged-activation       -> ordinary check or one exact staged prospective transition
 resolve-context <request.json>  -> immutable ContextBuild locator and hashes

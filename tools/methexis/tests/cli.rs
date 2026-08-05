@@ -7,6 +7,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[path = "cli/bounded_check.rs"]
+mod bounded_check;
+
 const HELP: &str = concat!(
     "methexis ",
     env!("CARGO_PKG_VERSION"),
@@ -15,7 +18,7 @@ Methexis SOT Pilot
 
 USAGE:
     methexis [--help | --version]
-    methexis check [--only <class>[,<class>...]]...
+    methexis check [--only <class>[,<class>...]]... [--summary] [--unit <id>]
     methexis check --staged-activation
     methexis project-review <request.json>
     methexis build-review <request.json>
@@ -39,16 +42,16 @@ from local develop, then uses current Source observations only to demote it.
 ",
 );
 
-fn methexis() -> Command {
+pub(crate) fn methexis() -> Command {
     Command::new(env!("CARGO_BIN_EXE_methexis"))
 }
 
-struct CorpusRepository {
-    path: PathBuf,
+pub(crate) struct CorpusRepository {
+    pub(crate) path: PathBuf,
 }
 
 impl CorpusRepository {
-    fn without_active_checkpoint() -> Self {
+    pub(crate) fn without_active_checkpoint() -> Self {
         let source = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
