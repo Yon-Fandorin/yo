@@ -2,6 +2,7 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     io::{self, Write},
+    path::Path,
     process::ExitCode,
 };
 
@@ -29,6 +30,7 @@ USAGE:
     methexis approve <request.json>
     methexis create-checkpoint <request.json>
     methexis propose-activation <request.json>
+    methexis refresh-context-manifests <activation-request.json>
     methexis resolve-context <request.json>
 
 COMMANDS:
@@ -38,6 +40,7 @@ COMMANDS:
     approve           Record a human-authorized approval proposal
     create-checkpoint Create an immutable trusted-revision Checkpoint proposal
     propose-activation Propose the active Checkpoint with compare-and-swap
+    refresh-context-manifests Refresh registered manifests for an activation proposal
     resolve-context    Build or reuse deterministic token-bounded agent context
 
 Run commands from the repository root. Mutations remain Draft proposals until
@@ -98,6 +101,14 @@ pub fn run(
         },
         [command, request] if command == OsStr::new("resolve-context") => {
             run_context_operation(request, &mut stdout, &mut stderr)
+        },
+        [command, request] if command == OsStr::new("refresh-context-manifests") => {
+            let root = env::current_dir()?;
+            let service = ContextService::new(&root);
+            match service.refresh_manifests(Path::new(request)) {
+                Ok(result) => write_json(&mut stdout, &result, ExitCode::SUCCESS),
+                Err(error) => write_json(&mut stderr, &error, ExitCode::from(2)),
+            }
         },
         _ => write_text(&mut stderr, UNSUPPORTED_COMMAND, ExitCode::from(2)),
     }

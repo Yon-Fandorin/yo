@@ -25,6 +25,7 @@ USAGE:
     methexis approve <request.json>
     methexis create-checkpoint <request.json>
     methexis propose-activation <request.json>
+    methexis refresh-context-manifests <activation-request.json>
     methexis resolve-context <request.json>
 
 COMMANDS:
@@ -34,6 +35,7 @@ COMMANDS:
     approve           Record a human-authorized approval proposal
     create-checkpoint Create an immutable trusted-revision Checkpoint proposal
     propose-activation Propose the active Checkpoint with compare-and-swap
+    refresh-context-manifests Refresh registered manifests for an activation proposal
     resolve-context    Build or reuse deterministic token-bounded agent context
 
 Run commands from the repository root. Mutations remain Draft proposals until

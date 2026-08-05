@@ -6,6 +6,8 @@ mod failures;
 mod lineage;
 #[path = "checkpoint_flow/prospective.rs"]
 mod prospective;
+#[path = "checkpoint_flow/refresh.rs"]
+mod refresh;
 #[path = "checkpoint_flow/replacement.rs"]
 mod replacement;
 #[path = "checkpoint_flow/support.rs"]

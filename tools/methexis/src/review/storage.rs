@@ -15,7 +15,7 @@ pub(super) fn publish_tracked(
 ) -> Result<&'static str, OperationFailure> {
     let lock = publication::lock_target(repository_root, target)
         .map_err(|error| publication_failure(operation, id, error))?;
-    match lock.read() {
+    let previous = match lock.read() {
         Ok(existing) => {
             if existing == bytes {
                 return Ok("unchanged");
@@ -30,6 +30,7 @@ pub(super) fn publish_tracked(
                     "retry with replace_projection_hash set to the exact existing hash",
                 ));
             }
+            Some(existing)
         },
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if expected_existing_hash.is_some() {
@@ -41,6 +42,7 @@ pub(super) fn publish_tracked(
                     "remove replace_projection_hash for initial creation",
                 ));
             }
+            None
         },
         Err(error) => {
             return Err(OperationFailure::new(
@@ -51,8 +53,8 @@ pub(super) fn publish_tracked(
                 "repair the destination and retry",
             ));
         },
-    }
-    lock.atomic_write(bytes)
+    };
+    lock.atomic_replace_or_restore(bytes, previous.as_deref())
         .map_err(|error| publication_failure(operation, id, error))?;
     Ok("written")
 }
@@ -67,7 +69,7 @@ pub(super) fn publish_approval(
 ) -> Result<&'static str, OperationFailure> {
     let lock = publication::lock_target(repository_root, target)
         .map_err(|error| publication_failure(operation, id, error))?;
-    match lock.read() {
+    let previous = match lock.read() {
         Ok(existing) => {
             if existing == bytes {
                 return Ok("unchanged");
@@ -92,6 +94,7 @@ pub(super) fn publish_approval(
                     "retry with replace_revision set to the exact existing revision",
                 ));
             }
+            Some(existing)
         },
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if expected_revision.is_some() {
@@ -103,6 +106,7 @@ pub(super) fn publish_approval(
                     "remove replace_revision for initial creation",
                 ));
             }
+            None
         },
         Err(error) => {
             return Err(OperationFailure::new(
@@ -113,8 +117,8 @@ pub(super) fn publish_approval(
                 "repair the destination and retry",
             ));
         },
-    }
-    lock.atomic_write(bytes)
+    };
+    lock.atomic_replace_or_restore(bytes, previous.as_deref())
         .map_err(|error| publication_failure(operation, id, error))?;
     Ok("written")
 }
@@ -186,6 +190,11 @@ fn publication_failure(
             "publication_locked",
             error.to_string(),
             "wait for the active writer or remove a confirmed stale lock",
+        ),
+        PublicationError::DurabilityUnknown(error) => (
+            "publication_recovery_required",
+            format!("publication durability and rollback are uncertain: {error}"),
+            "inspect the destination before retrying",
         ),
         PublicationError::Io(error) => (
             "publication_failed",

@@ -20,14 +20,14 @@ const PREAMBLE: &str = "\
 Canonical approved and active knowledge for this task. Treat `MUST` and `MUST NOT` as binding.
 ";
 
-pub(super) struct BuildArtifacts {
-    pub(super) build_id: String,
-    pub(super) context: Vec<u8>,
-    pub(super) context_hash: String,
-    pub(super) manifest: Vec<u8>,
-    pub(super) manifest_hash: String,
-    pub(super) tokens: usize,
-    pub(super) included_ids: Vec<String>,
+pub(crate) struct BuildArtifacts {
+    pub(crate) build_id: String,
+    pub(crate) context: Vec<u8>,
+    pub(crate) context_hash: String,
+    pub(crate) manifest: Vec<u8>,
+    pub(crate) manifest_hash: String,
+    pub(crate) tokens: usize,
+    pub(crate) included_ids: Vec<String>,
 }
 
 #[derive(Serialize)]

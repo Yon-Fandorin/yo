@@ -14,12 +14,14 @@ const DEFAULT_TRUSTED_REF: &str = "refs/heads/develop";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_RECORD_BYTES: usize = 256 * 1024;
 
+mod candidate;
 mod context;
 mod evaluation;
 mod git;
 mod operations;
 mod prospective;
 mod records;
+mod refresh;
 mod storage;
 mod validation;
 
@@ -27,7 +29,12 @@ pub(crate) use context::{
     ContextAuthority, final_revalidate as final_revalidate_context_authority,
     resolve as resolve_context_authority,
 };
+#[cfg(test)]
+pub(crate) use context_tests::Repository as TestRepository;
 pub(crate) use evaluation::{ActiveCheckpoint, AuthorityFailure};
+#[cfg(test)]
+pub(crate) use refresh::ProspectiveContext;
+pub(crate) use refresh::prepare_context_refresh;
 
 pub(crate) enum StagedTransition {
     Prospective(prospective::ProspectiveActivation),
@@ -179,6 +186,15 @@ impl OperationFailure {
 
     fn code(&self) -> &str {
         &self.error.code
+    }
+
+    pub(crate) fn parts(&self) -> (Option<String>, String, String, Vec<String>) {
+        (
+            self.trusted_commit.clone(),
+            self.error.code.clone(),
+            self.error.message.clone(),
+            self.error.affected_ids.clone(),
+        )
     }
 }
 

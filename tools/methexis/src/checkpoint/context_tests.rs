@@ -63,12 +63,12 @@ fn final_guard_rejects_a_concurrent_trusted_ref_advance_without_switching_snapsh
     );
 }
 
-struct Repository {
-    path: PathBuf,
+pub(crate) struct Repository {
+    pub(crate) path: PathBuf,
 }
 
 impl Repository {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -97,7 +97,7 @@ impl Repository {
         repository
     }
 
-    fn approve(&self, ids: &[&str]) {
+    pub(crate) fn approve(&self, ids: &[&str]) {
         let foundation = load_foundation(&self.path).unwrap();
         let reviews = ReviewService::new(&self.path);
         for id in ids {
@@ -143,7 +143,7 @@ impl Repository {
         self.git(&["branch", "-f", "develop", "HEAD"]);
     }
 
-    fn request(&self, name: &str, value: &serde_json::Value) -> PathBuf {
+    pub(crate) fn request(&self, name: &str, value: &serde_json::Value) -> PathBuf {
         let directory = self.path.join(".local-exclude/methexis/requests");
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join(name);
@@ -153,7 +153,7 @@ impl Repository {
         path
     }
 
-    fn git(&self, args: &[&str]) {
+    pub(crate) fn git(&self, args: &[&str]) {
         let output = Command::new("/usr/bin/git")
             .env_clear()
             .env("GIT_CONFIG_NOSYSTEM", "1")

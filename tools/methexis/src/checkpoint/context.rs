@@ -24,8 +24,8 @@ pub(crate) struct ContextAuthority {
     pub(crate) active: BTreeSet<String>,
     pub(crate) freshness: BTreeMap<String, UnitFreshness>,
     pub(crate) approval_evidence: BTreeMap<String, ApprovalEvidence>,
-    freshness_guard: FreshnessGuard,
-    active_record_hash: String,
+    pub(super) freshness_guard: FreshnessGuard,
+    pub(super) active_record_hash: String,
 }
 
 pub(crate) fn resolve(repository_root: &Path) -> Result<ContextAuthority, AuthorityFailure> {

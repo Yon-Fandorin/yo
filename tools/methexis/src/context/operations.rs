@@ -1,6 +1,6 @@
 //! End-to-end Context Resolution orchestration.
 
-use std::{collections::BTreeSet, fs::File, io::Read, path::Path};
+use std::{collections::BTreeSet, path::Path};
 
 use super::{
     candidate, payload, selection, storage,
@@ -8,7 +8,10 @@ use super::{
         Anchor, REQUEST_SCHEMA, ResolveFailure, ResolveRequest, ResolveSuccess, TOKENIZER_PROFILE,
     },
 };
-use crate::checkpoint::{self, AuthorityFailure};
+use crate::{
+    checkpoint::{self, AuthorityFailure},
+    publication::{self, PublicationError},
+};
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_ANCHORS: usize = 128;
@@ -20,10 +23,72 @@ pub(super) fn resolve(
     repository_root: &Path,
     request_path: &Path,
 ) -> Result<ResolveSuccess, ResolveFailure> {
-    let mut request = read_request(request_path)?;
-    validate_request(&mut request)?;
+    let request_target = if request_path.is_absolute() {
+        request_path.to_owned()
+    } else {
+        repository_root.join(request_path)
+    };
+    let request_capture =
+        publication::capture_file(repository_root, &request_target, MAX_REQUEST_BYTES)
+            .map_err(|error| request_capture_failure(error, request_path))?;
     let authority =
         checkpoint::resolve_context_authority(repository_root).map_err(authority_failure)?;
+    let compiled = compile_captured(
+        repository_root,
+        request_capture.bytes(),
+        request_path,
+        &authority,
+    )?;
+    let stored = storage::publish(repository_root, &compiled.artifacts, || {
+        request_capture.revalidate().map_err(|error| {
+            request_failure(
+                "request_changed_during_resolution",
+                error.to_string(),
+                vec![request_path.to_string_lossy().into_owned()],
+            )
+        })?;
+        compiled.final_revalidate(repository_root, &authority.trusted_commit)?;
+        checkpoint::final_revalidate_context_authority(repository_root, &authority)
+            .map_err(authority_failure)
+    })
+    .map_err(|failure| failure.with_trusted_commit(&authority.trusted_commit))?;
+    Ok(ResolveSuccess::new(
+        stored.status,
+        authority.trusted_commit,
+        compiled.artifacts.build_id,
+        stored.context,
+        stored.manifest,
+        compiled.artifacts.included_ids,
+    ))
+}
+
+pub(super) struct CompiledBuild {
+    pub(super) artifacts: payload::BuildArtifacts,
+    candidates: Option<candidate::CapturedCandidates>,
+}
+
+impl CompiledBuild {
+    pub(super) fn final_revalidate(
+        &self,
+        repository_root: &Path,
+        trusted_commit: &str,
+    ) -> Result<(), ResolveFailure> {
+        if let Some(capture) = &self.candidates {
+            candidate::final_revalidate(repository_root, capture)
+                .map_err(|failure| failure.with_trusted_commit(trusted_commit))?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn compile_captured(
+    repository_root: &Path,
+    request_bytes: &[u8],
+    request_path: &Path,
+    authority: &checkpoint::ContextAuthority,
+) -> Result<CompiledBuild, ResolveFailure> {
+    let mut request = parse_request(request_bytes, request_path)?;
+    validate_request(&mut request)?;
     let candidates = request
         .candidates
         .as_ref()
@@ -34,66 +99,29 @@ pub(super) fn resolve(
         .as_ref()
         .map_or(&[][..], |capture| capture.set.candidates.as_slice());
     let selection = selection::pack(
-        &authority,
+        authority,
         &request.anchors,
         candidate_slice,
         request.max_tokens,
         |included| {
-            let context = payload::render(&authority, included);
+            let context = payload::render(authority, included);
             payload::count_tokens(&context)
         },
     )?;
     let artifacts = payload::compile(
-        &authority,
+        authority,
         &selection,
         candidates.as_ref().map(|capture| capture.hash.as_str()),
         candidates.as_ref().map(|capture| &capture.set),
         request.max_tokens,
     );
-    let stored = storage::publish(repository_root, &artifacts, || {
-        if let Some(capture) = &candidates {
-            candidate::final_revalidate(repository_root, capture)
-                .map_err(|failure| failure.with_trusted_commit(&authority.trusted_commit))?;
-        }
-        checkpoint::final_revalidate_context_authority(repository_root, &authority)
-            .map_err(authority_failure)
+    Ok(CompiledBuild {
+        artifacts,
+        candidates,
     })
-    .map_err(|failure| failure.with_trusted_commit(&authority.trusted_commit))?;
-    Ok(ResolveSuccess::new(
-        stored.status,
-        authority.trusted_commit,
-        artifacts.build_id,
-        stored.context,
-        stored.manifest,
-        artifacts.included_ids,
-    ))
 }
 
-fn read_request(path: &Path) -> Result<ResolveRequest, ResolveFailure> {
-    let file = File::open(path).map_err(|error| {
-        request_failure(
-            "request_unreadable",
-            error.to_string(),
-            vec![path.to_string_lossy().into_owned()],
-        )
-    })?;
-    let mut bytes = Vec::new();
-    file.take((MAX_REQUEST_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
-            request_failure(
-                "request_unreadable",
-                error.to_string(),
-                vec![path.to_string_lossy().into_owned()],
-            )
-        })?;
-    if bytes.len() > MAX_REQUEST_BYTES {
-        return Err(request_failure(
-            "request_too_large",
-            "Context Resolution request exceeds the Pilot size limit",
-            vec![path.to_string_lossy().into_owned()],
-        ));
-    }
+fn parse_request(bytes: &[u8], path: &Path) -> Result<ResolveRequest, ResolveFailure> {
     if bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
         return Err(request_failure(
             "request_bom_forbidden",
@@ -101,13 +129,34 @@ fn read_request(path: &Path) -> Result<ResolveRequest, ResolveFailure> {
             vec![path.to_string_lossy().into_owned()],
         ));
     }
-    serde_json::from_slice(&bytes).map_err(|error| {
+    serde_json::from_slice(bytes).map_err(|error| {
         request_failure(
             "invalid_request",
             error.to_string(),
             vec![path.to_string_lossy().into_owned()],
         )
     })
+}
+
+fn request_capture_failure(error: PublicationError, path: &Path) -> ResolveFailure {
+    let (code, message) = match error {
+        PublicationError::OutsideRepository => (
+            "request_path_invalid",
+            "request path escapes the repository".to_owned(),
+        ),
+        PublicationError::Symlink(path) => (
+            "request_path_symlink",
+            format!("request path uses symlink `{}`", path.display()),
+        ),
+        PublicationError::NotDirectory(path) => (
+            "request_path_not_directory",
+            format!("request parent is not a directory `{}`", path.display()),
+        ),
+        PublicationError::Locked(error)
+        | PublicationError::Io(error)
+        | PublicationError::DurabilityUnknown(error) => ("request_unreadable", error.to_string()),
+    };
+    request_failure(code, message, vec![path.to_string_lossy().into_owned()])
 }
 
 fn validate_request(request: &mut ResolveRequest) -> Result<(), ResolveFailure> {

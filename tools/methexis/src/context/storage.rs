@@ -161,6 +161,11 @@ fn publication_failure(error: PublicationError, path: &Path) -> ResolveFailure {
             format!("ContextBuild target is locked: {error}"),
             true,
         ),
+        PublicationError::DurabilityUnknown(error) => (
+            "context_storage_recovery_required",
+            format!("ContextBuild durability and rollback are uncertain: {error}"),
+            false,
+        ),
         PublicationError::Io(error) => ("context_storage_failed", error.to_string(), false),
     };
     ResolveFailure::new(

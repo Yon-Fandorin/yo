@@ -55,7 +55,7 @@ pub(super) fn publish_active(
 ) -> Result<&'static str, OperationFailure> {
     let lock = publication::lock_target(repository_root, target)
         .map_err(|error| publication_failure(operation, commit, id, error))?;
-    match lock.read() {
+    let previous = match lock.read() {
         Ok(existing) if existing == bytes => return Ok("unchanged"),
         Ok(existing) => {
             parse_active_bytes(&existing, operation)?;
@@ -70,6 +70,7 @@ pub(super) fn publish_active(
                     "rebuild the request from the current active record",
                 ));
             }
+            Some(existing)
         },
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if expected_hash.is_some() {
@@ -82,6 +83,7 @@ pub(super) fn publish_active(
                     "remove replace_active_hash for initial activation",
                 ));
             }
+            None
         },
         Err(error) => {
             return Err(failure(
@@ -93,8 +95,8 @@ pub(super) fn publish_active(
                 "repair the destination and retry",
             ));
         },
-    }
-    lock.atomic_write(bytes)
+    };
+    lock.atomic_replace_or_restore(bytes, previous.as_deref())
         .map_err(|error| publication_failure(operation, commit, id, error))?;
     Ok("written")
 }
@@ -125,6 +127,11 @@ fn publication_failure(
             "publication_locked",
             error.to_string(),
             "wait for the active writer or remove a confirmed stale lock",
+        ),
+        PublicationError::DurabilityUnknown(error) => (
+            "publication_recovery_required",
+            format!("publication durability and rollback are uncertain: {error}"),
+            "inspect the destination before retrying",
         ),
         PublicationError::Io(error) => (
             "publication_failed",

@@ -18,7 +18,7 @@ impl TemporaryRepository {
             "methexis-artifact-check-{}-{unique}",
             std::process::id()
         ));
-        for relative in super::TRACKED_ARTIFACTS {
+        for relative in crate::context::registry::manifest_paths() {
             fs::create_dir_all(
                 root.join(relative)
                     .parent()
@@ -43,7 +43,7 @@ impl TemporaryRepository {
                 }
             }
         });
-        for relative in super::TRACKED_ARTIFACTS {
+        for relative in crate::context::registry::manifest_paths() {
             fs::write(
                 self.0.join(relative),
                 serde_json::to_vec(&manifest).expect("encode manifest"),
@@ -105,7 +105,9 @@ fn symlinked_tracked_artifact_is_rejected() {
     repository.write_manifests(&active.id, &active.hash, &active.authority_basis_commit);
     let target = repository.root().join("outside.json");
     fs::write(&target, b"{}").expect("write symlink target");
-    let artifact = repository.root().join(super::TRACKED_ARTIFACTS[0]);
+    let artifact = repository
+        .root()
+        .join(crate::context::registry::REGISTRATIONS[0].manifest);
     fs::remove_file(&artifact).expect("remove regular artifact");
     symlink(&target, &artifact).expect("create artifact symlink");
 
@@ -123,7 +125,9 @@ fn oversized_tracked_artifact_is_bounded() {
     let active = active_checkpoint();
     repository.write_manifests(&active.id, &active.hash, &active.authority_basis_commit);
     fs::write(
-        repository.root().join(super::TRACKED_ARTIFACTS[0]),
+        repository
+            .root()
+            .join(crate::context::registry::REGISTRATIONS[0].manifest),
         vec![b' '; super::MAX_ARTIFACT_BYTES + 1],
     )
     .expect("write oversized artifact");
@@ -140,8 +144,12 @@ fn partial_registration_requires_every_tracked_artifact() {
     let repository = TemporaryRepository::new();
     let active = active_checkpoint();
     repository.write_manifests(&active.id, &active.hash, &active.authority_basis_commit);
-    fs::remove_file(repository.root().join(super::TRACKED_ARTIFACTS[1]))
-        .expect("remove one registered artifact");
+    fs::remove_file(
+        repository
+            .root()
+            .join(crate::context::registry::REGISTRATIONS[1].manifest),
+    )
+    .expect("remove one registered artifact");
 
     assert!(super::is_registered(repository.root()));
     let diagnostics = super::validate(repository.root(), &active);

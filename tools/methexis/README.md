@@ -20,6 +20,7 @@ methexis build-review <review-request.json>
 methexis approve <approval-request.json>
 methexis create-checkpoint <checkpoint-request.json>
 methexis propose-activation <activation-request.json>
+methexis refresh-context-manifests <activation-request.json>
 methexis resolve-context <context-request.json>
 methexis check
 methexis check --only authority,artifacts
@@ -85,6 +86,27 @@ Both files become authority only after repository review integrates them into
 stable Source drift yields `degraded`, while a concurrent Source change returns
 a retryable failure without partial state.
 
+`refresh-context-manifests` prepares the closed registered context-manifest
+set for that exact activation proposal. It reuses the activation request,
+pins current trusted `develop`, verifies the prospective Checkpoint and the
+working active record's canonical compare-and-swap lineage, then recompiles
+each manifest with the ContextBuild compiler. The command writes manifests
+only when every compiled `context.md` still matches its tracked golden bytes;
+a payload change fails and remains a separately reviewed semantic change.
+All outputs are computed before publication. A durable transaction journal
+then makes the registered set one operation: late failure rolls every changed
+manifest back, and the next invocation recovers an interrupted prepared or
+committed batch before doing new work. Ambiguous journal or target bytes fail
+closed rather than overwriting either version. Methexis writers serialize on
+process-lifetime kernel locks, and Methexis readers reject a live journal, so
+cooperating commands never accept an intermediate batch. Raw filesystem tools
+that ignore those locks are outside this guarantee: they may observe or create
+intermediate bytes, and a cooperating refresh may overwrite them or later
+Methexis validation may diagnose them as a conflict; raw writes receive no CAS
+guarantee.
+Run it before staging the four-file transition checked by
+`check --staged-activation`.
+
 `resolve-context` accepts required direct anchors and/or a hash-pinned Librarian
 candidate result. It verifies trusted approval and freshness, packs complete
 required-relation bundles with `o200k_base/v1`, and returns paths and hashes for
@@ -117,10 +139,12 @@ tests/review_flow/
 
 src/checkpoint/
   mod.rs         CheckpointService facade and shared wire-contract types
+  candidate.rs   shared prospective authority and final freshness guard
   context.rs     Context authority capture and final revalidation guard
   context_tests.rs final concurrent authority-change regression
   operations.rs  Checkpoint and activation-proposal orchestration
   prospective.rs exact staged activation and artifact validation
+  refresh.rs     prospective authority preparation for manifest refresh
   git.rs         isolated pinned trusted-ref Git-object snapshot
   git/proposal.rs read-only captured-index and parent snapshot for hook validation
   git/tests.rs   captured proposal mutation regression
@@ -149,6 +173,8 @@ src/check/
 src/context/
   mod.rs         ContextService facade
   operations.rs  request-to-publication orchestration
+  registry.rs    typed owner of registered request, payload, and manifest triples
+  refresh.rs     captured compilation and recoverable batch publication
   wire.rs        independent versioned request, result, and candidate structs
   payload.rs     canonical Markdown, actual token count, BuildId, and manifest
   storage.rs     verified reuse, atomic publication, and collision quarantine

@@ -219,6 +219,16 @@ impl ResolveFailure {
         self
     }
 
+    pub(crate) fn parts(&self) -> (Option<String>, String, String, Vec<String>, Vec<String>) {
+        (
+            self.trusted_commit.clone(),
+            self.error.code.clone(),
+            self.error.message.clone(),
+            self.error.affected_ids.clone(),
+            self.error.affected_paths.clone(),
+        )
+    }
+
     #[cfg(test)]
     pub(super) fn code(&self) -> &str {
         &self.error.code

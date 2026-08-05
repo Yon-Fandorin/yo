@@ -1,15 +1,15 @@
 //! Read-only validation for one exact staged Checkpoint activation transition.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::Serialize;
 
 use super::{
-    ActiveCheckpoint, OperationFailure, StagedFallback, StagedTransition, git, hash_bytes,
+    ActiveCheckpoint, OperationFailure, StagedFallback, StagedTransition, candidate, git,
+    hash_bytes,
     records::{build_active, parse_active_bytes, parse_checkpoint_bytes, read_active},
-    validation,
 };
-use crate::{check::artifacts, source};
+use crate::{check::artifacts, context, context::registry};
 
 pub(super) const OPERATION: &str = "check_staged_activation";
 const ACTIVE_PATH: &str = "methexis/active-checkpoint.yaml";
@@ -39,6 +39,16 @@ pub(super) fn check_staged(
     repository_root: &std::path::Path,
     trusted_ref: &str,
 ) -> Result<StagedTransition, OperationFailure> {
+    let _transaction_guard =
+        context::manifest_refresh_reader_guard(repository_root).map_err(|error| {
+            failure(
+                None,
+                "manifest_refresh_transaction_pending",
+                error,
+                Vec::new(),
+                "rerun refresh-context-manifests to recover the transaction before checking",
+            )
+        })?;
     let index = git::capture_index(repository_root, OPERATION)?;
     let entries = git::staged_entries(repository_root, &index, OPERATION)?;
     if !contains_staged_active_record(&entries) {
@@ -94,8 +104,6 @@ pub(super) fn check_staged(
             "recreate the Checkpoint from the current trusted integration",
         ));
     }
-    validation::verify_lineage(&snapshot, &checkpoint, &checkpoint_bytes, OPERATION)?;
-
     let (_, expected_active_bytes, _) = build_active(
         &checkpoint,
         &checkpoint_hash,
@@ -111,72 +119,14 @@ pub(super) fn check_staged(
         ));
     }
 
-    let selected = checkpoint
-        .units
-        .iter()
-        .map(|unit| unit.id.clone())
-        .collect::<BTreeSet<_>>();
-    let foundation = crate::check::load_foundation(&snapshot.root).map_err(|diagnostics| {
-        let message = diagnostics.first().map_or_else(
-            || "trusted foundation is invalid".to_owned(),
-            |item| item.message.clone(),
-        );
-        failure(
-            Some(snapshot.commit.clone()),
-            "trusted_foundation_invalid",
-            message,
-            diagnostics
-                .into_iter()
-                .flat_map(|item| item.affected_ids)
-                .collect(),
-            "repair and review the trusted foundation",
-        )
-    })?;
-    let (working_sources, captures) =
-        source::load_captured(repository_root).map_err(|diagnostics| {
-            let message = diagnostics.first().map_or_else(
-                || "working Source records are invalid".to_owned(),
-                |item| item.message.clone(),
-            );
-            failure(
-                Some(snapshot.commit.clone()),
-                "source_records_invalid",
-                message,
-                diagnostics
-                    .into_iter()
-                    .flat_map(|item| item.affected_ids)
-                    .collect(),
-                "repair the Source records and retry",
-            )
-        })?;
-    let mut source_evaluation =
-        source::evaluate(repository_root, &foundation, &working_sources, &selected).map_err(
-            |error| {
-                failure(
-                    Some(snapshot.commit.clone()),
-                    error.code,
-                    error.message,
-                    error.affected_ids,
-                    "repair the Source observation and retry",
-                )
-            },
-        )?;
-    source_evaluation.guard.add_record_captures(captures);
-    let degraded = source_evaluation
-        .units
-        .iter()
-        .filter(|(_, state)| state.eligibility != source::Eligibility::Active)
-        .map(|(id, _)| id.clone())
-        .collect::<Vec<_>>();
-    if !degraded.is_empty() {
-        return Err(failure(
-            Some(snapshot.commit.clone()),
-            "prospective_checkpoint_degraded",
-            "staged activation contains selected knowledge that is not currently fresh",
-            degraded,
-            "repair Source freshness before activating the Checkpoint",
-        ));
-    }
+    let authority = candidate::build(
+        repository_root,
+        &snapshot,
+        &checkpoint,
+        &checkpoint_bytes,
+        &active_bytes,
+        OPERATION,
+    )?;
 
     let candidate_active = ActiveCheckpoint {
         id: checkpoint.checkpoint_id.clone(),
@@ -184,11 +134,10 @@ pub(super) fn check_staged(
         active_record_hash: hash_bytes(&active_bytes),
         authority_basis_commit: checkpoint.trusted_commit.clone(),
     };
-    let artifact_bytes = artifacts::TRACKED_ARTIFACTS
-        .iter()
+    let artifact_bytes = registry::manifest_paths()
         .map(|path| {
             git::read_index_blob(repository_root, &index, path, OPERATION)
-                .map(|bytes| ((*path).to_owned(), bytes))
+                .map(|bytes| (path.to_owned(), bytes))
         })
         .collect::<Result<BTreeMap<_, _>, _>>()?;
     let diagnostics = artifacts::validate_candidate(&artifact_bytes, &candidate_active);
@@ -205,15 +154,7 @@ pub(super) fn check_staged(
         ));
     }
 
-    source::final_revalidate(repository_root, &source_evaluation.guard).map_err(|error| {
-        failure(
-            Some(snapshot.commit.clone()),
-            error.code,
-            error.message,
-            error.affected_ids,
-            "retry after the Source files stop changing",
-        )
-    })?;
+    candidate::final_revalidate(repository_root, &authority, trusted_ref, OPERATION)?;
     git::ensure_index_unchanged(repository_root, &index, OPERATION)?;
     git::ensure_ref_unchanged(repository_root, trusted_ref, &snapshot.commit, OPERATION)?;
 
@@ -226,7 +167,7 @@ pub(super) fn check_staged(
         current_active_hash,
         checkpoint_id: checkpoint.checkpoint_id,
         checkpoint_hash,
-        checkpoint: source_evaluation.checkpoint,
+        checkpoint: "active",
         affected_ids: checkpoint.units.into_iter().map(|unit| unit.id).collect(),
         staged_paths: entries.into_iter().map(|entry| entry.path).collect(),
         next_actions: vec![
@@ -278,10 +219,10 @@ fn validate_candidate_paths(entries: &[CandidatePath]) -> Result<(), OperationFa
             || checkpoint_paths
                 .first()
                 .is_some_and(|entry| entry.path == path)
-            || artifacts::TRACKED_ARTIFACTS.contains(&path)
+            || registry::manifest_paths().any(|candidate| candidate == path)
     };
     if checkpoint_paths.len() != 1
-        || entries.len() != artifacts::TRACKED_ARTIFACTS.len() + 2
+        || entries.len() != registry::REGISTRATIONS.len() + 2
         || entries.iter().any(|entry| !allowed(&entry.path))
         || entries.iter().any(|entry| entry.status == 'D')
         || entries
