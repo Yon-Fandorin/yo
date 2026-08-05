@@ -2,13 +2,7 @@ use std::num::NonZeroU64;
 
 use uuid::Builder;
 
-use super::{
-    projection::{
-        cache_state, close_reason, detail_availability, exchange_direction, exchange_kind,
-        transition_mode,
-    },
-    *,
-};
+use super::*;
 use crate::{
     AgentCommand, AgentEvent, JournalSequence, SubmissionId, TurnId, TurnOutcome, TurnRef,
     UserInput,
@@ -21,6 +15,10 @@ use crate::{
             JournalCommit, JournalRecord, OperationId, ReplaySequence, SequencedJournalRecord,
             TransitionMode, VersionedIdentity, recover,
         },
+    },
+    request_trace::projection::{
+        cache_state, close_reason, detail_availability, exchange_direction, exchange_kind,
+        transition_mode,
     },
 };
 

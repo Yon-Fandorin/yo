@@ -2,15 +2,19 @@ use uuid::Uuid;
 
 use crate::{BackendIdentity, JournalSequence, TurnId};
 
-/// One durable Request diagnostic fact at its semantic Journal position.
+pub(crate) mod projection;
+
+pub(crate) use projection::{project as project_recovered, project_live};
+
+/// One payload-free Request diagnostic fact at its semantic Journal position.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoredRequestTraceEntry {
+pub struct RequestTraceEntry {
     sequence: JournalSequence,
-    record: StoredRequestTraceRecord,
+    record: RequestTraceRecord,
 }
 
-impl StoredRequestTraceEntry {
-    pub(super) const fn new(sequence: JournalSequence, record: StoredRequestTraceRecord) -> Self {
+impl RequestTraceEntry {
+    pub(crate) const fn new(sequence: JournalSequence, record: RequestTraceRecord) -> Self {
         Self { sequence, record }
     }
 
@@ -20,14 +24,14 @@ impl StoredRequestTraceEntry {
     }
 
     #[must_use]
-    pub const fn record(&self) -> &StoredRequestTraceRecord {
+    pub const fn record(&self) -> &RequestTraceRecord {
         &self.record
     }
 }
 
-/// Payload-free Request diagnostic facts exposed by stored Session recovery.
+/// Payload-free Request diagnostic facts shared by live and stored Session readers.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum StoredRequestTraceRecord {
+pub enum RequestTraceRecord {
     BindingOpened {
         epoch: u64,
         backend_kind: String,
@@ -106,7 +110,7 @@ pub struct StoredBindingTransition {
 }
 
 impl StoredBindingTransition {
-    pub(super) const fn new(
+    pub(crate) const fn new(
         mode: StoredBindingTransitionMode,
         cache: StoredBindingCacheState,
         source_anchor_sequence: Option<JournalSequence>,

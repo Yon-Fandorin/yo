@@ -4,8 +4,8 @@ use std::collections::VecDeque;
 use yo_core::SessionId;
 use yo_core::{
     AgentBackend, AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, CommandAdmission,
-    PendingCommand, SessionDescriptor, TranscriptObservation, TranscriptObservationSequence,
-    TranscriptReader, session_repository::SessionRepository,
+    JournalSequence, PendingCommand, RequestTraceReader, SessionDescriptor, TranscriptObservation,
+    TranscriptObservationSequence, TranscriptReader, session_repository::SessionRepository,
 };
 use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
 
@@ -13,7 +13,9 @@ use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
 pub(crate) struct TuiAgentConnection {
     session: AgentSession,
     transcript: TranscriptReader,
+    request_trace: RequestTraceReader,
     cursor: Option<TranscriptObservationSequence>,
+    request_cursor: Option<JournalSequence>,
     pending: VecDeque<AgentPoll>,
     journal_changed: bool,
     closed: bool,
@@ -36,10 +38,13 @@ impl TuiAgentConnection {
         .map(|session| {
             session.map(|session| {
                 let transcript = session.transcript_reader();
+                let request_trace = session.request_trace_reader();
                 Self {
                     session,
                     transcript,
+                    request_trace,
                     cursor: None,
+                    request_cursor: None,
                     pending: VecDeque::new(),
                     journal_changed: false,
                     closed: false,
@@ -65,10 +70,13 @@ impl TuiAgentConnection {
         .map(|session| {
             session.map(|session| {
                 let transcript = session.transcript_reader();
+                let request_trace = session.request_trace_reader();
                 Self {
                     session,
                     transcript,
+                    request_trace,
                     cursor: None,
+                    request_cursor: None,
                     pending: VecDeque::new(),
                     journal_changed: false,
                     closed: false,
@@ -94,10 +102,13 @@ impl TuiAgentConnection {
         .map(|session| {
             session.map(|session| {
                 let transcript = session.transcript_reader();
+                let request_trace = session.request_trace_reader();
                 Self {
                     session,
                     transcript,
+                    request_trace,
                     cursor: None,
+                    request_cursor: None,
                     pending: VecDeque::new(),
                     journal_changed: false,
                     closed: false,
@@ -154,7 +165,13 @@ impl AgentConnection for TuiAgentConnection {
                     TranscriptObservation::Record(record) => AgentPoll::Record(record.clone()),
                 });
             }
-            self.journal_changed = self.cursor != head;
+            let trace = self.request_trace.read_after(self.request_cursor);
+            let trace_head = trace.head();
+            for entry in trace.into_entries() {
+                self.request_cursor = Some(entry.sequence());
+                self.pending.push_back(AgentPoll::RequestTrace(entry));
+            }
+            self.journal_changed = self.cursor != head || self.request_cursor != trace_head;
         }
 
         if let Some(observation) = self.pending.pop_front() {

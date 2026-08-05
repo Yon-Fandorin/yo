@@ -8,6 +8,7 @@ mod event;
 mod host;
 mod input;
 mod journal;
+mod request_trace;
 mod runtime;
 mod session;
 pub mod session_repository;
@@ -38,10 +39,12 @@ pub use input::{
     skill_reference_projection, workspace_reference_projection,
 };
 pub use journal::{
-    DurabilityGapCause, JournalDurability, JournalSequence, TranscriptEntry, TranscriptObservation,
-    TranscriptObservationEntry, TranscriptObservationSequence, TranscriptObservationSlice,
-    TranscriptReader, TranscriptRecord, TranscriptSlice,
+    DurabilityGapCause, JournalDurability, JournalSequence, RequestTraceReader, RequestTraceSlice,
+    TranscriptEntry, TranscriptObservation, TranscriptObservationEntry,
+    TranscriptObservationSequence, TranscriptObservationSlice, TranscriptReader, TranscriptRecord,
+    TranscriptSlice,
 };
+pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
 pub use session::{
     ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionDescriptor, SessionId,

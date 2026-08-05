@@ -2,8 +2,8 @@ use std::{collections::VecDeque, time::Duration};
 
 use yo_core::{
     ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent, ApprovalDecision, InputSubmission,
-    JournalDurability, SkillReferenceSearchRequest, SkillReferenceSearchUpdate, SubmissionId,
-    SubmissionOutcome, TranscriptRecord, UserInput, WorkspaceReferenceSearchRequest,
+    JournalDurability, RequestTraceEntry, SkillReferenceSearchRequest, SkillReferenceSearchUpdate,
+    SubmissionId, SubmissionOutcome, TranscriptRecord, UserInput, WorkspaceReferenceSearchRequest,
     WorkspaceReferenceSearchUpdate,
 };
 
@@ -292,6 +292,10 @@ impl TuiState {
             )
             .map_err(StateError::Transcript)?;
         Ok(effect)
+    }
+
+    pub(super) fn observe_request_trace(&mut self, entry: RequestTraceEntry) {
+        self.views.observe_request_trace(entry);
     }
 
     pub(super) fn observe_durability(

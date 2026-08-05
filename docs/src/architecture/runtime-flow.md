@@ -171,12 +171,12 @@ AgentRuntime
     ↓ commit and append to SessionJournal
 AgentSession coalescible change lane
     ↓ wake-up only
-TuiAgentConnection + TranscriptReader
-    ↓ ordered AgentPoll::Record
+TuiAgentConnection + TranscriptReader + RequestTraceReader
+    ↓ ordered AgentPoll::Record / RequestTrace
     ↓
 TuiState::observe_record
     ├── concise Chat projection
-    └── chronological Transcript / anchored Request projections
+    └── chronological Transcript / full-Session Request projections
           ↓ selected view
 completed Surface
     ↓
@@ -373,22 +373,21 @@ typed continuation recovery described below.
 The selected TUI projection changes presentation, not Session authority:
 
 ```text
-read-only AgentPoll::Record stream
+read-only AgentPoll stream
     ├── Chat: concise activity/message projection + editable prompt
     └── full semantic record projection
           ├── Transcript: chronological command/event and Activity detail
-          └── Request: exact Chat/Transcript context anchor
-                ├── direct ActivityRequestRef → Request Audit unavailable
-                └── no direct correlation → no associated request
+          └── RequestTrace: full-Session correlation records in Journal order
+                ├── exact Chat/Transcript context → optional highlight only
+                └── Request Audit → explicitly unavailable
 ```
 
 F1/F2/F3 currently select Chat/Transcript/Request through
 `input/view_binding.rs`. That mapping is a typed presentation-policy seam, not
 projection state. Page and line navigation update the active view's own
 viewport; Chat and Transcript also retain their own context cursor. Request
-navigation scrolls only the anchored diagnostic page, so it cannot become a
-nearby-request browser. Returning to a view restores its retained state when
-its anchor is unchanged.
+navigation scrolls the complete diagnostic trace and never changes its content
+by selecting a nearby request. Returning to a view restores its retained state.
 
 All three modes use the session's pinned appearance snapshot and the existing
 Transcript layout and Surface primitives. The status row shows the active mode
@@ -397,15 +396,14 @@ frames, and remains renderable when only one terminal row is available.
 Transcript and Request are full-page read-only modes: their input path never
 reaches the prompt editor or emits a submission.
 
-The current TUI adapter exposes semantic `TranscriptRecord` values and typed
-durability transitions, but still drops the reader's per-record `JournalSequence`
-and does not expose Request Audit detail. Transcript prints that observation boundary. Request
-uses only a correlation carried by its exact record and otherwise reports
-`no_associated_request`; when an exact `ActivityRequestRef` exists it reports
-`request_audit_detail_unavailable`. It never borrows a correlation from an
-adjacent record. The repository is now inside the live worker path, while these
-additional observation coordinates remain to be wired into the frontend
-contract.
+The TUI adapter exposes semantic `TranscriptRecord` values, typed durability
+transitions, and a separately paged payload-free `RequestTraceEntry` stream.
+The Request stream preserves each correlation record's `JournalSequence` and
+is drained from the same worker change notification without exposing Journal
+locks, backend payloads, or physical storage. Request Audit detail remains
+explicitly unavailable. An exact `ActivityRequestRef` from the currently viewed
+Chat or Transcript record may be shown as context, but it does not alter the
+full trace.
 
 ## Durable Journal composition seam
 

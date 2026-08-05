@@ -7,10 +7,11 @@ use std::{
 
 use yo_core::{
     ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentBackend, AgentCommand, AgentEvent,
-    AgentIntent, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
-    BackendFailureKind, BackendPoll, BackendScriptStep, BackendStopHandle, CommandAdmission,
-    DurabilityGapCause, JournalDurability, ScriptedBackend, SessionId, TranscriptRecord, TurnId,
-    TurnOutcome, TurnRef, UserInput,
+    AgentIntent, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
+    BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, BackendPoll,
+    BackendRequestEvidence, BackendScriptStep, BackendStopHandle, CommandAdmission,
+    DurabilityGapCause, JournalDurability, RequestTraceRecord, ScriptedBackend, SessionId,
+    TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableCutoff, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
@@ -179,6 +180,92 @@ fn session_descriptor() -> yo_core::SessionDescriptor {
     )
 }
 
+// CLI adapter는 worker 알림 하나에서 Transcript와 payload-free Request trace를 함께
+// 끝까지 배출하여, TUI가 backend나 저장소 내부 타입을 직접 읽지 않게 합니다.
+#[test]
+fn exposes_live_request_trace_through_the_frontend_connection() {
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: AgentCommand::CreateSession {
+                session_id: session_id(),
+            },
+            evidence: BackendCommandEvidence::BindingOpened(BackendBindingEvidence::new(
+                "codex-app-server",
+                "test",
+                BackendIdentity::new("binding/v1", "binding"),
+                BackendIdentity::new("model/v1", "model"),
+                BackendIdentity::new("session/v1", "session"),
+            )),
+        },
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::new("inspect"),
+            },
+            evidence: BackendCommandEvidence::RequestAccepted(BackendRequestEvidence::new(
+                "payload/v1",
+                BackendIdentity::new("exchange/v1", "exchange"),
+                BackendIdentity::new("request/v1", "request"),
+            )),
+        },
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn: turn(),
+            evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
+                "outcome/v1",
+                "outcome",
+            )),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut termination = NeverTerminated;
+    let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
+        .unwrap()
+        .unwrap();
+    connection
+        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut trace = Vec::new();
+    while trace.len() < 5 {
+        match connection.poll().unwrap() {
+            AgentPoll::RequestTrace(entry) => trace.push(entry),
+            AgentPoll::Closed => panic!("connection closed before Request trace was drained"),
+            _ => thread::yield_now(),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "live Request trace was not delivered"
+        );
+    }
+    assert!(
+        trace
+            .windows(2)
+            .all(|pair| pair[0].sequence() < pair[1].sequence())
+    );
+    assert!(matches!(
+        trace[0].record(),
+        RequestTraceRecord::BindingOpened { .. }
+    ));
+    assert!(matches!(
+        trace[1].record(),
+        RequestTraceRecord::ExchangeObserved { .. }
+    ));
+    assert!(matches!(
+        trace[2].record(),
+        RequestTraceRecord::RequestAccepted { .. }
+    ));
+    assert!(matches!(
+        trace[3].record(),
+        RequestTraceRecord::ResumableOutcome { .. }
+    ));
+    assert!(matches!(
+        trace[4].record(),
+        RequestTraceRecord::ContinuationAnchor { .. }
+    ));
+    connection.shutdown().unwrap();
+}
+
 fn turn() -> TurnRef {
     TurnRef::new(session_id(), TurnId::new(NonZeroU64::MIN))
 }
@@ -197,7 +284,9 @@ fn collect_until(
                     return Ok(records);
                 }
             },
-            Ok(AgentPoll::Pending | AgentPoll::Submission(_)) if Instant::now() < deadline => {
+            Ok(AgentPoll::Pending | AgentPoll::Submission(_) | AgentPoll::RequestTrace(_))
+                if Instant::now() < deadline =>
+            {
                 thread::yield_now();
             },
             Ok(other) => {
@@ -302,6 +391,7 @@ fn exposes_initial_storage_pressure_to_the_connected_frontend() {
             }) => break,
             AgentPoll::Pending
             | AgentPoll::Record(_)
+            | AgentPoll::RequestTrace(_)
             | AgentPoll::Durability(_)
             | AgentPoll::Submission(_) => {},
             AgentPoll::Closed => panic!("connection closed before reporting storage pressure"),
@@ -523,7 +613,12 @@ fn drains_committed_failure_record_before_reporting_connection_failure() {
                 outcome: TurnOutcome::Failed(_),
                 ..
             }))) => saw_failed_turn = true,
-            Ok(AgentPoll::Record(_) | AgentPoll::Pending | AgentPoll::Submission(_)) => {},
+            Ok(
+                AgentPoll::Record(_)
+                | AgentPoll::Pending
+                | AgentPoll::Submission(_)
+                | AgentPoll::RequestTrace(_),
+            ) => {},
             Ok(other) => panic!("connection closed without its failure: {other:?}"),
             Err(error) => {
                 assert!(saw_failed_turn);
@@ -590,7 +685,7 @@ fn drains_cleanup_record_before_reporting_command_failure() {
     loop {
         match connection.poll() {
             Ok(AgentPoll::Record(record)) => records.push(record),
-            Ok(AgentPoll::Pending | AgentPoll::Submission(_)) => {},
+            Ok(AgentPoll::Pending | AgentPoll::Submission(_) | AgentPoll::RequestTrace(_)) => {},
             Ok(other) => panic!("connection closed without its failure: {other:?}"),
             Err(error) => {
                 assert!(error.to_string().contains("steer was rejected"));

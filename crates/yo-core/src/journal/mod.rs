@@ -4,6 +4,7 @@ pub(crate) mod codec;
 mod correlation;
 mod durable;
 mod record;
+mod request_trace;
 mod transcript;
 
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -11,6 +12,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 pub use durable::{DurabilityGapCause, JournalDurability};
 pub use record::JournalSequence;
 pub(crate) use record::{CommittedCommand, JournalEntry, SemanticRecord};
+pub use request_trace::{RequestTraceReader, RequestTraceSlice};
 pub use transcript::{
     TranscriptEntry, TranscriptObservation, TranscriptObservationEntry,
     TranscriptObservationSequence, TranscriptObservationSlice, TranscriptReader, TranscriptRecord,
@@ -119,6 +121,12 @@ impl SessionJournal {
 
     pub(crate) fn transcript_reader(&self) -> TranscriptReader {
         TranscriptReader {
+            state: Arc::clone(&self.state),
+        }
+    }
+
+    pub(crate) fn request_trace_reader(&self) -> RequestTraceReader {
+        RequestTraceReader {
             state: Arc::clone(&self.state),
         }
     }

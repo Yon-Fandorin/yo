@@ -1,6 +1,6 @@
 //! Read-only terminal-independent projections of one durable Session history.
 
-mod request;
+pub(in crate::runner) mod request;
 
 use std::fmt;
 

@@ -168,12 +168,12 @@ AgentRuntime
     ↓ commit한 뒤 SessionJournal에 추가
 AgentSession의 합칠 수 있는 change lane
     ↓ 내용 없는 깨우기 알림
-TuiAgentConnection + TranscriptReader
-    ↓ 순서가 보장된 AgentPoll::Record
+TuiAgentConnection + TranscriptReader + RequestTraceReader
+    ↓ 순서가 보장된 AgentPoll::Record / RequestTrace
     ↓
 TuiState::observe_record
     ├── 간결한 Chat Projection
-    └── chronological Transcript / anchored Request Projection
+    └── chronological Transcript / full-Session Request Projection
           ↓ 선택된 view
 completed Surface
     ↓
@@ -357,21 +357,21 @@ continuation을 제공하지 않는다. live `yo --resume UUID`와 `yo --continu
 선택한 TUI Projection은 표시만 바꾸며 Session authority를 바꾸지 않는다.
 
 ```text
-읽기 전용 AgentPoll::Record stream
+읽기 전용 AgentPoll stream
     ├── Chat: 간결한 activity/message Projection + 편집 가능한 prompt
     └── 전체 semantic record Projection
           ├── Transcript: chronological command/event와 Activity detail
-          └── Request: 정확한 Chat/Transcript context anchor
-                ├── 직접 ActivityRequestRef → Request Audit unavailable
-                └── 직접 correlation 없음 → associated request 없음
+          └── RequestTrace: Journal 순서의 Session 전체 correlation record
+                ├── 정확한 Chat/Transcript context → 선택적인 강조만 제공
+                └── Request Audit → 명시적으로 사용 불가
 ```
 
 현재 `input/view_binding.rs`의 F1/F2/F3가 Chat/Transcript/Request를
 선택한다. 이 mapping은 typed 표시 정책 seam이며 Projection 상태가 아니다.
 page·line 이동은 활성 view 자체의 viewport를 갱신하고, Chat과 Transcript는
-각자의 context cursor도 보존한다. Request 이동은 anchor된 diagnostic
-page 안에서만 scroll하므로 가까운 request를 탐색하는 browser가 되지
-않는다. anchor가 같다면 view로 돌아올 때 보존한 상태를 복원한다.
+각자의 context cursor도 보존한다. Request 이동은 완전한 diagnostic trace를
+scroll하며 가까운 request 선택으로 내용을 바꾸지 않는다. view로 돌아오면
+각 view가 보존한 상태를 복원한다.
 
 세 mode 모두 session에서 pin한 appearance snapshot과 기존 Transcript
 layout·Surface primitive를 쓴다. status 행은 활성 mode와 key를 표시하고,
@@ -380,15 +380,13 @@ layout·Surface primitive를 쓴다. status 행은 활성 mode와 key를 표시�
 전용 mode이므로 input 경로가 prompt editor에 도달하거나 submission을
 만들지 않는다.
 
-현재 TUI adapter는 semantic `TranscriptRecord`와 typed durability 전환을
-공개하지만 reader record별 `JournalSequence`는 버리고 Request Audit detail은
-공개하지 않는다. Transcript는 이 observation boundary를
-출력한다. Request는 정확히 anchor된 record가 가진 correlation만 사용하며,
-없으면 `no_associated_request`를 보고한다. 정확한
-`ActivityRequestRef`가 있으면 `request_audit_detail_unavailable`을
-보고하며 인접 record의 correlation을 빌리지 않는다. repository는 이제 live
-worker 경로 안에 있지만, 이 추가 observation 좌표는 아직 frontend 계약에
-연결하지 않았다.
+현재 TUI adapter는 semantic `TranscriptRecord`, typed durability 전환과 별도로
+page를 나눈 payload-free `RequestTraceEntry` stream을 공개한다. Request stream은
+각 correlation record의 `JournalSequence`를 보존하며 Journal lock, backend
+payload, 물리 저장 형식을 노출하지 않고 같은 worker 변경 알림에서 끝까지
+drain된다. Request Audit detail은 명시적으로 사용 불가 상태다. 현재 Chat이나
+Transcript record에 정확한 `ActivityRequestRef`가 있으면 context로 표시할 수
+있지만 Session 전체 trace 내용은 바꾸지 않는다.
 
 ## Durable Journal 조합 seam
 

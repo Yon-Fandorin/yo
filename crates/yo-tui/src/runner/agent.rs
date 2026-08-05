@@ -4,7 +4,7 @@ pub use yo_core::{
     AgentIntent as AgentAction, CommandAdmission as DispatchOutcome,
     PendingCommand as PendingDispatch, SubmissionOutcome,
 };
-use yo_core::{JournalDurability, TranscriptRecord};
+use yo_core::{JournalDurability, RequestTraceEntry, TranscriptRecord};
 
 /// One nonblocking observation exposed to the TUI.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13,6 +13,8 @@ pub enum AgentPoll {
     Pending,
     /// One record from the Session Journal's ordered Transcript projection.
     Record(TranscriptRecord),
+    /// One payload-free correlation record from the live Session Journal.
+    RequestTrace(RequestTraceEntry),
     /// A persistent durability-state transition for the visible Session.
     Durability(JournalDurability),
     /// Whole-request admission resolved for one immutable frontend snapshot.

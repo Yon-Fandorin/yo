@@ -569,6 +569,10 @@ where
                 state.observe_record(record).map_err(LoopError::State)?;
                 changed = true;
             },
+            AgentPoll::RequestTrace(entry) => {
+                state.observe_request_trace(entry);
+                changed = true;
+            },
             AgentPoll::Durability(durability) => {
                 state
                     .observe_durability(durability)

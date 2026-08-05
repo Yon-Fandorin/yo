@@ -52,6 +52,7 @@ pub struct AgentSession {
     active_turn_id: Arc<AtomicU64>,
     next_turn_id: u64,
     transcript: TranscriptReader,
+    request_trace: crate::RequestTraceReader,
     submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
     submission_ids: HashSet<crate::SubmissionId>,
     #[cfg(test)]
@@ -226,6 +227,7 @@ impl AgentSession {
         let lifecycle = Arc::new(AtomicU8::new(WORKER_IDLE));
         let worker_lifecycle = Arc::clone(&lifecycle);
         let transcript = journal.transcript_reader();
+        let request_trace = journal.request_trace_reader();
         let submission_outcomes = Arc::new(Mutex::new(VecDeque::new()));
         let worker_submission_outcomes = Arc::clone(&submission_outcomes);
         let worker = match thread::Builder::new()
@@ -340,6 +342,7 @@ impl AgentSession {
                     active_turn_id,
                     next_turn_id,
                     transcript,
+                    request_trace,
                     submission_outcomes,
                     submission_ids,
                     #[cfg(test)]
@@ -484,6 +487,12 @@ impl AgentSession {
     #[must_use]
     pub fn transcript_reader(&self) -> TranscriptReader {
         self.transcript.clone()
+    }
+
+    /// Returns read-only access to this Session's payload-free Request correlation trace.
+    #[must_use]
+    pub fn request_trace_reader(&self) -> crate::RequestTraceReader {
+        self.request_trace.clone()
     }
 
     /// Takes the oldest whole-request admission result, if one is available.

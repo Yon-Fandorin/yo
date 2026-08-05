@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, num::NonZeroU16, time::Duration};
 
-use yo_core::TranscriptRecord;
+use yo_core::{RequestTraceEntry, TranscriptRecord};
 
 use crate::{
     appearance::AppearanceSnapshot,
@@ -63,19 +63,11 @@ impl From<ViewSwitchTarget> for ObservabilityView {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RequestUnavailableReason {
     NoAssociatedRequest,
     RequestAuditDetailUnavailable,
-}
-
-impl RequestUnavailableReason {
-    const fn code(self) -> &'static str {
-        match self {
-            Self::NoAssociatedRequest => "no_associated_request",
-            Self::RequestAuditDetailUnavailable => "request_audit_detail_unavailable",
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -99,6 +91,7 @@ pub(super) struct ObservabilityViewState {
 pub(super) struct ObservabilityViews {
     state: ObservabilityViewState,
     records: Vec<TranscriptRecord>,
+    request_trace: Vec<RequestTraceEntry>,
     transcript: TranscriptState,
     chat_contexts: HashMap<TranscriptItemId, usize>,
     bindings: ViewSwitchBindings,
@@ -139,6 +132,22 @@ pub(super) struct ObservabilityRenderOptions<'frame> {
 }
 
 impl ObservabilityViews {
+    pub(super) fn observe_request_trace(&mut self, entry: RequestTraceEntry) {
+        let sequence = entry.sequence();
+        let index = self
+            .request_trace
+            .binary_search_by_key(&sequence, RequestTraceEntry::sequence)
+            .unwrap_or_else(|index| index);
+        if self
+            .request_trace
+            .get(index)
+            .map(RequestTraceEntry::sequence)
+            != Some(sequence)
+        {
+            self.request_trace.insert(index, entry);
+        }
+    }
+
     pub(super) fn wants_global_input(&self, input: &InputEvent) -> bool {
         self.bindings.target(input).is_some()
     }
@@ -380,7 +389,11 @@ impl ObservabilityViews {
         projection
             .append_text(
                 id,
-                &projection::request_text(&self.records, self.state.request_anchor),
+                &projection::request_text(
+                    &self.records,
+                    self.state.request_anchor,
+                    &self.request_trace,
+                ),
             )
             .expect("the fresh Request item is streaming");
         projection

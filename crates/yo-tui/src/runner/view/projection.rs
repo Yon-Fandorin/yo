@@ -2,39 +2,63 @@
 
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, ActivityUpdate,
-    AgentCommand, AgentEvent, ApprovalDecision, TranscriptRecord, TurnOutcome,
+    AgentCommand, AgentEvent, ApprovalDecision, RequestTraceEntry, TranscriptRecord, TurnOutcome,
 };
 
+#[cfg(test)]
 use super::RequestUnavailableReason;
 
-pub(super) fn request_text(records: &[TranscriptRecord], anchor: Option<usize>) -> String {
+pub(super) fn request_text(
+    records: &[TranscriptRecord],
+    anchor: Option<usize>,
+    trace: &[RequestTraceEntry],
+) -> String {
+    let context = request_context_text(records, anchor);
+    let records = if trace.is_empty() {
+        "no correlation records have been committed".to_owned()
+    } else {
+        trace
+            .iter()
+            .map(|entry| {
+                super::super::archival::request::format_record(
+                    entry.sequence().get(),
+                    entry.record(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    format!(
+        "Live Session Request diagnostic\n\
+         {context}\n\
+         observation_boundary=committed-live-session-journal\n\
+         request_audit_detail=unavailable(reason=no-audit-reader)\n\
+         \n\
+         {records}"
+    )
+}
+
+fn request_context_text(records: &[TranscriptRecord], anchor: Option<usize>) -> String {
     let Some(index) = anchor else {
-        return request_unavailable_text(None, RequestUnavailableReason::NoAssociatedRequest);
+        return "context_highlight=none(reason=no-viewed-journal-record)".to_owned();
     };
     let Some(record) = records.get(index) else {
-        return request_unavailable_text(None, RequestUnavailableReason::NoAssociatedRequest);
+        return "context_highlight=none(reason=no-viewed-journal-record)".to_owned();
     };
     match request_association(record) {
         Some(request) => format!(
-            "Request diagnostic\n\
-             status: unavailable\n\
-             reason: {}\n\
-             anchor: observed record #{} ({})\n\
-             associated request: session={} turn={} activity={} request={}\n\
-             observation boundary: semantic Session Journal only\n\
-             exchange/revisions/attempts/redaction: unavailable\n\
-             Request Audit detail is not wired in this Slice.",
-            RequestUnavailableReason::RequestAuditDetailUnavailable.code(),
-            index + 1,
-            record_name(record),
-            request.activity().session_id(),
-            request.activity().turn_id().get().get(),
+            "context_highlight=direct-activity-request activity={} request={}\n\
+             context_record={} session={} turn={}",
             request.activity().activity_id().get().get(),
             request.request_id().get().get(),
+            index + 1,
+            request.activity().session_id(),
+            request.activity().turn_id().get().get(),
         ),
-        None => request_unavailable_text(
-            Some((index, record)),
-            RequestUnavailableReason::NoAssociatedRequest,
+        None => format!(
+            "context_highlight=none(reason=no-direct-request)\ncontext_record={} ({})",
+            index + 1,
+            record_name(record)
         ),
     }
 }
@@ -50,32 +74,6 @@ pub(super) fn request_reason(
         .map_or(RequestUnavailableReason::NoAssociatedRequest, |_| {
             RequestUnavailableReason::RequestAuditDetailUnavailable
         })
-}
-
-fn request_unavailable_text(
-    anchor: Option<(usize, &TranscriptRecord)>,
-    reason: RequestUnavailableReason,
-) -> String {
-    let anchor = anchor.map_or_else(
-        || "anchor: no Journal record is currently viewed".to_owned(),
-        |(index, record)| {
-            format!(
-                "anchor: observed record #{} ({})",
-                index + 1,
-                record_name(record)
-            )
-        },
-    );
-    format!(
-        "Request diagnostic\n\
-         status: unavailable\n\
-         reason: {}\n\
-         {anchor}\n\
-         observation boundary: semantic Session Journal only\n\
-         no direct request correlation exists on this exact record\n\
-         nearby records were not selected.",
-        reason.code(),
-    )
 }
 
 fn request_association(record: &TranscriptRecord) -> Option<ActivityRequestRef> {

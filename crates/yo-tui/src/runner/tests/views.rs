@@ -112,9 +112,9 @@ fn three_modes_render_distinct_visible_projections_from_one_journal() {
     );
     let request = render_and_commit(&mut state, Size::new(72, 12));
     assert!(request.contains("Request · context 5/5 · F1 Chat · F2 Transcript · F3 Request"));
-    assert!(request.contains("status: unavailable"));
-    assert!(request.contains("reason: no_associated_request"));
-    assert!(request.contains("nearby records were not selected"));
+    assert!(request.contains("Live Session Request diagnostic"));
+    assert!(request.contains("context_highlight=none(reason=no-direct-request)"));
+    assert!(request.contains("no correlation records have been committed"));
 }
 
 // 기본 binding은 press에서만 정확한 mode로 전환하고 이미 활성인 mode의 같은 키나 release는
@@ -186,8 +186,8 @@ fn non_chat_modes_enforce_read_only_input_without_dispatch() {
     assert_eq!(state.editor().text(), "draft");
 }
 
-// 직접 request correlation이 없는 Journal 문맥은 no_associated_request이고, 정확한
-// Activity request가 anchor인 문맥은 이 Slice에 Audit detail이 없다는 별도 typed 사유다.
+// 현재 문맥의 직접 Activity request 유무는 highlight로만 구분하며, 두 경우 모두 전체
+// Session trace와 별개의 Audit reader 부재를 정직하게 표시합니다.
 #[test]
 fn request_distinguishes_no_association_from_unavailable_audit_detail() {
     let mut no_request = observed_conversation();
@@ -219,9 +219,10 @@ fn request_distinguishes_no_association_from_unavailable_audit_detail() {
         RequestUnavailableReason::RequestAuditDetailUnavailable
     );
     let request = render_and_commit(&mut unavailable, Size::new(72, 12));
-    assert!(request.contains("reason: request_audit_detail_unavailable"));
+    assert!(request.contains("request_audit_detail=unavailable(reason=no-audit-reader)"));
+    assert!(request.contains("context_highlight=direct-activity-request"));
     assert!(request.contains("activity=3 request=7"));
-    assert!(request.contains("exchange/revisions/attempts/redaction: unavailable"));
+    assert!(request.contains("no correlation records have been committed"));
 }
 
 // Chat, Transcript, Request에서 각각 분리된 viewport를 움직인 뒤 mode를 왕복하면 같은
@@ -348,7 +349,7 @@ fn request_anchor_never_falls_through_to_a_nearby_request() {
         .unwrap();
 
     let request = render_and_commit(&mut state, Size::new(72, 10));
-    assert!(request.contains("reason: no_associated_request"));
+    assert!(request.contains("context_highlight=none(reason=no-direct-request)"));
     assert!(request.contains("event.turn_started"));
     assert!(!request.contains("request=8"));
 }
@@ -380,7 +381,7 @@ fn chat_context_ignores_hidden_records_after_the_visible_item() {
         .unwrap();
     let request = render_and_commit(&mut state, Size::new(72, 10));
 
-    assert!(request.contains("anchor: observed record #1 (event.activity_started)"));
+    assert!(request.contains("context_record=1"));
     assert!(request.contains("activity=6 request=13"));
     assert!(!request.contains("event.turn_started"));
 }
@@ -415,7 +416,7 @@ fn lifecycle_only_finish_preserves_visible_request_correlation() {
         .unwrap();
     let request = render_and_commit(&mut state, Size::new(72, 10));
 
-    assert!(request.contains("anchor: observed record #1 (event.activity_started)"));
+    assert!(request.contains("context_record=1"));
     assert!(request.contains("activity=10 request=17"));
     assert!(!request.contains("event.activity_finished"));
 }
@@ -485,8 +486,8 @@ fn wrapped_chat_rows_map_to_the_visible_record_context() {
         .handle(function(3, KeyAction::Press), Duration::ZERO)
         .unwrap();
     let request = render_and_commit(&mut state, Size::new(72, 16));
-    assert!(request.contains("anchor: observed record #1 (command.start_turn)"));
-    assert!(request.contains("reason: no_associated_request"));
+    assert!(request.contains("context_record=1"));
+    assert!(request.contains("context_highlight=none(reason=no-direct-request)"));
     assert!(!request.contains("request=14"));
 }
 
@@ -532,8 +533,8 @@ fn transcript_page_movement_uses_visible_rows_and_not_neighbor_records() {
         .handle(function(3, KeyAction::Press), Duration::ZERO)
         .unwrap();
     let request = render_and_commit(&mut state, Size::new(72, 10));
-    assert!(request.contains("anchor: observed record #2 (command.start_turn)"));
-    assert!(request.contains("reason: no_associated_request"));
+    assert!(request.contains("context_record=2"));
+    assert!(request.contains("context_highlight=none(reason=no-direct-request)"));
     assert!(!request.contains("request=15"));
     assert!(!request.contains("request=16"));
 }

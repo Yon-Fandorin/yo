@@ -56,7 +56,7 @@ pub(super) fn project_parts<'record>(
     output
 }
 
-fn format_record(sequence: u64, record: &StoredRequestTraceRecord) -> String {
+pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTraceRecord) -> String {
     let prefix = format!("[J#{sequence:03}]");
     match record {
         StoredRequestTraceRecord::BindingOpened {
