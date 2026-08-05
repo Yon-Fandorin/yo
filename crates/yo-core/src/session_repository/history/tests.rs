@@ -279,6 +279,15 @@ fn accepts_a_discovery_epoch_derived_from_semantic_binding_evidence() {
             }
         )]
     );
+    assert_eq!(history.request_trace().len(), 1);
+    assert!(matches!(
+        history.request_trace()[0].record(),
+        StoredRequestTraceRecord::BindingOpened {
+            epoch: 1,
+            backend_kind,
+            ..
+        } if backend_kind == "codex"
+    ));
 }
 
 // semantic 증거가 없는 descriptor-only history에서 summary가

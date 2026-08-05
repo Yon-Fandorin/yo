@@ -13,7 +13,10 @@ pub use continuation::{
     recover_stored_session_continuation,
 };
 pub use history::{
-    StoredDiscoveryMismatch, StoredDiscoveryMismatchKind, StoredDiscoveryValidation,
+    StoredBindingCacheState, StoredBindingCloseReason, StoredBindingTransition,
+    StoredBindingTransitionMode, StoredDiscoveryMismatch, StoredDiscoveryMismatchKind,
+    StoredDiscoveryValidation, StoredExchangeDirection, StoredExchangeKind,
+    StoredRequestDetailAvailability, StoredRequestTraceEntry, StoredRequestTraceRecord,
     StoredSessionContinuity, StoredSessionHistory, StoredSessionReadError, StoredSessionRecovery,
     read_stored_session,
 };

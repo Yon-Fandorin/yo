@@ -1,10 +1,16 @@
 //! Validated semantic history recovered from one stored Session snapshot.
 
 mod normalizer;
+mod request_trace;
 
 use std::fmt;
 
 use normalizer::normalize;
+pub use request_trace::{
+    StoredBindingCacheState, StoredBindingCloseReason, StoredBindingTransition,
+    StoredBindingTransitionMode, StoredExchangeDirection, StoredExchangeKind,
+    StoredRequestDetailAvailability, StoredRequestTraceEntry, StoredRequestTraceRecord,
+};
 
 use super::{
     RepositoryEntry, RepositoryError, RepositorySequence, StoredSessionReader,
@@ -27,6 +33,7 @@ pub struct StoredSessionHistory {
     continuity: StoredSessionContinuity,
     discovery_validation: StoredDiscoveryValidation,
     records: Vec<TranscriptRecord>,
+    request_trace: Vec<StoredRequestTraceEntry>,
 }
 
 impl StoredSessionHistory {
@@ -69,6 +76,12 @@ impl StoredSessionHistory {
     #[must_use]
     pub fn records(&self) -> &[TranscriptRecord] {
         &self.records
+    }
+
+    /// Returns every payload-free Request correlation fact in durable Journal order.
+    #[must_use]
+    pub fn request_trace(&self) -> &[StoredRequestTraceEntry] {
+        &self.request_trace
     }
 }
 
@@ -262,6 +275,7 @@ pub fn read_stored_session(
         StoredSessionRecovery::NotRequired
     };
     let records = normalize(&recovered).map_err(invalid_stored)?;
+    let request_trace = request_trace::project(&recovered);
     Ok(StoredSessionHistory {
         descriptor,
         journal_cutoff: recovered.journal_cutoff(),
@@ -269,6 +283,7 @@ pub fn read_stored_session(
         continuity: StoredSessionContinuity::NotObservable,
         discovery_validation,
         records,
+        request_trace,
     })
 }
 
