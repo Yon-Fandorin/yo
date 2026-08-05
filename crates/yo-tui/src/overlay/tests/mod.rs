@@ -194,7 +194,7 @@ fn renders_rib_shaped_selection_panel_from_semantic_entries() {
 }
 
 // workspace형 후보는 이름과 부모 경로를 왼쪽 읽기 흐름으로 붙이고 종류만 오른쪽 끝에 둔다.
-// 선택 강조는 marker가 담당하므로 파일 이름 자체에는 별도 selected 색을 입히지 않는다.
+// 선택된 이름은 marker와 같은 selected 역할로 강조하되 context와 종류는 보조 계층을 유지한다.
 #[test]
 fn renders_codex_shaped_path_context_with_a_trailing_kind() {
     let panel = SelectionPanel::new(snapshot(vec![
@@ -219,7 +219,15 @@ fn renders_codex_shaped_path_context_with_a_trailing_kind() {
     assert!(row(&surface, 2).contains("  workspace/  crates/yo-core/src/"));
     assert_eq!(
         surface.cell(Point::new(3, 1)).unwrap().style(),
-        Style::default()
+        appearance().styles.selected
+    );
+    assert_eq!(
+        surface.cell(Point::new(15, 1)).unwrap().style(),
+        appearance().styles.detail
+    );
+    assert_eq!(
+        surface.cell(Point::new(59, 1)).unwrap().style(),
+        appearance().styles.detail
     );
 }
 

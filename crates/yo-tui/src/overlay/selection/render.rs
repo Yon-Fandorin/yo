@@ -403,9 +403,10 @@ impl PreparedSelectionPanel {
             styles.label
         };
         self.push_text(Point::new(1, row), marker, content_end, marker_style);
-        let label_style = match entry.availability {
-            EntryAvailability::Enabled => styles.label,
-            EntryAvailability::Disabled { .. } => styles.disabled,
+        let label_style = match (selected, &entry.availability) {
+            (true, EntryAvailability::Enabled) => styles.selected,
+            (false, EntryAvailability::Enabled) => styles.label,
+            (_, EntryAvailability::Disabled { .. }) => styles.disabled,
         };
         let label_start = 3.min(content_end);
         let available = usize::from(content_end.saturating_sub(label_start));
