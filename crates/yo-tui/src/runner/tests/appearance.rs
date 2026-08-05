@@ -5,7 +5,9 @@ use yo_core::{
 use super::{TuiSession, TuiState, activity, turn};
 use crate::{
     PresentationMode, TuiSessionInfo,
-    appearance::{AppearanceCandidate, AppearanceState, GlyphProfile},
+    appearance::{
+        AppearanceCandidate, AppearanceState, ColorCapability, GlyphProfile, MotionPreference,
+    },
     html::HtmlSurface,
     prompt::{PromptGlyphs, PromptStyles},
     shell::{AgentShellStyles, ShellChromeStyles},
@@ -168,7 +170,11 @@ fn default_profiles_resolve_prompt_glyphs_and_visual_roles() {
 // 함께 쓰여 host가 선택한 profile의 일관성과 출력 경계를 지킨다.
 #[test]
 fn public_ascii_session_keeps_frame_and_output_consistent() {
-    let mut session = TuiSession::with_glyph_profile(GlyphProfile::Ascii);
+    let mut session = TuiSession::with_glyph_profile(
+        GlyphProfile::Ascii,
+        ColorCapability::Unknown,
+        MotionPreference::Standard,
+    );
     *session.parts_mut().state = conversation();
     let pin = session.appearance_pin();
     let frame = session
@@ -185,11 +191,11 @@ fn public_ascii_session_keeps_frame_and_output_consistent() {
     assert_eq!(output, "> question\n\n* answer\n");
 }
 
-// 기본 public session은 Rich compatibility snapshot을 실제 준비 frame과 plain output에
-// 함께 사용하여 새 host seam이 기존 marker 동작을 바꾸지 않음을 보인다.
+// 명시적인 Unknown·Standard host 선택을 받은 public session은 Rich snapshot을 실제
+// 준비 frame과 plain output에 함께 사용해 기본 glyph profile의 일관성을 지킨다.
 #[test]
-fn public_default_session_keeps_rich_frame_and_output_consistent() {
-    let mut session = TuiSession::new();
+fn public_rich_session_keeps_frame_and_output_consistent() {
+    let mut session = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
     *session.parts_mut().state = conversation();
     let pin = session.appearance_pin();
     let frame = session
@@ -215,6 +221,8 @@ fn session_projects_host_metadata_active_work_and_presentation_mode() {
     let mut session = TuiSession::with_session_info(
         GlyphProfile::Rich,
         TuiSessionInfo::new("codex", "~/projects/yo"),
+        ColorCapability::TrueColor,
+        MotionPreference::Standard,
     );
     session.set_presentation_mode(PresentationMode::Fullscreen);
     session
@@ -231,35 +239,65 @@ fn session_projects_host_metadata_active_work_and_presentation_mode() {
         .unwrap();
     let rows = visible_rows(&frame.surface);
 
-    assert!(rows.contains("· Working"));
+    assert!(rows.contains("✦ Working"));
     assert!(rows.contains("codex · ~/projects/yo"));
     assert!(rows.ends_with("fullscreen"));
 }
 
-// 실제 Chat 작업 marker가 보일 때만 PreparedFrame이 120ms motion demand를 보고하고,
-// 같은 epoch의 다음 tick은 geometry나 중단 안내를 바꾸지 않고 marker만 교체한다.
+// 실제 Chat 작업 marker가 보일 때만 PreparedFrame이 16ms motion demand를 보고하고,
+// 서로 다른 elapsed에서도 고정 marker와 동일한 frame geometry를 유지한다.
 #[test]
 fn visible_activity_marker_alone_demands_timed_motion() {
     let mut state = TuiState::new();
     state
         .observe(AgentEvent::TurnStarted { turn: turn() })
         .unwrap();
-    let appearance = AppearanceState::default().pin();
+    let appearance = AppearanceState::new(AppearanceCandidate::for_profile_with_host_preferences(
+        GlyphProfile::Rich,
+        ColorCapability::TrueColor,
+        MotionPreference::Standard,
+    ))
+    .unwrap()
+    .pin();
 
     let first = state
-        .prepare_frame_at(Size::new(48, 12), &appearance, Duration::ZERO)
+        .prepare_frame_at(Size::new(48, 12), &appearance, Duration::from_millis(500))
         .unwrap();
     let second = state
-        .prepare_frame_at(Size::new(48, 12), &appearance, Duration::from_millis(120))
+        .prepare_frame_at(Size::new(48, 12), &appearance, Duration::from_millis(516))
         .unwrap();
 
     assert_eq!(
         first.motion_demand.unwrap().period(),
-        Duration::from_millis(120)
+        Duration::from_millis(16)
     );
     assert_eq!(second.motion_demand, first.motion_demand);
-    assert!(visible_rows(&first.surface).contains("· Working"));
-    assert!(visible_rows(&second.surface).contains("✢ Working"));
+    assert_eq!(first.surface.size(), second.surface.size());
+    assert_eq!(visible_rows(&first.surface), visible_rows(&second.surface));
+    assert!(visible_rows(&first.surface).contains("✦ Working"));
+    assert_ne!(first.surface, second.surface);
+}
+
+// 실제 public session 경계에서 Reduced를 선택하면 작업 표시는 그대로 보이지만,
+// frame이 16ms motion demand를 만들지 않아 host가 접근성 선택을 실행할 수 있다.
+#[test]
+fn public_reduced_motion_session_keeps_activity_static() {
+    let mut session = TuiSession::new(ColorCapability::TrueColor, MotionPreference::Reduced);
+    session
+        .parts_mut()
+        .state
+        .observe(AgentEvent::TurnStarted { turn: turn() })
+        .unwrap();
+    let pin = session.appearance_pin();
+
+    let frame = session
+        .parts_mut()
+        .state
+        .prepare_frame_at(Size::new(48, 12), &pin, Duration::from_secs(9))
+        .unwrap();
+
+    assert!(visible_rows(&frame.surface).contains("✦ Working"));
+    assert_eq!(frame.motion_demand, None);
 }
 
 // 작업 중이어도 marker를 생략하는 좁은 fallback이나 작업 행 자체가 없는 낮은 화면은
@@ -287,8 +325,8 @@ fn hidden_activity_marker_does_not_demand_timed_motion() {
 // 한 TuiSession의 profile 교체는 다른 세션의 snapshot과 revision에 전파되지 않는다.
 #[test]
 fn appearance_replacement_is_isolated_per_session() {
-    let mut first = TuiSession::new();
-    let mut second = TuiSession::new();
+    let mut first = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
+    let mut second = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
     populate_session(&mut first);
     populate_session(&mut second);
     let second_before = second.appearance_pin();

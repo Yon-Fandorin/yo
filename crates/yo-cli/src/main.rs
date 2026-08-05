@@ -290,6 +290,8 @@ fn run_agent_generation(
             tui: yo_tui::TuiSession::with_session_info(
                 options.glyph_profile,
                 yo_tui::TuiSessionInfo::new("codex", compact_workspace_label(&session_cwd)),
+                terminal_color_capability(),
+                yo_tui::MotionPreference::Standard,
             )
             .with_workspace_references(workspace_references)
             .with_skill_references(skill_references),
@@ -371,6 +373,39 @@ impl Launch {
 }
 
 #[cfg(unix)]
+fn terminal_color_capability() -> yo_tui::ColorCapability {
+    classify_terminal_color_capability(
+        std::env::var_os("COLORTERM")
+            .as_deref()
+            .and_then(std::ffi::OsStr::to_str),
+        std::env::var_os("TERM")
+            .as_deref()
+            .and_then(std::ffi::OsStr::to_str),
+        std::env::var_os("NO_COLOR").is_some(),
+    )
+}
+
+#[cfg(unix)]
+fn classify_terminal_color_capability(
+    color_term: Option<&str>,
+    term: Option<&str>,
+    no_color: bool,
+) -> yo_tui::ColorCapability {
+    if no_color {
+        return yo_tui::ColorCapability::Unknown;
+    }
+    if color_term.is_some_and(|value| {
+        value.eq_ignore_ascii_case("truecolor") || value.eq_ignore_ascii_case("24bit")
+    }) {
+        return yo_tui::ColorCapability::TrueColor;
+    }
+    if term.is_some_and(|value| value.to_ascii_lowercase().contains("256color")) {
+        return yo_tui::ColorCapability::Limited;
+    }
+    yo_tui::ColorCapability::Unknown
+}
+
+#[cfg(unix)]
 fn compact_workspace_label(cwd: &std::path::Path) -> String {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     compact_workspace_label_with_home(cwd, home.as_deref())
@@ -429,6 +464,48 @@ mod workspace_label_tests {
         assert_eq!(
             compact_workspace_label_with_home(Path::new("/srv/work/yo"), None),
             "/srv/work/yo"
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod color_capability_tests {
+    use yo_tui::ColorCapability;
+
+    use super::classify_terminal_color_capability;
+
+    // 명시적인 truecolor 표시는 24-bit ramp 사용을 허용하고 대소문자 차이는 의미를 바꾸지 않는다.
+    #[test]
+    fn explicit_color_term_selects_true_color() {
+        assert_eq!(
+            classify_terminal_color_capability(Some("TRUECOLOR"), Some("xterm-256color"), false),
+            ColorCapability::TrueColor
+        );
+        assert_eq!(
+            classify_terminal_color_capability(Some("24bit"), None, false),
+            ColorCapability::TrueColor
+        );
+    }
+
+    // 256-color TERM만 확인되면 RGB를 과장하지 않고 제한 색상 fallback을 선택한다.
+    #[test]
+    fn term_256color_selects_the_limited_fallback() {
+        assert_eq!(
+            classify_terminal_color_capability(None, Some("screen-256color"), false),
+            ColorCapability::Limited
+        );
+    }
+
+    // NO_COLOR 또는 아무 증거가 없는 환경은 RGB를 내보내지 않는 Unknown 경계로 닫는다.
+    #[test]
+    fn missing_or_suppressed_color_evidence_stays_unknown() {
+        assert_eq!(
+            classify_terminal_color_capability(Some("truecolor"), None, true),
+            ColorCapability::Unknown
+        );
+        assert_eq!(
+            classify_terminal_color_capability(None, None, false),
+            ColorCapability::Unknown
         );
     }
 }

@@ -7,6 +7,7 @@ use std::{
 
 use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
+    appearance::{ColorCapability, MotionPreference},
     runner::{
         AgentConnection, AgentPoll, DispatchOutcome, PresentationMode, RunError,
         SkillReferenceConnection, SkillReferencePoll, TerminalOutcome, TerminationSource,
@@ -99,11 +100,19 @@ impl Error for LoopError {}
 pub fn run<A>(
     termination: &mut impl TerminationSource,
     agent: &mut A,
+    color_capability: ColorCapability,
+    motion_preference: MotionPreference,
 ) -> Result<TerminalOutcome, RunError>
 where
     A: AgentConnection,
 {
-    run_with_mode(termination, agent, PresentationMode::Inline)
+    run_with_mode(
+        termination,
+        agent,
+        PresentationMode::Inline,
+        color_capability,
+        motion_preference,
+    )
 }
 
 /// Runs one terminal UI session in the explicitly selected presentation mode.
@@ -115,11 +124,13 @@ pub fn run_with_mode<A>(
     termination: &mut impl TerminationSource,
     agent: &mut A,
     mode: PresentationMode,
+    color_capability: ColorCapability,
+    motion_preference: MotionPreference,
 ) -> Result<TerminalOutcome, RunError>
 where
     A: AgentConnection,
 {
-    let mut session = TuiSession::new();
+    let mut session = TuiSession::new(color_capability, motion_preference);
     run_session_with_mode(termination, agent, &mut session, mode)
 }
 

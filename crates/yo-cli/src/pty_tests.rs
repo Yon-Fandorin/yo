@@ -323,7 +323,13 @@ fn assert_fullscreen_pair(output: &[u8]) {
 
 fn run_fullscreen(termination: &mut impl TerminationSource) -> Result<(), Box<dyn Error>> {
     let mut agent = PendingAgent;
-    yo_tui::run_with_mode(termination, &mut agent, PresentationMode::Fullscreen)?;
+    yo_tui::run_with_mode(
+        termination,
+        &mut agent,
+        PresentationMode::Fullscreen,
+        yo_tui::ColorCapability::Unknown,
+        yo_tui::MotionPreference::Standard,
+    )?;
     Ok(())
 }
 
@@ -331,7 +337,13 @@ fn run_inline_with_retained_chat(
     termination: &mut impl TerminationSource,
 ) -> Result<(), Box<dyn Error>> {
     let mut agent = RetainedChatAgent::new();
-    let outcome = yo_tui::run_with_mode(termination, &mut agent, PresentationMode::Inline)?;
+    let outcome = yo_tui::run_with_mode(
+        termination,
+        &mut agent,
+        PresentationMode::Inline,
+        yo_tui::ColorCapability::Unknown,
+        yo_tui::MotionPreference::Standard,
+    )?;
     match outcome {
         yo_tui::TerminalOutcome::Exited(outcome) => {
             if let Some(output) = outcome.output() {
@@ -558,7 +570,10 @@ fn child_fullscreen_repeated_suspend_resume() {
     let mut coordinator = TerminationCoordinator::install().unwrap();
     let mut job_control = crate::process::job_control::JobControl::new();
     let mut agent = PendingAgent;
-    let mut tui = yo_tui::TuiSession::new();
+    let mut tui = yo_tui::TuiSession::new(
+        yo_tui::ColorCapability::Unknown,
+        yo_tui::MotionPreference::Standard,
+    );
 
     loop {
         let outcome = coordinator
@@ -593,7 +608,10 @@ fn child_inline_repeated_suspend_resume() {
     let mut coordinator = TerminationCoordinator::install().unwrap();
     let mut job_control = crate::process::job_control::JobControl::new();
     let mut agent = RetainedChatAgent::new();
-    let mut tui = yo_tui::TuiSession::new();
+    let mut tui = yo_tui::TuiSession::new(
+        yo_tui::ColorCapability::Unknown,
+        yo_tui::MotionPreference::Standard,
+    );
 
     loop {
         let outcome = coordinator

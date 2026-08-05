@@ -18,7 +18,7 @@ use yo_core::{
 };
 
 use crate::{
-    appearance::{AppearanceCandidate, GlyphProfile},
+    appearance::{AppearanceCandidate, ColorCapability, GlyphProfile, MotionPreference},
     runner::{
         AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch,
         TerminationEvent, TerminationSource, TuiSession,
@@ -229,7 +229,7 @@ impl AgentConnection for SimpleAgent {
 #[derive(Default)]
 struct Presenter {
     previous_on_render: Vec<bool>,
-    frames: Vec<String>,
+    frames: Vec<Surface>,
 }
 
 impl FrameViewport for Presenter {
@@ -245,7 +245,7 @@ impl LivePresenter<Backend> for Presenter {
         _cursor: Point,
     ) -> Result<(), LoopError> {
         self.previous_on_render.push(previous.is_some());
-        self.frames.push(surface_text(current));
+        self.frames.push(current.clone());
         Ok(())
     }
 }
@@ -267,6 +267,37 @@ fn surface_text(surface: &Surface) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn styles_for_ascii_text(surface: &Surface, needle: &str) -> Vec<crate::surface::Style> {
+    let expected = needle.chars().collect::<Vec<_>>();
+    let size = surface.size();
+    for y in 0..size.height {
+        for x in 0..size.width {
+            let fits = expected.iter().enumerate().all(|(offset, expected)| {
+                let Some(point_x) = x.checked_add(u16::try_from(offset).unwrap()) else {
+                    return false;
+                };
+                matches!(
+                    surface.cell(Point::new(point_x, y)).map(|cell| cell.content()),
+                    Some(CellContent::Grapheme { text, .. }) if text.starts_with(*expected)
+                )
+            });
+            if fits {
+                return expected
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, _)| {
+                        surface
+                            .cell(Point::new(x + u16::try_from(offset).unwrap(), y))
+                            .unwrap()
+                            .style()
+                    })
+                    .collect();
+            }
+        }
+    }
+    panic!("expected ASCII text was not rendered: {needle}");
 }
 
 fn key(code: CrosstermKeyCode) -> Event {
@@ -292,6 +323,16 @@ fn run_generation(
     events: Events,
     termination: StopAfter,
 ) -> Presenter {
+    run_generation_at(retained, agent, events, termination, Instant::now())
+}
+
+fn run_generation_at(
+    retained: &mut TuiSession,
+    agent: &mut impl AgentConnection,
+    events: Events,
+    termination: StopAfter,
+    started: Instant,
+) -> Presenter {
     let mut backend = Backend::default();
     let mut terminal = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
     let mut presenter = Presenter::default();
@@ -305,7 +346,7 @@ fn run_generation(
             retained,
             agent,
             Size::new(16, 6),
-            Instant::now(),
+            started,
         )
         .unwrap(),
         LoopExit::Termination
@@ -324,9 +365,13 @@ fn turn() -> TurnRef {
 }
 
 fn active_motion_session(period: Duration) -> TuiSession {
-    let mut retained = TuiSession::with_glyph_profile(GlyphProfile::Ascii);
+    let mut retained = TuiSession::with_glyph_profile(
+        GlyphProfile::Ascii,
+        ColorCapability::Unknown,
+        MotionPreference::Standard,
+    );
     let candidate = AppearanceCandidate::for_profile(GlyphProfile::Ascii)
-        .with_activity_motion_for_test(period, &[".", "*"])
+        .with_activity_motion_for_test(period, "*")
         .unwrap();
     retained.commit_appearance(candidate).unwrap();
     retained
@@ -401,7 +446,11 @@ impl AgentConnection for CoreAgent {
 // TuiSession의 두 번째 generation이 다시 그리며, 이전 frame은 재사용하지 않는다.
 #[test]
 fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
-    let mut retained = TuiSession::with_glyph_profile(GlyphProfile::Ascii);
+    let mut retained = TuiSession::with_glyph_profile(
+        GlyphProfile::Ascii,
+        ColorCapability::Unknown,
+        MotionPreference::Standard,
+    );
     let appearance_revision = retained.appearance_pin().revision().get();
     let mut agent = SimpleAgent::default();
     let first_polls = Rc::new(Cell::new(0));
@@ -440,10 +489,10 @@ fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
         first
             .frames
             .iter()
-            .any(|frame| frame.contains("> question"))
+            .any(|frame| surface_text(frame).contains("> question"))
     );
-    assert!(second.frames[0].contains("> question"));
-    assert!(second.frames[0].contains("draft"));
+    assert!(surface_text(&second.frames[0]).contains("> question"));
+    assert!(surface_text(&second.frames[0]).contains("draft"));
     assert_eq!(
         retained.appearance_pin().revision().get(),
         appearance_revision
@@ -493,7 +542,7 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
         panic!("the full normal lane must retain another command");
     };
 
-    let mut retained = TuiSession::new();
+    let mut retained = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
     {
         let parts = retained.parts_mut();
         *parts.pending_dispatch = Some(normal);
@@ -587,7 +636,7 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
         panic!("the full normal lane must return an opaque pending dispatch");
     };
 
-    let period = Duration::from_millis(5);
+    let period = Duration::from_millis(16);
     let mut retained = active_motion_session(period);
     *retained.parts_mut().pending_dispatch = Some(pending);
     let mut agent = RetainingAgent::default();
@@ -609,7 +658,7 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
 
     assert!(agent.retries >= 3);
     assert!(presenter.frames.len() >= 2);
-    assert!(presenter.frames[0].contains(". Working"));
+    assert!(surface_text(&presenter.frames[0]).contains("* Working"));
     assert!(
         timeouts
             .borrow()
@@ -625,7 +674,7 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
 }
 
 // terminal이 잠시 0x0이 되어 frame을 숨겨도 generation epoch는 유지한다.
-// 다시 보이는 순간에는 resize 시점부터가 아니라 원래 경과 시간의 frame을 고른다.
+// 다시 보이는 순간에는 resize 시점부터가 아니라 원래 경과 시간의 style phase를 고른다.
 #[test]
 fn zero_size_resize_preserves_the_generation_motion_epoch() {
     let period = Duration::from_secs(1);
@@ -665,19 +714,26 @@ fn zero_size_resize_preserves_the_generation_motion_epoch() {
     terminal.close().unwrap();
 
     assert_eq!(presenter.frames.len(), 1);
-    assert!(presenter.frames[0].contains("* Working"));
+    assert!(surface_text(&presenter.frames[0]).contains("* Working"));
+    assert_eq!(
+        styles_for_ascii_text(&presenter.frames[0], "* Working")[0].attributes,
+        crate::surface::Attributes::BOLD
+    );
 }
 
 // 같은 semantic turn을 재진입해도 terminal ownership generation마다 motion epoch는
-// 새로 시작하므로 첫 frame은 매번 profile의 첫 marker다.
+// 새로 시작하므로 고정 marker를 유지하면서 style phase만 첫 위치에서 시작한다.
 #[test]
 fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
     let period = Duration::from_millis(100);
     let mut retained = active_motion_session(period);
     let mut agent = SimpleAgent::default();
+    let old_epoch = Instant::now()
+        .checked_sub(Duration::from_millis(1_100))
+        .unwrap();
 
     let first_polls = Rc::new(Cell::new(0));
-    let first = run_generation(
+    let first = run_generation_at(
         &mut retained,
         &mut agent,
         Events::new([], Rc::clone(&first_polls), Rc::new(Cell::new(0))),
@@ -685,8 +741,8 @@ fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
             counter: first_polls,
             threshold: 1,
         },
+        old_epoch,
     );
-    std::thread::sleep(period + Duration::from_millis(50));
     let second_polls = Rc::new(Cell::new(0));
     let second = run_generation(
         &mut retained,
@@ -698,6 +754,9 @@ fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
         },
     );
 
-    assert!(first.frames[0].contains(". Working"));
-    assert!(second.frames[0].contains(". Working"));
+    let first_styles = styles_for_ascii_text(&first.frames[0], "* Working");
+    let second_styles = styles_for_ascii_text(&second.frames[0], "* Working");
+
+    assert_eq!(first_styles[0].attributes, crate::surface::Attributes::BOLD);
+    assert_eq!(second_styles[0].attributes, crate::surface::Attributes::DIM);
 }

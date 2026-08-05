@@ -15,7 +15,7 @@ use super::{
     unix::{drain_agent, handle_backpressured_input, prepare_resize, retained_session_output},
 };
 use crate::{
-    appearance::AppearanceState,
+    appearance::{AppearanceState, ColorCapability, MotionPreference},
     input::event::{InputEvent, KeyAction, KeyCode, KeyEvent as YoKeyEvent, KeyState},
     surface::{CellContent, Point, Size},
     terminal::mode::inline::{InlineFramePlan, InlineViewport},
@@ -239,7 +239,7 @@ fn session_output_contains_the_current_chat_without_the_prompt() {
 // 생략한다.
 #[test]
 fn oversized_session_output_does_not_replace_a_successful_exit() {
-    let mut retained = TuiSession::new();
+    let mut retained = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
     retained
         .parts_mut()
         .state

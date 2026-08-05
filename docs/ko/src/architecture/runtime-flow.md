@@ -53,7 +53,10 @@ ASCII glyph profile을 위한 `--ascii`이며 순서와 관계없이 사용할 �
 provider나 터미널을 시작하기 전에 실패한다. 선택한 glyph profile로 보존할
 `TuiSession`을 생성하므로 준비한 frame과 마지막 plain session output은
 같은 committed appearance snapshot을 읽는다. Glyph 선택은 명시적이며
-`TERM`이나 `NO_COLOR`를 검사하지 않는다. CLI는 자신이 아는 backend 이름과
+`TERM`이나 `NO_COLOR`를 검사하지 않는다. 별도로 CLI는 명시적인
+`COLORTERM=truecolor|24bit`를 TrueColor, `256color`가 든 `TERM`을 Limited,
+색상이 억제되었거나 증거가 없으면 Unknown으로 분류하며 TrueColor에서만 RGB
+activity ramp를 사용한다. CLI는 자신이 아는 backend 이름과
 홈 경로를 줄여 쓴 작업 디렉터리 label도 보존되는 session에 전달한다. 이
 label은 화면 표시용 metadata일 뿐 backend Session을 선택하거나 식별하지
 않는다.
@@ -243,8 +246,9 @@ Inline 또는 Fullscreen presenter
    결과보다 먼저 즉시 redraw되고, 이전 usable panel은 pending snapshot gate 뒤에
    계속 보인다. animated 작업 marker나 고정 문구 activity sheen을 실제로 그린 Chat
    frame은 보이는 period 중 가장 짧은 값을 반환하고, runner는 터미널 세대 epoch의
-   다음 경계를 예약해 event redraw와 합친다. 숨김·좁음·낮음·idle·한 frame·zero-size
-   indicator는 timer를 활성화하지 않는다.
+   다음 경계를 예약해 event redraw와 합친다. 숨김·좁음·낮음·idle·reduced-motion·zero-size
+   indicator는 timer를 활성화하지 않는다. 한 grapheme activity status도 pulse할 수
+   있으므로 계속 animated indicator다.
 
 승인된 순서, 중단 gesture, 정직한 status 데이터, 반응형 맞춤 정책은
 [정적 입력 chrome 계약](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md)이
@@ -256,7 +260,7 @@ typed 행을 계산하고 폭에 맞춘다. `shell::chrome::help`는 label을 �
 가능한지는 결정하지 않는다. `shell`은 그 영역을 prompt 주변에 조합하고,
 `input::control`은 아주 작은 frame이 시각 안내를 표시하지 못해도 mapping된
 interrupt intent를 dispatch한다.
-정확한 marker cycle과 runner 시간 경계는
+고정 marker, 연속 2초 shimmer, runner 시간 경계는
 [activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)과
 [activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)
 계약이 소유한다.

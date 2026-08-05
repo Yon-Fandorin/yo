@@ -56,8 +56,10 @@ order. Omitting the presentation flag keeps the Inline default, and omitting
 startup. The selected glyph profile constructs the retained `TuiSession`, so
 prepared frames and final plain session output read the same committed
 appearance snapshot. Glyph selection is explicit and does not inspect `TERM` or
-`NO_COLOR`. The CLI also passes its known backend name and a home-compacted
-working-directory label into that retained session. These labels are display
+`NO_COLOR`. Separately, the CLI classifies explicit `COLORTERM=truecolor|24bit`
+as TrueColor, a `TERM` containing `256color` as Limited, and suppressed or missing
+evidence as Unknown; only TrueColor enables the RGB activity ramp. The CLI also
+passes its known backend name and a home-compacted working-directory label into that retained session. These labels are display
 metadata only; they do not select or identify the backend Session.
 
 Contracts:
@@ -248,10 +250,11 @@ The useful inspection points are:
    sequence. An editor mutation that dispatches `@` or `$` discovery is redrawn
    immediately before any provider result; the prior usable panel remains visible
    behind a pending snapshot gate. A Chat frame that actually paints an animated
-   work marker or fixed-text activity sheen returns the shortest visible period;
+   fixed `✦`/`*` work marker or fixed-text activity sheen returns the shortest visible period;
    the runner schedules the next generation-epoch boundary and coalesces it with
-   event redraw. Hidden, narrow, short, idle, one-frame, and zero-size indicators
-   do not arm that timer.
+   event redraw. Hidden, narrow, short, idle, reduced-motion, and zero-size indicators
+   do not arm that timer. A one-grapheme activity status can still pulse and therefore
+   remains animated.
 
 The accepted ordering, interruption gestures, honest status data, and
 responsive fitting policy are owned by the
@@ -264,7 +267,7 @@ shared `input::key_notation` formatter renders terminal conventions such as
 not decide whether an action is currently available. `shell` composes those
 regions around the prompt, and `input::control` dispatches the mapped interrupt
 intent even when a tiny frame cannot show the visual hint.
-The exact marker cycles and runner timing boundary are owned by the
+The fixed marker, continuous two-second shimmer, and runner timing boundary are owned by the
 [activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)
 and
 [activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)

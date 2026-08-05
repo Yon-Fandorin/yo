@@ -134,8 +134,8 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
     assert_eq!(row(&minimal), "Esc/^C");
 }
 
-// Working 문구는 marker와 같은 activity phase를 사용해 peak와 양옆 trail을 이동한다.
-// 두 frame의 문자열과 폭은 같고, marker는 굵기 변화 없이 전용 style을 유지한다.
+// Working 문구와 고정 marker는 같은 elapsed 표본을 사용해 style만 바꾼다.
+// 두 frame의 문자열과 폭은 같고 16ms repaint 주기만 renderer에 전달된다.
 #[test]
 fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
     let styles = ShellChromeStyles {
@@ -158,7 +158,8 @@ fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
             .unwrap(),
         snapshot("codex", "~/projects/yo"),
         styles,
-        pin.snapshot().activity_motion_frame(Duration::ZERO),
+        pin.snapshot()
+            .activity_motion_frame(Duration::from_millis(500)),
         false,
     )
     .unwrap();
@@ -170,7 +171,7 @@ fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
         snapshot("codex", "~/projects/yo"),
         styles,
         pin.snapshot()
-            .activity_motion_frame(Duration::from_millis(120)),
+            .activity_motion_frame(Duration::from_millis(1_000)),
         false,
     )
     .unwrap();
@@ -180,35 +181,13 @@ fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
         row(&second).split_once(' ').unwrap().1
     );
     assert_ne!(first, second);
-    assert_eq!(
-        first.cell(Point::new(0, 0)).unwrap().style(),
-        styles.activity.marker
-    );
-    assert_eq!(
-        first.cell(Point::new(2, 0)).unwrap().style(),
-        styles.activity.peak
-    );
-    assert_eq!(
-        first.cell(Point::new(3, 0)).unwrap().style(),
-        styles.activity.trail
-    );
-    assert_eq!(
-        first.cell(Point::new(4, 0)).unwrap().style(),
-        styles.activity.muted
-    );
-    assert_eq!(
-        second.cell(Point::new(2, 0)).unwrap().style(),
-        styles.activity.trail
-    );
-    assert_eq!(
-        second.cell(Point::new(3, 0)).unwrap().style(),
-        styles.activity.peak
-    );
-    assert_eq!(
-        second.cell(Point::new(4, 0)).unwrap().style(),
-        styles.activity.trail
-    );
-    assert_eq!(first_period, Some(Duration::from_millis(120)));
+    assert_eq!(row(&first), "✦ Working");
+    assert_eq!(row(&second), "✦ Working");
+    assert!((0..9).any(|x| {
+        first.cell(Point::new(x, 0)).unwrap().style()
+            != second.cell(Point::new(x, 0)).unwrap().style()
+    }));
+    assert_eq!(first_period, Some(Duration::from_millis(16)));
     assert_eq!(second_period, first_period);
 }
 

@@ -240,17 +240,13 @@ fn paint_fitting_activity_row(
     };
     let candidate = &candidates[index];
     let sheen = candidate.working.and_then(|(_, count)| motion.sheen(count));
-    let base = if candidate.marker_visible || candidate.working.is_some() {
-        styles.activity.muted
-    } else {
-        styles.activity.peak
-    };
+    let base = motion.static_style(styles.activity);
     if view.clear(base) == WriteOutcome::Clipped {
         return Err(ShellChromeError::SurfaceConflict);
     }
     for (grapheme_index, positioned) in flow.glyphs.into_iter().enumerate() {
         let style = if candidate.marker_visible && grapheme_index == 0 {
-            styles.activity.marker
+            motion.marker_style(styles.activity)
         } else if let (Some((start, count)), Some(sheen)) = (candidate.working, sheen) {
             let end = start.saturating_add(count);
             if (start..end).contains(&grapheme_index) {

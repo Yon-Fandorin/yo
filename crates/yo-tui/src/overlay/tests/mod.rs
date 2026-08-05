@@ -109,8 +109,8 @@ fn row(surface: &Surface, y: u16) -> String {
     rendered.trim_end().to_owned()
 }
 
-// activity title status는 글자를 바꾸지 않고 같은 120ms phase로 peak와 trail을 이동한다.
-// 따라서 두 frame의 문구와 geometry는 같고, shell과 같은 역할 style만 한 칸씩 전진한다.
+// activity title status는 글자를 바꾸지 않고 같은 연속 phase로 밝기를 이동한다.
+// 따라서 두 frame의 문구와 geometry는 같고, shell과 같은 16ms motion demand를 낸다.
 #[test]
 fn activity_title_status_moves_a_style_only_sheen_without_relayout() {
     let panel = SelectionPanel::new(
@@ -119,43 +119,34 @@ fn activity_title_status_moves_a_style_only_sheen_without_relayout() {
             .unwrap(),
     );
 
-    let (first, first_size, first_period) =
-        render_with_motion(&panel, Size::new(48, 6), std::time::Duration::ZERO).unwrap();
+    let (first, first_size, first_period) = render_with_motion(
+        &panel,
+        Size::new(48, 6),
+        std::time::Duration::from_millis(500),
+    )
+    .unwrap();
     let (second, second_size, second_period) = render_with_motion(
         &panel,
         Size::new(48, 6),
-        std::time::Duration::from_millis(120),
+        std::time::Duration::from_millis(1_000),
     )
     .unwrap();
 
     assert_eq!(row(&first, 0), row(&second, 0));
     assert_eq!(first_size, second_size);
-    assert_eq!(first_period, Some(std::time::Duration::from_millis(120)));
+    assert_eq!(first_period, Some(std::time::Duration::from_millis(16)));
     assert_eq!(second_period, first_period);
     assert_ne!(first, second);
-    let activity = appearance().styles.activity;
-    assert_eq!(
-        first.cell(Point::new(14, 0)).unwrap().style(),
-        activity.peak
-    );
-    assert_eq!(
-        first.cell(Point::new(15, 0)).unwrap().style(),
-        activity.trail
-    );
-    assert_eq!(
-        second.cell(Point::new(14, 0)).unwrap().style(),
-        activity.trail
-    );
-    assert_eq!(
-        second.cell(Point::new(15, 0)).unwrap().style(),
-        activity.peak
-    );
+    assert!((14..23).any(|x| {
+        first.cell(Point::new(x, 0)).unwrap().style()
+            != second.cell(Point::new(x, 0)).unwrap().style()
+    }));
 }
 
-// static status와 한 grapheme뿐인 activity status는 이후 phase가 화면을 바꿀 수 없으므로
-// timer를 요구하지 않는다. 한 frame profile과 같은 no-op 경계다.
+// 일반 static status는 timer를 요구하지 않지만 한 grapheme activity status는 marker처럼
+// pulse 밝기가 바뀔 수 있으므로 16ms motion demand를 유지한다.
 #[test]
-fn static_or_single_grapheme_status_does_not_demand_motion() {
+fn static_status_stays_still_while_one_grapheme_activity_pulses() {
     let static_panel = SelectionPanel::new(
         snapshot(vec![enabled("src", "src/")])
             .with_title_status("Ready")
@@ -177,7 +168,7 @@ fn static_or_single_grapheme_status_does_not_demand_motion() {
         render_with_motion(&single_panel, Size::new(48, 6), std::time::Duration::ZERO)
             .unwrap()
             .2,
-        None
+        Some(std::time::Duration::from_millis(16))
     );
 }
 

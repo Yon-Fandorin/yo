@@ -166,7 +166,7 @@ terminal-operation, and HTML-projection types.
 | Module | Owns | Follow next |
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, input/event orchestration, immediate editor-frame publication around asynchronous prompt assistance, final cleanup reporting, and terminal-independent archived Chat/Transcript projection | `runner/state.rs` for semantic UI transitions; `runner/archival.rs` for stored output; `runner/unix.rs` for live orchestration and visible motion scheduling |
-| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and the public built-in Rich/ASCII glyph and shared-phase activity-motion profiles | `runner/session.rs` for profile-aware construction and ownership; `runner/state.rs` for frame pinning |
+| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and the public built-in Rich/ASCII glyph profiles | `appearance/activity.rs` for fixed activity markers, continuous shimmer math, color-depth resolution, and reduced motion; `runner/session.rs` for profile-aware construction; `runner/state.rs` for frame pinning |
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | Terminal-cell-aware plain lists that preserve pinned columns, pack short collapsed label/value pairs as a width-bounded flow, give block values an independent row and split their label from the value only when needed, wrap grapheme clusters without truncation, and fall back to a vertical card layout | Which columns mean what, their fold priorities or continuation hints, configuration, stdout TTY policy, or terminal ownership |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | Decoded semantic key events, edit buffer, configurable bindings, exit gestures, prompt editing, typed view-switch presentation policy, and shared terminal notation for available key actions | `input/key_notation.rs` for terminal labels only; `prompt` for visible cursor layout; `runner/view.rs` for the selected projection |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, transcript layout, and scrolling state | `shell` for composition with the prompt |
@@ -214,15 +214,19 @@ Each redraw pins the appearance
 revision before measurement and uses that same resolved snapshot through paint
 and the completed `Surface`; plain session output pins the same session-owned
 configuration. The runner supplies one generation-local elapsed sample. A visible
-animated marker or activity-text sheen returns its period, while static, hidden,
-single-grapheme, and one-frame indicators return no motion demand. The completed
+animated marker or activity-text sheen returns its period, including a one-grapheme
+pulse; static, hidden, empty, and reduced-motion indicators return no demand. The completed
 frame reports the shortest positive period across its visible indicators.
 `runner/unix.rs` derives the next epoch boundary, skips missed ticks, and folds
 that deadline into normal and backpressured input waits; presenters and HTML
-continue to consume only the completed `Surface`. `TuiSession::new` selects the default Rich glyphs,
-while `TuiSession::with_glyph_profile` lets the process host choose the built-in
-ASCII profile without exposing mutable theme state. `TuiSession::with_session_info`
-also accepts the backend and workspace labels already known by the process host;
+continue to consume only the completed `Surface`. Every public `TuiSession`
+constructor and one-shot runner requires the process host to supply an explicit
+TrueColor, Limited, or Unknown classification plus a Standard or Reduced motion
+preference before appearance publication. `TuiSession::new` selects the default
+Rich glyphs, while `TuiSession::with_glyph_profile` additionally lets the host
+choose the built-in ASCII profile without exposing mutable theme state.
+`TuiSession::with_session_info` adds backend and workspace labels to that same
+explicit publication boundary;
 the chrome omits unavailable model, context, Git, and permission values instead
 of inventing them. Reentry keeps the same
 agent connection because the retained state contains identities from that agent

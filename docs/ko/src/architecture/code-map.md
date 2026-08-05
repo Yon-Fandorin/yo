@@ -162,7 +162,7 @@ transport 공유 구조를 추출한다.
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, input·event 조율, 비동기 prompt assist 중 즉시 editor frame 공개, 마지막 정리 결과 보고, 터미널에 독립적인 저장 Chat/Transcript Projection | UI 의미 상태 전이는 `runner/state.rs`, 저장 출력은 `runner/archival.rs`, 실행 중 조율과 보이는 motion scheduling은 `runner/unix.rs` |
-| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph와 phase를 공유하는 activity-motion profile | profile을 받는 생성과 소유권은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
+| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph profile | 고정 activity marker·연속 shimmer 계산·색상 깊이 해석·reduced motion은 `appearance/activity.rs`, profile 생성은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | terminal cell 폭에 맞춰 고정 열을 유지하고 짧은 접힌 label/value pair는 폭 안에서 flow로 채우며 block 값은 독립된 한 줄을 사용하되 필요할 때만 label과 값을 분리하고, grapheme을 자르지 않고 개행한 뒤 필요하면 세로 card layout으로 전환하는 plain 목록 | 열의 의미와 접기 우선순위 또는 continuation hint, 설정, stdout TTY 정책, terminal 소유권 |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집, typed view-switch 표시 정책, 사용 가능한 key action의 공용 terminal 표기 | terminal label만 다루는 곳은 `input/key_notation.rs`, 보이는 cursor 배치는 `prompt`, 선택한 Projection은 `runner/view.rs` |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, 대화 기록 layout, scroll 상태 | prompt와 조합하는 일은 `shell` |
@@ -209,16 +209,19 @@ Audit을 persist하거나 또 다른 Journal owner를 만들지 않으며, worke
 각 redraw는 측정 전에 appearance revision을 pin하고, paint와 완성된
 `Surface`까지 같은 resolved snapshot을 사용한다. plain session output도
 같은 session-owned 설정을 pin한다. runner는 터미널 소유 세대마다 하나의
-elapsed sample을 전달한다. 보이는 animated marker나 activity 문구 sheen은 period를
-반환하지만 static·숨김·단일 grapheme·한 frame indicator는 motion demand를 만들지
-않는다. 완성된 frame은 보이는 indicator 가운데 가장 짧은 양수 period를 보고한다.
+elapsed sample을 전달한다. 보이는 animated marker나 activity 문구 sheen은 한
+grapheme pulse도 포함해 period를 반환하지만 static·숨김·빈 값·reduced-motion
+indicator는 motion demand를 만들지 않는다. 완성된 frame은 보이는 indicator 가운데 가장 짧은 양수 period를 보고한다.
 `runner/unix.rs`는 다음 epoch 경계를 계산하고 놓친 tick을
 건너뛰며 일반·backpressure input wait에 그 deadline을 함께 반영한다. presenter와
-HTML은 계속 완성된 `Surface`만 소비한다. `TuiSession::new`는 기본 Rich
-glyph를 선택하고, `TuiSession::with_glyph_profile`은 mutable theme state를
-노출하지 않은 채 process host가 built-in ASCII profile을 선택하게 한다.
-`TuiSession::with_session_info`는 process host가 이미 아는 backend와 workspace
-label도 받는다. chrome은 알 수 없는 model, context, Git, permission 값을
+HTML은 계속 완성된 `Surface`만 소비한다. 모든 public `TuiSession` 생성자와
+one-shot runner는 appearance를 publish하기 전에 process host가
+TrueColor·Limited·Unknown 중 하나와 Standard·Reduced motion preference 중
+하나를 명시하도록 요구한다. `TuiSession::new`는 기본 Rich glyph를 선택하고,
+`TuiSession::with_glyph_profile`은 mutable theme state를 노출하지 않은 채
+host가 built-in ASCII profile도 선택하게 한다. `TuiSession::with_session_info`는
+같은 명시적 publication 경계에 backend와 workspace label을 더한다.
+chrome은 알 수 없는 model, context, Git, permission 값을
 만들어내지 않고 생략한다.
 보존된 상태에는 해당 agent Session의 식별자가 있으므로 재진입할 때도 같은
 agent 연결을 유지한다.

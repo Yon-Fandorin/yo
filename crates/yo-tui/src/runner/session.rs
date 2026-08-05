@@ -7,7 +7,7 @@ use crate::appearance::AppearancePin;
 use crate::{
     appearance::{
         AppearanceCandidate, AppearanceCommitError, AppearanceRevision, AppearanceState,
-        GlyphProfile,
+        ColorCapability, GlyphProfile, MotionPreference,
     },
     overlay::{AcceptanceReceipt, OverlayInstanceToken, PanelSnapshot, SlotError},
     transcript::TranscriptMeasureError,
@@ -44,25 +44,45 @@ pub(super) struct SessionParts<'session> {
 }
 
 impl TuiSession {
-    /// Creates an empty TUI session with the compatibility-default Rich glyphs.
+    /// Creates an empty Rich-glyph TUI session from explicit host appearance facts.
     #[must_use]
-    pub fn new() -> Self {
-        Self::with_glyph_profile(GlyphProfile::Rich)
+    pub fn new(color_capability: ColorCapability, motion_preference: MotionPreference) -> Self {
+        Self::with_glyph_profile(GlyphProfile::Rich, color_capability, motion_preference)
     }
 
-    /// Creates an empty TUI session with an explicit built-in glyph profile.
+    /// Creates an empty TUI session from an explicit profile and host appearance facts.
     #[must_use]
-    pub fn with_glyph_profile(profile: GlyphProfile) -> Self {
-        Self::with_session_info(profile, TuiSessionInfo::default())
+    pub fn with_glyph_profile(
+        profile: GlyphProfile,
+        color_capability: ColorCapability,
+        motion_preference: MotionPreference,
+    ) -> Self {
+        Self::with_session_info(
+            profile,
+            TuiSessionInfo::default(),
+            color_capability,
+            motion_preference,
+        )
     }
 
-    /// Creates a session with host-known status labels and an explicit glyph profile.
+    /// Creates a session with explicit host labels, glyphs, color, and motion preference.
     #[must_use]
-    pub fn with_session_info(profile: GlyphProfile, info: TuiSessionInfo) -> Self {
+    pub fn with_session_info(
+        profile: GlyphProfile,
+        info: TuiSessionInfo,
+        color_capability: ColorCapability,
+        motion_preference: MotionPreference,
+    ) -> Self {
         Self {
             state: TuiState::with_session_info(info),
-            appearance: AppearanceState::new(AppearanceCandidate::for_profile(profile))
-                .expect("built-in appearance profiles must always be valid"),
+            appearance: AppearanceState::new(
+                AppearanceCandidate::for_profile_with_host_preferences(
+                    profile,
+                    color_capability,
+                    motion_preference,
+                ),
+            )
+            .expect("built-in appearance profiles must always be valid"),
             pending_dispatch: None,
             pending_control: None,
             workspace_references: None,
@@ -229,16 +249,13 @@ fn single_line_label(value: String) -> String {
     label
 }
 
-impl Default for TuiSession {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{TuiSession, TuiSessionInfo};
-    use crate::overlay::{PanelSnapshot, SelectionEntry, SlotError};
+    use crate::{
+        appearance::{ColorCapability, MotionPreference},
+        overlay::{PanelSnapshot, SelectionEntry, SlotError},
+    };
 
     fn panel(label: &str) -> PanelSnapshot {
         PanelSnapshot::new(
@@ -261,7 +278,7 @@ mod tests {
     // close 뒤 같은 token의 refresh를 stale로 거절한다.
     #[test]
     fn session_facade_preserves_overlay_token_scope() {
-        let mut session = TuiSession::new();
+        let mut session = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
         let token = session.open_prompt_overlay(panel("First")).unwrap();
 
         session
