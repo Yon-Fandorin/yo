@@ -743,10 +743,14 @@ fn next_motion_deadline(
 }
 
 fn wait_timeout(base: Duration, deadline: Option<Instant>) -> Duration {
+    wait_timeout_at(base, deadline, Instant::now())
+}
+
+fn wait_timeout_at(base: Duration, deadline: Option<Instant>, now: Instant) -> Duration {
     let Some(deadline) = deadline else {
         return base;
     };
-    base.min(deadline.saturating_duration_since(Instant::now()))
+    base.min(deadline.saturating_duration_since(now))
 }
 
 fn motion_is_due(deadline: Option<Instant>) -> bool {
@@ -833,7 +837,23 @@ fn validate_size(size: Size) -> Result<(), RunError> {
 mod motion_tests {
     use std::time::{Duration, Instant};
 
-    use super::next_motion_deadline;
+    use super::{next_motion_deadline, wait_timeout_at};
+
+    // 10ms worker 재시도보다 4ms 뒤 motion 마감이 더 가까우면 실제 sleep 없이도
+    // scheduler가 정확히 4ms를 선택함을 결정적으로 확인한다.
+    #[test]
+    fn nearer_motion_deadline_shortens_the_base_wait() {
+        let now = Instant::now();
+
+        assert_eq!(
+            wait_timeout_at(
+                Duration::from_millis(10),
+                now.checked_add(Duration::from_millis(4)),
+                now,
+            ),
+            Duration::from_millis(4)
+        );
+    }
 
     // 늦게 깨어난 frame은 놓친 tick을 재생하지 않고 epoch 기준 다음 경계 하나만 예약한다.
     #[test]
