@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.observability-002
-    revision: sha256:c3e88747d2b56be976c217839f095dc6bd1a015e49d4a5f0e453346023a69f3c
+    revision: sha256:5b84c15abb860fb9b2f402d2b90fce6b3c613adfdb28fdcc40e5c4fb62ae6ec9
 relations:
   depends_on:
     - agent.observability.session-journal
@@ -31,14 +31,17 @@ long output.
 Transcript MUST be the transparent chronological superset of Chat and add
 detailed semantic and Activity lifecycle, context, failures, and explicit
 observation or persistence gaps. Request MUST be a full-page read-only
-projection anchored to the context currently viewed in Chat or Transcript,
-not primarily a request-list browser. It MUST show the observable backend
-exchange, revisions, attempts, outcomes, redaction, exact observation boundary,
-and a typed reason when detail is unavailable. A context with no direct request
-MUST say so instead of selecting a nearby request. Returning across linked
-views MUST restore each view's cursor and scroll state. A future remote reader
-MAY fetch detail on demand only after a real remote consumer defines that
-contract; this decision does not create a remote Request Audit interface.
+diagnostic trace that presents all of the Journal's bounded correlation and
+availability records for the full Session in chronological order, not a
+request-list browser. It
+MUST show the observable backend exchange, revisions, attempts, outcomes,
+redaction, exact observation boundary, and a typed reason when detail is
+unavailable. An interactive surface MAY highlight the context currently viewed
+in Chat or Transcript within that trace; a highlighted context with no direct
+request MUST say so instead of selecting a nearby request. Returning across
+linked views MUST restore each view's cursor and scroll state. A future remote
+reader MAY fetch detail on demand only after a real remote consumer defines
+that contract; this decision does not create a remote Request Audit interface.
 
 ## Rationale
 
