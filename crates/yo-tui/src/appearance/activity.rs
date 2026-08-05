@@ -7,6 +7,7 @@ use crate::surface::{Attributes, Color, Grapheme, Style};
 
 pub(super) const BUILT_IN_REPAINT_INTERVAL: Duration = Duration::from_millis(16);
 const MINIMUM_REPAINT_INTERVAL: Duration = Duration::from_millis(16);
+const BUILT_IN_MARKER_INTERVAL: Duration = Duration::from_millis(80);
 const BUILT_IN_SWEEP_PERIOD: Duration = Duration::from_secs(2);
 const SWEEP_PADDING: f64 = 10.0;
 const BAND_HALF_WIDTH: f64 = 5.0;
@@ -52,7 +53,9 @@ pub(crate) struct ActivityStyles {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ActivityMotionProfile {
-    marker: String,
+    marker_frames: Vec<ActivityMarkerFrame>,
+    marker_interval: Duration,
+    reserved_marker_width: u16,
     repaint_interval: Duration,
     sweep_period: Duration,
     color_capability: ColorCapability,
@@ -61,9 +64,17 @@ pub(super) struct ActivityMotionProfile {
     reduced_motion: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ActivityMarkerFrame {
+    text: String,
+    width: u16,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ActivityMotionFrame<'frame> {
     marker: &'frame str,
+    marker_width: u16,
+    reserved_marker_width: u16,
     repaint_interval: Duration,
     sweep_period: Duration,
     color_capability: ColorCapability,
@@ -109,12 +120,16 @@ impl ActivityStyles {
 
 impl ActivityMotionProfile {
     pub(super) fn built_in(
-        marker: &str,
+        marker_frames: &[&str],
         color_capability: ColorCapability,
         motion_preference: MotionPreference,
     ) -> Self {
+        let (marker_frames, reserved_marker_width) =
+            resolve_marker_frames(marker_frames).expect("built-in activity frames must be valid");
         Self {
-            marker: marker.to_owned(),
+            marker_frames,
+            marker_interval: BUILT_IN_MARKER_INTERVAL,
+            reserved_marker_width,
             repaint_interval: BUILT_IN_REPAINT_INTERVAL,
             sweep_period: BUILT_IN_SWEEP_PERIOD,
             color_capability,
@@ -125,11 +140,19 @@ impl ActivityMotionProfile {
     }
 
     pub(super) fn validate(&self) -> Result<(), AppearanceCandidateError> {
-        validate_activity_marker(&self.marker)?;
         if self.repaint_interval < MINIMUM_REPAINT_INTERVAL {
             return Err(AppearanceCandidateError::ActivityRepaintIntervalTooFast {
                 minimum: MINIMUM_REPAINT_INTERVAL,
                 actual: self.repaint_interval,
+            });
+        }
+        if self.marker_interval.is_zero() {
+            return Err(AppearanceCandidateError::ZeroActivityMarkerInterval);
+        }
+        if self.marker_interval < self.repaint_interval {
+            return Err(AppearanceCandidateError::ActivityMarkerIntervalTooFast {
+                minimum: self.repaint_interval,
+                actual: self.marker_interval,
             });
         }
         if self.sweep_period.is_zero() {
@@ -139,8 +162,16 @@ impl ActivityMotionProfile {
     }
 
     pub(super) fn frame_at(&self, elapsed: Duration) -> ActivityMotionFrame<'_> {
+        let index = if self.reduced_motion {
+            0
+        } else {
+            marker_frame_index(elapsed, self.marker_interval, self.marker_frames.len())
+        };
+        let marker = &self.marker_frames[index];
         ActivityMotionFrame {
-            marker: &self.marker,
+            marker: &marker.text,
+            marker_width: marker.width,
+            reserved_marker_width: self.reserved_marker_width,
             repaint_interval: self.repaint_interval,
             sweep_period: self.sweep_period,
             color_capability: self.color_capability,
@@ -152,10 +183,19 @@ impl ActivityMotionProfile {
     }
 
     #[cfg(test)]
-    pub(super) fn with_test_motion(mut self, repaint_interval: Duration, marker: &str) -> Self {
+    pub(super) fn with_test_motion(
+        mut self,
+        repaint_interval: Duration,
+        marker_interval: Duration,
+        marker_frames: &[&str],
+    ) -> Result<Self, AppearanceCandidateError> {
+        let (marker_frames, reserved_marker_width) = resolve_marker_frames(marker_frames)?;
         self.repaint_interval = repaint_interval;
-        self.marker = marker.to_owned();
-        self
+        self.marker_interval = marker_interval;
+        self.marker_frames = marker_frames;
+        self.reserved_marker_width = reserved_marker_width;
+        self.validate()?;
+        Ok(self)
     }
 
     #[cfg(test)]
@@ -169,6 +209,8 @@ impl<'frame> ActivityMotionFrame<'frame> {
     pub(crate) const fn still(marker: &'frame str) -> Self {
         Self {
             marker,
+            marker_width: 1,
+            reserved_marker_width: 1,
             repaint_interval: BUILT_IN_REPAINT_INTERVAL,
             sweep_period: BUILT_IN_SWEEP_PERIOD,
             color_capability: ColorCapability::Unknown,
@@ -181,6 +223,14 @@ impl<'frame> ActivityMotionFrame<'frame> {
 
     pub(crate) const fn marker(self) -> &'frame str {
         self.marker
+    }
+
+    pub(crate) const fn marker_width(self) -> u16 {
+        self.marker_width
+    }
+
+    pub(crate) const fn reserved_marker_width(self) -> u16 {
+        self.reserved_marker_width
     }
 
     pub(crate) const fn period(self) -> Option<Duration> {
@@ -260,6 +310,11 @@ fn sweep_position(elapsed: Duration, sweep_period: Duration, visible_graphemes: 
     -SWEEP_PADDING + phase * (visible_graphemes as f64 + 2.0 * SWEEP_PADDING)
 }
 
+fn marker_frame_index(elapsed: Duration, interval: Duration, frame_count: usize) -> usize {
+    let elapsed_intervals = elapsed.as_nanos() / interval.as_nanos();
+    (elapsed_intervals % frame_count as u128) as usize
+}
+
 fn blend_channel(base: u8, highlight: u8, amount: f64) -> u8 {
     (f64::from(base) + (f64::from(highlight) - f64::from(base)) * amount)
         .round()
@@ -296,28 +351,50 @@ impl Default for ActivityStyles {
     }
 }
 
-fn validate_activity_marker(marker: &str) -> Result<(), AppearanceCandidateError> {
-    if marker.is_empty() {
-        return Err(AppearanceCandidateError::EmptyActivityMarker);
+fn resolve_marker_frames(
+    frames: &[&str],
+) -> Result<(Vec<ActivityMarkerFrame>, u16), AppearanceCandidateError> {
+    if frames.is_empty() {
+        return Err(AppearanceCandidateError::EmptyActivityMarkerFrames);
     }
-    if marker.chars().any(char::is_control) {
-        return Err(AppearanceCandidateError::ActivityMarkerContainsControl);
-    }
-    let mut graphemes = marker.graphemes(true);
-    let text = graphemes
-        .next()
-        .ok_or(AppearanceCandidateError::EmptyActivityMarker)?;
-    if graphemes.next().is_some() {
-        return Err(AppearanceCandidateError::ActivityMarkerMustBeOneGrapheme);
-    }
-    let grapheme = Grapheme::try_from(text)
-        .map_err(|cause| AppearanceCandidateError::InvalidActivityMarker { cause })?;
-    if grapheme.width().get() > 1 {
-        return Err(AppearanceCandidateError::ActivityMarkerMustBeOneCell {
-            actual: grapheme.width().get(),
+    let mut resolved = Vec::with_capacity(frames.len());
+    let mut reserved_width = 0;
+    for (frame_index, frame) in frames.iter().copied().enumerate() {
+        if frame.is_empty() {
+            return Err(AppearanceCandidateError::EmptyActivityMarkerFrame { frame_index });
+        }
+        if frame.chars().any(char::is_control) {
+            return Err(
+                AppearanceCandidateError::ActivityMarkerFrameContainsControl { frame_index },
+            );
+        }
+        let mut width = 0_u16;
+        for (grapheme_index, text) in frame.graphemes(true).enumerate() {
+            let grapheme = Grapheme::try_from(text).map_err(|cause| {
+                AppearanceCandidateError::InvalidActivityMarkerGrapheme {
+                    frame_index,
+                    grapheme_index,
+                    cause,
+                }
+            })?;
+            if grapheme.width().get() > 2 {
+                return Err(AppearanceCandidateError::ActivityMarkerGraphemeTooWide {
+                    frame_index,
+                    grapheme_index,
+                    actual: grapheme.width().get(),
+                });
+            }
+            width = width
+                .checked_add(grapheme.width().get())
+                .ok_or(AppearanceCandidateError::ActivityMarkerWidthOverflow { frame_index })?;
+        }
+        reserved_width = reserved_width.max(width);
+        resolved.push(ActivityMarkerFrame {
+            text: frame.to_owned(),
+            width,
         });
     }
-    Ok(())
+    Ok((resolved, reserved_width))
 }
 
 #[cfg(test)]

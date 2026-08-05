@@ -5,7 +5,9 @@ use super::{
     paint_mode, paint_status_groups, paint_transient,
 };
 use crate::{
-    appearance::{ActivityMotionFrame, ActivityStyles, AppearanceState},
+    appearance::{
+        ActivityMotionFrame, ActivityStyles, AppearanceCandidate, AppearanceState, GlyphProfile,
+    },
     input::editor::binding::NewlineBinding,
     runner::PresentationMode,
     surface::{Attributes, CellContent, Color, Point, Rect, Size, Style, Surface},
@@ -134,10 +136,10 @@ fn activity_row_drops_description_without_wrapping_interrupt_keys() {
     assert_eq!(row(&minimal), "Esc/^C");
 }
 
-// Working 문구와 고정 marker는 같은 elapsed 표본을 사용해 style만 바꾼다.
-// 두 frame의 문자열과 폭은 같고 16ms repaint 주기만 renderer에 전달된다.
+// Working 문구와 marker는 같은 elapsed 표본을 사용하며, marker frame이 바뀌어도
+// label 내용과 16ms repaint 요구는 유지되고 각 frame의 marker cell은 같은 pulse를 쓴다.
 #[test]
-fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
+fn working_row_animates_marker_frames_and_text_sheen_from_one_elapsed_sample() {
     let styles = ShellChromeStyles {
         activity: ActivityStyles {
             marker: Style::new(Color::Indexed(6), Color::Default, Attributes::empty()),
@@ -181,14 +183,69 @@ fn working_row_moves_a_fixed_text_sheen_on_the_marker_phase() {
         row(&second).split_once(' ').unwrap().1
     );
     assert_ne!(first, second);
-    assert_eq!(row(&first), "✦ Working");
-    assert_eq!(row(&second), "✦ Working");
+    assert_eq!(row(&first), "⠦ Working");
+    assert_eq!(row(&second), "⠹ Working");
     assert!((0..9).any(|x| {
         first.cell(Point::new(x, 0)).unwrap().style()
             != second.cell(Point::new(x, 0)).unwrap().style()
     }));
     assert_eq!(first_period, Some(Duration::from_millis(16)));
     assert_eq!(second_period, first_period);
+}
+
+// 현재 frame이 폭 2인 한글·두 ASCII grapheme·폭 1인 점으로 바뀌어도 최대 2셀 marker
+// 영역으로 Working을 3번 셀에 고정하고, 여러 marker grapheme는 같은 style을 쓰며 잔여 셀은 비운다.
+#[test]
+fn heterogeneous_marker_frames_keep_the_working_column_stable() {
+    let candidate = AppearanceCandidate::for_profile(GlyphProfile::Rich)
+        .with_activity_motion_for_test(
+            Duration::from_millis(16),
+            Duration::from_millis(80),
+            &[".", "가", "oo"],
+        )
+        .unwrap();
+    let appearance = AppearanceState::new(candidate).unwrap();
+    let pin = appearance.pin();
+    let styles = ShellChromeStyles {
+        activity: ActivityStyles::default(),
+        metrics: Style::default(),
+        mode: Style::default(),
+        key_hint: Style::default(),
+    };
+
+    let mut surface = Surface::new(Size::new(16, 1)).unwrap();
+    for (elapsed, expected) in [
+        (Duration::from_millis(80), "가  Working"),
+        (Duration::from_millis(160), "oo Working"),
+        (Duration::from_millis(240), ".  Working"),
+    ] {
+        paint_transient(
+            &mut surface
+                .view(Rect::new(Point::new(0, 0), Size::new(16, 1)))
+                .unwrap(),
+            snapshot("codex", "~/projects/yo"),
+            styles,
+            pin.snapshot().activity_motion_frame(elapsed),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(row(&surface), expected);
+        assert!(matches!(
+            surface.cell(Point::new(3, 0)).unwrap().content(),
+            CellContent::Grapheme { text, .. } if text.as_ref() == "W"
+        ));
+        if elapsed == Duration::from_millis(160) {
+            assert_eq!(
+                surface.cell(Point::new(0, 0)).unwrap().style(),
+                surface.cell(Point::new(1, 0)).unwrap().style()
+            );
+        }
+    }
+    assert!(matches!(
+        surface.cell(Point::new(1, 0)).unwrap().content(),
+        CellContent::Blank
+    ));
 }
 
 // 충분한 폭의 하단 도움말은 실제 newline binding과 종료·중단 키를 관례 표기로 보여주고,

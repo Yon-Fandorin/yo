@@ -11,7 +11,7 @@ use crate::surface::{Attributes, Color, Style};
 #[test]
 fn padded_sweep_is_dark_at_both_period_edges() {
     let profile = ActivityMotionProfile::built_in(
-        "✦",
+        &["✦"],
         ColorCapability::TrueColor,
         MotionPreference::Standard,
     );
@@ -27,12 +27,51 @@ fn padded_sweep_is_dark_at_both_period_edges() {
     }
 }
 
+// 폭 1인 점, 폭 2인 한글, 두 개의 ASCII grapheme가 섞여도 profile은 각 frame의
+// 셀 폭 합 중 최댓값 2를 계속 예약하고, 80ms 경계에서 elapsed 기반 frame만 선택한다.
+#[test]
+fn marker_frames_use_elapsed_phase_and_reserve_the_widest_frame() {
+    let profile = ActivityMotionProfile::built_in(
+        &[".", "가", "oo"],
+        ColorCapability::Unknown,
+        MotionPreference::Standard,
+    );
+
+    let first = profile.frame_at(Duration::ZERO);
+    let wide = profile.frame_at(Duration::from_millis(80));
+    let multi = profile.frame_at(Duration::from_millis(160));
+    let skipped = profile.frame_at(Duration::from_millis(245));
+
+    assert_eq!((first.marker(), first.marker_width()), (".", 1));
+    assert_eq!((wide.marker(), wide.marker_width()), ("가", 2));
+    assert_eq!((multi.marker(), multi.marker_width()), ("oo", 2));
+    assert_eq!(skipped.marker(), ".");
+    assert_eq!(first.reserved_marker_width(), 2);
+    assert_eq!(wide.reserved_marker_width(), 2);
+}
+
+// reduced motion은 elapsed가 여러 frame 주기를 지나도 첫 frame을 고정하고 timer를
+// 요청하지 않되, layout이 사용하는 최대 예약 폭 정보는 표준 모드와 동일하게 유지한다.
+#[test]
+fn reduced_motion_freezes_the_first_frame_without_losing_reserved_width() {
+    let profile = ActivityMotionProfile::built_in(
+        &[".", "가"],
+        ColorCapability::Unknown,
+        MotionPreference::Reduced,
+    );
+    let frame = profile.frame_at(Duration::from_secs(9));
+
+    assert_eq!(frame.marker(), ".");
+    assert_eq!(frame.reserved_marker_width(), 2);
+    assert_eq!(frame.period(), None);
+}
+
 // 연속 위치를 정수 peak로 먼저 줄이지 않아 같은 글자도 16ms가 흐르면 서로 다른 RGB로
 // 해석되고, TrueColor 해석은 appearance가 정한 배경과 속성을 그대로 보존한다.
 #[test]
 fn fractional_position_changes_true_color_between_repaints() {
     let profile = ActivityMotionProfile::built_in(
-        "✦",
+        &["✦"],
         ColorCapability::TrueColor,
         MotionPreference::Standard,
     );
@@ -63,7 +102,8 @@ fn fractional_position_changes_true_color_between_repaints() {
 fn lower_depth_capabilities_use_bounded_attribute_roles() {
     let styles = ActivityStyles::built_in();
     for capability in [ColorCapability::Limited, ColorCapability::Unknown] {
-        let profile = ActivityMotionProfile::built_in("*", capability, MotionPreference::Standard);
+        let profile =
+            ActivityMotionProfile::built_in(&["*"], capability, MotionPreference::Standard);
         let frame = profile.frame_at(Duration::from_millis(1_000));
         let sheen = frame.sheen(1).unwrap();
         let style = sheen.style_at(0, styles);
@@ -139,8 +179,11 @@ fn fallback_thresholds_use_the_documented_half_open_ranges() {
 // 접근성 선택이 숨은 repaint 작업으로 남지 않는다.
 #[test]
 fn reduced_motion_disarms_timed_repaint() {
-    let profile =
-        ActivityMotionProfile::built_in("✦", ColorCapability::TrueColor, MotionPreference::Reduced);
+    let profile = ActivityMotionProfile::built_in(
+        &["✦"],
+        ColorCapability::TrueColor,
+        MotionPreference::Reduced,
+    );
     let frame = profile.frame_at(Duration::from_secs(9));
 
     assert_eq!(frame.marker(), "✦");

@@ -1,6 +1,6 @@
 //! Static rows surrounding the prompt inside the agent shell.
 
-use std::{num::NonZeroU16, time::Duration};
+use std::{num::NonZeroU16, ops::Range, time::Duration};
 
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -127,27 +127,46 @@ pub(super) fn paint_transient(
         return Ok(None);
     }
     let marker = motion.marker();
+    let marker_graphemes = marker.graphemes(true).count();
+    let trailing_cells = motion
+        .reserved_marker_width()
+        .saturating_sub(motion.marker_width());
+    let marker_region = format!("{marker}{}", " ".repeat(usize::from(trailing_cells)));
+    let marker_region_graphemes = marker_graphemes + usize::from(trailing_cells);
+    let marker_padding = marker_graphemes..marker_region_graphemes;
     let interrupt = interrupt_notation();
     let working_graphemes = WORKING_LABEL.graphemes(true).count();
     let candidates = if show_shortcuts {
         vec![
             ActivityRowCandidate::new(
-                format!("{marker} {WORKING_LABEL}  ·  {interrupt} interrupt"),
-                true,
-                Some((2, working_graphemes)),
+                format!("{marker_region} {WORKING_LABEL}  ·  {interrupt} interrupt"),
+                Some(0..marker_graphemes),
+                Some(marker_padding.clone()),
+                Some((marker_region_graphemes + 1, working_graphemes)),
             ),
-            ActivityRowCandidate::new(format!("{marker} {interrupt}"), true, None),
-            ActivityRowCandidate::new(interrupt, false, None),
-            ActivityRowCandidate::new(marker, true, None),
+            ActivityRowCandidate::new(
+                format!("{marker_region} {interrupt}"),
+                Some(0..marker_graphemes),
+                Some(marker_padding.clone()),
+                None,
+            ),
+            ActivityRowCandidate::new(interrupt, None, None, None),
+            ActivityRowCandidate::new(
+                marker_region,
+                Some(0..marker_graphemes),
+                Some(marker_padding),
+                None,
+            ),
         ]
     } else {
         vec![
             ActivityRowCandidate::new(
-                format!("{marker} {WORKING_LABEL}"),
-                true,
-                Some((2, working_graphemes)),
+                format!("{marker_region} {WORKING_LABEL}"),
+                Some(0..marker_graphemes),
+                Some(marker_padding),
+                Some((marker_region_graphemes + 1, working_graphemes)),
             ),
-            ActivityRowCandidate::new(WORKING_LABEL, false, Some((0, working_graphemes))),
+            ActivityRowCandidate::new(WORKING_LABEL, None, None, Some((0, working_graphemes))),
         ]
     };
     let row = view.size().height - 1;
@@ -245,7 +264,18 @@ fn paint_fitting_activity_row(
         return Err(ShellChromeError::SurfaceConflict);
     }
     for (grapheme_index, positioned) in flow.glyphs.into_iter().enumerate() {
-        let style = if candidate.marker_visible && grapheme_index == 0 {
+        if candidate
+            .blank
+            .as_ref()
+            .is_some_and(|blank| blank.contains(&grapheme_index))
+        {
+            continue;
+        }
+        let style = if candidate
+            .marker
+            .as_ref()
+            .is_some_and(|marker| marker.contains(&grapheme_index))
+        {
             motion.marker_style(styles.activity)
         } else if let (Some((start, count)), Some(sheen)) = (candidate.working, sheen) {
             let end = start.saturating_add(count);
@@ -261,22 +291,29 @@ fn paint_fitting_activity_row(
             return Err(ShellChromeError::SurfaceConflict);
         }
     }
-    Ok((candidate.marker_visible || sheen.is_some())
+    Ok((candidate.marker.is_some() || sheen.is_some())
         .then(|| motion.period())
         .flatten())
 }
 
 struct ActivityRowCandidate {
     text: String,
-    marker_visible: bool,
+    marker: Option<Range<usize>>,
+    blank: Option<Range<usize>>,
     working: Option<(usize, usize)>,
 }
 
 impl ActivityRowCandidate {
-    fn new(text: impl Into<String>, marker_visible: bool, working: Option<(usize, usize)>) -> Self {
+    fn new(
+        text: impl Into<String>,
+        marker: Option<Range<usize>>,
+        blank: Option<Range<usize>>,
+        working: Option<(usize, usize)>,
+    ) -> Self {
         Self {
             text: text.into(),
-            marker_visible,
+            marker,
+            blank,
             working,
         }
     }

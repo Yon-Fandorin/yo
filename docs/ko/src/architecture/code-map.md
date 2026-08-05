@@ -162,14 +162,14 @@ transport 공유 구조를 추출한다.
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
 | [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, input·event 조율, 비동기 prompt assist 중 즉시 editor frame 공개, 마지막 정리 결과 보고, 터미널에 독립적인 저장 Chat/Transcript Projection | UI 의미 상태 전이는 `runner/state.rs`, 저장 출력은 `runner/archival.rs`, 실행 중 조율과 보이는 motion scheduling은 `runner/unix.rs` |
-| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph profile | 고정 activity marker·연속 shimmer 계산·색상 깊이 해석·reduced motion은 `appearance/activity.rs`, profile 생성은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
+| [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph profile | 검증된 activity frame 순서·elapsed 기반 선택·최대 예약 marker 폭·연속 shimmer 계산·색상 깊이 해석·reduced motion은 `appearance/activity.rs`, profile 생성은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | terminal cell 폭에 맞춰 고정 열을 유지하고 짧은 접힌 label/value pair는 폭 안에서 flow로 채우며 block 값은 독립된 한 줄을 사용하되 필요할 때만 label과 값을 분리하고, grapheme을 자르지 않고 개행한 뒤 필요하면 세로 card layout으로 전환하는 plain 목록 | 열의 의미와 접기 우선순위 또는 continuation hint, 설정, stdout TTY 정책, terminal 소유권 |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집, typed view-switch 표시 정책, 사용 가능한 key action의 공용 terminal 표기 | terminal label만 다루는 곳은 `input/key_notation.rs`, 보이는 cursor 배치는 `prompt`, 선택한 Projection은 `runner/view.rs` |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, 대화 기록 layout, scroll 상태 | prompt와 조합하는 일은 `shell` |
 | [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Chat·Transcript·Request 선택, 상단 헤더가 없는 편집 가능한 Chat 화면, 읽기 전용 mode 헤더, 전체 Journal record Projection, 정확한 Request anchor와 typed unavailable 사유, mode별 context·viewport 상태 | Journal 관찰과 editor dispatch는 `runner/state.rs`, 공통 layout·scroll은 `transcript` |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | editor 내용과 cursor가 보이는 상태를 측정하고 그리며, 유효한 `@`·`$` token scan, 대체 query가 pending인 동안 마지막 usable panel 보존, stale provider update 거절, 선택 span 치환과 typed identity 보존, 보고된 scope에 따른 cached skill 후보 filtering | 편집 의미는 `input/editor`, 탐색은 실행 provider, freshness-gated 표시는 `overlay`, structured admission은 `yo-core` |
 | [`overlay`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/overlay/mod.rs) | 검증된 선택 panel snapshot, 항목 availability와 독립적인 snapshot freshness, typed static/activity title status, enabled 항목 navigation·fitting, 선택적인 왼쪽 하단 filter 표시, 원자적인 `Surface` paint, token 범위의 단일 prompt-overlay slot | provider는 query·후보 filtering·preview와 accept된 제품 effect를 유지하고, routing·receipt는 `runner/state.rs`, 아래에 고정된 목적지는 `shell`이 소유한다 |
-| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | 안정적인 작업·prompt·metric·도움말 stack을 배분하고 상태에 맞는 도움말을 원자적 우선순위 segment로 폭에 맞추며 pinned activity marker와 고정 문구 style sheen을 그린 뒤, 완성된 frame의 cursor와 가장 짧은 보이는 motion demand를 보고 | 작업 행은 `shell/chrome.rs`, footer는 `shell/chrome/help.rs`, 표기는 `input/key_notation.rs`, cell 쓰기는 `surface`, host가 실제로 아는 status 값은 `runner/session.rs` |
+| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | 안정적인 작업·prompt·metric·도움말 stack을 배분하고 상태에 맞는 도움말을 원자적 우선순위 segment로 폭에 맞추며 pinned activity frame을 최대 폭 marker 영역 안에 그리고 고정 문구 style sheen을 적용한 뒤, 완성된 frame의 cursor와 가장 짧은 보이는 motion demand를 보고 | 작업 행은 `shell/chrome.rs`, footer는 `shell/chrome/help.rs`, 표기는 `input/key_notation.rs`, cell 쓰기는 `surface`, host가 실제로 아는 status 값은 `runner/session.rs` |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | adapter에 독립적인 cell 상태, Unicode grapheme과 너비, 경계가 있는 view, diff span, 터미널에 독립적인 text flow | Projection은 `terminal` 또는 `html` |
 | [`terminal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mod.rs) | typed terminal operation과 ANSI encoding | 표시 정책은 `terminal/mode`, Unix effect는 `terminal/backend` |
 | [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | 공유 transactional restoration, Inline·Fullscreen presenter, panic routing, crate-private platform boundary | 프로세스 signal 정책이 바뀔 때만 `yo-cli/process` |
@@ -209,7 +209,10 @@ Audit을 persist하거나 또 다른 Journal owner를 만들지 않으며, worke
 각 redraw는 측정 전에 appearance revision을 pin하고, paint와 완성된
 `Surface`까지 같은 resolved snapshot을 사용한다. plain session output도
 같은 session-owned 설정을 pin한다. runner는 터미널 소유 세대마다 하나의
-elapsed sample을 전달한다. 보이는 animated marker나 activity 문구 sheen은 한
+elapsed sample을 전달한다. appearance는 이 값으로 marker frame을 직접 선택하고
+reduced motion에서는 첫 frame을 고정하며, 검증된 frame 가운데 가장 넓은 폭을
+고정 marker 영역으로 유지해 frame 변경이 문구 위치나 fitting을 바꾸지 않게 한다.
+보이는 animated marker나 activity 문구 sheen은 한
 grapheme pulse도 포함해 period를 반환하지만 static·숨김·빈 값·reduced-motion
 indicator는 motion demand를 만들지 않는다. 완성된 frame은 보이는 indicator 가운데 가장 짧은 양수 period를 보고한다.
 `runner/unix.rs`는 다음 epoch 경계를 계산하고 놓친 tick을

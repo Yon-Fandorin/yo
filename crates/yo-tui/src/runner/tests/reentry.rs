@@ -371,7 +371,7 @@ fn active_motion_session(period: Duration) -> TuiSession {
         MotionPreference::Standard,
     );
     let candidate = AppearanceCandidate::for_profile(GlyphProfile::Ascii)
-        .with_activity_motion_for_test(period, "*")
+        .with_activity_motion_for_test(period, period, &["*"])
         .unwrap();
     retained.commit_appearance(candidate).unwrap();
     retained

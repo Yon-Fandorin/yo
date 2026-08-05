@@ -249,8 +249,9 @@ The useful inspection points are:
    user input only when its `StartTurn` or `SteerTurn` command appears in that
    sequence. An editor mutation that dispatches `@` or `$` discovery is redrawn
    immediately before any provider result; the prior usable panel remains visible
-   behind a pending snapshot gate. A Chat frame that actually paints an animated
-   fixed `✦`/`*` work marker or fixed-text activity sheen returns the shortest visible period;
+   behind a pending snapshot gate. A Chat frame that actually paints the elapsed-selected
+   Rich Braille or ASCII work-marker frame inside its fixed maximum-width region, or a
+   fixed-text activity sheen, returns the shortest visible period;
    the runner schedules the next generation-epoch boundary and coalesces it with
    event redraw. Hidden, narrow, short, idle, reduced-motion, and zero-size indicators
    do not arm that timer. A one-grapheme activity status can still pulse and therefore
@@ -267,7 +268,8 @@ shared `input::key_notation` formatter renders terminal conventions such as
 not decide whether an action is currently available. `shell` composes those
 regions around the prompt, and `input::control` dispatches the mapped interrupt
 intent even when a tiny frame cannot show the visual hint.
-The fixed marker, continuous two-second shimmer, and runner timing boundary are owned by the
+The 80ms marker-frame sequence, maximum-width marker region, continuous two-second
+shimmer, and 16ms runner repaint boundary are owned by the
 [activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)
 and
 [activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)

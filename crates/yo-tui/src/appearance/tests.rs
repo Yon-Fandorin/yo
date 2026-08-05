@@ -106,24 +106,25 @@ fn marker_wider_than_the_body_indent_is_rejected() {
     );
 }
 
-// Rich와 ASCII 내장 profile은 shape를 바꾸지 않는 정확한 marker와 16ms repaint 주기를
-// publication하며, elapsed가 달라져도 marker의 grapheme identity는 유지된다.
+// Rich와 ASCII 내장 profile은 rib에서 선택한 frame 순서를 80ms마다 elapsed로 고르고,
+// marker 형태가 바뀌어도 부드러운 shimmer를 위한 16ms repaint 주기는 그대로 유지한다.
 #[test]
-fn built_in_activity_profiles_keep_fixed_markers_at_sixteen_milliseconds() {
+fn built_in_activity_profiles_select_marker_frames_at_eighty_milliseconds() {
     let rich = AppearanceState::default().pin();
     let first = rich.snapshot().activity_motion_frame(Duration::ZERO);
     let later = rich
         .snapshot()
         .activity_motion_frame(Duration::from_millis(777));
-    assert_eq!(first.marker(), "✦");
-    assert_eq!(later.marker(), "✦");
+    assert_eq!(first.marker(), "⠋");
+    assert_eq!(later.marker(), "⠏");
+    assert_eq!(first.reserved_marker_width(), 1);
     assert_eq!(first.period(), Some(Duration::from_millis(16)));
 
     let ascii = AppearanceState::new(AppearanceCandidate::for_profile(GlyphProfile::Ascii))
         .unwrap()
         .pin();
     let ascii_frame = ascii.snapshot().activity_motion_frame(Duration::ZERO);
-    assert_eq!(ascii_frame.marker(), "*");
+    assert_eq!(ascii_frame.marker(), "|");
     assert_eq!(ascii_frame.period(), Some(Duration::from_millis(16)));
 }
 
@@ -140,7 +141,7 @@ fn reduced_motion_profile_is_valid_but_does_not_demand_motion() {
     let pin = state.pin();
     let frame = pin.snapshot().activity_motion_frame(Duration::from_secs(9));
 
-    assert_eq!(frame.marker(), "*");
+    assert_eq!(frame.marker(), "|");
     assert_eq!(frame.period(), None);
     assert_eq!(frame.sheen(7), None);
 }
@@ -188,45 +189,85 @@ fn host_color_capability_selects_rgb_or_safe_fallback() {
     ));
 }
 
-// marker 구조, 16ms보다 빠른 repaint, 0초 sweep는 모두 publication 전에 구체적인
-// 오류로 거부해 renderer가 불완전한 activity profile을 관찰하지 못하게 한다.
+// 빈 frame 목록·문자열, 제어·폭 0 grapheme, 잘못된 두 timer와 0초 sweep를 publication
+// 전에 구체적인 오류로 거부해 renderer가 불완전한 activity profile을 보지 못하게 한다.
 #[test]
 fn invalid_activity_profiles_are_rejected_before_publication() {
     let base = AppearanceCandidate::for_profile(GlyphProfile::Rich);
     assert_eq!(
-        base.clone()
-            .with_activity_motion_for_test(Duration::from_millis(16), ""),
-        Err(AppearanceCandidateError::EmptyActivityMarker)
+        base.clone().with_activity_motion_for_test(
+            Duration::from_millis(16),
+            Duration::from_millis(80),
+            &[],
+        ),
+        Err(AppearanceCandidateError::EmptyActivityMarkerFrames)
     );
     assert_eq!(
-        base.clone()
-            .with_activity_motion_for_test(Duration::from_millis(15), "*"),
+        base.clone().with_activity_motion_for_test(
+            Duration::from_millis(16),
+            Duration::from_millis(80),
+            &[""],
+        ),
+        Err(AppearanceCandidateError::EmptyActivityMarkerFrame { frame_index: 0 })
+    );
+    assert_eq!(
+        base.clone().with_activity_motion_for_test(
+            Duration::from_millis(15),
+            Duration::from_millis(80),
+            &["*"],
+        ),
         Err(AppearanceCandidateError::ActivityRepaintIntervalTooFast {
             minimum: Duration::from_millis(16),
             actual: Duration::from_millis(15),
         })
     );
     assert_eq!(
-        base.clone()
-            .with_activity_motion_for_test(Duration::from_millis(16), "ab"),
-        Err(AppearanceCandidateError::ActivityMarkerMustBeOneGrapheme)
+        base.clone().with_activity_motion_for_test(
+            Duration::from_millis(16),
+            Duration::ZERO,
+            &["*"],
+        ),
+        Err(AppearanceCandidateError::ZeroActivityMarkerInterval)
     );
     assert_eq!(
-        base.clone()
-            .with_activity_motion_for_test(Duration::from_millis(16), "\u{1b}"),
-        Err(AppearanceCandidateError::ActivityMarkerContainsControl)
-    );
-    assert_eq!(
-        base.clone()
-            .with_activity_motion_for_test(Duration::from_millis(16), "\u{0301}"),
-        Err(AppearanceCandidateError::InvalidActivityMarker {
-            cause: GraphemeError::ZeroWidth,
+        base.clone().with_activity_motion_for_test(
+            Duration::from_millis(20),
+            Duration::from_millis(18),
+            &["*"],
+        ),
+        Err(AppearanceCandidateError::ActivityMarkerIntervalTooFast {
+            minimum: Duration::from_millis(20),
+            actual: Duration::from_millis(18),
         })
     );
     assert_eq!(
-        base.clone()
-            .with_activity_motion_for_test(Duration::from_millis(16), "한"),
-        Err(AppearanceCandidateError::ActivityMarkerMustBeOneCell { actual: 2 })
+        base.clone().with_activity_motion_for_test(
+            Duration::from_millis(16),
+            Duration::from_millis(80),
+            &["\u{1b}"],
+        ),
+        Err(AppearanceCandidateError::ActivityMarkerFrameContainsControl { frame_index: 0 })
+    );
+    assert_eq!(
+        base.clone().with_activity_motion_for_test(
+            Duration::from_millis(16),
+            Duration::from_millis(80),
+            &["\u{0301}"],
+        ),
+        Err(AppearanceCandidateError::InvalidActivityMarkerGrapheme {
+            frame_index: 0,
+            grapheme_index: 0,
+            cause: GraphemeError::ZeroWidth,
+        })
+    );
+    let too_wide = "a".repeat(usize::from(u16::MAX) + 1);
+    assert_eq!(
+        base.clone().with_activity_motion_for_test(
+            Duration::from_millis(16),
+            Duration::from_millis(80),
+            &[&too_wide],
+        ),
+        Err(AppearanceCandidateError::ActivityMarkerWidthOverflow { frame_index: 0 })
     );
     assert_eq!(
         base.with_activity_sweep_period_for_test(Duration::ZERO),

@@ -63,14 +63,30 @@ pub(crate) enum AppearanceCandidateError {
         marker_width: u16,
         body_indent: u16,
     },
-    EmptyActivityMarker,
-    ActivityMarkerContainsControl,
-    ActivityMarkerMustBeOneGrapheme,
-    InvalidActivityMarker {
+    EmptyActivityMarkerFrames,
+    EmptyActivityMarkerFrame {
+        frame_index: usize,
+    },
+    ActivityMarkerFrameContainsControl {
+        frame_index: usize,
+    },
+    InvalidActivityMarkerGrapheme {
+        frame_index: usize,
+        grapheme_index: usize,
         cause: GraphemeError,
     },
-    ActivityMarkerMustBeOneCell {
+    ActivityMarkerGraphemeTooWide {
+        frame_index: usize,
+        grapheme_index: usize,
         actual: u16,
+    },
+    ActivityMarkerWidthOverflow {
+        frame_index: usize,
+    },
+    ZeroActivityMarkerInterval,
+    ActivityMarkerIntervalTooFast {
+        minimum: Duration,
+        actual: Duration,
     },
     ActivityRepaintIntervalTooFast {
         minimum: Duration,
@@ -129,12 +145,17 @@ impl AppearanceCandidate {
         color_capability: ColorCapability,
         motion_preference: MotionPreference,
     ) -> Self {
-        let (user_marker, assistant_marker, activity_marker) = match profile {
-            GlyphProfile::Rich => ("❯", "•", "✦"),
-            GlyphProfile::Ascii => (">", "*", "*"),
+        let (user_marker, assistant_marker, activity_frames): (&str, &str, &[&str]) = match profile
+        {
+            GlyphProfile::Rich => (
+                "❯",
+                "•",
+                &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+            ),
+            GlyphProfile::Ascii => (">", "*", &["|", "/", "-", "\\"]),
         };
         let activity_motion =
-            ActivityMotionProfile::built_in(activity_marker, color_capability, motion_preference);
+            ActivityMotionProfile::built_in(activity_frames, color_capability, motion_preference);
         Self {
             user_marker: user_marker.to_owned(),
             assistant_marker: assistant_marker.to_owned(),
@@ -185,11 +206,15 @@ impl AppearanceCandidate {
     #[cfg(test)]
     pub(crate) fn with_activity_motion_for_test(
         mut self,
-        period: Duration,
-        marker: &str,
+        repaint_interval: Duration,
+        marker_interval: Duration,
+        marker_frames: &[&str],
     ) -> Result<Self, AppearanceCandidateError> {
-        self.activity_motion = self.activity_motion.with_test_motion(period, marker);
-        self.activity_motion.validate()?;
+        self.activity_motion = self.activity_motion.with_test_motion(
+            repaint_interval,
+            marker_interval,
+            marker_frames,
+        )?;
         Ok(self)
     }
 

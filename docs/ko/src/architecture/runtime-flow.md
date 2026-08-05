@@ -244,7 +244,8 @@ Inline 또는 Fullscreen presenter
    사용자 입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난
    뒤에만 표시된다. `@`나 `$` discovery를 dispatch하는 editor mutation은 provider
    결과보다 먼저 즉시 redraw되고, 이전 usable panel은 pending snapshot gate 뒤에
-   계속 보인다. animated 작업 marker나 고정 문구 activity sheen을 실제로 그린 Chat
+   계속 보인다. elapsed로 선택한 Rich Braille 또는 ASCII 작업 marker frame을 고정된
+   최대 폭 영역에 그리거나 고정 문구 activity sheen을 실제로 그린 Chat
    frame은 보이는 period 중 가장 짧은 값을 반환하고, runner는 터미널 세대 epoch의
    다음 경계를 예약해 event redraw와 합친다. 숨김·좁음·낮음·idle·reduced-motion·zero-size
    indicator는 timer를 활성화하지 않는다. 한 grapheme activity status도 pulse할 수
@@ -260,7 +261,7 @@ typed 행을 계산하고 폭에 맞춘다. `shell::chrome::help`는 label을 �
 가능한지는 결정하지 않는다. `shell`은 그 영역을 prompt 주변에 조합하고,
 `input::control`은 아주 작은 frame이 시각 안내를 표시하지 못해도 mapping된
 interrupt intent를 dispatch한다.
-고정 marker, 연속 2초 shimmer, runner 시간 경계는
+80ms marker frame 순서, 최대 폭 marker 영역, 연속 2초 shimmer, 16ms runner repaint 경계는
 [activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)과
 [activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)
 계약이 소유한다.
