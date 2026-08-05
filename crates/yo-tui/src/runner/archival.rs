@@ -1,5 +1,7 @@
 //! Read-only terminal-independent projections of one durable Session history.
 
+mod request;
+
 use std::fmt;
 
 use yo_core::session_repository::{
@@ -14,6 +16,7 @@ use crate::appearance::{AppearanceCandidate, AppearanceState, GlyphProfile};
 pub enum ArchivedSessionView {
     Chat,
     Transcript,
+    Request,
 }
 
 /// Failure to build a read-only projection from already validated history.
@@ -39,6 +42,7 @@ pub fn project_archived_session(
     match view {
         ArchivedSessionView::Chat => project_chat(history.records(), glyph_profile),
         ArchivedSessionView::Transcript => Ok(project_transcript(history)),
+        ArchivedSessionView::Request => Ok(request::project(history)),
     }
 }
 
@@ -82,22 +86,10 @@ fn project_transcript_parts(
     discovery_consistent: bool,
     records: &[yo_core::TranscriptRecord],
 ) -> String {
-    let cutoff = journal_cutoff.map_or_else(
-        || "descriptor-only".to_owned(),
-        |value| value.get().to_string(),
-    );
-    let recovery = match recovery {
-        StoredSessionRecovery::NotRequired => "not-required",
-        StoredSessionRecovery::Interrupted => "interrupted",
-    };
-    let continuity = match continuity {
-        StoredSessionContinuity::NotObservable => "not-observable",
-    };
-    let discovery = if discovery_consistent {
-        "consistent"
-    } else {
-        "mismatch"
-    };
+    let cutoff = cutoff_text(journal_cutoff);
+    let recovery = recovery_text(recovery);
+    let continuity = continuity_text(continuity);
+    let discovery = discovery_text(discovery_consistent);
     let mut output = format!(
         "Stored Session diagnostic\n\
          session={}\n\
@@ -114,6 +106,34 @@ fn project_transcript_parts(
         output.push_str(&format_archival_record(index, record));
     }
     output
+}
+
+fn cutoff_text(journal_cutoff: Option<yo_core::JournalSequence>) -> String {
+    journal_cutoff.map_or_else(
+        || "descriptor-only".to_owned(),
+        |value| value.get().to_string(),
+    )
+}
+
+const fn recovery_text(recovery: StoredSessionRecovery) -> &'static str {
+    match recovery {
+        StoredSessionRecovery::NotRequired => "not-required",
+        StoredSessionRecovery::Interrupted => "interrupted",
+    }
+}
+
+const fn continuity_text(continuity: StoredSessionContinuity) -> &'static str {
+    match continuity {
+        StoredSessionContinuity::NotObservable => "not-observable",
+    }
+}
+
+const fn discovery_text(discovery_consistent: bool) -> &'static str {
+    if discovery_consistent {
+        "consistent"
+    } else {
+        "mismatch"
+    }
 }
 
 #[cfg(test)]

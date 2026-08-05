@@ -296,18 +296,25 @@ LocalSessionReader::discover
   ↓ validated tail summaries
 workspace-filtered metadata table on stdout
 
-yo session SESSION_ID [--view chat|transcript]
+yo session SESSION_ID [--view chat|transcript|request]
   ↓ one point-in-time physical snapshot, no writer lease
 yo-core read_stored_session
-  ↓ envelope validation + Journal recovery + message normalization
+  ↓ envelope validation + Journal recovery
 StoredSessionHistory
-  ↓ yo-tui archived projection
+  ↓ Chat/Transcript message normalization or full-session Request correlation trace
+  ↓ exact Journal boundary; Request Audit explicitly unavailable without a reader
+yo-tui archived projection
 plain stdout
 ```
 
 `yo-cli/src/command.rs` owns the command grammar, `session.rs` owns selection
 and table/output routing, `config.rs` owns date-format configuration, and
 `storage.rs::open_default_reader` is deliberately separate from writer startup.
+Request has no anchor selector: it renders every durable correlation and
+availability record in chronological Journal order instead of guessing a
+nearby request. The projection never prints backend payloads or physical
+repository envelopes.
+
 For terminal stdout, `session.rs` supplies the observed width and Session-specific
 column priorities and continuation hints to the generic `yo-tui::plain`
 renderer. It first folds PATH and DETAIL, then continuation/version, started

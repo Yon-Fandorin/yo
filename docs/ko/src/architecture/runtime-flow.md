@@ -287,19 +287,26 @@ LocalSessionReader::discover
   ↓ 검증된 tail summary
 workspace로 거른 metadata table을 stdout에 출력
 
-yo session SESSION_ID [--view chat|transcript]
+yo session SESSION_ID [--view chat|transcript|request]
   ↓ writer lease 없는 한 시점의 physical snapshot
 yo-core read_stored_session
-  ↓ envelope 검증 + Journal recovery + message normalization
+  ↓ envelope 검증 + Journal recovery
 StoredSessionHistory
-  ↓ yo-tui archived Projection
+  ↓ Chat/Transcript message normalization 또는 Session 전체 Request correlation trace
+  ↓ 정확한 Journal 경계, reader가 없으면 Request Audit을 명시적으로 unavailable 처리
+yo-tui archived Projection
 plain stdout
 ```
 
 `yo-cli/src/command.rs`는 command 문법, `session.rs`는 선택과 table/output routing,
 `config.rs`는 날짜 형식 설정, `storage.rs::open_default_reader`는 writer startup과
-분리된 읽기 전용 조합을 소유한다. stdout이 terminal이면 `session.rs`가 관찰한 폭,
-Session 전용 열 우선순위와 continuation hint를 범용 `yo-tui::plain` renderer에
+분리된 읽기 전용 조합을 소유한다.
+Request에는 anchor selector가 없다. 인접 request를 추측하지 않고 durable correlation과
+availability record 전체를 Journal 시간순으로 출력한다. 이 Projection은 backend payload나
+physical repository envelope를 출력하지 않는다.
+
+stdout이 terminal이면 `session.rs`가 관찰한 폭, Session 전용 열 우선순위와
+continuation hint를 범용 `yo-tui::plain` renderer에
 전달한다. 먼저 PATH와 DETAIL, 다음으로 continuation/version, 시작 시각, workspace를
 접는다. 짧은 label/value pair는 주 행 아래를 왼쪽부터 채우고, 다음 pair 전체가
 들어가지 않을 때만 다음 줄로 옮긴다. PATH와 DETAIL은 진행 중인 flow를 끝내고

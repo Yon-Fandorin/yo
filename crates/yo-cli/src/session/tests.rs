@@ -135,10 +135,17 @@ fn chat_warns_when_durability_continuity_is_not_observable() {
         StoredSessionContinuity::NotObservable,
         StoredDiscoveryValidation::Consistent,
     );
+    let request = archival_diagnostics(
+        session_id,
+        SessionView::Request,
+        StoredSessionContinuity::NotObservable,
+        StoredDiscoveryValidation::Consistent,
+    );
 
     assert_eq!(chat.len(), 1);
     assert!(chat[0].contains("volatile suffix"));
     assert!(transcript.is_empty());
+    assert!(request.is_empty());
 }
 
 // Chat의 continuity 경고와 discovery 불일치는 서로 다른 복구 단서이므로 함께 남고,

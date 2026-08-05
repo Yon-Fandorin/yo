@@ -73,6 +73,34 @@ fn direct_session_selects_a_read_only_projection() {
     assert_eq!(command.glyph_profile, GlyphProfile::Ascii);
 }
 
+// `request`는 같은 UUID의 전체 저장 상관 흐름을 읽는 세 번째 view로 파싱되고,
+// 특정 시점을 추측하는 `--at` 선택자는 실제 사용처가 생기기 전까지 명시적으로 거부됩니다.
+#[test]
+fn direct_session_accepts_request_without_an_anchor_selector() {
+    let id = "01890f00-0000-7000-8000-000000000001";
+    let Command::Session(command) = parse([
+        "session".into(),
+        id.into(),
+        "--view".into(),
+        "request".into(),
+    ])
+    .unwrap() else {
+        panic!("the session command remains distinct from live startup");
+    };
+
+    assert_eq!(command.view, SessionView::Request);
+    let error = parse([
+        "session".into(),
+        id.into(),
+        "--view".into(),
+        "request".into(),
+        "--at".into(),
+        "5".into(),
+    ])
+    .unwrap_err();
+    assert!(error.to_string().contains("unknown argument `--at`"));
+}
+
 // list 전용 `--all`과 direct read UUID를 함께 쓰면 어느 쪽 의미도 임의로 우선하지 않고
 // 사용법 오류로 거부해 조회 범위와 출력 대상이 모호해지지 않는다.
 #[test]

@@ -4,7 +4,7 @@ use yo_tui::{GlyphProfile, PresentationMode};
 
 use super::AppError;
 
-const USAGE: &str = "yo [--resume SESSION_ID | --continue] [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript] [--ascii]";
+const USAGE: &str = "yo [--resume SESSION_ID | --continue] [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript|request] [--ascii]";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LiveOptions {
@@ -31,6 +31,7 @@ pub(crate) enum Command {
 pub(crate) enum SessionView {
     Chat,
     Transcript,
+    Request,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -126,13 +127,18 @@ fn parse_session(
                 set_once(&mut glyph_profile, GlyphProfile::Ascii, "--ascii")?;
             },
             value if value == "--view" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| usage_error("`--view` requires `chat` or `transcript`"))?;
+                let value = arguments.next().ok_or_else(|| {
+                    usage_error("`--view` requires `chat`, `transcript`, or `request`")
+                })?;
                 let selected = match value.to_str() {
                     Some("chat") => SessionView::Chat,
                     Some("transcript") => SessionView::Transcript,
-                    _ => return Err(usage_error("`--view` requires `chat` or `transcript`")),
+                    Some("request") => SessionView::Request,
+                    _ => {
+                        return Err(usage_error(
+                            "`--view` requires `chat`, `transcript`, or `request`",
+                        ));
+                    },
                 };
                 set_once(&mut view, selected, "--view")?;
             },
