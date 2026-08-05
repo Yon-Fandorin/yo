@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.motion-002
-    revision: sha256:0b58c256cc9fb7a3b4751e840846674e80b12f2fddb5d191175427cfc1ec8250
+    revision: sha256:800df7feb6bade941beadcbf7ae1fed51d3379ebfb450ac74316eb15d99f889b
 relations:
   depends_on:
     - tui.runtime.activity-motion-scheduling
@@ -24,74 +24,105 @@ relations:
 
 ## Statement
 
-The initial built-in activity marker period MUST be exactly 120 milliseconds
-per logical frame. The Rich profile MUST use this exact ordered ping-pong
-cycle:
+The initial built-in Rich activity marker MUST be the fixed one-cell grapheme
+`✦` (`U+2726`). The ASCII profile MUST use the fixed marker `*` (`U+002A`).
+The marker MUST NOT change shape while activity is running. This removes
+font-dependent overhang changes between unlike star silhouettes and keeps one
+stable cell identity across repaints.
+
+The initial built-in animated repaint interval MUST be exactly 16 milliseconds.
+An appearance candidate with an animated interval below 16 milliseconds MUST
+be rejected; a slower interval remains valid for a future configured profile.
+Its sweep period MUST be exactly two seconds. A late wake MUST select the
+current elapsed-time phase and skip missed frames under the existing scheduling
+contract; it MUST NOT replay missed frames. Adaptive cadence is deferred until
+runtime evidence requires a separate scheduling policy.
+
+For elapsed duration `e`, sweep period `T`, and a label with `N` visible
+graphemes, resolution MUST use these values without first reducing `q` or `p`
+to an integer:
 
 ```text
-· ✢ ✳ ✶ ✻ ✽ ✽ ✻ ✶ ✳ ✢ ·
+q = (e mod T) / T
+p = -10 + q * (N + 20)
 ```
 
-The ASCII profile MUST use this exact ordered cycle:
+Label grapheme coordinates MUST be the zero-based integers `i = 0..N-1`.
+The ten virtual positions on both sides make every label intensity zero at the
+period boundary, so restarting at `q = 0` is not visible.
+
+For each visible label grapheme, intensity MUST be zero outside a five-cell
+half-width around the sweep position. Inside that band it MUST use this
+raised-cosine envelope, where `d` is absolute logical distance from the sweep
+position:
 
 ```text
-. *
+intensity(d) = 0.5 * (1 + cos(PI * d / 5))
 ```
 
-Every frame in one profile MUST be one non-empty, control-free, renderable
-extended grapheme cluster with the same cell width as every other frame in
-that profile. Candidate validation MUST reject an empty frame sequence, a zero
-period, an invalid frame, or unequal frame widths before publication.
+The continuous position MUST be retained until style resolution; it MUST NOT
+be reduced to one integer peak index per repaint. In TrueColor mode each
+grapheme MUST linearly blend between appearance-resolved base and highlight RGB
+endpoints using `0.9 * intensity`. Each channel MUST use
+`round(base + (highlight - base) * 0.9 * intensity)` and clamp to `0..255`.
+The renderer MUST NOT hard-code those RGB endpoints. Appearance owns the
+endpoints so a later terminal-palette probe or user theme can replace them
+without changing shell or overlay layout code.
 
-The built-in marker MUST use a stable appearance-resolved accent without bold
-or dim attributes. Frame changes MUST NOT also change its font weight. This
-avoids adding font-weight distortion to the one-cell star silhouette while
-preserving the exact marker sequences above; it does not claim to control a
-terminal font's own glyph overhang.
+Before appearance publication, the process host MUST supply an explicit color
+capability classified as `TrueColor`, `Limited`, or `Unknown`. The committed
+appearance snapshot MUST retain that resolved value for the whole logical
+frame. `Unknown` MUST follow the safe lower-depth fallback and MUST NOT emit RGB.
+Capability classification is distinct from OSC palette probing: a conservative
+host MAY derive it from explicit configuration or stable environment facts,
+while a future lifecycle-owned probe MAY provide stronger evidence.
 
-The same logical frame MAY additionally move one peak grapheme at a time
-across the visible `Working` label or a typed activity title-status published
-by a selection panel. Up to one adjacent grapheme on each side MUST use an
-appearance-resolved intermediate trail style; the trail MUST clip at the label
-edges rather than wrap. All remaining label graphemes MUST use the muted
-activity style. Muted, trail, peak, and marker styles MUST remain separate
-appearance roles so a profile can tune color without changing layout code.
-The peak MUST advance from the first visible grapheme through the last and
-then wrap to the first. One shared `ActivityMotionFrame` resolver MUST return
-the peak and optional left and right trail indices for both shell chrome and
-selection-panel rendering.
+At lower color depths, the same intensity MUST resolve through a bounded
+fallback: below `0.2` is dim, from `0.2` below `0.6` is default weight, and
+`0.6` or above is bold. The fallback MUST NOT introduce RGB output. Reduced
+motion MUST render a static marker and static activity label and MUST NOT arm a
+timed repaint.
 
-Built-in muted, trail, peak, and marker roles MUST use only the terminal
-default foreground or palette-indexed colors. Hard-coded RGB colors are
-reserved for future explicit theme configuration, where foreground and
-background can be resolved together.
+The fixed marker MUST use the same position and intensity equations with
+`N = 1` and `i = 0`. It therefore derives a deterministic smooth pulse from the
+same elapsed sample rather than changing grapheme or cell width. One shared
+`ActivityMotionFrame` resolver MUST supply continuous intensity for the shell
+`Working` label, the marker pulse, and typed activity title-status published by
+a selection panel.
 
-The sheen MUST change style only: it MUST preserve every grapheme, cell width,
+Motion MUST change style only: it MUST preserve every grapheme, cell width,
 row and panel geometry, fitting result, input behavior, and interruption
 affordance. Ordinary non-busy title status MUST remain static. The marker and
-every visible sheen MUST derive from the same elapsed sample.
+every visible shimmer MUST derive from the same elapsed sample.
 
-A profile with one valid frame MUST disable marker and sheen motion and MUST
-NOT arm timed redraw, leaving a future reduced-motion host choice open without
-changing runner scheduling. A visible sheen MUST contain at least two
-graphemes; otherwise advancing its phase cannot change a cell and MUST NOT
-request timed motion.
+Appearance MUST own the resolved color capability, validated marker, repaint
+interval, sweep period, RGB endpoints, lower-depth fallback roles, and
+reduced-motion choice. Candidate
+validation MUST reject an empty, controlled, multi-grapheme, zero-width, or
+over-wide marker; a repaint interval below 16 milliseconds; or a zero sweep
+period before publication. Keeping these values inside the existing appearance
+candidate boundary is a configuration seam, not a user-facing configuration
+file in this revision.
 
-One committed appearance snapshot and revision MUST provide the marker cycle
-and period used for both frame selection and paint during a logical frame.
+One committed appearance snapshot and revision MUST provide the marker,
+timing, endpoints, fallback, and motion mode used for both style resolution and
+paint during a logical frame.
 Replacement during preparation MUST take effect only on the next complete
 frame.
 
 ## Rationale
 
-The exact built-in sequences deliberately make the first motion behavior
-reviewable while keeping cosmetic policy out of the runner. A stable marker
-weight avoids adding font-weight distortion, while the peak and adjacent trail
-turn the label into one controlled scan instead of a flashing character.
-Equal-width frames and style-only sheen ensure that animation changes cells
-rather than geometry, and a one-frame candidate creates a compact
-reduced-motion seam without prematurely exposing configuration. Activating
-this profile also selects its already-approved
+The fixed marker removes the one-cell silhouette churn that appeared clipped
+in some fonts. The fractional cosine sweep changes brightness gradually instead
+of moving a three-level block one grapheme at a time. Off-label padding makes
+the modulo reset invisible, while explicit lower-depth and reduced-motion
+paths keep the behavior honest outside TrueColor terminals.
+
+Appearance-resolved endpoints preserve the future route to terminal palette
+discovery and user themes without coupling layout code to configuration. This
+revision intentionally does not add OSC palette probing because that operation
+shares terminal input and timeout ownership with lifecycle code and deserves a
+separate contract. Activating this profile also selects its already-approved
 `tui.appearance.frame-consistency` constraint and that unit's
 `tui.appearance.session-publication` dependency; that broader eligibility
 transition MUST remain explicit in the separate activation review.
