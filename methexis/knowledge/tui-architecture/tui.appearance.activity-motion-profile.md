@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.motion-002
-    revision: sha256:800df7feb6bade941beadcbf7ae1fed51d3379ebfb450ac74316eb15d99f889b
+    revision: sha256:8c9cf4738ee0e01c30d4b86607e66ba9486f13f461c56cb4d64871db53887b2c
 relations:
   depends_on:
     - tui.runtime.activity-motion-scheduling
@@ -24,11 +24,32 @@ relations:
 
 ## Statement
 
-The initial built-in Rich activity marker MUST be the fixed one-cell grapheme
-`✦` (`U+2726`). The ASCII profile MUST use the fixed marker `*` (`U+002A`).
-The marker MUST NOT change shape while activity is running. This removes
-font-dependent overhang changes between unlike star silhouettes and keeps one
-stable cell identity across repaints.
+The initial built-in Rich loading marker MUST use the compact Braille sequence
+`⠋`, `⠙`, `⠹`, `⠸`, `⠼`, `⠴`, `⠦`, `⠧`, `⠇`, `⠏`, derived from the reviewed
+`rib` Loader profile. The ASCII profile MUST use `|`, `/`, `-`, `\\`. The
+built-in marker-frame interval MUST be exactly 80 milliseconds.
+
+A configured marker profile MAY provide a non-empty ordered sequence of frame
+strings. Before publication, appearance MUST calculate each frame's
+terminal-cell width as the checked sum of its validated cluster widths and
+reserve the maximum frame width as one fixed marker region. The
+current frame MUST be left-aligned in that region and every unused trailing
+cell MUST be blank. Frame changes MUST NOT move the activity label, change the
+row width, or alter a fitting decision. This maximum-width region also permits
+later profiles whose frames do not all have equal cell widths.
+
+Each frame MUST segment into one or more complete extended grapheme clusters,
+and every cluster MUST validate as a width-one or width-two Surface `Grapheme`
+under the selected width profile. Candidate validation MUST reject an empty
+frame sequence, an empty frame, a controlled or zero-width cluster, a marker
+width that cannot be represented by the Surface coordinate type, a zero
+marker-frame interval, or a marker-frame interval below the selected repaint interval
+before publication.
+
+For elapsed duration `e`, marker-frame interval `M`, and `L` frames, frame
+selection MUST use `floor(e / M) mod L`. It MUST NOT advance from the previously
+painted frame, so a late wake skips missed marker frames without shifting later
+phase.
 
 The initial built-in animated repaint interval MUST be exactly 16 milliseconds.
 An appearance candidate with an animated interval below 16 milliseconds MUST
@@ -80,43 +101,48 @@ while a future lifecycle-owned probe MAY provide stronger evidence.
 At lower color depths, the same intensity MUST resolve through a bounded
 fallback: below `0.2` is dim, from `0.2` below `0.6` is default weight, and
 `0.6` or above is bold. The fallback MUST NOT introduce RGB output. Reduced
-motion MUST render a static marker and static activity label and MUST NOT arm a
-timed repaint.
+motion MUST render the profile's first marker frame and activity label
+statically and MUST NOT arm a timed repaint.
 
-The fixed marker MUST use the same position and intensity equations with
-`N = 1` and `i = 0`. It therefore derives a deterministic smooth pulse from the
-same elapsed sample rather than changing grapheme or cell width. One shared
-`ActivityMotionFrame` resolver MUST supply continuous intensity for the shell
-`Working` label, the marker pulse, and typed activity title-status published by
-a selection panel.
+The current marker frame MUST use the same position and intensity equations as
+the label with `N = 1` and `i = 0`. Every grapheme of that frame MUST use this
+one marker pulse so styling does not introduce another moving band inside the
+reserved region. One shared `ActivityMotionFrame` resolver MUST supply frame
+selection and continuous intensity for the shell `Working` label, the marker
+pulse, and typed activity title-status published by a selection panel.
 
-Motion MUST change style only: it MUST preserve every grapheme, cell width,
-row and panel geometry, fitting result, input behavior, and interruption
-affordance. Ordinary non-busy title status MUST remain static. The marker and
-every visible shimmer MUST derive from the same elapsed sample.
+Motion MAY replace content only inside the fixed marker region. Outside that
+region it MUST preserve every grapheme, cell width, row and panel geometry,
+fitting result, input behavior, and interruption affordance. Ordinary non-busy
+title status MUST remain static. Marker frame selection, marker pulse, and every
+visible shimmer MUST derive from the same elapsed sample.
 
-Appearance MUST own the resolved color capability, validated marker, repaint
-interval, sweep period, RGB endpoints, lower-depth fallback roles, and
-reduced-motion choice. Candidate
-validation MUST reject an empty, controlled, multi-grapheme, zero-width, or
-over-wide marker; a repaint interval below 16 milliseconds; or a zero sweep
-period before publication. Keeping these values inside the existing appearance
-candidate boundary is a configuration seam, not a user-facing configuration
-file in this revision.
+Appearance MUST own the resolved color capability, validated marker frames,
+maximum reserved marker width, marker-frame interval, repaint interval, sweep
+period, RGB endpoints, lower-depth fallback roles, and reduced-motion choice.
+Candidate validation MUST reject a repaint interval below 16 milliseconds or a
+zero sweep period before publication in addition to the marker-profile failures
+above. Keeping these values inside the existing appearance candidate boundary
+is a configuration seam, not a user-facing configuration file in this revision.
 
-One committed appearance snapshot and revision MUST provide the marker,
-timing, endpoints, fallback, and motion mode used for both style resolution and
-paint during a logical frame.
+One committed appearance snapshot and revision MUST provide the marker frames,
+reserved width, timing, endpoints, fallback, and motion mode used for both
+style resolution and paint during a logical frame.
 Replacement during preparation MUST take effect only on the next complete
 frame.
 
 ## Rationale
 
-The fixed marker removes the one-cell silhouette churn that appeared clipped
-in some fonts. The fractional cosine sweep changes brightness gradually instead
+The compact Braille profile reduces exposure to the font-dependent star
+overhang that looked clipped in some terminals while restoring a recognizable
+configurable loader. Cell-width reservation guarantees layout occupancy, not a
+font's ink bounds, so terminal smoke evidence still owns residual overhang.
+Reserving maximum frame width deliberately permits multi-grapheme and
+heterogeneous-width future profiles without forcing every frame into one
+nominal cell. The fractional cosine sweep changes brightness gradually instead
 of moving a three-level block one grapheme at a time. Off-label padding makes
-the modulo reset invisible, while explicit lower-depth and reduced-motion
-paths keep the behavior honest outside TrueColor terminals.
+the modulo reset invisible, while explicit lower-depth and reduced-motion paths
+keep the behavior honest outside TrueColor terminals.
 
 Appearance-resolved endpoints preserve the future route to terminal palette
 discovery and user themes without coupling layout code to configuration. This
