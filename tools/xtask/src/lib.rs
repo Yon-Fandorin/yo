@@ -1,6 +1,7 @@
 mod docs_translation;
 mod git;
 mod impact;
+mod slice_close;
 mod slice_contract;
 mod test_explanations;
 mod validation_stage;
@@ -15,6 +16,32 @@ use impact::ImpactInput;
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let mut arguments = arguments.into_iter();
     match (arguments.next().as_deref(), arguments.next().as_deref()) {
+        (Some(command), Some(scope)) if command == "slice" && scope == "close" => {
+            let action = arguments
+                .next()
+                .ok_or_else(slice_close_usage)?
+                .to_string_lossy()
+                .into_owned();
+            let value = arguments
+                .next()
+                .map(PathBuf::from)
+                .ok_or_else(slice_close_usage)?;
+            if arguments.next().is_some() {
+                return Err(slice_close_usage());
+            }
+            let repository = std::env::current_dir()
+                .map_err(|error| format!("cannot locate the repository: {error}"))?;
+            match action.as_str() {
+                "plan" => {
+                    let slice = value
+                        .to_str()
+                        .ok_or_else(|| "Slice name must be valid UTF-8".to_owned())?;
+                    slice_close::plan(&repository, slice)
+                },
+                "apply" => slice_close::apply(&repository, &value),
+                _ => Err(slice_close_usage()),
+            }
+        },
         (Some(command), Some(action)) if command == "docs" && action == "accept-translation" => {
             let page = arguments
                 .next()
@@ -138,6 +165,7 @@ fn usage(check: &str) -> String {
 
 fn general_usage() -> String {
     "usage:\n\
+     cargo xtask slice close <plan SLICE|apply PLAN.json>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
      cargo xtask check test-explanations\n\
@@ -147,6 +175,10 @@ fn general_usage() -> String {
      cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
+}
+
+fn slice_close_usage() -> String {
+    "usage: cargo xtask slice close <plan SLICE|apply PLAN.json>".to_owned()
 }
 
 fn docs_accept_translation_usage() -> String {
@@ -159,7 +191,7 @@ fn slice_contract_usage() -> String {
 
 #[cfg(test)]
 mod cli_tests {
-    use super::{docs_accept_translation_usage, run};
+    use super::{docs_accept_translation_usage, run, slice_close_usage};
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
     // 인자 없는 검사와 커밋 입력 검사를 각각 실행 가능한 형태로 안내한다.
@@ -170,6 +202,7 @@ mod cli_tests {
         assert_eq!(
             error,
             "usage:\n\
+             cargo xtask slice close <plan SLICE|apply PLAN.json>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
              cargo xtask check test-explanations\n\
@@ -200,5 +233,23 @@ mod cli_tests {
 
         assert_eq!(missing, docs_accept_translation_usage());
         assert_eq!(extra, docs_accept_translation_usage());
+    }
+
+    // Slice close는 plan 또는 apply와 정확히 하나의 대상을 요구하여, 누락된
+    // 정리 대상이나 조용히 무시되는 추가 인자가 파괴적 단계로 넘어가지 않는다.
+    #[test]
+    fn slice_close_rejects_incomplete_or_extra_arguments() {
+        for arguments in [
+            vec!["slice", "close"],
+            vec!["slice", "close", "plan"],
+            vec!["slice", "close", "apply"],
+            vec!["slice", "close", "plan", "sample", "extra"],
+            vec!["slice", "close", "unknown", "sample"],
+        ] {
+            assert_eq!(
+                run(arguments.into_iter().map(Into::into)).unwrap_err(),
+                slice_close_usage()
+            );
+        }
     }
 }

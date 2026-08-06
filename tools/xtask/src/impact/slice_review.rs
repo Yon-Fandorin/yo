@@ -1,5 +1,42 @@
 use super::{ImpactInput, changed_list, deferred_branch};
 
+pub(crate) fn check_commit(
+    repository: &std::path::Path,
+    commit: &str,
+    branch: &str,
+) -> Result<(), String> {
+    let message = crate::git::output_in(
+        repository,
+        &["show", "--no-patch", "--format=%B", commit],
+        false,
+    )?;
+    let changed_paths = crate::git::output_in(
+        repository,
+        &[
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            commit,
+        ],
+        false,
+    )?
+    .lines()
+    .map(str::trim)
+    .filter(|line| !line.is_empty())
+    .map(str::to_owned)
+    .collect();
+    check(&ImpactInput {
+        message,
+        changed_paths,
+        branch: branch.to_owned(),
+        merge_head: None,
+        repository: repository.to_path_buf(),
+        inherit_git_environment: false,
+    })
+}
+
 pub(crate) fn check(input: &ImpactInput) -> Result<(), String> {
     if deferred_branch(&input.branch) {
         return Ok(());

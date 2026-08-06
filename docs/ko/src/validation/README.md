@@ -45,6 +45,7 @@ command, host, credential, platform을 기록한다.
 | Rust test 바로 위에 필요한 설명 | `cargo xtask check test-explanations` | `crates/`와 `tools/` 아래 Rust source |
 | Slice 변경이 bind된 로컬 write-set 안에 머무는지 | `cargo xtask check slice-scope` | 하나의 활성 Slice worktree; planner가 먼저 `cargo xtask slice-contract bind <contract.json>` 실행 |
 | 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
+| 수용된 Slice가 여전히 검수한 로컬 branch patch와 정확히 같고 안전하게 정리할 수 있는지 | `cargo xtask slice close plan <slice>` 후 `cargo xtask slice close apply <plan.json>` | 수용 commit이 생긴 뒤 깨끗한 통합 worktree에서 실행하고 apply 전에 plan 검토 |
 | 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | `tools/xtask/src` |
 | Linux/macOS 조건부 compile | `bash tools/validation/yo-cli-unix-matrix.sh` | 로컬 host 결과와 두 host를 위한 `.github/workflows/unix-compile.yml` |
 | tmux, SSH, SSH 내부 tmux 동작 | [터미널 환경 매트릭스](./terminal-matrix.md) 참고 | ignored `yo-cli` 환경 test |
@@ -92,6 +93,13 @@ Methexis check와 test를 실행한다.
 
 Slice가 platform이나 외부 환경 경계를 바꾼다면 기준선이 이를 검사했다고
 주장하지 말고 관련 matrix 명령을 추가한다.
+
+Slice 종료 정리 명령은 이 검증 기준선의 일부가 아니다. 이미 수용된 결과를
+나중에 소비하며, 로컬 worktree와 Slice branch를 제거하기 전에 정확한 ref,
+검수 trailer, patch identity, worktree 청결 상태, binding, plan hash를 다시
+검사한다. 통합 workflow는
+[`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#review-and-integration)를
+참고한다.
 
 ## 유용한 소유자
 

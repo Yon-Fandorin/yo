@@ -5,6 +5,7 @@ use std::{
 };
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use crate::git;
 
@@ -32,6 +33,16 @@ enum PathRule {
     Tree(String),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BoundSlice {
+    pub(crate) slice: String,
+    pub(crate) base: String,
+    pub(crate) base_ref: String,
+    pub(crate) binding_path: PathBuf,
+    pub(crate) contract_path: PathBuf,
+    pub(crate) contract_id: String,
+}
+
 pub(crate) fn check_scope(repository: &Path, contract_path: &Path) -> Result<(), String> {
     let index_file = selected_index(repository);
     check_scope_with_index(repository, contract_path, index_file.as_deref())
@@ -51,6 +62,29 @@ fn selected_index(repository: &Path) -> Option<PathBuf> {
 pub(crate) fn check_bound_scope(repository: &Path) -> Result<(), String> {
     let index_file = selected_index(repository);
     check_bound_scope_with_index(repository, index_file.as_deref())
+}
+
+pub(crate) fn bound_slice(repository: &Path) -> Result<BoundSlice, String> {
+    let repository = repository_root(repository)?;
+    let binding_path = binding_path(&repository)?;
+    let contract_path = bound_contract_path(&repository)?;
+    let (contract, bytes) = read_contract(&contract_path)?;
+    validate(&repository, &contract)?;
+    validate_slice_branch(&repository, &contract)?;
+    Ok(BoundSlice {
+        slice: contract.slice,
+        base: contract.base,
+        base_ref: contract.base_ref,
+        binding_path,
+        contract_path,
+        contract_id: format!(
+            "sha256:{}",
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ),
+    })
 }
 
 fn check_bound_scope_with_index(
@@ -216,10 +250,15 @@ pub(crate) fn check_parallel(
 }
 
 fn load(path: &Path) -> Result<SliceContract, String> {
+    read_contract(path).map(|(contract, _)| contract)
+}
+
+fn read_contract(path: &Path) -> Result<(SliceContract, Vec<u8>), String> {
     let bytes = std::fs::read(path)
         .map_err(|error| format!("cannot read Slice contract {}: {error}", path.display()))?;
-    serde_json::from_slice(&bytes)
-        .map_err(|error| format!("invalid Slice contract {}: {error}", path.display()))
+    let contract = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid Slice contract {}: {error}", path.display()))?;
+    Ok((contract, bytes))
 }
 
 fn repository_root(directory: &Path) -> Result<PathBuf, String> {

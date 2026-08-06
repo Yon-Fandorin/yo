@@ -264,8 +264,11 @@ other.
 owns structured checks that maintain this repository rather than the `yo`
 product. Its checks classify changed paths and commit trailers for Slice review
 and Developer Docs impact, and verify that Rust tests carry nearby explanatory
-comments. `hk.pkl` decides when to run them; `xtask` implements and tests their
-rules. Methexis and Librarian retain their separate knowledge-domain
+comments. The `slice_close` module produces and applies a hash-addressed local
+cleanup plan only after the accepted commit, Slice patch, review evidence,
+binding, refs, and clean worktrees agree; its storage boundary rejects unsafe
+plan-file inputs. `hk.pkl` decides when to run checks; `xtask` implements and
+tests their rules. Methexis and Librarian retain their separate knowledge-domain
 responsibilities, while simple external-command orchestration remains in `hk`
 or a small validation script.
 

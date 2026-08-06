@@ -1,7 +1,6 @@
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
-    process::Command,
     sync::atomic::{AtomicU64, Ordering},
 };
 
@@ -27,6 +26,9 @@ impl TestRepository {
         repository.git(["init", "--quiet", "-b", "develop"]);
         repository.git(["config", "user.name", "xtask Test"]);
         repository.git(["config", "user.email", "xtask@example.invalid"]);
+        let hooks = repository.path.join(".git/disabled-hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        repository.git(["config", "core.hooksPath", hooks.to_str().unwrap()]);
         repository
     }
 
@@ -44,11 +46,7 @@ impl TestRepository {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let status = Command::new("git")
-            .current_dir(&self.path)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_WORK_TREE")
+        let status = crate::git::command_in(&self.path, false)
             .args(arguments)
             .status()
             .unwrap();

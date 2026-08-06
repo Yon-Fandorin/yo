@@ -24,7 +24,7 @@ pub(crate) fn output_bytes_in(
     arguments: &[&str],
     inherit_repository_environment: bool,
 ) -> Result<Vec<u8>, String> {
-    let result = command(directory, inherit_repository_environment)
+    let result = command_in(directory, inherit_repository_environment)
         .args(arguments)
         .output()
         .map_err(|error| format!("cannot run git {}: {error}", arguments.join(" ")))?;
@@ -50,7 +50,7 @@ pub(crate) fn output_bytes_in_with_index(
     arguments: &[&str],
     index_file: Option<&OsStr>,
 ) -> Result<Vec<u8>, String> {
-    let mut command = command(directory, false);
+    let mut command = command_in(directory, false);
     if let Some(index_file) = index_file {
         command.env("GIT_INDEX_FILE", index_file);
     }
@@ -80,7 +80,7 @@ pub(crate) fn optional_output_in(
     arguments: &[&str],
     inherit_repository_environment: bool,
 ) -> Result<Option<String>, String> {
-    let result = command(directory, inherit_repository_environment)
+    let result = command_in(directory, inherit_repository_environment)
         .args(arguments)
         .output()
         .map_err(|error| format!("cannot run git {}: {error}", arguments.join(" ")))?;
@@ -101,7 +101,7 @@ pub(crate) fn succeeds_in(
     arguments: &[&str],
     inherit_repository_environment: bool,
 ) -> Result<bool, String> {
-    command(directory, inherit_repository_environment)
+    command_in(directory, inherit_repository_environment)
         .args(arguments)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -110,20 +110,42 @@ pub(crate) fn succeeds_in(
         .map_err(|error| format!("cannot run git {}: {error}", arguments.join(" ")))
 }
 
-fn command(directory: &Path, inherit_repository_environment: bool) -> Command {
+pub(crate) fn command_in(directory: &Path, inherit_repository_environment: bool) -> Command {
     let mut command = Command::new("git");
     command.current_dir(directory);
     if !inherit_repository_environment {
-        command
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_WORK_TREE");
+        clear_repository_environment(&mut command);
     }
     command
 }
 
+fn clear_repository_environment(command: &mut Command) {
+    for name in [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+    ] {
+        command.env_remove(name);
+    }
+}
+
 pub(crate) fn interpret_trailers(message: &str) -> Result<String, String> {
-    let mut child = Command::new("git")
+    let mut child = command_in(Path::new("."), false)
         .args(["interpret-trailers", "--parse"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -256,7 +256,10 @@ Appearance 계약:
 `yo` 제품이 아니라 이 저장소를 관리하는 구조화된 검사를 소유한다. 변경
 경로와 commit trailer를 분류하여 Slice 검수와 Developer Docs 영향을
 확인하고, Rust test에 이해 가능한 인접 설명이 있는지도 검사한다.
-`hk.pkl`은 언제 실행할지를 결정하고, `xtask`는 규칙의 구현과 test를
+`slice_close` 모듈은 수용 commit, Slice patch, 검수 증거, binding, ref,
+깨끗한 worktree가 모두 일치한 뒤에만 hash-addressed 로컬 정리 plan을 만들고
+적용한다. 그 storage 경계는 안전하지 않은 plan file 입력을 거절한다.
+`hk.pkl`은 검사를 언제 실행할지 결정하고, `xtask`는 규칙의 구현과 test를
 담당한다. Methexis와 Librarian은 각자의 지식 domain 책임을 유지하며,
 단순한 외부 명령 조합은 `hk` 또는 작은 검증 script에 남는다.
 
