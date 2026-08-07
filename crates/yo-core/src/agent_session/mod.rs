@@ -5,6 +5,7 @@ use std::{
         atomic::{AtomicU8, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError},
     },
+    task::{Context, Poll},
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -55,6 +56,7 @@ pub struct AgentSession {
     request_trace: crate::RequestTraceReader,
     submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
     submission_ids: HashSet<crate::SubmissionId>,
+    readiness: Arc<crate::readiness::Readiness>,
     #[cfg(test)]
     processed: Arc<(Mutex<u64>, Condvar)>,
     worker: Option<JoinHandle<WorkerExit>>,
@@ -230,6 +232,8 @@ impl AgentSession {
         let request_trace = journal.request_trace_reader();
         let submission_outcomes = Arc::new(Mutex::new(VecDeque::new()));
         let worker_submission_outcomes = Arc::clone(&submission_outcomes);
+        let readiness = Arc::new(crate::readiness::Readiness::new());
+        let worker_readiness = Arc::clone(&readiness);
         let worker = match thread::Builder::new()
             .name("yo-agent-runtime".to_owned())
             .spawn(move || {
@@ -251,7 +255,8 @@ impl AgentSession {
                         if startup_tx.send(Ok(())).is_err() {
                             WorkerExit::from_cleanup(worker.runtime.shutdown())
                         } else {
-                            let mut lane = ChangeLane::new(change_tx, worker_failure);
+                            let mut lane =
+                                ChangeLane::new(change_tx, worker_failure, worker_readiness);
                             if !lane.changed() {
                                 WorkerExit::from_cleanup(worker.runtime.shutdown())
                             } else {
@@ -345,6 +350,7 @@ impl AgentSession {
                     request_trace,
                     submission_outcomes,
                     submission_ids,
+                    readiness,
                     #[cfg(test)]
                     processed,
                     worker: Some(worker),
@@ -481,6 +487,11 @@ impl AgentSession {
             Err(TryRecvError::Empty) => Ok(AgentSessionPoll::Pending),
             Err(TryRecvError::Disconnected) => Ok(AgentSessionPoll::Closed),
         }
+    }
+
+    /// Registers the frontend task that should observe the next Session change.
+    pub fn poll_ready(&self, context: &mut Context<'_>) -> Poll<()> {
+        self.readiness.poll(context)
     }
 
     /// Returns read-only access to this Session's committed semantic history.

@@ -6,7 +6,11 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, Sender, TryRecvError},
+    },
+    task::{Context, Poll},
     thread,
 };
 
@@ -22,6 +26,7 @@ const RESULT_CAP: usize = 40;
 pub struct LocalWorkspaceReferenceProvider {
     requests: Sender<WorkspaceReferenceSearchRequest>,
     updates: Receiver<WorkspaceReferenceSearchUpdate>,
+    readiness: Arc<crate::readiness::Readiness>,
 }
 
 struct Inventory {
@@ -33,13 +38,25 @@ impl LocalWorkspaceReferenceProvider {
     pub fn start(root: &Path, workspace_host_id: WorkspaceHostId) -> Result<Self, std::io::Error> {
         let (request_tx, request_rx) = mpsc::channel();
         let (update_tx, update_rx) = mpsc::channel();
+        let readiness = Arc::new(crate::readiness::Readiness::new());
+        let worker_readiness = Arc::clone(&readiness);
         let root = std::fs::canonicalize(root)?;
         thread::Builder::new()
             .name("yo-workspace-search".to_owned())
-            .spawn(move || worker(root, workspace_host_id, request_rx, update_tx))?;
+            .spawn(move || {
+                worker(
+                    root,
+                    workspace_host_id,
+                    request_rx,
+                    update_tx,
+                    &worker_readiness,
+                );
+                worker_readiness.notify();
+            })?;
         Ok(Self {
             requests: request_tx,
             updates: update_rx,
+            readiness,
         })
     }
 }
@@ -58,6 +75,10 @@ impl WorkspaceReferenceProvider for LocalWorkspaceReferenceProvider {
             Err(TryRecvError::Disconnected) => Err("workspace search worker closed".to_owned()),
         }
     }
+
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()> {
+        self.readiness.poll(context)
+    }
 }
 
 fn worker(
@@ -65,6 +86,7 @@ fn worker(
     workspace_host_id: WorkspaceHostId,
     requests: Receiver<WorkspaceReferenceSearchRequest>,
     updates: Sender<WorkspaceReferenceSearchUpdate>,
+    readiness: &crate::readiness::Readiness,
 ) {
     let inventory = build_inventory(&root, workspace_host_id);
     while let Ok(mut request) = requests.recv() {
@@ -86,6 +108,7 @@ fn worker(
         if updates.send(update).is_err() {
             break;
         }
+        readiness.notify();
     }
 }
 

@@ -1,4 +1,7 @@
-use std::collections::VecDeque;
+use std::{
+    collections::VecDeque,
+    task::{Context, Poll},
+};
 
 #[cfg(test)]
 use yo_core::SessionId;
@@ -184,6 +187,15 @@ impl AgentConnection for TuiAgentConnection {
             return Ok(AgentPoll::Closed);
         }
         Ok(AgentPoll::Pending)
+    }
+
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()> {
+        if !self.pending.is_empty() || self.journal_changed || self.failure.is_some() || self.closed
+        {
+            Poll::Ready(())
+        } else {
+            self.session.poll_ready(context)
+        }
     }
 }
 

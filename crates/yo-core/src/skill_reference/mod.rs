@@ -1,6 +1,9 @@
 //! Frontend-neutral identities and search messages for explicit skill references.
 
-use std::ops::Range;
+use std::{
+    ops::Range,
+    task::{Context, Poll},
+};
 
 mod search;
 
@@ -82,6 +85,14 @@ pub enum SkillReferenceProviderPoll {
 pub trait SkillReferenceProvider: Send {
     fn search(&mut self, request: SkillReferenceSearchRequest) -> Result<(), String>;
     fn poll(&mut self) -> Result<SkillReferenceProviderPoll, String>;
+
+    /// Registers a task to wake when an out-of-thread provider publishes an update.
+    ///
+    /// The default preserves synchronous providers and requires bounded
+    /// fallback observation by their frontend.
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
+    }
 }
 
 impl SkillReference {

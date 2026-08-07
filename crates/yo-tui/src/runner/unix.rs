@@ -2,6 +2,9 @@ use std::{
     error::Error,
     io,
     panic::AssertUnwindSafe,
+    sync::Arc,
+    task::{Context, Wake, Waker},
+    thread::{self, Thread},
     time::{Duration, Instant},
 };
 
@@ -12,6 +15,7 @@ use crate::{
         AgentConnection, AgentPoll, DispatchOutcome, PresentationMode, RunError,
         SkillReferenceConnection, SkillReferencePoll, TerminalOutcome, TerminationSource,
         TuiSession, WorkspaceReferenceConnection, WorkspaceReferencePoll,
+        frame::{FrameRequest, FrameScheduler},
         session::SessionParts,
         state::{FrameError, MotionDemand, StateEffect, StateError, TuiState},
     },
@@ -36,7 +40,7 @@ use crate::{
 
 mod finalize;
 
-const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const TERMINATION_CHECK_INTERVAL: Duration = Duration::from_millis(50);
 const WORKER_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_AGENT_EVENTS_PER_TICK: usize = 256;
 pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
@@ -260,34 +264,46 @@ where
     let mut frame_visible = false;
     let epoch = started;
     let mut motion_deadline = None;
+    let waker = Waker::from(Arc::new(OwnerThreadWake(thread::current())));
+    let mut context = Context::from_waker(&waker);
     let SessionParts {
         state,
         appearance,
         pending_dispatch,
         pending_control,
+        frame_rate_limit,
         workspace_references,
         skill_references,
     } = retained.parts_mut();
+    let mut frames = FrameScheduler::new(frame_rate_limit);
+    frames.request(FrameRequest::Immediate);
 
     loop {
         let agent_changed = drain_agent(agent, state)?;
         let workspace_changed = drain_workspace_references(workspace_references, state);
         let skill_changed = drain_skill_references(skill_references, state);
-        if (agent_changed || workspace_changed || skill_changed || !frame_visible)
-            && size.width > 0
-            && size.height > 0
-        {
-            motion_deadline = redraw(
-                session,
-                viewport,
-                state,
-                appearance,
-                size,
-                &mut previous,
-                epoch,
-            )?;
-            frame_visible = true;
+        if agent_changed || workspace_changed || skill_changed {
+            frames.request(FrameRequest::Coalesced);
         }
+        request_due_motion(
+            &mut frames,
+            frame_visible,
+            &mut motion_deadline,
+            Instant::now(),
+        );
+        render_requested_frame(
+            session,
+            viewport,
+            state,
+            appearance,
+            size,
+            &mut previous,
+            epoch,
+            &mut frames,
+            &mut frame_visible,
+            &mut motion_deadline,
+        )?;
+
         if let Some(action) = pending_control.take() {
             match agent
                 .retry(action)
@@ -312,227 +328,90 @@ where
                 },
             }
         }
-        if pending_control.is_some() || pending_dispatch.is_some() {
-            match events
-                .next(wait_timeout(WORKER_RETRY_INTERVAL, motion_deadline))
-                .map_err(|error| LoopError::Input(format!("{error:?}")))?
-            {
-                UnixEvent::Terminate => return Ok(LoopExit::Termination),
-                UnixEvent::Input(input) => {
-                    match handle_backpressured_input(
+        if sources_ready(agent, workspace_references, skill_references, &mut context) {
+            continue;
+        }
+        let backpressured = pending_control.is_some() || pending_dispatch.is_some();
+        let base = if backpressured {
+            WORKER_RETRY_INTERVAL
+        } else {
+            TERMINATION_CHECK_INTERVAL
+        };
+        let timeout = wait_timeout(base, motion_deadline, frames.deadline(Instant::now()));
+        match events
+            .next(timeout, &mut context)
+            .map_err(|error| LoopError::Input(format!("{error:?}")))?
+        {
+            UnixEvent::Idle => {},
+            UnixEvent::Terminate => return Ok(LoopExit::Termination),
+            UnixEvent::Input(input) => {
+                let effect = if backpressured {
+                    handle_backpressured_input(
                         state,
                         input,
                         started.elapsed(),
                         pending_control.is_none(),
                     )
-                    .map_err(LoopError::State)?
-                    {
-                        StateEffect::Exit => return Ok(LoopExit::User),
-                        StateEffect::Suspend => return Ok(LoopExit::Suspend),
-                        StateEffect::Dispatch(action) => {
-                            let is_interrupt =
-                                matches!(&action, crate::runner::AgentAction::Interrupt);
-                            if is_interrupt {
-                                *pending_dispatch = None;
-                            }
-                            match agent
-                                .dispatch(action)
-                                .map_err(|error| LoopError::Agent(error.to_string()))?
-                            {
-                                DispatchOutcome::Queued => {},
-                                DispatchOutcome::Backpressured(action) => {
-                                    if is_interrupt {
-                                        *pending_control = Some(action);
-                                    } else {
-                                        debug_assert!(pending_control.is_none());
-                                        *pending_control = Some(action);
-                                    }
-                                },
-                            }
-                        },
-                        StateEffect::Redraw => {
-                            if size.width > 0 && size.height > 0 {
-                                motion_deadline = redraw(
-                                    session,
-                                    viewport,
-                                    state,
-                                    appearance,
-                                    size,
-                                    &mut previous,
-                                    epoch,
-                                )?;
-                                frame_visible = true;
-                            }
-                        },
-                        StateEffect::WorkspaceSearch(request) => {
-                            dispatch_workspace_search(workspace_references, state, request);
-                            if size.width > 0 && size.height > 0 {
-                                motion_deadline = redraw(
-                                    session,
-                                    viewport,
-                                    state,
-                                    appearance,
-                                    size,
-                                    &mut previous,
-                                    epoch,
-                                )?;
-                                frame_visible = true;
-                            }
-                        },
-                        StateEffect::SkillSearch(request) => {
-                            dispatch_skill_search(skill_references, state, request);
-                            if size.width > 0 && size.height > 0 {
-                                motion_deadline = redraw(
-                                    session,
-                                    viewport,
-                                    state,
-                                    appearance,
-                                    size,
-                                    &mut previous,
-                                    epoch,
-                                )?;
-                                frame_visible = true;
-                            }
-                        },
-                        StateEffect::Unchanged => {},
-                        StateEffect::Resize(next) => {
-                            prepare_resize(viewport, &mut size, next);
-                            frame_visible = false;
-                            motion_deadline = None;
-                        },
-                    }
-                },
-                UnixEvent::Idle => {},
-            }
-            if frame_visible && motion_is_due(motion_deadline) && size.width > 0 && size.height > 0
-            {
-                motion_deadline = redraw(
-                    session,
-                    viewport,
-                    state,
-                    appearance,
-                    size,
-                    &mut previous,
-                    epoch,
-                )?;
-            }
-            continue;
-        }
-        let timeout = wait_timeout(INPUT_POLL_INTERVAL, motion_deadline);
-        match events
-            .next(timeout)
-            .map_err(|error| LoopError::Input(format!("{error:?}")))?
-        {
-            UnixEvent::Idle => {
-                if (!frame_visible || motion_is_due(motion_deadline))
-                    && size.width > 0
-                    && size.height > 0
-                {
-                    motion_deadline = redraw(
-                        session,
-                        viewport,
-                        state,
-                        appearance,
-                        size,
-                        &mut previous,
-                        epoch,
-                    )?;
-                    frame_visible = true;
+                } else {
+                    state.handle(input, started.elapsed())
+                }
+                .map_err(LoopError::State)?;
+                match effect {
+                    StateEffect::Unchanged => {},
+                    StateEffect::Exit => return Ok(LoopExit::User),
+                    StateEffect::Suspend => return Ok(LoopExit::Suspend),
+                    StateEffect::Redraw => {
+                        frames.request(FrameRequest::Coalesced);
+                    },
+                    StateEffect::Dispatch(action) => {
+                        let is_interrupt = matches!(&action, crate::runner::AgentAction::Interrupt);
+                        if is_interrupt {
+                            *pending_dispatch = None;
+                        }
+                        match agent
+                            .dispatch(action)
+                            .map_err(|error| LoopError::Agent(error.to_string()))?
+                        {
+                            DispatchOutcome::Queued => {},
+                            DispatchOutcome::Backpressured(action) => {
+                                if backpressured || is_interrupt {
+                                    *pending_control = Some(action);
+                                } else {
+                                    *pending_dispatch = Some(action);
+                                }
+                            },
+                        }
+                        frames.request(FrameRequest::Coalesced);
+                    },
+                    StateEffect::WorkspaceSearch(request) => {
+                        dispatch_workspace_search(workspace_references, state, request);
+                        frames.request(FrameRequest::Coalesced);
+                    },
+                    StateEffect::SkillSearch(request) => {
+                        dispatch_skill_search(skill_references, state, request);
+                        frames.request(FrameRequest::Coalesced);
+                    },
+                    StateEffect::Resize(next) => {
+                        prepare_resize(viewport, &mut size, next);
+                        frame_visible = false;
+                        motion_deadline = None;
+                        frames.request(FrameRequest::Immediate);
+                    },
                 }
             },
-            UnixEvent::Terminate => return Ok(LoopExit::Termination),
-            UnixEvent::Input(input) => match state
-                .handle(input, started.elapsed())
-                .map_err(LoopError::State)?
-            {
-                StateEffect::Unchanged => {},
-                StateEffect::Exit => return Ok(LoopExit::User),
-                StateEffect::Suspend => return Ok(LoopExit::Suspend),
-                StateEffect::Redraw => {
-                    if size.width > 0 && size.height > 0 {
-                        motion_deadline = redraw(
-                            session,
-                            viewport,
-                            state,
-                            appearance,
-                            size,
-                            &mut previous,
-                            epoch,
-                        )?;
-                        frame_visible = true;
-                    }
-                },
-                StateEffect::Dispatch(action) => {
-                    match agent
-                        .dispatch(action)
-                        .map_err(|error| LoopError::Agent(error.to_string()))?
-                    {
-                        DispatchOutcome::Queued => {},
-                        DispatchOutcome::Backpressured(action) => {
-                            *pending_dispatch = Some(action);
-                        },
-                    }
-                    if size.width > 0 && size.height > 0 {
-                        motion_deadline = redraw(
-                            session,
-                            viewport,
-                            state,
-                            appearance,
-                            size,
-                            &mut previous,
-                            epoch,
-                        )?;
-                        frame_visible = true;
-                    }
-                },
-                StateEffect::WorkspaceSearch(request) => {
-                    dispatch_workspace_search(workspace_references, state, request);
-                    if size.width > 0 && size.height > 0 {
-                        motion_deadline = redraw(
-                            session,
-                            viewport,
-                            state,
-                            appearance,
-                            size,
-                            &mut previous,
-                            epoch,
-                        )?;
-                        frame_visible = true;
-                    }
-                },
-                StateEffect::SkillSearch(request) => {
-                    dispatch_skill_search(skill_references, state, request);
-                    if size.width > 0 && size.height > 0 {
-                        motion_deadline = redraw(
-                            session,
-                            viewport,
-                            state,
-                            appearance,
-                            size,
-                            &mut previous,
-                            epoch,
-                        )?;
-                        frame_visible = true;
-                    }
-                },
-                StateEffect::Resize(next) => {
-                    prepare_resize(viewport, &mut size, next);
-                    frame_visible = false;
-                    motion_deadline = None;
-                },
-            },
         }
-        if frame_visible && motion_is_due(motion_deadline) && size.width > 0 && size.height > 0 {
-            motion_deadline = redraw(
-                session,
-                viewport,
-                state,
-                appearance,
-                size,
-                &mut previous,
-                epoch,
-            )?;
-        }
+    }
+}
+
+struct OwnerThreadWake(Thread);
+
+impl Wake for OwnerThreadWake {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
     }
 }
 
@@ -593,6 +472,25 @@ where
         }
     }
     Ok(changed)
+}
+
+fn sources_ready<A>(
+    agent: &mut A,
+    workspace_references: &mut Option<Box<dyn WorkspaceReferenceConnection>>,
+    skill_references: &mut Option<Box<dyn SkillReferenceConnection>>,
+    context: &mut Context<'_>,
+) -> bool
+where
+    A: AgentConnection,
+{
+    let agent_ready = agent.poll_ready(context).is_ready();
+    let workspace_ready = workspace_references
+        .as_deref_mut()
+        .is_some_and(|connection| connection.poll_ready(context).is_ready());
+    let skill_ready = skill_references
+        .as_deref_mut()
+        .is_some_and(|connection| connection.poll_ready(context).is_ready());
+    agent_ready || workspace_ready || skill_ready
 }
 
 fn dispatch_workspace_search(
@@ -728,6 +626,35 @@ where
     Ok(deadline)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn render_requested_frame<B, P>(
+    session: &mut TerminalSession<'_, B>,
+    viewport: &mut P,
+    state: &mut TuiState,
+    appearance: &crate::appearance::AppearanceState,
+    size: Size,
+    previous: &mut Option<Surface>,
+    epoch: Instant,
+    frames: &mut FrameScheduler,
+    frame_visible: &mut bool,
+    motion_deadline: &mut Option<Instant>,
+) -> Result<(), LoopError>
+where
+    B: crate::terminal::backend::ScreenModeBackend
+        + crate::terminal::backend::TerminalOutputBackend,
+    B::Mode: PartialEq,
+    P: LivePresenter<B>,
+{
+    let now = Instant::now();
+    if size.width == 0 || size.height == 0 || !frames.is_due(now) {
+        return Ok(());
+    }
+    *motion_deadline = redraw(session, viewport, state, appearance, size, previous, epoch)?;
+    frames.rendered(Instant::now());
+    *frame_visible = true;
+    Ok(())
+}
+
 fn next_motion_deadline(
     epoch: Instant,
     elapsed: Duration,
@@ -746,19 +673,38 @@ fn next_motion_deadline(
     epoch.checked_add(current_tick_start.checked_add(period)?)
 }
 
-fn wait_timeout(base: Duration, deadline: Option<Instant>) -> Duration {
-    wait_timeout_at(base, deadline, Instant::now())
+fn wait_timeout(
+    base: Duration,
+    motion_deadline: Option<Instant>,
+    frame_deadline: Option<Instant>,
+) -> Duration {
+    wait_timeout_at(base, motion_deadline, frame_deadline, Instant::now())
 }
 
-fn wait_timeout_at(base: Duration, deadline: Option<Instant>, now: Instant) -> Duration {
-    let Some(deadline) = deadline else {
-        return base;
-    };
-    base.min(deadline.saturating_duration_since(now))
+fn wait_timeout_at(
+    base: Duration,
+    motion_deadline: Option<Instant>,
+    frame_deadline: Option<Instant>,
+    now: Instant,
+) -> Duration {
+    [motion_deadline, frame_deadline]
+        .into_iter()
+        .flatten()
+        .fold(base, |timeout, deadline| {
+            timeout.min(deadline.saturating_duration_since(now))
+        })
 }
 
-fn motion_is_due(deadline: Option<Instant>) -> bool {
-    deadline.is_some_and(|deadline| Instant::now() >= deadline)
+fn request_due_motion(
+    frames: &mut FrameScheduler,
+    frame_visible: bool,
+    motion_deadline: &mut Option<Instant>,
+    now: Instant,
+) {
+    if frame_visible && motion_deadline.is_some_and(|deadline| now >= deadline) {
+        frames.request(FrameRequest::Coalesced);
+        *motion_deadline = None;
+    }
 }
 
 pub(super) trait FrameViewport {
@@ -841,7 +787,8 @@ fn validate_size(size: Size) -> Result<(), RunError> {
 mod motion_tests {
     use std::time::{Duration, Instant};
 
-    use super::{next_motion_deadline, wait_timeout_at};
+    use super::{next_motion_deadline, request_due_motion, wait_timeout_at};
+    use crate::runner::frame::{FrameRateLimit, FrameRequest, FrameScheduler};
 
     // 10ms worker 재시도보다 4ms 뒤 motion 마감이 더 가까우면 실제 sleep 없이도
     // scheduler가 정확히 4ms를 선택함을 결정적으로 확인한다.
@@ -853,10 +800,34 @@ mod motion_tests {
             wait_timeout_at(
                 Duration::from_millis(10),
                 now.checked_add(Duration::from_millis(4)),
+                None,
                 now,
             ),
             Duration::from_millis(4)
         );
+    }
+
+    // 16ms motion tick을 60fps frame 요청으로 승격하면 지난 motion deadline은 소비되어
+    // 남은 frame limiter 간격 동안 zero-timeout busy loop를 만들지 않습니다.
+    #[test]
+    fn due_motion_waits_for_the_remaining_60_fps_frame_interval() {
+        let started = Instant::now();
+        let motion_tick = started + Duration::from_millis(16);
+        let mut frames = FrameScheduler::new(FrameRateLimit::Fps60);
+        frames.request(FrameRequest::Immediate);
+        frames.rendered(started);
+        let mut motion_deadline = Some(motion_tick);
+
+        request_due_motion(&mut frames, true, &mut motion_deadline, motion_tick);
+        let timeout = wait_timeout_at(
+            Duration::from_millis(50),
+            motion_deadline,
+            frames.deadline(motion_tick),
+            motion_tick,
+        );
+
+        assert!(timeout > Duration::ZERO);
+        assert!(timeout < Duration::from_millis(1));
     }
 
     // 늦게 깨어난 frame은 놓친 tick을 재생하지 않고 epoch 기준 다음 경계 하나만 예약한다.

@@ -1,10 +1,11 @@
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     collections::VecDeque,
     convert::Infallible,
     io,
     rc::Rc,
     sync::mpsc,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
@@ -96,8 +97,6 @@ struct Events {
     events: VecDeque<Event>,
     polls: Rc<Cell<usize>>,
     reads: Rc<Cell<usize>>,
-    timeouts: Rc<RefCell<Vec<Duration>>>,
-    sleep_budget: usize,
 }
 
 impl Events {
@@ -110,23 +109,6 @@ impl Events {
             events: events.into_iter().collect(),
             polls,
             reads,
-            timeouts: Rc::new(RefCell::new(Vec::new())),
-            sleep_budget: 0,
-        }
-    }
-
-    fn timed(
-        events: impl IntoIterator<Item = Event>,
-        polls: Rc<Cell<usize>>,
-        timeouts: Rc<RefCell<Vec<Duration>>>,
-        sleep_budget: usize,
-    ) -> Self {
-        Self {
-            events: events.into_iter().collect(),
-            polls,
-            reads: Rc::new(Cell::new(0)),
-            timeouts,
-            sleep_budget,
         }
     }
 }
@@ -134,21 +116,12 @@ impl Events {
 impl EventSource for Events {
     type Error = io::Error;
 
-    fn poll(&mut self, timeout: Duration) -> Result<bool, Self::Error> {
-        self.timeouts.borrow_mut().push(timeout);
+    fn poll_event(&mut self, _context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
         self.polls.set(self.polls.get() + 1);
-        if !timeout.is_zero() && self.sleep_budget > 0 {
-            self.sleep_budget -= 1;
-            std::thread::sleep(timeout);
-        }
-        Ok(!self.events.is_empty())
-    }
-
-    fn read(&mut self) -> Result<Event, Self::Error> {
-        self.reads.set(self.reads.get() + 1);
-        self.events
-            .pop_front()
-            .ok_or_else(|| io::Error::other("no event"))
+        self.events.pop_front().map_or(Poll::Pending, |event| {
+            self.reads.set(self.reads.get() + 1);
+            Poll::Ready(Ok(event))
+        })
     }
 }
 
@@ -468,7 +441,7 @@ fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
         ),
         StopAfter {
             counter: first_polls,
-            threshold: 4,
+            threshold: 6,
         },
     );
 
@@ -583,27 +556,21 @@ fn normal_wait_coalesces_input_and_due_motion_into_one_redraw() {
     let mut retained = active_motion_session(period);
     let mut agent = SimpleAgent::default();
     let polls = Rc::new(Cell::new(0));
-    let timeouts = Rc::new(RefCell::new(Vec::new()));
     let presenter = run_generation(
         &mut retained,
         &mut agent,
-        Events::timed(
+        Events::new(
             [Event::Paste("x".to_owned())],
             Rc::clone(&polls),
-            Rc::clone(&timeouts),
-            1,
+            Rc::new(Cell::new(0)),
         ),
         StopAfter {
             counter: polls,
-            threshold: 2,
+            threshold: 4,
         },
     );
 
     assert_eq!(presenter.frames.len(), 2);
-    let waits = timeouts.borrow();
-    assert!(!waits.is_empty());
-    assert!(waits[0] > Duration::ZERO);
-    assert!(waits[0] <= period);
 }
 
 // 전송 재시도 중 10ms backpressure poll이 motion 마감을 지나더라도 이를 놓치지 않고
@@ -641,14 +608,15 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
     *retained.parts_mut().pending_dispatch = Some(pending);
     let mut agent = RetainingAgent::default();
     let polls = Rc::new(Cell::new(0));
-    let timeouts = Rc::new(RefCell::new(Vec::new()));
     let presenter = run_generation(
         &mut retained,
         &mut agent,
-        Events::timed([], Rc::clone(&polls), Rc::clone(&timeouts), 2),
+        Events::new([], Rc::clone(&polls), Rc::new(Cell::new(0))),
         StopAfter {
             counter: polls,
-            threshold: 3,
+            // Spurious owner-thread wakeups may add empty polls; keep enough headroom for the
+            // 16ms motion deadline to become due without making poll count the clock.
+            threshold: 25,
         },
     );
 
@@ -659,12 +627,6 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
     assert!(agent.retries >= 3);
     assert!(presenter.frames.len() >= 2);
     assert!(surface_text(&presenter.frames[0]).contains("* Working"));
-    assert!(
-        timeouts
-            .borrow()
-            .iter()
-            .all(|timeout| *timeout <= Duration::from_millis(10))
-    );
 }
 
 // terminal이 잠시 0x0이 되어 frame을 숨겨도 generation epoch는 유지한다.

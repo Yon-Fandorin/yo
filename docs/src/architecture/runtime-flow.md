@@ -236,7 +236,9 @@ The useful inspection points are:
    Hidden reasoning yo never receives and unadmitted backend-specific Request
    Audit payloads remain outside this semantic path. The shared observation stream orders every typed
    durability transition before the semantic records affected by it, so a
-   coalesced worker wake-up cannot erase a Gap-to-Durable transition. The CLI
+   coalesced worker wake-up cannot erase a Gap-to-Durable transition. The same
+   level-triggered readiness also wakes the terminal owner instead of waiting
+   for a periodic agent poll. The CLI
    adapter forwards that order to TUI state with the exact cutoff class. Chat, status-row, or banner presentation
    remains a separate product contract. Stored-Session inspection follows the
    separate read-only path below. Executable continuation uses the separately
@@ -247,8 +249,17 @@ The useful inspection points are:
    completed `Surface`, and send it to the active presenter. `runner/view.rs`
    selects Chat, Transcript, or Request from the same record stream. Chat shows
    user input only when its `StartTurn` or `SteerTurn` command appears in that
-   sequence. An editor mutation that dispatches `@` or `$` discovery is redrawn
-   immediately before any provider result; the prior usable panel remains visible
+   sequence. Terminal `EventStream` readiness and the built-in agent, local
+   workspace, and Codex skill producer readiness wake the owner thread. State changes request a frame
+   instead of drawing synchronously for every event. `FrameScheduler` publishes
+   the first and resize frames immediately, then coalesces ordinary requests at
+   the `TuiSession` limit: 120fps by default, or 60fps when the host selects
+   `FrameRateLimit::Fps60`. For those shipped asynchronous sources, the 50ms
+   bounded wait is not an input, agent, provider, or rendering poll interval. It
+   remains as a fallback for the process host's synchronous termination
+   observation and for custom synchronous connections or providers that retain
+   the default `poll_ready` implementation. An editor mutation that dispatches
+   `@` or `$` discovery requests a frame before any provider result; the prior usable panel remains visible
    behind a pending snapshot gate. A Chat frame that actually paints the elapsed-selected
    Rich Braille or ASCII work-marker frame inside its fixed maximum-width region, or a
    fixed-text activity sheen, returns the shortest visible period;
@@ -269,7 +280,7 @@ not decide whether an action is currently available. `shell` composes those
 regions around the prompt, and `input::control` dispatches the mapped interrupt
 intent even when a tiny frame cannot show the visual hint.
 The 80ms marker-frame sequence, maximum-width marker region, continuous two-second
-shimmer, and 16ms runner repaint boundary are owned by the
+shimmer, and the configurable 120/60fps runner frame boundary are owned by the
 [activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)
 and
 [activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)

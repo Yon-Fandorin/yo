@@ -54,37 +54,55 @@ impl WorkerExit {
 pub(super) struct ChangeLane {
     sender: SyncSender<WorkerSignal>,
     failure: Arc<Mutex<Option<AgentSessionError>>>,
+    readiness: Arc<crate::readiness::Readiness>,
 }
 
 impl ChangeLane {
     pub(super) fn new(
         sender: SyncSender<WorkerSignal>,
         failure: Arc<Mutex<Option<AgentSessionError>>>,
+        readiness: Arc<crate::readiness::Readiness>,
     ) -> Self {
-        Self { sender, failure }
+        Self {
+            sender,
+            failure,
+            readiness,
+        }
     }
 
     /// Publishes a level-triggered wake-up. One unread notification represents
     /// every committed suffix the reader has not consumed yet.
     pub(super) fn changed(&mut self) -> bool {
-        match self.sender.try_send(WorkerSignal::Changed) {
+        let open = match self.sender.try_send(WorkerSignal::Changed) {
             Ok(()) | Err(TrySendError::Full(WorkerSignal::Changed)) => true,
             Err(TrySendError::Disconnected(_)) => false,
             Err(TrySendError::Full(_)) => {
                 unreachable!("a terminal worker signal cannot precede another change")
             },
+        };
+        if open {
+            self.readiness.notify();
         }
+        open
     }
 
     pub(super) fn failure(&mut self, error: AgentSessionError) -> bool {
         if let Ok(mut failure) = self.failure.lock() {
             *failure = Some(error.clone());
         }
-        self.sender.send(WorkerSignal::Failure(error)).is_ok()
+        let open = self.sender.send(WorkerSignal::Failure(error)).is_ok();
+        if open {
+            self.readiness.notify();
+        }
+        open
     }
 
     pub(super) fn close(&mut self) -> bool {
-        self.sender.send(WorkerSignal::Closed).is_ok()
+        let open = self.sender.send(WorkerSignal::Closed).is_ok();
+        if open {
+            self.readiness.notify();
+        }
+        open
     }
 }
 

@@ -87,7 +87,11 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
     drop(normal_tx);
     drop(urgent_tx);
     let (changes_tx, _changes_rx) = mpsc::sync_channel(1);
-    let mut changes = ChangeLane::new(changes_tx, Arc::new(Mutex::new(None)));
+    let mut changes = ChangeLane::new(
+        changes_tx,
+        Arc::new(Mutex::new(None)),
+        Arc::new(crate::readiness::Readiness::new()),
+    );
     let processed = (Mutex::new(0), Condvar::new());
     let lifecycle = AtomicU8::new(WORKER_IDLE);
 
@@ -517,7 +521,11 @@ fn shutdown_retains_a_cleanup_failure_that_races_with_receiver_drop() {
 #[test]
 fn coalesces_journal_changes_while_one_notification_is_unread() {
     let (sender, receiver) = mpsc::sync_channel(1);
-    let mut lane = ChangeLane::new(sender, Arc::new(Mutex::new(None)));
+    let mut lane = ChangeLane::new(
+        sender,
+        Arc::new(Mutex::new(None)),
+        Arc::new(crate::readiness::Readiness::new()),
+    );
 
     assert!(lane.changed());
     assert!(lane.changed());

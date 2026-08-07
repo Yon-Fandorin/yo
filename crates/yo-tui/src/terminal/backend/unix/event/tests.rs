@@ -1,4 +1,13 @@
-use std::{collections::VecDeque, time::Duration};
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    task::{Context, Poll, Wake, Waker},
+    thread::{self, Thread},
+    time::{Duration, Instant},
+};
 
 use crossterm::event::Event;
 
@@ -18,12 +27,12 @@ struct RecordingEventSource {
 impl EventSource for RecordingEventSource {
     type Error = &'static str;
 
-    fn poll(&mut self, _timeout: Duration) -> Result<bool, Self::Error> {
-        self.ready.pop_front().unwrap_or(Ok(false))
-    }
-
-    fn read(&mut self) -> Result<Event, Self::Error> {
-        self.events.pop_front().unwrap_or(Err("missing event"))
+    fn poll_event(&mut self, _context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
+        match self.ready.pop_front().unwrap_or(Ok(false)) {
+            Ok(true) => Poll::Ready(self.events.pop_front().unwrap_or(Err("missing event"))),
+            Ok(false) => Poll::Pending,
+            Err(error) => Poll::Ready(Err(error)),
+        }
     }
 }
 
@@ -50,6 +59,67 @@ fn reader(
     )
 }
 
+fn next(
+    reader: &mut UnixEventReader<RecordingEventSource, PendingTermination>,
+    timeout: Duration,
+) -> Result<UnixEvent, InputReadFailure<&'static str>> {
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    reader.next(timeout, &mut context)
+}
+
+struct ThreadWake(Thread);
+
+impl Wake for ThreadWake {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+}
+
+struct WakingEventSource {
+    ready: Arc<AtomicBool>,
+    spawned: bool,
+}
+
+impl EventSource for WakingEventSource {
+    type Error = &'static str;
+
+    fn poll_event(&mut self, context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
+        if self.ready.load(Ordering::Acquire) {
+            return Poll::Ready(Ok(Event::Paste("wake".to_owned())));
+        }
+        if !self.spawned {
+            self.spawned = true;
+            let ready = Arc::clone(&self.ready);
+            let waker = context.waker().clone();
+            thread::spawn(move || {
+                ready.store(true, Ordering::Release);
+                waker.wake();
+            });
+        }
+        Poll::Pending
+    }
+}
+
+// terminal producer의 wake는 긴 fallback timeout을 기다리지 않고 owner thread를 즉시 재개합니다.
+#[test]
+fn producer_wake_preempts_bounded_fallback_wait() {
+    let input = WakingEventSource {
+        ready: Arc::new(AtomicBool::new(false)),
+        spawned: false,
+    };
+    let mut reader = UnixEventReader::new(input, PendingTermination::default());
+    let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
+    let mut context = Context::from_waker(&waker);
+    let started = Instant::now();
+
+    assert_eq!(
+        reader.next(Duration::from_secs(1), &mut context).unwrap(),
+        UnixEvent::Input(InputEvent::Paste("wake".to_owned()))
+    );
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
 // 이미 도착한 종료 신호는 terminal input을 기다리기 전에 우선 전달한다.
 #[test]
 fn pending_signal_preempts_terminal_polling() {
@@ -62,7 +132,7 @@ fn pending_signal_preempts_terminal_polling() {
     );
 
     assert_eq!(
-        reader.next(Duration::from_secs(1)).unwrap(),
+        next(&mut reader, Duration::from_secs(1)).unwrap(),
         UnixEvent::Terminate
     );
 }
@@ -78,7 +148,7 @@ fn returns_ready_terminal_input() {
     let timeout = Duration::from_millis(25);
 
     assert_eq!(
-        reader.next(timeout).unwrap(),
+        next(&mut reader, timeout).unwrap(),
         UnixEvent::Input(InputEvent::Paste("질문".to_owned()))
     );
 }
@@ -95,7 +165,7 @@ fn observes_signal_arriving_during_terminal_poll() {
     );
 
     assert_eq!(
-        reader.next(Duration::from_millis(25)).unwrap(),
+        next(&mut reader, Duration::from_millis(25)).unwrap(),
         UnixEvent::Terminate
     );
 }
@@ -112,7 +182,7 @@ fn post_poll_signal_preempts_ready_terminal_input() {
     );
 
     assert_eq!(
-        reader.next(Duration::from_millis(25)).unwrap(),
+        next(&mut reader, Duration::from_millis(25)).unwrap(),
         UnixEvent::Terminate
     );
 }
@@ -129,7 +199,7 @@ fn post_poll_signal_preempts_terminal_failure() {
     );
 
     assert_eq!(
-        reader.next(Duration::from_millis(25)).unwrap(),
+        next(&mut reader, Duration::from_millis(25)).unwrap(),
         UnixEvent::Terminate
     );
 }
@@ -146,7 +216,7 @@ fn returns_idle_after_bounded_poll() {
     );
 
     assert_eq!(
-        reader.next(Duration::from_millis(25)).unwrap(),
+        next(&mut reader, Duration::from_millis(25)).unwrap(),
         UnixEvent::Idle
     );
 }
@@ -163,7 +233,7 @@ fn preserves_terminal_poll_failure() {
     );
 
     assert_eq!(
-        reader.next(Duration::from_millis(25)),
+        next(&mut reader, Duration::from_millis(25)),
         Err(InputReadFailure::Source("poll failed"))
     );
 }

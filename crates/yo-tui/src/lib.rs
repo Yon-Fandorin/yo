@@ -19,8 +19,8 @@ pub use appearance::{ColorCapability, GlyphProfile, MotionPreference};
 #[cfg(unix)]
 pub use runner::{
     AgentAction, AgentConnection, AgentPoll, ArchivedProjectionError, ArchivedSessionView,
-    DispatchOutcome, ExitReason, PendingDispatch, PresentationMode, RunError, RunOutcome,
-    TerminalOutcome, TerminationEvent, TerminationSource, TuiSession, TuiSessionInfo,
+    DispatchOutcome, ExitReason, FrameRateLimit, PendingDispatch, PresentationMode, RunError,
+    RunOutcome, TerminalOutcome, TerminationEvent, TerminationSource, TuiSession, TuiSessionInfo,
     WorkspaceReferenceConnection, WorkspaceReferencePoll, project_archived_session, run,
     run_session_with_mode, run_with_mode,
 };

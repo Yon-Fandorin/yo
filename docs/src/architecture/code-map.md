@@ -165,7 +165,7 @@ terminal-operation, and HTML-projection types.
 
 | Module | Owns | Follow next |
 |---|---|---|
-| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, input/event orchestration, immediate editor-frame publication around asynchronous prompt assistance, final cleanup reporting, and terminal-independent archived Chat, Transcript, and Request projection | `runner/state.rs` for semantic UI transitions; `runner/archival.rs` for stored output; `runner/unix.rs` for live orchestration and visible motion scheduling |
+| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, readiness-driven input and built-in background orchestration with bounded fallback observation for synchronous custom sources, configurable 120/60fps frame coalescing, editor-frame publication around asynchronous prompt assistance, final cleanup reporting, and terminal-independent archived Chat, Transcript, and Request projection | `runner/state.rs` for semantic UI transitions; `runner/frame.rs` for frame-rate policy; `runner/archival.rs` for stored output; `runner/unix.rs` for live orchestration and visible motion scheduling |
 | [`runner/archival.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/archival.rs), [`runner/archival/request.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/archival/request.rs) | Read-only stored-Session output. Request renders the complete payload-free correlation trace in durable Journal order with its exact observation boundary, typed detail availability, and explicit unavailable Request Audit seam | Stored recovery or Request Audit persistence |
 | [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and the public built-in Rich/ASCII glyph profiles | `appearance/activity.rs` for validated activity-frame sequences, elapsed-time selection, maximum reserved marker width, continuous shimmer math, color-depth resolution, and reduced motion; `runner/session.rs` for profile-aware construction; `runner/state.rs` for frame pinning |
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | Terminal-cell-aware plain lists that preserve pinned columns, pack short collapsed label/value pairs as a width-bounded flow, give block values an independent row and split their label from the value only when needed, wrap grapheme clusters without truncation, and fall back to a vertical card layout | Which columns mean what, their fold priorities or continuation hints, configuration, stdout TTY policy, or terminal ownership |
@@ -226,8 +226,9 @@ frame changes cannot move the label or alter fitting. A visible animated marker 
 activity-text sheen returns its period, including a one-grapheme pulse; static,
 hidden, empty, and reduced-motion indicators return no demand. The completed
 frame reports the shortest positive period across its visible indicators.
-`runner/unix.rs` derives the next epoch boundary, skips missed ticks, and folds
-that deadline into normal and backpressured input waits; presenters and HTML
+`runner/unix.rs` derives the next epoch boundary and skips missed ticks;
+`runner/frame.rs` folds a due motion request into the same readiness-driven
+120/60fps frame boundary as input and background changes. Presenters and HTML
 continue to consume only the completed `Surface`. Every public `TuiSession`
 constructor and one-shot runner requires the process host to supply an explicit
 TrueColor, Limited, or Unknown classification plus a Standard or Reduced motion
@@ -235,7 +236,9 @@ preference before appearance publication. `TuiSession::new` selects the default
 Rich glyphs, while `TuiSession::with_glyph_profile` additionally lets the host
 choose the built-in ASCII profile without exposing mutable theme state.
 `TuiSession::with_session_info` adds backend and workspace labels to that same
-explicit publication boundary;
+explicit publication boundary. `TuiSession::with_frame_rate_limit` keeps the
+default 120fps coalescing policy or lets the host lower it to 60fps without
+changing semantic state transitions;
 the chrome omits unavailable model, context, Git, and permission values instead
 of inventing them. Reentry keeps the same
 agent connection because the retained state contains identities from that agent

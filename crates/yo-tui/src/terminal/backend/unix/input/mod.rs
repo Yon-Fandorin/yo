@@ -5,15 +5,16 @@
 
 use std::{
     marker::PhantomData,
+    pin::Pin,
     rc::Rc,
     sync::{Mutex, MutexGuard, TryLockError},
+    task::{Context, Poll},
     thread::{self, ThreadId},
-    time::Duration,
 };
 
 use crossterm::event::{
-    Event, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyEventKind, KeyEventState,
-    KeyModifiers as CrosstermKeyModifiers, MediaKeyCode as CrosstermMediaKeyCode,
+    Event, EventStream, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyEventKind,
+    KeyEventState, KeyModifiers as CrosstermKeyModifiers, MediaKeyCode as CrosstermMediaKeyCode,
     ModifierKeyCode as CrosstermModifierKeyCode,
 };
 
@@ -53,8 +54,7 @@ pub(crate) enum EventSourceAcquireFailure {
 pub(crate) trait EventSource {
     type Error;
 
-    fn poll(&mut self, timeout: Duration) -> Result<bool, Self::Error>;
-    fn read(&mut self) -> Result<Event, Self::Error>;
+    fn poll_event(&mut self, context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>>;
 }
 
 pub(crate) struct InputReader<S> {
@@ -69,24 +69,15 @@ where
         Self { source }
     }
 
-    pub(crate) fn poll(
+    pub(crate) fn poll_event(
         &mut self,
-        timeout: Duration,
-    ) -> Result<Option<InputEvent>, InputReadFailure<S::Error>> {
-        if !self
-            .source
-            .poll(timeout)
-            .map_err(InputReadFailure::Source)?
-        {
-            return Ok(None);
-        }
-
-        self.read().map(Some)
-    }
-
-    pub(super) fn read(&mut self) -> Result<InputEvent, InputReadFailure<S::Error>> {
-        let event = self.source.read().map_err(InputReadFailure::Source)?;
-        decode_event(event).map_err(InputReadFailure::Decode)
+        context: &mut Context<'_>,
+    ) -> Poll<Result<InputEvent, InputReadFailure<S::Error>>> {
+        self.source.poll_event(context).map(|result| {
+            result
+                .map_err(InputReadFailure::Source)
+                .and_then(|event| decode_event(event).map_err(InputReadFailure::Decode))
+        })
     }
 }
 
@@ -94,6 +85,7 @@ static CROSSTERM_EVENT_OWNER: Mutex<Option<ThreadId>> = Mutex::new(None);
 
 pub(crate) struct CrosstermEventSource {
     _ownership: MutexGuard<'static, Option<ThreadId>>,
+    stream: Option<EventStream>,
     _thread_affinity: PhantomData<Rc<()>>,
 }
 
@@ -116,6 +108,7 @@ impl CrosstermEventSource {
 
         Ok(Self {
             _ownership: ownership,
+            stream: None,
             _thread_affinity: PhantomData,
         })
     }
@@ -124,12 +117,16 @@ impl CrosstermEventSource {
 impl EventSource for CrosstermEventSource {
     type Error = std::io::Error;
 
-    fn poll(&mut self, timeout: Duration) -> Result<bool, Self::Error> {
-        crossterm::event::poll(timeout)
-    }
-
-    fn read(&mut self) -> Result<Event, Self::Error> {
-        crossterm::event::read()
+    fn poll_event(&mut self, context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
+        let stream = self.stream.get_or_insert_with(EventStream::new);
+        match futures_core::Stream::poll_next(Pin::new(stream), context) {
+            Poll::Ready(Some(event)) => Poll::Ready(event),
+            Poll::Ready(None) => Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "the terminal event stream closed",
+            ))),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 

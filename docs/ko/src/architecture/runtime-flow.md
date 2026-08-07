@@ -232,7 +232,8 @@ Inline 또는 Fullscreen presenter
    reasoning summary도 같은 segment와 seal 경로를 쓴다. yo가 받지 않은 숨겨진 reasoning과
    승인하지 않은 backend-specific Request Audit payload는 이 semantic 경로 밖에 남는다. 공유 observation stream은 각 typed
    durability 전환을 영향을 받는 semantic record보다 먼저 정렬하므로 coalesced worker
-   wake-up도 Gap-to-Durable 전환을 지우지 못한다. CLI adapter는 이 순서를 정확한 cutoff
+   wake-up도 Gap-to-Durable 전환을 지우지 못한다. 같은 level-triggered readiness가
+   주기적인 agent poll을 기다리지 않고 terminal owner를 깨운다. CLI adapter는 이 순서를 정확한 cutoff
    종류와 함께 TUI 상태에 전달한다. Chat·status 행·banner 중 어떤 방식으로 표현할지는
    별도 product 계약으로 남긴다. 저장된 Session 검사는 아래의 별도 read-only
    경로를 따른다. 실행 가능한 continuation은 frontend history Projection에서
@@ -242,8 +243,15 @@ Inline 또는 Fullscreen presenter
    완성된 `Surface`를 조합해 활성 presenter로 보낸다. `runner/view.rs`는
    같은 record stream에서 Chat, Transcript, Request를 선택한다. Chat의
    사용자 입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난
-   뒤에만 표시된다. `@`나 `$` discovery를 dispatch하는 editor mutation은 provider
-   결과보다 먼저 즉시 redraw되고, 이전 usable panel은 pending snapshot gate 뒤에
+   뒤에만 표시된다. terminal `EventStream` readiness와 built-in agent·local
+   workspace·Codex skill producer readiness가 owner thread를 깨운다. 상태 변경은 event마다 동기적으로
+   그리지 않고 frame을 요청한다. `FrameScheduler`는 첫 frame과 resize frame을 즉시
+   공개하고, 일반 요청은 `TuiSession` 제한에 맞춰 합친다. 기본은 120fps이고 host가
+   `FrameRateLimit::Fps60`을 선택하면 60fps다. 이 기본 제공 비동기 source에서 50ms
+   bounded wait는 input·agent·provider·rendering poll 간격이 아니다. 이 wait는
+   process host의 동기식 종료 관찰과 기본 `poll_ready` 구현을 유지하는 custom 동기식
+   connection 또는 provider를 위한 fallback으로 남는다. `@`나 `$` discovery를 dispatch하는 editor mutation은 provider
+   결과보다 먼저 frame을 요청하고, 이전 usable panel은 pending snapshot gate 뒤에
    계속 보인다. elapsed로 선택한 Rich Braille 또는 ASCII 작업 marker frame을 고정된
    최대 폭 영역에 그리거나 고정 문구 activity sheen을 실제로 그린 Chat
    frame은 보이는 period 중 가장 짧은 값을 반환하고, runner는 터미널 세대 epoch의
@@ -261,7 +269,7 @@ typed 행을 계산하고 폭에 맞춘다. `shell::chrome::help`는 label을 �
 가능한지는 결정하지 않는다. `shell`은 그 영역을 prompt 주변에 조합하고,
 `input::control`은 아주 작은 frame이 시각 안내를 표시하지 못해도 mapping된
 interrupt intent를 dispatch한다.
-80ms marker frame 순서, 최대 폭 marker 영역, 연속 2초 shimmer, 16ms runner repaint 경계는
+80ms marker frame 순서, 최대 폭 marker 영역, 연속 2초 shimmer, 설정 가능한 120/60fps runner frame 경계는
 [activity motion profile](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.appearance.activity-motion-profile.md)과
 [activity motion scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.activity-motion-scheduling.md)
 계약이 소유한다.

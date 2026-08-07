@@ -1,6 +1,6 @@
 use super::{
-    PendingDispatch, PresentationMode, SkillReferenceConnection, WorkspaceReferenceConnection,
-    state::TuiState,
+    FrameRateLimit, PendingDispatch, PresentationMode, SkillReferenceConnection,
+    WorkspaceReferenceConnection, state::TuiState,
 };
 #[cfg(test)]
 use crate::appearance::AppearancePin;
@@ -23,6 +23,7 @@ pub struct TuiSession {
     appearance: AppearanceState,
     pending_dispatch: Option<PendingDispatch>,
     pending_control: Option<PendingDispatch>,
+    frame_rate_limit: FrameRateLimit,
     workspace_references: Option<Box<dyn WorkspaceReferenceConnection>>,
     skill_references: Option<Box<dyn SkillReferenceConnection>>,
 }
@@ -39,6 +40,7 @@ pub(super) struct SessionParts<'session> {
     pub(super) appearance: &'session AppearanceState,
     pub(super) pending_dispatch: &'session mut Option<PendingDispatch>,
     pub(super) pending_control: &'session mut Option<PendingDispatch>,
+    pub(super) frame_rate_limit: FrameRateLimit,
     pub(super) workspace_references: &'session mut Option<Box<dyn WorkspaceReferenceConnection>>,
     pub(super) skill_references: &'session mut Option<Box<dyn SkillReferenceConnection>>,
 }
@@ -85,9 +87,17 @@ impl TuiSession {
             .expect("built-in appearance profiles must always be valid"),
             pending_dispatch: None,
             pending_control: None,
+            frame_rate_limit: FrameRateLimit::default(),
             workspace_references: None,
             skill_references: None,
         }
+    }
+
+    /// Selects the maximum presentation rate used to coalesce live frame requests.
+    #[must_use]
+    pub fn with_frame_rate_limit(mut self, limit: FrameRateLimit) -> Self {
+        self.frame_rate_limit = limit;
+        self
     }
 
     /// Installs the execution environment's nonblocking workspace provider.
@@ -126,6 +136,7 @@ impl TuiSession {
             appearance: &self.appearance,
             pending_dispatch: &mut self.pending_dispatch,
             pending_control: &mut self.pending_control,
+            frame_rate_limit: self.frame_rate_limit,
             workspace_references: &mut self.workspace_references,
             skill_references: &mut self.skill_references,
         }

@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, time::Duration};
+use std::{
+    collections::VecDeque,
+    task::{Context, Poll, Waker},
+};
 
 use crossterm::event::{
     Event, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyEventKind, KeyEventState,
@@ -280,12 +283,19 @@ struct RecordingSource {
 impl EventSource for RecordingSource {
     type Error = &'static str;
 
-    fn poll(&mut self, _timeout: Duration) -> Result<bool, Self::Error> {
-        Ok(!self.events.is_empty())
+    fn poll_event(&mut self, _context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
+        self.events.pop_front().map_or(Poll::Pending, Poll::Ready)
     }
+}
 
-    fn read(&mut self) -> Result<Event, Self::Error> {
-        self.events.pop_front().unwrap()
+fn read(
+    reader: &mut InputReader<RecordingSource>,
+) -> Result<InputEvent, InputReadFailure<&'static str>> {
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+    match reader.poll_event(&mut context) {
+        Poll::Ready(result) => result,
+        Poll::Pending => panic!("the recording source unexpectedly had no event"),
     }
 }
 
@@ -298,7 +308,7 @@ fn reader_decodes_one_complete_source_event() {
     let mut reader = InputReader::new(source);
 
     assert_eq!(
-        reader.read().unwrap(),
+        read(&mut reader).unwrap(),
         InputEvent::Resize(Size::new(120, 40))
     );
 }
@@ -311,9 +321,12 @@ fn source_failure_returns_no_partial_input_event() {
     };
     let mut reader = InputReader::new(source);
 
-    assert_eq!(reader.read(), Err(InputReadFailure::Source("read failure")));
     assert_eq!(
-        reader.read().unwrap(),
+        read(&mut reader),
+        Err(InputReadFailure::Source("read failure"))
+    );
+    assert_eq!(
+        read(&mut reader).unwrap(),
         InputEvent::Paste("after".to_owned())
     );
 }
@@ -327,7 +340,7 @@ fn unsupported_source_event_is_a_decode_failure() {
     let mut reader = InputReader::new(source);
 
     assert_eq!(
-        reader.read(),
+        read(&mut reader),
         Err(InputReadFailure::Decode(InputDecodeFailure::Unsupported(
             UnsupportedInputKind::FocusGained
         )))

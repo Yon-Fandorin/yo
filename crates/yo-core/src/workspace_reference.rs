@@ -1,6 +1,9 @@
 //! Frontend-neutral identities and search messages for execution-workspace references.
 
-use std::fmt;
+use std::{
+    fmt,
+    task::{Context, Poll},
+};
 
 use unicode_normalization::UnicodeNormalization;
 
@@ -78,6 +81,14 @@ pub enum WorkspaceReferenceProviderPoll {
 pub trait WorkspaceReferenceProvider: Send {
     fn search(&mut self, request: WorkspaceReferenceSearchRequest) -> Result<(), String>;
     fn poll(&mut self) -> Result<WorkspaceReferenceProviderPoll, String>;
+
+    /// Registers a task to wake when an out-of-thread provider publishes an update.
+    ///
+    /// The default preserves synchronous providers and requires bounded
+    /// fallback observation by their frontend.
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
+    }
 }
 
 impl WorkspaceReference {

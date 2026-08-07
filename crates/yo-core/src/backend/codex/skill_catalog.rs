@@ -2,7 +2,11 @@
 
 use std::{
     fmt::Write as _,
-    sync::mpsc::{self, Receiver, Sender, TryRecvError},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, Sender, TryRecvError},
+    },
+    task::{Context, Poll},
     thread,
 };
 
@@ -21,6 +25,7 @@ use crate::{
 pub struct CodexSkillReferenceProvider {
     requests: Sender<SkillReferenceSearchRequest>,
     updates: Receiver<SkillReferenceSearchUpdate>,
+    readiness: Arc<crate::readiness::Readiness>,
 }
 
 struct Inventory {
@@ -82,12 +87,24 @@ impl CodexSkillReferenceProvider {
     ) -> Result<Self, std::io::Error> {
         let (request_tx, request_rx) = mpsc::channel();
         let (update_tx, update_rx) = mpsc::channel();
+        let readiness = Arc::new(crate::readiness::Readiness::new());
+        let worker_readiness = Arc::clone(&readiness);
         thread::Builder::new()
             .name("yo-codex-skill-catalog".to_owned())
-            .spawn(move || worker(config, workspace_host_id, request_rx, update_tx))?;
+            .spawn(move || {
+                worker(
+                    config,
+                    workspace_host_id,
+                    request_rx,
+                    update_tx,
+                    &worker_readiness,
+                );
+                worker_readiness.notify();
+            })?;
         Ok(Self {
             requests: request_tx,
             updates: update_rx,
+            readiness,
         })
     }
 }
@@ -106,6 +123,10 @@ impl SkillReferenceProvider for CodexSkillReferenceProvider {
             Err(TryRecvError::Disconnected) => Err("Codex skill catalog worker closed".to_owned()),
         }
     }
+
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()> {
+        self.readiness.poll(context)
+    }
 }
 
 fn worker(
@@ -113,6 +134,7 @@ fn worker(
     workspace_host_id: WorkspaceHostId,
     requests: Receiver<SkillReferenceSearchRequest>,
     updates: Sender<SkillReferenceSearchUpdate>,
+    readiness: &crate::readiness::Readiness,
 ) {
     let mut inventory = None;
     let mut catalog_generation = 0_u64;
@@ -144,6 +166,7 @@ fn worker(
         if updates.send(update).is_err() {
             return;
         }
+        readiness.notify();
     }
 }
 

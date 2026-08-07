@@ -8,6 +8,7 @@ mod event;
 mod host;
 mod input;
 mod journal;
+mod readiness;
 mod request_trace;
 mod runtime;
 mod session;
