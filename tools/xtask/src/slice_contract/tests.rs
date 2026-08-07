@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::{
-    PathRule, bind, check_bound_scope, check_bound_scope_with_index, check_parallel,
-    check_scope_with_index, overlaps,
+    PathRule, bind, binding_path_for, check_bound_scope, check_bound_scope_with_index,
+    check_parallel, check_scope_with_index, overlaps,
 };
 use crate::{git, test_support::TestRepository};
 
@@ -103,6 +103,33 @@ fn bound_contract_is_discovered_without_a_path_argument() {
     repository.write("crates/yo-tui/src/render.rs", "polished\n");
 
     check_bound_scope_with_index(&repository.path, None).unwrap();
+}
+
+// 명시적 일반 bind 명령은 planner가 검증한 새 계약 경로로 기존 binding을
+// 교체할 수 있어 stale pointer에서 회복하는 종전 workflow를 보존한다.
+#[test]
+fn explicit_bind_replaces_a_stale_binding() {
+    let repository = TestRepository::new("scope-rebind-contract");
+    repository.write("crates/yo-tui/src/render.rs", "base\n");
+    let base = commit(&repository);
+    repository.git(["switch", "--quiet", "-c", "slice/direct/tui-polish"]);
+    let first = repository.write(
+        ".git/first-contract.json",
+        &contract("tui-polish", &base, "crates/yo-tui/src/**", "tui.visual"),
+    );
+    let second = repository.write(
+        ".git/second-contract.json",
+        &contract("tui-polish", &base, "crates/yo-tui/src/**", "tui.visual"),
+    );
+
+    bind(&repository.path, &first).unwrap();
+    bind(&repository.path, &second).unwrap();
+
+    let binding = binding_path_for(&repository.path).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(binding).unwrap(),
+        format!("{}\n", std::fs::canonicalize(second).unwrap().display())
+    );
 }
 
 // 현재 branch와 다른 Slice 계약은 bind 단계에서 거절하여 새 agent가

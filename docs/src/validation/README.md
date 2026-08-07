@@ -92,6 +92,13 @@ Methexis activation interval, `hk` uses prospective validation and defers the
 ordinary Methexis tests; immediately after integration, run the ordinary full
 Methexis check and tests against trusted `develop`.
 
+Prepare that activation worktree from clean `develop` with
+`cargo xtask slice create-activation <request.json>`. The generated contract
+leases the active record, the Checkpoint tree, and the two registered context
+manifests. Its focused `methexis check --staged-activation` admits exactly one
+new immutable Checkpoint. Slice creation is coordination setup, not evidence
+that the prospective transition is valid.
+
 If the Slice changes a platform or external-environment boundary, add the
 relevant matrix command rather than claiming the baseline covered it.
 

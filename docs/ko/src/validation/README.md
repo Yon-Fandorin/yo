@@ -91,6 +91,13 @@ crate 검사, Methexis 검사, Developer Docs 검사가 여기에 포함된다.
 Methexis test를 잠시 미룬다. 통합 직후에는 trusted `develop`에서 일반 전체
 Methexis check와 test를 실행한다.
 
+해당 activation worktree는 clean `develop`에서
+`cargo xtask slice create-activation <request.json>`으로 준비한다. 생성된
+contract는 active record, Checkpoint tree, 등록된 context manifest 두 개를
+lease한다. 집중 검사인 `methexis check --staged-activation`은 새 immutable
+Checkpoint를 정확히 하나만 허용한다. Slice 생성은 coordination setup일 뿐
+prospective transition이 유효하다는 증거가 아니다.
+
 Slice가 platform이나 외부 환경 경계를 바꾼다면 기준선이 이를 검사했다고
 주장하지 말고 관련 matrix 명령을 추가한다.
 

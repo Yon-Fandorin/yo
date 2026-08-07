@@ -264,7 +264,10 @@ other.
 owns structured checks that maintain this repository rather than the `yo`
 product. Its checks classify changed paths and commit trailers for Slice review
 and Developer Docs impact, and verify that Rust tests carry nearby explanatory
-comments. The `slice_close` module produces and applies a hash-addressed local
+comments. The `activation_slice` module consumes a small semantic request,
+pins current `develop`, publishes the canonical Methexis activation contract,
+creates its Direct Slice worktree, and binds the two while recovering exact
+partial setup. The `slice_close` module produces and applies a hash-addressed local
 cleanup plan only after the accepted commit, Slice patch, review evidence,
 binding, refs, and clean worktrees agree; its storage boundary rejects unsafe
 plan-file inputs. `hk.pkl` decides when to run checks; `xtask` implements and

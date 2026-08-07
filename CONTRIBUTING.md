@@ -48,6 +48,44 @@ git switch -c slice/<wave>/<slice>
 
 Create a Task branch from its Slice only when concurrent workers need isolation. A worker that can safely operate in the Slice worktree returns evidence without adding a branch layer. Task commit history is working context; the slice planner reconciles Task results into the reviewable Slice outcome.
 
+For a direct Methexis activation Slice, record only the semantic coordination
+input and let `xtask` fix the mechanical boundary. From a clean `develop`
+worktree, save a versioned local request such as:
+
+```json
+{
+  "schema": "yo.activation-slice-request/v1",
+  "slice": "tui-example-activation",
+  "owned_contracts": ["tui.example.activation"],
+  "dependencies": [
+    "approved tui.example revision <revision>",
+    "exact activation transition authorized by human/<owner>"
+  ]
+}
+```
+
+Then run:
+
+```bash
+cargo xtask slice create-activation <request.json>
+```
+
+The command pins the current `develop` commit; writes the canonical activation
+contract under `.local-exclude/coordination/<slice>/`; creates
+`slice/direct/<slice>` and its worktree under
+`.local-exclude/worktrees/<slice>/`; and binds that contract to the worktree.
+An exact retry reuses completed effects and restores a missing worktree or
+binding. Conflicting refs, paths, contracts, or bindings fail closed. This
+setup does not approve a revision, create a Checkpoint, propose activation, or
+record human authorization.
+
+The versioned JSON result reports the contract, branch, worktree, and binding
+effects separately. A failed invocation returns the same result schema with
+each effect observed as `prepared`, `absent`, `conflicting`, or `unknown`, so a
+caller can save the exact partial state before retrying. If `develop` advances
+after the contract was published, the same request retains that contract's
+pinned base rather than silently changing the Slice identity.
+
 Before parallel dispatch, the slice planner or wave coordinator must confirm:
 
 - dependencies are complete;

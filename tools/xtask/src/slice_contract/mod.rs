@@ -7,7 +7,7 @@ use std::{
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
-use crate::git;
+use crate::{bounded_file, git};
 
 const SCHEMA: &str = "yo.slice-contract/v1";
 const BINDING_FILE: &str = "yo-slice-contract";
@@ -41,6 +41,14 @@ pub(crate) struct BoundSlice {
     pub(crate) binding_path: PathBuf,
     pub(crate) contract_path: PathBuf,
     pub(crate) contract_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EnsuredBinding {
+    pub(crate) slice: String,
+    pub(crate) contract_path: PathBuf,
+    pub(crate) binding_path: PathBuf,
+    pub(crate) created: bool,
 }
 
 pub(crate) fn check_scope(repository: &Path, contract_path: &Path) -> Result<(), String> {
@@ -124,6 +132,66 @@ pub(crate) fn bind(repository: &Path, contract_path: &Path) -> Result<(), String
         json(&contract_path)?
     );
     Ok(())
+}
+
+pub(crate) fn verify_bound_exact(
+    repository: &Path,
+    contract_path: &Path,
+) -> Result<PathBuf, String> {
+    let contract_path = std::fs::canonicalize(contract_path).map_err(|error| {
+        format!(
+            "cannot resolve Slice contract {}: {error}",
+            contract_path.display()
+        )
+    })?;
+    let repository = repository_root(repository)?;
+    let binding = binding_path(&repository)?;
+    let expected = format!("{}\n", contract_path.display());
+    let actual = bounded_file::read_regular(&binding, 64 * 1024, "Slice contract binding")?;
+    if actual == expected.as_bytes() {
+        Ok(binding)
+    } else {
+        Err(format!(
+            "Slice contract binding {} already contains different bytes",
+            binding.display()
+        ))
+    }
+}
+
+pub(crate) fn binding_path_for(repository: &Path) -> Result<PathBuf, String> {
+    let repository = repository_root(repository)?;
+    binding_path(&repository)
+}
+
+pub(crate) fn ensure_bound(
+    repository: &Path,
+    contract_path: &Path,
+) -> Result<EnsuredBinding, String> {
+    let contract_path = std::fs::canonicalize(contract_path).map_err(|error| {
+        format!(
+            "cannot resolve Slice contract {}: {error}",
+            contract_path.display()
+        )
+    })?;
+    let contract = load(&contract_path)?;
+    let repository = repository_root(repository)?;
+    validate(&repository, &contract)?;
+    validate_slice_branch(&repository, &contract)?;
+
+    let binding = binding_path(&repository)?;
+    let expected = format!("{}\n", contract_path.display());
+    let created = bounded_file::publish_new_or_exact(
+        &binding,
+        expected.as_bytes(),
+        64 * 1024,
+        "Slice contract binding",
+    )?;
+    Ok(EnsuredBinding {
+        slice: contract.slice,
+        contract_path,
+        binding_path: binding,
+        created,
+    })
 }
 
 fn check_scope_with_index(

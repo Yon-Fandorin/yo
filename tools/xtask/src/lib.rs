@@ -1,8 +1,11 @@
+mod activation_slice;
+mod bounded_file;
 mod docs_translation;
 mod git;
 mod impact;
 mod slice_close;
 mod slice_contract;
+mod slice_worktree;
 mod test_explanations;
 mod validation_stage;
 
@@ -16,6 +19,18 @@ use impact::ImpactInput;
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let mut arguments = arguments.into_iter();
     match (arguments.next().as_deref(), arguments.next().as_deref()) {
+        (Some(command), Some(scope)) if command == "slice" && scope == "create-activation" => {
+            let request = arguments
+                .next()
+                .map(PathBuf::from)
+                .ok_or_else(activation_slice_usage)?;
+            if arguments.next().is_some() {
+                return Err(activation_slice_usage());
+            }
+            let repository = std::env::current_dir()
+                .map_err(|error| format!("cannot locate the repository: {error}"))?;
+            activation_slice::run(&repository, &request)
+        },
         (Some(command), Some(scope)) if command == "slice" && scope == "close" => {
             let action = arguments
                 .next()
@@ -165,6 +180,7 @@ fn usage(check: &str) -> String {
 
 fn general_usage() -> String {
     "usage:\n\
+     cargo xtask slice create-activation <request.json>\n\
      cargo xtask slice close <plan SLICE|apply PLAN.json>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
@@ -175,6 +191,10 @@ fn general_usage() -> String {
      cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
+}
+
+fn activation_slice_usage() -> String {
+    "usage: cargo xtask slice create-activation <request.json>".to_owned()
 }
 
 fn slice_close_usage() -> String {
@@ -191,7 +211,7 @@ fn slice_contract_usage() -> String {
 
 #[cfg(test)]
 mod cli_tests {
-    use super::{docs_accept_translation_usage, run, slice_close_usage};
+    use super::{activation_slice_usage, docs_accept_translation_usage, run, slice_close_usage};
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
     // 인자 없는 검사와 커밋 입력 검사를 각각 실행 가능한 형태로 안내한다.
@@ -202,6 +222,7 @@ mod cli_tests {
         assert_eq!(
             error,
             "usage:\n\
+             cargo xtask slice create-activation <request.json>\n\
              cargo xtask slice close <plan SLICE|apply PLAN.json>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
@@ -212,6 +233,19 @@ mod cli_tests {
              cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
              <commit-message-file> [changed-paths-file] [branch]"
         );
+    }
+
+    // activation Slice 생성은 정확히 한 versioned request만 받아 누락되거나
+    // 조용히 무시된 추가 입력으로 branch와 worktree를 만들지 않는다.
+    #[test]
+    fn activation_slice_requires_exactly_one_request() {
+        let missing = run(["slice", "create-activation"].map(Into::into)).unwrap_err();
+        let extra =
+            run(["slice", "create-activation", "request.json", "extra.json"].map(Into::into))
+                .unwrap_err();
+
+        assert_eq!(missing, activation_slice_usage());
+        assert_eq!(extra, activation_slice_usage());
     }
 
     // test-explanations 뒤의 불필요한 인자는 조용히 무시하지 않고 해당 명령의
