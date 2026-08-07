@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.storage.session-repository
-revision: sha256:81350456780ff59743ce1c1a924b1dcc3160215ede250f93f816ded647fb76b1
+revision: sha256:857c96fa154d662dd70e7620116dbab4dc2e302b1dafa5aaf3647c69f740c94c
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:d31fc472056736c9236c0e0c2ad49c5a7f6fcd7feb5f018c666593ef9f00f759
+request_hash: sha256:03063110699b220884f6d18498001f86294546181e5e293ce64060b3744b4b4a
 ---
 # Korean Review Projection
 
@@ -14,20 +14,26 @@ request_hash: sha256:d31fc472056736c9236c0e0c2ad49c5a7f6fcd7feb5f018c666593ef9f0
 
 ## 계약
 
-Storage-neutral Session Repository가 파일·SQLite 같은 물리 구조를 frontend 계약으로 노출하지 않고 durable Session record lifecycle을 소유합니다. 의미 Session Journal과 Request Audit은 한 소유 경계 안의 서로 다른 논리 domain이지 독립 Session authority가 아닙니다. 첫 구현은 local이며 remote storage, replication, dual-write, conflict resolution, 별도 Request Audit repository, generic append-log abstraction은 도입하지 않습니다.
+Storage-neutral Session Repository가 파일이나 SQLite 같은 물리 구조를 frontend 계약으로 노출하지 않고 durable Session record lifecycle을 소유합니다. 의미 Session Journal과 Request Audit은 한 소유 경계 안의 서로 다른 논리 domain이지 독립 Session authority가 아닙니다. 첫 구현은 local이며 remote storage, replication, dual-write, conflict resolution, 별도 Request Audit repository, generic append-log abstraction은 도입하지 않습니다.
 
-Local 구현은 Session마다 하나의 append-only versioned JSON Lines log를 사용하지만 JSONL은 교체 가능한 내부 세부사항입니다. 하나의 semantic commit은 하나의 physical envelope이며 command와 그 events 또는 observation batch의 절반만 영속하면 안 됩니다. `JournalSequence`는 semantic replay 순서, `RepositorySequence`는 physical append 순서이고 서로 추론하지 않습니다.
+Local 구현은 Session마다 하나의 append-only versioned JSON Lines log를 사용하지만 JSONL은 교체 가능한 내부 세부사항입니다. 하나의 semantic commit은 하나의 physical envelope이며 command와 그 events 또는 observation batch의 절반만 영속하면 안 됩니다. JournalSequence는 semantic replay 순서, RepositorySequence는 physical append 순서이고 서로 추론하지 않습니다.
 
-모든 새 물리 record는 schema, Session ID, `RepositorySequence`, kind, 정확한 payload bytes, format compatibility 계약의 discovery 객체 전체를 명시적인 preimage로 하는 CRC32C를 가집니다. Repository writer가 append 직전에 discovery timestamp를 지정하고, committed semantic prefix에서 descriptor, 선택적인 binding epoch, 선택적인 최신 valid Continuation Anchor `JournalSequence`를 도출해 같은 checksummed envelope에 기록합니다. Timestamp는 envelope와 함께 영속될 때만 durable합니다. 두 번째 checksum이나 별도 summary append를 만들지 않습니다.
+모든 새 물리 record는 schema, Session ID, RepositorySequence, kind, 정확한 payload bytes, format compatibility 계약의 discovery 객체 전체를 명시적인 preimage로 하는 versioned CRC32C를 가집니다. Checksum이 이미 든 record를 recursive serialization해 checksum을 계산하면 안 됩니다. Repository writer가 append 직전에 discovery timestamp를 지정하고 committed semantic prefix에서 descriptor, 선택적인 binding epoch, 선택적인 최신 valid Continuation Anchor JournalSequence를 도출해 같은 checksummed envelope에 기록합니다. Timestamp는 envelope와 함께 영속될 때만 durable합니다. 별도 mutable summary authority를 만들지 않습니다.
 
-같은 repository boundary는 각 Session의 마지막 완전한 envelope를 bounded tail read로 찾아 검증하고 storage-neutral discovery summary를 반환하는 read-only port를 제공합니다. 이 port는 writer lease를 얻거나 storage를 만들거나 record를 repair하거나 JSONL path를 노출하지 않습니다. Active writer와 버려진 pending marker를 구분하기 위한 독립 reader lock은 사용할 수 있지만 writer lease는 아닙니다.
+같은 repository boundary는 각 Session의 마지막 완전한 envelope를 bounded tail read로 찾아 검증하고 storage-neutral discovery summary를 반환하는 read-only port를 제공합니다. 이 port는 writer lease를 얻거나 storage를 만들거나 record를 repair하거나 JSONL path를 노출하지 않습니다. Active writer와 abandoned pending marker를 구분하기 위한 independent read lock은 사용할 수 있지만 writer lease가 아닙니다.
 
-복구는 호환성 계약이 지원하는 record만 checksum 검증 뒤 받아들입니다. Checksum 자신을 포함한 record를 재직렬화해 checksum을 계산하지 않습니다. 완전한 줄을 streaming하고 불완전한 마지막 줄은 uncommitted tail로 보며 다른 완전한 줄의 corruption은 보고합니다. Bounded suffix를 위해 전체 log를 materialize하지 않습니다. Root마다 writer 하나만 허용하고 안정적인 absolute root를 확정합니다. Append마다 durable pending marker를 사용하며 rollback을 확인하지 못하면 이후 reader가 log를 quarantine합니다. 비어 있지 않은 Session reopen 또는 초기 state load failure recovery 뒤에는 incremental record 전에 complete snapshot이 필요합니다.
+여러 process가 같은 안정적인 absolute repository root를 동시에 열 수 있고 서로 다른 Session의 writer가 함께 실행될 수 있습니다. 잠금 방식 전환 중에는 모든 신버전 writer-capable repository instance가 기존 root-exclusive writer-lock 파일에 대한 shared compatibility guard를 lifetime 동안 유지합니다. 신버전 writer-capable instance끼리는 이 guard를 공유하지만 live 구버전의 exclusive guard와는 서로 배타적입니다. 따라서 구버전 writer가 살아 있으면 신버전 writer-capable open은 실패하고, 신버전 writer-capable instance가 열려 있으면 구버전 open이 실패합니다. 이 compatibility guard는 root append coordinator가 아니며 신버전 writer들을 직렬화하지 않고 read-only discovery port는 획득하지 않습니다. 각 Session에는 writer owner가 하나뿐이며 그 lease는 Session state를 load하거나 repair하기 전에 얻어 writer lifetime 동안 유지합니다. 특정 Session lease 획득 실패가 다른 Session open이나 write를 막으면 안 됩니다.
 
-Journal과 Request correlation은 현재 하나의 physical availability와 capacity ceiling을 공유합니다. Request detail은 redaction-before-admission gate 전까지 volatile합니다. Durable commit은 append와 sync 뒤에만 in-memory Journal에 publish합니다. Persistence failure 뒤 semantic result는 volatile로 공개하고 durable gap을 유지하며 rollback이라고 보고하지 않습니다. Capacity나 storage failure 때 기존 record는 그대로 두고 Session은 memory에서 계속되며 frontend에 typed persistent pressure notification을 보냅니다. Capacity가 돌아오면 complete snapshot 뒤에만 incremental persistence를 재개합니다.
+모든 append는 해당 Session에만 속한 durable pending marker로 보호합니다. Reader가 marker를 보면 storage를 만들지 않고 대응 Session lease를 검사합니다. Live owner가 있으면 in-flight append로 보고 marker 전 마지막 complete envelope에서 멈추며, owner가 없으면 그 Session만 quarantine합니다. Rollback을 확인하지 못하면 marker를 유지하고 ambiguous complete line을 replay하지 않습니다.
 
-Local 저장소는 기본 활성화하고 current-user permission과 configurable capacity ceiling을 적용하며 자동 age expiry나 Session deletion을 하지 않습니다. 첫 구현은 synchronous single writer입니다. 측정 evidence 없이 background writer, generic transaction, group commit, compression, index, SQLite projection, alternate encoding, Request Audit physical split을 도입하지 않습니다.
+Capacity ceiling은 repository 전체에 적용됩니다. Writer는 최종 repository size 확인, marker publish, append와 sync, 필요한 rollback, marker 제거 동안에만 짧은 root append coordinator를 얻습니다. 이 coordinator는 append 사이에 유지하지 않고 다른 process가 root를 열거나 다른 Session에서 작업하는 것을 막지 않습니다. Writer는 항상 Session lease를 먼저 얻고 root coordinator를 나중에 얻으며 역순으로 얻지 않습니다. Lock과 marker file은 record capacity에 포함하지 않습니다.
+
+복구는 호환성 계약이 지원하는 record만 checksum 검증 뒤 받아들입니다. 완전한 줄을 streaming하고 불완전한 마지막 줄은 uncommitted tail로 보며 다른 완전한 줄의 corruption은 보고합니다. Bounded suffix를 반환하기 위해 log 전체를 materialize하면 안 됩니다. 비어 있지 않은 Session reopen 또는 초기 state load failure recovery 뒤에는 incremental record 전에 complete snapshot이 필요합니다. Message와 tool-output segment는 별도 Session authority가 아닙니다.
+
+Journal과 Request correlation은 하나의 physical availability와 capacity ceiling을 공유합니다. Request detail은 redaction-before-admission gate 전까지 volatile합니다. Durable commit은 append와 sync 뒤에만 in-memory Journal에 publish합니다. Persistence failure 뒤 semantic result는 volatile로 공개하고 durable gap을 유지하며 rollback이라고 보고하지 않습니다. Capacity나 storage failure 때 기존 record는 그대로 두고 Session은 memory에서 계속되며 frontend에 known cutoff, known empty log, unknown cutoff를 구분하는 typed persistent pressure notification을 보냅니다. Known cutoff는 마지막 durable RepositorySequence와, semantic Journal event가 하나도 durable하지 않으면 absent일 수 있는 마지막 durable JournalSequence를 포함합니다. 두 coordinate는 서로 추론하지 않습니다. Gap 뒤 continuous suffix를 주장하지 않으며 capacity가 돌아오면 complete snapshot 뒤에만 incremental persistence를 재개합니다.
+
+Local 저장소는 기본 활성화하고 current-user permission과 configurable capacity ceiling을 적용하며 자동 age expiry나 Session deletion을 하지 않습니다. 첫 구현은 Session마다 synchronous single writer입니다. 측정 evidence 없이 background writer, generic transaction, group commit, compression, index, SQLite projection, alternate encoding, Request Audit physical split을 도입하지 않습니다.
 
 ## 이유
 
-하나의 checksummed envelope와 분리된 semantic·physical sequence는 partial durability와 corruption을 명확하게 합니다. Discovery read port는 저장 방식과 frontend를 분리하면서도 별도 index authority를 만들지 않습니다. Durable-first publication, explicit pressure, snapshot recovery는 responsive streaming과 honest history를 함께 유지합니다.
+Legacy shared guard는 신·구 binary가 섞인 전환에서 fail-closed하면서 신버전 writer process끼리는 직렬화하지 않고 read-only discovery도 막지 않습니다. Session-scoped ownership은 같은 semantic history에 writer 둘이 생기는 것을 막고 짧은 append coordinator는 공유 capacity ceiling을 정확하게 보존합니다. 하나의 checksummed envelope와 분리된 semantic 및 physical sequence는 partial durability와 corruption을 명확하게 하며 durable-first publication과 snapshot recovery는 responsive streaming과 정직한 history를 함께 유지합니다.

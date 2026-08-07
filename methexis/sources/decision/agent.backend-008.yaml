@@ -1,0 +1,16 @@
+schema: methexis.source/v1alpha1
+id: agent.backend-008
+revision: sha256:e41bf7b7bde0c8a0518e1204f63d6adce0f8df6e1d0446e6953a6c47cec87621
+payload:
+  kind: decision
+  content: >-
+    The first Yo-managed Agent Backend owns the model and tool loop inside
+    yo-core and reaches the selected service only through a Model Connector.
+    It projects committed semantic history into model input, streams model work
+    as Activities, preserves function-call identity and typed failed Activities
+    for rejected calls, executes approved local tools, returns exact tool results,
+    and repeats until a final answer or failure. It uses exact Yo Journal replay
+    from the newest durable Continuation Anchor rather than provider-private
+    response state for continuation, treats model changes as binding-epoch transitions,
+    and fails closed on ambiguous retries, malformed protocol state, or
+    incomplete tool relationships.

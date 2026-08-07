@@ -1,0 +1,16 @@
+schema: methexis.source/v1alpha1
+id: agent.model-001
+revision: sha256:a1c115321da2a857e78f51f6aed83bdc86a3a28d9a87578e2554e084b66a3ece
+payload:
+  kind: decision
+  content: >-
+    Model routing uses stable provider, account, and model identities with
+    separate mutable display names. Provider identifies the model-service
+    group, account selects one local credential and entitlement scope within
+    that provider, and model identifies the requested model. An explicit API
+    protocol identifies the request and response contract; OpenAI-compatible
+    is only a family description and never replaces the exact protocol. The
+    complete runtime binding records provider, account, model, API protocol,
+    connector, and normalized endpoint identity. Tenant behavior is deferred,
+    while credential and binding resolution remain injectable so tenant scope
+    can be added without changing these identities.

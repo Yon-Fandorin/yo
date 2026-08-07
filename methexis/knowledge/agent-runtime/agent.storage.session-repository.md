@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.storage-001
-    revision: sha256:babaa8fe5a5d034539e75fbc46cf698f639b58a0e744b86b9f088da52873eec6
+    revision: sha256:16a5437ffd93e9045d8e2ea00b57d6bc3edee98295f42f863685d522952da3c1
 relations:
   depends_on:
     - agent.persistence.format-compatibility
@@ -68,11 +68,38 @@ implementation.
 Recovery MUST stream complete lines, MUST treat an incomplete final line as an
 uncommitted tail, MUST report corruption in any complete line, and MUST NOT
 materialize the entire log merely to return a bounded suffix.
-The local implementation MUST allow only one writer owner per repository root.
-It MUST resolve that root to a stable absolute location when opened.
-Every physical append MUST be guarded by a durable pending marker. If rollback
-cannot be confirmed, the marker MUST remain and later readers MUST quarantine
-the Session log rather than replay an ambiguous complete line.
+The local implementation MUST allow multiple processes to open the same
+repository root and MUST allow different Sessions in that root to have live
+writers concurrently. It MUST resolve the root to a stable absolute location
+when opened. During migration from the legacy root-exclusive writer, every new
+writer-capable repository instance MUST retain a shared compatibility guard on
+the legacy writer-lock file for its lifetime. New writer-capable instances MAY share that guard with one
+another, but opening MUST fail while a live legacy instance holds the old
+exclusive guard, and the shared guard MUST prevent a legacy instance from
+opening after a new instance. This compatibility guard is not the root append
+coordinator, MUST NOT serialize new writers, and MUST NOT be acquired by the
+read-only discovery port. Each Session MUST allow only
+one writer owner, acquired before
+loading or repairing that Session state and retained for that writer's
+lifetime. Failure to acquire the exact Session lease MUST NOT block opening or
+writing another Session.
+
+Every physical append MUST be guarded by a durable marker belonging only to
+that Session. A reader that observes a marker MUST test the corresponding
+Session lease without creating storage: a live owner makes the marker an
+in-flight append and the reader stops at the preceding complete envelope; an
+unowned marker quarantines only that Session. If rollback cannot be confirmed,
+the marker MUST remain and later readers MUST quarantine the Session log rather
+than replay an ambiguous complete line.
+
+The configured capacity ceiling remains repository-wide. Writers MUST acquire
+a short-lived root append coordinator only around the final repository-size
+check, marker publication, physical append and synchronization, rollback when
+needed, and marker removal. This coordinator MUST NOT be retained between
+appends and MUST NOT prevent another process from opening the root or working
+on a different Session. Lock ordering MUST acquire the Session writer lease
+before the root append coordinator and MUST never acquire them in the reverse
+order. Lock and marker files do not consume the configured record capacity.
 When an owner reopens a non-empty Session or recovers after an initial
 Session-state load failure, it MUST require a complete snapshot before
 accepting another incremental record because it cannot prove that no
@@ -107,15 +134,21 @@ The repository MUST NOT claim a continuous suffix after such a gap. Once
 capacity is available again, it MUST publish a complete Session snapshot
 before accepting later incremental records as durable.
 
-The first implementation MUST remain a synchronous single-writer path. It MUST
-NOT add a background writer, generic transaction API, or group commit without
-measured synchronization latency and append-rate evidence.
+The first implementation MUST remain a synchronous single-writer path within
+each Session. It MUST NOT add a background writer, generic transaction API, or
+group commit without measured synchronization latency and append-rate
+evidence.
 
 ## Rationale
 
 A local-first port supports immediate resume and diagnosis without freezing a
-database choice or silently sacrificing old work. Atomic envelopes, separate
-semantic and physical sequence spaces, and checksummed records make partial or
-corrupted durability explicit. Durable-first publication, explicit pressure,
-and snapshot recovery preserve honest history while transient streaming remains
-responsive and remote storage is still future work.
+database choice or silently sacrificing old work. The legacy shared guard makes
+the lock-granularity migration fail closed across mixed binary versions without
+serializing new processes. Session-scoped ownership
+allows independent processes without admitting two writers to one semantic
+history, while the short append coordinator preserves the exact shared capacity
+ceiling. Atomic envelopes, separate semantic and physical sequence spaces, and
+checksummed records make partial or corrupted durability explicit.
+Durable-first publication, explicit pressure, and snapshot recovery preserve
+honest history while transient streaming remains responsive and remote storage
+is still future work.

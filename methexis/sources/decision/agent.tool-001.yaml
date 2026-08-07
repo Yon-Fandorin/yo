@@ -1,0 +1,15 @@
+schema: methexis.source/v1alpha1
+id: agent.tool-001
+revision: sha256:820f31c3967deac92bb987d25ed593ba689695939bac62375c05e7183a5af5f0
+payload:
+  kind: decision
+  content: >-
+    A Yo-managed model loop exposes only locally registered function tools
+    through a frontend-independent registry and injected execution-host port.
+    Stable tool identity, JSON-schema validation, approval, mutable-resource
+    admission, exact call/result correlation, cancellation, and result bounds
+    are decided before connector submission or local side effects. A tool call
+    is attempted at most once after dispatch and is never automatically retried.
+    Calls execute serially unless the scheduler proves their approvals and
+    mutable resource leases independent. Provider built-in tools and direct
+    provider MCP execution are deferred.

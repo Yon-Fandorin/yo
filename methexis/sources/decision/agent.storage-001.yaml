@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.storage-001
-revision: sha256:babaa8fe5a5d034539e75fbc46cf698f639b58a0e744b86b9f088da52873eec6
+revision: sha256:16a5437ffd93e9045d8e2ea00b57d6bc3edee98295f42f863685d522952da3c1
 payload:
   kind: decision
   content: >-
@@ -12,9 +12,16 @@ payload:
     local implementation first; remote storage and later physical Request Audit
     separation are evidence-gated implementations. The first local
     implementation uses one append-only, explicitly versioned JSON Lines log
-    per Session as a replaceable implementation detail and one writer owner for
-    each repository root, which is resolved to a stable absolute location when
-    opened.
+    per Session as a replaceable implementation detail. Multiple processes may
+    open the same stable absolute repository root, while each Session permits
+    one writer owner. During migration, each new writer-capable repository instance
+    retains a shared compatibility guard on the legacy root-exclusive writer-lock file
+    for its lifetime. New writer-capable instances may share the guard, while a live legacy
+    exclusive owner and any new instance exclude one another. The compatibility
+    guard does not serialize new writers and is not acquired by the read-only
+    discovery port. A short-lived root append coordinator serializes the
+    capacity check and physical append so the repository-wide ceiling remains
+    exact; it is not a process-lifetime writer lease.
     It is enabled by default, restricts its directory and files to the current
     user, has a configurable capacity ceiling, and neither expires records by
     age nor automatically deletes Sessions. One semantic commit is encoded as one
@@ -68,8 +75,8 @@ payload:
     redaction-admission gate; until it exists, detail remains process-local and
     volatile. It has no independent retention or eviction policy in the first
     implementation.
-    The first implementation remains a synchronous single-writer path and does
-    not introduce a separate Request Audit
+    The first implementation remains a synchronous single-writer path within
+    each Session and does not introduce a separate Request Audit
     repository interface, generic append-log abstraction, background writer,
     generic transaction API, group commit, replication, dual-write, or conflict
     resolution. A background writer, generic transaction API, or group commit

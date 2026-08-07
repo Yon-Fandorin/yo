@@ -1,0 +1,17 @@
+schema: methexis.source/v1alpha1
+id: agent.model-002
+revision: sha256:967d609205f18e2a361e8b614a259eed9ce9ad9fa3392449a9f5a2b45c10606e
+payload:
+  kind: decision
+  content: >-
+    Users select models through a startup CLI model option or through a Rib-style
+    session model command and grouped picker. The picker groups usable entries
+    by provider, account, and model and returns the complete validated binding.
+    A direct model command resolves exactly one entry within the current provider
+    and account; changing accounts requires the picker. A resume-time CLI override
+    resolves from the newest durable Anchor's provider and account rather than
+    startup defaults and requires exact replay. Selection changes the
+    current Session binding rather than creating a Session, is allowed only
+    while idle, and never silently substitutes a different provider, account,
+    protocol, or model. Initial catalogs come from configured entries rather
+    than an assumed provider model-list endpoint.

@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: agent.storage.session-repository
-revision: sha256:81350456780ff59743ce1c1a924b1dcc3160215ede250f93f816ded647fb76b1
+revision: sha256:857c96fa154d662dd70e7620116dbab4dc2e302b1dafa5aaf3647c69f740c94c
 reviewer: agent-runtime
-reviewed_at: 2026-08-01T17:06:08Z
+reviewed_at: 2026-08-07T22:21:48Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:fc54aea2a591e3e31c96074c63c935e90410a88dda384dc23c6b107193cd4c1d
-request_hash: sha256:2d85b3227310e18f6873a36b644838a97d0bedc7f48a3412b4e5e8edc8a36a63
+projection_hash: sha256:c83bebf2a8f5b5794103e16900ad2658d541a24e80fa371080c478f90783bf5f
+request_hash: sha256:186b8e710526aec80c4cea07b79fb2b61f84142bdd4476753adcf60c41fed6cd
