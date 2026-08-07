@@ -26,6 +26,11 @@ impl CloseFixture {
 
     fn new_for(integration_ref: &str, slice_branch: &str) -> Self {
         let repository = test_support::TestRepository::new("slice-close");
+        std::fs::write(
+            repository.path.join(".git/info/exclude"),
+            ".local-exclude/\n",
+        )
+        .unwrap();
         repository.write("base.txt", "base\n");
         repository.git(["add", "base.txt"]);
         repository.git(["commit", "--quiet", "-m", "test: base"]);
@@ -60,7 +65,9 @@ impl CloseFixture {
         };
         repository.git(["commit", "--quiet", "-m", accepted_message]);
 
-        let contract_path = test_support::unique_path("slice-close-contract.json");
+        let contract_directory = repository.path.join(".local-exclude/coordination/sample");
+        std::fs::create_dir_all(&contract_directory).unwrap();
+        let contract_path = contract_directory.join("slice-contract.json");
         std::fs::write(
             &contract_path,
             format!(
@@ -129,6 +136,7 @@ impl Drop for CloseFixture {
         }
         let _ = std::fs::remove_file(&self.plan_path);
         let _ = std::fs::remove_file(&self.contract_path);
+        let _ = std::fs::remove_dir_all(self.repository.path.join(".local-exclude"));
         let _ = std::fs::remove_dir_all(&self.slice_worktree);
     }
 }

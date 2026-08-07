@@ -45,7 +45,7 @@ the assertion or silently skipping it.
 | Required explanations immediately above Rust tests | `cargo xtask check test-explanations` | Rust sources under `crates/` and `tools/` |
 | Slice changes remain inside their bound local write-set | `cargo xtask check slice-scope` | One active Slice worktree; the planner first runs `cargo xtask slice-contract bind <contract.json>` |
 | Two Slice contracts have a common current integration base and disjoint declared ownership | `cargo xtask check slice-parallel <left.json> <right.json>` | Direct Slices use `develop`; Wave Slices use their Wave branch |
-| An accepted Slice is still exactly the reviewed local branch patch and is safe to clean up | `cargo xtask slice close plan <slice>` then `cargo xtask slice close apply <plan.json>` | Run from the clean integration worktree after the accepted commit exists; inspect the plan before apply |
+| An accepted Slice is still exactly the reviewed local branch patch and is safe to clean up | `cargo xtask slice close plan <slice> <plan.json>` then `cargo xtask slice close apply <plan.json>` | Run from the clean integration worktree after the accepted commit exists; inspect the directly published plan before apply |
 | Repository hook policy or structured development checks | `cargo test -p xtask` | `tools/xtask/src` |
 | Linux/macOS conditional compilation | `bash tools/validation/yo-cli-unix-matrix.sh` | Local host result plus `.github/workflows/unix-compile.yml` for both hosts |
 | tmux, SSH, or nested tmux behavior | See the [terminal environment matrix](./terminal-matrix.md) | Ignored `yo-cli` environment tests |
@@ -103,9 +103,11 @@ If the Slice changes a platform or external-environment boundary, add the
 relevant matrix command rather than claiming the baseline covered it.
 
 The Slice-close cleanup command is not part of this validation baseline. It
-consumes the already accepted result afterward and rechecks the exact refs,
-review trailers, patch identity, worktree cleanliness, binding, and plan hash
-before removing the local worktree and Slice branch. See the integration
+publishes its plan directly to the requested file, then consumes the already
+accepted result afterward and rechecks the exact refs, review trailers, patch
+identity, worktree cleanliness, binding, contract hash, and plan hash before
+removing the local worktree, standard transient Slice contract, and Slice
+branch. It preserves every other coordination artifact. See the integration
 workflow in
 [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#review-and-integration).
 

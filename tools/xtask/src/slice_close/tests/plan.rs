@@ -1,25 +1,55 @@
 use super::{CloseFixture, git, output};
 use crate::{
-    slice_close::{build_plan, identity},
+    slice_close::{build_plan, identity, plan},
     test_support,
 };
 
 // plan은 승인된 커밋과 Slice 패치가 같고 양쪽 worktree가 깨끗할 때만
-// 실제 제거 대상·고정된 Git 상태·세 가지 제한된 효과를 해시로 묶는다.
+// 실제 제거 대상·고정된 Git 상태·경로에 따라 정해진 제한 효과를 해시로 묶는다.
 #[test]
 fn describes_only_the_verified_slice_cleanup() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
 
-    assert_eq!(plan.schema, "yo.slice-close-plan/v1");
+    assert_eq!(plan.schema, "yo.slice-close-plan/v2");
     assert_eq!(plan.slice, "sample");
     assert_eq!(plan.integration_ref, "refs/heads/develop");
     assert_eq!(plan.integration_head, plan.accepted_commit);
     assert_eq!(plan.worktree_path, fixture.slice_worktree);
     assert!(plan.effects.remove_worktree);
     assert!(plan.effects.remove_binding);
+    assert!(plan.effects.remove_coordination_contract);
     assert!(plan.effects.delete_slice_branch);
     assert_eq!(plan.plan_id, identity(&plan).unwrap());
+}
+
+// plan 출력 경로를 주면 agent가 stdout JSON을 다시 쓰지 않아도 exact bytes가
+// 원자적으로 발행되고, 같은 상태의 재실행은 동일 plan을 그대로 재사용한다.
+#[test]
+fn publishes_the_exact_plan_directly_to_a_file() {
+    let fixture = CloseFixture::new();
+
+    plan(&fixture.repository.path, "sample", Some(&fixture.plan_path)).unwrap();
+    let first = std::fs::read(&fixture.plan_path).unwrap();
+    plan(&fixture.repository.path, "sample", Some(&fixture.plan_path)).unwrap();
+
+    let mut expected = serde_json::to_vec_pretty(&fixture.plan()).unwrap();
+    expected.push(b'\n');
+    assert_eq!(first, expected);
+    assert_eq!(std::fs::read(&fixture.plan_path).unwrap(), expected);
+}
+
+// plan 파일을 제거 대상 worktree 안에 발행하면 검토 증거도 함께 사라지므로
+// 파일을 만들기 전에 거절한다.
+#[test]
+fn rejects_plan_output_inside_the_target_worktree() {
+    let fixture = CloseFixture::new();
+    let inside = fixture.slice_worktree.join("close-plan.json");
+
+    let error = plan(&fixture.repository.path, "sample", Some(&inside)).unwrap_err();
+
+    assert!(error.contains("outside the worktree"));
+    assert!(!inside.exists());
 }
 
 // 이후 Slice가 develop에 들어와 HEAD가 움직여도 first-parent 이력에서 patch가

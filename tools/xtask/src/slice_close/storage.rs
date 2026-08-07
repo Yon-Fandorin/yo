@@ -2,6 +2,8 @@ use std::{fs::File, io::Read, path::Path};
 
 use rustix::fs::{FileType, Mode, OFlags, fstat, open};
 
+use crate::bounded_file;
+
 const MAX_PLAN_BYTES: usize = 64 * 1024;
 const READ_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::NONBLOCK)
@@ -38,4 +40,20 @@ pub(super) fn read_plan(path: &Path) -> Result<Vec<u8>, String> {
         ));
     }
     Ok(bytes)
+}
+
+pub(super) fn publish_plan(path: &Path, bytes: &[u8]) -> Result<bool, String> {
+    bounded_file::publish_new_or_exact(path, bytes, MAX_PLAN_BYTES, "Slice close plan")
+}
+
+pub(super) fn remove_coordination_contract(
+    path: &Path,
+    expected_hash: &str,
+) -> Result<bool, String> {
+    bounded_file::remove_regular_matching_sha256(
+        path,
+        expected_hash,
+        MAX_PLAN_BYTES,
+        "Slice coordination contract",
+    )
 }

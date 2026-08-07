@@ -518,27 +518,33 @@ After the accepted commit exists, close its local Slice in two explicit steps
 from the integration worktree:
 
 ```bash
-cargo xtask slice close plan <slice> > /tmp/<slice>-close.json
+cargo xtask slice close plan <slice> /tmp/<slice>-close.json
 cargo xtask slice close apply /tmp/<slice>-close.json
 ```
 
 Review the plan before applying it. `plan` requires clean integration and Slice
 worktrees, the original bound Slice contract, valid review evidence on exactly
 one accepted commit in the integration branch's first-parent history, and a
-verbatim patch identity shared by the Slice and that commit. A later accepted
-Slice does not strand an older local worktree; generate a fresh plan at the
+verbatim patch identity shared by the Slice and that commit. `plan` publishes
+the hash-addressed JSON atomically at the optional output path, so agents do
+not copy or reserialize its stdout; omitting the path retains stdout for
+pipeline consumers. A later accepted Slice does not strand an older local
+worktree; generate a fresh plan at the
 new integration head. The hash-addressed plan fixes the integration and Slice refs,
 worktree, binding, and effects. `apply` revalidates them immediately before it
-removes only the registered worktree and its binding, then deletes only the
+removes only the registered worktree and its binding. When the bound contract
+is the exact regular file at the standard
+`.local-exclude/coordination/<slice>/slice-contract.json` path, the plan also
+hash-binds and removes that one transient file. It then deletes only the
 expected local Slice branch with a compare-and-swap ref update. It can finish
-the branch deletion if interruption occurred immediately after worktree
-removal. Store the plan outside the worktree it removes.
+the contract or branch deletion if interruption occurs after worktree removal.
+Store the plan outside the worktree it removes.
 
 The removed worktree path is deleted in full, including ignored build output or
 scratch files inside it. Move anything worth retaining out of that path before
-apply. The command never targets remote refs, coordination contracts, handoffs,
-notes, or other local artifacts outside the planned worktree. Reconcile or
-discard those through their own owner after retaining any stable knowledge. A
+apply. The command never targets remote refs, nonstandard contracts, handoffs,
+requests, notes, or other coordination artifacts. Reconcile or discard those
+through their own owner after retaining any stable knowledge. A
 stale plan fails closed; do not edit its JSON to make it pass. Cooperating
 `slice close apply` processes share a repository lock. Raw Git processes do not
 honor it, so the final worktree snapshot, Git's dirty-worktree refusal, and one

@@ -74,6 +74,25 @@ pub(crate) fn repository_root(repository: &Path) -> Result<PathBuf, String> {
     Ok(PathBuf::from(root))
 }
 
+pub(crate) fn workspace_root(repository: &Path) -> Result<PathBuf, String> {
+    let common = git::output_in(
+        repository,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        false,
+    )?;
+    let common = PathBuf::from(common.trim());
+    if common.file_name().and_then(|name| name.to_str()) != Some(".git") {
+        return Err(format!(
+            "unsupported common Git directory {}; expected a `.git` directory",
+            common.display()
+        ));
+    }
+    common
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "common Git directory has no workspace parent".to_owned())
+}
+
 pub(crate) fn resolve_commit(repository: &Path, reference: &str) -> Result<String, String> {
     git::output_in(
         repository,

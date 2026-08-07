@@ -6,7 +6,7 @@ use super::{
         FailureRecord, Observation, ObservedEffects, ObservedState, RESULT_SCHEMA, Request,
         recover_contract_base,
     },
-    storage, workspace_root,
+    storage,
 };
 use crate::{slice_contract, slice_worktree};
 
@@ -46,7 +46,7 @@ pub(super) fn failure(
             return record;
         },
     };
-    let workspace = match workspace_root(&repository) {
+    let workspace = match slice_worktree::workspace_root(&repository) {
         Ok(workspace) => workspace,
         Err(detail) => {
             record.effects = unknown_effects(detail);

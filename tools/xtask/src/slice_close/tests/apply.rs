@@ -1,5 +1,5 @@
 use super::{CloseFixture, git, git_succeeds};
-use crate::slice_close::{apply, apply_with_before_delete};
+use crate::slice_close::{apply, apply_with_before_delete, identity};
 
 // 계획 이후 develop이 한 커밋이라도 움직이면 apply는 오래된 승인 상태를
 // 추측하지 않고 멈추며 Slice worktree와 다른 로컬 자료를 그대로 보존한다.
@@ -36,10 +36,11 @@ fn final_ref_guard_preserves_the_slice_branch_on_late_integration_drift() {
     .unwrap_err();
 
     assert!(error.contains("guarded git update-ref failed"));
-    assert!(error.contains("worktree and binding were removed"));
+    assert!(error.contains("worktree, binding, and standard coordination contract were removed"));
     assert!(error.contains("Slice ref refs/heads/slice/direct/sample"));
     assert!(error.contains("separately verified branch cleanup"));
     assert!(!fixture.slice_worktree.exists());
+    assert!(!fixture.contract_path.exists());
     assert!(git_succeeds(
         &fixture.repository.path,
         &["show-ref", "--verify", "refs/heads/slice/direct/sample"]
@@ -59,6 +60,23 @@ fn rejects_a_tampered_plan_before_cleanup() {
 
     assert!(error.contains("identity mismatch"));
     assert!(fixture.slice_worktree.exists());
+}
+
+// caller가 coordination-contract 삭제 효과를 바꾸고 plan hash까지 다시 계산해도
+// apply는 표준 경로에서 효과를 독립적으로 재도출하여 cleanup 전에 거절한다.
+#[test]
+fn rejects_a_rehashed_but_incorrect_contract_effect() {
+    let fixture = CloseFixture::new();
+    let mut plan = fixture.plan();
+    plan.effects.remove_coordination_contract = false;
+    plan.plan_id = identity(&plan).unwrap();
+    fixture.write_plan(&plan);
+
+    let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
+
+    assert!(error.contains("effect does not match"));
+    assert!(fixture.slice_worktree.exists());
+    assert!(fixture.contract_path.exists());
 }
 
 // plan 이후 contract의 허용 범위 같은 내용이 바뀌면 경로와 핵심 필드가 같아도
@@ -146,8 +164,9 @@ fn rejects_a_plan_stored_inside_the_target_worktree() {
     assert!(fixture.slice_worktree.exists());
 }
 
-// 정상 apply는 먼저 등록된 worktree를 제거한 뒤 integration ref 확인과 예상
-// Slice SHA 삭제를 한 transaction으로 묶어 Git의 "미병합" 판정에 의존하지 않는다.
+// 정상 apply는 등록된 worktree와 exact 표준 contract를 제거한 뒤 integration ref
+// 확인과 예상 Slice SHA 삭제를 한 transaction으로 묶어 Git의 "미병합" 판정에
+// 의존하지 않는다.
 #[test]
 fn completes_the_verified_cleanup() {
     let fixture = CloseFixture::new();
@@ -157,6 +176,7 @@ fn completes_the_verified_cleanup() {
     apply(&fixture.repository.path, &fixture.plan_path).unwrap();
 
     assert!(!fixture.slice_worktree.exists());
+    assert!(!fixture.contract_path.exists());
     assert!(!git_succeeds(
         &fixture.repository.path,
         &["show-ref", "--verify", "refs/heads/slice/direct/sample"]
@@ -182,7 +202,80 @@ fn resumes_after_the_planned_worktree_was_already_removed() {
 
     apply(&fixture.repository.path, &fixture.plan_path).unwrap();
 
+    assert!(!fixture.contract_path.exists());
     assert!(!git_succeeds(
+        &fixture.repository.path,
+        &["show-ref", "--verify", "refs/heads/slice/direct/sample"]
+    ));
+}
+
+// 표준 coordination 경로가 아닌 contract는 plan에 삭제 효과가 없으며,
+// worktree와 branch를 닫아도 caller가 둔 외부 파일을 보존한다.
+#[test]
+fn preserves_a_nonstandard_contract_path() {
+    let fixture = CloseFixture::new();
+    let external = crate::test_support::unique_path("slice-close-external-contract.json");
+    std::fs::copy(&fixture.contract_path, &external).unwrap();
+    crate::slice_contract::bind(&fixture.slice_worktree, &external).unwrap();
+    let plan = fixture.plan();
+    fixture.write_plan(&plan);
+
+    assert!(!plan.effects.remove_coordination_contract);
+    apply(&fixture.repository.path, &fixture.plan_path).unwrap();
+
+    assert!(external.exists());
+    std::fs::remove_file(external).unwrap();
+}
+
+// worktree와 표준 contract가 이미 제거된 중단 상태에서도 plan의 exact ref가
+// 유지되면 재실행은 없는 contract를 오류로 보지 않고 branch 삭제를 수렴한다.
+#[test]
+fn resumes_after_worktree_and_contract_were_already_removed() {
+    let fixture = CloseFixture::new();
+    let plan = fixture.plan();
+    fixture.write_plan(&plan);
+    git(
+        &fixture.repository.path,
+        &[
+            "worktree",
+            "remove",
+            "--",
+            fixture.slice_worktree.to_str().unwrap(),
+        ],
+    );
+    std::fs::remove_file(&fixture.contract_path).unwrap();
+
+    apply(&fixture.repository.path, &fixture.plan_path).unwrap();
+
+    assert!(!git_succeeds(
+        &fixture.repository.path,
+        &["show-ref", "--verify", "refs/heads/slice/direct/sample"]
+    ));
+}
+
+// worktree 제거 뒤 contract bytes가 바뀐 중단 상태에서는 plan hash와 다른 로컬
+// 판단을 지우거나 branch를 닫지 않고 exact mismatch로 중단한다.
+#[test]
+fn changed_contract_after_worktree_removal_is_preserved() {
+    let fixture = CloseFixture::new();
+    let plan = fixture.plan();
+    fixture.write_plan(&plan);
+    git(
+        &fixture.repository.path,
+        &[
+            "worktree",
+            "remove",
+            "--",
+            fixture.slice_worktree.to_str().unwrap(),
+        ],
+    );
+    std::fs::write(&fixture.contract_path, b"changed after interruption\n").unwrap();
+
+    let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
+
+    assert!(error.contains("hash changed"));
+    assert!(fixture.contract_path.exists());
+    assert!(git_succeeds(
         &fixture.repository.path,
         &["show-ref", "--verify", "refs/heads/slice/direct/sample"]
     ));

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub(super) const SCHEMA: &str = "yo.slice-close-plan/v1";
+pub(super) const SCHEMA: &str = "yo.slice-close-plan/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -30,14 +30,16 @@ pub(super) struct Plan {
 pub(super) struct Effects {
     pub(super) remove_worktree: bool,
     pub(super) remove_binding: bool,
+    pub(super) remove_coordination_contract: bool,
     pub(super) delete_slice_branch: bool,
 }
 
 impl Effects {
-    pub(super) fn all() -> Self {
+    pub(super) fn new(remove_coordination_contract: bool) -> Self {
         Self {
             remove_worktree: true,
             remove_binding: true,
+            remove_coordination_contract,
             delete_slice_branch: true,
         }
     }
@@ -69,8 +71,11 @@ pub(super) fn validate_plan_shape(plan: &Plan) -> Result<(), String> {
         ));
     }
     validate_slice_name(&plan.slice)?;
-    if plan.effects != Effects::all() {
-        return Err("Slice close plan must declare all three bounded cleanup effects".to_owned());
+    if !plan.effects.remove_worktree
+        || !plan.effects.remove_binding
+        || !plan.effects.delete_slice_branch
+    {
+        return Err("Slice close plan must declare every Git cleanup effect".to_owned());
     }
     if slice_ref_for(&plan.integration_ref, &plan.slice)? != plan.slice_ref {
         return Err("Slice close plan branch does not match its Slice name".to_owned());

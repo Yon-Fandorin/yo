@@ -5,7 +5,7 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
@@ -19,15 +19,39 @@ use self::{
         Effects, Plan, SCHEMA, identity, slice_ref_for, validate_plan_shape, validate_slice_name,
     },
 };
-use crate::{impact, slice_contract};
+use crate::{impact, slice_contract, slice_worktree};
 
-pub(crate) fn plan(repository: &Path, slice: &str) -> Result<(), String> {
+pub(crate) fn plan(
+    repository: &Path,
+    slice: &str,
+    output_path: Option<&Path>,
+) -> Result<(), String> {
     let plan = build_plan(repository, slice)?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&plan)
-            .map_err(|error| format!("cannot encode Slice close plan: {error}"))?
-    );
+    let mut bytes = serde_json::to_vec_pretty(&plan)
+        .map_err(|error| format!("cannot encode Slice close plan: {error}"))?;
+    bytes.push(b'\n');
+    if let Some(path) = output_path {
+        if path_within(path, &plan.worktree_path)? {
+            return Err("store the Slice close plan outside the worktree it removes".to_owned());
+        }
+        let status = if storage::publish_plan(path, &bytes)? {
+            "written"
+        } else {
+            "unchanged"
+        };
+        println!(
+            "{{\"schema\":\"yo.slice-close-plan-publication/v1\",\"ok\":true,\"status\":{},\"slice\":{},\"plan_id\":{},\"path\":{}}}",
+            json(&status)?,
+            json(&plan.slice)?,
+            json(&plan.plan_id)?,
+            json(&path)?
+        );
+    } else {
+        print!(
+            "{}",
+            String::from_utf8(bytes).expect("serialized Slice close plan is valid UTF-8")
+        );
+    }
     Ok(())
 }
 
@@ -77,6 +101,8 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
     let (patch_id, accepted_commit) =
         find_accepted_commit(&repository, &integration_head, &bound.base, &slice_head)?;
     validate_accepted_commit(&repository, &current_ref, &accepted_commit)?;
+    let remove_coordination_contract =
+        bound.contract_path == standard_contract_path(&repository, slice)?;
     let mut plan = Plan {
         schema: SCHEMA.to_owned(),
         plan_id: String::new(),
@@ -92,7 +118,7 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
         binding_path: bound.binding_path,
         contract_path: bound.contract_path,
         contract_id: bound.contract_id,
-        effects: Effects::all(),
+        effects: Effects::new(remove_coordination_contract),
     };
     plan.plan_id = identity(&plan)?;
     Ok(plan)
@@ -114,6 +140,7 @@ fn apply_with_before_delete(
     let plan: Plan = serde_json::from_slice(&bytes)
         .map_err(|error| format!("invalid Slice close plan {}: {error}", plan_path.display()))?;
     validate_plan_shape(&plan)?;
+    validate_plan_effects(&repository, &plan)?;
     let actual_identity = identity(&plan)?;
     if plan.plan_id != actual_identity {
         return Err(format!(
@@ -181,6 +208,10 @@ fn apply_with_before_delete(
         },
     }
 
+    if plan.effects.remove_coordination_contract {
+        storage::remove_coordination_contract(&plan.contract_path, &plan.contract_id)?;
+    }
+
     before_delete()?;
     if let Err(error) = delete_slice_ref_guarded(
         &repository,
@@ -189,10 +220,12 @@ fn apply_with_before_delete(
         &plan.slice_ref,
         &plan.slice_head,
     ) {
-        let state = if worktree_was_present {
+        let state = if worktree_was_present && plan.effects.remove_coordination_contract {
+            "the planned worktree, binding, and standard coordination contract were removed"
+        } else if worktree_was_present {
             "the planned worktree and binding were removed"
         } else {
-            "the planned worktree and binding were already absent"
+            "the planned worktree and binding were already absent; any planned standard coordination contract was reconciled"
         };
         return Err(format!(
             "{error}; {state}, but the exact Slice ref {} at {} was preserved. Inspect the current integration ref and preserved Slice ref, then perform a separately verified branch cleanup",
@@ -238,6 +271,22 @@ fn validate_bound_plan(plan: &Plan, bound: &slice_contract::BoundSlice) -> Resul
     Ok(())
 }
 
+fn validate_plan_effects(repository: &Path, plan: &Plan) -> Result<(), String> {
+    let expected = plan.contract_path == standard_contract_path(repository, &plan.slice)?;
+    if plan.effects.remove_coordination_contract == expected {
+        Ok(())
+    } else {
+        Err("Slice close plan coordination-contract effect does not match its bounded standard path".to_owned())
+    }
+}
+
+fn standard_contract_path(repository: &Path, slice: &str) -> Result<PathBuf, String> {
+    Ok(slice_worktree::workspace_root(repository)?
+        .join(".local-exclude/coordination")
+        .join(slice)
+        .join("slice-contract.json"))
+}
+
 fn validate_accepted_commit(
     repository: &Path,
     integration_ref: &str,
@@ -252,8 +301,16 @@ fn validate_accepted_commit(
 }
 
 fn path_within(path: &Path, directory: &Path) -> Result<bool, String> {
-    let path = std::fs::canonicalize(path)
-        .map_err(|error| format!("cannot resolve plan path {}: {error}", path.display()))?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent = std::fs::canonicalize(parent)
+        .map_err(|error| format!("cannot resolve plan parent {}: {error}", parent.display()))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("Slice close plan path {} has no file name", path.display()))?;
+    let path = parent.join(name);
     let directory = if directory.exists() {
         std::fs::canonicalize(directory).map_err(|error| {
             format!(

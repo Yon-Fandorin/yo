@@ -5,7 +5,7 @@ mod storage;
 #[cfg(test)]
 mod tests;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use model::{Effect, Effects, Request, ResultRecord};
 
@@ -86,7 +86,7 @@ fn prepare_bytes_with_post_binding(
     let branch_ref = format!("refs/heads/slice/direct/{}", request.slice);
     validate_branch_ref(&repository, &branch_ref)?;
 
-    let workspace = workspace_root(&repository)?;
+    let workspace = slice_worktree::workspace_root(&repository)?;
     let local = workspace.join(".local-exclude");
     let coordination = local.join("coordination");
     let worktrees_directory = local.join("worktrees");
@@ -269,25 +269,6 @@ fn validate_prepared_worktree(
         "activation Slice worktree",
         "activation Slice setup",
     )
-}
-
-fn workspace_root(repository: &Path) -> Result<PathBuf, String> {
-    let common = git::output_in(
-        repository,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        false,
-    )?;
-    let common = PathBuf::from(common.trim());
-    if common.file_name().and_then(|name| name.to_str()) != Some(".git") {
-        return Err(format!(
-            "unsupported common Git directory {}; expected a `.git` directory",
-            common.display()
-        ));
-    }
-    common
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| "common Git directory has no workspace parent".to_owned())
 }
 
 fn existing_ref(repository: &Path, reference: &str) -> Result<Option<String>, String> {

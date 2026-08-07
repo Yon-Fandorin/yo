@@ -14,6 +14,7 @@ use rustix::{
     },
     io::Errno,
 };
+use sha2::{Digest, Sha256};
 
 const READ_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::NONBLOCK)
@@ -93,6 +94,168 @@ pub(crate) fn publish_new_or_exact(
         file.sync_all()
             .map_err(|error| format!("cannot sync prepared {label} {}: {error}", path.display()))
     })
+}
+
+pub(crate) fn remove_regular_matching_sha256(
+    path: &Path,
+    expected_hash: &str,
+    limit: usize,
+    label: &str,
+) -> Result<bool, String> {
+    remove_regular_matching_sha256_with_hooks(
+        path,
+        expected_hash,
+        limit,
+        label,
+        || Ok(()),
+        |parent| sync_directory(parent, label),
+    )
+}
+
+fn remove_regular_matching_sha256_with_hooks(
+    path: &Path,
+    expected_hash: &str,
+    limit: usize,
+    label: &str,
+    mut before_claim: impl FnMut() -> Result<(), String>,
+    mut sync_parent: impl FnMut(&OwnedFd) -> Result<(), String>,
+) -> Result<bool, String> {
+    let parent_path = path
+        .parent()
+        .ok_or_else(|| format!("{label} path {} has no parent", path.display()))?;
+    let target = path
+        .file_name()
+        .ok_or_else(|| format!("{label} path {} has no file name", path.display()))?;
+    let hash_suffix = expected_hash
+        .strip_prefix("sha256:")
+        .filter(|suffix| {
+            suffix.len() == 64
+                && suffix
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        })
+        .ok_or_else(|| format!("{label} expected hash is not canonical SHA-256"))?;
+    let mut claimed = OsString::from(".");
+    claimed.push(target);
+    claimed.push(format!(".yo-remove-{hash_suffix}"));
+    let parent = open_directory(parent_path, label)?;
+    let claimed_path = parent_path.join(&claimed);
+    let mut removed = false;
+
+    loop {
+        let claimed_bytes = match read_regular_at(&parent, &claimed, &claimed_path, limit, label) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return Err(restore_claimed(
+                    &parent,
+                    &claimed,
+                    target,
+                    &claimed_path,
+                    path,
+                    label,
+                    &mut sync_parent,
+                    error,
+                ));
+            },
+        };
+        if let Some(bytes) = claimed_bytes {
+            // A previous attempt may have stopped after the atomic claim. Establish that
+            // directory state before deleting the claimed inode.
+            sync_parent(&parent)?;
+            if let Err(error) = exact_sha256(path, expected_hash, &bytes, label) {
+                return Err(restore_claimed(
+                    &parent,
+                    &claimed,
+                    target,
+                    &claimed_path,
+                    path,
+                    label,
+                    &mut sync_parent,
+                    error,
+                ));
+            }
+            unlinkat(&parent, &claimed, AtFlags::empty()).map_err(|error| {
+                format!(
+                    "cannot remove claimed {label} {}: {error}",
+                    claimed_path.display()
+                )
+            })?;
+            sync_parent(&parent)?;
+            removed = true;
+            continue;
+        }
+
+        let Some(bytes) = read_regular_at(&parent, target, path, limit, label)? else {
+            // This also makes a preceding unlink durable when its parent sync failed.
+            sync_parent(&parent)?;
+            return Ok(removed);
+        };
+        if let Err(error) = exact_sha256(path, expected_hash, &bytes, label) {
+            sync_parent(&parent)?;
+            return Err(error);
+        }
+
+        before_claim()?;
+        match renameat_with(&parent, target, &parent, &claimed, RenameFlags::NOREPLACE) {
+            Ok(()) => {},
+            Err(Errno::NOENT | Errno::EXIST) => continue,
+            Err(error) => {
+                return Err(format!(
+                    "cannot claim {label} {} for removal: {error}",
+                    path.display()
+                ));
+            },
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn restore_claimed(
+    parent: &OwnedFd,
+    claimed: &std::ffi::OsStr,
+    target: &std::ffi::OsStr,
+    claimed_path: &Path,
+    path: &Path,
+    label: &str,
+    sync_parent: &mut impl FnMut(&OwnedFd) -> Result<(), String>,
+    error: String,
+) -> String {
+    match renameat_with(parent, claimed, parent, target, RenameFlags::NOREPLACE) {
+        Ok(()) => match sync_parent(parent) {
+            Ok(()) => error,
+            Err(sync_error) => format!(
+                "{error}; restored {label} {} but cannot sync its parent: {sync_error}",
+                path.display()
+            ),
+        },
+        Err(Errno::EXIST) => format!(
+            "{error}; preserved the claimed file at {} because {} was recreated",
+            claimed_path.display(),
+            path.display()
+        ),
+        Err(restore_error) => format!(
+            "{error}; cannot restore {label} {}: {restore_error}",
+            path.display()
+        ),
+    }
+}
+
+fn exact_sha256(path: &Path, expected_hash: &str, bytes: &[u8], label: &str) -> Result<(), String> {
+    let actual_hash = format!(
+        "sha256:{}",
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    if actual_hash == expected_hash {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} {} hash changed: expected {expected_hash}, found {actual_hash}",
+            path.display()
+        ))
+    }
 }
 
 fn publish_new_or_exact_with(
@@ -288,8 +451,226 @@ fn exact_bytes(path: &Path, expected: &[u8], actual: &[u8], label: &str) -> Resu
 mod tests {
     use std::io::Write;
 
-    use super::{publish_new_or_exact, publish_new_or_exact_with, publish_new_or_exact_with_hooks};
+    use sha2::{Digest, Sha256};
+
+    use super::{
+        publish_new_or_exact, publish_new_or_exact_with, publish_new_or_exact_with_hooks,
+        remove_regular_matching_sha256, remove_regular_matching_sha256_with_hooks,
+    };
     use crate::test_support;
+
+    // exact hash가 일치하는 singly-linked regular file만 제거하고, 재실행 때 이미
+    // 없는 target은 성공적인 수렴 상태로 보고한다.
+    #[test]
+    fn exact_hash_removal_is_bounded_and_idempotent() {
+        let directory = test_support::unique_path("bounded-file-remove-exact");
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join("contract.json");
+        let bytes = b"exact\n";
+        std::fs::write(&target, bytes).unwrap();
+        let hash = format!(
+            "sha256:{}",
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+
+        assert!(remove_regular_matching_sha256(&target, &hash, 1024, "test file").unwrap());
+        assert!(!remove_regular_matching_sha256(&target, &hash, 1024, "test file").unwrap());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    // plan에 묶인 hash와 현재 bytes가 다르면 삭제하지 않아 사람이 변경 원인을
+    // 조사할 수 있게 파일을 그대로 보존한다.
+    #[test]
+    fn hash_mismatch_preserves_the_target() {
+        let directory = test_support::unique_path("bounded-file-remove-mismatch");
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join("contract.json");
+        std::fs::write(&target, b"changed\n").unwrap();
+
+        let error = remove_regular_matching_sha256(
+            &target,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            1024,
+            "test file",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("hash changed"));
+        assert!(target.exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    // initial hash 확인 직후 pathname bytes가 바뀌어도 atomic claim 뒤 다시
+    // 검증하므로 바뀐 file은 삭제하지 않고 원래 이름으로 복구한다.
+    #[test]
+    fn replacement_between_hash_and_claim_is_preserved() {
+        let directory = test_support::unique_path("bounded-file-remove-race");
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join("contract.json");
+        let bytes = b"exact\n";
+        std::fs::write(&target, bytes).unwrap();
+        let hash = format!(
+            "sha256:{}",
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+
+        let error = remove_regular_matching_sha256_with_hooks(
+            &target,
+            &hash,
+            1024,
+            "test file",
+            || std::fs::write(&target, b"changed\n").map_err(|error| error.to_string()),
+            |parent| super::sync_directory(parent, "test file"),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("hash changed"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"changed\n");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    // claim 직후 parent sync가 실패해도 hash-addressed claimed name이 남아
+    // 재실행이 같은 inode를 검증하고 삭제까지 수렴한다.
+    #[test]
+    fn retry_finishes_an_unsynced_claim() {
+        let directory = test_support::unique_path("bounded-file-remove-claim-sync");
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join("contract.json");
+        let bytes = b"exact\n";
+        std::fs::write(&target, bytes).unwrap();
+        let hash = format!(
+            "sha256:{}",
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+
+        let error = remove_regular_matching_sha256_with_hooks(
+            &target,
+            &hash,
+            1024,
+            "test file",
+            || Ok(()),
+            |_| Err("injected claim sync failure".to_owned()),
+        )
+        .unwrap_err();
+        assert!(error.contains("injected claim sync failure"));
+        assert!(!target.exists());
+
+        assert!(remove_regular_matching_sha256(&target, &hash, 1024, "test file").unwrap());
+        assert!(!target.exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    // initial hash 뒤 symlink로 바뀐 target도 claim 후 검증에서 거절하고 원래
+    // pathname으로 복구하며 link target은 건드리지 않는다.
+    #[test]
+    fn symlink_replacement_during_claim_is_restored() {
+        use std::os::unix::fs::symlink;
+
+        let directory = test_support::unique_path("bounded-file-remove-symlink-race");
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join("contract.json");
+        let outside = directory.join("outside.json");
+        let bytes = b"exact\n";
+        std::fs::write(&target, bytes).unwrap();
+        std::fs::write(&outside, b"outside\n").unwrap();
+        let hash = format!(
+            "sha256:{}",
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+
+        let error = remove_regular_matching_sha256_with_hooks(
+            &target,
+            &hash,
+            1024,
+            "test file",
+            || {
+                std::fs::remove_file(&target).map_err(|error| error.to_string())?;
+                symlink(&outside, &target).map_err(|error| error.to_string())
+            },
+            |parent| super::sync_directory(parent, "test file"),
+        )
+        .unwrap_err();
+
+        assert!(error.contains("cannot open test file"));
+        assert!(
+            std::fs::symlink_metadata(&target)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read(&outside).unwrap(), b"outside\n");
+        std::fs::remove_file(&target).unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    // unlink 뒤 parent sync가 실패해도 재실행은 absent 상태에서 parent를 다시
+    // sync한 뒤 성공하므로 삭제 내구성까지 수렴한다.
+    #[test]
+    fn retry_resyncs_an_unlinked_target() {
+        let directory = test_support::unique_path("bounded-file-remove-resync");
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join("contract.json");
+        let bytes = b"exact\n";
+        std::fs::write(&target, bytes).unwrap();
+        let hash = format!(
+            "sha256:{}",
+            Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        );
+        let mut syncs = 0;
+
+        let error = remove_regular_matching_sha256_with_hooks(
+            &target,
+            &hash,
+            1024,
+            "test file",
+            || Ok(()),
+            |_| {
+                syncs += 1;
+                if syncs == 2 {
+                    Err("injected parent sync failure".to_owned())
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("injected parent sync failure"));
+        assert!(!target.exists());
+
+        let mut retry_syncs = 0;
+        assert!(
+            !remove_regular_matching_sha256_with_hooks(
+                &target,
+                &hash,
+                1024,
+                "test file",
+                || Ok(()),
+                |_| {
+                    retry_syncs += 1;
+                    Ok(())
+                },
+            )
+            .unwrap()
+        );
+        assert_eq!(retry_syncs, 1);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     // 이전 실행이 write 중 중단되어 partial prepared file을 남겨도 고유한 새
     // 임시 파일을 사용해 exact target을 발행하고 stale artifact에 막히지 않는다.

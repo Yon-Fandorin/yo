@@ -41,6 +41,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
                 .next()
                 .map(PathBuf::from)
                 .ok_or_else(slice_close_usage)?;
+            let output = arguments.next().map(PathBuf::from);
             if arguments.next().is_some() {
                 return Err(slice_close_usage());
             }
@@ -51,9 +52,9 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
                     let slice = value
                         .to_str()
                         .ok_or_else(|| "Slice name must be valid UTF-8".to_owned())?;
-                    slice_close::plan(&repository, slice)
+                    slice_close::plan(&repository, slice, output.as_deref())
                 },
-                "apply" => slice_close::apply(&repository, &value),
+                "apply" if output.is_none() => slice_close::apply(&repository, &value),
                 _ => Err(slice_close_usage()),
             }
         },
@@ -181,7 +182,7 @@ fn usage(check: &str) -> String {
 fn general_usage() -> String {
     "usage:\n\
      cargo xtask slice create-activation <request.json>\n\
-     cargo xtask slice close <plan SLICE|apply PLAN.json>\n\
+     cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
      cargo xtask check test-explanations\n\
@@ -198,7 +199,7 @@ fn activation_slice_usage() -> String {
 }
 
 fn slice_close_usage() -> String {
-    "usage: cargo xtask slice close <plan SLICE|apply PLAN.json>".to_owned()
+    "usage: cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>".to_owned()
 }
 
 fn docs_accept_translation_usage() -> String {
@@ -223,7 +224,7 @@ mod cli_tests {
             error,
             "usage:\n\
              cargo xtask slice create-activation <request.json>\n\
-             cargo xtask slice close <plan SLICE|apply PLAN.json>\n\
+             cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
              cargo xtask check test-explanations\n\
@@ -277,7 +278,8 @@ mod cli_tests {
             vec!["slice", "close"],
             vec!["slice", "close", "plan"],
             vec!["slice", "close", "apply"],
-            vec!["slice", "close", "plan", "sample", "extra"],
+            vec!["slice", "close", "plan", "sample", "plan.json", "extra"],
+            vec!["slice", "close", "apply", "plan.json", "extra"],
             vec!["slice", "close", "unknown", "sample"],
         ] {
             assert_eq!(
