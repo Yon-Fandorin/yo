@@ -5,6 +5,35 @@ message does not make its owner obvious. They describe the current
 implementation path. Methexis remains the authority for what each boundary
 must mean.
 
+## Model-service resolution foundation
+
+The provider-neutral startup inputs now have one typed route, although the
+process host does not consume it until the native connector Slice:
+
+```text
+configured ProviderId + AccountId + ModelId
+  ↓ exact ModelCatalog namespace lookup
+EffectiveModelBinding
+  ├── ConnectorId + ApiProtocol
+  └── normalized HTTPS base endpoint
+
+config.yaml sibling credentials.yaml
+  ↓ one no-follow handle; regular file, current owner, 0600-equivalent,
+    bounded size, stable metadata
+immutable CredentialStore
+  ↓ exact AccountId lookup
+redacted ApiCredential
+```
+
+`yo-core::model_service` owns this resolution and validation. A missing
+credential file produces an empty snapshot without creating anything; an
+existing unsafe or malformed file fails closed. API keys have no environment
+fallback and diagnostic formatting never exposes their contents. Display names
+remain optional metadata and never participate in identity or routing. The
+later configuration and connector Slices will select the config path, use its
+sibling credential path, and combine both exact resolutions before network
+startup.
+
 ## Startup
 
 The terminal is acquired only after process policy and the agent Session are

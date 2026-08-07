@@ -8,6 +8,7 @@ mod event;
 mod host;
 mod input;
 mod journal;
+mod model_service;
 mod readiness;
 mod request_trace;
 mod runtime;
@@ -44,6 +45,11 @@ pub use journal::{
     TranscriptEntry, TranscriptObservation, TranscriptObservationEntry,
     TranscriptObservationSequence, TranscriptObservationSlice, TranscriptReader, TranscriptRecord,
     TranscriptSlice,
+};
+pub use model_service::{
+    AccountId, ApiCredential, ApiProtocol, ConnectorId, CredentialStore, EffectiveModelBinding,
+    LocalCredentialStore, LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry, ModelId,
+    ModelServiceError, NormalizedEndpoint, ProviderId,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
