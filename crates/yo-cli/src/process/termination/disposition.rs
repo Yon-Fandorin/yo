@@ -2,7 +2,7 @@ use std::process;
 
 use nix::sys::signal::{SaFlags, SigAction, SigHandler, SigSet, Signal, sigaction};
 
-use super::{PROCESS_STATE, state::Publication};
+use super::{PROCESS_STATE, readiness::signal_wake_fd, state::Publication};
 
 #[allow(unsafe_code)]
 pub(super) fn install(signal: Signal) -> nix::Result<SigAction> {
@@ -11,8 +11,8 @@ pub(super) fn install(signal: Signal) -> nix::Result<SigAction> {
         SaFlags::SA_RESTART,
         SigSet::empty(),
     );
-    // SAFETY: handle_signal performs only lock-free atomic operations and
-    // signal-hook's documented async-signal-safe default emulation.
+    // SAFETY: handle_signal performs lock-free atomics, an async-signal-safe
+    // nonblocking write, and signal-hook's documented default emulation.
     unsafe { sigaction(signal, &action) }
 }
 
@@ -39,9 +39,26 @@ pub(super) fn replace_for_test(signal: Signal, action: &SigAction) -> nix::Resul
 }
 
 extern "C" fn handle_signal(signal: i32) {
-    if PROCESS_STATE.publish(signal) == Publication::DefaultNow {
-        default_now(signal);
+    match PROCESS_STATE.publish(signal) {
+        Publication::Published => wake_frontend(),
+        Publication::DefaultNow => default_now(signal),
     }
+}
+
+#[allow(unsafe_code)]
+fn wake_frontend() {
+    let Some(fd) = signal_wake_fd() else {
+        return;
+    };
+    let byte = 1_u8;
+    // SAFETY: fd names the installed nonblocking UnixStream endpoint and the
+    // one-byte buffer remains valid for the duration of async-signal-safe write.
+    let _ = unsafe { libc::write(fd, std::ptr::from_ref(&byte).cast(), 1) };
+}
+
+#[cfg(test)]
+pub(super) fn wake_frontend_for_test() {
+    wake_frontend();
 }
 
 pub(super) fn default_now(signal: i32) -> ! {

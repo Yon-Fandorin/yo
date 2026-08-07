@@ -1,4 +1,8 @@
-use std::{num::NonZeroU64, time::Duration};
+use std::{
+    num::NonZeroU64,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityUpdate,
@@ -851,6 +855,10 @@ impl AgentConnection for RuntimeConnection {
             RuntimePoll::Event(event) => AgentPoll::Record(TranscriptRecord::EventCommitted(event)),
             RuntimePoll::Closed => AgentPoll::Closed,
         })
+    }
+
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
     }
 }
 

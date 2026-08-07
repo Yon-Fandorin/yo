@@ -36,7 +36,7 @@ impl TuiAgentConnection {
         B: AgentBackend + Send + 'static,
     {
         AgentSession::start_cancellable_with_id(backend, session_id, || {
-            termination.poll_termination() == TerminationEvent::Requested
+            termination_requested(termination)
         })
         .map(|session| {
             session.map(|session| {
@@ -68,7 +68,7 @@ impl TuiAgentConnection {
         R: SessionRepository + Send + 'static,
     {
         AgentSession::start_cancellable_with_repository(backend, descriptor, repository, || {
-            termination.poll_termination() == TerminationEvent::Requested
+            termination_requested(termination)
         })
         .map(|session| {
             session.map(|session| {
@@ -100,7 +100,7 @@ impl TuiAgentConnection {
         R: SessionRepository + Send + 'static,
     {
         AgentSession::start_cancellable_with_continuation(backend, continuation, repository, || {
-            termination.poll_termination() == TerminationEvent::Requested
+            termination_requested(termination)
         })
         .map(|session| {
             session.map(|session| {
@@ -124,6 +124,12 @@ impl TuiAgentConnection {
     pub(crate) fn shutdown(&mut self) -> Result<Vec<yo_core::AgentEvent>, AgentSessionError> {
         self.session.shutdown()
     }
+}
+
+fn termination_requested(termination: &mut impl TerminationSource) -> bool {
+    let waker = std::task::Waker::noop();
+    let mut context = Context::from_waker(waker);
+    termination.poll_termination(&mut context) == Poll::Ready(TerminationEvent::Requested)
 }
 
 impl AgentConnection for TuiAgentConnection {

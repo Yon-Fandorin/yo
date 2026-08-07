@@ -3,7 +3,7 @@ use std::{
     io,
     panic::AssertUnwindSafe,
     sync::Arc,
-    task::{Context, Wake, Waker},
+    task::{Context, Poll, Wake, Waker},
     thread::{self, Thread},
     time::{Duration, Instant},
 };
@@ -40,7 +40,6 @@ use crate::{
 
 mod finalize;
 
-const TERMINATION_CHECK_INTERVAL: Duration = Duration::from_millis(50);
 const WORKER_RETRY_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_AGENT_EVENTS_PER_TICK: usize = 256;
 pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
@@ -328,20 +327,24 @@ where
                 },
             }
         }
-        if sources_ready(agent, workspace_references, skill_references, &mut context) {
-            continue;
-        }
+        let source_ready =
+            sources_ready(agent, workspace_references, skill_references, &mut context);
         let backpressured = pending_control.is_some() || pending_dispatch.is_some();
-        let base = if backpressured {
-            WORKER_RETRY_INTERVAL
-        } else {
-            TERMINATION_CHECK_INTERVAL
-        };
+        let base = backpressured.then_some(WORKER_RETRY_INTERVAL);
         let timeout = wait_timeout(base, motion_deadline, frames.deadline(Instant::now()));
-        match events
-            .next(timeout, &mut context)
-            .map_err(|error| LoopError::Input(format!("{error:?}")))?
-        {
+        let event = if source_ready {
+            match events.poll_next(&mut context) {
+                Poll::Ready(event) => {
+                    event.map_err(|error| LoopError::Input(format!("{error:?}")))?
+                },
+                Poll::Pending => continue,
+            }
+        } else {
+            events
+                .next(timeout, &mut context)
+                .map_err(|error| LoopError::Input(format!("{error:?}")))?
+        };
+        match event {
             UnixEvent::Idle => {},
             UnixEvent::Terminate => return Ok(LoopExit::Termination),
             UnixEvent::Input(input) => {
@@ -674,24 +677,25 @@ fn next_motion_deadline(
 }
 
 fn wait_timeout(
-    base: Duration,
+    base: Option<Duration>,
     motion_deadline: Option<Instant>,
     frame_deadline: Option<Instant>,
-) -> Duration {
+) -> Option<Duration> {
     wait_timeout_at(base, motion_deadline, frame_deadline, Instant::now())
 }
 
 fn wait_timeout_at(
-    base: Duration,
+    base: Option<Duration>,
     motion_deadline: Option<Instant>,
     frame_deadline: Option<Instant>,
     now: Instant,
-) -> Duration {
+) -> Option<Duration> {
     [motion_deadline, frame_deadline]
         .into_iter()
         .flatten()
+        .map(|deadline| deadline.saturating_duration_since(now))
         .fold(base, |timeout, deadline| {
-            timeout.min(deadline.saturating_duration_since(now))
+            Some(timeout.map_or(deadline, |current| current.min(deadline)))
         })
 }
 
@@ -790,6 +794,12 @@ mod motion_tests {
     use super::{next_motion_deadline, request_due_motion, wait_timeout_at};
     use crate::runner::frame::{FrameRateLimit, FrameRequest, FrameScheduler};
 
+    // backpressure와 frame·motion 마감이 모두 없으면 주기적 poll 없이 무기한 대기합니다.
+    #[test]
+    fn idle_without_deadlines_has_no_timeout() {
+        assert_eq!(wait_timeout_at(None, None, None, Instant::now()), None);
+    }
+
     // 10ms worker 재시도보다 4ms 뒤 motion 마감이 더 가까우면 실제 sleep 없이도
     // scheduler가 정확히 4ms를 선택함을 결정적으로 확인한다.
     #[test]
@@ -798,12 +808,12 @@ mod motion_tests {
 
         assert_eq!(
             wait_timeout_at(
-                Duration::from_millis(10),
+                Some(Duration::from_millis(10)),
                 now.checked_add(Duration::from_millis(4)),
                 None,
                 now,
             ),
-            Duration::from_millis(4)
+            Some(Duration::from_millis(4))
         );
     }
 
@@ -820,14 +830,14 @@ mod motion_tests {
 
         request_due_motion(&mut frames, true, &mut motion_deadline, motion_tick);
         let timeout = wait_timeout_at(
-            Duration::from_millis(50),
+            None,
             motion_deadline,
             frames.deadline(motion_tick),
             motion_tick,
         );
 
-        assert!(timeout > Duration::ZERO);
-        assert!(timeout < Duration::from_millis(1));
+        assert!(timeout.is_some_and(|timeout| timeout > Duration::ZERO));
+        assert!(timeout.is_some_and(|timeout| timeout < Duration::from_millis(1)));
     }
 
     // 늦게 깨어난 frame은 놓친 tick을 재생하지 않고 epoch 기준 다음 경계 하나만 예약한다.

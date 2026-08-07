@@ -6,6 +6,7 @@ use std::{
     num::NonZeroU64,
     process::{Command, Stdio},
     sync::mpsc,
+    task::{Context, Poll},
     thread,
     time::Duration,
 };
@@ -37,8 +38,8 @@ const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
 struct PendingTermination;
 
 impl TerminationSource for PendingTermination {
-    fn poll_termination(&mut self) -> TerminationEvent {
-        TerminationEvent::None
+    fn poll_termination(&mut self, _context: &mut Context<'_>) -> Poll<TerminationEvent> {
+        Poll::Pending
     }
 }
 
@@ -57,6 +58,10 @@ impl AgentConnection for PendingAgent {
 
     fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
         Ok(AgentPoll::Pending)
+    }
+
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
     }
 }
 
@@ -108,6 +113,10 @@ impl AgentConnection for RetainedChatAgent {
             .records
             .pop_front()
             .map_or(AgentPoll::Pending, AgentPoll::Record))
+    }
+
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
     }
 }
 

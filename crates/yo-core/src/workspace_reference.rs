@@ -83,12 +83,7 @@ pub trait WorkspaceReferenceProvider: Send {
     fn poll(&mut self) -> Result<WorkspaceReferenceProviderPoll, String>;
 
     /// Registers a task to wake when an out-of-thread provider publishes an update.
-    ///
-    /// The default preserves synchronous providers and requires bounded
-    /// fallback observation by their frontend.
-    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
-        Poll::Pending
-    }
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()>;
 }
 
 impl WorkspaceReference {

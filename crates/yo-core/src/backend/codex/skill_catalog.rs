@@ -24,8 +24,7 @@ use crate::{
 
 pub struct CodexSkillReferenceProvider {
     requests: Sender<SkillReferenceSearchRequest>,
-    updates: Receiver<SkillReferenceSearchUpdate>,
-    readiness: Arc<crate::readiness::Readiness>,
+    updates: crate::readiness::ReadyReceiver<SkillReferenceSearchUpdate>,
 }
 
 struct Inventory {
@@ -103,8 +102,7 @@ impl CodexSkillReferenceProvider {
             })?;
         Ok(Self {
             requests: request_tx,
-            updates: update_rx,
-            readiness,
+            updates: crate::readiness::ReadyReceiver::new(update_rx, readiness),
         })
     }
 }
@@ -125,7 +123,7 @@ impl SkillReferenceProvider for CodexSkillReferenceProvider {
     }
 
     fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()> {
-        self.readiness.poll(context)
+        self.updates.poll_ready(context)
     }
 }
 

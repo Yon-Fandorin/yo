@@ -38,18 +38,18 @@ impl EventSource for RecordingEventSource {
 
 #[derive(Default)]
 struct PendingTermination {
-    pending: VecDeque<TerminationEvent>,
+    pending: VecDeque<Poll<TerminationEvent>>,
 }
 
 impl TerminationSource for PendingTermination {
-    fn poll_termination(&mut self) -> TerminationEvent {
-        self.pending.pop_front().unwrap_or(TerminationEvent::None)
+    fn poll_termination(&mut self, _context: &mut Context<'_>) -> Poll<TerminationEvent> {
+        self.pending.pop_front().unwrap_or(Poll::Pending)
     }
 }
 
 fn reader(
     input: RecordingEventSource,
-    pending: impl IntoIterator<Item = TerminationEvent>,
+    pending: impl IntoIterator<Item = Poll<TerminationEvent>>,
 ) -> UnixEventReader<RecordingEventSource, PendingTermination> {
     UnixEventReader::new(
         input,
@@ -65,7 +65,7 @@ fn next(
 ) -> Result<UnixEvent, InputReadFailure<&'static str>> {
     let waker = Waker::noop();
     let mut context = Context::from_waker(waker);
-    reader.next(timeout, &mut context)
+    reader.next(Some(timeout), &mut context)
 }
 
 struct ThreadWake(Thread);
@@ -101,9 +101,9 @@ impl EventSource for WakingEventSource {
     }
 }
 
-// terminal producer의 wake는 긴 fallback timeout을 기다리지 않고 owner thread를 즉시 재개합니다.
+// terminal producer의 wake는 주기적 fallback 없이 무기한 대기하는 owner thread를 즉시 재개합니다.
 #[test]
-fn producer_wake_preempts_bounded_fallback_wait() {
+fn producer_wake_preempts_indefinite_wait() {
     let input = WakingEventSource {
         ready: Arc::new(AtomicBool::new(false)),
         spawned: false,
@@ -114,7 +114,7 @@ fn producer_wake_preempts_bounded_fallback_wait() {
     let started = Instant::now();
 
     assert_eq!(
-        reader.next(Duration::from_secs(1), &mut context).unwrap(),
+        reader.next(None, &mut context).unwrap(),
         UnixEvent::Input(InputEvent::Paste("wake".to_owned()))
     );
     assert!(started.elapsed() < Duration::from_millis(500));
@@ -128,7 +128,7 @@ fn pending_signal_preempts_terminal_polling() {
             ready: VecDeque::from([Err("must not poll")]),
             ..RecordingEventSource::default()
         },
-        [TerminationEvent::Requested],
+        [Poll::Ready(TerminationEvent::Requested)],
     );
 
     assert_eq!(
@@ -144,7 +144,7 @@ fn returns_ready_terminal_input() {
         ready: VecDeque::from([Ok(true)]),
         events: VecDeque::from([Ok(Event::Paste("질문".to_owned()))]),
     };
-    let mut reader = reader(input, [TerminationEvent::None]);
+    let mut reader = reader(input, [Poll::Pending]);
     let timeout = Duration::from_millis(25);
 
     assert_eq!(
@@ -161,7 +161,7 @@ fn observes_signal_arriving_during_terminal_poll() {
             ready: VecDeque::from([Ok(false)]),
             ..RecordingEventSource::default()
         },
-        [TerminationEvent::None, TerminationEvent::Requested],
+        [Poll::Pending, Poll::Ready(TerminationEvent::Requested)],
     );
 
     assert_eq!(
@@ -178,7 +178,7 @@ fn post_poll_signal_preempts_ready_terminal_input() {
             ready: VecDeque::from([Ok(true)]),
             events: VecDeque::from([Ok(Event::Paste("discarded".to_owned()))]),
         },
-        [TerminationEvent::None, TerminationEvent::Requested],
+        [Poll::Pending, Poll::Ready(TerminationEvent::Requested)],
     );
 
     assert_eq!(
@@ -195,7 +195,7 @@ fn post_poll_signal_preempts_terminal_failure() {
             ready: VecDeque::from([Err("poll failed")]),
             ..RecordingEventSource::default()
         },
-        [TerminationEvent::None, TerminationEvent::Requested],
+        [Poll::Pending, Poll::Ready(TerminationEvent::Requested)],
     );
 
     assert_eq!(
@@ -212,7 +212,7 @@ fn returns_idle_after_bounded_poll() {
             ready: VecDeque::from([Ok(false)]),
             ..RecordingEventSource::default()
         },
-        [TerminationEvent::None, TerminationEvent::None],
+        [Poll::Pending, Poll::Pending],
     );
 
     assert_eq!(
@@ -229,7 +229,7 @@ fn preserves_terminal_poll_failure() {
             ready: VecDeque::from([Err("poll failed")]),
             ..RecordingEventSource::default()
         },
-        [TerminationEvent::None, TerminationEvent::None],
+        [Poll::Pending, Poll::Pending],
     );
 
     assert_eq!(

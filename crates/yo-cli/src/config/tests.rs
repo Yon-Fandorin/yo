@@ -17,7 +17,47 @@ fn missing_configuration_uses_defaults_without_creating_a_file() {
     let config = load_from(&path).unwrap();
 
     assert!(config.date_formatter().is_ok());
+    assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps120);
     assert!(!path.exists());
+}
+
+// 사용자가 60fps를 선택하면 설정을 시작 시의 typed frame 정책으로 해석합니다.
+#[test]
+fn tui_max_fps_accepts_60() {
+    let config = parse(
+        Path::new("config.yaml"),
+        "version: 1\ntui:\n  max_fps: 60\n",
+    )
+    .unwrap();
+
+    assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps60);
+}
+
+// 기본값과 같은 120도 명시할 수 있어 설정 파일이 실제 frame 정책을 온전히 표현합니다.
+#[test]
+fn tui_max_fps_accepts_120() {
+    let config = parse(
+        Path::new("config.yaml"),
+        "version: 1\ntui:\n  max_fps: 120\n",
+    )
+    .unwrap();
+
+    assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps120);
+}
+
+// 지원하지 않는 frame 비율은 조용히 보정하지 않고 정확한 설정 경로와 값으로 거절합니다.
+#[test]
+fn tui_max_fps_rejects_unsupported_values() {
+    let error = parse(
+        Path::new("/tmp/yo-config.yaml"),
+        "version: 1\ntui:\n  max_fps: 30\n",
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "/tmp/yo-config.yaml: tui.max_fps must be 60 or 120, not 30"
+    );
 }
 
 // 사용자가 지정한 날짜 형식은 UPDATED와 STARTED가 공유할 하나의 검증된 formatter로

@@ -7,8 +7,9 @@ use std::{
     process::{Command, Stdio},
     rc::Rc,
     sync::{Arc, Barrier, mpsc},
+    task::{Context, Poll, Wake, Waker},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use nix::sys::signal::{
@@ -19,6 +20,7 @@ use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
 use super::{
     PROCESS_STATE, SIGNALS, SignalOs, TerminationCoordinator, TerminationEvents, UnixSignalOs,
     disposition,
+    readiness::{TerminationNotifier, TerminationReadiness, signal_wake_fd},
     state::{Phase, Publication, SharedState},
 };
 
@@ -309,16 +311,21 @@ fn fail_retire_race_never_discards_a_published_signal() {
 #[test]
 fn typed_termination_events_hide_signal_identity() {
     let shared = active_shared();
-    let mut events = TerminationEvents { shared };
+    let mut events = TerminationEvents {
+        shared,
+        readiness: Arc::new(TerminationReadiness::new()),
+    };
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
 
     assert_eq!(
-        yo_tui::TerminationSource::poll_termination(&mut events),
-        yo_tui::TerminationEvent::None
+        yo_tui::TerminationSource::poll_termination(&mut events, &mut context),
+        Poll::Pending
     );
     assert_eq!(shared.publish(SIGQUIT), Publication::Published);
     assert_eq!(
-        yo_tui::TerminationSource::poll_termination(&mut events),
-        yo_tui::TerminationEvent::Requested
+        yo_tui::TerminationSource::poll_termination(&mut events, &mut context),
+        Poll::Ready(yo_tui::TerminationEvent::Requested)
     );
 }
 
@@ -390,6 +397,51 @@ fn install_failure_runs_complete_reverse_rollback() {
         ]
     );
     assert_eq!(shared.snapshot_phase(), Phase::FailedRetired);
+}
+
+struct ChannelWake(mpsc::Sender<()>);
+
+impl Wake for ChannelWake {
+    fn wake(self: Arc<Self>) {
+        let _ = self.0.send(());
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        let _ = self.0.send(());
+    }
+}
+
+// 실제 notifier는 FD를 게시하고 relay로 frontend를 깨운 뒤 후속 설치 실패 시 FD와 thread를
+// 회수합니다.
+#[test]
+fn notifier_lifecycle_rolls_back_with_a_later_install_failure() {
+    let shared = shared();
+    let readiness = Arc::new(TerminationReadiness::new());
+    let notifier = TerminationNotifier::install(Arc::clone(&readiness)).unwrap();
+    assert!(signal_wake_fd().is_some());
+
+    let (wake_tx, wake_rx) = mpsc::channel();
+    let waker = Waker::from(Arc::new(ChannelWake(wake_tx)));
+    let mut context = Context::from_waker(&waker);
+    assert_eq!(readiness.poll(&mut context), Poll::Pending);
+    disposition::wake_frontend_for_test();
+    wake_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert_eq!(readiness.poll(&mut context), Poll::Ready(()));
+
+    let (os, _) = RecordingOs::new([Call::Install(Signal::SIGQUIT)]);
+    let error = match TerminationCoordinator::install_with_parts(
+        shared,
+        os,
+        false,
+        readiness,
+        Some(notifier),
+    ) {
+        Ok(_) => panic!("injected install failure must reject initialization"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("Install(SIGQUIT) failed"));
+    assert_eq!(signal_wake_fd(), None);
 }
 
 // 첫 mask capture 실패도 coordinator를 영구 은퇴시키며 실행하지 않은 복구를 꾸미지 않는다.
@@ -709,15 +761,31 @@ const CHILD_ENV: &str = "YO_TERMINATION_SUBPROCESS";
 
 fn run_child(test_name: &str) -> std::process::Output {
     let executable = std::env::current_exe().unwrap();
-    Command::new("/bin/sh")
+    let mut child = Command::new("/bin/sh")
         .args(["-c", "ulimit -c 0; exec \"$@\"", "yo-test"])
         .arg(executable)
         .args(["--exact", test_name, "--ignored", "--nocapture"])
         .env(CHILD_ENV, "1")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
-        .unwrap()
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait().unwrap() {
+            Some(_) => return child.wait_with_output().unwrap(),
+            None if Instant::now() < deadline => thread::sleep(Duration::from_millis(5)),
+            None => {
+                let _ = child.kill();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "termination subprocess timed out: {test_name}\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            },
+        }
+    }
 }
 
 fn assert_child() {
@@ -753,16 +821,29 @@ fn subprocess_child_signal_waits_for_active_cleanup() {
             println!("SESSION_READY");
             std::io::stdout().flush().unwrap();
             active_tx.send(()).unwrap();
-            while yo_tui::TerminationSource::poll_termination(events)
-                == yo_tui::TerminationEvent::None
+            let waker = Waker::from(Arc::new(ThreadWake(thread::current())));
+            let mut context = Context::from_waker(&waker);
+            while yo_tui::TerminationSource::poll_termination(events, &mut context) == Poll::Pending
             {
-                thread::sleep(Duration::from_millis(1));
+                thread::park();
             }
             println!("CLEANUP_DONE");
             std::io::stdout().flush().unwrap();
             Ok(())
         })
         .unwrap();
+}
+
+struct ThreadWake(thread::Thread);
+
+impl Wake for ThreadWake {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.0.unpark();
+    }
 }
 
 // IDLE은 설치 전 SIG_IGN을 사용하지 않고 coordinator 기본 종료 정책을 적용한다.

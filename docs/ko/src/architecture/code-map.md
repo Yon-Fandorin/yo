@@ -40,10 +40,10 @@ yo-cli main
 |---|---|---|
 | [`src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | 인자 해석, 터미널 획득 전 표시 방식과 glyph profile 선택, 작업 디렉터리 확보, provider 시작, 터미널 세대 재진입, 최상위 정리 결과 취합 | 에이전트 의미나 터미널 렌더링 |
 | [`src/agent/mod.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs) | 구체적인 local Transcript cursor와 payload-free Request trace cursor를 포함해 `yo-core::AgentSession`을 TUI의 `AgentConnection` 포트에 맞게 연결 | provider 프로토콜 변환 또는 시기상조인 local·remote reader trait |
-| [`src/command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command.rs), [`src/live.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/live.rs), [`src/session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/session.rs), [`src/config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs) | live startup과 `yo session` 목록/직접 읽기 문법 분리, test 가능한 live 경계에서 `yo --resume UUID`와 현재 workspace의 `yo --continue` 선택, Session 목록 날짜 설정, TTY 폭에 따른 열 우선순위, 저장 Chat·Transcript·Request와 typed discovery mismatch의 stdout/stderr routing | physical Session decode, semantic recovery, provider-native resume, 범용 반응형 plain-text layout |
+| [`src/command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command.rs), [`src/live.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/live.rs), [`src/session.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/session.rs), [`src/config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs) | live startup과 `yo session` 목록/직접 읽기 문법 분리, test 가능한 live 경계에서 `yo --resume UUID`와 현재 workspace의 `yo --continue` 선택, startup-only TUI frame rate와 Session 목록 날짜 설정, TTY 폭에 따른 열 우선순위, 저장 Chat·Transcript·Request와 typed discovery mismatch의 stdout/stderr routing | physical Session decode, semantic recovery, provider-native resume, 실행 중 설정 reload, 범용 반응형 plain-text layout |
 | [`src/storage.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/storage.rs) | 사용자별 플랫폼 상태 루트와 별도 override 가능한 Session repository 루트 선택, local writer와 생성하지 않는 reader 경로를 분리해 조합. writer startup은 Host identity를 확립하지만 read-only command는 기존 identity와 repository만 관찰 | Host identity의 의미나 physical Session record 의미 |
 | [`src/process/job_control.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/job_control.rs) | 기본 `SIGTSTP` 동작 적용, 프로세스 일시정지, `SIGCONT` 뒤 물려받은 signal 상태 복원을 하나의 transaction으로 처리 | TUI 상태나 터미널 복원 |
-| [`src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Unix signal 설치·관찰·복원과 마지막 처리 | 터미널 상태 복원 |
+| [`src/process/termination`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs) | Unix signal 설치, async-signal-safe readiness 연결, 관찰, 복원과 마지막 처리 | 터미널 상태 복원이나 frontend redraw 정책 |
 
 프로세스 시작이나 종료가 실패하면 `main.rs`에서 오류 문맥에 표시된
 소유자로 이동한다. signal coordinator는 `yo-cli`에 있다. TUI는 어떤
@@ -161,7 +161,7 @@ transport 공유 구조를 추출한다.
 
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
-| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, readiness 기반 input·built-in background 조율과 동기식 custom source를 위한 bounded fallback 관찰, 설정 가능한 120/60fps frame 합치기, 비동기 prompt assist 중 editor frame 공개, 마지막 정리 결과 보고, 터미널에 독립적인 저장 Chat·Transcript·Request Projection | UI 의미 상태 전이는 `runner/state.rs`, frame-rate 정책은 `runner/frame.rs`, 저장 출력은 `runner/archival.rs`, 실행 중 조율과 보이는 motion scheduling은 `runner/unix.rs` |
+| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, 모든 live source의 필수 readiness, 무기한 idle 대기, 설정 가능한 120/60fps frame 합치기, 비동기 prompt assist 중 editor frame 공개, 마지막 정리 결과 보고, 터미널에 독립적인 저장 Chat·Transcript·Request Projection | UI 의미 상태 전이는 `runner/state.rs`, frame-rate 정책은 `runner/frame.rs`, 저장 출력은 `runner/archival.rs`, 실행 중 조율과 보이는 motion scheduling은 `runner/unix.rs` |
 | [`runner/archival.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/archival.rs), [`runner/archival/request.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/archival/request.rs) | 읽기 전용 저장 Session 출력. Request는 정확한 관찰 경계, typed detail availability와 명시적인 Request Audit 미연결 상태를 포함해 payload-free correlation trace 전체를 durable Journal 순서로 그린다 | 저장 복구 또는 Request Audit 영속화 |
 | [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph profile | 검증된 activity frame 순서·elapsed 기반 선택·최대 예약 marker 폭·연속 shimmer 계산·색상 깊이 해석·reduced motion은 `appearance/activity.rs`, profile 생성은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | terminal cell 폭에 맞춰 고정 열을 유지하고 짧은 접힌 label/value pair는 폭 안에서 flow로 채우며 block 값은 독립된 한 줄을 사용하되 필요할 때만 label과 값을 분리하고, grapheme을 자르지 않고 개행한 뒤 필요하면 세로 card layout으로 전환하는 plain 목록 | 열의 의미와 접기 우선순위 또는 continuation hint, 설정, stdout TTY 정책, terminal 소유권 |
@@ -231,7 +231,9 @@ TrueColor·Limited·Unknown 중 하나와 Standard·Reduced motion preference �
 host가 built-in ASCII profile도 선택하게 한다. `TuiSession::with_session_info`는
 같은 명시적 publication 경계에 backend와 workspace label을 더한다.
 `TuiSession::with_frame_rate_limit`은 기본 120fps frame 합치기 정책을 유지하거나
-semantic 상태 전이를 바꾸지 않고 host가 60fps로 낮추게 한다.
+semantic 상태 전이를 바꾸지 않고 host가 60fps로 낮추게 한다. CLI는 startup-only
+`tui.max_fps` 설정을 이 정책으로 옮긴다. 향후 GUI는 source readiness를 재사용하되
+자체 event loop와 redraw/vsync 정책을 유지할 수 있다.
 chrome은 알 수 없는 model, context, Git, permission 값을
 만들어내지 않고 생략한다.
 보존된 상태에는 해당 agent Session의 식별자가 있으므로 재진입할 때도 같은

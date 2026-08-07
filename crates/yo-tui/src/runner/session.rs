@@ -262,7 +262,7 @@ fn single_line_label(value: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{TuiSession, TuiSessionInfo};
+    use super::{FrameRateLimit, TuiSession, TuiSessionInfo};
     use crate::{
         appearance::{ColorCapability, MotionPreference},
         overlay::{PanelSnapshot, SelectionEntry, SlotError},
@@ -302,5 +302,15 @@ mod tests {
             session.refresh_prompt_overlay(token, panel("Late")),
             Err(SlotError::StaleToken)
         );
+    }
+
+    // 시작 시 선택한 frame 제한은 terminal ownership generation이 parts를 다시 빌려도 유지됩니다.
+    #[test]
+    fn frame_rate_limit_is_retained_across_generation_borrows() {
+        let mut session = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard)
+            .with_frame_rate_limit(FrameRateLimit::Fps60);
+
+        assert_eq!(session.parts_mut().frame_rate_limit, FrameRateLimit::Fps60);
+        assert_eq!(session.parts_mut().frame_rate_limit, FrameRateLimit::Fps60);
     }
 }

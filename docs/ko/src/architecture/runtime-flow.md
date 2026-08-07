@@ -243,14 +243,17 @@ Inline 또는 Fullscreen presenter
    완성된 `Surface`를 조합해 활성 presenter로 보낸다. `runner/view.rs`는
    같은 record stream에서 Chat, Transcript, Request를 선택한다. Chat의
    사용자 입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난
-   뒤에만 표시된다. terminal `EventStream` readiness와 built-in agent·local
-   workspace·Codex skill producer readiness가 owner thread를 깨운다. 상태 변경은 event마다 동기적으로
+   뒤에만 표시된다. terminal `EventStream` readiness와 agent·workspace·skill
+   producer readiness가 owner thread를 깨운다. 각 live-source trait가 이 계약을
+   필수로 요구하며 주기적인 관찰 fallback은 없다. Unix 종료 handler는 durable signal
+   bit를 공개하고 nonblocking async-signal-safe write만 수행한다. 일반 notifier thread가
+   이 byte를 같은 frontend wake로 바꾼 뒤 host가 정리하고 선택한 원래 signal을 재생한다.
+   상태 변경은 event마다 동기적으로
    그리지 않고 frame을 요청한다. `FrameScheduler`는 첫 frame과 resize frame을 즉시
    공개하고, 일반 요청은 `TuiSession` 제한에 맞춰 합친다. 기본은 120fps이고 host가
-   `FrameRateLimit::Fps60`을 선택하면 60fps다. 이 기본 제공 비동기 source에서 50ms
-   bounded wait는 input·agent·provider·rendering poll 간격이 아니다. 이 wait는
-   process host의 동기식 종료 관찰과 기본 `poll_ready` 구현을 유지하는 custom 동기식
-   connection 또는 provider를 위한 fallback으로 남는다. `@`나 `$` discovery를 dispatch하는 editor mutation은 provider
+   `FrameRateLimit::Fps60`을 선택하면 60fps다. readiness나 예약된 frame·motion·활성
+   backpressure 마감이 없으면 owner는 무기한 잠들 수 있다. 10ms backpressure 재시도는
+   작업이 실제로 보존된 동안에만 deadline으로 남는다. `@`나 `$` discovery를 dispatch하는 editor mutation은 provider
    결과보다 먼저 frame을 요청하고, 이전 usable panel은 pending snapshot gate 뒤에
    계속 보인다. elapsed로 선택한 Rich Braille 또는 ASCII 작업 marker frame을 고정된
    최대 폭 영역에 그리거나 고정 문구 activity sheen을 실제로 그린 Chat
@@ -338,11 +341,15 @@ version: 1
 session:
   list:
     date_format: "%Y-%m-%d %H:%M %:z"
+tui:
+  max_fps: 120
 ```
 
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
-timezone으로 표시한다. 설정 파일이 없으면 위 기본값을 사용한다. 파일을 읽을 수
-없거나 version/field/크기/date format이 잘못되면 조용히 기본값으로 대체하지 않고
+timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
+한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. 설정
+파일이 없으면 위 기본값을 사용한다. 파일을 읽을 수 없거나 version/field/크기/date
+format/frame rate가 잘못되면 조용히 기본값으로 대체하지 않고
 명시적으로 실패한다. reader는 nonblocking descriptor 하나를 열어 regular file인지
 확인하고 64 KiB와 판별용 한 byte까지만 읽으므로 FIFO가 command를 멈추거나 동시에
 커지는 파일이 상한을 우회하지 못한다. repository가

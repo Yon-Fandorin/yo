@@ -35,24 +35,28 @@ pub enum PresentationMode {
 /// A process-host termination observation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminationEvent {
-    /// No process termination has been requested.
-    None,
     /// The host requested termination after terminal cleanup.
     Requested,
 }
 
-/// Supplies process-host termination observations without exposing OS signals.
+/// Supplies process-host termination readiness without exposing OS signals.
 pub trait TerminationSource {
-    /// Polls the current process termination state.
-    fn poll_termination(&mut self) -> TerminationEvent;
+    /// Registers the frontend task and observes a pending termination request.
+    fn poll_termination(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<TerminationEvent>;
 }
 
 impl<S> TerminationSource for &mut S
 where
     S: TerminationSource + ?Sized,
 {
-    fn poll_termination(&mut self) -> TerminationEvent {
-        (**self).poll_termination()
+    fn poll_termination(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<TerminationEvent> {
+        (**self).poll_termination(context)
     }
 }
 

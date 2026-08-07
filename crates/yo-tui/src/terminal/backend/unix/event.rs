@@ -40,12 +40,12 @@ where
         &mut self,
         context: &mut Context<'_>,
     ) -> Poll<Result<UnixEvent, InputReadFailure<E::Error>>> {
-        if self.termination.poll_termination() == TerminationEvent::Requested {
+        if self.termination.poll_termination(context) == Poll::Ready(TerminationEvent::Requested) {
             return Poll::Ready(Ok(UnixEvent::Terminate));
         }
 
         let input = self.input.poll_event(context);
-        if self.termination.poll_termination() == TerminationEvent::Requested {
+        if self.termination.poll_termination(context) == Poll::Ready(TerminationEvent::Requested) {
             return Poll::Ready(Ok(UnixEvent::Terminate));
         }
 
@@ -54,14 +54,17 @@ where
 
     pub(crate) fn next(
         &mut self,
-        timeout: Duration,
+        timeout: Option<Duration>,
         context: &mut Context<'_>,
     ) -> Result<UnixEvent, InputReadFailure<E::Error>> {
         if let Poll::Ready(event) = self.poll_next(context) {
             return event;
         }
 
-        thread::park_timeout(timeout);
+        match timeout {
+            Some(timeout) => thread::park_timeout(timeout),
+            None => thread::park(),
+        }
         match self.poll_next(context) {
             Poll::Ready(event) => event,
             Poll::Pending => Ok(UnixEvent::Idle),

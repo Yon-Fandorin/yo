@@ -4,16 +4,23 @@ use std::{
     marker::PhantomData,
     panic::{AssertUnwindSafe, catch_unwind},
     rc::Rc,
-    sync::atomic::{AtomicU8, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
     thread::{self, ThreadId},
 };
 
 use nix::sys::signal::{SigAction, SigSet, SigmaskHow, Signal, pthread_sigmask};
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
 
-use self::state::{Phase, SharedState, StateError};
+use self::{
+    readiness::{TerminationNotifier, TerminationReadiness},
+    state::{Phase, SharedState, StateError},
+};
 
 pub(crate) mod disposition;
+mod readiness;
 mod state;
 
 static PROCESS_COORDINATOR: AtomicU8 = AtomicU8::new(0);
@@ -36,6 +43,8 @@ where
     owner: ThreadId,
     retired: bool,
     owns_process_claim: bool,
+    readiness: Arc<TerminationReadiness>,
+    notifier: Option<TerminationNotifier>,
     _thread_bound: PhantomData<Rc<()>>,
 }
 
@@ -55,7 +64,44 @@ impl TerminationCoordinator<UnixSignalOs> {
             PROCESS_COORDINATOR.store(2, Ordering::SeqCst);
             return Err(HostError::state(error));
         }
-        match Self::install_with(&PROCESS_STATE, UnixSignalOs, true) {
+        let mut os = UnixSignalOs;
+        let original_mask = match os.capture_and_block_configured() {
+            Ok(mask) => mask,
+            Err(error) => {
+                PROCESS_STATE.force_phase(Phase::FailedRetired);
+                PROCESS_COORDINATOR.store(2, Ordering::SeqCst);
+                return Err(HostError::single(
+                    "capturing the installing thread signal mask",
+                    error,
+                ));
+            },
+        };
+        let readiness = Arc::new(TerminationReadiness::new());
+        let notifier = match TerminationNotifier::install(Arc::clone(&readiness)) {
+            Ok(notifier) => notifier,
+            Err(error) => {
+                let mut failures = vec![error.to_string()];
+                if let Err(restore_error) = os.restore_mask(&original_mask) {
+                    failures.push(format!(
+                        "restoring the installing thread signal mask: {restore_error}"
+                    ));
+                }
+                PROCESS_STATE.force_phase(Phase::FailedRetired);
+                PROCESS_COORDINATOR.store(2, Ordering::SeqCst);
+                return Err(HostError::many(
+                    "installing process termination readiness",
+                    failures,
+                ));
+            },
+        };
+        match Self::install_after_block(
+            &PROCESS_STATE,
+            os,
+            true,
+            original_mask,
+            readiness,
+            Some(notifier),
+        ) {
             Ok(coordinator) => Ok(coordinator),
             Err(error) => {
                 PROCESS_COORDINATOR.store(2, Ordering::SeqCst);
@@ -69,15 +115,50 @@ impl<O> TerminationCoordinator<O>
 where
     O: SignalOs,
 {
+    #[cfg_attr(not(test), allow(dead_code))]
     fn install_with(
+        shared: &'static SharedState,
+        os: O,
+        owns_process_claim: bool,
+    ) -> Result<Self, HostError> {
+        Self::install_with_parts(
+            shared,
+            os,
+            owns_process_claim,
+            Arc::new(TerminationReadiness::new()),
+            None,
+        )
+    }
+
+    fn install_with_parts(
         shared: &'static SharedState,
         mut os: O,
         owns_process_claim: bool,
+        readiness: Arc<TerminationReadiness>,
+        notifier: Option<TerminationNotifier>,
     ) -> Result<Self, HostError> {
         let original_mask = os.capture_and_block_configured().map_err(|error| {
             shared.force_phase(Phase::FailedRetired);
             HostError::single("capturing the installing thread signal mask", error)
         })?;
+        Self::install_after_block(
+            shared,
+            os,
+            owns_process_claim,
+            original_mask,
+            readiness,
+            notifier,
+        )
+    }
+
+    fn install_after_block(
+        shared: &'static SharedState,
+        mut os: O,
+        owns_process_claim: bool,
+        original_mask: O::Mask,
+        readiness: Arc<TerminationReadiness>,
+        notifier: Option<TerminationNotifier>,
+    ) -> Result<Self, HostError> {
         let mut prior_actions = Vec::with_capacity(SIGNALS.len());
 
         for signal in SIGNALS {
@@ -115,6 +196,8 @@ where
             owner: thread::current().id(),
             retired: false,
             owns_process_claim,
+            readiness,
+            notifier,
             _thread_bound: PhantomData,
         })
     }
@@ -157,6 +240,7 @@ where
 
         let mut events = TerminationEvents {
             shared: self.shared,
+            readiness: Arc::clone(&self.readiness),
         };
         let result = catch_unwind(AssertUnwindSafe(|| operation(&mut events, resource)));
         self.shared
@@ -217,6 +301,7 @@ where
                 failures.push(format!("restoring {signal:?}: {error}"));
             }
         }
+        drop(self.notifier.take());
         if let Err(error) = self.os.restore_mask(&self.original_mask) {
             failures.push(format!(
                 "restoring the installing thread signal mask: {error}"
@@ -277,14 +362,22 @@ where
 
 pub(crate) struct TerminationEvents {
     shared: &'static SharedState,
+    readiness: Arc<TerminationReadiness>,
 }
 
 impl yo_tui::TerminationSource for TerminationEvents {
-    fn poll_termination(&mut self) -> yo_tui::TerminationEvent {
+    fn poll_termination(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<yo_tui::TerminationEvent> {
         if self.shared.observe_termination() {
-            yo_tui::TerminationEvent::Requested
+            return std::task::Poll::Ready(yo_tui::TerminationEvent::Requested);
+        }
+        let _ = self.readiness.poll(context);
+        if self.shared.observe_termination() {
+            std::task::Poll::Ready(yo_tui::TerminationEvent::Requested)
         } else {
-            yo_tui::TerminationEvent::None
+            std::task::Poll::Pending
         }
     }
 }

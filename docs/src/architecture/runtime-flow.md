@@ -249,16 +249,20 @@ The useful inspection points are:
    completed `Surface`, and send it to the active presenter. `runner/view.rs`
    selects Chat, Transcript, or Request from the same record stream. Chat shows
    user input only when its `StartTurn` or `SteerTurn` command appears in that
-   sequence. Terminal `EventStream` readiness and the built-in agent, local
-   workspace, and Codex skill producer readiness wake the owner thread. State changes request a frame
+   sequence. Terminal `EventStream` readiness and the agent, workspace, and
+   skill producer readiness wake the owner thread. Their live-source traits
+   require this contract; there is no periodic observation fallback. Unix
+   termination handlers publish the durable signal bit and perform only a
+   nonblocking, async-signal-safe write. A normal notifier thread converts that
+   byte into the same frontend wake before the host cleans up and replays the
+   selected original signal. State changes request a frame
    instead of drawing synchronously for every event. `FrameScheduler` publishes
    the first and resize frames immediately, then coalesces ordinary requests at
    the `TuiSession` limit: 120fps by default, or 60fps when the host selects
-   `FrameRateLimit::Fps60`. For those shipped asynchronous sources, the 50ms
-   bounded wait is not an input, agent, provider, or rendering poll interval. It
-   remains as a fallback for the process host's synchronous termination
-   observation and for custom synchronous connections or providers that retain
-   the default `poll_ready` implementation. An editor mutation that dispatches
+   `FrameRateLimit::Fps60`. With no readiness or scheduled frame, motion, or
+   active-backpressure deadline, the owner may sleep indefinitely. The 10ms
+   backpressure retry remains a deadline only while an operation is actively
+   retained. An editor mutation that dispatches
    `@` or `$` discovery requests a frame before any provider result; the prior usable panel remains visible
    behind a pending snapshot gate. A Chat frame that actually paints the elapsed-selected
    Rich Braille or ASCII work-marker frame inside its fixed maximum-width region, or a
@@ -355,12 +359,16 @@ version: 1
 session:
   list:
     date_format: "%Y-%m-%d %H:%M %:z"
+tui:
+  max_fps: 120
 ```
 
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
-in the viewing machine's local timezone. Missing configuration uses the shown
-default. Unreadable files, unsupported versions, unknown fields, oversized
-files, and invalid date formats are explicit failures rather than silent
+in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
+`120`; live startup reads it once and applies it to retained TUI generations.
+Runtime reload is not supported. Missing configuration uses the shown defaults.
+Unreadable files, unsupported versions, unknown fields, oversized files,
+invalid date formats, and unsupported frame rates are explicit failures rather than silent
 fallbacks. The reader opens one nonblocking descriptor, requires it to be a
 regular file, and consumes at most 64 KiB plus one sentinel byte, so a FIFO
 cannot stall the command and concurrent file growth cannot bypass the bound. A

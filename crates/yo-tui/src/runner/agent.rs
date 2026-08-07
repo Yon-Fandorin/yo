@@ -45,12 +45,6 @@ pub trait AgentConnection {
     /// Observes one already committed Transcript record without blocking.
     fn poll(&mut self) -> Result<AgentPoll, Self::Error>;
 
-    /// Registers the owner-thread task to wake for the next out-of-thread change.
-    ///
-    /// The default preserves synchronous connection implementations and relies
-    /// on the runner's bounded fallback observation. Connections with an
-    /// out-of-thread producer should override this method.
-    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
-        Poll::Pending
-    }
+    /// Registers the frontend task to wake for the next out-of-thread change.
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()>;
 }

@@ -25,8 +25,7 @@ const RESULT_CAP: usize = 40;
 
 pub struct LocalWorkspaceReferenceProvider {
     requests: Sender<WorkspaceReferenceSearchRequest>,
-    updates: Receiver<WorkspaceReferenceSearchUpdate>,
-    readiness: Arc<crate::readiness::Readiness>,
+    updates: crate::readiness::ReadyReceiver<WorkspaceReferenceSearchUpdate>,
 }
 
 struct Inventory {
@@ -55,8 +54,7 @@ impl LocalWorkspaceReferenceProvider {
             })?;
         Ok(Self {
             requests: request_tx,
-            updates: update_rx,
-            readiness,
+            updates: crate::readiness::ReadyReceiver::new(update_rx, readiness),
         })
     }
 }
@@ -77,7 +75,7 @@ impl WorkspaceReferenceProvider for LocalWorkspaceReferenceProvider {
     }
 
     fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()> {
-        self.readiness.poll(context)
+        self.updates.poll_ready(context)
     }
 }
 

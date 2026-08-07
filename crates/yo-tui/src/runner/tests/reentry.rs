@@ -131,11 +131,11 @@ struct StopAfter {
 }
 
 impl TerminationSource for StopAfter {
-    fn poll_termination(&mut self) -> TerminationEvent {
+    fn poll_termination(&mut self, _context: &mut Context<'_>) -> Poll<TerminationEvent> {
         if self.counter.get() >= self.threshold {
-            TerminationEvent::Requested
+            Poll::Ready(TerminationEvent::Requested)
         } else {
-            TerminationEvent::None
+            Poll::Pending
         }
     }
 }
@@ -143,6 +143,11 @@ impl TerminationSource for StopAfter {
 #[derive(Default)]
 struct SimpleAgent {
     records: VecDeque<TranscriptRecord>,
+}
+
+#[derive(Default)]
+struct ContinuouslyReadyAgent {
+    readiness_polls: usize,
 }
 
 #[derive(Default)]
@@ -164,6 +169,10 @@ impl AgentConnection for RetainingAgent {
 
     fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
         Ok(AgentPoll::Pending)
+    }
+
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
     }
 }
 
@@ -197,12 +206,42 @@ impl AgentConnection for SimpleAgent {
             .pop_front()
             .map_or(AgentPoll::Pending, AgentPoll::Record))
     }
+
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
+        Poll::Pending
+    }
+}
+
+impl AgentConnection for ContinuouslyReadyAgent {
+    type Error = Infallible;
+
+    fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
+        Ok(DispatchOutcome::Queued)
+    }
+
+    fn retry(&mut self, _pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
+        Ok(DispatchOutcome::Queued)
+    }
+
+    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
+        Ok(AgentPoll::Pending)
+    }
+
+    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
+        self.readiness_polls += 1;
+        assert_eq!(
+            self.readiness_polls, 1,
+            "termination must be polled before a continuously ready source is revisited"
+        );
+        Poll::Ready(())
+    }
 }
 
 #[derive(Default)]
 struct Presenter {
     previous_on_render: Vec<bool>,
     frames: Vec<Surface>,
+    render_count: Rc<Cell<usize>>,
 }
 
 impl FrameViewport for Presenter {
@@ -219,6 +258,7 @@ impl LivePresenter<Backend> for Presenter {
     ) -> Result<(), LoopError> {
         self.previous_on_render.push(previous.is_some());
         self.frames.push(current.clone());
+        self.render_count.set(self.render_count.get() + 1);
         Ok(())
     }
 }
@@ -294,21 +334,29 @@ fn run_generation(
     retained: &mut TuiSession,
     agent: &mut impl AgentConnection,
     events: Events,
-    termination: StopAfter,
+    stop_after_frames: usize,
 ) -> Presenter {
-    run_generation_at(retained, agent, events, termination, Instant::now())
+    run_generation_at(retained, agent, events, stop_after_frames, Instant::now())
 }
 
 fn run_generation_at(
     retained: &mut TuiSession,
     agent: &mut impl AgentConnection,
     events: Events,
-    termination: StopAfter,
+    stop_after_frames: usize,
     started: Instant,
 ) -> Presenter {
     let mut backend = Backend::default();
     let mut terminal = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
-    let mut presenter = Presenter::default();
+    let render_count = Rc::new(Cell::new(0));
+    let mut presenter = Presenter {
+        render_count: Rc::clone(&render_count),
+        ..Presenter::default()
+    };
+    let termination = StopAfter {
+        counter: render_count,
+        threshold: stop_after_frames,
+    };
     let mut reader = UnixEventReader::new(events, termination);
 
     assert!(matches!(
@@ -353,6 +401,22 @@ fn active_motion_session(period: Duration) -> TuiSession {
         .observe(AgentEvent::TurnStarted { turn: turn() })
         .unwrap();
     retained
+}
+
+// nonterminal source가 계속 ready여도 같은 loop에서 이미 게시된 종료 요청을 먼저 처리합니다.
+#[test]
+fn continuously_ready_source_cannot_starve_termination() {
+    let mut retained = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
+    let mut agent = ContinuouslyReadyAgent::default();
+
+    run_generation(
+        &mut retained,
+        &mut agent,
+        Events::new([], Rc::new(Cell::new(0)), Rc::new(Cell::new(0))),
+        0,
+    );
+
+    assert_eq!(agent.readiness_polls, 1);
 }
 
 struct BlockingAgentBackend {
@@ -413,6 +477,10 @@ impl AgentConnection for CoreAgent {
     fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
         Ok(AgentPoll::Pending)
     }
+
+    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<()> {
+        self.session.poll_ready(context)
+    }
 }
 
 // 첫 generation의 실제 input·render loop가 만든 대화와 작성 중인 prompt를 같은
@@ -439,10 +507,7 @@ fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
             Rc::clone(&first_polls),
             Rc::new(Cell::new(0)),
         ),
-        StopAfter {
-            counter: first_polls,
-            threshold: 6,
-        },
+        2,
     );
 
     let second_polls = Rc::new(Cell::new(0));
@@ -450,10 +515,7 @@ fn second_terminal_generation_renders_retained_state_from_a_fresh_frame() {
         &mut retained,
         &mut agent,
         Events::new([], Rc::clone(&second_polls), Rc::new(Cell::new(0))),
-        StopAfter {
-            counter: second_polls,
-            threshold: 2,
-        },
+        1,
     );
 
     assert!(!first.previous_on_render[0]);
@@ -535,10 +597,7 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
         &mut retained,
         &mut agent,
         Events::new([], Rc::clone(&polls), Rc::new(Cell::new(0))),
-        StopAfter {
-            counter: polls,
-            threshold: 2,
-        },
+        1,
     );
 
     assert_eq!(agent.retries, 2);
@@ -564,10 +623,7 @@ fn normal_wait_coalesces_input_and_due_motion_into_one_redraw() {
             Rc::clone(&polls),
             Rc::new(Cell::new(0)),
         ),
-        StopAfter {
-            counter: polls,
-            threshold: 4,
-        },
+        2,
     );
 
     assert_eq!(presenter.frames.len(), 2);
@@ -612,19 +668,14 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
         &mut retained,
         &mut agent,
         Events::new([], Rc::clone(&polls), Rc::new(Cell::new(0))),
-        StopAfter {
-            counter: polls,
-            // Spurious owner-thread wakeups may add empty polls; keep enough headroom for the
-            // 16ms motion deadline to become due without making poll count the clock.
-            threshold: 25,
-        },
+        2,
     );
 
     release_tx.send(()).unwrap();
     wait_for_session_change(&mut core);
     core.shutdown().unwrap();
 
-    assert!(agent.retries >= 3);
+    assert!(agent.retries >= 2);
     assert!(presenter.frames.len() >= 2);
     assert!(surface_text(&presenter.frames[0]).contains("* Working"));
 }
@@ -642,13 +693,17 @@ fn zero_size_resize_preserves_the_generation_motion_epoch() {
         Rc::clone(&polls),
         Rc::new(Cell::new(0)),
     );
+    let render_count = Rc::new(Cell::new(0));
     let termination = StopAfter {
-        counter: polls,
-        threshold: 2,
+        counter: Rc::clone(&render_count),
+        threshold: 1,
     };
     let mut backend = Backend::default();
     let mut terminal = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
-    let mut presenter = Presenter::default();
+    let mut presenter = Presenter {
+        render_count,
+        ..Presenter::default()
+    };
     let mut reader = UnixEventReader::new(events, termination);
     let started = Instant::now()
         .checked_sub(period + Duration::from_millis(100))
@@ -693,10 +748,7 @@ fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
         &mut retained,
         &mut agent,
         Events::new([], Rc::clone(&first_polls), Rc::new(Cell::new(0))),
-        StopAfter {
-            counter: first_polls,
-            threshold: 1,
-        },
+        1,
         old_epoch,
     );
     let second_polls = Rc::new(Cell::new(0));
@@ -704,10 +756,7 @@ fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
         &mut retained,
         &mut agent,
         Events::new([], Rc::clone(&second_polls), Rc::new(Cell::new(0))),
-        StopAfter {
-            counter: second_polls,
-            threshold: 1,
-        },
+        1,
     );
 
     let first_styles = styles_for_ascii_text(&first.frames[0], "* Working");

@@ -18,12 +18,14 @@ const MAX_DATE_FORMAT_BYTES: usize = 128;
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
     date_format: String,
+    frame_rate_limit: yo_tui::FrameRateLimit,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             date_format: DEFAULT_DATE_FORMAT.to_owned(),
+            frame_rate_limit: yo_tui::FrameRateLimit::Fps120,
         }
     }
 }
@@ -31,6 +33,10 @@ impl Default for Config {
 impl Config {
     pub(crate) fn date_formatter(&self) -> Result<DateFormatter, ConfigError> {
         DateFormatter::new(&self.date_format)
+    }
+
+    pub(crate) fn frame_rate_limit(&self) -> yo_tui::FrameRateLimit {
+        self.frame_rate_limit
     }
 }
 
@@ -96,6 +102,10 @@ pub(crate) enum ConfigError {
         version: u32,
     },
     InvalidDateFormat(String),
+    InvalidMaxFps {
+        path: PathBuf,
+        value: u16,
+    },
     TimestampOutOfRange(u64),
 }
 
@@ -130,6 +140,11 @@ impl fmt::Display for ConfigError {
                 path.display()
             ),
             Self::InvalidDateFormat(message) => formatter.write_str(message),
+            Self::InvalidMaxFps { path, value } => write!(
+                formatter,
+                "{}: tui.max_fps must be 60 or 120, not {value}",
+                path.display()
+            ),
             Self::TimestampOutOfRange(millis) => {
                 write!(
                     formatter,
@@ -151,6 +166,7 @@ impl Error for ConfigError {
             | Self::TooLarge(_)
             | Self::UnsupportedVersion { .. }
             | Self::InvalidDateFormat(_)
+            | Self::InvalidMaxFps { .. }
             | Self::TimestampOutOfRange(_) => None,
         }
     }
@@ -162,6 +178,8 @@ struct FileConfig {
     version: u32,
     #[serde(default)]
     session: SessionConfig,
+    #[serde(default)]
+    tui: TuiConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -175,6 +193,12 @@ struct SessionConfig {
 #[serde(deny_unknown_fields)]
 struct SessionListConfig {
     date_format: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TuiConfig {
+    max_fps: Option<u16>,
 }
 
 pub(crate) fn load() -> Result<Config, ConfigError> {
@@ -236,12 +260,23 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
             version: decoded.version,
         });
     }
+    let frame_rate_limit = match decoded.tui.max_fps.unwrap_or(120) {
+        60 => yo_tui::FrameRateLimit::Fps60,
+        120 => yo_tui::FrameRateLimit::Fps120,
+        value => {
+            return Err(ConfigError::InvalidMaxFps {
+                path: path.to_owned(),
+                value,
+            });
+        },
+    };
     let config = Config {
         date_format: decoded
             .session
             .list
             .date_format
             .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_owned()),
+        frame_rate_limit,
     };
     config.date_formatter().map_err(|error| match error {
         ConfigError::InvalidDateFormat(message) => {

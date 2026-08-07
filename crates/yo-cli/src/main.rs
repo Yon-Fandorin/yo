@@ -58,6 +58,10 @@ fn run() -> Result<(), AppError> {
                 return Ok(());
             },
         };
+    // Live configuration is snapshotted once and retained across terminal ownership generations.
+    let frame_rate_limit = config::load()
+        .map_err(|error| AppError::single("reading Yo configuration", error))?
+        .frame_rate_limit();
     let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
         AppError::single("installing the process termination coordinator", error)
     })?;
@@ -68,7 +72,14 @@ fn run() -> Result<(), AppError> {
         let generation = host.with_active_resource(
             &mut live,
             |termination, live| {
-                run_agent_generation(termination, live, &cwd, options, launch_failure_selection)
+                run_agent_generation(
+                    termination,
+                    live,
+                    &cwd,
+                    options,
+                    launch_failure_selection,
+                    frame_rate_limit,
+                )
             },
             shutdown_live_session,
         );
@@ -123,6 +134,7 @@ fn run_agent_generation(
     cwd: &std::path::Path,
     options: command::LiveOptions,
     launch_failure_selection: command::LiveSelection,
+    frame_rate_limit: yo_tui::FrameRateLimit,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {
         let storage = match storage::open_default() {
@@ -293,6 +305,7 @@ fn run_agent_generation(
                 terminal_color_capability(),
                 yo_tui::MotionPreference::Standard,
             )
+            .with_frame_rate_limit(frame_rate_limit)
             .with_workspace_references(workspace_references)
             .with_skill_references(skill_references),
         });

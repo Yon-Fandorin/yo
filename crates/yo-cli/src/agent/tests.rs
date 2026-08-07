@@ -1,6 +1,7 @@
 use std::{
     num::NonZeroU64,
     sync::{Arc, Mutex, mpsc},
+    task::{Context, Poll},
     thread,
     time::{Duration, Instant},
 };
@@ -158,8 +159,8 @@ impl SessionRepository for CapacityPressureRepository {
 }
 
 impl TerminationSource for NeverTerminated {
-    fn poll_termination(&mut self) -> TerminationEvent {
-        TerminationEvent::None
+    fn poll_termination(&mut self, _context: &mut Context<'_>) -> Poll<TerminationEvent> {
+        Poll::Pending
     }
 }
 
