@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.events-001
+revision: sha256:6eee66c1defd59cb5828130d9a7e248f27340bdabf9ff6d6623a82ecf4d421b8
+payload:
+  kind: decision
+  content: The live frontend selects the first ready terminal-input, agent, workspace, or skill source in cyclic order from a rotating cursor, handles at most one ordinary observation, and then advances the cursor. Process termination is a separate strict-priority control path checked before selection and after polling every ordinary source before its result is handled. Level-preserving readiness permits indefinite idle waits without a periodic fallback.

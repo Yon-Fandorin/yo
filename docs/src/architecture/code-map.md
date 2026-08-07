@@ -259,6 +259,11 @@ Appearance contracts:
 and
 [resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
+Runtime scheduling contracts:
+[bounded frame scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.frame-scheduling.md)
+and
+[fair readiness-driven event sources](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.event-source-scheduling.md).
+
 The `surface` is the common completed state. Terminal and HTML projections
 consume it independently; neither projection defines layout meaning for the
 other.

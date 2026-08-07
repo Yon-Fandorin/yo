@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: tui.dependencies.terminal-backend-selection
-revision: sha256:263b9b9a27a07bbcae8c1bb5bb6144fba5ef69e7857ca0698152bbf458692312
+revision: sha256:632b25f826964df1a588a50e79429a721e83ef9b31002b8195083118e1800af2
 reviewer: tui-architecture
-reviewed_at: 2026-07-28T03:38:22Z
+reviewed_at: 2026-08-07T10:25:54Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:05728eeaa1150a559524027a15dd8f7ebc92723c4c53569e99d17befe187e662
-request_hash: sha256:f16dc3d49cb98a35e39f9777708e54e2288c3b595bf3c93111c57665ffb0f310
+projection_hash: sha256:b9af5f3bfce10b50aba29629367cccb173949a93edcc99d9a89a9ec6b2fb7729
+request_hash: sha256:b0701d1a12a2a3ac1333303653b6eff76bedf1fd39970e135c9a982bb7a2c28b

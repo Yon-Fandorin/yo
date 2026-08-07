@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: tui.dependencies-001
-revision: sha256:3bfc01fb7ae2f355d5918e080cba41c8b7e83ab6953633e71009f72b0cd784cb
+revision: sha256:e73ad00259d797bfaaabf7fd44eb806d0aabc45d76a3bc0f92b3e4fb18a8e9a1
 payload:
   kind: decision
-  content: The Unix UI adapter uses feature-minimal crossterm input and rustix-owned exact termios state, while the private yo-cli process host uses one audited nix sigaction boundary and signal-hook default emulation; yo-tui owns terminal cleanup but not process-signal installation or replay.
+  content: The Unix UI adapter uses feature-minimal Crossterm event decoding plus its EventStream readiness surface, polled directly by the terminal-owning thread through futures-core without an async runtime or periodic input timeout. Rustix owns exact termios state, while the private yo-cli process host owns the audited Nix sigaction boundary and Signal Hook default emulation; yo-tui owns terminal cleanup but not process-signal installation or replay.

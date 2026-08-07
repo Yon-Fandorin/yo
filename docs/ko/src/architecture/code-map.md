@@ -252,6 +252,10 @@ Appearance 계약:
 그리고
 [resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
+Runtime scheduling 계약:
+[bounded frame scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.frame-scheduling.md)과
+[공정한 readiness 기반 event source](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.event-source-scheduling.md).
+
 `surface`는 공통으로 완성된 상태다. 터미널과 HTML Projection은 이를
 각자 소비하며, 어느 쪽도 다른 쪽의 layout 의미를 정의하지 않는다.
 

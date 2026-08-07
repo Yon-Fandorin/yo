@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.runtime.frame-scheduling
+revision: sha256:f356fb179b08f615ceaf5d018a89ba8a4fe204b04933766b5851f6fa097bcf56
+reviewer: tui-architecture
+reviewed_at: 2026-08-07T10:25:54Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:8074bcf24cd9e4bfb542b14b46884531c9552a98527401e43a2077277806ec73
+request_hash: sha256:b8ee3aff812b08e30fd2bbfc0c34eb1f950834f76144b6f0dc47bfd6c2d61741

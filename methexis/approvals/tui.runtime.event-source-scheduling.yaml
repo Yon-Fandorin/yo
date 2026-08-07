@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.runtime.event-source-scheduling
+revision: sha256:d7f0adfae5a45b49cf70b5aa82d8b9010fe25d4c3d7fe3a8bc7aff7987b264d3
+reviewer: tui-architecture
+reviewed_at: 2026-08-07T10:25:54Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:9f117e52371615c893e112b5c8860ff3201d741ca23767b51d518094a39fa97e
+request_hash: sha256:2b53ad43d9e525cb5b412dd563e65a9c8c102e1e60e11f6519596ccc427ec86b

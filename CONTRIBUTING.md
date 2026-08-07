@@ -241,6 +241,70 @@ review findings—do not create another human checkpoint. Resolve them, rerun th
 affected review lens, and continue. A reviewer finding becomes a checkpoint
 only when resolving it requires one of the human-owned choices above.
 
+### SOT-first changes
+
+Before changing behavior that is governed by, contradicts, or deserves durable
+SOT, make one narrow inventory of the affected implementation decisions and
+their active Knowledge owners. Classify each decision as covered, missing, or
+conflicting and record the required action. Read the active Checkpoint, those
+Knowledge units, and the exact code anchors once; do not begin implementation
+while a missing or conflicting contract remains unresolved.
+
+Keep contract authority, Checkpoint activation, and implementation as separate
+Slices. Use this order for a contract Slice:
+
+1. author or revise the decision Source, Knowledge body, and self-contained
+   Korean review Projection;
+2. run `methexis check` and worker self-check that every normative exception,
+   priority cutoff, failure outcome, and acceptance obligation is closed;
+3. commit a clean semantic candidate and perform the required fresh-context
+   review against that exact commit;
+4. resolve findings, replace the candidate commit, and repeat the affected lens
+   before requesting exact-revision human approval;
+5. record the reviewed candidate commit; after approval, generate only the
+   matching approval record, compare the resulting candidate directly with that
+   commit, and require the changed-path set to contain exactly the expected
+   approval record while `methexis check` verifies its pins;
+6. integrate the approved contract proposal into trusted `develop` before a
+   separate activation Slice creates or activates a Checkpoint; and
+7. start implementation in a fresh Slice based on the activated `develop`.
+
+The generated approval record in step 5 is the sole permitted post-review
+addition to the contract candidate. It does not invalidate the semantic review
+only when it pins the exact reviewed Knowledge revision and Projection hash,
+the human explicitly approved those values, and an exact Git diff from the
+recorded reviewed commit to the resulting candidate contains only the expected
+approval-record path or paths. The Source, Knowledge, relation, Projection, and
+all unrelated bytes MUST be identical to the reviewed commit, and `methexis
+check` MUST pass. Any other change requires a new immutable candidate and
+review. Working-diff review before step 3 is preparation only and MUST NOT be
+recorded as completed review.
+
+### Token-efficient agent operation
+
+At session start, read each routed authority once, run `cargo xtask check
+slice-scope`, and keep a compact working note containing only the base, allowed
+write-set, current decision, exact candidate, validation state, and next
+transition. Reuse that note instead of repeatedly loading broad history or full
+documents. A continuation handoff contains these fields and unresolved work,
+not transcripts or copied tool output.
+
+Use the narrowest evidence-producing command. Start with `rg`, `git status
+--short --untracked-files=all`, `git diff --stat`, and targeted line ranges;
+expand only when the result leaves a named uncertainty. Cap command output and
+split a query before truncation. Do not treat `git diff` as including untracked
+files. Avoid listing completed agents when a running reviewer identity is
+already known; wait on or message that reviewer directly.
+
+Parallelize independent read-only discovery and validation. Serialize Source,
+Knowledge, Projection, approval, Checkpoint, activation, Git-index, commit, and
+integration mutations in their authority order. Reuse hashes and manifests
+returned by `author-revision` and the `prepare-*` commands; do not guess CLI
+options, field names, revisions, model aliases, or replacement preconditions.
+After a command fails, classify the failure and change the input or state before
+retrying. Rerun a validation group only when its reviewed inputs changed or at a
+declared Slice gate.
+
 ## Ownership and reconciliation
 
 One public contract or design decision has one active owner; concurrent work never shares it. Workers must not silently expand scope, decide a shared interface, or edit outside the allowed write-set. Return a focused proposal and evidence when an out-of-scope decision is required.

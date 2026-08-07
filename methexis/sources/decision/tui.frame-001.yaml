@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.frame-001
+revision: sha256:400f3aaa51fb9b8e9ddae487143b5e55adc1dc0465222aca264445568d7df28e
+payload:
+  kind: decision
+  content: The live TUI owns one frame-request scheduler per terminal generation. The selected 120fps default or 60fps alternative bounds ordinary coalesced presentation; the first visible frame and resize frames are explicit immediate correctness exceptions. The startup-selected cadence survives terminal generations without runtime reload, and a future GUI may reuse the coalescing policy through its native display scheduler.
