@@ -10,15 +10,18 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use file::{WriterLock, append_line, prepare_root, scan_entries};
+use file::{
+    LegacyWriterCompatibilityGuard, RootAppendGuard, SessionWriterLease, append_line,
+    coordination_file, prepare_root, scan_entries,
+};
 use reader::{open_existing_root, read_snapshot_entries, read_tail_discovery};
 use wire::WireEntry;
 
 use super::{
     AppendError, AppendReceipt, DurableCutoff, DurableRecord, DurableRecordKind, RepositoryEntry,
-    RepositoryError, RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
-    StoredSession, StoredSessionReader, StoredSessionSnapshot, StoredSessionSummary,
-    StoredSessionUnavailableReason,
+    RepositoryError, RepositorySequence, SessionRepository, SessionWriterRepository,
+    StoragePressure, StoragePressureCause, StoredSession, StoredSessionReader,
+    StoredSessionSnapshot, StoredSessionSummary, StoredSessionUnavailableReason,
 };
 use crate::{JournalSequence, SessionId};
 
@@ -36,7 +39,8 @@ pub struct LocalSessionRepository {
     root: PathBuf,
     capacity_bytes: u64,
     sessions: HashMap<SessionId, SessionState>,
-    _writer_lock: WriterLock,
+    session_leases: HashMap<SessionId, SessionWriterLease>,
+    _legacy_compatibility_guard: LegacyWriterCompatibilityGuard,
 }
 
 #[derive(Debug)]
@@ -181,13 +185,14 @@ impl StoredSessionReader for LocalSessionReader {
 impl LocalSessionRepository {
     pub fn open(root: impl Into<PathBuf>, capacity_bytes: u64) -> Result<Self, RepositoryError> {
         let root = prepare_root(&root.into())?;
-        let writer_lock = WriterLock::acquire(&root)?;
+        let legacy_compatibility_guard = LegacyWriterCompatibilityGuard::acquire(&root)?;
 
         Ok(Self {
             root,
             capacity_bytes,
             sessions: HashMap::new(),
-            _writer_lock: writer_lock,
+            session_leases: HashMap::new(),
+            _legacy_compatibility_guard: legacy_compatibility_guard,
         })
     }
 
@@ -218,6 +223,8 @@ impl LocalSessionRepository {
     }
 
     fn ensure_session_state(&mut self, session_id: SessionId) -> Result<(), AppendError> {
+        self.acquire_session_writer(session_id)
+            .map_err(AppendError::Repository)?;
         let reload_required = self
             .sessions
             .get(&session_id)
@@ -264,12 +271,7 @@ impl LocalSessionRepository {
         fs::read_dir(&self.root)?
             .try_fold(0_u64, |total, entry| {
                 let entry = entry?;
-                if entry.file_name() == ".writer.lock"
-                    || entry
-                        .path()
-                        .extension()
-                        .is_some_and(|extension| extension == "pending")
-                {
+                if coordination_file(&entry.file_name()) {
                     return Ok(total);
                 }
                 let metadata = fs::symlink_metadata(entry.path())?;
@@ -302,6 +304,16 @@ impl LocalSessionRepository {
             pressure: StoragePressure::new(known_cutoff(*state), cause),
             source,
         }
+    }
+}
+
+impl SessionWriterRepository for LocalSessionRepository {
+    fn acquire_session_writer(&mut self, session_id: SessionId) -> Result<(), RepositoryError> {
+        if !self.session_leases.contains_key(&session_id) {
+            let lease = SessionWriterLease::acquire(&self.root, session_id)?;
+            self.session_leases.insert(session_id, lease);
+        }
+        Ok(())
     }
 }
 
@@ -342,31 +354,6 @@ impl SessionRepository for LocalSessionRepository {
         };
         let sequence = RepositorySequence::new(next);
 
-        let storage_bytes = match self.storage_bytes() {
-            Ok(bytes) => bytes,
-            Err(error @ RepositoryError::Unavailable { .. }) => {
-                return Err(self.mark_pressure(
-                    session_id,
-                    StoragePressureCause::Storage,
-                    Some(error),
-                ));
-            },
-            Err(
-                error @ (RepositoryError::Quarantined { .. }
-                | RepositoryError::UnsupportedSchema { .. }
-                | RepositoryError::CorruptLog { .. }
-                | RepositoryError::CorruptTail { .. }),
-            ) => {
-                return Err(AppendError::Repository(error));
-            },
-        };
-        let remaining = self.capacity_bytes.saturating_sub(storage_bytes);
-        if storage_bytes > self.capacity_bytes
-            || u64::try_from(record.payload().len()).unwrap_or(u64::MAX) > remaining
-        {
-            return Err(self.mark_pressure(session_id, StoragePressureCause::Capacity, None));
-        }
-
         let updated_unix_millis = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| {
@@ -386,6 +373,28 @@ impl SessionRepository for LocalSessionRepository {
         })?;
         encoded.push(b'\n');
         let encoded_bytes = u64::try_from(encoded.len()).unwrap_or(u64::MAX);
+
+        let append_guard = RootAppendGuard::acquire(&self.root).map_err(|error| {
+            self.mark_pressure(session_id, StoragePressureCause::Storage, Some(error))
+        })?;
+        let storage_bytes = match self.storage_bytes() {
+            Ok(bytes) => bytes,
+            Err(error @ RepositoryError::Unavailable { .. }) => {
+                return Err(self.mark_pressure(
+                    session_id,
+                    StoragePressureCause::Storage,
+                    Some(error),
+                ));
+            },
+            Err(
+                error @ (RepositoryError::Quarantined { .. }
+                | RepositoryError::UnsupportedSchema { .. }
+                | RepositoryError::CorruptLog { .. }
+                | RepositoryError::CorruptTail { .. }),
+            ) => {
+                return Err(AppendError::Repository(error));
+            },
+        };
         if storage_bytes.saturating_add(encoded_bytes) > self.capacity_bytes {
             return Err(self.mark_pressure(session_id, StoragePressureCause::Capacity, None));
         }
@@ -394,6 +403,7 @@ impl SessionRepository for LocalSessionRepository {
         if let Err(error) = append_line(&self.root, &path, &encoded) {
             return Err(self.mark_pressure(session_id, StoragePressureCause::Storage, Some(error)));
         }
+        drop(append_guard);
 
         let state = self
             .sessions

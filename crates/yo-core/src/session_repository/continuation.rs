@@ -1,7 +1,7 @@
 use std::{collections::HashSet, fmt};
 
 use super::{
-    SessionRepository, StoredSessionReader, StoredSessionSnapshot,
+    SessionWriterRepository, StoredSessionReader, StoredSessionSnapshot,
     history::normalize_recovered,
     journal::{recover_entries, recover_repository},
 };
@@ -76,11 +76,14 @@ impl fmt::Display for StoredSessionContinuationError {
 
 impl std::error::Error for StoredSessionContinuationError {}
 
-/// Revalidates one Session while its repository writer lease is held.
+/// Acquires one Session writer lease, then revalidates its executable continuation.
 pub fn recover_stored_session_continuation(
-    repository: &(impl SessionRepository + ?Sized),
+    repository: &mut (impl SessionWriterRepository + ?Sized),
     session_id: SessionId,
 ) -> Result<StoredSessionContinuation, StoredSessionContinuationError> {
+    repository
+        .acquire_session_writer(session_id)
+        .map_err(|error| StoredSessionContinuationError::new(error.to_string()))?;
     let recovered = recover_repository(repository, session_id)
         .map_err(|error| StoredSessionContinuationError::new(error.to_string()))?;
     build_continuation(recovered, session_id)

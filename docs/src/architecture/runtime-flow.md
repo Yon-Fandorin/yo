@@ -444,7 +444,7 @@ JournalRepository
     ↓ one physical append
 SessionRepository
     ↓ add writer timestamp; checksum payload + complete discovery summary
-single-writer versioned JSONL physical v1
+Session-single-writer versioned JSONL physical v1
 
 versioned JSONL
     ↓ bounded suffix read + semantic decode
@@ -463,8 +463,22 @@ available discovery summary or typed per-Session unavailability
 The reader classifies quarantine, corruption, unsupported schema, and a missing
 complete envelope without parsing diagnostic strings. A supported summary with
 no Continuation Anchor is `unavailable`; an unsupported schema is `unknown`.
-An inherited pending marker blocks a successor writer, so only the writer that
-created an in-flight marker can make its pre-append cutoff visible.
+It probes an observed pending marker against both the exact Session lease and
+the marker inode's independent append lock without creating storage. Only a
+live owner holding that exact marker lock exposes the pre-append cutoff; a
+successor cannot adopt an inherited marker, which quarantines that Session
+without hiding other Sessions. If another append replaces the marker pathname
+while it is being inspected, the reader detects the inode-generation change and
+retries against the replacement within a fixed bound instead of reporting a
+false quarantine.
+
+A writer-capable repository retains a shared guard on the legacy root lock for
+mixed-version safety. Before loading or repairing a Session it acquires that
+Session's exclusive writer lease and retains it for its lifetime. The final
+repository-wide capacity check, marker publication, append, synchronization,
+rollback, and marker removal run under a short-lived root append coordinator;
+the coordinator is released between appends and its files do not consume record
+capacity.
 
 Before the backend receives `CreateSession`, the worker attempts one
 descriptor-only incremental envelope containing the UUIDv7 Session identity,
@@ -531,7 +545,7 @@ selected Session read-only first; an unavailable direct target opens its
 archived Chat with a diagnostic instead of mutating storage. `yo --continue`
 selects the newest eligible Session for the current Host and normalized
 workspace and fails without creating a Session when none exists. A runnable
-target is revalidated under the single-writer lease, restores the same Yo
+target is revalidated under its Session writer lease, restores the same Yo
 Session identity, and resumes only its newest durable Anchor—there is no
 fallback to an older Anchor. Remote storage, Request Audit persistence,
 database or compression backends, and a durable transport remain outside this

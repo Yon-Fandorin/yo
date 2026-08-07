@@ -205,6 +205,14 @@ fn active_append_exposes_the_previous_durable_snapshot() {
     fs::write(&pending, format!("{cutoff}\n")).expect("active marker is simulated");
     fs::set_permissions(&pending, fs::Permissions::from_mode(0o600))
         .expect("marker permissions are restricted");
+    let pending_owner = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&pending)
+        .expect("the append owner opens its marker");
+    pending_owner
+        .lock()
+        .expect("the append owner locks the exact marker inode");
     OpenOptions::new()
         .append(true)
         .open(&path)
@@ -219,8 +227,14 @@ fn active_append_exposes_the_previous_durable_snapshot() {
     let history = reader
         .read_after(session_id, None, 8)
         .expect("the durable prefix remains readable");
-    let competing_writer = LocalSessionRepository::open(directory.path(), 32_768)
-        .expect_err("the reader probe must not release the live writer lock");
+    let mut competing_writer = LocalSessionRepository::open(directory.path(), 32_768)
+        .expect("another process may open the same root");
+    let competing_error = competing_writer
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("conflict")),
+        )
+        .expect_err("the reader probe must not release the live Session lease");
 
     assert_eq!(
         summaries[0]
@@ -230,7 +244,12 @@ fn active_append_exposes_the_previous_durable_snapshot() {
         RepositorySequence::new(1)
     );
     assert_eq!(history.len(), 1);
-    assert!(competing_writer.to_string().contains("another writer owns"));
+    assert!(
+        competing_error
+            .to_string()
+            .contains("another writer owns Session")
+    );
+    drop(pending_owner);
     drop(writer);
 }
 
@@ -268,10 +287,10 @@ fn abandoned_append_marker_quarantines_discovery() {
     ));
 }
 
-// 이전 writer가 남긴 marker가 있으면 다음 writer가 같은 root lock을 잡아 그 marker를
-// 자기 진행 중 append처럼 보이게 하지 못하고 저장소 전체를 먼저 격리해야 합니다.
+// 이전 writer가 남긴 marker가 있으면 다음 writer가 그 Session lease를 얻더라도 marker를
+// 자기 진행 중 append처럼 보지 않고 해당 Session만 격리해야 합니다.
 #[test]
-fn successor_writer_cannot_coexist_with_an_abandoned_marker() {
+fn successor_writer_quarantines_only_the_session_with_an_abandoned_marker() {
     let directory = TestDirectory::new("successor-with-abandoned-marker");
     let session_id = session(31);
     {
@@ -289,13 +308,39 @@ fn successor_writer_cannot_coexist_with_an_abandoned_marker() {
     fs::set_permissions(&pending, fs::Permissions::from_mode(0o600))
         .expect("marker permissions are restricted");
 
-    let error = LocalSessionRepository::open(directory.path(), 32_768)
-        .expect_err("a successor writer cannot adopt an old marker");
+    let mut successor = LocalSessionRepository::open(directory.path(), 32_768)
+        .expect("a successor may open the shared root");
+    let error = successor
+        .append(
+            session_id,
+            discovered(session_id, DurableRecord::snapshot("unsafe")),
+        )
+        .expect_err("a successor writer cannot adopt an old Session marker");
 
     assert!(matches!(
         error,
+        crate::session_repository::AppendError::StoragePressure {
+            source: Some(crate::session_repository::RepositoryError::Quarantined { .. }),
+            ..
+        }
+    ));
+
+    let reader = LocalSessionReader::open(directory.path()).expect("reader opens");
+    let read_error = reader
+        .read_after(session_id, None, 8)
+        .expect_err("the successor lease does not adopt the abandoned marker");
+    assert!(matches!(
+        read_error,
         crate::session_repository::RepositoryError::Quarantined { .. }
     ));
+
+    let other_session = session(38);
+    successor
+        .append(
+            other_session,
+            discovered(other_session, DurableRecord::incremental("independent")),
+        )
+        .expect("the abandoned marker does not quarantine another Session");
 }
 
 // newline 하나는 미완결 tail이 아니라 완결되었지만 JSON이 아닌 한 줄이므로 discovery가

@@ -148,7 +148,7 @@ fn run_agent_generation(
                 );
             },
         };
-        let (repository, workspace_host_id) = storage.into_parts();
+        let (mut repository, workspace_host_id) = storage.into_parts();
         let launch = match options.selection {
             command::LiveSelection::New => {
                 let workspace_path = yo_core::HostWorkspacePath::normalize_local(cwd)
@@ -162,7 +162,7 @@ fn run_agent_generation(
             command::LiveSelection::Resume(session_id) => {
                 let continuation =
                     match yo_core::session_repository::recover_stored_session_continuation(
-                        &repository,
+                        &mut repository,
                         session_id,
                     ) {
                         Ok(continuation) => continuation,

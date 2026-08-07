@@ -423,7 +423,7 @@ JournalRepository
     ↓ physical append 하나
 SessionRepository
     ↓ writer 시각 추가; payload와 완전한 discovery summary를 함께 checksum
-single-writer versioned JSONL physical v1
+Session-single-writer versioned JSONL physical v1
 
 versioned JSONL
     ↓ 제한된 suffix 읽기 + semantic decode
@@ -441,9 +441,19 @@ RecoveredJournal 또는 명시적인 recovery 오류
 
 reader는 진단 문자열을 다시 해석하지 않고 격리, 손상, 미지원 schema, 완결 envelope
 없음을 구분한다. 지원되는 summary에 Continuation Anchor가 없으면 `unavailable`,
-미지원 schema면 `unknown`이다. 이전 writer가 남긴 pending marker가 있으면 후속
-writer가 열리지 않으므로, 진행 중 marker를 만든 바로 그 writer만 append 전 cutoff를
-보이게 할 수 있다.
+미지원 schema면 `unknown`이다. 관찰한 pending marker는 storage를 만들지 않고 정확한
+Session lease와 marker inode의 독립 append lock 양쪽에 대조한다. 그 marker lock까지
+보유한 live owner만 append 이전 cutoff를 보일 수 있다. 후속 owner는 물려받은 marker를
+입양할 수 없으며, 그 marker는 다른 Session을 숨기지 않은 채 해당 Session만 quarantine한다.
+검사 도중 다른 append가 marker pathname을 교체하면 reader는 inode generation 변경을
+감지하고 고정된 횟수 안에서 새 marker를 다시 검사하므로 잘못 quarantine하지 않는다.
+
+Writer-capable repository는 혼합 버전 안전성을 위해 legacy root lock의 shared guard를
+lifetime 동안 유지한다. Session을 load하거나 repair하기 전에 해당 Session의 exclusive
+writer lease를 얻어 lifetime 동안 보유한다. 최종 repository-wide capacity 확인, marker
+publish, append와 sync, 필요한 rollback, marker 제거만 짧은 root append coordinator
+안에서 실행한다. Coordinator는 append 사이에 해제되며 lock·marker file은 record
+capacity를 소비하지 않는다.
 
 backend가 `CreateSession`을 받기 전에 worker는 UUIDv7 Session identity, Workspace
 Host identity, 생성 Host의 canonical path bytes, UUID와 일치하는 시작 시각을 담은
@@ -499,7 +509,7 @@ macOS는 `$HOME/Library/Application Support/yo/sessions`를 쓴다. `yo session`
 Session을 read-only로 검증하며, 직접 지정한 대상이 실행 불가능하면 저장소를
 변경하지 않고 진단과 함께 archived Chat을 연다. `yo --continue`는 현재 Host와
 정규화된 workspace에서 가장 최근 eligible Session을 고르고, 후보가 없으면 새
-Session을 만들지 않고 실패한다. 실행 가능한 대상은 single-writer lease 안에서
+Session을 만들지 않고 실패한다. 실행 가능한 대상은 해당 Session writer lease 안에서
 다시 검증하고 같은 Yo Session identity를 복원하며, 최신 durable Anchor 하나만
 재개한다. 이전 Anchor로 fallback하지 않는다. remote storage, Request Audit
 persistence, database나 compression backend, durable transport는 이 조합 밖에 남는다.

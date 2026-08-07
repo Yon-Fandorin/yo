@@ -14,41 +14,140 @@ use crate::SessionId;
 const DIRECTORY_MODE: u32 = 0o700;
 const FILE_MODE: u32 = 0o600;
 
+const LEGACY_WRITER_LOCK: &str = ".writer.lock";
+const APPEND_COORDINATOR_LOCK: &str = ".append.lock";
+
 #[derive(Debug)]
-pub(super) struct WriterLock {
+pub(super) struct LegacyWriterCompatibilityGuard {
     _file: File,
 }
 
-impl WriterLock {
+impl LegacyWriterCompatibilityGuard {
     pub(super) fn acquire(root: &Path) -> Result<Self, RepositoryError> {
-        let path = root.join(".writer.lock");
-        reject_symlink(&path)?;
-        let file = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .mode(FILE_MODE)
-            .open(&path)?;
-        require_user_only_file(&file)?;
-        file.try_lock()
-            .map_err(|error| RepositoryError::Unavailable {
-                message: format!("another writer owns the Session repository: {error}"),
-            })?;
-        for entry in fs::read_dir(root)? {
-            let path = entry?.path();
-            if path
-                .extension()
-                .is_some_and(|extension| extension == "pending")
-            {
-                return Err(RepositoryError::Quarantined {
+        let path = root.join(LEGACY_WRITER_LOCK);
+        let file = open_lock_file(&path)?;
+        match file.try_lock_shared() {
+            Ok(()) => {},
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(RepositoryError::Unavailable {
                     message: format!(
-                        "Session repository contains an unfinished append marker at {}",
+                        "a legacy writer owns the Session repository compatibility lock at {}",
                         path.display()
                     ),
                 });
-            }
+            },
+            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
         Ok(Self { _file: file })
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct SessionWriterLease {
+    _file: File,
+}
+
+impl SessionWriterLease {
+    pub(super) fn acquire(root: &Path, session_id: SessionId) -> Result<Self, RepositoryError> {
+        let path = session_writer_lock_path(root, session_id);
+        let file = open_lock_file(&path)?;
+        match file.try_lock() {
+            Ok(()) => {},
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(RepositoryError::Unavailable {
+                    message: format!("another writer owns Session {session_id}"),
+                });
+            },
+            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+        }
+        Ok(Self { _file: file })
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct RootAppendGuard {
+    file: File,
+}
+
+#[derive(Debug)]
+struct PendingAppendGuard {
+    _file: File,
+}
+
+impl RootAppendGuard {
+    pub(super) fn acquire(root: &Path) -> Result<Self, RepositoryError> {
+        let path = root.join(APPEND_COORDINATOR_LOCK);
+        let file = open_lock_file(&path)?;
+        file.lock()?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for RootAppendGuard {
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
+pub(super) fn coordination_file(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name == LEGACY_WRITER_LOCK
+        || name == APPEND_COORDINATOR_LOCK
+        || name.ends_with(".writer.lock")
+        || name.ends_with(".pending")
+        || name.ends_with(".pending.preparing")
+}
+
+pub(super) fn session_writer_is_active(
+    root: &Path,
+    session_id: SessionId,
+) -> Result<bool, RepositoryError> {
+    exclusive_lock_is_active(&session_writer_lock_path(root, session_id))
+}
+
+pub(super) fn legacy_writer_is_active(root: &Path) -> Result<bool, RepositoryError> {
+    exclusive_lock_is_active(&root.join(LEGACY_WRITER_LOCK))
+}
+
+pub(super) fn pending_append_is_active(file: &File) -> Result<bool, RepositoryError> {
+    exclusive_file_lock_is_active(file)
+}
+
+fn session_writer_lock_path(root: &Path, session_id: SessionId) -> PathBuf {
+    root.join(format!("{session_id}.writer.lock"))
+}
+
+fn open_lock_file(path: &Path) -> Result<File, RepositoryError> {
+    reject_symlink(path)?;
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .mode(FILE_MODE)
+        .open(path)?;
+    require_user_only_file(&file)?;
+    Ok(file)
+}
+
+fn exclusive_lock_is_active(path: &Path) -> Result<bool, RepositoryError> {
+    reject_symlink(path)?;
+    let file = match OpenOptions::new().read(true).open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    require_user_only_file(&file)?;
+    exclusive_file_lock_is_active(&file)
+}
+
+fn exclusive_file_lock_is_active(file: &File) -> Result<bool, RepositoryError> {
+    match file.try_lock_shared() {
+        Ok(()) => {
+            let _ = file.unlock();
+            Ok(false)
+        },
+        Err(std::fs::TryLockError::WouldBlock) => Ok(true),
+        Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
     }
 }
 
@@ -90,7 +189,7 @@ pub(super) fn append_line(root: &Path, path: &Path, encoded: &[u8]) -> Result<()
     require_user_only_file(&file)?;
     let durable_bytes = file.metadata()?.len();
     let pending = pending_path(path);
-    begin_pending_append(root, &pending, durable_bytes)?;
+    let pending_guard = begin_pending_append(root, &pending, durable_bytes)?;
     let append = file
         .write_all(encoded)
         .and_then(|()| file.sync_data())
@@ -118,6 +217,7 @@ pub(super) fn append_line(root: &Path, path: &Path, encoded: &[u8]) -> Result<()
         return Err(RepositoryError::Unavailable { message });
     }
     clear_pending_append(root, &pending)?;
+    drop(pending_guard);
     Ok(())
 }
 
@@ -218,7 +318,7 @@ fn begin_pending_append(
     root: &Path,
     pending: &Path,
     durable_bytes: u64,
-) -> Result<(), RepositoryError> {
+) -> Result<PendingAppendGuard, RepositoryError> {
     reject_symlink(pending)?;
     if pending.try_exists()? {
         return Err(RepositoryError::Quarantined {
@@ -244,6 +344,7 @@ fn begin_pending_append(
                 preparing.display()
             ),
         })?;
+    marker.lock()?;
     writeln!(marker, "{durable_bytes}")?;
     marker.sync_data()?;
     fs::hard_link(&preparing, pending).map_err(|error| RepositoryError::Quarantined {
@@ -254,7 +355,7 @@ fn begin_pending_append(
     })?;
     File::open(root)?.sync_all()?;
     fs::remove_file(preparing)?;
-    Ok(())
+    Ok(PendingAppendGuard { _file: marker })
 }
 
 fn clear_pending_append(root: &Path, pending: &Path) -> Result<(), RepositoryError> {

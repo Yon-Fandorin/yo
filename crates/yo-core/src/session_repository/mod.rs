@@ -44,6 +44,14 @@ pub trait SessionRepository {
     ) -> Result<Vec<RepositoryEntry>, RepositoryError>;
 }
 
+/// A repository that can retain exclusive ownership of one Session across
+/// continuation recovery and later durable appends.
+pub trait SessionWriterRepository: SessionRepository {
+    /// Acquires the exact Session once and retains its writer ownership until
+    /// this repository instance is dropped.
+    fn acquire_session_writer(&mut self, session_id: SessionId) -> Result<(), RepositoryError>;
+}
+
 /// Read-only access to durable Sessions without executable continuation.
 pub trait StoredSessionReader {
     fn discover(&self) -> Result<Vec<StoredSession>, RepositoryError>;
@@ -111,6 +119,15 @@ where
         limit: usize,
     ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
         (**self).read_after(session_id, sequence, limit)
+    }
+}
+
+impl<R> SessionWriterRepository for Box<R>
+where
+    R: SessionWriterRepository + ?Sized,
+{
+    fn acquire_session_writer(&mut self, session_id: SessionId) -> Result<(), RepositoryError> {
+        (**self).acquire_session_writer(session_id)
     }
 }
 

@@ -13,7 +13,7 @@ use crate::{
     journal::SessionJournal,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, DurableRecordKind, RepositoryEntry,
-        RepositoryError, RepositorySequence,
+        RepositoryError, RepositorySequence, SessionRepository,
     },
 };
 
@@ -56,6 +56,12 @@ impl SessionRepository for MemoryRepository {
             .take(limit)
             .cloned()
             .collect())
+    }
+}
+
+impl SessionWriterRepository for MemoryRepository {
+    fn acquire_session_writer(&mut self, _session_id: SessionId) -> Result<(), RepositoryError> {
+        Ok(())
     }
 }
 
@@ -128,7 +134,7 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
         }),
         BackendScriptStep::Shutdown(Ok(())),
     ]);
-    let repository = MemoryRepository::default();
+    let mut repository = MemoryRepository::default();
     let journal = SessionJournal::with_repository_and_descriptor(
         Box::new(repository.clone()),
         crate::fixture_descriptor(session_id),
@@ -160,7 +166,7 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
         }
     }
     runtime.shutdown().unwrap();
-    let continuation = recover_stored_session_continuation(&repository, session_id).unwrap();
+    let continuation = recover_stored_session_continuation(&mut repository, session_id).unwrap();
     (repository, continuation)
 }
 
@@ -183,7 +189,7 @@ fn derives_one_executable_plan_from_the_newest_durable_anchor() {
 // 않았다면 재개 경계는 과거 Anchor로 되돌아가지 않고 전체 Session을 실행 불가로 닫는다.
 #[test]
 fn rejects_an_unanchored_suffix_instead_of_falling_back_to_an_older_anchor() {
-    let (repository, continuation) = durable_resumable_session();
+    let (mut repository, continuation) = durable_resumable_session();
     let before = repository.entries.lock().unwrap().len();
     let target = continuation.target().clone();
     let session_id = continuation.descriptor().session_id();
@@ -241,7 +247,7 @@ fn rejects_an_unanchored_suffix_instead_of_falling_back_to_an_older_anchor() {
     }
     session.shutdown().unwrap();
 
-    let error = recover_stored_session_continuation(&repository, session_id)
+    let error = recover_stored_session_continuation(&mut repository, session_id)
         .expect_err("an unfinished durable suffix must invalidate the older Anchor");
     assert!(
         error
@@ -294,7 +300,7 @@ fn resumed_agent_publishes_a_snapshot_before_admitting_new_work() {
 // durable cutoff 다음 번호에서 시작하고, 기존 SubmissionId 재사용도 backend 전에 막는다.
 #[test]
 fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_text() {
-    let (repository, continuation) = durable_resumable_session();
+    let (mut repository, continuation) = durable_resumable_session();
     let target = continuation.target().clone();
     let session_id = continuation.descriptor().session_id();
     let second_turn = TurnRef::new(
@@ -388,7 +394,7 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     session.shutdown().unwrap();
-    let recovered = recover_stored_session_continuation(&repository, session_id).unwrap();
+    let recovered = recover_stored_session_continuation(&mut repository, session_id).unwrap();
     assert_eq!(recovered.next_turn_id(), 3);
     assert_eq!(recovered.submission_ids().len(), 2);
 }

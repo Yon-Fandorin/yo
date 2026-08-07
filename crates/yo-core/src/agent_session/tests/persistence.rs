@@ -14,9 +14,7 @@ use crate::{
     InputReference, InputSubmission, ScriptedBackend, TurnOutcome, UserInput, WorkspaceReference,
     WorkspaceReferenceKind,
     journal::codec::JournalRecord,
-    session_repository::{
-        LocalSessionRepository, RepositoryError, SessionRepository, journal::JournalRepository,
-    },
+    session_repository::{LocalSessionRepository, SessionRepository, journal::JournalRepository},
 };
 
 struct TestDirectory(PathBuf);
@@ -42,36 +40,11 @@ impl Drop for TestDirectory {
     }
 }
 
-fn reopen_after_transient_fork_lock(root: &std::path::Path) -> LocalSessionRepository {
-    const WRITER_LOCK_PREFIX: &str = "another writer owns the Session repository:";
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let mut attempts = 0_u32;
-    loop {
-        attempts = attempts.saturating_add(1);
-        match LocalSessionRepository::open(root, 1024 * 1024) {
-            Ok(repository) => return repository,
-            Err(error) => {
-                let inherited_lock = matches!(
-                    &error,
-                    RepositoryError::Unavailable { message }
-                        if message.starts_with(WRITER_LOCK_PREFIX)
-                );
-                assert!(
-                    inherited_lock && Instant::now() < deadline,
-                    "the repository did not reopen after {attempts} attempts: {error}"
-                );
-                thread::sleep(Duration::from_millis(1));
-            },
-        }
-    }
-}
-
 // 실제 AgentSession worker는 semantic record보다 먼저 cutoff 없는 descriptor envelope를
 // 저장해야 한다. frontend가 정상적인 backpressure를 재시도한 뒤 command, streaming
 // delta, replacement snapshot, 종료를 처리하고 local JSONL을 다시 열어도 같은
 // descriptor, SubmissionId가 붙은 structured input, 최종 message revision과 Turn 완료가
-// 함께 복구되는지 검증한다. 병렬 host test의 fork가 writer-lock fd를 exec 전까지 잠깐
-// 상속할 수 있으므로 그 오류만 제한적으로 재시도하되, 영구 lock은 1초 안에 실패한다.
+// 함께 복구되는지 검증한다.
 #[test]
 fn live_worker_persists_a_recoverable_session_journal() {
     let directory = TestDirectory::new();
@@ -156,7 +129,8 @@ fn live_worker_persists_a_recoverable_session_journal() {
     app.wait_until_no_active_turn();
     app.shutdown().unwrap();
 
-    let repository = reopen_after_transient_fork_lock(&directory.0);
+    let repository =
+        LocalSessionRepository::open(&directory.0, 1024 * 1024).expect("repository reopens");
     let physical = repository.read_after(session(), None, 16).unwrap();
     assert!(physical.len() >= 2);
     assert_eq!(physical[0].record().journal_cutoff(), None);
@@ -168,7 +142,8 @@ fn live_worker_persists_a_recoverable_session_journal() {
     drop(repository);
     drop(app);
 
-    let repository = reopen_after_transient_fork_lock(&directory.0);
+    let repository =
+        LocalSessionRepository::open(&directory.0, 1024 * 1024).expect("repository reopens");
     let recovered = JournalRepository::new(repository)
         .recover(session())
         .unwrap();
