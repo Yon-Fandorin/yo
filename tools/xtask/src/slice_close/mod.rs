@@ -1,3 +1,4 @@
+mod coordination;
 mod git_state;
 mod model;
 mod storage;
@@ -31,9 +32,7 @@ pub(crate) fn plan(
         .map_err(|error| format!("cannot encode Slice close plan: {error}"))?;
     bytes.push(b'\n');
     if let Some(path) = output_path {
-        if path_within(path, &plan.worktree_path)? {
-            return Err("store the Slice close plan outside the worktree it removes".to_owned());
-        }
+        validate_plan_storage(repository, path, &plan)?;
         let status = if storage::publish_plan(path, &bytes)? {
             "written"
         } else {
@@ -103,6 +102,9 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
     validate_accepted_commit(&repository, &current_ref, &accepted_commit)?;
     let remove_coordination_contract =
         bound.contract_path == standard_contract_path(&repository, slice)?;
+    let workspace = slice_worktree::workspace_root(&repository)?;
+    let retained_coordination_paths =
+        coordination::retained_paths(&workspace, slice, remove_coordination_contract)?;
     let mut plan = Plan {
         schema: SCHEMA.to_owned(),
         plan_id: String::new(),
@@ -118,6 +120,7 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
         binding_path: bound.binding_path,
         contract_path: bound.contract_path,
         contract_id: bound.contract_id,
+        retained_coordination_paths,
         effects: Effects::new(remove_coordination_contract),
     };
     plan.plan_id = identity(&plan)?;
@@ -148,8 +151,17 @@ fn apply_with_before_delete(
             plan.plan_id
         ));
     }
-    if path_within(plan_path, &plan.worktree_path)? {
-        return Err("store the Slice close plan outside the worktree it removes".to_owned());
+    validate_plan_storage(&repository, plan_path, &plan)?;
+    if plan.schema == SCHEMA {
+        let workspace = slice_worktree::workspace_root(&repository)?;
+        let retained = coordination::retained_paths(
+            &workspace,
+            &plan.slice,
+            plan.effects.remove_coordination_contract,
+        )?;
+        if retained != plan.retained_coordination_paths {
+            return Err("retained Slice coordination paths changed after planning".to_owned());
+        }
     }
     if current_branch_ref(&repository)? != plan.integration_ref {
         return Err(format!(
@@ -281,10 +293,29 @@ fn validate_plan_effects(repository: &Path, plan: &Plan) -> Result<(), String> {
 }
 
 fn standard_contract_path(repository: &Path, slice: &str) -> Result<PathBuf, String> {
+    Ok(standard_coordination_directory(repository, slice)?.join("slice-contract.json"))
+}
+
+fn standard_coordination_directory(repository: &Path, slice: &str) -> Result<PathBuf, String> {
     Ok(slice_worktree::workspace_root(repository)?
         .join(".local-exclude/coordination")
-        .join(slice)
-        .join("slice-contract.json"))
+        .join(slice))
+}
+
+fn validate_plan_storage(repository: &Path, path: &Path, plan: &Plan) -> Result<(), String> {
+    if path_within(path, &plan.worktree_path)?
+        || (plan.schema == SCHEMA
+            && path_within(
+                path,
+                &standard_coordination_directory(repository, &plan.slice)?,
+            )?)
+    {
+        return Err(
+            "store the Slice close plan outside the worktree and coordination directory it closes"
+                .to_owned(),
+        );
+    }
+    Ok(())
 }
 
 fn validate_accepted_commit(

@@ -45,7 +45,7 @@ command, host, credential, platform을 기록한다.
 | Rust test 바로 위에 필요한 설명 | `cargo xtask check test-explanations` | `crates/`와 `tools/` 아래 Rust source |
 | Slice 변경이 bind된 로컬 write-set 안에 머무는지 | `cargo xtask check slice-scope` | 하나의 활성 Slice worktree; planner가 먼저 `cargo xtask slice-contract bind <contract.json>` 실행 |
 | 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
-| 수용된 Slice가 여전히 검수한 로컬 branch patch와 정확히 같고 안전하게 정리할 수 있는지 | `cargo xtask slice close plan <slice> <plan.json>` 후 `cargo xtask slice close apply <plan.json>` | 수용 commit이 생긴 뒤 깨끗한 통합 worktree에서 실행하고 직접 발행된 plan을 apply 전에 검토 |
+| 수용된 Slice가 여전히 검수한 로컬 branch patch와 정확히 같고 안전하게 정리할 수 있는지 | `cargo xtask slice close plan <slice> <plan.json>` 후 `cargo xtask slice close apply <plan.json>` | 깨끗한 통합 worktree에서 실행하고 apply 전에 제거 효과와 보존할 coordination 경로를 검토 |
 | 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | `tools/xtask/src` |
 | Linux/macOS 조건부 compile | `bash tools/validation/yo-cli-unix-matrix.sh` | 로컬 host 결과와 두 host를 위한 `.github/workflows/unix-compile.yml` |
 | tmux, SSH, SSH 내부 tmux 동작 | [터미널 환경 매트릭스](./terminal-matrix.md) 참고 | ignored `yo-cli` 환경 test |
@@ -101,11 +101,20 @@ prospective transition이 유효하다는 증거가 아니다.
 Slice가 platform이나 외부 환경 경계를 바꾼다면 기준선이 이를 검사했다고
 주장하지 말고 관련 matrix 명령을 추가한다.
 
+검수한 후보를 squash했다는 이유만으로 바뀌지 않은 기준선을 다시 실행하지
+않는다. 정확한 Git diff로 두 commit의 tree가 같고, 통합 과정에 conflict 해소나
+다른 수정이 없으며, toolchain과 환경이 같고, 외부 상태 증거가 만료되지 않았고,
+commit hook이 통과한 경우에만 후보 결과를 수용 commit의 증거로 재사용한다.
+그 밖에는 영향받은 검사를 다시 실행한다. 이 재사용은 후보 자체의 검증이나
+검수를 대체하지 않는다.
+
 Slice 종료 정리 명령은 이 검증 기준선의 일부가 아니다. 요청한 파일에 plan을
 직접 발행한 뒤 이미 수용된 결과를 소비한다. 로컬 worktree, 표준 임시 Slice
 contract, Slice branch를 제거하기 전에 정확한 ref, 검수 trailer, patch
 identity, worktree 청결 상태, binding, contract hash, plan hash를 다시
-검사하며 다른 coordination artifact는 모두 보존한다. 통합 workflow는
+검사한다. plan은 보존할 직계 coordination 항목도 모두 나열하며, apply는 그
+목록이 바뀌면 거절하고 해당 항목을 삭제하지 않는다. plan은 제거할 worktree와
+해당 Slice coordination 디렉터리 바깥에 저장한다. 통합 workflow는
 [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#review-and-integration)를
 참고한다.
 

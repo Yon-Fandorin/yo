@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub(super) const SCHEMA: &str = "yo.slice-close-plan/v2";
+pub(super) const SCHEMA: &str = "yo.slice-close-plan/v3";
+const LEGACY_SCHEMA_V2: &str = "yo.slice-close-plan/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -22,6 +23,8 @@ pub(super) struct Plan {
     pub(super) binding_path: PathBuf,
     pub(super) contract_path: PathBuf,
     pub(super) contract_id: String,
+    #[serde(default)]
+    pub(super) retained_coordination_paths: Vec<PathBuf>,
     pub(super) effects: Effects,
 }
 
@@ -46,7 +49,14 @@ impl Effects {
 }
 
 #[derive(Serialize)]
-struct PlanIdentity<'a> {
+struct PlanIdentityV3<'a> {
+    #[serde(flatten)]
+    legacy: LegacyPlanIdentityV2<'a>,
+    retained_coordination_paths: &'a [PathBuf],
+}
+
+#[derive(Serialize)]
+struct LegacyPlanIdentityV2<'a> {
     schema: &'a str,
     slice: &'a str,
     integration_ref: &'a str,
@@ -64,11 +74,16 @@ struct PlanIdentity<'a> {
 }
 
 pub(super) fn validate_plan_shape(plan: &Plan) -> Result<(), String> {
-    if plan.schema != SCHEMA {
+    if !matches!(plan.schema.as_str(), SCHEMA | LEGACY_SCHEMA_V2) {
         return Err(format!(
-            "unsupported Slice close plan schema `{}`; expected `{SCHEMA}`",
+            "unsupported Slice close plan schema `{}`; expected `{SCHEMA}` or `{LEGACY_SCHEMA_V2}`",
             plan.schema
         ));
+    }
+    if plan.schema == LEGACY_SCHEMA_V2 && !plan.retained_coordination_paths.is_empty() {
+        return Err(
+            "legacy Slice close plans cannot contain retained coordination paths".to_owned(),
+        );
     }
     validate_slice_name(&plan.slice)?;
     if !plan.effects.remove_worktree
@@ -84,7 +99,7 @@ pub(super) fn validate_plan_shape(plan: &Plan) -> Result<(), String> {
 }
 
 pub(super) fn identity(plan: &Plan) -> Result<String, String> {
-    let identity = PlanIdentity {
+    let legacy = LegacyPlanIdentityV2 {
         schema: &plan.schema,
         slice: &plan.slice,
         integration_ref: &plan.integration_ref,
@@ -100,8 +115,15 @@ pub(super) fn identity(plan: &Plan) -> Result<String, String> {
         contract_id: &plan.contract_id,
         effects: &plan.effects,
     };
-    let bytes = serde_json::to_vec(&identity)
-        .map_err(|error| format!("cannot encode Slice close plan identity: {error}"))?;
+    let bytes = if plan.schema == LEGACY_SCHEMA_V2 {
+        serde_json::to_vec(&legacy)
+    } else {
+        serde_json::to_vec(&PlanIdentityV3 {
+            legacy,
+            retained_coordination_paths: &plan.retained_coordination_paths,
+        })
+    }
+    .map_err(|error| format!("cannot encode Slice close plan identity: {error}"))?;
     let digest = Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))

@@ -161,13 +161,10 @@ from the JSON. Before dispatch, run:
 cargo xtask check slice-parallel <left.json> <right.json>
 ```
 
-It is one mechanical preflight: both contracts must name the same current
-integration base—`refs/heads/develop` for direct Slices or their
-`refs/heads/wave/<wave>` branch for Wave Slices—and it rejects overlapping
-write leases or contract ownership. The planner still confirms dependencies,
-capacity, independent completion gates, and any Wave join required by the
-dispatch checklist above. The planner then binds each contract once in its
-Slice worktree:
+It requires the same current integration base—`refs/heads/develop` for direct
+Slices or their `refs/heads/wave/<wave>` branch for Wave Slices—and rejects
+overlapping write leases or contract ownership. It supplements the dispatch
+checklist above. Bind each accepted contract once in its Slice worktree:
 
 ```bash
 cargo xtask slice-contract bind <its-contract.json>
@@ -207,39 +204,23 @@ Exact storage, schema, and generation remain experimental until the W0 exercise 
 
 ## Alignment and human checkpoints
 
-Do not turn one Slice into a sequence of routine confirmation requests. Before
-implementation, collect unresolved product and contract choices into one
-alignment checkpoint with their concrete effects and examples. Once the human
-accepts the exact contract and scope, continue through Slice setup,
-implementation, validation, review fixes, and review without asking again for
-the same decision.
+Before implementation, collect unresolved product and contract choices into
+one alignment checkpoint with concrete effects and examples. Also classify the
+required review lenses and reviewer routing; architecture and workflow changes
+must either select or give a concrete reason to omit a different-perspective
+reviewer. This classification does not start review: independent review begins
+from the clean candidate defined under [Review and integration](#review-and-integration).
+After the human accepts the exact contract and scope, continue without asking
+again for the same decision.
 
-Classify the required review lenses and reviewer routing during the initial
-alignment, not for the first time after implementation. For architecture or
-workflow changes, explicitly evaluate whether the different-perspective
-reviewer criterion below applies and record a concrete rationale when it does
-not. This classification selects the reviewer; it does not dispatch one early.
-Independent review starts only from a clean, immutable candidate commit under
-the review protocol below. A review of a dirty working diff is preparation, not
-completed evidence.
-
-If implementation reveals new impact, escalate risk and update the required
-lenses or routing. That update is not another human checkpoint unless resolving
-it requires one of the human-owned choices below.
-
-Pause and return to the human only when new evidence creates a choice that can
-change the product, durable contract, failure behavior, compatibility, security,
-permissions, destructive or external effects, or long-term ownership; when the
-accepted authorities conflict; or when required validation or review cannot be
-made clear. State the newly discovered choice, its practical alternatives, and
-the effect of each. Use the human-attention classification below for the final
-integration disposition.
-
-Implementation details that remain inside the accepted contract—module
-boundaries, mechanical refactoring, test coverage, diagnostics, and fixes for
-review findings—do not create another human checkpoint. Resolve them, rerun the
-affected review lens, and continue. A reviewer finding becomes a checkpoint
-only when resolving it requires one of the human-owned choices above.
+Return to the human only when new evidence creates a choice affecting product,
+durable contract, failure behavior, compatibility, security, permissions,
+destructive or external effects, or long-term ownership; when authorities
+conflict; or when required validation or review is unclear. State the choice,
+practical alternatives, and effects. Module boundaries, mechanical refactoring,
+tests, diagnostics, and review fixes inside the accepted contract are not new
+checkpoints: resolve them, update risk or routing when needed, and rerun the
+affected lens.
 
 ### SOT-first changes
 
@@ -346,6 +327,8 @@ and keep shared test support separate from individual scenarios.
 
 Each Slice must include its implementation or docs, discriminating validation, public-contract updates, and known limits.
 
+### Required lenses
+
 Every Slice receives worker self-check and its required review lenses. The
 slice planner proposes its risk and required lenses in the Slice Contract;
 workers cannot lower them. Escalate risk when implementation reveals
@@ -360,20 +343,15 @@ abstraction, complexity, diagnostics, cleanup, and test maintainability. The
 same fresh-context reviewer may perform both contract and code-quality review,
 but must inspect and record the lenses separately.
 
-Use Codex in a separate fresh-context session for agent-performed independent
-review by default. Use a configured different-perspective reviewer when the
-review specifically needs another model or provider to search for hidden
-assumptions, counterexamples, credible alternatives, or future costs. Kimi is
-the current preferred route, not a permanent product dependency. Such a request
-MUST ask for the strongest counterargument before its verdict instead of asking
-it to confirm the implementer's conclusion.
+### Agent review protocol
 
-A different-perspective reviewer is configured only when the human has selected
-the route and local operating guidance defines its invocation, stable review
-identity, and setup-failure and unavailability handling. The Kimi-specific
-protocol below is the current provider profile. Add or replace that profile when
-the configured route changes; do not invent commands for a hypothetical
-provider.
+Use a separate fresh-context Codex session by default. Use a configured
+different-perspective provider when the lens needs hidden assumptions,
+counterexamples, alternatives, or future costs; require its strongest
+counterargument before the verdict. A provider is configured only after the
+human selects it and local guidance defines invocation, stable identity, setup
+failure, and unavailability. Kimi is the current preferred profile, not a
+product dependency. Do not invent commands for an unconfigured provider.
 
 Run a Kimi review from the Slice worktree in a new non-interactive prompt
 session:
@@ -389,55 +367,38 @@ alternatives. Return path-specific findings, the verdict, and unresolved
 uncertainty.'
 ```
 
-Replace every placeholder with exact immutable Git commits; do not ask the
-reviewer to infer which changes are final. Commit the candidate on its Slice
-branch before review and require a clean worktree so `<base>..<candidate>`
-includes the complete review surface. Dirty staged, unstaged, or untracked
-changes are not an exact review candidate. If findings change the candidate,
-update its working commit and review the new commit range again.
+Every reviewer receives the immutable `<base>..<candidate>` diff, relevant
+authority, requested lens, and validation evidence. Commit the complete
+candidate and require a clean worktree; dirty or inferred review surfaces do
+not count. Reviewers may rerun a targeted check to resolve a finding or named
+uncertainty, but do not repeat a supplied green baseline when its inputs are
+unchanged. If a finding changes the candidate, validate the affected boundary
+and review the new commit again.
 
-Plain `kimi -p` starts the fresh prompt-mode session required here. Do not use
-`--continue` or `--session`, because either reuses earlier context. Omit
-`--model` unless the review contract requires a model whose exact configured
-alias is known; a model name displayed by an interactive UI is not necessarily
-a valid CLI alias. Consult the installed `kimi --help` rather than combining
-prompt mode with guessed interactive or permission flags. Run
-`git status --short --untracked-files=all` immediately before and after Kimi;
-both results MUST be empty. Any reviewer-created change invalidates that
-attempt and must be resolved before a new review starts.
+For Kimi, use plain `kimi -p`: never `--continue` or `--session`. Omit `--model`
+unless its exact configured CLI alias is known, and consult `kimi --help`
+instead of guessing flags. Require empty `git status --short
+--untracked-files=all` output before and after; reviewer-created changes
+invalidate the attempt. Invalid options and aliases are setup failures to fix,
+not unavailability. Record the completion hint's session as
+`kimi/<session-id>`; without that hint, do not invent an identity or count the
+attempt as complete.
 
-An invalid option, unknown model alias, or other local invocation error is a
-setup failure, not reviewer unavailability: correct the invocation and retry
-the same review. A completed text-mode prompt ends with
-`To resume this session: kimi -r <session-id>`; record that value as
-`kimi/<session-id>`. If the hint is absent, do not invent an identity or count
-the attempt as completed. Apply the Codex fallback below only when a correctly
-invoked Kimi session cannot start or finish because the service or usage
-allowance is unavailable.
+For every completed agent review, record the lens, actual provider, exposed
+model and session identity, and verdict in the Slice status or handoff; report
+the actual provider and model at close. Record missing identifiers rather than
+guessing. If a correctly invoked preferred provider cannot finish because the
+service or allowance is unavailable, record the requested provider and reason,
+then a separate fresh-context Codex session may perform the same lens. Do not
+retry an unavailable provider until its state changes. Human exact review is
+also valid; the implementing session's self-check is not.
 
-Every agent reviewer MUST receive the exact final diff, relevant authority,
-requested lens, and validation evidence. For every completed agent review, the
-Slice status or handoff MUST record the requested lens, actual provider, exact
-model identifier and reviewer session identity when exposed, and verdict. When
-closing the Slice, report the actual provider and model to the human. If either
-identifier is not exposed, record and report that fact rather than guessing.
+If no reviewer completes a required lens, mark it **unreviewed**, record each
+attempt and reason, notify the human, and stop before acceptance. Quota
+exhaustion, partial responses, self-checks, and failed attempts are not review
+trailers.
 
-If the preferred different-perspective reviewer cannot start or finish because
-it is unavailable or its usage allowance is exhausted, a separate fresh-context
-Codex session MAY retry the same explicit lens. When the fallback starts, record
-the requested reviewer and concrete availability reason; after it completes,
-record and report the actual fallback provider and model under the rule above.
-An unavailable default Codex reviewer is not retried until its availability
-state changes. The implementing session's self-check is not an independent
-review. A human may perform the exact review at any point.
-
-If no agent or human reviewer completes the lens, mark the lens **unreviewed**
-in the Slice status or handoff, identify each attempted reviewer and the
-concrete availability reason, notify the human, and stop before acceptance or
-integration. Do not treat quota exhaustion, reviewer unavailability, a partial
-response, or an implementing-agent self-check as a completed lens. Do not
-repeat an unavailable reviewer until its availability state changes. Failed
-attempts are operational evidence, not accepted-commit trailers.
+### Evidence and disposition
 
 The accepted commit records completed lenses as evidence, not as a substitute
 for performing them. Put every trailer in one contiguous block at the very end
@@ -457,20 +418,15 @@ tokens such as `kimi/session-id`, `codex/session-id`, or `human/name`; put
 operational detail in the Slice status rather than free text in the trailer.
 
 When no additional lens applies, record `Slice-Review: none - <reason>`.
-`cargo xtask check slice-review-impact` fails closed when this disposition is
-missing. It conservatively requires fresh-context review for product and tool
-code, build and Cargo metadata, workflow authority, and semantic SOT authority,
-it requires code-quality review for executable source under `crates/` and
-`tools/` plus Developer Docs theme source, and it requires integration review
-on a Wave branch. It reads only the Git trailer block. For a clean-index
-message amend, it conservatively rechecks the current commit's paths. Path
-detection is a minimum safety net: a planner MUST add any semantic lens that
-the changed paths cannot discover. `none` cannot be combined with completed
-lenses. A required lens counts only when its trailer uses the exact
-`<lens> - completed - <reviewer-id> - <clear|resolved>` shape. Unavailable,
-unfinished, pending, or unresolved reviews cannot satisfy a required lens.
-This grammar is prospective: existing accepted commits retain their historical
-trailers, while every new commit or amend after this change uses the new shape.
+`cargo xtask check slice-review-impact` reads the final trailer block and fails
+closed when the disposition is missing or malformed. It requires
+fresh-context review for product/tool code, build/Cargo metadata, workflow, and
+semantic SOT; code-quality for executable `crates/` and `tools/` source plus
+Developer Docs theme source; and integration review on Wave branches. This is
+a minimum path-based safety net, so the planner adds lenses required by semantic
+impact. `none` cannot accompany completed lenses, and unfinished or unresolved
+reviews never satisfy a lens. Existing accepted commits keep their historical
+trailers; new commits and amends use this grammar.
 
 Classify a Slice as **human-attention** when it introduces or changes a product
 decision, public contract, failure semantics, dependency choice, permissions,
@@ -494,6 +450,14 @@ already includes the exact activation transition satisfies that Slice's
 disposition; do not request a second merge approval. If the standing
 authorization is absent or revoked, routine Slices also require explicit human
 approval.
+
+### Integration and cleanup
+
+Run the declared baseline on the reviewed candidate. After squash, reuse its
+result only under the exact conditions in the Developer Docs
+[Slice-close baseline](docs/src/validation/README.md#slice-close-baseline);
+otherwise rerun the affected gates and lenses. Evidence reuse never replaces
+candidate validation or fresh-context review.
 
 After the Slice's review disposition is satisfied, squash a direct Slice into
 `develop`:
@@ -522,34 +486,26 @@ cargo xtask slice close plan <slice> /tmp/<slice>-close.json
 cargo xtask slice close apply /tmp/<slice>-close.json
 ```
 
-Review the plan before applying it. `plan` requires clean integration and Slice
-worktrees, the original bound Slice contract, valid review evidence on exactly
-one accepted commit in the integration branch's first-parent history, and a
-verbatim patch identity shared by the Slice and that commit. `plan` publishes
-the hash-addressed JSON atomically at the optional output path, so agents do
-not copy or reserialize its stdout; omitting the path retains stdout for
-pipeline consumers. A later accepted Slice does not strand an older local
-worktree; generate a fresh plan at the
-new integration head. The hash-addressed plan fixes the integration and Slice refs,
-worktree, binding, and effects. `apply` revalidates them immediately before it
-removes only the registered worktree and its binding. When the bound contract
-is the exact regular file at the standard
-`.local-exclude/coordination/<slice>/slice-contract.json` path, the plan also
-hash-binds and removes that one transient file. It then deletes only the
-expected local Slice branch with a compare-and-swap ref update. It can finish
-the contract or branch deletion if interruption occurs after worktree removal.
-Store the plan outside the worktree it removes.
+Review the directly published, hash-addressed plan; do not copy, reserialize, or
+edit it. Store it outside the worktree and Slice coordination directory it
+closes. `plan` requires clean
+integration and Slice worktrees, the bound contract, accepted review evidence,
+and exact Slice/accepted-commit patch identity. It fixes refs, paths, binding,
+effects, and the coordination entries that will remain. Generate a fresh plan
+if integration advances.
 
-The removed worktree path is deleted in full, including ignored build output or
-scratch files inside it. Move anything worth retaining out of that path before
-apply. The command never targets remote refs, nonstandard contracts, handoffs,
-requests, notes, or other coordination artifacts. Reconcile or discard those
-through their own owner after retaining any stable knowledge. A
-stale plan fails closed; do not edit its JSON to make it pass. Cooperating
-`slice close apply` processes share a repository lock. Raw Git processes do not
-honor it, so the final worktree snapshot, Git's dirty-worktree refusal, and one
-atomic ref transaction recheck the planned integration ref while deleting the
-exact Slice ref.
+`apply` revalidates that state and the retained-entry list, then removes only
+the registered worktree and binding, the exact standard
+`.local-exclude/coordination/<slice>/slice-contract.json` when applicable, and
+the expected local Slice branch. It preserves remote refs, nonstandard
+contracts, handoffs, requests, notes, and other reported coordination entries;
+reconcile those through their own owner. The entire worktree, including ignored
+output, is removed, so move retained material first. A repository lock, final
+worktree check, and compare-and-swap ref transaction protect cooperating
+applies; raw Git does not use the lock. A stale plan fails closed, while an
+interrupted apply can resume the planned contract or branch deletion.
+
+### Wave promotion
 
 Never rebase accepted Slice commits. Parallel sibling Waves may finish in any order, but promotion into `develop` is serialized. Before promotion, a Wave based on an older `develop` merges the latest `develop` into the Wave:
 

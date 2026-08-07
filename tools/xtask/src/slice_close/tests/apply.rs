@@ -99,6 +99,24 @@ fn rejects_contract_content_drift() {
     assert!(fixture.slice_worktree.exists());
 }
 
+// plan을 검토한 뒤 coordination 항목이 추가되거나 사라지면 apply는 사용자가 본
+// 보존 목록과 현재 상태가 다르므로 어떤 cleanup도 시작하기 전에 거절한다.
+#[test]
+fn rejects_retained_coordination_drift_before_cleanup() {
+    let fixture = CloseFixture::new();
+    let plan = fixture.plan();
+    fixture.write_plan(&plan);
+    let handoff = fixture.contract_path.parent().unwrap().join("handoff.md");
+    std::fs::write(&handoff, "new after plan\n").unwrap();
+
+    let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
+
+    assert!(error.contains("retained Slice coordination paths changed"));
+    assert!(fixture.slice_worktree.exists());
+    assert!(fixture.contract_path.exists());
+    assert!(handoff.exists());
+}
+
 // 계획된 경로의 worktree가 detached되거나 다른 branch로 전환된 것은 제거 완료가
 // 아니므로 apply가 두 상태 모두 거절하고 원래 Slice ref를 보존한다.
 #[test]
@@ -164,6 +182,22 @@ fn rejects_a_plan_stored_inside_the_target_worktree() {
     assert!(fixture.slice_worktree.exists());
 }
 
+// 외부에서 v3 plan을 coordination 디렉터리 안에 복사해도 apply는 그 파일을
+// 보존 목록 drift로 오인하지 않고 금지된 저장 위치를 직접 진단한다.
+#[test]
+fn rejects_a_plan_stored_inside_the_slice_coordination_directory() {
+    let fixture = CloseFixture::new();
+    let plan = fixture.plan();
+    let inside = fixture.contract_path.with_file_name("close-plan.json");
+    std::fs::write(&inside, serde_json::to_vec_pretty(&plan).unwrap()).unwrap();
+
+    let error = apply(&fixture.repository.path, &inside).unwrap_err();
+
+    assert!(error.contains("outside the worktree and coordination directory"));
+    assert!(fixture.slice_worktree.exists());
+    assert!(fixture.contract_path.exists());
+}
+
 // 정상 apply는 등록된 worktree와 exact 표준 contract를 제거한 뒤 integration ref
 // 확인과 예상 Slice SHA 삭제를 한 transaction으로 묶어 Git의 "미병합" 판정에
 // 의존하지 않는다.
@@ -181,6 +215,68 @@ fn completes_the_verified_cleanup() {
         &fixture.repository.path,
         &["show-ref", "--verify", "refs/heads/slice/direct/sample"]
     ));
+}
+
+// 정상 cleanup은 plan에 보고된 비표준 coordination 파일과 디렉터리를 그대로
+// 보존하고 표준 contract, worktree, Slice branch만 제거한다.
+#[test]
+fn preserves_reported_coordination_paths() {
+    let fixture = CloseFixture::new();
+    let coordination = fixture.contract_path.parent().unwrap();
+    let handoff = coordination.join("handoff.md");
+    let notes = coordination.join("notes");
+    std::fs::write(&handoff, "retain me\n").unwrap();
+    std::fs::create_dir(&notes).unwrap();
+    let plan = fixture.plan();
+    fixture.write_plan(&plan);
+
+    apply(&fixture.repository.path, &fixture.plan_path).unwrap();
+
+    assert!(handoff.exists());
+    assert!(notes.exists());
+    assert!(!fixture.contract_path.exists());
+}
+
+// v3 도입 전에 발행된 v2 plan은 새 retained 필드가 없어도 기존 identity로
+// 검증되어 중단된 cleanup을 다시 시작할 수 있다.
+#[test]
+fn applies_a_legacy_v2_plan() {
+    let fixture = CloseFixture::new();
+    let mut plan = fixture.plan();
+    plan.schema = "yo.slice-close-plan/v2".to_owned();
+    plan.plan_id = identity(&plan).unwrap();
+    let mut encoded = serde_json::to_value(&plan).unwrap();
+    encoded
+        .as_object_mut()
+        .unwrap()
+        .remove("retained_coordination_paths");
+    std::fs::write(
+        &fixture.plan_path,
+        serde_json::to_vec_pretty(&encoded).unwrap(),
+    )
+    .unwrap();
+
+    apply(&fixture.repository.path, &fixture.plan_path).unwrap();
+
+    assert!(!fixture.slice_worktree.exists());
+    assert!(!fixture.contract_path.exists());
+}
+
+// v2 identity가 알지 못하는 새 필드를 끼워 넣어도 검증되지 않은 값이 plan의
+// 일부인 것처럼 보이지 않도록 cleanup 전에 명시적으로 거절한다.
+#[test]
+fn rejects_retained_paths_added_to_a_legacy_plan() {
+    let fixture = CloseFixture::new();
+    let mut plan = fixture.plan();
+    plan.schema = "yo.slice-close-plan/v2".to_owned();
+    plan.retained_coordination_paths = vec![fixture.contract_path.with_file_name("handoff.md")];
+    plan.plan_id = identity(&plan).unwrap();
+    fixture.write_plan(&plan);
+
+    let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
+
+    assert!(error.contains("legacy Slice close plans cannot contain"));
+    assert!(fixture.slice_worktree.exists());
 }
 
 // worktree 제거 직후 프로세스가 중단된 경우에도 계획된 경로와 binding이 사라지고

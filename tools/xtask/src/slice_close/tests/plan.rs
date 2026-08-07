@@ -11,7 +11,7 @@ fn describes_only_the_verified_slice_cleanup() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
 
-    assert_eq!(plan.schema, "yo.slice-close-plan/v2");
+    assert_eq!(plan.schema, "yo.slice-close-plan/v3");
     assert_eq!(plan.slice, "sample");
     assert_eq!(plan.integration_ref, "refs/heads/develop");
     assert_eq!(plan.integration_head, plan.accepted_commit);
@@ -20,7 +20,39 @@ fn describes_only_the_verified_slice_cleanup() {
     assert!(plan.effects.remove_binding);
     assert!(plan.effects.remove_coordination_contract);
     assert!(plan.effects.delete_slice_branch);
+    assert!(plan.retained_coordination_paths.is_empty());
     assert_eq!(plan.plan_id, identity(&plan).unwrap());
+}
+
+// 표준 contract와 함께 handoff나 하위 디렉터리가 있으면 plan은 삭제 대상에서
+// 제외한 coordination 경로를 정렬해 보여 주어 사람이 후속 소유자를 판단하게 한다.
+#[test]
+fn reports_retained_coordination_paths_without_claiming_cleanup() {
+    let fixture = CloseFixture::new();
+    let coordination = fixture.contract_path.parent().unwrap();
+    let notes = coordination.join("notes");
+    let handoff = coordination.join("handoff.md");
+    std::fs::create_dir(&notes).unwrap();
+    std::fs::write(&handoff, "retain me\n").unwrap();
+
+    let plan = fixture.plan();
+
+    assert_eq!(plan.retained_coordination_paths, vec![handoff, notes],);
+}
+
+// retained coordination 항목이 너무 많아 plan의 보고가 불완전해질 수 있으면
+// 일부만 조용히 생략하지 않고 cleanup 계획 생성을 거절한다.
+#[test]
+fn rejects_more_retained_coordination_paths_than_the_plan_can_report() {
+    let fixture = CloseFixture::new();
+    let coordination = fixture.contract_path.parent().unwrap();
+    for index in 0..65 {
+        std::fs::write(coordination.join(format!("note-{index:02}")), "retain me\n").unwrap();
+    }
+
+    let error = build_plan(&fixture.repository.path, "sample").unwrap_err();
+
+    assert!(error.contains("64-entry reporting limit"));
 }
 
 // plan 출력 경로를 주면 agent가 stdout JSON을 다시 쓰지 않아도 exact bytes가
@@ -50,6 +82,46 @@ fn rejects_plan_output_inside_the_target_worktree() {
 
     assert!(error.contains("outside the worktree"));
     assert!(!inside.exists());
+}
+
+// Slice coordination 디렉터리에 plan을 발행하면 그 파일 자체가 보존 목록을
+// 바꾸므로 성공을 보고한 뒤 apply에서 실패하는 대신 발행 전에 거절한다.
+#[test]
+fn rejects_plan_output_inside_the_slice_coordination_directory() {
+    let fixture = CloseFixture::new();
+    let inside = fixture.contract_path.with_file_name("close-plan.json");
+
+    let error = plan(&fixture.repository.path, "sample", Some(&inside)).unwrap_err();
+
+    assert!(error.contains("outside the worktree and coordination directory"));
+    assert!(!inside.exists());
+}
+
+// integration을 linked worktree에서 실행해도 보존 목록은 그 checkout 아래가
+// 아니라 표준 contract와 같은 공용 workspace coordination 경계를 관찰한다.
+#[test]
+fn linked_integration_worktree_reports_shared_coordination_paths() {
+    let fixture = CloseFixture::new();
+    let handoff = fixture.contract_path.with_file_name("handoff.md");
+    std::fs::write(&handoff, "retain me\n").unwrap();
+    let linked = test_support::unique_path("slice-close-linked-integration");
+    fixture.repository.git(["switch", "--quiet", "--detach"]);
+    fixture.repository.git([
+        "worktree",
+        "add",
+        "--quiet",
+        linked.to_str().unwrap(),
+        "develop",
+    ]);
+    let linked = std::fs::canonicalize(linked).unwrap();
+
+    let plan = build_plan(&linked, "sample").unwrap();
+
+    assert_eq!(plan.retained_coordination_paths, vec![handoff]);
+    git(
+        &fixture.repository.path,
+        &["worktree", "remove", "--", linked.to_str().unwrap()],
+    );
 }
 
 // 이후 Slice가 develop에 들어와 HEAD가 움직여도 first-parent 이력에서 patch가
