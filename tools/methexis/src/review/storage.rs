@@ -13,6 +13,31 @@ pub(super) fn publish_tracked(
     operation: &'static str,
     id: &str,
 ) -> Result<&'static str, OperationFailure> {
+    publish_tracked_record(
+        repository_root,
+        target,
+        bytes,
+        expected_existing_hash,
+        operation,
+        id,
+        "Projection",
+        "retry with replace_projection_hash set to the exact existing hash",
+        "remove replace_projection_hash for initial creation",
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn publish_tracked_record(
+    repository_root: &Path,
+    target: &Path,
+    bytes: &[u8],
+    expected_existing_hash: Option<&str>,
+    operation: &'static str,
+    id: &str,
+    record_name: &'static str,
+    conflict_next_action: &'static str,
+    missing_next_action: &'static str,
+) -> Result<&'static str, OperationFailure> {
     let lock = publication::lock_target(repository_root, target)
         .map_err(|error| publication_failure(operation, id, error))?;
     let previous = match lock.read() {
@@ -25,9 +50,9 @@ pub(super) fn publish_tracked(
                 return Err(OperationFailure::new(
                     operation,
                     "replacement_conflict",
-                    format!("existing Projection hash is `{existing_hash}`"),
+                    format!("existing {record_name} hash is `{existing_hash}`"),
                     vec![id.to_owned()],
-                    "retry with replace_projection_hash set to the exact existing hash",
+                    conflict_next_action,
                 ));
             }
             Some(existing)
@@ -37,9 +62,11 @@ pub(super) fn publish_tracked(
                 return Err(OperationFailure::new(
                     operation,
                     "replacement_conflict",
-                    "no existing Projection is available for the replacement precondition",
+                    format!(
+                        "no existing {record_name} is available for the replacement precondition"
+                    ),
                     vec![id.to_owned()],
-                    "remove replace_projection_hash for initial creation",
+                    missing_next_action,
                 ));
             }
             None
@@ -48,7 +75,7 @@ pub(super) fn publish_tracked(
             return Err(OperationFailure::new(
                 operation,
                 "publication_failed",
-                format!("cannot inspect existing Projection: {error}"),
+                format!("cannot inspect existing {record_name}: {error}"),
                 vec![id.to_owned()],
                 "repair the destination and retry",
             ));
@@ -123,7 +150,7 @@ pub(super) fn publish_approval(
     Ok("written")
 }
 
-pub(super) fn publish_artifact_directory(
+pub(crate) fn publish_artifact_directory(
     repository_root: &Path,
     target: &Path,
     files: &[(&str, &[u8])],
@@ -165,7 +192,7 @@ pub(super) fn publish_artifact_directory(
     Ok("written")
 }
 
-fn publication_failure(
+pub(crate) fn publication_failure(
     operation: &'static str,
     id: &str,
     error: PublicationError,

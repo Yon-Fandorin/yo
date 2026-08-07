@@ -4,6 +4,7 @@
 //! Trusted integration is fixed to local `develop`. Working-tree observations
 //! may demote Source-aware eligibility to degraded, but never grant authority.
 
+mod author;
 mod check;
 mod checkpoint;
 mod cli;

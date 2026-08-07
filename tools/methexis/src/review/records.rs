@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{check::Diagnostic, model::KnowledgeUnit};
 
-pub(super) fn projection_input_hash(id: &str, revision: &str, korean_markdown: &str) -> String {
+pub(crate) fn projection_input_hash(id: &str, revision: &str, korean_markdown: &str) -> String {
     semantic_hash(&ProjectionInput {
         schema: PROJECTION_REQUEST_SCHEMA,
         knowledge_id: id,
@@ -19,7 +19,7 @@ pub(super) fn projection_input_hash(id: &str, revision: &str, korean_markdown: &
     })
 }
 
-pub(super) fn render_projection(unit: &KnowledgeUnit, request_hash: &str, korean: &str) -> Vec<u8> {
+pub(crate) fn render_projection(unit: &KnowledgeUnit, request_hash: &str, korean: &str) -> Vec<u8> {
     render_projection_fields(&unit.metadata.id, &unit.revision, request_hash, korean)
 }
 
@@ -30,10 +30,18 @@ fn render_projection_fields(
     korean: &str,
 ) -> Vec<u8> {
     format!(
-        "---\nschema: {PROJECTION_SCHEMA}\nknowledge_id: {}\nrevision: {}\nprofile: {PROFILE}\ncompiler: {COMPILER}\nrequest_hash: {request_hash}\n---\n# Korean Review Projection\n\n## Translation\n\n{korean}\n",
-        knowledge_id, revision
+        "---\nschema: {PROJECTION_SCHEMA}\nknowledge_id: {}\nrevision: {}\nprofile: {PROFILE}\ncompiler: {COMPILER}\nrequest_hash: {request_hash}\n---\n{}",
+        knowledge_id,
+        revision,
+        render_projection_body(korean),
     )
     .into_bytes()
+}
+
+/// The Markdown body every Projection carries below its front matter, shared
+/// so the written Projection and the packet can never drift apart.
+pub(crate) fn render_projection_body(korean: &str) -> String {
+    format!("# Korean Review Projection\n\n## Translation\n\n{korean}\n")
 }
 
 pub(super) fn render_review_packet(unit: &KnowledgeUnit, projection: &ProjectionRecord) -> String {
@@ -99,7 +107,7 @@ pub(super) fn render_approval(
 }
 
 #[allow(clippy::result_large_err)]
-pub(super) fn parse_projection(
+pub(crate) fn parse_projection(
     path: &Path,
     repository_root: &Path,
 ) -> Result<ProjectionRecord, Diagnostic> {

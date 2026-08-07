@@ -1,0 +1,8 @@
+{
+  "schema": "methexis.author-revision-request/v1alpha1",
+  "knowledge_id": "tui.grapheme-cells",
+  "expected_revision": "sha256:6a63699a7d866f06815035055f8766b9cb86ffbde2e8226ebcc7e0b8dbd00500",
+  "source_content": "Cells are allocated per measured grapheme cluster.",
+  "knowledge_body": "# Grapheme cell storage\n\n## Statement\n\nTerminal cells store exactly one measured grapheme cluster each.\n\n## Rationale\n\nSplitting clusters across cells corrupts cursor accounting.\n",
+  "korean_markdown": "터미널 셀은 각각 측정된 하나의 자소 클러스터를 저장합니다."
+}

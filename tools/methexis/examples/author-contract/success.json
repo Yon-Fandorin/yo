@@ -1,0 +1,25 @@
+{
+    "schema": "methexis.author-revision/v1alpha1",
+    "ok": true,
+    "operation": "author-revision",
+    "status": "written",
+    "authority": "draft_proposal",
+    "affected_ids": [
+        "tui.grapheme-cells"
+    ],
+    "revision": "sha256:66c52b6fe090b8602c9a3409b58aeef924c32da4a60b01b70635e4c66315c620",
+    "projection_hash": "sha256:3516422c3513892e37e4a9f6febf5fbea347280a377e20a828edb1837ab26a5a",
+    "packet": {
+        "path": ".local-exclude/methexis/reviews/2bbc65adb2a8bfcc4760fedf8f432d0ee5af6f17ba5ef15846474dc4a65fd84d/manifest.json",
+        "hash": "sha256:f63cb4b1b0156594da4ddb1285e8f349c14a4d39e346457cedfe1a7f475015e9"
+    },
+    "changed_paths": [
+        "methexis/sources/decision/tui.fixture.yaml",
+        "methexis/knowledge/tui.grapheme-cells.md",
+        "methexis/review-projections/tui.grapheme-cells.md"
+    ],
+    "request_hash": "sha256:1b8765834d2157dd9e6e10006b52fb52fae2093dbe667bcb4b546e73d57f9063",
+    "next_actions": [
+        "review the tracked diff and packet, then record approval with methexis approve"
+    ]
+}

@@ -1,6 +1,10 @@
 //! Agent operations that coordinate foundation, record, and storage boundaries.
 
-use std::{fs, io::Read, path::Path};
+use std::{
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use super::{
     APPROVAL_REQUEST_SCHEMA, ApprovalInput, ApprovalRequest, MAX_REQUEST_BYTES, OperationFailure,
@@ -99,8 +103,44 @@ pub(super) fn build_review(
     })?;
     require_projection_match(OPERATION, unit, &projection, &request.projection_hash)?;
 
+    let published = publish_review_packet(repository_root, OPERATION, unit, &projection)?;
+
+    Ok(success(SuccessInput {
+        operation: OPERATION,
+        status: published.status,
+        repository_root,
+        path: &published.manifest_path,
+        hash: published.packet_hash,
+        request_hash: published.request_hash,
+        next_actions: vec!["read the packet and obtain explicit human approval".to_owned()],
+        id: unit.metadata.id.clone(),
+    }))
+}
+
+pub(crate) struct PublishedPacket {
+    pub(crate) status: &'static str,
+    pub(crate) manifest_path: PathBuf,
+    pub(crate) packet_hash: String,
+    pub(crate) request_hash: String,
+}
+
+/// Builds and publishes the deterministic review packet for one exact end
+/// state. Shared by `build-review` and `author-revision` so both produce
+/// byte-identical packets for the same unit and Projection.
+pub(crate) fn publish_review_packet(
+    repository_root: &Path,
+    operation: &'static str,
+    unit: &KnowledgeUnit,
+    projection: &ProjectionRecord,
+) -> Result<PublishedPacket, OperationFailure> {
+    let request = ReviewRequest {
+        schema: REVIEW_REQUEST_SCHEMA.to_owned(),
+        knowledge_id: unit.metadata.id.clone(),
+        expected_revision: unit.revision.clone(),
+        projection_hash: projection.hash.clone(),
+    };
     let request_hash = semantic_hash(&request);
-    let packet = render_review_packet(unit, &projection);
+    let packet = render_review_packet(unit, projection);
     let packet_hash = hash_bytes(packet.as_bytes());
     let review_id = hash_bytes(
         format!(
@@ -126,7 +166,7 @@ pub(super) fn build_review(
     };
     let mut manifest_bytes = serde_json::to_vec(&manifest).map_err(|error| {
         OperationFailure::new(
-            OPERATION,
+            operation,
             "serialization_failed",
             error.to_string(),
             vec![unit.metadata.id.clone()],
@@ -141,20 +181,16 @@ pub(super) fn build_review(
             ("packet.md", packet.as_bytes()),
             ("manifest.json", &manifest_bytes),
         ],
-        OPERATION,
+        operation,
         &unit.metadata.id,
     )?;
 
-    Ok(success(SuccessInput {
-        operation: OPERATION,
+    Ok(PublishedPacket {
         status,
-        repository_root,
-        path: &directory.join("manifest.json"),
-        hash: packet_hash,
+        manifest_path: directory.join("manifest.json"),
+        packet_hash,
         request_hash,
-        next_actions: vec!["read the packet and obtain explicit human approval".to_owned()],
-        id: unit.metadata.id.clone(),
-    }))
+    })
 }
 
 pub(super) fn record_approval(
@@ -247,7 +283,7 @@ pub(super) fn record_approval(
     }))
 }
 
-fn load_operation_foundation(
+pub(crate) fn load_operation_foundation(
     repository_root: &Path,
     operation: &'static str,
     id: &str,
@@ -318,7 +354,7 @@ fn require_projection_match(
     Ok(())
 }
 
-fn read_request<T>(path: &Path, operation: &'static str) -> Result<T, OperationFailure>
+pub(crate) fn read_request<T>(path: &Path, operation: &'static str) -> Result<T, OperationFailure>
 where
     T: serde::de::DeserializeOwned,
 {
@@ -363,7 +399,7 @@ where
     })
 }
 
-fn require_schema(
+pub(crate) fn require_schema(
     operation: &'static str,
     actual: &str,
     expected: &str,
@@ -382,7 +418,7 @@ fn require_schema(
     }
 }
 
-fn normalize_markdown(
+pub(crate) fn normalize_markdown(
     markdown: &str,
     operation: &'static str,
     id: &str,

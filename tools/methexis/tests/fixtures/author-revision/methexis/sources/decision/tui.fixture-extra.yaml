@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: tui.fixture-extra
+revision: sha256:1f9068982d8a277d102ae11aac1d2a7d3b55598d4dec41e39474c08731477d70
+payload:
+  kind: decision
+  content: Secondary fixture provenance.

@@ -13,17 +13,17 @@ use sha2::{Digest, Sha256};
 
 use crate::check::{Diagnostic, DiagnosticPhase};
 
-const PROJECTION_SCHEMA: &str = "methexis.review-projection/v1alpha1";
+pub(crate) const PROJECTION_SCHEMA: &str = "methexis.review-projection/v1alpha1";
 const APPROVAL_SCHEMA: &str = "methexis.approval/v1alpha1";
 const PROJECTION_REQUEST_SCHEMA: &str = "methexis.review-projection-request/v1alpha1";
 const REVIEW_REQUEST_SCHEMA: &str = "methexis.review-request/v1alpha1";
 const APPROVAL_REQUEST_SCHEMA: &str = "methexis.approval-request/v1alpha1";
 const OPERATION_SCHEMA: &str = "methexis.operation/v1alpha1";
 const REVIEW_MANIFEST_SCHEMA: &str = "methexis.review-manifest/v1alpha1";
-const PROFILE: &str = "ko-review/v1alpha1";
+pub(crate) const PROFILE: &str = "ko-review/v1alpha1";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
-const MAX_RECORD_BYTES: usize = 256 * 1024;
-const COMPILER: &str = concat!("methexis/", env!("CARGO_PKG_VERSION"));
+pub(crate) const MAX_RECORD_BYTES: usize = 256 * 1024;
+pub(crate) const COMPILER: &str = concat!("methexis/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProposalState {
@@ -98,21 +98,30 @@ struct ApprovalInput<'a> {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ProjectionMetadata {
-    schema: String,
-    knowledge_id: String,
-    revision: String,
-    profile: String,
-    compiler: String,
-    request_hash: String,
+pub(crate) struct ProjectionMetadata {
+    pub(crate) schema: String,
+    pub(crate) knowledge_id: String,
+    pub(crate) revision: String,
+    pub(crate) profile: String,
+    pub(crate) compiler: String,
+    pub(crate) request_hash: String,
 }
 
 #[derive(Clone, Debug)]
-struct ProjectionRecord {
-    metadata: ProjectionMetadata,
-    path: PathBuf,
-    hash: String,
-    body: String,
+pub(crate) struct ProjectionRecord {
+    pub(crate) metadata: ProjectionMetadata,
+    pub(crate) path: PathBuf,
+    pub(crate) hash: String,
+    pub(crate) body: String,
+}
+
+impl ProjectionRecord {
+    pub(crate) fn translation(&self) -> &str {
+        self.body
+            .strip_prefix("# Korean Review Projection\n\n## Translation\n\n")
+            .expect("parse validates the Translation section")
+            .trim()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -162,7 +171,7 @@ struct OperationErrorBody {
 }
 
 impl OperationFailure {
-    fn new(
+    pub(crate) fn new(
         operation: &'static str,
         code: impl Into<String>,
         message: impl Into<String>,
@@ -180,6 +189,22 @@ impl OperationFailure {
                 next_actions: vec![next_action.into()],
             }),
         }
+    }
+
+    /// Marks a mid-sequence failure with the paths already written so a
+    /// convergent re-run can finish the remaining writes.
+    pub(crate) fn into_partial(mut self, written: &[String]) -> Self {
+        if written.is_empty() {
+            return self;
+        }
+        self.error.message = format!(
+            "{}; already wrote: {}",
+            self.error.message,
+            written.join(", ")
+        );
+        self.error.next_actions =
+            vec!["re-run the same request to converge the remaining writes".to_owned()];
+        self
     }
 }
 
@@ -207,9 +232,9 @@ struct SuccessInput<'a> {
     id: String,
 }
 
-mod operations;
-mod records;
-mod storage;
+pub(crate) mod operations;
+pub(crate) mod records;
+pub(crate) mod storage;
 mod validation;
 
 pub(crate) struct ReviewService<'a> {
@@ -260,7 +285,7 @@ fn success(input: SuccessInput<'_>) -> OperationSuccess {
     }
 }
 
-fn failure_from_diagnostic(
+pub(crate) fn failure_from_diagnostic(
     operation: &'static str,
     diagnostic: Diagnostic,
     next_action: &str,
@@ -332,12 +357,12 @@ fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {
     });
 }
 
-fn semantic_hash(value: &impl Serialize) -> String {
+pub(crate) fn semantic_hash(value: &impl Serialize) -> String {
     let bytes = serde_json::to_vec(value).expect("request structs serialize");
     hash_bytes(&bytes)
 }
 
-fn hash_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let digest = Sha256::digest(bytes);
     let mut output = String::with_capacity(71);
@@ -398,7 +423,7 @@ fn valid_review_time(value: &str) -> bool {
         && matches!(number(17..19), Some(0..=59))
 }
 
-fn relative_path(repository_root: &Path, path: &Path) -> String {
+pub(crate) fn relative_path(repository_root: &Path, path: &Path) -> String {
     path.strip_prefix(repository_root)
         .unwrap_or(path)
         .to_string_lossy()

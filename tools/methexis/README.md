@@ -6,7 +6,8 @@ from the local `develop` ref and evaluates pinned Source freshness before an
 integrated Checkpoint can make knowledge active.
 
 The versioned contract fixtures under
-[`examples/review-contract`](examples/review-contract/) and
+[`examples/review-contract`](examples/review-contract/),
+[`examples/author-contract`](examples/author-contract/), and
 [`examples/checkpoint-contract`](examples/checkpoint-contract/) show complete
 requests and structured success and failure results. The
 [`examples/context-contract`](examples/context-contract/) directory additionally
@@ -15,6 +16,7 @@ pins exact agent payload and manifest bytes. Copy requests to
 revision, hash, reviewer, or review time.
 
 ```text
+methexis author-revision <author-request.json>
 methexis project-review <projection-request.json>
 methexis build-review <review-request.json>
 methexis approve <approval-request.json>
@@ -65,6 +67,17 @@ authority. It neither regenerates the full bytes nor checks rebuildable
 responsibilities. If any registered tracked manifest is present, the complete
 registered set is required. Without active trusted authority the class is
 `blocked` and the requested check is unsuccessful.
+
+`author-revision` authors one unit revision in a single call. It accepts any
+of new Source content, a new Knowledge body, and new Korean review Markdown,
+then derives and writes the Source revision, the Knowledge source pin and
+derived revision, the replacement Projection, and the review packet. It writes
+tracked Draft proposals only; approval records are never touched, and human
+approval remains a separate explicit step. The first version fails closed for
+units that do not pin exactly one `decision` Source. Writes are
+sequential per-file compare-and-swap operations; a mid-sequence failure
+reports the paths already written, and re-running the same request converges
+the remainder.
 
 `project-review` writes a generated file under
 `methexis/review-projections/`. `build-review` returns the path and hash of a
@@ -124,12 +137,22 @@ Review and Checkpoint workflows remain crate-internal concerns with small
 service facades:
 
 ```text
+src/author/
+  mod.rs         AuthorService facade and shared wire-contract types
+  operations.rs  Source, Knowledge, Projection, and packet orchestration
+  records.rs     deterministic Source record and Knowledge unit encoding
+
 src/review/
   mod.rs         ReviewService and shared wire-contract types
   operations.rs  Projection, packet, and approval orchestration
   records.rs     deterministic record encoding and validation
   storage.rs     atomic publication, CAS, and path safety
   validation.rs  repository-wide proposal state and diagnostics
+
+tests/author_flow/
+  contract.rs    agent fixtures, the happy path, and packet equivalence
+  failures.rs    input, unit-shape, and validation failures
+  support.rs     isolated repository fixture
 
 tests/review_flow/
   contract.rs     agent fixtures and the complete happy path

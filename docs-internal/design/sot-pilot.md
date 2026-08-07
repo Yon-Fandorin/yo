@@ -779,6 +779,7 @@ but remains a reconstructible index rather than authority.
 The implemented operations are:
 
 ```text
+author-revision <request.json>   -> derived revision authoring Draft proposals
 project-review <request.json>  -> tracked Korean review Projection
 build-review <request.json>    -> local packet and manifest
 approve <request.json>         -> tracked exact-revision approval proposal
@@ -789,6 +790,18 @@ check [--only <class>[,<class>...]]... [--summary] [--unit <knowledge-id>]
 check --staged-activation       -> ordinary check or one exact staged prospective transition
 resolve-context <request.json>  -> immutable ContextBuild locator and hashes
 ```
+
+`author-revision` collapses the revision-authoring loop into one call: it
+accepts new Source content, a new Knowledge body, and/or new Korean review
+Markdown, then derives the SourceRevision, the Knowledge source pin and
+RevisionId, the replacement Projection, and the review packet, writing the
+tracked files as Draft proposals. The unit's single decision Source id and all
+other Knowledge metadata are preserved. Approval records MUST NOT be written
+by this operation; human approval remains a separate explicit step. Units
+that do not pin exactly one `decision` Source fail closed. Writes are
+sequential per-file compare-and-swap operations rather than one batch; a
+mid-sequence failure names the paths already written, and re-running the same
+request converges the remainder.
 
 S4 adds context resolution with a versioned request and one structured result.
 Success returns only the small artifact locator and integrity record described

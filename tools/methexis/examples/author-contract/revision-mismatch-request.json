@@ -1,0 +1,6 @@
+{
+  "schema": "methexis.author-revision-request/v1alpha1",
+  "knowledge_id": "tui.grapheme-cells",
+  "expected_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "korean_markdown": "터미널 셀은 각각 측정된 하나의 자소 클러스터를 저장합니다."
+}

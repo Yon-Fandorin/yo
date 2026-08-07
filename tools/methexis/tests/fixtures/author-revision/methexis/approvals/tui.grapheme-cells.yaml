@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: tui.grapheme-cells
+revision: sha256:6a63699a7d866f06815035055f8766b9cb86ffbde2e8226ebcc7e0b8dbd00500
+reviewer: tui-architecture
+reviewed_at: 2026-08-01T09:00:00Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:201fff2f9be79349bb8be78f6c053cf4207278c91929867c219a5460d3081a72
+request_hash: sha256:7f8ff26b8b6a15f8728e9f86e1c67aea6506f8292451f998710a84b4cf8d6a01

@@ -1,0 +1,15 @@
+{
+    "schema": "methexis.operation/v1alpha1",
+    "ok": false,
+    "operation": "author-revision",
+    "error": {
+        "code": "revision_mismatch",
+        "message": "expected revision `sha256:0000000000000000000000000000000000000000000000000000000000000000` but current revision is `sha256:6a63699a7d866f06815035055f8766b9cb86ffbde2e8226ebcc7e0b8dbd00500`",
+        "affected_ids": [
+            "tui.grapheme-cells"
+        ],
+        "next_actions": [
+            "rebuild the request from the current revision"
+        ]
+    }
+}

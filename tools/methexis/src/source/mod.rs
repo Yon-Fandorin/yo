@@ -13,6 +13,7 @@ mod tests;
 
 pub(crate) use freshness::{FreshnessFailure, FreshnessGuard, evaluate, final_revalidate};
 pub(crate) use records::{load, load_captured};
+pub(crate) use revision::calculate as calculate_revision;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum Eligibility {

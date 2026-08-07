@@ -424,7 +424,7 @@ fn parse_knowledge_file(
     })
 }
 
-fn body_start_line(content: &str, body: &str) -> u64 {
+pub(crate) fn body_start_line(content: &str, body: &str) -> u64 {
     let body_offset = content.len() - body.len();
     content[..body_offset]
         .bytes()
@@ -565,7 +565,7 @@ where
     })
 }
 
-fn validate_metadata(
+pub(crate) fn validate_metadata(
     metadata: &KnowledgeMetadata,
     body: &str,
     body_start_line: u64,
@@ -1138,7 +1138,7 @@ fn canonical_cycle(mut cycle: Vec<String>) -> Vec<String> {
     cycle
 }
 
-fn knowledge_revision(metadata: &KnowledgeMetadata, body: &str) -> String {
+pub(crate) fn knowledge_revision(metadata: &KnowledgeMetadata, body: &str) -> String {
     let mut hasher = Sha256::new();
     hash_part(&mut hasher, b"domain", REVISION_DOMAIN);
     hash_part(&mut hasher, b"schema", metadata.schema.as_bytes());

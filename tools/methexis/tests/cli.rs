@@ -20,6 +20,7 @@ USAGE:
     methexis [--help | --version]
     methexis check [--only <class>[,<class>...]]... [--summary] [--unit <id>]
     methexis check --staged-activation
+    methexis author-revision <request.json>
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis approve <request.json>
@@ -30,6 +31,7 @@ USAGE:
 
 COMMANDS:
     check             Validate current SOT integrity or one exact staged activation
+    author-revision   Author a derived unit revision as tracked Draft proposals
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal

@@ -9,7 +9,9 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    CheckClass, check_repository_selected,
+    CheckClass,
+    author::AuthorService,
+    check_repository_selected,
     checkpoint::{CheckpointService, StagedTransition},
     context::ContextService,
     review::ReviewService,
@@ -25,6 +27,7 @@ USAGE:
     methexis [--help | --version]
     methexis check [--only <class>[,<class>...]]... [--summary] [--unit <id>]
     methexis check --staged-activation
+    methexis author-revision <request.json>
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis approve <request.json>
@@ -35,6 +38,7 @@ USAGE:
 
 COMMANDS:
     check             Validate current SOT integrity or one exact staged activation
+    author-revision   Author a derived unit revision as tracked Draft proposals
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
     approve           Record a human-authorized approval proposal
@@ -73,6 +77,9 @@ pub fn run(
         [arg] if arg == OsStr::new("--version") || arg == OsStr::new("-V") => {
             writeln!(stdout, "methexis {}", env!("CARGO_PKG_VERSION"))?;
             Ok(ExitCode::SUCCESS)
+        },
+        [command, request] if command == OsStr::new("author-revision") => {
+            run_author_operation(request, &mut stdout, &mut stderr)
         },
         [command, request] if command == OsStr::new("project-review") => {
             run_operation(ReviewOperation::Project, request, &mut stdout, &mut stderr)
@@ -358,6 +365,19 @@ enum ReviewOperation {
     Project,
     Build,
     Approve,
+}
+
+fn run_author_operation(
+    request: &OsStr,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let root = env::current_dir()?;
+    let service = AuthorService::new(&root);
+    match service.author_revision(Path::new(request)) {
+        Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
+    }
 }
 
 fn run_operation(
