@@ -19,6 +19,7 @@ mod context;
 mod evaluation;
 mod git;
 mod operations;
+mod prepare;
 mod prospective;
 mod records;
 mod refresh;
@@ -47,7 +48,7 @@ pub(crate) struct StagedFallback {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct CreateRequest {
+pub(crate) struct CreateRequest {
     schema: String,
     roots: Vec<String>,
 }
@@ -60,11 +61,11 @@ struct CreateInput<'a> {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ActivationRequest {
+pub(crate) struct ActivationRequest {
     schema: String,
     checkpoint_id: String,
     checkpoint_hash: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     replace_active_hash: Option<String>,
 }
 
@@ -222,6 +223,17 @@ impl<'a> CheckpointService<'a> {
         request_path: &Path,
     ) -> Result<OperationSuccess, OperationFailure> {
         operations::propose_activation(self.repository_root, self.trusted_ref, request_path)
+    }
+
+    pub(crate) fn prepare_checkpoint(&self) -> Result<CreateRequest, OperationFailure> {
+        prepare::prepare_checkpoint(self.repository_root)
+    }
+
+    pub(crate) fn prepare_activation(
+        &self,
+        output_path: &Path,
+    ) -> Result<ActivationRequest, OperationFailure> {
+        prepare::prepare_activation(self.repository_root, output_path)
     }
 
     pub(crate) fn check_staged_transition(&self) -> Result<StagedTransition, OperationFailure> {

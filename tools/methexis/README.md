@@ -10,6 +10,11 @@ The versioned contract fixtures under
 [`examples/author-contract`](examples/author-contract/), and
 [`examples/checkpoint-contract`](examples/checkpoint-contract/) show complete
 requests and structured success and failure results. The
+[`examples/prepare-approval-contract`](examples/prepare-approval-contract/),
+[`examples/prepare-checkpoint-contract`](examples/prepare-checkpoint-contract/),
+and
+[`examples/prepare-activation-contract`](examples/prepare-activation-contract/)
+directories pin the request-preparation handoffs between those commands. The
 [`examples/context-contract`](examples/context-contract/) directory additionally
 pins exact agent payload and manifest bytes. Copy requests to
 `.local-exclude/methexis/requests/` before replacing their fixture identity,
@@ -19,8 +24,11 @@ revision, hash, reviewer, or review time.
 methexis author-revision <author-request.json>
 methexis project-review <projection-request.json>
 methexis build-review <review-request.json>
+methexis prepare-approval <manifest.json> --reviewer <owner-id> [--replace-current]
 methexis approve <approval-request.json>
+methexis prepare-checkpoint
 methexis create-checkpoint <checkpoint-request.json>
+methexis prepare-activation <create-output.json>
 methexis propose-activation <activation-request.json>
 methexis refresh-context-manifests <activation-request.json>
 methexis resolve-context <context-request.json>
@@ -85,6 +93,22 @@ local packet under `.local-exclude/methexis/reviews/`. After a human explicitly
 accepts that exact packet, `approve` writes a tracked proposal under
 `methexis/approvals/`.
 
+The three `prepare-*` commands remove hand-copied hashes between these steps.
+Each binds values that already exist in the repository into the exact request
+wire shape the next command consumes, and prints that proposal request JSON on
+stdout; none of them performs the next step's mutation. `prepare-approval`
+reads a review packet manifest and emits the approval request with the current
+UTC `reviewed_at`; it validates `--reviewer` against the tracked Owner
+foundation, binds the current record's RevisionId as `replace_revision` only
+with `--replace-current`, and never writes `methexis/approvals/` — human
+approval remains the separate explicit `approve` step. `prepare-checkpoint`
+reads the working-tree active record and emits a Checkpoint request carrying
+the currently active roots, failing closed when no active Checkpoint exists.
+`prepare-activation` reads one saved `create-checkpoint` result and emits the
+activation request, binding the working-tree active record's content hash as
+the compare-and-swap `replace_active_hash` when one exists, and failing closed
+for input that is not a successful `create_checkpoint` result.
+
 `create-checkpoint` resolves `refs/heads/develop` once through an isolated
 system Git process, disables replacement refs, reads exact Git objects without
 switching branches, and writes an immutable Checkpoint proposal containing the
@@ -145,6 +169,7 @@ src/author/
 src/review/
   mod.rs         ReviewService and shared wire-contract types
   operations.rs  Projection, packet, and approval orchestration
+  prepare.rs     approval-request preparation from a packet manifest
   records.rs     deterministic record encoding and validation
   storage.rs     atomic publication, CAS, and path safety
   validation.rs  repository-wide proposal state and diagnostics
@@ -153,6 +178,12 @@ tests/author_flow/
   contract.rs    agent fixtures, the happy path, and packet equivalence
   failures.rs    input, unit-shape, and validation failures
   support.rs     isolated repository fixture
+
+tests/prepare_flow/
+  contract.rs    agent fixtures for the three prepare commands
+  chain.rs       the full review-to-activation loop through prepare output
+  failures.rs    reviewer, replacement, active-state, and input failures
+  support.rs     Git-backed isolated repository fixture
 
 tests/review_flow/
   contract.rs     agent fixtures and the complete happy path
@@ -166,6 +197,7 @@ src/checkpoint/
   context.rs     Context authority capture and final revalidation guard
   context_tests.rs final concurrent authority-change regression
   operations.rs  Checkpoint and activation-proposal orchestration
+  prepare.rs     Checkpoint and activation request preparation
   prospective.rs exact staged activation and artifact validation
   refresh.rs     prospective authority preparation for manifest refresh
   git.rs         isolated pinned trusted-ref Git-object snapshot

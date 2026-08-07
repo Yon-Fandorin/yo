@@ -75,14 +75,14 @@ struct ReviewRequest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ApprovalRequest {
+pub(crate) struct ApprovalRequest {
     schema: String,
     knowledge_id: String,
     expected_revision: String,
     projection_hash: String,
     reviewer: String,
     reviewed_at: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     replace_revision: Option<String>,
 }
 
@@ -208,17 +208,18 @@ impl OperationFailure {
     }
 }
 
-#[derive(Serialize)]
-struct ReviewManifest<'a> {
-    schema: &'static str,
-    review_id: &'a str,
-    knowledge_id: &'a str,
-    revision: &'a str,
-    projection_hash: &'a str,
-    request_hash: &'a str,
-    source_status: &'static str,
-    packet_path: &'a str,
-    packet_hash: &'a str,
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewManifest {
+    schema: String,
+    review_id: String,
+    knowledge_id: String,
+    revision: String,
+    projection_hash: String,
+    request_hash: String,
+    source_status: String,
+    packet_path: String,
+    packet_hash: String,
 }
 
 struct SuccessInput<'a> {
@@ -233,6 +234,7 @@ struct SuccessInput<'a> {
 }
 
 pub(crate) mod operations;
+mod prepare;
 pub(crate) mod records;
 pub(crate) mod storage;
 mod validation;
@@ -265,6 +267,20 @@ impl<'a> ReviewService<'a> {
         request_path: &Path,
     ) -> Result<OperationSuccess, OperationFailure> {
         operations::record_approval(self.repository_root, request_path)
+    }
+
+    pub(crate) fn prepare_approval(
+        &self,
+        manifest_path: &Path,
+        reviewer: &str,
+        replace_current: bool,
+    ) -> Result<ApprovalRequest, OperationFailure> {
+        prepare::prepare_approval(
+            self.repository_root,
+            manifest_path,
+            reviewer,
+            replace_current,
+        )
     }
 }
 

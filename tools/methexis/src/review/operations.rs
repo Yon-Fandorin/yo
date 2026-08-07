@@ -154,15 +154,15 @@ pub(crate) fn publish_review_packet(
         .join(review_id.trim_start_matches("sha256:"));
     let packet_relative = relative_path(repository_root, &directory.join("packet.md"));
     let manifest = ReviewManifest {
-        schema: REVIEW_MANIFEST_SCHEMA,
-        review_id: &review_id,
-        knowledge_id: &unit.metadata.id,
-        revision: &unit.revision,
-        projection_hash: &projection.hash,
-        request_hash: &request_hash,
-        source_status: "not_evaluated",
-        packet_path: &packet_relative,
-        packet_hash: &packet_hash,
+        schema: REVIEW_MANIFEST_SCHEMA.to_owned(),
+        review_id: review_id.clone(),
+        knowledge_id: unit.metadata.id.clone(),
+        revision: unit.revision.clone(),
+        projection_hash: projection.hash.clone(),
+        request_hash: request_hash.clone(),
+        source_status: "not_evaluated".to_owned(),
+        packet_path: packet_relative,
+        packet_hash: packet_hash.clone(),
     };
     let mut manifest_bytes = serde_json::to_vec(&manifest).map_err(|error| {
         OperationFailure::new(

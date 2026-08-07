@@ -176,7 +176,7 @@ pub(super) fn propose_activation(
     })
 }
 
-fn read_request<T>(path: &Path, operation: &'static str) -> Result<T, OperationFailure>
+pub(super) fn read_request<T>(path: &Path, operation: &'static str) -> Result<T, OperationFailure>
 where
     T: serde::de::DeserializeOwned,
 {

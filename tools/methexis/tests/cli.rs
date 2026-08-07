@@ -23,8 +23,11 @@ USAGE:
     methexis author-revision <request.json>
     methexis project-review <request.json>
     methexis build-review <request.json>
+    methexis prepare-approval <manifest.json> --reviewer <owner-id> [--replace-current]
     methexis approve <request.json>
+    methexis prepare-checkpoint
     methexis create-checkpoint <request.json>
+    methexis prepare-activation <create-output.json>
     methexis propose-activation <request.json>
     methexis refresh-context-manifests <activation-request.json>
     methexis resolve-context <request.json>
@@ -34,8 +37,11 @@ COMMANDS:
     author-revision   Author a derived unit revision as tracked Draft proposals
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
+    prepare-approval  Emit an approval request from a review packet manifest
     approve           Record a human-authorized approval proposal
+    prepare-checkpoint Emit a Checkpoint request from the active roots
     create-checkpoint Create an immutable trusted-revision Checkpoint proposal
+    prepare-activation Emit an activation request from create-checkpoint output
     propose-activation Propose the active Checkpoint with compare-and-swap
     refresh-context-manifests Refresh registered manifests for an activation proposal
     resolve-context    Build or reuse deterministic token-bounded agent context

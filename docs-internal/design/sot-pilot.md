@@ -782,8 +782,13 @@ The implemented operations are:
 author-revision <request.json>   -> derived revision authoring Draft proposals
 project-review <request.json>  -> tracked Korean review Projection
 build-review <request.json>    -> local packet and manifest
+prepare-approval <manifest.json> --reviewer <owner-id> [--replace-current]
+                               -> approval-request proposal on stdout only
 approve <request.json>         -> tracked exact-revision approval proposal
+prepare-checkpoint             -> Checkpoint-request proposal on stdout only
 create-checkpoint <request.json> -> immutable trusted-revision Checkpoint proposal
+prepare-activation <create-output.json>
+                               -> activation-request proposal on stdout only
 propose-activation <request.json> -> active-record proposal with compare-and-swap
 check [--only <class>[,<class>...]]... [--summary] [--unit <knowledge-id>]
                                 -> selected SOT integrity classes and their prerequisites
@@ -802,6 +807,20 @@ that do not pin exactly one `decision` Source fail closed. Writes are
 sequential per-file compare-and-swap operations rather than one batch; a
 mid-sequence failure names the paths already written, and re-running the same
 request converges the remainder.
+
+The `prepare-approval`, `prepare-checkpoint`, and `prepare-activation`
+operations remove hand-copied hashes from the review→approval→checkpoint→
+activation loop. Each reads values that already exist in the repository — the
+review packet manifest, the active Checkpoint roots, or one saved
+`create-checkpoint` result — binds them into the exact request wire shape the
+next operation consumes, and prints that request JSON on stdout. The authority
+boundaries are unchanged: the prepare operations emit proposals only and never
+perform the following mutation. `prepare-approval` MUST NOT write
+`methexis/approvals/` or record an approval; human authorization remains the
+separate explicit `approve` step. Checkpoint and activation preparation MUST
+NOT invoke Checkpoint creation or activation. Missing authority inputs — an
+unknown reviewer, a `--replace-current` without an existing approval record,
+or no active Checkpoint — fail closed with structured diagnostics.
 
 S4 adds context resolution with a versioned request and one structured result.
 Success returns only the small artifact locator and integrity record described

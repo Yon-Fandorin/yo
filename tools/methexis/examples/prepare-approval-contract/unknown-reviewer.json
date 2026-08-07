@@ -1,0 +1,15 @@
+{
+  "schema": "methexis.operation/v1alpha1",
+  "ok": false,
+  "operation": "prepare_approval",
+  "error": {
+    "code": "unknown_reviewer",
+    "message": "reviewer OwnerId `nobody` does not exist",
+    "affected_ids": [
+      "tui.relocated"
+    ],
+    "next_actions": [
+      "use a tracked OwnerId"
+    ]
+  }
+}

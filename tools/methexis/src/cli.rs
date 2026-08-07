@@ -30,8 +30,11 @@ USAGE:
     methexis author-revision <request.json>
     methexis project-review <request.json>
     methexis build-review <request.json>
+    methexis prepare-approval <manifest.json> --reviewer <owner-id> [--replace-current]
     methexis approve <request.json>
+    methexis prepare-checkpoint
     methexis create-checkpoint <request.json>
+    methexis prepare-activation <create-output.json>
     methexis propose-activation <request.json>
     methexis refresh-context-manifests <activation-request.json>
     methexis resolve-context <request.json>
@@ -41,8 +44,11 @@ COMMANDS:
     author-revision   Author a derived unit revision as tracked Draft proposals
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
+    prepare-approval  Emit an approval request from a review packet manifest
     approve           Record a human-authorized approval proposal
+    prepare-checkpoint Emit a Checkpoint request from the active roots
     create-checkpoint Create an immutable trusted-revision Checkpoint proposal
+    prepare-activation Emit an activation request from create-checkpoint output
     propose-activation Propose the active Checkpoint with compare-and-swap
     refresh-context-manifests Refresh registered manifests for an activation proposal
     resolve-context    Build or reuse deterministic token-bounded agent context
@@ -69,6 +75,13 @@ pub fn run(
         return run_check(&args[1..], &mut stdout, &mut stderr);
     }
 
+    if args
+        .first()
+        .is_some_and(|arg| arg == OsStr::new("prepare-approval"))
+    {
+        return run_prepare_approval(&args[1..], &mut stdout, &mut stderr);
+    }
+
     match args.as_slice() {
         [] => write_text(&mut stdout, HELP, ExitCode::SUCCESS),
         [arg] if arg == OsStr::new("--help") || arg == OsStr::new("-h") => {
@@ -77,6 +90,9 @@ pub fn run(
         [arg] if arg == OsStr::new("--version") || arg == OsStr::new("-V") => {
             writeln!(stdout, "methexis {}", env!("CARGO_PKG_VERSION"))?;
             Ok(ExitCode::SUCCESS)
+        },
+        [command] if command == OsStr::new("prepare-checkpoint") => {
+            run_prepare_checkpoint(&mut stdout, &mut stderr)
         },
         [command, request] if command == OsStr::new("author-revision") => {
             run_author_operation(request, &mut stdout, &mut stderr)
@@ -106,6 +122,9 @@ pub fn run(
                 &mut stderr,
             )
         },
+        [command, output] if command == OsStr::new("prepare-activation") => {
+            run_prepare_activation(output, &mut stdout, &mut stderr)
+        },
         [command, request] if command == OsStr::new("resolve-context") => {
             run_context_operation(request, &mut stdout, &mut stderr)
         },
@@ -122,17 +141,117 @@ pub fn run(
 }
 
 #[derive(Serialize)]
-struct CheckArgumentFailure {
+struct ArgumentFailure {
     schema: &'static str,
     ok: bool,
-    error: CheckArgumentError,
+    error: ArgumentError,
 }
 
 #[derive(Serialize)]
-struct CheckArgumentError {
+struct ArgumentError {
     code: &'static str,
     affected_ids: Vec<String>,
     next_actions: Vec<&'static str>,
+}
+
+fn argument_failure(code: &'static str, affected_ids: Vec<String>) -> ArgumentFailure {
+    ArgumentFailure {
+        schema: "methexis.error/v1alpha1",
+        ok: false,
+        error: ArgumentError {
+            code,
+            affected_ids,
+            next_actions: vec!["methexis --help"],
+        },
+    }
+}
+
+fn run_prepare_approval(
+    args: &[OsString],
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let Ok((manifest, reviewer, replace_current)) = parse_prepare_approval(args) else {
+        return write_json(
+            stderr,
+            &argument_failure("invalid_prepare_arguments", Vec::new()),
+            ExitCode::from(2),
+        );
+    };
+    let root = env::current_dir()?;
+    let service = ReviewService::new(&root);
+    match service.prepare_approval(Path::new(&manifest), &reviewer, replace_current) {
+        Ok(request) => write_json_pretty(stdout, &request, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
+    }
+}
+
+fn parse_prepare_approval(args: &[OsString]) -> Result<(OsString, String, bool), ()> {
+    let mut manifest = None;
+    let mut reviewer = None;
+    let mut replace_current = false;
+    let mut index = 0;
+    while index < args.len() {
+        let argument = args[index].to_str().ok_or(())?;
+        if argument == "--replace-current" {
+            if replace_current {
+                return Err(());
+            }
+            replace_current = true;
+            index += 1;
+            continue;
+        }
+        // Anything that is not --replace-current is either a --reviewer form
+        // (whose value falls through to the shared recording below) or the
+        // single positional manifest path.
+        let value = if argument == "--reviewer" {
+            index += 1;
+            args.get(index).and_then(|value| value.to_str()).ok_or(())?
+        } else if let Some(value) = argument.strip_prefix("--reviewer=") {
+            value
+        } else if argument.starts_with("--") {
+            return Err(());
+        } else {
+            if manifest.replace(args[index].clone()).is_some() {
+                return Err(());
+            }
+            index += 1;
+            continue;
+        };
+        if value.is_empty() || reviewer.replace(value.to_owned()).is_some() {
+            return Err(());
+        }
+        index += 1;
+    }
+    match (manifest, reviewer) {
+        (Some(manifest), Some(reviewer)) => Ok((manifest, reviewer, replace_current)),
+        _ => Err(()),
+    }
+}
+
+fn run_prepare_checkpoint(
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let root = env::current_dir()?;
+    let service = CheckpointService::new(&root);
+    match service.prepare_checkpoint() {
+        Ok(request) => write_json_pretty(stdout, &request, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
+    }
+}
+
+fn run_prepare_activation(
+    output: &OsStr,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let root = env::current_dir()?;
+    let service = CheckpointService::new(&root);
+    match service.prepare_activation(Path::new(output)) {
+        Ok(request) => write_json_pretty(stdout, &request, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
+    }
 }
 
 fn run_check(
@@ -165,15 +284,7 @@ fn run_check(
         Err(()) => {
             return write_json(
                 stderr,
-                &CheckArgumentFailure {
-                    schema: "methexis.error/v1alpha1",
-                    ok: false,
-                    error: CheckArgumentError {
-                        code: "invalid_check_selector",
-                        affected_ids: Vec::new(),
-                        next_actions: vec!["methexis --help"],
-                    },
-                },
+                &argument_failure("invalid_check_selector", Vec::new()),
                 ExitCode::from(2),
             );
         },
@@ -187,10 +298,10 @@ fn run_check(
     {
         return write_json(
             stderr,
-            &CheckArgumentFailure {
+            &ArgumentFailure {
                 schema: "methexis.error/v1alpha1",
                 ok: false,
-                error: CheckArgumentError {
+                error: ArgumentError {
                     code: "invalid_check_selector",
                     affected_ids: selection.unit.into_iter().collect(),
                     next_actions: vec![
@@ -211,10 +322,10 @@ fn run_check(
         if report.units.is_empty() {
             return write_json(
                 stderr,
-                &CheckArgumentFailure {
+                &ArgumentFailure {
                     schema: "methexis.error/v1alpha1",
                     ok: false,
-                    error: CheckArgumentError {
+                    error: ArgumentError {
                         code: "unknown_check_unit",
                         affected_ids: vec![unit.to_owned()],
                         next_actions: vec!["choose an id reported by methexis check"],
@@ -410,7 +521,28 @@ fn write_json(
     value: &impl Serialize,
     exit_code: ExitCode,
 ) -> io::Result<ExitCode> {
-    serde_json::to_writer(&mut *writer, value).map_err(io::Error::other)?;
+    write_json_with(writer, value, exit_code, false)
+}
+
+fn write_json_pretty(
+    writer: &mut impl Write,
+    value: &impl Serialize,
+    exit_code: ExitCode,
+) -> io::Result<ExitCode> {
+    write_json_with(writer, value, exit_code, true)
+}
+
+fn write_json_with(
+    writer: &mut impl Write,
+    value: &impl Serialize,
+    exit_code: ExitCode,
+    pretty: bool,
+) -> io::Result<ExitCode> {
+    if pretty {
+        serde_json::to_writer_pretty(&mut *writer, value).map_err(io::Error::other)?;
+    } else {
+        serde_json::to_writer(&mut *writer, value).map_err(io::Error::other)?;
+    }
     writer.write_all(b"\n")?;
     Ok(exit_code)
 }

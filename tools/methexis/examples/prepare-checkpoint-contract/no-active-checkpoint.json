@@ -1,0 +1,13 @@
+{
+  "schema": "methexis.operation/v1alpha1",
+  "ok": false,
+  "operation": "prepare_checkpoint",
+  "error": {
+    "code": "no_active_checkpoint",
+    "message": "no active Checkpoint exists in the working tree",
+    "affected_ids": [],
+    "next_actions": [
+      "integrate an activation before preparing the next Checkpoint"
+    ]
+  }
+}
