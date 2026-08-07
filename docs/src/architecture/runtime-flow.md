@@ -244,9 +244,11 @@ The useful inspection points are:
    separate read-only path below. Executable continuation uses the separately
    validated recovery path below rather than deriving state from that frontend
    history projection.
-6. [`drain_agent` and `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
-   consume already committed Transcript records, update TUI state, compose a
-   completed `Surface`, and send it to the active presenter. `runner/view.rs`
+6. [`runner` source scheduling and redraw](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)
+   use a rotating cursor to select one ready terminal, agent, workspace, or
+   skill observation at a time. The selected observation updates TUI state;
+   process termination remains a strict-priority path outside that rotation.
+   The runner composes a completed `Surface` and sends it to the active presenter. `runner/view.rs`
    selects Chat, Transcript, or Request from the same record stream. Chat shows
    user input only when its `StartTurn` or `SteerTurn` command appears in that
    sequence. Terminal `EventStream` readiness and the agent, workspace, and

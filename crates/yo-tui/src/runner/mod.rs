@@ -7,6 +7,7 @@ mod error;
 mod frame;
 mod session;
 mod skill;
+mod source_schedule;
 mod state;
 mod unix;
 mod view;

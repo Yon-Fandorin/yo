@@ -19,7 +19,7 @@ mod event;
 mod input;
 
 pub(crate) use backend::{UnixBackend, UnixBackendError, UnixMode};
-pub(crate) use event::{UnixEvent, UnixEventReader};
+pub(crate) use event::UnixEventReader;
 pub(crate) use input::{CrosstermEventSource, EventSource};
 
 pub(crate) trait TermiosDriver {

@@ -238,9 +238,11 @@ Inline 또는 Fullscreen presenter
    별도 product 계약으로 남긴다. 저장된 Session 검사는 아래의 별도 read-only
    경로를 따른다. 실행 가능한 continuation은 frontend history Projection에서
    상태를 만들지 않고, 아래의 별도 검증된 recovery 경로를 사용한다.
-6. [`drain_agent`와 `redraw`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
-   이미 확정된 Transcript record를 소비하고 TUI 상태를 갱신한다.
-   완성된 `Surface`를 조합해 활성 presenter로 보낸다. `runner/view.rs`는
+6. [`runner` source scheduling과 redraw](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs)는
+   회전 cursor로 준비된 terminal·agent·workspace·skill observation 중 한 건씩
+   선택한다. 선택한 observation이 TUI 상태를 갱신하며, process termination은
+   이 순회 밖의 strict-priority 경로로 남는다. runner는 완성된 `Surface`를 조합해
+   활성 presenter로 보낸다. `runner/view.rs`는
    같은 record stream에서 Chat, Transcript, Request를 선택한다. Chat의
    사용자 입력은 `StartTurn` 또는 `SteerTurn` command가 이 순서에 나타난
    뒤에만 표시된다. terminal `EventStream` readiness와 agent·workspace·skill

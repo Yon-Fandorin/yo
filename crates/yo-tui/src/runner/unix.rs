@@ -17,13 +17,14 @@ use crate::{
         TuiSession, WorkspaceReferenceConnection, WorkspaceReferencePoll,
         frame::{FrameRequest, FrameScheduler},
         session::SessionParts,
+        source_schedule::{OrdinarySource, SourceSchedule},
         state::{FrameError, MotionDemand, StateEffect, StateError, TuiState},
     },
     surface::{Size, Surface},
     terminal::{
         backend::unix::{
             CrosstermEventSource, RustixTermiosDriver, TtyStateAdapter, UnixBackend,
-            UnixBackendError, UnixEvent, UnixEventReader, terminal_size,
+            UnixBackendError, UnixEventReader, terminal_size,
         },
         mode::{
             TerminalSession,
@@ -41,7 +42,6 @@ use crate::{
 mod finalize;
 
 const WORKER_RETRY_INTERVAL: Duration = Duration::from_millis(10);
-const MAX_AGENT_EVENTS_PER_TICK: usize = 256;
 pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
 
 pub(super) enum LoopExit {
@@ -275,15 +275,10 @@ where
         skill_references,
     } = retained.parts_mut();
     let mut frames = FrameScheduler::new(frame_rate_limit);
+    let mut source_schedule = SourceSchedule::default();
     frames.request(FrameRequest::Immediate);
 
     loop {
-        let agent_changed = drain_agent(agent, state)?;
-        let workspace_changed = drain_workspace_references(workspace_references, state);
-        let skill_changed = drain_skill_references(skill_references, state);
-        if agent_changed || workspace_changed || skill_changed {
-            frames.request(FrameRequest::Coalesced);
-        }
         request_due_motion(
             &mut frames,
             frame_visible,
@@ -327,27 +322,50 @@ where
                 },
             }
         }
-        let source_ready =
-            sources_ready(agent, workspace_references, skill_references, &mut context);
         let backpressured = pending_control.is_some() || pending_dispatch.is_some();
         let base = backpressured.then_some(WORKER_RETRY_INTERVAL);
         let timeout = wait_timeout(base, motion_deadline, frames.deadline(Instant::now()));
-        let event = if source_ready {
-            match events.poll_next(&mut context) {
-                Poll::Ready(event) => {
-                    event.map_err(|error| LoopError::Input(format!("{error:?}")))?
-                },
-                Poll::Pending => continue,
-            }
-        } else {
-            events
-                .next(timeout, &mut context)
-                .map_err(|error| LoopError::Input(format!("{error:?}")))?
+        let observation = match poll_ordinary(
+            events,
+            agent,
+            workspace_references,
+            skill_references,
+            &source_schedule,
+            &mut context,
+        )? {
+            OrdinaryPoll::Pending => {
+                events.wait(timeout);
+                continue;
+            },
+            OrdinaryPoll::Reselect => continue,
+            OrdinaryPoll::Termination => return Ok(LoopExit::Termination),
+            OrdinaryPoll::Ready {
+                source,
+                observation,
+            } => {
+                source_schedule.handled(source);
+                observation
+            },
         };
-        match event {
-            UnixEvent::Idle => {},
-            UnixEvent::Terminate => return Ok(LoopExit::Termination),
-            UnixEvent::Input(input) => {
+        match observation {
+            OrdinaryObservation::Agent(observation) => {
+                if apply_agent_poll(state, observation)? {
+                    frames.request(FrameRequest::Coalesced);
+                }
+            },
+            OrdinaryObservation::Workspace(observation) => {
+                let changed = apply_workspace_poll(state, workspace_references, observation);
+                if changed {
+                    frames.request(FrameRequest::Coalesced);
+                }
+            },
+            OrdinaryObservation::Skill(observation) => {
+                let changed = apply_skill_poll(state, skill_references, observation);
+                if changed {
+                    frames.request(FrameRequest::Coalesced);
+                }
+            },
+            OrdinaryObservation::Input(input) => {
                 let effect = if backpressured {
                     handle_backpressured_input(
                         state,
@@ -406,6 +424,198 @@ where
     }
 }
 
+pub(super) enum OrdinaryObservation {
+    Input(crate::input::event::InputEvent),
+    Agent(AgentPoll),
+    Workspace(Result<WorkspaceReferencePoll, String>),
+    Skill(Result<SkillReferencePoll, String>),
+}
+
+enum ReferenceSourcePoll<P> {
+    Pending,
+    Reselect,
+    Termination,
+    Ready(Result<P, String>),
+}
+
+// Keeping one bounded observation inline avoids a heap allocation in the owner-thread hot path.
+#[allow(clippy::large_enum_variant)]
+pub(super) enum OrdinaryPoll {
+    Pending,
+    Reselect,
+    Termination,
+    Ready {
+        source: OrdinarySource,
+        observation: OrdinaryObservation,
+    },
+}
+
+pub(super) fn poll_ordinary<E, T, A>(
+    events: &mut UnixEventReader<E, T>,
+    agent: &mut A,
+    workspace_references: &mut Option<Box<dyn WorkspaceReferenceConnection>>,
+    skill_references: &mut Option<Box<dyn SkillReferenceConnection>>,
+    schedule: &SourceSchedule,
+    context: &mut Context<'_>,
+) -> Result<OrdinaryPoll, LoopError>
+where
+    E: crate::terminal::backend::unix::EventSource,
+    E::Error: std::fmt::Debug,
+    T: TerminationSource,
+    A: AgentConnection,
+{
+    if events.poll_termination(context).is_ready() {
+        return Ok(OrdinaryPoll::Termination);
+    }
+
+    let mut must_reselect = false;
+    for source in schedule.order() {
+        let observation = match source {
+            OrdinarySource::Terminal => {
+                let polled = events.poll_input(context);
+                if events.poll_termination(context).is_ready() {
+                    return Ok(OrdinaryPoll::Termination);
+                }
+                match polled {
+                    Poll::Ready(result) => Some(OrdinaryObservation::Input(
+                        result.map_err(|error| LoopError::Input(format!("{error:?}")))?,
+                    )),
+                    Poll::Pending => None,
+                }
+            },
+            OrdinarySource::Agent => {
+                let ready = agent.poll_ready(context);
+                if events.poll_termination(context).is_ready() {
+                    return Ok(OrdinaryPoll::Termination);
+                }
+                if ready.is_pending() {
+                    None
+                } else {
+                    let polled = agent
+                        .poll()
+                        .map_err(|error| LoopError::Agent(error.to_string()));
+                    if events.poll_termination(context).is_ready() {
+                        return Ok(OrdinaryPoll::Termination);
+                    }
+                    match polled? {
+                        AgentPoll::Pending => {
+                            must_reselect |= agent.poll_ready(context).is_ready();
+                            if events.poll_termination(context).is_ready() {
+                                return Ok(OrdinaryPoll::Termination);
+                            }
+                            None
+                        },
+                        observation => Some(OrdinaryObservation::Agent(observation)),
+                    }
+                }
+            },
+            OrdinarySource::Workspace => {
+                let Some(connection) = workspace_references.as_mut() else {
+                    continue;
+                };
+                match poll_reference_source(
+                    events,
+                    connection,
+                    context,
+                    |connection, context| connection.poll_ready(context),
+                    |connection| connection.poll(),
+                    |observation| matches!(observation, WorkspaceReferencePoll::Pending),
+                ) {
+                    ReferenceSourcePoll::Pending => None,
+                    ReferenceSourcePoll::Reselect => {
+                        must_reselect = true;
+                        None
+                    },
+                    ReferenceSourcePoll::Termination => return Ok(OrdinaryPoll::Termination),
+                    ReferenceSourcePoll::Ready(observation) => {
+                        Some(OrdinaryObservation::Workspace(observation))
+                    },
+                }
+            },
+            OrdinarySource::Skill => {
+                let Some(connection) = skill_references.as_mut() else {
+                    continue;
+                };
+                match poll_reference_source(
+                    events,
+                    connection,
+                    context,
+                    |connection, context| connection.poll_ready(context),
+                    |connection| connection.poll(),
+                    |observation| matches!(observation, SkillReferencePoll::Pending),
+                ) {
+                    ReferenceSourcePoll::Pending => None,
+                    ReferenceSourcePoll::Reselect => {
+                        must_reselect = true;
+                        None
+                    },
+                    ReferenceSourcePoll::Termination => return Ok(OrdinaryPoll::Termination),
+                    ReferenceSourcePoll::Ready(observation) => {
+                        Some(OrdinaryObservation::Skill(observation))
+                    },
+                }
+            },
+        };
+        if let Some(observation) = observation {
+            return Ok(OrdinaryPoll::Ready {
+                source,
+                observation,
+            });
+        }
+    }
+
+    Ok(if must_reselect {
+        OrdinaryPoll::Reselect
+    } else {
+        OrdinaryPoll::Pending
+    })
+}
+
+fn poll_reference_source<E, T, C, P, FReady, FPoll, FPending>(
+    events: &mut UnixEventReader<E, T>,
+    connection: &mut C,
+    context: &mut Context<'_>,
+    mut poll_ready: FReady,
+    poll: FPoll,
+    is_pending: FPending,
+) -> ReferenceSourcePoll<P>
+where
+    E: crate::terminal::backend::unix::EventSource,
+    T: TerminationSource,
+    C: ?Sized,
+    FReady: FnMut(&mut C, &mut Context<'_>) -> Poll<()>,
+    FPoll: FnOnce(&mut C) -> Result<P, String>,
+    FPending: FnOnce(&P) -> bool,
+{
+    let ready = poll_ready(connection, context);
+    if events.poll_termination(context).is_ready() {
+        return ReferenceSourcePoll::Termination;
+    }
+    if ready.is_pending() {
+        return ReferenceSourcePoll::Pending;
+    }
+
+    let observation = poll(connection);
+    if events.poll_termination(context).is_ready() {
+        return ReferenceSourcePoll::Termination;
+    }
+    if let Ok(observation) = &observation
+        && is_pending(observation)
+    {
+        let ready_again = poll_ready(connection, context).is_ready();
+        if events.poll_termination(context).is_ready() {
+            return ReferenceSourcePoll::Termination;
+        }
+        return if ready_again {
+            ReferenceSourcePoll::Reselect
+        } else {
+            ReferenceSourcePoll::Pending
+        };
+    }
+
+    ReferenceSourcePoll::Ready(observation)
+}
+
 struct OwnerThreadWake(Thread);
 
 impl Wake for OwnerThreadWake {
@@ -436,64 +646,79 @@ pub(super) fn handle_backpressured_input(
     }
 }
 
-pub(super) fn drain_agent<A>(agent: &mut A, state: &mut TuiState) -> Result<bool, LoopError>
-where
-    A: AgentConnection,
-{
-    let mut changed = false;
-    for _ in 0..MAX_AGENT_EVENTS_PER_TICK {
-        match agent
-            .poll()
-            .map_err(|error| LoopError::Agent(error.to_string()))?
-        {
-            AgentPoll::Pending => return Ok(changed),
-            AgentPoll::Record(record) => {
-                state.observe_record(record).map_err(LoopError::State)?;
-                changed = true;
-            },
-            AgentPoll::RequestTrace(entry) => {
-                state.observe_request_trace(entry);
-                changed = true;
-            },
-            AgentPoll::Durability(durability) => {
-                state
-                    .observe_durability(durability)
-                    .map_err(LoopError::State)?;
-                changed = true;
-            },
-            AgentPoll::Submission(outcome) => {
-                state
-                    .observe_submission_outcome(outcome)
-                    .map_err(LoopError::State)?;
-                changed = true;
-            },
-            AgentPoll::Closed => {
-                return Err(LoopError::Agent(
-                    "the agent connection closed unexpectedly".to_owned(),
-                ));
-            },
-        }
+pub(super) fn apply_agent_poll(
+    state: &mut TuiState,
+    observation: AgentPoll,
+) -> Result<bool, LoopError> {
+    match observation {
+        AgentPoll::Pending => return Ok(false),
+        AgentPoll::Record(record) => {
+            state.observe_record(record).map_err(LoopError::State)?;
+        },
+        AgentPoll::RequestTrace(entry) => {
+            state.observe_request_trace(entry);
+        },
+        AgentPoll::Durability(durability) => {
+            state
+                .observe_durability(durability)
+                .map_err(LoopError::State)?;
+        },
+        AgentPoll::Submission(outcome) => {
+            state
+                .observe_submission_outcome(outcome)
+                .map_err(LoopError::State)?;
+        },
+        AgentPoll::Closed => {
+            return Err(LoopError::Agent(
+                "the agent connection closed unexpectedly".to_owned(),
+            ));
+        },
     }
-    Ok(changed)
+    Ok(true)
 }
 
-fn sources_ready<A>(
-    agent: &mut A,
-    workspace_references: &mut Option<Box<dyn WorkspaceReferenceConnection>>,
-    skill_references: &mut Option<Box<dyn SkillReferenceConnection>>,
-    context: &mut Context<'_>,
-) -> bool
-where
-    A: AgentConnection,
-{
-    let agent_ready = agent.poll_ready(context).is_ready();
-    let workspace_ready = workspace_references
-        .as_deref_mut()
-        .is_some_and(|connection| connection.poll_ready(context).is_ready());
-    let skill_ready = skill_references
-        .as_deref_mut()
-        .is_some_and(|connection| connection.poll_ready(context).is_ready());
-    agent_ready || workspace_ready || skill_ready
+pub(super) fn apply_workspace_poll(
+    state: &mut TuiState,
+    connection: &mut Option<Box<dyn WorkspaceReferenceConnection>>,
+    observation: Result<WorkspaceReferencePoll, String>,
+) -> bool {
+    match observation {
+        Ok(WorkspaceReferencePoll::Pending) => false,
+        Ok(WorkspaceReferencePoll::Update(update)) => matches!(
+            state.observe_workspace_reference_update(update),
+            StateEffect::Redraw
+        ),
+        Err(error) => {
+            let changed = matches!(
+                state.observe_workspace_reference_failure(error),
+                StateEffect::Redraw
+            );
+            *connection = None;
+            changed
+        },
+    }
+}
+
+pub(super) fn apply_skill_poll(
+    state: &mut TuiState,
+    connection: &mut Option<Box<dyn SkillReferenceConnection>>,
+    observation: Result<SkillReferencePoll, String>,
+) -> bool {
+    match observation {
+        Ok(SkillReferencePoll::Pending) => false,
+        Ok(SkillReferencePoll::Update(update)) => matches!(
+            state.observe_skill_reference_update(update),
+            StateEffect::Redraw
+        ),
+        Err(error) => {
+            let changed = matches!(
+                state.observe_skill_reference_failure(error),
+                StateEffect::Redraw
+            );
+            *connection = None;
+            changed
+        },
+    }
 }
 
 fn dispatch_workspace_search(
@@ -510,40 +735,6 @@ fn dispatch_workspace_search(
     }
 }
 
-fn drain_workspace_references(
-    connection: &mut Option<Box<dyn WorkspaceReferenceConnection>>,
-    state: &mut TuiState,
-) -> bool {
-    let Some(active_connection) = connection.as_deref_mut() else {
-        return false;
-    };
-    let mut changed = false;
-    let mut disconnected = false;
-    for _ in 0..MAX_AGENT_EVENTS_PER_TICK {
-        match active_connection.poll() {
-            Ok(WorkspaceReferencePoll::Pending) => break,
-            Ok(WorkspaceReferencePoll::Update(update)) => {
-                changed |= matches!(
-                    state.observe_workspace_reference_update(update),
-                    StateEffect::Redraw
-                );
-            },
-            Err(error) => {
-                changed |= matches!(
-                    state.observe_workspace_reference_failure(error),
-                    StateEffect::Redraw
-                );
-                disconnected = true;
-                break;
-            },
-        }
-    }
-    if disconnected {
-        *connection = None;
-    }
-    changed
-}
-
 fn dispatch_skill_search(
     connection: &mut Option<Box<dyn SkillReferenceConnection>>,
     state: &mut TuiState,
@@ -556,40 +747,6 @@ fn dispatch_skill_search(
     if let Err(error) = result {
         state.observe_skill_reference_failure(error);
     }
-}
-
-fn drain_skill_references(
-    connection: &mut Option<Box<dyn SkillReferenceConnection>>,
-    state: &mut TuiState,
-) -> bool {
-    let Some(active_connection) = connection.as_deref_mut() else {
-        return false;
-    };
-    let mut changed = false;
-    let mut disconnected = false;
-    for _ in 0..MAX_AGENT_EVENTS_PER_TICK {
-        match active_connection.poll() {
-            Ok(SkillReferencePoll::Pending) => break,
-            Ok(SkillReferencePoll::Update(update)) => {
-                changed |= matches!(
-                    state.observe_skill_reference_update(update),
-                    StateEffect::Redraw
-                );
-            },
-            Err(error) => {
-                changed |= matches!(
-                    state.observe_skill_reference_failure(error),
-                    StateEffect::Redraw
-                );
-                disconnected = true;
-                break;
-            },
-        }
-    }
-    if disconnected {
-        *connection = None;
-    }
-    changed
 }
 
 pub(super) fn prepare_resize<P: FrameViewport>(viewport: &mut P, size: &mut Size, next: Size) {

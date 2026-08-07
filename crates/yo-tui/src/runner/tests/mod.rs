@@ -16,7 +16,7 @@ use super::{
     AgentAction, AgentConnection, AgentPoll, ExitReason, RunOutcome,
     session::TuiSession,
     state::{StateEffect, StateError, TuiState},
-    unix::{drain_agent, handle_backpressured_input, prepare_resize, retained_session_output},
+    unix::{apply_agent_poll, handle_backpressured_input, prepare_resize, retained_session_output},
 };
 use crate::{
     appearance::{AppearanceState, ColorCapability, MotionPreference},
@@ -28,6 +28,7 @@ use crate::{
 mod appearance;
 mod overlay;
 mod reentry;
+mod source_scheduling;
 mod views;
 
 fn key(code: KeyCode, modifiers: crate::input::event::KeyModifiers) -> InputEvent {
@@ -862,8 +863,8 @@ impl AgentConnection for RuntimeConnection {
     }
 }
 
-// ScriptedBackend의 coding Activity가 core 상관관계 검증을 통과한 뒤 TUI drain 경계에서
-// Tool과 FileChange transcript로 함께 투영되는지 결합해 확인한다.
+// ScriptedBackend의 coding Activity가 core 상관관계 검증을 통과한 뒤 agent observation을
+// 하나씩 적용하는 TUI 경계에서 Tool과 FileChange transcript로 함께 투영되는지 확인한다.
 #[test]
 fn projects_fake_backend_coding_activities_through_core_into_tui() {
     let active_turn = turn();
@@ -922,7 +923,17 @@ fn projects_fake_backend_coding_activities_through_core_into_tui() {
     }
     let mut connection = RuntimeConnection { runtime };
 
-    assert!(drain_agent(&mut connection, &mut state).unwrap());
+    let mut observed = 0;
+    loop {
+        let observation = connection.poll().unwrap();
+        if matches!(observation, AgentPoll::Pending) {
+            break;
+        }
+        assert!(apply_agent_poll(&mut state, observation).unwrap());
+        observed += 1;
+        assert!(observed < 32, "scripted runtime must converge to pending");
+    }
+    assert!(observed > 0);
 
     let frame = state
         .prepare_frame(Size::new(32, 18), &AppearanceState::default().pin())

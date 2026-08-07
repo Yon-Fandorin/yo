@@ -116,7 +116,11 @@ impl AgentConnection for RetainedChatAgent {
     }
 
     fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
-        Poll::Pending
+        if self.records.is_empty() {
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
     }
 }
 
@@ -367,8 +371,8 @@ fn run_inline_with_retained_chat(
     Ok(())
 }
 
-// 실제 Linux PTY에서 Inline viewport가 지워진 뒤 일반 대화 뷰의 텍스트가 같은 main
-// screen에 다시 출력되어 native scrollback으로 남는지 확인한다.
+// 실제 Linux PTY에서 세 buffered record가 one-at-a-time 순회 중에도 계속 ready로 남아
+// 대화를 완성하고, Inline viewport 복구 뒤 그 텍스트가 native scrollback에 남는지 확인한다.
 #[test]
 fn inline_normal_exit_retains_chat_after_viewport_restoration() {
     const RETAINED: &[u8] = "• YO_INLINE_RETAINED\r\n".as_bytes();

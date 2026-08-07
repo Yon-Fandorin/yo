@@ -1,4 +1,4 @@
-//! Fair polling of process-host termination and terminal input on the owner thread.
+//! Independent process-termination, terminal-input, and owner-thread wait adapters.
 
 use std::{
     task::{Context, Poll},
@@ -11,13 +11,6 @@ use crate::{
     input::event::InputEvent,
     runner::{TerminationEvent, TerminationSource},
 };
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum UnixEvent {
-    Input(InputEvent),
-    Terminate,
-    Idle,
-}
 
 pub(crate) struct UnixEventReader<E, T> {
     input: InputReader<E>,
@@ -36,38 +29,21 @@ where
         }
     }
 
-    pub(crate) fn poll_next(
-        &mut self,
-        context: &mut Context<'_>,
-    ) -> Poll<Result<UnixEvent, InputReadFailure<E::Error>>> {
-        if self.termination.poll_termination(context) == Poll::Ready(TerminationEvent::Requested) {
-            return Poll::Ready(Ok(UnixEvent::Terminate));
-        }
-
-        let input = self.input.poll_event(context);
-        if self.termination.poll_termination(context) == Poll::Ready(TerminationEvent::Requested) {
-            return Poll::Ready(Ok(UnixEvent::Terminate));
-        }
-
-        input.map(|result| result.map(UnixEvent::Input))
+    pub(crate) fn poll_termination(&mut self, context: &mut Context<'_>) -> Poll<TerminationEvent> {
+        self.termination.poll_termination(context)
     }
 
-    pub(crate) fn next(
+    pub(crate) fn poll_input(
         &mut self,
-        timeout: Option<Duration>,
         context: &mut Context<'_>,
-    ) -> Result<UnixEvent, InputReadFailure<E::Error>> {
-        if let Poll::Ready(event) = self.poll_next(context) {
-            return event;
-        }
+    ) -> Poll<Result<InputEvent, InputReadFailure<E::Error>>> {
+        self.input.poll_event(context)
+    }
 
+    pub(crate) fn wait(&self, timeout: Option<Duration>) {
         match timeout {
             Some(timeout) => thread::park_timeout(timeout),
             None => thread::park(),
-        }
-        match self.poll_next(context) {
-            Poll::Ready(event) => event,
-            Poll::Pending => Ok(UnixEvent::Idle),
         }
     }
 }

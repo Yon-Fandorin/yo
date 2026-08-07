@@ -146,11 +146,6 @@ struct SimpleAgent {
 }
 
 #[derive(Default)]
-struct ContinuouslyReadyAgent {
-    readiness_polls: usize,
-}
-
-#[derive(Default)]
 struct RetainingAgent {
     retries: usize,
 }
@@ -209,31 +204,6 @@ impl AgentConnection for SimpleAgent {
 
     fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
         Poll::Pending
-    }
-}
-
-impl AgentConnection for ContinuouslyReadyAgent {
-    type Error = Infallible;
-
-    fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Queued)
-    }
-
-    fn retry(&mut self, _pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Queued)
-    }
-
-    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
-        Ok(AgentPoll::Pending)
-    }
-
-    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
-        self.readiness_polls += 1;
-        assert_eq!(
-            self.readiness_polls, 1,
-            "termination must be polled before a continuously ready source is revisited"
-        );
-        Poll::Ready(())
     }
 }
 
@@ -330,6 +300,21 @@ fn wait_for_session_change(session: &mut AgentSession) {
     }
 }
 
+fn dispatch_until_queued(session: &mut AgentSession, intent: AgentIntent) {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut admission = session.dispatch(intent).unwrap();
+    loop {
+        match admission {
+            CommandAdmission::Queued => return,
+            CommandAdmission::Backpressured(pending) if Instant::now() < deadline => {
+                std::thread::yield_now();
+                admission = session.retry(pending).unwrap();
+            },
+            other => panic!("worker did not admit the command before the deadline: {other:?}"),
+        }
+    }
+}
+
 fn run_generation(
     retained: &mut TuiSession,
     agent: &mut impl AgentConnection,
@@ -401,22 +386,6 @@ fn active_motion_session(period: Duration) -> TuiSession {
         .observe(AgentEvent::TurnStarted { turn: turn() })
         .unwrap();
     retained
-}
-
-// nonterminal source가 계속 ready여도 같은 loop에서 이미 게시된 종료 요청을 먼저 처리합니다.
-#[test]
-fn continuously_ready_source_cannot_starve_termination() {
-    let mut retained = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
-    let mut agent = ContinuouslyReadyAgent::default();
-
-    run_generation(
-        &mut retained,
-        &mut agent,
-        Events::new([], Rc::new(Cell::new(0)), Rc::new(Cell::new(0))),
-        0,
-    );
-
-    assert_eq!(agent.readiness_polls, 1);
 }
 
 struct BlockingAgentBackend {
@@ -556,11 +525,9 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     wait_for_session_change(&mut agent.session);
 
-    assert_eq!(
-        agent
-            .dispatch(AgentIntent::submit("block".to_owned()).unwrap())
-            .unwrap(),
-        CommandAdmission::Queued
+    dispatch_until_queued(
+        &mut agent.session,
+        AgentIntent::submit("block".to_owned()).unwrap(),
     );
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -645,11 +612,7 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
     let mut core = AgentSession::start(backend).unwrap();
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     wait_for_session_change(&mut core);
-    assert_eq!(
-        core.dispatch(AgentIntent::submit("block".to_owned()).unwrap())
-            .unwrap(),
-        CommandAdmission::Queued
-    );
+    dispatch_until_queued(&mut core, AgentIntent::submit("block".to_owned()).unwrap());
     entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     processed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
     let CommandAdmission::Backpressured(pending) = core

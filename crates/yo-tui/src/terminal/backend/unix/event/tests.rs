@@ -11,7 +11,7 @@ use std::{
 
 use crossterm::event::Event;
 
-use super::{UnixEvent, UnixEventReader};
+use super::UnixEventReader;
 use crate::{
     input::event::InputEvent,
     runner::{TerminationEvent, TerminationSource},
@@ -47,27 +47,6 @@ impl TerminationSource for PendingTermination {
     }
 }
 
-fn reader(
-    input: RecordingEventSource,
-    pending: impl IntoIterator<Item = Poll<TerminationEvent>>,
-) -> UnixEventReader<RecordingEventSource, PendingTermination> {
-    UnixEventReader::new(
-        input,
-        PendingTermination {
-            pending: pending.into_iter().collect(),
-        },
-    )
-}
-
-fn next(
-    reader: &mut UnixEventReader<RecordingEventSource, PendingTermination>,
-    timeout: Duration,
-) -> Result<UnixEvent, InputReadFailure<&'static str>> {
-    let waker = Waker::noop();
-    let mut context = Context::from_waker(waker);
-    reader.next(Some(timeout), &mut context)
-}
-
 struct ThreadWake(Thread);
 
 impl Wake for ThreadWake {
@@ -101,7 +80,8 @@ impl EventSource for WakingEventSource {
     }
 }
 
-// terminal producer의 wake는 주기적 fallback 없이 무기한 대기하는 owner thread를 즉시 재개합니다.
+// terminal producer가 등록된 waker를 깨우면 fixed fallback 없이 indefinite owner wait가
+// 끝나고 같은 reader에서 준비된 input 한 건을 읽는다.
 #[test]
 fn producer_wake_preempts_indefinite_wait() {
     let input = WakingEventSource {
@@ -113,127 +93,85 @@ fn producer_wake_preempts_indefinite_wait() {
     let mut context = Context::from_waker(&waker);
     let started = Instant::now();
 
+    assert!(reader.poll_input(&mut context).is_pending());
+    reader.wait(None);
     assert_eq!(
-        reader.next(None, &mut context).unwrap(),
-        UnixEvent::Input(InputEvent::Paste("wake".to_owned()))
+        reader.poll_input(&mut context),
+        Poll::Ready(Ok(InputEvent::Paste("wake".to_owned())))
     );
     assert!(started.elapsed() < Duration::from_millis(500));
 }
 
-// 이미 도착한 종료 신호는 terminal input을 기다리기 전에 우선 전달한다.
+// termination readiness는 terminal input consumption과 분리되어 scheduler가 ordinary
+// cursor를 시작하기 전에 strict-priority control path를 확인할 수 있다.
 #[test]
-fn pending_signal_preempts_terminal_polling() {
-    let mut reader = reader(
+fn termination_can_be_polled_without_polling_terminal_input() {
+    let mut reader = UnixEventReader::new(
         RecordingEventSource {
             ready: VecDeque::from([Err("must not poll")]),
             ..RecordingEventSource::default()
         },
-        [Poll::Ready(TerminationEvent::Requested)],
-    );
-
-    assert_eq!(
-        next(&mut reader, Duration::from_secs(1)).unwrap(),
-        UnixEvent::Terminate
-    );
-}
-
-// 준비된 terminal event는 같은 owner thread에서 semantic input으로 반환한다.
-#[test]
-fn returns_ready_terminal_input() {
-    let input = RecordingEventSource {
-        ready: VecDeque::from([Ok(true)]),
-        events: VecDeque::from([Ok(Event::Paste("질문".to_owned()))]),
-    };
-    let mut reader = reader(input, [Poll::Pending]);
-    let timeout = Duration::from_millis(25);
-
-    assert_eq!(
-        next(&mut reader, timeout).unwrap(),
-        UnixEvent::Input(InputEvent::Paste("질문".to_owned()))
-    );
-}
-
-// input poll 동안 도착한 종료 신호도 idle을 반환하기 전에 다시 확인한다.
-#[test]
-fn observes_signal_arriving_during_terminal_poll() {
-    let mut reader = reader(
-        RecordingEventSource {
-            ready: VecDeque::from([Ok(false)]),
-            ..RecordingEventSource::default()
+        PendingTermination {
+            pending: VecDeque::from([Poll::Ready(TerminationEvent::Requested)]),
         },
-        [Poll::Pending, Poll::Ready(TerminationEvent::Requested)],
     );
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
 
     assert_eq!(
-        next(&mut reader, Duration::from_millis(25)).unwrap(),
-        UnixEvent::Terminate
+        reader.poll_termination(&mut context),
+        Poll::Ready(TerminationEvent::Requested)
     );
 }
 
-// input과 종료 신호가 함께 준비되어도 종료를 먼저 전달해 state mutation을 막는다.
+// 준비된 terminal event는 다른 source payload와 결합하지 않고 semantic input 한 건으로
+// owner-thread scheduler에 전달된다.
 #[test]
-fn post_poll_signal_preempts_ready_terminal_input() {
-    let mut reader = reader(
+fn returns_one_ready_terminal_input() {
+    let mut reader = UnixEventReader::new(
         RecordingEventSource {
             ready: VecDeque::from([Ok(true)]),
-            events: VecDeque::from([Ok(Event::Paste("discarded".to_owned()))]),
+            events: VecDeque::from([Ok(Event::Paste("질문".to_owned()))]),
         },
-        [Poll::Pending, Poll::Ready(TerminationEvent::Requested)],
+        PendingTermination::default(),
     );
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
 
     assert_eq!(
-        next(&mut reader, Duration::from_millis(25)).unwrap(),
-        UnixEvent::Terminate
+        reader.poll_input(&mut context),
+        Poll::Ready(Ok(InputEvent::Paste("질문".to_owned())))
     );
 }
 
-// poll 실패와 종료 신호가 경쟁하면 terminal 복구를 위한 종료가 오류보다 우선한다.
-#[test]
-fn post_poll_signal_preempts_terminal_failure() {
-    let mut reader = reader(
-        RecordingEventSource {
-            ready: VecDeque::from([Err("poll failed")]),
-            ..RecordingEventSource::default()
-        },
-        [Poll::Pending, Poll::Ready(TerminationEvent::Requested)],
-    );
-
-    assert_eq!(
-        next(&mut reader, Duration::from_millis(25)).unwrap(),
-        UnixEvent::Terminate
-    );
-}
-
-// input과 signal이 모두 없으면 제한된 대기 뒤 명시적인 idle을 반환한다.
-#[test]
-fn returns_idle_after_bounded_poll() {
-    let mut reader = reader(
-        RecordingEventSource {
-            ready: VecDeque::from([Ok(false)]),
-            ..RecordingEventSource::default()
-        },
-        [Poll::Pending, Poll::Pending],
-    );
-
-    assert_eq!(
-        next(&mut reader, Duration::from_millis(25)).unwrap(),
-        UnixEvent::Idle
-    );
-}
-
-// polling 실패는 신호 부재나 idle로 숨기지 않고 입력 오류로 보존한다.
+// terminal source failure는 pending readiness로 축약되지 않고 scheduler가 관찰할 typed
+// input failure로 그대로 남는다.
 #[test]
 fn preserves_terminal_poll_failure() {
-    let mut reader = reader(
+    let mut reader = UnixEventReader::new(
         RecordingEventSource {
             ready: VecDeque::from([Err("poll failed")]),
             ..RecordingEventSource::default()
         },
-        [Poll::Pending, Poll::Pending],
+        PendingTermination::default(),
     );
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
 
     assert_eq!(
-        next(&mut reader, Duration::from_millis(25)),
-        Err(InputReadFailure::Source("poll failed"))
+        reader.poll_input(&mut context),
+        Poll::Ready(Err(InputReadFailure::Source("poll failed")))
     );
+}
+
+// bounded wait는 source를 몰래 poll하지 않고 지정된 deadline이 지난 뒤 caller가 모든
+// source readiness를 다시 선택하도록 제어를 반환한다.
+#[test]
+fn bounded_wait_returns_to_the_scheduler() {
+    let reader = UnixEventReader::new(
+        RecordingEventSource::default(),
+        PendingTermination::default(),
+    );
+
+    reader.wait(Some(Duration::ZERO));
 }
