@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.storage-001
-    revision: sha256:1edc955aa7e1ae77ad9544dc4e75d77354fa468dfe4086b8497b8713af82037f
+    revision: sha256:840dce68123f20bb5139961b16970179300e5f8a5c81e76584f13a8b588d54b7
 relations:
   depends_on:
     - agent.persistence.format-compatibility
@@ -147,6 +147,20 @@ Repository capacity and model-context limits are independent: storage capacity
 MUST count replay bytes normally, while replay-prefix or model-context exhaustion
 MUST complete the Turn as non-resumable without silently truncating, summarizing,
 or appending a partial replay chain.
+
+The repository MUST interpret replay presence through the binding's explicit
+continuation strategy. A local `exact_replay(local_client)` binding reconstructs
+the validated model-visible prefix from its replay-delta chain. A
+`backend_managed_state` binding persists the payload-free outcome, Anchor, and
+backend locator evidence without a replay delta and MUST NOT synthesize one from
+Transcript or Request Audit data.
+
+A future managed Session Repository MAY execute `exact_replay(managed_server)`
+using the same semantic Journal and replay chain. Before it can be advertised,
+the implementation MUST verify its server and repository identity, selected
+replay boundary, replay-content and contract digests, binding epoch,
+availability, and retention. Remote storage, replication, and conflict handling
+remain deferred and MUST NOT be inferred from the reserved strategy value.
 
 ## Rationale
 

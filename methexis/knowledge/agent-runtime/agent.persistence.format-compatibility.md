@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:28d7fcb8c0d694c3d97ba384bad6dd54439df15e420dfb0b606b8add77b9c7d5
+    revision: sha256:d21c5c0d1e9393c13a33241107c605a019127801ac5f5f1f74da6f76e912ecbd
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -24,9 +24,9 @@ The UUIDv7-only, descriptor-aware semantic Session Journal format
 `yo.semantic-journal-commit/v1` and checksummed physical Session-record envelope
 `yo.session-record/v1` are yo's initial public-format candidates. Before the
 first public release, an earlier reviewed revision replaced the structured-input
-semantic `/v1` with an anchored-session development shape. This second reviewed
-revision replaces that immediately preceding shape with the closed
-anchored-session semantic `/v1` defined below. Its exact shape and UUIDv7 Session identity are part of the
+semantic `/v1` with an anchored-session development shape. A second reviewed revision then replaced that shape with the replay-delta
+development shape. This third reviewed revision replaces that immediately
+preceding shape with the closed anchored-session semantic `/v1` defined below. Its exact shape and UUIDv7 Session identity are part of the
 baseline; a matching schema tag alone MUST NOT admit a record.
 
 Every semantic `/v1` commit, including a descriptor-only commit, MUST contain
@@ -125,8 +125,8 @@ kinds, scopes, zero skill generations, invalid metadata, and invalid profile
 values MUST fail closed. These rules define persisted `/v1`; later live-domain
 rule changes MUST NOT silently change its decoder.
 
-This second explicitly reviewed pre-release semantic `/v1` replaces the
-immediately preceding anchored-session development shape. Logs written in the
+This third explicitly reviewed pre-release semantic `/v1` replaces the
+immediately preceding replay-delta development shape. Logs written in the
 displaced shape MUST fail closed even though the schema tag is unchanged. The
 replacement admits one general exchange record and exactly six
 continuation-specific records. Existing correlation records remain bounded and
@@ -140,7 +140,7 @@ semantic Journal data rather than Request Audit detail:
 
 - `backend_binding_opened` contains positive `epoch`, `backend_kind`,
   `backend_version`, `binding_identity`, `model_identity`, `session_locator`,
-  and `transition` objects defined below;
+  and `transition` and `continuation_strategy` objects defined below;
 - `backend_binding_closed` contains the positive `epoch` being closed and exact
   `reason: replaced`, `revoked`, or `exhausted`;
 - `backend_request_accepted` contains positive `epoch`, positive `turn_id`, the
@@ -157,9 +157,9 @@ semantic Journal data rather than Request Audit detail:
   argument JSON bytes, or a function result with call identity and bounded
   model-visible output bytes;
 - `backend_resumable_outcome` contains positive `epoch`, positive `turn_id`,
-  positive `accepted_request_sequence`, positive `replay_delta_sequence`, exact
-  `status: completed`, and an optional `outcome_identity` object with `schema`
-  and `value`; and
+  positive `accepted_request_sequence`, optional positive
+  `replay_delta_sequence`, exact `status: completed`, and an optional
+  `outcome_identity` object with `schema` and `value`; and
 - `continuation_anchor` contains positive `epoch`, positive
   `accepted_request_sequence`, positive `resumable_outcome_sequence`, and
   positive `journal_boundary`.
@@ -201,6 +201,23 @@ shared semantic validator checks only the closed field shape, bounds, ordering,
 and cross-record relationships; it MUST NOT parse a Codex, Kimi, remote-host,
 or other backend-specific value.
 
+The closed `continuation_strategy` object is exactly either
+`{ mode: exact_replay, executor: local_client | managed_server }` or
+`{ mode: backend_managed_state }`. Unknown fields and values fail closed, and
+`backend_managed_state` forbids an `executor` field. The strategy is explicit
+binding evidence; validators MUST NOT infer it from `backend_kind`, Provider,
+API dialect, model, or locator. It is distinct from the `transition.mode`
+below: transition records how a new epoch was seeded, while continuation strategy
+records who owns context reconstruction for later requests in that epoch.
+
+Both exact-replay executors use the same replay item, contract, bounds, digest,
+ordering, and Anchor validation. `local_client` assembles the next request from
+the local repository. `managed_server` reserves that assembly for a future
+Yo-managed Session service and MUST NOT be emitted by the current implementation.
+Its future admission additionally requires verified server and repository
+identity, replay boundary, replay-content and contract digests, binding epoch,
+availability, and retention under an independently reviewed contract.
+
 The closed `transition` object contains exact `mode: initial`, `exact_replay`,
 or `lossy_handoff`; exact `cache: not_applicable`, `lost`, or `unknown`; and an
 optional positive `source_anchor_sequence`. `initial` requires
@@ -233,8 +250,9 @@ epoch. Multiple accepted submissions MAY target one Turn; the request referenced
 by a completed outcome MUST be the latest accepted request for that Turn in the
 same epoch.
 
-A `model_replay_delta` is valid only after a matching semantic
-`TurnFinished` with outcome `completed`. It MUST reference the latest accepted
+A `model_replay_delta` is valid only for an `exact_replay` binding and only
+after a matching semantic `TurnFinished` with outcome `completed`. A
+`backend_managed_state` binding MUST NOT emit one. It MUST reference the latest accepted
 request for that Turn and epoch. Its message, function-call, and function-result
 order and relationships MUST validate independently of presentation records or
 old connector payloads. The encoded replay contract is limited to 1 MiB, one
@@ -243,26 +261,33 @@ items. A bound violation produces a completed but non-resumable Turn and no
 delta, outcome, or Anchor; later Turns on that binding fail with explicit
 context exhaustion until an independently approved compaction or new binding.
 
-A `backend_resumable_outcome` is valid only after that replay delta and a
-matching semantic `TurnFinished` with outcome `completed`. It MUST reference the
-latest accepted request for that Turn and epoch and the immediately preceding
-replay delta. When a backend exposes a separate stable
+A `backend_resumable_outcome` is valid only after a matching semantic
+`TurnFinished` with outcome `completed` and MUST reference the latest accepted
+request for that Turn and epoch. For an `exact_replay` binding,
+`replay_delta_sequence` is required and MUST reference the immediately preceding
+replay delta. For a `backend_managed_state` binding it is forbidden; the outcome
+remains payload-free and relies on the binding, accepted-request, outcome, and
+backend-session identities. When a backend exposes a separate stable
 result identity, `outcome_identity` records it. When it does not, omission is
 explicit and the referenced accepted request identity remains the backend
 operation identity; the writer MUST NOT invent a value. Failed or interrupted
 Turns MUST NOT produce a resumable outcome.
 
 A `continuation_anchor` MUST immediately follow its referenced resumable
-outcome in the same semantic commit, and that outcome MUST immediately follow
-its referenced replay delta. Every `*_sequence`,
+outcome in the same semantic commit. For an `exact_replay` binding, that outcome
+MUST immediately follow its referenced replay delta. For a
+`backend_managed_state` binding, the outcome MUST immediately follow the matching
+`TurnFinished(completed)` and no replay delta may intervene. Every `*_sequence`,
 `source_anchor_sequence`, `correlation_sequence`, and `journal_boundary` in
 these seven records is a
 semantic `JournalSequence`, never a storage-only ReplaySequence. The request
 and outcome sequences MUST identify the correlated records in the same epoch,
 and `journal_boundary` MUST equal the resumable outcome's JournalSequence. The
 anchor record's own JournalSequence is the value projected into physical
-discovery metadata. `TurnFinished(completed)`, the replay delta, the resumable outcome, and the
-Anchor MUST occur in that order in one semantic commit. This
+discovery metadata. For `exact_replay`, `TurnFinished(completed)`, replay delta, resumable outcome,
+and Anchor MUST occur in that order in one semantic commit. For
+`backend_managed_state`, `TurnFinished(completed)`, resumable outcome, and Anchor
+MUST occur in that order in one semantic commit. This
 ordering makes the completed Turn, outcome, and Anchor one physical append
 without making the Anchor circularly claim itself as its committed boundary.
 Recovery and snapshots MUST preserve and revalidate the complete binding and

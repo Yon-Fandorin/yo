@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.storage.session-repository
-revision: sha256:7fbd4967d8274150ae583b80dc6774cb5ec16c60308ea78b3cd1b249ddd46626
+revision: sha256:2f7e673093a05d2d430a3edcbdff6eefa94b705e165d53e6e68a1157ae911c68
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:2f4d36ee01d6ba54a8bd4d914ff86c55873525521d8b8d6f88e3e615c3374e07
+request_hash: sha256:3d9ba54f7bd18474b642b518b92c7d11e814d91c979eba13ab5e75c8f4e0c64b
 ---
 # Korean Review Projection
 
@@ -36,6 +36,9 @@ Local 저장소는 기본 활성화하고 current-user permission과 configurabl
 
 
 Session Repository는 payload-free Request correlation record와 별도의 bounded payload-bearing model_replay_delta semantic record를 같은 checksummed Session log에서 소유합니다. Replay delta, completed outcome, Anchor는 하나의 atomic physical envelope로 기록되어 일부만 durable해질 수 없습니다. Model replay는 repository append 전에 semantic redaction admission을 통과합니다. Repository capacity와 model context limit은 별개이며 replay/context bound를 넘으면 partial chain이나 silent truncation, summary를 기록하지 않고 Turn을 completed but non-resumable로 남깁니다.
+
+
+Repository는 binding의 explicit continuation strategy에 따라 replay 유무를 해석합니다. exact_replay(local_client)는 local replay-delta chain에서 validated model-visible prefix를 복원합니다. backend_managed_state는 replay delta 없이 payload-free outcome, Anchor, backend locator evidence를 보관하고 Transcript나 Request Audit에서 replay를 합성하지 않습니다. 향후 managed Session Repository는 동일한 semantic Journal과 replay chain으로 exact_replay(managed_server)를 실행할 수 있지만 server와 repository identity, selected boundary, replay-content와 contract digest, binding epoch, availability, retention 검증이 필요합니다. Reserved strategy value만으로 remote storage, replication, conflict handling을 구현했다고 간주하지 않습니다.
 
 ## 이유
 

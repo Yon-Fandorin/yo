@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:54c80a6bbecc6b99ba842665cea711e2340702fb2a3ea31c968ae305356203a4
+    revision: sha256:c921df55868cde70dedfa506ab66e8824b079327afeed8c0f455c4a055633ce3
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -55,9 +55,8 @@ connector work promptly, prevent new tool execution, seal active Activities as
 interrupted, and run explicit connector and tool cleanup.
 
 Provider response IDs, cache handles, and conversation IDs MAY be retained as
-diagnostic correlation but MUST NOT be the only continuation locator. A
-Yo-managed binding advertises exact semantic replay rather than provider-native
-resume. Executable continuation MUST reconstruct the model-visible semantic
+diagnostic correlation but MUST NOT be the only continuation locator. A Yo-managed binding MUST explicitly declare `exact_replay` with
+`local_client` as the current executor rather than provider-native resume. Executable continuation MUST reconstruct the model-visible semantic
 boundary named by the newest durable Continuation Anchor from the Session
 Journal and open a new binding epoch when endpoint, protocol, Provider,
 Account, Model, or connector identity changes. A committed mid-Turn function
@@ -89,6 +88,13 @@ Tool arguments and outputs MUST pass the local tool boundary's semantic-admissio
 gate before they become Activities, later model input, or a replay delta. The
 backend MUST persist replay as its own semantic record and MUST NOT attach it to
 the payload-free resumable-outcome correlation record.
+
+A future `managed_server` executor MAY load the same validated replay prefix and
+assemble the next model request on a Yo-managed Session service. It does not
+define a second replay meaning and MUST use the same replay contract, ordering,
+bounds, and Anchor boundary as `local_client`. It remains deferred until its
+remote repository, identity, digest, availability, and retention evidence has an
+independently reviewed implementation. The current backend MUST NOT advertise it.
 
 ## Rationale
 

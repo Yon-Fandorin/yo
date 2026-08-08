@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-001
-    revision: sha256:773ebf9bfa8615c41114a33abc1d57d93a1729f2ad3d8fc7e9ef95f8b12dc6a8
+    revision: sha256:c215423a1ea3a9c359ca33aa7899d616108207e04df4f3e952d588b80837b5df
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -53,9 +53,29 @@ or resend the uncommitted suffix. A recovery snapshot MAY support a later
 Continuation Anchor only after durable publication completes and every anchor
 condition is satisfied; the snapshot alone MUST NOT create one.
 
-A backend advertising Native Resume MUST reconnect through the anchor's
-versioned locator and verify the returned backend identity. Successful native
-resume continues the same Yo Session and binding. If native resume fails but a
+Every backend binding MUST declare exactly one versioned continuation strategy.
+`exact_replay` MUST declare an executor of `local_client` or `managed_server`;
+`backend_managed_state` MUST NOT declare a replay executor. Strategy is an
+explicit binding capability and MUST NOT be inferred from backend kind, Provider,
+API dialect, or model name. It is distinct from the binding-transition mode:
+for example, a newly opened binding can be seeded by an `exact_replay` transition
+and then continue using either declared strategy.
+
+Both exact-replay executors share one semantic replay contract, validation, and
+Anchor boundary. The executor changes only where the validated prefix is loaded
+and the next model request is assembled. `local_client` reconstructs that prefix
+from the local Session Repository. `managed_server` reserves the same operation
+for a future Yo-managed Session service; it MUST NOT be advertised until the
+remote repository identity, replay boundary, content and contract digests,
+binding epoch, availability, and retention are verified by an independently
+reviewed implementation.
+
+A backend using `backend_managed_state` MUST reconnect through the anchor's
+versioned locator and verify the returned backend identity. Successful backend-managed resume continues the same Yo Session and binding.
+Yo still owns the durable transcript, semantic events, correlation evidence, and
+locator, while the backend owns the model-visible conversational state. Such an
+Anchor MUST NOT claim or reference a Yo replay delta. If continuation under the
+recorded strategy fails but a
 replacement backend supports exact semantic replay, yo MAY create a new backend
 binding inside the same Yo Session and seed it from the committed semantic
 boundary. Exact semantic replay preserves message roles and order, exact

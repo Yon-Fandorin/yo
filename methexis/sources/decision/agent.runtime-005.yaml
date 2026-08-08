@@ -1,6 +1,9 @@
 schema: methexis.source/v1alpha1
 id: agent.runtime-005
-revision: sha256:7fa50258cd0b1f42dd8ee113b86810ae821bcb23bb197ea2b0b658e516c91473
+revision: sha256:55e86343fb7ead85e4764c7fa6c86976d6577359c130c6d970605299c4dd7a3b
 payload:
   kind: decision
-  content: The first real Agent Backend is a locally installed Codex app-server adapter over its default stdio JSONL transport. It initializes and checks protocol-version compatibility, maps Codex Thread, Turn, and Item messages into yo-neutral Session, Turn, and Activity semantics, keeps Codex wire types private, and fails explicitly on incompatibility. yo-cli selects and wires the backend, while its private module owns the child process and cleanup in coordination with the product process host. A deterministic fake implements the same core contract without Codex, credentials, network access, or model nondeterminism. WebSocket, remote app-server use, and another delegated Agent Backend are deferred.
+  content: |-
+    The first real Agent Backend is a locally installed Codex app-server adapter over its default stdio JSONL transport. It initializes and checks protocol-version compatibility, maps Codex Thread, Turn, and Item messages into yo-neutral Session, Turn, and Activity semantics, keeps Codex wire types private, and fails explicitly on incompatibility. yo-cli selects and wires the backend, while its private module owns the child process and cleanup in coordination with the product process host. A deterministic fake implements the same core contract without Codex, credentials, network access, or model nondeterminism. WebSocket, remote app-server use, and another delegated Agent Backend are deferred.
+
+    The Codex app-server adapter declares backend_managed_state continuation: Yo persists transcript, semantic events, correlation, and a versioned locator, while Codex owns model-visible conversation state. Resume verifies the Codex thread identity and emits no Yo replay delta or replay reference.
