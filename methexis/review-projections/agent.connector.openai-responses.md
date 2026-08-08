@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.connector.openai-responses
-revision: sha256:517d11c14064f16e5a9037e640672b1255b9a7f7b01f3d978111019605f94d54
+revision: sha256:811c1d8c896b7976d32c03c3dd131f95e99ad328807b072c23ca6518a671ce19
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:41b3b531dd01f2e311c34847498b4312ff3cdb024243461508397f6b1ea2e57e
+request_hash: sha256:b5fa00b8b731dc98d78ada61f97b82f918e37abdf7164721ff0ca74a7967d210
 ---
 # Korean Review Projection
 
@@ -12,20 +12,20 @@ request_hash: sha256:41b3b531dd01f2e311c34847498b4312ff3cdb024243461508397f6b1ea
 
 # OpenAI Responses model connector
 
-## 계약
+## 규칙
 
-첫 Model Connector는 HTTP와 SSE streaming을 사용하는 명시적인 openai-responses protocol을 구현합니다. Provider-neutral이어야 하며 QwenCloud 이름을 붙이지 않습니다. 설정은 absolute normalized HTTPS base URL, exact protocol, effective Model binding을 포함합니다. URL user information, query, fragment를 거부합니다. Redirect는 횟수를 제한하고 동일한 normalized HTTPS origin의 target만 허용합니다. Cross-origin redirect는 credential뿐 아니라 model context, tool schema, argument, result도 보내지 않고 실패합니다.
+첫 Model Connector는 HTTPS와 SSE streaming 위에서 명시적인 `openai-responses` API dialect를 구현해야 합니다. Provider-neutral해야 하며 OpenRouter, QwenCloud 또는 특정 Model family 이름을 사용하면 안 됩니다. OpenRouter와 QwenCloud binding은 같은 connector 구현을 사용합니다. 입력에는 절대 경로로 정규화된 HTTPS base URL, 정확한 dialect, effective Model binding, 정확한 Provider와 Account 조합에 대해 미리 해석된 opaque credential 하나가 포함되어야 합니다.
 
-Connector는 normalized base URL에 responses path segment 하나만 붙입니다. v1을 다시 붙이거나 vendor path를 추론하거나 다른 endpoint를 probe하거나 Chat Completions로 fallback하지 않습니다. QwenCloud Token Plan은 base URL https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1, request URL https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/responses, model qwen3.8-max로 resolve됩니다.
+Connector는 URL user information, query, fragment를 거절합니다. Redirect는 횟수를 제한하고 완전히 같은 origin의 정규화된 HTTPS target만 허용합니다. Cross-origin redirect는 credential, model context, tool schema, arguments, results를 전달하지 않고 실패해야 합니다. Connector는 정규화된 base URL에 `responses` path segment 하나만 추가합니다. 추가 `v1`, vendor path 추론, 다른 endpoint probe, Chat Completions fallback은 금지합니다. 구체적인 Provider endpoint, Model ID, tokenizer profile은 connector identity가 아니라 catalog 설정과 conformance evidence에 속합니다.
 
-Resolve된 API key는 HTTP client 밖으로 관찰되지 않는 bearer authorization으로 보냅니다. Request는 wire model, input items, function tools, tool choice, streaming mode, selected binding이 지원하는 model option만 포함합니다. 초기 Qwen binding은 reasoning.effort를 사용할 수 있지만 provider session cache, previous_response_id, provider Conversation을 Yo continuation authority로 사용하지 않습니다.
+해석된 API key는 HTTP client 밖에서 관찰되지 않도록 bearer authorization으로 보냅니다. Request는 wire Model, input item, 선언된 function tool, tool choice, streaming mode, output-token cap, 선택된 binding이 지원하는 model option만 포함해야 합니다. Provider session cache, `previous_response_id`, provider Conversation을 Yo continuation authority로 사용하면 안 됩니다.
 
-SSE decoder는 output item에 delta를 correlate하며 정확한 text bytes와 function call의 call_id, name, JSON argument bytes를 보존합니다. Response completion, incomplete 또는 failed termination, usage, 존재할 때 reasoning-token count를 보고합니다. Unknown JSON field는 무시할 수 있지만 unknown output item, malformed correlation, duplicate terminal event, termination 뒤 text, invalid UTF-8, terminal response 없는 stream end는 completed Turn이 아니라 typed protocol failure입니다.
+SSE decoder는 text byte와 function-call `call_id`, name, JSON argument byte를 정확히 보존하면서 output item과 delta를 연결합니다. Response completion, incomplete/failed terminal, usage, reasoning-token count가 있으면 보고해야 합니다. 알 수 없는 JSON field는 무시할 수 있습니다. 유효한 `response.completed`, `response.incomplete`, `response.failed` event만 semantic terminal입니다. `data` field가 없는 SSE event는 terminal 전후의 transport framing으로 무시할 수 있습니다. 유효한 semantic terminal 뒤에는 declared event name이 없는 정확한 `data: [DONE]` payload 하나를 제외한 모든 `data` field 포함 SSE event가 실패해야 합니다. 이 sentinel은 마지막 data payload여야 하고 terminal을 대신하거나 반복할 수 없으며, 그 뒤에는 data 없는 framing과 stream 종료만 허용합니다. `[DONE]`이 terminal 전에 나오거나 event name을 선언하면 실패해야 합니다. 알 수 없는 output item, 잘못된 correlation, 중복 terminal, 종료 뒤 그 밖의 모든 data, invalid UTF-8, terminal 없는 stream 종료는 completed Turn이 아니라 typed protocol failure가 되어야 합니다.
 
-모든 binding profile은 finite connect, response-header, stream-idle, total request deadline과 maximum error-body bytes, SSE-event bytes, SSE-event count, output-item count, cumulative response-text bytes, cumulative function-argument bytes를 정합니다. Connector는 unbounded buffering 뒤가 아니라 읽는 동안 이 bound를 적용합니다. Deadline expiry, oversized HTTP 또는 SSE data, event-count 또는 cumulative response overflow, decoding 중 cancellation은 typed failure이며 partial-response retry 금지를 그대로 적용합니다.
+각 binding profile은 유한한 connect, response-header, stream-idle, total request deadline과 error-body bytes, SSE-event bytes/count, output-item count, 누적 response-text bytes, 누적 function-argument bytes 최대값을 설정합니다. Connector는 무제한 buffering 뒤가 아니라 읽는 동안 제한을 적용해야 합니다. Deadline expiry, oversized HTTP/SSE data, event-count 또는 누적 response overflow, decoding 중 cancellation은 typed failure로 종료하며 같은 partial-response retry 금지 규칙을 따라야 합니다.
 
-Throttling이나 temporary service failure를 명시적으로 보고한 HTTP status는 response item을 하나도 admit하기 전에 bounded retry할 수 있습니다. Request 전송 뒤의 connection ambiguity와 첫 response item 뒤의 failure는 자동 retry하지 않습니다. 각 retry attempt는 자기 request correlation을 유지하며 tool result를 반복하거나 partial stream을 replacement response로 숨기지 않습니다.
+명시적인 throttling 또는 temporary service failure HTTP status는 response item이 하나도 admitted되지 않은 경우에만 제한된 정책으로 retry할 수 있습니다. Request 전송 뒤 connection ambiguity와 첫 response item 뒤 모든 failure는 자동 retry하면 안 됩니다. 각 retry attempt는 자체 request correlation을 유지해야 하며 tool result를 반복하거나 partial stream을 대체 response 뒤에 숨기면 안 됩니다.
 
 ## 이유
 
-Exact protocol과 URL join rule은 OpenAI compatibility를 vendor 추론이 아니라 test 가능한 계약으로 만듭니다. Same-origin redirect와 streaming deadline 및 cumulative resource bound는 credential과 semantic payload 유출, stalled 또는 unbounded response를 막습니다. Provider session state를 continuation에서 제외하면 generic connector로 QwenCloud를 지원하면서 Yo durable semantic Journal을 authority로 유지할 수 있습니다.
+정확한 dialect와 URL 결합 규칙은 vendor 추론 대신 OpenAI compatibility를 검증 가능하게 합니다. Provider-neutral transport와 decoding을 통해 OpenRouter와 QwenCloud가 하나의 backend architecture를 공유합니다. Semantic terminal을 필수로 유지하면서 실제 관찰된 post-terminal transport sentinel만 좁게 허용하면 fail-closed completion을 보존하면서 compatible SSE stream을 거절하지 않습니다.
