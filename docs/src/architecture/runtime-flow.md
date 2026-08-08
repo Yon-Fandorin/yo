@@ -5,10 +5,11 @@ message does not make its owner obvious. They describe the current
 implementation path. Methexis remains the authority for what each boundary
 must mean.
 
-## Model-service resolution foundation
+## Model-service and Responses connector
 
-The provider-neutral startup inputs now have one typed route, although the
-process host does not consume it until the native connector Slice:
+The provider-neutral service inputs and remote Responses protocol now form one
+typed route, although the process host does not consume it until the native
+backend Slice:
 
 ```text
 configured ProviderId + AccountId + ModelId
@@ -23,16 +24,26 @@ config.yaml sibling credentials.yaml
 immutable CredentialStore
   ↓ exact AccountId lookup
 redacted ApiCredential
+  ↓ OpenAiResponsesConnector
+POST <normalized base>/responses
+  ↓ bearer auth + same-origin bounded redirects + finite deadlines
+bounded text/event-stream decoder
+  ├── correlated text and reasoning deltas
+  ├── exact function call identity, name, and argument bytes
+  └── completed, incomplete, or failed terminal + usage
 ```
 
 `yo-core::model_service` owns this resolution and validation. A missing
 credential file produces an empty snapshot without creating anything; an
 existing unsafe or malformed file fails closed. API keys have no environment
 fallback and diagnostic formatting never exposes their contents. Display names
-remain optional metadata and never participate in identity or routing. The
-later configuration and connector Slices will select the config path, use its
-sibling credential path, and combine both exact resolutions before network
-startup.
+remain optional metadata and never participate in identity or routing.
+`yo-core::model_connector` appends exactly one `responses` segment and does not
+enable provider cache, `previous_response_id`, a provider Conversation, or
+built-in tools. It bounds SSE events, item count, cumulative text and function
+arguments while reading, and cancellation interrupts header, stream, and queue
+waits. The later native-backend and configuration Slices will own semantic
+Activities, the tool loop, startup selection, and assembly of these inputs.
 
 ## Startup
 

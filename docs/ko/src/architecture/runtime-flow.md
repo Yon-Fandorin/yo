@@ -4,10 +4,10 @@
 때 이 흐름을 사용한다. 여기에는 현재 구현 경로가 담겨 있다. 각 경계가
 어떤 의미여야 하는지는 계속 Methexis가 기준이다.
 
-## Model-service resolution foundation
+## Model-service와 Responses connector
 
-provider 중립 startup 입력에는 이제 하나의 typed 경로가 있지만, process host는
-native connector Slice가 연결될 때까지 이를 소비하지 않는다.
+provider 중립 service 입력과 remote Responses protocol은 이제 하나의 typed
+경로를 이루지만, process host는 native backend Slice가 연결될 때까지 이를 소비하지 않는다.
 
 ```text
 설정된 ProviderId + AccountId + ModelId
@@ -22,15 +22,25 @@ config.yaml과 같은 디렉터리의 credentials.yaml
 변경 불가능한 CredentialStore
   ↓ 정확한 AccountId lookup
 원문을 감춘 ApiCredential
+  ↓ OpenAiResponsesConnector
+POST <정규화한 base>/responses
+  ↓ bearer auth + 같은 origin의 bounded redirect + finite deadline
+bounded text/event-stream decoder
+  ├── correlation을 보존한 text와 reasoning delta
+  ├── 정확한 function call identity, 이름, argument byte
+  └── completed, incomplete 또는 failed terminal + usage
 ```
 
 `yo-core::model_service`가 이 resolution과 validation을 소유한다. credential
 파일이 없으면 아무것도 만들지 않고 빈 snapshot을 반환하며, 기존 파일이
 안전하지 않거나 형식이 잘못되면 실패-폐쇄한다. API key에는 environment
 fallback이 없고 diagnostic formatting은 내용을 노출하지 않는다. 표시 이름은
-optional metadata일 뿐 identity나 routing에 참여하지 않는다. 이후 configuration과
-connector Slice가 config 경로를 선택하고 같은 디렉터리의 credential 경로를 사용해
-network startup 전에 두 exact resolution을 결합한다.
+optional metadata일 뿐 identity나 routing에 참여하지 않는다.
+`yo-core::model_connector`는 `responses` segment를 정확히 하나만 붙이고 provider
+cache, `previous_response_id`, provider Conversation, built-in tool을 켜지 않는다.
+SSE event, item 수, 누적 text와 function argument를 읽는 동안 제한하며 cancellation은
+header·stream·queue wait를 중단한다. 이후 native-backend와 configuration Slice가
+semantic Activity, tool loop, startup 선택과 이 입력들의 조립을 소유한다.
 
 ## 시작
 

@@ -109,6 +109,20 @@ impl NormalizedEndpoint {
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
+
+    pub(crate) fn append_path_segment(&self, segment: &str) -> Result<Url, ModelServiceError> {
+        if segment.is_empty() || segment.contains('/') || segment.chars().any(char::is_control) {
+            return Err(ModelServiceError::new(
+                "model-service endpoint path segment must be non-empty and contain no slash or control character",
+            ));
+        }
+        let mut endpoint = self.0.clone();
+        endpoint
+            .path_segments_mut()
+            .map_err(|_| ModelServiceError::new("model-service base_url cannot accept a path"))?
+            .push(segment);
+        Ok(endpoint)
+    }
 }
 
 impl fmt::Display for NormalizedEndpoint {

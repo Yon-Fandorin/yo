@@ -8,6 +8,7 @@ mod event;
 mod host;
 mod input;
 mod journal;
+mod model_connector;
 mod model_service;
 mod readiness;
 mod request_trace;
@@ -45,6 +46,12 @@ pub use journal::{
     TranscriptEntry, TranscriptObservation, TranscriptObservationEntry,
     TranscriptObservationSequence, TranscriptObservationSlice, TranscriptReader, TranscriptRecord,
     TranscriptSlice,
+};
+pub use model_connector::{
+    ConnectorError, ConnectorFailureKind, FunctionTool, OpenAiResponsesConnector, ReasoningChannel,
+    ReasoningEffort, ResponseTerminal, ResponsesCancellation, ResponsesConnectorLimits,
+    ResponsesEvent, ResponsesInputItem, ResponsesInputRole, ResponsesPoll, ResponsesRequest,
+    ResponsesStream, ResponsesUsage,
 };
 pub use model_service::{
     AccountId, ApiCredential, ApiProtocol, ConnectorId, CredentialStore, EffectiveModelBinding,
