@@ -1,37 +1,37 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.backend.yo-managed-model-loop
-revision: sha256:2a96668d0aac9d7842a1f229b28f495ab78f532dd8d12a837c40580a57562d88
+revision: sha256:3a4de402ea2d11c801643a1d6a5e8a3182e20efd58a2c7edd2a3665d63846ef1
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:12612b8ad2d85ac57065d55e45e2462198c8c8c4bed96bf661486002ecb136b4
+request_hash: sha256:f2f06fab01eb3aeedb22ee276ad9b0f15f29e244b7a2556cc586117720171305
 ---
 # Korean Review Projection
 
 ## Translation
 
-# Yo-managed model과 tool loop
+# Yo-managed 모델 및 도구 루프
 
-## 계약
+## Statement
 
-첫 Yo-managed Agent Backend는 기존 AgentBackend semantic port를 구현하면서 yo-core 안에서 model loop, tool execution coordination, model-visible context를 소유합니다. Model Connector는 remote request와 stream protocol만 소유하며 yo-cli, frontend, connector는 agent-loop owner가 될 수 없습니다.
+Yo-managed Agent Backend는 기존 `AgentBackend` semantic port를 구현하면서 `yo-core` 안에서 모델 루프, 도구 실행 조정, 모델에 보이는 context를 소유해야 합니다. Effective binding은 Turn 시작 전에 허용된 Model Connector 하나와 정확한 API dialect를 선택해야 합니다. Model Connector는 원격 request와 stream protocol만 소유하고 dialect를 루프가 소비하는 connector-neutral round observation으로 변환해야 합니다. `yo-cli`, frontend, connector는 agent loop owner가 될 수 없습니다. 루프는 다른 dialect를 probe하거나 다른 connector로 fallback하거나 Provider identity에 따라 분기하면 안 됩니다.
 
-Accepted Turn마다 backend는 committed semantic Session history와 새 user input을 selected model protocol로 project합니다. Text delta는 기존 message segmentation과 terminal-seal 경로를 통해 ModelWork Activity가 됩니다. Model function call은 wire call identity, function name, 누적 argument bytes를 정확히 보존합니다. Validation이 거부해도 correlated Tool Activity를 만들며 invalid JSON, schema mismatch, unknown 또는 duplicate identity, unavailable tool, argument bound failure는 effect 없이 typed validation failure로 Activity를 끝냅니다. Approval, admission, dispatch 전에 validation이 성공해야 하며 approval과 execution은 frozen registry, admission policy, execution-host boundary를 사용합니다. Model service가 local workspace tool을 직접 실행하지 않습니다.
+각 허용된 Turn에서 backend는 commit된 semantic Session history와 새 user input을 선택된 API dialect로 projection해야 합니다. Text delta는 기존 message segmentation과 terminal seal 경로를 통해 `ModelWork` Activity가 되어야 합니다. 모델 function call은 wire call identity, function name, 정확히 누적된 argument bytes를 보존해야 합니다. Validation이 거절한 경우에도 correlated Tool Activity가 되어야 하며 invalid JSON, schema mismatch, 알 수 없거나 중복된 identity, 사용할 수 없는 tool, argument bound 실패는 effect 없이 typed validation failure로 Activity를 끝내야 합니다. Approval, admission, dispatch 전에 validation이 성공해야 합니다. Approval과 실행은 frozen registry, admission policy, execution host 경계를 사용해야 하며 모델 서비스가 로컬 workspace tool을 직접 실행하면 안 됩니다.
 
-Backend는 function call과 exact tool outcome을 record한 뒤 대응 function-call output을 다음 model request에 보냅니다. 한 response의 여러 call은 tool scheduler가 approval과 mutable resource lease의 독립성을 증명할 때만 concurrent execution할 수 있고 아니면 model order로 실행합니다. 완료 순서와 관계없이 result는 stable call order로 반환합니다. Missing, duplicate, mis-correlated call이나 result는 Turn을 실패시킵니다.
+Backend는 다음 모델 request에서 선택된 dialect로 대응하는 function-call output을 제출하기 전에 각 function call과 정확한 tool outcome을 기록해야 합니다. 한 response가 반환한 여러 call은 scheduler가 approval과 mutable resource lease의 독립성을 증명한 경우에만 병렬 실행할 수 있으며, 그렇지 않으면 모델 순서로 실행해야 합니다. 실행 완료 순서와 관계없이 결과는 안정적인 call 순서로 반환해야 합니다. 빠지거나 중복되거나 잘못 연계된 call 또는 result는 Turn을 실패시켜야 합니다.
 
-Loop는 final assistant message, accepted cancellation, bounded model-round limit, typed failure 중 하나까지 model response, local tool execution, tool-result submission을 반복합니다. Session은 active Turn 하나 제한을 유지합니다. Cancellation은 connector work를 신속히 중단하고 새 tool execution을 막고 active Activity를 interrupted로 seal한 뒤 connector와 tool cleanup을 실행합니다.
+루프는 모델이 최종 assistant message를 내거나, cancellation이 수락되거나, 제한된 model round 한도에 도달하거나, typed failure가 발생할 때까지 model response, local tool execution, tool-result submission을 반복합니다. Session당 active Turn 하나 제한을 유지합니다. Cancellation은 진행 중인 connector 작업을 신속히 중단하고 새 tool 실행을 막고 active Activity를 interrupted로 seal한 다음 connector와 tool cleanup을 실행해야 합니다.
 
-Provider response ID, cache handle, conversation ID는 diagnostic correlation으로 보존할 수 있지만 유일한 continuation locator가 될 수 없습니다. Yo-managed binding은 provider-native resume가 아니라 exact semantic replay를 광고합니다. Executable continuation은 Session Journal에서 최신 durable Continuation Anchor가 지시한 model-visible semantic boundary를 재구성하고 endpoint, protocol, Provider, Account, Model, connector identity가 바뀌면 새 binding epoch를 엽니다. Anchor 뒤의 committed mid-Turn function call, tool result, partial stream 또는 다른 suffix는 diagnostic으로만 남고 automatic continuation input이 되지 않습니다. Durable Anchor가 없으면 replay input을 만들지 않고 continuation contract의 read-only fallback을 따릅니다. Exact replay는 message role과 order, exact visible text, function-call과 tool-result relation, recorded system 및 tool contract를 보존합니다. Hidden reasoning과 provider cache state는 replay claim이 아닙니다.
+Provider response ID, cache handle, conversation ID는 diagnostic correlation으로 보존할 수 있지만 유일한 continuation locator가 될 수 없습니다. Yo-managed binding은 provider-native resume 대신 현재 executor가 `local_client`인 `exact_replay`를 명시해야 합니다. 실행 가능한 continuation은 Session Journal의 최신 durable Continuation Anchor가 가리키는 model-visible semantic boundary를 재구성하고 endpoint, API dialect, Provider, Account, Model, connector identity가 바뀌면 새 binding epoch를 열어야 합니다. Anchor 뒤의 commit된 mid-Turn function call, tool result, partial stream 또는 다른 suffix는 diagnostic으로만 남고 자동 continuation input이 되면 안 됩니다. Durable Anchor가 없으면 replay input을 만들지 않고 continuation 계약의 read-only fallback을 따라야 합니다. Exact replay는 message role과 order, 정확히 보이는 text, function-call과 tool-result 관계, 기록된 system 및 tool contract를 보존해야 합니다. Hidden reasoning과 provider cache state는 replay claim이 아닙니다.
 
-Partial model stream, uncommitted tool result, uncertain request, failed final response를 Continuation Anchor가 덮으면 안 됩니다. Usage와 exact effective binding은 같은 Yo Session 안에서 모델이 바뀌어도 그것을 생성한 model response에 귀속합니다.
+Partial model stream, commit되지 않은 tool result, 불확실한 request, 실패한 final response는 Continuation Anchor에 포함할 수 없습니다. 한 Yo Session 안에서 모델이 바뀌는 경우를 포함해 usage와 정확한 effective binding은 이를 생성한 model response에 귀속해야 합니다.
 
+선택된 model catalog entry는 input token limit, output reserve, 주입된 token counter가 사용하는 정확한 tokenizer profile을 제공해야 합니다. 모든 model request는 dispatch 전에 counter를 통과해야 합니다. Provider 측 implicit caching은 비용을 줄일 수 있지만 exact replay나 context admission을 바꾸면 안 됩니다. Exact replay가 더 이상 맞지 않으면 backend는 typed `context_exhausted`를 반환하고 현재 Turn을 non-resumable로 완료하며 해당 binding의 이후 Turn을 거절해야 합니다. History를 몰래 버리거나 자르거나 요약하면 안 됩니다. Lossy compaction은 새 binding epoch를 여는 별도 검토된 user-visible handoff로 미룹니다.
 
-Selected model catalog entry는 input-token limit, output reserve, injected token counter가 사용할 exact tokenizer profile을 제공합니다. 모든 model request는 dispatch 전에 counter를 통과합니다. Provider implicit cache는 billing을 줄일 수 있지만 exact replay나 context admission을 바꾸지 않습니다. Exact history가 맞지 않으면 backend는 typed context_exhausted를 반환하고 current Turn을 non-resumable로 완료하며 같은 binding의 후속 Turn을 거부합니다. History를 silently discard, truncate, summarize하지 않습니다. Lossy compaction은 user-visible handoff와 새 binding epoch를 갖는 별도 reviewed Slice로 미룹니다. Tool argument와 output은 Activity, later model input, replay delta 전에 semantic-admission gate를 통과합니다. Replay는 별도 semantic record로 저장하며 payload-free resumable-outcome correlation에 붙이지 않습니다.
+Tool argument와 output은 Activity, 이후 model input, replay delta가 되기 전에 local tool boundary의 semantic admission gate를 통과해야 합니다. Backend는 replay를 별도 semantic record로 저장해야 하며 payload가 없는 resumable-outcome correlation record에 붙이면 안 됩니다.
 
+향후 `managed_server` executor는 같은 검증된 replay prefix를 읽고 Yo-managed Session service에서 다음 model request를 조립할 수 있습니다. 이는 두 번째 replay 의미를 정의하지 않으며 `local_client`와 같은 replay contract, ordering, bound, Anchor boundary를 사용해야 합니다. Remote repository, identity, digest, availability, retention evidence를 갖춘 별도 검토 구현 전까지 미뤄지며 현재 backend는 이를 광고하면 안 됩니다.
 
-현재 Yo-managed model loop는 continuation strategy로 exact_replay와 local_client executor를 명시합니다. 향후 managed_server executor는 같은 validated replay prefix와 contract, ordering, bounds, Anchor boundary를 사용하며 별도의 replay 의미가 아닙니다. Remote repository, identity, digest, availability, retention evidence를 가진 independently reviewed implementation 전에는 deferred 상태이고 현재 backend는 이를 광고하지 않습니다.
+## Rationale
 
-## 이유
-
-Loop를 yo-core가 소유하면 frontend-independent Session contract를 유지하면서 genuinely native backend를 제공합니다. Durable Anchor 기준의 exact semantic replay는 partial Turn이나 uncertain side effect를 continuation으로 오인하지 않으면서 provider의 temporary response retention과 분리합니다.
+`yo-core`가 루프를 소유하면 기존 frontend-independent Session contract를 유지하면서 진정한 native backend를 제공할 수 있습니다. 명시적인 connector 경계는 서로 다른 wire grammar를 약화하지 않으면서 여러 API dialect가 semantic loop를 공유하게 합니다. Exact semantic replay는 durable continuation을 Provider의 임시 response 보관에 결합하지 않으며 tool side effect를 Yo 자체 authority와 연계된 상태로 유지합니다.

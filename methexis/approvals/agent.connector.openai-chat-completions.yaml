@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: agent.connector.openai-chat-completions
+revision: sha256:1254024644f7ef8b1e580b7d2d0aab0f429ea93401053175c2fbdcc68fed9c65
+reviewer: agent-runtime
+reviewed_at: 2026-08-08T13:27:48Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:8396bba9438180d5129186735d32439d137514facbf8527cd86ca1ee2e964077
+request_hash: sha256:5b1607009114ff1fe3f7a40d4c0fce5d4f4203168cb3e656ea402f6abe48363f

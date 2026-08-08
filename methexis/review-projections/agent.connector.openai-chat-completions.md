@@ -1,0 +1,37 @@
+---
+schema: methexis.review-projection/v1alpha1
+knowledge_id: agent.connector.openai-chat-completions
+revision: sha256:1254024644f7ef8b1e580b7d2d0aab0f429ea93401053175c2fbdcc68fed9c65
+profile: ko-review/v1alpha1
+compiler: methexis/0.0.0
+request_hash: sha256:ea75e14a4b84325e311171c64c2f5d12289954883ac90fb44b2dd27baac03182
+---
+# Korean Review Projection
+
+## Translation
+
+# OpenAI Chat Completions 모델 connector
+
+## Statement
+
+명시적인 `openai-chat-completions` API dialect용 Model Connector는 HTTPS와 SSE streaming을 사용해야 합니다. Provider-neutral해야 하며 OpenRouter, QwenCloud, DeepSeek 또는 특정 Model family 이름을 사용하면 안 됩니다. 입력에는 절대 경로로 정규화된 HTTPS base URL, 정확한 dialect, effective Model binding, 정확한 Provider와 Account 조합에 대해 미리 해석된 opaque credential 하나가 포함되어야 합니다. Connector는 dialect에서 파생된 `openai-chat-completions` connector와 dialect가 정확히 짝지어진 경우에만 시작해야 합니다.
+
+Connector는 URL user information, query, fragment를 거절해야 합니다. Redirect는 횟수를 제한하고 완전히 같은 origin의 정규화된 HTTPS target만 허용해야 합니다. Cross-origin redirect는 credential, model context, tool schema, argument, result를 전달하지 않고 실패해야 합니다. Connector는 정규화된 base URL에 `chat`과 `completions` 두 path segment를 추가해야 합니다. 추가 `v1`, vendor path 추론, 다른 endpoint probe, Responses fallback은 금지합니다. 구체적인 Provider endpoint, Model ID, tokenizer profile, 모델 기본값, 선택적 Provider parameter는 connector identity가 아니라 catalog 설정과 conformance evidence에 속합니다.
+
+Connector는 해석된 API key를 HTTP client 밖에서 관찰 가능하게 만들지 않고 bearer authorization으로 전송해야 합니다. Request는 wire Model, 순서가 있는 `messages` replay, 선언된 function `tools`, automatic tool choice, streaming mode, `stream_options.include_usage`, `max_tokens`로 표현된 설정 output token cap을 식별해야 합니다. 첫 profile은 선언되지 않은 Provider-specific option을 주입하면 안 됩니다. Replay는 system 및 visible text message를 정확한 role과 bytes로 encode해야 합니다. 이전 assistant round는 visible `content`, visible `refusal`, correlated `tool_calls`를 서로 독립된 field로 정확히 보존하는 assistant message 하나로 encode해야 하며 content나 refusal이 tool call과 함께 온 경우도 포함합니다. 허용된 각 tool result는 정확한 `tool_call_id`를 가진 뒤따르는 `tool` message가 되어야 합니다. Provider conversation state나 hidden reasoning content를 continuation authority로 전송하면 안 됩니다.
+
+SSE decoder는 index가 0인 correlated choice 하나만 허용해야 합니다. 정확한 `delta.content` bytes를 보존하고, 정확한 `delta.refusal` bytes를 visible refusal observation으로 노출해야 하며, `delta.reasoning_content`는 exact replay에 추가하지 않으면서 reasoning observation으로 노출할 수 있습니다. Indexed `delta.tool_calls` fragment를 연계하면서 각 call ID, function name, 정확히 누적된 JSON argument bytes를 보존해야 합니다. Content, refusal, tool-call delta는 서로 독립된 선택적 field이며 하나의 assistant round에 함께 올 수 있습니다. `stop`으로 완료된 refusal은 transport 또는 protocol failure가 아니라 완료된 visible assistant response로 표시하고 commit해야 하며 그 정확한 visible bytes를 replay에 유지해야 합니다. Tool-call index는 처음 등장할 때 오름차순의 연속된 값이어야 하고 이미 허용된 index의 이후 fragment는 서로 interleave할 수 있습니다. 최초 role-only delta는 무시할 수 있습니다. 여러 choice, 변경된 response ID, 중복되거나 빠진 tool-call ID, 일관되지 않은 function name, 처음 등장한 비연속 index 또는 아직 도입되지 않은 index의 fragment, malformed delta는 typed protocol failure가 되어야 합니다.
+
+정확히 하나의 choice finish reason이 종료보다 먼저 와야 합니다. `stop`은 완료된 final-assistant round를 뜻하며 tool call이 누적되었다면 모순으로 실패해야 합니다. `tool_calls`는 완료된 tool-call round를 뜻하며 누적된 tool call이 없다면 모순으로 실패해야 합니다. 함께 온 content나 refusal은 같은 assistant message와 exact replay의 일부로 남습니다. `length`는 typed incomplete failure입니다. Backend는 Turn을 실패시키고 partial assistant message나 tool call을 replay에 commit하면 안 되며 이를 포함하는 Continuation Anchor를 발행하면 안 됩니다. `content_filter`는 같은 replay 및 Anchor 제외를 적용하는 typed failed response입니다. 알 수 없거나 중복되거나 모순되는 finish reason은 fail closed해야 합니다.
+
+일반 choice chunk의 `usage` field가 없거나 null인 것은 transport metadata이므로 무시해야 합니다. Request가 streaming usage를 요구하므로 빈 `choices` array를 가진 chunk의 non-null final usage record가 finished choice 뒤에 정확히 한 번 와야 하고 음수가 아닌 `prompt_tokens`, `completion_tokens`, `total_tokens`를 보고해야 합니다. 음수가 아닌 `completion_tokens_details.reasoning_tokens`도 보고할 수 있습니다. Finish 전 non-null usage, 중복된 non-null usage, final usage record의 non-empty choice array, 음수 값, prompt와 completion token에 맞지 않는 total은 typed protocol failure가 되어야 합니다.
+
+이름 없는 정확한 `data: [DONE]` sentinel은 finished choice와 usage record 뒤의 마지막 data payload여야 합니다. 이는 Chat Completions stream terminal이며 JSON으로 처리하면 안 됩니다. 빠지거나 반복되거나 SSE event name을 가져서는 안 됩니다. SSE comment와 data field가 없는 event는 `[DONE]` 전 transport framing으로 무시할 수 있습니다. `[DONE]` 뒤에는 non-data framing과 stream end만 허용합니다. 그 밖의 `[DONE]` 뒤 data, invalid UTF-8, 완전한 finish, usage, sentinel 순서 없이 끝난 stream은 완료된 Turn이 아니라 typed protocol failure가 되어야 합니다.
+
+모든 binding profile은 유한한 connect, response-header, stream-idle, total request deadline과 maximum error-body bytes, SSE-event bytes, SSE-event count, tool-call count, 누적 response-content bytes, 누적 refusal bytes, 누적 reasoning bytes, 누적 function-argument bytes를 설정해야 합니다. Connector는 제한 없는 값을 buffer한 뒤가 아니라 읽는 동안 이 bound를 적용해야 합니다. Deadline 만료, 너무 큰 HTTP 또는 SSE data, event count나 누적 response 초과, decoding 중 cancellation은 typed failure로 종료하고 아래의 같은 partial-response retry 금지를 따라야 합니다.
+
+명시적으로 throttling이나 temporary service failure를 보고하는 HTTP status는 response item을 하나도 admit하지 않은 경우 제한된 정책 안에서 retry할 수 있습니다. Request 전송 뒤 connection ambiguity와 첫 response item 이후의 모든 failure는 자동 retry하면 안 됩니다. 각 retry attempt는 자체 request correlation을 유지해야 하며 connector가 tool result를 반복하거나 partial stream을 replacement response 뒤에 숨기면 안 됩니다.
+
+## Rationale
+
+Chat Completions와 Responses는 transport 관심사를 공유하지만 message, tool call, usage, terminal grammar가 다릅니다. 별도의 정확한 dialect와 provider-neutral connector는 이 차이를 보존하면서 같은 Yo-managed semantic model loop가 둘 중 하나를 사용하게 합니다. Refusal을 visible model output으로 처리하면 정상적인 모델 판단을 infrastructure failure로 잘못 보고하지 않고 사용자의 대화를 보존할 수 있습니다. Finish, usage, `[DONE]` 순서를 요구하고 `length` 및 failed response를 replay에서 제외하면 잘린 stream이 durable model history가 되는 일을 막을 수 있습니다.
