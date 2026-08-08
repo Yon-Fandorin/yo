@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:0ade2fa8646f07f8af9afc894fb749a10618c807e863942d44641b70d599bfc7
+    revision: sha256:28d7fcb8c0d694c3d97ba384bad6dd54439df15e420dfb0b606b8add77b9c7d5
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -23,9 +23,10 @@ relations:
 The UUIDv7-only, descriptor-aware semantic Session Journal format
 `yo.semantic-journal-commit/v1` and checksummed physical Session-record envelope
 `yo.session-record/v1` are yo's initial public-format candidates. Before the
-first public release, this revision replaces the immediately preceding
-structured-input semantic `/v1` with the closed anchored-session semantic `/v1`
-defined below. Its exact shape and UUIDv7 Session identity are part of the
+first public release, an earlier reviewed revision replaced the structured-input
+semantic `/v1` with an anchored-session development shape. This second reviewed
+revision replaces that immediately preceding shape with the closed
+anchored-session semantic `/v1` defined below. Its exact shape and UUIDv7 Session identity are part of the
 baseline; a matching schema tag alone MUST NOT admit a record.
 
 Every semantic `/v1` commit, including a descriptor-only commit, MUST contain
@@ -35,7 +36,7 @@ fail closed before semantic admission.
 
 Every persisted `command_committed`, `event_committed`,
 `backend_exchange_observed`, `backend_binding_opened`,
-`backend_binding_closed`, `backend_request_accepted`,
+`backend_binding_closed`, `backend_request_accepted`, `model_replay_delta`,
 `backend_resumable_outcome`, and `continuation_anchor` record contains a
 required positive `journal_sequence`. The sole Session Journal writer assigns
 that identity when it commits the backend-neutral semantic record; a codec,
@@ -124,9 +125,13 @@ kinds, scopes, zero skill generations, invalid metadata, and invalid profile
 values MUST fail closed. These rules define persisted `/v1`; later live-domain
 rule changes MUST NOT silently change its decoder.
 
-The replacement semantic `/v1` additionally admits one general exchange record
-and exactly five continuation-specific records. All six are bounded,
-payload-free semantic Journal data, not Request Audit detail:
+This second explicitly reviewed pre-release semantic `/v1` replaces the
+immediately preceding anchored-session development shape. Logs written in the
+displaced shape MUST fail closed even though the schema tag is unchanged. The
+replacement admits one general exchange record and exactly six
+continuation-specific records. Existing correlation records remain bounded and
+payload-free. The separate `model_replay_delta` is bounded, payload-bearing
+semantic Journal data rather than Request Audit detail:
 
 - `backend_exchange_observed` contains positive `epoch`, canonical UUIDv4
   `operation_id`, exact `exchange_kind`, exact `direction`, `payload_schema`,
@@ -142,9 +147,19 @@ payload-free semantic Journal data, not Request Audit detail:
   accepted submission's canonical UUIDv4 `operation_id`, and a
   positive `exchange_sequence` plus a `request_identity` object with `schema`
   and `value`;
+- `model_replay_delta` contains positive `epoch`, positive `turn_id`, positive
+  `accepted_request_sequence`, an optional replay contract, and an ordered
+  non-empty list of exact provider-neutral replay items. The replay contract is
+  present exactly once at the start of a replay chain and contains the exact
+  system prompt plus ordered tools with name, safe description, schema version,
+  and closed JSON schema. An item is exactly a message with role and visible
+  UTF-8 content, a function call with call identity, tool name, and validated
+  argument JSON bytes, or a function result with call identity and bounded
+  model-visible output bytes;
 - `backend_resumable_outcome` contains positive `epoch`, positive `turn_id`,
-  positive `accepted_request_sequence`, exact `status: completed`, and an
-  optional `outcome_identity` object with `schema` and `value`; and
+  positive `accepted_request_sequence`, positive `replay_delta_sequence`, exact
+  `status: completed`, and an optional `outcome_identity` object with `schema`
+  and `value`; and
 - `continuation_anchor` contains positive `epoch`, positive
   `accepted_request_sequence`, positive `resumable_outcome_sequence`, and
   positive `journal_boundary`.
@@ -218,23 +233,35 @@ epoch. Multiple accepted submissions MAY target one Turn; the request referenced
 by a completed outcome MUST be the latest accepted request for that Turn in the
 same epoch.
 
-A `backend_resumable_outcome` is valid only after a matching semantic
+A `model_replay_delta` is valid only after a matching semantic
 `TurnFinished` with outcome `completed`. It MUST reference the latest accepted
-request for that Turn and epoch. When a backend exposes a separate stable
+request for that Turn and epoch. Its message, function-call, and function-result
+order and relationships MUST validate independently of presentation records or
+old connector payloads. The encoded replay contract is limited to 1 MiB, one
+delta to 16 MiB, and the replay prefix selected by an Anchor to 64 MiB and 4096
+items. A bound violation produces a completed but non-resumable Turn and no
+delta, outcome, or Anchor; later Turns on that binding fail with explicit
+context exhaustion until an independently approved compaction or new binding.
+
+A `backend_resumable_outcome` is valid only after that replay delta and a
+matching semantic `TurnFinished` with outcome `completed`. It MUST reference the
+latest accepted request for that Turn and epoch and the immediately preceding
+replay delta. When a backend exposes a separate stable
 result identity, `outcome_identity` records it. When it does not, omission is
 explicit and the referenced accepted request identity remains the backend
 operation identity; the writer MUST NOT invent a value. Failed or interrupted
 Turns MUST NOT produce a resumable outcome.
 
 A `continuation_anchor` MUST immediately follow its referenced resumable
-outcome in the same semantic commit. Every `*_sequence`,
+outcome in the same semantic commit, and that outcome MUST immediately follow
+its referenced replay delta. Every `*_sequence`,
 `source_anchor_sequence`, `correlation_sequence`, and `journal_boundary` in
-these six records is a
+these seven records is a
 semantic `JournalSequence`, never a storage-only ReplaySequence. The request
 and outcome sequences MUST identify the correlated records in the same epoch,
 and `journal_boundary` MUST equal the resumable outcome's JournalSequence. The
 anchor record's own JournalSequence is the value projected into physical
-discovery metadata. `TurnFinished(completed)`, the resumable outcome, and the
+discovery metadata. `TurnFinished(completed)`, the replay delta, the resumable outcome, and the
 Anchor MUST occur in that order in one semantic commit. This
 ordering makes the completed Turn, outcome, and Anchor one physical append
 without making the Anchor circularly claim itself as its committed boundary.
@@ -280,6 +307,20 @@ explicitly reviewed SOT revision that names the replaced shape and accepts its
 data impact. After yo's first public release, evolution MUST preserve published
 versions or provide an explicitly reviewed compatibility or migration contract;
 it MUST NOT silently reset a published schema tag.
+
+
+Every persisted failed semantic outcome MUST contain both a required `code`
+field and a `message`. The code is either null or a non-empty ASCII identifier
+of at most 128 bytes. Tool admission failures MUST use a stable non-null
+`yo.tool.validation.*/v1` code; uncoded general failures are represented
+explicitly as null rather than by omitting the field. The displaced message-only
+failure shape MUST fail closed.
+
+Replay arguments and outputs MUST pass the semantic-admission redaction gate
+before becoming Activities, later model input, or durable replay. Prohibited raw
+credentials, complete environment values, execution-host diagnostics, and
+configured prohibited literals MUST NOT enter the semantic record. The admitted
+exact value, including an explicit bounded replacement, is the sole replay value.
 
 ## Rationale
 

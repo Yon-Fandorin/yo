@@ -1,87 +1,9 @@
 schema: methexis.source/v1alpha1
 id: agent.storage-001
-revision: sha256:16a5437ffd93e9045d8e2ea00b57d6bc3edee98295f42f863685d522952da3c1
+revision: sha256:1edc955aa7e1ae77ad9544dc4e75d77354fa468dfe4086b8497b8713af82037f
 payload:
   kind: decision
-  content: >-
-    A storage-neutral Session Repository owns the lifecycle of durable Session
-    records behind one repository interface without exposing a physical layout
-    as a frontend contract. Semantic Session Journal records
-    and Request Audit data are logically distinct domains inside that ownership
-    boundary, not independent Session authorities. The product provides the
-    local implementation first; remote storage and later physical Request Audit
-    separation are evidence-gated implementations. The first local
-    implementation uses one append-only, explicitly versioned JSON Lines log
-    per Session as a replaceable implementation detail. Multiple processes may
-    open the same stable absolute repository root, while each Session permits
-    one writer owner. During migration, each new writer-capable repository instance
-    retains a shared compatibility guard on the legacy root-exclusive writer-lock file
-    for its lifetime. New writer-capable instances may share the guard, while a live legacy
-    exclusive owner and any new instance exclude one another. The compatibility
-    guard does not serialize new writers and is not acquired by the read-only
-    discovery port. A short-lived root append coordinator serializes the
-    capacity check and physical append so the repository-wide ceiling remains
-    exact; it is not a process-lifetime writer lease.
-    It is enabled by default, restricts its directory and files to the current
-    user, has a configurable capacity ceiling, and neither expires records by
-    age nor automatically deletes Sessions. One semantic commit is encoded as one
-    physical repository envelope, including a command with zero or more events
-    or an observation event batch, so a durable record cannot expose only half
-    of that commit. JournalSequence expresses semantic replay order while
-    RepositorySequence expresses physical append order; neither is derived
-    from the other. Every newly written physical record carries a versioned
-    CRC32C over an explicit preimage containing schema, Session identity,
-    RepositorySequence, record kind, exact payload bytes, and the complete
-    discovery object. The repository writer assigns the discovery timestamp
-    immediately before append, derives the descriptor, binding epoch, and latest
-    valid Continuation Anchor JournalSequence from the semantic prefix being
-    committed, and writes the summary inside the same checksummed envelope. The
-    timestamp becomes durable only when that envelope does. A read-only discovery
-    port validates the last complete envelope of each Session with a bounded tail
-    read and exposes storage-neutral summaries without acquiring the writer lease,
-    creating storage, or exposing JSONL paths. Recovery accepts
-    supported older records, validates checksummed records before admission,
-    and never computes a checksum by serializing a record containing that
-    checksum. Recovery
-    streams complete lines, treats an incomplete final line as an uncommitted
-    tail, reports corruption in any complete line, and returns a bounded suffix
-    without materializing the entire log. Every append is protected by a durable
-    pending marker; an append whose rollback cannot be confirmed leaves the
-    marker so later readers quarantine the Session log. Reopening a non-empty
-    Session or recovering after an initial state-load failure requires a
-    complete snapshot before another incremental record. Message and
-    tool-output segments inside semantic commits remain content-persistence
-    detail rather than another Session authority. A successful durable commit
-    is published to the in-memory Journal only after its append and
-    required synchronization complete. Process-local presentation updates
-    explicitly marked volatile are outside this durable-before-publication
-    rule and never appear as durable records. If semantic work completes but
-    persistence fails, the worker publishes the result as volatile, latches a
-    durable gap, and does not report the semantic work as rolled back. When the
-    configured ceiling or underlying storage prevents another durable append,
-    existing records remain unchanged, the active Session continues in memory
-    without durable appends, and the worker emits a typed persistent
-    storage-pressure notification to every connected frontend that
-    distinguishes a known cutoff, a known empty log, and an unknown durable
-    cutoff. A known cutoff carries both the last durable JournalSequence, which
-    may be absent when no semantic Journal event is durable, and the last
-    RepositorySequence; neither coordinate is inferred from the other. It does
-    not claim a continuous suffix across the gap.
-    Persistence resumes by writing a complete
-    Session snapshot after capacity returns, then accepting later incremental
-    records. The repository has one shared physical availability boundary. It
-    remains the initial durable home for bounded payload-free Request
-    correlation records. Durable Request detail requires a prior
-    redaction-admission gate; until it exists, detail remains process-local and
-    volatile. It has no independent retention or eviction policy in the first
-    implementation.
-    The first implementation remains a synchronous single-writer path within
-    each Session and does not introduce a separate Request Audit
-    repository interface, generic append-log abstraction, background writer,
-    generic transaction API, group commit, replication, dual-write, or conflict
-    resolution. A background writer, generic transaction API, or group commit
-    requires measured synchronization-latency and append-rate evidence.
-    Compression, indexes, SQLite projections, alternative encodings, and
-    physical Request Audit separation also require measured evidence; a later
-    split cannot redefine Session meaning or move Session lifecycle
-    coordination.
+  content: |-
+    A storage-neutral Session Repository owns the lifecycle of durable Session records behind one repository interface without exposing a physical layout as a frontend contract. Semantic Session Journal records and Request Audit data are logically distinct domains inside that ownership boundary, not independent Session authorities. The product provides the local implementation first; remote storage and later physical Request Audit separation are evidence-gated implementations. The first local implementation uses one append-only, explicitly versioned JSON Lines log per Session as a replaceable implementation detail. Multiple processes may open the same stable absolute repository root, while each Session permits one writer owner. During migration, each new writer-capable repository instance retains a shared compatibility guard on the legacy root-exclusive writer-lock file for its lifetime. New writer-capable instances may share the guard, while a live legacy exclusive owner and any new instance exclude one another. The compatibility guard does not serialize new writers and is not acquired by the read-only discovery port. A short-lived root append coordinator serializes the capacity check and physical append so the repository-wide ceiling remains exact; it is not a process-lifetime writer lease. It is enabled by default, restricts its directory and files to the current user, has a configurable capacity ceiling, and neither expires records by age nor automatically deletes Sessions. One semantic commit is encoded as one physical repository envelope, including a command with zero or more events or an observation event batch, so a durable record cannot expose only half of that commit. JournalSequence expresses semantic replay order while RepositorySequence expresses physical append order; neither is derived from the other. Every newly written physical record carries a versioned CRC32C over an explicit preimage containing schema, Session identity, RepositorySequence, record kind, exact payload bytes, and the complete discovery object. The repository writer assigns the discovery timestamp immediately before append, derives the descriptor, binding epoch, and latest valid Continuation Anchor JournalSequence from the semantic prefix being committed, and writes the summary inside the same checksummed envelope. The timestamp becomes durable only when that envelope does. A read-only discovery port validates the last complete envelope of each Session with a bounded tail read and exposes storage-neutral summaries without acquiring the writer lease, creating storage, or exposing JSONL paths. Recovery accepts supported older records, validates checksummed records before admission, and never computes a checksum by serializing a record containing that checksum. Recovery streams complete lines, treats an incomplete final line as an uncommitted tail, reports corruption in any complete line, and returns a bounded suffix without materializing the entire log. Every append is protected by a durable pending marker; an append whose rollback cannot be confirmed leaves the marker so later readers quarantine the Session log. Reopening a non-empty Session or recovering after an initial state-load failure requires a complete snapshot before another incremental record. Message and tool-output segments inside semantic commits remain content-persistence detail rather than another Session authority. A successful durable commit is published to the in-memory Journal only after its append and required synchronization complete. Process-local presentation updates explicitly marked volatile are outside this durable-before-publication rule and never appear as durable records. If semantic work completes but persistence fails, the worker publishes the result as volatile, latches a durable gap, and does not report the semantic work as rolled back. When the configured ceiling or underlying storage prevents another durable append, existing records remain unchanged, the active Session continues in memory without durable appends, and the worker emits a typed persistent storage-pressure notification to every connected frontend that distinguishes a known cutoff, a known empty log, and an unknown durable cutoff. A known cutoff carries both the last durable JournalSequence, which may be absent when no semantic Journal event is durable, and the last RepositorySequence; neither coordinate is inferred from the other. It does not claim a continuous suffix across the gap. Persistence resumes by writing a complete Session snapshot after capacity returns, then accepting later incremental records. The repository has one shared physical availability boundary. It remains the initial durable home for bounded payload-free Request correlation records. Durable Request detail requires a prior redaction-admission gate; until it exists, detail remains process-local and volatile. It has no independent retention or eviction policy in the first implementation. The first implementation remains a synchronous single-writer path within each Session and does not introduce a separate Request Audit repository interface, generic append-log abstraction, background writer, generic transaction API, group commit, replication, dual-write, or conflict resolution. A background writer, generic transaction API, or group commit requires measured synchronization-latency and append-rate evidence. Compression, indexes, SQLite projections, alternative encodings, and physical Request Audit separation also require measured evidence; a later split cannot redefine Session meaning or move Session lifecycle coordination.
+
+    The Session Repository keeps payload-free request correlation and bounded payload-bearing model replay as distinct semantic records in the same atomic checksummed envelope. Replay admission is redaction-gated, bounded independently from repository capacity, and an exhausted replay/context binding cannot silently truncate, summarize, or resume.

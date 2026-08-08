@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.observability-001
-    revision: sha256:f219e1c793d56890f0f7c96a7927339d25c4d6d0f9ece745346e99bd3eb87f57
+    revision: sha256:952a09565421cb17d1440a4923f3922226b5d3104b6dc1e9177605ceedc072b5
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -51,7 +51,8 @@ visibly partial rather than becoming a completed message.
 
 The Journal MUST also record backend-neutral semantic Session, Turn, and
 Activity events together with bounded, payload-free Request correlation and
-availability records. Stable operation identity,
+availability records, plus a separate bounded `model_replay_delta` containing
+the exact model-visible replay suffix. Stable operation identity,
 accepted-request identity, correlated resumable outcome, backend kind and
 version, observation boundary, exchange kind and direction, payload schema
 identity, and the versioned backend Session locator required for continuation
@@ -73,6 +74,15 @@ complete environment variables, private reasoning values, and other prohibited
 raw values MUST NOT enter durable storage; removal MUST be represented
 explicitly when it affects interpretation. Until that admission boundary is
 implemented, Request detail MUST remain process-local and volatile.
+
+
+A model replay delta MUST preserve exact visible message roles and bytes, validated
+function calls, bounded function results, and their stable order. It MUST be
+committed after `TurnFinished(completed)` and before the correlated resumable
+outcome and Continuation Anchor in the same physical append. It MUST NOT be
+derived from Chat or Transcript presentation. Tool arguments and outputs MUST
+pass semantic redaction admission before they update an Activity, become later
+model input, or enter replay; the admitted exact replacement is authoritative.
 
 ## Rationale
 

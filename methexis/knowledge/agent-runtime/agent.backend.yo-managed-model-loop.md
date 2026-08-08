@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:e41bf7b7bde0c8a0518e1204f63d6adce0f8df6e1d0446e6953a6c47cec87621
+    revision: sha256:54c80a6bbecc6b99ba842665cea711e2340702fb2a3ea31c968ae305356203a4
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -73,6 +73,22 @@ No Continuation Anchor may cover a partial model stream, an uncommitted tool
 result, an uncertain request, or a failed final response. Usage and the exact
 effective binding MUST be attributed to the model response that produced them,
 including when the model changes inside one Yo Session.
+
+
+The selected model catalog entry MUST provide an input-token limit, an output
+reserve, and the exact tokenizer profile used by an injected token counter. Every
+model request MUST pass that counter before dispatch. Provider-side implicit
+caching MAY reduce billing but MUST NOT change exact replay or context admission.
+When exact replay no longer fits, the backend MUST return typed
+`context_exhausted`, complete the current Turn as non-resumable, and reject a
+later Turn on that binding. It MUST NOT silently discard, truncate, or summarize
+history. Lossy compaction is deferred to an independently reviewed, user-visible
+handoff that opens a new binding epoch.
+
+Tool arguments and outputs MUST pass the local tool boundary's semantic-admission
+gate before they become Activities, later model input, or a replay delta. The
+backend MUST persist replay as its own semantic record and MUST NOT attach it to
+the payload-free resumable-outcome correlation record.
 
 ## Rationale
 

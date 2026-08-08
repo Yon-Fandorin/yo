@@ -1,78 +1,9 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:0ade2fa8646f07f8af9afc894fb749a10618c807e863942d44641b70d599bfc7
+revision: sha256:28d7fcb8c0d694c3d97ba384bad6dd54439df15e420dfb0b606b8add77b9c7d5
 payload:
   kind: decision
-  content: >-
-    The UUIDv7-only, descriptor-aware semantic Session Journal and checksummed
-    physical Session-record envelope remain yo's initial public-format
-    candidates, both named version 1. Before the first public release, this
-    decision replaces the immediately preceding structured-input semantic v1
-    with one closed anchored-session semantic v1. Every semantic commit requires
-    the exact `format: anchored-session` discriminator, while preserving the
-    existing UUIDv4 SubmissionId, exact UserInput text, and ordered typed
-    workspace and skill reference occurrences. Every persisted command, event,
-    exchange, binding, accepted request, resumable outcome, and Anchor carries a
-    required positive JournalSequence assigned only by the sole semantic writer
-    at commit time. Descriptor and normalized message persistence records
-    structurally omit it. Explicit semantic sequences are Session-unique and
-    strictly increasing but may have gaps where live text updates were normalized
-    into bounded message records; codec, recovery, snapshots, retries, and remote
-    transports never allocate, fill, or renumber them. The monotonic commit cutoff
-    is the semantic boundary covered after the commit and cannot precede an
-    explicit sequence. Every sequence newly introduced by an incremental commit
-    is greater than the preceding cutoff; complete snapshots may only restate the
-    exact sequence values of the prefix they replace. Recovery rebuilds a
-    non-persistent sequence-to-record index and fails closed on duplicate or
-    decreasing sequences, incremental sequences inside the preceding cutoff,
-    backward or undersized cutoffs, and missing or wrong-kind correlation targets.
-    Storage-only ReplaySequence remains a separate internal coordinate for
-    normalized records within semantic payloads, while RepositorySequence orders
-    physical Session-record appends. The replacement adds one general
-    backend_exchange_observed record and exactly five continuation-specific
-    records: backend_binding_opened, backend_binding_closed,
-    backend_request_accepted, backend_resumable_outcome, and
-    continuation_anchor. The general record distinguishes request, response,
-    notification, server request, retry, and terminal outcome by direction,
-    payload schema, correlation JournalSequence, optional backend identity, and
-    Request Audit detail availability without storing payload. A root request,
-    notification, or server request owns one Session-unique UUIDv4 operation ID;
-    StartTurn and SteerTurn requests reuse their SubmissionId, while other roots
-    receive a writer-assigned ID. Correlated responses, retries, and terminal
-    outcomes reuse that ID and follow a closed same-epoch kind-and-direction edge
-    matrix, while notifications remain roots. A binding open
-    records a positive monotonic epoch, backend kind and version, versioned
-    binding, model, and Session-locator identities, and whether it is initial,
-    exact replay, or lossy handoff together with its source Anchor and known
-    cache state. Replacement closes the prior epoch before opening the next;
-    process restart retains an open epoch, native resume verifies its recorded
-    binding identity, and a mismatch must transition epochs before another
-    request is accepted. An accepted request records its open epoch, positive
-    Turn identity, the exact SubmissionId as stable yo operation identity, the
-    matching outbound exchange JournalSequence, and one versioned opaque backend
-    request identity. A completed resumable outcome records its epoch and Turn,
-    references the latest accepted request for that Turn, has exact status
-    completed, and stores a separate versioned outcome identity only when the
-    backend provides one. The writer never invents an outcome identity. Failed
-    and interrupted Turns do not produce an outcome or Anchor. Turn completion,
-    the resumable outcome, and the Continuation Anchor occur in order in one
-    semantic commit. The Anchor refers backward by semantic JournalSequence to
-    the accepted request and outcome, identifies the epoch, and sets its
-    committed boundary to the outcome sequence; its own JournalSequence is
-    projected into physical discovery. Backend kind, payload schema, and identity
-    schemas are non-empty ASCII bounded to 128 bytes; versions and opaque locator
-    or identity values are non-empty UTF-8 bounded to 4096 bytes. The shared
-    codec validates field shape, bounds, ordering, and correlation but never
-    interprets backend-specific values; the selected backend adapter owns that
-    interpretation. Recovery and snapshots preserve and revalidate the complete
-    graph and never synthesize an Anchor from a completed Turn, discovery
-    summary, wire payload, or Request Audit detail.
-    The physical yo.session-record/v1 shape remains unchanged because its CRC32C
-    already binds the exact semantic payload and discovery summary. The previous
-    structured-input and string-input semantic v1 shapes, summary-less physical
-    v1, legacy numeric-v1, semantic v2 through v4, and physical v2 and v3 remain
-    unreadable development data with no migration, dual reader, or compatibility
-    shim. Any further pre-release same-tag replacement requires another explicit
-    SOT decision accepting its data impact; after the first public release,
-    evolution preserves published versions or supplies an explicitly reviewed
-    compatibility or migration contract.
+  content: |-
+    The UUIDv7-only, descriptor-aware semantic Session Journal and checksummed physical Session-record envelope remain yo's initial public-format candidates, both named version 1. Before the first public release, this decision replaces the immediately preceding structured-input semantic v1 with one closed anchored-session semantic v1. Every semantic commit requires the exact `format: anchored-session` discriminator, while preserving the existing UUIDv4 SubmissionId, exact UserInput text, and ordered typed workspace and skill reference occurrences. Every persisted command, event, exchange, binding, accepted request, resumable outcome, and Anchor carries a required positive JournalSequence assigned only by the sole semantic writer at commit time. Descriptor and normalized message persistence records structurally omit it. Explicit semantic sequences are Session-unique and strictly increasing but may have gaps where live text updates were normalized into bounded message records; codec, recovery, snapshots, retries, and remote transports never allocate, fill, or renumber them. The monotonic commit cutoff is the semantic boundary covered after the commit and cannot precede an explicit sequence. Every sequence newly introduced by an incremental commit is greater than the preceding cutoff; complete snapshots may only restate the exact sequence values of the prefix they replace. Recovery rebuilds a non-persistent sequence-to-record index and fails closed on duplicate or decreasing sequences, incremental sequences inside the preceding cutoff, backward or undersized cutoffs, and missing or wrong-kind correlation targets. Storage-only ReplaySequence remains a separate internal coordinate for normalized records within semantic payloads, while RepositorySequence orders physical Session-record appends. The replacement adds one general backend_exchange_observed record and exactly five continuation-specific records: backend_binding_opened, backend_binding_closed, backend_request_accepted, backend_resumable_outcome, and continuation_anchor. The general record distinguishes request, response, notification, server request, retry, and terminal outcome by direction, payload schema, correlation JournalSequence, optional backend identity, and Request Audit detail availability without storing payload. A root request, notification, or server request owns one Session-unique UUIDv4 operation ID; StartTurn and SteerTurn requests reuse their SubmissionId, while other roots receive a writer-assigned ID. Correlated responses, retries, and terminal outcomes reuse that ID and follow a closed same-epoch kind-and-direction edge matrix, while notifications remain roots. A binding open records a positive monotonic epoch, backend kind and version, versioned binding, model, and Session-locator identities, and whether it is initial, exact replay, or lossy handoff together with its source Anchor and known cache state. Replacement closes the prior epoch before opening the next; process restart retains an open epoch, native resume verifies its recorded binding identity, and a mismatch must transition epochs before another request is accepted. An accepted request records its open epoch, positive Turn identity, the exact SubmissionId as stable yo operation identity, the matching outbound exchange JournalSequence, and one versioned opaque backend request identity. A completed resumable outcome records its epoch and Turn, references the latest accepted request for that Turn, has exact status completed, and stores a separate versioned outcome identity only when the backend provides one. The writer never invents an outcome identity. Failed and interrupted Turns do not produce an outcome or Anchor. Turn completion, the resumable outcome, and the Continuation Anchor occur in order in one semantic commit. The Anchor refers backward by semantic JournalSequence to the accepted request and outcome, identifies the epoch, and sets its committed boundary to the outcome sequence; its own JournalSequence is projected into physical discovery. Backend kind, payload schema, and identity schemas are non-empty ASCII bounded to 128 bytes; versions and opaque locator or identity values are non-empty UTF-8 bounded to 4096 bytes. The shared codec validates field shape, bounds, ordering, and correlation but never interprets backend-specific values; the selected backend adapter owns that interpretation. Recovery and snapshots preserve and revalidate the complete graph and never synthesize an Anchor from a completed Turn, discovery summary, wire payload, or Request Audit detail. The physical yo.session-record/v1 shape remains unchanged because its CRC32C already binds the exact semantic payload and discovery summary. The previous structured-input and string-input semantic v1 shapes, summary-less physical v1, legacy numeric-v1, semantic v2 through v4, and physical v2 and v3 remain unreadable development data with no migration, dual reader, or compatibility shim. Any further pre-release same-tag replacement requires another explicit SOT decision accepting its data impact; after the first public release, evolution preserves published versions or supplies an explicitly reviewed compatibility or migration contract.
+
+    Before the first public release, the closed anchored-session semantic Journal /v1 is replaced by a second explicitly reviewed /v1 revision. Existing backend correlation records remain payload-free, while a separate bounded model_replay_delta carries exact provider-neutral replay content and is referenced by a completed resumable outcome. Failed outcomes persist a required nullable typed code, replay is admitted only after semantic redaction, and context exhaustion fails explicitly without silent truncation or compaction.

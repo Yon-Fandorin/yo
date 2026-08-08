@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.storage-001
-    revision: sha256:16a5437ffd93e9045d8e2ea00b57d6bc3edee98295f42f863685d522952da3c1
+    revision: sha256:1edc955aa7e1ae77ad9544dc4e75d77354fa468dfe4086b8497b8713af82037f
 relations:
   depends_on:
     - agent.persistence.format-compatibility
@@ -59,10 +59,12 @@ expose JSONL paths. It MAY use an independent read lock only to distinguish an
 active writer from an abandoned pending marker; that lock is not a writer lease.
 
 The two logical record domains therefore share one physical availability
-boundary and one capacity ceiling in this implementation. It is the initial
-durable home for bounded, payload-free Request correlation records. Durable
-Request detail MUST NOT be admitted until a redaction-before-admission contract
-has an implemented gate; until then detail remains process-local and volatile.
+boundary and one capacity ceiling in this implementation. It is the initial durable home for bounded, payload-free Request correlation
+records and the separate bounded, payload-bearing `model_replay_delta` semantic
+record. Replay is Session meaning rather than Request detail and MUST share the
+completed Turn, outcome, and Anchor's atomic physical envelope. Durable Request
+detail MUST NOT be admitted until a redaction-before-admission contract has an
+implemented gate; until then detail remains process-local and volatile.
 Independent Request-detail retention or eviction is not part of the first
 implementation.
 Recovery MUST stream complete lines, MUST treat an incomplete final line as an
@@ -138,6 +140,13 @@ The first implementation MUST remain a synchronous single-writer path within
 each Session. It MUST NOT add a background writer, generic transaction API, or
 group commit without measured synchronization latency and append-rate
 evidence.
+
+
+Model replay MUST pass semantic redaction admission before repository append.
+Repository capacity and model-context limits are independent: storage capacity
+MUST count replay bytes normally, while replay-prefix or model-context exhaustion
+MUST complete the Turn as non-resumable without silently truncating, summarizing,
+or appending a partial replay chain.
 
 ## Rationale
 

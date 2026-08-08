@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:a5f222e1183901fc9db819de2afd18c73a7c203c146c4cd2028458754a227579
+revision: sha256:358a15d5420efe88f39bbaa7f36595c9d0dc7ef950a44155e73bce4ca1598a23
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:05f0ce020f86bfe52e9face31cbe2d29b9069888dabd686598091fb0b84b343a
+request_hash: sha256:69b5b30a62b09e0d64238e15745e87cabcf6627523dbebe2105c497a27ff551b
 ---
 # Korean Review Projection
 
@@ -16,9 +16,9 @@ request_hash: sha256:05f0ce020f86bfe52e9face31cbe2d29b9069888dabd686598091fb0b84
 
 UUIDv7만 사용하는 descriptor-aware 의미 Session Journal
 `yo.semantic-journal-commit/v1`과 체크섬이 있는 물리 Session 레코드
-`yo.session-record/v1`을 yo의 첫 공개 포맷 후보로 유지합니다. 첫 공개 릴리스 전인
-지금, 바로 앞의 structured-input 의미 `/v1`을 아래의 닫힌 anchored-session 의미
-`/v1`로 교체합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며 schema
+`yo.session-record/v1`을 yo의 첫 공개 포맷 후보로 유지합니다. 첫 공개 릴리스 전에 앞선 reviewed revision이 structured-input 의미 `/v1`을
+anchored-session development shape로 교체했습니다. 이번 두 번째 reviewed revision은
+그 바로 앞 shape를 아래의 닫힌 anchored-session 의미 `/v1`로 교체합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며 schema
 태그가 같다는 이유만으로 레코드를 받아들이지 않습니다.
 
 Descriptor만 있는 commit을 포함한 모든 의미 `/v1` commit은 top-level에 정확히
@@ -155,6 +155,9 @@ fail closed 합니다. 현재 checksummed physical envelope 자체는 정확한 
 묶을 수 있으므로 바꾸지 않습니다. 공개 전 같은 `/v1`을 다시 교체하려면 데이터 영향을
 수용하는 별도 SOT 검토가 필요하고, 첫 공개 뒤에는 공개 버전을 보존하거나 명시적인
 호환성·migration 계약을 제공해야 합니다.
+
+
+이번 revision은 public release 전 anchored-session semantic Journal /v1을 두 번째로 명시적으로 교체합니다. 기존 backend correlation record는 payload-free 상태를 유지하고, exact provider-neutral replay는 별도 model_replay_delta record가 소유합니다. model_replay_delta는 TurnFinished(completed) 뒤, backend_resumable_outcome과 continuation_anchor 앞에 같은 semantic commit으로 기록되며 outcome은 replay delta의 JournalSequence를 참조합니다. Replay contract는 system prompt와 ordered tool name, description, schema version, closed schema를 보존하고 replay item은 message, function call, function result의 정확한 순서와 관계를 보존합니다. Contract는 1 MiB, delta는 16 MiB, Anchor가 선택한 prefix는 64 MiB 및 4096 item으로 제한하며 초과하면 completed지만 non-resumable인 Turn과 explicit context exhaustion이 됩니다. Silent truncation이나 implicit compaction은 허용하지 않습니다. Persisted failed outcome은 required nullable code와 message를 모두 가지며 tool validation은 stable yo.tool.validation.*/v1 code를 사용합니다. Argument와 output은 Activity, 후속 model input, replay persistence 전에 semantic redaction admission을 통과해야 합니다. 이 교체 전 development shape는 같은 schema tag라도 fail closed합니다.
 
 ## 이유
 

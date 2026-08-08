@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.observability.session-journal
-revision: sha256:c130b09df8b8309b32a0bd4e3ce1693e4475ec7b7e84496be22e318575304638
+revision: sha256:b27449a240e944a5073b37a4369c0993f89f64ca1747520304f84446e8ee7796
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:2be2ba65c4bde5a9fd4fb6bc09d1e1adf2949cc60f0a2b450873cc30d372c6fc
+request_hash: sha256:67a72b27a4fb5ce809924a0b8bc7e16ab490354013ea8e79ddacfba26756ff8d
 ---
 # Korean Review Projection
 
@@ -23,6 +23,9 @@ request_hash: sha256:2be2ba65c4bde5a9fd4fb6bc09d1e1adf2949cc60f0a2b450873cc30d37
 저널은 이와 함께 백엔드 중립적인 Session·Turn·Activity 사건과 제한된 페이로드 없는 Request 상관관계 및 가용성 기록을 보존해야 합니다. 안정적인 연산 ID, 수락된 요청 ID, 그 요청과 상관 연결된 재개 가능한 결과, 백엔드 종류와 버전, 관찰 경계, 교환 종류와 방향, 페이로드 스키마 ID, 재개에 필요한 버전이 있는 백엔드 Session 위치는 Request 상세가 아니라 Journal 기록에 속합니다. 상세가 없어도 요청, 응답, 알림, 서버 발 요청, 재시도, 종료 결과를 상관관계 기록을 통해 서로 구분할 수 있어야 합니다.
 
 백엔드별 Request Audit 상세는 요청 페이로드, 헤더, revision·attempt 증거를 포함하는 같은 Session Repository 수명주기 아래의 선택적인 별도 진단 도메인이며 의미 권위가 될 수 없습니다. 그 상세가 없어도 Journal 재생, Continuation Anchor 검증, 관련 없는 의미 기록을 막아서는 안 됩니다. 의미는 수집할 때 확정해야 하며 오래된 백엔드 페이로드만 나중에 다시 해석해서 복원해서는 안 됩니다. 상세가 missing, unsupported, volatile, unpersisted 중 어떤 상태인지 명시해야 합니다. 영속 상세를 받아들이기 전에 민감정보를 제거해야 하고, 제거가 해석에 영향을 주면 그 사실도 명시해야 합니다. 자격 증명, 전체 환경 변수, 비공개 추론 값과 금지된 원시 값은 영속 저장소에 들어가면 안 됩니다. 이 수용 경계가 구현되기 전에는 Request 상세를 프로세스 로컬의 휘발성 데이터로 유지해야 합니다.
+
+
+Durable Session Journal은 bounded payload-free backend correlation과 별도의 bounded model_replay_delta를 구분합니다. Replay delta는 exact visible message role과 bytes, validated function call, bounded function result 및 stable order를 보존하고 Chat 또는 Transcript presentation에서 재구성하지 않습니다. TurnFinished(completed) 뒤와 correlated outcome 및 Continuation Anchor 앞에 같은 physical append로 commit합니다. Tool argument와 output은 Activity update, 후속 model input, replay admission 전에 semantic redaction gate를 통과하며 실제 admitted replacement만 authority가 됩니다.
 
 ## 이유
 
