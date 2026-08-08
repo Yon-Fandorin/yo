@@ -155,6 +155,15 @@ impl ResponsesRequest {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn input(&self) -> &[ResponsesInputItem] {
+        &self.input
+    }
+
+    pub(crate) fn tokenization_payload(&self, model: &str) -> Value {
+        self.wire_body(model)
+    }
+
     pub(super) fn wire_body(&self, model: &str) -> Value {
         let input = self
             .input

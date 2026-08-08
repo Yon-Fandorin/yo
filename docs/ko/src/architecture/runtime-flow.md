@@ -6,8 +6,9 @@
 
 ## Model-service와 Responses connector
 
-provider 중립 service 입력과 remote Responses protocol은 이제 하나의 typed
-경로를 이루지만, process host는 native backend Slice가 연결될 때까지 이를 소비하지 않는다.
+provider 중립 service 입력, remote Responses protocol, Yo-managed loop는 이제
+하나의 typed 경로를 이룬다. process host는 configuration과 model-selection
+Slice가 연결될 때까지 이 경로를 선택하지 않는다.
 
 ```text
 설정된 ProviderId + AccountId + ModelId
@@ -15,6 +16,9 @@ provider 중립 service 입력과 remote Responses protocol은 이제 하나의 
 EffectiveModelBinding
   ├── ConnectorId + ApiProtocol
   └── 정규화한 HTTPS base endpoint
+ModelContextProfile
+  ↓ 주입한 tokenizer profile로 직렬화된 실제 request를 계산
+출력 예산을 예약한 input admission
 
 config.yaml과 같은 디렉터리의 credentials.yaml
   ↓ no-follow handle 하나, regular file, 현재 owner, 0600에 해당하는 권한,
@@ -29,6 +33,14 @@ bounded text/event-stream decoder
   ├── correlation을 보존한 text와 reasoning delta
   ├── 정확한 function call identity, 이름, argument byte
   └── completed, incomplete 또는 failed terminal + usage
+  ↓ NativeModelBackend
+semantic ModelWork와 ToolCall Activity
+  ↓ 고정된 ToolRegistry schema 검증, host semantic-admission gate,
+    정확한 approval binding
+주입된 ToolExecutionHost의 직렬 단일 실행 시도
+  ↓ 제한한 output이 같은 semantic-admission 경계를 통과
+다음 remote request 전에 durable한 ToolResult Activity
+다음 Responses round 또는 재개 가능한 semantic replay delta
 ```
 
 `yo-core::model_service`가 이 resolution과 validation을 소유한다. credential
@@ -39,8 +51,27 @@ optional metadata일 뿐 identity나 routing에 참여하지 않는다.
 `yo-core::model_connector`는 `responses` segment를 정확히 하나만 붙이고 provider
 cache, `previous_response_id`, provider Conversation, built-in tool을 켜지 않는다.
 SSE event, item 수, 누적 text와 function argument를 읽는 동안 제한하며 cancellation은
-header·stream·queue wait를 중단한다. 이후 native-backend와 configuration Slice가
-semantic Activity, tool loop, startup 선택과 이 입력들의 조립을 소유한다.
+header·stream·queue wait를 중단한다. `yo-core::backend::native`가 semantic
+Activity와 제한된 model/tool loop를 소유한다. 매 dispatch 전에 catalog가 선택한
+tokenizer profile로 실제 request를 계산한다. 예약 출력량을 제외한 input budget이나
+admission된 replay prefix가 소진되면 현재 Turn을 재개 evidence 없이 완료하고, 한도를
+넘는 remote request를 보내지 않으며, 이후 Turn이 같은 binding을 쓰지 못하게 latch한다.
+원시 tool
+argument는 schema 검증을 거치고 tool output은 제한된 뒤, 주입한 host gate가 Activity,
+replay, 이후 request에 들어갈 수 있는 semantic 형태를 결정한다. backend는 이렇게
+admission된 call/result replay만 기록하고, 승인과 실행 시도 Activity를 Journal에 남길
+수 있을 때까지 승인된 effect를 미루며, 각 terminal response의 usage를 정확한
+Provider·Account·Model·connector·protocol·endpoint에 귀속한다. 남은 configuration Slice가
+startup 선택, 이 입력들의 조립, 구체적인 local tool을 소유한다.
+
+열린 모든 backend binding은 continuation strategy를 선언한다. 현재 Yo-managed
+경로는 local client의 exact replay를 선언하고 Codex는 backend-managed state를
+선언한다. Exact replay는 별도의 제한된 `ModelReplayDelta`, 그 delta를 가리키는
+payload-free resumable outcome, Continuation Anchor 순서로 commit한다.
+Backend-managed state는 replay-delta 참조가 없는 outcome을 Anchor보다 먼저
+commit한다. Recovery는 backend 이름으로 소유권을 추론하지 않고 이 순서와
+strategy별 존재 조건을 검증한다. Managed-server exact-replay executor는 예약된
+contract 값이며 현재 이를 선택하는 backend는 없다.
 
 ## 시작
 

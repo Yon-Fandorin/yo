@@ -143,7 +143,7 @@ impl TryFrom<WireMessageEnded> for MessageEnded {
             ActivityRef::try_from(ended.activity)?,
             MessageStream::from(ended.stream),
             revision,
-            MessageOutcome::from(ended.outcome),
+            MessageOutcome::try_from(ended.outcome)?,
             ended.segment_count,
             ended.utf8_bytes,
         ))
@@ -155,19 +155,26 @@ impl From<&MessageOutcome> for WireOutcome {
         match outcome {
             MessageOutcome::Completed => Self::Completed,
             MessageOutcome::Interrupted => Self::Interrupted,
-            MessageOutcome::Failed(message) => Self::Failed {
-                message: message.clone(),
+            MessageOutcome::Failed(failure) => Self::Failed {
+                code: failure
+                    .code()
+                    .map_or(serde_json::Value::Null, |code| code.into()),
+                message: failure.message().to_owned(),
             },
         }
     }
 }
 
-impl From<WireOutcome> for MessageOutcome {
-    fn from(outcome: WireOutcome) -> Self {
+impl TryFrom<WireOutcome> for MessageOutcome {
+    type Error = JournalCodecError;
+
+    fn try_from(outcome: WireOutcome) -> Result<Self, Self::Error> {
         match outcome {
-            WireOutcome::Completed => Self::Completed,
-            WireOutcome::Interrupted => Self::Interrupted,
-            WireOutcome::Failed { message } => Self::Failed(message),
+            WireOutcome::Completed => Ok(Self::Completed),
+            WireOutcome::Interrupted => Ok(Self::Interrupted),
+            WireOutcome::Failed { code, message } => {
+                Ok(Self::Failed(super::event::failure_from(code, message)?))
+            },
         }
     }
 }

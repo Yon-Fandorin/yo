@@ -279,6 +279,7 @@ fn projects_the_recovered_binding_epoch_into_discovery() {
                         CacheState::NotApplicable,
                         None,
                     ),
+                    crate::ContinuationStrategy::BackendManagedState,
                 )),
             ),
         ],

@@ -70,6 +70,7 @@ fn recovered_correlation_history() -> crate::journal::codec::RecoveredJournal {
                         CacheState::NotApplicable,
                         None,
                     ),
+                    crate::ContinuationStrategy::BackendManagedState,
                 )),
             ),
             semantic(
@@ -122,6 +123,7 @@ fn recovered_correlation_history() -> crate::journal::codec::RecoveredJournal {
                     turn.turn_id(),
                     JournalSequence::new(5),
                     Some(identity("outcome")),
+                    None,
                 )),
             ),
             semantic(
@@ -168,6 +170,7 @@ fn projects_the_complete_payload_free_request_trace_in_journal_order() {
         model_identity,
         session_locator,
         transition,
+        ..
     } = trace[0].record()
     else {
         panic!("first trace record must open the backend binding");
@@ -232,6 +235,7 @@ fn projects_the_complete_payload_free_request_trace_in_journal_order() {
         turn_id,
         accepted_request_sequence,
         outcome_identity,
+        ..
     } = trace[3].record()
     else {
         panic!("fourth trace record must describe the resumable outcome");

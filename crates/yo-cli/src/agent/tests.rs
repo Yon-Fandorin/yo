@@ -196,6 +196,7 @@ fn exposes_live_request_trace_through_the_frontend_connection() {
                 BackendIdentity::new("binding/v1", "binding"),
                 BackendIdentity::new("model/v1", "model"),
                 BackendIdentity::new("session/v1", "session"),
+                yo_core::ContinuationStrategy::BackendManagedState,
             )),
         },
         BackendScriptStep::AcceptCommandWithEvidence {

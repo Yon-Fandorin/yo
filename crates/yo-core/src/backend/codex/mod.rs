@@ -23,8 +23,8 @@ use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
     AgentBackend, AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
-    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle, RequestId,
-    SessionId, TurnRef,
+    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
+    ContinuationStrategy, RequestId, SessionId, TurnRef,
 };
 
 /// Local stdio adapter for a compatible `codex app-server` process.
@@ -274,6 +274,7 @@ impl<P: JsonPeer> Backend<P> {
                 BackendIdentity::new("codex.app-server/thread-binding/v1", binding_value),
                 BackendIdentity::new("codex.app-server/model-and-provider/v1", model_value),
                 BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
+                ContinuationStrategy::BackendManagedState,
             ),
         ))
     }
@@ -339,6 +340,7 @@ impl<P: JsonPeer> Backend<P> {
             binding_identity,
             model_identity,
             BackendIdentity::new("codex.app-server/thread-locator/v1", resumed_thread),
+            ContinuationStrategy::BackendManagedState,
         );
         if !target.binding().same_resume_identity(&evidence) {
             return Err(BackendFailure::new(

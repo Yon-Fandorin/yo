@@ -3,8 +3,8 @@
 pub use crate::request_trace::{
     RequestTraceEntry as StoredRequestTraceEntry, RequestTraceRecord as StoredRequestTraceRecord,
     StoredBindingCacheState, StoredBindingCloseReason, StoredBindingTransition,
-    StoredBindingTransitionMode, StoredExchangeDirection, StoredExchangeKind,
-    StoredRequestDetailAvailability,
+    StoredBindingTransitionMode, StoredContinuationStrategy, StoredExchangeDirection,
+    StoredExchangeKind, StoredReplayExecutor, StoredRequestDetailAvailability,
 };
 pub(super) fn project(
     recovered: &crate::journal::codec::RecoveredJournal,

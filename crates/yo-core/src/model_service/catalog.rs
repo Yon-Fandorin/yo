@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use serde_json::Value;
+
 use super::{AccountId, EffectiveModelBinding, ModelId, ModelServiceError, ProviderId};
 
 const MAX_DISPLAY_NAME_BYTES: usize = 256;
@@ -10,6 +12,7 @@ pub struct ModelCatalogEntry {
     provider_display_name: Option<String>,
     account_display_name: Option<String>,
     model_display_name: Option<String>,
+    context: ModelContextProfile,
 }
 
 impl ModelCatalogEntry {
@@ -18,6 +21,7 @@ impl ModelCatalogEntry {
         provider_display_name: Option<String>,
         account_display_name: Option<String>,
         model_display_name: Option<String>,
+        context: ModelContextProfile,
     ) -> Result<Self, ModelServiceError> {
         validate_display_name("Provider", provider_display_name.as_deref())?;
         validate_display_name("Account", account_display_name.as_deref())?;
@@ -27,6 +31,7 @@ impl ModelCatalogEntry {
             provider_display_name,
             account_display_name,
             model_display_name,
+            context,
         })
     }
 
@@ -49,7 +54,85 @@ impl ModelCatalogEntry {
     pub fn model_display_name(&self) -> Option<&str> {
         self.model_display_name.as_deref()
     }
+
+    pub const fn context(&self) -> &ModelContextProfile {
+        &self.context
+    }
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelContextProfile {
+    input_token_limit: u64,
+    output_token_reserve: u64,
+    tokenizer_profile: String,
+}
+
+impl ModelContextProfile {
+    pub fn new(
+        input_token_limit: u64,
+        output_token_reserve: u64,
+        tokenizer_profile: impl Into<String>,
+    ) -> Result<Self, ModelServiceError> {
+        let tokenizer_profile = tokenizer_profile.into();
+        if input_token_limit == 0
+            || output_token_reserve == 0
+            || output_token_reserve >= input_token_limit
+            || tokenizer_profile.is_empty()
+            || tokenizer_profile.len() > 128
+            || !tokenizer_profile.is_ascii()
+        {
+            return Err(ModelServiceError::new(
+                "model context profile requires a positive limit, a smaller positive output reserve, and a bounded ASCII tokenizer profile",
+            ));
+        }
+        Ok(Self {
+            input_token_limit,
+            output_token_reserve,
+            tokenizer_profile,
+        })
+    }
+
+    pub const fn input_token_limit(&self) -> u64 {
+        self.input_token_limit
+    }
+
+    pub const fn output_token_reserve(&self) -> u64 {
+        self.output_token_reserve
+    }
+
+    pub fn tokenizer_profile(&self) -> &str {
+        &self.tokenizer_profile
+    }
+}
+
+pub trait ModelTokenCounter: Send {
+    fn count_input_tokens(
+        &self,
+        tokenizer_profile: &str,
+        request: &Value,
+    ) -> Result<u64, ModelTokenCounterError>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelTokenCounterError {
+    message: String,
+}
+
+impl ModelTokenCounterError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for ModelTokenCounterError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ModelTokenCounterError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ModelCatalog {

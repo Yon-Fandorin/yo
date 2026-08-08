@@ -286,6 +286,7 @@ fn durable_live_correlation_publishes_one_recoverable_anchor() {
             BackendIdentity::new("scripted/binding/v1", "binding-1"),
             BackendIdentity::new("scripted/model/v1", "model-1"),
             BackendIdentity::new("scripted/session/v1", "session-1"),
+            crate::ContinuationStrategy::BackendManagedState,
         ),
     );
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::MIN));
@@ -313,6 +314,7 @@ fn durable_live_correlation_publishes_one_recoverable_anchor() {
         },
         1,
         accepted,
+        crate::ContinuationStrategy::BackendManagedState,
         BackendOutcomeEvidence::without_identity(),
     );
 

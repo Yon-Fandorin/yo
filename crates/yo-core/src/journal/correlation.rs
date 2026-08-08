@@ -3,14 +3,14 @@ use super::{
     codec::{
         BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
         BackendResumableOutcome, BindingTransition, CacheState, ContinuationAnchor,
-        DetailAvailability, ExchangeDirection, ExchangeKind, OperationId, TransitionMode,
-        VersionedIdentity,
+        DetailAvailability, ExchangeDirection, ExchangeKind, ModelReplayDeltaRecord, OperationId,
+        TransitionMode, VersionedIdentity,
     },
     read_state,
 };
 use crate::{
     AgentCommand, AgentEvent, BackendBindingEvidence, BackendOutcomeEvidence,
-    BackendRequestEvidence, SubmissionId, TurnOutcome, TurnRef,
+    BackendRequestEvidence, ContinuationStrategy, SubmissionId, TurnOutcome, TurnRef,
 };
 
 impl SessionJournal {
@@ -35,6 +35,7 @@ impl SessionJournal {
                 versioned(evidence.model_identity()),
                 versioned(evidence.session_locator()),
                 BindingTransition::new(TransitionMode::Initial, CacheState::NotApplicable, None),
+                evidence.continuation_strategy(),
             ),
         ));
         self.append_records(records);
@@ -86,6 +87,7 @@ impl SessionJournal {
         event: &AgentEvent,
         epoch: u64,
         accepted_request_sequence: JournalSequence,
+        continuation_strategy: ContinuationStrategy,
         evidence: BackendOutcomeEvidence,
     ) {
         let AgentEvent::TurnFinished {
@@ -95,14 +97,41 @@ impl SessionJournal {
         else {
             panic!("only a completed Turn may publish a resumable outcome");
         };
-        let outcome_sequence = read_state(&self.state).next_sequence().advance_by(1);
-        self.append_records(vec![
-            SemanticRecord::EventCommitted(event.clone()),
+        let first_sequence = read_state(&self.state).next_sequence();
+        let mut records = vec![SemanticRecord::EventCommitted(event.clone())];
+        let replay_delta_sequence = match continuation_strategy {
+            ContinuationStrategy::ExactReplay { .. } => {
+                let delta = evidence
+                    .model_replay()
+                    .cloned()
+                    .expect("exact replay completion requires a model replay delta");
+                let sequence = first_sequence.advance_by(1);
+                records.push(SemanticRecord::ModelReplayDelta(
+                    ModelReplayDeltaRecord::new(
+                        epoch,
+                        turn.turn_id(),
+                        accepted_request_sequence,
+                        delta,
+                    ),
+                ));
+                Some(sequence)
+            },
+            ContinuationStrategy::BackendManagedState => {
+                assert!(
+                    evidence.model_replay().is_none(),
+                    "backend-managed completion must not carry a model replay delta"
+                );
+                None
+            },
+        };
+        let outcome_sequence = first_sequence.advance_by(records.len());
+        records.extend([
             SemanticRecord::BackendResumableOutcome(BackendResumableOutcome::new(
                 epoch,
                 turn.turn_id(),
                 accepted_request_sequence,
                 evidence.outcome_identity().map(versioned),
+                replay_delta_sequence,
             )),
             SemanticRecord::ContinuationAnchor(ContinuationAnchor::new(
                 epoch,
@@ -111,6 +140,7 @@ impl SessionJournal {
                 outcome_sequence,
             )),
         ]);
+        self.append_records(records);
     }
 }
 

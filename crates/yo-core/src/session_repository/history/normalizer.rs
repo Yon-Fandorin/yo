@@ -93,6 +93,7 @@ impl HistoryNormalizer {
             | JournalRecord::BackendBindingOpened(_)
             | JournalRecord::BackendBindingClosed(_)
             | JournalRecord::BackendRequestAccepted(_)
+            | JournalRecord::ModelReplayDelta(_)
             | JournalRecord::BackendResumableOutcome(_)
             | JournalRecord::ContinuationAnchor(_) => Ok(()),
             JournalRecord::MessageReset(reset) => {
@@ -186,7 +187,7 @@ fn outcomes_match(message: &MessageOutcome, activity: &ActivityOutcome) -> bool 
     match (message, activity) {
         (MessageOutcome::Completed, ActivityOutcome::Completed)
         | (MessageOutcome::Interrupted, ActivityOutcome::Interrupted) => true,
-        (MessageOutcome::Failed(left), ActivityOutcome::Failed(right)) => left == right.message(),
+        (MessageOutcome::Failed(left), ActivityOutcome::Failed(right)) => left == right,
         _ => false,
     }
 }

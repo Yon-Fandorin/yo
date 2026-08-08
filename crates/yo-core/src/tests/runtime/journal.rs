@@ -464,6 +464,7 @@ fn binding_evidence() -> BackendBindingEvidence {
         BackendIdentity::new("scripted/binding/v1", "binding-1"),
         BackendIdentity::new("scripted/model/v1", "model-1"),
         BackendIdentity::new("scripted/session/v1", "session-1"),
+        crate::ContinuationStrategy::BackendManagedState,
     )
 }
 

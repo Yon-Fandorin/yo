@@ -7,9 +7,9 @@ must mean.
 
 ## Model-service and Responses connector
 
-The provider-neutral service inputs and remote Responses protocol now form one
-typed route, although the process host does not consume it until the native
-backend Slice:
+The provider-neutral service inputs, remote Responses protocol, and Yo-managed
+loop now form one typed route. The process host does not select that route until
+the configuration and model-selection Slice:
 
 ```text
 configured ProviderId + AccountId + ModelId
@@ -17,6 +17,9 @@ configured ProviderId + AccountId + ModelId
 EffectiveModelBinding
   ├── ConnectorId + ApiProtocol
   └── normalized HTTPS base endpoint
+ModelContextProfile
+  ↓ injected tokenizer profile counts the exact serialized request
+input admission with a reserved output budget
 
 config.yaml sibling credentials.yaml
   ↓ one no-follow handle; regular file, current owner, 0600-equivalent,
@@ -31,6 +34,14 @@ bounded text/event-stream decoder
   ├── correlated text and reasoning deltas
   ├── exact function call identity, name, and argument bytes
   └── completed, incomplete, or failed terminal + usage
+  ↓ NativeModelBackend
+semantic ModelWork and ToolCall Activities
+  ↓ frozen ToolRegistry schema validation, host semantic-admission gate,
+    and exact approval binding
+injected ToolExecutionHost, one serial execution attempt
+  ↓ bounded output passes the same semantic-admission boundary
+durable ToolResult Activity before another remote request
+next Responses round or resumable semantic replay delta
 ```
 
 `yo-core::model_service` owns this resolution and validation. A missing
@@ -42,8 +53,29 @@ remain optional metadata and never participate in identity or routing.
 enable provider cache, `previous_response_id`, a provider Conversation, or
 built-in tools. It bounds SSE events, item count, cumulative text and function
 arguments while reading, and cancellation interrupts header, stream, and queue
-waits. The later native-backend and configuration Slices will own semantic
-Activities, the tool loop, startup selection, and assembly of these inputs.
+waits. `yo-core::backend::native` owns semantic Activities and the bounded
+model/tool loop. Before each dispatch it counts the exact request with the
+catalog-selected tokenizer profile. If the input budget or admitted replay
+prefix is exhausted, it completes the current Turn without resumable evidence,
+makes no over-budget remote request, and latches the binding against later
+Turns. Raw tool
+arguments are schema-validated and tool output is bounded before the injected
+host gate decides the semantic form allowed into Activities, replay, and later
+requests. The backend records only that admitted call/result replay, defers an
+approved effect until its approval and attempt Activities can be journaled, and
+attributes each terminal response's usage to its exact Provider, Account,
+Model, connector, protocol, and endpoint. The remaining configuration Slice
+owns startup selection and assembly of these inputs and concrete local tools.
+
+Every opened backend binding declares its continuation strategy. The current
+Yo-managed route declares exact replay by the local client; Codex declares
+backend-managed state. Exact replay commits a separate bounded
+`ModelReplayDelta`, a payload-free resumable outcome that points to that delta,
+and then the Continuation Anchor. Backend-managed state commits an outcome with
+no replay-delta reference before its Anchor. Recovery validates this ordering
+and strategy-dependent presence instead of inferring ownership from backend
+names. A managed-server exact-replay executor remains a reserved contract value
+and no current backend selects it.
 
 ## Startup
 

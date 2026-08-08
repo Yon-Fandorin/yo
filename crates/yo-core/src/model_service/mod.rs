@@ -7,7 +7,9 @@ mod identity;
 mod local_credentials;
 
 pub use binding::{ApiProtocol, ConnectorId, EffectiveModelBinding, NormalizedEndpoint};
-pub use catalog::{ModelCatalog, ModelCatalogEntry};
+pub use catalog::{
+    ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelTokenCounter, ModelTokenCounterError,
+};
 pub use credential::{ApiCredential, CredentialStore};
 pub use identity::{AccountId, ModelId, ModelServiceError, ProviderId};
 pub use local_credentials::{LocalCredentialStore, LocalCredentialStoreError};

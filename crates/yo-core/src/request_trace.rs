@@ -40,6 +40,7 @@ pub enum RequestTraceRecord {
         model_identity: BackendIdentity,
         session_locator: BackendIdentity,
         transition: StoredBindingTransition,
+        continuation_strategy: StoredContinuationStrategy,
     },
     BindingClosed {
         epoch: u64,
@@ -67,6 +68,7 @@ pub enum RequestTraceRecord {
         turn_id: TurnId,
         accepted_request_sequence: JournalSequence,
         outcome_identity: Option<BackendIdentity>,
+        replay_delta_sequence: Option<JournalSequence>,
     },
     ContinuationAnchor {
         epoch: u64,
@@ -150,6 +152,18 @@ pub enum StoredBindingCacheState {
     NotApplicable,
     Lost,
     Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StoredContinuationStrategy {
+    ExactReplay { executor: StoredReplayExecutor },
+    BackendManagedState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StoredReplayExecutor {
+    LocalClient,
+    ManagedServer,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -246,6 +246,7 @@ fn accepts_a_discovery_epoch_derived_from_semantic_binding_evidence() {
                         CacheState::NotApplicable,
                         None,
                     ),
+                    crate::ContinuationStrategy::BackendManagedState,
                 )),
             ),
         ],

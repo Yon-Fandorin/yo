@@ -1,24 +1,27 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::{
     JournalCodecError,
     command::WireCommand,
     correlation,
     correlation::{
-        WireBindingCloseReason, WireBindingTransition, WireDetailAvailability,
-        WireExchangeDirection, WireExchangeKind, WireResumableStatus, WireVersionedIdentity,
+        WireBindingCloseReason, WireBindingTransition, WireContinuationStrategy,
+        WireDetailAvailability, WireExchangeDirection, WireExchangeKind, WireResumableStatus,
+        WireVersionedIdentity,
     },
     descriptor::WireSessionDescriptor,
     event::WireEvent,
     message::{WireMessageEnded, WireMessageReset, WireMessageSegment},
 };
 use crate::{
-    AgentEvent, JournalSequence, SessionDescriptor,
+    AgentEvent, JournalSequence, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+    ModelReplayRole, ModelReplayTool, SessionDescriptor,
     journal::codec::{
         BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved,
         BackendRequestAccepted, BackendResumableOutcome, BindingTransition, ContinuationAnchor,
         JournalRecord, MessageEnded, MessageReset, MessageSegment, MessageTerminal,
-        SequencedJournalRecord,
+        ModelReplayDeltaRecord, SequencedJournalRecord,
     },
 };
 
@@ -58,6 +61,7 @@ pub(super) enum WireRecord {
         model_identity: WireVersionedIdentity,
         session_locator: WireVersionedIdentity,
         transition: WireBindingTransition,
+        continuation_strategy: WireContinuationStrategy,
     },
     BackendBindingClosed {
         journal_sequence: u64,
@@ -72,6 +76,14 @@ pub(super) enum WireRecord {
         exchange_sequence: u64,
         request_identity: WireVersionedIdentity,
     },
+    ModelReplayDelta {
+        journal_sequence: u64,
+        epoch: u64,
+        turn_id: u64,
+        accepted_request_sequence: u64,
+        #[serde(flatten)]
+        replay: WireModelReplayDelta,
+    },
     BackendResumableOutcome {
         journal_sequence: u64,
         epoch: u64,
@@ -80,6 +92,8 @@ pub(super) enum WireRecord {
         status: WireResumableStatus,
         #[serde(skip_serializing_if = "Option::is_none")]
         outcome_identity: Option<WireVersionedIdentity>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        replay_delta_sequence: Option<u64>,
     },
     ContinuationAnchor {
         journal_sequence: u64,
@@ -99,6 +113,57 @@ pub(super) enum WireRecord {
         final_segment: Option<WireMessageSegment>,
         ended: WireMessageEnded,
     },
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WireModelReplayDelta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contract: Option<WireModelReplayContract>,
+    items: Vec<WireModelReplayItem>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WireModelReplayContract {
+    system_prompt: String,
+    tools: Vec<WireModelReplayTool>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WireModelReplayTool {
+    name: String,
+    description: String,
+    schema_version: String,
+    parameters: Value,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum WireModelReplayItem {
+    Message {
+        role: WireModelReplayRole,
+        content: String,
+    },
+    FunctionCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    FunctionCallOutput {
+        call_id: String,
+        output: String,
+    },
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum WireModelReplayRole {
+    System,
+    Developer,
+    User,
+    Assistant,
 }
 
 impl TryFrom<&SequencedJournalRecord> for WireRecord {
@@ -157,6 +222,7 @@ impl TryFrom<&SequencedJournalRecord> for WireRecord {
                         .source_anchor_sequence()
                         .map(JournalSequence::get),
                 },
+                continuation_strategy: binding.continuation_strategy().into(),
             },
             JournalRecord::BackendBindingClosed(binding) => Self::BackendBindingClosed {
                 journal_sequence: required_journal_sequence(entry)?.get(),
@@ -171,6 +237,13 @@ impl TryFrom<&SequencedJournalRecord> for WireRecord {
                 exchange_sequence: request.exchange_sequence().get(),
                 request_identity: correlation::encode_identity(request.request_identity())?,
             },
+            JournalRecord::ModelReplayDelta(replay) => Self::ModelReplayDelta {
+                journal_sequence: required_journal_sequence(entry)?.get(),
+                epoch: replay.epoch(),
+                turn_id: replay.turn_id().get().get(),
+                accepted_request_sequence: replay.accepted_request_sequence().get(),
+                replay: encode_model_replay(replay.delta()),
+            },
             JournalRecord::BackendResumableOutcome(outcome) => Self::BackendResumableOutcome {
                 journal_sequence: required_journal_sequence(entry)?.get(),
                 epoch: outcome.epoch(),
@@ -181,6 +254,7 @@ impl TryFrom<&SequencedJournalRecord> for WireRecord {
                     .outcome_identity()
                     .map(correlation::encode_identity)
                     .transpose()?,
+                replay_delta_sequence: outcome.replay_delta_sequence().map(JournalSequence::get),
             },
             JournalRecord::ContinuationAnchor(anchor) => Self::ContinuationAnchor {
                 journal_sequence: required_journal_sequence(entry)?.get(),
@@ -266,6 +340,7 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                 model_identity,
                 session_locator,
                 transition,
+                continuation_strategy,
             } => {
                 correlation::positive(epoch, "epoch")?;
                 correlation::validate_ascii(&backend_kind, "backend_kind")?;
@@ -287,6 +362,7 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                                 .map(|value| correlation::sequence(value, "source_anchor_sequence"))
                                 .transpose()?,
                         ),
+                        continuation_strategy.into(),
                     )),
                 ))
             },
@@ -324,6 +400,27 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                     )),
                 ))
             },
+            WireRecord::ModelReplayDelta {
+                journal_sequence,
+                epoch,
+                turn_id,
+                accepted_request_sequence,
+                replay,
+            } => {
+                correlation::positive(epoch, "epoch")?;
+                Ok((
+                    Some(correlation::sequence(journal_sequence, "journal_sequence")?),
+                    JournalRecord::ModelReplayDelta(ModelReplayDeltaRecord::new(
+                        epoch,
+                        correlation::turn_id(turn_id)?,
+                        correlation::sequence(
+                            accepted_request_sequence,
+                            "accepted_request_sequence",
+                        )?,
+                        decode_model_replay(replay)?,
+                    )),
+                ))
+            },
             WireRecord::BackendResumableOutcome {
                 journal_sequence,
                 epoch,
@@ -331,6 +428,7 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                 accepted_request_sequence,
                 status: WireResumableStatus::Completed,
                 outcome_identity,
+                replay_delta_sequence,
             } => {
                 correlation::positive(epoch, "epoch")?;
                 Ok((
@@ -344,6 +442,9 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                         )?,
                         outcome_identity
                             .map(correlation::decode_identity)
+                            .transpose()?,
+                        replay_delta_sequence
+                            .map(|value| correlation::sequence(value, "replay_delta_sequence"))
                             .transpose()?,
                     )),
                 ))
@@ -390,6 +491,116 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                     MessageEnded::try_from(ended)?,
                 )),
             )),
+        }
+    }
+}
+
+fn encode_model_replay(replay: &ModelReplayDelta) -> WireModelReplayDelta {
+    WireModelReplayDelta {
+        contract: replay.contract().map(|contract| WireModelReplayContract {
+            system_prompt: contract.system_prompt().to_owned(),
+            tools: contract
+                .tools()
+                .iter()
+                .map(|tool| WireModelReplayTool {
+                    name: tool.name().to_owned(),
+                    description: tool.description().to_owned(),
+                    schema_version: tool.schema_version().to_owned(),
+                    parameters: tool.parameters().clone(),
+                })
+                .collect(),
+        }),
+        items: replay
+            .items()
+            .iter()
+            .map(|item| match item {
+                ModelReplayItem::Message { role, content } => WireModelReplayItem::Message {
+                    role: (*role).into(),
+                    content: content.clone(),
+                },
+                ModelReplayItem::FunctionCall {
+                    call_id,
+                    name,
+                    arguments,
+                } => WireModelReplayItem::FunctionCall {
+                    call_id: call_id.clone(),
+                    name: name.clone(),
+                    arguments: arguments.clone(),
+                },
+                ModelReplayItem::FunctionCallOutput { call_id, output } => {
+                    WireModelReplayItem::FunctionCallOutput {
+                        call_id: call_id.clone(),
+                        output: output.clone(),
+                    }
+                },
+            })
+            .collect(),
+    }
+}
+
+fn decode_model_replay(wire: WireModelReplayDelta) -> Result<ModelReplayDelta, JournalCodecError> {
+    let contract = wire.contract.map(|contract| {
+        ModelReplayContract::new(
+            contract.system_prompt,
+            contract
+                .tools
+                .into_iter()
+                .map(|tool| {
+                    ModelReplayTool::new(
+                        tool.name,
+                        tool.description,
+                        tool.schema_version,
+                        tool.parameters,
+                    )
+                })
+                .collect(),
+        )
+    });
+    let items = wire
+        .items
+        .into_iter()
+        .map(|item| match item {
+            WireModelReplayItem::Message { role, content } => ModelReplayItem::Message {
+                role: role.into(),
+                content,
+            },
+            WireModelReplayItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => ModelReplayItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            },
+            WireModelReplayItem::FunctionCallOutput { call_id, output } => {
+                ModelReplayItem::FunctionCallOutput { call_id, output }
+            },
+        })
+        .collect();
+    let delta = ModelReplayDelta::new(contract, items);
+    delta.validate().map_err(JournalCodecError::new)?;
+    Ok(delta)
+}
+
+impl From<ModelReplayRole> for WireModelReplayRole {
+    fn from(value: ModelReplayRole) -> Self {
+        match value {
+            ModelReplayRole::System => Self::System,
+            ModelReplayRole::Developer => Self::Developer,
+            ModelReplayRole::User => Self::User,
+            ModelReplayRole::Assistant => Self::Assistant,
+        }
+    }
+}
+
+impl From<WireModelReplayRole> for ModelReplayRole {
+    fn from(value: WireModelReplayRole) -> Self {
+        match value {
+            WireModelReplayRole::System => Self::System,
+            WireModelReplayRole::Developer => Self::Developer,
+            WireModelReplayRole::User => Self::User,
+            WireModelReplayRole::Assistant => Self::Assistant,
         }
     }
 }

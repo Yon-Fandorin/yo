@@ -1,6 +1,6 @@
 use uuid::{Uuid, Variant, Version};
 
-use crate::{JournalSequence, SubmissionId, TurnId};
+use crate::{ContinuationStrategy, JournalSequence, ModelReplayDelta, SubmissionId, TurnId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct OperationId(Uuid);
@@ -196,6 +196,7 @@ pub(crate) struct BackendBindingOpened {
     model_identity: VersionedIdentity,
     session_locator: VersionedIdentity,
     transition: BindingTransition,
+    continuation_strategy: ContinuationStrategy,
 }
 
 impl BackendBindingOpened {
@@ -208,6 +209,7 @@ impl BackendBindingOpened {
         model_identity: VersionedIdentity,
         session_locator: VersionedIdentity,
         transition: BindingTransition,
+        continuation_strategy: ContinuationStrategy,
     ) -> Self {
         Self {
             epoch,
@@ -217,6 +219,7 @@ impl BackendBindingOpened {
             model_identity,
             session_locator,
             transition,
+            continuation_strategy,
         }
     }
 
@@ -246,6 +249,10 @@ impl BackendBindingOpened {
 
     pub(crate) const fn transition(&self) -> &BindingTransition {
         &self.transition
+    }
+
+    pub(crate) const fn continuation_strategy(&self) -> ContinuationStrategy {
+        self.continuation_strategy
     }
 }
 
@@ -329,6 +336,7 @@ pub(crate) struct BackendResumableOutcome {
     turn_id: TurnId,
     accepted_request_sequence: JournalSequence,
     outcome_identity: Option<VersionedIdentity>,
+    replay_delta_sequence: Option<JournalSequence>,
 }
 
 impl BackendResumableOutcome {
@@ -337,12 +345,14 @@ impl BackendResumableOutcome {
         turn_id: TurnId,
         accepted_request_sequence: JournalSequence,
         outcome_identity: Option<VersionedIdentity>,
+        replay_delta_sequence: Option<JournalSequence>,
     ) -> Self {
         Self {
             epoch,
             turn_id,
             accepted_request_sequence,
             outcome_identity,
+            replay_delta_sequence,
         }
     }
 
@@ -360,6 +370,50 @@ impl BackendResumableOutcome {
 
     pub(crate) const fn outcome_identity(&self) -> Option<&VersionedIdentity> {
         self.outcome_identity.as_ref()
+    }
+
+    pub(crate) const fn replay_delta_sequence(&self) -> Option<JournalSequence> {
+        self.replay_delta_sequence
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ModelReplayDeltaRecord {
+    epoch: u64,
+    turn_id: TurnId,
+    accepted_request_sequence: JournalSequence,
+    delta: ModelReplayDelta,
+}
+
+impl ModelReplayDeltaRecord {
+    pub(crate) const fn new(
+        epoch: u64,
+        turn_id: TurnId,
+        accepted_request_sequence: JournalSequence,
+        delta: ModelReplayDelta,
+    ) -> Self {
+        Self {
+            epoch,
+            turn_id,
+            accepted_request_sequence,
+            delta,
+        }
+    }
+
+    pub(crate) const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub(crate) const fn turn_id(&self) -> TurnId {
+        self.turn_id
+    }
+
+    pub(crate) const fn accepted_request_sequence(&self) -> JournalSequence {
+        self.accepted_request_sequence
+    }
+
+    pub(crate) const fn delta(&self) -> &ModelReplayDelta {
+        &self.delta
     }
 }
 

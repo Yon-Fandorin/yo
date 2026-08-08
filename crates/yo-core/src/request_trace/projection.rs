@@ -1,10 +1,11 @@
 use super::{
     RequestTraceEntry, RequestTraceRecord, StoredBindingCacheState, StoredBindingCloseReason,
-    StoredBindingTransition, StoredBindingTransitionMode, StoredExchangeDirection,
-    StoredExchangeKind, StoredRequestDetailAvailability,
+    StoredBindingTransition, StoredBindingTransitionMode, StoredContinuationStrategy,
+    StoredExchangeDirection, StoredExchangeKind, StoredReplayExecutor,
+    StoredRequestDetailAvailability,
 };
 use crate::{
-    BackendIdentity,
+    BackendIdentity, ContinuationStrategy, ReplayExecutor,
     journal::codec::{
         BindingCloseReason, CacheState, DetailAvailability, ExchangeDirection, ExchangeKind,
         JournalRecord, RecoveredJournal, TransitionMode, VersionedIdentity,
@@ -36,6 +37,7 @@ pub(crate) fn project_live(
         crate::journal::SemanticRecord::BackendRequestAccepted(request) => {
             request_accepted(request)
         },
+        crate::journal::SemanticRecord::ModelReplayDelta(_) => return None,
         crate::journal::SemanticRecord::BackendResumableOutcome(outcome) => {
             resumable_outcome(outcome)
         },
@@ -59,6 +61,7 @@ fn binding_opened(binding: &crate::journal::codec::BackendBindingOpened) -> Requ
             cache_state(binding.transition().cache()),
             binding.transition().source_anchor_sequence(),
         ),
+        continuation_strategy: continuation_strategy(binding.continuation_strategy()),
     }
 }
 
@@ -102,6 +105,7 @@ fn resumable_outcome(
         turn_id: outcome.turn_id(),
         accepted_request_sequence: outcome.accepted_request_sequence(),
         outcome_identity: outcome.outcome_identity().map(identity),
+        replay_delta_sequence: outcome.replay_delta_sequence(),
     }
 }
 
@@ -120,6 +124,7 @@ fn project_record(record: &JournalRecord) -> Option<RequestTraceRecord> {
         JournalRecord::BackendBindingClosed(binding) => Some(binding_closed(binding)),
         JournalRecord::BackendExchangeObserved(exchange) => Some(exchange_observed(exchange)),
         JournalRecord::BackendRequestAccepted(request) => Some(request_accepted(request)),
+        JournalRecord::ModelReplayDelta(_) => None,
         JournalRecord::BackendResumableOutcome(outcome) => Some(resumable_outcome(outcome)),
         JournalRecord::ContinuationAnchor(anchor) => Some(continuation_anchor(anchor)),
         JournalRecord::SessionDescriptor(_)
@@ -179,6 +184,22 @@ pub(crate) const fn cache_state(value: CacheState) -> StoredBindingCacheState {
         CacheState::NotApplicable => StoredBindingCacheState::NotApplicable,
         CacheState::Lost => StoredBindingCacheState::Lost,
         CacheState::Unknown => StoredBindingCacheState::Unknown,
+    }
+}
+
+pub(crate) const fn continuation_strategy(
+    value: ContinuationStrategy,
+) -> StoredContinuationStrategy {
+    match value {
+        ContinuationStrategy::ExactReplay { executor } => StoredContinuationStrategy::ExactReplay {
+            executor: match executor {
+                ReplayExecutor::LocalClient => StoredReplayExecutor::LocalClient,
+                ReplayExecutor::ManagedServer => StoredReplayExecutor::ManagedServer,
+            },
+        },
+        ContinuationStrategy::BackendManagedState => {
+            StoredContinuationStrategy::BackendManagedState
+        },
     }
 }
 

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use super::{
     JournalCodecError,
@@ -62,7 +63,7 @@ pub(super) enum WireActivityUpdate {
 pub(super) enum WireOutcome {
     Completed,
     Interrupted,
-    Failed { message: String },
+    Failed { code: Value, message: String },
 }
 
 impl From<&AgentEvent> for WireEvent {
@@ -115,11 +116,11 @@ impl TryFrom<WireEvent> for AgentEvent {
             }),
             WireEvent::ActivityFinished { activity, outcome } => Ok(Self::ActivityFinished {
                 activity: ActivityRef::try_from(activity)?,
-                outcome: ActivityOutcome::from(outcome),
+                outcome: activity_outcome_from(outcome)?,
             }),
             WireEvent::TurnFinished { turn, outcome } => Ok(Self::TurnFinished {
                 turn: TurnRef::try_from(turn)?,
-                outcome: TurnOutcome::from(outcome),
+                outcome: turn_outcome_from(outcome)?,
             }),
         }
     }
@@ -199,6 +200,7 @@ impl From<&ActivityOutcome> for WireOutcome {
             ActivityOutcome::Completed => Self::Completed,
             ActivityOutcome::Interrupted => Self::Interrupted,
             ActivityOutcome::Failed(failure) => Self::Failed {
+                code: failure.code().map_or(Value::Null, |code| code.into()),
                 message: failure.message().to_owned(),
             },
         }
@@ -211,28 +213,41 @@ impl From<&TurnOutcome> for WireOutcome {
             TurnOutcome::Completed => Self::Completed,
             TurnOutcome::Interrupted => Self::Interrupted,
             TurnOutcome::Failed(failure) => Self::Failed {
+                code: failure.code().map_or(Value::Null, |code| code.into()),
                 message: failure.message().to_owned(),
             },
         }
     }
 }
 
-impl From<WireOutcome> for ActivityOutcome {
-    fn from(outcome: WireOutcome) -> Self {
-        match outcome {
-            WireOutcome::Completed => Self::Completed,
-            WireOutcome::Interrupted => Self::Interrupted,
-            WireOutcome::Failed { message } => Self::Failed(Failure::new(message)),
-        }
+fn activity_outcome_from(outcome: WireOutcome) -> Result<ActivityOutcome, JournalCodecError> {
+    match outcome {
+        WireOutcome::Completed => Ok(ActivityOutcome::Completed),
+        WireOutcome::Interrupted => Ok(ActivityOutcome::Interrupted),
+        WireOutcome::Failed { code, message } => {
+            Ok(ActivityOutcome::Failed(failure_from(code, message)?))
+        },
     }
 }
 
-impl From<WireOutcome> for TurnOutcome {
-    fn from(outcome: WireOutcome) -> Self {
-        match outcome {
-            WireOutcome::Completed => Self::Completed,
-            WireOutcome::Interrupted => Self::Interrupted,
-            WireOutcome::Failed { message } => Self::Failed(Failure::new(message)),
-        }
+fn turn_outcome_from(outcome: WireOutcome) -> Result<TurnOutcome, JournalCodecError> {
+    match outcome {
+        WireOutcome::Completed => Ok(TurnOutcome::Completed),
+        WireOutcome::Interrupted => Ok(TurnOutcome::Interrupted),
+        WireOutcome::Failed { code, message } => {
+            Ok(TurnOutcome::Failed(failure_from(code, message)?))
+        },
+    }
+}
+
+pub(super) fn failure_from(code: Value, message: String) -> Result<Failure, JournalCodecError> {
+    match code {
+        Value::Null => Ok(Failure::new(message)),
+        Value::String(code) => Failure::new(message)
+            .with_code(code)
+            .map_err(JournalCodecError::new),
+        _ => Err(JournalCodecError::new(
+            "failed outcome code must be a string or null",
+        )),
     }
 }

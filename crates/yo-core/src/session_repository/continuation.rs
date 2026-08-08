@@ -6,8 +6,8 @@ use super::{
     journal::{recover_entries, recover_repository},
 };
 use crate::{
-    AgentCommand, BackendBindingEvidence, BackendIdentity, BackendResumeTarget, SessionDescriptor,
-    SessionId, SubmissionId,
+    AgentCommand, BackendBindingEvidence, BackendIdentity, BackendResumeTarget,
+    ContinuationStrategy, ModelReplay, SessionDescriptor, SessionId, SubmissionId,
     journal::{JournalEntry, codec::JournalRecord},
 };
 
@@ -194,7 +194,12 @@ fn build_continuation(
         identity(binding.binding_identity()),
         identity(binding.model_identity()),
         identity(binding.session_locator()),
+        binding.continuation_strategy(),
     );
+    let model_replay = match binding.continuation_strategy() {
+        ContinuationStrategy::ExactReplay { .. } => recovered.model_replay().clone(),
+        ContinuationStrategy::BackendManagedState => ModelReplay::default(),
+    };
     let next_turn_id = max_turn.checked_add(1).ok_or_else(|| {
         StoredSessionContinuationError::new("stored Turn identity space is exhausted")
     })?;
@@ -205,7 +210,8 @@ fn build_continuation(
     })?;
     Ok(StoredSessionContinuation {
         recovered,
-        target: BackendResumeTarget::new(session_id, epoch, evidence),
+        target: BackendResumeTarget::new(session_id, epoch, evidence)
+            .with_model_replay(model_replay),
         next_turn_id,
         transcript_records,
     })

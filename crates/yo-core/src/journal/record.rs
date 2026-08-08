@@ -1,6 +1,6 @@
 use super::codec::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
-    BackendResumableOutcome, ContinuationAnchor,
+    BackendResumableOutcome, ContinuationAnchor, ModelReplayDeltaRecord,
 };
 use crate::{AgentCommand, AgentEvent, SubmissionId};
 
@@ -45,6 +45,7 @@ pub(crate) enum SemanticRecord {
     BackendBindingOpened(BackendBindingOpened),
     BackendBindingClosed(BackendBindingClosed),
     BackendRequestAccepted(BackendRequestAccepted),
+    ModelReplayDelta(ModelReplayDeltaRecord),
     BackendResumableOutcome(BackendResumableOutcome),
     ContinuationAnchor(ContinuationAnchor),
 }

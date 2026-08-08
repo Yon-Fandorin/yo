@@ -292,6 +292,7 @@ impl TranscriptRecord {
             | SemanticRecord::BackendBindingOpened(_)
             | SemanticRecord::BackendBindingClosed(_)
             | SemanticRecord::BackendRequestAccepted(_)
+            | SemanticRecord::ModelReplayDelta(_)
             | SemanticRecord::BackendResumableOutcome(_)
             | SemanticRecord::ContinuationAnchor(_) => return None,
         })

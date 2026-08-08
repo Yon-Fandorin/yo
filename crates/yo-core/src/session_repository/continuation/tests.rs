@@ -8,8 +8,9 @@ use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
     AgentIntent, AgentRuntime, AgentSession, AgentSessionPoll, BackendBindingEvidence,
     BackendCommandEvidence, BackendEvent, BackendIdentity, BackendOutcomeEvidence,
-    BackendRequestEvidence, BackendScriptStep, CommandAdmission, InputSubmission, RuntimePoll,
-    ScriptedBackend, SubmissionId, TurnId, TurnRef, UserInput,
+    BackendRequestEvidence, BackendScriptStep, CommandAdmission, ContinuationStrategy,
+    InputSubmission, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+    ReplayExecutor, RuntimePoll, ScriptedBackend, SubmissionId, TurnId, TurnRef, UserInput,
     journal::SessionJournal,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, DurableRecordKind, RepositoryEntry,
@@ -78,6 +79,9 @@ fn binding() -> BackendBindingEvidence {
             r#"{"model":"gpt-test","provider":"openai"}"#,
         ),
         BackendIdentity::new("codex.app-server/thread-locator/v1", "thread-a"),
+        ContinuationStrategy::ExactReplay {
+            executor: ReplayExecutor::LocalClient,
+        },
     )
 }
 
@@ -130,6 +134,19 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
             evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
                 "codex.app-server/turn-outcome/v1",
                 "turn-a",
+            ))
+            .with_replay(ModelReplayDelta::new(
+                Some(ModelReplayContract::new("system", Vec::new())),
+                vec![
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::User,
+                        content: "resume me".to_owned(),
+                    },
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::Assistant,
+                        content: "durable streamed answer".to_owned(),
+                    },
+                ],
             )),
         }),
         BackendScriptStep::Shutdown(Ok(())),
@@ -183,6 +200,11 @@ fn derives_one_executable_plan_from_the_newest_durable_anchor() {
     );
     assert_eq!(continuation.next_turn_id(), 2);
     assert_eq!(continuation.submission_ids().len(), 1);
+    assert_eq!(
+        continuation.target().model_replay().contract(),
+        Some(&ModelReplayContract::new("system", Vec::new()))
+    );
+    assert_eq!(continuation.target().model_replay().items().len(), 2);
 }
 
 // 이전의 유효한 Anchor 뒤에 새 Turn 명령만 durable하게 남고 완결 Anchor가 생기지
@@ -207,7 +229,7 @@ fn rejects_an_unanchored_suffix_instead_of_falling_back_to_an_older_anchor() {
     );
     let backend = ScriptedBackend::new([
         BackendScriptStep::Resume {
-            target,
+            target: Box::new(target),
             evidence: binding(),
         },
         BackendScriptStep::AcceptCommandWithEvidence {
@@ -265,7 +287,7 @@ fn resumed_agent_publishes_a_snapshot_before_admitting_new_work() {
     let before = repository.entries.lock().unwrap().len();
     let backend = ScriptedBackend::new([
         BackendScriptStep::Resume {
-            target,
+            target: Box::new(target),
             evidence: binding(),
         },
         BackendScriptStep::Shutdown(Ok(())),
@@ -318,7 +340,7 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
     );
     let backend = ScriptedBackend::new([
         BackendScriptStep::Resume {
-            target,
+            target: Box::new(target),
             evidence: binding(),
         },
         BackendScriptStep::AcceptCommandWithEvidence {
@@ -333,6 +355,19 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
             evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
                 "codex.app-server/turn-outcome/v1",
                 "turn-b",
+            ))
+            .with_replay(ModelReplayDelta::new(
+                None,
+                vec![
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::User,
+                        content: "continue".to_owned(),
+                    },
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::Assistant,
+                        content: "continued".to_owned(),
+                    },
+                ],
             )),
         }),
         BackendScriptStep::Shutdown(Ok(())),
@@ -416,10 +451,11 @@ fn resumed_agent_rejects_identity_drift_before_snapshot_publication() {
             r#"{"model":"other","provider":"openai"}"#,
         ),
         drifted.session_locator().clone(),
+        drifted.continuation_strategy(),
     );
     let backend = ScriptedBackend::new([
         BackendScriptStep::Resume {
-            target,
+            target: Box::new(target),
             evidence: drifted,
         },
         BackendScriptStep::Shutdown(Ok(())),
@@ -449,7 +485,7 @@ fn resumed_agent_rejects_snapshot_failure_before_command_admission() {
     repository.fail_append.store(true, Ordering::Release);
     let backend = ScriptedBackend::new([
         BackendScriptStep::Resume {
-            target,
+            target: Box::new(target),
             evidence: binding(),
         },
         BackendScriptStep::Shutdown(Ok(())),

@@ -326,6 +326,14 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
                 correlation::positive(request.epoch(), "epoch")?;
                 correlation::encode_identity(request.request_identity())?;
             },
+            JournalRecord::ModelReplayDelta(replay) => {
+                correlation::positive(replay.epoch(), "epoch")?;
+                if !replay.delta().is_valid() {
+                    return Err(JournalCodecError::new(
+                        "model_replay_delta is invalid or exceeds its bounds",
+                    ));
+                }
+            },
             JournalRecord::BackendResumableOutcome(outcome) => {
                 correlation::positive(outcome.epoch(), "epoch")?;
                 if let Some(identity) = outcome.outcome_identity() {
@@ -404,6 +412,43 @@ fn validate_transition(transition: &BindingTransition) -> Result<(), JournalCode
 
 fn validate_correlation_commit_order(commit: &JournalCommit) -> Result<(), JournalCodecError> {
     for (index, entry) in commit.records().iter().enumerate() {
+        if let JournalRecord::ModelReplayDelta(replay) = entry.record() {
+            let Some((previous, next)) = index
+                .checked_sub(1)
+                .and_then(|previous| commit.records().get(previous))
+                .zip(commit.records().get(index + 1))
+            else {
+                return Err(JournalCodecError::new(
+                    "model_replay_delta must sit between its completed Turn and resumable outcome",
+                ));
+            };
+            if !matches!(
+                previous.record(),
+                JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: crate::TurnOutcome::Completed })
+                    if turn.turn_id() == replay.turn_id()
+            ) {
+                return Err(JournalCodecError::new(
+                    "model_replay_delta must immediately follow its completed Turn",
+                ));
+            }
+            let Some(replay_sequence) = entry.journal_sequence() else {
+                return Err(JournalCodecError::new(
+                    "model_replay_delta is missing journal_sequence",
+                ));
+            };
+            if !matches!(
+                next.record(),
+                JournalRecord::BackendResumableOutcome(outcome)
+                    if outcome.replay_delta_sequence() == Some(replay_sequence)
+                        && outcome.epoch() == replay.epoch()
+                        && outcome.turn_id() == replay.turn_id()
+                        && outcome.accepted_request_sequence() == replay.accepted_request_sequence()
+            ) {
+                return Err(JournalCodecError::new(
+                    "model_replay_delta must be referenced by its immediately following outcome",
+                ));
+            }
+        }
         if let JournalRecord::BackendResumableOutcome(outcome) = entry.record() {
             let completed_in_commit = commit.records()[..index].iter().any(|candidate| {
                 matches!(
@@ -415,6 +460,25 @@ fn validate_correlation_commit_order(commit: &JournalCommit) -> Result<(), Journ
             if !completed_in_commit {
                 return Err(JournalCodecError::new(
                     "backend_resumable_outcome requires its completed Turn in the same commit",
+                ));
+            }
+            let valid_predecessor = match outcome.replay_delta_sequence() {
+                Some(sequence) => index.checked_sub(1).is_some_and(|previous| {
+                    let previous = &commit.records()[previous];
+                    previous.journal_sequence() == Some(sequence)
+                        && matches!(previous.record(), JournalRecord::ModelReplayDelta(_))
+                }),
+                None => index.checked_sub(1).is_some_and(|previous| {
+                    matches!(
+                        commit.records()[previous].record(),
+                        JournalRecord::EventCommitted(AgentEvent::TurnFinished { turn, outcome: crate::TurnOutcome::Completed })
+                            if turn.turn_id() == outcome.turn_id()
+                    )
+                }),
+            };
+            if !valid_predecessor {
+                return Err(JournalCodecError::new(
+                    "backend_resumable_outcome predecessor does not match its replay strategy evidence",
                 ));
             }
             let Some(next) = commit.records().get(index + 1) else {

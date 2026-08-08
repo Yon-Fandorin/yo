@@ -260,6 +260,13 @@ impl DurableJournal {
                     JournalRecord::BackendRequestAccepted(request.clone()),
                 ));
             },
+            SemanticRecord::ModelReplayDelta(replay) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::ModelReplayDelta(replay.clone()),
+                ));
+            },
             SemanticRecord::BackendResumableOutcome(outcome) => {
                 self.flush_boundaries(None, durable);
                 durable.push(PendingJournalRecord::semantic(

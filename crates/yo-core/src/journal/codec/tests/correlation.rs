@@ -1,5 +1,18 @@
 use super::*;
-use crate::{TurnOutcome, journal::codec::*};
+use crate::{
+    ContinuationStrategy, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+    ReplayExecutor, TurnOutcome, journal::codec::*,
+};
+
+fn model_replay_delta() -> ModelReplayDelta {
+    ModelReplayDelta::new(
+        Some(ModelReplayContract::new("system", Vec::new())),
+        vec![ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "hello".to_owned(),
+        }],
+    )
+}
 
 fn semantic(
     replay_sequence: u64,
@@ -26,6 +39,9 @@ fn binding_opened() -> JournalRecord {
         identity("model"),
         identity("session"),
         BindingTransition::new(TransitionMode::Initial, CacheState::NotApplicable, None),
+        ContinuationStrategy::ExactReplay {
+            executor: ReplayExecutor::LocalClient,
+        },
     ))
 }
 
@@ -91,7 +107,7 @@ fn valid_history() -> Vec<JournalCommit> {
         ],
     );
     let completed = JournalCommit::incremental_through(
-        JournalSequence::new(8),
+        JournalSequence::new(9),
         vec![
             semantic(
                 7,
@@ -104,21 +120,32 @@ fn valid_history() -> Vec<JournalCommit> {
             semantic(
                 8,
                 7,
-                JournalRecord::BackendResumableOutcome(BackendResumableOutcome::new(
+                JournalRecord::ModelReplayDelta(ModelReplayDeltaRecord::new(
                     1,
                     activity().turn_id(),
                     JournalSequence::new(5),
-                    Some(identity("outcome")),
+                    model_replay_delta(),
                 )),
             ),
             semantic(
                 9,
                 8,
+                JournalRecord::BackendResumableOutcome(BackendResumableOutcome::new(
+                    1,
+                    activity().turn_id(),
+                    JournalSequence::new(5),
+                    Some(identity("outcome")),
+                    Some(JournalSequence::new(7)),
+                )),
+            ),
+            semantic(
+                10,
+                9,
                 JournalRecord::ContinuationAnchor(ContinuationAnchor::new(
                     1,
                     JournalSequence::new(5),
-                    JournalSequence::new(7),
-                    JournalSequence::new(7),
+                    JournalSequence::new(8),
+                    JournalSequence::new(8),
                 )),
             ),
         ],
@@ -158,6 +185,41 @@ fn replacement_commit(
                         CacheState::Lost,
                         Some(JournalSequence::new(source_anchor)),
                     ),
+                    ContinuationStrategy::BackendManagedState,
+                )),
+            ),
+        ],
+    )
+}
+
+fn backend_managed_replacement_commit() -> JournalCommit {
+    JournalCommit::incremental_through(
+        JournalSequence::new(11),
+        vec![
+            semantic(
+                11,
+                10,
+                JournalRecord::BackendBindingClosed(BackendBindingClosed::new(
+                    1,
+                    BindingCloseReason::Replaced,
+                )),
+            ),
+            semantic(
+                12,
+                11,
+                JournalRecord::BackendBindingOpened(BackendBindingOpened::new(
+                    2,
+                    "server",
+                    "1.0.0",
+                    identity("binding-2"),
+                    identity("model-2"),
+                    identity("session-2"),
+                    BindingTransition::new(
+                        TransitionMode::LossyHandoff,
+                        CacheState::Lost,
+                        Some(JournalSequence::new(9)),
+                    ),
+                    ContinuationStrategy::BackendManagedState,
                 )),
             ),
         ],
@@ -173,11 +235,11 @@ fn completed_turn_in_epoch_two() -> Vec<JournalCommit> {
     );
     vec![
         JournalCommit::incremental_through(
-            JournalSequence::new(13),
+            JournalSequence::new(14),
             vec![
                 semantic(
+                    13,
                     12,
-                    11,
                     JournalRecord::CommandCommitted(
                         crate::journal::CommittedCommand::submission(
                             AgentCommand::StartTurn {
@@ -190,8 +252,8 @@ fn completed_turn_in_epoch_two() -> Vec<JournalCommit> {
                     ),
                 ),
                 semantic(
+                    14,
                     13,
-                    12,
                     JournalRecord::BackendExchangeObserved(BackendExchangeObserved::new(
                         2,
                         operation_id,
@@ -204,47 +266,48 @@ fn completed_turn_in_epoch_two() -> Vec<JournalCommit> {
                     )),
                 ),
                 semantic(
+                    15,
                     14,
-                    13,
                     JournalRecord::BackendRequestAccepted(BackendRequestAccepted::new(
                         2,
                         turn.turn_id(),
                         operation_id,
-                        JournalSequence::new(12),
+                        JournalSequence::new(13),
                         identity("request-2"),
                     )),
                 ),
             ],
         ),
         JournalCommit::incremental_through(
-            JournalSequence::new(16),
+            JournalSequence::new(17),
             vec![
                 semantic(
+                    16,
                     15,
-                    14,
                     JournalRecord::EventCommitted(AgentEvent::TurnFinished {
                         turn,
                         outcome: TurnOutcome::Completed,
                     }),
                 ),
                 semantic(
+                    17,
                     16,
-                    15,
                     JournalRecord::BackendResumableOutcome(BackendResumableOutcome::new(
                         2,
                         turn.turn_id(),
-                        JournalSequence::new(13),
+                        JournalSequence::new(14),
                         Some(identity("outcome-2")),
+                        None,
                     )),
                 ),
                 semantic(
+                    18,
                     17,
-                    16,
                     JournalRecord::ContinuationAnchor(ContinuationAnchor::new(
                         2,
-                        JournalSequence::new(13),
-                        JournalSequence::new(15),
-                        JournalSequence::new(15),
+                        JournalSequence::new(14),
+                        JournalSequence::new(16),
+                        JournalSequence::new(16),
                     )),
                 ),
             ],
@@ -266,8 +329,66 @@ fn round_trips_and_recovers_a_complete_continuation_chain() {
     assert_eq!(recovered.binding_epoch(), Some(1));
     assert_eq!(
         recovered.continuation_anchor(),
-        Some(JournalSequence::new(8))
+        Some(JournalSequence::new(9))
     );
+    let replay = recovered
+        .records()
+        .iter()
+        .find_map(|record| match record.record() {
+            JournalRecord::ModelReplayDelta(replay) => Some(replay.delta()),
+            _ => None,
+        });
+    assert_eq!(replay, Some(&model_replay_delta()));
+}
+
+// exact replay outcome이 별도 delta record를 즉시 참조하지 않으면 decode가 실패하는지 검증합니다.
+#[test]
+fn exact_replay_requires_a_separate_immediately_referenced_delta() {
+    let completion = valid_history().pop().unwrap();
+    let mut wire: serde_json::Value = serde_json::from_str(&encode(&completion).unwrap()).unwrap();
+    wire["records"][2]
+        .as_object_mut()
+        .unwrap()
+        .remove("replay_delta_sequence");
+
+    let error = decode(&wire.to_string()).expect_err("exact replay cannot omit its delta link");
+
+    assert!(error.to_string().contains("referenced"), "{error}");
+}
+
+// backend-managed state에 Yo replay delta를 섞으면 strategy 계약 위반으로 recovery가 거부하는지
+// 검증합니다.
+#[test]
+fn backend_managed_state_forbids_model_replay_delta() {
+    let mut commits = valid_history();
+    let opened = &mut commits[1];
+    let mut wire: serde_json::Value = serde_json::from_str(&encode(opened).unwrap()).unwrap();
+    wire["records"][1]["continuation_strategy"] =
+        serde_json::json!({ "mode": "backend_managed_state" });
+    commits[1] = decode(&wire.to_string()).unwrap();
+
+    let error = recover(&commits).expect_err("backend-managed state cannot claim Yo replay");
+
+    assert!(
+        error.to_string().contains("exact-replay open epoch"),
+        "{error}"
+    );
+}
+
+// outcome 안에 replay payload를 넣던 이전 shape을 닫힌 wire schema가 다시 받아들이지 않는지
+// 검증합니다.
+#[test]
+fn rejects_the_displaced_nested_replay_outcome_shape() {
+    let completion = valid_history().pop().unwrap();
+    let mut wire: serde_json::Value = serde_json::from_str(&encode(&completion).unwrap()).unwrap();
+    wire["records"][2]["model_replay"] = serde_json::json!({
+        "contract": null,
+        "items": [{ "kind": "message", "role": "assistant", "content": "old" }]
+    });
+
+    let error = decode(&wire.to_string()).expect_err("the preceding /v1 shape must fail closed");
+
+    assert!(error.to_string().contains("unknown field"), "{error}");
 }
 
 // semantic record는 명시적인 JournalSequence를 가지지만 message segment는 저장 경계일
@@ -380,11 +501,11 @@ fn clears_the_latest_anchor_when_a_new_semantic_suffix_begins() {
         crate::TurnId::new(std::num::NonZeroU64::new(4).unwrap()),
     );
     commits.push(JournalCommit::incremental_through(
-        JournalSequence::new(10),
+        JournalSequence::new(11),
         vec![
             semantic(
+                11,
                 10,
-                9,
                 JournalRecord::CommandCommitted(
                     crate::journal::CommittedCommand::submission(
                         AgentCommand::StartTurn {
@@ -397,8 +518,8 @@ fn clears_the_latest_anchor_when_a_new_semantic_suffix_begins() {
                 ),
             ),
             semantic(
+                12,
                 11,
-                10,
                 JournalRecord::BackendExchangeObserved(BackendExchangeObserved::new(
                     1,
                     OperationId::from(submission_id),
@@ -425,10 +546,10 @@ fn clears_the_latest_anchor_when_a_new_semantic_suffix_begins() {
 fn clears_the_latest_anchor_when_the_binding_closes() {
     let mut commits = valid_history();
     commits.push(JournalCommit::incremental_through(
-        JournalSequence::new(9),
+        JournalSequence::new(10),
         vec![semantic(
+            11,
             10,
-            9,
             JournalRecord::BackendBindingClosed(BackendBindingClosed::new(
                 1,
                 BindingCloseReason::Revoked,
@@ -447,7 +568,7 @@ fn clears_the_latest_anchor_when_the_binding_closes() {
 #[test]
 fn opens_the_next_epoch_from_the_immediately_preceding_anchor() {
     let mut commits = valid_history();
-    commits.push(replacement_commit(2, 8, 10, 9));
+    commits.push(replacement_commit(2, 9, 11, 10));
 
     let recovered = recover(&commits).expect("the direct replacement lineage is valid");
 
@@ -455,14 +576,32 @@ fn opens_the_next_epoch_from_the_immediately_preceding_anchor() {
     assert_eq!(recovered.continuation_anchor(), None);
 }
 
+// exact replay epoch를 backend-managed binding으로 교체하면 이전 Yo replay는 새 Anchor가
+// 생긴 뒤에도 resume target 후보에 남지 않아야 한다.
+#[test]
+fn backend_managed_replacement_clears_the_previous_exact_replay() {
+    let mut commits = valid_history();
+    commits.push(backend_managed_replacement_commit());
+    commits.extend(completed_turn_in_epoch_two());
+
+    let recovered = recover(&commits).expect("the backend-managed replacement is valid");
+
+    assert_eq!(recovered.binding_epoch(), Some(2));
+    assert_eq!(
+        recovered.continuation_anchor(),
+        Some(JournalSequence::new(17))
+    );
+    assert_eq!(recovered.model_replay(), &crate::ModelReplay::default());
+}
+
 // epoch 2에도 새 Anchor가 생긴 뒤 epoch 3이 epoch 1의 오래된 Anchor로 되돌아가면 최신
 // 불완결 흐름을 건너뛸 수 있으므로 바로 이전 epoch의 source가 아니라고 거부해야 합니다.
 #[test]
 fn rejects_a_replacement_that_falls_back_to_an_older_epoch_anchor() {
     let mut commits = valid_history();
-    commits.push(replacement_commit(2, 8, 10, 9));
+    commits.push(replacement_commit(2, 9, 11, 10));
     commits.extend(completed_turn_in_epoch_two());
-    commits.push(replacement_commit(3, 8, 18, 17));
+    commits.push(replacement_commit(3, 9, 19, 18));
 
     let error = recover(&commits).expect_err("epoch three cannot cite epoch one's stale Anchor");
 
@@ -554,17 +693,17 @@ fn rejects_an_anchor_that_claims_its_own_sequence_as_the_boundary() {
     let mut commits = valid_history();
     let completion = commits.pop().unwrap();
     let mut records = completion.records().to_vec();
-    records[2] = semantic(
+    records[3] = semantic(
+        10,
         9,
-        8,
         JournalRecord::ContinuationAnchor(ContinuationAnchor::new(
             1,
             JournalSequence::new(5),
-            JournalSequence::new(7),
             JournalSequence::new(8),
+            JournalSequence::new(9),
         )),
     );
-    let invalid = JournalCommit::incremental_through(JournalSequence::new(8), records);
+    let invalid = JournalCommit::incremental_through(JournalSequence::new(9), records);
 
     let error = encode(&invalid).expect_err("an Anchor cannot claim itself as its boundary");
 

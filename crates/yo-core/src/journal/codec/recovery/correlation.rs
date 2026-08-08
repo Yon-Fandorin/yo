@@ -4,7 +4,10 @@ use super::super::{
     BindingCloseReason, CacheState, ExchangeDirection, ExchangeKind, JournalCodecError,
     JournalRecord, OperationId, TransitionMode,
 };
-use crate::{AgentCommand, AgentEvent, JournalSequence, TurnId, TurnOutcome};
+use crate::{
+    AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplay, TurnId,
+    TurnOutcome,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct CorrelationRecovery {
@@ -16,10 +19,12 @@ pub(super) struct CorrelationRecovery {
     completed_turns: BTreeMap<TurnId, JournalSequence>,
     session_created: bool,
     open_epoch: Option<u64>,
+    open_strategy: Option<ContinuationStrategy>,
     last_epoch: Option<u64>,
     last_close_reason: Option<BindingCloseReason>,
     replacement_source: Option<(JournalSequence, u64)>,
     latest_anchor: Option<JournalSequence>,
+    model_replay: ModelReplay,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,6 +80,7 @@ impl CorrelationRecovery {
                     ));
                 }
                 self.open_epoch = None;
+                self.open_strategy = None;
                 self.last_close_reason = Some(binding.reason());
                 self.replacement_source = if binding.reason() == BindingCloseReason::Replaced {
                     anchor_before_record.map(|anchor| (anchor, binding.epoch()))
@@ -111,6 +117,49 @@ impl CorrelationRecovery {
                 self.latest_accepted_request
                     .insert((request.epoch(), request.turn_id()), sequence);
             },
+            JournalRecord::ModelReplayDelta(replay) => {
+                if self.open_epoch != Some(replay.epoch())
+                    || !matches!(
+                        self.open_strategy,
+                        Some(ContinuationStrategy::ExactReplay { .. })
+                    )
+                {
+                    return Err(JournalCodecError::new(
+                        "model_replay_delta requires an exact-replay open epoch",
+                    ));
+                }
+                if self
+                    .latest_accepted_request
+                    .get(&(replay.epoch(), replay.turn_id()))
+                    != Some(&replay.accepted_request_sequence())
+                {
+                    return Err(JournalCodecError::new(
+                        "model_replay_delta must reference the latest accepted request",
+                    ));
+                }
+                let Some((
+                    _,
+                    JournalRecord::EventCommitted(AgentEvent::TurnFinished {
+                        turn,
+                        outcome: TurnOutcome::Completed,
+                    }),
+                )) = previous_in_commit
+                else {
+                    return Err(JournalCodecError::new(
+                        "model_replay_delta must immediately follow its completed Turn",
+                    ));
+                };
+                if turn.turn_id() != replay.turn_id() {
+                    return Err(JournalCodecError::new(
+                        "model_replay_delta Turn does not match its completed Turn",
+                    ));
+                }
+                self.model_replay.apply(replay.delta()).map_err(|detail| {
+                    JournalCodecError::new(format!(
+                        "model_replay_delta cannot extend the replay chain: {detail}"
+                    ))
+                })?;
+            },
             JournalRecord::BackendResumableOutcome(outcome) => {
                 if self.open_epoch != Some(outcome.epoch()) {
                     return Err(JournalCodecError::new(
@@ -134,6 +183,52 @@ impl CorrelationRecovery {
                     return Err(JournalCodecError::new(
                         "backend_resumable_outcome requires a preceding completed Turn",
                     ));
+                }
+                match self.open_strategy {
+                    Some(ContinuationStrategy::ExactReplay { .. }) => {
+                        let Some(replay_sequence) = outcome.replay_delta_sequence() else {
+                            return Err(JournalCodecError::new(
+                                "exact-replay outcome requires replay_delta_sequence",
+                            ));
+                        };
+                        let Some((previous_sequence, JournalRecord::ModelReplayDelta(replay))) =
+                            previous_in_commit
+                        else {
+                            return Err(JournalCodecError::new(
+                                "exact-replay outcome must immediately follow its replay delta",
+                            ));
+                        };
+                        if replay_sequence != previous_sequence
+                            || replay.epoch() != outcome.epoch()
+                            || replay.turn_id() != outcome.turn_id()
+                            || replay.accepted_request_sequence()
+                                != outcome.accepted_request_sequence()
+                        {
+                            return Err(JournalCodecError::new(
+                                "exact-replay outcome does not match its replay delta",
+                            ));
+                        }
+                    },
+                    Some(ContinuationStrategy::BackendManagedState) => {
+                        if outcome.replay_delta_sequence().is_some()
+                            || !matches!(
+                                previous_in_commit,
+                                Some((_, JournalRecord::EventCommitted(AgentEvent::TurnFinished {
+                                    turn,
+                                    outcome: TurnOutcome::Completed,
+                                }))) if turn.turn_id() == outcome.turn_id()
+                            )
+                        {
+                            return Err(JournalCodecError::new(
+                                "backend-managed outcome must immediately follow its completed Turn without replay evidence",
+                            ));
+                        }
+                    },
+                    None => {
+                        return Err(JournalCodecError::new(
+                            "backend_resumable_outcome requires a continuation strategy",
+                        ));
+                    },
                 }
             },
             JournalRecord::ContinuationAnchor(anchor) => {
@@ -185,6 +280,10 @@ impl CorrelationRecovery {
 
     pub(super) const fn latest_anchor(&self) -> Option<JournalSequence> {
         self.latest_anchor
+    }
+
+    pub(super) const fn model_replay(&self) -> &ModelReplay {
+        &self.model_replay
     }
 
     fn observe_command(&mut self, command: &crate::journal::CommittedCommand) {
@@ -370,6 +469,12 @@ impl CorrelationRecovery {
             },
         }
         self.open_epoch = Some(binding.epoch());
+        self.open_strategy = Some(binding.continuation_strategy());
+        if binding.continuation_strategy() == ContinuationStrategy::BackendManagedState
+            || binding.transition().mode() != TransitionMode::ExactReplay
+        {
+            self.model_replay = ModelReplay::default();
+        }
         self.last_epoch = Some(binding.epoch());
         self.last_close_reason = None;
         self.replacement_source = None;

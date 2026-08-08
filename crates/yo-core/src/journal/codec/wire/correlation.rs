@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::JournalCodecError;
 use crate::{
-    JournalSequence, TurnId,
+    ContinuationStrategy, JournalSequence, ReplayExecutor, TurnId,
     journal::codec::{
         BindingCloseReason, CacheState, DetailAvailability, ExchangeDirection, ExchangeKind,
         OperationId, TransitionMode, VersionedIdentity,
@@ -84,6 +84,60 @@ pub(super) struct WireBindingTransition {
     pub(super) cache: WireCacheState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) source_anchor_sequence: Option<u64>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum WireContinuationStrategy {
+    ExactReplay { executor: WireReplayExecutor },
+    BackendManagedState,
+}
+
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum WireReplayExecutor {
+    LocalClient,
+    ManagedServer,
+}
+
+impl From<ContinuationStrategy> for WireContinuationStrategy {
+    fn from(value: ContinuationStrategy) -> Self {
+        match value {
+            ContinuationStrategy::ExactReplay { executor } => Self::ExactReplay {
+                executor: executor.into(),
+            },
+            ContinuationStrategy::BackendManagedState => Self::BackendManagedState,
+        }
+    }
+}
+
+impl From<WireContinuationStrategy> for ContinuationStrategy {
+    fn from(value: WireContinuationStrategy) -> Self {
+        match value {
+            WireContinuationStrategy::ExactReplay { executor } => Self::ExactReplay {
+                executor: executor.into(),
+            },
+            WireContinuationStrategy::BackendManagedState => Self::BackendManagedState,
+        }
+    }
+}
+
+impl From<ReplayExecutor> for WireReplayExecutor {
+    fn from(value: ReplayExecutor) -> Self {
+        match value {
+            ReplayExecutor::LocalClient => Self::LocalClient,
+            ReplayExecutor::ManagedServer => Self::ManagedServer,
+        }
+    }
+}
+
+impl From<WireReplayExecutor> for ReplayExecutor {
+    fn from(value: WireReplayExecutor) -> Self {
+        match value {
+            WireReplayExecutor::LocalClient => Self::LocalClient,
+            WireReplayExecutor::ManagedServer => Self::ManagedServer,
+        }
+    }
 }
 
 pub(super) fn encode_identity(

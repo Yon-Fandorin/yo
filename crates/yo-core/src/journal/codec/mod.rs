@@ -19,6 +19,6 @@ mod tests;
 pub(crate) use correlation::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
     BackendResumableOutcome, BindingCloseReason, BindingTransition, CacheState, ContinuationAnchor,
-    DetailAvailability, ExchangeDirection, ExchangeKind, OperationId, TransitionMode,
-    VersionedIdentity,
+    DetailAvailability, ExchangeDirection, ExchangeKind, ModelReplayDeltaRecord, OperationId,
+    TransitionMode, VersionedIdentity,
 };

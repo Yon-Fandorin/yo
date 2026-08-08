@@ -15,18 +15,18 @@ use yo_core::{
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, StoredBindingCacheState, StoredBindingCloseReason,
-        StoredBindingTransitionMode, StoredExchangeDirection, StoredExchangeKind,
-        StoredRequestDetailAvailability, StoredRequestTraceRecord, StoredSession,
-        StoredSessionContinuity, StoredSessionHistory, StoredSessionReader, StoredSessionRecovery,
-        StoredSessionSnapshot, read_stored_session,
+        StoredBindingTransitionMode, StoredContinuationStrategy, StoredExchangeDirection,
+        StoredExchangeKind, StoredReplayExecutor, StoredRequestDetailAvailability,
+        StoredRequestTraceRecord, StoredSession, StoredSessionContinuity, StoredSessionHistory,
+        StoredSessionReader, StoredSessionRecovery, StoredSessionSnapshot, read_stored_session,
     },
 };
 
 use super::{
     project_chat, project_transcript_parts,
     request::{
-        cache_state_text, close_reason_text, detail_availability_text, exchange_direction_text,
-        exchange_kind_text, project_parts, transition_mode_text,
+        cache_state_text, close_reason_text, continuation_strategy_text, detail_availability_text,
+        exchange_direction_text, exchange_kind_text, project_parts, transition_mode_text,
     },
 };
 use crate::GlyphProfile;
@@ -136,6 +136,7 @@ fn durable_request_history() -> StoredSessionHistory {
         BackendIdentity::new("test.binding/v1", "binding-value"),
         BackendIdentity::new("test.model/v1", "model-value"),
         BackendIdentity::new("test.session/v1", "session-value"),
+        yo_core::ContinuationStrategy::BackendManagedState,
     );
     let request = BackendRequestEvidence::new(
         "test.payload/v1",
@@ -289,12 +290,14 @@ fn archived_request_formats_every_correlation_record_in_journal_order() {
     let positions = names.map(|name| output.find(name).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(output.contains("backend_kind=\"codex-app-server\""));
+    assert!(output.contains("continuation_strategy=backend-managed-state"));
     assert!(output.contains("kind=request"));
     assert!(output.contains("correlation_sequence=none"));
     assert!(output.contains("exchange_identity.value=\"exchange\\nvalue\\u{1b}\""));
     assert!(output.contains("detail_availability=unpersisted"));
     assert!(output.contains("request_identity.value=\"request-value\""));
     assert!(output.contains("outcome_identity.value=\"outcome-value\""));
+    assert!(output.contains("replay_delta_sequence=none"));
     assert!(output.contains("journal_boundary="));
     assert!(output.contains("reason=exhausted"));
     assert!(!output.contains("input="));
@@ -304,6 +307,23 @@ fn archived_request_formats_every_correlation_record_in_journal_order() {
 // 표시되어, 비슷한 variant를 잘못 연결하거나 새 값을 조용히 빠뜨리지 못합니다.
 #[test]
 fn archived_request_labels_every_closed_diagnostic_value() {
+    assert_eq!(
+        [
+            StoredContinuationStrategy::ExactReplay {
+                executor: StoredReplayExecutor::LocalClient,
+            },
+            StoredContinuationStrategy::ExactReplay {
+                executor: StoredReplayExecutor::ManagedServer,
+            },
+            StoredContinuationStrategy::BackendManagedState,
+        ]
+        .map(continuation_strategy_text),
+        [
+            "exact-replay(local-client)",
+            "exact-replay(managed-server)",
+            "backend-managed-state",
+        ]
+    );
     assert_eq!(
         [
             StoredExchangeKind::Request,

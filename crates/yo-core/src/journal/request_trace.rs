@@ -110,6 +110,7 @@ mod tests {
                 BackendIdentity::new("binding/v1", "binding"),
                 BackendIdentity::new("model/v1", "model"),
                 BackendIdentity::new("session/v1", "session"),
+                crate::ContinuationStrategy::BackendManagedState,
             ),
         );
 

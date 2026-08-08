@@ -8,8 +8,9 @@ use std::fmt;
 use normalizer::normalize;
 pub use request_trace::{
     StoredBindingCacheState, StoredBindingCloseReason, StoredBindingTransition,
-    StoredBindingTransitionMode, StoredExchangeDirection, StoredExchangeKind,
-    StoredRequestDetailAvailability, StoredRequestTraceEntry, StoredRequestTraceRecord,
+    StoredBindingTransitionMode, StoredContinuationStrategy, StoredExchangeDirection,
+    StoredExchangeKind, StoredReplayExecutor, StoredRequestDetailAvailability,
+    StoredRequestTraceEntry, StoredRequestTraceRecord,
 };
 
 use super::{

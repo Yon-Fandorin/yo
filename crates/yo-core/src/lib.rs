@@ -16,6 +16,7 @@ mod runtime;
 mod session;
 pub mod session_repository;
 mod skill_reference;
+mod tool;
 mod workspace_reference;
 
 pub use agent_session::{
@@ -26,7 +27,10 @@ pub use backend::{
     AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
     BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
     BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendScriptStep, BackendStopHandle,
-    CodexBackend, CodexBackendConfig, CodexSkillReferenceProvider, ScriptedBackend,
+    CodexBackend, CodexBackendConfig, CodexSkillReferenceProvider, ContinuationStrategy,
+    ModelReplay, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+    ModelReplayTool, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+    ReplayExecutor, ScriptedBackend,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
@@ -55,8 +59,9 @@ pub use model_connector::{
 };
 pub use model_service::{
     AccountId, ApiCredential, ApiProtocol, ConnectorId, CredentialStore, EffectiveModelBinding,
-    LocalCredentialStore, LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry, ModelId,
-    ModelServiceError, NormalizedEndpoint, ProviderId,
+    LocalCredentialStore, LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry,
+    ModelContextProfile, ModelId, ModelServiceError, ModelTokenCounter, ModelTokenCounterError,
+    NormalizedEndpoint, ProviderId,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
@@ -68,6 +73,13 @@ pub use skill_reference::{
     SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceProvider,
     SkillReferenceProviderPoll, SkillReferenceScope, SkillReferenceSearchRequest,
     SkillReferenceSearchStatus, SkillReferenceSearchUpdate,
+};
+pub use tool::{
+    FrozenToolRegistry, TOOL_SCHEMA_DIALECT, ToolApprovalBinding, ToolApprovalRequirement,
+    ToolDefinition, ToolEffect, ToolExecution, ToolExecutionError, ToolExecutionHost,
+    ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest, ToolExecutionResult, ToolId,
+    ToolRegistry, ToolRegistryError, ToolSemanticAdmission, ToolSemanticAdmissionError,
+    ToolValidationError, ToolValidationFailure, ValidatedToolCall,
 };
 pub use workspace_reference::{
     LocalWorkspaceReferenceProvider, WorkspaceReference, WorkspaceReferenceCandidate,

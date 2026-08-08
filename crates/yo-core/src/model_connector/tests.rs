@@ -395,10 +395,14 @@ fn accepts_a_declared_empty_output_text_part() {
     .concat();
     let mut decoder = ResponsesSseDecoder::new(ResponsesConnectorLimits::default());
 
-    assert!(decoder.push(stream.as_bytes()).unwrap().is_empty());
+    let mut events = decoder.push(stream.as_bytes()).unwrap();
+    events.extend(decoder.finish().unwrap());
     assert!(matches!(
-        decoder.finish().unwrap().as_slice(),
-        [ResponsesEvent::Terminal { response_id, .. }] if response_id == "resp-empty"
+        events.as_slice(),
+        [
+            ResponsesEvent::MessageDone { item_id, .. },
+            ResponsesEvent::Terminal { response_id, .. }
+        ] if item_id == "msg" && response_id == "resp-empty"
     ));
 }
 

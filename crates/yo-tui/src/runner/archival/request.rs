@@ -2,9 +2,9 @@ use yo_core::{
     BackendIdentity, JournalSequence, SessionDescriptor,
     session_repository::{
         StoredBindingCacheState, StoredBindingCloseReason, StoredBindingTransitionMode,
-        StoredExchangeDirection, StoredExchangeKind, StoredRequestDetailAvailability,
-        StoredRequestTraceRecord, StoredSessionContinuity, StoredSessionHistory,
-        StoredSessionRecovery,
+        StoredContinuationStrategy, StoredExchangeDirection, StoredExchangeKind,
+        StoredReplayExecutor, StoredRequestDetailAvailability, StoredRequestTraceRecord,
+        StoredSessionContinuity, StoredSessionHistory, StoredSessionRecovery,
     },
 };
 
@@ -67,6 +67,7 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
             model_identity,
             session_locator,
             transition,
+            continuation_strategy,
         } => format!(
             "{prefix} binding.opened\n\
              epoch={epoch}\n\
@@ -75,12 +76,14 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
              {}\n\
              {}\n\
              {}\n\
+             continuation_strategy={}\n\
              transition={}\n\
              cache={}\n\
              source_anchor_sequence={}",
             identity_text("binding_identity", binding_identity),
             identity_text("model_identity", model_identity),
             identity_text("session_locator", session_locator),
+            continuation_strategy_text(*continuation_strategy),
             transition_mode_text(transition.mode()),
             cache_state_text(transition.cache()),
             sequence_text(transition.source_anchor_sequence()),
@@ -143,6 +146,7 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
             turn_id,
             accepted_request_sequence,
             outcome_identity,
+            replay_delta_sequence,
         } => {
             let identity = outcome_identity.as_ref().map_or_else(
                 || "outcome_identity=none".to_owned(),
@@ -153,9 +157,11 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
                  epoch={epoch}\n\
                  turn={}\n\
                  accepted_request_sequence={}\n\
+                 replay_delta_sequence={}\n\
                  {identity}",
                 turn_id.get().get(),
                 accepted_request_sequence.get(),
+                sequence_text(*replay_delta_sequence),
             )
         },
         StoredRequestTraceRecord::ContinuationAnchor {
@@ -173,6 +179,20 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
             resumable_outcome_sequence.get(),
             journal_boundary.get(),
         ),
+    }
+}
+
+pub(super) const fn continuation_strategy_text(
+    strategy: StoredContinuationStrategy,
+) -> &'static str {
+    match strategy {
+        StoredContinuationStrategy::ExactReplay {
+            executor: StoredReplayExecutor::LocalClient,
+        } => "exact-replay(local-client)",
+        StoredContinuationStrategy::ExactReplay {
+            executor: StoredReplayExecutor::ManagedServer,
+        } => "exact-replay(managed-server)",
+        StoredContinuationStrategy::BackendManagedState => "backend-managed-state",
     }
 }
 

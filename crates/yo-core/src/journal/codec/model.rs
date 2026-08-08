@@ -1,6 +1,6 @@
 use super::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
-    BackendResumableOutcome, ContinuationAnchor,
+    BackendResumableOutcome, ContinuationAnchor, ModelReplayDeltaRecord,
 };
 use crate::{
     ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionDescriptor,
@@ -210,6 +210,7 @@ pub(crate) enum JournalRecord {
     BackendBindingOpened(BackendBindingOpened),
     BackendBindingClosed(BackendBindingClosed),
     BackendRequestAccepted(BackendRequestAccepted),
+    ModelReplayDelta(ModelReplayDeltaRecord),
     BackendResumableOutcome(BackendResumableOutcome),
     ContinuationAnchor(ContinuationAnchor),
     MessageReset(MessageReset),
@@ -236,6 +237,9 @@ impl JournalRecord {
             },
             Self::BackendRequestAccepted(record) => {
                 Some(SemanticRecord::BackendRequestAccepted(record.clone()))
+            },
+            Self::ModelReplayDelta(record) => {
+                Some(SemanticRecord::ModelReplayDelta(record.clone()))
             },
             Self::BackendResumableOutcome(record) => {
                 Some(SemanticRecord::BackendResumableOutcome(record.clone()))
@@ -278,6 +282,7 @@ impl JournalRecord {
             | Self::BackendBindingOpened(_)
             | Self::BackendBindingClosed(_)
             | Self::BackendRequestAccepted(_)
+            | Self::ModelReplayDelta(_)
             | Self::BackendResumableOutcome(_)
             | Self::ContinuationAnchor(_) => None,
         }
@@ -414,7 +419,7 @@ impl MessageSegment {
 pub(crate) enum MessageOutcome {
     Completed,
     Interrupted,
-    Failed(String),
+    Failed(crate::Failure),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

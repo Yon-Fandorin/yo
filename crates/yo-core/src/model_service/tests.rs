@@ -99,10 +99,23 @@ fn redacts_unparseable_endpoint_input_from_diagnostics() {
 // 다른 Account에 같은 ModelId가 있어도 fallback하거나 임의 선택하지 않는지 검증합니다.
 #[test]
 fn resolves_models_only_inside_the_selected_provider_and_account() {
-    let first =
-        ModelCatalogEntry::new(qwen_binding("token-a", "qwen3.8-max"), None, None, None).unwrap();
-    let second =
-        ModelCatalogEntry::new(qwen_binding("token-b", "qwen3.8-max"), None, None, None).unwrap();
+    let context = || ModelContextProfile::new(262_144, 8_192, "qwen3.8-max/v1").unwrap();
+    let first = ModelCatalogEntry::new(
+        qwen_binding("token-a", "qwen3.8-max"),
+        None,
+        None,
+        None,
+        context(),
+    )
+    .unwrap();
+    let second = ModelCatalogEntry::new(
+        qwen_binding("token-b", "qwen3.8-max"),
+        None,
+        None,
+        None,
+        context(),
+    )
+    .unwrap();
     let catalog = ModelCatalog::new(vec![first, second]).unwrap();
 
     let selected = catalog
@@ -113,6 +126,9 @@ fn resolves_models_only_inside_the_selected_provider_and_account() {
         )
         .unwrap();
     assert_eq!(selected.binding().account_id().as_str(), "token-b");
+    assert_eq!(selected.context().input_token_limit(), 262_144);
+    assert_eq!(selected.context().output_token_reserve(), 8_192);
+    assert_eq!(selected.context().tokenizer_profile(), "qwen3.8-max/v1");
     assert!(
         catalog
             .resolve_model(
@@ -122,6 +138,16 @@ fn resolves_models_only_inside_the_selected_provider_and_account() {
             )
             .is_err()
     );
+}
+
+// context profile은 양수 token limit, 그보다 작은 양수 reserve, 식별 가능한 tokenizer profile을
+// 모두 요구함을 검증합니다.
+#[test]
+fn rejects_incomplete_model_context_profiles() {
+    assert!(ModelContextProfile::new(0, 1, "qwen/v1").is_err());
+    assert!(ModelContextProfile::new(100, 0, "qwen/v1").is_err());
+    assert!(ModelContextProfile::new(100, 100, "qwen/v1").is_err());
+    assert!(ModelContextProfile::new(100, 10, "").is_err());
 }
 
 // resolved secret은 connector가 내부적으로 읽을 수 있어도 Debug와 Display projection에는

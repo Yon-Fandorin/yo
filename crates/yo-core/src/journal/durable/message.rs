@@ -46,9 +46,7 @@ impl MessageTracker {
         Some(message.finish(match outcome {
             ActivityOutcome::Completed => MessageOutcome::Completed,
             ActivityOutcome::Interrupted => MessageOutcome::Interrupted,
-            ActivityOutcome::Failed(failure) => {
-                MessageOutcome::Failed(failure.message().to_owned())
-            },
+            ActivityOutcome::Failed(failure) => MessageOutcome::Failed(failure.clone()),
         }))
     }
 

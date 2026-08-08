@@ -38,6 +38,68 @@ fn structured_input() -> crate::UserInput {
     .unwrap()
 }
 
+fn failed_turn_commit(failure: crate::Failure) -> JournalCommit {
+    JournalCommit::incremental(sequenced(
+        1,
+        [JournalRecord::EventCommitted(AgentEvent::TurnFinished {
+            turn: activity().turn(),
+            outcome: crate::TurnOutcome::Failed(failure),
+        })],
+    ))
+}
+
+// 실패 결과는 도메인 코드가 없는 일반 실패도 명시적인 null을 기록하고, 안정적인
+// 정책 코드는 문자열로 손실 없이 왕복해야 한다.
+#[test]
+fn failed_outcomes_persist_an_explicit_nullable_code() {
+    let uncoded = serde_json::from_str::<serde_json::Value>(
+        &encode(&failed_turn_commit(crate::Failure::new("failed"))).unwrap(),
+    )
+    .unwrap();
+    assert!(uncoded["records"][0]["event"]["outcome"]["code"].is_null());
+
+    let coded = crate::Failure::new("invalid tool input")
+        .with_code("tool_invalid_arguments")
+        .unwrap();
+    let decoded = decode(&encode(&failed_turn_commit(coded.clone())).unwrap()).unwrap();
+    let JournalRecord::EventCommitted(AgentEvent::TurnFinished {
+        outcome: crate::TurnOutcome::Failed(round_tripped),
+        ..
+    }) = decoded.records()[0].record()
+    else {
+        panic!("the failed Turn remains typed")
+    };
+    assert_eq!(round_tripped, &coded);
+}
+
+// 개발 중 사용했던 message-only 실패 shape이나 타입이 다른/비정규 code를 받아들이면
+// 같은 v1 실패의 의미가 달라지므로 wire 경계에서 닫힌 형태로 거부한다.
+#[test]
+fn failed_outcomes_reject_missing_or_malformed_codes() {
+    let encoded = encode(&failed_turn_commit(crate::Failure::new("failed"))).unwrap();
+
+    let mut missing = serde_json::from_str::<serde_json::Value>(&encoded).unwrap();
+    missing["records"][0]["event"]["outcome"]
+        .as_object_mut()
+        .unwrap()
+        .remove("code");
+    let error = decode(&missing.to_string()).expect_err("failure code is mandatory");
+    assert!(
+        error.to_string().contains("missing field `code`"),
+        "{error}"
+    );
+
+    for (malformed, expected) in [
+        (serde_json::json!(7), "failed outcome code"),
+        (serde_json::json!("not canonical"), "failure code"),
+    ] {
+        let mut wire = serde_json::from_str::<serde_json::Value>(&encoded).unwrap();
+        wire["records"][0]["event"]["outcome"]["code"] = malformed;
+        let error = decode(&wire.to_string()).expect_err("malformed failure code is rejected");
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
 // 현재 공개 후보의 schema뿐 아니라 같은 schema 아래 형식 세대를 구분하는 discriminator도
 // descriptor-only commit을 포함한 모든 payload에 기록해야 이전 개발 v1과 섞이지 않는다.
 #[test]

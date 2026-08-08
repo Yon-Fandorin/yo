@@ -6,8 +6,8 @@ pub use error::RuntimeError;
 
 use crate::{
     AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendCommandEvidence, BackendEvent,
-    BackendPoll, BackendResumeTarget, Failure, JournalSequence, SessionId, SubmissionId,
-    TurnOutcome, TurnRef, journal::SessionJournal,
+    BackendPoll, BackendResumeTarget, ContinuationStrategy, Failure, JournalSequence, SessionId,
+    SubmissionId, TurnOutcome, TurnRef, journal::SessionJournal,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -24,6 +24,7 @@ pub struct AgentRuntime<B> {
     journal: SessionJournal,
     submission_ids: HashSet<SubmissionId>,
     binding_epoch: Option<u64>,
+    continuation_strategy: Option<ContinuationStrategy>,
     accepted_requests: HashMap<TurnRef, JournalSequence>,
 }
 
@@ -39,6 +40,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             journal,
             submission_ids: HashSet::new(),
             binding_epoch: None,
+            continuation_strategy: None,
             accepted_requests: HashMap::new(),
         }
     }
@@ -66,6 +68,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             })
             .collect();
         self.binding_epoch = Some(target.epoch());
+        self.continuation_strategy = Some(target.binding().continuation_strategy());
         self.accepted_requests.clear();
         let evidence = self
             .backend
@@ -189,6 +192,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             },
             (None, BackendCommandEvidence::BindingOpened(evidence)) => {
                 let epoch = 1;
+                self.continuation_strategy = Some(evidence.continuation_strategy());
                 self.journal
                     .append_initial_binding(committed, &events, epoch, evidence);
                 self.binding_epoch = Some(epoch);
@@ -290,9 +294,18 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
     fn apply_backend_event(&mut self, event: BackendEvent) -> Result<RuntimePoll, RuntimeError> {
         if let BackendEvent::ResumableTurnFinished { turn, evidence } = event.clone() {
-            if !evidence.is_valid() {
+            let Some(continuation_strategy) = self.continuation_strategy else {
                 return self.reject_correlation_event(
-                    "backend completed a resumable Turn with an invalid outcome identity",
+                    "backend completed a resumable Turn without a continuation strategy",
+                );
+            };
+            let replay_matches_strategy = match continuation_strategy {
+                ContinuationStrategy::ExactReplay { .. } => evidence.model_replay().is_some(),
+                ContinuationStrategy::BackendManagedState => evidence.model_replay().is_none(),
+            };
+            if !evidence.is_valid() || !replay_matches_strategy {
+                return self.reject_correlation_event(
+                    "backend completed a resumable Turn with evidence incompatible with its continuation strategy",
                 );
             }
             let Some(epoch) = self.binding_epoch else {
@@ -311,6 +324,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                         &event,
                         epoch,
                         accepted_request_sequence,
+                        continuation_strategy,
                         evidence,
                     );
                     self.accepted_requests.remove(&turn);

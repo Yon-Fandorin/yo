@@ -14,11 +14,11 @@ pub use continuation::{
 };
 pub use history::{
     StoredBindingCacheState, StoredBindingCloseReason, StoredBindingTransition,
-    StoredBindingTransitionMode, StoredDiscoveryMismatch, StoredDiscoveryMismatchKind,
-    StoredDiscoveryValidation, StoredExchangeDirection, StoredExchangeKind,
-    StoredRequestDetailAvailability, StoredRequestTraceEntry, StoredRequestTraceRecord,
-    StoredSessionContinuity, StoredSessionHistory, StoredSessionReadError, StoredSessionRecovery,
-    read_stored_session,
+    StoredBindingTransitionMode, StoredContinuationStrategy, StoredDiscoveryMismatch,
+    StoredDiscoveryMismatchKind, StoredDiscoveryValidation, StoredExchangeDirection,
+    StoredExchangeKind, StoredReplayExecutor, StoredRequestDetailAvailability,
+    StoredRequestTraceEntry, StoredRequestTraceRecord, StoredSessionContinuity,
+    StoredSessionHistory, StoredSessionReadError, StoredSessionRecovery, read_stored_session,
 };
 pub use local::{LocalSessionReader, LocalSessionRepository};
 pub use record::{

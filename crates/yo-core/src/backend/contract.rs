@@ -151,6 +151,7 @@ pub enum BackendFailureKind {
     Protocol,
     ProcessExit,
     Turn,
+    ContextExhausted,
     Cleanup,
 }
 

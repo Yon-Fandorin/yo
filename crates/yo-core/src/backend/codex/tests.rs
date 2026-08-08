@@ -101,6 +101,7 @@ fn resume_target(session_id: SessionId, thread_id: &str) -> BackendResumeTarget 
                 json!({ "model": "gpt-test", "provider": "openai" }).to_string(),
             ),
             BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
+            crate::ContinuationStrategy::BackendManagedState,
         ),
     )
 }
@@ -159,6 +160,10 @@ fn initializes_before_starting_a_thread() {
     assert_eq!(evidence.backend_version(), "codex_cli_rs/0.146.0 (test)");
     assert!(evidence.model_identity().value().contains("gpt-test"));
     assert!(evidence.model_identity().value().contains("openai"));
+    assert_eq!(
+        evidence.continuation_strategy(),
+        crate::ContinuationStrategy::BackendManagedState
+    );
 
     let sent = sent.0.borrow();
     assert_eq!(sent[0]["method"], "initialize");

@@ -149,6 +149,10 @@ pub enum ResponsesEvent {
         content_index: usize,
         delta: String,
     },
+    MessageDone {
+        output_index: usize,
+        item_id: String,
+    },
     ReasoningDelta {
         output_index: usize,
         item_id: String,

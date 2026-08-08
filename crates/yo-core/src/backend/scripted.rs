@@ -11,7 +11,7 @@ use crate::AgentCommand;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BackendScriptStep {
     Resume {
-        target: BackendResumeTarget,
+        target: Box<BackendResumeTarget>,
         evidence: BackendBindingEvidence,
     },
     AcceptCommand(AgentCommand),
@@ -82,7 +82,7 @@ impl AgentBackend for ScriptedBackend {
         match self.steps.front() {
             Some(BackendScriptStep::Resume {
                 target: expected, ..
-            }) if expected == target => {
+            }) if expected.as_ref() == target => {
                 let Some(BackendScriptStep::Resume { evidence, .. }) = self.steps.pop_front()
                 else {
                     unreachable!("the front script step was native resume")

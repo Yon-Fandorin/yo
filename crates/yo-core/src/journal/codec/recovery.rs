@@ -91,6 +91,10 @@ impl RecoveredJournal {
         self.correlation.latest_anchor()
     }
 
+    pub(crate) const fn model_replay(&self) -> &crate::ModelReplay {
+        self.correlation.model_replay()
+    }
+
     pub(crate) fn discovery_states(&self) -> &[RecoveredDiscovery] {
         &self.discovery_states
     }
@@ -438,6 +442,7 @@ fn apply_message_record(
         | JournalRecord::BackendBindingOpened(_)
         | JournalRecord::BackendBindingClosed(_)
         | JournalRecord::BackendRequestAccepted(_)
+        | JournalRecord::ModelReplayDelta(_)
         | JournalRecord::BackendResumableOutcome(_)
         | JournalRecord::ContinuationAnchor(_) => {},
     }

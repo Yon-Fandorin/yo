@@ -330,7 +330,10 @@ impl ResponsesSseDecoder {
                         "message item completed before every content completion event",
                     ));
                 }
-                Vec::new()
+                vec![ResponsesEvent::MessageDone {
+                    output_index,
+                    item_id: id.to_owned(),
+                }]
             },
             (OutputItemKind::Reasoning { parts }, "reasoning") => {
                 if parts.values().any(|part| !part.is_done()) {
