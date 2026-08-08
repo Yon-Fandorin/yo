@@ -10,7 +10,7 @@ fn definition(id: &str, name: &str) -> ToolDefinition {
         ToolId::new(id).unwrap(),
         name,
         "reads one path",
-        "v1",
+        TOOL_SCHEMA_DIALECT,
         json!({
             "type": "object",
             "properties": {"path": {"type": "string"}},
@@ -125,7 +125,7 @@ fn frozen_registry_projection_is_stable() {
     let replay = registry.replay_tools();
     assert_eq!(connector[0].name(), replay[0].name());
     assert_eq!(connector[1].name(), replay[1].name());
-    assert_eq!(replay[0].schema_version(), "v1");
+    assert_eq!(replay[0].schema_version(), TOOL_SCHEMA_DIALECT);
 }
 
 // yo.tool-schema/v1은 닫힌 subset이므로 모호하거나 무시될 keyword 조합을 registry 생성
@@ -159,7 +159,7 @@ fn registry_rejects_malformed_closed_subset_schemas() {
                 ToolId::new("bad-schema").unwrap(),
                 "bad_schema",
                 "schema fixture",
-                "v1",
+                TOOL_SCHEMA_DIALECT,
                 schema,
                 ToolEffect::ReadOnly,
                 ToolApprovalRequirement::Automatic,

@@ -20,8 +20,8 @@ mod tool;
 mod workspace_reference;
 
 pub use agent_session::{
-    AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, CommandAdmission,
-    PendingCommand,
+    AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, BackendReplacementOutcome,
+    CommandAdmission, PendingCommand,
 };
 pub use backend::{
     AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
@@ -58,10 +58,10 @@ pub use model_connector::{
     ResponsesStream, ResponsesUsage,
 };
 pub use model_service::{
-    AccountId, ApiCredential, ApiProtocol, ConnectorId, CredentialStore, EffectiveModelBinding,
+    AccountId, ApiCredential, ApiDialect, ConnectorId, CredentialStore, EffectiveModelBinding,
     LocalCredentialStore, LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry,
-    ModelContextProfile, ModelId, ModelServiceError, ModelTokenCounter, ModelTokenCounterError,
-    NormalizedEndpoint, ProviderId,
+    ModelContextProfile, ModelId, ModelSelection, ModelSelectionChoice, ModelSelectionController,
+    ModelServiceError, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint, ProviderId,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

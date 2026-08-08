@@ -6,7 +6,7 @@ use std::sync::{
 use super::*;
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
-    AgentIntent, AgentRuntime, AgentSession, AgentSessionPoll, BackendBindingEvidence,
+    AgentEvent, AgentIntent, AgentRuntime, AgentSession, AgentSessionPoll, BackendBindingEvidence,
     BackendCommandEvidence, BackendEvent, BackendIdentity, BackendOutcomeEvidence,
     BackendRequestEvidence, BackendScriptStep, CommandAdmission, ContinuationStrategy,
     InputSubmission, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
@@ -82,6 +82,40 @@ fn binding() -> BackendBindingEvidence {
         ContinuationStrategy::ExactReplay {
             executor: ReplayExecutor::LocalClient,
         },
+    )
+}
+
+fn replacement_binding() -> BackendBindingEvidence {
+    BackendBindingEvidence::new(
+        binding().backend_kind(),
+        "replacement/v1",
+        BackendIdentity::new(
+            "codex.app-server/thread-binding/v1",
+            r#"{"sessionId":"thread-b","threadId":"thread-b"}"#,
+        ),
+        BackendIdentity::new(
+            "codex.app-server/model-and-provider/v1",
+            r#"{"model":"replacement-model","provider":"openai"}"#,
+        ),
+        binding().session_locator().clone(),
+        binding().continuation_strategy(),
+    )
+}
+
+fn second_replacement_binding() -> BackendBindingEvidence {
+    BackendBindingEvidence::new(
+        binding().backend_kind(),
+        "replacement/v2",
+        BackendIdentity::new(
+            "codex.app-server/thread-binding/v1",
+            r#"{"sessionId":"thread-c","threadId":"thread-c"}"#,
+        ),
+        BackendIdentity::new(
+            "codex.app-server/model-and-provider/v1",
+            r#"{"model":"second-replacement-model","provider":"openai"}"#,
+        ),
+        binding().session_locator().clone(),
+        binding().continuation_strategy(),
     )
 }
 
@@ -315,6 +349,251 @@ fn resumed_agent_publishes_a_snapshot_before_admitting_new_work() {
     assert_eq!(
         entries.last().unwrap().record().kind(),
         DurableRecordKind::Snapshot
+    );
+}
+
+// idle Session의 worker 안에서 교체를 연속 commit해도 다음 Turn 없이 새 binding과 이전
+// durable Anchor의 exact replay 조합으로 즉시 다시 열 수 있어야 한다.
+#[test]
+fn idle_replacement_is_immediately_resumable_without_another_turn() {
+    let (mut repository, continuation) = durable_resumable_session();
+    let target = continuation.target().clone();
+    let session_id = continuation.descriptor().session_id();
+    let replacement = replacement_binding();
+    let second_replacement = second_replacement_binding();
+    let current = ScriptedBackend::new([
+        BackendScriptStep::Resume {
+            target: Box::new(target.clone()),
+            evidence: target.binding().clone(),
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let candidate = ScriptedBackend::new([
+        BackendScriptStep::ReplaceBinding {
+            target: Box::new(target.clone()),
+            evidence: replacement.clone(),
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let second_target = BackendResumeTarget::new(
+        session_id,
+        2,
+        replacement.clone(),
+        target.source_anchor_sequence(),
+    )
+    .with_model_replay(target.model_replay().clone());
+    let second_candidate = ScriptedBackend::new([
+        BackendScriptStep::ReplaceBinding {
+            target: Box::new(second_target),
+            evidence: second_replacement.clone(),
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut session = AgentSession::start_cancellable_with_continuation(
+        current,
+        continuation,
+        repository.clone(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+
+    let outcome = session
+        .replace_backend(Box::new(candidate), || false)
+        .unwrap();
+    assert!(outcome.cleanup_failure().is_none());
+    let outcome = session
+        .replace_backend(Box::new(second_candidate), || false)
+        .unwrap();
+    assert!(outcome.cleanup_failure().is_none());
+    session.shutdown().unwrap();
+
+    let recovered = recover_stored_session_continuation(&mut repository, session_id).unwrap();
+    assert_eq!(recovered.target().epoch(), 3);
+    assert_eq!(recovered.target().binding(), &second_replacement);
+}
+
+// replacement transition의 durable append가 실패하면 candidate만 정리하고 기존 backend가
+// 같은 Session의 다음 command를 실제로 받아 처리해야 하며 partial epoch는 저장하지 않는다.
+#[test]
+fn failed_idle_replacement_keeps_the_previous_backend_usable() {
+    let (repository, continuation) = durable_resumable_session();
+    let target = continuation.target().clone();
+    let session_id = continuation.descriptor().session_id();
+    let turn = TurnRef::new(
+        session_id,
+        TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
+    );
+    let current = ScriptedBackend::new([
+        BackendScriptStep::Resume {
+            target: Box::new(target.clone()),
+            evidence: target.binding().clone(),
+        },
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn,
+            input: UserInput::new("still usable"),
+        }),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn,
+            outcome: crate::TurnOutcome::Completed,
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let candidate = ScriptedBackend::new([
+        BackendScriptStep::ReplaceBinding {
+            target: Box::new(target),
+            evidence: replacement_binding(),
+        },
+        BackendScriptStep::Shutdown(Err(crate::BackendFailure::new(
+            crate::BackendFailureKind::Cleanup,
+            "candidate cleanup failed",
+        ))),
+    ]);
+    let mut session = AgentSession::start_cancellable_with_continuation(
+        current,
+        continuation,
+        repository.clone(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    let entries_before = repository.entries.lock().unwrap().len();
+    repository.fail_append.store(true, Ordering::Release);
+
+    let error = session
+        .replace_backend(Box::new(candidate), || false)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        crate::AgentSessionError::Multiple {
+            primary,
+            additional,
+        } if matches!(*primary, crate::AgentSessionError::Runtime(_))
+            && matches!(*additional, crate::AgentSessionError::BackendCleanup(_))
+    ));
+    assert_eq!(repository.entries.lock().unwrap().len(), entries_before);
+
+    let mut admission = session
+        .dispatch(AgentIntent::Submit(InputSubmission::new(
+            SubmissionId::new().unwrap(),
+            UserInput::new("still usable"),
+        )))
+        .unwrap();
+    while let CommandAdmission::Backpressured(pending) = admission {
+        admission = session.retry(pending).unwrap();
+    }
+    let transcript = session.transcript_reader();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        session.poll().unwrap();
+        if transcript.read_after(None).entries().iter().any(|entry| {
+            matches!(
+                entry.record(),
+                crate::TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+                    turn: finished,
+                    ..
+                }) if *finished == turn
+            )
+        }) {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the previous backend did not finish work after a rejected replacement"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    session.shutdown().unwrap();
+}
+
+// exact-replay replacement은 기존 Anchor의 전체 snapshot을 먼저 게시한 뒤 이전 epoch를
+// 닫고 새 binding epoch를 열며, replay와 Session identity는 그대로 이어지는지 검증합니다.
+#[test]
+fn replacement_resume_publishes_a_new_binding_epoch_from_the_exact_anchor() {
+    let (mut repository, continuation) = durable_resumable_session();
+    let target = continuation.target().clone();
+    let before = repository.entries.lock().unwrap().len();
+    let previous_replay = target.model_replay().clone();
+    let session_id = continuation.descriptor().session_id();
+    let turn = TurnRef::new(
+        session_id,
+        TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
+    );
+    let replacement = replacement_binding();
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::ReplaceBinding {
+            target: Box::new(target),
+            evidence: replacement.clone(),
+        },
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: AgentCommand::StartTurn {
+                turn,
+                input: UserInput::new("continue on replacement"),
+            },
+            evidence: BackendCommandEvidence::RequestAccepted(BackendRequestEvidence::new(
+                "replacement/request/v1",
+                BackendIdentity::new("replacement/exchange/v1", "request-2"),
+                BackendIdentity::new("replacement/request/v1", "request-2"),
+            )),
+        },
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn,
+            evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
+                "replacement/outcome/v1",
+                "outcome-2",
+            ))
+            .with_replay(ModelReplayDelta::new(
+                None,
+                vec![
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::User,
+                        content: "continue on replacement".to_owned(),
+                    },
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::Assistant,
+                        content: "replacement complete".to_owned(),
+                    },
+                ],
+            )),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+
+    let mut session = AgentSession::start_cancellable_with_replacement_continuation(
+        backend,
+        continuation,
+        repository.clone(),
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    let mut admission = session
+        .dispatch(AgentIntent::Submit(InputSubmission::new(
+            SubmissionId::new().unwrap(),
+            UserInput::new("continue on replacement"),
+        )))
+        .unwrap();
+    while let CommandAdmission::Backpressured(pending) = admission {
+        admission = session.retry(pending).unwrap();
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while repository.entries.lock().unwrap().len() < before + 4 {
+        session.poll().unwrap();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the replacement Turn did not publish its durable Anchor"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    session.shutdown().unwrap();
+
+    assert_eq!(repository.entries.lock().unwrap().len(), before + 4);
+    let recovered = recover_stored_session_continuation(&mut repository, session_id).unwrap();
+    assert_eq!(recovered.target().epoch(), 2);
+    assert_eq!(recovered.target().binding(), &replacement);
+    assert_eq!(
+        recovered.target().model_replay().items().len(),
+        previous_replay.items().len() + 2
     );
 }
 

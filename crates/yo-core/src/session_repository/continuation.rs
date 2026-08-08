@@ -129,14 +129,32 @@ fn build_continuation(
             "stored Session descriptor identity does not match its repository key",
         ));
     }
-    let anchor_sequence = recovered.continuation_anchor().ok_or_else(|| {
-        StoredSessionContinuationError::new(format!(
-            "stored Session {session_id} has no newest durable Continuation Anchor"
-        ))
-    })?;
     let epoch = recovered.binding_epoch().ok_or_else(|| {
         StoredSessionContinuationError::new("Continuation Anchor has no open backend binding")
     })?;
+    let binding = recovered
+        .records()
+        .iter()
+        .find_map(|record| match record.record() {
+            JournalRecord::BackendBindingOpened(candidate) if candidate.epoch() == epoch => {
+                Some(candidate.clone())
+            },
+            _ => None,
+        })
+        .ok_or_else(|| {
+            StoredSessionContinuationError::new(
+                "the open backend binding is absent from the recovered semantic Journal",
+            )
+        })?;
+    let transition_anchor = binding.transition().source_anchor_sequence();
+    let anchor_sequence = recovered
+        .continuation_anchor()
+        .or(transition_anchor)
+        .ok_or_else(|| {
+            StoredSessionContinuationError::new(format!(
+                "stored Session {session_id} has no newest durable Continuation Anchor"
+            ))
+        })?;
     let anchor_epoch = recovered
         .records()
         .iter()
@@ -154,21 +172,19 @@ fn build_continuation(
                 anchor_sequence.get()
             ))
         })?;
-    if anchor_epoch != epoch {
+    let resumes_from_replacement_source = transition_anchor == Some(anchor_sequence)
+        && binding.transition().mode() == crate::journal::codec::TransitionMode::ExactReplay;
+    if anchor_epoch != epoch && !resumes_from_replacement_source {
         return Err(StoredSessionContinuationError::new(format!(
             "Continuation Anchor {} belongs to epoch {anchor_epoch}, not open epoch {epoch}",
             anchor_sequence.get()
         )));
     }
 
-    let mut binding = None;
     let mut max_turn = 0_u64;
     for record in recovered.records() {
-        match record.record() {
-            JournalRecord::BackendBindingOpened(candidate) if candidate.epoch() == epoch => {
-                binding = Some(candidate.clone());
-            },
-            JournalRecord::CommandCommitted(committed) => match committed.command() {
+        if let JournalRecord::CommandCommitted(committed) = record.record() {
+            match committed.command() {
                 AgentCommand::StartTurn { turn, .. }
                 | AgentCommand::SteerTurn { turn, .. }
                 | AgentCommand::InterruptTurn { turn } => {
@@ -178,16 +194,9 @@ fn build_continuation(
                     max_turn = max_turn.max(request.activity().turn().turn_id().get().get());
                 },
                 AgentCommand::CreateSession { .. } => {},
-            },
-            _ => {},
+            }
         }
     }
-    let binding = binding.ok_or_else(|| {
-        StoredSessionContinuationError::new(format!(
-            "Continuation Anchor {} does not identify a durable backend binding",
-            anchor_sequence.get()
-        ))
-    })?;
     let evidence = BackendBindingEvidence::new(
         binding.backend_kind(),
         binding.backend_version(),
@@ -210,7 +219,7 @@ fn build_continuation(
     })?;
     Ok(StoredSessionContinuation {
         recovered,
-        target: BackendResumeTarget::new(session_id, epoch, evidence)
+        target: BackendResumeTarget::new(session_id, epoch, evidence, anchor_sequence)
             .with_model_replay(model_replay),
         next_turn_id,
         transcript_records,

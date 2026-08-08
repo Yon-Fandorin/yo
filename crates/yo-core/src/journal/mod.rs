@@ -180,17 +180,40 @@ impl SessionJournal {
     }
 
     fn append_records(&mut self, records: Vec<SemanticRecord>) {
-        let first_sequence = read_state(&self.state).next_sequence();
-        let entries = records
-            .into_iter()
-            .enumerate()
-            .map(|(offset, record)| JournalEntry::new(first_sequence.advance_by(offset), record))
-            .collect::<Vec<_>>();
+        let entries = self.entries_for(records);
         let durability = if let Some(durable) = &mut self.durable {
             durable.publish(&entries)
         } else {
             JournalDurability::MemoryOnly
         };
+        self.commit_entries(entries, durability);
+    }
+
+    fn append_records_transactionally(&mut self, records: Vec<SemanticRecord>) -> bool {
+        let entries = self.entries_for(records);
+        let durability = if let Some(durable) = &mut self.durable {
+            durable.publish_transactionally(&entries)
+        } else {
+            JournalDurability::MemoryOnly
+        };
+        if !matches!(durability, JournalDurability::Durable { .. }) {
+            write_state(&self.state).observe_durability(durability);
+            return false;
+        }
+        self.commit_entries(entries, durability);
+        true
+    }
+
+    fn entries_for(&self, records: Vec<SemanticRecord>) -> Vec<JournalEntry> {
+        let first_sequence = read_state(&self.state).next_sequence();
+        records
+            .into_iter()
+            .enumerate()
+            .map(|(offset, record)| JournalEntry::new(first_sequence.advance_by(offset), record))
+            .collect()
+    }
+
+    fn commit_entries(&mut self, entries: Vec<JournalEntry>, durability: JournalDurability) {
         let mut state = write_state(&self.state);
         state.observe_durability(durability);
         for entry in &entries {

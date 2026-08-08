@@ -271,7 +271,7 @@ impl NativeModelBackend {
             "account": self.binding.account_id().as_str(),
             "model": self.binding.model_id().as_str(),
             "connector": self.binding.connector_id().as_str(),
-            "api_protocol": self.binding.api_protocol().as_str(),
+            "api_dialect": self.binding.api_dialect().as_str(),
             "base_url": self.binding.endpoint().as_str(),
         })
         .to_string();
@@ -382,6 +382,7 @@ impl NativeModelBackend {
             self.registry
                 .function_tools()
                 .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?,
+            self.model_context.max_output_tokens(),
             self.config.reasoning_effort,
         )
         .map_err(map_connector_turn)?;
@@ -400,12 +401,12 @@ impl NativeModelBackend {
         let admitted_input = self
             .model_context
             .input_token_limit()
-            .saturating_sub(self.model_context.output_token_reserve());
+            .saturating_sub(self.model_context.max_output_tokens());
         if input_tokens > admitted_input {
             return Err(failure(
                 BackendFailureKind::ContextExhausted,
                 format!(
-                    "context_exhausted: {input_tokens} input tokens exceed the admitted {admitted_input} after output reserve"
+                    "context_exhausted: {input_tokens} input tokens exceed the admitted {admitted_input} after the configured output cap"
                 ),
             ));
         }
@@ -820,7 +821,7 @@ impl NativeModelBackend {
                         "account": self.binding.account_id().as_str(),
                         "model": self.binding.model_id().as_str(),
                         "connector": self.binding.connector_id().as_str(),
-                        "api_protocol": self.binding.api_protocol().as_str(),
+                        "api_dialect": self.binding.api_dialect().as_str(),
                         "base_url": self.binding.endpoint().as_str(),
                         "usage": {
                             "input_tokens": usage.input_tokens,
@@ -1466,6 +1467,27 @@ impl AgentBackend for NativeModelBackend {
         self.session = Some(target.session_id());
         self.replay = target.model_replay().clone();
         Ok(expected)
+    }
+
+    fn resume_session_replacing_binding(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        if self.closed || self.session.is_some() || self.turn.is_some() {
+            return Err(failure(
+                BackendFailureKind::Session,
+                "native backend is not available for binding replacement",
+            ));
+        }
+        if target.model_replay().contract() != Some(&self.contract) {
+            return Err(failure(
+                BackendFailureKind::Session,
+                "durable exact replay contract does not match the replacement binding",
+            ));
+        }
+        self.session = Some(target.session_id());
+        self.replay = target.model_replay().clone();
+        Ok(self.binding_evidence(target.session_id()))
     }
 
     fn execute_command(

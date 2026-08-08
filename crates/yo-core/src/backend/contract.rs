@@ -33,6 +33,17 @@ pub trait AgentBackend {
         ))
     }
 
+    /// Opens a new binding from the exact replay carried by a durable anchor.
+    fn resume_session_replacing_binding(
+        &mut self,
+        _target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        Err(BackendFailure::new(
+            BackendFailureKind::Unsupported,
+            "this backend does not support exact-replay binding replacement",
+        ))
+    }
+
     /// Executes a command far enough to know whether the backend accepted it.
     ///
     /// The returned provider-neutral evidence contains only facts the adapter observed; the
@@ -52,6 +63,48 @@ pub trait AgentBackend {
     /// Implementations must make repeated calls safe. A successful call makes later polling return
     /// [`BackendPoll::Closed`] and later commands fail explicitly.
     fn shutdown(&mut self) -> Result<(), BackendFailure>;
+}
+
+impl<T> AgentBackend for Box<T>
+where
+    T: AgentBackend + ?Sized,
+{
+    fn stop_handle(&self) -> BackendStopHandle {
+        (**self).stop_handle()
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        (**self).capabilities()
+    }
+
+    fn resume_session(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        (**self).resume_session(target)
+    }
+
+    fn resume_session_replacing_binding(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        (**self).resume_session_replacing_binding(target)
+    }
+
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        (**self).execute_command(command)
+    }
+
+    fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
+        (**self).poll_event()
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        (**self).shutdown()
+    }
 }
 
 /// Provider-neutral, cloneable cancellation handle for backend lifecycle ownership.

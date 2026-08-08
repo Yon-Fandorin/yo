@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt};
 
-use super::{AccountId, ModelServiceError};
+use super::{AccountId, ModelServiceError, ProviderId};
 
 const MAX_API_CREDENTIAL_BYTES: usize = 16 * 1024;
 
@@ -46,22 +46,22 @@ impl fmt::Display for ApiCredential {
 
 #[derive(Clone, Default)]
 pub struct CredentialStore {
-    accounts: HashMap<AccountId, ApiCredential>,
+    credentials: HashMap<(ProviderId, AccountId), ApiCredential>,
 }
 
 impl CredentialStore {
     pub fn new(
-        accounts: impl IntoIterator<Item = (AccountId, ApiCredential)>,
+        credentials: impl IntoIterator<Item = ((ProviderId, AccountId), ApiCredential)>,
     ) -> Result<Self, ModelServiceError> {
         let mut store = Self::default();
-        for (account_id, credential) in accounts {
+        for ((provider_id, account_id), credential) in credentials {
             if store
-                .accounts
-                .insert(account_id.clone(), credential)
+                .credentials
+                .insert((provider_id.clone(), account_id.clone()), credential)
                 .is_some()
             {
                 return Err(ModelServiceError::new(format!(
-                    "duplicate credential for AccountId {account_id}"
+                    "duplicate credential for ProviderId {provider_id} and AccountId {account_id}"
                 )));
             }
         }
@@ -69,18 +69,34 @@ impl CredentialStore {
     }
 
     #[must_use]
-    pub fn resolve(&self, account_id: &AccountId) -> Option<&ApiCredential> {
-        self.accounts.get(account_id)
+    pub fn resolve(
+        &self,
+        provider_id: &ProviderId,
+        account_id: &AccountId,
+    ) -> Option<&ApiCredential> {
+        self.credentials
+            .get(&(provider_id.clone(), account_id.clone()))
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.accounts.is_empty()
+        self.credentials.is_empty()
     }
 
     #[must_use]
     pub fn len(&self) -> usize {
-        self.accounts.len()
+        self.credentials.len()
+    }
+
+    /// Reports whether a semantic value contains any credential in this snapshot.
+    ///
+    /// This permits redaction gates to cover every configured Account without exposing an
+    /// iterator over the underlying secret values.
+    #[must_use]
+    pub fn contains_secret_material(&self, value: &str) -> bool {
+        self.credentials
+            .values()
+            .any(|credential| value.contains(credential.expose_secret()))
     }
 }
 
@@ -88,7 +104,7 @@ impl fmt::Debug for CredentialStore {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("CredentialStore")
-            .field("account_count", &self.accounts.len())
+            .field("credential_count", &self.credentials.len())
             .finish()
     }
 }

@@ -48,7 +48,7 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
     let active_turn_id = Arc::new(AtomicU64::new(active_turn.turn_id().get().get()));
     let outcomes = Arc::new(Mutex::new(VecDeque::new()));
     let mut worker = AgentWorker::new(
-        backend,
+        Box::new(backend),
         session(),
         Arc::clone(&state),
         Arc::clone(&active_turn_id),
@@ -70,6 +70,7 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
 
     let (normal_tx, normal_rx) = mpsc::sync_channel(1);
     let (urgent_tx, urgent_rx) = mpsc::sync_channel(1);
+    let (_replacement_tx, replacement_rx) = mpsc::sync_channel(1);
     normal_tx
         .send(PendingCommand::from_submission(
             AgentCommand::SteerTurn {
@@ -95,7 +96,14 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
     let processed = (Mutex::new(0), Condvar::new());
     let lifecycle = AtomicU8::new(WORKER_IDLE);
 
-    let exit = worker.run(normal_rx, urgent_rx, &mut changes, &processed, &lifecycle);
+    let exit = worker.run(
+        normal_rx,
+        urgent_rx,
+        replacement_rx,
+        &mut changes,
+        &processed,
+        &lifecycle,
+    );
 
     assert!(exit.failure.is_none());
     assert_eq!(

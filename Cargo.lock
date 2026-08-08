@@ -2036,8 +2036,10 @@ dependencies = [
  "libc",
  "nix",
  "serde",
+ "serde_json",
  "serde_norway",
  "signal-hook",
+ "tiktoken-rs",
  "yo-core",
  "yo-tui",
 ]

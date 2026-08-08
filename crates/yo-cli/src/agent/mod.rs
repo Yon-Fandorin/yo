@@ -93,16 +93,29 @@ impl TuiAgentConnection {
         backend: B,
         continuation: yo_core::session_repository::StoredSessionContinuation,
         repository: R,
+        replace_binding: bool,
         termination: &mut impl TerminationSource,
     ) -> Result<Option<Self>, AgentSessionError>
     where
         B: AgentBackend + Send + 'static,
         R: SessionRepository + Send + 'static,
     {
-        AgentSession::start_cancellable_with_continuation(backend, continuation, repository, || {
-            termination_requested(termination)
-        })
-        .map(|session| {
+        let started = if replace_binding {
+            AgentSession::start_cancellable_with_replacement_continuation(
+                backend,
+                continuation,
+                repository,
+                || termination_requested(termination),
+            )
+        } else {
+            AgentSession::start_cancellable_with_continuation(
+                backend,
+                continuation,
+                repository,
+                || termination_requested(termination),
+            )
+        };
+        started.map(|session| {
             session.map(|session| {
                 let transcript = session.transcript_reader();
                 let request_trace = session.request_trace_reader();
@@ -123,6 +136,15 @@ impl TuiAgentConnection {
 
     pub(crate) fn shutdown(&mut self) -> Result<Vec<yo_core::AgentEvent>, AgentSessionError> {
         self.session.shutdown()
+    }
+
+    pub(crate) fn replace_backend(
+        &mut self,
+        backend: Box<dyn AgentBackend + Send>,
+        termination: &mut impl TerminationSource,
+    ) -> Result<yo_core::BackendReplacementOutcome, AgentSessionError> {
+        self.session
+            .replace_backend(backend, || termination_requested(termination))
     }
 }
 

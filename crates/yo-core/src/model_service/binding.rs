@@ -5,11 +5,11 @@ use url::Url;
 use super::{AccountId, ModelId, ModelServiceError, ProviderId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ApiProtocol {
+pub enum ApiDialect {
     OpenAiResponses,
 }
 
-impl ApiProtocol {
+impl ApiDialect {
     pub const OPENAI_RESPONSES: &'static str = "openai-responses";
 
     #[must_use]
@@ -20,20 +20,20 @@ impl ApiProtocol {
     }
 }
 
-impl fmt::Display for ApiProtocol {
+impl fmt::Display for ApiDialect {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
 }
 
-impl FromStr for ApiProtocol {
+impl FromStr for ApiDialect {
     type Err = ModelServiceError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             Self::OPENAI_RESPONSES => Ok(Self::OpenAiResponses),
             _ => Err(ModelServiceError::new(format!(
-                "unsupported api_protocol {value:?}; expected {}",
+                "unsupported api_dialect {value:?}; expected {}",
                 Self::OPENAI_RESPONSES
             ))),
         }
@@ -137,7 +137,7 @@ pub struct EffectiveModelBinding {
     account_id: AccountId,
     model_id: ModelId,
     connector_id: ConnectorId,
-    api_protocol: ApiProtocol,
+    api_dialect: ApiDialect,
     endpoint: NormalizedEndpoint,
 }
 
@@ -148,7 +148,7 @@ impl EffectiveModelBinding {
         account_id: AccountId,
         model_id: ModelId,
         connector_id: ConnectorId,
-        api_protocol: ApiProtocol,
+        api_dialect: ApiDialect,
         endpoint: NormalizedEndpoint,
     ) -> Self {
         Self {
@@ -156,7 +156,7 @@ impl EffectiveModelBinding {
             account_id,
             model_id,
             connector_id,
-            api_protocol,
+            api_dialect,
             endpoint,
         }
     }
@@ -182,8 +182,8 @@ impl EffectiveModelBinding {
     }
 
     #[must_use]
-    pub const fn api_protocol(&self) -> ApiProtocol {
-        self.api_protocol
+    pub const fn api_dialect(&self) -> ApiDialect {
+        self.api_dialect
     }
 
     #[must_use]

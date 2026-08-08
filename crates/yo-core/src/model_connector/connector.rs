@@ -14,7 +14,7 @@ use super::{
     ConnectorError, ConnectorFailureKind, ResponsesConnectorLimits, ResponsesEvent, ResponsesPoll,
     ResponsesRequest, sse::ResponsesSseDecoder,
 };
-use crate::{ApiCredential, ApiProtocol, ConnectorId, EffectiveModelBinding};
+use crate::{ApiCredential, ApiDialect, ConnectorId, EffectiveModelBinding};
 
 const EVENT_QUEUE_CAPACITY: usize = 256;
 
@@ -63,7 +63,7 @@ impl OpenAiResponsesConnector {
     ) -> Result<Self, ConnectorError> {
         limits.validate()?;
         if binding.connector_id().as_str() != ConnectorId::OPENAI_RESPONSES
-            || binding.api_protocol() != ApiProtocol::OpenAiResponses
+            || binding.api_dialect() != ApiDialect::OpenAiResponses
         {
             return Err(configuration_failure(
                 "binding does not select the openai-responses connector and protocol",
@@ -608,6 +608,28 @@ mod tests {
     fn dummy_event(id: &str) -> ResponsesEvent {
         ResponsesEvent::ResponseCreated {
             response_id: id.to_owned(),
+        }
+    }
+
+    // 인증·rate-limit·server 오류는 상태 코드만 보존하고 민감한 body는 진단에 싣지 않는다.
+    #[test]
+    fn http_failures_preserve_only_the_status_code() {
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            let error = http_status_failure(status);
+            assert_eq!(error.kind(), ConnectorFailureKind::HttpStatus);
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "HttpStatus: Responses HTTP request returned status {}",
+                    status.as_u16()
+                )
+            );
+            assert!(!error.to_string().contains("prompt"));
+            assert!(!error.to_string().contains("credential"));
         }
     }
 

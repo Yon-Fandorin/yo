@@ -3,7 +3,7 @@ use std::{
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicU8, AtomicU64, Ordering},
-        mpsc::{self, Receiver, SyncSender, TryRecvError},
+        mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
     },
     task::{Context, Poll},
     thread::{self, JoinHandle},
@@ -35,14 +35,40 @@ const WORKER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 const COMMAND_CAPACITY: usize = 32;
 const URGENT_COMMAND_CAPACITY: usize = 8;
 const CHANGE_CAPACITY: usize = 1;
+const REPLACEMENT_CAPACITY: usize = 1;
 const WORKER_IDLE: u8 = 0;
 const WORKER_EXECUTING: u8 = 1;
 const WORKER_STOPPING: u8 = 2;
+
+enum ResumeInitialization {
+    SameBinding(BackendResumeTarget),
+    Replacement(BackendResumeTarget),
+}
+
+pub(super) struct ReplacementRequest {
+    backend: Box<dyn AgentBackend + Send>,
+    result: SyncSender<Result<BackendReplacementOutcome, AgentSessionError>>,
+}
+
+/// Result of an atomically committed idle backend replacement.
+#[derive(Clone, Debug)]
+pub struct BackendReplacementOutcome {
+    cleanup_failure: Option<crate::BackendFailure>,
+}
+
+impl BackendReplacementOutcome {
+    /// Reports a previous-backend cleanup failure that occurred after the new epoch committed.
+    #[must_use]
+    pub const fn cleanup_failure(&self) -> Option<&crate::BackendFailure> {
+        self.cleanup_failure.as_ref()
+    }
+}
 
 /// Nonblocking frontend-independent connection to one worker-owned agent runtime.
 pub struct AgentSession {
     commands: SyncSender<PendingCommand>,
     urgent_commands: SyncSender<PendingCommand>,
+    replacements: SyncSender<ReplacementRequest>,
     changes: Option<Receiver<WorkerSignal>>,
     finished: Receiver<()>,
     stop: BackendStopHandle,
@@ -192,7 +218,35 @@ impl AgentSession {
             backend,
             session_id,
             journal,
-            Some(target),
+            Some(ResumeInitialization::SameBinding(target)),
+            next_turn_id,
+            submission_ids,
+            &mut is_cancelled,
+        )
+    }
+
+    /// Reopens an exact-replay Session while replacing its durable model binding.
+    pub fn start_cancellable_with_replacement_continuation<B, R>(
+        backend: B,
+        continuation: StoredSessionContinuation,
+        repository: R,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<Option<Self>, AgentSessionError>
+    where
+        B: AgentBackend + Send + 'static,
+        R: SessionRepository + Send + 'static,
+    {
+        let session_id = continuation.descriptor().session_id();
+        let target = continuation.target().clone();
+        let next_turn_id = continuation.next_turn_id();
+        let submission_ids = continuation.submission_ids();
+        let journal =
+            SessionJournal::with_repository_and_continuation(Box::new(repository), &continuation);
+        Self::start_inner(
+            backend,
+            session_id,
+            journal,
+            Some(ResumeInitialization::Replacement(target)),
             next_turn_id,
             submission_ids,
             &mut is_cancelled,
@@ -203,7 +257,7 @@ impl AgentSession {
         backend: B,
         session_id: SessionId,
         journal: SessionJournal,
-        resume_target: Option<BackendResumeTarget>,
+        resume: Option<ResumeInitialization>,
         next_turn_id: u64,
         submission_ids: HashSet<crate::SubmissionId>,
         is_cancelled: &mut dyn FnMut() -> bool,
@@ -211,9 +265,11 @@ impl AgentSession {
     where
         B: AgentBackend + Send + 'static,
     {
+        let backend: Box<dyn AgentBackend + Send> = Box::new(backend);
         let stop = backend.stop_handle();
         let (command_tx, command_rx) = mpsc::sync_channel(COMMAND_CAPACITY);
         let (urgent_tx, urgent_rx) = mpsc::sync_channel(URGENT_COMMAND_CAPACITY);
+        let (replacement_tx, replacement_rx) = mpsc::sync_channel(REPLACEMENT_CAPACITY);
         let (change_tx, change_rx) = mpsc::sync_channel(CHANGE_CAPACITY);
         let (startup_tx, startup_rx) = mpsc::sync_channel(1);
         let (finished_tx, finished_rx) = mpsc::sync_channel(1);
@@ -248,7 +304,7 @@ impl AgentSession {
                     worker_active_turn_id,
                     journal,
                     worker_submission_outcomes,
-                    resume_target,
+                    resume,
                 );
                 let outcome = match worker.initialize() {
                     Ok(_) => {
@@ -263,6 +319,7 @@ impl AgentSession {
                                 worker.run(
                                     command_rx,
                                     urgent_rx,
+                                    replacement_rx,
                                     &mut lane,
                                     &worker_processed,
                                     &worker_lifecycle,
@@ -337,6 +394,7 @@ impl AgentSession {
                 let mut app = Self {
                     commands: command_tx,
                     urgent_commands: urgent_tx,
+                    replacements: replacement_tx,
                     changes: Some(change_rx),
                     finished: finished_rx,
                     stop,
@@ -375,6 +433,65 @@ impl AgentSession {
                     Err(error)
                 }
             },
+        }
+    }
+
+    /// Atomically replaces the backend of an idle exact-replay Session.
+    ///
+    /// The current backend remains live if candidate resume or durable transition publication
+    /// fails. Cancellation stops only the candidate while the worker completes that decision.
+    pub fn replace_backend(
+        &mut self,
+        backend: Box<dyn AgentBackend + Send>,
+        mut is_cancelled: impl FnMut() -> bool,
+    ) -> Result<BackendReplacementOutcome, AgentSessionError> {
+        if self.lifecycle.load(Ordering::Acquire) != WORKER_IDLE {
+            return Err(AgentSessionError::WorkerUnavailable(
+                "binding replacement requires an idle Session".to_owned(),
+            ));
+        }
+        let candidate_stop = backend.stop_handle();
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        if let Err(error) = self.replacements.try_send(ReplacementRequest {
+            backend,
+            result: result_tx,
+        }) {
+            let mut request = match error {
+                TrySendError::Full(request) | TrySendError::Disconnected(request) => request,
+            };
+            let cleanup = request.backend.shutdown().err();
+            let primary = AgentSessionError::WorkerUnavailable(
+                "the backend replacement lane is unavailable".to_owned(),
+            );
+            return Err(match cleanup {
+                Some(cleanup) => AgentSessionError::Multiple {
+                    primary: Box::new(primary),
+                    additional: Box::new(AgentSessionError::BackendCleanup(cleanup)),
+                },
+                None => primary,
+            });
+        }
+        self.readiness.notify();
+        let mut cancellation_requested = false;
+        loop {
+            match result_rx.recv_timeout(WORKER_POLL_INTERVAL) {
+                Ok(result) => {
+                    let outcome = result?;
+                    self.stop = candidate_stop;
+                    return Ok(outcome);
+                },
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(AgentSessionError::WorkerUnavailable(
+                        "the runtime worker closed during backend replacement".to_owned(),
+                    ));
+                },
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if is_cancelled() && !cancellation_requested {
+                        cancellation_requested = true;
+                        candidate_stop.request_stop();
+                    }
+                },
+            }
         }
     }
 

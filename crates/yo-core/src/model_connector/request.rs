@@ -112,6 +112,7 @@ impl ReasoningEffort {
 pub struct ResponsesRequest {
     input: Vec<ResponsesInputItem>,
     tools: Vec<FunctionTool>,
+    max_output_tokens: u64,
     reasoning_effort: Option<ReasoningEffort>,
 }
 
@@ -119,12 +120,19 @@ impl ResponsesRequest {
     pub fn new(
         input: Vec<ResponsesInputItem>,
         tools: Vec<FunctionTool>,
+        max_output_tokens: u64,
         reasoning_effort: Option<ReasoningEffort>,
     ) -> Result<Self, ConnectorError> {
         if input.is_empty() {
             return Err(ConnectorError::new(
                 ConnectorFailureKind::Configuration,
                 "Responses input must contain at least one item",
+            ));
+        }
+        if max_output_tokens == 0 {
+            return Err(ConnectorError::new(
+                ConnectorFailureKind::Configuration,
+                "Responses max_output_tokens must be positive",
             ));
         }
         let mut names = HashSet::new();
@@ -151,6 +159,7 @@ impl ResponsesRequest {
         Ok(Self {
             input,
             tools,
+            max_output_tokens,
             reasoning_effort,
         })
     }
@@ -208,6 +217,7 @@ impl ResponsesRequest {
             "tools": tools,
             "tool_choice": "auto",
             "stream": true,
+            "max_output_tokens": self.max_output_tokens,
         });
         if let Some(effort) = self.reasoning_effort {
             body["reasoning"] = json!({ "effort": effort.as_str() });

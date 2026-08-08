@@ -4,13 +4,14 @@ use yo_tui::{GlyphProfile, PresentationMode};
 
 use super::AppError;
 
-const USAGE: &str = "yo [--resume SESSION_ID | --continue] [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript|request] [--ascii]";
+const USAGE: &str = "yo [--resume SESSION_ID | --continue] [--model MODEL_ID] [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript|request] [--ascii]";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LiveOptions {
     pub(crate) mode: PresentationMode,
     pub(crate) glyph_profile: GlyphProfile,
     pub(crate) selection: LiveSelection,
+    pub(crate) model: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -60,6 +61,7 @@ fn parse_live(arguments: impl IntoIterator<Item = OsString>) -> Result<LiveOptio
     let mut mode = None;
     let mut glyph_profile = None;
     let mut selection = None;
+    let mut model = None;
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
         let selected_mode = match argument.as_os_str() {
@@ -90,6 +92,16 @@ fn parse_live(arguments: impl IntoIterator<Item = OsString>) -> Result<LiveOptio
                 )?;
                 None
             },
+            value if value == "--model" => {
+                let value = arguments
+                    .next()
+                    .ok_or_else(|| usage_error("`--model` requires a Model ID"))?;
+                let value = value
+                    .to_str()
+                    .ok_or_else(|| usage_error("Model ID is not UTF-8"))?;
+                set_once(&mut model, value.to_owned(), "--model")?;
+                None
+            },
             _ => {
                 return Err(usage_error(format!(
                     "unknown argument `{}`",
@@ -107,6 +119,7 @@ fn parse_live(arguments: impl IntoIterator<Item = OsString>) -> Result<LiveOptio
         mode: mode.unwrap_or(PresentationMode::Inline),
         glyph_profile: glyph_profile.unwrap_or(GlyphProfile::Rich),
         selection: selection.unwrap_or_default(),
+        model,
     })
 }
 

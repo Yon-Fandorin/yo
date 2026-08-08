@@ -14,6 +14,10 @@ pub enum BackendScriptStep {
         target: Box<BackendResumeTarget>,
         evidence: BackendBindingEvidence,
     },
+    ReplaceBinding {
+        target: Box<BackendResumeTarget>,
+        evidence: BackendBindingEvidence,
+    },
     AcceptCommand(AgentCommand),
     AcceptCommandWithEvidence {
         command: AgentCommand,
@@ -98,6 +102,30 @@ impl AgentBackend for ScriptedBackend {
         }
     }
 
+    fn resume_session_replacing_binding(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        match self.steps.front() {
+            Some(BackendScriptStep::ReplaceBinding {
+                target: expected, ..
+            }) if expected.as_ref() == target => {
+                let Some(BackendScriptStep::ReplaceBinding { evidence, .. }) =
+                    self.steps.pop_front()
+                else {
+                    unreachable!("the front script step was binding replacement")
+                };
+                Ok(evidence)
+            },
+            Some(step) => Err(Self::protocol_failure(format!(
+                "unexpected binding replacement while awaiting {step:?}"
+            ))),
+            None => Err(Self::protocol_failure(
+                "unexpected binding replacement after the script was exhausted",
+            )),
+        }
+    }
+
     fn execute_command(
         &mut self,
         command: AgentCommand,
@@ -177,6 +205,7 @@ impl AgentBackend for ScriptedBackend {
             },
             Some(
                 BackendScriptStep::Resume { .. }
+                | BackendScriptStep::ReplaceBinding { .. }
                 | BackendScriptStep::AcceptCommand(_)
                 | BackendScriptStep::AcceptCommandWithEvidence { .. }
                 | BackendScriptStep::RejectCommand { .. }

@@ -9,7 +9,7 @@ use std::{
 
 use serde::{Deserialize, Deserializer, de};
 
-use super::{AccountId, ApiCredential, CredentialStore};
+use super::{AccountId, ApiCredential, CredentialStore, ProviderId};
 
 const MAX_CREDENTIAL_FILE_BYTES: u64 = 64 * 1024;
 
@@ -213,8 +213,8 @@ fn validate_stable_metadata(
 #[serde(deny_unknown_fields)]
 struct CredentialFile {
     version: u32,
-    #[serde(deserialize_with = "deserialize_accounts")]
-    accounts: Vec<(AccountId, ApiCredential)>,
+    #[serde(deserialize_with = "deserialize_providers")]
+    providers: Vec<((ProviderId, AccountId), ApiCredential)>,
 }
 
 #[derive(Deserialize)]
@@ -223,42 +223,85 @@ struct AccountCredential {
     api_key: String,
 }
 
-fn deserialize_accounts<'de, D>(
-    deserializer: D,
-) -> Result<Vec<(AccountId, ApiCredential)>, D::Error>
+struct ProviderCredentials(Vec<(AccountId, ApiCredential)>);
+
+impl<'de> Deserialize<'de> for ProviderCredentials {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct AccountsVisitor;
+
+        impl<'de> de::Visitor<'de> for AccountsVisitor {
+            type Value = ProviderCredentials;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("an AccountId-keyed credential mapping")
+            }
+
+            fn visit_map<A>(self, mut mapping: A) -> Result<Self::Value, A::Error>
+            where
+                A: de::MapAccess<'de>,
+            {
+                let mut accounts = Vec::with_capacity(mapping.size_hint().unwrap_or(0));
+                let mut seen = HashSet::new();
+                while let Some(account) = mapping.next_key::<String>()? {
+                    let credential = mapping.next_value::<AccountCredential>()?;
+                    let account = AccountId::new(account).map_err(de::Error::custom)?;
+                    if !seen.insert(account.clone()) {
+                        return Err(de::Error::custom("duplicate AccountId inside Provider"));
+                    }
+                    let credential =
+                        ApiCredential::new(credential.api_key).map_err(de::Error::custom)?;
+                    accounts.push((account, credential));
+                }
+                Ok(ProviderCredentials(accounts))
+            }
+        }
+
+        deserializer.deserialize_map(AccountsVisitor)
+    }
+}
+
+type ScopedCredential = ((ProviderId, AccountId), ApiCredential);
+
+fn deserialize_providers<'de, D>(deserializer: D) -> Result<Vec<ScopedCredential>, D::Error>
 where
     D: Deserializer<'de>,
 {
-    struct AccountsVisitor;
+    struct ProvidersVisitor;
 
-    impl<'de> de::Visitor<'de> for AccountsVisitor {
-        type Value = Vec<(AccountId, ApiCredential)>;
+    impl<'de> de::Visitor<'de> for ProvidersVisitor {
+        type Value = Vec<ScopedCredential>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter.write_str("an account-keyed credential mapping")
+            formatter.write_str("a ProviderId-keyed credential mapping")
         }
 
         fn visit_map<A>(self, mut mapping: A) -> Result<Self::Value, A::Error>
         where
             A: de::MapAccess<'de>,
         {
-            let mut accounts = Vec::with_capacity(mapping.size_hint().unwrap_or(0));
+            let mut credentials = Vec::new();
             let mut seen = HashSet::new();
-            while let Some(account) = mapping.next_key::<String>()? {
-                let credential = mapping.next_value::<AccountCredential>()?;
-                let account = AccountId::new(account).map_err(de::Error::custom)?;
-                if !seen.insert(account.clone()) {
-                    return Err(de::Error::custom("duplicate AccountId"));
+            while let Some(provider) = mapping.next_key::<String>()? {
+                let provider_accounts = mapping.next_value::<ProviderCredentials>()?;
+                let provider = ProviderId::new(provider).map_err(de::Error::custom)?;
+                if !seen.insert(provider.clone()) {
+                    return Err(de::Error::custom("duplicate ProviderId"));
                 }
-                let credential =
-                    ApiCredential::new(credential.api_key).map_err(de::Error::custom)?;
-                accounts.push((account, credential));
+                credentials.extend(
+                    provider_accounts
+                        .0
+                        .into_iter()
+                        .map(|(account, credential)| ((provider.clone(), account), credential)),
+                );
             }
-            Ok(accounts)
+            Ok(credentials)
         }
     }
 
-    deserializer.deserialize_map(AccountsVisitor)
+    deserializer.deserialize_map(ProvidersVisitor)
 }
 
 fn parse(path: &Path, contents: &str) -> Result<CredentialStore, LocalCredentialStoreError> {
@@ -270,7 +313,7 @@ fn parse(path: &Path, contents: &str) -> Result<CredentialStore, LocalCredential
             version: decoded.version,
         });
     }
-    CredentialStore::new(decoded.accounts)
+    CredentialStore::new(decoded.providers)
         .map_err(|_| LocalCredentialStoreError::InvalidContents(path.to_owned()))
 }
 

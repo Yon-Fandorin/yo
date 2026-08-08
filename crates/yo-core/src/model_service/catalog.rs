@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 
 use serde_json::Value;
 
@@ -63,31 +63,31 @@ impl ModelCatalogEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelContextProfile {
     input_token_limit: u64,
-    output_token_reserve: u64,
+    max_output_tokens: u64,
     tokenizer_profile: String,
 }
 
 impl ModelContextProfile {
     pub fn new(
         input_token_limit: u64,
-        output_token_reserve: u64,
+        max_output_tokens: u64,
         tokenizer_profile: impl Into<String>,
     ) -> Result<Self, ModelServiceError> {
         let tokenizer_profile = tokenizer_profile.into();
         if input_token_limit == 0
-            || output_token_reserve == 0
-            || output_token_reserve >= input_token_limit
+            || max_output_tokens == 0
+            || max_output_tokens >= input_token_limit
             || tokenizer_profile.is_empty()
             || tokenizer_profile.len() > 128
             || !tokenizer_profile.is_ascii()
         {
             return Err(ModelServiceError::new(
-                "model context profile requires a positive limit, a smaller positive output reserve, and a bounded ASCII tokenizer profile",
+                "model context profile requires a positive limit, a smaller positive max_output_tokens value, and a bounded ASCII tokenizer profile",
             ));
         }
         Ok(Self {
             input_token_limit,
-            output_token_reserve,
+            max_output_tokens,
             tokenizer_profile,
         })
     }
@@ -96,8 +96,8 @@ impl ModelContextProfile {
         self.input_token_limit
     }
 
-    pub const fn output_token_reserve(&self) -> u64 {
-        self.output_token_reserve
+    pub const fn max_output_tokens(&self) -> u64 {
+        self.max_output_tokens
     }
 
     pub fn tokenizer_profile(&self) -> &str {
@@ -142,15 +142,33 @@ pub struct ModelCatalog {
 impl ModelCatalog {
     pub fn new(entries: Vec<ModelCatalogEntry>) -> Result<Self, ModelServiceError> {
         let mut bindings = HashSet::new();
+        let mut provider_display_names = HashMap::new();
+        let mut account_display_names = HashMap::new();
         for entry in &entries {
-            if !bindings.insert(entry.binding().clone()) {
+            let binding = entry.binding();
+            let provider_id = binding.provider_id().clone();
+            let account_id = binding.account_id().clone();
+            let model_id = binding.model_id().clone();
+            if !bindings.insert((provider_id.clone(), account_id.clone(), model_id)) {
                 return Err(ModelServiceError::new(format!(
                     "duplicate configured model binding for Provider {}, Account {}, Model {}",
-                    entry.binding().provider_id(),
-                    entry.binding().account_id(),
-                    entry.binding().model_id()
+                    binding.provider_id(),
+                    binding.account_id(),
+                    binding.model_id()
                 )));
             }
+            require_consistent_display_name(
+                &mut provider_display_names,
+                provider_id.clone(),
+                entry.provider_display_name(),
+                format!("Provider {provider_id}"),
+            )?;
+            require_consistent_display_name(
+                &mut account_display_names,
+                (provider_id.clone(), account_id.clone()),
+                entry.account_display_name(),
+                format!("Provider {provider_id} Account {account_id}"),
+            )?;
         }
         Ok(Self { entries })
     }
@@ -183,6 +201,28 @@ impl ModelCatalog {
             )));
         }
         Ok(selected)
+    }
+}
+
+fn require_consistent_display_name<K>(
+    names: &mut HashMap<K, Option<String>>,
+    key: K,
+    value: Option<&str>,
+    identity: String,
+) -> Result<(), ModelServiceError>
+where
+    K: Eq + std::hash::Hash,
+{
+    let value = value.map(str::to_owned);
+    match names.entry(key) {
+        Entry::Vacant(entry) => {
+            entry.insert(value);
+            Ok(())
+        },
+        Entry::Occupied(entry) if entry.get() == &value => Ok(()),
+        Entry::Occupied(_) => Err(ModelServiceError::new(format!(
+            "inconsistent display name for {identity}"
+        ))),
     }
 }
 

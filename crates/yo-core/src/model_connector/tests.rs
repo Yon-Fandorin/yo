@@ -9,7 +9,7 @@ use super::{
     *,
 };
 use crate::{
-    AccountId, ApiCredential, ApiProtocol, ConnectorId, EffectiveModelBinding, ModelId,
+    AccountId, ApiCredential, ApiDialect, ConnectorId, EffectiveModelBinding, ModelId,
     NormalizedEndpoint, ProviderId,
 };
 
@@ -17,9 +17,9 @@ fn qwen_binding() -> EffectiveModelBinding {
     EffectiveModelBinding::new(
         ProviderId::new("qwencloud").unwrap(),
         AccountId::new("qwencloud-token-plan").unwrap(),
-        ModelId::new("qwen3.8-max").unwrap(),
+        ModelId::new("qwen3.8max").unwrap(),
         ConnectorId::new("openai-responses").unwrap(),
-        ApiProtocol::OpenAiResponses,
+        ApiDialect::OpenAiResponses,
         NormalizedEndpoint::parse(
             "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
         )
@@ -106,7 +106,7 @@ fn constructs_the_exact_qwencloud_responses_endpoint_without_exposing_the_key() 
         "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/responses"
     );
     let debug = format!("{connector:?}");
-    assert!(debug.contains("qwen3.8-max"));
+    assert!(debug.contains("qwen3.8max"));
     assert!(!debug.contains("sk-sensitive-value"));
 }
 
@@ -126,20 +126,40 @@ fn serializes_only_the_declared_responses_request_capabilities() {
             content: "hello".to_owned(),
         }],
         vec![tool],
+        8_192,
         Some(ReasoningEffort::High),
     )
     .unwrap();
 
-    let body = request.wire_body("qwen3.8-max");
+    let body = request.wire_body("qwen3.8max");
 
-    assert_eq!(body["model"], "qwen3.8-max");
+    assert_eq!(body["model"], "qwen3.8max");
     assert_eq!(body["stream"], true);
     assert_eq!(body["tool_choice"], "auto");
+    assert_eq!(body["max_output_tokens"], 8_192);
     assert_eq!(body["tools"][0]["name"], "read_file");
     assert_eq!(body["reasoning"]["effort"], "high");
     assert!(body.get("previous_response_id").is_none());
     assert!(body.get("conversation").is_none());
     assert!(body.get("x-dashscope-session-cache").is_none());
+}
+
+// output cap 0은 무제한처럼 해석하지 않고 network dispatch 전에 configuration 오류로
+// 거절합니다.
+#[test]
+fn rejects_a_zero_responses_output_cap() {
+    let error = ResponsesRequest::new(
+        vec![ResponsesInputItem::Message {
+            role: ResponsesInputRole::User,
+            content: "hello".to_owned(),
+        }],
+        Vec::new(),
+        0,
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind(), ConnectorFailureKind::Configuration);
 }
 
 // UTF-8 text delta가 HTTP chunk 경계와 무관하게 exact item correlation으로 복원되고,
@@ -632,6 +652,46 @@ fn rejects_any_sse_data_after_the_terminal_event() {
     assert_eq!(error.kind(), ConnectorFailureKind::Protocol);
 }
 
+// OpenRouter Responses는 semantic terminal 뒤 transport 종료 sentinel로 `[DONE]`을
+// 한 번 더 보낸다. terminal을 대신할 수는 없지만 clean EOF 앞 marker로는 허용한다.
+#[test]
+fn accepts_one_done_marker_after_the_terminal_event() {
+    let stream = [
+        event(json!({
+            "type": "response.completed", "sequence_number": 1,
+            "response": {"id": "resp", "status": "completed", "usage": null}
+        })),
+        "data: [DONE]\n\n".to_owned(),
+    ]
+    .concat();
+    let mut decoder = ResponsesSseDecoder::new(ResponsesConnectorLimits::default());
+
+    assert!(decoder.push(stream.as_bytes()).unwrap().is_empty());
+    assert!(matches!(
+        decoder.finish().unwrap().as_slice(),
+        [ResponsesEvent::Terminal { response_id, .. }] if response_id == "resp"
+    ));
+}
+
+// `[DONE]`은 Responses semantic terminal이 아니므로 단독 marker나 중복 marker를
+// 성공으로 승격하지 않는다.
+#[test]
+fn rejects_done_without_a_terminal_or_more_than_once() {
+    let mut without_terminal = ResponsesSseDecoder::new(ResponsesConnectorLimits::default());
+    let error = without_terminal.push(b"data: [DONE]\n\n").unwrap_err();
+    assert_eq!(error.kind(), ConnectorFailureKind::Protocol);
+
+    let terminal = event(json!({
+        "type": "response.completed", "sequence_number": 1,
+        "response": {"id": "resp", "status": "completed", "usage": null}
+    }));
+    let mut duplicate = ResponsesSseDecoder::new(ResponsesConnectorLimits::default());
+    duplicate.push(terminal.as_bytes()).unwrap();
+    duplicate.push(b"data: [DONE]\n\n").unwrap();
+    let error = duplicate.push(b"data: [DONE]\n\n").unwrap_err();
+    assert_eq!(error.kind(), ConnectorFailureKind::Protocol);
+}
+
 // terminal과 invalid tail이 서로 다른 HTTP chunk에 들어와도 EOF 전에는 성공 event를
 // 노출하지 않고 뒤의 data를 Protocol failure로 판정하여 chunk 경계 불변성을 지킵니다.
 #[test]
@@ -668,6 +728,7 @@ fn rejects_a_cancelled_request_before_starting_network_work() {
             content: "hello".to_owned(),
         }],
         Vec::new(),
+        8_192,
         None,
     )
     .unwrap();

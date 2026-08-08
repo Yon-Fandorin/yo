@@ -461,10 +461,20 @@ impl CorrelationRecovery {
                         "replacement binding source does not identify a continuation Anchor",
                     ));
                 };
-                if self.replacement_source != Some((source, previous)) || epoch != previous {
+                let inherited_local_replay_anchor = binding.continuation_strategy()
+                    == (ContinuationStrategy::ExactReplay {
+                        executor: crate::ReplayExecutor::LocalClient,
+                    })
+                    && binding.transition().mode() == TransitionMode::ExactReplay;
+                if self.replacement_source != Some((source, previous))
+                    || (epoch != previous && !inherited_local_replay_anchor)
+                {
                     return Err(JournalCodecError::new(
-                        "replacement binding must use the valid Anchor from the immediately preceding epoch",
+                        "replacement binding must use the valid resume Anchor carried by the immediately preceding epoch",
                     ));
+                }
+                if inherited_local_replay_anchor {
+                    self.latest_anchor = Some(source);
                 }
             },
         }

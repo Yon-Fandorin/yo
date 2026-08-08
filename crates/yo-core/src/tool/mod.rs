@@ -80,7 +80,11 @@ impl ToolDefinition {
             ));
         }
         let schema_version = schema_version.into();
-        validate_wire_name(&schema_version, "tool schema version")?;
+        if schema_version != TOOL_SCHEMA_DIALECT {
+            return Err(ToolRegistryError::new(format!(
+                "unsupported tool schema version; expected {TOOL_SCHEMA_DIALECT}"
+            )));
+        }
         let encoded_schema = serde_json::to_vec(&input_schema)
             .map_err(|_| ToolRegistryError::new("tool input schema cannot be encoded"))?;
         if encoded_schema.len() > MAX_SCHEMA_BYTES {

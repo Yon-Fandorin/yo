@@ -1,6 +1,101 @@
 use super::*;
 use crate::overlay::{PanelSnapshot, SelectionEntry, SlotError};
 
+fn model_controller(current_model: &str) -> yo_core::ModelSelectionController {
+    let entries = [
+        ("openrouter", "default", "free-model", "OpenRouter"),
+        ("qwencloud", "default", "qwen3.8max", "Qwen Cloud"),
+    ]
+    .into_iter()
+    .map(|(provider, account, model, provider_label)| {
+        yo_core::ModelCatalogEntry::new(
+            yo_core::EffectiveModelBinding::new(
+                yo_core::ProviderId::new(provider).unwrap(),
+                yo_core::AccountId::new(account).unwrap(),
+                yo_core::ModelId::new(model).unwrap(),
+                yo_core::ConnectorId::new("openai-responses").unwrap(),
+                yo_core::ApiDialect::OpenAiResponses,
+                yo_core::NormalizedEndpoint::parse("https://example.test/v1").unwrap(),
+            ),
+            Some(provider_label.to_owned()),
+            Some("Default".to_owned()),
+            None,
+            yo_core::ModelContextProfile::new(1_000, 100, "utf8-bytes/v1").unwrap(),
+        )
+        .unwrap()
+    })
+    .collect();
+    let current = yo_core::ModelSelection::new(
+        yo_core::ProviderId::new("qwencloud").unwrap(),
+        yo_core::AccountId::new("default").unwrap(),
+        yo_core::ModelId::new(current_model).unwrap(),
+    );
+    yo_core::ModelSelectionController::new(
+        yo_core::ModelCatalog::new(entries).unwrap(),
+        Some(current),
+    )
+}
+
+// 직접 `/model ID`는 같은 ID가 다른 Provider에 있어도 현재 namespace 밖을 탐색하지 않는다.
+#[test]
+fn direct_model_command_resolves_only_inside_the_current_provider_and_account() {
+    let mut state = TuiState::new();
+    state.enable_model_selection(model_controller("qwen3.8max"));
+    state
+        .handle(
+            InputEvent::Paste("/model free-model".to_owned()),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(state.take_model_selection(), None);
+}
+
+// picker acceptance는 display label이 아니라 Provider·Account·Model 전체 좌표를 반환한다.
+#[test]
+fn grouped_model_picker_returns_the_complete_selected_binding() {
+    let mut state = TuiState::new();
+    state.enable_model_selection(model_controller("qwen3.8max"));
+    state
+        .handle(InputEvent::Paste("/model".to_owned()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    let frame = state
+        .prepare_frame(Size::new(80, 16), &AppearanceState::default().pin())
+        .unwrap();
+    state.commit_frame(&frame);
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Exit
+    );
+    let selected = state.take_model_selection().unwrap();
+    assert_eq!(selected.provider().as_str(), "openrouter");
+    assert_eq!(selected.account().as_str(), "default");
+    assert_eq!(selected.model().as_str(), "free-model");
+}
+
 fn overlay_snapshot() -> PanelSnapshot {
     PanelSnapshot::new(
         "Commands",

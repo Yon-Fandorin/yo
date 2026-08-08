@@ -18,6 +18,7 @@ pub(super) struct ResponsesSseDecoder {
     response_text_bytes: usize,
     function_argument_bytes: usize,
     terminated: bool,
+    done_marker_seen: bool,
     pending_terminal: Option<ResponsesEvent>,
 }
 
@@ -83,6 +84,7 @@ impl ResponsesSseDecoder {
             response_text_bytes: 0,
             function_argument_bytes: 0,
             terminated: false,
+            done_marker_seen: false,
             pending_terminal: None,
         }
     }
@@ -135,12 +137,6 @@ impl ResponsesSseDecoder {
         if self.event_count > self.limits.max_sse_events {
             return Err(limit_failure("SSE event count limit exceeded"));
         }
-        if self.terminated {
-            return Err(protocol_failure(
-                "Responses stream contained data after its terminal event",
-            ));
-        }
-
         let text = std::str::from_utf8(bytes)
             .map_err(|_| protocol_failure("Responses SSE event is not valid UTF-8"))?;
         let mut declared_event = None;
@@ -163,6 +159,15 @@ impl ResponsesSseDecoder {
             return Ok(Vec::new());
         }
         let data = data_lines.join("\n");
+        if self.terminated {
+            if data == "[DONE]" && declared_event.is_none() && !self.done_marker_seen {
+                self.done_marker_seen = true;
+                return Ok(Vec::new());
+            }
+            return Err(protocol_failure(
+                "Responses stream contained data after its terminal event",
+            ));
+        }
         if data == "[DONE]" {
             return Err(protocol_failure(
                 "Chat Completions [DONE] marker is not a Responses terminal event",

@@ -10,6 +10,10 @@ use std::{
 
 use jiff::{Timestamp, fmt::strtime, tz::TimeZone};
 use serde::Deserialize;
+use yo_core::{
+    AccountId, ConnectorId, EffectiveModelBinding, ModelCatalog, ModelCatalogEntry,
+    ModelContextProfile, ModelId, NormalizedEndpoint, ProviderId,
+};
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
 const MAX_CONFIG_BYTES: u64 = 64 * 1024;
@@ -19,6 +23,9 @@ const MAX_DATE_FORMAT_BYTES: usize = 128;
 pub(crate) struct Config {
     date_format: String,
     frame_rate_limit: yo_tui::FrameRateLimit,
+    source_path: PathBuf,
+    model_catalog: ModelCatalog,
+    startup_model: Option<StartupModel>,
 }
 
 impl Default for Config {
@@ -26,6 +33,9 @@ impl Default for Config {
         Self {
             date_format: DEFAULT_DATE_FORMAT.to_owned(),
             frame_rate_limit: yo_tui::FrameRateLimit::Fps120,
+            source_path: PathBuf::new(),
+            model_catalog: ModelCatalog::default(),
+            startup_model: None,
         }
     }
 }
@@ -37,6 +47,42 @@ impl Config {
 
     pub(crate) fn frame_rate_limit(&self) -> yo_tui::FrameRateLimit {
         self.frame_rate_limit
+    }
+
+    pub(crate) fn model_catalog(&self) -> &ModelCatalog {
+        &self.model_catalog
+    }
+
+    pub(crate) fn startup_model(&self) -> Option<&StartupModel> {
+        self.startup_model.as_ref()
+    }
+
+    pub(crate) fn credential_path(&self) -> PathBuf {
+        self.source_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("credentials.yaml")
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct StartupModel {
+    provider: ProviderId,
+    account: AccountId,
+    model: ModelId,
+}
+
+impl StartupModel {
+    pub(crate) fn provider(&self) -> &ProviderId {
+        &self.provider
+    }
+
+    pub(crate) fn account(&self) -> &AccountId {
+        &self.account
+    }
+
+    pub(crate) fn model(&self) -> &ModelId {
+        &self.model
     }
 }
 
@@ -106,6 +152,10 @@ pub(crate) enum ConfigError {
         path: PathBuf,
         value: u16,
     },
+    InvalidModel {
+        path: PathBuf,
+        message: String,
+    },
     TimestampOutOfRange(u64),
 }
 
@@ -145,6 +195,9 @@ impl fmt::Display for ConfigError {
                 "{}: tui.max_fps must be 60 or 120, not {value}",
                 path.display()
             ),
+            Self::InvalidModel { path, message } => {
+                write!(formatter, "{}: {message}", path.display())
+            },
             Self::TimestampOutOfRange(millis) => {
                 write!(
                     formatter,
@@ -167,6 +220,7 @@ impl Error for ConfigError {
             | Self::UnsupportedVersion { .. }
             | Self::InvalidDateFormat(_)
             | Self::InvalidMaxFps { .. }
+            | Self::InvalidModel { .. }
             | Self::TimestampOutOfRange(_) => None,
         }
     }
@@ -180,6 +234,8 @@ struct FileConfig {
     session: SessionConfig,
     #[serde(default)]
     tui: TuiConfig,
+    #[serde(default)]
+    model: ModelConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -201,6 +257,39 @@ struct TuiConfig {
     max_fps: Option<u16>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelConfig {
+    startup: Option<StartupModelConfig>,
+    #[serde(default)]
+    catalog: Vec<ModelEntryConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StartupModelConfig {
+    provider: String,
+    account: String,
+    model: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelEntryConfig {
+    provider: String,
+    provider_display_name: Option<String>,
+    account: String,
+    account_display_name: Option<String>,
+    model: String,
+    model_display_name: Option<String>,
+    connector: String,
+    api_dialect: String,
+    base_url: String,
+    input_token_limit: u64,
+    max_output_tokens: u64,
+    tokenizer_profile: String,
+}
+
 pub(crate) fn load() -> Result<Config, ConfigError> {
     let path = config_path()?;
     load_from(&path)
@@ -213,7 +302,12 @@ fn load_from(path: &Path) -> Result<Config, ConfigError> {
         .open(path)
     {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Config::default()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Config {
+                source_path: path.to_owned(),
+                ..Config::default()
+            });
+        },
         Err(source) => {
             return Err(ConfigError::Io {
                 path: path.to_owned(),
@@ -270,6 +364,23 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
             });
         },
     };
+    let model_catalog = ModelCatalog::new(
+        decoded
+            .model
+            .catalog
+            .into_iter()
+            .map(|entry| model_entry(path, entry))
+            .collect::<Result<Vec<_>, _>>()?,
+    )
+    .map_err(|error| ConfigError::InvalidModel {
+        path: path.to_owned(),
+        message: error.to_string(),
+    })?;
+    let startup_model = decoded
+        .model
+        .startup
+        .map(|startup| startup_model(path, startup, &model_catalog))
+        .transpose()?;
     let config = Config {
         date_format: decoded
             .session
@@ -277,6 +388,9 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
             .date_format
             .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_owned()),
         frame_rate_limit,
+        source_path: path.to_owned(),
+        model_catalog,
+        startup_model,
     };
     config.date_formatter().map_err(|error| match error {
         ConfigError::InvalidDateFormat(message) => {
@@ -285,6 +399,63 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
         other => other,
     })?;
     Ok(config)
+}
+
+fn model_entry(path: &Path, entry: ModelEntryConfig) -> Result<ModelCatalogEntry, ConfigError> {
+    let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
+        path: path.to_owned(),
+        message: error.to_string(),
+    };
+    let binding = EffectiveModelBinding::new(
+        ProviderId::new(entry.provider).map_err(&invalid)?,
+        AccountId::new(entry.account).map_err(&invalid)?,
+        ModelId::new(entry.model).map_err(&invalid)?,
+        ConnectorId::new(entry.connector).map_err(&invalid)?,
+        entry.api_dialect.parse().map_err(&invalid)?,
+        NormalizedEndpoint::parse(&entry.base_url).map_err(&invalid)?,
+    );
+    let context = ModelContextProfile::new(
+        entry.input_token_limit,
+        entry.max_output_tokens,
+        entry.tokenizer_profile,
+    )
+    .map_err(&invalid)?;
+    ModelCatalogEntry::new(
+        binding,
+        entry.provider_display_name,
+        entry.account_display_name,
+        entry.model_display_name,
+        context,
+    )
+    .map_err(invalid)
+}
+
+fn startup_model(
+    path: &Path,
+    startup: StartupModelConfig,
+    catalog: &ModelCatalog,
+) -> Result<StartupModel, ConfigError> {
+    let startup = StartupModel {
+        provider: ProviderId::new(startup.provider).map_err(|error| ConfigError::InvalidModel {
+            path: path.to_owned(),
+            message: error.to_string(),
+        })?,
+        account: AccountId::new(startup.account).map_err(|error| ConfigError::InvalidModel {
+            path: path.to_owned(),
+            message: error.to_string(),
+        })?,
+        model: ModelId::new(startup.model).map_err(|error| ConfigError::InvalidModel {
+            path: path.to_owned(),
+            message: error.to_string(),
+        })?,
+    };
+    catalog
+        .resolve_model(&startup.provider, &startup.account, &startup.model)
+        .map_err(|error| ConfigError::InvalidModel {
+            path: path.to_owned(),
+            message: format!("model.startup does not name one configured entry: {error}"),
+        })?;
+    Ok(startup)
 }
 
 fn config_path() -> Result<PathBuf, ConfigError> {

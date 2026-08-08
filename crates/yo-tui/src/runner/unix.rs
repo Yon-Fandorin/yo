@@ -151,9 +151,20 @@ pub fn run_session_with_mode<A>(
 where
     A: AgentConnection,
 {
-    finish(catch_owner_panic(AssertUnwindSafe(|| {
+    let outcome = finish(catch_owner_panic(AssertUnwindSafe(|| {
         run_routed(termination, agent, session, mode)
-    })))
+    })))?;
+    if matches!(
+        outcome,
+        TerminalOutcome::Exited(crate::runner::RunOutcome {
+            reason: crate::runner::ExitReason::UserRequested,
+            ..
+        })
+    ) && let Some(selection) = session.take_model_selection()
+    {
+        return Ok(TerminalOutcome::ModelSelectionRequested(selection));
+    }
+    Ok(outcome)
 }
 
 fn run_routed<A>(

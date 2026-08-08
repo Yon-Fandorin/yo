@@ -192,6 +192,46 @@ fn replacement_commit(
     )
 }
 
+fn local_exact_replay_replacement_commit(
+    epoch: u64,
+    first_replay: u64,
+    first_journal: u64,
+) -> JournalCommit {
+    JournalCommit::incremental_through(
+        JournalSequence::new(first_journal + 1),
+        vec![
+            semantic(
+                first_replay,
+                first_journal,
+                JournalRecord::BackendBindingClosed(BackendBindingClosed::new(
+                    epoch - 1,
+                    BindingCloseReason::Replaced,
+                )),
+            ),
+            semantic(
+                first_replay + 1,
+                first_journal + 1,
+                JournalRecord::BackendBindingOpened(BackendBindingOpened::new(
+                    epoch,
+                    "native",
+                    "1.0.0",
+                    identity(&format!("binding-{epoch}")),
+                    identity(&format!("model-{epoch}")),
+                    identity(&format!("session-{epoch}")),
+                    BindingTransition::new(
+                        TransitionMode::ExactReplay,
+                        CacheState::Lost,
+                        Some(JournalSequence::new(9)),
+                    ),
+                    ContinuationStrategy::ExactReplay {
+                        executor: ReplayExecutor::LocalClient,
+                    },
+                )),
+            ),
+        ],
+    )
+}
+
 fn backend_managed_replacement_commit() -> JournalCommit {
     JournalCommit::incremental_through(
         JournalSequence::new(11),
@@ -564,7 +604,8 @@ fn clears_the_latest_anchor_when_the_binding_closes() {
 }
 
 // epoch 1을 replaced로 닫은 직후 그 epoch의 최신 Anchor를 source로 쓰면 epoch 2가
-// 정상적으로 열리고, 새 binding 자체가 아직 완결되지 않은 이전 Anchor 노출은 지웁니다.
+// 정상적으로 열립니다. Backend-managed binding은 이전 Anchor를 현재 resume 후보로
+// 노출하지 않습니다.
 #[test]
 fn opens_the_next_epoch_from_the_immediately_preceding_anchor() {
     let mut commits = valid_history();
@@ -574,6 +615,39 @@ fn opens_the_next_epoch_from_the_immediately_preceding_anchor() {
 
     assert_eq!(recovered.binding_epoch(), Some(2));
     assert_eq!(recovered.continuation_anchor(), None);
+}
+
+// Local exact replay replacement는 새 epoch에서 아직 Turn이 없더라도 durable source
+// Anchor와 누적 replay를 사용해 즉시 다시 열 수 있어야 합니다.
+#[test]
+fn local_exact_replay_replacement_keeps_its_source_as_the_resume_anchor() {
+    let mut commits = valid_history();
+    commits.push(local_exact_replay_replacement_commit(2, 11, 10));
+
+    let recovered = recover(&commits).expect("the local exact replay lineage is valid");
+
+    assert_eq!(recovered.binding_epoch(), Some(2));
+    assert_eq!(
+        recovered.continuation_anchor(),
+        Some(JournalSequence::new(9))
+    );
+}
+
+// 새 Turn 없이 local exact-replay binding을 연속 교체하면 바로 전 epoch가 물려받은
+// 동일 source Anchor를 다시 전달해도 계보가 이어져야 합니다.
+#[test]
+fn consecutive_local_exact_replay_replacements_keep_the_inherited_anchor() {
+    let mut commits = valid_history();
+    commits.push(local_exact_replay_replacement_commit(2, 11, 10));
+    commits.push(local_exact_replay_replacement_commit(3, 13, 12));
+
+    let recovered = recover(&commits).expect("the inherited local replay Anchor is valid");
+
+    assert_eq!(recovered.binding_epoch(), Some(3));
+    assert_eq!(
+        recovered.continuation_anchor(),
+        Some(JournalSequence::new(9))
+    );
 }
 
 // exact replay epoch를 backend-managed binding으로 교체하면 이전 Yo replay는 새 Anchor가

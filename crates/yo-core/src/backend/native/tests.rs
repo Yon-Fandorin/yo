@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::*;
 use crate::{
-    AccountId, AgentEvent, AgentRuntime, ApiProtocol, ConnectorId, ModelId, NormalizedEndpoint,
+    AccountId, AgentEvent, AgentRuntime, ApiDialect, ConnectorId, ModelId, NormalizedEndpoint,
     ProviderId, RuntimePoll, SubmissionId, ToolDefinition, ToolEffect, ToolExecutionError,
     ToolExecutionResult, ToolId, ToolRegistry, UserInput, fixture_session,
 };
@@ -281,9 +281,9 @@ fn binding() -> EffectiveModelBinding {
     EffectiveModelBinding::new(
         ProviderId::new("qwencloud").unwrap(),
         AccountId::new("default").unwrap(),
-        ModelId::new("qwen3.8-max").unwrap(),
+        ModelId::new("qwen3.8max").unwrap(),
         ConnectorId::new(ConnectorId::OPENAI_RESPONSES).unwrap(),
-        ApiProtocol::OpenAiResponses,
+        ApiDialect::OpenAiResponses,
         NormalizedEndpoint::parse("https://example.invalid/v1").unwrap(),
     )
 }
@@ -293,7 +293,7 @@ fn registry(approval: ToolApprovalRequirement) -> FrozenToolRegistry {
         ToolId::new("read-file").unwrap(),
         "read_file",
         "reads a UTF-8 file",
-        "v1",
+        crate::TOOL_SCHEMA_DIALECT,
         json!({
             "type": "object",
             "properties": {"path": {"type": "string"}},
@@ -1207,6 +1207,50 @@ fn context_exhaustion_finishes_non_resumably_and_latches_the_binding() {
         })
         .unwrap_err();
     assert_eq!(error.kind(), BackendFailureKind::ContextExhausted);
+}
+
+// input count가 input limit에서 wire output cap을 뺀 값과 정확히 같으면 요청을 허용하고,
+// 같은 cap이 tokenization payload와 실제 connector request에 포함되는지 검증합니다.
+#[test]
+fn admits_the_exact_input_boundary_with_the_configured_output_cap() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(vec![Vec::new()]),
+            requests: Arc::clone(&requests),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(90)),
+        ),
+        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+
+    assert!(matches!(
+        backend
+            .execute_command(AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("exact boundary"),
+            })
+            .unwrap(),
+        BackendCommandEvidence::RequestAccepted(_)
+    ));
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].tokenization_payload("qwen3.8max")["max_output_tokens"],
+        10
+    );
 }
 
 // 완료 응답을 replay에 더하는 순간 누적 한도를 넘더라도 실패 기록이나 재개 Anchor를

@@ -5,9 +5,10 @@ use std::collections::{HashMap, HashSet};
 pub use error::RuntimeError;
 
 use crate::{
-    AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendCommandEvidence, BackendEvent,
-    BackendPoll, BackendResumeTarget, ContinuationStrategy, Failure, JournalSequence, SessionId,
-    SubmissionId, TurnOutcome, TurnRef, journal::SessionJournal,
+    AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendBindingEvidence,
+    BackendCommandEvidence, BackendEvent, BackendPoll, BackendResumeTarget, ContinuationStrategy,
+    Failure, JournalSequence, ModelReplay, SessionId, SubmissionId, TurnOutcome, TurnRef,
+    journal::SessionJournal,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +18,11 @@ pub enum RuntimePoll {
     Closed,
 }
 
+pub(crate) struct BackendReplacementError {
+    pub(crate) primary: RuntimeError,
+    pub(crate) cleanup_failure: Option<crate::BackendFailure>,
+}
+
 /// Composes one semantic engine with one initialized backend.
 pub struct AgentRuntime<B> {
     engine: AgentEngine,
@@ -24,7 +30,10 @@ pub struct AgentRuntime<B> {
     journal: SessionJournal,
     submission_ids: HashSet<SubmissionId>,
     binding_epoch: Option<u64>,
+    binding: Option<BackendBindingEvidence>,
     continuation_strategy: Option<ContinuationStrategy>,
+    model_replay: ModelReplay,
+    source_anchor_sequence: Option<JournalSequence>,
     accepted_requests: HashMap<TurnRef, JournalSequence>,
 }
 
@@ -40,7 +49,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
             journal,
             submission_ids: HashSet::new(),
             binding_epoch: None,
+            binding: None,
             continuation_strategy: None,
+            model_replay: ModelReplay::default(),
+            source_anchor_sequence: None,
             accepted_requests: HashMap::new(),
         }
     }
@@ -49,6 +61,79 @@ impl<B: AgentBackend> AgentRuntime<B> {
         &mut self,
         target: &BackendResumeTarget,
     ) -> Result<(), RuntimeError> {
+        self.restore_resume_state(target)?;
+        let evidence = self
+            .backend
+            .resume_session(target)
+            .map_err(RuntimeError::backend)?;
+        let expected = target.binding();
+        if !expected.same_resume_identity(&evidence) {
+            return Err(RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Session,
+                "native resume returned a binding identity different from the durable Continuation Anchor",
+            )));
+        }
+        self.publish_resume_snapshot()?;
+        Ok(())
+    }
+
+    pub(crate) fn initialize_resume_replacing_binding(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<(), RuntimeError> {
+        self.restore_resume_state(target)?;
+        if !matches!(
+            target.binding().continuation_strategy(),
+            ContinuationStrategy::ExactReplay { .. }
+        ) {
+            return Err(RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Unsupported,
+                "binding replacement requires an exact-replay Continuation Anchor",
+            )));
+        }
+        let evidence = self
+            .backend
+            .resume_session_replacing_binding(target)
+            .map_err(RuntimeError::backend)?;
+        let previous = target.binding();
+        if !evidence.is_valid()
+            || evidence.backend_kind() != previous.backend_kind()
+            || evidence.session_locator() != previous.session_locator()
+            || evidence.continuation_strategy() != previous.continuation_strategy()
+            || evidence.binding_identity() == previous.binding_identity()
+        {
+            return Err(RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Session,
+                "exact-replay replacement returned an invalid or unchanged binding identity",
+            )));
+        }
+        self.publish_resume_snapshot()?;
+        let epoch = target.epoch().checked_add(1).ok_or_else(|| {
+            RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Session,
+                "backend binding epoch is exhausted",
+            ))
+        })?;
+        if !self.journal.commit_exact_replay_replacement(
+            target.epoch(),
+            epoch,
+            target.source_anchor_sequence(),
+            evidence.clone(),
+        ) {
+            return Err(RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Session,
+                "exact-replay replacement could not publish its binding transition",
+            )));
+        }
+        self.binding_epoch = Some(epoch);
+        self.binding = Some(evidence.clone());
+        self.continuation_strategy = Some(evidence.continuation_strategy());
+        self.model_replay = target.model_replay().clone();
+        self.source_anchor_sequence = Some(target.source_anchor_sequence());
+        Ok(())
+    }
+
+    fn restore_resume_state(&mut self, target: &BackendResumeTarget) -> Result<(), RuntimeError> {
         let entries = self.journal.semantic_entries();
         self.engine =
             AgentEngine::from_journal(&entries, self.backend.capabilities().supports_steer())
@@ -68,19 +153,15 @@ impl<B: AgentBackend> AgentRuntime<B> {
             })
             .collect();
         self.binding_epoch = Some(target.epoch());
+        self.binding = Some(target.binding().clone());
         self.continuation_strategy = Some(target.binding().continuation_strategy());
+        self.model_replay = target.model_replay().clone();
+        self.source_anchor_sequence = Some(target.source_anchor_sequence());
         self.accepted_requests.clear();
-        let evidence = self
-            .backend
-            .resume_session(target)
-            .map_err(RuntimeError::backend)?;
-        let expected = target.binding();
-        if !expected.same_resume_identity(&evidence) {
-            return Err(RuntimeError::backend(crate::BackendFailure::new(
-                crate::BackendFailureKind::Session,
-                "native resume returned a binding identity different from the durable Continuation Anchor",
-            )));
-        }
+        Ok(())
+    }
+
+    fn publish_resume_snapshot(&mut self) -> Result<(), RuntimeError> {
         self.journal.initialize_durability();
         if !matches!(self.durability(), crate::JournalDurability::Durable { .. }) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
@@ -192,6 +273,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
             },
             (None, BackendCommandEvidence::BindingOpened(evidence)) => {
                 let epoch = 1;
+                self.binding = Some(evidence.clone());
                 self.continuation_strategy = Some(evidence.continuation_strategy());
                 self.journal
                     .append_initial_binding(committed, &events, epoch, evidence);
@@ -318,15 +400,32 @@ impl<B: AgentBackend> AgentRuntime<B> {
                     "backend completed a resumable Turn without an accepted request",
                 );
             };
+            let next_replay = evidence.model_replay().map(|delta| {
+                let mut replay = self.model_replay.clone();
+                replay.apply(delta).map(|()| replay)
+            });
+            let next_replay = match next_replay {
+                Some(Ok(replay)) => Some(replay),
+                Some(Err(_)) => {
+                    return self.reject_correlation_event(
+                        "backend completed a resumable Turn with an invalid replay delta",
+                    );
+                },
+                None => None,
+            };
             return match self.engine.finish_turn(turn, TurnOutcome::Completed) {
                 Ok(event) => {
-                    self.journal.append_resumable_turn(
+                    let anchor = self.journal.append_resumable_turn(
                         &event,
                         epoch,
                         accepted_request_sequence,
                         continuation_strategy,
                         evidence,
                     );
+                    if let Some(replay) = next_replay {
+                        self.model_replay = replay;
+                    }
+                    self.source_anchor_sequence = Some(anchor);
                     self.accepted_requests.remove(&turn);
                     Ok(RuntimePoll::Event(event))
                 },
@@ -414,6 +513,118 @@ impl<B: AgentBackend> AgentRuntime<B> {
     #[cfg(test)]
     pub(crate) fn journal(&self) -> &SessionJournal {
         &self.journal
+    }
+}
+
+impl AgentRuntime<Box<dyn AgentBackend + Send>> {
+    /// Replaces one idle exact-replay binding without releasing the current backend first.
+    ///
+    /// The candidate is resumed and its transition is durably committed before it becomes active.
+    /// Any pre-commit failure cleans up only the candidate, leaving the current backend usable.
+    pub(crate) fn replace_backend(
+        &mut self,
+        mut candidate: Box<dyn AgentBackend + Send>,
+    ) -> Result<Option<crate::BackendFailure>, BackendReplacementError> {
+        if self.engine.active_turn().is_some() {
+            return Err(reject_replacement_candidate(
+                &mut candidate,
+                RuntimeError::backend(crate::BackendFailure::new(
+                    crate::BackendFailureKind::Session,
+                    "binding replacement requires an idle Session",
+                )),
+            ));
+        }
+        let (Some(session_id), Some(epoch), Some(binding), Some(source_anchor_sequence)) = (
+            self.engine.session_id(),
+            self.binding_epoch,
+            self.binding.clone(),
+            self.source_anchor_sequence,
+        ) else {
+            return Err(reject_replacement_candidate(
+                &mut candidate,
+                RuntimeError::backend(crate::BackendFailure::new(
+                    crate::BackendFailureKind::Session,
+                    "binding replacement requires one durable continuation target",
+                )),
+            ));
+        };
+        if !matches!(
+            binding.continuation_strategy(),
+            ContinuationStrategy::ExactReplay { .. }
+        ) {
+            return Err(reject_replacement_candidate(
+                &mut candidate,
+                RuntimeError::backend(crate::BackendFailure::new(
+                    crate::BackendFailureKind::Unsupported,
+                    "binding replacement requires exact replay",
+                )),
+            ));
+        }
+        let target =
+            BackendResumeTarget::new(session_id, epoch, binding.clone(), source_anchor_sequence)
+                .with_model_replay(self.model_replay.clone());
+        let evidence = match candidate.resume_session_replacing_binding(&target) {
+            Ok(evidence) => evidence,
+            Err(failure) => {
+                return Err(reject_replacement_candidate(
+                    &mut candidate,
+                    RuntimeError::backend(failure),
+                ));
+            },
+        };
+        if !evidence.is_valid()
+            || evidence.backend_kind() != binding.backend_kind()
+            || evidence.session_locator() != binding.session_locator()
+            || evidence.continuation_strategy() != binding.continuation_strategy()
+            || evidence.binding_identity() == binding.binding_identity()
+        {
+            return Err(reject_replacement_candidate(
+                &mut candidate,
+                RuntimeError::backend(crate::BackendFailure::new(
+                    crate::BackendFailureKind::Session,
+                    "exact-replay replacement returned an invalid or unchanged binding identity",
+                )),
+            ));
+        }
+        let Some(next_epoch) = epoch.checked_add(1) else {
+            return Err(reject_replacement_candidate(
+                &mut candidate,
+                RuntimeError::backend(crate::BackendFailure::new(
+                    crate::BackendFailureKind::Session,
+                    "backend binding epoch is exhausted",
+                )),
+            ));
+        };
+        if !self.journal.commit_exact_replay_replacement(
+            epoch,
+            next_epoch,
+            source_anchor_sequence,
+            evidence.clone(),
+        ) {
+            return Err(reject_replacement_candidate(
+                &mut candidate,
+                RuntimeError::backend(crate::BackendFailure::new(
+                    crate::BackendFailureKind::Session,
+                    "exact-replay replacement could not publish its binding transition",
+                )),
+            ));
+        }
+
+        self.binding_epoch = Some(next_epoch);
+        self.binding = Some(evidence.clone());
+        self.continuation_strategy = Some(evidence.continuation_strategy());
+        let mut previous = std::mem::replace(&mut self.backend, candidate);
+        Ok(previous.shutdown().err())
+    }
+}
+
+fn reject_replacement_candidate(
+    candidate: &mut Box<dyn AgentBackend + Send>,
+    primary: RuntimeError,
+) -> BackendReplacementError {
+    BackendReplacementError {
+        primary,
+        cleanup_failure: candidate.shutdown().err(),
     }
 }
 

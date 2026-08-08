@@ -7,15 +7,14 @@ must mean.
 
 ## Model-service and Responses connector
 
-The provider-neutral service inputs, remote Responses protocol, and Yo-managed
-loop now form one typed route. The process host does not select that route until
-the configuration and model-selection Slice:
+The provider-neutral service inputs, remote Responses dialect, and Yo-managed
+loop form one typed route:
 
 ```text
 configured ProviderId + AccountId + ModelId
   ↓ exact ModelCatalog namespace lookup
 EffectiveModelBinding
-  ├── ConnectorId + ApiProtocol
+  ├── ConnectorId + ApiDialect
   └── normalized HTTPS base endpoint
 ModelContextProfile
   ↓ injected tokenizer profile counts the exact serialized request
@@ -25,7 +24,7 @@ config.yaml sibling credentials.yaml
   ↓ one no-follow handle; regular file, current owner, 0600-equivalent,
     bounded size, stable metadata
 immutable CredentialStore
-  ↓ exact AccountId lookup
+  ↓ exact ProviderId + AccountId lookup
 redacted ApiCredential
   ↓ OpenAiResponsesConnector
 POST <normalized base>/responses
@@ -64,8 +63,8 @@ host gate decides the semantic form allowed into Activities, replay, and later
 requests. The backend records only that admitted call/result replay, defers an
 approved effect until its approval and attempt Activities can be journaled, and
 attributes each terminal response's usage to its exact Provider, Account,
-Model, connector, protocol, and endpoint. The remaining configuration Slice
-owns startup selection and assembly of these inputs and concrete local tools.
+Model, connector, API dialect, and endpoint. The process host owns startup
+selection and assembly of these inputs and concrete local tools.
 
 Every opened backend binding declares its continuation strategy. The current
 Yo-managed route declares exact replay by the local client; Codex declares
@@ -77,6 +76,30 @@ and strategy-dependent presence instead of inferring ownership from backend
 names. A managed-server exact-replay executor remains a reserved contract value
 and no current backend selects it.
 
+### Model selection and replacement
+
+Startup accepts `--model MODEL_ID` inside the Provider and Account selected by
+`model.startup`. A resumed Session instead resolves the override inside the
+newest durable binding; startup defaults never replace that namespace. Provider
+or Account changes are intentionally unavailable as CLI overrides.
+
+While the TUI is idle, `/model` opens the generic selection panel with entries
+ordered as Provider, Account, then Model. Labels use the optional display names,
+but each row carries the complete stable coordinate. `/model MODEL_ID` is the
+direct form and searches only the current Provider and Account. A Provider or
+Account change therefore requires the picker.
+
+The frontend-neutral `ModelSelectionController` owns those resolution rules.
+After acceptance, the process host constructs and validates the candidate
+backend from the startup credential snapshot, tokenizer, connector, tool
+registry, and tool host while the current binding remains live. A preparation
+failure is reported back into the retained TUI. The Session worker then commits
+the exact-replay transition atomically: a durable failure discards the candidate
+and keeps the old backend usable, while success swaps the backend in place after
+closing the prior binding epoch and opening one replacement epoch. The same TUI
+and Yo Session remain active, and the choice does not change configuration
+defaults.
+
 ## Startup
 
 The terminal is acquired only after process policy and the agent Session are
@@ -84,20 +107,19 @@ ready:
 
 ```text
 yo-cli
-  parse presentation mode and glyph profile; capture cwd
+  parse presentation mode, glyph profile, and optional model coordinates; capture cwd
+  load validated model catalog and exact Provider/Account credential when selected
   install TerminationCoordinator
   open Host identity and Session repository
   normalize workspace and create SessionDescriptor
-  spawn CodexBackend transport
+  spawn CodexBackend transport or assemble the Yo-managed OpenAI Responses backend
       ↓
 yo-core AgentSession
   start worker
   attempt descriptor envelope
   CreateSession
-      ↓
-Codex app-server
-  initialize
-  thread/start
+      ├── CodexBackend → app-server initialize + thread/start
+      └── NativeModelBackend → bind local exact-replay Session state
       ↓
 yo-core
   SessionCreated
@@ -109,10 +131,10 @@ yo-tui
 | Step | Current owner | What to follow |
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run` selects presentation options, captures the working directory, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`. |
-| 2 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CodexBackend::spawn` validates configuration and starts the stdio transport. It defers the provider handshake. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | The process host either starts the Codex stdio transport or assembles the selected native binding from the startup snapshots and injected tools. Both defer remote model work until the worker owns the backend. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` first attempts the descriptor-only Journal envelope, then sends `CreateSession` through `AgentRuntime`; storage pressure keeps both the descriptor and later activity in the recoverable volatile prefix. |
-| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CreateSession` performs `initialize` and `thread/start`; the semantic engine produces `SessionCreated`. |
+| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | For Codex, `CreateSession` performs `initialize` and `thread/start`. The native backend binds local exact-replay Session state without a provider request. Both let the semantic engine produce `SessionCreated`. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode` acquires input and terminal state for the first terminal ownership generation, then enters the already selected presentation mode. |
 
 If termination arrives during the handshake, `AgentSession::start_inner`
@@ -435,18 +457,77 @@ session:
     date_format: "%Y-%m-%d %H:%M %:z"
 tui:
   max_fps: 120
+model:
+  startup:
+    provider: qwencloud
+    account: default
+    model: qwen3.8max
+  catalog:
+    - provider: openrouter
+      provider_display_name: OpenRouter
+      account: default
+      account_display_name: Default
+      model: openrouter/free
+      model_display_name: OpenRouter Free Router
+      connector: openai-responses
+      api_dialect: openai-responses
+      base_url: https://openrouter.ai/api/v1
+      input_token_limit: 32000
+      max_output_tokens: 4096
+      tokenizer_profile: utf8-bytes/v1
+    - provider: qwencloud
+      provider_display_name: QwenCloud
+      account: default
+      account_display_name: Default
+      model: qwen3.8max
+      model_display_name: Qwen 3.8 Max
+      connector: openai-responses
+      api_dialect: openai-responses
+      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+      input_token_limit: 1000000
+      max_output_tokens: 65536
+      tokenizer_profile: utf8-bytes/v1
 ```
 
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
 in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
 `120`; live startup reads it once and applies it to retained TUI generations.
-Runtime reload is not supported. Missing configuration uses the shown defaults.
+Runtime reload is not supported. Missing configuration keeps the Codex backend
+and built-in Session/TUI defaults; the YAML above is an operator-owned native
+model example rather than the implicit model default.
 Unreadable files, unsupported versions, unknown fields, oversized files,
 invalid date formats, and unsupported frame rates are explicit failures rather than silent
 fallbacks. The reader opens one nonblocking descriptor, requires it to be a
 regular file, and consumes at most 64 KiB plus one sentinel byte, so a FIFO
 cannot stall the command and concurrent file growth cannot bypass the bound. A
-missing repository produces an empty list and does not create state. Direct
+model API key is never read from an environment variable. When a configured
+model is selected, Yo reads a separate `credentials.yaml` beside the selected
+`config.yaml`. Its versioned Provider-then-Account shape is:
+
+```yaml
+version: 1
+providers:
+  openrouter:
+    default:
+      api_key: "..."
+  qwencloud:
+    default:
+      api_key: "..."
+```
+
+The credential file must be a current-user-owned regular file with no group or
+other permission bits (normally mode `0600`). The same Account ID may be used
+under different Providers; only the exact selected Provider-and-Account pair is
+resolved. Endpoint, model, connector, API dialect, and display names remain in
+ordinary configuration rather than this secret file. Catalog limits and model
+IDs are operator-owned examples and must be checked against the exact current
+Provider offering. `utf8-bytes/v1` conservatively counts the complete serialized
+request one token per UTF-8 byte; `o200k_base/v1` is available only for bindings
+whose tokenizer is actually o200k-compatible. Unknown profiles fail startup.
+`max_output_tokens` is both the wire output cap and the amount excluded from the
+configured input limit during local context admission.
+
+A missing repository produces an empty list and does not create state. Direct
 history reads preserve a message-recovery
 interruption in the semantic records and send discovery disagreement
 diagnostics to stderr. The physical `v1` format cannot prove whether a stopped

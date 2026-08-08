@@ -56,6 +56,7 @@ pub struct BackendResumeTarget {
     epoch: u64,
     binding: BackendBindingEvidence,
     model_replay: ModelReplay,
+    source_anchor_sequence: crate::JournalSequence,
 }
 
 impl BackendResumeTarget {
@@ -63,12 +64,14 @@ impl BackendResumeTarget {
         session_id: crate::SessionId,
         epoch: u64,
         binding: BackendBindingEvidence,
+        source_anchor_sequence: crate::JournalSequence,
     ) -> Self {
         Self {
             session_id,
             epoch,
             binding,
             model_replay: ModelReplay::default(),
+            source_anchor_sequence,
         }
     }
 
@@ -90,6 +93,11 @@ impl BackendResumeTarget {
     #[must_use]
     pub const fn model_replay(&self) -> &ModelReplay {
         &self.model_replay
+    }
+
+    #[must_use]
+    pub const fn source_anchor_sequence(&self) -> crate::JournalSequence {
+        self.source_anchor_sequence
     }
 
     pub(crate) fn with_model_replay(mut self, replay: ModelReplay) -> Self {

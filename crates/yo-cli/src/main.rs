@@ -13,6 +13,10 @@ mod config;
 #[cfg(unix)]
 mod live;
 #[cfg(unix)]
+mod local_tools;
+#[cfg(unix)]
+mod model;
+#[cfg(unix)]
 mod process;
 #[cfg(unix)]
 mod session;
@@ -59,9 +63,9 @@ fn run() -> Result<(), AppError> {
             },
         };
     // Live configuration is snapshotted once and retained across terminal ownership generations.
-    let frame_rate_limit = config::load()
-        .map_err(|error| AppError::single("reading Yo configuration", error))?
-        .frame_rate_limit();
+    let config =
+        config::load().map_err(|error| AppError::single("reading Yo configuration", error))?;
+    let credentials = model::open_credentials(&config.credential_path())?;
     let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
         AppError::single("installing the process termination coordinator", error)
     })?;
@@ -76,9 +80,10 @@ fn run() -> Result<(), AppError> {
                     termination,
                     live,
                     &cwd,
-                    options,
+                    options.clone(),
                     launch_failure_selection,
-                    frame_rate_limit,
+                    &config,
+                    &credentials,
                 )
             },
             shutdown_live_session,
@@ -91,6 +96,7 @@ fn run() -> Result<(), AppError> {
                 }
             },
             Ok(Ok(SessionStep::Complete)) => break,
+            Ok(Ok(SessionStep::Continue)) => {},
             Ok(Err(error)) => {
                 failures.extend(error.failures);
                 break;
@@ -119,11 +125,13 @@ fn run() -> Result<(), AppError> {
 struct LiveSession {
     agent: agent::TuiAgentConnection,
     tui: yo_tui::TuiSession,
+    workspace: std::path::PathBuf,
 }
 
 #[cfg(unix)]
 enum SessionStep {
     Suspend,
+    Continue,
     Complete,
 }
 
@@ -134,7 +142,8 @@ fn run_agent_generation(
     cwd: &std::path::Path,
     options: command::LiveOptions,
     launch_failure_selection: command::LiveSelection,
-    frame_rate_limit: yo_tui::FrameRateLimit,
+    config: &config::Config,
+    credentials: &yo_core::CredentialStore,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {
         let storage = match storage::open_default() {
@@ -233,38 +242,81 @@ fn run_agent_generation(
                 ));
             },
         };
-        let codex_config = yo_core::CodexBackendConfig::new(&session_cwd);
-        let skill_references = match yo_core::CodexSkillReferenceProvider::start(
-            codex_config.clone(),
-            workspace_host_id,
-        ) {
-            Ok(provider) => provider,
-            Err(error) => {
-                if launch.resume_id().is_some() {
-                    drop(repository);
-                    return handle_launch_failure(
-                        launch_failure_selection,
-                        options.glyph_profile,
-                        live::ResumeFailureStage::SkillReferences,
-                        error,
-                    );
-                }
-                return Err(AppError::single("starting Codex skill discovery", error));
+        let selection = match model::resolve(
+            config,
+            options.model.as_deref(),
+            match &launch {
+                Launch::New(_) => None,
+                Launch::Resume(continuation) => Some(continuation.target()),
             },
+        ) {
+            Ok(selection) => selection,
+            Err(error) if launch.resume_id().is_some() => {
+                drop(repository);
+                return handle_launch_failure(
+                    launch_failure_selection,
+                    options.glyph_profile,
+                    live::ResumeFailureStage::BackendSpawn,
+                    error,
+                );
+            },
+            Err(error) => return Err(error),
         };
-        let backend = match yo_core::CodexBackend::spawn(codex_config) {
-            Ok(backend) => backend,
-            Err(error) => {
-                if matches!(&launch, Launch::Resume(_)) {
-                    drop(repository);
-                    return handle_launch_failure(
-                        launch_failure_selection,
-                        options.glyph_profile,
-                        live::ResumeFailureStage::BackendSpawn,
-                        error,
-                    );
-                }
-                return Err(AppError::single("starting Codex", error));
+        let (backend, skill_references): (
+            Box<dyn yo_core::AgentBackend + Send>,
+            Option<yo_core::CodexSkillReferenceProvider>,
+        ) = match &selection {
+            model::StartupBackend::Codex => {
+                let codex_config = yo_core::CodexBackendConfig::new(&session_cwd);
+                let skills = match yo_core::CodexSkillReferenceProvider::start(
+                    codex_config.clone(),
+                    workspace_host_id,
+                ) {
+                    Ok(skills) => skills,
+                    Err(error) if launch.resume_id().is_some() => {
+                        drop(repository);
+                        return handle_launch_failure(
+                            launch_failure_selection,
+                            options.glyph_profile,
+                            live::ResumeFailureStage::SkillReferences,
+                            error,
+                        );
+                    },
+                    Err(error) => {
+                        return Err(AppError::single("starting Codex skill discovery", error));
+                    },
+                };
+                let backend = match yo_core::CodexBackend::spawn(codex_config) {
+                    Ok(backend) => backend,
+                    Err(error) if launch.resume_id().is_some() => {
+                        drop(repository);
+                        return handle_launch_failure(
+                            launch_failure_selection,
+                            options.glyph_profile,
+                            live::ResumeFailureStage::BackendSpawn,
+                            error,
+                        );
+                    },
+                    Err(error) => return Err(AppError::single("starting Codex", error)),
+                };
+                (Box::new(backend), Some(skills))
+            },
+            model::StartupBackend::Native { .. } => {
+                let backend =
+                    match model::start_native(config, credentials, &selection, &session_cwd) {
+                        Ok(backend) => backend,
+                        Err(error) if launch.resume_id().is_some() => {
+                            drop(repository);
+                            return handle_launch_failure(
+                                launch_failure_selection,
+                                options.glyph_profile,
+                                live::ResumeFailureStage::BackendSpawn,
+                                error,
+                            );
+                        },
+                        Err(error) => return Err(error),
+                    };
+                (backend, None)
             },
         };
         let agent = match launch {
@@ -275,10 +327,12 @@ fn run_agent_generation(
                 termination,
             ),
             Launch::Resume(continuation) => {
+                let replace_binding = selection.replaces_binding();
                 match agent::TuiAgentConnection::start_resumed(
                     backend,
                     *continuation,
                     repository,
+                    replace_binding,
                     termination,
                 ) {
                     Ok(agent) => Ok(agent),
@@ -297,17 +351,27 @@ fn run_agent_generation(
         let Some(agent) = agent else {
             return Ok(SessionStep::Complete);
         };
+        let mut tui = yo_tui::TuiSession::with_session_info(
+            options.glyph_profile,
+            yo_tui::TuiSessionInfo::new(selection.label(), compact_workspace_label(&session_cwd)),
+            terminal_color_capability(),
+            yo_tui::MotionPreference::Standard,
+        )
+        .with_frame_rate_limit(config.frame_rate_limit())
+        .with_workspace_references(workspace_references);
+        if let Some(skill_references) = skill_references {
+            tui = tui.with_skill_references(skill_references);
+        }
+        if selection.model_selection().is_some() {
+            tui = tui.with_model_selection(yo_core::ModelSelectionController::new(
+                config.model_catalog().clone(),
+                selection.model_selection(),
+            ));
+        }
         *live = Some(LiveSession {
             agent,
-            tui: yo_tui::TuiSession::with_session_info(
-                options.glyph_profile,
-                yo_tui::TuiSessionInfo::new("codex", compact_workspace_label(&session_cwd)),
-                terminal_color_capability(),
-                yo_tui::MotionPreference::Standard,
-            )
-            .with_frame_rate_limit(frame_rate_limit)
-            .with_workspace_references(workspace_references)
-            .with_skill_references(skill_references),
+            tui,
+            workspace: session_cwd,
         });
     }
     let session = live
@@ -323,6 +387,34 @@ fn run_agent_generation(
     let mut failures = Vec::new();
     match terminal {
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
+        Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(selection)) => {
+            let replacement = model::replacement(&selection);
+            match model::start_native(config, credentials, &replacement, &session.workspace) {
+                Ok(backend) => match session.agent.replace_backend(backend, termination) {
+                    Ok(outcome) => {
+                        let cleanup_warning = outcome.cleanup_failure().map(ToString::to_string);
+                        let label = selection.model().to_string();
+                        session.tui.commit_model_switch(
+                            yo_core::ModelSelectionController::new(
+                                config.model_catalog().clone(),
+                                Some(selection),
+                            ),
+                            label,
+                            cleanup_warning,
+                        );
+                        return Ok(SessionStep::Continue);
+                    },
+                    Err(error) => {
+                        session.tui.report_model_switch_failure(error.to_string());
+                        return Ok(SessionStep::Continue);
+                    },
+                },
+                Err(error) => {
+                    session.tui.report_model_switch_failure(error.to_string());
+                    return Ok(SessionStep::Continue);
+                },
+            }
+        },
         Ok(yo_tui::TerminalOutcome::Exited(outcome)) => {
             if let Some(output) = outcome.output()
                 && let Err(error) = write_session_output(output)

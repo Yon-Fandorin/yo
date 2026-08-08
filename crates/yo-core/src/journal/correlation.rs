@@ -41,6 +41,37 @@ impl SessionJournal {
         self.append_records(records);
     }
 
+    pub(crate) fn commit_exact_replay_replacement(
+        &mut self,
+        previous_epoch: u64,
+        epoch: u64,
+        source_anchor_sequence: JournalSequence,
+        evidence: BackendBindingEvidence,
+    ) -> bool {
+        use super::codec::{BackendBindingClosed, BindingCloseReason};
+
+        self.append_records_transactionally(vec![
+            SemanticRecord::BackendBindingClosed(BackendBindingClosed::new(
+                previous_epoch,
+                BindingCloseReason::Replaced,
+            )),
+            SemanticRecord::BackendBindingOpened(BackendBindingOpened::new(
+                epoch,
+                evidence.backend_kind(),
+                evidence.backend_version(),
+                versioned(evidence.binding_identity()),
+                versioned(evidence.model_identity()),
+                versioned(evidence.session_locator()),
+                BindingTransition::new(
+                    TransitionMode::ExactReplay,
+                    CacheState::Lost,
+                    Some(source_anchor_sequence),
+                ),
+                evidence.continuation_strategy(),
+            )),
+        ])
+    }
+
     pub(crate) fn append_accepted_submission(
         &mut self,
         command: AgentCommand,
@@ -89,7 +120,7 @@ impl SessionJournal {
         accepted_request_sequence: JournalSequence,
         continuation_strategy: ContinuationStrategy,
         evidence: BackendOutcomeEvidence,
-    ) {
+    ) -> JournalSequence {
         let AgentEvent::TurnFinished {
             turn,
             outcome: TurnOutcome::Completed,
@@ -141,6 +172,7 @@ impl SessionJournal {
             )),
         ]);
         self.append_records(records);
+        outcome_sequence.advance_by(1)
     }
 }
 

@@ -9,13 +9,14 @@ use std::{
 };
 
 use super::{
-    AgentSessionError, PendingCommand, SessionState, WORKER_EXECUTING, WORKER_IDLE,
-    WORKER_POLL_INTERVAL, WORKER_STOPPING,
+    AgentSessionError, BackendReplacementOutcome, PendingCommand, ReplacementRequest,
+    ResumeInitialization, SessionState, WORKER_EXECUTING, WORKER_IDLE, WORKER_POLL_INTERVAL,
+    WORKER_STOPPING,
 };
 use crate::{
     ActivityKind, ActivityRequestRef, AgentBackend, AgentCommand, AgentEvent, AgentRuntime,
-    BackendResumeTarget, RuntimeError, RuntimePoll, SessionId, SubmissionOutcome,
-    SubmissionRejection, SubmissionRejectionKind, TurnRef, journal::SessionJournal,
+    RuntimeError, RuntimePoll, SessionId, SubmissionOutcome, SubmissionRejection,
+    SubmissionRejectionKind, TurnRef, journal::SessionJournal,
 };
 
 pub(super) enum WorkerSignal {
@@ -106,24 +107,24 @@ impl ChangeLane {
     }
 }
 
-pub(super) struct AgentWorker<B> {
-    pub(super) runtime: AgentRuntime<B>,
+pub(super) struct AgentWorker {
+    pub(super) runtime: AgentRuntime<Box<dyn AgentBackend + Send>>,
     session_id: SessionId,
     state: Arc<Mutex<SessionState>>,
     active_turn_id: Arc<AtomicU64>,
     submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
-    resume_target: Option<BackendResumeTarget>,
+    resume: Option<ResumeInitialization>,
 }
 
-impl<B: AgentBackend> AgentWorker<B> {
+impl AgentWorker {
     pub(super) fn new(
-        backend: B,
+        backend: Box<dyn AgentBackend + Send>,
         session_id: SessionId,
         state: Arc<Mutex<SessionState>>,
         active_turn_id: Arc<AtomicU64>,
         journal: SessionJournal,
         submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
-        resume_target: Option<BackendResumeTarget>,
+        resume: Option<ResumeInitialization>,
     ) -> Self {
         Self {
             runtime: AgentRuntime::with_journal(backend, journal),
@@ -131,13 +132,21 @@ impl<B: AgentBackend> AgentWorker<B> {
             state,
             active_turn_id,
             submission_outcomes,
-            resume_target,
+            resume,
         }
     }
 
     pub(super) fn initialize(&mut self) -> Result<Vec<AgentEvent>, AgentSessionError> {
-        if let Some(target) = self.resume_target.take() {
-            return match self.runtime.initialize_resume(&target) {
+        if let Some(resume) = self.resume.take() {
+            let initialized = match resume {
+                ResumeInitialization::SameBinding(target) => {
+                    self.runtime.initialize_resume(&target)
+                },
+                ResumeInitialization::Replacement(target) => {
+                    self.runtime.initialize_resume_replacing_binding(&target)
+                },
+            };
+            return match initialized {
                 Ok(()) => Ok(Vec::new()),
                 Err(start) => match self.runtime.shutdown() {
                     Ok(_) => Err(AgentSessionError::Runtime(start)),
@@ -170,6 +179,7 @@ impl<B: AgentBackend> AgentWorker<B> {
         &mut self,
         commands: Receiver<PendingCommand>,
         urgent_commands: Receiver<PendingCommand>,
+        replacements: Receiver<ReplacementRequest>,
         changes: &mut ChangeLane,
         processed: &(Mutex<u64>, Condvar),
         lifecycle: &AtomicU8,
@@ -179,6 +189,60 @@ impl<B: AgentBackend> AgentWorker<B> {
         loop {
             if lifecycle.load(Ordering::Acquire) == WORKER_STOPPING {
                 return WorkerExit::from_cleanup(self.runtime.shutdown());
+            }
+
+            match replacements.try_recv() {
+                Ok(request) => {
+                    if lifecycle
+                        .compare_exchange(
+                            WORKER_IDLE,
+                            WORKER_EXECUTING,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_err()
+                    {
+                        let mut backend = request.backend;
+                        let cleanup = backend.shutdown().err();
+                        let primary = AgentSessionError::WorkerUnavailable(
+                            "binding replacement requires an idle Session".to_owned(),
+                        );
+                        let error = match cleanup {
+                            Some(cleanup) => AgentSessionError::Multiple {
+                                primary: Box::new(primary),
+                                additional: Box::new(AgentSessionError::BackendCleanup(cleanup)),
+                            },
+                            None => primary,
+                        };
+                        let _ = request.result.send(Err(error));
+                        continue;
+                    }
+                    let durability_before = self.runtime.durability();
+                    let result = self
+                        .runtime
+                        .replace_backend(request.backend)
+                        .map(|cleanup_failure| BackendReplacementOutcome { cleanup_failure })
+                        .map_err(|error| {
+                            let primary = AgentSessionError::Runtime(error.primary);
+                            match error.cleanup_failure {
+                                Some(cleanup) => AgentSessionError::Multiple {
+                                    primary: Box::new(primary),
+                                    additional: Box::new(AgentSessionError::BackendCleanup(
+                                        cleanup,
+                                    )),
+                                },
+                                None => primary,
+                            }
+                        });
+                    lifecycle.store(WORKER_IDLE, Ordering::Release);
+                    let changed = self.runtime.durability() != durability_before || result.is_ok();
+                    let _ = request.result.send(result);
+                    if changed && !changes.changed() {
+                        return WorkerExit::from_cleanup(self.runtime.shutdown());
+                    }
+                    continue;
+                },
+                Err(TryRecvError::Disconnected | TryRecvError::Empty) => {},
             }
 
             let urgent = deferred_urgent

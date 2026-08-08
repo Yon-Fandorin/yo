@@ -6,15 +6,14 @@
 
 ## Model-service와 Responses connector
 
-provider 중립 service 입력, remote Responses protocol, Yo-managed loop는 이제
-하나의 typed 경로를 이룬다. process host는 configuration과 model-selection
-Slice가 연결될 때까지 이 경로를 선택하지 않는다.
+provider 중립 service 입력, remote Responses dialect, Yo-managed loop는 하나의
+typed 경로를 이룬다.
 
 ```text
 설정된 ProviderId + AccountId + ModelId
   ↓ 정확한 ModelCatalog namespace lookup
 EffectiveModelBinding
-  ├── ConnectorId + ApiProtocol
+  ├── ConnectorId + ApiDialect
   └── 정규화한 HTTPS base endpoint
 ModelContextProfile
   ↓ 주입한 tokenizer profile로 직렬화된 실제 request를 계산
@@ -24,7 +23,7 @@ config.yaml과 같은 디렉터리의 credentials.yaml
   ↓ no-follow handle 하나, regular file, 현재 owner, 0600에 해당하는 권한,
     제한된 크기, 안정적인 metadata
 변경 불가능한 CredentialStore
-  ↓ 정확한 AccountId lookup
+  ↓ 정확한 ProviderId + AccountId lookup
 원문을 감춘 ApiCredential
   ↓ OpenAiResponsesConnector
 POST <정규화한 base>/responses
@@ -61,8 +60,8 @@ argument는 schema 검증을 거치고 tool output은 제한된 뒤, 주입한 h
 replay, 이후 request에 들어갈 수 있는 semantic 형태를 결정한다. backend는 이렇게
 admission된 call/result replay만 기록하고, 승인과 실행 시도 Activity를 Journal에 남길
 수 있을 때까지 승인된 effect를 미루며, 각 terminal response의 usage를 정확한
-Provider·Account·Model·connector·protocol·endpoint에 귀속한다. 남은 configuration Slice가
-startup 선택, 이 입력들의 조립, 구체적인 local tool을 소유한다.
+Provider·Account·Model·connector·API dialect·endpoint에 귀속한다. process host가 startup
+선택, 이 입력들의 조립, 구체적인 local tool을 소유한다.
 
 열린 모든 backend binding은 continuation strategy를 선언한다. 현재 Yo-managed
 경로는 local client의 exact replay를 선언하고 Codex는 backend-managed state를
@@ -73,26 +72,45 @@ commit한다. Recovery는 backend 이름으로 소유권을 추론하지 않고 
 strategy별 존재 조건을 검증한다. Managed-server exact-replay executor는 예약된
 contract 값이며 현재 이를 선택하는 backend는 없다.
 
+### 모델 선택과 교체
+
+startup은 `model.startup`이 선택한 Provider와 Account 안에서 `--model MODEL_ID`를
+받는다. 저장 Session을 재개할 때는 최신 durable binding의 Provider와 Account 안에서
+override를 해석하며 startup 기본값이 그 namespace를 바꾸지 않는다. Provider나
+Account 변경은 CLI override로 노출하지 않는다.
+
+TUI가 idle일 때 `/model`은 Provider, Account, Model 순서로 정렬한 항목을 범용
+selection panel에 연다. label에는 optional display name을 쓰지만 각 행의 identity는
+완전한 안정 좌표다. `/model MODEL_ID`는 현재 Provider와 Account 안에서만 찾는 직접
+형식이다. 따라서 Provider나 Account를 바꾸려면 picker를 사용한다.
+
+frontend 중립 `ModelSelectionController`가 이 resolution 규칙을 소유한다. 선택을
+accept하면 process host는 현재 binding을 유지한 채 startup credential snapshot,
+tokenizer, connector, tool registry, tool host로 후보 backend를 구성하고 검증한다.
+준비 실패는 보존한 TUI에 알린다. 이어서 Session worker가 exact-replay 전환을 원자적으로
+commit한다. durable 실패면 후보를 버리고 기존 backend를 계속 사용하며, 성공하면 이전
+binding epoch를 닫고 replacement epoch 하나를 연 뒤 backend를 제자리에서 교체한다.
+같은 TUI와 Yo Session이 계속 활성 상태이고, 선택은 설정 기본값을 변경하지 않는다.
+
 ## 시작
 
 프로세스 정책과 agent Session이 준비된 뒤에만 터미널을 획득한다.
 
 ```text
 yo-cli
-  표시 mode와 glyph profile 해석, cwd 확보
+  표시 mode, glyph profile, optional 모델 좌표 해석, cwd 확보
+  검증된 모델 catalog와 선택한 Provider/Account의 정확한 credential 읽기
   TerminationCoordinator 설치
   Host identity와 Session repository 열기
   workspace 정규화와 SessionDescriptor 생성
-  CodexBackend transport 시작
+  CodexBackend transport 시작 또는 Yo-managed OpenAI Responses backend 조립
       ↓
 yo-core AgentSession
   worker 시작
   descriptor envelope 시도
   CreateSession
-      ↓
-Codex app-server
-  initialize
-  thread/start
+      ├── CodexBackend → app-server initialize + thread/start
+      └── NativeModelBackend → local exact-replay Session state 연결
       ↓
 yo-core
   SessionCreated
@@ -104,10 +122,10 @@ yo-tui
 | 단계 | 현재 소유자 | 확인할 내용 |
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run`이 표시 옵션과 작업 디렉터리를 확보하고 종료 coordinator를 설치한다. Host identity와 Session storage를 열고 workspace를 canonicalize한 뒤 시각이 일치하는 UUIDv7 `SessionDescriptor`를 만든다. |
-| 2 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CodexBackend::spawn`이 설정을 검증하고 stdio transport를 시작한다. provider handshake는 아직 하지 않는다. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | process host가 Codex stdio transport를 시작하거나 startup snapshot과 주입된 tool로 선택한 native binding을 조립한다. 두 경로 모두 worker가 backend를 소유할 때까지 remote model 작업을 미룬다. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 descriptor-only Journal envelope를 먼저 시도한 뒤 `AgentRuntime`을 통해 `CreateSession`을 보낸다. storage pressure가 있으면 descriptor와 이후 activity를 복구 가능한 volatile prefix로 함께 유지한다. |
-| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `CreateSession`이 `initialize`와 `thread/start`를 수행하고 semantic engine이 `SessionCreated`를 만든다. |
+| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | Codex에서는 `CreateSession`이 `initialize`와 `thread/start`를 수행한다. native backend는 provider 요청 없이 local exact-replay Session state를 연결한다. 두 경로 모두 semantic engine이 `SessionCreated`를 만들게 한다. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode`가 첫 터미널 소유 세대의 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
 
 handshake 중에 종료 요청이 오면 `AgentSession::start_inner`가 취소
@@ -414,16 +432,73 @@ session:
     date_format: "%Y-%m-%d %H:%M %:z"
 tui:
   max_fps: 120
+model:
+  startup:
+    provider: qwencloud
+    account: default
+    model: qwen3.8max
+  catalog:
+    - provider: openrouter
+      provider_display_name: OpenRouter
+      account: default
+      account_display_name: Default
+      model: openrouter/free
+      model_display_name: OpenRouter Free Router
+      connector: openai-responses
+      api_dialect: openai-responses
+      base_url: https://openrouter.ai/api/v1
+      input_token_limit: 32000
+      max_output_tokens: 4096
+      tokenizer_profile: utf8-bytes/v1
+    - provider: qwencloud
+      provider_display_name: QwenCloud
+      account: default
+      account_display_name: Default
+      model: qwen3.8max
+      model_display_name: Qwen 3.8 Max
+      connector: openai-responses
+      api_dialect: openai-responses
+      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+      input_token_limit: 1000000
+      max_output_tokens: 65536
+      tokenizer_profile: utf8-bytes/v1
 ```
 
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
 한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. 설정
-파일이 없으면 위 기본값을 사용한다. 파일을 읽을 수 없거나 version/field/크기/date
+파일이 없으면 Codex backend와 built-in Session/TUI 기본값을 유지한다. 위 YAML은
+암묵적 모델 기본값이 아니라 운영자가 소유하는 native 모델 예시다. 파일을 읽을 수
+없거나 version/field/크기/date
 format/frame rate가 잘못되면 조용히 기본값으로 대체하지 않고
 명시적으로 실패한다. reader는 nonblocking descriptor 하나를 열어 regular file인지
 확인하고 64 KiB와 판별용 한 byte까지만 읽으므로 FIFO가 command를 멈추거나 동시에
-커지는 파일이 상한을 우회하지 못한다. repository가
+커지는 파일이 상한을 우회하지 못한다. 모델 API key는 환경 변수에서 읽지 않는다.
+설정한 모델을 선택하면 Yo는 선택된 `config.yaml` 옆의 별도
+`credentials.yaml`을 다음 Provider-Account 순서의 versioned 구조로 읽는다.
+
+```yaml
+version: 1
+providers:
+  openrouter:
+    default:
+      api_key: "..."
+  qwencloud:
+    default:
+      api_key: "..."
+```
+
+credential 파일은 현재 사용자가 소유한 regular file이어야 하고 group/other 권한 bit가
+없어야 한다(보통 mode `0600`). 서로 다른 Provider 아래에는 같은 Account ID를 사용할
+수 있으며 선택된 Provider·Account exact pair만 resolve한다. endpoint, model, connector,
+API dialect와 표시 이름은 secret 파일이 아닌 일반 설정에 둔다. 위 catalog의 limit과
+Model ID는 운영자가 관리하는 예시이며 현재 Provider의 정확한 제공 목록과 대조해야 한다.
+`utf8-bytes/v1`은 직렬화한 전체 request의 UTF-8 byte마다 token 하나를 세는 보수적인
+profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 binding에만 쓸 수
+있고 모르는 profile은 startup에서 실패한다. `max_output_tokens`는 wire output cap인
+동시에 local context admission에서 입력 한도로부터 제외하는 값이다.
+
+repository가
 없으면 빈 목록을 반환하고 상태를 만들지 않는다.
 직접 history 읽기는
 message-recovery interruption을 semantic record에 보존하며 discovery 불일치 진단은

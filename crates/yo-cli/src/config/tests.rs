@@ -45,6 +45,51 @@ fn tui_max_fps_accepts_120() {
     assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps120);
 }
 
+// startup namespace와 flat catalog entry가 하나의 완전한 Provider·Account·Model binding으로
+// 검증되고, credential은 같은 디렉터리의 별도 파일에서만 찾는지 확인합니다.
+#[test]
+fn model_catalog_resolves_the_configured_startup_binding() {
+    let path = Path::new("/tmp/yo/config.yaml");
+    let config = parse(
+        path,
+        "version: 1\nmodel:\n  startup:\n    provider: qwencloud\n    account: token-plan\n    model: qwen3.8max\n  catalog:\n    - provider: qwencloud\n      provider_display_name: Qwen Cloud\n      account: token-plan\n      account_display_name: Token Plan\n      model: qwen3.8max\n      model_display_name: Qwen 3.8 Max\n      connector: openai-responses\n      api_dialect: openai-responses\n      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1\n      input_token_limit: 1000000\n      max_output_tokens: 65536\n      tokenizer_profile: utf8-bytes/v1\n",
+    )
+    .unwrap();
+
+    let startup = config.startup_model().unwrap();
+    let selected = config
+        .model_catalog()
+        .resolve_model(startup.provider(), startup.account(), startup.model())
+        .unwrap();
+    assert_eq!(selected.binding().model_id().as_str(), "qwen3.8max");
+    assert_eq!(
+        selected.binding().endpoint().as_str(),
+        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+    );
+    assert_eq!(
+        config.credential_path(),
+        Path::new("/tmp/yo/credentials.yaml")
+    );
+}
+
+// startup ModelId가 같은 Provider·Account catalog에 없으면 다른 계정이나 임의 첫 entry로
+// 대체하지 않고 설정 경로를 포함한 오류로 실패합니다.
+#[test]
+fn model_startup_rejects_an_unconfigured_model() {
+    let error = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        "version: 1\nmodel:\n  startup:\n    provider: qwencloud\n    account: token-plan\n    model: absent\n",
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("/tmp/yo/config.yaml"));
+    assert!(
+        error
+            .to_string()
+            .contains("does not name one configured entry")
+    );
+}
+
 // 지원하지 않는 frame 비율은 조용히 보정하지 않고 정확한 설정 경로와 값으로 거절합니다.
 #[test]
 fn tui_max_fps_rejects_unsupported_values() {
@@ -134,6 +179,20 @@ fn unknown_configuration_field_is_rejected() {
     .unwrap_err();
 
     assert!(error.to_string().contains("/tmp/yo-config.yaml"));
+    assert!(error.to_string().contains("unknown field"));
+}
+
+// 공개 용어는 api_dialect 하나이므로 이전 임시 api_protocol key는 조용히 alias로
+// 받아들이지 않고 unknown field로 거절합니다.
+#[test]
+fn obsolete_api_protocol_key_is_rejected() {
+    let error = parse(
+        Path::new("/tmp/yo-config.yaml"),
+        "version: 1\nmodel:\n  catalog:\n    - provider: openrouter\n      account: default\n      model: openrouter/free\n      connector: openai-responses\n      api_protocol: openai-responses\n      base_url: https://openrouter.ai/api/v1\n      input_token_limit: 100000\n      max_output_tokens: 8192\n      tokenizer_profile: o200k_base/v1\n",
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("api_protocol"));
     assert!(error.to_string().contains("unknown field"));
 }
 

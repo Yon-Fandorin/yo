@@ -122,6 +122,33 @@ impl TuiSession {
         self
     }
 
+    /// Installs the validated, frontend-neutral model selection controller.
+    #[must_use]
+    pub fn with_model_selection(mut self, controller: yo_core::ModelSelectionController) -> Self {
+        self.state.enable_model_selection(controller);
+        self
+    }
+
+    pub(super) fn take_model_selection(&mut self) -> Option<yo_core::ModelSelection> {
+        self.state.take_model_selection()
+    }
+
+    /// Reports a host-side model preparation failure without discarding the live Session.
+    pub fn report_model_switch_failure(&mut self, detail: impl Into<String>) {
+        self.state.report_model_switch_failure(detail.into());
+    }
+
+    /// Commits the frontend projection after the core Session has durably changed binding.
+    pub fn commit_model_switch(
+        &mut self,
+        controller: yo_core::ModelSelectionController,
+        backend_label: impl Into<String>,
+        cleanup_warning: Option<String>,
+    ) {
+        self.state
+            .commit_model_switch(controller, backend_label.into(), cleanup_warning);
+    }
+
     pub(super) fn set_presentation_mode(&mut self, mode: PresentationMode) {
         self.state.set_presentation_mode(mode);
     }
@@ -236,6 +263,10 @@ impl TuiSessionInfo {
 
     pub(super) fn backend(&self) -> Option<&str> {
         self.backend.as_deref()
+    }
+
+    pub(super) fn set_backend(&mut self, backend: String) {
+        self.backend = non_empty_label(backend);
     }
 
     pub(super) fn workspace(&self) -> &str {

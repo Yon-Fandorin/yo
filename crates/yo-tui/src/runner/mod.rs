@@ -5,6 +5,7 @@ mod archival;
 mod chat;
 mod error;
 mod frame;
+mod model;
 mod session;
 mod skill;
 mod source_schedule;
@@ -86,6 +87,8 @@ pub enum TerminalOutcome {
     Exited(RunOutcome),
     /// Terminal state was restored and the process host should suspend.
     SuspendRequested,
+    /// The frontend selected a fully qualified model binding for this Session.
+    ModelSelectionRequested(yo_core::ModelSelection),
 }
 
 impl RunOutcome {

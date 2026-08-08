@@ -64,7 +64,7 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | [`workspace_reference`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/workspace_reference.rs) | frontend에 독립적인 workspace reference identity·provider port·revision 검색 메시지·Unicode 정규화 순위와 local 실행 provider의 background Git-ignore inventory | TUI 표시와 제출 시점 admission. `yo-cli`는 선택한 실행 provider만 조립 |
 | [`skill_reference`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/skill_reference/mod.rs) | frontend에 독립적인 skill identity, 실행 환경 provenance, catalog generation과 entry revision selector, availability, revision-bound 검색 메시지 | TUI 표시와 제출 시점의 정확한 재검증. 구체적인 catalog adapter는 `backend` 아래에 남는다 |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/input/mod.rs) | 변경 불가능한 제출 text, 화면의 정확한 byte span에 묶인 순서 있는 typed reference occurrence, 안전한 reference token의 canonical Projection, UUIDv4 submission 연결, 제출 전체의 최종 outcome | queue와 worker 수락은 `agent_session`. 구체적인 reference admission은 다음 경계에 남는다 |
-| [`model_service`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/mod.rs) | 안정적인 Provider·Account·Model identity, 정확한 connector와 API protocol 선택, 정규화한 HTTPS endpoint, Account 범위 catalog와 context-profile resolution, 주입하는 tokenizer-counting port, 원문을 감춘 resolved credential, 안전하고 크기가 제한된 startup-only local `credentials.yaml` snapshot | request 변환은 connector, 설정 경로 선택은 process host |
+| [`model_service`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/mod.rs) | 안정적인 Provider·Account·Model identity, 정확한 connector와 API dialect 선택, 정규화한 HTTPS endpoint, Provider·Account 범위 catalog·context-profile·credential resolution, 주입하는 tokenizer-counting port, 원문을 감춘 resolved credential, 안전하고 크기가 제한된 startup-only local `credentials.yaml` snapshot | request 변환은 connector, 설정 경로 선택은 process host |
 | [`model_connector`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/mod.rs) | generic `openai-responses` request 직렬화, 같은 origin으로 제한한 bounded redirect, bearer 인증 HTTPS, 취소 가능한 request worker, bounded SSE framing, output-item correlation, terminal 상태와 token usage | semantic Activity와 tool loop는 Yo-managed backend |
 | [`tool`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/tool/mod.rs) | 안정적인 tool identity, 요청마다 고정한 registry, 닫힌 `yo.tool-schema/v1` dialect에 대한 크기 제한 인자 검증, argument와 output projection을 위한 주입형 semantic admission, 정규화한 approval binding, typed effect, 주입하는 단일 시도 execution-host port | 구체적인 운영체제 effect나 provider-hosted tool |
 | [`engine`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/engine/mod.rs) | 결정론적인 Session, Turn, Activity, request 상태 전이 | 전이가 provider 경계도 지난다면 `runtime` |
@@ -86,8 +86,8 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 provider 중립 identity와 local secret 경계를 소유한다.
 [OpenAI Responses connector](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.connector.openai-responses.md)가
 generic remote protocol을 소유한다. `backend/native`가 이를 고정된 tool registry와
-정확한 semantic replay에 조합하지만 process host는 아직 그 backend를 선택하지 않는다.
-connector 자체는 계속 semantic Activity를 소유하거나 tool을 실행하지 않는다.
+정확한 semantic replay에 조합하고 process host가 검증된 설정으로 그 backend를 선택해
+조립한다. connector 자체는 semantic Activity를 소유하거나 tool을 실행하지 않는다.
 [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)과
 [Session Repository](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.storage.session-repository.md)가
 durable replay와 storage 계약을 소유한다. 구현된 조합은 semantic commit을

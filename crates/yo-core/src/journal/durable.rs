@@ -161,6 +161,22 @@ impl DurableJournal {
         self.publish_records(durable, self.live_cutoff)
     }
 
+    /// Publishes a binding transition without retaining it in the live durable candidate on
+    /// failure. The caller may therefore keep using the preceding binding after a failed switch.
+    pub(super) fn publish_transactionally(
+        &mut self,
+        records: &[JournalEntry],
+    ) -> JournalDurability {
+        let record_count = self.records.len();
+        let live_cutoff = self.live_cutoff;
+        let status = self.publish(records);
+        if !matches!(status, JournalDurability::Durable { .. }) {
+            self.records.truncate(record_count);
+            self.live_cutoff = live_cutoff;
+        }
+        status
+    }
+
     /// Flushes message text whose oldest byte reached the one-second boundary.
     pub(super) fn flush_due(&mut self) -> JournalDurability {
         let now = self.started.elapsed();

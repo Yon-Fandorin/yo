@@ -103,6 +103,7 @@ fn resume_target(session_id: SessionId, thread_id: &str) -> BackendResumeTarget 
             BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
             crate::ContinuationStrategy::BackendManagedState,
         ),
+        crate::JournalSequence::new(1),
     )
 }
 

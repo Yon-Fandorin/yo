@@ -24,6 +24,7 @@ use crate::{
     runner::{
         AgentAction, PresentationMode,
         chat::{ChatProjection, ChatProjectionChange},
+        model::ModelSelectionState,
         session::TuiSessionInfo,
         view::{
             ObservabilityRenderError, ObservabilityRenderOptions, ObservabilityViewState,
@@ -98,6 +99,9 @@ pub(super) struct TuiState {
     accepted_overlays: VecDeque<AcceptanceReceipt>,
     prompt_assist: PromptAssistController,
     pending_submissions: VecDeque<InputSubmission>,
+    model_selection: Option<ModelSelectionState>,
+    model_overlay: Option<OverlayInstanceToken>,
+    pending_model_selection: Option<yo_core::ModelSelection>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -166,6 +170,10 @@ impl TuiState {
                 if self.prompt_assist.accept(&receipt, &mut self.editor) {
                     return Ok(StateEffect::Redraw);
                 }
+                if self.model_overlay == Some(receipt.token()) {
+                    self.model_overlay = None;
+                    return self.accept_model_selection(receipt.identity());
+                }
                 self.accepted_overlays.push_back(receipt);
                 return Ok(StateEffect::Redraw);
             },
@@ -217,6 +225,9 @@ impl TuiState {
                 }
                 if let Some(request) = self.pending_requests.front().copied() {
                     return self.request_response(request, text);
+                }
+                if text == "/model" || text.starts_with("/model ") {
+                    return self.handle_model_command(&text);
                 }
                 if self
                     .pending_submissions
@@ -527,6 +538,118 @@ impl TuiState {
 
     pub(super) fn take_overlay_acceptance(&mut self) -> Option<AcceptanceReceipt> {
         self.accepted_overlays.pop_front()
+    }
+
+    pub(super) fn enable_model_selection(&mut self, controller: yo_core::ModelSelectionController) {
+        self.model_selection = Some(ModelSelectionState::new(controller));
+    }
+
+    pub(super) fn take_model_selection(&mut self) -> Option<yo_core::ModelSelection> {
+        self.pending_model_selection.take()
+    }
+
+    pub(super) fn report_model_switch_failure(&mut self, detail: String) {
+        let _ = self.chat.push_notice(format!(
+            "Model switch failed; the previous model remains active: {detail}"
+        ));
+    }
+
+    pub(super) fn commit_model_switch(
+        &mut self,
+        controller: yo_core::ModelSelectionController,
+        backend_label: String,
+        cleanup_warning: Option<String>,
+    ) {
+        self.model_selection = Some(ModelSelectionState::new(controller));
+        self.session_info.set_backend(backend_label.clone());
+        let mut notice = format!("Model switched to {backend_label}.");
+        if let Some(warning) = cleanup_warning {
+            notice.push_str(&format!(" Previous backend cleanup warning: {warning}"));
+        }
+        let _ = self.chat.push_notice(notice);
+    }
+
+    fn handle_model_command(&mut self, text: &str) -> Result<StateEffect, StateError> {
+        if self.turn_active || !self.pending_submissions.is_empty() || self.has_pending_request() {
+            self.chat.push_notice(
+                "Model switching is available only while the Session is idle.".to_owned(),
+            )?;
+            return Ok(StateEffect::Redraw);
+        }
+        let Some(selection) = self.model_selection.as_ref() else {
+            self.chat.push_notice(
+                "No configured model catalog is available for this Session.".to_owned(),
+            )?;
+            return Ok(StateEffect::Redraw);
+        };
+        let argument = text
+            .strip_prefix("/model")
+            .expect("command prefix checked")
+            .trim();
+        if argument.is_empty() {
+            match selection.panel() {
+                Ok(panel) => match self.overlay.open(panel) {
+                    Ok(token) => {
+                        self.model_overlay = Some(token);
+                    },
+                    Err(error) => {
+                        self.chat.push_notice(format!(
+                            "The model picker could not be opened: {error:?}"
+                        ))?;
+                    },
+                },
+                Err(error) => {
+                    self.chat.push_notice(error)?;
+                },
+            }
+            return Ok(StateEffect::Redraw);
+        }
+        match selection.resolve_direct(argument) {
+            Ok(selected) if selection.is_current(&selected) => {
+                self.chat
+                    .push_notice(format!("Model {} is already selected.", selected.model()))?;
+                Ok(StateEffect::Redraw)
+            },
+            Ok(selected) => {
+                self.pending_model_selection = Some(selected);
+                Ok(StateEffect::Exit)
+            },
+            Err(error) => {
+                self.chat
+                    .push_notice(format!("Model switch rejected: {error}"))?;
+                Ok(StateEffect::Redraw)
+            },
+        }
+    }
+
+    fn accept_model_selection(&mut self, identity: &str) -> Result<StateEffect, StateError> {
+        if self.turn_active || !self.pending_submissions.is_empty() || self.has_pending_request() {
+            self.chat.push_notice(
+                "Model switching is available only while the Session is idle.".to_owned(),
+            )?;
+            return Ok(StateEffect::Redraw);
+        }
+        let Some(controller) = self.model_selection.as_ref() else {
+            self.chat
+                .push_notice("The model selection controller is unavailable.".to_owned())?;
+            return Ok(StateEffect::Redraw);
+        };
+        match controller.accept_identity(identity) {
+            Ok(selected) if controller.is_current(&selected) => {
+                self.chat
+                    .push_notice(format!("Model {} is already selected.", selected.model()))?;
+                Ok(StateEffect::Redraw)
+            },
+            Ok(selected) => {
+                self.pending_model_selection = Some(selected);
+                Ok(StateEffect::Exit)
+            },
+            Err(error) => {
+                self.chat
+                    .push_notice(format!("Model switch rejected: {error}"))?;
+                Ok(StateEffect::Redraw)
+            },
+        }
     }
 
     pub(super) fn commit_frame(&mut self, frame: &PreparedFrame) {
