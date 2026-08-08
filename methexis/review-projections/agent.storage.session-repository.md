@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.storage.session-repository
-revision: sha256:857c96fa154d662dd70e7620116dbab4dc2e302b1dafa5aaf3647c69f740c94c
+revision: sha256:7fbd4967d8274150ae583b80dc6774cb5ec16c60308ea78b3cd1b249ddd46626
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:03063110699b220884f6d18498001f86294546181e5e293ce64060b3744b4b4a
+request_hash: sha256:2f4d36ee01d6ba54a8bd4d914ff86c55873525521d8b8d6f88e3e615c3374e07
 ---
 # Korean Review Projection
 
@@ -33,6 +33,9 @@ Capacity ceiling은 repository 전체에 적용됩니다. Writer는 최종 repos
 Journal과 Request correlation은 하나의 physical availability와 capacity ceiling을 공유합니다. Request detail은 redaction-before-admission gate 전까지 volatile합니다. Durable commit은 append와 sync 뒤에만 in-memory Journal에 publish합니다. Persistence failure 뒤 semantic result는 volatile로 공개하고 durable gap을 유지하며 rollback이라고 보고하지 않습니다. Capacity나 storage failure 때 기존 record는 그대로 두고 Session은 memory에서 계속되며 frontend에 known cutoff, known empty log, unknown cutoff를 구분하는 typed persistent pressure notification을 보냅니다. Known cutoff는 마지막 durable RepositorySequence와, semantic Journal event가 하나도 durable하지 않으면 absent일 수 있는 마지막 durable JournalSequence를 포함합니다. 두 coordinate는 서로 추론하지 않습니다. Gap 뒤 continuous suffix를 주장하지 않으며 capacity가 돌아오면 complete snapshot 뒤에만 incremental persistence를 재개합니다.
 
 Local 저장소는 기본 활성화하고 current-user permission과 configurable capacity ceiling을 적용하며 자동 age expiry나 Session deletion을 하지 않습니다. 첫 구현은 Session마다 synchronous single writer입니다. 측정 evidence 없이 background writer, generic transaction, group commit, compression, index, SQLite projection, alternate encoding, Request Audit physical split을 도입하지 않습니다.
+
+
+Session Repository는 payload-free Request correlation record와 별도의 bounded payload-bearing model_replay_delta semantic record를 같은 checksummed Session log에서 소유합니다. Replay delta, completed outcome, Anchor는 하나의 atomic physical envelope로 기록되어 일부만 durable해질 수 없습니다. Model replay는 repository append 전에 semantic redaction admission을 통과합니다. Repository capacity와 model context limit은 별개이며 replay/context bound를 넘으면 partial chain이나 silent truncation, summary를 기록하지 않고 Turn을 completed but non-resumable로 남깁니다.
 
 ## 이유
 

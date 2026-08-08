@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.backend.yo-managed-model-loop
-revision: sha256:e8acc4fdfb2465b2c5bb8e0d4fbca46b4ef2f4227e8df13abdf2bc325aac6285
+revision: sha256:273846efc65e163bbe39bcbbecdb6d4a9296a2766877ec590440ecd9b4135602
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:83d9a83e12d70f19e1bdeb5bddef845bc00f6fb24a16e998eab2be37de757f44
+request_hash: sha256:2d407ea30fae3e0572531be09fc602565e7e1ddf1eb5bdcaf84152bbc869d302
 ---
 # Korean Review Projection
 
@@ -25,6 +25,9 @@ Loop는 final assistant message, accepted cancellation, bounded model-round limi
 Provider response ID, cache handle, conversation ID는 diagnostic correlation으로 보존할 수 있지만 유일한 continuation locator가 될 수 없습니다. Yo-managed binding은 provider-native resume가 아니라 exact semantic replay를 광고합니다. Executable continuation은 Session Journal에서 최신 durable Continuation Anchor가 지시한 model-visible semantic boundary를 재구성하고 endpoint, protocol, Provider, Account, Model, connector identity가 바뀌면 새 binding epoch를 엽니다. Anchor 뒤의 committed mid-Turn function call, tool result, partial stream 또는 다른 suffix는 diagnostic으로만 남고 automatic continuation input이 되지 않습니다. Durable Anchor가 없으면 replay input을 만들지 않고 continuation contract의 read-only fallback을 따릅니다. Exact replay는 message role과 order, exact visible text, function-call과 tool-result relation, recorded system 및 tool contract를 보존합니다. Hidden reasoning과 provider cache state는 replay claim이 아닙니다.
 
 Partial model stream, uncommitted tool result, uncertain request, failed final response를 Continuation Anchor가 덮으면 안 됩니다. Usage와 exact effective binding은 같은 Yo Session 안에서 모델이 바뀌어도 그것을 생성한 model response에 귀속합니다.
+
+
+Selected model catalog entry는 input-token limit, output reserve, injected token counter가 사용할 exact tokenizer profile을 제공합니다. 모든 model request는 dispatch 전에 counter를 통과합니다. Provider implicit cache는 billing을 줄일 수 있지만 exact replay나 context admission을 바꾸지 않습니다. Exact history가 맞지 않으면 backend는 typed context_exhausted를 반환하고 current Turn을 non-resumable로 완료하며 같은 binding의 후속 Turn을 거부합니다. History를 silently discard, truncate, summarize하지 않습니다. Lossy compaction은 user-visible handoff와 새 binding epoch를 갖는 별도 reviewed Slice로 미룹니다. Tool argument와 output은 Activity, later model input, replay delta 전에 semantic-admission gate를 통과합니다. Replay는 별도 semantic record로 저장하며 payload-free resumable-outcome correlation에 붙이지 않습니다.
 
 ## 이유
 

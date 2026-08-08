@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.tool.local-execution-boundary
-revision: sha256:f515f27d699356249582dbd8ea51e87f1e90c06905670f089135c8c5483a6cfe
+revision: sha256:008b8c0d5eae8069bfc67404de3fe9eb8cb64d3fd385bd445fab6a3b2ebb2914
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:da6393a28b6a9199af8f8b8530661e4286486c69d005182182381c9dcdf5ed70
+request_hash: sha256:7b39222c29d0e3f907f94bd765c143b7dc0d76d217bccbf7dc081c83080a9403
 ---
 # Korean Review Projection
 
@@ -25,6 +25,9 @@ Dispatch 뒤에는 local execution attempt를 하나만 허용합니다. Timeout
 기본은 model order의 serial execution입니다. Scheduler가 approval scope와 mutable resource lease가 disjoint임을 증명할 때만 concurrent execution할 수 있습니다. Completion order와 관계없이 result publication과 model submission은 stable model-call order를 사용합니다. Cancellation은 undispatched call을 막고 active executor의 prompt cancellation을 요청하며 effect가 없었다고 증명할 수 없으면 explicit interrupted result를 보존합니다.
 
 Tool name, schema, arguments, output은 model-visible semantic history이며 Session Journal의 bounded persistence와 redaction을 따릅니다. Execution-host diagnostic과 prohibited secret은 semantic history 밖에 둡니다. Exact replay는 historical tool을 다시 실행하지 않고 recorded function-call과 result relation을 재현합니다.
+
+
+첫 registry schema dialect는 closed yo.tool-schema/v1 subset입니다. 각 node는 object, array, string, number, integer, boolean, null 중 하나이며 description, properties, required, additionalProperties, items, 같은 type의 non-empty enum만 허용합니다. Object는 additionalProperties: false가 필수이고 array는 item schema가 필요하며 required는 unique declared property만 지칭합니다. Unsupported keyword와 16단계 초과 nesting은 fail closed합니다. 각 validation class는 diagnostic prose와 별도의 stable non-null yo.tool.validation.*/v1 code를 제공합니다. Argument는 dispatch 전에, output은 Activity·후속 model input·replay 전에 injected semantic-admission gate를 통과합니다. Gate는 exact admission, explicit bounded redacted replacement, 또는 Turn failure만 반환합니다. Credential, complete environment value, execution-host diagnostic, configured prohibited literal은 이 경계를 넘지 않으며 concrete tool은 gate를 우회할 수 없습니다. Gate가 설치되기 전에는 native model에 local tool registry를 노출하지 않습니다.
 
 ## 이유
 
