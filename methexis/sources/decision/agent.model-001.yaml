@@ -1,16 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.model-001
-revision: sha256:a1c115321da2a857e78f51f6aed83bdc86a3a28d9a87578e2554e084b66a3ece
+revision: sha256:d2fc8098664ec115a875f2e5bbd9df261d05f397544212c8823fcf76eb587b55
 payload:
   kind: decision
-  content: >-
-    Model routing uses stable provider, account, and model identities with
-    separate mutable display names. Provider identifies the model-service
-    group, account selects one local credential and entitlement scope within
-    that provider, and model identifies the requested model. An explicit API
-    protocol identifies the request and response contract; OpenAI-compatible
-    is only a family description and never replaces the exact protocol. The
-    complete runtime binding records provider, account, model, API protocol,
-    connector, and normalized endpoint identity. Tenant behavior is deferred,
-    while credential and binding resolution remain injectable so tenant scope
-    can be added without changing these identities.
+  content: Model routing uses stable Provider, Account, and Model identities with separate mutable display names. Provider identifies the model-service group, Account selects one local credential and entitlement scope within that Provider, and Model identifies the exact wire model. Credential resolution uses the ProviderId and AccountId pair. An explicit API dialect identifies the complete request, response, streaming-event, tool-call, and terminal grammar; OpenAI-compatible is only a family description and never replaces the exact dialect. The complete runtime binding records Provider, Account, Model, API dialect, connector, and normalized endpoint identity. OpenRouter and QwenCloud are initial first-class configured Providers that share the provider-neutral backend and connector rather than defining Provider-specific backend types. Tenant behavior is deferred, while credential and binding resolution remain injectable so caller-owned tenant scope can be added without changing these identities.

@@ -5,50 +5,27 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.credentials-001
-    revision: sha256:17ffd481e980ffd3cd0ed5fc79822a4c2a4e5383ed8341b00d192915461bd122
+    revision: sha256:df2bf50c8cee5491dd7b895385de7463d8a566ccec756b7fe6523a86d776496f
 relations:
   depends_on:
     - agent.model.service-binding
   constrained_by:
     - agent.observability.session-journal
 ---
-# Local account credential store
+# Provider-scoped local credential store
 
 ## Statement
 
-API credentials MUST be stored separately from ordinary Yo settings. The first
-implementation MUST read a dedicated `credentials.yaml` beside the selected Yo
-`config.yaml`. Its versioned shape maps stable `AccountId` values to secret
-material and MUST NOT duplicate Provider or Model routing policy. The file MUST
-be opened once with no-follow semantics. The exact opened handle MUST identify
-a regular file and every other object type MUST be rejected. Current-user
-ownership and the absence of group or world permission bits MUST be checked on
-that same handle before reading. Reads MUST remain size bounded, MUST use only that
-handle, and MUST reject a file whose identity or relevant metadata changes
-during capture. A path pre-check or a second path-based open MUST NOT satisfy
-these requirements.
+API credentials MUST be stored separately from ordinary Yo settings. The first implementation MUST read a dedicated `credentials.yaml` beside the selected Yo `config.yaml`. Its versioned shape MUST namespace secret material first by stable `ProviderId` and then by stable `AccountId`. Those coordinates select a credential only and MUST NOT duplicate endpoint, Model, connector, API dialect, or display-name routing policy. The same `AccountId` MAY exist under different Providers and MUST resolve independently; a duplicate exact Provider-and-Account pair MUST be rejected.
 
-Environment variables MUST NOT provide API keys. The process MUST read and
-validate the credential file once during startup and keep an immutable
-in-memory `CredentialStore` for that process. Runtime reload, refresh, account
-rotation, failover, interactive login, and OS keychain integration are
-deferred. Absence of a selected Account or its credential MUST fail before a
-model request and MUST NOT fall through to another Account.
+The file MUST be opened once with no-follow semantics. The exact opened handle MUST identify a regular file and every other object type MUST be rejected. Current-user ownership and the absence of group or world permission bits MUST be checked on that same handle before reading. Reads MUST remain size bounded, MUST use only that handle, and MUST reject a file whose identity or relevant metadata changes during capture. A path pre-check or a second path-based open MUST NOT satisfy these requirements.
 
-Ordinary configuration and UI may expose Account ID and display name. The
-connector MUST receive only an opaque resolved secret for the exact selected
-Account. Secret types MUST redact `Debug` and display output. API keys MUST NOT
-enter diagnostics, logs, Session Journal records, Request Audit data, model
-binding evidence, command-line arguments, or child-process environments.
+Environment variables MUST NOT provide API keys. The process MUST read and validate the credential file once during startup and keep an immutable in-memory `CredentialStore` keyed by the exact Provider-and-Account pair for that process. Startup assembly MUST resolve the pair from the selected effective model binding. Absence of that exact pair or its credential MUST fail before a model request and MUST NOT fall through to another Account or Provider. Runtime reload, refresh, account rotation, failover, interactive login, and OS keychain integration are deferred.
 
-The credential resolver MUST be injected into startup assembly rather than
-opened by a Model Connector. A later tenant-aware caller MAY choose which
-AccountId to resolve before this boundary, but the first implementation MUST
-not persist or display tenant state.
+Ordinary configuration and UI may expose Provider and Account IDs and display names. The connector MUST receive only an opaque resolved secret for the exact selected pair. Secret types MUST redact `Debug` and display output. API keys MUST NOT enter diagnostics, logs, Session Journal records, Request Audit data, model binding evidence, command-line arguments, or child-process environments.
+
+The credential resolver MUST be injected into startup assembly rather than opened by a Model Connector. A later tenant-aware caller MAY choose the Provider-and-Account pair inside its own tenant scope before this boundary, but the first implementation MUST NOT add a `TenantId`, tenant field, or tenant UI.
 
 ## Rationale
 
-A separate permission-restricted file avoids putting long-lived secrets in
-shell environments or shareable settings. Startup-only resolution keeps file
-access and secret ownership outside protocol code while preserving a narrow
-future seam for another credential store.
+Provider-scoped account coordinates prevent a common local Account ID such as `default` from selecting another Provider's secret. A separate permission-restricted file avoids long-lived shell secrets, while startup-only injected resolution preserves a narrow future seam for tenant-owned or alternative credential stores.
