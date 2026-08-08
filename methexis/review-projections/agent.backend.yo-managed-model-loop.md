@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.backend.yo-managed-model-loop
-revision: sha256:273846efc65e163bbe39bcbbecdb6d4a9296a2766877ec590440ecd9b4135602
+revision: sha256:2a96668d0aac9d7842a1f229b28f495ab78f532dd8d12a837c40580a57562d88
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:2d407ea30fae3e0572531be09fc602565e7e1ddf1eb5bdcaf84152bbc869d302
+request_hash: sha256:12612b8ad2d85ac57065d55e45e2462198c8c8c4bed96bf661486002ecb136b4
 ---
 # Korean Review Projection
 
@@ -28,6 +28,9 @@ Partial model stream, uncommitted tool result, uncertain request, failed final r
 
 
 Selected model catalog entry는 input-token limit, output reserve, injected token counter가 사용할 exact tokenizer profile을 제공합니다. 모든 model request는 dispatch 전에 counter를 통과합니다. Provider implicit cache는 billing을 줄일 수 있지만 exact replay나 context admission을 바꾸지 않습니다. Exact history가 맞지 않으면 backend는 typed context_exhausted를 반환하고 current Turn을 non-resumable로 완료하며 같은 binding의 후속 Turn을 거부합니다. History를 silently discard, truncate, summarize하지 않습니다. Lossy compaction은 user-visible handoff와 새 binding epoch를 갖는 별도 reviewed Slice로 미룹니다. Tool argument와 output은 Activity, later model input, replay delta 전에 semantic-admission gate를 통과합니다. Replay는 별도 semantic record로 저장하며 payload-free resumable-outcome correlation에 붙이지 않습니다.
+
+
+현재 Yo-managed model loop는 continuation strategy로 exact_replay와 local_client executor를 명시합니다. 향후 managed_server executor는 같은 validated replay prefix와 contract, ordering, bounds, Anchor boundary를 사용하며 별도의 replay 의미가 아닙니다. Remote repository, identity, digest, availability, retention evidence를 가진 independently reviewed implementation 전에는 deferred 상태이고 현재 backend는 이를 광고하지 않습니다.
 
 ## 이유
 

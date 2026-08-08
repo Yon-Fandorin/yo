@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.backend.codex-app-server
-revision: sha256:2cdd82d1f384ddd65e70d99297bfdb738031fc625b317f38c15d80dc20c9435c
+revision: sha256:dc2f48f5d235ed6234387abf8558022548437f6a42d81372a6a659a21bd3fcb2
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:59cabd8ed9279d3f09a1f0243a8bfd36cc0097abe37e501ad1b74c79da4e07d1
+request_hash: sha256:2cbf04bc4758fc3299d5fcca8fee0cc6fa413c81dbc67b56a25af460881a5d5d
 ---
 # Korean Review Projection
 
@@ -19,6 +19,9 @@ request_hash: sha256:59cabd8ed9279d3f09a1f0243a8bfd36cc0097abe37e501ad1b74c79da4
 `yo-cli`가 백엔드를 선택하고 연결합니다. 비공개 백엔드 모듈은 제품 프로세스 호스트와 협력하여 자식 프로세스와 결정적인 정리를 소유합니다. 같은 코어 계약에는 Codex 설치, 자격 증명, 네트워크, 비결정적인 모델 출력 없이 계약과 실패를 테스트할 수 있는 결정적 가짜 백엔드가 있어야 합니다.
 
 WebSocket 전송, 원격 app-server 사용, 다른 위임형 에이전트 백엔드는 각각의 실행 가능한 증거가 생길 때까지 미룹니다.
+
+
+Codex binding은 backend_managed_state continuation을 명시합니다. Yo는 durable transcript, semantic event, correlation record, versioned Codex Thread locator를 소유하고 Codex는 model-visible conversation state를 소유합니다. Resume은 locator로 reconnect한 뒤 versioned identity schema에 따라 반환된 Thread identity를 검증합니다. Completed resumable Codex Turn은 payload-free outcome과 Continuation Anchor를 기록하지만 model_replay_delta와 replay_delta_sequence는 기록하지 않습니다. Provider Response 또는 item identity는 correlation evidence일 수 있으나 Yo exact replay로 표현하지 않습니다.
 
 ## 이유
 

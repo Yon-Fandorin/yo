@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-005
-    revision: sha256:7fa50258cd0b1f42dd8ee113b86810ae821bcb23bb197ea2b0b658e516c91473
+    revision: sha256:55e86343fb7ead85e4764c7fa6c86976d6577359c130c6d970605299c4dd7a3b
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -32,6 +32,16 @@ credentials, network access, or nondeterministic model output.
 
 WebSocket transport, remote app-server use, and another delegated Agent
 Backend are deferred until their own executable evidence exists.
+
+The Codex binding MUST explicitly declare `backend_managed_state` continuation.
+Yo owns the durable transcript, semantic events, correlation records, and
+versioned Codex Thread locator, while Codex owns the model-visible conversation
+state. Resume MUST reconnect through that locator and verify the returned Thread
+identity under the binding's versioned identity schema. A completed resumable
+Codex Turn MUST emit a payload-free resumable outcome and Continuation Anchor,
+but MUST NOT emit a `model_replay_delta` or `replay_delta_sequence`. Provider
+Responses or item identifiers MAY remain correlation evidence and MUST NOT be
+misrepresented as Yo exact replay.
 
 ## Rationale
 

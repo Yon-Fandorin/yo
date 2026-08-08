@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:358a15d5420efe88f39bbaa7f36595c9d0dc7ef950a44155e73bce4ca1598a23
+revision: sha256:acc24661fcc92c3bc78232ce7bf8ea0d59aae3a5e0c8e544d168248dc62d0e90
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:69b5b30a62b09e0d64238e15745e87cabcf6627523dbebe2105c497a27ff551b
+request_hash: sha256:fb0dbcaef2ca1459cb85051f80feba912db4a5fe401437fff4b43f26bacd64b1
 ---
 # Korean Review Projection
 
@@ -16,8 +16,9 @@ request_hash: sha256:69b5b30a62b09e0d64238e15745e87cabcf6627523dbebe2105c497a27f
 
 UUIDv7만 사용하는 descriptor-aware 의미 Session Journal
 `yo.semantic-journal-commit/v1`과 체크섬이 있는 물리 Session 레코드
-`yo.session-record/v1`을 yo의 첫 공개 포맷 후보로 유지합니다. 첫 공개 릴리스 전에 앞선 reviewed revision이 structured-input 의미 `/v1`을
-anchored-session development shape로 교체했습니다. 이번 두 번째 reviewed revision은
+`yo.session-record/v1`을 yo의 첫 공개 포맷 후보로 유지합니다. 첫 공개 릴리스 전에 첫 reviewed revision이 structured-input 의미 `/v1`을
+anchored-session development shape로 교체했고, 두 번째 reviewed revision은 이를
+replay-delta development shape로 교체했습니다. 이번 세 번째 reviewed revision은
 그 바로 앞 shape를 아래의 닫힌 anchored-session 의미 `/v1`로 교체합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며 schema
 태그가 같다는 이유만으로 레코드를 받아들이지 않습니다.
 
@@ -158,6 +159,9 @@ fail closed 합니다. 현재 checksummed physical envelope 자체는 정확한 
 
 
 이번 revision은 public release 전 anchored-session semantic Journal /v1을 두 번째로 명시적으로 교체합니다. 기존 backend correlation record는 payload-free 상태를 유지하고, exact provider-neutral replay는 별도 model_replay_delta record가 소유합니다. model_replay_delta는 TurnFinished(completed) 뒤, backend_resumable_outcome과 continuation_anchor 앞에 같은 semantic commit으로 기록되며 outcome은 replay delta의 JournalSequence를 참조합니다. Replay contract는 system prompt와 ordered tool name, description, schema version, closed schema를 보존하고 replay item은 message, function call, function result의 정확한 순서와 관계를 보존합니다. Contract는 1 MiB, delta는 16 MiB, Anchor가 선택한 prefix는 64 MiB 및 4096 item으로 제한하며 초과하면 completed지만 non-resumable인 Turn과 explicit context exhaustion이 됩니다. Silent truncation이나 implicit compaction은 허용하지 않습니다. Persisted failed outcome은 required nullable code와 message를 모두 가지며 tool validation은 stable yo.tool.validation.*/v1 code를 사용합니다. Argument와 output은 Activity, 후속 model input, replay persistence 전에 semantic redaction admission을 통과해야 합니다. 이 교체 전 development shape는 같은 schema tag라도 fail closed합니다.
+
+
+이번 세 번째 reviewed pre-release revision은 바로 앞 replay-delta development shape를 교체합니다. backend_binding_opened는 continuation_strategy를 명시하며 exact_replay는 local_client 또는 managed_server executor를 갖고 backend_managed_state는 executor를 금지합니다. 이는 새 epoch의 seed 방법을 뜻하는 transition.mode와 별개입니다. exact replay binding에서만 model_replay_delta와 outcome의 replay_delta_sequence가 필수이며 delta가 outcome 바로 앞에 있어야 합니다. backend-managed binding에서는 둘 다 금지되고 TurnFinished(completed), payload-free outcome, Anchor가 같은 commit에 연속해서 기록됩니다. 두 exact replay executor의 replay contract, bounds, digest, ordering, Anchor validation은 동일하며 request를 조립하는 위치만 다릅니다. managed_server는 reviewed remote repository 구현 전에는 현재 implementation이 기록할 수 없는 예약 값입니다. 같은 `/v1` tag를 사용한 직전 development shape는 fail closed합니다.
 
 ## 이유
 
