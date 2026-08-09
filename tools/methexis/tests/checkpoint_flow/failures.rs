@@ -113,6 +113,59 @@ fn damaged_checkpoint_is_rejected_without_active_output() {
     );
 }
 
+// pinned active record가 가리키는 baseline Checkpoint를 읽을 수 없더라도 이미 확인한
+// trusted commit과 CheckpointId를 실패 증거에서 잃지 않으며 새 proposal을 게시하지 않는다.
+#[test]
+fn unreadable_active_baseline_preserves_evidence_and_publishes_nothing() {
+    let repository = GitRepository::approved();
+    repository.integrate_active_checkpoint();
+    let (checkpoint_id, checkpoint_path) = active_checkpoint_identity(&repository);
+    fs::remove_file(&checkpoint_path).unwrap();
+    repository.git(&["add", "methexis/checkpoints"]);
+    repository.git(&["commit", "-m", "remove active baseline checkpoint"]);
+    repository.git(&["branch", "-f", "develop", "HEAD"]);
+    let before = checkpoint_files(&repository);
+
+    let create = repository.request("checkpoint-missing-baseline.json", &checkpoint_request());
+    let failure = failure_json(repository.run(&["create-checkpoint", create.to_str().unwrap()]));
+
+    assert_eq!(failure["error"]["code"], "checkpoint_unreadable");
+    assert_eq!(failure["error"]["affected_ids"], json!([checkpoint_id]));
+    assert_eq!(
+        failure["trusted_commit"],
+        String::from_utf8(repository.git(&["rev-parse", "develop"]).stdout)
+            .unwrap()
+            .trim()
+    );
+    assert_eq!(checkpoint_files(&repository), before);
+}
+
+// malformed baseline도 동일한 증거 보존 규칙을 따르고 candidate publication 전에 실패한다.
+#[test]
+fn malformed_active_baseline_preserves_evidence_and_publishes_nothing() {
+    let repository = GitRepository::approved();
+    repository.integrate_active_checkpoint();
+    let (checkpoint_id, checkpoint_path) = active_checkpoint_identity(&repository);
+    fs::write(&checkpoint_path, b"not: [valid\n").unwrap();
+    repository.git(&["add", "methexis/checkpoints"]);
+    repository.git(&["commit", "-m", "damage active baseline checkpoint"]);
+    repository.git(&["branch", "-f", "develop", "HEAD"]);
+    let before = checkpoint_files(&repository);
+
+    let create = repository.request("checkpoint-malformed-baseline.json", &checkpoint_request());
+    let failure = failure_json(repository.run(&["create-checkpoint", create.to_str().unwrap()]));
+
+    assert_eq!(failure["error"]["code"], "invalid_checkpoint");
+    assert_eq!(failure["error"]["affected_ids"], json!([checkpoint_id]));
+    assert_eq!(
+        failure["trusted_commit"],
+        String::from_utf8(repository.git(&["rev-parse", "develop"]).stdout)
+            .unwrap()
+            .trim()
+    );
+    assert_eq!(checkpoint_files(&repository), before);
+}
+
 // 호출자가 Git 환경 변수나 같은 이름의 replacement ref를 주입해도 신뢰 기준을 바꿀 수 없어야 한다.
 // checkpoint는 저장소가 정한 실제 authority ref만 읽어 권한을 판정한다.
 #[test]
@@ -125,14 +178,20 @@ fn caller_git_environment_and_replacement_refs_cannot_change_authority() {
         &["create-checkpoint", create.to_str().unwrap()],
         &[("GIT_DIR", &foreign_git_dir), ("PATH", &other.path)],
     ));
-    assert_eq!(created["affected_ids"][0], KNOWLEDGE_ID);
+    assert_eq!(
+        created["checkpoint_delta"]["unit_changes"][0]["id"],
+        KNOWLEDGE_ID
+    );
 
     std::fs::remove_file(repository.path.join(created["path"].as_str().unwrap())).unwrap();
     let trusted = String::from_utf8(repository.git(&["rev-parse", "develop"]).stdout).unwrap();
     let parent = String::from_utf8(repository.git(&["rev-parse", "develop^"]).stdout).unwrap();
     repository.git(&["replace", trusted.trim(), parent.trim()]);
     let created = success_json(repository.run(&["create-checkpoint", create.to_str().unwrap()]));
-    assert_eq!(created["affected_ids"][0], KNOWLEDGE_ID);
+    assert_eq!(
+        created["checkpoint_delta"]["unit_changes"][0]["id"],
+        KNOWLEDGE_ID
+    );
 }
 
 // 새 지식이 이전 지식을 대체하도록 승인됐다면 두 버전을 한 context에 동시에 넣어서는 안 된다.
@@ -181,4 +240,28 @@ Replacement meaning.
     let failure = failure_json(repository.run(&["create-checkpoint", request.to_str().unwrap()]));
     assert_eq!(failure["error"]["code"], "superseded_units_co_selected");
     assert!(!repository.path.join("methexis/checkpoints").exists());
+}
+
+fn active_checkpoint_identity(repository: &GitRepository) -> (String, std::path::PathBuf) {
+    let active: serde_json::Value = serde_norway::from_slice(
+        &fs::read(repository.path.join("methexis/active-checkpoint.yaml")).unwrap(),
+    )
+    .unwrap();
+    let checkpoint_id = active["checkpoint_id"].as_str().unwrap().to_owned();
+    let checkpoint_name = checkpoint_id.strip_prefix("sha256:").unwrap();
+    let checkpoint_path = repository
+        .path
+        .join("methexis/checkpoints")
+        .join(format!("{checkpoint_name}.yaml"));
+    (checkpoint_id, checkpoint_path)
+}
+
+fn checkpoint_files(repository: &GitRepository) -> Vec<std::ffi::OsString> {
+    let directory = repository.path.join("methexis/checkpoints");
+    let mut files = fs::read_dir(directory)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    files.sort();
+    files
 }

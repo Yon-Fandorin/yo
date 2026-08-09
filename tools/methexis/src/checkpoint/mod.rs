@@ -16,6 +16,7 @@ const MAX_RECORD_BYTES: usize = 256 * 1024;
 
 mod candidate;
 mod context;
+mod delta;
 mod evaluation;
 mod git;
 mod operations;
@@ -136,7 +137,7 @@ pub(crate) struct OperationSuccess {
     status: &'static str,
     authority: &'static str,
     trusted_commit: String,
-    affected_ids: Vec<String>,
+    checkpoint_delta: delta::CheckpointDelta,
     path: String,
     hash: String,
     checkpoint_id: String,
@@ -187,6 +188,14 @@ impl OperationFailure {
 
     fn code(&self) -> &str {
         &self.error.code
+    }
+
+    fn with_trusted_evidence(mut self, trusted_commit: String, affected_id: String) -> Self {
+        self.trusted_commit = Some(trusted_commit);
+        self.error.affected_ids.push(affected_id);
+        self.error.affected_ids.sort();
+        self.error.affected_ids.dedup();
+        self
     }
 
     pub(crate) fn parts(&self) -> (Option<String>, String, String, Vec<String>) {

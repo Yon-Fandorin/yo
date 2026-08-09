@@ -4,7 +4,7 @@ use std::{fs, io::Read, path::Path};
 
 use super::{
     ACTIVATE_REQUEST_SCHEMA, ActivationInput, ActivationRequest, CREATE_REQUEST_SCHEMA,
-    CreateInput, CreateRequest, MAX_REQUEST_BYTES, OperationFailure, OperationSuccess, git,
+    CreateInput, CreateRequest, MAX_REQUEST_BYTES, OperationFailure, OperationSuccess, delta, git,
     hash_bytes,
     records::{build_active, build_checkpoint, read_checkpoint},
     relative_path, semantic_hash,
@@ -43,6 +43,9 @@ pub(super) fn create(
     let target = repository_root
         .join("methexis/checkpoints")
         .join(format!("{filename}.yaml"));
+    let candidate_path = relative_path(repository_root, &target);
+    let checkpoint_delta =
+        delta::summarize(&snapshot, &record, &hash, candidate_path.clone(), OPERATION)?;
     let status = publish_immutable(
         repository_root,
         &target,
@@ -58,8 +61,8 @@ pub(super) fn create(
         status,
         authority: "draft_proposal",
         trusted_commit: snapshot.commit.clone(),
-        affected_ids: record.units.iter().map(|unit| unit.id.clone()).collect(),
-        path: relative_path(repository_root, &target),
+        checkpoint_delta,
+        path: candidate_path,
         hash,
         checkpoint_id: record.checkpoint_id,
         request_hash,
@@ -145,6 +148,14 @@ pub(super) fn propose_activation(
         request.replace_active_hash.as_deref(),
     )?;
     let target = repository_root.join("methexis/active-checkpoint.yaml");
+    let candidate_path = relative_path(repository_root, &checkpoint_path);
+    let checkpoint_delta = delta::summarize(
+        &snapshot,
+        &checkpoint,
+        &actual_hash,
+        candidate_path,
+        OPERATION,
+    )?;
     let status = publish_active(
         repository_root,
         &target,
@@ -161,11 +172,7 @@ pub(super) fn propose_activation(
         status,
         authority: "draft_proposal",
         trusted_commit: checkpoint.trusted_commit,
-        affected_ids: checkpoint
-            .units
-            .iter()
-            .map(|unit| unit.id.clone())
-            .collect(),
+        checkpoint_delta,
         path: relative_path(repository_root, &target),
         hash,
         checkpoint_id: checkpoint.checkpoint_id,

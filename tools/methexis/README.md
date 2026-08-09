@@ -118,6 +118,14 @@ then writes the active-record proposal with compare-and-swap. Replacements
 persist the exact prior active-record hash as deterministic lineage, allowing a
 later staged check to reproduce the transition without trusting invocation
 history.
+Both success results include `checkpoint_delta`, computed against the active
+Checkpoint in that same pinned snapshot. It identifies the baseline (or
+explicitly reports its absence), identifies the immutable candidate artifact,
+lists only sorted root-presence and KnowledgeId/RevisionId changes, and reports
+candidate and unchanged unit counts. The candidate Checkpoint remains the owner
+of the complete closure and selection reasons; successful output does not
+repeat unchanged units. Failure output retains its complete diagnostic
+`affected_ids`.
 Both files become authority only after repository review integrates them into
 `develop`. `check` reports a fully fresh integrated active record as `active`;
 stable Source drift yields `degraded`, while a concurrent Source change returns

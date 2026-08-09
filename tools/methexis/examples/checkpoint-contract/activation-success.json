@@ -5,9 +5,30 @@
   "status": "written",
   "authority": "draft_proposal",
   "trusted_commit": "8f32802b338831bb4119e1fcf9d413bd736cc023",
-  "affected_ids": [
-    "tui.relocated"
-  ],
+  "checkpoint_delta": {
+    "baseline": null,
+    "candidate": {
+      "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
+      "checkpoint_hash": "sha256:e9d6a9442c1964fdbf6d9fe7173cab6189cc8df9d52d2b4381b82ded0d7dac01",
+      "artifact_path": "methexis/checkpoints/7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9.yaml"
+    },
+    "unit_changes": [
+      {
+        "id": "tui.relocated",
+        "before_revision": null,
+        "after_revision": "sha256:54e7e0b515b400d95c7a3578fbd72fef0ab0e1d71c6f1b057637ee0f2998874d"
+      }
+    ],
+    "root_changes": [
+      {
+        "root": "tui.relocated",
+        "before_present": false,
+        "after_present": true
+      }
+    ],
+    "candidate_unit_count": 1,
+    "unchanged_unit_count": 0
+  },
   "path": "methexis/active-checkpoint.yaml",
   "hash": "sha256:5731a65d8a00fda36fdee778d6ccd6b5d09a706aa70edab56a59ff8b4ef31ff2",
   "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
