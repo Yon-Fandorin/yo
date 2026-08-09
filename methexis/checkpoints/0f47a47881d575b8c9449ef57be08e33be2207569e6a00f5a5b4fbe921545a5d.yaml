@@ -1,0 +1,408 @@
+schema: methexis.checkpoint/v1alpha1
+checkpoint_id: sha256:0f47a47881d575b8c9449ef57be08e33be2207569e6a00f5a5b4fbe921545a5d
+trusted_commit: d3f67453b80a86565b8d7dd39faead11d0409327
+source_status: not_evaluated
+roots:
+- agent.backend.yo-managed-model-loop
+- agent.delivery.first-coding-loop
+- agent.model.session-selection
+- agent.remote.yo-host
+- agent.session.continuation-lineage
+- agent.session.history-discovery
+- methexis.knowledge.body-contract
+- methexis.knowledge.identity
+- methexis.knowledge.kind-extension
+- methexis.knowledge.kind-vocabulary
+- methexis.knowledge.record-format
+- methexis.knowledge.unit
+- methexis.knowledge.unit-boundary
+- tui.appearance.activity-motion-profile
+- tui.appearance.glyph-profiles
+- tui.architecture.evidence-based-split
+- tui.chrome.input-stack
+- tui.dependencies.selection-gate
+- tui.dependencies.terminal-backend-selection
+- tui.overlay.prompt-slot-routing
+- tui.overlay.selection-panel
+- tui.prompt-assist.trigger-lifecycle
+- tui.runtime.event-source-scheduling
+- tui.runtime.mode-selection
+- tui.runtime.typed-flow
+- tui.terminal.job-control-suspend-resume
+- tui.terminal.lifecycle-restoration
+units:
+- id: agent.backend.codex-app-server
+  revision: sha256:dc2f48f5d235ed6234387abf8558022548437f6a42d81372a6a659a21bd3fcb2
+  reasons:
+  - required_by:agent.delivery.first-coding-loop
+- id: agent.backend.execution-topology
+  revision: sha256:70819655552fdb0e13a9bebd452ac5626967f6e747097247fb12e66f2c4208e4
+  reasons:
+  - required_by:agent.backend.yo-managed-model-loop
+  - required_by:agent.connector.openai-chat-completions
+  - required_by:agent.connector.openai-responses
+  - required_by:agent.input.explicit-skill-reference
+  - required_by:agent.input.workspace-reference
+  - required_by:agent.model.service-binding
+  - required_by:agent.observability.session-journal
+  - required_by:agent.remote.yo-host
+  - required_by:agent.session.continuation-lineage
+- id: agent.backend.yo-managed-model-loop
+  revision: sha256:3a4de402ea2d11c801643a1d6a5e8a3182e20efd58a2c7edd2a3665d63846ef1
+  reasons:
+  - root:agent.backend.yo-managed-model-loop
+- id: agent.connector.openai-chat-completions
+  revision: sha256:1254024644f7ef8b1e580b7d2d0aab0f429ea93401053175c2fbdcc68fed9c65
+  reasons:
+  - required_by:agent.backend.yo-managed-model-loop
+- id: agent.connector.openai-responses
+  revision: sha256:811c1d8c896b7976d32c03c3dd131f95e99ad328807b072c23ca6518a671ce19
+  reasons:
+  - required_by:agent.backend.yo-managed-model-loop
+- id: agent.core.frontend-independent-boundary
+  revision: sha256:48bdc83d2ff51aec31703a19c69bfe7cf8767eff6f55c488f531ff247b5dbdce
+  reasons:
+  - required_by:agent.backend.codex-app-server
+  - required_by:agent.backend.execution-topology
+  - required_by:agent.input.explicit-skill-reference
+  - required_by:agent.input.workspace-reference
+  - required_by:agent.observability.view-projections
+  - required_by:agent.remote.yo-host
+  - required_by:agent.runtime.command-event-boundary
+  - required_by:agent.runtime.session-turn-activity
+  - required_by:agent.tool.local-execution-boundary
+- id: agent.credentials.local-account-store
+  revision: sha256:c2b31051123e7f06dade53fbe24f665468445a19385898324c75f692a3bee45e
+  reasons:
+  - required_by:agent.connector.openai-chat-completions
+  - required_by:agent.connector.openai-responses
+- id: agent.delivery.first-coding-loop
+  revision: sha256:032c41cd0a0d6d0ac462c99223b6744850f6061519d8a209f1032689e194b549
+  reasons:
+  - root:agent.delivery.first-coding-loop
+- id: agent.input.explicit-skill-reference
+  revision: sha256:c94ff484148533a2ef4dfa543c0d94fa058df07acaaa5cc8f106940dd8aa2879
+  reasons:
+  - required_by:agent.persistence.format-compatibility
+  - required_by:tui.prompt-assist.trigger-lifecycle
+- id: agent.input.workspace-reference
+  revision: sha256:24966d483a66fdd183618dcae270f1395c4cca452a5f60f5bea130da96fae4e4
+  reasons:
+  - required_by:agent.persistence.format-compatibility
+  - required_by:tui.prompt-assist.trigger-lifecycle
+- id: agent.model.service-binding
+  revision: sha256:3cf709c45e94c810ae926047b3e90cd9025591f34a99b8d1914d57bf5e6b7cbc
+  reasons:
+  - required_by:agent.connector.openai-chat-completions
+  - required_by:agent.connector.openai-responses
+  - required_by:agent.credentials.local-account-store
+  - required_by:agent.model.session-selection
+- id: agent.model.session-selection
+  revision: sha256:efc5edce0a42b6cd3beb423804a8a3a9ff39e65426a0516fa857574a31c80946
+  reasons:
+  - root:agent.model.session-selection
+- id: agent.observability.session-journal
+  revision: sha256:b27449a240e944a5073b37a4369c0993f89f64ca1747520304f84446e8ee7796
+  reasons:
+  - required_by:agent.backend.yo-managed-model-loop
+  - required_by:agent.connector.openai-chat-completions
+  - required_by:agent.connector.openai-responses
+  - required_by:agent.credentials.local-account-store
+  - required_by:agent.observability.view-projections
+  - required_by:agent.remote.yo-host
+  - required_by:agent.session.continuation-lineage
+  - required_by:agent.session.history-discovery
+  - required_by:agent.tool.local-execution-boundary
+- id: agent.observability.view-projections
+  revision: sha256:d6dfe4c07c30988c606a93b9d0f9076f46bbe9ce63931ffb7917a1d020351c29
+  reasons:
+  - required_by:agent.remote.yo-host
+  - required_by:agent.session.history-discovery
+- id: agent.persistence.format-compatibility
+  revision: sha256:06893d7a2264f154d5c2dc2cfe102938dcc833d32957d80420eb782445e0d4c0
+  reasons:
+  - required_by:agent.observability.session-journal
+  - required_by:agent.storage.session-repository
+- id: agent.remote.yo-host
+  revision: sha256:193b7634a6357d78ba76de4eefedf19c8b444b91315e9fff2664e50761ea968a
+  reasons:
+  - required_by:agent.session.history-discovery
+  - root:agent.remote.yo-host
+- id: agent.runtime.active-turn-input
+  revision: sha256:39aa3a6547d3c30c50ae361dd884d9ce66b20262d2b62bdd3936f216f5a5735e
+  reasons:
+  - required_by:agent.delivery.first-coding-loop
+  - required_by:tui.chrome.input-stack
+- id: agent.runtime.command-event-boundary
+  revision: sha256:3fdc1fe8302195d1aac087bb723f14080a782f50076f25ae50bd0c7d8533c9b2
+  reasons:
+  - required_by:agent.backend.yo-managed-model-loop
+  - required_by:agent.input.explicit-skill-reference
+  - required_by:agent.input.workspace-reference
+  - required_by:agent.model.session-selection
+  - required_by:agent.remote.yo-host
+  - required_by:agent.runtime.active-turn-input
+  - required_by:agent.storage.session-repository
+  - required_by:agent.tool.local-execution-boundary
+- id: agent.runtime.session-turn-activity
+  revision: sha256:f2711f638f3fc4c25bf22c5f043a8b12510507472b838288d6db0a0dbe12d66a
+  reasons:
+  - required_by:agent.backend.codex-app-server
+  - required_by:agent.backend.yo-managed-model-loop
+  - required_by:agent.observability.session-journal
+  - required_by:agent.runtime.command-event-boundary
+  - required_by:agent.session.continuation-lineage
+  - required_by:agent.storage.session-repository
+  - required_by:agent.tool.local-execution-boundary
+- id: agent.session.continuation-lineage
+  revision: sha256:f5aa09a8a8fef392ac361ab2b54e860548730858a2cd508dd950e34f8d96cda9
+  reasons:
+  - required_by:agent.backend.yo-managed-model-loop
+  - required_by:agent.model.service-binding
+  - required_by:agent.model.session-selection
+  - required_by:agent.session.history-discovery
+  - root:agent.session.continuation-lineage
+- id: agent.session.history-discovery
+  revision: sha256:0fda64b5cb1eefbc4b1659c7c056fdfb27b19225935b2015ee8bac5583c3caee
+  reasons:
+  - root:agent.session.history-discovery
+- id: agent.storage.session-repository
+  revision: sha256:2f7e673093a05d2d430a3edcbdff6eefa94b705e165d53e6e68a1157ae911c68
+  reasons:
+  - required_by:agent.observability.session-journal
+  - required_by:agent.remote.yo-host
+  - required_by:agent.session.continuation-lineage
+  - required_by:agent.session.history-discovery
+- id: agent.tool.local-execution-boundary
+  revision: sha256:008b8c0d5eae8069bfc67404de3fe9eb8cb64d3fd385bd445fab6a3b2ebb2914
+  reasons:
+  - required_by:agent.backend.yo-managed-model-loop
+- id: methexis.knowledge.body-contract
+  revision: sha256:2c8c44d2ab0991e1bd67b1e763976863d32bf9c40fb15b1daf6fc08ad834292e
+  reasons:
+  - root:methexis.knowledge.body-contract
+- id: methexis.knowledge.identity
+  revision: sha256:744628ec91eb5121d7705cb18d88bf5bb5e1fd8a2c7e091feb6eb8d0ddfc8d3f
+  reasons:
+  - required_by:methexis.knowledge.record-format
+  - root:methexis.knowledge.identity
+- id: methexis.knowledge.kind-extension
+  revision: sha256:e39366ccde6df74fcdf749b0bdff7d7eee7487bcc1bc60d70f56597f8456529c
+  reasons:
+  - root:methexis.knowledge.kind-extension
+- id: methexis.knowledge.kind-vocabulary
+  revision: sha256:a4a8ab956a9583084768eeebc1e669837aebfa5d280028f5fcfcdb1433fcb4b3
+  reasons:
+  - required_by:methexis.knowledge.body-contract
+  - required_by:methexis.knowledge.kind-extension
+  - root:methexis.knowledge.kind-vocabulary
+- id: methexis.knowledge.record-format
+  revision: sha256:5190f93b930126015f89a0a704ea4391f6325cb6da235b2d68683a773f06d13d
+  reasons:
+  - required_by:methexis.knowledge.body-contract
+  - root:methexis.knowledge.record-format
+- id: methexis.knowledge.unit
+  revision: sha256:18de5fd8656eb91fcab35b81efcd7c8e18c288ccec8731faf1ce3b965d4a852a
+  reasons:
+  - required_by:methexis.knowledge.identity
+  - required_by:methexis.knowledge.kind-vocabulary
+  - required_by:methexis.knowledge.record-format
+  - required_by:methexis.knowledge.unit-boundary
+  - root:methexis.knowledge.unit
+- id: methexis.knowledge.unit-boundary
+  revision: sha256:e9394beecae03537ed2f925a86a63259b06779add86d151dfb71caf6c593285f
+  reasons:
+  - root:methexis.knowledge.unit-boundary
+- id: tui.appearance.activity-motion-profile
+  revision: sha256:20c8ea416043e18fe26d3aa8c0190cdb3add9ba91ea08c5427b2ee7ba3f05526
+  reasons:
+  - root:tui.appearance.activity-motion-profile
+- id: tui.appearance.frame-consistency
+  revision: sha256:5c391df66f82b9f447d1dee86bf3d510d1305910c36ac3042818e6448361ff9a
+  reasons:
+  - required_by:tui.appearance.activity-motion-profile
+  - required_by:tui.appearance.glyph-profiles
+  - required_by:tui.overlay.selection-panel
+- id: tui.appearance.glyph-profiles
+  revision: sha256:fcdba9627e4dda4e968aa24837993d2b2247ba9e30a511781ffb6f3a9db334d9
+  reasons:
+  - root:tui.appearance.glyph-profiles
+- id: tui.appearance.session-publication
+  revision: sha256:5419dabeac274a7afded46caa29fc07474a1f6406e61f4f1d08787483c199551
+  reasons:
+  - required_by:tui.appearance.frame-consistency
+  - required_by:tui.appearance.glyph-profiles
+- id: tui.architecture.evidence-based-split
+  revision: sha256:b8022eaed3bf1313bb75a4e7c15bb3aa698550415f3845e9daa0e9544c8a2b42
+  reasons:
+  - root:tui.architecture.evidence-based-split
+- id: tui.architecture.module-boundaries
+  revision: sha256:95366906f598718e308296d25ff8e765ba6fc8dd602eff8ce4eaea95eb249ffb
+  reasons:
+  - required_by:agent.core.frontend-independent-boundary
+  - required_by:tui.appearance.session-publication
+  - required_by:tui.dependencies.terminal-backend-selection
+  - required_by:tui.runtime.mode-selection
+  - required_by:tui.runtime.process-termination-coordinator
+  - required_by:tui.runtime.typed-flow
+  - required_by:tui.surface.geometry
+  - required_by:tui.surface.model-ownership
+  - required_by:tui.surface.resolved-style
+  - required_by:tui.surface.terminal-ops
+  - required_by:tui.terminal.inline-viewport
+  - required_by:tui.terminal.job-control-suspend-resume
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.chrome.input-stack
+  revision: sha256:29de6d2133f29312fe6ab737fb17aca8e2294e7e15ffff62cbd615685f981054
+  reasons:
+  - required_by:tui.appearance.activity-motion-profile
+  - required_by:tui.overlay.prompt-slot-routing
+  - required_by:tui.prompt-assist.trigger-lifecycle
+  - required_by:tui.runtime.activity-motion-scheduling
+  - root:tui.chrome.input-stack
+- id: tui.crate.ui-only-boundary
+  revision: sha256:890ea5c07e508f9b29a01edeb5e274fffa4750e3cfe22d1fc1ef53546988d2a4
+  reasons:
+  - required_by:agent.core.frontend-independent-boundary
+  - required_by:agent.observability.view-projections
+  - required_by:tui.architecture.evidence-based-split
+  - required_by:tui.architecture.module-boundaries
+  - required_by:tui.runtime.typed-flow
+  - required_by:tui.surface.model-ownership
+  - required_by:tui.surface.text-segmentation
+  - required_by:tui.surface.width-profile
+- id: tui.dependencies.selection-gate
+  revision: sha256:11a84ded112fda98eee50b4b6230b3291a51f65791f2370ccbcd8ca7f142a208
+  reasons:
+  - required_by:tui.dependencies.terminal-backend-selection
+  - root:tui.dependencies.selection-gate
+- id: tui.dependencies.terminal-backend-selection
+  revision: sha256:632b25f826964df1a588a50e79429a721e83ef9b31002b8195083118e1800af2
+  reasons:
+  - required_by:tui.runtime.event-source-scheduling
+  - root:tui.dependencies.terminal-backend-selection
+- id: tui.overlay.prompt-slot-routing
+  revision: sha256:98716f609a3d30008068429e069ccd966edfc0f66b98b7a85ccc2c707cdabdda
+  reasons:
+  - required_by:tui.prompt-assist.trigger-lifecycle
+  - root:tui.overlay.prompt-slot-routing
+- id: tui.overlay.selection-panel
+  revision: sha256:2e58f50d50fb5f38ea32ade437bf4cdb47b30f2ffd62ec728d0c957cb8fa336d
+  reasons:
+  - required_by:agent.model.session-selection
+  - required_by:tui.appearance.activity-motion-profile
+  - required_by:tui.overlay.prompt-slot-routing
+  - required_by:tui.prompt-assist.trigger-lifecycle
+  - root:tui.overlay.selection-panel
+- id: tui.prompt-assist.trigger-lifecycle
+  revision: sha256:a7a8721bee4e81a1f20f25c4abee067a3fcfffef2bdd88e0e142739298440fb9
+  reasons:
+  - root:tui.prompt-assist.trigger-lifecycle
+- id: tui.runtime.activity-motion-scheduling
+  revision: sha256:4b7ecbd05bd0936adc1f49073c392f5428e8b566101d27b06a9e05944a5a50c5
+  reasons:
+  - required_by:tui.appearance.activity-motion-profile
+  - required_by:tui.runtime.frame-scheduling
+- id: tui.runtime.event-source-scheduling
+  revision: sha256:d7f0adfae5a45b49cf70b5aa82d8b9010fe25d4c3d7fe3a8bc7aff7987b264d3
+  reasons:
+  - root:tui.runtime.event-source-scheduling
+- id: tui.runtime.frame-scheduling
+  revision: sha256:f356fb179b08f615ceaf5d018a89ba8a4fe204b04933766b5851f6fa097bcf56
+  reasons:
+  - required_by:tui.runtime.event-source-scheduling
+- id: tui.runtime.mode-selection
+  revision: sha256:da04bd60dc60009bb82238da9fe97af2dd5c6afa772b653e6cac594147d3ff1d
+  reasons:
+  - root:tui.runtime.mode-selection
+- id: tui.runtime.process-termination-coordinator
+  revision: sha256:cbb78b65c659e052ec0683d5f9052bfedc769738dc4d94b8bcfee39f894a11e7
+  reasons:
+  - required_by:agent.backend.codex-app-server
+  - required_by:tui.dependencies.terminal-backend-selection
+  - required_by:tui.runtime.event-source-scheduling
+  - required_by:tui.terminal.job-control-suspend-resume
+- id: tui.runtime.typed-flow
+  revision: sha256:191d3c5030c6e2e161556232cd548bccf8b375cb52a85a586db14fb6aa6dac49
+  reasons:
+  - required_by:agent.runtime.command-event-boundary
+  - required_by:tui.overlay.prompt-slot-routing
+  - required_by:tui.prompt-assist.trigger-lifecycle
+  - required_by:tui.runtime.event-source-scheduling
+  - required_by:tui.runtime.frame-scheduling
+  - required_by:tui.runtime.process-termination-coordinator
+  - required_by:tui.surface.terminal-ops
+  - required_by:tui.terminal.lifecycle-restoration
+  - root:tui.runtime.typed-flow
+- id: tui.surface.blank-cell
+  revision: sha256:ec8988e176bf90cbe93c8c0d19c547dbf20fe006e08d79fc89ceb7d052d7ba85
+  reasons:
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.deterministic-diff
+  revision: sha256:269a7815cb3c6b213295b70da7c26ddc2dded7a776bfbe12353d5b2ebff41e4c
+  reasons:
+  - required_by:tui.runtime.activity-motion-scheduling
+  - required_by:tui.surface.terminal-ops
+- id: tui.surface.geometry
+  revision: sha256:41f9fe004f1a95d1d95b6810cd05408e5e356e17858ee3f7f0002164d2abff8f
+  reasons:
+  - required_by:tui.chrome.input-stack
+  - required_by:tui.overlay.selection-panel
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.grapheme-cells
+  revision: sha256:f0c1a62e8e1121618003f8b5c264fc77945afb7bec087037813ce2bbba6d72ff
+  reasons:
+  - required_by:tui.appearance.activity-motion-profile
+  - required_by:tui.overlay.selection-panel
+  - required_by:tui.surface.deterministic-diff
+- id: tui.surface.model-ownership
+  revision: sha256:d1529670a39e3d9ca4cda0fcaf822c2afee833043334b1894931f25e821bcd24
+  reasons:
+  - required_by:tui.surface.deterministic-diff
+  - required_by:tui.surface.grapheme-cells
+- id: tui.surface.resolved-style
+  revision: sha256:7210c4f0cdb9a5f7382c0e7edb7ea24d40b42181259854d2e4ae558b284ac33e
+  reasons:
+  - required_by:tui.appearance.frame-consistency
+  - required_by:tui.appearance.session-publication
+  - required_by:tui.overlay.selection-panel
+  - required_by:tui.surface.blank-cell
+  - required_by:tui.surface.grapheme-cells
+  - required_by:tui.surface.model-ownership
+- id: tui.surface.terminal-ops
+  revision: sha256:ad84fe74ecf5998e0f5f20c92ac793d02550bc114b0836d580d916b47d63c1b1
+  reasons:
+  - required_by:tui.terminal.inline-viewport
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.surface.text-segmentation
+  revision: sha256:a4911404c56747266cada0136602123dc0c06115f330f8bd6e7fbd355bdd46f3
+  reasons:
+  - required_by:tui.surface.grapheme-cells
+  - required_by:tui.surface.width-profile
+- id: tui.surface.width-profile
+  revision: sha256:6f83deba02e9cce6473c947191acca41e160fe9a78a3a2b9e1646ecd5aac0883
+  reasons:
+  - required_by:tui.appearance.activity-motion-profile
+  - required_by:tui.appearance.glyph-profiles
+  - required_by:tui.chrome.input-stack
+  - required_by:tui.surface.grapheme-cells
+- id: tui.terminal.inline-viewport
+  revision: sha256:dad59a7d08cb9afc9466bdc9e675d2d497d51f623b24a7b726c0cb01fd61cb2c
+  reasons:
+  - required_by:tui.terminal.lifecycle-restoration
+- id: tui.terminal.job-control-suspend-resume
+  revision: sha256:f494d7d5c6af42bc29e68094cce97c55c2692950fa7fa42d80b6cebcea3d73a7
+  reasons:
+  - root:tui.terminal.job-control-suspend-resume
+- id: tui.terminal.lifecycle-restoration
+  revision: sha256:4403451e95ae089a621b9699d0801a6cb34300d73948a18a171ac722e06fbd19
+  reasons:
+  - required_by:agent.delivery.first-coding-loop
+  - required_by:tui.dependencies.terminal-backend-selection
+  - required_by:tui.runtime.activity-motion-scheduling
+  - required_by:tui.runtime.event-source-scheduling
+  - required_by:tui.runtime.frame-scheduling
+  - required_by:tui.runtime.mode-selection
+  - required_by:tui.runtime.process-termination-coordinator
+  - required_by:tui.terminal.job-control-suspend-resume
+  - root:tui.terminal.lifecycle-restoration
