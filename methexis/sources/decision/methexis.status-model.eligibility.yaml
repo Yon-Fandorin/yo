@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.status-model.eligibility
+revision: sha256:bbd7100ffb2bded9f6012d57b27ab353c854e1d3e17238a8a4220910ea21bfdf
+payload:
+  kind: decision
+  content: Final eligibility is derived after the pre-transition status guard and trusted active-record transition. Guard outcomes supply invalid, suspect, or stale; otherwise a revision is inactive when the trusted active Checkpoint does not select it and active when selected. Every final state carries machine-readable evidence for its winning condition, preserving guard evidence or identifying the exact trusted Checkpoint membership decision. Final precedence is invalid, suspect, stale, inactive, then active. Normal context requires both approved and active. Suspect and stale content remains visible only in a marked diagnostic view, and invalid content is never emitted.

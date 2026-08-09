@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.status-model.negative-record
+revision: sha256:1f3ef80419ea75defef7247402a6fd6a04a116f93674aa4a7f78633a2689f297
+payload:
+  kind: decision
+  content: Durable review holds and invalidations are tracked records bound to the exact affected Knowledge revision. A review hold supplies the suspect guard condition for unresolved semantic or provenance uncertainty, while a human invalidation supplies the invalid guard condition. Neither record grants approval or activation, and each supplies machine-readable evidence.

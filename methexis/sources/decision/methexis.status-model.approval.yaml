@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.status-model.approval
+revision: sha256:6ba7f59c6b9617abad9b56382229c6e556e516dea2c2d65e5b79bc5ec215ce5e
+payload:
+  kind: decision
+  content: Approval status is a derived axis separate from context eligibility, with the closed labels draft and approved. Consumers evaluate it independently from eligibility, and approval alone never implies context eligibility. Exact label derivation remains owned by the exact-revision approval and current-record contracts rather than being redefined here.

@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.status.demotion-evidence
+revision: sha256:3ffdeca5953ebe40b36cab76f45a0a9dd233376851a7ca5f74900a1c7d9ea6a9
+reviewer: methexis
+reviewed_at: 2026-08-09T12:37:19Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:6fdcc650ca83bef08c6df7ad6c7f69d4b8e355b8ba08ac057353f79a4e0e85cb
+request_hash: sha256:d70d104feb3e3d124f760660ca98d0683bd2a6777fb8b37a1fad16ad503c477f

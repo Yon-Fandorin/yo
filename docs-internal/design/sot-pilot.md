@@ -504,6 +504,50 @@ that evidence; the Pilot directory is not copied wholesale.
 
 ## SOT-006: Invalidation and validation
 
+The approval and eligibility-status clauses in this section are migrating to
+the following semantic KnowledgeUnits:
+
+| KnowledgeUnit | Delegated scope |
+| --- | --- |
+| [`methexis.status.approval`](../../methexis/knowledge/methexis/methexis.status.approval.md) | Approval-axis separation and closed Draft/approved vocabulary; existing SOT-004 KUs retain exact derivation ownership |
+| [`methexis.status.negative-record`](../../methexis/knowledge/methexis/methexis.status.negative-record.md) | Exact-revision durable review holds and invalidations |
+| [`methexis.status.demotion-evidence`](../../methexis/knowledge/methexis/methexis.status.demotion-evidence.md) | Pre-transition and runtime demotion guard, winning-condition evidence, affected-closure propagation, and concurrency routing |
+| [`methexis.status.eligibility`](../../methexis/knowledge/methexis/methexis.status.eligibility.md) | Post-transition final eligibility composition, precedence, context-admission rule, and diagnostic visibility |
+
+Until all four exact approved revisions are selected together by the trusted
+active Checkpoint, this section remains the sole authority for those scopes and
+the linked records are migration candidates regardless of branch presence or
+approval. The migration activation MUST select all four as one cohort; partial
+activation does not transfer any listed scope and MUST be rejected during
+activation review. That transition MUST also select an exact approved revision
+of `methexis.checkpoint.activation-transition` whose required graph depends on
+`methexis.status.demotion-evidence` and therefore includes
+`methexis.status.negative-record` through required closure. The transition MUST
+NOT depend on the post-transition `methexis.status.eligibility` unit. Selecting
+the four status revisions with the current pre-routing activation revision does
+not transfer any listed scope.
+Once that complete activation becomes trusted, the linked
+KnowledgeUnits become the sole authority for their listed scopes and the
+corresponding prose below remains only non-authoritative migration history
+until a later Projection cleanup replaces it with routing links. This
+conditional delegation makes the active-Checkpoint transition the atomic owner
+change without an authority gap or a period of dual ownership.
+
+This SOT-006 migration-control paragraph remains authoritative after that
+transfer. Every later Checkpoint transition MUST preserve the delegated scopes:
+its prospective Checkpoint selects an exact approved revision of
+`methexis.status.approval`, `methexis.status.eligibility`,
+`methexis.status.negative-record`, and `methexis.status.demotion-evidence`, or
+exact approved semantic successors that preserve those four scopes. The
+currently active revisions remain authoritative until the exact replacement
+transition becomes trusted;
+replacement revisions need not already be active. Omitting any member or
+selecting a pre-migration Checkpoint does not restore authority to the
+historical status prose below. Reversal requires an explicit reviewed revision
+of SOT-006 that reclaims those named scopes and a new forward compare-and-swap
+activation that keeps the current owner authoritative until its replacement is
+trusted; a raw Git revert is not an authority transition.
+
 Approval and context eligibility are separate derived axes.
 
 | Approval | Trigger |

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.status-model.demotion-evidence
+revision: sha256:0e99fa79cd8915914eec5dbafa494794cb972acb7c769d40b7f746f3e730427d
+payload:
+  kind: decision
+  content: The pre-transition and runtime status guard maps deterministic failures and human invalidations to invalid, unresolved review holds to suspect, and a pinned Source, evidence result, retrieval, or attestation that no longer satisfies the freshness input approved for the Knowledge revision to stale, in that precedence order. Working-tree and host observations can only demote the guard outcome, never grant approval or activation, and every outcome carries winning-condition evidence. Pinned Source changes block affected knowledge and Projections and degrade affected Checkpoints. The winning ineligible state propagates only toward selected dependents that transitively require the affected unit; unaffected prerequisites, siblings, and unrelated approved knowledge remain eligible. Concurrent changes follow the immutable-snapshot and final-revalidation rules owned by SOT-007.
