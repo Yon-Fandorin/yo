@@ -2,7 +2,7 @@
   "schema": "methexis.operation/v1alpha1",
   "ok": false,
   "operation": "create_checkpoint",
-  "trusted_commit": "8f32802b338831bb4119e1fcf9d413bd736cc023",
+  "trusted_commit": "b5fa1633ba947891247c7385c5f28f18c64363a9",
   "error": {
     "code": "unknown_checkpoint_root",
     "message": "root KnowledgeId `unknown.root` does not exist",

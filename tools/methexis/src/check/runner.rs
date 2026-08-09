@@ -41,6 +41,7 @@ pub(super) fn check_repository_selected(
         &foundation.units,
         &foundation.owners,
         &foundation.sources,
+        &foundation.negative_records,
         repository_root,
     );
     sort_diagnostics(&mut diagnostics);

@@ -140,6 +140,7 @@ pub(crate) struct Foundation {
     pub(crate) units: Vec<KnowledgeUnit>,
     pub(crate) owners: Vec<Owner>,
     pub(crate) sources: Vec<Source>,
+    pub(crate) negative_records: crate::source::NegativeRecords,
 }
 
 pub(crate) fn check_repository(repository_root: &Path) -> CheckReport {
@@ -159,6 +160,7 @@ pub(crate) fn load_foundation(repository_root: &Path) -> Result<Foundation, Vec<
         &foundation.units,
         &foundation.owners,
         &foundation.sources,
+        &foundation.negative_records,
         repository_root,
     );
     sort_diagnostics(&mut global_diagnostics);
@@ -193,6 +195,13 @@ fn load_records(repository_root: &Path) -> Result<Foundation, Vec<Diagnostic>> {
             Vec::new()
         },
     };
+    let negative_records = match crate::source::negative::load(repository_root) {
+        Ok(records) => records,
+        Err(mut record_diagnostics) => {
+            diagnostics.append(&mut record_diagnostics);
+            crate::source::NegativeRecords::empty()
+        },
+    };
 
     let mut units = Vec::new();
     for path in knowledge_paths {
@@ -219,6 +228,7 @@ fn load_records(repository_root: &Path) -> Result<Foundation, Vec<Diagnostic>> {
         units,
         owners,
         sources,
+        negative_records,
     })
 }
 
@@ -908,6 +918,7 @@ fn validate_global(
     units: &[KnowledgeUnit],
     owners: &[Owner],
     sources: &[Source],
+    negative_records: &crate::source::NegativeRecords,
     repository_root: &Path,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
@@ -1041,6 +1052,11 @@ fn validate_global(
         repository_root,
         "supersedes_cycle",
         |relations| relations.supersedes.clone(),
+    ));
+    diagnostics.extend(crate::source::negative::validate_global(
+        negative_records,
+        units,
+        owners,
     ));
 
     diagnostics
@@ -1200,11 +1216,11 @@ fn hash_part(hasher: &mut Sha256, label: &[u8], value: &[u8]) {
     hasher.update(value);
 }
 
-fn is_semantic_id(id: &str) -> bool {
+pub(crate) fn is_semantic_id(id: &str) -> bool {
     !id.is_empty() && id.split('.').all(is_segment)
 }
 
-fn valid_hash(value: &str) -> bool {
+pub(crate) fn valid_hash(value: &str) -> bool {
     value.len() == 71
         && value.starts_with("sha256:")
         && value[7..]
@@ -1212,7 +1228,7 @@ fn valid_hash(value: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-fn is_segment(segment: &str) -> bool {
+pub(crate) fn is_segment(segment: &str) -> bool {
     let bytes = segment.as_bytes();
     matches!(bytes.first(), Some(b'a'..=b'z'))
         && matches!(bytes.last(), Some(b'a'..=b'z' | b'0'..=b'9'))

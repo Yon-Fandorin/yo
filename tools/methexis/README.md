@@ -56,6 +56,27 @@ summary output omits the full unit list. Validation failures always retain the
 complete ordinary report and diagnostics on stderr, even when bounded output
 was requested.
 
+`methexis/negative-records.yaml` is a required, tracked authority input. The
+canonical evaluated-empty form is:
+
+```yaml
+schema: methexis.negative-records/v1alpha1
+records: []
+```
+
+Its absence, unreadability, symlink substitution, malformed bytes, unknown
+fields, duplicate entries, or noncanonical ordering fails closed; an empty
+file is not equivalent to an evaluated-empty manifest. Each record binds one
+exact `knowledge_id` and SHA-256 `revision` to `suspect` or `invalid`, a
+tracked `recorded_by` OwnerId, and structured `evidence.code` plus
+`evidence.reference`. Matching records demote eligibility in the order
+`invalid > suspect > stale > active` and propagate only through required
+knowledge relations. Trusted and working records are unioned during runtime,
+so deleting a trusted hold only in the working tree cannot clear it, while a
+new working record can immediately demote use. Resolve a record through an
+ordinary reviewed removal from the tracked manifest; Git history retains the
+prior decision.
+
 `check --staged-activation` is the fail-closed repository-hook entry point.
 When the index does not contain an active-record change it runs the ordinary
 all-class check. When it does, the index must contain exactly one new immutable
@@ -218,6 +239,7 @@ src/checkpoint/
 
 src/source/
   mod.rs          Source facade and eligibility result types
+  negative.rs     exact-revision negative records and demotion evidence
   records.rs      typed YAML record loading
   revision.rs     deterministic SourceRevision identity
   validation.rs   closed schema and semantic-field validation

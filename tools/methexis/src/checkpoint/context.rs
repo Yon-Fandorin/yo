@@ -88,11 +88,22 @@ pub(crate) fn final_revalidate(
 ) -> Result<(), AuthorityFailure> {
     const OPERATION: &str = "resolve_context";
     source::final_revalidate(repository_root, &authority.freshness_guard).map_err(|failure| {
+        let negative_records = failure.code.starts_with("negative_records_");
         AuthorityFailure {
             diagnostics: vec![Diagnostic {
                 phase: DiagnosticPhase::Global,
-                path: "methexis/sources".to_owned(),
-                code: "source_changed_during_resolution".to_owned(),
+                path: if negative_records {
+                    "methexis/negative-records.yaml"
+                } else {
+                    "methexis/sources"
+                }
+                .to_owned(),
+                code: if negative_records {
+                    "negative_records_changed_during_resolution"
+                } else {
+                    "source_changed_during_resolution"
+                }
+                .to_owned(),
                 message: failure.message,
                 line: None,
                 column: None,

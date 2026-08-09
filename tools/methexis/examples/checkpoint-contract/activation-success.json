@@ -4,13 +4,13 @@
   "operation": "propose_activation",
   "status": "written",
   "authority": "draft_proposal",
-  "trusted_commit": "8f32802b338831bb4119e1fcf9d413bd736cc023",
+  "trusted_commit": "b5fa1633ba947891247c7385c5f28f18c64363a9",
   "checkpoint_delta": {
     "baseline": null,
     "candidate": {
-      "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
-      "checkpoint_hash": "sha256:e9d6a9442c1964fdbf6d9fe7173cab6189cc8df9d52d2b4381b82ded0d7dac01",
-      "artifact_path": "methexis/checkpoints/7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9.yaml"
+      "checkpoint_id": "sha256:43e22a12817b3929a716e12e522db31be2a336a4a80fd3aab4ce5f561a22ed12",
+      "checkpoint_hash": "sha256:ca644f85c4c7a6f7debcff2a6ad481d3ac72d4ca0fad697e6f81affaba4c1f40",
+      "artifact_path": "methexis/checkpoints/43e22a12817b3929a716e12e522db31be2a336a4a80fd3aab4ce5f561a22ed12.yaml"
     },
     "unit_changes": [
       {
@@ -30,9 +30,9 @@
     "unchanged_unit_count": 0
   },
   "path": "methexis/active-checkpoint.yaml",
-  "hash": "sha256:5731a65d8a00fda36fdee778d6ccd6b5d09a706aa70edab56a59ff8b4ef31ff2",
-  "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
-  "request_hash": "sha256:e4685908fd65a3e6a30dfc78909526c62b5f8ed290cc87f085860fe16c61dc34",
+  "hash": "sha256:d8165787b9515b6154578bda1bae8aaeaf51d6bc3173850b18b76c482714f3be",
+  "checkpoint_id": "sha256:43e22a12817b3929a716e12e522db31be2a336a4a80fd3aab4ce5f561a22ed12",
+  "request_hash": "sha256:2b1c85a68aaabeeded2033bcc0bff04512d6391e96382dbf4e42373acdddbde4",
   "next_actions": [
     "submit the Checkpoint and active record through repository review"
   ]

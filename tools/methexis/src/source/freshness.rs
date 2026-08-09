@@ -17,6 +17,9 @@ pub(crate) fn evaluate(
     working_sources: &[Source],
     selected: &BTreeSet<String>,
 ) -> Result<FreshnessEvaluation, FreshnessFailure> {
+    let (working_negative_records, negative_record_capture) =
+        super::negative::load_captured(repository_root)?;
+    super::negative::validate_for_evaluation(&working_negative_records, trusted)?;
     let trusted_sources = sources_by_id(&trusted.sources);
     let working_sources_by_id = sources_by_id(working_sources);
     let trusted_units = trusted
@@ -103,11 +106,19 @@ pub(crate) fn evaluate(
         );
     }
 
+    super::negative::apply(
+        &trusted.negative_records,
+        &working_negative_records,
+        &trusted_units,
+        selected,
+        &mut units,
+    );
     propagate_required_dependents(&trusted_units, selected, &mut units);
     let guard = FreshnessGuard {
         source_revisions: source_revisions(working_sources),
         code_captures,
         record_captures: Vec::new(),
+        negative_record_capture: Some(negative_record_capture),
     };
     final_revalidate(repository_root, &guard)?;
     let checkpoint = if units
@@ -129,6 +140,7 @@ pub(crate) struct FreshnessGuard {
     source_revisions: BTreeMap<String, String>,
     code_captures: Vec<(super::working_tree::Capture, String, String)>,
     record_captures: Vec<super::working_tree::Capture>,
+    negative_record_capture: Option<super::working_tree::Capture>,
 }
 
 impl FreshnessGuard {
@@ -137,6 +149,7 @@ impl FreshnessGuard {
             source_revisions: BTreeMap::new(),
             code_captures: Vec::new(),
             record_captures: Vec::new(),
+            negative_record_capture: None,
         }
     }
 
@@ -149,6 +162,15 @@ pub(crate) fn final_revalidate(
     repository_root: &Path,
     guard: &FreshnessGuard,
 ) -> Result<(), FreshnessFailure> {
+    if let Some(capture) = &guard.negative_record_capture {
+        super::working_tree::final_revalidate(repository_root, capture).map_err(|_| {
+            FreshnessFailure {
+                code: "negative_records_changed_during_validation",
+                message: "negative-record input changed during validation".to_owned(),
+                affected_ids: Vec::new(),
+            }
+        })?;
+    }
     final_revalidate_source_records(repository_root, &guard.source_revisions)?;
     for capture in &guard.record_captures {
         super::working_tree::final_revalidate(repository_root, capture)?;
@@ -205,9 +227,10 @@ pub(super) fn propagate_required_dependents(
                 .expect("selected dependent has a freshness state");
             if state.eligibility < blocked_state {
                 state.eligibility = blocked_state;
-                state
-                    .evidence
-                    .push(format!("required_source_state:{blocked}"));
+                state.evidence.push(format!(
+                    "required_knowledge_state:{}:{blocked}",
+                    blocked_state.as_str()
+                ));
                 state.evidence.sort();
                 state.evidence.dedup();
                 queue.push_back(dependent.to_owned());

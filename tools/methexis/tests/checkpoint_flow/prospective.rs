@@ -213,6 +213,27 @@ fn staged_replacement_rejects_degraded_source_freshness() {
     assert_eq!(failure["error"]["affected_ids"], json!([KNOWLEDGE_ID]));
 }
 
+// Source가 fresh해도 exact KU revision에 열린 suspect record가 있으면 새 active 전이로
+// 승격할 수 없다. prospective hook도 일반 runtime과 같은 negative 입력을 평가한다.
+#[test]
+fn staged_replacement_rejects_a_suspect_negative_record() {
+    let repository = GitRepository::approved();
+    let revision = repository.revision_for(KNOWLEDGE_ID);
+    let repository = replacement_candidate_from(repository);
+    fs::write(
+        repository.path.join("methexis/negative-records.yaml"),
+        format!(
+            "schema: methexis.negative-records/v1alpha1\nrecords:\n  - knowledge_id: {KNOWLEDGE_ID}\n    revision: {revision}\n    condition: suspect\n    recorded_by: tui-architecture\n    evidence:\n      code: review.hold\n      reference: test://prospective/suspect\n"
+        ),
+    )
+    .unwrap();
+
+    let failure = failure_json(repository.run(&["check", "--staged-activation"]));
+
+    assert_eq!(failure["error"]["code"], "prospective_checkpoint_degraded");
+    assert_eq!(failure["error"]["affected_ids"], json!([KNOWLEDGE_ID]));
+}
+
 // working tree의 임의 active bytes를 CAS 전임자로 사용해 만든 proposal은
 // canonical이어도 trusted active의 실제 hash와 다르므로 prospective 검사를 통과하지 못한다.
 #[test]

@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 mod freshness;
+pub(crate) mod negative;
 mod records;
 mod revision;
 mod validation;
@@ -12,6 +13,7 @@ mod working_tree;
 mod tests;
 
 pub(crate) use freshness::{FreshnessFailure, FreshnessGuard, evaluate, final_revalidate};
+pub(crate) use negative::NegativeRecords;
 pub(crate) use records::{load, load_captured};
 pub(crate) use revision::calculate as calculate_revision;
 
@@ -19,6 +21,7 @@ pub(crate) use revision::calculate as calculate_revision;
 pub(crate) enum Eligibility {
     Active,
     Stale,
+    Suspect,
     Invalid,
 }
 
@@ -27,6 +30,7 @@ impl Eligibility {
         match self {
             Self::Active => "active",
             Self::Stale => "stale",
+            Self::Suspect => "suspect",
             Self::Invalid => "invalid",
         }
     }

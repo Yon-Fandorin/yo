@@ -54,11 +54,20 @@ impl From<Vec<Diagnostic>> for AuthorityFailure {
 
 impl AuthorityFailure {
     pub(crate) fn from_source(trusted_commit: &str, failure: source::FreshnessFailure) -> Self {
-        let retryable = failure.code == "source_changed_during_validation";
+        let negative_records = failure.code.starts_with("negative_records_");
+        let retryable = matches!(
+            failure.code,
+            "source_changed_during_validation" | "negative_records_changed_during_validation"
+        );
         Self {
             diagnostics: vec![Diagnostic {
                 phase: DiagnosticPhase::Global,
-                path: "methexis/sources".to_owned(),
+                path: if negative_records {
+                    "methexis/negative-records.yaml"
+                } else {
+                    "methexis/sources"
+                }
+                .to_owned(),
                 code: failure.code.to_owned(),
                 message: failure.message,
                 line: None,

@@ -60,6 +60,42 @@ fn stale_required_knowledge_fails_and_stale_optional_candidate_is_omitted() {
     );
 }
 
+// suspect는 stale보다 강한 검토 보류 상태다. 필수 anchor면 요청을 막고, 선택 후보면
+// 요청 전체는 살리되 bundle_suspect라는 구체적 제외 사유를 남긴다.
+#[test]
+fn suspect_required_knowledge_fails_and_suspect_optional_candidate_is_omitted() {
+    let repository = active_repository();
+    let id = "tui.context.small";
+    let revision = repository.revision_for(id);
+    fs::write(
+        repository.path.join("methexis/negative-records.yaml"),
+        format!(
+            "schema: methexis.negative-records/v1alpha1\nrecords:\n  - knowledge_id: {id}\n    revision: {revision}\n    condition: suspect\n    recorded_by: tui-architecture\n    evidence:\n      code: review.hold\n      reference: test://context/suspect\n"
+        ),
+    )
+    .unwrap();
+
+    let required = direct_request(&repository, "knowledge_id", id, 8_000);
+    let failure = resolve_failure(&repository, &required);
+    assert_eq!(failure["error"]["code"], "required_knowledge_blocked");
+
+    let optional = candidate_request(&repository, &[(id, 100)], 8_000, false);
+    let result = resolve(&repository, &optional);
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            repository
+                .path
+                .join(result["manifest"]["path"].as_str().unwrap()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        manifest["plan"]["candidate_decisions"][0]["reason"],
+        "bundle_suspect"
+    );
+}
+
 // 같은 build id의 기존 디렉터리가 손상돼 있으면 정상 결과인 것처럼 덮어써서는 안 된다.
 // 충돌을 실패로 보고하고 이번에 만든 임시 출력은 quarantine으로 옮겨 부분 게시를 막는다.
 #[test]

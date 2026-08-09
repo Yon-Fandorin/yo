@@ -4,13 +4,13 @@
   "operation": "create_checkpoint",
   "status": "written",
   "authority": "draft_proposal",
-  "trusted_commit": "8f32802b338831bb4119e1fcf9d413bd736cc023",
+  "trusted_commit": "b5fa1633ba947891247c7385c5f28f18c64363a9",
   "checkpoint_delta": {
     "baseline": null,
     "candidate": {
-      "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
-      "checkpoint_hash": "sha256:e9d6a9442c1964fdbf6d9fe7173cab6189cc8df9d52d2b4381b82ded0d7dac01",
-      "artifact_path": "methexis/checkpoints/7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9.yaml"
+      "checkpoint_id": "sha256:43e22a12817b3929a716e12e522db31be2a336a4a80fd3aab4ce5f561a22ed12",
+      "checkpoint_hash": "sha256:ca644f85c4c7a6f7debcff2a6ad481d3ac72d4ca0fad697e6f81affaba4c1f40",
+      "artifact_path": "methexis/checkpoints/43e22a12817b3929a716e12e522db31be2a336a4a80fd3aab4ce5f561a22ed12.yaml"
     },
     "unit_changes": [
       {
@@ -29,9 +29,9 @@
     "candidate_unit_count": 1,
     "unchanged_unit_count": 0
   },
-  "path": "methexis/checkpoints/7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9.yaml",
-  "hash": "sha256:e9d6a9442c1964fdbf6d9fe7173cab6189cc8df9d52d2b4381b82ded0d7dac01",
-  "checkpoint_id": "sha256:7ef9c6fda63f2caf5aef1ff24cea42be2388f9b00cc619af9aadcb13cac274c9",
+  "path": "methexis/checkpoints/43e22a12817b3929a716e12e522db31be2a336a4a80fd3aab4ce5f561a22ed12.yaml",
+  "hash": "sha256:ca644f85c4c7a6f7debcff2a6ad481d3ac72d4ca0fad697e6f81affaba4c1f40",
+  "checkpoint_id": "sha256:43e22a12817b3929a716e12e522db31be2a336a4a80fd3aab4ce5f561a22ed12",
   "request_hash": "sha256:359c923a34912c02d862c5f547614c4b60ae624a76dda45fb2b378b01bd84c70",
   "next_actions": [
     "inspect the immutable Checkpoint before proposing activation"

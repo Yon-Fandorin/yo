@@ -28,6 +28,13 @@ pub(super) fn blocked_reason(authority: &ContextAuthority, blocked: &[String]) -
         authority
             .freshness
             .get(id)
+            .is_some_and(|state| state.eligibility == Eligibility::Suspect)
+    }) {
+        "bundle_suspect"
+    } else if blocked.iter().any(|id| {
+        authority
+            .freshness
+            .get(id)
             .is_some_and(|state| state.eligibility == Eligibility::Stale)
     }) {
         "bundle_stale"
