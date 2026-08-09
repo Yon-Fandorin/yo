@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.source-model.reference-pinning
+revision: sha256:992aa0e974653d841f19f200ce1576d4f99005631922dc4bff2afc78eff38892
+payload:
+  kind: decision
+  content: A KnowledgeUnit pins every Source by exact SourceId and SourceRevision. Source changes never advance implicitly; an author must select the new SourceRevision, producing a new Knowledge revision that requires exact review, approval, and Checkpoint activation.

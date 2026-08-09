@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.source-model.revision-identity
+revision: sha256:3aab2c4332313d28befa2df6cb931dc852a4b1b87cce7b8d0efe3a41b2970ab6
+payload:
+  kind: decision
+  content: SourceRevision is lowercase SHA-256 over a domain-separated length-delimited representation of schema, SourceId, kind, and kind-specific semantic fields. YAML formatting, physical path, generation time, code line hint, and revision field are excluded; code path, symbol, and content hash are included.

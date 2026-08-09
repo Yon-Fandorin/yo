@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.knowledge-model.revision-identity
+revision: sha256:4dc984e4bb685e7f6871d597f318e4c60581c98ab6d2fb451ffaeb98744dc9fe
+payload:
+  kind: decision
+  content: Knowledge RevisionId is lowercase SHA-256 over an unambiguous length-delimited representation of schema, KnowledgeId, kind, owner, canonical body, sorted exact Source pins, and every closed relation type with sorted targets. CRLF and bare CR normalize to LF; path, YAML order or formatting, generation time, and original line endings are excluded while all other body bytes remain meaningful.

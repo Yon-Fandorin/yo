@@ -195,6 +195,32 @@ expanding the enum. Catch-all kinds such as `misc` are prohibited.
 
 ## SOT-003: Relation and Source model
 
+The relation, Source, and revision-identity clauses in this section and the
+opening of SOT-004 are migrating to the following semantic KnowledgeUnits:
+
+| KnowledgeUnit | Delegated scope |
+| --- | --- |
+| [`methexis.relation.vocabulary`](../../methexis/knowledge/methexis/methexis.relation.vocabulary.md) | Closed relation names, targets, meanings, and advisory-signal boundary |
+| [`methexis.relation.required-graph`](../../methexis/knowledge/methexis/methexis.relation.required-graph.md) | Forward relation authorship, reverse derivation, and graph membership and acyclicity |
+| [`methexis.source.kind-vocabulary`](../../methexis/knowledge/methexis/methexis.source.kind-vocabulary.md) | Closed Source kinds, material modes, freshness modes, and current eligibility |
+| [`methexis.source.record-format`](../../methexis/knowledge/methexis/methexis.source.record-format.md) | Source record shape, SourceId identity, and kind-specific fields |
+| [`methexis.source.revision-identity`](../../methexis/knowledge/methexis/methexis.source.revision-identity.md) | Canonical SourceRevision preimage and exclusions |
+| [`methexis.source.reference-pinning`](../../methexis/knowledge/methexis/methexis.source.reference-pinning.md) | Exact Source pins and explicit Source advancement lifecycle |
+| [`methexis.knowledge.revision-identity`](../../methexis/knowledge/methexis/methexis.knowledge.revision-identity.md) | Canonical Knowledge RevisionId preimage and line-ending normalization |
+
+Until all seven exact approved revisions are selected together by the trusted
+active Checkpoint, SOT-003 and the RevisionId identity paragraphs at the start
+of SOT-004 remain the sole authority for these scopes. The linked records are
+migration candidates regardless of branch presence or approval. Migration
+activation MUST select all seven as one required closure; partial activation
+does not transfer any listed scope and MUST be rejected during activation
+review. Once that complete activation becomes trusted, the linked
+KnowledgeUnits become the sole authority for their listed scopes and the
+corresponding prose below remains only non-authoritative migration history
+until a later Projection cleanup replaces it with routing links. This
+conditional delegation makes the active-Checkpoint transition the atomic owner
+change without an authority gap or a period of dual ownership.
+
 The closed initial relation vocabulary is:
 
 | Relation | Target | Compiler meaning |

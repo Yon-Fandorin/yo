@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.source-model.kind-vocabulary
+revision: sha256:b34736641a50ef1d2e851b828e732e79d5afe353bcde18f519eefbb24b23dbd8
+payload:
+  kind: decision
+  content: The closed initial Source kinds are decision, code, conversation, and external. Conversation material is an authorized excerpt or opaque reference; external freshness is immutable, mutable, or attested. Conversation and external Sources fail closed until their corresponding verifier exists.

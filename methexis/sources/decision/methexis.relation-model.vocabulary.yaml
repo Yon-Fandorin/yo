@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.relation-model.vocabulary
+revision: sha256:405254fe19b92ccfbf1a0e1ab3059b7a677eb770eb5de5f65f50f16d48dd977b
+payload:
+  kind: decision
+  content: The canonical relation vocabulary is closed to depends_on, constrained_by, validated_by, applies_to, and supersedes, with typed targets and compiler meanings. Weak related_to signals are advisory Librarian discovery data and never affect SOT eligibility or invalidation.

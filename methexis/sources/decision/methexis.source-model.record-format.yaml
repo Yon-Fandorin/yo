@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.source-model.record-format
+revision: sha256:b31839e9e0d0d613a385cde233bc7ea8aaf14d1ba854f838f2cda3608d699cda
+payload:
+  kind: decision
+  content: Each Source is one closed typed YAML record below methexis/sources/<kind>. SourceId from record content is stable identity; path and filename are organizational hints. Kind-specific payloads own content or locators once. Code uses repository path, symbol, content hash, and an optional non-identity line hint.
