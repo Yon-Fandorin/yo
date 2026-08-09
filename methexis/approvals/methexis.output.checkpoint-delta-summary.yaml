@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.output.checkpoint-delta-summary
+revision: sha256:ececfd2c5aa339f7aa40e2a1bbf6a90fc37356664539a697afea62bce11582ad
+reviewer: methexis
+reviewed_at: 2026-08-09T03:53:47Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:a68bd96bbeda6767f3e4caf6119ae602235e535bce7ac6ecc4e72bf59e95711c
+request_hash: sha256:899f7673aa11dc8d56e61f8e864e63c2022ec371ad74fa1c954dd77212c29ba9

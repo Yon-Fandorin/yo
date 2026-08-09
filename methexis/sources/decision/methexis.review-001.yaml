@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.review-001
+revision: sha256:4adac6cc627a8664ed1a270ce7ef18146b89407e552e70d437560d2a8e78e8cd
+payload:
+  kind: decision
+  content: A Slice review packet is one content-addressed, atomically published managed model-visible payload. It binds an immutable Git diff, verified ContextBuild, exact bytes and hashes of repository authorities not carried by that build, exact Slice-contract bytes and hash, review questions, validation evidence, and a versioned fixed delivery wrapper. Its ReviewId is a domain-separated hash of a versioned canonical plan containing every semantic reuse input while excluding output paths, timestamps, status, and circular output hashes. Its budget counts the complete caller-controlled payload with a declared tokenizer while explicitly excluding unobservable provider-controlled system or tool overhead. Construction snapshots all inputs, final-revalidates authority, freshness, hashes, and worktree cleanliness before every new or reused return, fails instead of truncating, and verifies exact packet-plus-manifest bytes under create-if-absent publication.

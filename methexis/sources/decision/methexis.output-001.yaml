@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.output-001
+revision: sha256:78c46bdde00c0e2cc427d9200296bf1dcc5f1993408f8e340f614f760b020b61
+payload:
+  kind: decision
+  content: Successful create-checkpoint and propose-activation operations report a reproducible semantic delta between the candidate Checkpoint and the active Checkpoint captured from the same pinned trusted snapshot. The compact result binds the trusted commit, both Checkpoint identities and hashes, the candidate artifact locator, per-unit before/after revisions or absence, per-root before/after presence, candidate closure count, and unchanged-unit count. It omits unchanged closure detail from success output while failures retain complete affected-identifier evidence.
