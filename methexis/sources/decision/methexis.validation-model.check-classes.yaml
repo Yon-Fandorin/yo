@@ -1,0 +1,13 @@
+schema: methexis.source/v1alpha1
+id: methexis.validation-model.check-classes
+revision: sha256:2b337bbed69e8ec1b51cae1c8361208cca53e7a45828dcb086ab54b81dc1acc3
+payload:
+  kind: decision
+  content: >-
+    Fast Check exposes the ordered classes records, relations, authority, and
+    artifacts. A request executes every prerequisite of each selected class and
+    reports canonical requested and executed class lists plus passed, failed, or
+    blocked outcomes. A failed prerequisite blocks every remaining dependent
+    class rather than claiming it was checked. The default request selects all
+    classes; explicit selection accepts repeatable comma-separated case-sensitive
+    names, trims surrounding whitespace, and rejects unknown or empty segments.

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.validation-model.bounded-success-output
+revision: sha256:b01c11543a1e0cef64774b1c4076261dcd15b6db0b851d071000d399d7a5551c
+payload:
+  kind: decision
+  content: Successful Fast Check output may be bounded with summary mode while retaining requested and executed classes, class outcomes, authority, affected IDs, and diagnostic count. Exactly one unit selector occurrence may be used only with summary output and an authority- or artifacts-capable request. After validation successfully reaches that stage, a known KnowledgeId returns only that unit and an unknown ID is a usage failure. Multiple unit selector occurrences and incompatible combinations are usage failures before validation. An underlying validation failure takes precedence over unit resolution and preserves the complete ordinary report and diagnostics.

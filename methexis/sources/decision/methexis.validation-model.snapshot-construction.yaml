@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.validation-model.snapshot-construction
+revision: sha256:8326897b96a461bac9a504429d96b16c162c0235db1dc0347f19fbd92cf67b38
+payload:
+  kind: decision
+  content: Fast editing validation constructs one all-or-nothing structural snapshot in two phases. The records phase parses every discovered working-tree record, including untracked additions under the authority roots, and aggregates local schema, field, identity, relation-shape, and required-body diagnostics. The relations phase runs only after all records pass and aggregates duplicate identities, missing owners or relation targets, and graph cycles. Discovery rejects authority roots, authority directories, and tracked record paths that are symbolic links without following them. Snapshot revision and unit identity remain deterministic across repeated validation, record discovery order, and physical relocation, while canonical Knowledge identity remains owned by methexis.knowledge.identity. Diagnostics use stable codes and deterministic phase, path, code, line, column, message, and affected-ID ordering. Any local or global structural diagnostic prevents the report from carrying a snapshot revision or unit set, and a records failure prevents the relations phase from executing. Later validation-class planning and blocking remain outside this contract.

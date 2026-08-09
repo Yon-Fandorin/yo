@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.validation-model.working-tree-authority
+revision: sha256:c48436aa9345ad2ce53e44e930e7b7f8665b86aec11eb37686f5ff5781d591e1
+payload:
+  kind: decision
+  content: After structural record validation owned by methexis.validation.snapshot-construction succeeds, working-tree Fast Check evaluates Projections and approval proposals against current Draft Knowledge and typed Sources and may report matching, stale, or missing proposal evidence, but local evidence never grants trusted approval or activation. This contract does not redefine structural record validation. Fast Check consumes approval and final eligibility as independently derived by their status contracts and does not redefine them. Working-tree or host observations may contribute only through the status demotion guard and cannot promote content. Successful reports identify their own authority as Draft even when they carry trusted-derived statuses; failed trusted status evaluation cannot fall back to local proposal evidence.

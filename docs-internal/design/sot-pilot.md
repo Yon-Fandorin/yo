@@ -594,6 +594,31 @@ projections and mark affected Checkpoints degraded. A change concurrent with
 resolution follows the immutable snapshot and final revalidation rules in
 `SOT-007`. Unaffected approved knowledge remains eligible.
 
+The Fast Check structural-validation and report-authority clauses are migrating
+to the following semantic KnowledgeUnits:
+
+| KnowledgeUnit | Delegated scope |
+| --- | --- |
+| [`methexis.validation.snapshot-construction`](../../methexis/knowledge/methexis/methexis.validation.snapshot-construction.md) | Two-phase local/global structural validation, deterministic diagnostics, and no partial snapshot |
+| [`methexis.validation.check-classes`](../../methexis/knowledge/methexis/methexis.validation.check-classes.md) | Ordered check classes, prerequisites, requested/executed reporting, and blocked outcomes |
+| [`methexis.validation.bounded-success-output`](../../methexis/knowledge/methexis/methexis.validation.bounded-success-output.md) | Summary and unit selectors without loss of failure evidence |
+| [`methexis.validation.working-tree-authority`](../../methexis/knowledge/methexis/methexis.validation.working-tree-authority.md) | Draft proposal evaluation, trusted approval separation, and observation-only demotion |
+
+Each listed exact approved revision transfers only its delegated scope while
+its final eligibility is `active` under the separately retained status and
+activation guards. Before first activation or during any later demotion, the
+corresponding Fast Check prose below is the sole authority for that scope. If
+the retained rules make a valid subset `active`, those units become the sole
+authority only for their disjoint listed scopes, while inactive or demoted
+scopes remain or return here. Partial activation or demotion therefore MUST NOT
+transfer another scope or create joint ownership. While all four revisions are
+`active`, the corresponding prose remains dormant non-authoritative fallback
+and migration history. Projection cleanup MUST NOT remove that fallback until
+a separate reviewed migration defines authority continuity through demotion.
+This delegation does not transfer the staged-activation, tracked-artifact,
+activation-guard, or executable-evidence clauses, which remain authoritative
+here until their own explicit migrations.
+
 Fast editing validation uses two phases. The local phase parses every record and
 aggregates schema, field, ID, relation-shape, and body-section diagnostics. The
 global phase runs only when every record passes locally, then aggregates

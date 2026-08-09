@@ -73,6 +73,7 @@ fn global_failures_include_missing_targets_and_cycles() {
 
     assert!(!report.ok);
     assert!(report.snapshot_revision.is_none());
+    assert!(report.units.is_empty());
     assert!(
         report
             .diagnostics
