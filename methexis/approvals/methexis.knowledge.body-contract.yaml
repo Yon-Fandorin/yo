@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.knowledge.body-contract
+revision: sha256:2c8c44d2ab0991e1bd67b1e763976863d32bf9c40fb15b1daf6fc08ad834292e
+reviewer: methexis
+reviewed_at: 2026-08-09T02:50:48Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:9c6193f0ec31ae80a0ea235e130fb0e0a93d0d8b43cc7bc2bc5993552f197622
+request_hash: sha256:f71036018264b04eb8a98fa030e5b1498c92d746087d1e65048bf579d940aa00

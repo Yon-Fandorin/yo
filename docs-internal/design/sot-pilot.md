@@ -79,6 +79,31 @@ consumer.
 
 ## SOT-002: Knowledge authority and unit model
 
+The knowledge-model clauses in this section are migrating to the following
+semantic KnowledgeUnits:
+
+| KnowledgeUnit | Delegated scope |
+| --- | --- |
+| [`methexis.knowledge.unit`](../../methexis/knowledge/methexis/methexis.knowledge.unit.md) | Meaning of a KnowledgeUnit |
+| [`methexis.knowledge.unit-boundary`](../../methexis/knowledge/methexis/methexis.knowledge.unit-boundary.md) | Authoring boundary between one complete contract and independent units |
+| [`methexis.knowledge.identity`](../../methexis/knowledge/methexis/methexis.knowledge.identity.md) | Stable semantic KnowledgeId and grammar |
+| [`methexis.knowledge.record-format`](../../methexis/knowledge/methexis/methexis.knowledge.record-format.md) | Canonical file and metadata format |
+| [`methexis.knowledge.body-contract`](../../methexis/knowledge/methexis/methexis.knowledge.body-contract.md) | Required canonical body structure and visible meaning |
+| [`methexis.knowledge.kind-vocabulary`](../../methexis/knowledge/methexis/methexis.knowledge.kind-vocabulary.md) | Meanings of the closed initial kinds |
+| [`methexis.knowledge.kind-extension`](../../methexis/knowledge/methexis/methexis.knowledge.kind-extension.md) | Admission gate for new and catch-all kinds |
+
+Until all seven exact approved revisions are selected together by the trusted
+active Checkpoint, this section remains the sole authority for those scopes and
+the linked records are migration candidates regardless of branch presence or
+approval. The migration activation MUST select all seven as one required
+closure; partial activation does not transfer any listed scope and MUST be
+rejected during activation review. Once that complete activation becomes
+trusted, the linked KnowledgeUnits become the sole authority for their listed
+scopes and the corresponding prose below remains only non-authoritative
+migration history until a later Projection cleanup replaces it with routing
+links. This conditional delegation makes the active-Checkpoint transition the
+atomic owner change, without an authority gap or a period of dual ownership.
+
 Records reachable from the repository-local `refs/heads/develop` are the only
 approval authority in the current Pilot. Task input, environment variables, and
 the invoking agent MUST NOT override it. At the start of an operation, the ref

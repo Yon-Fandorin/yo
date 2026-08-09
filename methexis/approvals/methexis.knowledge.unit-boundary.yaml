@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.knowledge.unit-boundary
+revision: sha256:e9394beecae03537ed2f925a86a63259b06779add86d151dfb71caf6c593285f
+reviewer: methexis
+reviewed_at: 2026-08-09T02:50:48Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:f0b2d435d2b799a92226ab4b89a8f070145643f9947ad082e5adee68ed640ef5
+request_hash: sha256:7ff62d9e7cf018e81480a3ca71c8c0067abdbf628efca19181a71e70b474fd49

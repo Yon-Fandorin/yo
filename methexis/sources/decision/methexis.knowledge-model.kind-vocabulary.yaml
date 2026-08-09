@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.knowledge-model.kind-vocabulary
+revision: sha256:323a85db0168e317a609a61dee61cd847bf9b25db5e5a11b49caf6ab43daabe5
+payload:
+  kind: decision
+  content: The closed initial KnowledgeUnit kinds are definition for shared meaning, rule for required behavior or invariants, decision for a selected direction and rationale, and procedure for ordered work with completion criteria.

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.knowledge-model.unit-boundary
+revision: sha256:cf9fd831a871505d557e1508b2e9c1b45f24c5535c82f095cf34aebb38354617
+payload:
+  kind: decision
+  content: Conditions, outcomes, and exceptions remain in one KnowledgeUnit when separating them would make the behavioral contract incomplete. Reusable definitions and behavior that can change independently use separate KnowledgeUnits.

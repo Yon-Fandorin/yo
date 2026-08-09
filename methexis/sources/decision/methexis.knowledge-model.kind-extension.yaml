@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.knowledge-model.kind-extension
+revision: sha256:f6690351aa3fee9e8d29b16bad8d372755ad1e2bf754ccc6be5c4651a72cf101
+payload:
+  kind: decision
+  content: Knowledge records use only the closed kind vocabulary. Classification friction is recorded before a new kind is admitted, and catch-all kinds such as misc are prohibited.

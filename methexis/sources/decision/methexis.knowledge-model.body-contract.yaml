@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.knowledge-model.body-contract
+revision: sha256:23ce9a091096b3363f6f45285c06e29768339e546e44221504a6c1cd42721232
+payload:
+  kind: decision
+  content: Every canonical KnowledgeUnit body has a non-empty Statement. Decisions also have Rationale; procedures also have Steps and Completion Criteria. Raw HTML blocks and comments cannot carry or hide canonical meaning.

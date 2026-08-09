@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.knowledge-model.record-format
+revision: sha256:e9259e2eb1b1f5bd2da3dc44bf32bcd0a3e79a15116ff91d965baf780e1fd1ef
+payload:
+  kind: decision
+  content: The Pilot stores one KnowledgeUnit per Markdown file with closed typed YAML frontmatter that is validated as machine metadata and a canonical English Markdown body for meaning. Metadata contains schema, identity, kind, owner, exact Source pins, and typed relations without YAML merge keys or a duplicate canonical statement.

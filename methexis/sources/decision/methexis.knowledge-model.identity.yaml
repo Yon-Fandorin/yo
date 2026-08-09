@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.knowledge-model.identity
+revision: sha256:24200a9ccc29a7829af72325be15ebec2f5aa87ab4cff49c3984e2978d4551a5
+payload:
+  kind: decision
+  content: Knowledge identity is a stable lowercase dot-separated semantic ID read from record content. Location and filename are mutable organizational hints, and an ID does not encode physical path, record kind, revision, or first consumer.
