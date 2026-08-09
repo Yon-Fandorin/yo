@@ -1,12 +1,12 @@
 {
   "schema": "methexis.context-manifest/v1alpha1",
-  "build_id": "sha256:c0982ca83ecaf46686556aa17b884c028782f8b248b236d46a48987b2a67817b",
+  "build_id": "sha256:78a7348e3b8f8e71bab49a74a0396726e1efa15f9ae51e5120bd5a6245e629dc",
   "plan": {
     "schema": "methexis.context-build-plan/v1alpha1",
     "checkpoint": {
-      "id": "sha256:e85befd6b2a1f64a0502be81ad2ccb3417d6aecde4c96af75b9f30dc70118014",
-      "hash": "sha256:c5adc8b15b027d3ed541974095f8467e725a9e9f9cf69e5759bfe1b7793fd5ff",
-      "authority_basis_commit": "0eb1d3f1a091702b5185a794135ffc83f2e029f4"
+      "id": "sha256:34b551fefc89bb4b2c7764e392f59be06048b422c0d415976920ddcf33660e4a",
+      "hash": "sha256:785c0fd1bc61b0784aa6f4473ba52430523b40c66fda38b8aced4ab32924266f",
+      "authority_basis_commit": "62b495100bb57dfc4a894b4d229e40907cf9ce8a"
     },
     "units": [
       {
