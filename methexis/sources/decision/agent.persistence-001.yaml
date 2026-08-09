@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:d21c5c0d1e9393c13a33241107c605a019127801ac5f5f1f74da6f76e912ecbd
+revision: sha256:9099aa0899d2315e2472ca8c691a465a39adf5f26694291690303d660b29273e
 payload:
   kind: decision
   content: |-
@@ -10,3 +10,6 @@ payload:
 
 
     Before public release, the anchored-session semantic Journal /v1 is explicitly replaced again so every backend binding records exact_replay(local_client or managed_server) or backend_managed_state. Replay deltas and replay_delta_sequence are required only for exact replay and forbidden for backend-managed state; both strategies retain payload-free resumable outcomes and atomic Continuation Anchors.
+
+
+    Before public release, the continuation-strategy-aware anchored-session semantic Journal /v1 is explicitly extended so a replay message may carry visible content and an optional independent visible refusal. This is an additive extension of the same format generation: every refusal-absent preceding record is also a valid current record, while mixed top-level format discriminators still fail closed. Refusal is valid only for assistant messages. Absence means no refusal; presence requires a non-null UTF-8 JSON string, including the valid empty string, while null and non-string values fail closed. Content and refusal are each bounded over decoded UTF-8 octets before the existing canonical encoded delta and prefix bounds apply. The new reader accepts every preceding record, while a preceding closed-shape reader rejects a new refusal-bearing record. Therefore downgrade remains possible only for Sessions that have not persisted refusal; no migration, dual write, or downgrade shim is provided. The physical envelope and all other semantic records remain unchanged.

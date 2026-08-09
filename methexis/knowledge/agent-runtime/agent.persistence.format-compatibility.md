@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:d21c5c0d1e9393c13a33241107c605a019127801ac5f5f1f74da6f76e912ecbd
+    revision: sha256:9099aa0899d2315e2472ca8c691a465a39adf5f26694291690303d660b29273e
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -25,13 +25,16 @@ The UUIDv7-only, descriptor-aware semantic Session Journal format
 `yo.session-record/v1` are yo's initial public-format candidates. Before the
 first public release, an earlier reviewed revision replaced the structured-input
 semantic `/v1` with an anchored-session development shape. A second reviewed revision then replaced that shape with the replay-delta
-development shape. This third reviewed revision replaces that immediately
-preceding shape with the closed anchored-session semantic `/v1` defined below. Its exact shape and UUIDv7 Session identity are part of the
+development shape. A third reviewed revision replaced that immediately
+preceding shape with a continuation-strategy-aware anchored-session shape. This
+fourth reviewed revision explicitly extends that same shape with the optional
+assistant-refusal replay field defined below. Its exact shape and UUIDv7 Session identity are part of the
 baseline; a matching schema tag alone MUST NOT admit a record.
 
 Every semantic `/v1` commit, including a descriptor-only commit, MUST contain
 the exact top-level discriminator `format: anchored-session`. A missing or
-unknown value, or a Session history containing mixed format generations, MUST
+unknown value, or a Session history containing different top-level `format`
+discriminator values, MUST
 fail closed before semantic admission.
 
 Every persisted `command_committed`, `event_committed`,
@@ -152,10 +155,14 @@ semantic Journal data rather than Request Audit detail:
   non-empty list of exact provider-neutral replay items. The replay contract is
   present exactly once at the start of a replay chain and contains the exact
   system prompt plus ordered tools with name, safe description, schema version,
-  and closed JSON schema. An item is exactly a message with role and visible
-  UTF-8 content, a function call with call identity, tool name, and validated
-  argument JSON bytes, or a function result with call identity and bounded
-  model-visible output bytes;
+  and closed JSON schema. An item is exactly a message with role, visible UTF-8
+  content, and an optional independent visible refusal; a function call with
+  call identity, tool name, and validated argument JSON bytes; or a function
+  result with call identity and bounded model-visible output bytes. Refusal is
+  valid only on an assistant message. Absence means no refusal. When present,
+  refusal MUST be a non-null JSON string containing UTF-8, including the valid
+  empty string `""`; null and every non-string value MUST fail closed. Content
+  and refusal preserve their exact decoded UTF-8 bytes independently;
 - `backend_resumable_outcome` contains positive `epoch`, positive `turn_id`,
   positive `accepted_request_sequence`, optional positive
   `replay_delta_sequence`, exact `status: completed`, and an optional
@@ -260,6 +267,11 @@ delta to 16 MiB, and the replay prefix selected by an Anchor to 64 MiB and 4096
 items. A bound violation produces a completed but non-resumable Turn and no
 delta, outcome, or Anchor; later Turns on that binding fail with explicit
 context exhaustion until an independently approved compaction or new binding.
+Message content and refusal are each limited to 16 MiB of decoded UTF-8 octets.
+The existing delta and replay-prefix limits measure the complete canonical
+encoded delta bytes after JSON escaping. A refusal on a system, developer, or
+user message MUST fail closed during evidence validation and wire decoding
+rather than being reinterpreted by a connector.
 
 A `backend_resumable_outcome` is valid only after a matching semantic
 `TurnFinished` with outcome `completed` and MUST reference the latest accepted
@@ -327,6 +339,23 @@ This contract governs Session Journal and Session-record persistence only.
 Other persistent formats, including `yo.workspace-host-id/v1`, remain under
 their own owning contracts.
 
+This fourth explicitly reviewed pre-release semantic `/v1` change is an
+additive extension of the continuation-strategy-aware anchored-session shape,
+not another distinguishable format generation. It adds only the optional
+`refusal` field to a replay message and retains `format: anchored-session`; it
+does not change the physical envelope or any other semantic record. Every valid
+refusal-absent record from the preceding revision is also a current-generation
+record under this extended closed shape, so mixing refusal-absent and
+refusal-bearing messages does not violate the top-level format-generation rule.
+The new reader MUST accept every valid preceding record by interpreting an
+absent field as no refusal. A reader for the preceding closed shape rejects a
+new refusal-bearing record as an unknown field. Consequently, an existing
+Session remains readable by the preceding reader only until a refusal-bearing
+replay delta is persisted; after that point a downgrade fails closed for that
+Session. No migration, dual write, or downgrade compatibility shim is provided.
+This asymmetric pre-release data impact is explicitly accepted by this
+revision.
+
 Any further pre-release replacement under either `/v1` tag requires another
 explicitly reviewed SOT revision that names the replaced shape and accepts its
 data impact. After yo's first public release, evolution MUST preserve published
@@ -359,4 +388,7 @@ Separate binding, accepted-request, and outcome records preserve backend
 differences without duplicating their payloads in each Anchor. Backward
 Journal-sequence references make a small Anchor verifiable, while the existing
 envelope checksum protects the new semantic payload without creating a second
-authority.
+authority. Keeping content and refusal separate preserves the visible fields
+required for exact Chat Completions replay, while the assistant-only invariant
+prevents another API dialect from silently assigning refusal meaning to a user,
+developer, or system message.

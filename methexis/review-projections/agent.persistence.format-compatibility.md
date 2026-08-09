@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:acc24661fcc92c3bc78232ce7bf8ea0d59aae3a5e0c8e544d168248dc62d0e90
+revision: sha256:06893d7a2264f154d5c2dc2cfe102938dcc833d32957d80420eb782445e0d4c0
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:fb0dbcaef2ca1459cb85051f80feba912db4a5fe401437fff4b43f26bacd64b1
+request_hash: sha256:2142432b9a59549a85768e9718a5b3484bb42b27c7c1e7bbf29f25b75b8f09bb
 ---
 # Korean Review Projection
 
@@ -18,8 +18,10 @@ UUIDv7만 사용하는 descriptor-aware 의미 Session Journal
 `yo.semantic-journal-commit/v1`과 체크섬이 있는 물리 Session 레코드
 `yo.session-record/v1`을 yo의 첫 공개 포맷 후보로 유지합니다. 첫 공개 릴리스 전에 첫 reviewed revision이 structured-input 의미 `/v1`을
 anchored-session development shape로 교체했고, 두 번째 reviewed revision은 이를
-replay-delta development shape로 교체했습니다. 이번 세 번째 reviewed revision은
-그 바로 앞 shape를 아래의 닫힌 anchored-session 의미 `/v1`로 교체합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며 schema
+replay-delta development shape로 교체했습니다. 세 번째 reviewed revision은 그 shape를
+continuation strategy를 명시하는 anchored-session shape로 교체했습니다. 이번 네 번째
+reviewed revision은 같은 shape에 아래의 optional assistant-refusal replay field를 명시적으로
+확장합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며 schema
 태그가 같다는 이유만으로 레코드를 받아들이지 않습니다.
 
 Descriptor만 있는 commit을 포함한 모든 의미 `/v1` commit은 top-level에 정확히
@@ -163,6 +165,11 @@ fail closed 합니다. 현재 checksummed physical envelope 자체는 정확한 
 
 이번 세 번째 reviewed pre-release revision은 바로 앞 replay-delta development shape를 교체합니다. backend_binding_opened는 continuation_strategy를 명시하며 exact_replay는 local_client 또는 managed_server executor를 갖고 backend_managed_state는 executor를 금지합니다. 이는 새 epoch의 seed 방법을 뜻하는 transition.mode와 별개입니다. exact replay binding에서만 model_replay_delta와 outcome의 replay_delta_sequence가 필수이며 delta가 outcome 바로 앞에 있어야 합니다. backend-managed binding에서는 둘 다 금지되고 TurnFinished(completed), payload-free outcome, Anchor가 같은 commit에 연속해서 기록됩니다. 두 exact replay executor의 replay contract, bounds, digest, ordering, Anchor validation은 동일하며 request를 조립하는 위치만 다릅니다. managed_server는 reviewed remote repository 구현 전에는 현재 implementation이 기록할 수 없는 예약 값입니다. 같은 `/v1` tag를 사용한 직전 development shape는 fail closed합니다.
 
+
+이번 네 번째 reviewed pre-release revision은 바로 앞 continuation-strategy-aware anchored-session shape와 같은 format generation을 additive extension합니다. Replay message는 정확한 role과 visible UTF-8 content 외에 독립적인 optional visible refusal을 가질 수 있습니다. Refusal은 assistant message에만 유효합니다. Field가 없으면 refusal이 없다는 뜻이고, 존재하면 빈 문자열 `""`도 포함하는 non-null UTF-8 JSON string이어야 하며 null과 다른 타입은 fail closed합니다. Content와 refusal의 decoded UTF-8 bytes를 각각 정확히 보존하고 각자 16 MiB로 제한합니다. 기존 16 MiB delta와 64 MiB 및 4096 item replay prefix 제한은 JSON escape 뒤의 전체 canonical encoded delta bytes에 적용됩니다. System·developer·user message의 refusal은 공통 evidence validation과 wire decoding에서 fail closed해야 합니다.
+
+Refusal이 없는 직전 revision의 모든 유효 record는 확장된 현재 shape에서도 current-generation record입니다. 따라서 refusal이 없는 message와 있는 message가 섞이는 것은 top-level format generation 혼합이 아니며, 서로 다른 `format` discriminator가 섞이는 경우만 계속 fail closed합니다. 새 reader는 직전 record를 그대로 읽지만, 직전 closed-shape reader는 refusal이 실제로 기록된 새 record를 unknown field로 거부합니다. 따라서 기존 Session은 refusal-bearing replay delta가 처음 저장되기 전까지만 이전 binary로 downgrade하여 읽을 수 있고, 그 이후에는 해당 Session이 fail closed합니다. 이 revision은 migration, dual write, downgrade shim 없이 이 비대칭적인 공개 전 data impact를 명시적으로 수용합니다. `format: anchored-session`, checksummed physical envelope, 다른 semantic record는 바뀌지 않습니다.
+
 ## 이유
 
 첫 릴리스 전 `/v1`을 다시 닫으면 실험 번호를 공개 호환성 부담으로 남기지 않습니다.
@@ -170,3 +177,6 @@ Binding, accepted request, resumable outcome을 별도 record로 보존하면 Co
 결과 ID가 같은 backend와 Kimi처럼 다를 수 있는 backend를 같은 의미 계약으로 다룰 수
 있습니다. Anchor는 문자열을 복사하지 않고 앞 record의 JournalSequence를 참조하므로
 작고 검증 가능하며, 기존 물리 envelope checksum만으로 새 의미 payload까지 보호합니다.
+Content와 refusal을 분리하면 Chat Completions의 visible field를 정확히 replay할 수 있고,
+assistant-only 제한은 다른 API dialect가 user·developer·system message에 refusal 의미를
+임의로 부여하는 일을 막습니다.
