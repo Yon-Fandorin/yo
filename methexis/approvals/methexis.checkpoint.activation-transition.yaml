@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: methexis.checkpoint.activation-transition
-revision: sha256:e69511cf56b8562fb554eed0a1c997c6241a41b7ed42c3024d2fde9a0fccf55b
+revision: sha256:fdc7518e60403f6f84033cec1c7405dd8d003ae36ea95456db243c4ce0b269f2
 reviewer: methexis
-reviewed_at: 2026-08-09T11:06:29Z
+reviewed_at: 2026-08-09T12:57:11Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:492086b6d986dc324b447bb06b35ff58fe8bf5e0ad80403e0adefef5d0594a8a
-request_hash: sha256:8734ea55b343a747a06a29e2ef2fe61d4b2438259228069c25d0854e1fe45ca6
+projection_hash: sha256:0f23744309c594d99dbf3e214febec4d7f8af312ee262061df1da495a739cfd6
+request_hash: sha256:5b23af544769f33fd8ca3cd334da8c9767ea8c6ba1a496f73a2f2f48fe41505b
