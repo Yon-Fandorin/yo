@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.source.reference-pinning
+revision: sha256:49db80fa7bb0cb5de027e8ce5d7995568a83ec6da743ef24a9b61b4ee1e697ae
+reviewer: methexis
+reviewed_at: 2026-08-09T07:05:13Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:ebc38307294bb13722edcf6a7702b669a8bbcccf3a43dddd57a5e758ab1b41df
+request_hash: sha256:0d857c438e236ef3fea72e91b9969887ff6f1afb2eec8c77ebb2631739441f39

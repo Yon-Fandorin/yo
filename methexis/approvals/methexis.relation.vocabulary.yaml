@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.relation.vocabulary
+revision: sha256:4d572a9a49727ddf5cc6d2eabf76a1fe2ef238e5eb7b586a157d0019d97d8e94
+reviewer: methexis
+reviewed_at: 2026-08-09T07:05:12Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:a320b26f83819ab9dab44a6322236495df87a87bf226807d3544eeb909ccd5ff
+request_hash: sha256:e24cab402f7ed3fdf151857472d0ce723306d9a5836334a3b2190371b247032c
