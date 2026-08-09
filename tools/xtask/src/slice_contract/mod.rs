@@ -73,12 +73,20 @@ pub(crate) fn check_bound_scope(repository: &Path) -> Result<(), String> {
 }
 
 pub(crate) fn bound_slice(repository: &Path) -> Result<BoundSlice, String> {
-    let repository = repository_root(repository)?;
-    let binding_path = binding_path(&repository)?;
-    let contract_path = bound_contract_path(&repository)?;
+    bound_slice_with(repository, false)
+}
+
+pub(crate) fn trusted_bound_slice(repository: &Path) -> Result<BoundSlice, String> {
+    bound_slice_with(repository, true)
+}
+
+fn bound_slice_with(repository: &Path, trusted: bool) -> Result<BoundSlice, String> {
+    let repository = repository_root_with(repository, trusted)?;
+    let binding_path = binding_path_with(&repository, trusted)?;
+    let contract_path = bound_contract_path_with(&repository, trusted)?;
     let (contract, bytes) = read_contract(&contract_path)?;
-    validate(&repository, &contract)?;
-    validate_slice_branch(&repository, &contract)?;
+    validate_with(&repository, &contract, trusted)?;
+    validate_slice_branch_with(&repository, &contract, trusted)?;
     Ok(BoundSlice {
         slice: contract.slice,
         base: contract.base,
@@ -330,7 +338,12 @@ fn read_contract(path: &Path) -> Result<(SliceContract, Vec<u8>), String> {
 }
 
 fn repository_root(directory: &Path) -> Result<PathBuf, String> {
-    let output = git::output_in(directory, &["rev-parse", "--show-toplevel"], false)?;
+    repository_root_with(directory, false)
+}
+
+fn repository_root_with(directory: &Path, trusted: bool) -> Result<PathBuf, String> {
+    let arguments = ["rev-parse", "--show-toplevel"];
+    let output = git_output(directory, &arguments, trusted)?;
     let root = output.trim();
     if root.is_empty() {
         return Err("git rev-parse --show-toplevel returned an empty path".to_owned());
@@ -339,16 +352,17 @@ fn repository_root(directory: &Path) -> Result<PathBuf, String> {
 }
 
 fn binding_path(repository: &Path) -> Result<PathBuf, String> {
-    let output = git::output_in(
-        repository,
-        &[
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            BINDING_FILE,
-        ],
-        false,
-    )?;
+    binding_path_with(repository, false)
+}
+
+fn binding_path_with(repository: &Path, trusted: bool) -> Result<PathBuf, String> {
+    let arguments = [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        BINDING_FILE,
+    ];
+    let output = git_output(repository, &arguments, trusted)?;
     let path = output.trim();
     if path.is_empty() {
         return Err("git rev-parse --git-path returned an empty binding path".to_owned());
@@ -358,7 +372,11 @@ fn binding_path(repository: &Path) -> Result<PathBuf, String> {
 
 fn bound_contract_path(repository: &Path) -> Result<PathBuf, String> {
     let repository = repository_root(repository)?;
-    let binding = binding_path(&repository)?;
+    bound_contract_path_with(&repository, false)
+}
+
+fn bound_contract_path_with(repository: &Path, trusted: bool) -> Result<PathBuf, String> {
+    let binding = binding_path_with(repository, trusted)?;
     let value = std::fs::read_to_string(&binding).map_err(|error| {
         format!(
             "this worktree has no readable Slice contract binding at {}: {error}\n\
@@ -377,12 +395,16 @@ fn bound_contract_path(repository: &Path) -> Result<PathBuf, String> {
 }
 
 fn validate_slice_branch(repository: &Path, contract: &SliceContract) -> Result<(), String> {
-    let branch = git::output_in(
-        repository,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-        false,
-    )
-    .map_err(|_| {
+    validate_slice_branch_with(repository, contract, false)
+}
+
+fn validate_slice_branch_with(
+    repository: &Path,
+    contract: &SliceContract,
+    trusted: bool,
+) -> Result<(), String> {
+    let arguments = ["symbolic-ref", "--quiet", "--short", "HEAD"];
+    let branch = git_output(repository, &arguments, trusted).map_err(|_| {
         format!(
             "Slice contract `{}` requires a named Slice or Task branch; HEAD is detached",
             contract.slice
@@ -425,6 +447,10 @@ fn validate_slice_branch(repository: &Path, contract: &SliceContract) -> Result<
 }
 
 fn validate(repository: &Path, contract: &SliceContract) -> Result<(), String> {
+    validate_with(repository, contract, false)
+}
+
+fn validate_with(repository: &Path, contract: &SliceContract, trusted: bool) -> Result<(), String> {
     if contract.schema != SCHEMA {
         return Err(format!(
             "unsupported Slice contract schema `{}`; expected `{SCHEMA}`",
@@ -473,7 +499,12 @@ fn validate(repository: &Path, contract: &SliceContract) -> Result<(), String> {
             contract.slice
         ));
     }
-    if !git::succeeds_in(repository, &["check-ref-format", &contract.base_ref], false)? {
+    let valid_ref = git_succeeds(
+        repository,
+        &["check-ref-format", &contract.base_ref],
+        trusted,
+    )?;
+    if !valid_ref {
         return Err(format!(
             "Slice `{}` has invalid base_ref `{}`",
             contract.slice, contract.base_ref
@@ -482,15 +513,9 @@ fn validate(repository: &Path, contract: &SliceContract) -> Result<(), String> {
 
     parse_rules(&contract.allowed_write_set)?;
 
-    let resolved = git::output_in(
-        repository,
-        &[
-            "rev-parse",
-            "--verify",
-            &format!("{}^{{commit}}", contract.base),
-        ],
-        false,
-    )?;
+    let base_reference = format!("{}^{{commit}}", contract.base);
+    let arguments = ["rev-parse", "--verify", base_reference.as_str()];
+    let resolved = git_output(repository, &arguments, trusted)?;
     if resolved.trim() != contract.base {
         return Err(format!(
             "Slice `{}` base must be a full canonical commit ID; `{}` resolves to {}",
@@ -499,17 +524,18 @@ fn validate(repository: &Path, contract: &SliceContract) -> Result<(), String> {
             resolved.trim()
         ));
     }
-    if !git::succeeds_in(
+    let base_is_ancestor = git_succeeds(
         repository,
         &["merge-base", "--is-ancestor", &contract.base, "HEAD"],
-        false,
-    )? {
+        trusted,
+    )?;
+    if !base_is_ancestor {
         return Err(format!(
             "Slice `{}` base {} is not an ancestor of HEAD",
             contract.slice, contract.base
         ));
     }
-    if !git::succeeds_in(
+    let base_belongs_to_integration = git_succeeds(
         repository,
         &[
             "merge-base",
@@ -517,14 +543,31 @@ fn validate(repository: &Path, contract: &SliceContract) -> Result<(), String> {
             &contract.base,
             &contract.base_ref,
         ],
-        false,
-    )? {
+        trusted,
+    )?;
+    if !base_belongs_to_integration {
         return Err(format!(
             "Slice `{}` base {} does not belong to integration history {}",
             contract.slice, contract.base, contract.base_ref
         ));
     }
     Ok(())
+}
+
+fn git_output(repository: &Path, arguments: &[&str], trusted: bool) -> Result<String, String> {
+    if trusted {
+        git::trusted_output_in(repository, arguments)
+    } else {
+        git::output_in(repository, arguments, false)
+    }
+}
+
+fn git_succeeds(repository: &Path, arguments: &[&str], trusted: bool) -> Result<bool, String> {
+    if trusted {
+        git::trusted_succeeds_in(repository, arguments)
+    } else {
+        git::succeeds_in(repository, arguments, false)
+    }
 }
 
 fn ensure_distinct_non_empty(label: &str, values: &[String]) -> Result<(), String> {

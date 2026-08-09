@@ -119,6 +119,64 @@ pub(crate) fn command_in(directory: &Path, inherit_repository_environment: bool)
     command
 }
 
+pub(crate) fn trusted_output_in(directory: &Path, arguments: &[&str]) -> Result<String, String> {
+    let output = trusted_output_bytes_in(directory, arguments)?;
+    String::from_utf8(output).map_err(|error| {
+        format!(
+            "trusted Git {} returned non-UTF-8 output: {error}",
+            arguments.join(" ")
+        )
+    })
+}
+
+pub(crate) fn trusted_output_bytes_in(
+    directory: &Path,
+    arguments: &[&str],
+) -> Result<Vec<u8>, String> {
+    let result = trusted_command_in(directory)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("cannot run trusted Git {}: {error}", arguments.join(" ")))?;
+    if result.status.success() {
+        Ok(result.stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        Err(format!(
+            "trusted Git {} failed with {}{}",
+            arguments.join(" "),
+            result.status,
+            if stderr.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr.trim())
+            }
+        ))
+    }
+}
+
+pub(crate) fn trusted_succeeds_in(directory: &Path, arguments: &[&str]) -> Result<bool, String> {
+    trusted_command_in(directory)
+        .args(arguments)
+        .output()
+        .map(|output| output.status.success())
+        .map_err(|error| format!("cannot run trusted Git {}: {error}", arguments.join(" ")))
+}
+
+pub(crate) fn trusted_command_in(directory: &Path) -> Command {
+    let mut command = Command::new("/usr/bin/git");
+    command
+        .env_clear()
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_GRAFT_FILE", "/dev/null")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("LC_ALL", "C")
+        .args(["-c", "advice.graftFileDeprecated=false"])
+        .arg("--no-replace-objects")
+        .current_dir(directory);
+    command
+}
+
 fn clear_repository_environment(command: &mut Command) {
     for name in [
         "GIT_ALTERNATE_OBJECT_DIRECTORIES",

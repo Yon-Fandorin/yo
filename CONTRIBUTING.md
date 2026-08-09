@@ -345,6 +345,24 @@ but must inspect and record the lenses separately.
 
 ### Agent review protocol
 
+After committing a clean candidate and saving declared validation output as
+bounded evidence files, build the content-addressed review input from a
+versioned request:
+
+```bash
+cargo xtask slice review-packet <request.json>
+```
+
+The request names the ContextBuild request and required included KnowledgeIds, exact Slice Contract,
+repository-authority paths not carried by that build, validation evidence,
+review lenses and questions, `yo.slice-review-markdown/v1`,
+`o200k_base/v1`, and the maximum managed-payload tokens. The command derives
+the base from the bound Slice Contract and the candidate from clean `HEAD`,
+captures a no-renames binary diff, and returns only the immutable packet and
+manifest paths, hashes, ReviewId, and token count. An over-budget packet fails
+without truncation. Deliver the exact `packet.md` bytes as the provider's sole
+caller-controlled prompt; do not add parallel instructions or authority.
+
 Use a separate fresh-context Codex session by default. Use a configured
 different-perspective provider when the lens needs hidden assumptions,
 counterexamples, alternatives, or future costs; require its strongest
@@ -354,17 +372,12 @@ failure, and unavailability. Kimi is the current preferred profile, not a
 product dependency. Do not invent commands for an unconfigured provider.
 
 Run a Kimi review from the Slice worktree in a new non-interactive prompt
-session:
+session. The sentinel prevents command substitution from stripping the
+packet's trailing newlines and is removed before invocation:
 
 ```bash
-kimi -p 'Perform a read-only independent review. Do not edit files.
-Exact final diff: <base>..<candidate>.
-Authority: <paths and owned contracts>.
-Review lens: <lens and concrete questions>.
-Validation evidence: <commands, environments, and results>.
-Before the verdict, present the strongest counterargument and credible
-alternatives. Return path-specific findings, the verdict, and unresolved
-uncertainty.'
+review_payload="$(cat <packet.md>; printf x)"
+kimi -p "${review_payload%x}"
 ```
 
 Every reviewer receives the immutable `<base>..<candidate>` diff, relevant

@@ -3,6 +3,7 @@ mod bounded_file;
 mod docs_translation;
 mod git;
 mod impact;
+mod review_packet;
 mod slice_close;
 mod slice_contract;
 mod slice_worktree;
@@ -30,6 +31,18 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
             let repository = std::env::current_dir()
                 .map_err(|error| format!("cannot locate the repository: {error}"))?;
             activation_slice::run(&repository, &request)
+        },
+        (Some(command), Some(scope)) if command == "slice" && scope == "review-packet" => {
+            let request = arguments
+                .next()
+                .map(PathBuf::from)
+                .ok_or_else(review_packet_usage)?;
+            if arguments.next().is_some() {
+                return Err(review_packet_usage());
+            }
+            let repository = std::env::current_dir()
+                .map_err(|error| format!("cannot locate the repository: {error}"))?;
+            review_packet::run(&repository, &request)
         },
         (Some(command), Some(scope)) if command == "slice" && scope == "close" => {
             let action = arguments
@@ -182,6 +195,7 @@ fn usage(check: &str) -> String {
 fn general_usage() -> String {
     "usage:\n\
      cargo xtask slice create-activation <request.json>\n\
+     cargo xtask slice review-packet <request.json>\n\
      cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
@@ -198,6 +212,10 @@ fn activation_slice_usage() -> String {
     "usage: cargo xtask slice create-activation <request.json>".to_owned()
 }
 
+fn review_packet_usage() -> String {
+    "usage: cargo xtask slice review-packet <request.json>".to_owned()
+}
+
 fn slice_close_usage() -> String {
     "usage: cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>".to_owned()
 }
@@ -212,7 +230,10 @@ fn slice_contract_usage() -> String {
 
 #[cfg(test)]
 mod cli_tests {
-    use super::{activation_slice_usage, docs_accept_translation_usage, run, slice_close_usage};
+    use super::{
+        activation_slice_usage, docs_accept_translation_usage, review_packet_usage, run,
+        slice_close_usage,
+    };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
     // 인자 없는 검사와 커밋 입력 검사를 각각 실행 가능한 형태로 안내한다.
@@ -224,6 +245,7 @@ mod cli_tests {
             error,
             "usage:\n\
              cargo xtask slice create-activation <request.json>\n\
+             cargo xtask slice review-packet <request.json>\n\
              cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
@@ -247,6 +269,18 @@ mod cli_tests {
 
         assert_eq!(missing, activation_slice_usage());
         assert_eq!(extra, activation_slice_usage());
+    }
+
+    // review packet 생성도 정확히 한 versioned request만 받아 입력 일부가
+    // 누락되거나 추가 인자가 조용히 무시된 채 다른 review identity가 생기지 않는다.
+    #[test]
+    fn review_packet_requires_exactly_one_request() {
+        let missing = run(["slice", "review-packet"].map(Into::into)).unwrap_err();
+        let extra = run(["slice", "review-packet", "request.json", "extra.json"].map(Into::into))
+            .unwrap_err();
+
+        assert_eq!(missing, review_packet_usage());
+        assert_eq!(extra, review_packet_usage());
     }
 
     // test-explanations 뒤의 불필요한 인자는 조용히 무시하지 않고 해당 명령의

@@ -1,0 +1,179 @@
+use serde::{Deserialize, Serialize};
+
+pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-packet-request/v1";
+pub(super) const PLAN_SCHEMA: &str = "yo.slice-review-plan/v1";
+pub(super) const MANIFEST_SCHEMA: &str = "yo.slice-review-manifest/v1";
+pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-packet-result/v1";
+pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-markdown/v1";
+pub(super) const TOKENIZER_PROFILE: &str = "o200k_base/v1";
+pub(super) const TOKENIZER_COMPILER: &str = "tiktoken-rs/0.12.0";
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct Request {
+    pub(super) schema: String,
+    pub(super) context_request_path: String,
+    pub(super) required_knowledge_ids: Vec<String>,
+    pub(super) slice_contract_path: String,
+    pub(super) repository_authority_paths: Vec<String>,
+    pub(super) validation_evidence: Vec<EvidenceRequest>,
+    pub(super) review_lenses: Vec<String>,
+    pub(super) review_questions: Vec<String>,
+    pub(super) delivery_profile: String,
+    pub(super) tokenizer_profile: String,
+    pub(super) max_managed_payload_tokens: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct EvidenceRequest {
+    pub(super) name: String,
+    pub(super) path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) struct Artifact {
+    pub(super) path: String,
+    pub(super) hash: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ContextResult {
+    pub(super) schema: String,
+    pub(super) ok: bool,
+    pub(super) operation: String,
+    pub(super) authority: String,
+    pub(super) trusted_commit: String,
+    pub(super) build_id: String,
+    pub(super) context: Artifact,
+    pub(super) manifest: Artifact,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ContextManifest {
+    pub(super) schema: String,
+    pub(super) build_id: String,
+    pub(super) plan: ContextPlan,
+    pub(super) context: Artifact,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ContextPlan {
+    pub(super) checkpoint: CheckpointIdentity,
+    pub(super) units: Vec<ContextUnit>,
+    pub(super) tokenizer_profile: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ContextUnit {
+    pub(super) id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) struct CheckpointIdentity {
+    pub(super) id: String,
+    pub(super) hash: String,
+    pub(super) authority_basis_commit: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct ReviewPlan {
+    pub(super) schema: &'static str,
+    pub(super) base_commit: String,
+    pub(super) candidate_commit: String,
+    pub(super) diff_hash: String,
+    pub(super) trusted_commit: String,
+    pub(super) active_checkpoint: CheckpointIdentity,
+    pub(super) context_build_id: String,
+    pub(super) context_request: SemanticInput,
+    pub(super) context: SemanticInput,
+    pub(super) context_manifest: SemanticInput,
+    pub(super) required_knowledge_ids: Vec<String>,
+    pub(super) repository_authorities: Vec<SemanticInput>,
+    pub(super) slice_contract: SemanticInput,
+    pub(super) validation_evidence: Vec<NamedSemanticInput>,
+    pub(super) review_lenses: Vec<String>,
+    pub(super) review_questions: Vec<String>,
+    pub(super) delivery_profile: DeliveryProfile,
+    pub(super) tokenizer_profile: &'static str,
+    pub(super) tokenizer_compiler: &'static str,
+    pub(super) max_managed_payload_tokens: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct SemanticInput {
+    pub(super) path: String,
+    pub(super) hash: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct NamedSemanticInput {
+    pub(super) name: String,
+    pub(super) path: String,
+    pub(super) hash: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct DeliveryProfile {
+    pub(super) id: &'static str,
+    pub(super) preamble: &'static str,
+    pub(super) section_prefix: &'static str,
+    pub(super) metadata_suffix: &'static str,
+    pub(super) section_suffix: &'static str,
+    pub(super) payload_suffix: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct Manifest {
+    pub(super) schema: &'static str,
+    pub(super) review_id: String,
+    pub(super) plan: ReviewPlan,
+    pub(super) inputs: ManifestInputs,
+    pub(super) packet: PacketRecord,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ManifestInputs {
+    pub(super) context_request: Artifact,
+    pub(super) context: Artifact,
+    pub(super) context_manifest: Artifact,
+    pub(super) repository_authorities: Vec<Artifact>,
+    pub(super) slice_contract: Artifact,
+    pub(super) validation_evidence: Vec<NamedArtifact>,
+    pub(super) diff: Artifact,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct NamedArtifact {
+    pub(super) name: String,
+    pub(super) artifact: Artifact,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct PacketRecord {
+    pub(super) path: &'static str,
+    pub(super) hash: String,
+    pub(super) managed_payload_tokens: usize,
+    pub(super) max_managed_payload_tokens: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ResultRecord {
+    pub(super) schema: &'static str,
+    pub(super) ok: bool,
+    pub(super) operation: &'static str,
+    pub(super) status: &'static str,
+    pub(super) review_id: String,
+    pub(super) trusted_commit: String,
+    pub(super) candidate_commit: String,
+    pub(super) packet: ArtifactWithTokens,
+    pub(super) manifest: Artifact,
+    pub(super) max_managed_payload_tokens: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ArtifactWithTokens {
+    pub(super) path: String,
+    pub(super) hash: String,
+    pub(super) managed_payload_tokens: usize,
+}

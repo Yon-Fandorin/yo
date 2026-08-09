@@ -43,7 +43,7 @@ pub(crate) fn read_regular(path: &Path, limit: usize, label: &str) -> Result<Vec
         .ok_or_else(|| format!("cannot open {label} {}: {}", path.display(), Errno::NOENT))
 }
 
-fn read_regular_at(
+pub(crate) fn read_regular_at(
     parent: &OwnedFd,
     name: &std::ffi::OsStr,
     display_path: &Path,
@@ -349,7 +349,7 @@ fn create_temporary(
     ))
 }
 
-fn open_directory(path: &Path, label: &str) -> Result<OwnedFd, String> {
+pub(crate) fn open_directory(path: &Path, label: &str) -> Result<OwnedFd, String> {
     let mut directory = if path.is_absolute() {
         open(Path::new("/"), DIRECTORY_FLAGS, Mode::empty())
     } else {
@@ -427,7 +427,7 @@ pub(crate) fn ensure_directory(path: &Path, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn sync_directory(directory: &OwnedFd, label: &str) -> Result<(), String> {
+pub(crate) fn sync_directory(directory: &OwnedFd, label: &str) -> Result<(), String> {
     File::from(
         rustix::io::dup(directory)
             .map_err(|error| format!("cannot retain {label} parent for sync: {error}"))?,

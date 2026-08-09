@@ -17,7 +17,9 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+methexis = { path = "../methexis" }
 rustix = { version = "1.1.4", features = ["fs"] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 sha2 = "0.11.0"
+tiktoken-rs = "0.12.0"
