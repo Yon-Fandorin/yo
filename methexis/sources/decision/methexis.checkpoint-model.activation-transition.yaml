@@ -1,21 +1,6 @@
 schema: methexis.source/v1alpha1
 id: methexis.checkpoint-model.activation-transition
-revision: sha256:6651c9634b9c0bb6148b9267189b407fc04f8f0f4daf4f9289e7e0854f3f9fa4
+revision: sha256:7fc71b9ae1bec5d4f654e40681dac9c56f496dd5b4ca74cd33a4f44d9480de98
 payload:
   kind: decision
-  content: >-
-    A tracked active-Checkpoint record points to one exact Checkpoint and content
-    hash. Activation is a separately reviewed Git change that adds or updates
-    the immutable Checkpoint and active record together and becomes authoritative
-    only when the accepted commit is reachable from the configured trust anchor.
-    Replacement records bind the exact prior trusted active-record hash as a
-    compare-and-swap predecessor, with no predecessor for initial activation and
-    no force path. Proposal requires the current trusted commit and reproducible
-    Checkpoint lineage. Before integration, the transition must obtain and obey
-    a passing result from the current Source-freshness guard owned by SOT-006;
-    the guard's input, status, demotion, context-exclusion, and failure semantics
-    remain outside this decision. A non-passing result rejects the prospective
-    activation. Integrated authority requires the Checkpoint-owned basis commit
-    to remain readable and ancestral, the Checkpoint to reproduce, the current
-    approved closure to match, and the SOT-006 guard to pass before the
-    Checkpoint is derived active.
+  content: A tracked active-Checkpoint record points to one exact Checkpoint and content hash. Activation is a separately reviewed Git change that adds or updates the immutable Checkpoint and active record together and becomes authoritative only when the accepted commit is reachable from the configured trust anchor. Replacement records bind the exact prior trusted active-record hash as a compare-and-swap predecessor, with no predecessor for initial activation and no force path. Proposal requires the current trusted commit and reproducible Checkpoint lineage. Before integration, the transition must invoke and obey the pre-transition demotion guard owned by methexis.status.demotion-evidence over the complete selected closure; its required dependency closure supplies durable negative inputs through methexis.status.negative-record. Invalid, suspect, or stale guard outcomes reject the prospective activation. The guard can only demote and cannot grant approval or activation. The transition must not depend on or invoke post-transition methexis.status.eligibility, because active or inactive membership is derived only from a trusted active Checkpoint after this transition. Integrated authority requires the Checkpoint-owned basis commit to remain readable and ancestral, the Checkpoint to reproduce, the current approved required closure to match, and the pre-transition demotion guard to pass before the Checkpoint is derived active.
