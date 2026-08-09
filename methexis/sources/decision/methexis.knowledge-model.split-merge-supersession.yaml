@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.knowledge-model.split-merge-supersession
+revision: sha256:6cb194ccd70fe22ece9344f1ddb9edceabb1e5dabc492526f747f0057cd4e8cf
+payload:
+  kind: decision
+  content: A split creates multiple new KnowledgeIds that supersede the old unit, while a merge creates one new KnowledgeId that supersedes multiple old units. The transition must preserve required inbound obligations, pass structural supersession checks, avoid co-selecting old and replacement units, and receive human semantic-continuity review before one atomic Checkpoint transition replaces the old selection.

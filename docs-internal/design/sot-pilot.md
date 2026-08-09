@@ -274,6 +274,29 @@ extraction boundary.
 
 ## SOT-004: Revision, approval, and Checkpoint
 
+The semantic-continuity and approval clauses in this section are migrating to
+the following semantic KnowledgeUnits:
+
+| KnowledgeUnit | Delegated scope |
+| --- | --- |
+| [`methexis.knowledge.semantic-continuity`](../../methexis/knowledge/methexis/methexis.knowledge.semantic-continuity.md) | Same-ID revisions, general supersession guards, advisory detection, and human semantic ownership |
+| [`methexis.knowledge.split-merge-supersession`](../../methexis/knowledge/methexis/methexis.knowledge.split-merge-supersession.md) | Split and merge replacement procedure |
+| [`methexis.approval.exact-revision-binding`](../../methexis/knowledge/methexis/methexis.approval.exact-revision-binding.md) | Exact revision, reviewer, time, and reviewed-Projection approval binding |
+| [`methexis.projection.korean-review`](../../methexis/knowledge/methexis/methexis.projection.korean-review.md) | Deterministic Korean review Projection and drift rejection |
+| [`methexis.approval.current-record`](../../methexis/knowledge/methexis/methexis.approval.current-record.md) | One current approval, Draft derivation, idempotency, CAS, and trusted-integration boundary |
+
+Until all five exact approved revisions are selected together by the trusted
+active Checkpoint, this section remains the sole authority for those scopes and
+the linked records are migration candidates regardless of branch presence or
+approval. The migration activation MUST select all five as one cohort; partial
+activation does not transfer any listed scope and MUST be rejected during
+activation review. Once that complete activation becomes trusted, the linked
+KnowledgeUnits become the sole authority for their listed scopes and the
+corresponding prose below remains only non-authoritative migration history
+until a later Projection cleanup replaces it with routing links. This
+conditional delegation makes the active-Checkpoint transition the atomic owner
+change without an authority gap or a period of dual ownership.
+
 `KnowledgeId` is stable semantic identity. `RevisionId` identifies exact
 canonical meaning. The Pilot encodes it as `sha256:<lowercase-hex>` over one
 unambiguous, length-delimited semantic representation containing:

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.approval-model.current-record
+revision: sha256:8c1e070ac82cbaba653bc3ea321df47a3ec1d0e4020fd48dee374ea44f1b2d3b
+payload:
+  kind: decision
+  content: Each KnowledgeId has at most one current approval record under methexis/approvals. A nonmatching current revision is Draft, Git history retains old approvals instead of unbounded per-revision files, identical writes are idempotent, and replacing different bytes requires the exact prior RevisionId with no force path. Working-tree or branch records are proposal evidence only and grant effective approval only after trusted integration.

@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.approval-model.exact-revision-binding
+revision: sha256:033bb7cd862d519529d40dcd389c434e4ba01512a27cfa1e1b8e3659defac0de
+payload:
+  kind: decision
+  content: Approval binds one exact Knowledge RevisionId, reviewer OwnerId, review time, and the profile, compiler identity, and hash of the Korean review Projection. Approval never applies to a mutable KnowledgeId in general.
