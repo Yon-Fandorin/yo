@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.checkpoint-model.immutable-publication
+revision: sha256:279f84c81eef5c0adb74d5358a25150ddc61b851c3839d745fd6c26535dae366
+payload:
+  kind: decision
+  content: Checkpoint creation reads exact blobs from one pinned trusted Git commit without checking it out and publishes an immutable create-if-absent proposal. The proposal records enough canonical lineage to reproduce its exact bytes from that commit. A collision with different bytes, an invalid approved closure, or unreadable input fails without replacing or publishing a different Checkpoint.

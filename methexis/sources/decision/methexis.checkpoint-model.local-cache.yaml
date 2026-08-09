@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.checkpoint-model.local-cache
+revision: sha256:bd30358de195bcc0c9458df7051a5ea3ab0a1358c75be61a5f1c8082baa5eaa4
+payload:
+  kind: decision
+  content: Any local active pointer is only a reconstructible non-authoritative cache. It is bound to the Git tree identity and active-Checkpoint hash, replaced crash-safely, and discarded on mismatch. Concurrent authority changes are serialized by the repository merge and review workflow rather than a runtime database lock.

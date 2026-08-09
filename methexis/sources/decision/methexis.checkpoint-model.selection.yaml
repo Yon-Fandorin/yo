@@ -1,0 +1,6 @@
+schema: methexis.source/v1alpha1
+id: methexis.checkpoint-model.selection
+revision: sha256:03e4440557a47513755d489e04953f27aad3bc10738371ff7aba51b8402e5b11
+payload:
+  kind: decision
+  content: A Checkpoint pins a consistent map of approved KnowledgeIds to exact RevisionIds. Its request names explicit root KnowledgeIds; selection adds the complete depends_on and constrained_by closure, while validated_by and applies_to do not select KnowledgeUnits. The selected set excludes a replacement together with a unit it supersedes. The Checkpoint retains the historical source_status not_evaluated input marker because Source freshness is a current derived guard rather than authored Checkpoint state.

@@ -297,6 +297,50 @@ until a later Projection cleanup replaces it with routing links. This
 conditional delegation makes the active-Checkpoint transition the atomic owner
 change without an authority gap or a period of dual ownership.
 
+The Checkpoint-lifecycle clauses in this section are migrating to the following
+semantic KnowledgeUnits:
+
+| KnowledgeUnit | Delegated scope |
+| --- | --- |
+| [`methexis.checkpoint.selection`](../../methexis/knowledge/methexis/methexis.checkpoint.selection.md) | Approved roots, required closure, supersession exclusion, and historical Source-status input |
+| [`methexis.checkpoint.immutable-publication`](../../methexis/knowledge/methexis/methexis.checkpoint.immutable-publication.md) | Pinned trusted-snapshot construction, reproducible identity, and immutable proposal publication |
+| [`methexis.checkpoint.activation-transition`](../../methexis/knowledge/methexis/methexis.checkpoint.activation-transition.md) | Active-record identity, compare-and-swap lineage, invocation of the SOT-006 freshness guard, reviewed Git transition, and trusted post-integration verification |
+| [`methexis.checkpoint.local-cache`](../../methexis/knowledge/methexis/methexis.checkpoint.local-cache.md) | Reconstructible local-pointer boundary and mismatch recovery |
+
+Until all four exact approved revisions are selected together by the trusted
+active Checkpoint, this section remains the sole authority for those scopes and
+the linked records are migration candidates regardless of branch presence or
+approval. The migration activation MUST select all four as one cohort; partial
+activation does not transfer any listed scope and MUST be rejected during
+activation review. Once that complete activation becomes trusted, the linked
+KnowledgeUnits become the sole authority for their listed scopes and the
+corresponding prose below remains only non-authoritative migration history
+until a later Projection cleanup replaces it with routing links. This
+conditional delegation makes the active-Checkpoint transition the atomic owner
+change without an authority gap or a period of dual ownership.
+
+This delegation does not transfer the Source-freshness guard's inputs,
+eligibility states, precedence, demotion, context-exclusion, or failure
+semantics. `SOT-006` remains the sole authority for those rules; the activation
+procedure owns only when that externally defined guard is invoked and the
+requirement that a non-passing result blocks the transition.
+
+This SOT-004 migration-control paragraph remains authoritative after that
+transfer. Every later Checkpoint transition MUST preserve the delegated scopes:
+its prospective Checkpoint selects an exact approved revision of
+`methexis.checkpoint.selection`,
+`methexis.checkpoint.immutable-publication`,
+`methexis.checkpoint.activation-transition`, and
+`methexis.checkpoint.local-cache`, or exact approved semantic successors that
+preserve those four scopes. The currently active revisions remain authoritative
+until the exact replacement transition becomes trusted; replacement revisions
+need not already be active. Omitting any member or selecting a pre-migration
+Checkpoint does not restore authority to the historical Checkpoint prose below.
+Reversal requires an explicit reviewed revision of SOT-004 that reclaims those
+named scopes and a new forward compare-and-swap activation that keeps the
+current owner authoritative until its replacement is trusted; a raw Git revert
+is not an authority transition.
+
 `KnowledgeId` is stable semantic identity. `RevisionId` identifies exact
 canonical meaning. The Pilot encodes it as `sha256:<lowercase-hex>` over one
 unambiguous, length-delimited semantic representation containing:

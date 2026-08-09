@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.checkpoint.local-cache
+revision: sha256:4303bf26d4f7506abbda0e203646ab10e8de0f3a925ebbd0ef25c110d5cf3cbc
+reviewer: methexis
+reviewed_at: 2026-08-09T11:06:29Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:34e554c0bbc93dc01ca9a4ea48314a50a467dc8956be22ee64fb4731a2f13f5c
+request_hash: sha256:3ef7823de951db3eb20e4df70933f5ceba3c931868b0779b3bbb1cd54cafbc7f
