@@ -7,16 +7,43 @@ use std::{
 
 use futures_util::StreamExt;
 use reqwest::{Client, StatusCode, Url, header, redirect};
+use serde_json::Value;
 use tokio::sync::mpsc as async_mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::{
     ConnectorError, ConnectorFailureKind, ResponsesConnectorLimits, ResponsesEvent, ResponsesPoll,
-    ResponsesRequest, sse::ResponsesSseDecoder,
+    ResponsesRequest, SseDecodeBatch, chat_request, chat_sse::ChatCompletionsSseDecoder,
+    sse::ResponsesSseDecoder,
 };
 use crate::{ApiCredential, ApiDialect, ConnectorId, EffectiveModelBinding};
 
 const EVENT_QUEUE_CAPACITY: usize = 256;
+
+trait SseDecoder: Send {
+    fn push(&mut self, bytes: &[u8]) -> SseDecodeBatch;
+    fn finish(&mut self) -> Result<Vec<ResponsesEvent>, ConnectorError>;
+}
+
+impl SseDecoder for ResponsesSseDecoder {
+    fn push(&mut self, bytes: &[u8]) -> SseDecodeBatch {
+        self.push_batch(bytes)
+    }
+
+    fn finish(&mut self) -> Result<Vec<ResponsesEvent>, ConnectorError> {
+        self.finish()
+    }
+}
+
+impl SseDecoder for ChatCompletionsSseDecoder {
+    fn push(&mut self, bytes: &[u8]) -> SseDecodeBatch {
+        self.push_batch(bytes)
+    }
+
+    fn finish(&mut self) -> Result<Vec<ResponsesEvent>, ConnectorError> {
+        self.finish()
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct ResponsesCancellation(CancellationToken);
@@ -73,26 +100,7 @@ impl OpenAiResponsesConnector {
             .endpoint()
             .append_path_segment("responses")
             .map_err(|_| configuration_failure("cannot append responses to the base endpoint"))?;
-        let origin = Origin::from_url(&request_url)?;
-        let max_redirects = limits.max_redirects;
-        let redirect_origin = origin.clone();
-        let redirect_policy = redirect::Policy::custom(move |attempt| {
-            match validate_redirect(
-                &redirect_origin,
-                attempt.url(),
-                attempt.previous().len(),
-                max_redirects,
-            ) {
-                Ok(()) => attempt.follow(),
-                Err(message) => attempt.error(message),
-            }
-        });
-        let client = Client::builder()
-            .connect_timeout(limits.connect_timeout)
-            .redirect(redirect_policy)
-            .retry(reqwest::retry::never())
-            .build()
-            .map_err(|_| configuration_failure("cannot initialize the Responses HTTP client"))?;
+        let client = http_client(&request_url, &limits)?;
         Ok(Self {
             client,
             request_url,
@@ -107,66 +115,190 @@ impl OpenAiResponsesConnector {
         self.request_url.as_str()
     }
 
+    #[must_use]
+    pub fn tokenization_payload(&self, request: &ResponsesRequest) -> Value {
+        request.tokenization_payload(&self.model)
+    }
+
     pub fn start(
         &self,
         request: ResponsesRequest,
         cancellation: ResponsesCancellation,
     ) -> Result<ResponsesStream, ConnectorError> {
-        if cancellation.is_cancelled() {
-            return Err(cancelled_failure());
-        }
-        let (acceptance_sender, acceptance_receiver) = mpsc::sync_channel(1);
-        let (event_sender, event_receiver) = async_mpsc::channel(EVENT_QUEUE_CAPACITY);
-        let (outcome_sender, outcome_receiver) = mpsc::sync_channel(1);
-        let client = self.client.clone();
-        let request_url = self.request_url.clone();
-        let model = self.model.clone();
-        let credential = self.credential.clone();
-        let limits = self.limits.clone();
-        let worker_cancellation = cancellation.clone();
-        let worker = thread::Builder::new()
-            .name("yo-openai-responses".to_owned())
-            .spawn(move || {
-                run_worker(
-                    client,
-                    request_url,
-                    model,
-                    credential,
-                    limits,
-                    request,
-                    worker_cancellation,
-                    acceptance_sender,
-                    event_sender,
-                    outcome_sender,
-                );
-            })
-            .map_err(|_| {
-                ConnectorError::new(
-                    ConnectorFailureKind::Transport,
-                    "cannot start the Responses request worker",
-                )
-            })?;
+        start_stream(
+            self.client.clone(),
+            self.request_url.clone(),
+            self.credential.clone(),
+            self.limits.clone(),
+            request.wire_body(&self.model),
+            Box::new(ResponsesSseDecoder::new(self.limits.clone())),
+            cancellation,
+            "yo-openai-responses",
+        )
+    }
+}
 
-        match acceptance_receiver.recv() {
-            Ok(Ok(())) => Ok(ResponsesStream {
-                receiver: event_receiver,
-                outcome: outcome_receiver,
-                cancellation,
-                worker: Some(worker),
-                closed: false,
-            }),
-            Ok(Err(error)) => {
-                let _ = worker.join();
-                Err(error)
-            },
-            Err(_) => {
-                let _ = worker.join();
-                Err(ConnectorError::new(
-                    ConnectorFailureKind::Transport,
-                    "Responses request worker stopped before HTTP acceptance",
-                ))
-            },
+#[derive(Clone)]
+pub struct OpenAiChatCompletionsConnector {
+    client: Client,
+    request_url: Url,
+    model: String,
+    credential: ApiCredential,
+    limits: ResponsesConnectorLimits,
+}
+
+impl OpenAiChatCompletionsConnector {
+    pub fn new(
+        binding: &EffectiveModelBinding,
+        credential: ApiCredential,
+        limits: ResponsesConnectorLimits,
+    ) -> Result<Self, ConnectorError> {
+        limits.validate()?;
+        if binding.connector_id().as_str() != ConnectorId::OPENAI_CHAT_COMPLETIONS
+            || binding.api_dialect() != ApiDialect::OpenAiChatCompletions
+        {
+            return Err(configuration_failure(
+                "binding does not select the openai-chat-completions connector and dialect",
+            ));
         }
+        let request_url = binding
+            .endpoint()
+            .append_path_segments(&["chat", "completions"])
+            .map_err(|_| {
+                configuration_failure("cannot append chat/completions to the base endpoint")
+            })?;
+        let client = http_client(&request_url, &limits)?;
+        Ok(Self {
+            client,
+            request_url,
+            model: binding.model_id().as_str().to_owned(),
+            credential,
+            limits,
+        })
+    }
+
+    #[must_use]
+    pub fn request_url(&self) -> &str {
+        self.request_url.as_str()
+    }
+
+    pub fn tokenization_payload(
+        &self,
+        request: &ResponsesRequest,
+    ) -> Result<Value, ConnectorError> {
+        chat_request::wire_body(request, &self.model)
+    }
+
+    pub fn start(
+        &self,
+        request: ResponsesRequest,
+        cancellation: ResponsesCancellation,
+    ) -> Result<ResponsesStream, ConnectorError> {
+        let body = chat_request::wire_body(&request, &self.model)?;
+        start_stream(
+            self.client.clone(),
+            self.request_url.clone(),
+            self.credential.clone(),
+            self.limits.clone(),
+            body,
+            Box::new(ChatCompletionsSseDecoder::new(self.limits.clone())),
+            cancellation,
+            "yo-openai-chat-completions",
+        )
+    }
+}
+
+impl fmt::Debug for OpenAiChatCompletionsConnector {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OpenAiChatCompletionsConnector")
+            .field("request_url", &self.request_url)
+            .field("model", &self.model)
+            .field("credential", &self.credential)
+            .field("limits", &self.limits)
+            .finish_non_exhaustive()
+    }
+}
+
+fn http_client(
+    request_url: &Url,
+    limits: &ResponsesConnectorLimits,
+) -> Result<Client, ConnectorError> {
+    let origin = Origin::from_url(request_url)?;
+    let max_redirects = limits.max_redirects;
+    let redirect_policy = redirect::Policy::custom(move |attempt| {
+        match validate_redirect(
+            &origin,
+            attempt.url(),
+            attempt.previous().len(),
+            max_redirects,
+        ) {
+            Ok(()) => attempt.follow(),
+            Err(message) => attempt.error(message),
+        }
+    });
+    Client::builder()
+        .connect_timeout(limits.connect_timeout)
+        .redirect(redirect_policy)
+        .retry(reqwest::retry::never())
+        .build()
+        .map_err(|_| configuration_failure("cannot initialize the model-connector HTTP client"))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn start_stream(
+    client: Client,
+    request_url: Url,
+    credential: ApiCredential,
+    limits: ResponsesConnectorLimits,
+    body: Value,
+    decoder: Box<dyn SseDecoder>,
+    cancellation: ResponsesCancellation,
+    worker_name: &'static str,
+) -> Result<ResponsesStream, ConnectorError> {
+    if cancellation.is_cancelled() {
+        return Err(cancelled_failure());
+    }
+    let (acceptance_sender, acceptance_receiver) = mpsc::sync_channel(1);
+    let (event_sender, event_receiver) = async_mpsc::channel(EVENT_QUEUE_CAPACITY);
+    let (outcome_sender, outcome_receiver) = mpsc::sync_channel(1);
+    let worker_cancellation = cancellation.clone();
+    let worker = thread::Builder::new()
+        .name(worker_name.to_owned())
+        .spawn(move || {
+            run_worker(
+                client,
+                request_url,
+                credential,
+                limits,
+                body,
+                decoder,
+                worker_cancellation,
+                acceptance_sender,
+                event_sender,
+                outcome_sender,
+            );
+        })
+        .map_err(|_| transport_failure("cannot start the model-connector request worker"))?;
+
+    match acceptance_receiver.recv() {
+        Ok(Ok(())) => Ok(ResponsesStream {
+            receiver: event_receiver,
+            outcome: outcome_receiver,
+            cancellation,
+            worker: Some(worker),
+            closed: false,
+        }),
+        Ok(Err(error)) => {
+            let _ = worker.join();
+            Err(error)
+        },
+        Err(_) => {
+            let _ = worker.join();
+            Err(transport_failure(
+                "model-connector request worker stopped before HTTP acceptance",
+            ))
+        },
     }
 }
 
@@ -177,15 +309,15 @@ fn validate_redirect(
     max_redirects: usize,
 ) -> Result<(), &'static str> {
     if previous_count >= max_redirects {
-        Err("Responses redirect limit exceeded")
+        Err("model-connector redirect limit exceeded")
     } else if !origin.matches(target) {
-        Err("Responses redirect changed origin")
+        Err("model-connector redirect changed origin")
     } else if !target.username().is_empty()
         || target.password().is_some()
         || target.query().is_some()
         || target.fragment().is_some()
     {
-        Err("Responses redirect target is not normalized")
+        Err("model-connector redirect target is not normalized")
     } else {
         Ok(())
     }
@@ -234,7 +366,7 @@ impl ResponsesStream {
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.closed = true;
                 Err(transport_failure(
-                    "Responses request worker stopped without a terminal outcome",
+                    "model-connector request worker stopped without a terminal outcome",
                 ))
             },
         }
@@ -255,7 +387,7 @@ impl ResponsesStream {
             worker.join().map_err(|_| {
                 ConnectorError::new(
                     ConnectorFailureKind::Cleanup,
-                    "Responses request worker panicked during cleanup",
+                    "model-connector request worker panicked during cleanup",
                 )
             })
         })
@@ -290,10 +422,10 @@ impl Origin {
     fn from_url(url: &Url) -> Result<Self, ConnectorError> {
         let host = url
             .host_str()
-            .ok_or_else(|| configuration_failure("Responses request URL has no host"))?;
-        let port = url
-            .port_or_known_default()
-            .ok_or_else(|| configuration_failure("Responses request URL has no effective port"))?;
+            .ok_or_else(|| configuration_failure("model-connector request URL has no host"))?;
+        let port = url.port_or_known_default().ok_or_else(|| {
+            configuration_failure("model-connector request URL has no effective port")
+        })?;
         Ok(Self {
             scheme: url.scheme().to_owned(),
             host: host.to_owned(),
@@ -312,10 +444,10 @@ impl Origin {
 fn run_worker(
     client: Client,
     request_url: Url,
-    model: String,
     credential: ApiCredential,
     limits: ResponsesConnectorLimits,
-    request: ResponsesRequest,
+    body: Value,
+    decoder: Box<dyn SseDecoder>,
     cancellation: ResponsesCancellation,
     acceptance_sender: mpsc::SyncSender<Result<(), ConnectorError>>,
     event_sender: async_mpsc::Sender<ResponsesEvent>,
@@ -329,7 +461,7 @@ fn run_worker(
         Err(_) => {
             let _ = acceptance_sender.send(Err(ConnectorError::new(
                 ConnectorFailureKind::Transport,
-                "cannot initialize the Responses request runtime",
+                "cannot initialize the model-connector request runtime",
             )));
             return;
         },
@@ -338,10 +470,10 @@ fn run_worker(
     let result = runtime.block_on(execute_request(
         &client,
         request_url,
-        &model,
         &credential,
         &limits,
-        &request,
+        &body,
+        decoder,
         &cancellation,
         &mut acceptance_sender,
         &event_sender,
@@ -352,7 +484,7 @@ fn run_worker(
         },
         (Some(sender), Ok(())) => {
             let _ = sender.send(Err(transport_failure(
-                "Responses request completed before HTTP acceptance",
+                "model-connector request completed before HTTP acceptance",
             )));
         },
         (None, result) => {
@@ -365,10 +497,10 @@ fn run_worker(
 async fn execute_request(
     client: &Client,
     request_url: Url,
-    model: &str,
     credential: &ApiCredential,
     limits: &ResponsesConnectorLimits,
-    request: &ResponsesRequest,
+    body: &Value,
+    mut decoder: Box<dyn SseDecoder>,
     cancellation: &ResponsesCancellation,
     acceptance_sender: &mut Option<mpsc::SyncSender<Result<(), ConnectorError>>>,
     event_sender: &async_mpsc::Sender<ResponsesEvent>,
@@ -380,13 +512,13 @@ async fn execute_request(
             started,
             limits.total_request_timeout,
             limits.response_header_timeout,
-            "Responses response-header deadline expired",
+            "model-connector response-header deadline expired",
         )?,
         client
             .post(request_url)
             .bearer_auth(credential.expose_secret())
             .header(header::ACCEPT, "text/event-stream")
-            .json(&request.wire_body(model))
+            .json(body)
             .send(),
     )
     .await?
@@ -408,32 +540,37 @@ async fn execute_request(
         .is_some_and(|media_type| media_type.trim().eq_ignore_ascii_case("text/event-stream"))
     {
         return Err(protocol_failure(
-            "Responses HTTP success did not return text/event-stream",
+            "model-connector HTTP success did not return text/event-stream",
         ));
     }
     acceptance_sender
         .take()
-        .ok_or_else(|| transport_failure("Responses acceptance channel was already consumed"))?
+        .ok_or_else(|| {
+            transport_failure("model-connector acceptance channel was already consumed")
+        })?
         .send(Ok(()))
-        .map_err(|_| transport_failure("Responses caller stopped before HTTP acceptance"))?;
+        .map_err(|_| transport_failure("model-connector caller stopped before HTTP acceptance"))?;
 
-    let mut decoder = ResponsesSseDecoder::new(limits.clone());
     let mut chunks = response.bytes_stream();
     loop {
         let timeout = effective_timeout(
             started,
             limits.total_request_timeout,
             limits.stream_idle_timeout,
-            "Responses stream idle deadline expired",
+            "model-connector stream idle deadline expired",
         )?;
         let next = cancellable_timeout(cancellation, timeout, chunks.next()).await?;
         match next {
             Some(Ok(bytes)) => {
-                for event in decoder.push(&bytes)? {
+                let batch = decoder.push(&bytes);
+                for event in batch.events {
                     send_event(event_sender, cancellation, started, limits, event).await?;
                 }
+                if let Some(failure) = batch.failure {
+                    return Err(failure);
+                }
             },
-            Some(Err(_)) => return Err(transport_failure("Responses stream read failed")),
+            Some(Err(_)) => return Err(transport_failure("model-connector stream read failed")),
             None => {
                 for event in decoder.finish()? {
                     send_event(event_sender, cancellation, started, limits, event).await?;
@@ -457,19 +594,21 @@ async fn consume_error_body(
             started,
             limits.total_request_timeout,
             limits.stream_idle_timeout,
-            "Responses error-body idle deadline expired",
+            "model-connector error-body idle deadline expired",
         )?;
         let next = cancellable_timeout(cancellation, timeout, chunks.next()).await?;
         match next {
             Some(Ok(bytes)) => {
                 total = total
                     .checked_add(bytes.len())
-                    .ok_or_else(|| limit_failure("Responses error body size overflowed"))?;
+                    .ok_or_else(|| limit_failure("model-connector error body size overflowed"))?;
                 if total > limits.max_error_body_bytes {
-                    return Err(limit_failure("Responses error body limit exceeded"));
+                    return Err(limit_failure("model-connector error body limit exceeded"));
                 }
             },
-            Some(Err(_)) => return Err(transport_failure("Responses error body read failed")),
+            Some(Err(_)) => {
+                return Err(transport_failure("model-connector error body read failed"));
+            },
             None => return Ok(()),
         }
     }
@@ -486,7 +625,7 @@ async fn send_event(
         started,
         limits.total_request_timeout,
         limits.total_request_timeout,
-        "Responses event delivery deadline expired",
+        "model-connector event delivery deadline expired",
     )?;
     tokio::select! {
         biased;
@@ -531,19 +670,19 @@ fn effective_timeout(
     let remaining = total.checked_sub(started.elapsed()).ok_or_else(|| {
         ConnectorError::new(
             ConnectorFailureKind::Timeout,
-            "Responses total request deadline expired",
+            "model-connector total request deadline expired",
         )
     })?;
     if remaining.is_zero() {
         return Err(ConnectorError::new(
             ConnectorFailureKind::Timeout,
-            "Responses total request deadline expired",
+            "model-connector total request deadline expired",
         ));
     }
     if remaining <= phase {
         Ok(EffectiveTimeout {
             duration: remaining,
-            message: "Responses total request deadline expired",
+            message: "model-connector total request deadline expired",
         })
     } else {
         Ok(EffectiveTimeout {
@@ -557,12 +696,12 @@ fn map_reqwest_error(error: reqwest::Error) -> ConnectorError {
     if error.is_timeout() {
         ConnectorError::new(
             ConnectorFailureKind::Timeout,
-            "Responses HTTP transport deadline expired",
+            "model-connector HTTP transport deadline expired",
         )
     } else if error.is_redirect() {
-        transport_failure("Responses HTTP redirect was rejected")
+        transport_failure("model-connector HTTP redirect was rejected")
     } else {
-        transport_failure("Responses HTTP request failed")
+        transport_failure("model-connector HTTP request failed")
     }
 }
 
@@ -585,14 +724,17 @@ fn limit_failure(message: impl Into<String>) -> ConnectorError {
 fn cancelled_failure() -> ConnectorError {
     ConnectorError::new(
         ConnectorFailureKind::Cancelled,
-        "Responses request was cancelled",
+        "model-connector request was cancelled",
     )
 }
 
 fn http_status_failure(status: StatusCode) -> ConnectorError {
     ConnectorError::new(
         ConnectorFailureKind::HttpStatus,
-        format!("Responses HTTP request returned status {}", status.as_u16()),
+        format!(
+            "model-connector HTTP request returned status {}",
+            status.as_u16()
+        ),
     )
 }
 
@@ -624,7 +766,7 @@ mod tests {
             assert_eq!(
                 error.to_string(),
                 format!(
-                    "HttpStatus: Responses HTTP request returned status {}",
+                    "HttpStatus: model-connector HTTP request returned status {}",
                     status.as_u16()
                 )
             );

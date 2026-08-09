@@ -12,6 +12,8 @@ pub struct ResponsesConnectorLimits {
     pub max_sse_events: usize,
     pub max_output_items: usize,
     pub max_response_text_bytes: usize,
+    pub max_refusal_bytes: usize,
+    pub max_reasoning_bytes: usize,
     pub max_function_argument_bytes: usize,
 }
 
@@ -28,6 +30,8 @@ impl Default for ResponsesConnectorLimits {
             max_sse_events: 100_000,
             max_output_items: 1_024,
             max_response_text_bytes: 16 * 1024 * 1024,
+            max_refusal_bytes: 16 * 1024 * 1024,
+            max_reasoning_bytes: 16 * 1024 * 1024,
             max_function_argument_bytes: 4 * 1024 * 1024,
         }
     }
@@ -54,6 +58,8 @@ impl ResponsesConnectorLimits {
             self.max_sse_events,
             self.max_output_items,
             self.max_response_text_bytes,
+            self.max_refusal_bytes,
+            self.max_reasoning_bytes,
             self.max_function_argument_bytes,
         ];
         if bounds.into_iter().any(|bound| bound == 0) {

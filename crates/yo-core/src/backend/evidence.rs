@@ -364,6 +364,7 @@ pub enum ModelReplayItem {
     Message {
         role: ModelReplayRole,
         content: String,
+        refusal: Option<String>,
     },
     FunctionCall {
         call_id: String,
@@ -379,7 +380,17 @@ pub enum ModelReplayItem {
 impl ModelReplayItem {
     fn is_valid(&self) -> bool {
         match self {
-            Self::Message { content, .. } => content.len() <= MAX_REPLAY_TEXT_BYTES,
+            Self::Message {
+                role,
+                content,
+                refusal,
+            } => {
+                content.len() <= MAX_REPLAY_TEXT_BYTES
+                    && refusal.as_ref().is_none_or(|refusal| {
+                        *role == ModelReplayRole::Assistant
+                            && refusal.len() <= MAX_REPLAY_TEXT_BYTES
+                    })
+            },
             Self::FunctionCall {
                 call_id,
                 name,
@@ -595,16 +606,26 @@ fn contract_value(contract: &ModelReplayContract) -> Value {
 
 fn item_value(item: &ModelReplayItem) -> Value {
     match item {
-        ModelReplayItem::Message { role, content } => json!({
-            "kind": "message",
-            "role": match role {
-                ModelReplayRole::System => "system",
-                ModelReplayRole::Developer => "developer",
-                ModelReplayRole::User => "user",
-                ModelReplayRole::Assistant => "assistant",
-            },
-            "content": content,
-        }),
+        ModelReplayItem::Message {
+            role,
+            content,
+            refusal,
+        } => {
+            let mut value = json!({
+                "kind": "message",
+                "role": match role {
+                    ModelReplayRole::System => "system",
+                    ModelReplayRole::Developer => "developer",
+                    ModelReplayRole::User => "user",
+                    ModelReplayRole::Assistant => "assistant",
+                },
+                "content": content,
+            });
+            if let Some(refusal) = refusal {
+                value["refusal"] = Value::String(refusal.clone());
+            }
+            value
+        },
         ModelReplayItem::FunctionCall {
             call_id,
             name,

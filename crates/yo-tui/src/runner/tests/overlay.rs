@@ -13,7 +13,6 @@ fn model_controller(current_model: &str) -> yo_core::ModelSelectionController {
                 yo_core::ProviderId::new(provider).unwrap(),
                 yo_core::AccountId::new(account).unwrap(),
                 yo_core::ModelId::new(model).unwrap(),
-                yo_core::ConnectorId::new("openai-responses").unwrap(),
                 yo_core::ApiDialect::OpenAiResponses,
                 yo_core::NormalizedEndpoint::parse("https://example.test/v1").unwrap(),
             ),

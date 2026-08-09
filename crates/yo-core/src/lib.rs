@@ -52,10 +52,13 @@ pub use journal::{
     TranscriptSlice,
 };
 pub use model_connector::{
-    ConnectorError, ConnectorFailureKind, FunctionTool, OpenAiResponsesConnector, ReasoningChannel,
-    ReasoningEffort, ResponseTerminal, ResponsesCancellation, ResponsesConnectorLimits,
-    ResponsesEvent, ResponsesInputItem, ResponsesInputRole, ResponsesPoll, ResponsesRequest,
-    ResponsesStream, ResponsesUsage,
+    ConnectorError, ConnectorFailureKind, FunctionTool, ModelConnectorCancellation,
+    ModelConnectorEvent, ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits,
+    ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStream, ModelConnectorTerminal,
+    ModelConnectorUsage, OpenAiChatCompletionsConnector, OpenAiResponsesConnector,
+    ReasoningChannel, ReasoningEffort, ResponseTerminal, ResponsesCancellation,
+    ResponsesConnectorLimits, ResponsesEvent, ResponsesInputItem, ResponsesInputRole,
+    ResponsesPoll, ResponsesRequest, ResponsesStream, ResponsesUsage,
 };
 pub use model_service::{
     AccountId, ApiCredential, ApiDialect, ConnectorId, CredentialStore, EffectiveModelBinding,

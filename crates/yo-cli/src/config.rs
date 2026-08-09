@@ -11,8 +11,8 @@ use std::{
 use jiff::{Timestamp, fmt::strtime, tz::TimeZone};
 use serde::Deserialize;
 use yo_core::{
-    AccountId, ConnectorId, EffectiveModelBinding, ModelCatalog, ModelCatalogEntry,
-    ModelContextProfile, ModelId, NormalizedEndpoint, ProviderId,
+    AccountId, EffectiveModelBinding, ModelCatalog, ModelCatalogEntry, ModelContextProfile,
+    ModelId, NormalizedEndpoint, ProviderId,
 };
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
@@ -282,7 +282,6 @@ struct ModelEntryConfig {
     account_display_name: Option<String>,
     model: String,
     model_display_name: Option<String>,
-    connector: String,
     api_dialect: String,
     base_url: String,
     input_token_limit: u64,
@@ -406,12 +405,12 @@ fn model_entry(path: &Path, entry: ModelEntryConfig) -> Result<ModelCatalogEntry
         path: path.to_owned(),
         message: error.to_string(),
     };
+    let api_dialect = entry.api_dialect.parse().map_err(&invalid)?;
     let binding = EffectiveModelBinding::new(
         ProviderId::new(entry.provider).map_err(&invalid)?,
         AccountId::new(entry.account).map_err(&invalid)?,
         ModelId::new(entry.model).map_err(&invalid)?,
-        ConnectorId::new(entry.connector).map_err(&invalid)?,
-        entry.api_dialect.parse().map_err(&invalid)?,
+        api_dialect,
         NormalizedEndpoint::parse(&entry.base_url).map_err(&invalid)?,
     );
     let context = ModelContextProfile::new(

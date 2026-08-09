@@ -19,7 +19,6 @@ fn selection_entry(
             ProviderId::new(provider).unwrap(),
             AccountId::new(account).unwrap(),
             ModelId::new(model).unwrap(),
-            ConnectorId::new("openai-responses").unwrap(),
             ApiDialect::OpenAiResponses,
             NormalizedEndpoint::parse("https://example.test/v1").unwrap(),
         ),
@@ -108,13 +107,40 @@ fn qwen_binding(account: &str, model: &str) -> EffectiveModelBinding {
         ProviderId::new("qwencloud").unwrap(),
         AccountId::new(account).unwrap(),
         ModelId::new(model).unwrap(),
-        ConnectorId::new("openai-responses").unwrap(),
         "openai-responses".parse().unwrap(),
         NormalizedEndpoint::parse(
             "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/",
         )
         .unwrap(),
     )
+}
+
+// public dialect는 connector를 하나로 파생하며 durable identity가 다른 pair를 주장하면 거부한다.
+#[test]
+fn api_dialect_derives_exactly_one_builtin_connector_and_durable_mismatch_fails() {
+    let chat = EffectiveModelBinding::new(
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("token-plan").unwrap(),
+        ModelId::new("deepseek-v4-flash-0731").unwrap(),
+        ApiDialect::OpenAiChatCompletions,
+        NormalizedEndpoint::parse("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+            .unwrap(),
+    );
+    assert_eq!(
+        chat.connector_id().as_str(),
+        ConnectorId::OPENAI_CHAT_COMPLETIONS
+    );
+    assert!(
+        EffectiveModelBinding::from_durable(
+            chat.provider_id().clone(),
+            chat.account_id().clone(),
+            chat.model_id().clone(),
+            ConnectorId::new(ConnectorId::OPENAI_RESPONSES).unwrap(),
+            ApiDialect::OpenAiChatCompletions,
+            chat.endpoint().clone(),
+        )
+        .is_err()
+    );
 }
 
 // stable identity는 표시 이름과 분리되므로 유효한 ID를 그대로 보존하고 공백이나 control

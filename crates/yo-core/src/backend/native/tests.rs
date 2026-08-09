@@ -4,26 +4,33 @@ use serde_json::json;
 
 use super::*;
 use crate::{
-    AccountId, AgentEvent, AgentRuntime, ApiDialect, ConnectorId, ModelId, NormalizedEndpoint,
-    ProviderId, RuntimePoll, SubmissionId, ToolDefinition, ToolEffect, ToolExecutionError,
-    ToolExecutionResult, ToolId, ToolRegistry, UserInput, fixture_session,
+    AccountId, AgentEvent, AgentRuntime, ApiDialect, ModelId, NormalizedEndpoint, ProviderId,
+    RuntimePoll, SubmissionId, ToolDefinition, ToolEffect, ToolExecutionError, ToolExecutionResult,
+    ToolId, ToolRegistry, UserInput, fixture_session,
 };
 
 struct MockConnector {
-    rounds: Arc<Mutex<VecDeque<VecDeque<ResponsesEvent>>>>,
-    requests: Arc<Mutex<Vec<ResponsesRequest>>>,
+    rounds: Arc<Mutex<VecDeque<VecDeque<ModelConnectorEvent>>>>,
+    requests: Arc<Mutex<Vec<ModelConnectorRequest>>>,
 }
 
-impl ResponseConnector for MockConnector {
+impl ModelConnector for MockConnector {
     fn request_url(&self) -> &str {
         "https://example.invalid/v1/responses"
     }
 
+    fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<serde_json::Value, crate::ConnectorError> {
+        Ok(request.tokenization_payload("mock-model"))
+    }
+
     fn start(
         &self,
-        request: ResponsesRequest,
-        _cancellation: ResponsesCancellation,
-    ) -> Result<Box<dyn ResponseStream>, crate::ConnectorError> {
+        request: ModelConnectorRequest,
+        _cancellation: ModelConnectorCancellation,
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, crate::ConnectorError> {
         self.requests.lock().unwrap().push(request);
         let events = self
             .rounds
@@ -36,15 +43,15 @@ impl ResponseConnector for MockConnector {
 }
 
 struct MockStream {
-    events: VecDeque<ResponsesEvent>,
+    events: VecDeque<ModelConnectorEvent>,
 }
 
-impl ResponseStream for MockStream {
-    fn poll(&mut self) -> Result<ResponsesPoll, crate::ConnectorError> {
+impl ModelConnectorStreamPort for MockStream {
+    fn poll(&mut self) -> Result<ModelConnectorPoll, crate::ConnectorError> {
         Ok(self
             .events
             .pop_front()
-            .map_or(ResponsesPoll::Closed, ResponsesPoll::Event))
+            .map_or(ModelConnectorPoll::Closed, ModelConnectorPoll::Event))
     }
 
     fn cancel(&self) {}
@@ -282,8 +289,17 @@ fn binding() -> EffectiveModelBinding {
         ProviderId::new("qwencloud").unwrap(),
         AccountId::new("default").unwrap(),
         ModelId::new("qwen3.8max").unwrap(),
-        ConnectorId::new(ConnectorId::OPENAI_RESPONSES).unwrap(),
         ApiDialect::OpenAiResponses,
+        NormalizedEndpoint::parse("https://example.invalid/v1").unwrap(),
+    )
+}
+
+fn chat_binding() -> EffectiveModelBinding {
+    EffectiveModelBinding::new(
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("default").unwrap(),
+        ModelId::new("deepseek-v4-flash-0731").unwrap(),
+        ApiDialect::OpenAiChatCompletions,
         NormalizedEndpoint::parse("https://example.invalid/v1").unwrap(),
     )
 }
@@ -403,8 +419,8 @@ impl crate::ModelTokenCounter for FailingTokenCounter {
 }
 
 fn event_rounds(
-    rounds: Vec<Vec<ResponsesEvent>>,
-) -> Arc<Mutex<VecDeque<VecDeque<ResponsesEvent>>>> {
+    rounds: Vec<Vec<ModelConnectorEvent>>,
+) -> Arc<Mutex<VecDeque<VecDeque<ModelConnectorEvent>>>> {
     Arc::new(Mutex::new(
         rounds
             .into_iter()
@@ -414,7 +430,7 @@ fn event_rounds(
 }
 
 fn backend(
-    rounds: Vec<Vec<ResponsesEvent>>,
+    rounds: Vec<Vec<ModelConnectorEvent>>,
     approval: ToolApprovalRequirement,
     starts: Arc<Mutex<usize>>,
 ) -> NativeModelBackend {
@@ -443,10 +459,10 @@ fn turn() -> TurnRef {
     )
 }
 
-fn completed(response_id: &str) -> ResponsesEvent {
-    ResponsesEvent::Terminal {
+fn completed(response_id: &str) -> ModelConnectorEvent {
+    ModelConnectorEvent::Terminal {
         response_id: response_id.to_owned(),
-        status: ResponseTerminal::Completed,
+        status: ModelConnectorTerminal::Completed,
         usage: crate::ResponsesUsage::default(),
     }
 }
@@ -472,16 +488,16 @@ fn native_backend_runs_automatic_tool_once_and_replays_it_before_the_next_round(
     let mut backend = backend(
         vec![
             vec![
-                ResponsesEvent::ResponseCreated {
+                ModelConnectorEvent::ResponseCreated {
                     response_id: "r1".to_owned(),
                 },
-                ResponsesEvent::FunctionCallStarted {
+                ModelConnectorEvent::FunctionCallStarted {
                     output_index: 0,
                     item_id: "item-1".to_owned(),
                     call_id: "call-1".to_owned(),
                     name: "read_file".to_owned(),
                 },
-                ResponsesEvent::FunctionCallDone {
+                ModelConnectorEvent::FunctionCallDone {
                     output_index: 0,
                     item_id: "item-1".to_owned(),
                     call_id: "call-1".to_owned(),
@@ -491,22 +507,22 @@ fn native_backend_runs_automatic_tool_once_and_replays_it_before_the_next_round(
                 completed("r1"),
             ],
             vec![
-                ResponsesEvent::ResponseCreated {
+                ModelConnectorEvent::ResponseCreated {
                     response_id: "r2".to_owned(),
                 },
-                ResponsesEvent::TextDelta {
+                ModelConnectorEvent::TextDelta {
                     output_index: 0,
                     item_id: "item-2".to_owned(),
                     content_index: 0,
                     delta: "완".to_owned(),
                 },
-                ResponsesEvent::TextDelta {
+                ModelConnectorEvent::TextDelta {
                     output_index: 0,
                     item_id: "item-2".to_owned(),
                     content_index: 0,
                     delta: "료".to_owned(),
                 },
-                ResponsesEvent::MessageDone {
+                ModelConnectorEvent::MessageDone {
                     output_index: 0,
                     item_id: "item-2".to_owned(),
                 },
@@ -557,8 +573,125 @@ fn native_backend_runs_automatic_tool_once_and_replays_it_before_the_next_round(
         ModelReplayItem::Message {
             role: ModelReplayRole::Assistant,
             content: "완료".to_owned(),
+            refusal: None,
         }
     );
+}
+
+// visible refusal은 실패로 바꾸지 않고 Chat 전용 response identity와 assistant replay를 함께
+// 보존한다.
+#[test]
+fn native_backend_commits_visible_refusal_as_a_normal_assistant_message() {
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(vec![vec![
+                ModelConnectorEvent::ResponseCreated {
+                    response_id: "chat-refusal".to_owned(),
+                },
+                ModelConnectorEvent::RefusalDelta {
+                    output_index: 0,
+                    item_id: "message".to_owned(),
+                    content_index: 1,
+                    delta: "요청을 처리할 수 없습니다".to_owned(),
+                },
+                ModelConnectorEvent::MessageDone {
+                    output_index: 0,
+                    item_id: "message".to_owned(),
+                },
+                completed("chat-refusal"),
+            ]]),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        chat_binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("거절 테스트"),
+        })
+        .unwrap();
+
+    let BackendEvent::ResumableTurnFinished { evidence, .. } = drain_until_turn(&mut backend)
+    else {
+        panic!("a visible refusal must complete resumably")
+    };
+    assert_eq!(
+        evidence.model_replay().unwrap().items().last(),
+        Some(&ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: String::new(),
+            refusal: Some("요청을 처리할 수 없습니다".to_owned()),
+        })
+    );
+    assert_eq!(
+        evidence.outcome_identity().unwrap().schema(),
+        "chat-completions.response-id/v1"
+    );
+}
+
+// length로 끝난 partial Chat round는 실패 Turn이 되며 replay나 Anchor 후보를 만들지 않는다.
+#[test]
+fn incomplete_chat_round_fails_without_a_resumable_replay_delta() {
+    let mut backend = backend(
+        vec![vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "chat-length".to_owned(),
+            },
+            ModelConnectorEvent::TextDelta {
+                output_index: 0,
+                item_id: "message".to_owned(),
+                content_index: 0,
+                delta: "partial".to_owned(),
+            },
+            ModelConnectorEvent::MessageDone {
+                output_index: 0,
+                item_id: "message".to_owned(),
+            },
+            ModelConnectorEvent::Terminal {
+                response_id: "chat-length".to_owned(),
+                status: ModelConnectorTerminal::Incomplete {
+                    reason: Some("length".to_owned()),
+                },
+                usage: crate::ModelConnectorUsage::default(),
+            },
+        ]],
+        ToolApprovalRequirement::Automatic,
+        Arc::new(Mutex::new(0)),
+    );
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("truncate"),
+        })
+        .unwrap();
+
+    let BackendEvent::TurnFinished {
+        outcome: TurnOutcome::Failed(failure),
+        ..
+    } = drain_until_turn(&mut backend)
+    else {
+        panic!("an incomplete Chat round must fail the Turn")
+    };
+    assert_eq!(failure.message(), "model response was incomplete: length");
 }
 
 // 함수 호출 완료 event가 뒤집혀 도착해도 output index 순서로 한 번씩 실행하고,
@@ -569,29 +702,29 @@ fn native_backend_executes_multiple_tools_in_model_output_order() {
     let starts = Arc::new(Mutex::new(Vec::new()));
     let rounds = vec![
         vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "r1".to_owned(),
             },
-            ResponsesEvent::FunctionCallStarted {
+            ModelConnectorEvent::FunctionCallStarted {
                 output_index: 0,
                 item_id: "item-0".to_owned(),
                 call_id: "call-0".to_owned(),
                 name: "read_file".to_owned(),
             },
-            ResponsesEvent::FunctionCallStarted {
+            ModelConnectorEvent::FunctionCallStarted {
                 output_index: 1,
                 item_id: "item-1".to_owned(),
                 call_id: "call-1".to_owned(),
                 name: "read_file".to_owned(),
             },
-            ResponsesEvent::FunctionCallDone {
+            ModelConnectorEvent::FunctionCallDone {
                 output_index: 1,
                 item_id: "item-1".to_owned(),
                 call_id: "call-1".to_owned(),
                 name: "read_file".to_owned(),
                 arguments: r#"{"path":"one"}"#.to_owned(),
             },
-            ResponsesEvent::FunctionCallDone {
+            ModelConnectorEvent::FunctionCallDone {
                 output_index: 0,
                 item_id: "item-0".to_owned(),
                 call_id: "call-0".to_owned(),
@@ -601,10 +734,10 @@ fn native_backend_executes_multiple_tools_in_model_output_order() {
             completed("r1"),
         ],
         vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "r2".to_owned(),
             },
-            ResponsesEvent::MessageDone {
+            ModelConnectorEvent::MessageDone {
                 output_index: 0,
                 item_id: "message".to_owned(),
             },
@@ -651,10 +784,10 @@ fn native_backend_executes_multiple_tools_in_model_output_order() {
     assert!(matches!(
         &replay[2..],
         [
-            ResponsesInputItem::FunctionCall { call_id: first_call, .. },
-            ResponsesInputItem::FunctionCall { call_id: second_call, .. },
-            ResponsesInputItem::FunctionCallOutput { call_id: first_output, .. },
-            ResponsesInputItem::FunctionCallOutput { call_id: second_output, .. },
+            ModelConnectorInputItem::FunctionCall { call_id: first_call, .. },
+            ModelConnectorInputItem::FunctionCall { call_id: second_call, .. },
+            ModelConnectorInputItem::FunctionCallOutput { call_id: first_output, .. },
+            ModelConnectorInputItem::FunctionCallOutput { call_id: second_output, .. },
         ] if first_call == "call-0"
             && second_call == "call-1"
             && first_output == "call-0"
@@ -668,16 +801,16 @@ fn native_backend_never_dispatches_invalid_tool_arguments() {
     let starts = Arc::new(Mutex::new(0));
     let mut backend = backend(
         vec![vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "r1".to_owned(),
             },
-            ResponsesEvent::FunctionCallStarted {
+            ModelConnectorEvent::FunctionCallStarted {
                 output_index: 0,
                 item_id: "item-1".to_owned(),
                 call_id: "call-1".to_owned(),
                 name: "read_file".to_owned(),
             },
-            ResponsesEvent::FunctionCallDone {
+            ModelConnectorEvent::FunctionCallDone {
                 output_index: 0,
                 item_id: "item-1".to_owned(),
                 call_id: "call-1".to_owned(),
@@ -717,22 +850,22 @@ fn native_backend_failure_sequence_is_accepted_by_the_runtime() {
     let starts = Arc::new(Mutex::new(0));
     let backend = backend(
         vec![vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "r1".to_owned(),
             },
-            ResponsesEvent::TextDelta {
+            ModelConnectorEvent::TextDelta {
                 output_index: 0,
                 item_id: "message".to_owned(),
                 content_index: 0,
                 delta: "partial".to_owned(),
             },
-            ResponsesEvent::FunctionCallStarted {
+            ModelConnectorEvent::FunctionCallStarted {
                 output_index: 1,
                 item_id: "call-item".to_owned(),
                 call_id: "call-1".to_owned(),
                 name: "read_file".to_owned(),
             },
-            ResponsesEvent::FunctionCallDone {
+            ModelConnectorEvent::FunctionCallDone {
                 output_index: 1,
                 item_id: "call-item".to_owned(),
                 call_id: "call-1".to_owned(),
@@ -782,10 +915,10 @@ fn native_backend_requires_a_final_assistant_message_item() {
     let starts = Arc::new(Mutex::new(0));
     let mut empty_message = backend(
         vec![vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "empty".to_owned(),
             },
-            ResponsesEvent::MessageDone {
+            ModelConnectorEvent::MessageDone {
                 output_index: 0,
                 item_id: "message".to_owned(),
             },
@@ -812,10 +945,10 @@ fn native_backend_requires_a_final_assistant_message_item() {
 
     let mut reasoning_only = backend(
         vec![vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "reasoning".to_owned(),
             },
-            ResponsesEvent::ReasoningDelta {
+            ModelConnectorEvent::ReasoningDelta {
                 output_index: 0,
                 item_id: "reason".to_owned(),
                 channel: ReasoningChannel::Summary,
@@ -854,16 +987,16 @@ fn native_backend_required_approval_gates_tool_execution() {
     let mut backend = backend(
         vec![
             vec![
-                ResponsesEvent::ResponseCreated {
+                ModelConnectorEvent::ResponseCreated {
                     response_id: "r1".to_owned(),
                 },
-                ResponsesEvent::FunctionCallStarted {
+                ModelConnectorEvent::FunctionCallStarted {
                     output_index: 0,
                     item_id: "item-1".to_owned(),
                     call_id: "call-1".to_owned(),
                     name: "read_file".to_owned(),
                 },
-                ResponsesEvent::FunctionCallDone {
+                ModelConnectorEvent::FunctionCallDone {
                     output_index: 0,
                     item_id: "item-1".to_owned(),
                     call_id: "call-1".to_owned(),
@@ -873,16 +1006,16 @@ fn native_backend_required_approval_gates_tool_execution() {
                 completed("r1"),
             ],
             vec![
-                ResponsesEvent::ResponseCreated {
+                ModelConnectorEvent::ResponseCreated {
                     response_id: "r2".to_owned(),
                 },
-                ResponsesEvent::TextDelta {
+                ModelConnectorEvent::TextDelta {
                     output_index: 0,
                     item_id: "item-2".to_owned(),
                     content_index: 0,
                     delta: "ok".to_owned(),
                 },
-                ResponsesEvent::MessageDone {
+                ModelConnectorEvent::MessageDone {
                     output_index: 0,
                     item_id: "item-2".to_owned(),
                 },
@@ -935,16 +1068,16 @@ fn native_backend_interrupts_and_seals_an_active_tool_execution() {
     let cancelled = Arc::new(Mutex::new(0));
     let shutdowns = Arc::new(Mutex::new(0));
     let rounds = vec![vec![
-        ResponsesEvent::ResponseCreated {
+        ModelConnectorEvent::ResponseCreated {
             response_id: "r1".to_owned(),
         },
-        ResponsesEvent::FunctionCallStarted {
+        ModelConnectorEvent::FunctionCallStarted {
             output_index: 0,
             item_id: "item-1".to_owned(),
             call_id: "call-1".to_owned(),
             name: "read_file".to_owned(),
         },
-        ResponsesEvent::FunctionCallDone {
+        ModelConnectorEvent::FunctionCallDone {
             output_index: 0,
             item_id: "item-1".to_owned(),
             call_id: "call-1".to_owned(),
@@ -1031,16 +1164,16 @@ fn native_backend_seals_the_turn_when_tool_cleanup_fails() {
     let cancelled = Arc::new(Mutex::new(0));
     let shutdowns = Arc::new(Mutex::new(0));
     let rounds = vec![vec![
-        ResponsesEvent::ResponseCreated {
+        ModelConnectorEvent::ResponseCreated {
             response_id: "r1".to_owned(),
         },
-        ResponsesEvent::FunctionCallStarted {
+        ModelConnectorEvent::FunctionCallStarted {
             output_index: 0,
             item_id: "item-1".to_owned(),
             call_id: "call-1".to_owned(),
             name: "read_file".to_owned(),
         },
-        ResponsesEvent::FunctionCallDone {
+        ModelConnectorEvent::FunctionCallDone {
             output_index: 0,
             item_id: "item-1".to_owned(),
             call_id: "call-1".to_owned(),
@@ -1260,16 +1393,16 @@ fn replay_exhaustion_finishes_non_resumably_and_latches_the_binding() {
     let starts = Arc::new(Mutex::new(0));
     let mut backend = backend(
         vec![vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "full".to_owned(),
             },
-            ResponsesEvent::TextDelta {
+            ModelConnectorEvent::TextDelta {
                 output_index: 0,
                 item_id: "message".to_owned(),
                 content_index: 0,
                 delta: "answer".to_owned(),
             },
-            ResponsesEvent::MessageDone {
+            ModelConnectorEvent::MessageDone {
                 output_index: 0,
                 item_id: "message".to_owned(),
             },
@@ -1286,6 +1419,7 @@ fn replay_exhaustion_finishes_non_resumably_and_latches_the_binding() {
                 .map(|_| ModelReplayItem::Message {
                     role: ModelReplayRole::Assistant,
                     content: String::new(),
+                    refusal: None,
                 })
                 .collect(),
         ))
@@ -1330,16 +1464,16 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
     let requests = Arc::new(Mutex::new(Vec::new()));
     let rounds = vec![
         vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "r1".to_owned(),
             },
-            ResponsesEvent::FunctionCallStarted {
+            ModelConnectorEvent::FunctionCallStarted {
                 output_index: 0,
                 item_id: "item-1".to_owned(),
                 call_id: "call-1".to_owned(),
                 name: "read_file".to_owned(),
             },
-            ResponsesEvent::FunctionCallDone {
+            ModelConnectorEvent::FunctionCallDone {
                 output_index: 0,
                 item_id: "item-1".to_owned(),
                 call_id: "call-1".to_owned(),
@@ -1349,10 +1483,10 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
             completed("r1"),
         ],
         vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "r2".to_owned(),
             },
-            ResponsesEvent::MessageDone {
+            ModelConnectorEvent::MessageDone {
                 output_index: 0,
                 item_id: "message".to_owned(),
             },
@@ -1423,12 +1557,12 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
     assert_eq!(requests.len(), 2);
     assert!(requests[1].input().iter().any(|item| matches!(
         item,
-        ResponsesInputItem::FunctionCall { arguments, .. }
+        ModelConnectorInputItem::FunctionCall { arguments, .. }
             if arguments == r#"{"path":"[redacted]"}"#
     )));
     assert!(requests[1].input().iter().any(|item| matches!(
         item,
-        ResponsesInputItem::FunctionCallOutput { output, .. }
+        ModelConnectorInputItem::FunctionCallOutput { output, .. }
             if output == "[redacted-output]"
     )));
 }
@@ -1438,16 +1572,16 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
 #[test]
 fn schema_validation_diagnostics_do_not_persist_argument_property_names() {
     let rounds = vec![vec![
-        ResponsesEvent::ResponseCreated {
+        ModelConnectorEvent::ResponseCreated {
             response_id: "r1".to_owned(),
         },
-        ResponsesEvent::FunctionCallStarted {
+        ModelConnectorEvent::FunctionCallStarted {
             output_index: 0,
             item_id: "item-1".to_owned(),
             call_id: "call-1".to_owned(),
             name: "read_file".to_owned(),
         },
-        ResponsesEvent::FunctionCallDone {
+        ModelConnectorEvent::FunctionCallDone {
             output_index: 0,
             item_id: "item-1".to_owned(),
             call_id: "call-1".to_owned(),
@@ -1506,16 +1640,16 @@ fn schema_validation_diagnostics_do_not_persist_argument_property_names() {
 #[test]
 fn injected_policy_diagnostics_do_not_cross_the_semantic_boundary() {
     let rounds = vec![vec![
-        ResponsesEvent::ResponseCreated {
+        ModelConnectorEvent::ResponseCreated {
             response_id: "r1".to_owned(),
         },
-        ResponsesEvent::FunctionCallStarted {
+        ModelConnectorEvent::FunctionCallStarted {
             output_index: 0,
             item_id: "item-1".to_owned(),
             call_id: "call-1".to_owned(),
             name: "read_file".to_owned(),
         },
-        ResponsesEvent::FunctionCallDone {
+        ModelConnectorEvent::FunctionCallDone {
             output_index: 0,
             item_id: "item-1".to_owned(),
             call_id: "call-1".to_owned(),
@@ -1599,16 +1733,16 @@ fn injected_policy_diagnostics_do_not_cross_the_semantic_boundary() {
 
     let rounds = vec![
         vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "tool".to_owned(),
             },
-            ResponsesEvent::FunctionCallStarted {
+            ModelConnectorEvent::FunctionCallStarted {
                 output_index: 0,
                 item_id: "item-1".to_owned(),
                 call_id: "call-1".to_owned(),
                 name: "read_file".to_owned(),
             },
-            ResponsesEvent::FunctionCallDone {
+            ModelConnectorEvent::FunctionCallDone {
                 output_index: 0,
                 item_id: "item-1".to_owned(),
                 call_id: "call-1".to_owned(),
@@ -1618,16 +1752,16 @@ fn injected_policy_diagnostics_do_not_cross_the_semantic_boundary() {
             completed("tool"),
         ],
         vec![
-            ResponsesEvent::ResponseCreated {
+            ModelConnectorEvent::ResponseCreated {
                 response_id: "answer".to_owned(),
             },
-            ResponsesEvent::TextDelta {
+            ModelConnectorEvent::TextDelta {
                 output_index: 0,
                 item_id: "message".to_owned(),
                 content_index: 0,
                 delta: "done".to_owned(),
             },
-            ResponsesEvent::MessageDone {
+            ModelConnectorEvent::MessageDone {
                 output_index: 0,
                 item_id: "message".to_owned(),
             },

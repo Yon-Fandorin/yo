@@ -145,6 +145,12 @@ enum WireModelReplayItem {
     Message {
         role: WireModelReplayRole,
         content: String,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "deserialize_optional_refusal"
+        )]
+        refusal: Option<String>,
     },
     FunctionCall {
         call_id: String,
@@ -164,6 +170,13 @@ enum WireModelReplayRole {
     Developer,
     User,
     Assistant,
+}
+
+fn deserialize_optional_refusal<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
 }
 
 impl TryFrom<&SequencedJournalRecord> for WireRecord {
@@ -514,9 +527,14 @@ fn encode_model_replay(replay: &ModelReplayDelta) -> WireModelReplayDelta {
             .items()
             .iter()
             .map(|item| match item {
-                ModelReplayItem::Message { role, content } => WireModelReplayItem::Message {
+                ModelReplayItem::Message {
+                    role,
+                    content,
+                    refusal,
+                } => WireModelReplayItem::Message {
                     role: (*role).into(),
                     content: content.clone(),
+                    refusal: refusal.clone(),
                 },
                 ModelReplayItem::FunctionCall {
                     call_id,
@@ -560,9 +578,14 @@ fn decode_model_replay(wire: WireModelReplayDelta) -> Result<ModelReplayDelta, J
         .items
         .into_iter()
         .map(|item| match item {
-            WireModelReplayItem::Message { role, content } => ModelReplayItem::Message {
+            WireModelReplayItem::Message {
+                role,
+                content,
+                refusal,
+            } => ModelReplayItem::Message {
                 role: role.into(),
                 content,
+                refusal,
             },
             WireModelReplayItem::FunctionCall {
                 call_id,

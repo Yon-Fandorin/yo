@@ -9,8 +9,8 @@ use super::{
     *,
 };
 use crate::{
-    AccountId, ApiCredential, ApiDialect, ConnectorId, EffectiveModelBinding, ModelId,
-    NormalizedEndpoint, ProviderId,
+    AccountId, ApiCredential, ApiDialect, EffectiveModelBinding, ModelId, NormalizedEndpoint,
+    ProviderId,
 };
 
 fn qwen_binding() -> EffectiveModelBinding {
@@ -18,13 +18,40 @@ fn qwen_binding() -> EffectiveModelBinding {
         ProviderId::new("qwencloud").unwrap(),
         AccountId::new("qwencloud-token-plan").unwrap(),
         ModelId::new("qwen3.8max").unwrap(),
-        ConnectorId::new("openai-responses").unwrap(),
         ApiDialect::OpenAiResponses,
         NormalizedEndpoint::parse(
             "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
         )
         .unwrap(),
     )
+}
+
+fn deepseek_chat_binding() -> EffectiveModelBinding {
+    EffectiveModelBinding::new(
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("token-plan").unwrap(),
+        ModelId::new("deepseek-v4-flash-0731").unwrap(),
+        ApiDialect::OpenAiChatCompletions,
+        NormalizedEndpoint::parse("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+            .unwrap(),
+    )
+}
+
+// Chat connector는 base URL에 정확한 두 segment만 붙이고 Debug에서 credential을 숨긴다.
+#[test]
+fn chat_connector_appends_exactly_chat_completions_and_redacts_credentials() {
+    let connector = OpenAiChatCompletionsConnector::new(
+        &deepseek_chat_binding(),
+        ApiCredential::new("secret-token").unwrap(),
+        ResponsesConnectorLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        connector.request_url(),
+        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+    );
+    let debug = format!("{connector:?}");
+    assert!(!debug.contains("secret-token"));
 }
 
 fn event(value: serde_json::Value) -> String {
@@ -124,6 +151,7 @@ fn serializes_only_the_declared_responses_request_capabilities() {
         vec![ResponsesInputItem::Message {
             role: ResponsesInputRole::User,
             content: "hello".to_owned(),
+            refusal: None,
         }],
         vec![tool],
         8_192,
@@ -152,9 +180,29 @@ fn rejects_a_zero_responses_output_cap() {
         vec![ResponsesInputItem::Message {
             role: ResponsesInputRole::User,
             content: "hello".to_owned(),
+            refusal: None,
         }],
         Vec::new(),
         0,
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind(), ConnectorFailureKind::Configuration);
+}
+
+// connector 입력을 직접 만드는 호출자도 user·system 메시지에 refusal을 붙일 수 없으며,
+// dialect별 serializer가 같은 replay를 서로 다르게 해석하기 전에 공통 생성자가 거부한다.
+#[test]
+fn rejects_visible_refusal_on_a_non_assistant_connector_message() {
+    let error = ResponsesRequest::new(
+        vec![ResponsesInputItem::Message {
+            role: ResponsesInputRole::User,
+            content: "hello".to_owned(),
+            refusal: Some("declined".to_owned()),
+        }],
+        Vec::new(),
+        8_192,
         None,
     )
     .unwrap_err();
@@ -265,6 +313,33 @@ fn rejects_an_unknown_output_item_type() {
     let error = decoder.push(stream.as_bytes()).unwrap_err();
 
     assert_eq!(error.kind(), ConnectorFailureKind::Protocol);
+}
+
+// Responses에서도 한 network chunk의 앞선 정상 event는 뒤의 malformed event 때문에
+// 사라지지 않고 failure와 함께 반환되어 공용 transport가 먼저 관찰 가능하게 만든다.
+#[test]
+fn responses_preserves_completed_events_before_a_later_same_chunk_failure() {
+    let stream = [
+        event(json!({
+            "type": "response.created",
+            "sequence_number": 1,
+            "response": {"id": "resp-partial"}
+        })),
+        "data: {not-json}\n\n".to_owned(),
+    ]
+    .concat();
+    let mut decoder = ResponsesSseDecoder::new(ResponsesConnectorLimits::default());
+
+    let batch = decoder.push_batch(stream.as_bytes());
+
+    assert!(matches!(
+        batch.failure,
+        Some(ref failure) if failure.kind() == ConnectorFailureKind::Protocol
+    ));
+    assert!(matches!(
+        batch.events.as_slice(),
+        [ResponsesEvent::ResponseCreated { response_id }] if response_id == "resp-partial"
+    ));
 }
 
 // SSE event delimiter가 오기 전 수신 byte가 profile 한도를 넘으면 전체 event를 더
@@ -726,6 +801,7 @@ fn rejects_a_cancelled_request_before_starting_network_work() {
         vec![ResponsesInputItem::Message {
             role: ResponsesInputRole::User,
             content: "hello".to_owned(),
+            refusal: None,
         }],
         Vec::new(),
         8_192,

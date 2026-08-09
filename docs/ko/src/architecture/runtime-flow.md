@@ -4,16 +4,16 @@
 때 이 흐름을 사용한다. 여기에는 현재 구현 경로가 담겨 있다. 각 경계가
 어떤 의미여야 하는지는 계속 Methexis가 기준이다.
 
-## Model-service와 Responses connector
+## Model-service와 OpenAI-compatible connector
 
-provider 중립 service 입력, remote Responses dialect, Yo-managed loop는 하나의
+provider 중립 service 입력, 명시적인 remote API dialect, Yo-managed loop는 하나의
 typed 경로를 이룬다.
 
 ```text
 설정된 ProviderId + AccountId + ModelId
   ↓ 정확한 ModelCatalog namespace lookup
 EffectiveModelBinding
-  ├── ConnectorId + ApiDialect
+  ├── 명시적인 ApiDialect → 정확히 하나의 built-in ConnectorId
   └── 정규화한 HTTPS base endpoint
 ModelContextProfile
   ↓ 주입한 tokenizer profile로 직렬화된 실제 request를 계산
@@ -25,11 +25,12 @@ config.yaml과 같은 디렉터리의 credentials.yaml
 변경 불가능한 CredentialStore
   ↓ 정확한 ProviderId + AccountId lookup
 원문을 감춘 ApiCredential
-  ↓ OpenAiResponsesConnector
+  ↓ dialect에서 파생된 OpenAiResponsesConnector 또는 OpenAiChatCompletionsConnector
 POST <정규화한 base>/responses
+  또는 <정규화한 base>/chat/completions
   ↓ bearer auth + 같은 origin의 bounded redirect + finite deadline
-bounded text/event-stream decoder
-  ├── correlation을 보존한 text와 reasoning delta
+dialect별 bounded text/event-stream decoder
+  ├── correlation을 보존한 text, visible refusal, optional reasoning delta
   ├── 정확한 function call identity, 이름, argument byte
   └── completed, incomplete 또는 failed terminal + usage
   ↓ NativeModelBackend
@@ -39,7 +40,7 @@ semantic ModelWork와 ToolCall Activity
 주입된 ToolExecutionHost의 직렬 단일 실행 시도
   ↓ 제한한 output이 같은 semantic-admission 경계를 통과
 다음 remote request 전에 durable한 ToolResult Activity
-다음 Responses round 또는 재개 가능한 semantic replay delta
+다음 model round 또는 재개 가능한 semantic replay delta
 ```
 
 `yo-core::model_service`가 이 resolution과 validation을 소유한다. credential
@@ -47,9 +48,13 @@ semantic ModelWork와 ToolCall Activity
 안전하지 않거나 형식이 잘못되면 실패-폐쇄한다. API key에는 environment
 fallback이 없고 diagnostic formatting은 내용을 노출하지 않는다. 표시 이름은
 optional metadata일 뿐 identity나 routing에 참여하지 않는다.
-`yo-core::model_connector`는 `responses` segment를 정확히 하나만 붙이고 provider
-cache, `previous_response_id`, provider Conversation, built-in tool을 켜지 않는다.
-SSE event, item 수, 누적 text와 function argument를 읽는 동안 제한하며 cancellation은
+`yo-core::model_connector`는 `api_dialect`에서 built-in connector 하나를 파생한다.
+Responses는 `responses` segment를 정확히 하나 붙이고 Chat Completions는 정확히
+`chat/completions`를 붙인다. 어느 경로도 `v1`을 하나 더 붙이거나 fallback을 probe하거나
+provider conversation authority 또는 built-in tool을 켜지 않는다. Chat decoder는 index 0인
+choice 하나, finish 뒤 final usage와 `[DONE]` 순서를 요구하고 content와 refusal을 독립적으로
+보존하며 index가 있는 tool-call fragment를 correlate한다. 두 dialect 모두 SSE event와 누적
+payload를 읽는 동안 제한하며 cancellation은
 header·stream·queue wait를 중단한다. `yo-core::backend::native`가 semantic
 Activity와 제한된 model/tool loop를 소유한다. 매 dispatch 전에 catalog가 선택한
 tokenizer profile로 실제 request를 계산한다. 예약 출력량을 제외한 input budget이나
@@ -103,7 +108,7 @@ yo-cli
   TerminationCoordinator 설치
   Host identity와 Session repository 열기
   workspace 정규화와 SessionDescriptor 생성
-  CodexBackend transport 시작 또는 Yo-managed OpenAI Responses backend 조립
+  CodexBackend transport 시작 또는 dialect에서 파생된 Yo-managed model backend 조립
       ↓
 yo-core AgentSession
   worker 시작
@@ -433,10 +438,6 @@ session:
 tui:
   max_fps: 120
 model:
-  startup:
-    provider: qwencloud
-    account: default
-    model: qwen3.8max
   catalog:
     - provider: openrouter
       provider_display_name: OpenRouter
@@ -444,7 +445,6 @@ model:
       account_display_name: Default
       model: openrouter/free
       model_display_name: OpenRouter Free Router
-      connector: openai-responses
       api_dialect: openai-responses
       base_url: https://openrouter.ai/api/v1
       input_token_limit: 32000
@@ -454,13 +454,23 @@ model:
       provider_display_name: QwenCloud
       account: default
       account_display_name: Default
-      model: qwen3.8max
+      model: qwen3.8-max
       model_display_name: Qwen 3.8 Max
-      connector: openai-responses
       api_dialect: openai-responses
       base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
       input_token_limit: 1000000
       max_output_tokens: 65536
+      tokenizer_profile: utf8-bytes/v1
+    - provider: qwencloud
+      provider_display_name: QwenCloud
+      account: default
+      account_display_name: Default
+      model: deepseek-v4-flash-0731
+      model_display_name: DeepSeek V4 Flash
+      api_dialect: openai-chat-completions
+      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+      input_token_limit: 1000000
+      max_output_tokens: 8192
       tokenizer_profile: utf8-bytes/v1
 ```
 
@@ -490,8 +500,8 @@ providers:
 
 credential 파일은 현재 사용자가 소유한 regular file이어야 하고 group/other 권한 bit가
 없어야 한다(보통 mode `0600`). 서로 다른 Provider 아래에는 같은 Account ID를 사용할
-수 있으며 선택된 Provider·Account exact pair만 resolve한다. endpoint, model, connector,
-API dialect와 표시 이름은 secret 파일이 아닌 일반 설정에 둔다. 위 catalog의 limit과
+수 있으며 선택된 Provider·Account exact pair만 resolve한다. endpoint, model, API dialect,
+파생된 connector identity와 표시 이름은 secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과
 Model ID는 운영자가 관리하는 예시이며 현재 Provider의 정확한 제공 목록과 대조해야 한다.
 `utf8-bytes/v1`은 직렬화한 전체 request의 UTF-8 byte마다 token 하나를 세는 보수적인
 profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 binding에만 쓸 수

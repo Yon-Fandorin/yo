@@ -16,7 +16,7 @@ pub enum ResponsesInputRole {
 }
 
 impl ResponsesInputRole {
-    const fn as_str(self) -> &'static str {
+    pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::System => "system",
             Self::Developer => "developer",
@@ -31,6 +31,7 @@ pub enum ResponsesInputItem {
     Message {
         role: ResponsesInputRole,
         content: String,
+        refusal: Option<String>,
     },
     FunctionCall {
         call_id: String,
@@ -86,6 +87,14 @@ impl FunctionTool {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(super) fn description(&self) -> &str {
+        &self.description
+    }
+
+    pub(super) const fn parameters(&self) -> &Value {
+        &self.parameters
     }
 }
 
@@ -146,7 +155,14 @@ impl ResponsesRequest {
         }
         for item in &input {
             match item {
-                ResponsesInputItem::Message { .. } => {},
+                ResponsesInputItem::Message { role, refusal, .. } => {
+                    if refusal.is_some() && *role != ResponsesInputRole::Assistant {
+                        return Err(ConnectorError::new(
+                            ConnectorFailureKind::Configuration,
+                            "visible refusal is valid only on an assistant message",
+                        ));
+                    }
+                },
                 ResponsesInputItem::FunctionCall { call_id, name, .. } => {
                     validate_wire_id("function call_id", call_id)?;
                     validate_wire_id("function name", name)?;
@@ -164,9 +180,16 @@ impl ResponsesRequest {
         })
     }
 
-    #[cfg(test)]
     pub(crate) fn input(&self) -> &[ResponsesInputItem] {
         &self.input
+    }
+
+    pub(super) fn tools(&self) -> &[FunctionTool] {
+        &self.tools
+    }
+
+    pub(super) const fn max_output_tokens(&self) -> u64 {
+        self.max_output_tokens
     }
 
     pub(crate) fn tokenization_payload(&self, model: &str) -> Value {
@@ -178,10 +201,20 @@ impl ResponsesRequest {
             .input
             .iter()
             .map(|item| match item {
-                ResponsesInputItem::Message { role, content } => json!({
-                    "role": role.as_str(),
-                    "content": content,
-                }),
+                ResponsesInputItem::Message {
+                    role,
+                    content,
+                    refusal,
+                } => {
+                    let mut visible = content.clone();
+                    if let Some(refusal) = refusal {
+                        visible.push_str(refusal);
+                    }
+                    json!({
+                        "role": role.as_str(),
+                        "content": visible,
+                    })
+                },
                 ResponsesInputItem::FunctionCall {
                     call_id,
                     name,

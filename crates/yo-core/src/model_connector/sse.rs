@@ -4,13 +4,13 @@ use serde_json::Value;
 
 use super::{
     ConnectorError, ConnectorFailureKind, ReasoningChannel, ResponseTerminal,
-    ResponsesConnectorLimits, ResponsesEvent, ResponsesUsage,
+    ResponsesConnectorLimits, ResponsesEvent, ResponsesUsage, SseDecodeBatch,
+    framing::{SseFrame, SseFramer},
 };
 
 pub(super) struct ResponsesSseDecoder {
     limits: ResponsesConnectorLimits,
-    event_buffer: Vec<u8>,
-    event_count: usize,
+    framer: SseFramer,
     output_items: HashMap<usize, OutputItem>,
     item_ids: HashSet<String>,
     response_id: Option<String>,
@@ -73,10 +73,14 @@ enum MessageContent {
 
 impl ResponsesSseDecoder {
     pub(super) fn new(limits: ResponsesConnectorLimits) -> Self {
+        let framer = SseFramer::new(
+            limits.max_sse_event_bytes,
+            limits.max_sse_events,
+            "Responses",
+        );
         Self {
             limits,
-            event_buffer: Vec::new(),
-            event_count: 0,
+            framer,
             output_items: HashMap::new(),
             item_ids: HashSet::new(),
             response_id: None,
@@ -89,29 +93,39 @@ impl ResponsesSseDecoder {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn push(&mut self, bytes: &[u8]) -> Result<Vec<ResponsesEvent>, ConnectorError> {
+        let batch = self.push_batch(bytes);
+        match batch.failure {
+            Some(failure) => Err(failure),
+            None => Ok(batch.events),
+        }
+    }
+
+    pub(super) fn push_batch(&mut self, bytes: &[u8]) -> SseDecodeBatch {
         let mut decoded = Vec::new();
-        for byte in bytes {
-            self.event_buffer.push(*byte);
-            if let Some(separator_len) = trailing_separator_len(&self.event_buffer) {
-                let event_len = self.event_buffer.len() - separator_len;
-                let event = self.event_buffer[..event_len].to_vec();
-                self.event_buffer.clear();
-                if !event.is_empty() {
-                    decoded.extend(self.decode_event(&event)?);
-                }
-            } else if self.event_buffer.len() > self.limits.max_sse_event_bytes {
-                return Err(limit_failure("SSE event byte limit exceeded"));
+        let frames = self.framer.push(bytes);
+        for frame in frames.frames {
+            match self.decode_event(frame) {
+                Ok(events) => decoded.extend(events),
+                Err(failure) => {
+                    return SseDecodeBatch {
+                        events: decoded,
+                        failure: Some(failure),
+                    };
+                },
             }
         }
-        Ok(decoded)
+        SseDecodeBatch {
+            events: decoded,
+            failure: frames.failure,
+        }
     }
 
     pub(super) fn finish(&mut self) -> Result<Vec<ResponsesEvent>, ConnectorError> {
         let mut decoded = Vec::new();
-        if !self.event_buffer.is_empty() {
-            let event = std::mem::take(&mut self.event_buffer);
-            decoded.extend(self.decode_event(&event)?);
+        if let Some(frame) = self.framer.finish()? {
+            decoded.extend(self.decode_event(frame)?);
         }
         if !self.terminated {
             return Err(protocol_failure(
@@ -126,41 +140,12 @@ impl ResponsesSseDecoder {
         Ok(decoded)
     }
 
-    fn decode_event(&mut self, bytes: &[u8]) -> Result<Vec<ResponsesEvent>, ConnectorError> {
-        if bytes.len() > self.limits.max_sse_event_bytes {
-            return Err(limit_failure("SSE event byte limit exceeded"));
-        }
-        self.event_count = self
-            .event_count
-            .checked_add(1)
-            .ok_or_else(|| limit_failure("SSE event count overflowed"))?;
-        if self.event_count > self.limits.max_sse_events {
-            return Err(limit_failure("SSE event count limit exceeded"));
-        }
-        let text = std::str::from_utf8(bytes)
-            .map_err(|_| protocol_failure("Responses SSE event is not valid UTF-8"))?;
-        let mut declared_event = None;
-        let mut data_lines = Vec::new();
-        for raw_line in text.split('\n') {
-            let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-            if line.is_empty() || line.starts_with(':') {
-                continue;
-            }
-            let (field, value) = line.split_once(':').unwrap_or((line, ""));
-            let value = value.strip_prefix(' ').unwrap_or(value);
-            match field {
-                "event" => declared_event = Some(value),
-                "data" => data_lines.push(value),
-                "id" | "retry" => {},
-                _ => {},
-            }
-        }
-        if data_lines.is_empty() {
+    fn decode_event(&mut self, frame: SseFrame) -> Result<Vec<ResponsesEvent>, ConnectorError> {
+        let Some(data) = frame.data else {
             return Ok(Vec::new());
-        }
-        let data = data_lines.join("\n");
+        };
         if self.terminated {
-            if data == "[DONE]" && declared_event.is_none() && !self.done_marker_seen {
+            if data == "[DONE]" && frame.declared_event.is_none() && !self.done_marker_seen {
                 self.done_marker_seen = true;
                 return Ok(Vec::new());
             }
@@ -176,7 +161,10 @@ impl ResponsesSseDecoder {
         let event: Value = serde_json::from_str(&data)
             .map_err(|_| protocol_failure("Responses SSE data is not valid JSON"))?;
         let event_type = string_at(&event, &["type"], "event type")?;
-        if declared_event.is_some_and(|declared| declared != event_type) {
+        if frame
+            .declared_event
+            .is_some_and(|declared| declared != event_type)
+        {
             return Err(protocol_failure(
                 "Responses SSE event field disagrees with its JSON type",
             ));
@@ -1044,16 +1032,6 @@ impl TextPart {
         }
         self.part_done = true;
         Ok(())
-    }
-}
-
-fn trailing_separator_len(buffer: &[u8]) -> Option<usize> {
-    if buffer.ends_with(b"\r\n\r\n") {
-        Some(4)
-    } else if buffer.ends_with(b"\n\n") {
-        Some(2)
-    } else {
-        None
     }
 }
 

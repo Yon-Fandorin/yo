@@ -1,4 +1,4 @@
-//! Yo-managed model/tool loop over the OpenAI Responses connector.
+//! Provider-neutral Yo-managed model/tool loop over an admitted API-dialect connector.
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::{
     AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
@@ -18,15 +18,17 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentCommand, ApiCredential, ApprovalDecision, ContinuationStrategy, EffectiveModelBinding,
-    Failure, FrozenToolRegistry, ModelCatalogEntry, ModelContextProfile, ModelReplay,
+    AgentCommand, ApiCredential, ApiDialect, ApprovalDecision, ContinuationStrategy,
+    EffectiveModelBinding, Failure, FrozenToolRegistry, ModelCatalogEntry,
+    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
+    ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
+    ModelConnectorStream, ModelConnectorTerminal, ModelContextProfile, ModelReplay,
     ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelTokenCounter,
-    OpenAiResponsesConnector, ReasoningChannel, ReasoningEffort, ReplayExecutor, RequestId,
-    ResponseTerminal, ResponsesCancellation, ResponsesConnectorLimits, ResponsesEvent,
-    ResponsesInputItem, ResponsesInputRole, ResponsesPoll, ResponsesRequest, ResponsesStream,
-    SessionId, ToolApprovalBinding, ToolApprovalRequirement, ToolExecution, ToolExecutionHost,
-    ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission,
-    ToolValidationFailure, TurnOutcome, TurnRef, ValidatedToolCall,
+    OpenAiChatCompletionsConnector, OpenAiResponsesConnector, ReasoningChannel, ReasoningEffort,
+    ReplayExecutor, RequestId, SessionId, ToolApprovalBinding, ToolApprovalRequirement,
+    ToolExecution, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
+    ToolExecutionRequest, ToolSemanticAdmission, ToolValidationFailure, TurnOutcome, TurnRef,
+    ValidatedToolCall,
 };
 
 const BACKEND_KIND: &str = "yo-managed-model";
@@ -75,38 +77,71 @@ impl NativeModelBackendServices {
     }
 }
 
-trait ResponseConnector: Send {
+trait ModelConnector: Send {
     fn request_url(&self) -> &str;
+    fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<Value, crate::ConnectorError>;
     fn start(
         &self,
-        request: ResponsesRequest,
-        cancellation: ResponsesCancellation,
-    ) -> Result<Box<dyn ResponseStream>, crate::ConnectorError>;
+        request: ModelConnectorRequest,
+        cancellation: ModelConnectorCancellation,
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, crate::ConnectorError>;
 }
 
-trait ResponseStream: Send {
-    fn poll(&mut self) -> Result<ResponsesPoll, crate::ConnectorError>;
+trait ModelConnectorStreamPort: Send {
+    fn poll(&mut self) -> Result<ModelConnectorPoll, crate::ConnectorError>;
     fn cancel(&self);
     fn shutdown(&mut self) -> Result<(), crate::ConnectorError>;
 }
 
-impl ResponseConnector for OpenAiResponsesConnector {
+impl ModelConnector for OpenAiResponsesConnector {
     fn request_url(&self) -> &str {
         self.request_url()
     }
 
+    fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<Value, crate::ConnectorError> {
+        Ok(self.tokenization_payload(request))
+    }
+
     fn start(
         &self,
-        request: ResponsesRequest,
-        cancellation: ResponsesCancellation,
-    ) -> Result<Box<dyn ResponseStream>, crate::ConnectorError> {
+        request: ModelConnectorRequest,
+        cancellation: ModelConnectorCancellation,
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, crate::ConnectorError> {
         OpenAiResponsesConnector::start(self, request, cancellation)
-            .map(|stream| Box::new(stream) as Box<dyn ResponseStream>)
+            .map(|stream| Box::new(stream) as Box<dyn ModelConnectorStreamPort>)
     }
 }
 
-impl ResponseStream for ResponsesStream {
-    fn poll(&mut self) -> Result<ResponsesPoll, crate::ConnectorError> {
+impl ModelConnector for OpenAiChatCompletionsConnector {
+    fn request_url(&self) -> &str {
+        self.request_url()
+    }
+
+    fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<Value, crate::ConnectorError> {
+        self.tokenization_payload(request)
+    }
+
+    fn start(
+        &self,
+        request: ModelConnectorRequest,
+        cancellation: ModelConnectorCancellation,
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, crate::ConnectorError> {
+        OpenAiChatCompletionsConnector::start(self, request, cancellation)
+            .map(|stream| Box::new(stream) as Box<dyn ModelConnectorStreamPort>)
+    }
+}
+
+impl ModelConnectorStreamPort for ModelConnectorStream {
+    fn poll(&mut self) -> Result<ModelConnectorPoll, crate::ConnectorError> {
         self.poll()
     }
 
@@ -122,7 +157,7 @@ impl ResponseStream for ResponsesStream {
 #[derive(Default)]
 struct SharedStop {
     requested: AtomicBool,
-    response: Mutex<Option<ResponsesCancellation>>,
+    response: Mutex<Option<ModelConnectorCancellation>>,
 }
 
 struct PendingCall {
@@ -147,7 +182,7 @@ struct TurnState {
     turn: TurnRef,
     round: usize,
     delta: Vec<ModelReplayItem>,
-    stream: Option<Box<dyn ResponseStream>>,
+    stream: Option<Box<dyn ModelConnectorStreamPort>>,
     response_id: Option<String>,
     assistant_activities: HashMap<(usize, usize), ActivityRef>,
     reasoning_activities: HashMap<(usize, usize), ActivityRef>,
@@ -155,6 +190,7 @@ struct TurnState {
     seen_call_ids: HashSet<String>,
     round_message_items: BTreeSet<usize>,
     round_messages: BTreeMap<(usize, usize), String>,
+    round_refusals: BTreeMap<(usize, usize), String>,
     round_replay: BTreeMap<usize, ModelReplayItem>,
     pending_calls: BTreeMap<usize, PendingCall>,
     active_tool: Option<ActiveTool>,
@@ -165,7 +201,7 @@ struct TurnState {
 }
 
 pub struct NativeModelBackend {
-    connector: Box<dyn ResponseConnector>,
+    connector: Box<dyn ModelConnector>,
     binding: EffectiveModelBinding,
     registry: FrozenToolRegistry,
     semantic_admission: Option<Box<dyn ToolSemanticAdmission>>,
@@ -191,16 +227,24 @@ impl NativeModelBackend {
     pub fn new(
         catalog_entry: &ModelCatalogEntry,
         credential: ApiCredential,
-        connector_limits: ResponsesConnectorLimits,
+        connector_limits: ModelConnectorLimits,
         registry: FrozenToolRegistry,
         services: NativeModelBackendServices,
         config: NativeModelBackendConfig,
     ) -> Result<Self, BackendFailure> {
         let binding = catalog_entry.binding().clone();
-        let connector = OpenAiResponsesConnector::new(&binding, credential, connector_limits)
-            .map_err(map_connector_initialization)?;
+        let connector: Box<dyn ModelConnector> = match binding.api_dialect() {
+            ApiDialect::OpenAiResponses => Box::new(
+                OpenAiResponsesConnector::new(&binding, credential, connector_limits)
+                    .map_err(map_connector_initialization)?,
+            ),
+            ApiDialect::OpenAiChatCompletions => Box::new(
+                OpenAiChatCompletionsConnector::new(&binding, credential, connector_limits)
+                    .map_err(map_connector_initialization)?,
+            ),
+        };
         Self::with_connector(
-            Box::new(connector),
+            connector,
             binding,
             registry,
             services,
@@ -210,7 +254,7 @@ impl NativeModelBackend {
     }
 
     fn with_connector(
-        connector: Box<dyn ResponseConnector>,
+        connector: Box<dyn ModelConnector>,
         binding: EffectiveModelBinding,
         registry: FrozenToolRegistry,
         services: NativeModelBackendServices,
@@ -307,6 +351,7 @@ impl NativeModelBackend {
         let delta = vec![ModelReplayItem::Message {
             role: ModelReplayRole::User,
             content: input,
+            refusal: None,
         }];
         let mut state = TurnState {
             turn,
@@ -328,6 +373,7 @@ impl NativeModelBackend {
                 .collect(),
             round_message_items: BTreeSet::new(),
             round_messages: BTreeMap::new(),
+            round_refusals: BTreeMap::new(),
             round_replay: BTreeMap::new(),
             pending_calls: BTreeMap::new(),
             active_tool: None,
@@ -351,10 +397,20 @@ impl NativeModelBackend {
         if !request_started {
             return Ok(BackendCommandEvidence::None);
         }
+        let (request_schema, endpoint_schema) = match self.binding.api_dialect() {
+            ApiDialect::OpenAiResponses => (
+                "openai.responses/yo-managed-turn/v1",
+                "responses.endpoint/v1",
+            ),
+            ApiDialect::OpenAiChatCompletions => (
+                "openai.chat-completions/yo-managed-turn/v1",
+                "chat-completions.endpoint/v1",
+            ),
+        };
         Ok(BackendCommandEvidence::RequestAccepted(
             BackendRequestEvidence::new(
-                "openai.responses/yo-managed-turn/v1",
-                BackendIdentity::new("responses.endpoint/v1", self.connector.request_url()),
+                request_schema,
+                BackendIdentity::new(endpoint_schema, self.connector.request_url()),
                 BackendIdentity::new(
                     "yo.turn/v1",
                     format!("{}:{}", turn.session_id(), turn.turn_id().get()),
@@ -371,13 +427,14 @@ impl NativeModelBackend {
             ));
         }
         let mut items = Vec::new();
-        items.push(ResponsesInputItem::Message {
-            role: ResponsesInputRole::System,
+        items.push(ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::System,
             content: self.contract.system_prompt().to_owned(),
+            refusal: None,
         });
         items.extend(self.replay.items().iter().map(replay_input));
         items.extend(state.delta.iter().map(replay_input));
-        let request = ResponsesRequest::new(
+        let request = ModelConnectorRequest::new(
             items,
             self.registry
                 .function_tools()
@@ -390,7 +447,10 @@ impl NativeModelBackend {
             .token_counter
             .count_input_tokens(
                 self.model_context.tokenizer_profile(),
-                &request.tokenization_payload(self.binding.model_id().as_str()),
+                &self
+                    .connector
+                    .tokenization_payload(&request)
+                    .map_err(map_connector_turn)?,
             )
             .map_err(|_| {
                 failure(
@@ -410,7 +470,7 @@ impl NativeModelBackend {
                 ),
             ));
         }
-        let cancellation = ResponsesCancellation::new();
+        let cancellation = ModelConnectorCancellation::new();
         *self
             .shared_stop
             .response
@@ -434,6 +494,7 @@ impl NativeModelBackend {
         state.call_activities.clear();
         state.round_message_items.clear();
         state.round_messages.clear();
+        state.round_refusals.clear();
         state.round_replay.clear();
         Ok(())
     }
@@ -491,7 +552,7 @@ impl NativeModelBackend {
         }
     }
 
-    fn handle_response_event(&mut self, event: ResponsesEvent) -> Result<(), BackendFailure> {
+    fn handle_response_event(&mut self, event: ModelConnectorEvent) -> Result<(), BackendFailure> {
         let mut state = self.turn.take().ok_or_else(|| {
             failure(
                 BackendFailureKind::Protocol,
@@ -519,56 +580,71 @@ impl NativeModelBackend {
         Ok(())
     }
 
+    fn apply_visible_delta(
+        &mut self,
+        state: &mut TurnState,
+        output_index: usize,
+        content_index: usize,
+        delta: String,
+        refusal: bool,
+    ) -> Result<(), BackendFailure> {
+        let key = (output_index, content_index);
+        let activity = if let Some(activity) = state.assistant_activities.get(&key) {
+            *activity
+        } else {
+            let activity = self.next_activity(state.turn)?;
+            state.assistant_activities.insert(key, activity);
+            self.events.push_back(BackendEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::ModelWork,
+            });
+            activity
+        };
+        if state.round_replay.contains_key(&output_index) {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "model output index changed semantic item kind",
+            ));
+        }
+        let target = if refusal {
+            &mut state.round_refusals
+        } else {
+            &mut state.round_messages
+        };
+        target.entry(key).or_default().push_str(&delta);
+        self.events.push_back(BackendEvent::ActivityUpdated {
+            activity,
+            update: crate::ActivityUpdate::TextDelta(delta),
+        });
+        Ok(())
+    }
+
     fn apply_response_event(
         &mut self,
         state: &mut TurnState,
-        event: ResponsesEvent,
+        event: ModelConnectorEvent,
     ) -> Result<(), BackendFailure> {
         match event {
-            ResponsesEvent::ResponseCreated { response_id } => {
+            ModelConnectorEvent::ResponseCreated { response_id } => {
                 state.response_id = Some(response_id);
             },
-            ResponsesEvent::TextDelta {
-                output_index,
-                content_index,
-                delta,
-                ..
-            }
-            | ResponsesEvent::RefusalDelta {
+            ModelConnectorEvent::TextDelta {
                 output_index,
                 content_index,
                 delta,
                 ..
             } => {
-                let key = (output_index, content_index);
-                let activity = if let Some(activity) = state.assistant_activities.get(&key) {
-                    *activity
-                } else {
-                    let activity = self.next_activity(state.turn)?;
-                    state.assistant_activities.insert(key, activity);
-                    self.events.push_back(BackendEvent::ActivityStarted {
-                        activity,
-                        kind: ActivityKind::ModelWork,
-                    });
-                    activity
-                };
-                if state.round_replay.contains_key(&output_index) {
-                    return Err(failure(
-                        BackendFailureKind::Protocol,
-                        "Responses output index changed semantic item kind",
-                    ));
-                }
-                state
-                    .round_messages
-                    .entry(key)
-                    .or_default()
-                    .push_str(&delta);
-                self.events.push_back(BackendEvent::ActivityUpdated {
-                    activity,
-                    update: crate::ActivityUpdate::TextDelta(delta),
-                });
+                self.apply_visible_delta(state, output_index, content_index, delta, false)?;
             },
-            ResponsesEvent::MessageDone {
+            ModelConnectorEvent::RefusalDelta {
+                output_index,
+                content_index,
+                delta,
+                ..
+            } => {
+                self.apply_visible_delta(state, output_index, content_index, delta, true)?;
+            },
+            ModelConnectorEvent::MessageDone {
                 output_index,
                 item_id: _,
             } => {
@@ -577,11 +653,11 @@ impl NativeModelBackend {
                 {
                     return Err(failure(
                         BackendFailureKind::Protocol,
-                        "Responses output index completed more than one semantic item",
+                        "model output index completed more than one semantic item",
                     ));
                 }
             },
-            ResponsesEvent::ReasoningDelta {
+            ModelConnectorEvent::ReasoningDelta {
                 output_index,
                 part_index,
                 channel,
@@ -607,7 +683,7 @@ impl NativeModelBackend {
                     });
                 }
             },
-            ResponsesEvent::FunctionCallStarted {
+            ModelConnectorEvent::FunctionCallStarted {
                 output_index,
                 item_id,
                 call_id,
@@ -642,8 +718,8 @@ impl NativeModelBackend {
                 );
                 self.queue_activity_text(activity, ActivityKind::ToolCall, name, None);
             },
-            ResponsesEvent::FunctionArgumentsDelta { .. } => {},
-            ResponsesEvent::FunctionCallDone {
+            ModelConnectorEvent::FunctionArgumentsDelta { .. } => {},
+            ModelConnectorEvent::FunctionCallDone {
                 output_index,
                 item_id,
                 call_id,
@@ -740,7 +816,7 @@ impl NativeModelBackend {
                         {
                             return Err(failure(
                                 BackendFailureKind::Protocol,
-                                "Responses output index was completed more than once",
+                                "model output index was completed more than once",
                             ));
                         }
                         if state
@@ -756,7 +832,7 @@ impl NativeModelBackend {
                         {
                             return Err(failure(
                                 BackendFailureKind::Protocol,
-                                "Responses output index declared more than one function call",
+                                "model output index declared more than one function call",
                             ));
                         }
                     },
@@ -787,7 +863,7 @@ impl NativeModelBackend {
                     },
                 }
             },
-            ResponsesEvent::Terminal {
+            ModelConnectorEvent::Terminal {
                 response_id,
                 status,
                 usage,
@@ -795,13 +871,13 @@ impl NativeModelBackend {
                 if !state.call_activities.is_empty() {
                     return Err(failure(
                         BackendFailureKind::Protocol,
-                        "Responses terminal arrived with an incomplete function call",
+                        "model terminal arrived with an incomplete function call",
                     ));
                 }
                 if state.response_id.as_deref() != Some(response_id.as_str()) {
                     return Err(failure(
                         BackendFailureKind::Protocol,
-                        "Responses terminal identity does not match response.created",
+                        "model terminal identity does not match the created response",
                     ));
                 }
                 if let Some(mut stream) = state.stream.take() {
@@ -847,8 +923,13 @@ impl NativeModelBackend {
                 for ((output_index, _), content) in std::mem::take(&mut state.round_messages) {
                     messages.entry(output_index).or_default().push_str(&content);
                 }
+                let mut refusals = BTreeMap::<usize, String>::new();
+                for ((output_index, _), refusal) in std::mem::take(&mut state.round_refusals) {
+                    refusals.entry(output_index).or_default().push_str(&refusal);
+                }
                 for output_index in std::mem::take(&mut state.round_message_items) {
                     let content = messages.remove(&output_index).unwrap_or_default();
+                    let refusal = refusals.remove(&output_index);
                     if state
                         .round_replay
                         .insert(
@@ -856,27 +937,28 @@ impl NativeModelBackend {
                             ModelReplayItem::Message {
                                 role: ModelReplayRole::Assistant,
                                 content,
+                                refusal,
                             },
                         )
                         .is_some()
                     {
                         return Err(failure(
                             BackendFailureKind::Protocol,
-                            "Responses output index changed semantic item kind",
+                            "model output index changed semantic item kind",
                         ));
                     }
                 }
-                if !messages.is_empty() {
+                if !messages.is_empty() || !refusals.is_empty() {
                     return Err(failure(
                         BackendFailureKind::Protocol,
-                        "Responses message text completed without its message output item",
+                        "model message text completed without its message output item",
                     ));
                 }
                 state
                     .delta
                     .extend(std::mem::take(&mut state.round_replay).into_values());
                 match status {
-                    ResponseTerminal::Completed if state.pending_calls.is_empty() => {
+                    ModelConnectorTerminal::Completed if state.pending_calls.is_empty() => {
                         if state.delta.last().is_some_and(|item| {
                             matches!(
                                 item,
@@ -895,15 +977,15 @@ impl NativeModelBackend {
                             );
                         }
                     },
-                    ResponseTerminal::Completed => self.advance_tool_queue(state)?,
-                    ResponseTerminal::Incomplete { reason } => self.fail_turn(
+                    ModelConnectorTerminal::Completed => self.advance_tool_queue(state)?,
+                    ModelConnectorTerminal::Incomplete { reason } => self.fail_turn(
                         state,
                         format!(
                             "model response was incomplete: {}",
                             reason.unwrap_or_else(|| "unknown reason".to_owned())
                         ),
                     ),
-                    ResponseTerminal::Failed { code } => self.fail_turn(
+                    ModelConnectorTerminal::Failed { code } => self.fail_turn(
                         state,
                         format!(
                             "model response failed: {}",
@@ -1175,7 +1257,10 @@ impl NativeModelBackend {
         self.events.push_back(BackendEvent::ResumableTurnFinished {
             turn: state.turn,
             evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
-                "responses.response-id/v1",
+                match self.binding.api_dialect() {
+                    ApiDialect::OpenAiResponses => "responses.response-id/v1",
+                    ApiDialect::OpenAiChatCompletions => "chat-completions.response-id/v1",
+                },
                 state
                     .response_id
                     .clone()
@@ -1627,15 +1712,15 @@ impl AgentBackend for NativeModelBackend {
                     let mut state = self.turn.take().expect("active Turn was checked");
                     self.fail_turn(&mut state, map_connector_turn(error).to_string());
                 },
-                Ok(ResponsesPoll::Event(event)) => self.handle_response_event(event)?,
-                Ok(ResponsesPoll::Closed) => {
+                Ok(ModelConnectorPoll::Event(event)) => self.handle_response_event(event)?,
+                Ok(ModelConnectorPoll::Closed) => {
                     let mut state = self.turn.take().expect("active Turn was checked");
                     self.fail_turn(
                         &mut state,
-                        "Responses stream closed without a terminal event".to_owned(),
+                        "model connector stream closed without a terminal event".to_owned(),
                     );
                 },
-                Ok(ResponsesPoll::Pending) => {},
+                Ok(ModelConnectorPoll::Pending) => {},
             }
         }
         Ok(self
@@ -1677,28 +1762,33 @@ impl AgentBackend for NativeModelBackend {
     }
 }
 
-fn replay_input(item: &ModelReplayItem) -> ResponsesInputItem {
+fn replay_input(item: &ModelReplayItem) -> ModelConnectorInputItem {
     match item {
-        ModelReplayItem::Message { role, content } => ResponsesInputItem::Message {
+        ModelReplayItem::Message {
+            role,
+            content,
+            refusal,
+        } => ModelConnectorInputItem::Message {
             role: match role {
-                ModelReplayRole::System => ResponsesInputRole::System,
-                ModelReplayRole::Developer => ResponsesInputRole::Developer,
-                ModelReplayRole::User => ResponsesInputRole::User,
-                ModelReplayRole::Assistant => ResponsesInputRole::Assistant,
+                ModelReplayRole::System => ModelConnectorInputRole::System,
+                ModelReplayRole::Developer => ModelConnectorInputRole::Developer,
+                ModelReplayRole::User => ModelConnectorInputRole::User,
+                ModelReplayRole::Assistant => ModelConnectorInputRole::Assistant,
             },
             content: content.clone(),
+            refusal: refusal.clone(),
         },
         ModelReplayItem::FunctionCall {
             call_id,
             name,
             arguments,
-        } => ResponsesInputItem::FunctionCall {
+        } => ModelConnectorInputItem::FunctionCall {
             call_id: call_id.clone(),
             name: name.clone(),
             arguments: arguments.clone(),
         },
         ModelReplayItem::FunctionCallOutput { call_id, output } => {
-            ResponsesInputItem::FunctionCallOutput {
+            ModelConnectorInputItem::FunctionCallOutput {
                 call_id: call_id.clone(),
                 output: output.clone(),
             }
@@ -1706,10 +1796,10 @@ fn replay_input(item: &ModelReplayItem) -> ResponsesInputItem {
     }
 }
 
-fn terminal_activity_outcome(status: &ResponseTerminal) -> ActivityOutcome {
+fn terminal_activity_outcome(status: &ModelConnectorTerminal) -> ActivityOutcome {
     match status {
-        ResponseTerminal::Completed => ActivityOutcome::Completed,
-        ResponseTerminal::Incomplete { .. } | ResponseTerminal::Failed { .. } => {
+        ModelConnectorTerminal::Completed => ActivityOutcome::Completed,
+        ModelConnectorTerminal::Incomplete { .. } | ModelConnectorTerminal::Failed { .. } => {
             ActivityOutcome::Failed(Failure::new("model response did not complete"))
         },
     }

@@ -52,7 +52,7 @@ fn model_catalog_resolves_the_configured_startup_binding() {
     let path = Path::new("/tmp/yo/config.yaml");
     let config = parse(
         path,
-        "version: 1\nmodel:\n  startup:\n    provider: qwencloud\n    account: token-plan\n    model: qwen3.8max\n  catalog:\n    - provider: qwencloud\n      provider_display_name: Qwen Cloud\n      account: token-plan\n      account_display_name: Token Plan\n      model: qwen3.8max\n      model_display_name: Qwen 3.8 Max\n      connector: openai-responses\n      api_dialect: openai-responses\n      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1\n      input_token_limit: 1000000\n      max_output_tokens: 65536\n      tokenizer_profile: utf8-bytes/v1\n",
+        "version: 1\nmodel:\n  startup:\n    provider: qwencloud\n    account: token-plan\n    model: qwen3.8max\n  catalog:\n    - provider: qwencloud\n      provider_display_name: Qwen Cloud\n      account: token-plan\n      account_display_name: Token Plan\n      model: qwen3.8max\n      model_display_name: Qwen 3.8 Max\n      api_dialect: openai-responses\n      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1\n      input_token_limit: 1000000\n      max_output_tokens: 65536\n      tokenizer_profile: utf8-bytes/v1\n",
     )
     .unwrap();
 
@@ -62,6 +62,10 @@ fn model_catalog_resolves_the_configured_startup_binding() {
         .resolve_model(startup.provider(), startup.account(), startup.model())
         .unwrap();
     assert_eq!(selected.binding().model_id().as_str(), "qwen3.8max");
+    assert_eq!(
+        selected.binding().connector_id().as_str(),
+        "openai-responses"
+    );
     assert_eq!(
         selected.binding().endpoint().as_str(),
         "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
@@ -188,12 +192,32 @@ fn unknown_configuration_field_is_rejected() {
 fn obsolete_api_protocol_key_is_rejected() {
     let error = parse(
         Path::new("/tmp/yo-config.yaml"),
-        "version: 1\nmodel:\n  catalog:\n    - provider: openrouter\n      account: default\n      model: openrouter/free\n      connector: openai-responses\n      api_protocol: openai-responses\n      base_url: https://openrouter.ai/api/v1\n      input_token_limit: 100000\n      max_output_tokens: 8192\n      tokenizer_profile: o200k_base/v1\n",
+        "version: 1\nmodel:\n  catalog:\n    - provider: openrouter\n      account: default\n      model: openrouter/free\n      api_protocol: openai-responses\n      base_url: https://openrouter.ai/api/v1\n      input_token_limit: 100000\n      max_output_tokens: 8192\n      tokenizer_profile: o200k_base/v1\n",
     )
     .unwrap_err();
 
     assert!(error.to_string().contains("api_protocol"));
     assert!(error.to_string().contains("unknown field"));
+}
+
+// 공개 설정은 dialect만 선택하고 닫힌 runtime registry가 정확히 하나의 built-in
+// connector identity를 파생합니다.
+#[test]
+fn chat_completions_dialect_derives_its_connector_without_a_public_selector() {
+    let config = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        "version: 1\nmodel:\n  catalog:\n    - provider: qwencloud\n      account: token-plan\n      model: deepseek-v4-flash-0731\n      api_dialect: openai-chat-completions\n      base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1\n      input_token_limit: 65536\n      max_output_tokens: 8192\n      tokenizer_profile: utf8-bytes/v1\n",
+    )
+    .unwrap();
+    let entry = &config.model_catalog().entries()[0];
+    assert_eq!(
+        entry.binding().api_dialect(),
+        yo_core::ApiDialect::OpenAiChatCompletions
+    );
+    assert_eq!(
+        entry.binding().connector_id().as_str(),
+        "openai-chat-completions"
+    );
 }
 
 // 끝나지 않은 `%`처럼 잘못된 strftime 문법은 실행 때 조용히 그대로 출력하지 않고

@@ -10,6 +10,7 @@ fn model_replay_delta() -> ModelReplayDelta {
         vec![ModelReplayItem::Message {
             role: ModelReplayRole::User,
             content: "hello".to_owned(),
+            refusal: None,
         }],
     )
 }
@@ -46,6 +47,10 @@ fn binding_opened() -> JournalRecord {
 }
 
 fn valid_history() -> Vec<JournalCommit> {
+    valid_history_with_replay(model_replay_delta())
+}
+
+fn valid_history_with_replay(replay_delta: ModelReplayDelta) -> Vec<JournalCommit> {
     let descriptor = JournalCommit::descriptor(descriptor_with_path(b"/workspace".to_vec()));
     let opened = JournalCommit::incremental_through(
         JournalSequence::new(2),
@@ -124,7 +129,7 @@ fn valid_history() -> Vec<JournalCommit> {
                     1,
                     activity().turn_id(),
                     JournalSequence::new(5),
-                    model_replay_delta(),
+                    replay_delta,
                 )),
             ),
             semantic(
@@ -379,6 +384,66 @@ fn round_trips_and_recovers_a_complete_continuation_chain() {
             _ => None,
         });
     assert_eq!(replay, Some(&model_replay_delta()));
+}
+
+// assistant refusal을 가진 exact replay delta는 물리 JSONL, semantic recovery, 최신 Anchor
+// 재구성을 모두 통과하고 content와 refusal의 독립적인 바이트를 그대로 보존한다.
+#[test]
+fn round_trips_refusal_through_physical_recovery_and_anchor_validation() {
+    let replay_delta = ModelReplayDelta::new(
+        Some(ModelReplayContract::new("system", Vec::new())),
+        vec![ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "visible".to_owned(),
+            refusal: Some("declined".to_owned()),
+        }],
+    );
+    let encoded = valid_history_with_replay(replay_delta.clone())
+        .into_iter()
+        .map(|commit| encode(&commit).unwrap())
+        .collect::<Vec<_>>();
+    let refusal_wire: serde_json::Value = serde_json::from_str(&encoded[3]).unwrap();
+    assert_eq!(
+        refusal_wire["records"][1]["items"][0]["refusal"],
+        "declined"
+    );
+
+    let decoded = encoded
+        .iter()
+        .map(|commit| decode(commit).unwrap())
+        .collect::<Vec<_>>();
+    let recovered = recover(&decoded).unwrap();
+
+    assert_eq!(
+        recovered.continuation_anchor(),
+        Some(JournalSequence::new(9))
+    );
+    let recovered_delta = recovered
+        .records()
+        .iter()
+        .find_map(|record| match record.record() {
+            JournalRecord::ModelReplayDelta(record) => Some(record.delta()),
+            _ => None,
+        });
+    assert_eq!(recovered_delta, Some(&replay_delta));
+}
+
+// additive v1 reader는 직전 refusal-absent message를 계속 읽지만, 명시적 null이나
+// non-string refusal은 필드 부재로 축약하지 않고 닫힌 wire 경계에서 거부한다.
+#[test]
+fn accepts_absent_refusal_but_rejects_null_and_non_string_values() {
+    let completion = valid_history().pop().unwrap();
+    let encoded = encode(&completion).unwrap();
+    let absent: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert!(absent["records"][1]["items"][0].get("refusal").is_none());
+    decode(&encoded).expect("the preceding refusal-absent shape remains readable");
+
+    for malformed in [serde_json::Value::Null, serde_json::json!(7)] {
+        let mut wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        wire["records"][1]["items"][0]["refusal"] = malformed;
+        let error = decode(&wire.to_string()).expect_err("refusal must be a JSON string");
+        assert!(error.to_string().contains("string"), "{error}");
+    }
 }
 
 // exact replay outcome이 별도 delta record를 즉시 참조하지 않으면 decode가 실패하는지 검증합니다.

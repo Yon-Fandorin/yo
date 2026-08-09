@@ -56,6 +56,28 @@ fn model_replay_preserves_one_exact_function_relationship() {
     assert_eq!(replay.items(), delta.items());
 }
 
+// visible refusal은 assistant가 낸 관찰에만 의미가 있으므로 system·developer·user 역할에
+// 붙은 replay는 저장이나 다음 dialect 직렬화 전에 공통 증거 경계에서 거부한다.
+#[test]
+fn model_replay_rejects_refusal_on_non_assistant_messages() {
+    for role in [
+        ModelReplayRole::System,
+        ModelReplayRole::Developer,
+        ModelReplayRole::User,
+    ] {
+        let delta = ModelReplayDelta::new(
+            Some(ModelReplayContract::new("system", Vec::new())),
+            vec![ModelReplayItem::Message {
+                role,
+                content: String::new(),
+                refusal: Some("declined".to_owned()),
+            }],
+        );
+
+        assert!(!delta.is_valid());
+    }
+}
+
 // replay contract·delta·전체 prefix가 각 바이트 상한을 넘으면 저장 전에 거부하는지 검증합니다.
 #[test]
 fn model_replay_enforces_contract_delta_and_prefix_byte_bounds() {
@@ -68,6 +90,7 @@ fn model_replay_enforces_contract_delta_and_prefix_byte_bounds() {
         vec![ModelReplayItem::Message {
             role: ModelReplayRole::Assistant,
             content: "x".repeat(MAX_REPLAY_DELTA_BYTES),
+            refusal: None,
         }],
     );
     assert!(!oversized_delta.is_valid());
@@ -81,6 +104,7 @@ fn model_replay_enforces_contract_delta_and_prefix_byte_bounds() {
                 vec![ModelReplayItem::Message {
                     role: ModelReplayRole::Assistant,
                     content: body.clone(),
+                    refusal: None,
                 }],
             ))
             .unwrap();
@@ -91,6 +115,7 @@ fn model_replay_enforces_contract_delta_and_prefix_byte_bounds() {
             vec![ModelReplayItem::Message {
                 role: ModelReplayRole::Assistant,
                 content: body,
+                refusal: None,
             }],
         ))
         .unwrap_err();
@@ -116,6 +141,7 @@ fn model_replay_contract_is_required_on_the_first_delta_only() {
     let message = || ModelReplayItem::Message {
         role: ModelReplayRole::Assistant,
         content: "answer".to_owned(),
+        refusal: None,
     };
     let mut replay = ModelReplay::default();
     assert!(

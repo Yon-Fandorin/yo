@@ -5,9 +5,9 @@ use std::path::Path;
 use serde::Deserialize;
 use yo_core::{
     AccountId, AgentBackend, ApiDialect, BackendResumeTarget, ConnectorId, CredentialStore,
-    LocalCredentialStore, ModelCatalogEntry, ModelId, ModelTokenCounter, ModelTokenCounterError,
-    NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices, NormalizedEndpoint,
-    ProviderId, ResponsesConnectorLimits,
+    LocalCredentialStore, ModelCatalogEntry, ModelConnectorLimits, ModelId, ModelTokenCounter,
+    ModelTokenCounterError, NativeModelBackend, NativeModelBackendConfig,
+    NativeModelBackendServices, NormalizedEndpoint, ProviderId,
 };
 
 use crate::{AppError, config::Config, local_tools};
@@ -161,14 +161,15 @@ fn parse_durable_binding(value: &str) -> Result<yo_core::EffectiveModelBinding, 
         .map_err(|error| AppError::single("validating durable API dialect", error))?;
     let durable_endpoint = NormalizedEndpoint::parse(&durable.base_url)
         .map_err(|error| AppError::single("validating durable endpoint", error))?;
-    Ok(yo_core::EffectiveModelBinding::new(
+    yo_core::EffectiveModelBinding::from_durable(
         durable_provider,
         durable_account,
         durable_model,
         durable_connector,
         durable_dialect,
         durable_endpoint,
-    ))
+    )
+    .map_err(|error| AppError::single("validating durable model binding", error))
 }
 
 fn parse_model(value: Option<&str>) -> Result<Option<ModelId>, AppError> {
@@ -230,7 +231,7 @@ pub(crate) fn start_native(
     NativeModelBackend::new(
         entry,
         credential,
-        ResponsesConnectorLimits::default(),
+        ModelConnectorLimits::default(),
         registry,
         services,
         NativeModelBackendConfig::default(),
@@ -324,7 +325,6 @@ mod tests {
             binding.provider_id().clone(),
             binding.account_id().clone(),
             binding.model_id().clone(),
-            ConnectorId::new("openai-responses").unwrap(),
             ApiDialect::OpenAiResponses,
             NormalizedEndpoint::parse("https://new.example/v1").unwrap(),
         );

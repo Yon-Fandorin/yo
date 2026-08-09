@@ -175,10 +175,12 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
                     ModelReplayItem::Message {
                         role: ModelReplayRole::User,
                         content: "resume me".to_owned(),
+                        refusal: None,
                     },
                     ModelReplayItem::Message {
                         role: ModelReplayRole::Assistant,
                         content: "durable streamed answer".to_owned(),
+                        refusal: None,
                     },
                 ],
             )),
@@ -548,10 +550,12 @@ fn replacement_resume_publishes_a_new_binding_epoch_from_the_exact_anchor() {
                     ModelReplayItem::Message {
                         role: ModelReplayRole::User,
                         content: "continue on replacement".to_owned(),
+                        refusal: None,
                     },
                     ModelReplayItem::Message {
                         role: ModelReplayRole::Assistant,
                         content: "replacement complete".to_owned(),
+                        refusal: None,
                     },
                 ],
             )),
@@ -641,10 +645,12 @@ fn resumed_agent_continues_sequences_and_admission_identities_after_streamed_tex
                     ModelReplayItem::Message {
                         role: ModelReplayRole::User,
                         content: "continue".to_owned(),
+                        refusal: None,
                     },
                     ModelReplayItem::Message {
                         role: ModelReplayRole::Assistant,
                         content: "continued".to_owned(),
+                        refusal: None,
                     },
                 ],
             )),

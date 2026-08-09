@@ -7,15 +7,18 @@ use super::{AccountId, ModelId, ModelServiceError, ProviderId};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ApiDialect {
     OpenAiResponses,
+    OpenAiChatCompletions,
 }
 
 impl ApiDialect {
     pub const OPENAI_RESPONSES: &'static str = "openai-responses";
+    pub const OPENAI_CHAT_COMPLETIONS: &'static str = "openai-chat-completions";
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::OpenAiResponses => Self::OPENAI_RESPONSES,
+            Self::OpenAiChatCompletions => Self::OPENAI_CHAT_COMPLETIONS,
         }
     }
 }
@@ -32,9 +35,11 @@ impl FromStr for ApiDialect {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             Self::OPENAI_RESPONSES => Ok(Self::OpenAiResponses),
+            Self::OPENAI_CHAT_COMPLETIONS => Ok(Self::OpenAiChatCompletions),
             _ => Err(ModelServiceError::new(format!(
-                "unsupported api_dialect {value:?}; expected {}",
-                Self::OPENAI_RESPONSES
+                "unsupported api_dialect {value:?}; expected {} or {}",
+                Self::OPENAI_RESPONSES,
+                Self::OPENAI_CHAT_COMPLETIONS,
             ))),
         }
     }
@@ -45,16 +50,30 @@ pub struct ConnectorId(String);
 
 impl ConnectorId {
     pub const OPENAI_RESPONSES: &'static str = "openai-responses";
+    pub const OPENAI_CHAT_COMPLETIONS: &'static str = "openai-chat-completions";
 
     pub fn new(value: impl Into<String>) -> Result<Self, ModelServiceError> {
         let value = value.into();
-        if value != Self::OPENAI_RESPONSES {
+        if !matches!(
+            value.as_str(),
+            Self::OPENAI_RESPONSES | Self::OPENAI_CHAT_COMPLETIONS
+        ) {
             return Err(ModelServiceError::new(format!(
-                "unsupported Model Connector {value:?}; expected {}",
-                Self::OPENAI_RESPONSES
+                "unsupported Model Connector {value:?}; expected {} or {}",
+                Self::OPENAI_RESPONSES,
+                Self::OPENAI_CHAT_COMPLETIONS,
             )));
         }
         Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn for_dialect(dialect: ApiDialect) -> Self {
+        let value = match dialect {
+            ApiDialect::OpenAiResponses => Self::OPENAI_RESPONSES,
+            ApiDialect::OpenAiChatCompletions => Self::OPENAI_CHAT_COMPLETIONS,
+        };
+        Self(value.to_owned())
     }
 
     #[must_use]
@@ -123,6 +142,24 @@ impl NormalizedEndpoint {
             .push(segment);
         Ok(endpoint)
     }
+
+    pub(crate) fn append_path_segments(&self, segments: &[&str]) -> Result<Url, ModelServiceError> {
+        let mut endpoint = self.0.clone();
+        let mut path = endpoint
+            .path_segments_mut()
+            .map_err(|_| ModelServiceError::new("model-service base_url cannot accept a path"))?;
+        for segment in segments {
+            if segment.is_empty() || segment.contains('/') || segment.chars().any(char::is_control)
+            {
+                return Err(ModelServiceError::new(
+                    "model-service endpoint path segment must be non-empty and contain no slash or control character",
+                ));
+            }
+            path.push(segment);
+        }
+        drop(path);
+        Ok(endpoint)
+    }
 }
 
 impl fmt::Display for NormalizedEndpoint {
@@ -143,11 +180,10 @@ pub struct EffectiveModelBinding {
 
 impl EffectiveModelBinding {
     #[must_use]
-    pub const fn new(
+    pub fn new(
         provider_id: ProviderId,
         account_id: AccountId,
         model_id: ModelId,
-        connector_id: ConnectorId,
         api_dialect: ApiDialect,
         endpoint: NormalizedEndpoint,
     ) -> Self {
@@ -155,10 +191,35 @@ impl EffectiveModelBinding {
             provider_id,
             account_id,
             model_id,
-            connector_id,
+            connector_id: ConnectorId::for_dialect(api_dialect),
             api_dialect,
             endpoint,
         }
+    }
+
+    pub fn from_durable(
+        provider_id: ProviderId,
+        account_id: AccountId,
+        model_id: ModelId,
+        connector_id: ConnectorId,
+        api_dialect: ApiDialect,
+        endpoint: NormalizedEndpoint,
+    ) -> Result<Self, ModelServiceError> {
+        let expected = ConnectorId::for_dialect(api_dialect);
+        if connector_id != expected {
+            return Err(ModelServiceError::new(format!(
+                "durable connector {} does not match api_dialect {}",
+                connector_id, api_dialect
+            )));
+        }
+        Ok(Self {
+            provider_id,
+            account_id,
+            model_id,
+            connector_id,
+            api_dialect,
+            endpoint,
+        })
     }
 
     #[must_use]

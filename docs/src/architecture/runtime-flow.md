@@ -5,16 +5,16 @@ message does not make its owner obvious. They describe the current
 implementation path. Methexis remains the authority for what each boundary
 must mean.
 
-## Model-service and Responses connector
+## Model-service and OpenAI-compatible connectors
 
-The provider-neutral service inputs, remote Responses dialect, and Yo-managed
+The provider-neutral service inputs, explicit remote API dialect, and Yo-managed
 loop form one typed route:
 
 ```text
 configured ProviderId + AccountId + ModelId
   ↓ exact ModelCatalog namespace lookup
 EffectiveModelBinding
-  ├── ConnectorId + ApiDialect
+  ├── explicit ApiDialect → exactly one built-in ConnectorId
   └── normalized HTTPS base endpoint
 ModelContextProfile
   ↓ injected tokenizer profile counts the exact serialized request
@@ -26,11 +26,12 @@ config.yaml sibling credentials.yaml
 immutable CredentialStore
   ↓ exact ProviderId + AccountId lookup
 redacted ApiCredential
-  ↓ OpenAiResponsesConnector
+  ↓ dialect-derived OpenAiResponsesConnector or OpenAiChatCompletionsConnector
 POST <normalized base>/responses
+  or <normalized base>/chat/completions
   ↓ bearer auth + same-origin bounded redirects + finite deadlines
-bounded text/event-stream decoder
-  ├── correlated text and reasoning deltas
+bounded dialect-specific text/event-stream decoder
+  ├── correlated text, visible refusal, and optional reasoning deltas
   ├── exact function call identity, name, and argument bytes
   └── completed, incomplete, or failed terminal + usage
   ↓ NativeModelBackend
@@ -40,7 +41,7 @@ semantic ModelWork and ToolCall Activities
 injected ToolExecutionHost, one serial execution attempt
   ↓ bounded output passes the same semantic-admission boundary
 durable ToolResult Activity before another remote request
-next Responses round or resumable semantic replay delta
+next model round or resumable semantic replay delta
 ```
 
 `yo-core::model_service` owns this resolution and validation. A missing
@@ -48,11 +49,14 @@ credential file produces an empty snapshot without creating anything; an
 existing unsafe or malformed file fails closed. API keys have no environment
 fallback and diagnostic formatting never exposes their contents. Display names
 remain optional metadata and never participate in identity or routing.
-`yo-core::model_connector` appends exactly one `responses` segment and does not
-enable provider cache, `previous_response_id`, a provider Conversation, or
-built-in tools. It bounds SSE events, item count, cumulative text and function
-arguments while reading, and cancellation interrupts header, stream, and queue
-waits. `yo-core::backend::native` owns semantic Activities and the bounded
+`yo-core::model_connector` derives one built-in connector from `api_dialect`.
+Responses appends exactly one `responses` segment; Chat Completions appends
+exactly `chat/completions`. Neither route adds another `v1`, probes a fallback,
+or enables provider conversation authority or built-in tools. The Chat decoder
+requires one index-zero choice, finish then final usage then `[DONE]`, preserves
+content and refusal independently, and correlates indexed tool-call fragments.
+Both dialects bound SSE events and cumulative payloads while reading, and
+cancellation interrupts header, stream, and queue waits. `yo-core::backend::native` owns semantic Activities and the bounded
 model/tool loop. Before each dispatch it counts the exact request with the
 catalog-selected tokenizer profile. If the input budget or admitted replay
 prefix is exhausted, it completes the current Turn without resumable evidence,
@@ -112,7 +116,7 @@ yo-cli
   install TerminationCoordinator
   open Host identity and Session repository
   normalize workspace and create SessionDescriptor
-  spawn CodexBackend transport or assemble the Yo-managed OpenAI Responses backend
+  spawn CodexBackend transport or assemble the dialect-derived Yo-managed model backend
       ↓
 yo-core AgentSession
   start worker
@@ -458,10 +462,6 @@ session:
 tui:
   max_fps: 120
 model:
-  startup:
-    provider: qwencloud
-    account: default
-    model: qwen3.8max
   catalog:
     - provider: openrouter
       provider_display_name: OpenRouter
@@ -469,7 +469,6 @@ model:
       account_display_name: Default
       model: openrouter/free
       model_display_name: OpenRouter Free Router
-      connector: openai-responses
       api_dialect: openai-responses
       base_url: https://openrouter.ai/api/v1
       input_token_limit: 32000
@@ -479,13 +478,23 @@ model:
       provider_display_name: QwenCloud
       account: default
       account_display_name: Default
-      model: qwen3.8max
+      model: qwen3.8-max
       model_display_name: Qwen 3.8 Max
-      connector: openai-responses
       api_dialect: openai-responses
       base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
       input_token_limit: 1000000
       max_output_tokens: 65536
+      tokenizer_profile: utf8-bytes/v1
+    - provider: qwencloud
+      provider_display_name: QwenCloud
+      account: default
+      account_display_name: Default
+      model: deepseek-v4-flash-0731
+      model_display_name: DeepSeek V4 Flash
+      api_dialect: openai-chat-completions
+      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
+      input_token_limit: 1000000
+      max_output_tokens: 8192
       tokenizer_profile: utf8-bytes/v1
 ```
 
@@ -518,8 +527,8 @@ providers:
 The credential file must be a current-user-owned regular file with no group or
 other permission bits (normally mode `0600`). The same Account ID may be used
 under different Providers; only the exact selected Provider-and-Account pair is
-resolved. Endpoint, model, connector, API dialect, and display names remain in
-ordinary configuration rather than this secret file. Catalog limits and model
+resolved. Endpoint, model, API dialect, derived connector identity, and display
+names remain non-secret binding data rather than secret-file content. Catalog limits and model
 IDs are operator-owned examples and must be checked against the exact current
 Provider offering. `utf8-bytes/v1` conservatively counts the complete serialized
 request one token per UTF-8 byte; `o200k_base/v1` is available only for bindings
