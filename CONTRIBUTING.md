@@ -79,6 +79,15 @@ binding. Conflicting refs, paths, contracts, or bindings fail closed. This
 setup does not approve a revision, create a Checkpoint, propose activation, or
 record human authorization.
 
+For the resulting activation Slice, follow each structured `next_actions`
+handoff in authority order instead of reconstructing the command chain from
+memory. Save and reuse prepare results, refresh the registered ContextBuild
+manifests, stage the exact returned transition paths, and only then run
+`methexis check --staged-activation`. Prepare the final commit message,
+including required review and Developer Docs impact trailers, before the first
+commit attempt and run commit preflight against that exact message. Check lists
+record executable commands with their required arguments, never placeholders.
+
 The versioned JSON result reports the contract, branch, worktree, and binding
 effects separately. A failed invocation returns the same result schema with
 each effect observed as `prepared`, `absent`, `conflicting`, or `unknown`, so a
@@ -213,6 +222,13 @@ from the clean candidate defined under [Review and integration](#review-and-inte
 After the human accepts the exact contract and scope, continue without asking
 again for the same decision.
 
+Present a human checkpoint in this order: the concrete user-visible effect,
+one representative example, the boundaries that remain unchanged, and the
+exact decision requested. Put hashes, internal identifiers, and protocol terms
+last. Record the accepted decision in the compact working note and do not
+reopen it after continuation or context compaction unless new evidence changes
+one of those effects or boundaries.
+
 Return to the human only when new evidence creates a choice affecting product,
 durable contract, failure behavior, compatibility, security, permissions,
 destructive or external effects, or long-term ownership; when authorities
@@ -230,6 +246,16 @@ their active Knowledge owners. Classify each decision as covered, missing, or
 conflicting and record the required action. Read the active Checkpoint, those
 Knowledge units, and the exact code anchors once; do not begin implementation
 while a missing or conflicting contract remains unresolved.
+
+Keep an evolving work procedure in this repository workflow authority and its
+measurements in the local working note. Promote it to canonical Methexis
+workflow Knowledge only after evidence from multiple completed Slices shows
+that its semantics have stabilized and the human explicitly accepts the owner
+transition. One task may reveal a workflow improvement without absorbing that
+improvement into its delivery scope. Interrupt the delivery Slice only when the
+current procedure cannot preserve correctness or authority; route a cost,
+convenience, or tooling improvement to a separate governance Slice and finish
+the accepted product path first.
 
 Keep contract authority, Checkpoint activation, and implementation as separate
 Slices. Until Methexis advertises the complete
@@ -387,12 +413,22 @@ uncertainty, but do not repeat a supplied green baseline when its inputs are
 unchanged. If a finding changes the candidate, validate the affected boundary
 and review the new commit again. When the lens, scope, and reviewer are
 unchanged, resume that exact reviewer session and provide the prior candidate
-and ReviewId, replacement candidate, exact delta, and finding dispositions.
-This bounded continuation is the default for finding-resolution review because
-the reviewer already owns the relevant context. Start another fresh session
-only for a new lens or scope, reviewer unavailability, or context loss that
-prevents exact disposition review. A resumed reviewer that cannot identify the
-prior packet fails closed and does not count as completed review.
+and ReviewId, replacement candidate, exact delta bytes or their
+content-addressed artifact, finding dispositions, and the unchanged evidence
+the reviewer may reuse. The coordinator validates command syntax, artifact
+identity, and supplied green checks before delivery; do not make the reviewer
+rediscover those operational facts.
+
+The continuation payload and question are bounded; the number of continuations
+is not. Keep reusing the session while it can identify the prior review and the
+remaining work without broad reconstruction. Start a compact fresh session
+when the lens or scope changes, the reviewer is unavailable, exact context is
+lost, the reviewer begins broad repository or documentation reinspection, or
+the next finding introduces a new design question instead of resolving the
+reviewed one. Repeated tool calls that mostly reconstruct supplied evidence are
+a signal that accumulated session context is no longer helping. A resumed
+reviewer that cannot identify the prior packet fails closed and does not count
+as completed review.
 
 For Codex CLI review, resume the recorded session through its supported
 non-interactive surface:
@@ -418,6 +454,13 @@ service or allowance is unavailable, record the requested provider and reason,
 then a separate fresh-context Codex session may perform the same lens. Do not
 retry an unavailable provider until its state changes. Human exact review is
 also valid; the implementing session's self-check is not.
+
+When the provider exposes them, also record managed packet tokens, model-call
+and reviewer-tool-call counts, cumulative input, cached input, output, and the
+number of finding-resolution rounds. Managed packet size is not a proxy for
+the total work of a tool-using review session. Use these measurements to compare
+Slice workflows and accepted outcomes, not as a reason to weaken a required
+lens or optimize token count in isolation.
 
 If no reviewer completes a required lens, mark it **unreviewed**, record each
 attempt and reason, notify the human, and stop before acceptance. Quota
