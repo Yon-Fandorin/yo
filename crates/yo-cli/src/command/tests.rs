@@ -15,14 +15,19 @@ fn no_argument_keeps_the_live_defaults() {
     );
 }
 
-// `--model`은 새 Session과 resume 양쪽에서 같은 명시적 ModelId override로 보존되고,
+// `--model`은 새 Session과 resume 양쪽에서 같은 명시적 model reference로 보존되고,
 // Provider·Account 변경 option은 노출하지 않으며 중복 값이나 빠진 값은 사용법 오류가 된다.
 #[test]
 fn live_model_override_is_explicit_and_single() {
-    let Command::Live(options) = parse(["--model".into(), "qwen3.8max".into()]).unwrap() else {
+    let Command::Live(options) =
+        parse(["--model".into(), "qwencloud:default:qwen3.8-max".into()]).unwrap()
+    else {
         panic!("--model remains a live startup option");
     };
-    assert_eq!(options.model.as_deref(), Some("qwen3.8max"));
+    assert_eq!(
+        options.model.as_deref(),
+        Some("qwencloud:default:qwen3.8-max")
+    );
 
     assert!(parse(["--provider".into(), "qwencloud".into()]).is_err());
     assert!(parse(["--account".into(), "default".into()]).is_err());

@@ -5,9 +5,9 @@ use std::path::Path;
 use serde::Deserialize;
 use yo_core::{
     AccountId, AgentBackend, ApiDialect, BackendResumeTarget, ConnectorId, CredentialStore,
-    LocalCredentialStore, ModelCatalogEntry, ModelConnectorLimits, ModelId, ModelTokenCounter,
-    ModelTokenCounterError, NativeModelBackend, NativeModelBackendConfig,
-    NativeModelBackendServices, NormalizedEndpoint, ProviderId,
+    LocalCredentialStore, ModelCatalogEntry, ModelConnectorLimits, ModelId, ModelSelection,
+    ModelSelectionController, ModelTokenCounter, ModelTokenCounterError, NativeModelBackend,
+    NativeModelBackendConfig, NativeModelBackendServices, NormalizedEndpoint, ProviderId,
 };
 
 use crate::{AppError, config::Config, local_tools};
@@ -78,30 +78,32 @@ pub(crate) fn resolve(
     if let Some(target) = resume {
         return resolve_resume(config, override_model, target);
     }
-    let (provider, account, model) = if let Some(startup) = config.startup_model() {
-        (
+    let startup = config.startup_model().map(|startup| {
+        ModelSelection::new(
             startup.provider().clone(),
             startup.account().clone(),
-            parse_model(override_model)?.unwrap_or_else(|| startup.model().clone()),
+            startup.model().clone(),
         )
-    } else {
-        if override_model.is_none() {
-            return Ok(StartupBackend::Codex);
-        }
-        return Err(AppError::many([
-            "--model requires a configured model.startup Provider and Account".to_owned(),
-        ]));
+    });
+    resolve_new_session(config.model_catalog(), startup, override_model)
+}
+
+fn resolve_new_session(
+    catalog: &yo_core::ModelCatalog,
+    startup: Option<ModelSelection>,
+    reference: Option<&str>,
+) -> Result<StartupBackend, AppError> {
+    let selection = match (startup, reference) {
+        (None, None) => return Ok(StartupBackend::Codex),
+        (Some(selection), None) => selection,
+        (current, Some(reference)) => {
+            resolve_reference(catalog, current, reference, "resolving startup model")?
+        },
     };
-    config
-        .model_catalog()
-        .resolve_model(&provider, &account, &model)
+    catalog
+        .resolve_model(selection.provider(), selection.account(), selection.model())
         .map_err(|error| AppError::single("resolving startup model", error))?;
-    Ok(StartupBackend::Native {
-        provider,
-        account,
-        model,
-        replace_binding: false,
-    })
+    Ok(native_selection(selection, false))
 }
 
 fn resolve_resume(
@@ -112,7 +114,8 @@ fn resolve_resume(
     if target.binding().backend_kind() != "yo-managed-model" {
         if override_model.is_some() {
             return Err(AppError::many([
-                "model coordinate overrides cannot replace a backend-managed Session".to_owned(),
+                "a model reference cannot replace a backend-managed Session; cross-backend handoff is not supported"
+                    .to_owned(),
             ]));
         }
         return Ok(StartupBackend::Codex);
@@ -124,23 +127,53 @@ fn resolve_resume(
         ]));
     }
     let durable_binding = parse_durable_binding(binding_identity.value())?;
-    let durable_provider = durable_binding.provider_id().clone();
-    let durable_account = durable_binding.account_id().clone();
-    let durable_model = durable_binding.model_id().clone();
-    let provider = durable_provider.clone();
-    let account = durable_account.clone();
-    let model = parse_model(override_model)?.unwrap_or_else(|| durable_model.clone());
-    let entry = config
-        .model_catalog()
-        .resolve_model(&provider, &account, &model)
+    resolve_native_resume(config.model_catalog(), durable_binding, override_model)
+}
+
+fn resolve_native_resume(
+    catalog: &yo_core::ModelCatalog,
+    durable_binding: yo_core::EffectiveModelBinding,
+    reference: Option<&str>,
+) -> Result<StartupBackend, AppError> {
+    let durable_selection = ModelSelection::new(
+        durable_binding.provider_id().clone(),
+        durable_binding.account_id().clone(),
+        durable_binding.model_id().clone(),
+    );
+    let selection = match reference {
+        Some(reference) => resolve_reference(
+            catalog,
+            Some(durable_selection.clone()),
+            reference,
+            "resolving resumed model",
+        )?,
+        None => durable_selection,
+    };
+    let entry = catalog
+        .resolve_model(selection.provider(), selection.account(), selection.model())
         .map_err(|error| AppError::single("resolving resumed model", error))?;
     let replace_binding = entry.binding() != &durable_binding;
-    Ok(StartupBackend::Native {
-        provider,
-        account,
-        model,
+    Ok(native_selection(selection, replace_binding))
+}
+
+fn resolve_reference(
+    catalog: &yo_core::ModelCatalog,
+    current: Option<ModelSelection>,
+    reference: &str,
+    operation: &'static str,
+) -> Result<ModelSelection, AppError> {
+    ModelSelectionController::new(catalog.clone(), current)
+        .resolve_reference(reference)
+        .map_err(|error| AppError::single(operation, error))
+}
+
+fn native_selection(selection: ModelSelection, replace_binding: bool) -> StartupBackend {
+    StartupBackend::Native {
+        provider: selection.provider().clone(),
+        account: selection.account().clone(),
+        model: selection.model().clone(),
         replace_binding,
-    })
+    }
 }
 
 fn parse_durable_binding(value: &str) -> Result<yo_core::EffectiveModelBinding, AppError> {
@@ -170,13 +203,6 @@ fn parse_durable_binding(value: &str) -> Result<yo_core::EffectiveModelBinding, 
         durable_endpoint,
     )
     .map_err(|error| AppError::single("validating durable model binding", error))
-}
-
-fn parse_model(value: Option<&str>) -> Result<Option<ModelId>, AppError> {
-    value
-        .map(ModelId::new)
-        .transpose()
-        .map_err(|error| AppError::single("validating --model", error))
 }
 
 #[derive(Deserialize)]
@@ -290,6 +316,150 @@ impl ModelTokenCounter for TokenizerRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn selection_catalog(entries: &[(&str, &str, &str)]) -> yo_core::ModelCatalog {
+        yo_core::ModelCatalog::new(
+            entries
+                .iter()
+                .map(|(provider, account, model)| {
+                    yo_core::ModelCatalogEntry::new(
+                        yo_core::EffectiveModelBinding::new(
+                            ProviderId::new(*provider).unwrap(),
+                            AccountId::new(*account).unwrap(),
+                            ModelId::new(*model).unwrap(),
+                            ApiDialect::OpenAiResponses,
+                            NormalizedEndpoint::parse("https://example.test/v1").unwrap(),
+                        ),
+                        None,
+                        None,
+                        None,
+                        yo_core::ModelContextProfile::new(1_000, 100, UTF8_BYTES_PROFILE).unwrap(),
+                    )
+                    .unwrap()
+                })
+                .collect(),
+        )
+        .unwrap()
+    }
+
+    // startup namespace가 없으면 option 생략은 Codex를 유지하지만 globally unique bare
+    // ModelId나 완전한 좌표는 model.startup 없이도 Yo-managed backend를 선택한다.
+    #[test]
+    fn new_codex_default_session_accepts_unique_or_complete_model_references() {
+        let catalog = selection_catalog(&[
+            ("qwencloud", "default", "qwen3.8-max"),
+            ("openrouter", "default", "openrouter/free"),
+        ]);
+
+        assert!(matches!(
+            resolve_new_session(&catalog, None, None).unwrap(),
+            StartupBackend::Codex
+        ));
+        let bare = resolve_new_session(&catalog, None, Some("qwen3.8-max")).unwrap();
+        let selected = bare.model_selection().unwrap();
+        assert_eq!(selected.provider().as_str(), "qwencloud");
+        assert_eq!(selected.account().as_str(), "default");
+        assert_eq!(selected.model().as_str(), "qwen3.8-max");
+
+        let complete =
+            resolve_new_session(&catalog, None, Some("openrouter:default:openrouter/free"))
+                .unwrap();
+        assert_eq!(
+            complete.model_selection().unwrap().model().as_str(),
+            "openrouter/free"
+        );
+    }
+
+    // configured startup이 있으면 bare form은 그 Provider·Account에 머물고 qualified form은
+    // 다른 정확한 좌표로 갈 수 있으며, 중복 bare form은 namespace 없이 모호하게 실패한다.
+    #[test]
+    fn startup_reference_scope_is_contextual_and_ambiguity_is_explicit() {
+        let catalog = selection_catalog(&[
+            ("qwencloud", "default", "same"),
+            ("qwencloud", "team", "same"),
+            ("openrouter", "default", "same"),
+        ]);
+        let startup = ModelSelection::new(
+            ProviderId::new("qwencloud").unwrap(),
+            AccountId::new("team").unwrap(),
+            ModelId::new("same").unwrap(),
+        );
+
+        let contextual =
+            resolve_new_session(&catalog, Some(startup.clone()), Some("same")).unwrap();
+        assert_eq!(
+            contextual.model_selection().unwrap().account().as_str(),
+            "team"
+        );
+        let qualified =
+            resolve_new_session(&catalog, Some(startup), Some("openrouter::same")).unwrap();
+        assert_eq!(
+            qualified.model_selection().unwrap().provider().as_str(),
+            "openrouter"
+        );
+
+        let error = match resolve_new_session(&catalog, None, Some("same")) {
+            Ok(_) => panic!("duplicate bare ModelId must remain ambiguous"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("is ambiguous"));
+        assert!(error.contains("Provider \"openrouter\""));
+        assert!(error.contains("Provider \"qwencloud\""));
+    }
+
+    // option을 생략해 configured startup을 그대로 쓰더라도 catalog에서 제거된 낡은
+    // 좌표를 backend 시작 경계 밖으로 통과시키지 않는지 검증한다.
+    #[test]
+    fn unchanged_startup_must_still_resolve_in_the_current_catalog() {
+        let catalog = selection_catalog(&[("qwencloud", "default", "current")]);
+        let stale = ModelSelection::new(
+            ProviderId::new("qwencloud").unwrap(),
+            AccountId::new("default").unwrap(),
+            ModelId::new("removed").unwrap(),
+        );
+
+        let error = match resolve_new_session(&catalog, Some(stale), None) {
+            Ok(_) => panic!("a stale configured startup must fail closed"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("resolving startup model"));
+        assert!(error.contains("Model removed"));
+    }
+
+    // native resume의 bare form은 durable Provider·Account에 남고 qualified form만 다른
+    // configured coordinate를 골라 기존 exact-replay replacement flag를 세운다.
+    #[test]
+    fn native_resume_reference_uses_the_durable_namespace_or_an_exact_qualified_replacement() {
+        let catalog = selection_catalog(&[
+            ("qwencloud", "default", "same"),
+            ("openrouter", "default", "same"),
+        ]);
+        let durable = catalog
+            .resolve_model(
+                &ProviderId::new("qwencloud").unwrap(),
+                &AccountId::new("default").unwrap(),
+                &ModelId::new("same").unwrap(),
+            )
+            .unwrap()
+            .binding()
+            .clone();
+
+        let same = resolve_native_resume(&catalog, durable.clone(), Some("same")).unwrap();
+        assert!(!same.replaces_binding());
+        assert_eq!(
+            same.model_selection().unwrap().provider().as_str(),
+            "qwencloud"
+        );
+
+        let replacement =
+            resolve_native_resume(&catalog, durable, Some("openrouter::same")).unwrap();
+        assert!(replacement.replaces_binding());
+        assert_eq!(
+            replacement.model_selection().unwrap().provider().as_str(),
+            "openrouter"
+        );
+    }
 
     // tokenizer profile은 versioned allowlist로 해석하며 알 수 없는 이름은 추측하지 않는다.
     #[test]

@@ -35,7 +35,8 @@ fn model_controller(current_model: &str) -> yo_core::ModelSelectionController {
     )
 }
 
-// 직접 `/model ID`는 같은 ID가 다른 Provider에 있어도 현재 namespace 밖을 탐색하지 않는다.
+// 직접 `/model Model`은 같은 ID가 다른 Provider에 있어도 현재 namespace 밖을 탐색하지
+// 않고, qualified reference만 다른 완전한 좌표를 선택하는지 검증한다.
 #[test]
 fn direct_model_command_resolves_only_inside_the_current_provider_and_account() {
     let mut state = TuiState::new();
@@ -57,6 +58,26 @@ fn direct_model_command_resolves_only_inside_the_current_provider_and_account() 
         StateEffect::Redraw
     );
     assert_eq!(state.take_model_selection(), None);
+
+    state
+        .handle(
+            InputEvent::Paste("/model openrouter::free-model".to_owned()),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Exit
+    );
+    let selected = state.take_model_selection().unwrap();
+    assert_eq!(selected.provider().as_str(), "openrouter");
+    assert_eq!(selected.account().as_str(), "default");
+    assert_eq!(selected.model().as_str(), "free-model");
 }
 
 // picker acceptance는 display label이 아니라 Provider·Account·Model 전체 좌표를 반환한다.

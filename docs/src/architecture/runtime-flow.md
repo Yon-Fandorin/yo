@@ -82,16 +82,29 @@ and no current backend selects it.
 
 ### Model selection and replacement
 
-Startup accepts `--model MODEL_ID` inside the Provider and Account selected by
-`model.startup`. A resumed Session instead resolves the override inside the
-newest durable binding; startup defaults never replace that namespace. Provider
-or Account changes are intentionally unavailable as CLI overrides.
+Startup accepts one optional `--model MODEL_REFERENCE`. The admitted spellings
+are `Model`, `Provider::Model`, and `Provider:Account:Model`; matching is derived
+from configured complete coordinates rather than separator precedence, so
+vendor ModelIds may contain `:`, `/`, or `.`. A bare reference stays inside the
+current Provider and Account. When a new Codex-default Session has no startup
+namespace, a bare reference instead requires one globally unique exact ModelId.
+The two qualified forms require respectively one exact Provider-and-Model
+account match or one exact complete coordinate. Absence and ambiguity fail with
+stable, sorted complete coordinates.
 
-While the TUI is idle, `/model` opens the generic selection panel with entries
-ordered as Provider, Account, then Model. Labels use the optional display names,
-but each row carries the complete stable coordinate. `/model MODEL_ID` is the
-direct form and searches only the current Provider and Account. A Provider or
-Account change therefore requires the picker.
+Omitting the option preserves `model.startup`, or Codex when no startup binding
+exists. A resumed Yo-managed Session uses its newest durable binding as the bare
+namespace; qualified references may request the existing exact-replay
+replacement transition, and startup defaults never replace that namespace. A
+Codex resume combined with a Yo-managed reference fails explicitly because
+cross-backend handoff remains deferred.
+
+While a Yo-managed TUI is idle, `/model` opens the generic selection panel with
+entries ordered as Provider, Account, then Model. Labels use the optional
+display names, but each row carries the complete stable coordinate. `/model
+MODEL_REFERENCE` uses the same resolver as startup, so its bare form remains in
+the current namespace while a qualified form can select another configured
+Provider or Account. A Codex-started live Session does not expose this picker.
 
 The frontend-neutral `ModelSelectionController` owns those resolution rules.
 After acceptance, the process host constructs and validates the candidate

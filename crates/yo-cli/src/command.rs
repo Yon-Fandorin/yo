@@ -4,7 +4,7 @@ use yo_tui::{GlyphProfile, PresentationMode};
 
 use super::AppError;
 
-const USAGE: &str = "yo [--resume SESSION_ID | --continue] [--model MODEL_ID] [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript|request] [--ascii]";
+const USAGE: &str = "yo [--resume SESSION_ID | --continue] [--model MODEL_REFERENCE] [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript|request] [--ascii]";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LiveOptions {
@@ -95,10 +95,10 @@ fn parse_live(arguments: impl IntoIterator<Item = OsString>) -> Result<LiveOptio
             value if value == "--model" => {
                 let value = arguments
                     .next()
-                    .ok_or_else(|| usage_error("`--model` requires a Model ID"))?;
+                    .ok_or_else(|| usage_error("`--model` requires a model reference"))?;
                 let value = value
                     .to_str()
-                    .ok_or_else(|| usage_error("Model ID is not UTF-8"))?;
+                    .ok_or_else(|| usage_error("model reference is not UTF-8"))?;
                 set_once(&mut model, value.to_owned(), "--model")?;
                 None
             },

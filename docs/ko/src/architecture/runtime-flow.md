@@ -79,15 +79,26 @@ contract 값이며 현재 이를 선택하는 backend는 없다.
 
 ### 모델 선택과 교체
 
-startup은 `model.startup`이 선택한 Provider와 Account 안에서 `--model MODEL_ID`를
-받는다. 저장 Session을 재개할 때는 최신 durable binding의 Provider와 Account 안에서
-override를 해석하며 startup 기본값이 그 namespace를 바꾸지 않는다. Provider나
-Account 변경은 CLI override로 노출하지 않는다.
+startup은 optional `--model MODEL_REFERENCE` 하나를 받는다. 허용하는 표기는 `Model`,
+`Provider::Model`, `Provider:Account:Model`이다. separator 우선순위로 파싱하지 않고
+설정된 완전한 좌표에서 가능한 표기를 만들어 대조하므로 vendor ModelId에는 `:`, `/`,
+`.`이 들어갈 수 있다. bare reference는 현재 Provider와 Account 안에 머문다. startup
+namespace가 없는 새 Codex-default Session에서는 bare reference가 catalog 전체에서 정확히
+하나인 ModelId여야 한다. qualified 두 형식은 각각 정확한 Provider와 Model에 해당하는
+Account가 하나이거나, 정확한 완전 좌표 하나여야 한다. 없거나 모호하면 안정적으로
+정렬한 완전 좌표와 함께 명시적으로 실패한다.
 
-TUI가 idle일 때 `/model`은 Provider, Account, Model 순서로 정렬한 항목을 범용
-selection panel에 연다. label에는 optional display name을 쓰지만 각 행의 identity는
-완전한 안정 좌표다. `/model MODEL_ID`는 현재 Provider와 Account 안에서만 찾는 직접
-형식이다. 따라서 Provider나 Account를 바꾸려면 picker를 사용한다.
+option을 생략하면 `model.startup`을 보존하고 startup binding이 없으면 Codex를 유지한다.
+저장된 Yo-managed Session은 최신 durable binding을 bare namespace로 쓰고, qualified
+reference는 기존 exact-replay replacement transition을 요청할 수 있다. startup 기본값은
+그 namespace를 바꾸지 않는다. Codex resume과 Yo-managed reference의 결합은
+cross-backend handoff가 아직 미뤄져 있으므로 명시적으로 실패한다.
+
+Yo-managed TUI가 idle일 때 `/model`은 Provider, Account, Model 순서로 정렬한 항목을
+범용 selection panel에 연다. label에는 optional display name을 쓰지만 각 행의
+identity는 완전한 안정 좌표다. `/model MODEL_REFERENCE`는 startup과 같은 resolver를
+사용하므로 bare 형식은 현재 namespace에 머물고 qualified 형식은 설정된 다른 Provider나
+Account를 선택할 수 있다. Codex로 시작한 live Session은 이 picker를 노출하지 않는다.
 
 frontend 중립 `ModelSelectionController`가 이 resolution 규칙을 소유한다. 선택을
 accept하면 process host는 현재 binding을 유지한 채 startup credential snapshot,

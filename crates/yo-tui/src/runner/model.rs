@@ -1,4 +1,4 @@
-use yo_core::{ModelId, ModelSelection, ModelSelectionController};
+use yo_core::{ModelSelection, ModelSelectionController};
 
 use crate::overlay::{PanelSnapshot, SelectionEntry};
 
@@ -41,10 +41,8 @@ impl ModelSelectionState {
     }
 
     pub(super) fn resolve_direct(&self, value: &str) -> Result<ModelSelection, String> {
-        let model =
-            ModelId::new(value).map_err(|error| format!("invalid model ID for /model: {error}"))?;
         self.controller
-            .resolve_direct(&model)
+            .resolve_reference(value)
             .map_err(|error| error.to_string())
     }
 
