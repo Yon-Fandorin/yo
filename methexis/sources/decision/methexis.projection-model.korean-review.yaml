@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: methexis.projection-model.korean-review
-revision: sha256:25844581c9b9d743ee7ba7b88884dc29135842ae0f8d08ec9c5393c9359b343d
+revision: sha256:051baf7734b890170422928469ffe1d0f437a0567424e468dd3545762fedb7ee
 payload:
   kind: decision
-  content: Methexis keeps one generated Korean review Projection per KnowledgeId under methexis/review-projections. It binds the exact RevisionId, Projection profile, compiler identity, deterministic request lineage, and exact reviewed file bytes. Direct edits, revision drift, and lineage drift are structural failures; replacement is regenerated only from an explicit request.
+  content: Methexis uses Source and canonical English Knowledge as the semantic authoring and agent-review surface. The complete semantic-first-ko-on-demand/v1 capability selects the current operation path and adds no durable authority lineage; without it, the exact-human-approved legacy flow remains controlling. Under the capability, author-revision changes only Source and Knowledge. After the exact semantic candidate clears review, project-review creates or replaces one Korean Projection only on human request. The Projection binds exact RevisionId, profile, compiler, request lineage, and bytes; stale or directly edited files fail validation. Human approval binds the revision and Projection hash. Legacy artifacts remain valid for their exact approved revisions without bulk migration.

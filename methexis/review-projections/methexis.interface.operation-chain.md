@@ -1,73 +1,23 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: methexis.interface.operation-chain
-revision: sha256:799117b0282b5d91622198a36dbdda01950573de05ebc7f5047d60ad66064e8f
+revision: sha256:41081f3516a7c67e90910579edd6af517d27cc6d85dc17f5a8d67879c44cc380
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:04abcb8c9b6613ad76c14cef4c8912ee5600d270f95a779be38f57278106f705
+request_hash: sha256:1bd198afa263143bdb514f32d57bda1fcb155cffb9820f76aa20d5382afb0bd5
 ---
 # Korean Review Projection
 
 ## Translation
 
-authoring→projection→review→approval→checkpoint→activation→context resolution의 각 명령과 proposal 경계를 고정합니다. prepare 명령은 기존 값을 복사해 다음 요청을 만들 뿐 mutation이나 권위 부여를 하지 않으며, author-revision도 approval을 쓰지 않습니다.
+# Methexis 작업 명령 연쇄와 권한 경계
 
-### 원문 대조
+## 규칙
 
-아래 내용은 기존에 승인된 SOT Pilot 정본에서 의미 변경 없이 옮긴 canonical English 본문입니다. 규범 키워드, 식별자, 예외 및 경계까지 이 원문을 기준으로 검토합니다.
+`semantic-first-ko-on-demand/v1`은 완전한 최소 흐름에만 제공된다. `author-revision`은 Source 및 정본 영문 Knowledge Draft를 기록하고, 저장소가 소유하는 의미 검토가 clear가 된 뒤 `project-review`가 사람 요청 때만 한글을 생성하며, `build-review`는 정확한 영문과 한글 쌍을 보여주고, `prepare-approval`과 `approve`는 제안 및 정확한 사람 승인 경계를 유지한다.
 
-The implemented operations are:
+capability는 현재 작업 경로만 선택하고 영구 권한이나 artifact 계보를 만들지 않는다. capability가 없으면 기존 흐름이 기준이며 여전히 exact-revision 사람 승인을 요구한다. 기존 legacy record는 일괄 이관 없이 이미 묶은 정확한 revision에 계속 유효하다.
 
-```text
-author-revision <request.json>   -> derived revision authoring Draft proposals
-project-review <request.json>  -> tracked Korean review Projection
-build-review <request.json>    -> local packet and manifest
-prepare-approval <manifest.json> --reviewer <owner-id> [--replace-current]
-                               -> approval-request proposal on stdout only
-approve <request.json>         -> tracked exact-revision approval proposal
-prepare-checkpoint             -> Checkpoint-request proposal on stdout only
-create-checkpoint <request.json> -> immutable trusted-revision Checkpoint proposal
-prepare-activation <create-output.json>
-                               -> activation-request proposal on stdout only
-propose-activation <request.json> -> active-record proposal with compare-and-swap
-check [--only <class>[,<class>...]]... [--summary] [--unit <knowledge-id>]
-                                -> selected SOT integrity classes and their prerequisites
-check --staged-activation       -> ordinary check or one exact staged prospective transition
-resolve-context <request.json>  -> immutable ContextBuild locator and hashes
-```
+에이전트 검토 절차, reviewer session 처리 및 review evidence는 저장소 workflow authority만 소유한다. Methexis는 그 workflow disposition만 소비하고 별도의 provider attestation이나 reviewer routing 정책을 정의하지 않는다.
 
-`author-revision` collapses the revision-authoring loop into one call: it
-accepts new Source content, a new Knowledge body, and/or new Korean review
-Markdown, then derives the SourceRevision, the Knowledge source pin and
-RevisionId, the replacement Projection, and the review packet, writing the
-tracked files as Draft proposals. The unit's single decision Source id and all
-other Knowledge metadata are preserved. Approval records MUST NOT be written
-by this operation; human approval remains a separate explicit step. Units
-that do not pin exactly one `decision` Source fail closed. Writes are
-sequential per-file compare-and-swap operations rather than one batch; a
-mid-sequence failure names the paths already written, and re-running the same
-request converges the remainder.
-
-The `prepare-approval`, `prepare-checkpoint`, and `prepare-activation`
-operations remove hand-copied hashes from the review→approval→checkpoint→
-activation loop. Each reads values that already exist in the repository — the
-review packet manifest, the active Checkpoint roots, or one saved
-`create-checkpoint` result — binds them into the exact request wire shape the
-next operation consumes, and prints that request JSON on stdout. The authority
-boundaries are unchanged: the prepare operations emit proposals only and never
-perform the following mutation. `prepare-approval` MUST NOT write
-`methexis/approvals/` or record an approval; human authorization remains the
-separate explicit `approve` step. Checkpoint and activation preparation MUST
-NOT invoke Checkpoint creation or activation. Missing authority inputs — an
-unknown reviewer, a `--replace-current` without an existing approval record,
-or no active Checkpoint — fail closed with structured diagnostics.
-
-S4 adds context resolution with a versioned request and one structured result.
-Success returns only the small artifact locator and integrity record described
-by `SOT-007`; the completed context is not streamed implicitly. Failures
-distinguish stable required-input failures from retryable concurrent Source or
-authority changes. Stable ineligibility or unaffordability of an optional
-candidate remains a successful build with an omission record; malformed input
-or an integrity failure still fails the operation. Neither direct anchors nor
-candidate input may override the trusted commit, active Checkpoint, approval,
-or freshness guards.
+의미 검토가 clear가 되면 `project-review`가 사람 요청에 따라 정확한 현재 revision의 한글을 게시한다. 의미가 바뀌면 의미 검토를 다시 시작하고 번역만 바뀌면 사람 검토를 반복한다. 그 밖의 prepare, Checkpoint, activation, validation 및 ContextBuild 경계는 바뀌지 않는다.

@@ -232,34 +232,33 @@ Knowledge units, and the exact code anchors once; do not begin implementation
 while a missing or conflicting contract remains unresolved.
 
 Keep contract authority, Checkpoint activation, and implementation as separate
-Slices. Use this order for a contract Slice:
+Slices. Until Methexis advertises the complete
+`semantic-first-ko-on-demand/v1` capability, use the legacy sequence in which
+Source, Knowledge, and Korean Projection form one reviewed candidate.
 
-1. author or revise the decision Source, Knowledge body, and self-contained
-   Korean review Projection;
-2. run `methexis check` and worker self-check that every normative exception,
-   priority cutoff, failure outcome, and acceptance obligation is closed;
-3. commit a clean semantic candidate and perform the required fresh-context
-   review against that exact commit;
-4. resolve findings, replace the candidate commit, and repeat the affected lens
-   before requesting exact-revision human approval;
-5. record the reviewed candidate commit; after approval, generate only the
-   matching approval record, compare the resulting candidate directly with that
-   commit, and require the changed-path set to contain exactly the expected
-   approval record while `methexis check` verifies its pins;
-6. integrate the approved contract proposal into trusted `develop` before a
-   separate activation Slice creates or activates a Checkpoint; and
-7. start implementation in a fresh Slice based on the activated `develop`.
+With that capability, use this order for a contract Slice:
 
-The generated approval record in step 5 is the sole permitted post-review
-addition to the contract candidate. It does not invalidate the semantic review
-only when it pins the exact reviewed Knowledge revision and Projection hash,
-the human explicitly approved those values, and an exact Git diff from the
-recorded reviewed commit to the resulting candidate contains only the expected
-approval-record path or paths. The Source, Knowledge, relation, Projection, and
-all unrelated bytes MUST be identical to the reviewed commit, and `methexis
-check` MUST pass. Any other change requires a new immutable candidate and
-review. Working-diff review before step 3 is preparation only and MUST NOT be
-recorded as completed review.
+1. author or revise only the decision Source and canonical English Knowledge;
+2. run `methexis check --only relations` and complete the worker self-check;
+3. commit one clean semantic candidate and perform each required review lens;
+4. resolve all findings in one batch and reuse the same reviewer session for
+   exact finding-resolution review when its lens and scope are unchanged;
+5. after semantic review clears, generate the matching Korean Projection once
+   on explicit human request and build the exact English-plus-Korean packet;
+6. record exact human approval of the Knowledge revision and Projection hash,
+   then run full `methexis check`; and
+7. integrate, activate, and implement through their separate Slices.
+
+The Projection and approval-record paths are the only permitted additions after
+semantic review. Source, Knowledge, relations, and unrelated bytes remain
+identical to the reviewed semantic candidate. Any semantic change creates a
+new candidate and repeats the affected lens; a translation-only correction
+repeats human review only. Working-diff review before the clean candidate is
+preparation, not completed review.
+
+Existing legacy Projection and approval records remain valid for their exact
+approved revisions and are not regenerated in bulk. The capability selects the
+current operation path and does not itself create durable authority lineage.
 
 ### Token-efficient agent operation
 
@@ -386,7 +385,21 @@ candidate and require a clean worktree; dirty or inferred review surfaces do
 not count. Reviewers may rerun a targeted check to resolve a finding or named
 uncertainty, but do not repeat a supplied green baseline when its inputs are
 unchanged. If a finding changes the candidate, validate the affected boundary
-and review the new commit again.
+and review the new commit again. When the lens, scope, and reviewer are
+unchanged, resume that exact reviewer session and provide the prior candidate
+and ReviewId, replacement candidate, exact delta, and finding dispositions.
+This bounded continuation is the default for finding-resolution review because
+the reviewer already owns the relevant context. Start another fresh session
+only for a new lens or scope, reviewer unavailability, or context loss that
+prevents exact disposition review. A resumed reviewer that cannot identify the
+prior packet fails closed and does not count as completed review.
+
+For Codex CLI review, resume the recorded session through its supported
+non-interactive surface:
+
+```bash
+codex exec resume --json <session-id> - < <delta-review-packet.md>
+```
 
 For Kimi, use plain `kimi -p`: never `--continue` or `--session`. Omit `--model`
 unless its exact configured CLI alias is known, and consult `kimi --help`

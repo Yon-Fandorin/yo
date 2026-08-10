@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: methexis.interface.operation-chain
-revision: sha256:799117b0282b5d91622198a36dbdda01950573de05ebc7f5047d60ad66064e8f
+revision: sha256:41081f3516a7c67e90910579edd6af517d27cc6d85dc17f5a8d67879c44cc380
 reviewer: methexis
-reviewed_at: 2026-08-09T16:53:16Z
+reviewed_at: 2026-08-10T08:06:20Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:0e6809bc62b38faf7741f4761afc9e562936f6b673c0cecb8139e996a6e2d579
-request_hash: sha256:ec28e334c085dc5d3b91e4c2af244da99b4ccd822849b5c2ee199bb26239404b
+projection_hash: sha256:4c3ffa4efb8447422b8cd20cb4e7209f57063c53632f03eaa45f20673b460626
+request_hash: sha256:aee91c96d7da456bf11bddf9bf4f6ecf7132c899633dbb55473e66633f38baed
