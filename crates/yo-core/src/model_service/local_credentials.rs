@@ -12,6 +12,14 @@ use serde::{Deserialize, Deserializer, de};
 use super::{AccountId, ApiCredential, CredentialStore, ProviderId};
 
 const MAX_CREDENTIAL_FILE_BYTES: u64 = 64 * 1024;
+#[cfg(target_vendor = "apple")]
+const FILE_TYPE_MASK: u32 = libc::S_IFMT as u32;
+#[cfg(not(target_vendor = "apple"))]
+const FILE_TYPE_MASK: u32 = libc::S_IFMT;
+#[cfg(target_vendor = "apple")]
+const REGULAR_FILE_MODE: u32 = libc::S_IFREG as u32;
+#[cfg(not(target_vendor = "apple"))]
+const REGULAR_FILE_MODE: u32 = libc::S_IFREG;
 
 /// Loads the immutable account credential snapshot used for one process run.
 pub struct LocalCredentialStore;
@@ -179,7 +187,7 @@ fn validate_metadata(
     path: &Path,
     metadata: &MetadataSnapshot,
 ) -> Result<(), LocalCredentialStoreError> {
-    if metadata.mode & libc::S_IFMT != libc::S_IFREG {
+    if metadata.mode & FILE_TYPE_MASK != REGULAR_FILE_MODE {
         return Err(LocalCredentialStoreError::UnsupportedFileType(
             path.to_owned(),
         ));
@@ -325,7 +333,7 @@ mod tests {
         MetadataSnapshot {
             device: 1,
             inode: 2,
-            mode: libc::S_IFREG | 0o600,
+            mode: REGULAR_FILE_MODE | 0o600,
             user: rustix::process::geteuid().as_raw(),
             group: 3,
             len: 100,

@@ -169,6 +169,16 @@ struct FileIdentity {
     inode: u64,
 }
 
+#[cfg(target_vendor = "apple")]
+const fn normalize_device_id(device: libc::dev_t) -> u64 {
+    device as u64
+}
+
+#[cfg(not(target_vendor = "apple"))]
+const fn normalize_device_id(device: libc::dev_t) -> u64 {
+    device
+}
+
 impl LocalToolHost {
     pub(crate) fn new(
         workspace: &Path,
@@ -237,9 +247,10 @@ impl LocalToolHost {
         if !SFlag::from_bits_truncate(metadata.st_mode).contains(SFlag::S_IFREG) {
             return Err(ToolExecutionError::new("read_file requires a regular file"));
         }
+        let device = normalize_device_id(metadata.st_dev);
         if self.denied_credential
             == Some(FileIdentity {
-                device: metadata.st_dev,
+                device,
                 inode: metadata.st_ino,
             })
         {
@@ -888,6 +899,15 @@ mod tests {
             thread::sleep(Duration::from_millis(1));
         }
         panic!("local tool did not finish")
+    }
+
+    #[cfg(target_vendor = "apple")]
+    // Apple의 signed dev_t가 high bit를 가진 경우에도 MetadataExt::dev와 같은 u64
+    // 비트 표현을 보존해 credential identity 비교가 정상 파일을 거절하지 않습니다.
+    #[test]
+    fn apple_device_identity_preserves_the_complete_signed_domain() {
+        assert_eq!(normalize_device_id(-1), u64::MAX);
+        assert_eq!(normalize_device_id(i32::MIN), i32::MIN as u64);
     }
 
     struct CountingReader {
