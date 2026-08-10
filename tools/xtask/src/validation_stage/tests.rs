@@ -8,7 +8,7 @@ use std::{
 use super::{
     Authority, GitEnvironment, StageReport, ValidationMode, classify_staged_paths,
     handle_staged_check_output, methexis_check_arguments,
-    require_exact_semantic_worktree_with_environment, validation_mode_with_environment,
+    require_exact_candidate_worktree_with_environment, validation_mode_with_environment,
 };
 
 const DRAFT_REPORT: &str = r#"{
@@ -20,8 +20,9 @@ const DRAFT_REPORT: &str = r#"{
     "diagnostics": []
 }"#;
 
-// Source와 Knowledge만 staged 된 집합만 의미 후보 경로를 선택하고, Projection이나
-// 다른 authority 파일이 섞이면 기존 완전 검증 경로를 유지한다.
+// Source와 Knowledge만 staged 된 집합은 의미 후보 경로를 선택하고, Projection과
+// approval만 staged 된 후속 집합은 trusted authority를 요구하지 않는 review 후보를
+// 선택한다. 두 집합이 섞이거나 다른 authority 파일이 있으면 완전 검증을 유지한다.
 #[test]
 fn semantic_candidate_mode_requires_an_exact_source_and_knowledge_path_cohort() {
     assert_eq!(
@@ -31,6 +32,10 @@ fn semantic_candidate_mode_requires_an_exact_source_and_knowledge_path_cohort() 
     assert_eq!(
         classify_staged_paths(b"methexis/knowledge/one.md\0methexis/review-projections/one.md\0"),
         ValidationMode::Complete
+    );
+    assert_eq!(
+        classify_staged_paths(b"methexis/review-projections/one.md\0methexis/approvals/one.yaml\0"),
+        ValidationMode::ReviewCandidate
     );
     assert_eq!(classify_staged_paths(b""), ValidationMode::Complete);
 }
@@ -95,7 +100,7 @@ fn semantic_candidate_rejects_unstaged_methexis_changes() {
     let repository = staged_semantic_repository("unstaged");
     repository.write("methexis/knowledge/one.md", "unstaged\n");
 
-    let error = require_exact_semantic_worktree_with_environment(
+    let error = require_exact_candidate_worktree_with_environment(
         &repository.path,
         GitEnvironment::Isolated,
     )
@@ -109,9 +114,11 @@ fn semantic_candidate_rejects_unstaged_methexis_changes() {
 fn semantic_candidate_rejects_untracked_and_ignored_methexis_paths() {
     let untracked = staged_semantic_repository("untracked");
     untracked.write("methexis/knowledge/extra.md", "extra\n");
-    let error =
-        require_exact_semantic_worktree_with_environment(&untracked.path, GitEnvironment::Isolated)
-            .unwrap_err();
+    let error = require_exact_candidate_worktree_with_environment(
+        &untracked.path,
+        GitEnvironment::Isolated,
+    )
+    .unwrap_err();
     assert!(error.contains("untracked or ignored"), "{error}");
 
     let ignored = staged_semantic_repository("ignored");
@@ -122,7 +129,7 @@ fn semantic_candidate_rejects_untracked_and_ignored_methexis_paths() {
     ignored.git(["add", "methexis/knowledge/one.md"]);
     ignored.write("methexis/knowledge/ignored.md", "ignored\n");
     let error =
-        require_exact_semantic_worktree_with_environment(&ignored.path, GitEnvironment::Isolated)
+        require_exact_candidate_worktree_with_environment(&ignored.path, GitEnvironment::Isolated)
             .unwrap_err();
     assert!(error.contains("untracked or ignored"), "{error}");
 }

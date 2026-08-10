@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize, de::IgnoredAny};
 
 pub(crate) fn run_methexis_check(repository: &Path) -> Result<(), String> {
     let mode = validation_mode(repository)?;
-    if mode == ValidationMode::SemanticCandidate {
-        require_exact_semantic_worktree(repository)?;
+    if mode != ValidationMode::Complete {
+        require_exact_candidate_worktree(repository)?;
     }
     let authority = run_selected_check(repository, mode)?;
     report_prospective_activation(authority);
@@ -19,6 +19,7 @@ pub(crate) fn run_methexis_check(repository: &Path) -> Result<(), String> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ValidationMode {
     SemanticCandidate,
+    ReviewCandidate,
     Complete,
 }
 
@@ -77,20 +78,25 @@ fn classify_staged_paths(paths: &[u8]) -> ValidationMode {
     if paths.peek().is_none() {
         return ValidationMode::Complete;
     }
-    if paths.all(|path| {
+    if paths.clone().all(|path| {
         path.starts_with(b"methexis/sources/") || path.starts_with(b"methexis/knowledge/")
     }) {
         ValidationMode::SemanticCandidate
+    } else if paths.all(|path| {
+        path.starts_with(b"methexis/review-projections/")
+            || path.starts_with(b"methexis/approvals/")
+    }) {
+        ValidationMode::ReviewCandidate
     } else {
         ValidationMode::Complete
     }
 }
 
-fn require_exact_semantic_worktree(repository: &Path) -> Result<(), String> {
-    require_exact_semantic_worktree_with_environment(repository, GitEnvironment::Caller)
+fn require_exact_candidate_worktree(repository: &Path) -> Result<(), String> {
+    require_exact_candidate_worktree_with_environment(repository, GitEnvironment::Caller)
 }
 
-fn require_exact_semantic_worktree_with_environment(
+fn require_exact_candidate_worktree_with_environment(
     repository: &Path,
     environment: GitEnvironment,
 ) -> Result<(), String> {
@@ -102,7 +108,7 @@ fn require_exact_semantic_worktree_with_environment(
         Some(0) => {},
         Some(1) => {
             return Err(
-                "semantic Methexis candidate has unstaged tracked changes; stage the exact candidate or revert those changes"
+                "Methexis candidate has unstaged tracked changes; stage the exact candidate or revert those changes"
                     .to_owned(),
             );
         },
@@ -117,7 +123,7 @@ fn require_exact_semantic_worktree_with_environment(
     let ignored = untracked_methexis_paths(repository, true, environment)?;
     if !untracked.is_empty() || !ignored.is_empty() {
         return Err(
-            "semantic Methexis candidate has untracked or ignored Methexis paths; stage the exact candidate or remove those paths"
+            "Methexis candidate has untracked or ignored Methexis paths; stage the exact candidate or remove those paths"
                 .to_owned(),
         );
     }
@@ -252,6 +258,9 @@ impl StageReport {
 }
 
 fn run_selected_check(repository: &Path, mode: ValidationMode) -> Result<Authority, String> {
+    if mode == ValidationMode::ReviewCandidate {
+        return run_review_candidate_check(repository);
+    }
     let output = Command::new("cargo")
         .args(methexis_check_arguments(mode))
         .current_dir(repository)
@@ -269,6 +278,28 @@ fn run_selected_check(repository: &Path, mode: ValidationMode) -> Result<Authori
     )
 }
 
+fn run_review_candidate_check(repository: &Path) -> Result<Authority, String> {
+    let units = methexis::validate_review_proposals(repository).map_err(|diagnostics| {
+        let diagnostics = serde_json::to_string(&diagnostics)
+            .unwrap_or_else(|error| format!("cannot encode diagnostics: {error}"));
+        format!("staged review proposal validation failed: {diagnostics}")
+    })?;
+    let summary = CheckSummary {
+        schema: "yo.methexis-stage-summary/v1",
+        ok: true,
+        authority: Authority::Draft,
+        checks: 3,
+        units,
+        diagnostics: 0,
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&summary)
+            .map_err(|error| format!("cannot encode Methexis validation summary: {error}"))?
+    );
+    Ok(Authority::Draft)
+}
+
 fn methexis_check_arguments(mode: ValidationMode) -> Vec<&'static str> {
     let mut arguments = vec![
         "run", "--quiet", "--locked", "-p", "methexis", "--", "check",
@@ -276,6 +307,9 @@ fn methexis_check_arguments(mode: ValidationMode) -> Vec<&'static str> {
     match mode {
         ValidationMode::SemanticCandidate => {
             arguments.extend(["--only", "records,relations"]);
+        },
+        ValidationMode::ReviewCandidate => {
+            unreachable!("review candidates use in-process proposal validation")
         },
         ValidationMode::Complete => arguments.push("--staged-activation"),
     }

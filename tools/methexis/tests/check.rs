@@ -158,6 +158,28 @@ fn repeated_checks_and_physical_relocation_preserve_identity() {
     );
 }
 
+// 아직 trusted 또는 active가 아닌 fixture도 working proposal 전체가 일치하면
+// review 후속 검증을 통과해 통합 전 Draft 경계를 검사할 수 있다.
+#[test]
+fn review_proposals_can_be_validated_before_trusted_integration() {
+    let units = methexis::validate_review_proposals(&fixture("author-revision")).unwrap();
+
+    assert_eq!(units, 2);
+}
+
+// Review 후속 검증은 proposal만 보지 않고 Source와 Knowledge 기반부터 검사하므로,
+// 잘못된 로컬 레코드가 있으면 proposal 성공으로 축소하지 않고 진단을 반환한다.
+#[test]
+fn review_proposal_validation_rejects_an_invalid_foundation() {
+    let diagnostics = methexis::validate_review_proposals(&fixture("local-invalid")).unwrap_err();
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "invalid_yaml")
+    );
+}
+
 // tracked artifact가 있지만 active trusted Checkpoint가 없는 저장소에서는 authority까지만
 // 실행되고 artifacts는 blocked가 되어, 완료되지 않은 요청을 성공으로 보고하지 않는다.
 #[test]
