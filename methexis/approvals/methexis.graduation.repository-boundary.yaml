@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.graduation.repository-boundary
+revision: sha256:d5a5cadc5ddcd1d061e861d405e52b04a0052d8648be0498d4d166797924c55f
+reviewer: methexis
+reviewed_at: 2026-08-09T16:53:15Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:5bb4d7552534a289a9f734a3069737a555e616301f6158c88736fb0d6cc29a5d
+request_hash: sha256:f25a76b2d05e74ef1920e59e36e2c0708dfc3da68d5e607c929b6c7171938f6c

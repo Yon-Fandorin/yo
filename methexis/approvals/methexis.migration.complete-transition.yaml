@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.migration.complete-transition
+revision: sha256:2bffdaf312ff356aa3a8fc459ecfcd92eb1bc9c3086c3d4aa9aadb3a2050cbdd
+reviewer: methexis
+reviewed_at: 2026-08-09T17:08:50Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:cdd5d5f9d8b8c55179930682c1f9bee0ab247b99a9719d87a8bbaa4d40d3d0b5
+request_hash: sha256:9c4ef3311179a191bd600946bc86e12c49b330aebf5a4d188fa2f55c27415b05

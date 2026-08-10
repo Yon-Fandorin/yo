@@ -1,0 +1,47 @@
+---
+schema: methexis.knowledge/v1alpha1
+id: methexis.interface.agent-first
+kind: rule
+owner: methexis
+sources:
+  - id: methexis.interface-model.agent-first
+    revision: sha256:7af107fc9617c22b5e1b4b18bbbbcca08da9163f7dd257ad8a1efe55aa55dc62
+---
+# Agent-first interface contract
+
+## Statement
+
+The primary Pilot consumer is a code agent. Every operation MUST:
+
+- support non-interactive execution;
+- expose versioned structured input and output;
+- use stable machine-readable error codes within the Pilot version;
+- include affected IDs and actionable next steps in failures;
+- return paths and hashes instead of streaming large artifacts through stdout;
+- derive human-readable output from the same result.
+
+The responsibility surface includes:
+
+| Methexis | Librarian |
+| --- | --- |
+| Fast check | Candidate discovery |
+| Review packet | Catalog integrity check |
+| Exact-revision approval record | Relocation plan |
+| Checkpoint activation | |
+| Context resolution | |
+
+Exact command names and final JSON fields remain provisional. Review never
+implies approval. A CLI cannot prove that its caller is human, so approval still
+requires explicit human authorization in the repository review flow.
+
+The current agent path uses versioned JSON request files, conventionally under
+`.local-exclude/methexis/requests/`. It writes tracked Projection and approval
+proposals, and content-addressed review packets under
+`.local-exclude/methexis/reviews/`. Requests and local packets are
+non-authoritative and MAY be discarded after their paths and hashes are
+returned. A future database MAY retain request history for audit or evaluation,
+but remains a reconstructible index rather than authority.
+
+The Pilot MUST be dogfooded during real Codex Surface work. Interface elements
+that do not improve safe agent completion SHOULD be removed or reshaped from
+evidence rather than preserved for compatibility.

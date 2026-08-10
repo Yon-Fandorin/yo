@@ -1,0 +1,27 @@
+schema: methexis.source/v1alpha1
+id: methexis.pilot-model.delivery-sequence
+revision: sha256:e9b537956e396c37421a5a51372923bb4cda456588425fc81e2bb6e8e43da3ff
+payload:
+  kind: decision
+  content: |-
+    The proposed implementation sequence is:
+    
+    ```text
+    S1 knowledge-foundation
+       |
+       +-- S2a approval-projection --> S2b checkpoint-proposal --> S2c source-validation --+
+       |                                                                                   |
+       +-- S3 librarian-discovery ---------------------------------------------------------+--> S4 context-resolution
+                                                                                                    |
+                                                                                              S5 surface-dogfood
+    ```
+    
+    S2a and S3 may run in parallel after S1. S2b depends on S2a; S2c owns Source
+    freshness and is the only stage that may open active eligibility. S4 is the
+    explicit join of S2c and S3. S5 expands the Surface corpus to roughly 20–50
+    units and runs the 8–12 task evaluation.
+    
+    Every Slice must provide one end-to-end agent path, versioned structured
+    output, success and failure fixtures, owner decision references, tests, and
+    inspectable example output. The Wave MUST NOT redesign the root Cargo
+    workspace, introduce database authority, or generalize before evaluation.

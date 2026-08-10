@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: librarian.discovery.advisory-boundary
+revision: sha256:18c1675f3c19be11b3f83d299c05957f1bf5ff445ac57c7f28df52342206968e
+reviewer: librarian
+reviewed_at: 2026-08-09T16:53:12Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:7c67cd6db2377c609dbe75b22491ec30f84f9d517b7fc2505f138bf2cf513748
+request_hash: sha256:298977b8cb1d3101a157d585b01d04d816584d787c0dd5826601b216a243f997

@@ -1,0 +1,34 @@
+schema: methexis.source/v1alpha1
+id: methexis.context-model.bundle-packing
+revision: sha256:8b4ead11cfc4eb8b310fc09dadf28c6f32dc320289fdb80c70b07006df16c01f
+payload:
+  kind: decision
+  content: |-
+    Selection operates on atomic semantic bundles. A root or candidate and its full
+    transitive `depends_on` and `constrained_by` closure are either included
+    together or not included. Shared required units are included and charged once.
+    A blocked or unaffordable required-root bundle fails the build. A blocked or
+    unaffordable optional-candidate bundle is omitted as a whole with a structured
+    manifest reason.
+    
+    Packing uses deterministic greedy order. Required-root bundles are admitted
+    first. Optional candidates are then considered in the validated Librarian
+    order; a bundle is included when its marginal token cost fits, otherwise it is
+    omitted and later candidates are still considered. The Pilot does not use
+    score-per-token optimization, knapsack selection, an LLM reranker, or silent
+    body truncation.
+    
+    The request names a supported versioned tokenizer profile and a maximum token
+    budget. The resolver counts the actual tokens of every byte-bearing element in
+    the final agent payload, including its preamble, stable IDs, headings, bodies,
+    and emitted relation text. It MUST NOT substitute character or byte estimates.
+    An unsupported profile is a structured failure. Tokenizer identity and version
+    are lineage inputs and change the BuildId. The first implementation supports
+    one profile and pins `o200k_base/v1` to `tiktoken-rs` 0.12.0.
+    
+    Applicable existing validation evidence is recorded and attached when the
+    corpus provides it. In the first compiler profile it appears only in the
+    manifest and consumes no agent-payload tokens. Context resolution does not
+    execute validation commands, invent missing evidence, or describe a
+    `validated_by` reference as an executed result. Evidence execution and
+    collection are a later capability.

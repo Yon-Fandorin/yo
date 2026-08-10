@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.pilot.delivery-sequence
+revision: sha256:385949e6944588af940fb884b8f2ee12b218c78407f70430265b597d7c8c6a3a
+reviewer: methexis
+reviewed_at: 2026-08-09T16:53:17Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:e1e262ab7cfcec37985d9791186f3bfc90a666a1aca905ea0e94ef31b3fb26c4
+request_hash: sha256:743915482db1b561a3960ad6dbba35d05f99215e37ddd7e0412e0e4aab558d30

@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.context.build-reuse
+revision: sha256:6f36c8f68142907af9849cdcae85f3e96351d1df9eac3d0019b4c234d2e88184
+reviewer: methexis
+reviewed_at: 2026-08-09T17:08:05Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:ecc2cea7e77f57a01cec055c57f8e056343e8794c0b88ba0bee26b6f628a851b
+request_hash: sha256:e8c8a2f4e2eac38fdd294faffe0653e39957b3c1f12fe329dc314840c4ef83e5

@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.migration.reversal-transition
+revision: sha256:b2825032abe4453e716744ae2c3f127ab09dadb1b8e1291a383fe0ce64819667
+reviewer: methexis
+reviewed_at: 2026-08-09T17:08:50Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:64f1e218f7d1714b32ed5595ad720da53c09cbb48afa11a3309438c74b62b6c7
+request_hash: sha256:a665d4cb28a8ac4cfefae3ec44cc8671eb4fe9004022d1a5e9c1da669e8efa97

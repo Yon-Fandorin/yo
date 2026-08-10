@@ -1,0 +1,31 @@
+---
+schema: methexis.knowledge/v1alpha1
+id: methexis.graduation.repository-boundary
+kind: rule
+owner: methexis
+sources:
+  - id: methexis.graduation-model.repository-boundary
+    revision: sha256:d5bf10ebbdd2157b5fe0d5fd242e4a662e9db20eb3ab28afcaff67a7c7f887cd
+---
+# Repository graduation boundary
+
+## Statement
+
+Librarian graduation requires the same contract to work for both Surface and
+the SOT operating-procedure corpus, no `yo`-specific public types, identity
+preservation across relocation, no authority mutation through search,
+transferred contract tests, and a passing `yo` Pilot against the final
+Librarian.
+
+Methexis repository graduation requires:
+
+- the deterministic suite and A/B/C Pilot evaluation pass in `yo`;
+- its public contract contains no TUI- or `yo`-specific types;
+- contract, fixture, and failure tests transfer to the standalone repository;
+- `yo` passes the same evaluation while consuming standalone Methexis;
+- the in-repository implementation shrinks to a thin adapter.
+
+Repository extraction MAY happen after stable `yo` Pilot evidence when the tool
+needs an independent release lifecycle. Until a second real product consumer
+exists, the standalone project MUST NOT generalize beyond the contract proven
+by `yo`.

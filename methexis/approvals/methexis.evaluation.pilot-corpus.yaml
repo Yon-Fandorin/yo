@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.evaluation.pilot-corpus
+revision: sha256:eccf1bea10a74c2682b4d763176287c989ffc4ba396d2af576e4d722ac2ddc9a
+reviewer: methexis
+reviewed_at: 2026-08-09T16:53:14Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:1a9d81e5920af4a277dc2a4597104d5a8e2336d8be7e44b766502280fa9cecb6
+request_hash: sha256:4fcf6279b88c086313e1951a5592e33e26f5203f57a057a64b853c639f10e423

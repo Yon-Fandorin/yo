@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.architecture.process-boundaries
+revision: sha256:76c8d04164727c7a68e3a981d351f795bb3fb7c4b205c13d5fdedd594ddbbe9e
+reviewer: methexis
+reviewed_at: 2026-08-09T16:53:12Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:3ccaf2e23a247cef135e178e25a31d27f296711742f134910be11a723b79b120
+request_hash: sha256:3c6913e5d1f8cabc02efacaa271372b9ce7d6c9ce05ce0449793267990bd3f12

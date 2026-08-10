@@ -5,7 +5,7 @@ kind: definition
 owner: methexis
 sources:
   - id: methexis.source-model.kind-vocabulary
-    revision: sha256:b34736641a50ef1d2e851b828e732e79d5afe353bcde18f519eefbb24b23dbd8
+    revision: sha256:7855ca492cc3d92200038aa913860fc0a86dd64d725819b991a3b4495bb3040a
 relations:
   depends_on:
     - methexis.knowledge.unit
@@ -31,3 +31,12 @@ reference with a content hash. External freshness MUST be declared as
 immutable, mutable, or attested. Conversation and External Sources MUST remain
 ineligible until a verifier for the corresponding kind and freshness mode
 exists.
+
+The canonical English body is agent-generated and begins as Draft. When Korean
+user input is material provenance, a reviewer sees an authorized Source excerpt
+and a generated Korean review projection. Full transcripts MUST NOT be retained
+by default. Tracked conversation Sources contain only a minimal relevant
+excerpt, redact sensitive content, and require explicit human authorization.
+Sensitive provenance MAY remain outside Git behind an opaque reference and
+content hash. English efficiency is a measured Pilot hypothesis, not a
+permanent product assumption.

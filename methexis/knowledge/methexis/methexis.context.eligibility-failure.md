@@ -1,0 +1,27 @@
+---
+schema: methexis.knowledge/v1alpha1
+id: methexis.context.eligibility-failure
+kind: rule
+owner: methexis
+sources:
+  - id: methexis.context-model.eligibility-failure
+    revision: sha256:87aea7f60375859ff5dc240c018c68a98e0ca8539c9f048e8dd84c95ba4f08a2
+relations:
+  depends_on:
+    - methexis.context.source-freshness
+---
+# Context eligibility and selection failure
+
+## Statement
+
+A Source, approval, or evidence freshness mismatch degrades the Checkpoint and
+fails the affected required dependency closure before context is returned.
+Optional affected knowledge is omitted with a structured reason. Local
+ContextBuild corruption or a determinism collision fails storage verification
+but does not alter Checkpoint eligibility. A resolver MUST NOT fall back to an
+older approved revision. A new review, evidence run, and activation restore
+eligibility.
+
+Missing, blocked, or unaffordable required knowledge MUST fail the build.
+Required bodies MUST NOT be silently truncated. Optional knowledge MAY be
+omitted only when the manifest records the omission and reason.

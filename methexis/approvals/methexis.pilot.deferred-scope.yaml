@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.pilot.deferred-scope
+revision: sha256:7144358fde967daf65084d109013abb4902382187591d7e59d37a0a49fd9c362
+reviewer: methexis
+reviewed_at: 2026-08-09T16:53:16Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:39251e34aeffeedda36dfeccb1ebc284631ffcd229f3293aa4b3afb321fcab23
+request_hash: sha256:eb515ccd1f2f79a0f6da3c950d32ed2f5404e7515e33ffe14c9a5b950dd487fa

@@ -1,0 +1,25 @@
+---
+schema: methexis.knowledge/v1alpha1
+id: methexis.context.build-publication
+kind: rule
+owner: methexis
+sources:
+  - id: methexis.context-model.build-publication
+    revision: sha256:6d1a3b54a4fa6b4254b13516a944da2e9309e94a86056da166b78a6d080f327f
+relations:
+  depends_on:
+    - methexis.context.build-identity
+---
+# Immutable ContextBuild publication
+
+## Statement
+
+Artifact publication is atomic create-if-absent, never replacement. The
+publisher builds in a temporary sibling and installs it with a no-clobber
+primitive. If the BuildId destination already exists, it verifies the manifest
+and every artifact hash and reuses the exact match. Existing-build verification
+rejects symlinked build or artifact paths, resolves them relative to retained
+directory handles, and retains those handles through verification and result
+construction. A mismatch is a determinism or corruption collision: quarantine
+the new temporary output, keep the existing artifact unchanged, and fail.
+Partial output is never eligible.

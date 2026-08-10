@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.workflow.self-hosting-boundary
+revision: sha256:1c66fe9ee7a7df7ba5d5125b66a72a6aee742d834161dabba2389217de92094b
+reviewer: methexis
+reviewed_at: 2026-08-09T16:53:20Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:7d58b0229b5bab78c0b25e47377755806b82908e89f256dc933dad509ebbe6ec
+request_hash: sha256:87e092736a696b81611d557da97b5cca5fa2ed5eea3da99b5db481e60359ea90

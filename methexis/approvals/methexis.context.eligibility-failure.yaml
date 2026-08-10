@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.context.eligibility-failure
+revision: sha256:11cc440f22ff2557139be2abe154a24da78244ee0327502832511606b0c31b3b
+reviewer: methexis
+reviewed_at: 2026-08-09T17:08:06Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:b29d03f55e1220283f6fea8af07421d24f21f61130dee6081948db32cb9c01db
+request_hash: sha256:4d3e71a4820be9cb41f712cf4278dafb73554e7a05d53da80a597c288b0f1044

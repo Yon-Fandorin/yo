@@ -38,6 +38,23 @@ IDs remain stable even if a decision is later replaced. Downstream design,
 Slice contracts, tests, and evidence reference these IDs instead of copying
 their rules.
 
+## Complete-migration transition
+
+The remaining scopes transfer only through the exact atomic transition owned
+by
+[`methexis.migration.complete-transition`](../../methexis/knowledge/methexis/methexis.migration.complete-transition.md).
+Its required graph includes the persistent scope registry and reversal rule:
+
+- [`methexis.migration.scope-preservation`](../../methexis/knowledge/methexis/methexis.migration.scope-preservation.md)
+- [`methexis.migration.reversal-transition`](../../methexis/knowledge/methexis/methexis.migration.reversal-transition.md)
+
+Until an exact approved revision of the complete-transition unit and its full
+required closure become trusted together, this document remains the sole
+authority for every scope not already delegated to an active KnowledgeUnit.
+Partial selection transfers no remaining scope. Once that transition becomes
+trusted, the closure's scope-owner KnowledgeUnits become the sole authority and
+this document becomes a non-authoritative routing Projection.
+
 ## SOT-001: Pilot and product boundary
 
 `tools/methexis` MUST begin as an internal `yo` Pilot. Its first job is to

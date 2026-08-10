@@ -1,0 +1,33 @@
+---
+schema: methexis.knowledge/v1alpha1
+id: methexis.context.candidate-input
+kind: rule
+owner: methexis
+sources:
+  - id: methexis.context-model.candidate-input
+    revision: sha256:31d08e82f99038e29a64b51a3e52b5b4e7a59b04ff28eb76b62357f5a18cb5aa
+---
+# Candidate input capture and validation
+
+## Statement
+
+A candidate path must remain beneath the opened repository root. Capture
+rejects absolute paths, empty or dot components, `..`, symlinks, non-regular
+files, and files over the compiler profile's declared bound. It opens path
+components relative to retained directory handles, captures one bounded byte
+snapshot, and verifies file identity before and after capture. A concurrent
+change is a structured retryable failure with no partial result or automatic
+retry.
+
+Methexis validates the candidate wire contract rather than reimplementing
+Librarian retrieval. Its independent closed decoder validates every envelope,
+identity, compiler, candidate, path, reason, unresolved-anchor, and truncation
+field defined by the versioned candidate-set schema. It rejects unknown fields,
+duplicate candidates or reasons, collection ordering that the schema declares
+canonical, malformed or inconsistent hashes and candidate-set identity, a false
+success marker, a candidate score unequal to the sum of its reason scores, and
+candidate ordering that is not descending score then ascending KnowledgeId.
+Cross-tool golden fixtures pin the complete accepted and rejected wire shapes.
+Methexis does not recompute reason signals or fixed score weights, candidate
+recall, or whether Librarian found the best result; reason scores determine
+advisory order, not authority or eligibility.

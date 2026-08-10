@@ -1,0 +1,26 @@
+---
+schema: methexis.knowledge/v1alpha1
+id: librarian.delivery.storage-graduation
+kind: rule
+owner: librarian
+sources:
+  - id: librarian.delivery-model.storage-graduation
+    revision: sha256:adfb46cddd2ff23b0b66cafa04219646516de2ef704eb2d5d79f532881bde650
+---
+# Librarian storage and graduation boundary
+
+## Statement
+
+The Pilot rebuilds one immutable in-memory catalog from the captured
+working-tree files for each request. It does not introduce a database,
+persistent index, storage trait, or background service before corpus evidence
+justifies one. Any later index remains reconstructible and non-authoritative.
+
+The initial Librarian implementation incubates under `yo/tools/librarian`.
+Validated capabilities and contract tests later graduate to a standalone
+Librarian repository after Surface and SOT operating-procedure dogfooding.
+Contract fixtures transfer before implementation, `yo` retains a thin adapter,
+reference corpus, contract fixtures, and integration evaluation, and the two
+repositories MUST NOT maintain parallel implementations. The destination
+repository and reconciliation with any existing Librarian code are decided from
+that evidence; the Pilot directory is not copied wholesale.

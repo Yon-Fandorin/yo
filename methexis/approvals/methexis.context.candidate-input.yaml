@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: methexis.context.candidate-input
+revision: sha256:e147dc178b577efadfb37290afce95af239e5a7d3c29a0e85bcfc20ea1f926da
+reviewer: methexis
+reviewed_at: 2026-08-09T16:53:13Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:a32dcb05b9f2f945eed6e0287848426cf43d8194551c2709118c23c66706c493
+request_hash: sha256:3770f7b96b2cf98a244838de663e9916808705cf518890992ed422de82260a04

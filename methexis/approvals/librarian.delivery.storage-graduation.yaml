@@ -1,0 +1,9 @@
+schema: methexis.approval/v1alpha1
+knowledge_id: librarian.delivery.storage-graduation
+revision: sha256:8d250a2266020d7150a2d09b88106db21313de99c0615f9e21030fbaf44b6660
+reviewer: librarian
+reviewed_at: 2026-08-09T16:53:11Z
+projection_profile: ko-review/v1alpha1
+projection_compiler: methexis/0.0.0
+projection_hash: sha256:d15eae74c8eeb83b0e35a585150021cda452b956d01fdb15ed1d777374ecacf6
+request_hash: sha256:3f7281363e69dfc6f405b90bc92eb3f1fe9df20eef93f2ebc50916b0f676108f
