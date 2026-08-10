@@ -1,29 +1,33 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.credentials.local-account-store
-revision: sha256:c2b31051123e7f06dade53fbe24f665468445a19385898324c75f692a3bee45e
+revision: sha256:8b8c3351eb1e70c9ec28240366060de2fe8196ee2fc0be585fd3f23d8ee0b086
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:046e554249b018593aa5da74eeece1bc797aeea4074bfca979b58a304780a24a
+request_hash: sha256:746c77eb613479f1e909833b2ab42899e5103bdc635390105b3165d1ce252520
 ---
 # Korean Review Projection
 
 ## Translation
 
-# Provider 범위 로컬 credential 저장소
+# Provider 범위 로컬 자격증명 저장소
 
 ## 규칙
 
-API credential은 일반 Yo 설정과 분리해 저장해야 합니다. 첫 구현은 선택된 Yo `config.yaml` 옆의 전용 `credentials.yaml`을 읽습니다. 버전이 있는 파일 구조는 secret을 먼저 안정적인 `ProviderId`, 다음으로 안정적인 `AccountId` 아래에 둡니다. 이 좌표는 credential만 선택하며 endpoint, Model, connector, API dialect 또는 표시 이름의 routing 정책을 중복 소유하지 않습니다. 서로 다른 Provider는 같은 `AccountId`를 가질 수 있고 독립적으로 해석되어야 하며, 완전히 같은 Provider와 Account 조합이 중복되면 거절해야 합니다.
+API 자격증명은 공개 설정과 분리합니다. 첫 로컬 저장소는 선택된 Yo `config.yaml` 옆의 버전이 있는 `credentials.yaml`이며, 안정적인 ProviderId와 AccountId 순서로 이름공간을 나눕니다. 이 좌표는 비밀값만 선택합니다. 서로 다른 Provider 아래의 같은 AccountId는 서로 독립적이고, 완전히 같은 좌표가 중복되면 실패하며, 기존 ID는 계속 유효합니다.
 
-파일은 no-follow 방식으로 한 번 열어야 합니다. 실제로 열린 handle이 일반 파일인지 확인하고 다른 객체 유형은 모두 거절합니다. 같은 handle에서 현재 사용자 소유권과 group/world 권한 비트 부재를 읽기 전에 확인합니다. 읽기 크기는 제한하며 같은 handle만 사용하고, 캡처 중 identity나 관련 metadata가 바뀌면 거절합니다. 경로 사전 검사나 두 번째 path 기반 open으로 이를 대신할 수 없습니다.
+자격증명 캡처는 유효 바인딩이 외부 자격증명을 요구할 때만 수행합니다. 파일은 no-follow 방식으로 한 번 열고 불변의 정확한 좌표를 검증하며, 자격증명이 없으면 요청 전에 실패합니다. Local Codex처럼 외부 자격증명이 필요 없는 바인딩에는 자격증명 경로가 필요하지 않습니다. 다른 계정으로 fallback하지 않습니다. 열린 handle은 현재 사용자가 소유하고 group 또는 world 권한 비트가 없는 일반 파일이어야 합니다. 읽기는 크기가 제한되고 그 handle만 사용하며, identity나 관련 metadata가 바뀌면 거절합니다.
 
-환경 변수는 API key 출처가 될 수 없습니다. 프로세스는 시작 시 credential 파일을 한 번 읽고 검증한 뒤 정확한 Provider와 Account 조합을 key로 하는 불변 `CredentialStore`를 유지합니다. 시작 assembly는 선택된 effective model binding에서 그 조합을 해석합니다. 정확한 조합이나 credential이 없으면 model 요청 전에 실패하며 다른 Account나 Provider로 fallback하지 않습니다. runtime reload, refresh, account rotation, failover, interactive login, OS keychain 연동은 미룹니다.
+경로가 없으면 예약된 opaque revision token `absent`와 pair가 없는 표준 빈 snapshot으로 봅니다. 저장소 lock 아래에서 `prepare`는 snapshot을 다시 읽고, pair 하나에 대한 동작을 예상 CredentialRevision과 새로 예약한 non-absent 예정 CredentialRevision에 결합합니다. 준비만으로 저장소 byte는 바뀌지 않습니다. 예정 revision은 비밀값이나 파일 byte에서 만들지 않고 독립적으로 생성하며, commit 전에 연결 orchestrator가 durable하게 기록할 수 있습니다. 준비된 mutation은 정확한 expected revision, planned revision, pair, 그리고 `add`·`replace`·`remove` 중 하나에 결합되어 다른 대상으로 바꿀 수 없습니다.
 
-일반 설정과 UI는 Provider/Account ID와 표시 이름을 보여줄 수 있습니다. Connector에는 정확히 선택된 조합의 opaque secret만 전달합니다. Secret type의 `Debug`와 display 출력은 반드시 가려야 합니다. API key는 diagnostics, logs, Session Journal, Request Audit, model binding evidence, command-line arguments, child-process environments에 들어가면 안 됩니다.
+`commit`은 그 준비된 mutation만 받고, `add`나 `replace`인 경우에는 메모리에 남아 있는 secret도 받습니다. 현재 상태가 expected revision 또는 정확한 planned revision이 아니면 거절합니다. planned revision과 의도한 pair 동작이 이미 적용되어 있으면 idempotent success이고, 그 밖의 winner는 conflict입니다. 최초 생성은 경로 부재를 다시 확인하고, 같은 directory에 현재 사용자 소유의 mode `0600` 일반 임시 파일을 배타적으로 만든 뒤 완전한 버전 byte를 durable하게 기록하고, expected revision이 여전히 `absent`일 때만 atomically 게시합니다. 기존 mutation도 정확한 expected revision을 기준으로 같은 bounded complete replacement와 atomic publication을 수행합니다. 확인하지 않은 winner를 덮어쓰지 않으며, 실패 시 이 operation의 임시 파일만 제거합니다.
 
-Credential resolver는 Model Connector가 직접 열지 않고 startup assembly에 주입합니다. 추후 tenant-aware caller는 자신의 tenant scope 안에서 Provider와 Account 조합을 선택할 수 있지만, 첫 구현에는 `TenantId`, tenant field, tenant UI를 추가하지 않습니다.
+성공 후에는 완전한 이전 snapshot 또는 새 snapshot 하나만 남습니다. 정확히 한 pair만 바뀌고 관련 없는 pair는 byte-equivalent하게 유지되며, 이미 정확히 적용된 교체나 삭제는 idempotent합니다. 마지막 pair를 삭제하면 새 non-absent planned revision을 가진 표준 버전 빈 파일을 게시할 수 있지만, 경로가 생성된 적 없거나 현재 없는 경우를 뜻하는 예약값 `absent`로 되돌아가면 안 됩니다.
+
+CredentialRevision은 private opaque CAS이자 복구 receipt입니다. 권한이 제한된 로컬 자격증명 snapshot, secret-safe store API, 그리고 모델 서비스 계약이 소유하는 권한 제한·redacted 연결 operation journal에만 나타날 수 있습니다. 사용자에게 보이는 partial outcome, 일반 diagnostics와 logs, Session Journal, Request Audit, binding evidence, 공개 설정에서는 제외합니다. 저장소 API는 내부적으로 prepare 또는 commit status와 정확한 expected/planned opaque revision만 노출하고 secret byte는 반환하지 않습니다. 바인딩 검증, operation locking, 공개 저장소 순서, command-local config 조합, 저장소 간 복구는 모델 서비스 계약의 책임입니다.
+
+환경 변수와 command-line argument로 key를 공급하지 않습니다. 최초 interactive setup은 controlling TTY의 no-echo channel로 읽으며 non-interactive secret channel은 미룹니다. Secret type은 display와 debug 출력을 가리고, Connector에는 정확한 pair의 opaque secret만 전달합니다. Runtime reload, refresh, failover, keychain 연동은 미룹니다. 주입되는 resolver는 지금 TenantId, tenant field, tenant UI를 추가하지 않으면서도 미래에 tenant가 소유하는 선택 경계를 유지합니다.
 
 ## 이유
 
-Provider 범위 Account 좌표는 `default` 같은 흔한 로컬 Account ID가 다른 Provider의 secret을 선택하는 일을 막습니다. 권한이 제한된 별도 파일은 장기 shell secret을 피하고, 시작 시 한 번 주입하는 해석 방식은 추후 tenant 소유 또는 대체 credential 저장소를 위한 좁은 확장 지점을 유지합니다.
+mutation 전에 독립적으로 생성한 CredentialRevision을 예약하면 write-ahead 복구 기록이 비밀 byte에서 identity를 만들지 않고도 정확한 예정 winner와 관련 없는 변경을 구분할 수 있습니다. 예약된 absent revision은 의도적으로 비어 있는 기존 저장소와 아직 없는 경로를 혼동하지 않으면서 최초 설치 CAS를 닫습니다.
