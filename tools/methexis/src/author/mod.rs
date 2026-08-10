@@ -1,58 +1,28 @@
-//! Revision authoring facade and wire-contract types.
+//! Versioned revision-authoring facade and wire contracts.
 //!
-//! `author-revision` accepts the meaningful inputs for one unit revision (new
-//! Source content, new Knowledge body, new Korean review Markdown) and derives
-//! every CAS value in a single call: SourceRevision, Knowledge source pin and
-//! RevisionId, replacement Projection, and the review packet. It writes
-//! tracked Draft proposals only; approval records are never touched and
-//! nothing is activated. Callers enter through [`AuthorService`].
+//! Exact request versions own their behavior below `v1alpha1/` and
+//! `v1alpha2/`. Shared Source and Knowledge derivation lives in `shared`; a
+//! version module must opt into every additional artifact it publishes.
 
-use std::path::Path;
+use std::{fs, io::Read, path::Path};
 
-use serde::{Deserialize, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
+use serde_json::Value;
 
 use crate::review::OperationFailure;
 
-const AUTHOR_SCHEMA: &str = "methexis.author-revision/v1alpha1";
-const AUTHOR_REQUEST_SCHEMA: &str = "methexis.author-revision-request/v1alpha1";
-
-mod operations;
+const OPERATION: &str = "author-revision";
+const MAX_REQUEST_BYTES: usize = 256 * 1024;
 mod records;
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AuthorRevisionRequest {
-    schema: String,
-    knowledge_id: String,
-    expected_revision: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    source_content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    knowledge_body: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    korean_markdown: Option<String>,
-}
+mod shared;
+mod v1alpha1;
+mod v1alpha2;
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct PacketRef {
-    path: String,
-    hash: String,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub(crate) struct AuthorSuccess {
-    schema: &'static str,
-    ok: bool,
-    operation: &'static str,
-    status: &'static str,
-    authority: &'static str,
-    affected_ids: Vec<String>,
-    revision: String,
-    projection_hash: String,
-    packet: PacketRef,
-    changed_paths: Vec<String>,
-    request_hash: String,
-    next_actions: Vec<String>,
+#[serde(untagged)]
+pub(crate) enum AuthorSuccess {
+    V1Alpha1(v1alpha1::Success),
+    V1Alpha2(v1alpha2::Success),
 }
 
 pub(crate) struct AuthorService<'a> {
@@ -68,6 +38,62 @@ impl<'a> AuthorService<'a> {
         &self,
         request_path: &Path,
     ) -> Result<AuthorSuccess, OperationFailure> {
-        operations::author_revision(self.repository_root, request_path)
+        let bytes = read_request_bytes(request_path)?;
+        let request: Value = decode_request(&bytes)?;
+        match request.get("schema").and_then(Value::as_str) {
+            Some(v1alpha2::REQUEST_SCHEMA) => {
+                v1alpha2::author_revision(self.repository_root, &bytes)
+            },
+            // Every input not explicitly selecting v1alpha2 follows the
+            // original v1alpha1 typed decoder. This preserves its missing,
+            // mistyped, unknown-field, and unsupported-schema diagnostics.
+            _ => v1alpha1::author_revision(self.repository_root, &bytes),
+        }
     }
+}
+
+fn read_request_bytes(path: &Path) -> Result<Vec<u8>, OperationFailure> {
+    let mut file = fs::File::open(path).map_err(|error| {
+        OperationFailure::new(
+            OPERATION,
+            "request_unreadable",
+            error.to_string(),
+            Vec::new(),
+            "provide a readable versioned JSON request file",
+        )
+    })?;
+    let mut bytes = Vec::new();
+    Read::take(&mut file, (MAX_REQUEST_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            OperationFailure::new(
+                OPERATION,
+                "request_unreadable",
+                error.to_string(),
+                Vec::new(),
+                "provide a readable versioned JSON request file",
+            )
+        })?;
+    if bytes.len() > MAX_REQUEST_BYTES {
+        return Err(OperationFailure::new(
+            OPERATION,
+            "request_too_large",
+            format!("request exceeds {MAX_REQUEST_BYTES} bytes"),
+            Vec::new(),
+            "reduce the request to the required fields",
+        ));
+    }
+    Ok(bytes)
+}
+
+fn decode_request<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, OperationFailure> {
+    serde_json::from_slice(bytes).map_err(|error| {
+        OperationFailure::new(
+            OPERATION,
+            "invalid_request",
+            error.to_string(),
+            Vec::new(),
+            "repair the versioned JSON request",
+        )
+    })
 }

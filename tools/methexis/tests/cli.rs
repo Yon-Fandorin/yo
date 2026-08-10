@@ -18,6 +18,7 @@ Methexis SOT Pilot
 
 USAGE:
     methexis [--help | --version]
+    methexis capabilities
     methexis check [--only <class>[,<class>...]]... [--summary] [--unit <id>]
     methexis check --staged-activation
     methexis author-revision <request.json>
@@ -33,6 +34,7 @@ USAGE:
     methexis resolve-context <request.json>
 
 COMMANDS:
+    capabilities      Report complete supported workflow profiles
     check             Validate current SOT integrity or one exact staged activation
     author-revision   Author a derived unit revision as tracked Draft proposals
     project-review    Write a tracked Korean review Projection
@@ -171,6 +173,26 @@ fn version_uses_the_package_version() {
     assert_eq!(
         String::from_utf8(output.stdout).expect("version is UTF-8"),
         format!("methexis {}\n", env!("CARGO_PKG_VERSION")),
+    );
+}
+
+// capability 출력은 부분 구현을 광고하지 않고 현재 완성된 workflow profile만 안정된 JSON으로
+// 알린다.
+#[test]
+fn capabilities_reports_the_complete_semantic_first_profile() {
+    let output = methexis()
+        .arg("capabilities")
+        .output()
+        .expect("run methexis capabilities");
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("capabilities output is JSON");
+    assert_eq!(value["schema"], "methexis.capabilities/v1");
+    assert_eq!(
+        value["capabilities"],
+        serde_json::json!(["semantic-first-ko-on-demand/v1"])
     );
 }
 

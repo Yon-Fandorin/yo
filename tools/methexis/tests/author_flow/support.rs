@@ -81,6 +81,28 @@ pub(super) fn author_request(revision: &str) -> Value {
     })
 }
 
+pub(super) fn semantic_author_request(revision: &str) -> Value {
+    json!({
+        "schema": "methexis.author-revision-request/v1alpha2",
+        "knowledge_id": KNOWLEDGE_ID,
+        "expected_revision": revision,
+        "source_content": "Cells are allocated per measured grapheme cluster.",
+        "knowledge_body": "# Grapheme cell storage\n\n## Statement\n\nTerminal cells store exactly one measured grapheme cluster each.\n\n## Rationale\n\nSplitting clusters across cells corrupts cursor accounting.\n",
+    })
+}
+
+pub(super) fn sha256(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::from("sha256:");
+    for byte in Sha256::digest(bytes) {
+        output.push(char::from(HEX[usize::from(byte >> 4)]));
+        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    output
+}
+
 pub(super) fn run(repository: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_methexis"))
         .current_dir(repository)

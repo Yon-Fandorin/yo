@@ -25,6 +25,7 @@ Methexis SOT Pilot
 
 USAGE:
     methexis [--help | --version]
+    methexis capabilities
     methexis check [--only <class>[,<class>...]]... [--summary] [--unit <id>]
     methexis check --staged-activation
     methexis author-revision <request.json>
@@ -40,6 +41,7 @@ USAGE:
     methexis resolve-context <request.json>
 
 COMMANDS:
+    capabilities      Report complete supported workflow profiles
     check             Validate current SOT integrity or one exact staged activation
     author-revision   Author a derived unit revision as tracked Draft proposals
     project-review    Write a tracked Korean review Projection
@@ -62,6 +64,12 @@ from local develop, then uses current Source observations only to demote it.
 const UNSUPPORTED_COMMAND: &str = "\
 {\"schema\":\"methexis.error/v1alpha1\",\"ok\":false,\"error\":{\"code\":\"unsupported_command\",\"affected_ids\":[],\"next_actions\":[\"methexis --help\"]}}
 ";
+
+#[derive(Serialize)]
+struct Capabilities {
+    schema: &'static str,
+    capabilities: [&'static str; 1],
+}
 
 /// Runs the current Methexis command surface against explicit streams.
 pub fn run(
@@ -91,6 +99,14 @@ pub fn run(
             writeln!(stdout, "methexis {}", env!("CARGO_PKG_VERSION"))?;
             Ok(ExitCode::SUCCESS)
         },
+        [command] if command == OsStr::new("capabilities") => write_json(
+            &mut stdout,
+            &Capabilities {
+                schema: "methexis.capabilities/v1",
+                capabilities: ["semantic-first-ko-on-demand/v1"],
+            },
+            ExitCode::SUCCESS,
+        ),
         [command] if command == OsStr::new("prepare-checkpoint") => {
             run_prepare_checkpoint(&mut stdout, &mut stderr)
         },

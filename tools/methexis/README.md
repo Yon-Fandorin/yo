@@ -21,6 +21,7 @@ pins exact agent payload and manifest bytes. Copy requests to
 revision, hash, reviewer, or review time.
 
 ```text
+methexis capabilities
 methexis author-revision <author-request.json>
 methexis project-review <projection-request.json>
 methexis build-review <review-request.json>
@@ -97,16 +98,20 @@ responsibilities. If any registered tracked manifest is present, the complete
 registered set is required. Without active trusted authority the class is
 `blocked` and the requested check is unsuccessful.
 
-`author-revision` authors one unit revision in a single call. It accepts any
-of new Source content, a new Knowledge body, and new Korean review Markdown,
-then derives and writes the Source revision, the Knowledge source pin and
-derived revision, the replacement Projection, and the review packet. It writes
-tracked Draft proposals only; approval records are never touched, and human
-approval remains a separate explicit step. The first version fails closed for
-units that do not pin exactly one `decision` Source. Writes are
-sequential per-file compare-and-swap operations; a mid-sequence failure
-reports the paths already written, and re-running the same request converges
-the remainder.
+`capabilities` reports complete supported workflow profiles. Callers use
+membership of `semantic-first-ko-on-demand/v1` to select the v1alpha2 authoring
+request; unknown or absent membership keeps the v1alpha1 compatibility path.
+
+`author-revision` v1alpha2 accepts new Source content and/or a canonical
+English Knowledge body and writes only those tracked Draft proposals. It
+rejects Korean Markdown and does not create, copy, or replace a Projection or
+review packet. After repository semantic review clears, `project-review`
+receives the exact revision and Korean Markdown explicitly. The v1alpha1
+compatibility request remains supported: it accepts any of Source, Knowledge, and
+Korean review Markdown and derives the matching Projection and review packet
+in the same call. Neither path touches approval records. Both fail closed for
+units that do not pin exactly one `decision` Source and use sequential
+per-file compare-and-swap publication.
 
 `project-review` writes a generated file under
 `methexis/review-projections/`. `build-review` returns the path and hash of a
@@ -191,9 +196,11 @@ service facades:
 
 ```text
 src/author/
-  mod.rs         AuthorService facade and shared wire-contract types
-  operations.rs  Source, Knowledge, Projection, and packet orchestration
-  records.rs     deterministic Source record and Knowledge unit encoding
+  mod.rs          AuthorService facade and exact-version dispatch
+  shared.rs       shared Source and Knowledge derivation and publication
+  records.rs      deterministic Source record and Knowledge unit encoding
+  v1alpha1/mod.rs v1alpha1 request, response, Projection, and packet flow
+  v1alpha2/mod.rs v1alpha2 request, response, and semantic-only flow
 
 src/review/
   mod.rs         ReviewService and shared wire-contract types

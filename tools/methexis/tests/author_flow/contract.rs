@@ -24,6 +24,18 @@ fn agent_contract_fixtures_are_complete_and_current() {
         serde_json::from_slice(&fs::read(examples.join("success.json")).unwrap()).unwrap();
     assert_eq!(actual, expected);
 
+    let semantic_repository = TempRepository::new();
+    let actual = success_json(run(
+        &semantic_repository.path,
+        &[
+            "author-revision",
+            examples.join("semantic-request.json").to_str().unwrap(),
+        ],
+    ));
+    let expected: Value =
+        serde_json::from_slice(&fs::read(examples.join("semantic-success.json")).unwrap()).unwrap();
+    assert_eq!(actual, expected);
+
     // 성공 예제가 revision을 바꾸므로 실패 예제는 원래 fixture 상태의 저장소에서 실행한다.
     let pristine = TempRepository::new();
     let actual = failure_json(run(
@@ -113,6 +125,89 @@ fn authoring_a_full_revision_writes_every_derived_draft() {
 
     // 파생값을 다시 계산하는 records·relations 검증이 작성 후에도 통과해야 한다.
     assert_eq!(repository.check()["ok"], true);
+}
+
+// v1alpha2 작성은 Source와 영문 Knowledge만 바꾸고 기존 Projection·approval을 그대로 둔다.
+// 그 뒤 명시적 project-review와 build-review가 같은 새 revision의 사람 검토 packet을 만든다.
+#[test]
+fn semantic_first_authoring_defers_projection_until_explicit_review() {
+    let repository = TempRepository::new();
+    let revision = repository.revision();
+    let projection_path = repository
+        .path
+        .join("methexis/review-projections/tui.grapheme-cells.md");
+    let approval_path = repository
+        .path
+        .join("methexis/approvals/tui.grapheme-cells.yaml");
+    let projection_before = fs::read(&projection_path).expect("read projection");
+    let approval_before = fs::read(&approval_path).expect("read approval");
+    let request = repository.request("semantic.json", &semantic_author_request(&revision));
+
+    let authored = success_json(run(
+        &repository.path,
+        &["author-revision", request.to_str().unwrap()],
+    ));
+
+    assert_eq!(authored["schema"], "methexis.author-revision/v1alpha2");
+    assert_eq!(authored["status"], "written");
+    assert_eq!(
+        authored["changed_paths"],
+        json!([
+            "methexis/sources/decision/tui.fixture.yaml",
+            "methexis/knowledge/tui.grapheme-cells.md",
+        ])
+    );
+    assert!(authored.get("projection_hash").is_none());
+    assert!(authored.get("packet").is_none());
+    assert_eq!(fs::read(&projection_path).unwrap(), projection_before);
+    assert_eq!(fs::read(&approval_path).unwrap(), approval_before);
+    assert_eq!(repository.check()["ok"], true);
+
+    let repeated = success_json(run(
+        &repository.path,
+        &["author-revision", request.to_str().unwrap()],
+    ));
+    assert_eq!(repeated["status"], "unchanged");
+    assert_eq!(repeated["revision"], authored["revision"]);
+
+    let projection_request = repository.request(
+        "projection.json",
+        &json!({
+            "schema": "methexis.review-projection-request/v1alpha1",
+            "knowledge_id": KNOWLEDGE_ID,
+            "expected_revision": authored["revision"],
+            "korean_markdown": "터미널 셀은 각각 측정된 하나의 자소 클러스터를 저장합니다.",
+            "replace_projection_hash": sha256(&projection_before),
+        }),
+    );
+    let projected = success_json(run(
+        &repository.path,
+        &["project-review", projection_request.to_str().unwrap()],
+    ));
+    assert_eq!(projected["status"], "written");
+    let projection = fs::read_to_string(&projection_path).unwrap();
+    assert!(projection.contains(authored["revision"].as_str().unwrap()));
+
+    let review_request = repository.request(
+        "review.json",
+        &json!({
+            "schema": "methexis.review-request/v1alpha1",
+            "knowledge_id": KNOWLEDGE_ID,
+            "expected_revision": authored["revision"],
+            "projection_hash": projected["hash"],
+        }),
+    );
+    let review = success_json(run(
+        &repository.path,
+        &["build-review", review_request.to_str().unwrap()],
+    ));
+    assert_eq!(review["status"], "written");
+    assert!(
+        repository
+            .path
+            .join(review["path"].as_str().unwrap())
+            .is_file()
+    );
 }
 
 // 같은 요청을 다시 실행하면 이미 적용된 내용을 감지해 아무 파일도 다시 쓰지 않고

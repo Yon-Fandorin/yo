@@ -1,0 +1,19 @@
+{
+    "schema": "methexis.author-revision/v1alpha2",
+    "ok": true,
+    "operation": "author-revision",
+    "status": "written",
+    "authority": "draft_proposal",
+    "affected_ids": [
+        "tui.grapheme-cells"
+    ],
+    "revision": "sha256:66c52b6fe090b8602c9a3409b58aeef924c32da4a60b01b70635e4c66315c620",
+    "changed_paths": [
+        "methexis/sources/decision/tui.fixture.yaml",
+        "methexis/knowledge/tui.grapheme-cells.md"
+    ],
+    "request_hash": "sha256:7f8df11d5fdc001d53590933b287ba381a989aa334738802646f0036bf9f2c22",
+    "next_actions": [
+        "run methexis check --only records,relations, commit the semantic candidate, and complete repository review before project-review"
+    ]
+}

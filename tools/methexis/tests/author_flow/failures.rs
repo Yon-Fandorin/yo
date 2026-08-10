@@ -44,7 +44,10 @@ fn unknown_knowledge_id_is_rejected() {
     let repository = TempRepository::new();
     let mut request = author_request(&repository.revision());
     request["knowledge_id"] = json!("tui.missing");
+    request["korean_markdown"] = json!("  ");
 
+    // Foundation identity takes precedence over later content validation in
+    // the original v1alpha1 contract.
     assert_failure(
         &author_failure(&repository, &request),
         "unknown_knowledge_id",
@@ -88,6 +91,25 @@ fn a_request_without_any_content_field_is_empty() {
     );
 }
 
+// v1alpha2는 의미 원본만 소유하므로 한국어 Projection 입력을 명시적으로 거부한다.
+#[test]
+fn semantic_first_request_rejects_projection_content() {
+    let repository = TempRepository::new();
+    let request = json!({
+        "schema": "methexis.author-revision-request/v1alpha2",
+        "knowledge_id": KNOWLEDGE_ID,
+        "expected_revision": repository.revision(),
+        "source_content": "A revised decision.",
+        "korean_markdown": "이 필드는 별도 project-review 요청에 속합니다.",
+    });
+
+    assert_failure(
+        &author_failure(&repository, &request),
+        "korean_markdown_forbidden",
+    );
+    assert_eq!(repository.check()["ok"], true);
+}
+
 // 각 내용 필드는 trim 후 비어 있으면 안 된다.
 #[test]
 fn blank_content_fields_fail_individually() {
@@ -108,6 +130,41 @@ fn blank_content_fields_fail_individually() {
     }
 }
 
+// v1alpha1 Source와 한국어 내용이 동시에 비어 있으면 기존 검증 순서대로 Source 오류가 먼저다.
+#[test]
+fn v1alpha1_semantic_validation_precedes_korean_validation() {
+    let repository = TempRepository::new();
+    let request = json!({
+        "schema": "methexis.author-revision-request/v1alpha1",
+        "knowledge_id": KNOWLEDGE_ID,
+        "expected_revision": repository.revision(),
+        "source_content": "  ",
+        "korean_markdown": "  ",
+    });
+
+    assert_failure(
+        &author_failure(&repository, &request),
+        "empty_source_content",
+    );
+}
+
+// 필드 정규화 뒤 단계인 revision 불일치보다 한국어 정규화 오류가 먼저 반환되어야 한다.
+#[test]
+fn v1alpha1_korean_validation_precedes_revision_validation() {
+    let repository = TempRepository::new();
+    let request = json!({
+        "schema": "methexis.author-revision-request/v1alpha1",
+        "knowledge_id": KNOWLEDGE_ID,
+        "expected_revision": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "korean_markdown": "  ",
+    });
+
+    assert_failure(
+        &author_failure(&repository, &request),
+        "empty_korean_markdown",
+    );
+}
+
 // 알 수 없는 필드나 잘못된 schema 버전은 request 계층에서 거부한다.
 #[test]
 fn malformed_requests_fail_before_any_write() {
@@ -120,6 +177,21 @@ fn malformed_requests_fail_before_any_write() {
         &author_failure(&repository, &unknown_field),
         "invalid_request",
     );
+
+    let missing_schema = json!({
+        "knowledge_id": KNOWLEDGE_ID,
+        "expected_revision": revision,
+        "source_content": "A decision.",
+    });
+    let missing_schema = author_failure(&repository, &missing_schema);
+    assert_failure(&missing_schema, "invalid_request");
+    assert!(
+        missing_schema["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing field `schema`")
+    );
+    assert_eq!(missing_schema["error"]["affected_ids"], json!([]));
 
     let mut wrong_schema = author_request(&revision);
     wrong_schema["schema"] = json!("methexis.author-revision-request/v0");
