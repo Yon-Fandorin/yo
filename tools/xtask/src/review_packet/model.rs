@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 
+pub(super) use crate::review_protocol::{
+    Artifact, ArtifactWithTokens, DeliveryProfile, EvidenceRequest, NamedArtifact,
+    NamedSemanticInput, PacketRecord, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
+};
+
 pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-packet-request/v1";
 pub(super) const PLAN_SCHEMA: &str = "yo.slice-review-plan/v1";
 pub(super) const MANIFEST_SCHEMA: &str = "yo.slice-review-manifest/v1";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-packet-result/v1";
 pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-markdown/v1";
-pub(super) const TOKENIZER_PROFILE: &str = "o200k_base/v1";
-pub(super) const TOKENIZER_COMPILER: &str = "tiktoken-rs/0.12.0";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,19 +25,6 @@ pub(super) struct Request {
     pub(super) delivery_profile: String,
     pub(super) tokenizer_profile: String,
     pub(super) max_managed_payload_tokens: usize,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct EvidenceRequest {
-    pub(super) name: String,
-    pub(super) path: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(super) struct Artifact {
-    pub(super) path: String,
-    pub(super) hash: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,23 +97,6 @@ pub(super) struct SemanticInput {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(super) struct NamedSemanticInput {
-    pub(super) name: String,
-    pub(super) path: String,
-    pub(super) hash: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(super) struct DeliveryProfile {
-    pub(super) id: String,
-    pub(super) preamble: String,
-    pub(super) section_prefix: String,
-    pub(super) metadata_suffix: String,
-    pub(super) section_suffix: String,
-    pub(super) payload_suffix: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct Manifest {
     pub(super) schema: String,
     pub(super) review_id: String,
@@ -143,20 +116,6 @@ pub(super) struct ManifestInputs {
     pub(super) diff: Artifact,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(super) struct NamedArtifact {
-    pub(super) name: String,
-    pub(super) artifact: Artifact,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub(super) struct PacketRecord {
-    pub(super) path: String,
-    pub(super) hash: String,
-    pub(super) managed_payload_tokens: usize,
-    pub(super) max_managed_payload_tokens: usize,
-}
-
 #[derive(Debug, Serialize)]
 pub(super) struct ResultRecord {
     pub(super) schema: &'static str,
@@ -169,11 +128,4 @@ pub(super) struct ResultRecord {
     pub(super) packet: ArtifactWithTokens,
     pub(super) manifest: Artifact,
     pub(super) max_managed_payload_tokens: usize,
-}
-
-#[derive(Debug, Serialize)]
-pub(super) struct ArtifactWithTokens {
-    pub(super) path: String,
-    pub(super) hash: String,
-    pub(super) managed_payload_tokens: usize,
 }

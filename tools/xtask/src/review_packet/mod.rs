@@ -13,7 +13,6 @@ use std::{
 };
 
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use self::model::{
     Artifact, ArtifactWithTokens, CheckpointIdentity, ContextManifest, ContextResult,
@@ -21,7 +20,14 @@ use self::model::{
     NamedArtifact, NamedSemanticInput, PLAN_SCHEMA, PacketRecord, REQUEST_SCHEMA, RESULT_SCHEMA,
     Request, ResultRecord, ReviewPlan, SemanticInput, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
 };
-use crate::{bounded_file, git, slice_contract};
+use crate::{
+    bounded_file, git,
+    review_protocol::{
+        Captured, NamedCaptured, artifact, digest, domain_digest, relative, require_commit,
+        resolve_input_path, sorted_unique,
+    },
+    slice_contract,
+};
 
 const REVIEW_ID_DOMAIN: &[u8] = b"yo.slice-review/v1";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -32,19 +38,6 @@ const SECTION_PREFIX: &str = "\n<<<YO-REVIEW-SECTION ";
 const METADATA_SUFFIX: &str = ">>>\n";
 const SECTION_SUFFIX: &str = "\n<<<YO-REVIEW-SECTION-END>>>\n";
 const PAYLOAD_SUFFIX: &str = "\n<<<YO-REVIEW-PAYLOAD-END>>>\n";
-
-#[derive(Clone, Debug)]
-struct Captured {
-    path: String,
-    hash: String,
-    bytes: Vec<u8>,
-}
-
-#[derive(Clone, Debug)]
-struct NamedCaptured {
-    name: String,
-    artifact: Captured,
-}
 
 struct ContextCapture {
     result: ContextResult,
@@ -949,32 +942,11 @@ fn captured(path: String, bytes: Vec<u8>) -> Result<Captured, String> {
     })
 }
 
-fn artifact(input: &Captured) -> Artifact {
-    Artifact {
-        path: input.path.clone(),
-        hash: input.hash.clone(),
-    }
-}
-
 fn semantic_input(input: &Captured) -> SemanticInput {
     SemanticInput {
         path: input.path.clone(),
         hash: input.hash.clone(),
     }
-}
-
-fn sorted_unique(values: &[String], label: &str) -> Result<Vec<String>, String> {
-    let mut sorted = values.to_vec();
-    if sorted.iter().any(|value| value.trim().is_empty()) {
-        return Err(format!("{label} must not be blank"));
-    }
-    sorted.sort();
-    let original = sorted.len();
-    sorted.dedup();
-    if sorted.len() != original {
-        return Err(format!("{label} values must be unique"));
-    }
-    Ok(sorted)
 }
 
 fn require_repository_path(path: &str) -> Result<(), String> {
@@ -990,18 +962,6 @@ fn require_repository_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn require_commit(commit: &str, label: &str) -> Result<(), String> {
-    if commit.len() == 40
-        && commit
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    {
-        Ok(())
-    } else {
-        Err(format!("{label} must be a full lowercase SHA-1 commit ID"))
-    }
-}
-
 fn require_hash(expected: &str, bytes: &[u8], label: &str) -> Result<(), String> {
     let actual = digest(bytes);
     if actual == expected {
@@ -1011,45 +971,6 @@ fn require_hash(expected: &str, bytes: &[u8], label: &str) -> Result<(), String>
             "{label} hash mismatch: expected {expected}, found {actual}"
         ))
     }
-}
-
-fn digest(bytes: &[u8]) -> String {
-    hex_digest(Sha256::digest(bytes).as_slice())
-}
-
-fn domain_digest(domain: &[u8], bytes: &[u8]) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update((domain.len() as u64).to_be_bytes());
-    hasher.update(domain);
-    hasher.update((bytes.len() as u64).to_be_bytes());
-    hasher.update(bytes);
-    hex_digest(hasher.finalize().as_slice())
-}
-
-fn hex_digest(bytes: &[u8]) -> String {
-    format!(
-        "sha256:{}",
-        bytes
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    )
-}
-
-fn resolve_input_path(repository: &Path, value: &str) -> PathBuf {
-    let path = Path::new(value);
-    if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        repository.join(path)
-    }
-}
-
-fn relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
 }
 
 fn trusted_resolve_commit(repository: &Path, reference: &str) -> Result<String, String> {

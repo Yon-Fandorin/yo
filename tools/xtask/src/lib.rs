@@ -5,6 +5,7 @@ mod git;
 mod impact;
 mod review_delta;
 mod review_packet;
+mod review_protocol;
 mod slice_close;
 mod slice_contract;
 mod slice_worktree;
