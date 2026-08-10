@@ -1,10 +1,73 @@
 use std::ffi::OsString;
 
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use yo_tui::{GlyphProfile, PresentationMode};
 
-use super::AppError;
+#[derive(Clone, Debug, Eq, Parser, PartialEq)]
+#[command(
+    name = "yo",
+    version,
+    about = "Agentic coding interface",
+    args_conflicts_with_subcommands = true,
+    disable_help_subcommand = true
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<CliCommand>,
 
-const USAGE: &str = "yo [--resume SESSION_ID | --continue] [--model MODEL_REFERENCE] [--inline | --fullscreen] [--ascii]\n       yo session [--all] [--details]\n       yo session SESSION_ID [--view chat|transcript|request] [--ascii]";
+    /// Render inside the current terminal screen.
+    #[arg(long, conflicts_with = "fullscreen")]
+    inline: bool,
+
+    /// Take over the terminal screen while the session is active.
+    #[arg(long, conflicts_with = "inline")]
+    fullscreen: bool,
+
+    /// Use ASCII characters instead of rich terminal glyphs.
+    #[arg(long)]
+    ascii: bool,
+
+    /// Resume a Session by its ID.
+    #[arg(long, value_name = "SESSION_ID", conflicts_with = "continue_session")]
+    resume: Option<yo_core::SessionId>,
+
+    /// Continue the most recent Session in the current workspace.
+    #[arg(long = "continue", conflicts_with = "resume")]
+    continue_session: bool,
+
+    /// Select a startup model, such as host:codex or provider:account:model.
+    #[arg(long, value_name = "MODEL_REFERENCE", allow_hyphen_values = true)]
+    model: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
+enum CliCommand {
+    /// List stored Sessions or inspect one Session.
+    Session(SessionArguments),
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+struct SessionArguments {
+    /// Session to inspect.
+    #[arg(value_name = "SESSION_ID", conflicts_with_all = ["all", "details"])]
+    session_id: Option<yo_core::SessionId>,
+
+    /// Include Sessions outside the current workspace.
+    #[arg(long, conflicts_with = "session_id")]
+    all: bool,
+
+    /// Include stored metadata in the Session list.
+    #[arg(long, conflicts_with = "session_id")]
+    details: bool,
+
+    /// Select the stored Session projection.
+    #[arg(long, value_enum, value_name = "VIEW", requires = "session_id")]
+    view: Option<SessionView>,
+
+    /// Use ASCII characters instead of rich terminal glyphs.
+    #[arg(long, requires = "session_id")]
+    ascii: bool,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LiveOptions {
@@ -28,7 +91,7 @@ pub(crate) enum Command {
     Session(SessionCommand),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub(crate) enum SessionView {
     Chat,
     Transcript,
@@ -44,169 +107,41 @@ pub(crate) struct SessionCommand {
     pub(crate) glyph_profile: GlyphProfile,
 }
 
-pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Command, AppError> {
-    let mut arguments = arguments.into_iter().peekable();
-    if arguments
-        .peek()
-        .is_some_and(|argument| argument.as_os_str() == "session")
-    {
-        arguments.next();
-        parse_session(arguments).map(Command::Session)
+pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Command, clap::Error> {
+    let cli = Cli::try_parse_from(std::iter::once(OsString::from("yo")).chain(arguments))?;
+
+    match cli.command {
+        Some(CliCommand::Session(arguments)) => Ok(Command::Session(SessionCommand {
+            session_id: arguments.session_id,
+            all: arguments.all,
+            details: arguments.details,
+            view: arguments.view.unwrap_or(SessionView::Chat),
+            glyph_profile: glyph_profile(arguments.ascii),
+        })),
+        None => Ok(Command::Live(LiveOptions {
+            mode: match (cli.inline, cli.fullscreen) {
+                (false, true) => PresentationMode::Fullscreen,
+                (_, false) => PresentationMode::Inline,
+                (true, true) => unreachable!("clap rejects conflicting presentation modes"),
+            },
+            glyph_profile: glyph_profile(cli.ascii),
+            selection: match (cli.resume, cli.continue_session) {
+                (Some(session_id), false) => LiveSelection::Resume(session_id),
+                (None, true) => LiveSelection::Continue,
+                (None, false) => LiveSelection::New,
+                (Some(_), true) => unreachable!("clap rejects conflicting continuation options"),
+            },
+            model: cli.model,
+        })),
+    }
+}
+
+fn glyph_profile(ascii: bool) -> GlyphProfile {
+    if ascii {
+        GlyphProfile::Ascii
     } else {
-        parse_live(arguments).map(Command::Live)
+        GlyphProfile::Rich
     }
-}
-
-fn parse_live(arguments: impl IntoIterator<Item = OsString>) -> Result<LiveOptions, AppError> {
-    let mut mode = None;
-    let mut glyph_profile = None;
-    let mut selection = None;
-    let mut model = None;
-    let mut arguments = arguments.into_iter();
-    while let Some(argument) = arguments.next() {
-        let selected_mode = match argument.as_os_str() {
-            value if value == "--inline" => Some(PresentationMode::Inline),
-            value if value == "--fullscreen" => Some(PresentationMode::Fullscreen),
-            value if value == "--ascii" => {
-                set_once(&mut glyph_profile, GlyphProfile::Ascii, "--ascii")?;
-                None
-            },
-            value if value == "--continue" => {
-                set_once(&mut selection, LiveSelection::Continue, "--continue")?;
-                None
-            },
-            value if value == "--resume" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| usage_error("`--resume` requires a Session ID"))?;
-                let value = value
-                    .to_str()
-                    .ok_or_else(|| usage_error("Session ID is not UTF-8"))?;
-                let session_id = value
-                    .parse()
-                    .map_err(|_| usage_error(format!("invalid Session ID `{value}`")))?;
-                set_once(
-                    &mut selection,
-                    LiveSelection::Resume(session_id),
-                    "--resume",
-                )?;
-                None
-            },
-            value if value == "--model" => {
-                let value = arguments
-                    .next()
-                    .ok_or_else(|| usage_error("`--model` requires a model reference"))?;
-                let value = value
-                    .to_str()
-                    .ok_or_else(|| usage_error("model reference is not UTF-8"))?;
-                set_once(&mut model, value.to_owned(), "--model")?;
-                None
-            },
-            _ => {
-                return Err(usage_error(format!(
-                    "unknown argument `{}`",
-                    argument.to_string_lossy()
-                )));
-            },
-        };
-        if let Some(selected_mode) = selected_mode
-            && mode.replace(selected_mode).is_some()
-        {
-            return Err(usage_error("multiple presentation modes"));
-        }
-    }
-    Ok(LiveOptions {
-        mode: mode.unwrap_or(PresentationMode::Inline),
-        glyph_profile: glyph_profile.unwrap_or(GlyphProfile::Rich),
-        selection: selection.unwrap_or_default(),
-        model,
-    })
-}
-
-fn parse_session(
-    arguments: impl IntoIterator<Item = OsString>,
-) -> Result<SessionCommand, AppError> {
-    let mut session_id = None;
-    let mut all = false;
-    let mut details = false;
-    let mut view = None;
-    let mut glyph_profile = None;
-    let mut arguments = arguments.into_iter();
-    while let Some(argument) = arguments.next() {
-        match argument.as_os_str() {
-            value if value == "--all" => set_flag(&mut all, "--all")?,
-            value if value == "--details" => set_flag(&mut details, "--details")?,
-            value if value == "--ascii" => {
-                set_once(&mut glyph_profile, GlyphProfile::Ascii, "--ascii")?;
-            },
-            value if value == "--view" => {
-                let value = arguments.next().ok_or_else(|| {
-                    usage_error("`--view` requires `chat`, `transcript`, or `request`")
-                })?;
-                let selected = match value.to_str() {
-                    Some("chat") => SessionView::Chat,
-                    Some("transcript") => SessionView::Transcript,
-                    Some("request") => SessionView::Request,
-                    _ => {
-                        return Err(usage_error(
-                            "`--view` requires `chat`, `transcript`, or `request`",
-                        ));
-                    },
-                };
-                set_once(&mut view, selected, "--view")?;
-            },
-            value if value.to_string_lossy().starts_with('-') => {
-                return Err(usage_error(format!(
-                    "unknown argument `{}`",
-                    argument.to_string_lossy()
-                )));
-            },
-            _ => {
-                let value = argument
-                    .to_str()
-                    .ok_or_else(|| usage_error("Session ID is not UTF-8"))?;
-                let parsed = value
-                    .parse()
-                    .map_err(|_| usage_error(format!("invalid Session ID `{value}`")))?;
-                set_once(&mut session_id, parsed, "SESSION_ID")?;
-            },
-        }
-    }
-    if session_id.is_none() && (view.is_some() || glyph_profile.is_some()) {
-        return Err(usage_error("`--view` and `--ascii` require a Session ID"));
-    }
-    if session_id.is_some() && (all || details) {
-        return Err(usage_error(
-            "`--all` and `--details` apply only to Session lists",
-        ));
-    }
-    Ok(SessionCommand {
-        session_id,
-        all,
-        details,
-        view: view.unwrap_or(SessionView::Chat),
-        glyph_profile: glyph_profile.unwrap_or(GlyphProfile::Rich),
-    })
-}
-
-fn set_flag(target: &mut bool, name: &'static str) -> Result<(), AppError> {
-    if std::mem::replace(target, true) {
-        Err(usage_error(format!("duplicate argument `{name}`")))
-    } else {
-        Ok(())
-    }
-}
-
-fn set_once<T>(target: &mut Option<T>, value: T, name: &'static str) -> Result<(), AppError> {
-    if target.replace(value).is_some() {
-        Err(usage_error(format!("duplicate argument `{name}`")))
-    } else {
-        Ok(())
-    }
-}
-
-fn usage_error(message: impl Into<String>) -> AppError {
-    AppError::many([format!("{}; usage: {USAGE}", message.into())])
 }
 
 #[cfg(test)]

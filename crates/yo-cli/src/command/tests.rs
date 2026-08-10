@@ -43,6 +43,17 @@ fn live_model_override_is_explicit_and_single() {
     );
 }
 
+// 하이픈으로 시작하는 model reference도 CLI option으로 재해석하지 않고 Yo의 model
+// resolver에 그대로 전달해, model 유효성 및 실패 의미의 소유권을 제품 경계에 남깁니다.
+#[test]
+fn option_like_model_reference_reaches_the_model_resolver_unchanged() {
+    let Command::Live(options) = parse(["--model".into(), "-vendor-model".into()]).unwrap() else {
+        panic!("--model remains a live startup option");
+    };
+
+    assert_eq!(options.model.as_deref(), Some("-vendor-model"));
+}
+
 // 명시한 UUID 재개와 현재 작업공간의 최근 세션 재개는 새 Session 시작과 구분되고,
 // 동시에 지정하면 어느 쪽도 임의로 우선하지 않는다.
 #[test]
@@ -127,7 +138,7 @@ fn direct_session_accepts_request_without_an_anchor_selector() {
         "5".into(),
     ])
     .unwrap_err();
-    assert!(error.to_string().contains("unknown argument `--at`"));
+    assert!(error.to_string().contains("unexpected argument '--at'"));
 }
 
 // list 전용 `--all`과 direct read UUID를 함께 쓰면 어느 쪽 의미도 임의로 우선하지 않고
@@ -141,5 +152,48 @@ fn list_only_options_are_rejected_for_a_direct_session() {
     ])
     .unwrap_err();
 
-    assert!(error.to_string().contains("apply only to Session lists"));
+    assert!(error.to_string().contains("cannot be used with"));
+}
+
+// `--help`는 실패가 아니라 stdout으로 전달할 성공 제어 흐름이며, 생성된 문서에서 live
+// option과 저장 Session 하위 명령을 한 진입점의 서로 다른 사용 경로로 보여 줍니다.
+#[test]
+fn help_is_successful_generated_command_documentation() {
+    let help = parse(["--help".into()]).unwrap_err();
+
+    assert_eq!(help.kind(), clap::error::ErrorKind::DisplayHelp);
+    assert_eq!(help.exit_code(), 0);
+    assert!(!help.use_stderr());
+    let rendered = help.to_string();
+    assert!(rendered.contains("Usage: yo [OPTIONS]"));
+    assert!(rendered.contains("yo <COMMAND>"));
+    assert!(rendered.contains("session"));
+    assert!(rendered.contains("--model <MODEL_REFERENCE>"));
+}
+
+// `--version`도 도움말과 같은 성공 제어 흐름으로 stdout에 전달되고, Cargo package
+// version을 한 곳에서 가져와 수동 version 문자열과 실행 파일의 불일치를 만들지 않습니다.
+#[test]
+fn version_is_successful_generated_output() {
+    let version = parse(["--version".into()]).unwrap_err();
+
+    assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+    assert_eq!(version.exit_code(), 0);
+    assert!(!version.use_stderr());
+    assert_eq!(
+        version.to_string(),
+        format!("yo {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
+// 사용자가 option 철자를 틀리면 전체 수동 usage를 한 줄로 반복하지 않고, clap이 가장
+// 가까운 실제 option과 짧은 명령별 Usage를 함께 제안해 복구 경로를 직접 보여 줍니다.
+#[test]
+fn misspelled_option_suggests_the_supported_spelling() {
+    let error = parse(["--modle".into(), "host:codex".into()]).unwrap_err();
+    let rendered = error.to_string();
+
+    assert!(rendered.contains("unexpected argument '--modle'"));
+    assert!(rendered.contains("similar argument exists: '--model'"));
+    assert!(rendered.contains("Usage: yo --model <MODEL_REFERENCE>"));
 }

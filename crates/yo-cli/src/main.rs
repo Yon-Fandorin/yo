@@ -25,7 +25,15 @@ mod storage;
 #[cfg(unix)]
 #[cfg(unix)]
 fn main() -> ExitCode {
-    match run() {
+    let command = match command::parse(std::env::args_os().skip(1)) {
+        Ok(command) => command,
+        Err(error) => {
+            let exit_code = u8::try_from(error.exit_code()).unwrap_or(1);
+            let _ = error.print();
+            return ExitCode::from(exit_code);
+        },
+    };
+    match run(command) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             let _ = writeln!(std::io::stderr().lock(), "yo: {error}");
@@ -35,8 +43,7 @@ fn main() -> ExitCode {
 }
 
 #[cfg(unix)]
-fn run() -> Result<(), AppError> {
-    let command = command::parse(std::env::args_os().skip(1))?;
+fn run(command: command::Command) -> Result<(), AppError> {
     let mut options = match command {
         command::Command::Session(command) => {
             let output = session::run(command)?;
