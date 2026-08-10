@@ -12,7 +12,7 @@ use jiff::{Timestamp, fmt::strtime, tz::TimeZone};
 use serde::Deserialize;
 use yo_core::{
     AccountId, EffectiveModelBinding, ModelCatalog, ModelCatalogEntry, ModelContextProfile,
-    ModelId, NormalizedEndpoint, ProviderId,
+    ModelId, ModelSelection, NormalizedEndpoint, ProviderId, StartupTarget,
 };
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
@@ -25,7 +25,7 @@ pub(crate) struct Config {
     frame_rate_limit: yo_tui::FrameRateLimit,
     source_path: PathBuf,
     model_catalog: ModelCatalog,
-    startup_model: Option<StartupModel>,
+    startup_target: Option<StartupTarget>,
 }
 
 impl Default for Config {
@@ -35,7 +35,7 @@ impl Default for Config {
             frame_rate_limit: yo_tui::FrameRateLimit::Fps120,
             source_path: PathBuf::new(),
             model_catalog: ModelCatalog::default(),
-            startup_model: None,
+            startup_target: None,
         }
     }
 }
@@ -53,8 +53,8 @@ impl Config {
         &self.model_catalog
     }
 
-    pub(crate) fn startup_model(&self) -> Option<&StartupModel> {
-        self.startup_model.as_ref()
+    pub(crate) fn startup_target(&self) -> Option<&StartupTarget> {
+        self.startup_target.as_ref()
     }
 
     pub(crate) fn credential_path(&self) -> PathBuf {
@@ -62,27 +62,6 @@ impl Config {
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join("credentials.yaml")
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct StartupModel {
-    provider: ProviderId,
-    account: AccountId,
-    model: ModelId,
-}
-
-impl StartupModel {
-    pub(crate) fn provider(&self) -> &ProviderId {
-        &self.provider
-    }
-
-    pub(crate) fn account(&self) -> &AccountId {
-        &self.account
-    }
-
-    pub(crate) fn model(&self) -> &ModelId {
-        &self.model
     }
 }
 
@@ -260,17 +239,21 @@ struct TuiConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModelConfig {
-    startup: Option<StartupModelConfig>,
+    startup: Option<StartupTargetConfig>,
     #[serde(default)]
     catalog: Vec<ModelEntryConfig>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StartupModelConfig {
-    provider: String,
-    account: String,
-    model: String,
+#[serde(untagged)]
+enum StartupTargetConfig {
+    Host(String),
+    Model {
+        provider: String,
+        account: String,
+        model: String,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -375,10 +358,10 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
         path: path.to_owned(),
         message: error.to_string(),
     })?;
-    let startup_model = decoded
+    let startup_target = decoded
         .model
         .startup
-        .map(|startup| startup_model(path, startup, &model_catalog))
+        .map(|startup| startup_target(path, startup, &model_catalog))
         .transpose()?;
     let config = Config {
         date_format: decoded
@@ -389,7 +372,7 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
         frame_rate_limit,
         source_path: path.to_owned(),
         model_catalog,
-        startup_model,
+        startup_target,
     };
     config.date_formatter().map_err(|error| match error {
         ConfigError::InvalidDateFormat(message) => {
@@ -429,32 +412,52 @@ fn model_entry(path: &Path, entry: ModelEntryConfig) -> Result<ModelCatalogEntry
     .map_err(invalid)
 }
 
-fn startup_model(
+fn startup_target(
     path: &Path,
-    startup: StartupModelConfig,
+    startup: StartupTargetConfig,
     catalog: &ModelCatalog,
-) -> Result<StartupModel, ConfigError> {
-    let startup = StartupModel {
-        provider: ProviderId::new(startup.provider).map_err(|error| ConfigError::InvalidModel {
-            path: path.to_owned(),
-            message: error.to_string(),
-        })?,
-        account: AccountId::new(startup.account).map_err(|error| ConfigError::InvalidModel {
-            path: path.to_owned(),
-            message: error.to_string(),
-        })?,
-        model: ModelId::new(startup.model).map_err(|error| ConfigError::InvalidModel {
-            path: path.to_owned(),
-            message: error.to_string(),
-        })?,
+) -> Result<StartupTarget, ConfigError> {
+    let (provider, account, model) = match startup {
+        StartupTargetConfig::Host(reference) => {
+            return if reference == StartupTarget::HOST_CODEX_REFERENCE {
+                Ok(StartupTarget::HostCodex)
+            } else {
+                Err(ConfigError::InvalidModel {
+                    path: path.to_owned(),
+                    message: format!(
+                        "model.startup host target must be exactly {}",
+                        StartupTarget::HOST_CODEX_REFERENCE
+                    ),
+                })
+            };
+        },
+        StartupTargetConfig::Model {
+            provider,
+            account,
+            model,
+        } => (provider, account, model),
     };
+    let startup = ModelSelection::new(
+        ProviderId::new(provider).map_err(|error| ConfigError::InvalidModel {
+            path: path.to_owned(),
+            message: error.to_string(),
+        })?,
+        AccountId::new(account).map_err(|error| ConfigError::InvalidModel {
+            path: path.to_owned(),
+            message: error.to_string(),
+        })?,
+        ModelId::new(model).map_err(|error| ConfigError::InvalidModel {
+            path: path.to_owned(),
+            message: error.to_string(),
+        })?,
+    );
     catalog
-        .resolve_model(&startup.provider, &startup.account, &startup.model)
+        .resolve_model(startup.provider(), startup.account(), startup.model())
         .map_err(|error| ConfigError::InvalidModel {
             path: path.to_owned(),
             message: format!("model.startup does not name one configured entry: {error}"),
         })?;
-    Ok(startup)
+    Ok(StartupTarget::Model(startup))
 }
 
 fn config_path() -> Result<PathBuf, ConfigError> {

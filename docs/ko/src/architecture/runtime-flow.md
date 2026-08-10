@@ -79,20 +79,25 @@ contract 값이며 현재 이를 선택하는 backend는 없다.
 
 ### 모델 선택과 교체
 
-startup은 optional `--model MODEL_REFERENCE` 하나를 받는다. 허용하는 표기는 `Model`,
-`Provider::Model`, `Provider:Account:Model`이다. separator 우선순위로 파싱하지 않고
-설정된 완전한 좌표에서 가능한 표기를 만들어 대조하므로 vendor ModelId에는 `:`, `/`,
-`.`이 들어갈 수 있다. bare reference는 현재 Provider와 Account 안에 머문다. startup
-namespace가 없는 새 Codex-default Session에서는 bare reference가 catalog 전체에서 정확히
-하나인 ModelId여야 한다. qualified 두 형식은 각각 정확한 Provider와 Model에 해당하는
-Account가 하나이거나, 정확한 완전 좌표 하나여야 한다. 없거나 모호하면 안정적으로
-정렬한 완전 좌표와 함께 명시적으로 실패한다.
+startup은 optional `--model TARGET_REFERENCE` 하나를 받는다. 정확한 `host:codex`는
+Local Codex HostTarget을 선택한다. ModelTarget 표기는 `Model`, `Provider::Model`,
+`Provider:Account:Model`이다. Provider와 Account는 `%`를 `%25`로, `:`를 `%3A`로
+encode하고 vendor가 소유하는 Model suffix는 바꾸지 않는다. separator 우선순위로
+파싱하지 않고 설정된 완전한 좌표에서 가능한 표기를 만들어 대조하므로 vendor
+ModelId에는 `:`, `/`, `.`이 들어갈 수 있다. bare model reference는 현재 Provider와
+Account 안에 머물고, namespace가 없으면 catalog 전체에서 정확히 하나인 ModelId여야
+한다. qualified 두 형식은 각각 정확한 Provider와 Model에 해당하는 Account가 하나이거나,
+정확한 완전 좌표 하나여야 한다. 없거나 모호하면 안정적으로 정렬한 canonical 완전
+좌표와 함께 명시적으로 실패한다.
 
-option을 생략하면 `model.startup`을 보존하고 startup binding이 없으면 Codex를 유지한다.
-저장된 Yo-managed Session은 최신 durable binding을 bare namespace로 쓰고, qualified
-reference는 기존 exact-replay replacement transition을 요청할 수 있다. startup 기본값은
-그 namespace를 바꾸지 않는다. Codex resume과 Yo-managed reference의 결합은
-cross-backend handoff가 아직 미뤄져 있으므로 명시적으로 실패한다.
+새 Session에서는 명시적인 invocation target이 operator `model.startup`보다 우선하고,
+option을 생략하면 그 operator target을 보존한다. 둘 다 없으면 Codex를 조용히 선택하지
+않고 Session 생성 전에 정확한 `yo connect`와 `yo --model host:codex` 안내로 실패한다.
+core resolver는 stored preference와 injected policy 계층도 이미 수용하지만, 로컬
+repository와 command 연결은 connection-management Slice에 남아 있다. 저장된
+Yo-managed Session은 최신 durable binding을 bare namespace로 쓰고 startup 기본값은 그
+namespace를 바꾸지 않는다. 정확한 `host:codex`는 Codex resume을 확인하며, 서로 다른
+cross-backend target은 handoff가 아직 미뤄져 있으므로 명시적으로 실패한다.
 
 Yo-managed TUI가 idle일 때 `/model`은 Provider, Account, Model 순서로 정렬한 항목을
 범용 selection panel에 연다. label에는 optional display name을 쓰지만 각 행의
@@ -487,9 +492,12 @@ model:
 
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
-한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. 설정
-파일이 없으면 Codex backend와 built-in Session/TUI 기본값을 유지한다. 위 YAML은
-암묵적 모델 기본값이 아니라 운영자가 소유하는 native 모델 예시다. 파일을 읽을 수
+한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. operator
+`model.startup`은 정확한 scalar `host:codex` 또는 catalog entry 하나를 가리키는
+`provider`, `account`, `model` mapping을 받는다. 설정 파일이 없으면 built-in
+Session/TUI 설정은 유지하지만 startup target은 제공하지 않으므로, live startup은
+Codex를 조용히 선택하지 않고 setup 안내를 표시한다. 위 YAML은 암묵적 모델 기본값이
+아니라 운영자가 소유하는 native 모델 예시다. 파일을 읽을 수
 없거나 version/field/크기/date
 format/frame rate가 잘못되면 조용히 기본값으로 대체하지 않고
 명시적으로 실패한다. reader는 nonblocking descriptor 하나를 열어 regular file인지

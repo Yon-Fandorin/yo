@@ -82,21 +82,26 @@ and no current backend selects it.
 
 ### Model selection and replacement
 
-Startup accepts one optional `--model MODEL_REFERENCE`. The admitted spellings
-are `Model`, `Provider::Model`, and `Provider:Account:Model`; matching is derived
-from configured complete coordinates rather than separator precedence, so
-vendor ModelIds may contain `:`, `/`, or `.`. A bare reference stays inside the
-current Provider and Account. When a new Codex-default Session has no startup
-namespace, a bare reference instead requires one globally unique exact ModelId.
-The two qualified forms require respectively one exact Provider-and-Model
-account match or one exact complete coordinate. Absence and ambiguity fail with
-stable, sorted complete coordinates.
+Startup accepts one optional `--model TARGET_REFERENCE`. Exact `host:codex`
+selects the Local Codex HostTarget. ModelTargets use `Model`, `Provider::Model`,
+or `Provider:Account:Model`; Provider and Account encode `%` as `%25` and `:` as
+`%3A`, while the vendor-owned Model suffix remains unchanged. Matching is
+derived from configured complete coordinates rather than separator precedence,
+so vendor ModelIds may contain `:`, `/`, or `.`. A bare model reference stays
+inside the current Provider and Account, or requires one globally unique exact
+ModelId when no namespace exists. The two qualified forms require respectively
+one exact Provider-and-Model account match or one exact complete coordinate.
+Absence and ambiguity fail with stable, sorted canonical complete coordinates.
 
-Omitting the option preserves `model.startup`, or Codex when no startup binding
-exists. A resumed Yo-managed Session uses its newest durable binding as the bare
-namespace; qualified references may request the existing exact-replay
-replacement transition, and startup defaults never replace that namespace. A
-Codex resume combined with a Yo-managed reference fails explicitly because
+For a new Session, an explicit invocation target overrides operator
+`model.startup`; omitting the option preserves that operator target. When both
+are absent, startup fails before Session creation with exact `yo connect` and
+`yo --model host:codex` guidance instead of silently choosing Codex. The core
+resolver already admits the stored-preference and injected-policy layers, while
+their local repository and command wiring remain in the connection-management
+Slice. A resumed Yo-managed Session uses its newest durable binding as the bare
+namespace; startup defaults never replace it. Exact `host:codex` confirms a
+Codex resume, while a different cross-backend target fails explicitly because
 cross-backend handoff remains deferred.
 
 While a Yo-managed TUI is idle, `/model` opens the generic selection panel with
@@ -514,9 +519,12 @@ model:
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
 in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
 `120`; live startup reads it once and applies it to retained TUI generations.
-Runtime reload is not supported. Missing configuration keeps the Codex backend
-and built-in Session/TUI defaults; the YAML above is an operator-owned native
-model example rather than the implicit model default.
+Runtime reload is not supported. Operator `model.startup` accepts either exact
+scalar `host:codex` or a `provider`, `account`, and `model` mapping that names
+one catalog entry. Missing configuration retains built-in Session/TUI settings
+but supplies no startup target, so live startup gives setup guidance instead of
+silently selecting Codex. The YAML above is an operator-owned native model
+example rather than an implicit model default.
 Unreadable files, unsupported versions, unknown fields, oversized files,
 invalid date formats, and unsupported frame rates are explicit failures rather than silent
 fallbacks. The reader opens one nonblocking descriptor, requires it to be a

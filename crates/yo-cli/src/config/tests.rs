@@ -56,7 +56,7 @@ fn model_catalog_resolves_the_configured_startup_binding() {
     )
     .unwrap();
 
-    let startup = config.startup_model().unwrap();
+    let startup = config.startup_target().unwrap().model().unwrap();
     let selected = config
         .model_catalog()
         .resolve_model(startup.provider(), startup.account(), startup.model())
@@ -74,6 +74,35 @@ fn model_catalog_resolves_the_configured_startup_binding() {
         config.credential_path(),
         Path::new("/tmp/yo/credentials.yaml")
     );
+}
+
+// operator startup은 model 좌표뿐 아니라 exact HostTarget도 표현해야 Local Codex를
+// implicit fallback이 아닌 명시적인 선택으로 유지할 수 있다.
+#[test]
+fn model_startup_accepts_exact_local_codex_host_target() {
+    let config = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        "version: 1\nmodel:\n  startup: host:codex\n",
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.startup_target(),
+        Some(&yo_core::StartupTarget::HostCodex)
+    );
+}
+
+// 임의 문자열을 host target처럼 받아들이면 새 Host identity를 설정 오타로 만들 수 있어
+// v1 operator 형식은 exact host:codex 외의 scalar를 명시적으로 거절한다.
+#[test]
+fn model_startup_rejects_unknown_host_target() {
+    let error = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        "version: 1\nmodel:\n  startup: host:other\n",
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("must be exactly host:codex"));
 }
 
 // startup ModelId가 같은 Provider·Account catalog에 없으면 다른 계정이나 임의 첫 entry로

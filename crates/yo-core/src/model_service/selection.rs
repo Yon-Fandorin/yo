@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use super::{AccountId, ModelCatalog, ModelId, ModelServiceError, ProviderId};
+use super::{AccountId, ModelCatalog, ModelId, ModelServiceError, ProviderId, StartupTarget};
 
 /// One exact Provider/Account/Model coordinate selected for a Yo-managed binding.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -137,6 +137,21 @@ impl ModelSelectionController {
     }
 
     pub fn resolve_reference(&self, reference: &str) -> Result<ModelSelection, ModelServiceError> {
+        match self.resolve_target_reference(reference)? {
+            StartupTarget::Model(selection) => Ok(selection),
+            StartupTarget::HostCodex => Err(ModelServiceError::new(
+                "host:codex is a HostTarget and is unavailable in a model-only selector",
+            )),
+        }
+    }
+
+    pub fn resolve_target_reference(
+        &self,
+        reference: &str,
+    ) -> Result<StartupTarget, ModelServiceError> {
+        if reference == StartupTarget::HOST_CODEX_REFERENCE {
+            return Ok(StartupTarget::HostCodex);
+        }
         let mut matches = BTreeSet::new();
         for choice in &self.choices {
             let selection = choice.selection();
@@ -144,16 +159,8 @@ impl ModelSelectionController {
                 current.provider() == selection.provider()
                     && current.account() == selection.account()
             });
-            let provider_model_matches = reference
-                .strip_prefix(selection.provider().as_str())
-                .and_then(|suffix| suffix.strip_prefix("::"))
-                .is_some_and(|suffix| suffix == selection.model().as_str());
-            let complete_coordinate_matches = reference
-                .strip_prefix(selection.provider().as_str())
-                .and_then(|suffix| suffix.strip_prefix(':'))
-                .and_then(|suffix| suffix.strip_prefix(selection.account().as_str()))
-                .and_then(|suffix| suffix.strip_prefix(':'))
-                .is_some_and(|suffix| suffix == selection.model().as_str());
+            let provider_model_matches = reference == provider_model_reference(selection);
+            let complete_coordinate_matches = reference == complete_reference(selection);
             if (bare_is_applicable && reference == selection.model().as_str())
                 || provider_model_matches
                 || complete_coordinate_matches
@@ -163,7 +170,9 @@ impl ModelSelectionController {
         }
 
         match matches.len() {
-            1 => self.accept_exact(matches.first().expect("one reference match exists")),
+            1 => self
+                .accept_exact(matches.first().expect("one reference match exists"))
+                .map(StartupTarget::Model),
             0 => Err(reference_error(
                 reference,
                 "is not configured",
@@ -204,6 +213,35 @@ impl ModelSelectionController {
     }
 }
 
+fn encode_coordinate_segment(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '%' => encoded.push_str("%25"),
+            ':' => encoded.push_str("%3A"),
+            _ => encoded.push(character),
+        }
+    }
+    encoded
+}
+
+fn provider_model_reference(selection: &ModelSelection) -> String {
+    format!(
+        "{}::{}",
+        encode_coordinate_segment(selection.provider().as_str()),
+        selection.model()
+    )
+}
+
+fn complete_reference(selection: &ModelSelection) -> String {
+    format!(
+        "{}:{}:{}",
+        encode_coordinate_segment(selection.provider().as_str()),
+        encode_coordinate_segment(selection.account().as_str()),
+        selection.model()
+    )
+}
+
 fn reference_error(
     reference: &str,
     outcome: &str,
@@ -227,12 +265,7 @@ fn reference_error(
         message.push_str("\n- none configured");
     } else {
         for coordinate in coordinates {
-            message.push_str(&format!(
-                "\n- Provider {:?}, Account {:?}, Model {:?}",
-                coordinate.provider().as_str(),
-                coordinate.account().as_str(),
-                coordinate.model().as_str()
-            ));
+            message.push_str(&format!("\n- {}", complete_reference(&coordinate)));
         }
     }
     ModelServiceError::new(message)

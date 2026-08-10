@@ -8,6 +8,7 @@ use yo_core::{
     LocalCredentialStore, ModelCatalogEntry, ModelConnectorLimits, ModelId, ModelSelection,
     ModelSelectionController, ModelTokenCounter, ModelTokenCounterError, NativeModelBackend,
     NativeModelBackendConfig, NativeModelBackendServices, NormalizedEndpoint, ProviderId,
+    StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
 use crate::{AppError, config::Config, local_tools};
@@ -15,7 +16,7 @@ use crate::{AppError, config::Config, local_tools};
 const O200K_PROFILE: &str = "o200k_base/v1";
 const UTF8_BYTES_PROFILE: &str = "utf8-bytes/v1";
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) enum StartupBackend {
     Codex,
     Native {
@@ -24,6 +25,12 @@ pub(crate) enum StartupBackend {
         model: ModelId,
         replace_binding: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DurableBackendKind {
+    Codex,
+    Native,
 }
 
 impl StartupBackend {
@@ -78,32 +85,35 @@ pub(crate) fn resolve(
     if let Some(target) = resume {
         return resolve_resume(config, override_model, target);
     }
-    let startup = config.startup_model().map(|startup| {
-        ModelSelection::new(
-            startup.provider().clone(),
-            startup.account().clone(),
-            startup.model().clone(),
-        )
-    });
+    let startup = config.startup_target().cloned();
     resolve_new_session(config.model_catalog(), startup, override_model)
 }
 
 fn resolve_new_session(
     catalog: &yo_core::ModelCatalog,
-    startup: Option<ModelSelection>,
+    operator: Option<StartupTarget>,
     reference: Option<&str>,
 ) -> Result<StartupBackend, AppError> {
-    let selection = match (startup, reference) {
-        (None, None) => return Ok(StartupBackend::Codex),
-        (Some(selection), None) => selection,
-        (current, Some(reference)) => {
-            resolve_reference(catalog, current, reference, "resolving startup model")?
+    let target = resolve_startup_target(
+        catalog,
+        &StartupPolicy::initial(),
+        StartupSelectionSources {
+            invocation: reference,
+            stored_preference: None,
+            operator_target: operator,
         },
+    )
+    .map_err(|error| AppError::single("resolving startup target", error))?;
+    let Some(target) = target else {
+        return Err(AppError::many([
+            "no startup target is selected; run `yo connect` to configure one, or start Local Codex explicitly with `yo --model host:codex`"
+                .to_owned(),
+        ]));
     };
-    catalog
-        .resolve_model(selection.provider(), selection.account(), selection.model())
-        .map_err(|error| AppError::single("resolving startup model", error))?;
-    Ok(native_selection(selection, false))
+    match target {
+        StartupTarget::HostCodex => Ok(StartupBackend::Codex),
+        StartupTarget::Model(selection) => Ok(native_selection(selection, false)),
+    }
 }
 
 fn resolve_resume(
@@ -111,14 +121,9 @@ fn resolve_resume(
     override_model: Option<&str>,
     target: &BackendResumeTarget,
 ) -> Result<StartupBackend, AppError> {
-    if target.binding().backend_kind() != "yo-managed-model" {
-        if override_model.is_some() {
-            return Err(AppError::many([
-                "a model reference cannot replace a backend-managed Session; cross-backend handoff is not supported"
-                    .to_owned(),
-            ]));
-        }
-        return Ok(StartupBackend::Codex);
+    match classify_durable_backend(target.binding().backend_kind())? {
+        DurableBackendKind::Codex => return resolve_codex_resume(override_model),
+        DurableBackendKind::Native => {},
     }
     let binding_identity = target.binding().binding_identity();
     if binding_identity.schema() != "yo.model-binding/v1" {
@@ -128,6 +133,26 @@ fn resolve_resume(
     }
     let durable_binding = parse_durable_binding(binding_identity.value())?;
     resolve_native_resume(config.model_catalog(), durable_binding, override_model)
+}
+
+fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> {
+    match kind {
+        "codex-app-server" => Ok(DurableBackendKind::Codex),
+        "yo-managed-model" => Ok(DurableBackendKind::Native),
+        other => Err(AppError::many([format!(
+            "unsupported durable backend kind {other:?}; the saved Session can only be opened read-only"
+        )])),
+    }
+}
+
+fn resolve_codex_resume(override_model: Option<&str>) -> Result<StartupBackend, AppError> {
+    match override_model {
+        None | Some(StartupTarget::HOST_CODEX_REFERENCE) => Ok(StartupBackend::Codex),
+        Some(_) => Err(AppError::many([
+            "a different model target cannot replace a Codex Session; cross-backend handoff is not supported"
+                .to_owned(),
+        ])),
+    }
 }
 
 fn resolve_native_resume(
@@ -141,12 +166,20 @@ fn resolve_native_resume(
         durable_binding.model_id().clone(),
     );
     let selection = match reference {
-        Some(reference) => resolve_reference(
-            catalog,
-            Some(durable_selection.clone()),
-            reference,
-            "resolving resumed model",
-        )?,
+        Some(reference) => {
+            match ModelSelectionController::new(catalog.clone(), Some(durable_selection.clone()))
+                .resolve_target_reference(reference)
+                .map_err(|error| AppError::single("resolving resumed model", error))?
+            {
+                StartupTarget::HostCodex => {
+                    return Err(AppError::many([
+                    "Local Codex cannot replace a Yo-managed Session; cross-backend handoff is not supported"
+                        .to_owned(),
+                ]));
+                },
+                StartupTarget::Model(selection) => selection,
+            }
+        },
         None => durable_selection,
     };
     let entry = catalog
@@ -154,17 +187,6 @@ fn resolve_native_resume(
         .map_err(|error| AppError::single("resolving resumed model", error))?;
     let replace_binding = entry.binding() != &durable_binding;
     Ok(native_selection(selection, replace_binding))
-}
-
-fn resolve_reference(
-    catalog: &yo_core::ModelCatalog,
-    current: Option<ModelSelection>,
-    reference: &str,
-    operation: &'static str,
-) -> Result<ModelSelection, AppError> {
-    ModelSelectionController::new(catalog.clone(), current)
-        .resolve_reference(reference)
-        .map_err(|error| AppError::single(operation, error))
 }
 
 fn native_selection(selection: ModelSelection, replace_binding: bool) -> StartupBackend {
@@ -342,17 +364,24 @@ mod tests {
         .unwrap()
     }
 
-    // startup namespace가 없으면 option 생략은 Codex를 유지하지만 globally unique bare
-    // ModelId나 완전한 좌표는 model.startup 없이도 Yo-managed backend를 선택한다.
+    // startup source가 모두 비면 setup guidance로 실패하고, Local Codex도 host target으로
+    // 명시해야 한다. unique bare ModelId와 완전한 좌표는 operator startup 없이 선택한다.
     #[test]
-    fn new_codex_default_session_accepts_unique_or_complete_model_references() {
+    fn new_session_requires_a_target_and_accepts_host_unique_or_complete_references() {
         let catalog = selection_catalog(&[
             ("qwencloud", "default", "qwen3.8-max"),
             ("openrouter", "default", "openrouter/free"),
         ]);
 
+        let missing = resolve_new_session(&catalog, None, None)
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("no startup target is selected"));
+        assert!(missing.contains("yo connect"));
+        assert!(missing.contains("yo --model host:codex"));
+
         assert!(matches!(
-            resolve_new_session(&catalog, None, None).unwrap(),
+            resolve_new_session(&catalog, None, Some("host:codex")).unwrap(),
             StartupBackend::Codex
         ));
         let bare = resolve_new_session(&catalog, None, Some("qwen3.8-max")).unwrap();
@@ -385,14 +414,22 @@ mod tests {
             ModelId::new("same").unwrap(),
         );
 
-        let contextual =
-            resolve_new_session(&catalog, Some(startup.clone()), Some("same")).unwrap();
+        let contextual = resolve_new_session(
+            &catalog,
+            Some(StartupTarget::Model(startup.clone())),
+            Some("same"),
+        )
+        .unwrap();
         assert_eq!(
             contextual.model_selection().unwrap().account().as_str(),
             "team"
         );
-        let qualified =
-            resolve_new_session(&catalog, Some(startup), Some("openrouter::same")).unwrap();
+        let qualified = resolve_new_session(
+            &catalog,
+            Some(StartupTarget::Model(startup)),
+            Some("openrouter::same"),
+        )
+        .unwrap();
         assert_eq!(
             qualified.model_selection().unwrap().provider().as_str(),
             "openrouter"
@@ -403,8 +440,8 @@ mod tests {
             Err(error) => error.to_string(),
         };
         assert!(error.contains("is ambiguous"));
-        assert!(error.contains("Provider \"openrouter\""));
-        assert!(error.contains("Provider \"qwencloud\""));
+        assert!(error.contains("openrouter:default:same"));
+        assert!(error.contains("qwencloud:default:same"));
     }
 
     // option을 생략해 configured startup을 그대로 쓰더라도 catalog에서 제거된 낡은
@@ -418,13 +455,47 @@ mod tests {
             ModelId::new("removed").unwrap(),
         );
 
-        let error = match resolve_new_session(&catalog, Some(stale), None) {
+        let error = match resolve_new_session(&catalog, Some(StartupTarget::Model(stale)), None) {
             Ok(_) => panic!("a stale configured startup must fail closed"),
             Err(error) => error.to_string(),
         };
 
-        assert!(error.contains("resolving startup model"));
+        assert!(error.contains("resolving startup target"));
         assert!(error.contains("Model removed"));
+    }
+
+    // Codex durable binding은 exact host target으로 같은 binding을 확인할 수 있지만 다른
+    // model target은 cross-backend handoff로 해석하지 않는다.
+    #[test]
+    fn codex_resume_accepts_only_absent_or_exact_host_override() {
+        assert!(matches!(
+            resolve_codex_resume(None).unwrap(),
+            StartupBackend::Codex
+        ));
+        assert!(matches!(
+            resolve_codex_resume(Some("host:codex")).unwrap(),
+            StartupBackend::Codex
+        ));
+        assert!(resolve_codex_resume(Some("qwen3.8-max")).is_err());
+    }
+
+    // 저장된 backend kind를 추측해 Codex로 보내면 locator identity를 바꾸므로 알려진 두
+    // runtime kind만 분류하고 다른 값은 read-only guidance와 함께 fail closed 한다.
+    #[test]
+    fn durable_backend_classification_rejects_unknown_kinds() {
+        assert_eq!(
+            classify_durable_backend("codex-app-server").unwrap(),
+            DurableBackendKind::Codex
+        );
+        assert_eq!(
+            classify_durable_backend("yo-managed-model").unwrap(),
+            DurableBackendKind::Native
+        );
+        let error = classify_durable_backend("delegated-provider")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unsupported durable backend kind"));
+        assert!(error.contains("read-only"));
     }
 
     // native resume의 bare form은 durable Provider·Account에 남고 qualified form만 다른

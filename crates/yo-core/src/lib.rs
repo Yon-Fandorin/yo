@@ -65,6 +65,7 @@ pub use model_service::{
     LocalCredentialStore, LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry,
     ModelContextProfile, ModelId, ModelSelection, ModelSelectionChoice, ModelSelectionController,
     ModelServiceError, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint, ProviderId,
+    StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};
