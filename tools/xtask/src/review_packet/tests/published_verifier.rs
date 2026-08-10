@@ -52,3 +52,24 @@ fn canonical_consumer_rejects_profile_and_token_record_drift() {
             .contains("token record")
     );
 }
+
+// published verifier는 producer가 반환한 manifest bytes의 hash를 ContextBuild 재생보다 먼저
+// 확인해 stale continuation이 다른 입력을 읽기 전에 현재 diagnostic을 보존한다.
+#[test]
+fn published_verifier_rejects_manifest_hash_drift_before_replay() {
+    let repository = crate::test_support::TestRepository::new("review-published-hash");
+    let manifest_text = "{\"schema\":\"yo.slice-review-manifest/v1\"}\n";
+    let manifest_bytes = manifest_text.as_bytes();
+    let manifest_path = repository.write("manifest.json", manifest_text);
+    let expected = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+    let error = verify_published(&repository.path, &manifest_path, expected).unwrap_err();
+
+    assert_eq!(
+        error,
+        format!(
+            "published Slice review manifest hash mismatch: expected {expected}, found {}",
+            digest(manifest_bytes)
+        )
+    );
+}

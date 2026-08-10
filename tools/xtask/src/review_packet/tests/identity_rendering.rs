@@ -97,3 +97,42 @@ fn over_budget_payload_fails_without_truncation() {
         "managed payload requires 101 tokens but the budget is 100; no content was truncated"
     );
 }
+
+// 원본 producer가 만드는 canonical plan, packet, manifest의 현재 bytes와 identity를 고정해
+// 공통 protocol로 분리한 뒤에도 caller-visible review payload가 바뀌지 않게 한다.
+#[test]
+fn canonical_original_artifacts_keep_current_bytes_and_identity() {
+    let inputs = sample_inputs("/tmp/validation.json");
+    let plan = build_plan(&inputs);
+    let review_id = domain_digest(
+        REVIEW_ID_DOMAIN,
+        &serde_json::to_vec(&plan).expect("plan serializes"),
+    );
+    let packet = render_packet(&review_id, &plan, &inputs).expect("packet renders");
+    let manifest = build_manifest(
+        review_id.clone(),
+        plan,
+        &inputs,
+        digest(&packet),
+        count_tokens(&packet).expect("tokens count"),
+    );
+    let mut manifest_bytes = serde_json::to_vec_pretty(&manifest).expect("manifest serializes");
+    manifest_bytes.push(b'\n');
+
+    assert_eq!(
+        review_id,
+        "sha256:3c63040c095f58baab0bdb23306766f70756866fdb7b7a41851800f81a609ae1"
+    );
+    assert_eq!(packet.len(), 4721);
+    assert_eq!(
+        digest(&packet),
+        "sha256:776250ee14be0f2c99a6ab7699db1904b8489d2c6516071578a594060776548e"
+    );
+    assert_eq!(manifest_bytes.len(), 3958);
+    assert_eq!(
+        digest(&manifest_bytes),
+        "sha256:b2763762628e854590df5b3ceae4269d55e98c1f81da0aca4c2e35ab7f1e6243"
+    );
+    assert!(packet.starts_with(b"# yo Slice Review Packet\n"));
+    assert!(packet.ends_with(b"\n<<<YO-REVIEW-PAYLOAD-END>>>\n"));
+}

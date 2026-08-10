@@ -89,3 +89,64 @@ fn later_continuation_starts_from_the_previous_replacement() {
     assert_eq!(plan.prior_candidate_commit, commit(3));
     assert_eq!(plan.replacement_candidate_commit, commit(4));
 }
+
+// continuation producer가 만드는 canonical delta packet과 manifest의 현재 bytes와 identity를
+// 고정해 common chain protocol 분리 뒤에도 같은 reviewer-visible payload를 보존한다.
+#[test]
+fn canonical_delta_artifacts_keep_current_bytes_and_identity() {
+    let inputs = Inputs {
+        request: captured("request.json".to_owned(), b"request".to_vec()).unwrap(),
+        prior_manifest: captured("manifest.json".to_owned(), b"prior manifest".to_vec()).unwrap(),
+        prior_packet: captured("packet.md".to_owned(), b"prior packet".to_vec()).unwrap(),
+        prior_findings: prior_findings(&["F1"]),
+        prior: prior(Vec::new()),
+        replacement_candidate: commit(3),
+        delta: captured(
+            "git-delta.patch".to_owned(),
+            b"diff --git a/file b/file\n".to_vec(),
+        )
+        .unwrap(),
+        slice_contract: captured("slice-contract.json".to_owned(), b"slice contract".to_vec())
+            .unwrap(),
+        findings: vec![finding("F1")],
+        reused_validation: Vec::new(),
+        affected_validation: vec![NamedCaptured {
+            name: "focused".to_owned(),
+            artifact: captured("focused.txt".to_owned(), b"focused green\n".to_vec()).unwrap(),
+        }],
+        delivery_profile_bytes: super::super::delivery_profile_bytes(),
+        max_tokens: 10_000,
+    };
+    let plan = build_plan(&inputs);
+    let review_delta_id = domain_digest(
+        REVIEW_DELTA_ID_DOMAIN,
+        &serde_json::to_vec(&plan).expect("delta plan serializes"),
+    );
+    let packet = render_packet(&review_delta_id, &plan, &inputs).expect("delta packet renders");
+    let manifest = build_manifest(
+        review_delta_id.clone(),
+        plan,
+        &inputs,
+        digest(&packet),
+        count_tokens(&packet).expect("tokens count"),
+    );
+    let mut manifest_bytes = serde_json::to_vec_pretty(&manifest).expect("manifest serializes");
+    manifest_bytes.push(b'\n');
+
+    assert_eq!(
+        review_delta_id,
+        "sha256:e9225833892b91c75de244fac9c284b0c11b3caa7a5117773f9b3e75b4a332d7"
+    );
+    assert_eq!(packet.len(), 4708);
+    assert_eq!(
+        digest(&packet),
+        "sha256:da5a8ed3a4b009d86d9212edc3f06e98cf642fee118ee7caa31de980247b8f20"
+    );
+    assert_eq!(manifest_bytes.len(), 3846);
+    assert_eq!(
+        digest(&manifest_bytes),
+        "sha256:e7fcbe71810dbdb3110a4fbcaf0398adde4dffac35d07aee3fe7c505ffc64a20"
+    );
+    assert!(packet.starts_with(b"# yo Slice Finding-Resolution Review Delta\n"));
+    assert!(packet.ends_with(b"\n<<<YO-REVIEW-DELTA-PAYLOAD-END>>>\n"));
+}

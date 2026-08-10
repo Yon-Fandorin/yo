@@ -206,6 +206,18 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
     )
     .unwrap();
     assert_eq!(first.candidate_commit, candidate_b);
+    assert_eq!(first.base_commit, candidate_a);
+    assert_eq!(first.trusted_commit, candidate_a);
+    assert_eq!(first.slice_contract_path, contract_path.to_string_lossy());
+    assert_eq!(first.validation_evidence.len(), 1);
+    assert_eq!(first.validation_evidence[0].name, "baseline");
+    assert!(
+        first.validation_evidence[0]
+            .path
+            .ends_with("evidence-b.txt")
+    );
+    let first_manifest_relative = first.manifest_path.clone();
+    let first_packet_relative = first.packet_path.clone();
 
     repository.write("owned.txt", "candidate c\n");
     repository.git(["add", "owned.txt"]);
@@ -231,9 +243,43 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
     )
     .unwrap();
     assert_eq!(second.candidate_commit, candidate_c);
+    assert_eq!(second.base_commit, candidate_a);
+    assert_eq!(second.trusted_commit, candidate_a);
+    assert_eq!(second.slice_contract_path, contract_path.to_string_lossy());
+    assert_eq!(second.validation_evidence.len(), 1);
+    assert_eq!(second.validation_evidence[0].name, "baseline");
+    assert!(
+        second.validation_evidence[0]
+            .path
+            .ends_with("evidence-c.txt")
+    );
     assert_eq!(
         second.manifest_path,
         relative(&repository.path, &second_manifest)
+    );
+    let second_manifest_value: Manifest =
+        serde_json::from_slice(&std::fs::read(&second_manifest).unwrap()).unwrap();
+    assert_eq!(
+        second_manifest_value.plan.prior_candidate_commit,
+        candidate_b
+    );
+    assert_eq!(
+        second_manifest_value.plan.replacement_candidate_commit,
+        candidate_c
+    );
+    assert_eq!(
+        second_manifest_value.inputs.prior_manifest.path,
+        first_manifest_relative
+    );
+    assert_eq!(
+        second_manifest_value.inputs.prior_packet.path,
+        first_packet_relative
+    );
+    assert_eq!(
+        second_manifest_value.inputs.affected_validation_evidence[0]
+            .artifact
+            .path,
+        second.validation_evidence[0].path
     );
 
     let invalid_inputs = delta_inputs(
