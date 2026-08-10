@@ -272,8 +272,11 @@ With that capability, use this order for a contract Slice:
 5. after semantic review clears, generate the matching Korean Projection once
    on explicit human request and build the exact English-plus-Korean packet;
 6. record exact human approval of the Knowledge revision and Projection hash,
-   then run full `methexis check`; and
-7. integrate, activate, and implement through their separate Slices.
+   stage only the matching Projection and approval follow-through, and run
+   `cargo xtask check methexis-check-for-stage`; and
+7. integrate that proposal, activate it through a separate Slice, run ordinary
+   full `methexis check` against the trusted activation, and implement through
+   another separate Slice.
 
 The Projection and approval-record paths are the only permitted additions after
 semantic review. Source, Knowledge, relations, and unrelated bytes remain
