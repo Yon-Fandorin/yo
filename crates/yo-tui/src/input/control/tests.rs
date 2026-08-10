@@ -91,7 +91,7 @@ fn ctrl_c_clears_nonempty_input() {
     assert_eq!(buffer.cursor_byte_index(), 0);
 }
 
-// 빈 입력에서 1.5초 안에 Ctrl+C를 두 번 누르면 정상 종료를 요청한다.
+// 빈 입력에서 1초 안에 Ctrl+C를 두 번 누르면 정상 종료를 요청한다.
 #[test]
 fn two_empty_ctrl_c_presses_within_the_window_exit() {
     let mut policy = ControlKeyPolicy::new();
@@ -106,7 +106,7 @@ fn two_empty_ctrl_c_presses_within_the_window_exit() {
             key('c', KeyAction::Press),
             false,
             &mut buffer,
-            NOW + Duration::from_millis(1_500)
+            NOW + Duration::from_millis(1_000)
         ),
         ControlEffect::Exit
     );
@@ -124,7 +124,7 @@ fn expired_or_non_monotonic_ctrl_c_rearms_exit() {
             key('c', KeyAction::Press),
             false,
             &mut buffer,
-            NOW + Duration::from_millis(1_501)
+            NOW + Duration::from_millis(1_001)
         ),
         ControlEffect::ExitArmed
     );

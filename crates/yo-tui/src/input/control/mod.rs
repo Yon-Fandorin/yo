@@ -7,7 +7,7 @@ use super::{
     event::{KeyAction, KeyCode, KeyEvent, KeyModifiers},
 };
 
-const EMPTY_CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1_500);
+const EMPTY_CTRL_C_EXIT_WINDOW: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ControlEffect {
