@@ -105,10 +105,8 @@ fn resolve_new_session(
     )
     .map_err(|error| AppError::single("resolving startup target", error))?;
     let Some(target) = target else {
-        return Err(AppError::many([
-            "no startup target is selected; run `yo connect` to configure one, or start Local Codex explicitly with `yo --model host:codex`"
-                .to_owned(),
-        ]));
+        return Err(AppError::message("no startup target is selected")
+            .with_help(["yo connect", "yo --model host:codex"]));
     };
     match target {
         StartupTarget::HostCodex => Ok(StartupBackend::Codex),
@@ -373,12 +371,9 @@ mod tests {
             ("openrouter", "default", "openrouter/free"),
         ]);
 
-        let missing = resolve_new_session(&catalog, None, None)
-            .unwrap_err()
-            .to_string();
-        assert!(missing.contains("no startup target is selected"));
-        assert!(missing.contains("yo connect"));
-        assert!(missing.contains("yo --model host:codex"));
+        let missing = resolve_new_session(&catalog, None, None).unwrap_err();
+        assert_eq!(missing.to_string(), "no startup target is selected");
+        assert_eq!(missing.help(), ["yo connect", "yo --model host:codex"]);
 
         assert!(matches!(
             resolve_new_session(&catalog, None, Some("host:codex")).unwrap(),

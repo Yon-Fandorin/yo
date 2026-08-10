@@ -1,8 +1,11 @@
 #[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
+use std::fmt;
 #[cfg(unix)]
-use std::{error::Error, fmt};
+use std::os::unix::ffi::OsStrExt;
 use std::{io::Write, process::ExitCode};
+
+#[cfg(unix)]
+use diagnostic::AppError;
 
 #[cfg(unix)]
 mod agent;
@@ -10,6 +13,8 @@ mod agent;
 mod command;
 #[cfg(unix)]
 mod config;
+#[cfg(unix)]
+mod diagnostic;
 #[cfg(unix)]
 mod live;
 #[cfg(unix)]
@@ -36,7 +41,7 @@ fn main() -> ExitCode {
     match run(command) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            let _ = writeln!(std::io::stderr().lock(), "yo: {error}");
+            let _ = error.print();
             ExitCode::FAILURE
         },
     }
@@ -78,7 +83,7 @@ fn run(command: command::Command) -> Result<(), AppError> {
     })?;
     let mut live = None;
     let mut job_control = process::job_control::JobControl::new();
-    let mut failures = Vec::new();
+    let mut errors = Vec::<AppError>::new();
     loop {
         let generation = host.with_active_resource(
             &mut live,
@@ -98,33 +103,39 @@ fn run(command: command::Command) -> Result<(), AppError> {
         match generation {
             Ok(Ok(SessionStep::Suspend)) => {
                 if let Err(error) = job_control.suspend() {
-                    failures.push(format!("suspending the process: {error}"));
+                    errors.push(AppError::message(format!(
+                        "suspending the process: {error}"
+                    )));
                     break;
                 }
             },
             Ok(Ok(SessionStep::Complete)) => break,
             Ok(Ok(SessionStep::Continue)) => {},
             Ok(Err(error)) => {
-                failures.extend(error.failures);
+                errors.push(error);
                 break;
             },
             Err(error) => {
-                failures.push(format!("process termination session: {error}"));
+                errors.push(AppError::message(format!(
+                    "process termination session: {error}"
+                )));
                 break;
             },
         }
     }
     if let Err(error) = shutdown_live_session(&mut live) {
-        failures.extend(error.failures);
+        errors.push(error);
     }
     if let Err(error) = host.shutdown() {
-        failures.push(format!("process termination cleanup: {error}"));
+        errors.push(AppError::message(format!(
+            "process termination cleanup: {error}"
+        )));
     }
 
-    if failures.is_empty() {
+    if errors.is_empty() {
         Ok(())
     } else {
-        Err(AppError::many(failures))
+        Err(AppError::combine(errors))
     }
 }
 
@@ -391,7 +402,7 @@ fn run_agent_generation(
         options.mode,
     );
 
-    let mut failures = Vec::new();
+    let mut errors = Vec::<AppError>::new();
     match terminal {
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
         Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(selection)) => {
@@ -426,19 +437,23 @@ fn run_agent_generation(
             if let Some(output) = outcome.output()
                 && let Err(error) = write_session_output(output)
             {
-                failures.push(format!("writing session output: {error}"));
+                errors.push(AppError::message(format!(
+                    "writing session output: {error}"
+                )));
             }
         },
-        Ok(_) => failures.push("terminal session: unsupported terminal outcome".to_owned()),
-        Err(error) => failures.push(format!("terminal session: {error}")),
+        Ok(_) => errors.push(AppError::message(
+            "terminal session: unsupported terminal outcome",
+        )),
+        Err(error) => errors.push(AppError::message(format!("terminal session: {error}"))),
     }
     if let Err(error) = shutdown_live_session(live) {
-        failures.extend(error.failures);
+        errors.push(error);
     }
-    if failures.is_empty() {
+    if errors.is_empty() {
         Ok(SessionStep::Complete)
     } else {
-        Err(AppError::many(failures))
+        Err(AppError::combine(errors))
     }
 }
 
@@ -660,35 +675,6 @@ fn write_session_command_output(output: session::Output) -> Result<(), AppError>
         Err(AppError::many(failures))
     }
 }
-
-#[cfg(unix)]
-#[derive(Debug)]
-struct AppError {
-    failures: Vec<String>,
-}
-
-#[cfg(unix)]
-impl AppError {
-    fn single(context: &'static str, error: impl fmt::Display) -> Self {
-        Self::many([format!("{context}: {error}")])
-    }
-
-    fn many(failures: impl IntoIterator<Item = String>) -> Self {
-        Self {
-            failures: failures.into_iter().collect(),
-        }
-    }
-}
-
-#[cfg(unix)]
-impl fmt::Display for AppError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.failures.join("; additionally, "))
-    }
-}
-
-#[cfg(unix)]
-impl Error for AppError {}
 
 #[cfg(not(unix))]
 fn main() -> ExitCode {
