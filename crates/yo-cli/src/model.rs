@@ -338,6 +338,13 @@ mod tests {
     use super::*;
 
     fn selection_catalog(entries: &[(&str, &str, &str)]) -> yo_core::ModelCatalog {
+        selection_catalog_with_tokenizer(entries, UTF8_BYTES_PROFILE)
+    }
+
+    fn selection_catalog_with_tokenizer(
+        entries: &[(&str, &str, &str)],
+        tokenizer_profile: &str,
+    ) -> yo_core::ModelCatalog {
         yo_core::ModelCatalog::new(
             entries
                 .iter()
@@ -353,13 +360,64 @@ mod tests {
                         None,
                         None,
                         None,
-                        yo_core::ModelContextProfile::new(1_000, 100, UTF8_BYTES_PROFILE).unwrap(),
+                        yo_core::ModelContextProfile::new(1_000, 100, tokenizer_profile).unwrap(),
                     )
                     .unwrap()
                 })
                 .collect(),
         )
         .unwrap()
+    }
+
+    // backend facade는 host와 native selection의 label·좌표·replacement flag를 각각
+    // 보존하고, replacement helper도 같은 좌표를 durable binding 교체로 표시한다.
+    #[test]
+    fn startup_backend_metadata_preserves_host_and_native_selection_semantics() {
+        let selection = ModelSelection::new(
+            ProviderId::new("qwencloud").unwrap(),
+            AccountId::new("token-plan").unwrap(),
+            ModelId::new("qwen3.8max").unwrap(),
+        );
+
+        let codex = StartupBackend::Codex;
+        assert_eq!(codex.label(), "codex");
+        assert!(!codex.replaces_binding());
+        assert!(codex.model_selection().is_none());
+
+        let native = StartupBackend::Native {
+            provider: selection.provider().clone(),
+            account: selection.account().clone(),
+            model: selection.model().clone(),
+            replace_binding: false,
+        };
+        assert_eq!(native.label(), "qwen3.8max");
+        assert!(!native.replaces_binding());
+        assert_eq!(native.model_selection(), Some(selection.clone()));
+
+        let replacement = replacement(&selection);
+        assert_eq!(replacement.label(), "qwen3.8max");
+        assert!(replacement.replaces_binding());
+        assert_eq!(replacement.model_selection(), Some(selection));
+    }
+
+    // native startup은 Codex 선택을 catalog 해석이나 credential 조회로 보내지 않고,
+    // backend 종류가 잘못된 호출이라는 고정 진단으로 즉시 거절한다.
+    #[test]
+    fn native_startup_rejects_host_backend_before_catalog_resolution() {
+        let error = match start_native(
+            &Config::default(),
+            &yo_core::CredentialStore::default(),
+            &StartupBackend::Codex,
+            std::path::Path::new("."),
+        ) {
+            Ok(_) => panic!("host backend must be rejected before native startup"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "native backend startup requires a native model selection"
+        );
     }
 
     // startup source가 모두 비면 setup guidance로 실패하고, Local Codex도 host target으로
@@ -549,6 +607,23 @@ mod tests {
         );
     }
 
+    // catalog entry가 지원하지 않는 profile을 선언하면 실제 profile과 현재 build의
+    // 전체 allowlist를 함께 노출하는 exact diagnostic으로 fail closed 한다.
+    #[test]
+    fn unsupported_tokenizer_profile_reports_exact_profile_and_allowlist() {
+        let catalog = selection_catalog_with_tokenizer(
+            &[("qwencloud", "default", "qwen3.8-max")],
+            "qwen/latest",
+        );
+
+        let error = require_supported_tokenizer(&catalog.entries()[0]).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "unsupported tokenizer profile \"qwen/latest\"; this build supports o200k_base/v1 and utf8-bytes/v1"
+        );
+    }
+
     // durable identity는 좌표뿐 아니라 connector·dialect·endpoint까지 복원하므로 같은
     // Provider·Account·Model 아래 endpoint 변경도 새 binding으로 구분된다.
     #[test]
@@ -567,5 +642,18 @@ mod tests {
 
         assert_ne!(binding, changed);
         assert_eq!(binding.endpoint().as_str(), "https://old.example/v1");
+    }
+
+    // durable identity parser는 v1에서 알 수 없는 JSON 필드를 현재 무시하므로, 같은
+    // canonical binding을 extra field 없이 읽거나 붙여 읽어도 complete identity가 같다.
+    #[test]
+    fn durable_binding_parser_ignores_unknown_json_fields() {
+        let canonical = r#"{"provider":"qwencloud","account":"token-plan","model":"qwen3.8max","connector":"openai-responses","api_dialect":"openai-responses","base_url":"https://old.example/v1"}"#;
+        let with_unknown_field = r#"{"provider":"qwencloud","account":"token-plan","model":"qwen3.8max","connector":"openai-responses","api_dialect":"openai-responses","base_url":"https://old.example/v1","unknown_field":"ignored"}"#;
+
+        let binding = parse_durable_binding(canonical).unwrap();
+        let binding_with_unknown_field = parse_durable_binding(with_unknown_field).unwrap();
+
+        assert_eq!(binding_with_unknown_field, binding);
     }
 }
