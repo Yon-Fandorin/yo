@@ -86,6 +86,14 @@ explanations, affected crate checks, Methexis checks, and Developer Docs checks.
 Installation and hook usage belong to
 [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#local-checks).
 
+For a staged Methexis change containing only `methexis/sources/` and
+`methexis/knowledge/` paths, the hook first requires the working Methexis tree
+to match the index exactly and contain no untracked Methexis paths, then runs
+only the `records` and `relations` classes. This admits a semantic-first
+candidate while its prior Projection is intentionally stale. Any staged
+Projection, approval, Checkpoint, active record, or other Methexis path keeps
+the complete authority-aware validation path.
+
 Use focused checks from the local Slice contract while editing, then run this
 Slice-close baseline once the outcome is complete. For the exact staged
 Methexis activation interval, `hk` uses prospective validation and defers the

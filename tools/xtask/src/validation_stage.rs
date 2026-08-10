@@ -7,9 +7,163 @@ use std::{
 use serde::{Deserialize, Serialize, de::IgnoredAny};
 
 pub(crate) fn run_methexis_check(repository: &Path) -> Result<(), String> {
-    let authority = run_staged_activation_check(repository)?;
+    let mode = validation_mode(repository)?;
+    if mode == ValidationMode::SemanticCandidate {
+        require_exact_semantic_worktree(repository)?;
+    }
+    let authority = run_selected_check(repository, mode)?;
     report_prospective_activation(authority);
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ValidationMode {
+    SemanticCandidate,
+    Complete,
+}
+
+fn validation_mode(repository: &Path) -> Result<ValidationMode, String> {
+    validation_mode_with_environment(repository, GitEnvironment::Caller)
+}
+
+#[derive(Clone, Copy)]
+enum GitEnvironment {
+    Caller,
+    #[cfg(test)]
+    Isolated,
+}
+
+impl GitEnvironment {
+    fn is_isolated(self) -> bool {
+        match self {
+            Self::Caller => false,
+            #[cfg(test)]
+            Self::Isolated => true,
+        }
+    }
+}
+
+fn validation_mode_with_environment(
+    repository: &Path,
+    environment: GitEnvironment,
+) -> Result<ValidationMode, String> {
+    let output = git_command(repository, environment)
+        .args([
+            "diff",
+            "--cached",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            "--diff-filter=ACDMRTUXB",
+            "--",
+            "methexis",
+        ])
+        .output()
+        .map_err(|error| format!("cannot inspect staged Methexis paths: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cannot inspect staged Methexis paths: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(classify_staged_paths(&output.stdout))
+}
+
+fn classify_staged_paths(paths: &[u8]) -> ValidationMode {
+    let mut paths = paths
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .peekable();
+    if paths.peek().is_none() {
+        return ValidationMode::Complete;
+    }
+    if paths.all(|path| {
+        path.starts_with(b"methexis/sources/") || path.starts_with(b"methexis/knowledge/")
+    }) {
+        ValidationMode::SemanticCandidate
+    } else {
+        ValidationMode::Complete
+    }
+}
+
+fn require_exact_semantic_worktree(repository: &Path) -> Result<(), String> {
+    require_exact_semantic_worktree_with_environment(repository, GitEnvironment::Caller)
+}
+
+fn require_exact_semantic_worktree_with_environment(
+    repository: &Path,
+    environment: GitEnvironment,
+) -> Result<(), String> {
+    let diff = git_command(repository, environment)
+        .args(["diff", "--quiet", "--exit-code", "--", "methexis"])
+        .status()
+        .map_err(|error| format!("cannot compare staged and working Methexis bytes: {error}"))?;
+    match diff.code() {
+        Some(0) => {},
+        Some(1) => {
+            return Err(
+                "semantic Methexis candidate has unstaged tracked changes; stage the exact candidate or revert those changes"
+                    .to_owned(),
+            );
+        },
+        _ => {
+            return Err(format!(
+                "cannot compare staged and working Methexis bytes: {diff}"
+            ));
+        },
+    }
+
+    let untracked = untracked_methexis_paths(repository, false, environment)?;
+    let ignored = untracked_methexis_paths(repository, true, environment)?;
+    if !untracked.is_empty() || !ignored.is_empty() {
+        return Err(
+            "semantic Methexis candidate has untracked or ignored Methexis paths; stage the exact candidate or remove those paths"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn untracked_methexis_paths(
+    repository: &Path,
+    ignored: bool,
+    environment: GitEnvironment,
+) -> Result<Vec<u8>, String> {
+    let mut arguments = vec!["ls-files", "--others", "--exclude-standard", "-z"];
+    if ignored {
+        arguments.push("--ignored");
+    }
+    arguments.extend(["--", "methexis"]);
+    let output = git_command(repository, environment)
+        .args(arguments)
+        .output()
+        .map_err(|error| format!("cannot inspect untracked Methexis paths: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "cannot inspect untracked Methexis paths: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(output.stdout)
+}
+
+fn git_command(repository: &Path, environment: GitEnvironment) -> Command {
+    let mut command = Command::new("git");
+    command.current_dir(repository).stdin(Stdio::null());
+    if environment.is_isolated() {
+        for variable in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_PREFIX",
+        ] {
+            command.env_remove(variable);
+        }
+    }
+    command
 }
 
 fn report_prospective_activation(authority: Authority) {
@@ -97,18 +251,9 @@ impl StageReport {
     }
 }
 
-fn run_staged_activation_check(repository: &Path) -> Result<Authority, String> {
+fn run_selected_check(repository: &Path, mode: ValidationMode) -> Result<Authority, String> {
     let output = Command::new("cargo")
-        .args([
-            "run",
-            "--quiet",
-            "--locked",
-            "-p",
-            "methexis",
-            "--",
-            "check",
-            "--staged-activation",
-        ])
+        .args(methexis_check_arguments(mode))
         .current_dir(repository)
         .stdin(Stdio::null())
         .output()
@@ -122,6 +267,19 @@ fn run_staged_activation_check(repository: &Path) -> Result<Authority, String> {
         &mut std::io::stdout(),
         &mut std::io::stderr(),
     )
+}
+
+fn methexis_check_arguments(mode: ValidationMode) -> Vec<&'static str> {
+    let mut arguments = vec![
+        "run", "--quiet", "--locked", "-p", "methexis", "--", "check",
+    ];
+    match mode {
+        ValidationMode::SemanticCandidate => {
+            arguments.extend(["--only", "records,relations"]);
+        },
+        ValidationMode::Complete => arguments.push("--staged-activation"),
+    }
+    arguments
 }
 
 fn handle_staged_check_output(

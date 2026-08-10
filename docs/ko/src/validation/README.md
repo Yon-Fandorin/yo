@@ -85,6 +85,13 @@ crate 검사, Methexis 검사, Developer Docs 검사가 여기에 포함된다.
 [`CONTRIBUTING.md`](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#local-checks)가
 소유한다.
 
+staged Methexis 변경이 `methexis/sources/`와 `methexis/knowledge/` 경로로만
+이루어지면 hook은 먼저 작업 중인 Methexis tree가 index와 정확히 같고 추적되지
+않은 Methexis 경로가 없는지 확인한 다음 `records`와 `relations` class만 실행한다.
+따라서 이전 Projection이 의도적으로 stale인 semantic-first 후보를 commit할 수 있다.
+staged Projection, approval, Checkpoint, active record 또는 그 밖의 Methexis 경로가
+하나라도 있으면 authority를 포함한 완전 validation 경로를 그대로 사용한다.
+
 편집 중에는 로컬 Slice contract에 선언한 집중 검사를 사용하고, 결과가
 완성되면 이 Slice 종료 기준선을 한 번 실행한다. 정확한 Methexis activation
 후보가 staged된 구간에는 `hk`가 prospective validation을 사용하고 일반
