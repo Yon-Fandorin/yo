@@ -55,6 +55,15 @@ boundaries. For example, an edit to `AgentSession` can require both its focused
 tests and the TUI runner tests when the admission result observed by the
 frontend changes.
 
+For model-connector HTTP transport, worker, and stream lifecycle validation, run
+`cargo test --locked -p yo-core model_connector::tests`, then
+`cargo test --locked -p yo-core` at close. These checks use only local
+`127.0.0.1` HTTPS listeners and require the external `python3` and `openssl`
+commands to create and serve their ephemeral test certificates. Missing
+prerequisites fail the command rather than skip its assertions; record the
+host/platform, prerequisite versions, and pass/unverified result for each
+validation run.
+
 ## Reading a result
 
 - **Passed** means the named command ran its assertions successfully in the

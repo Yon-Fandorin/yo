@@ -54,6 +54,14 @@ command, host, credential, platform을 기록한다.
 아니다. 예를 들어 `AgentSession` 수정으로 frontend가 보는 admission
 결과가 달라진다면 집중 test와 TUI runner test가 모두 필요할 수 있다.
 
+model-connector HTTP transport, worker, stream lifecycle validation은
+`cargo test --locked -p yo-core model_connector::tests`를 실행한 뒤, 종료할 때
+`cargo test --locked -p yo-core`를 실행한다. 이 검사는 로컬
+`127.0.0.1` HTTPS listener만 사용하며 ephemeral test certificate를 만들고
+serve하기 위해 외부 `python3`와 `openssl` 명령을 요구한다. 필수 조건이
+없으면 assertion을 skip하지 않고 명령이 실패한다. 각 validation 실행마다
+host/platform, prerequisite version, passed/unverified 결과를 기록한다.
+
 ## 결과 읽기
 
 - **Passed**: 적어둔 명령이 해당 환경에서 assertion을 성공적으로 실행했다.
