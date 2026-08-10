@@ -278,6 +278,48 @@ fn switching_restores_each_view_local_scroll_state() {
     assert_eq!(state.views().view_positions(), detached);
 }
 
+// 유효한 frame을 commit한 뒤 준비가 실패해도 committed viewport와 미소비 scroll 의도는 그대로
+// 남아, 재시도한 유효 frame에서만 다음 viewport가 적용된다.
+#[test]
+fn failed_frame_preparation_keeps_committed_viewport_and_pending_scroll() {
+    let mut state = TuiState::new();
+    for index in 0..12 {
+        state
+            .observe_record(TranscriptRecord::CommandCommitted(
+                AgentCommand::StartTurn {
+                    turn: turn(),
+                    input: UserInput::from(format!("question {index}")),
+                },
+            ))
+            .unwrap();
+    }
+    let size = Size::new(18, 5);
+    let first = state
+        .prepare_frame(size, &AppearanceState::default().pin())
+        .unwrap();
+    state.commit_frame(&first);
+    let committed = state.views().view_positions();
+
+    assert_eq!(
+        state.handle(key(KeyCode::PageUp, KeyModifiers::NONE), Duration::ZERO),
+        Ok(StateEffect::Redraw)
+    );
+    assert!(state.views().chat_has_pending_scroll());
+    assert!(
+        state
+            .prepare_frame(Size::new(size.width, 0), &AppearanceState::default().pin(),)
+            .is_err()
+    );
+    assert_eq!(state.views().view_positions(), committed);
+    assert!(state.views().chat_has_pending_scroll());
+
+    let retry = state
+        .prepare_frame(size, &AppearanceState::default().pin())
+        .unwrap();
+    state.commit_frame(&retry);
+    assert!(state.views().view_positions().0 < committed.0);
+}
+
 // 폭 6의 좁은 terminal에서는 mode와 세 switching key를 한 줄 compact 표기로 유지하고,
 // resize 뒤에도 Transcript full-page body가 prompt와 겹치지 않는다.
 #[test]

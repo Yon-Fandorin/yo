@@ -16,6 +16,7 @@ mod backpressure;
 mod integration;
 mod interrupt;
 mod job_control;
+mod model_selection;
 mod overlay;
 mod reentry;
 mod request_responses;

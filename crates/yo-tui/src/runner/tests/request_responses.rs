@@ -69,3 +69,61 @@ fn converts_text_into_a_correlated_agent_input_response() {
         })
     );
 }
+
+// 서로 다른 Activity의 approval·user-input request가 동시에 대기하면 첫 Enter는 queue 앞의
+// request에만 응답하고, 다음 Enter는 뒤의 request와 그 request ID를 그대로 상관시킨다.
+#[test]
+fn multiple_pending_requests_are_answered_fifo_with_their_own_correlations() {
+    let mut state = TuiState::new();
+    let approval_activity = activity(1);
+    let approval_id = RequestId::new(nonzero(7));
+    let input_activity = activity(2);
+    let input_id = RequestId::new(nonzero(8));
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: approval_activity,
+            kind: ActivityKind::ApprovalRequest {
+                request_id: approval_id,
+            },
+        })
+        .unwrap();
+    state
+        .observe(AgentEvent::ActivityStarted {
+            activity: input_activity,
+            kind: ActivityKind::UserInputRequest {
+                request_id: input_id,
+            },
+        })
+        .unwrap();
+
+    state
+        .handle(InputEvent::Paste("y".to_owned()), Duration::ZERO)
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToApproval {
+            request: ActivityRequestRef::new(approval_activity, approval_id),
+            decision: ApprovalDecision::Approved,
+        })
+    );
+    assert!(state.has_pending_request());
+
+    state
+        .handle(
+            InputEvent::Paste("use the second option".to_owned()),
+            Duration::ZERO,
+        )
+        .unwrap();
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::RespondToUserInput {
+            request: ActivityRequestRef::new(input_activity, input_id),
+            input: "use the second option".to_owned(),
+        })
+    );
+    assert!(!state.has_pending_request());
+}

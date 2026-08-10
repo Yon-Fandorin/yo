@@ -15,121 +15,6 @@ use crate::{
     surface::Size,
 };
 
-fn model_controller(current_model: &str) -> yo_core::ModelSelectionController {
-    let entries = [
-        ("openrouter", "default", "free-model", "OpenRouter"),
-        ("qwencloud", "default", "qwen3.8max", "Qwen Cloud"),
-    ]
-    .into_iter()
-    .map(|(provider, account, model, provider_label)| {
-        yo_core::ModelCatalogEntry::new(
-            yo_core::EffectiveModelBinding::new(
-                yo_core::ProviderId::new(provider).unwrap(),
-                yo_core::AccountId::new(account).unwrap(),
-                yo_core::ModelId::new(model).unwrap(),
-                yo_core::ApiDialect::OpenAiResponses,
-                yo_core::NormalizedEndpoint::parse("https://example.test/v1").unwrap(),
-            ),
-            Some(provider_label.to_owned()),
-            Some("Default".to_owned()),
-            None,
-            yo_core::ModelContextProfile::new(1_000, 100, "utf8-bytes/v1").unwrap(),
-        )
-        .unwrap()
-    })
-    .collect();
-    let current = yo_core::ModelSelection::new(
-        yo_core::ProviderId::new("qwencloud").unwrap(),
-        yo_core::AccountId::new("default").unwrap(),
-        yo_core::ModelId::new(current_model).unwrap(),
-    );
-    yo_core::ModelSelectionController::new(
-        yo_core::ModelCatalog::new(entries).unwrap(),
-        Some(current),
-    )
-}
-
-// 직접 `/model Model`은 같은 ID가 다른 Provider에 있어도 현재 namespace 밖을 탐색하지
-// 않고, qualified reference만 다른 완전한 좌표를 선택하는지 검증한다.
-#[test]
-fn direct_model_command_resolves_only_inside_the_current_provider_and_account() {
-    let mut state = TuiState::new();
-    state.enable_model_selection(model_controller("qwen3.8max"));
-    state
-        .handle(
-            InputEvent::Paste("/model free-model".to_owned()),
-            Duration::ZERO,
-        )
-        .unwrap();
-
-    assert_eq!(
-        state
-            .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
-                Duration::ZERO,
-            )
-            .unwrap(),
-        StateEffect::Redraw
-    );
-    assert_eq!(state.take_model_selection(), None);
-
-    state
-        .handle(
-            InputEvent::Paste("/model openrouter::free-model".to_owned()),
-            Duration::ZERO,
-        )
-        .unwrap();
-    assert_eq!(
-        state
-            .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
-                Duration::ZERO,
-            )
-            .unwrap(),
-        StateEffect::Exit
-    );
-    let selected = state.take_model_selection().unwrap();
-    assert_eq!(selected.provider().as_str(), "openrouter");
-    assert_eq!(selected.account().as_str(), "default");
-    assert_eq!(selected.model().as_str(), "free-model");
-}
-
-// picker acceptance는 display label이 아니라 Provider·Account·Model 전체 좌표를 반환한다.
-#[test]
-fn grouped_model_picker_returns_the_complete_selected_binding() {
-    let mut state = TuiState::new();
-    state.enable_model_selection(model_controller("qwen3.8max"));
-    state
-        .handle(InputEvent::Paste("/model".to_owned()), Duration::ZERO)
-        .unwrap();
-    assert_eq!(
-        state
-            .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
-                Duration::ZERO,
-            )
-            .unwrap(),
-        StateEffect::Redraw
-    );
-    let frame = state
-        .prepare_frame(Size::new(80, 16), &AppearanceState::default().pin())
-        .unwrap();
-    state.commit_frame(&frame);
-    assert_eq!(
-        state
-            .handle(
-                key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
-                Duration::ZERO,
-            )
-            .unwrap(),
-        StateEffect::Exit
-    );
-    let selected = state.take_model_selection().unwrap();
-    assert_eq!(selected.provider().as_str(), "openrouter");
-    assert_eq!(selected.account().as_str(), "default");
-    assert_eq!(selected.model().as_str(), "free-model");
-}
-
 fn overlay_snapshot() -> PanelSnapshot {
     PanelSnapshot::new(
         "Commands",
@@ -184,6 +69,66 @@ fn visible_overlay_dismissal_precedes_active_turn_escape_interrupt() {
             .unwrap(),
         StateEffect::Dispatch(AgentAction::Interrupt)
     );
+}
+
+// Resize와 Ctrl+Z는 visible overlay와 global view가 입력을 소유한 상태에서도 각각 geometry와
+// suspension effect를 먼저 반환하여 overlay나 editor가 이를 소비하지 않는다.
+#[test]
+fn resize_and_suspend_preempt_overlay_and_view_input_owners() {
+    let mut state = TuiState::new();
+    present_overlay(&mut state, Size::new(40, 12));
+
+    assert_eq!(
+        state
+            .handle(InputEvent::Resize(Size::new(80, 20)), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Resize(Size::new(80, 20))
+    );
+    assert_eq!(
+        state
+            .handle(
+                key(
+                    KeyCode::Character('z'),
+                    crate::input::event::KeyModifiers::CONTROL,
+                ),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Suspend
+    );
+    assert!(
+        state
+            .prepare_frame(Size::new(40, 12), &AppearanceState::default().pin())
+            .unwrap()
+            .overlay_presented
+    );
+    assert_eq!(
+        state.views().active(),
+        super::super::view::ObservabilityView::Chat
+    );
+}
+
+// stale token을 가진 provider 정리는 이미 새 panel이 열린 뒤에는 refresh·close를 수행하지 않아,
+// newer overlay를 닫거나 예전 상태로 되돌리지 않는다.
+#[test]
+fn stale_overlay_token_cannot_refresh_or_close_a_newer_panel() {
+    let mut state = TuiState::new();
+    let stale = state.open_overlay(overlay_snapshot()).unwrap();
+    state.close_overlay(stale).unwrap();
+    let current = state.open_overlay(overlay_snapshot()).unwrap();
+
+    assert_eq!(
+        state.refresh_overlay(stale, overlay_snapshot()),
+        Err(SlotError::StaleToken)
+    );
+    assert_eq!(state.close_overlay(stale), Err(SlotError::StaleToken));
+
+    let frame = state
+        .prepare_frame(Size::new(40, 12), &AppearanceState::default().pin())
+        .unwrap();
+    assert!(frame.overlay_presented);
+    state.commit_frame(&frame);
+    assert_eq!(state.close_overlay(current), Ok(()));
 }
 
 // provider가 첫 receipt를 회수하기 전에 두 번째 panel도 accept하면 두 identity가 accept

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use yo_core::{AgentCommand, TranscriptRecord, UserInput};
+use yo_core::{AgentCommand, SubmissionId, TranscriptRecord, UserInput};
 
 use super::{key, rendered_row, turn};
 use crate::{
@@ -132,4 +132,47 @@ fn pending_duplicate_and_rejection_preserve_the_exact_draft() {
         .unwrap();
 
     assert_eq!(state.editor().text(), "question");
+}
+
+// 아직 queue에 없는 receipt는 대기 중인 immutable snapshot을 소비하지 않으며, 같은 draft의
+// 다음 Enter도 중복 admission으로 남아 실제 receipt가 올 때까지 snapshot을 보존한다.
+#[test]
+fn unknown_submission_receipt_does_not_consume_pending_snapshot() {
+    let mut state = TuiState::new();
+    state
+        .handle(InputEvent::Paste("question".to_owned()), Duration::ZERO)
+        .unwrap();
+    let StateEffect::Dispatch(AgentAction::Submit(submission)) = state
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("Enter should queue one immutable snapshot");
+    };
+
+    let unknown = loop {
+        let candidate = SubmissionId::new().unwrap();
+        if candidate != submission.id() {
+            break candidate;
+        }
+    };
+    assert_eq!(
+        state
+            .observe_submission_outcome(yo_core::SubmissionOutcome::Accepted { id: unknown })
+            .unwrap(),
+        StateEffect::Unchanged
+    );
+    assert_eq!(state.editor().text(), "question");
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Redraw
+    );
+
+    state
+        .observe_submission_outcome(yo_core::SubmissionOutcome::Accepted {
+            id: submission.id(),
+        })
+        .unwrap();
+    assert_eq!(state.editor().text(), "");
 }
