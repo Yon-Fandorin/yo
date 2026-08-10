@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.model-002
-    revision: sha256:967d609205f18e2a361e8b614a259eed9ce9ad9fa3392449a9f5a2b45c10606e
+    revision: sha256:74dc2dd0f2f13327fd238bea14fbddcf95d170eaa36be86580bd1e838266bc8d
 relations:
   depends_on:
     - agent.model.service-binding
@@ -18,48 +18,20 @@ relations:
 
 ## Statement
 
-Interactive and non-interactive startup MUST accept `--model MODEL_ID` as an
-explicit model override. In the TUI, `/model` MUST open a Rib-style selection
-controller projected through the generic selection panel, and `/model
-MODEL_ID` MUST provide a direct switch. The overlay remains presentation
-only; a frontend-neutral controller owns catalog entries, validation,
-preparation, and the accepted effect.
+Interactive and non-interactive startup MUST accept one optional `--model MODEL_REFERENCE`. Omitting it MUST preserve a configured `model.startup`; when no startup binding is configured, omission MUST continue to start Codex. Supplying a reference for a new Session MUST be able to select a configured Yo-managed model without requiring `model.startup`.
 
-The picker MUST group usable entries in `Provider -> Account -> Model` order
-and MUST identify each row by the complete binding rather than by display text
-or ModelId alone. Provider, Account, and Model display names are labels only.
-The initial catalog MUST come from validated configured entries and MUST NOT
-assume that an OpenAI-compatible endpoint provides a complete account-scoped
-model-list API. Remote catalog discovery and caching are deferred.
+A `MODEL_REFERENCE` has three user-facing spellings: `Model`, `Provider::Model`, and `Provider:Account:Model`. Resolution MUST compare the supplied bytes against the applicable configured catalog coordinates under all admitted spellings, deduplicate identical coordinates, and succeed only when exactly one coordinate remains. It MUST NOT let separator precedence silently choose between a ModelId and a qualified interpretation. ModelId bytes remain vendor-owned and MAY contain `:`, `/`, or `.`. Provider and Account display names never participate.
 
-`/model MODEL_ID` MUST resolve to exactly one configured entry within the
-current Provider and Account. It MUST NOT search another Account or Provider
-when the ID is absent or ambiguous. Account or Provider changes require the
-grouped picker. For a new Session, `--model` resolves after the configured
-startup Provider and Account. For a resumed Session, it resolves within the
-Provider and Account of the newest durable Continuation Anchor and requests a
-replacement binding through exact replay; configured startup defaults MUST NOT
-override that namespace. If no durable Anchor exists, the Session remains
-read-only under the continuation contract. Ambiguity or absence in either CLI
-or command resolution MUST fail explicitly rather than selecting an arbitrary
-usable binding.
+`Model` resolves inside the current Provider and Account when a startup binding or current Yo-managed binding supplies that namespace. For a new Codex-default Session with no startup namespace, it MAY search the configured catalog only for an exact ModelId and MUST require one globally unique coordinate. `Provider::Model` matches exact ProviderId and ModelId values and MUST require exactly one configured Account coordinate. `Provider:Account:Model` matches all three exact IDs. Zero matches MUST fail as absent; multiple matches MUST fail as ambiguous. Diagnostics MUST return stable, sorted, complete Provider, Account, and Model coordinates that can disambiguate the request.
 
-A TUI selection changes only the current Yo Session. Default-model persistence
-belongs to ordinary settings and is a separate action. A switch MUST be
-prepared and fully validated without mutating the current binding, then
-committed atomically as a new binding epoch. It MUST be rejected while a Turn
-is active. Preparation failure, stale selection, missing credential, unsupported
-protocol, or connector startup failure MUST leave the old binding usable and
-MUST NOT create a partial epoch.
+In the TUI, `/model` without a value MUST open the Rib-style grouped picker for a Yo-managed binding. `/model MODEL_REFERENCE` MUST use the same frontend-neutral resolver as startup. The picker MUST group configured entries in `Provider -> Account -> Model` order and identify each row by the complete binding rather than display text or ModelId alone. Selection preparation MUST still validate credentials, tokenizer, protocol, connector, endpoint, and staleness before an effect is committed.
 
-Changing a Model or Account MUST NOT create a new Yo Session. Earlier messages
-retain the exact binding attribution that produced them, and the replacement
-binding receives only the exact semantic replay allowed by the continuation
-contract.
+A resumed Yo-managed exact-replay Session MAY use the same reference grammar. Its bare `Model` form remains inside the newest durable Continuation Anchor's Provider and Account; qualified forms MAY name another configured coordinate and request the existing exact-replay replacement transition. Configured startup defaults MUST NOT replace the resume namespace. If no durable Anchor exists, the Session remains read-only under the continuation contract.
+
+This revision does not admit cross-backend handoff. A Codex-started live Session MUST NOT expose the model picker, and a Codex resume combined with a Yo-managed model reference MUST fail explicitly until a separately reviewed transition can construct exact replay from the committed semantic boundary, record the new backend epoch and cache-loss boundary, and replace Codex-owned input providers.
+
+A TUI selection changes only the current Yo Session. Default-model persistence remains a separate settings action. A switch MUST be prepared while the old binding remains usable, MUST be rejected during an active Turn, and MUST commit atomically as a new binding epoch. Preparation, replay, or publication failure MUST leave the old binding usable and MUST NOT create a partial epoch. Earlier messages retain the exact binding attribution that produced them.
 
 ## Rationale
 
-Model-first UX matches commercial coding tools without exposing backend
-topology. Returning an exact grouped binding prevents duplicate model names or
-mutable labels from selecting the wrong credential, while transactional idle
-switching preserves Session and tool-loop integrity.
+One compact option keeps routine startup model-first while exact catalog matching preserves Provider, Account, and Model identity. Contextual shorthand avoids repetitive coordinates, complete references remain an explicit escape from ambiguity, and catalog-derived matching preserves vendor ModelId punctuation without inventing an escaping grammar. Separating startup selection from cross-backend replay delivers useful OpenAI-compatible startup now without pretending that Codex-managed state can already become local exact replay.
