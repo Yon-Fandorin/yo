@@ -1,28 +1,24 @@
 use std::{
     num::NonZeroU64,
     sync::{Arc, Mutex, mpsc},
-    task::{Context, Poll},
     thread,
     time::{Duration, Instant},
 };
 
 use yo_core::{
     ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentBackend, AgentCommand, AgentEvent,
-    AgentIntent, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
-    BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, BackendPoll,
-    BackendRequestEvidence, BackendScriptStep, BackendStopHandle, CommandAdmission,
-    DurabilityGapCause, JournalDurability, RequestTraceRecord, ScriptedBackend, SessionId,
-    TranscriptRecord, TurnId, TurnOutcome, TurnRef, UserInput,
+    AgentIntent, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
+    BackendPoll, BackendScriptStep, BackendStopHandle, CommandAdmission, DurabilityGapCause,
+    JournalDurability, ScriptedBackend, SessionId, TranscriptRecord, TurnOutcome, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableCutoff, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
     },
 };
-use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
+use yo_tui::{AgentConnection, AgentPoll};
 
-use super::TuiAgentConnection;
-
-struct NeverTerminated;
+use super::support::{NeverTerminated, collect_until, session_id, turn};
+use crate::agent::TuiAgentConnection;
 
 struct CapacityPressureRepository;
 
@@ -158,18 +154,6 @@ impl SessionRepository for CapacityPressureRepository {
     }
 }
 
-impl TerminationSource for NeverTerminated {
-    fn poll_termination(&mut self, _context: &mut Context<'_>) -> Poll<TerminationEvent> {
-        Poll::Pending
-    }
-}
-
-fn session_id() -> SessionId {
-    "01890f00-0000-7000-8000-000000000001"
-        .parse()
-        .expect("the fixture is a UUIDv7")
-}
-
 fn session_descriptor() -> yo_core::SessionDescriptor {
     yo_core::SessionDescriptor::for_session(
         session_id(),
@@ -179,129 +163,6 @@ fn session_descriptor() -> yo_core::SessionDescriptor {
         yo_core::HostWorkspacePath::normalize_local("/")
             .expect("the filesystem root is a canonical workspace path"),
     )
-}
-
-// CLI adapter는 worker 알림 하나에서 Transcript와 payload-free Request trace를 함께
-// 끝까지 배출하여, TUI가 backend나 저장소 내부 타입을 직접 읽지 않게 합니다.
-#[test]
-fn exposes_live_request_trace_through_the_frontend_connection() {
-    let backend = ScriptedBackend::new([
-        BackendScriptStep::AcceptCommandWithEvidence {
-            command: AgentCommand::CreateSession {
-                session_id: session_id(),
-            },
-            evidence: BackendCommandEvidence::BindingOpened(BackendBindingEvidence::new(
-                "codex-app-server",
-                "test",
-                BackendIdentity::new("binding/v1", "binding"),
-                BackendIdentity::new("model/v1", "model"),
-                BackendIdentity::new("session/v1", "session"),
-                yo_core::ContinuationStrategy::BackendManagedState,
-            )),
-        },
-        BackendScriptStep::AcceptCommandWithEvidence {
-            command: AgentCommand::StartTurn {
-                turn: turn(),
-                input: UserInput::new("inspect"),
-            },
-            evidence: BackendCommandEvidence::RequestAccepted(BackendRequestEvidence::new(
-                "payload/v1",
-                BackendIdentity::new("exchange/v1", "exchange"),
-                BackendIdentity::new("request/v1", "request"),
-            )),
-        },
-        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
-            turn: turn(),
-            evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
-                "outcome/v1",
-                "outcome",
-            )),
-        }),
-        BackendScriptStep::Shutdown(Ok(())),
-    ]);
-    let mut termination = NeverTerminated;
-    let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
-        .unwrap()
-        .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-        .unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut trace = Vec::new();
-    while trace.len() < 5 {
-        match connection.poll().unwrap() {
-            AgentPoll::RequestTrace(entry) => trace.push(entry),
-            AgentPoll::Closed => panic!("connection closed before Request trace was drained"),
-            _ => thread::yield_now(),
-        }
-        assert!(
-            Instant::now() < deadline,
-            "live Request trace was not delivered"
-        );
-    }
-    assert!(
-        trace
-            .windows(2)
-            .all(|pair| pair[0].sequence() < pair[1].sequence())
-    );
-    assert!(matches!(
-        trace[0].record(),
-        RequestTraceRecord::BindingOpened { .. }
-    ));
-    assert!(matches!(
-        trace[1].record(),
-        RequestTraceRecord::ExchangeObserved { .. }
-    ));
-    assert!(matches!(
-        trace[2].record(),
-        RequestTraceRecord::RequestAccepted { .. }
-    ));
-    assert!(matches!(
-        trace[3].record(),
-        RequestTraceRecord::ResumableOutcome { .. }
-    ));
-    assert!(matches!(
-        trace[4].record(),
-        RequestTraceRecord::ContinuationAnchor { .. }
-    ));
-    connection.shutdown().unwrap();
-}
-
-fn turn() -> TurnRef {
-    TurnRef::new(session_id(), TurnId::new(NonZeroU64::MIN))
-}
-
-fn collect_until(
-    connection: &mut TuiAgentConnection,
-    done: impl Fn(&[TranscriptRecord]) -> bool,
-) -> Result<Vec<TranscriptRecord>, String> {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let mut records = Vec::new();
-    loop {
-        match connection.poll() {
-            Ok(AgentPoll::Record(record)) => {
-                records.push(record);
-                if done(&records) {
-                    return Ok(records);
-                }
-            },
-            Ok(AgentPoll::Pending | AgentPoll::Submission(_) | AgentPoll::RequestTrace(_))
-                if Instant::now() < deadline =>
-            {
-                thread::yield_now();
-            },
-            Ok(other) => {
-                return Err(format!(
-                    "connection ended before the expected records: {other:?}"
-                ));
-            },
-            Err(error) => return Err(error.to_string()),
-        }
-        if Instant::now() >= deadline {
-            return Err("timed out waiting for committed records".to_owned());
-        }
-    }
 }
 
 // 로컬 CLI 어댑터는 변경 알림 자체를 화면에 보내지 않고 저널에서 명령과 이벤트를
@@ -577,139 +438,5 @@ fn drains_more_than_one_bounded_page_from_one_coalesced_wake() {
             .count(),
         UPDATE_COUNT
     );
-    connection.shutdown().unwrap();
-}
-
-// 백엔드 실패가 저널에 Turn 실패를 확정한 경우 CLI 어댑터는 그 레코드를 먼저 모두
-// 전달한 뒤 연결 오류를 보고한다.
-#[test]
-fn drains_committed_failure_record_before_reporting_connection_failure() {
-    let create = AgentCommand::CreateSession {
-        session_id: session_id(),
-    };
-    let start = AgentCommand::StartTurn {
-        turn: turn(),
-        input: UserInput::from("inspect"),
-    };
-    let backend_failure =
-        BackendFailure::new(BackendFailureKind::ProcessExit, "provider stream stopped");
-    let backend = ScriptedBackend::new([
-        BackendScriptStep::AcceptCommand(create),
-        BackendScriptStep::AcceptCommand(start),
-        BackendScriptStep::Fail(backend_failure),
-        BackendScriptStep::Shutdown(Ok(())),
-    ]);
-    let mut termination = NeverTerminated;
-    let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
-        .unwrap()
-        .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-        .unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let mut saw_failed_turn = false;
-    loop {
-        match connection.poll() {
-            Ok(AgentPoll::Record(TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
-                outcome: TurnOutcome::Failed(_),
-                ..
-            }))) => saw_failed_turn = true,
-            Ok(
-                AgentPoll::Record(_)
-                | AgentPoll::Pending
-                | AgentPoll::Submission(_)
-                | AgentPoll::RequestTrace(_),
-            ) => {},
-            Ok(other) => panic!("connection closed without its failure: {other:?}"),
-            Err(error) => {
-                assert!(saw_failed_turn);
-                assert!(error.to_string().contains("provider stream stopped"));
-                break;
-            },
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for the connection failure"
-        );
-        thread::yield_now();
-    }
-    connection.shutdown().unwrap();
-}
-
-// 활성 Turn의 후속 명령이 backend에서 거절되면 worker는 cleanup이 확정한 Turn 종료를
-// 먼저 공개하고, 그 다음에 명령 실패를 연결 오류로 보고한다.
-#[test]
-fn drains_cleanup_record_before_reporting_command_failure() {
-    let create = AgentCommand::CreateSession {
-        session_id: session_id(),
-    };
-    let start = AgentCommand::StartTurn {
-        turn: turn(),
-        input: UserInput::from("inspect"),
-    };
-    let steer = AgentCommand::SteerTurn {
-        turn: turn(),
-        input: UserInput::from("focus"),
-    };
-    let backend = ScriptedBackend::new([
-        BackendScriptStep::AcceptCommand(create),
-        BackendScriptStep::AcceptCommand(start),
-        BackendScriptStep::RejectCommand {
-            command: steer.clone(),
-            failure: BackendFailure::new(BackendFailureKind::Turn, "steer was rejected"),
-        },
-        BackendScriptStep::Shutdown(Ok(())),
-    ])
-    .with_capabilities(BackendCapabilities::none().with_steer());
-    let mut termination = NeverTerminated;
-    let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
-        .unwrap()
-        .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-        .unwrap();
-    collect_until(&mut connection, |records| {
-        records.iter().any(|record| {
-            matches!(
-                record,
-                TranscriptRecord::EventCommitted(AgentEvent::TurnStarted { .. })
-            )
-        })
-    })
-    .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("focus".to_owned()).unwrap())
-        .unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(1);
-    let mut records = Vec::new();
-    loop {
-        match connection.poll() {
-            Ok(AgentPoll::Record(record)) => records.push(record),
-            Ok(AgentPoll::Pending | AgentPoll::Submission(_) | AgentPoll::RequestTrace(_)) => {},
-            Ok(other) => panic!("connection closed without its failure: {other:?}"),
-            Err(error) => {
-                assert!(error.to_string().contains("steer was rejected"));
-                break;
-            },
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for the command failure"
-        );
-        thread::yield_now();
-    }
-
-    assert!(!records.contains(&TranscriptRecord::CommandCommitted(steer)));
-    assert!(records.iter().any(|record| {
-        matches!(
-            record,
-            TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
-                outcome: TurnOutcome::Interrupted,
-                ..
-            })
-        )
-    }));
     connection.shutdown().unwrap();
 }
