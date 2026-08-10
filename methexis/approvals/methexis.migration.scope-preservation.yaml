@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: methexis.migration.scope-preservation
-revision: sha256:a0bfb1328909bc4d466931507b2798dfb339ff4c30641ffc463da0a0c67f4dbc
+revision: sha256:3936ca89e5cd006aadecedd66095385341dd61d3fa066ba02fa5cd033c850204
 reviewer: methexis
-reviewed_at: 2026-08-09T17:08:51Z
+reviewed_at: 2026-08-10T01:05:14Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:4967e145d09a015604bd4b377e079b0fb4b7e954644269f8ef277e6f6459ee52
-request_hash: sha256:61cb9cf1320aaf86f1c4b1354b60909b8f155d664b40d988f3d375981a4faa30
+projection_hash: sha256:76cdcfd1fd7b8f600dd4f3fdcc1f90f6b13c6c98c5cf85a57ae787ccecb76760
+request_hash: sha256:fc266bafaf6c114ae337a3ad013935c2886e19e0ab517b082e167c733c2005ba

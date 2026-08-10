@@ -5,7 +5,7 @@ kind: rule
 owner: methexis
 sources:
   - id: methexis.migration-model.scope-preservation
-    revision: sha256:65d067b4c6893827f9cbc0fd1991e0c82115effb294d9bc01bd49023fc5f916e
+    revision: sha256:e8f893739c30e8e09f24cabcddf35123dc82996c21870dcfb0625d4ee1b172bf
 relations:
   depends_on:
     - librarian.catalog.snapshot-ranking
@@ -71,7 +71,7 @@ relations:
 
 ## Statement
 
-The complete post-migration SOT owner set is encoded by this unit's typed `depends_on` relations. The required owners are:
+The complete current SOT owner set is encoded by this unit's typed `depends_on` relations. The required owners are:
 
 - `librarian.catalog.snapshot-ranking`
 - `librarian.delivery.storage-graduation`
@@ -132,4 +132,4 @@ The complete post-migration SOT owner set is encoded by this unit's typed `depen
 - `methexis.validation.working-tree-authority`
 - `methexis.workflow.self-hosting-boundary`
 
-Every later Checkpoint transition MUST preserve this scope set by selecting an exact approved revision of `methexis.migration.scope-preservation` and its complete required closure, or an exact approved semantic successor whose reviewed relations assign every scope to an explicit owner. Omitting this unit, omitting any required owner, or selecting a pre-migration Checkpoint MUST NOT restore authority to historical prose in `docs-internal/design/sot-pilot.md`. A change of owner requires a reviewed revision of this unit or an explicit semantic successor and a forward compare-and-swap activation.
+Every later Checkpoint transition MUST preserve this scope set by selecting an exact approved revision of `methexis.migration.scope-preservation` and its complete required closure, or an exact approved semantic successor whose reviewed relations assign every scope to an explicit owner. Omitting this unit or any required owner MUST fail authority validation. A change of owner requires a reviewed revision of this unit or an explicit semantic successor and a forward compare-and-swap activation. Repository prose outside the active KnowledgeUnit closure MUST NOT substitute for a missing owner.

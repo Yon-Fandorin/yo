@@ -1,20 +1,16 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: methexis.migration.scope-preservation
-revision: sha256:a0bfb1328909bc4d466931507b2798dfb339ff4c30641ffc463da0a0c67f4dbc
+revision: sha256:3936ca89e5cd006aadecedd66095385341dd61d3fa066ba02fa5cd033c850204
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:f34ee588ee85b46ee17cd634123e2704a715de178473b17b5ba94e95e680f743
+request_hash: sha256:b95ec9a654ef2451f78d75095e98152a736f5847f6a0085042643eb7cf957eca
 ---
 # Korean Review Projection
 
 ## Translation
 
-이 KU의 depends_on closure가 migration 이후의 완전한 SOT owner 집합입니다. 이후 모든 Checkpoint는 이 KU와 전체 closure를 보존해야 하며, owner를 바꾸려면 모든 scope를 명시적으로 다시 배정한 reviewed revision 또는 successor와 forward CAS activation이 필요합니다. 누락이나 pre-migration Checkpoint가 옛 문서 prose의 권위를 되살리지 않습니다.
-
-### 전체 정본 원문 대조
-
-The complete post-migration SOT owner set is encoded by this unit's typed `depends_on` relations. The required owners are:
+이 unit의 typed depends_on relation이 현재 SOT owner 전체를 정의합니다. 필수 owner는 다음과 같습니다.
 
 - `librarian.catalog.snapshot-ranking`
 - `librarian.delivery.storage-graduation`
@@ -75,4 +71,4 @@ The complete post-migration SOT owner set is encoded by this unit's typed `depen
 - `methexis.validation.working-tree-authority`
 - `methexis.workflow.self-hosting-boundary`
 
-Every later Checkpoint transition MUST preserve this scope set by selecting an exact approved revision of `methexis.migration.scope-preservation` and its complete required closure, or an exact approved semantic successor whose reviewed relations assign every scope to an explicit owner. Omitting this unit, omitting any required owner, or selecting a pre-migration Checkpoint MUST NOT restore authority to historical prose in `docs-internal/design/sot-pilot.md`. A change of owner requires a reviewed revision of this unit or an explicit semantic successor and a forward compare-and-swap activation.
+이후 Checkpoint도 이 unit의 정확히 승인된 revision과 전체 required closure, 또는 모든 scope에 명시적 owner를 배정한 reviewed successor를 선택해야 합니다. owner 변경은 이 unit의 reviewed revision 또는 명시적 semantic successor와 forward compare-and-swap activation을 모두 거쳐야 합니다. owner가 빠지면 authority validation은 실패하며, active KU closure 밖의 prose는 누락 owner를 대신할 수 없습니다.

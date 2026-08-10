@@ -5,10 +5,10 @@ kind: rule
 owner: methexis
 sources:
   - id: methexis.migration-model.reversal-transition
-    revision: sha256:0ed4847ced4cdc499fce73818c177adf808846ce61e30ce27e2ca2d0bb4623f8
+    revision: sha256:6835a8b87535e4898cdae7860b56dd0e5427ba943a882e1412c63630db334c2c
 ---
-# Post-migration authority reversal transition
+# SOT authority replacement
 
 ## Statement
 
-Reversing or replacing any post-migration SOT authority assignment requires an explicit reviewed revision of `methexis.migration.scope-preservation`, or an explicit semantic successor, that names the replacement owner set. A new forward compare-and-swap Checkpoint activation MUST keep every current owner authoritative until its exact replacement becomes trusted. A raw Git revert, deletion, pre-migration Checkpoint, working-tree proposal, or caller-selected ref is not an authority transition and MUST NOT revive the historical document prose.
+Replacing any SOT authority assignment requires an explicit reviewed revision of `methexis.migration.scope-preservation`, or an explicit semantic successor, that names the replacement owner set. One forward compare-and-swap Checkpoint activation MUST keep every current owner authoritative until its exact replacement becomes trusted. A raw Git revert, deletion, older Checkpoint, working-tree proposal, or caller-selected ref is not an authority transition and MUST NOT supply substitute authority.
