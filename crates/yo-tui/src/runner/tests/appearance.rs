@@ -2,7 +2,7 @@ use yo_core::{
     ActivityKind, ActivityUpdate, AgentCommand, AgentEvent, TranscriptRecord, UserInput,
 };
 
-use super::{TuiSession, TuiState, activity, turn};
+use super::{activity, turn};
 use crate::{
     PresentationMode, TuiSessionInfo,
     appearance::{
@@ -10,6 +10,7 @@ use crate::{
     },
     html::HtmlSurface,
     prompt::{PromptGlyphs, PromptStyles},
+    runner::{session::TuiSession, state::TuiState},
     shell::{AgentShellStyles, ShellChromeStyles},
     surface::{Attributes, CellContent, Color, FrameDiff, Point, Size, Style, Surface},
     terminal::{TerminalOp, TerminalOps},

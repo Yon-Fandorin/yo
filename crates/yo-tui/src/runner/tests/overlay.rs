@@ -1,5 +1,19 @@
-use super::*;
-use crate::overlay::{PanelSnapshot, SelectionEntry, SlotError};
+use std::time::Duration;
+
+use yo_core::{ActivityKind, AgentEvent, RequestId};
+
+use super::{activity, key, nonzero, turn};
+use crate::{
+    appearance::AppearanceState,
+    input::event::{InputEvent, KeyCode},
+    overlay::{PanelSnapshot, SelectionEntry, SlotError},
+    runner::{
+        AgentAction,
+        state::{StateEffect, TuiState},
+        unix::handle_backpressured_input,
+    },
+    surface::Size,
+};
 
 fn model_controller(current_model: &str) -> yo_core::ModelSelectionController {
     let entries = [
