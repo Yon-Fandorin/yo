@@ -2,19 +2,25 @@
 
 use std::path::Path;
 
-use serde::Deserialize;
-use yo_core::{
-    AccountId, AgentBackend, ApiDialect, BackendResumeTarget, ConnectorId, CredentialStore,
-    LocalCredentialStore, ModelCatalogEntry, ModelConnectorLimits, ModelId, ModelSelection,
-    ModelSelectionController, ModelTokenCounter, ModelTokenCounterError, NativeModelBackend,
-    NativeModelBackendConfig, NativeModelBackendServices, NormalizedEndpoint, ProviderId,
-    StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
+use yo_core::{AccountId, AgentBackend, BackendResumeTarget, CredentialStore, ModelId, ProviderId};
+#[cfg(test)]
+use yo_core::{ApiDialect, ModelSelection, ModelTokenCounter, NormalizedEndpoint, StartupTarget};
+
+use crate::{AppError, config::Config};
+
+mod native;
+mod startup;
+mod tokenizer;
+
+#[cfg(test)]
+use startup::{
+    DurableBackendKind, classify_durable_backend, parse_durable_binding, resolve_codex_resume,
+    resolve_native_resume, resolve_new_session,
 };
-
-use crate::{AppError, config::Config, local_tools};
-
-const O200K_PROFILE: &str = "o200k_base/v1";
-const UTF8_BYTES_PROFILE: &str = "utf8-bytes/v1";
+#[cfg(test)]
+use tokenizer::{
+    O200K_PROFILE, TokenizerRegistry, UTF8_BYTES_PROFILE, require_supported_tokenizer,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) enum StartupBackend {
@@ -25,12 +31,6 @@ pub(crate) enum StartupBackend {
         model: ModelId,
         replace_binding: bool,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DurableBackendKind {
-    Codex,
-    Native,
 }
 
 impl StartupBackend {
@@ -69,12 +69,7 @@ impl StartupBackend {
 }
 
 pub(crate) fn replacement(selection: &yo_core::ModelSelection) -> StartupBackend {
-    StartupBackend::Native {
-        provider: selection.provider().clone(),
-        account: selection.account().clone(),
-        model: selection.model().clone(),
-        replace_binding: true,
-    }
+    startup::replacement(selection)
 }
 
 pub(crate) fn resolve(
@@ -82,157 +77,7 @@ pub(crate) fn resolve(
     override_model: Option<&str>,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
-    if let Some(target) = resume {
-        return resolve_resume(config, override_model, target);
-    }
-    let startup = config.startup_target().cloned();
-    resolve_new_session(config.model_catalog(), startup, override_model)
-}
-
-fn resolve_new_session(
-    catalog: &yo_core::ModelCatalog,
-    operator: Option<StartupTarget>,
-    reference: Option<&str>,
-) -> Result<StartupBackend, AppError> {
-    let target = resolve_startup_target(
-        catalog,
-        &StartupPolicy::initial(),
-        StartupSelectionSources {
-            invocation: reference,
-            stored_preference: None,
-            operator_target: operator,
-        },
-    )
-    .map_err(|error| AppError::single("resolving startup target", error))?;
-    let Some(target) = target else {
-        return Err(AppError::message("no startup target is selected")
-            .with_help(["yo connect", "yo --model host:codex"]));
-    };
-    match target {
-        StartupTarget::HostCodex => Ok(StartupBackend::Codex),
-        StartupTarget::Model(selection) => Ok(native_selection(selection, false)),
-    }
-}
-
-fn resolve_resume(
-    config: &Config,
-    override_model: Option<&str>,
-    target: &BackendResumeTarget,
-) -> Result<StartupBackend, AppError> {
-    match classify_durable_backend(target.binding().backend_kind())? {
-        DurableBackendKind::Codex => return resolve_codex_resume(override_model),
-        DurableBackendKind::Native => {},
-    }
-    let binding_identity = target.binding().binding_identity();
-    if binding_identity.schema() != "yo.model-binding/v1" {
-        return Err(AppError::many([
-            "the durable native binding has an unsupported identity schema".to_owned(),
-        ]));
-    }
-    let durable_binding = parse_durable_binding(binding_identity.value())?;
-    resolve_native_resume(config.model_catalog(), durable_binding, override_model)
-}
-
-fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> {
-    match kind {
-        "codex-app-server" => Ok(DurableBackendKind::Codex),
-        "yo-managed-model" => Ok(DurableBackendKind::Native),
-        other => Err(AppError::many([format!(
-            "unsupported durable backend kind {other:?}; the saved Session can only be opened read-only"
-        )])),
-    }
-}
-
-fn resolve_codex_resume(override_model: Option<&str>) -> Result<StartupBackend, AppError> {
-    match override_model {
-        None | Some(StartupTarget::HOST_CODEX_REFERENCE) => Ok(StartupBackend::Codex),
-        Some(_) => Err(AppError::many([
-            "a different model target cannot replace a Codex Session; cross-backend handoff is not supported"
-                .to_owned(),
-        ])),
-    }
-}
-
-fn resolve_native_resume(
-    catalog: &yo_core::ModelCatalog,
-    durable_binding: yo_core::EffectiveModelBinding,
-    reference: Option<&str>,
-) -> Result<StartupBackend, AppError> {
-    let durable_selection = ModelSelection::new(
-        durable_binding.provider_id().clone(),
-        durable_binding.account_id().clone(),
-        durable_binding.model_id().clone(),
-    );
-    let selection = match reference {
-        Some(reference) => {
-            match ModelSelectionController::new(catalog.clone(), Some(durable_selection.clone()))
-                .resolve_target_reference(reference)
-                .map_err(|error| AppError::single("resolving resumed model", error))?
-            {
-                StartupTarget::HostCodex => {
-                    return Err(AppError::many([
-                    "Local Codex cannot replace a Yo-managed Session; cross-backend handoff is not supported"
-                        .to_owned(),
-                ]));
-                },
-                StartupTarget::Model(selection) => selection,
-            }
-        },
-        None => durable_selection,
-    };
-    let entry = catalog
-        .resolve_model(selection.provider(), selection.account(), selection.model())
-        .map_err(|error| AppError::single("resolving resumed model", error))?;
-    let replace_binding = entry.binding() != &durable_binding;
-    Ok(native_selection(selection, replace_binding))
-}
-
-fn native_selection(selection: ModelSelection, replace_binding: bool) -> StartupBackend {
-    StartupBackend::Native {
-        provider: selection.provider().clone(),
-        account: selection.account().clone(),
-        model: selection.model().clone(),
-        replace_binding,
-    }
-}
-
-fn parse_durable_binding(value: &str) -> Result<yo_core::EffectiveModelBinding, AppError> {
-    let durable: DurableBinding = serde_json::from_str(value).map_err(|_| {
-        AppError::many(["the durable native binding identity is malformed".to_owned()])
-    })?;
-    let durable_provider = ProviderId::new(durable.provider)
-        .map_err(|error| AppError::single("validating durable Provider", error))?;
-    let durable_account = AccountId::new(durable.account)
-        .map_err(|error| AppError::single("validating durable Account", error))?;
-    let durable_model = ModelId::new(durable.model)
-        .map_err(|error| AppError::single("validating durable Model", error))?;
-    let durable_connector = ConnectorId::new(durable.connector)
-        .map_err(|error| AppError::single("validating durable connector", error))?;
-    let durable_dialect = durable
-        .api_dialect
-        .parse::<ApiDialect>()
-        .map_err(|error| AppError::single("validating durable API dialect", error))?;
-    let durable_endpoint = NormalizedEndpoint::parse(&durable.base_url)
-        .map_err(|error| AppError::single("validating durable endpoint", error))?;
-    yo_core::EffectiveModelBinding::from_durable(
-        durable_provider,
-        durable_account,
-        durable_model,
-        durable_connector,
-        durable_dialect,
-        durable_endpoint,
-    )
-    .map_err(|error| AppError::single("validating durable model binding", error))
-}
-
-#[derive(Deserialize)]
-struct DurableBinding {
-    provider: String,
-    account: String,
-    model: String,
-    connector: String,
-    api_dialect: String,
-    base_url: String,
+    startup::resolve(config, override_model, resume)
 }
 
 pub(crate) fn start_native(
@@ -241,96 +86,11 @@ pub(crate) fn start_native(
     selection: &StartupBackend,
     workspace: &Path,
 ) -> Result<Box<dyn AgentBackend + Send>, AppError> {
-    let StartupBackend::Native {
-        provider,
-        account,
-        model,
-        ..
-    } = selection
-    else {
-        return Err(AppError::many([
-            "native backend startup requires a native model selection".to_owned(),
-        ]));
-    };
-    let entry = config
-        .model_catalog()
-        .resolve_model(provider, account, model)
-        .map_err(|error| AppError::single("resolving native model binding", error))?;
-    require_supported_tokenizer(entry)?;
-    let credential_path = config.credential_path();
-    let credential = credentials.resolve(provider, account).cloned().ok_or_else(|| {
-        AppError::many([format!(
-            "credentials.yaml has no API credential for Provider {provider} and Account {account}"
-        )])
-    })?;
-    let registry = local_tools::registry()
-        .map_err(|error| AppError::single("building the local tool registry", error))?
-        .freeze();
-    let semantic_admission = local_tools::LocalSemanticAdmission::new(credentials.clone());
-    let tool_host = local_tools::LocalToolHost::new(workspace, &credential_path)
-        .map_err(|error| AppError::single("starting local workspace tools", error))?;
-    let services = NativeModelBackendServices::new(
-        Some(Box::new(semantic_admission)),
-        Box::new(tool_host),
-        Box::new(TokenizerRegistry),
-    );
-    NativeModelBackend::new(
-        entry,
-        credential,
-        ModelConnectorLimits::default(),
-        registry,
-        services,
-        NativeModelBackendConfig::default(),
-    )
-    .map(|backend| Box::new(backend) as Box<dyn AgentBackend + Send>)
-    .map_err(|error| AppError::single("starting native model backend", error))
+    native::start_native(config, credentials, selection, workspace)
 }
 
 pub(crate) fn open_credentials(path: &Path) -> Result<CredentialStore, AppError> {
-    LocalCredentialStore::open(path)
-        .map_err(|error| AppError::single("reading model credentials", error))
-}
-
-fn require_supported_tokenizer(entry: &ModelCatalogEntry) -> Result<(), AppError> {
-    if TokenizerRegistry::supports(entry.context().tokenizer_profile()) {
-        Ok(())
-    } else {
-        Err(AppError::many([format!(
-            "unsupported tokenizer profile {:?}; this build supports {O200K_PROFILE} and {UTF8_BYTES_PROFILE}",
-            entry.context().tokenizer_profile()
-        )]))
-    }
-}
-
-struct TokenizerRegistry;
-
-impl TokenizerRegistry {
-    fn supports(profile: &str) -> bool {
-        matches!(profile, O200K_PROFILE | UTF8_BYTES_PROFILE)
-    }
-}
-
-impl ModelTokenCounter for TokenizerRegistry {
-    fn count_input_tokens(
-        &self,
-        tokenizer_profile: &str,
-        request: &serde_json::Value,
-    ) -> Result<u64, ModelTokenCounterError> {
-        let encoded = serde_json::to_string(request)
-            .map_err(|_| ModelTokenCounterError::new("request cannot be tokenized"))?;
-        let count = match tokenizer_profile {
-            O200K_PROFILE => tiktoken_rs::o200k_base_singleton()
-                .encode_with_special_tokens(&encoded)
-                .len(),
-            // This profile deliberately admits one token per serialized UTF-8 byte. It is a
-            // conservative, provider-neutral bound for byte-backed tokenizer families when an
-            // exact built-in tokenizer is unavailable; the profile name makes that policy
-            // explicit rather than claiming Qwen or another model's private tokenizer.
-            UTF8_BYTES_PROFILE => encoded.len(),
-            _ => return Err(ModelTokenCounterError::new("unsupported tokenizer profile")),
-        };
-        u64::try_from(count).map_err(|_| ModelTokenCounterError::new("token count exceeds u64"))
-    }
+    native::open_credentials(path)
 }
 
 #[cfg(test)]
