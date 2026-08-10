@@ -76,9 +76,9 @@ pub(super) struct CheckpointIdentity {
     pub(super) authority_basis_commit: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct ReviewPlan {
-    pub(super) schema: &'static str,
+    pub(super) schema: String,
     pub(super) base_commit: String,
     pub(super) candidate_commit: String,
     pub(super) diff_hash: String,
@@ -95,44 +95,44 @@ pub(super) struct ReviewPlan {
     pub(super) review_lenses: Vec<String>,
     pub(super) review_questions: Vec<String>,
     pub(super) delivery_profile: DeliveryProfile,
-    pub(super) tokenizer_profile: &'static str,
-    pub(super) tokenizer_compiler: &'static str,
+    pub(super) tokenizer_profile: String,
+    pub(super) tokenizer_compiler: String,
     pub(super) max_managed_payload_tokens: usize,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct SemanticInput {
     pub(super) path: String,
     pub(super) hash: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct NamedSemanticInput {
     pub(super) name: String,
     pub(super) path: String,
     pub(super) hash: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct DeliveryProfile {
-    pub(super) id: &'static str,
-    pub(super) preamble: &'static str,
-    pub(super) section_prefix: &'static str,
-    pub(super) metadata_suffix: &'static str,
-    pub(super) section_suffix: &'static str,
-    pub(super) payload_suffix: &'static str,
+    pub(super) id: String,
+    pub(super) preamble: String,
+    pub(super) section_prefix: String,
+    pub(super) metadata_suffix: String,
+    pub(super) section_suffix: String,
+    pub(super) payload_suffix: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct Manifest {
-    pub(super) schema: &'static str,
+    pub(super) schema: String,
     pub(super) review_id: String,
     pub(super) plan: ReviewPlan,
     pub(super) inputs: ManifestInputs,
     pub(super) packet: PacketRecord,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct ManifestInputs {
     pub(super) context_request: Artifact,
     pub(super) context: Artifact,
@@ -143,15 +143,15 @@ pub(super) struct ManifestInputs {
     pub(super) diff: Artifact,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct NamedArtifact {
     pub(super) name: String,
     pub(super) artifact: Artifact,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(super) struct PacketRecord {
-    pub(super) path: &'static str,
+    pub(super) path: String,
     pub(super) hash: String,
     pub(super) managed_payload_tokens: usize,
     pub(super) max_managed_payload_tokens: usize,

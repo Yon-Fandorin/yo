@@ -422,8 +422,70 @@ the reviewer may reuse. The coordinator validates command syntax, artifact
 identity, and supplied green checks before delivery; do not make the reviewer
 rediscover those operational facts.
 
-The continuation payload and question are bounded; the number of continuations
-is not. Keep reusing the session while it can identify the prior review and the
+Build that provider-neutral continuation payload from the prior immutable
+manifest and a clean replacement `HEAD`:
+
+First record the exact finding set returned by that reviewer. This artifact is
+reviewer-authored evidence, not a worker-selected subset:
+
+```json
+{
+  "schema": "yo.slice-review-findings/v1",
+  "review_id": "sha256:<prior-review-id>",
+  "candidate_commit": "<prior-candidate-commit>",
+  "findings": [
+    {"finding_id": "F1", "summary": "The ambiguous state is accepted."}
+  ]
+}
+```
+
+```json
+{
+  "schema": "yo.slice-review-delta-request/v1",
+  "prior_manifest_path": ".local-exclude/methexis/slice-reviews/<review-id>/manifest.json",
+  "prior_manifest_hash": "sha256:<manifest-hash-from-review-packet-result>",
+  "prior_findings_path": ".local-exclude/coordination/<slice>/review-findings.json",
+  "prior_findings_hash": "sha256:<exact-findings-file-hash>",
+  "finding_dispositions": [
+    {
+      "finding_id": "F1",
+      "disposition": "resolved",
+      "summary": "The replacement candidate now rejects the ambiguous state."
+    }
+  ],
+  "reused_validation_evidence": ["unchanged-baseline"],
+  "affected_validation_evidence": [
+    {"name": "focused-finding-check", "path": "/tmp/focused-check.txt"}
+  ],
+  "delivery_profile": "yo.slice-review-delta-markdown/v1",
+  "tokenizer_profile": "o200k_base/v1",
+  "max_managed_payload_tokens": 12000
+}
+```
+
+```bash
+cargo xtask slice review-delta <request.json>
+```
+
+The command fully reproduces the prior packet and manifest from their captured
+inputs before accepting them; the prior manifest may be either the original
+review or the latest verified review delta in the same chain. It then requires dispositions (`resolved`,
+`not_reproduced`, or `accepted_limit`) for every and only prior finding ID,
+requires at least one replacement-specific affected validation item, requires
+every prior validation item to be classified as reused or affected, verifies
+reused bytes, requires every affected evidence body to name the exact
+replacement commit, and enforces a cumulative evidence bound while capturing.
+Store each candidate's evidence at a new immutable path; overwriting evidence
+referenced by an earlier review makes that chain head ineligible. The command
+captures the no-renames binary prior-to-replacement diff and returns one
+content-addressed `packet.md` plus manifest. Deliver those packet bytes
+unchanged to the recorded reviewer session. This command does not start or
+select a provider.
+
+The continuation payload and question are bounded. Policy does not impose a
+finding-resolution round count, but the verifier has a 64-hop safety limit; at
+that boundary, start a fresh review instead of extending the chain. Keep
+reusing the session while it can identify the prior review and the
 remaining work without broad reconstruction. Start a compact fresh session
 when the lens or scope changes, the reviewer is unavailable, exact context is
 lost, the reviewer begins broad repository or documentation reinspection, or

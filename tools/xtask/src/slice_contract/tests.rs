@@ -2,12 +2,41 @@ use std::path::Path;
 
 use super::{
     PathRule, bind, binding_path_for, check_bound_scope, check_bound_scope_with_index,
-    check_parallel, check_scope_with_index, overlaps,
+    check_parallel, check_scope_with_index, overlaps, trusted_check_bound_scope,
 };
 use crate::{git, test_support::TestRepository};
 
 fn check_scope(repository: &Path, contract_path: &Path) -> Result<(), String> {
     check_scope_with_index(repository, contract_path, None)
+}
+
+// review publish 시점의 silent trusted guard가 bound Slice write-set 밖에 commit된
+// 경로를 발견하면 거부함을 확인한다.
+#[test]
+fn trusted_bound_scope_rejects_a_committed_outside_path() {
+    let repository = TestRepository::new("trusted-review-scope");
+    repository.write("allowed.txt", "base\n");
+    let base = commit(&repository);
+    repository.git(["switch", "-c", "slice/direct/trusted-review-scope"]);
+    let contract_path = repository.write(
+        ".local-exclude/contract.json",
+        &contract(
+            "trusted-review-scope",
+            &base,
+            "allowed.txt",
+            "trusted review scope",
+        ),
+    );
+    bind(&repository.path, &contract_path).unwrap();
+    repository.write("outside.txt", "not leased\n");
+    repository.git(["add", "outside.txt"]);
+    repository.git(["commit", "--quiet", "-m", "outside"]);
+
+    assert!(
+        trusted_check_bound_scope(&repository.path)
+            .unwrap_err()
+            .contains("outside its allowed write-set")
+    );
 }
 
 fn commit(repository: &TestRepository) -> String {

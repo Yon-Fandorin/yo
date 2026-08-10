@@ -72,6 +72,28 @@ pub(crate) fn check_bound_scope(repository: &Path) -> Result<(), String> {
     check_bound_scope_with_index(repository, index_file.as_deref())
 }
 
+pub(crate) fn trusted_check_bound_scope(repository: &Path) -> Result<(), String> {
+    let repository = repository_root_with(repository, true)?;
+    let contract_path = bound_contract_path_with(&repository, true)?;
+    let contract = load(&contract_path)?;
+    validate_with(&repository, &contract, true)?;
+    validate_slice_branch_with(&repository, &contract, true)?;
+    let bytes = git::trusted_output_bytes_in(
+        &repository,
+        &[
+            "diff",
+            "--name-status",
+            "-z",
+            "--no-renames",
+            &contract.base,
+            "HEAD",
+            "--",
+        ],
+    )?;
+    let changed = diff_paths(bytes)?;
+    require_allowed_paths(&contract, &changed)
+}
+
 pub(crate) fn bound_slice(repository: &Path) -> Result<BoundSlice, String> {
     bound_slice_with(repository, false)
 }
@@ -213,6 +235,19 @@ fn check_scope_with_index(
     reject_hidden_index_paths(&repository, index_file.map(Path::as_os_str))?;
 
     let changed = changed_paths(&repository, &contract.base, index_file.map(Path::as_os_str))?;
+    require_allowed_paths(&contract, &changed)?;
+
+    println!(
+        "{{\"schema\":\"yo.slice-scope-check/v1\",\"ok\":true,\"slice\":{},\"contract_path\":{},\"base\":{},\"changed_paths\":{}}}",
+        json(&contract.slice)?,
+        json(&contract_path)?,
+        json(&contract.base)?,
+        json(&changed)?
+    );
+    Ok(())
+}
+
+fn require_allowed_paths(contract: &SliceContract, changed: &[String]) -> Result<(), String> {
     let rules = parse_rules(&contract.allowed_write_set)?;
     let outside = changed
         .iter()
@@ -231,13 +266,6 @@ fn check_scope_with_index(
         ));
     }
 
-    println!(
-        "{{\"schema\":\"yo.slice-scope-check/v1\",\"ok\":true,\"slice\":{},\"contract_path\":{},\"base\":{},\"changed_paths\":{}}}",
-        json(&contract.slice)?,
-        json(&contract_path)?,
-        json(&contract.base)?,
-        json(&changed)?
-    );
     Ok(())
 }
 

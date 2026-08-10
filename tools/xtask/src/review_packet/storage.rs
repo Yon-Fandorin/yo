@@ -28,7 +28,7 @@ const DIRECTORY_FLAGS: OFlags = OFlags::RDONLY
     .union(OFlags::CLOEXEC);
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(1);
 
-pub(super) fn publish(
+pub(crate) fn publish(
     directory: &Path,
     packet: &[u8],
     manifest: &[u8],
