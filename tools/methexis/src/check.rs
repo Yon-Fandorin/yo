@@ -5,7 +5,6 @@ use std::{
 };
 
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use crate::model::{
     KNOWLEDGE_SCHEMA, KnowledgeKind, KnowledgeMetadata, KnowledgeUnit, OWNER_SCHEMA, Owner,
@@ -13,11 +12,17 @@ use crate::model::{
 };
 
 const CHECK_SCHEMA: &str = "methexis.check/v1alpha1";
-const REVISION_DOMAIN: &[u8] = b"methexis.knowledge-revision/v1alpha1";
-const SNAPSHOT_DOMAIN: &[u8] = b"methexis.knowledge-snapshot/v1alpha1";
 const MAX_RECORD_BYTES: usize = 256 * 1024;
 pub(crate) mod artifacts;
+mod body;
+mod cycles;
+mod revision;
 mod runner;
+
+use body::{BodyLine, classify_body_lines};
+pub(crate) use body::{body_has_forbidden_html, body_start_line};
+pub(crate) use revision::knowledge_revision;
+use revision::snapshot_revision;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -434,15 +439,6 @@ fn parse_knowledge_file(
     })
 }
 
-pub(crate) fn body_start_line(content: &str, body: &str) -> u64 {
-    let body_offset = content.len() - body.len();
-    content[..body_offset]
-        .bytes()
-        .filter(|byte| *byte == b'\n')
-        .count() as u64
-        + 1
-}
-
 fn parse_owner_file(path: &Path, repository_root: &Path) -> Result<Owner, Vec<Diagnostic>> {
     let display_path = display_path(path, repository_root);
     let content = read_normalized(path, &display_path)?;
@@ -813,107 +809,6 @@ fn require_body_section(
     }
 }
 
-struct BodyLine<'a> {
-    heading: Option<&'a str>,
-    has_content: bool,
-    forbidden_html: bool,
-}
-
-fn classify_body_lines(body: &str) -> Vec<BodyLine<'_>> {
-    let mut fence = None;
-    let mut html_comment = false;
-    body.lines()
-        .map(|line| {
-            let marker = (!html_comment).then(|| fence_marker(line)).flatten();
-            let outside_fence = fence.is_none() && marker.is_none();
-            let contains_comment_marker = line.contains("<!--") || line.contains("-->");
-            let forbidden_html = outside_fence
-                && (html_comment || contains_comment_marker || line.trim_start().starts_with('<'));
-            let heading = if outside_fence
-                && !html_comment
-                && !contains_comment_marker
-                && line.starts_with("## ")
-            {
-                Some(line)
-            } else {
-                None
-            };
-
-            match (fence, marker) {
-                (None, Some(opening)) => fence = Some(opening),
-                (Some((character, minimum)), Some((candidate, length)))
-                    if character == candidate
-                        && length >= minimum
-                        && fence_closing_line(line, character, length) =>
-                {
-                    fence = None;
-                },
-                _ => {},
-            }
-
-            if outside_fence {
-                update_html_comment_state(line, &mut html_comment);
-            }
-
-            BodyLine {
-                heading,
-                has_content: !forbidden_html && !line.trim().is_empty(),
-                forbidden_html,
-            }
-        })
-        .collect()
-}
-
-pub(crate) fn body_has_forbidden_html(body: &str) -> bool {
-    classify_body_lines(body)
-        .iter()
-        .any(|line| line.forbidden_html)
-}
-
-fn update_html_comment_state(mut line: &str, html_comment: &mut bool) {
-    loop {
-        if *html_comment {
-            let Some(end) = line.find("-->") else {
-                return;
-            };
-            *html_comment = false;
-            line = &line[end + 3..];
-        } else {
-            let Some(start) = line.find("<!--") else {
-                return;
-            };
-            *html_comment = true;
-            line = &line[start + 4..];
-        }
-    }
-}
-
-fn fence_marker(line: &str) -> Option<(u8, usize)> {
-    let candidate = line.as_bytes();
-    let indentation = candidate.iter().take_while(|byte| **byte == b' ').count();
-    if indentation > 3 {
-        return None;
-    }
-    let marker = *candidate.get(indentation)?;
-    if !matches!(marker, b'`' | b'~') {
-        return None;
-    }
-    let length = candidate[indentation..]
-        .iter()
-        .take_while(|byte| **byte == marker)
-        .count();
-    (length >= 3).then_some((marker, length))
-}
-
-fn fence_closing_line(line: &str, marker: u8, length: usize) -> bool {
-    let trimmed = line.trim_start_matches(' ');
-    trimmed
-        .as_bytes()
-        .get(length..)
-        .is_some_and(|remainder| remainder.iter().all(u8::is_ascii_whitespace))
-        && trimmed.as_bytes().first() == Some(&marker)
-}
-
 fn validate_global(
     units: &[KnowledgeUnit],
     owners: &[Owner],
@@ -1041,13 +936,13 @@ fn validate_global(
             entries.is_empty().then_some((id, unit))
         })
         .collect::<BTreeMap<_, _>>();
-    diagnostics.extend(validate_cycles(
+    diagnostics.extend(cycle_diagnostics(
         &unique_units,
         repository_root,
         "required_relation_cycle",
         |relations| relations.required_targets().cloned().collect::<Vec<_>>(),
     ));
-    diagnostics.extend(validate_cycles(
+    diagnostics.extend(cycle_diagnostics(
         &unique_units,
         repository_root,
         "supersedes_cycle",
@@ -1062,30 +957,13 @@ fn validate_global(
     diagnostics
 }
 
-fn validate_cycles(
+fn cycle_diagnostics(
     units: &BTreeMap<String, KnowledgeUnit>,
     repository_root: &Path,
     code: &str,
     edges: impl Fn(&Relations) -> Vec<String>,
 ) -> Vec<Diagnostic> {
-    let graph = units
-        .iter()
-        .map(|(id, unit)| {
-            let mut targets = edges(&unit.metadata.relations);
-            targets.retain(|target| units.contains_key(target));
-            targets.sort();
-            (id.clone(), targets)
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut states = BTreeMap::<String, VisitState>::new();
-    let mut stack = Vec::new();
-    let mut cycles = BTreeSet::new();
-
-    for id in graph.keys() {
-        visit(id, &graph, &mut states, &mut stack, &mut cycles);
-    }
-
-    cycles
+    cycles::find_cycles(units, edges)
         .into_iter()
         .map(|cycle| {
             let source = cycle.first().and_then(|id| units.get(id)).map_or_else(
@@ -1100,120 +978,6 @@ fn validate_cycles(
             )
         })
         .collect()
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum VisitState {
-    Visiting,
-    Visited,
-}
-
-fn visit(
-    id: &str,
-    graph: &BTreeMap<String, Vec<String>>,
-    states: &mut BTreeMap<String, VisitState>,
-    stack: &mut Vec<String>,
-    cycles: &mut BTreeSet<Vec<String>>,
-) {
-    match states.get(id) {
-        Some(VisitState::Visited) => return,
-        Some(VisitState::Visiting) => {
-            if let Some(start) = stack.iter().position(|entry| entry == id) {
-                let mut cycle = stack[start..].to_vec();
-                cycle.push(id.to_owned());
-                cycles.insert(canonical_cycle(cycle));
-            }
-            return;
-        },
-        None => {},
-    }
-
-    states.insert(id.to_owned(), VisitState::Visiting);
-    stack.push(id.to_owned());
-    if let Some(targets) = graph.get(id) {
-        for target in targets {
-            visit(target, graph, states, stack, cycles);
-        }
-    }
-    stack.pop();
-    states.insert(id.to_owned(), VisitState::Visited);
-}
-
-fn canonical_cycle(mut cycle: Vec<String>) -> Vec<String> {
-    cycle.pop();
-    if cycle.is_empty() {
-        return cycle;
-    }
-    let start = cycle
-        .iter()
-        .enumerate()
-        .min_by_key(|(_, id)| *id)
-        .map_or(0, |(index, _)| index);
-    cycle.rotate_left(start);
-    cycle.push(cycle[0].clone());
-    cycle
-}
-
-pub(crate) fn knowledge_revision(metadata: &KnowledgeMetadata, body: &str) -> String {
-    let mut hasher = Sha256::new();
-    hash_part(&mut hasher, b"domain", REVISION_DOMAIN);
-    hash_part(&mut hasher, b"schema", metadata.schema.as_bytes());
-    hash_part(&mut hasher, b"id", metadata.id.as_bytes());
-    hash_part(&mut hasher, b"kind", metadata.kind.as_str().as_bytes());
-    hash_part(&mut hasher, b"owner", metadata.owner.as_bytes());
-    hash_part(&mut hasher, b"body", body.as_bytes());
-
-    let mut sources = metadata.sources.clone();
-    sources.sort();
-    for source in sources {
-        hash_part(&mut hasher, b"source_id", source.id.as_bytes());
-        hash_part(&mut hasher, b"source_revision", source.revision.as_bytes());
-    }
-    for (relation, targets) in metadata.relations.typed() {
-        let mut targets = targets.to_vec();
-        targets.sort();
-        hash_list(&mut hasher, relation.as_bytes(), &targets);
-    }
-
-    tagged_digest(hasher)
-}
-
-fn snapshot_revision(units: &[KnowledgeUnit]) -> String {
-    let mut hasher = Sha256::new();
-    hash_part(&mut hasher, b"domain", SNAPSHOT_DOMAIN);
-    for unit in units {
-        hash_part(&mut hasher, b"id", unit.metadata.id.as_bytes());
-        hash_part(&mut hasher, b"revision", unit.revision.as_bytes());
-    }
-    tagged_digest(hasher)
-}
-
-fn tagged_digest(hasher: Sha256) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-
-    let digest = hasher.finalize();
-    let mut output = String::with_capacity(7 + digest.len() * 2);
-    output.push_str("sha256:");
-    for byte in digest {
-        output.push(char::from(HEX[usize::from(byte >> 4)]));
-        output.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    output
-}
-
-fn hash_list(hasher: &mut Sha256, label: &[u8], values: &[String]) {
-    hash_part(hasher, b"list", label);
-    hasher.update((values.len() as u64).to_be_bytes());
-    for value in values {
-        hash_part(hasher, b"item", value.as_bytes());
-    }
-}
-
-fn hash_part(hasher: &mut Sha256, label: &[u8], value: &[u8]) {
-    hasher.update((label.len() as u64).to_be_bytes());
-    hasher.update(label);
-    hasher.update((value.len() as u64).to_be_bytes());
-    hasher.update(value);
 }
 
 pub(crate) fn is_semantic_id(id: &str) -> bool {
@@ -1284,7 +1048,7 @@ fn global_diagnostic(
 #[cfg(test)]
 mod tests {
     use super::{
-        DiagnosticPhase, canonical_cycle, knowledge_revision, local_diagnostic, parse_yaml,
+        DiagnosticPhase, cycles::canonical_cycle, knowledge_revision, local_diagnostic, parse_yaml,
         sort_diagnostics, validate_metadata,
     };
 
