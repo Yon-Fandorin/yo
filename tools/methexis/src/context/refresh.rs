@@ -2,7 +2,7 @@
 
 use std::{io, path::Path};
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use super::{
     operations::{self, CompiledBuild},
@@ -13,11 +13,10 @@ use crate::{
     publication::{self, CapturedFile, PublicationError, TargetLock},
 };
 
+mod inputs;
+mod transaction;
+
 const OPERATION: &str = "refresh_context_manifests";
-const MAX_REGISTERED_BYTES: usize = 256 * 1024;
-const MAX_JOURNAL_BYTES: usize = 1024 * 1024;
-const JOURNAL_PATH: &str =
-    "tools/methexis/examples/context-contract/.manifest-refresh-transaction.json";
 
 struct Prepared {
     registration: &'static ContextManifestRegistration,
@@ -28,29 +27,6 @@ struct Prepared {
     manifest_lock: TargetLock,
     manifest: CapturedFile,
     compiled: CompiledBuild,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct BatchJournal {
-    schema: String,
-    state: BatchState,
-    entries: Vec<BatchEntry>,
-}
-
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum BatchState {
-    Prepared,
-    Committed,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct BatchEntry {
-    path: String,
-    old: Vec<u8>,
-    new: Vec<u8>,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,15 +76,18 @@ pub(super) fn run(
     activation_request: &Path,
 ) -> Result<RefreshSuccess, RefreshFailure> {
     let _transaction_guard = publication::lock_repository_exclusive(repository_root)
-        .map_err(|error| publication_failure(error, JOURNAL_PATH))?;
-    recover_batch(repository_root)?;
+        .map_err(|error| publication_failure(error, transaction::JOURNAL_PATH))?;
+    transaction::recover_batch(repository_root)?;
     let prospective = checkpoint::prepare_context_refresh(repository_root, activation_request)
         .map_err(checkpoint_failure)?;
     let mut prepared = Vec::with_capacity(registry::REGISTRATIONS.len());
     for registration in registry::REGISTRATIONS {
-        let (request_lock, request) = capture_registered(repository_root, registration.request)?;
-        let (context_lock, context) = capture_registered(repository_root, registration.context)?;
-        let (manifest_lock, manifest) = capture_registered(repository_root, registration.manifest)?;
+        let (request_lock, request) =
+            inputs::capture_registered(repository_root, registration.request)?;
+        let (context_lock, context) =
+            inputs::capture_registered(repository_root, registration.context)?;
+        let (manifest_lock, manifest) =
+            inputs::capture_registered(repository_root, registration.manifest)?;
         let compiled = operations::compile_captured(
             repository_root,
             request.bytes(),
@@ -141,7 +120,7 @@ pub(super) fn run(
     for item in &prepared {
         let current = item
             .manifest_lock
-            .capture(MAX_REGISTERED_BYTES)
+            .capture(inputs::MAX_REGISTERED_BYTES)
             .map_err(|error| io_failure(error, item.registration.manifest))?;
         if current.bytes() != item.manifest.bytes() {
             return Err(failure(
@@ -153,7 +132,7 @@ pub(super) fn run(
                 "retry after concurrent edits stop",
             ));
         }
-        if let Err(error) = revalidate_registered_inputs(&item.request, &item.context) {
+        if let Err(error) = inputs::revalidate_registered_inputs(&item.request, &item.context) {
             return Err(failure(
                 Some(prospective.authority.trusted_commit.clone()),
                 "registered_input_changed_during_refresh",
@@ -167,7 +146,7 @@ pub(super) fn run(
             ));
         }
     }
-    let statuses = run_guarded_publication(
+    let statuses = transaction::run_guarded_publication(
         || {
             prospective
                 .final_revalidate(repository_root)
@@ -181,7 +160,7 @@ pub(super) fn run(
             }
             Ok(())
         },
-        || publish_batch(repository_root, &prepared),
+        || transaction::publish_batch(repository_root, &prepared),
     )?;
     let mut results = Vec::with_capacity(prepared.len());
     for (item, status) in prepared.iter().zip(statuses) {
@@ -215,279 +194,10 @@ pub(super) fn run(
     })
 }
 
-fn publish_batch(
-    repository_root: &Path,
-    prepared: &[Prepared],
-) -> Result<Vec<&'static str>, RefreshFailure> {
-    let journal_lock =
-        publication::lock_target(repository_root, &repository_root.join(JOURNAL_PATH))
-            .map_err(|error| publication_failure(error, JOURNAL_PATH))?;
-    match journal_lock.capture(MAX_JOURNAL_BYTES) {
-        Ok(_) => {
-            return Err(failure(
-                None,
-                "batch_recovery_required",
-                "a manifest refresh transaction appeared during preparation",
-                Vec::new(),
-                vec![JOURNAL_PATH.to_owned()],
-                "retry so Methexis can recover the transaction",
-            ));
-        },
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {},
-        Err(error) => return Err(io_failure(error, JOURNAL_PATH)),
-    }
-    let entries = prepared
-        .iter()
-        .map(|item| BatchEntry {
-            path: item.registration.manifest.to_owned(),
-            old: item.manifest.bytes().to_vec(),
-            new: item.compiled.artifacts.manifest.clone(),
-        })
-        .collect::<Vec<_>>();
-    let mut journal = BatchJournal {
-        schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
-        state: BatchState::Prepared,
-        entries,
-    };
-    let bytes = journal_bytes(&journal)?;
-    journal_lock
-        .atomic_write(&bytes)
-        .map_err(|error| publication_failure(error, JOURNAL_PATH))?;
-
-    if let Err(error) = publish_sequence(
-        prepared,
-        |item| item.manifest.bytes() != item.compiled.artifacts.manifest,
-        |item| {
-            item.manifest_lock
-                .atomic_write(&item.compiled.artifacts.manifest)
-        },
-        |item| item.manifest_lock.atomic_write(item.manifest.bytes()),
-        PublicationError::namespace_may_be_committed,
-    ) {
-        if error.rollback.is_some() {
-            return Err(failure(
-                None,
-                "batch_recovery_required",
-                format!(
-                    "late publication failed and rollback did not complete: {:?}",
-                    error.write
-                ),
-                Vec::new(),
-                registry::manifest_paths().map(str::to_owned).collect(),
-                "rerun refresh to recover the durable transaction",
-            ));
-        }
-        journal_lock
-            .remove()
-            .map_err(|remove| publication_failure(remove, JOURNAL_PATH))?;
-        return Err(publication_failure(
-            error.write,
-            prepared[error.index].registration.manifest,
-        ));
-    }
-    journal.state = BatchState::Committed;
-    journal_lock
-        .atomic_write(&journal_bytes(&journal)?)
-        .map_err(|error| publication_failure(error, JOURNAL_PATH))?;
-    journal_lock
-        .remove()
-        .map_err(|error| publication_failure(error, JOURNAL_PATH))?;
-    Ok(prepared
-        .iter()
-        .map(|item| {
-            if item.manifest.bytes() == item.compiled.artifacts.manifest {
-                "unchanged"
-            } else {
-                "written"
-            }
-        })
-        .collect())
-}
-
-fn revalidate_registered_inputs(request: &CapturedFile, context: &CapturedFile) -> io::Result<()> {
-    request.revalidate().and_then(|()| context.revalidate())
-}
-
-fn run_guarded_publication<E, T>(
-    prospective: impl FnOnce() -> Result<(), E>,
-    compiled: impl FnOnce() -> Result<(), E>,
-    publish: impl FnOnce() -> Result<T, E>,
-) -> Result<T, E> {
-    prospective()?;
-    compiled()?;
-    publish()
-}
-
-struct SequenceFailure<E> {
-    index: usize,
-    write: E,
-    rollback: Option<E>,
-}
-
-fn publish_sequence<T, E>(
-    items: &[T],
-    mut changed: impl FnMut(&T) -> bool,
-    mut write: impl FnMut(&T) -> Result<(), E>,
-    mut rollback: impl FnMut(&T) -> Result<(), E>,
-    mut committed_on_error: impl FnMut(&E) -> bool,
-) -> Result<(), SequenceFailure<E>> {
-    let mut written = Vec::new();
-    for (index, item) in items.iter().enumerate() {
-        if !changed(item) {
-            continue;
-        }
-        if let Err(error) = write(item) {
-            if committed_on_error(&error) {
-                written.push(item);
-            }
-            let mut rollback_error = None;
-            for previous in written.into_iter().rev() {
-                if let Err(error) = rollback(previous) {
-                    rollback_error = Some(error);
-                    break;
-                }
-            }
-            return Err(SequenceFailure {
-                index,
-                write: error,
-                rollback: rollback_error,
-            });
-        }
-        written.push(item);
-    }
-    Ok(())
-}
-
-fn recover_batch(repository_root: &Path) -> Result<(), RefreshFailure> {
-    let journal_path = repository_root.join(JOURNAL_PATH);
-    let journal_lock = publication::lock_target(repository_root, &journal_path)
-        .map_err(|error| publication_failure(error, JOURNAL_PATH))?;
-    let capture = match journal_lock.capture(MAX_JOURNAL_BYTES) {
-        Ok(capture) => capture,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(io_failure(error, JOURNAL_PATH)),
-    };
-    let journal: BatchJournal = serde_json::from_slice(capture.bytes()).map_err(|error| {
-        failure(
-            None,
-            "batch_recovery_conflict",
-            error.to_string(),
-            Vec::new(),
-            vec![JOURNAL_PATH.to_owned()],
-            "inspect the malformed transaction without overwriting tracked manifests",
-        )
-    })?;
-    validate_journal(&journal)?;
-    let desired_old = matches!(journal.state, BatchState::Prepared);
-    let mut locks = Vec::new();
-    for entry in &journal.entries {
-        let lock = publication::lock_target(repository_root, &repository_root.join(&entry.path))
-            .map_err(|error| publication_failure(error, &entry.path))?;
-        let current = lock
-            .capture(MAX_REGISTERED_BYTES)
-            .map_err(|error| io_failure(error, &entry.path))?;
-        if current.bytes() != entry.old && current.bytes() != entry.new {
-            return Err(failure(
-                None,
-                "batch_recovery_conflict",
-                "tracked manifest matches neither the journal old nor new bytes",
-                Vec::new(),
-                vec![entry.path.clone()],
-                "inspect the ambiguous manifest and transaction before retrying",
-            ));
-        }
-        locks.push((lock, current));
-    }
-    for ((lock, current), entry) in locks.iter().zip(&journal.entries) {
-        let desired = if desired_old { &entry.old } else { &entry.new };
-        if current.bytes() != desired {
-            lock.atomic_write(desired)
-                .map_err(|error| publication_failure(error, &entry.path))?;
-        }
-    }
-    journal_lock
-        .remove()
-        .map_err(|error| publication_failure(error, JOURNAL_PATH))
-}
-
 pub(crate) fn transaction_reader_guard(
     repository_root: &Path,
 ) -> Result<publication::RepositoryGuard, String> {
-    let guard = publication::lock_repository_shared(repository_root)
-        .map_err(|error| format!("cannot lock manifest refresh transaction: {error:?}"))?;
-    match publication::capture_file(
-        repository_root,
-        &repository_root.join(JOURNAL_PATH),
-        MAX_JOURNAL_BYTES,
-    ) {
-        Ok(_) => Err("a manifest refresh transaction is pending recovery".to_owned()),
-        Err(PublicationError::Io(error)) if error.kind() == io::ErrorKind::NotFound => Ok(guard),
-        Err(error) => Err(format!(
-            "cannot safely inspect manifest refresh transaction: {error:?}"
-        )),
-    }
-}
-
-fn validate_journal(journal: &BatchJournal) -> Result<(), RefreshFailure> {
-    let expected = registry::manifest_paths().collect::<Vec<_>>();
-    let actual = journal
-        .entries
-        .iter()
-        .map(|item| item.path.as_str())
-        .collect::<Vec<_>>();
-    if journal.schema != "methexis.context-manifest-refresh-transaction/v1alpha1"
-        || actual != expected
-        || journal.entries.iter().any(|item| {
-            item.old.len() > MAX_REGISTERED_BYTES || item.new.len() > MAX_REGISTERED_BYTES
-        })
-    {
-        return Err(failure(
-            None,
-            "batch_recovery_conflict",
-            "manifest refresh transaction schema, paths, or sizes are invalid",
-            Vec::new(),
-            vec![JOURNAL_PATH.to_owned()],
-            "inspect the transaction without overwriting tracked manifests",
-        ));
-    }
-    Ok(())
-}
-
-fn journal_bytes(journal: &BatchJournal) -> Result<Vec<u8>, RefreshFailure> {
-    let mut bytes = serde_json::to_vec(journal).map_err(|error| {
-        failure(
-            None,
-            "manifest_publication_failed",
-            error.to_string(),
-            Vec::new(),
-            vec![JOURNAL_PATH.to_owned()],
-            "report the transaction serialization failure",
-        )
-    })?;
-    bytes.push(b'\n');
-    if bytes.len() > MAX_JOURNAL_BYTES {
-        return Err(failure(
-            None,
-            "manifest_publication_failed",
-            "manifest refresh transaction exceeds its size limit",
-            Vec::new(),
-            vec![JOURNAL_PATH.to_owned()],
-            "reduce the registered manifest set",
-        ));
-    }
-    Ok(bytes)
-}
-
-fn capture_registered(
-    repository_root: &Path,
-    relative: &str,
-) -> Result<(TargetLock, CapturedFile), RefreshFailure> {
-    let lock = publication::lock_target(repository_root, &repository_root.join(relative))
-        .map_err(|error| publication_failure(error, relative))?;
-    let capture = lock
-        .capture(MAX_REGISTERED_BYTES)
-        .map_err(|error| io_failure(error, relative))?;
-    Ok((lock, capture))
+    transaction::transaction_reader_guard(repository_root)
 }
 
 fn checkpoint_failure(error: checkpoint::OperationFailure) -> RefreshFailure {
@@ -585,7 +295,7 @@ mod tests {
     #[test]
     fn publication_seam_rolls_back_a_late_failure() {
         let state = RefCell::new(vec![0, 0]);
-        let failure = super::publish_sequence(
+        let failure = super::transaction::publish_sequence(
             &[0_usize, 1],
             |_| true,
             |index| {
@@ -612,7 +322,7 @@ mod tests {
     #[test]
     fn publication_seam_rolls_back_the_current_ambiguous_write() {
         let state = RefCell::new(vec![0, 0]);
-        let failure = super::publish_sequence(
+        let failure = super::transaction::publish_sequence(
             &[0_usize, 1],
             |_| true,
             |index| {
@@ -641,7 +351,7 @@ mod tests {
         let state = RefCell::new(vec![0, 0, 0]);
         let write_order = RefCell::new(Vec::new());
         let rollback_order = RefCell::new(Vec::new());
-        let failure = super::publish_sequence(
+        let failure = super::transaction::publish_sequence(
             &[0_usize, 1, 2],
             |_| true,
             |index| {
@@ -672,7 +382,7 @@ mod tests {
     #[test]
     fn publication_seam_preserves_a_rollback_failure() {
         let state = RefCell::new(vec![0, 0]);
-        let failure = super::publish_sequence(
+        let failure = super::transaction::publish_sequence(
             &[0_usize, 1],
             |_| true,
             |index| {
@@ -702,7 +412,7 @@ mod tests {
     #[test]
     fn guarded_publication_runs_guards_before_publication() {
         let order = RefCell::new(Vec::new());
-        let result = super::run_guarded_publication(
+        let result = super::transaction::run_guarded_publication(
             || {
                 order.borrow_mut().push("prospective");
                 Ok::<(), &'static str>(())
@@ -726,7 +436,7 @@ mod tests {
     #[test]
     fn guarded_publication_stops_before_publication_on_compiled_guard_failure() {
         let order = RefCell::new(Vec::new());
-        let failure = super::run_guarded_publication(
+        let failure = super::transaction::run_guarded_publication(
             || {
                 order.borrow_mut().push("prospective");
                 Ok::<(), &'static str>(())
@@ -772,7 +482,7 @@ mod tests {
         fs::write(root.join("replacement"), b"{}\n").unwrap();
         fs::rename(root.join("replacement"), &request_path).unwrap();
 
-        assert!(super::revalidate_registered_inputs(&request, &context).is_err());
+        assert!(super::inputs::revalidate_registered_inputs(&request, &context).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -801,7 +511,7 @@ mod tests {
         let context = super::publication::capture_file(&root, &context_path, 32).unwrap();
         fs::write(&context_path, b"changed context\n").unwrap();
 
-        assert!(super::revalidate_registered_inputs(&request, &context).is_err());
+        assert!(super::inputs::revalidate_registered_inputs(&request, &context).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -836,12 +546,12 @@ mod tests {
     #[test]
     fn journal_validation_rejects_schema_paths_and_entry_sizes() {
         let registrations = super::registry::REGISTRATIONS;
-        let mut journal = super::BatchJournal {
+        let mut journal = super::transaction::BatchJournal {
             schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
-            state: super::BatchState::Prepared,
+            state: super::transaction::BatchState::Prepared,
             entries: registrations
                 .iter()
-                .map(|registration| super::BatchEntry {
+                .map(|registration| super::transaction::BatchEntry {
                     path: registration.manifest.to_owned(),
                     old: b"old\n".to_vec(),
                     new: b"new\n".to_vec(),
@@ -849,27 +559,27 @@ mod tests {
                 .collect(),
         };
 
-        assert!(super::validate_journal(&journal).is_ok());
+        assert!(super::transaction::validate_journal(&journal).is_ok());
         journal.schema = "wrong-schema".to_owned();
         assert_eq!(
-            serde_json::to_value(super::validate_journal(&journal).unwrap_err()).unwrap()["error"]
-                ["code"],
+            serde_json::to_value(super::transaction::validate_journal(&journal).unwrap_err())
+                .unwrap()["error"]["code"],
             "batch_recovery_conflict"
         );
 
         journal.schema = "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned();
         journal.entries.swap(0, 1);
         assert_eq!(
-            serde_json::to_value(super::validate_journal(&journal).unwrap_err()).unwrap()["error"]
-                ["affected_paths"],
-            serde_json::json!([super::JOURNAL_PATH])
+            serde_json::to_value(super::transaction::validate_journal(&journal).unwrap_err())
+                .unwrap()["error"]["affected_paths"],
+            serde_json::json!([super::transaction::JOURNAL_PATH])
         );
 
         journal.entries.swap(0, 1);
-        journal.entries[0].new = vec![b'x'; super::MAX_REGISTERED_BYTES + 1];
+        journal.entries[0].new = vec![b'x'; super::inputs::MAX_REGISTERED_BYTES + 1];
         assert_eq!(
-            serde_json::to_value(super::validate_journal(&journal).unwrap_err()).unwrap()["error"]
-                ["code"],
+            serde_json::to_value(super::transaction::validate_journal(&journal).unwrap_err())
+                .unwrap()["error"]["code"],
             "batch_recovery_conflict"
         );
     }
@@ -877,25 +587,25 @@ mod tests {
     // 두 registered manifest가 함께 직렬화될 때 journal 자체도 전체 크기 bound를 지킨다.
     #[test]
     fn journal_serialization_rejects_an_oversized_batch() {
-        let journal = super::BatchJournal {
+        let journal = super::transaction::BatchJournal {
             schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
-            state: super::BatchState::Prepared,
+            state: super::transaction::BatchState::Prepared,
             entries: super::registry::REGISTRATIONS
                 .iter()
-                .map(|registration| super::BatchEntry {
+                .map(|registration| super::transaction::BatchEntry {
                     path: registration.manifest.to_owned(),
-                    old: vec![b'o'; super::MAX_REGISTERED_BYTES],
-                    new: vec![b'n'; super::MAX_REGISTERED_BYTES],
+                    old: vec![b'o'; super::inputs::MAX_REGISTERED_BYTES],
+                    new: vec![b'n'; super::inputs::MAX_REGISTERED_BYTES],
                 })
                 .collect(),
         };
 
-        let failure = super::journal_bytes(&journal).unwrap_err();
+        let failure = super::transaction::journal_bytes(&journal).unwrap_err();
         let failure = serde_json::to_value(failure).unwrap();
         assert_eq!(failure["error"]["code"], "manifest_publication_failed");
         assert_eq!(
             failure["error"]["affected_paths"],
-            serde_json::json!([super::JOURNAL_PATH])
+            serde_json::json!([super::transaction::JOURNAL_PATH])
         );
     }
 
@@ -989,7 +699,7 @@ mod tests {
         expected: &str,
     ) {
         let publication_ran = RefCell::new(false);
-        let failure = super::run_guarded_publication(
+        let failure = super::transaction::run_guarded_publication(
             || prospective.final_revalidate(&repository.path),
             || Ok(()),
             || {
@@ -1020,7 +730,7 @@ mod tests {
         ));
         fs::create_dir(&prepared_root).unwrap();
         let prepared_entries = super::registry::manifest_paths()
-            .map(|path| super::BatchEntry {
+            .map(|path| super::transaction::BatchEntry {
                 path: path.to_owned(),
                 old: format!("old:{path}\n").into_bytes(),
                 new: format!("new:{path}\n").into_bytes(),
@@ -1031,22 +741,22 @@ mod tests {
             fs::create_dir_all(target.parent().unwrap()).unwrap();
             fs::write(&target, &entry.old).unwrap();
         }
-        let prepared_journal = super::BatchJournal {
+        let prepared_journal = super::transaction::BatchJournal {
             schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
-            state: super::BatchState::Prepared,
+            state: super::transaction::BatchState::Prepared,
             entries: prepared_entries,
         };
-        let journal_path = prepared_root.join(super::JOURNAL_PATH);
+        let journal_path = prepared_root.join(super::transaction::JOURNAL_PATH);
         fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
         fs::write(
             &journal_path,
-            super::journal_bytes(&prepared_journal).unwrap(),
+            super::transaction::journal_bytes(&prepared_journal).unwrap(),
         )
         .unwrap();
         let first = &prepared_journal.entries[0];
         fs::write(prepared_root.join(&first.path), &first.new).unwrap();
 
-        super::recover_batch(&prepared_root).unwrap();
+        super::transaction::recover_batch(&prepared_root).unwrap();
 
         for entry in &prepared_journal.entries {
             assert_eq!(
@@ -1063,7 +773,7 @@ mod tests {
         ));
         fs::create_dir(&committed_root).unwrap();
         let committed_entries = super::registry::manifest_paths()
-            .map(|path| super::BatchEntry {
+            .map(|path| super::transaction::BatchEntry {
                 path: path.to_owned(),
                 old: format!("old:{path}\n").into_bytes(),
                 new: format!("new:{path}\n").into_bytes(),
@@ -1074,22 +784,22 @@ mod tests {
             fs::create_dir_all(target.parent().unwrap()).unwrap();
             fs::write(&target, &entry.old).unwrap();
         }
-        let committed_journal = super::BatchJournal {
+        let committed_journal = super::transaction::BatchJournal {
             schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
-            state: super::BatchState::Committed,
+            state: super::transaction::BatchState::Committed,
             entries: committed_entries,
         };
-        let journal_path = committed_root.join(super::JOURNAL_PATH);
+        let journal_path = committed_root.join(super::transaction::JOURNAL_PATH);
         fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
         fs::write(
             &journal_path,
-            super::journal_bytes(&committed_journal).unwrap(),
+            super::transaction::journal_bytes(&committed_journal).unwrap(),
         )
         .unwrap();
         let first = &committed_journal.entries[0];
         fs::write(committed_root.join(&first.path), &first.new).unwrap();
 
-        super::recover_batch(&committed_root).unwrap();
+        super::transaction::recover_batch(&committed_root).unwrap();
 
         for entry in &committed_journal.entries {
             assert_eq!(
@@ -1119,7 +829,7 @@ mod tests {
         ));
         fs::create_dir(&root).unwrap();
         let entries = super::registry::manifest_paths()
-            .map(|path| super::BatchEntry {
+            .map(|path| super::transaction::BatchEntry {
                 path: path.to_owned(),
                 old: format!("old:{path}\n").into_bytes(),
                 new: format!("new:{path}\n").into_bytes(),
@@ -1132,16 +842,20 @@ mod tests {
         }
         let conflict_path = root.join(&entries[0].path);
         fs::write(&conflict_path, b"unrecognized\n").unwrap();
-        let journal = super::BatchJournal {
+        let journal = super::transaction::BatchJournal {
             schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
-            state: super::BatchState::Prepared,
+            state: super::transaction::BatchState::Prepared,
             entries,
         };
-        let journal_path = root.join(super::JOURNAL_PATH);
+        let journal_path = root.join(super::transaction::JOURNAL_PATH);
         fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
-        fs::write(&journal_path, super::journal_bytes(&journal).unwrap()).unwrap();
+        fs::write(
+            &journal_path,
+            super::transaction::journal_bytes(&journal).unwrap(),
+        )
+        .unwrap();
 
-        let failure = super::recover_batch(&root).unwrap_err();
+        let failure = super::transaction::recover_batch(&root).unwrap_err();
         let failure = serde_json::to_value(failure).unwrap();
         assert_eq!(failure["error"]["code"], "batch_recovery_conflict");
         assert_eq!(
@@ -1163,12 +877,12 @@ mod tests {
         let root = PathBuf::from(std::env::var_os("METHEXIS_CRASH_TEST_ROOT").unwrap());
         let ready = PathBuf::from(std::env::var_os("METHEXIS_CRASH_TEST_READY").unwrap());
         let paths = super::registry::manifest_paths().collect::<Vec<_>>();
-        let journal = super::BatchJournal {
+        let journal = super::transaction::BatchJournal {
             schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
-            state: super::BatchState::Prepared,
+            state: super::transaction::BatchState::Prepared,
             entries: paths
                 .iter()
-                .map(|path| super::BatchEntry {
+                .map(|path| super::transaction::BatchEntry {
                     path: (*path).to_owned(),
                     old: fs::read(root.join(path)).unwrap(),
                     new: format!("new:{path}\n").into_bytes(),
@@ -1176,9 +890,10 @@ mod tests {
                 .collect(),
         };
         let journal_lock =
-            super::publication::lock_target(&root, &root.join(super::JOURNAL_PATH)).unwrap();
+            super::publication::lock_target(&root, &root.join(super::transaction::JOURNAL_PATH))
+                .unwrap();
         journal_lock
-            .atomic_write(&super::journal_bytes(&journal).unwrap())
+            .atomic_write(&super::transaction::journal_bytes(&journal).unwrap())
             .unwrap();
         let first = &journal.entries[0];
         let manifest_lock =
@@ -1239,7 +954,7 @@ mod tests {
         child.kill().unwrap();
         child.wait().unwrap();
 
-        super::recover_batch(&root).unwrap();
+        super::transaction::recover_batch(&root).unwrap();
 
         for path in super::registry::manifest_paths() {
             assert_eq!(
@@ -1247,7 +962,7 @@ mod tests {
                 format!("old:{path}\n").as_bytes()
             );
         }
-        assert!(!root.join(super::JOURNAL_PATH).exists());
+        assert!(!root.join(super::transaction::JOURNAL_PATH).exists());
         fs::remove_dir_all(root).unwrap();
     }
 
