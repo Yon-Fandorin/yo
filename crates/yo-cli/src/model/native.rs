@@ -66,3 +66,28 @@ pub(super) fn open_credentials(path: &Path) -> Result<CredentialStore, AppError>
     LocalCredentialStore::open(path)
         .map_err(|error| AppError::single("reading model credentials", error))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // native startup은 Codex 선택을 catalog 해석이나 credential 조회로 보내지 않고,
+    // backend 종류가 잘못된 호출이라는 고정 진단으로 즉시 거절한다.
+    #[test]
+    fn native_startup_rejects_host_backend_before_catalog_resolution() {
+        let error = match start_native(
+            &Config::default(),
+            &yo_core::CredentialStore::default(),
+            &StartupBackend::Codex,
+            std::path::Path::new("."),
+        ) {
+            Ok(_) => panic!("host backend must be rejected before native startup"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "native backend startup requires a native model selection"
+        );
+    }
+}
