@@ -2,10 +2,7 @@ use std::{cell::RefCell, collections::BTreeSet, rc::Rc};
 
 use nix::sys::signal::Signal;
 
-use super::super::{
-    SignalOs, TerminationCoordinator,
-    state::{Phase, SharedState},
-};
+use super::super::{SignalOs, TerminationCoordinator, state::SharedState};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum Call {
@@ -87,15 +84,4 @@ pub(super) fn coordinator(
     let (os, calls) = RecordingOs::new(failures);
     let coordinator = TerminationCoordinator::install_with(shared, os, false).unwrap();
     (coordinator, calls)
-}
-
-pub(super) fn active_shared() -> &'static SharedState {
-    let shared = shared();
-    shared
-        .transition_preserving(Phase::Installing, Phase::Idle)
-        .unwrap();
-    shared
-        .transition_preserving(Phase::Idle, Phase::Active)
-        .unwrap();
-    shared
 }

@@ -6,14 +6,22 @@ use std::{
 
 use signal_hook::consts::signal::{SIGHUP, SIGINT, SIGQUIT, SIGTERM};
 
-use super::{
-    super::{
-        SIGNALS, TerminationEvents,
-        readiness::TerminationReadiness,
-        state::{Phase, Publication},
-    },
-    support::active_shared,
+use super::super::{
+    SIGNALS, TerminationEvents,
+    readiness::TerminationReadiness,
+    state::{Phase, Publication, SharedState},
 };
+
+fn active_shared() -> &'static SharedState {
+    let shared = super::support::shared();
+    shared
+        .transition_preserving(Phase::Installing, Phase::Idle)
+        .unwrap();
+    shared
+        .transition_preserving(Phase::Idle, Phase::Active)
+        .unwrap();
+    shared
+}
 
 // 여러 signal이 cleanup 전 도착하면 고정 우선순위의 원래 signal 하나를 선택한다.
 #[test]
