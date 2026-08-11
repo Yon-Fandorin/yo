@@ -15,9 +15,11 @@ use super::{
         Manifest, PLAN_SCHEMA, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
     },
     render::{count_tokens, render_packet_with_metadata},
-    trusted_git::{trusted_repository_root, trusted_resolve_commit},
+    trusted_git::{trusted_git_succeeds, trusted_repository_root, trusted_resolve_commit},
 };
-use crate::review_protocol::{Captured, digest, domain_digest, relative, resolve_input_path};
+use crate::review_protocol::{
+    Captured, digest, domain_digest, relative, require_commit, resolve_input_path,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct VerifiedEvidence {
@@ -48,7 +50,6 @@ pub(crate) fn verify_published(
     manifest_path: &Path,
     expected_manifest_hash: &str,
 ) -> Result<VerifiedReview, String> {
-    let repository = trusted_repository_root(repository)?;
     let manifest_bytes = crate::bounded_file::read_regular(
         manifest_path,
         MAX_INPUT_BYTES,
@@ -62,11 +63,13 @@ pub(crate) fn verify_published(
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("invalid published Slice review manifest: {error}"))?;
     require_supported_manifest(&manifest)?;
+    require_manifest_revisions(&manifest)?;
     let plan_bytes = serde_json::to_vec(&manifest.plan).expect("review plan serializes");
     let reproduced_id = domain_digest(REVIEW_ID_DOMAIN, &plan_bytes);
     if reproduced_id != manifest.review_id {
         return Err("published ReviewId does not match its canonical plan".to_owned());
     }
+    let repository = trusted_repository_root(repository)?;
     let suffix = manifest
         .review_id
         .strip_prefix("sha256:")
@@ -82,6 +85,12 @@ pub(crate) fn verify_published(
     {
         return Err("manifest is not the exact published ReviewId artifact".to_owned());
     }
+
+    require_base_candidate_provenance(
+        &repository,
+        &manifest.plan.base_commit,
+        &manifest.plan.candidate_commit,
+    )?;
 
     if trusted_resolve_commit(&repository, "refs/heads/develop")? != manifest.plan.trusted_commit {
         return Err("trusted integration changed since the published review".to_owned());
@@ -179,6 +188,60 @@ pub(crate) fn verify_published(
         review_lenses: inputs.lenses,
         review_questions: inputs.questions,
     })
+}
+
+fn require_manifest_revisions(manifest: &Manifest) -> Result<(), String> {
+    for (value, label) in [
+        (manifest.plan.base_commit.as_str(), "published review base"),
+        (
+            manifest.plan.candidate_commit.as_str(),
+            "published review candidate",
+        ),
+        (
+            manifest.plan.trusted_commit.as_str(),
+            "published review trusted integration",
+        ),
+        (
+            manifest
+                .plan
+                .active_checkpoint
+                .authority_basis_commit
+                .as_str(),
+            "published review Checkpoint authority basis",
+        ),
+    ] {
+        require_commit(value, label)?;
+    }
+    Ok(())
+}
+
+fn require_exact_commit(repository: &Path, revision: &str, label: &str) -> Result<(), String> {
+    let resolved = trusted_resolve_commit(repository, revision)
+        .map_err(|error| format!("cannot resolve published review {label}: {error}"))?;
+    if resolved == revision {
+        Ok(())
+    } else {
+        Err(format!(
+            "published review {label} does not name the exact commit object"
+        ))
+    }
+}
+
+pub(super) fn require_base_candidate_provenance(
+    repository: &Path,
+    base: &str,
+    candidate: &str,
+) -> Result<(), String> {
+    require_exact_commit(repository, base, "base revision")?;
+    require_exact_commit(repository, candidate, "candidate revision")?;
+    if trusted_git_succeeds(
+        repository,
+        &["merge-base", "--is-ancestor", base, candidate],
+    )? {
+        Ok(())
+    } else {
+        Err("published review base is not an ancestor of its candidate".to_owned())
+    }
 }
 
 pub(super) fn verify_canonical_artifacts(

@@ -5,11 +5,21 @@ use super::{
         capture::{Inputs, captured},
         model::Manifest,
         render::{count_tokens, render_packet_with_metadata},
-        verifier::{verify_canonical_artifacts, verify_published},
+        storage,
+        verifier::{
+            require_base_candidate_provenance, verify_canonical_artifacts, verify_published,
+        },
     },
-    support::{sample_inputs, sample_inputs_v1_alpha1},
+    support::{publish_original, sample_inputs, sample_inputs_v1_alpha1},
 };
 use crate::review_protocol::{digest, domain_digest};
+
+fn repository_head(repository: &std::path::Path) -> String {
+    crate::git::output_in(repository, &["rev-parse", "HEAD"], false)
+        .unwrap()
+        .trim()
+        .to_owned()
+}
 
 fn produced_artifacts(inputs: &Inputs) -> (Manifest, Vec<u8>, Vec<u8>) {
     let plan = build_plan(inputs);
@@ -135,5 +145,182 @@ fn published_verifier_rejects_manifest_hash_drift_before_replay() {
             "published Slice review manifest hash mismatch: expected {expected}, found {}",
             digest(manifest_bytes)
         )
+    );
+}
+
+// manifest의 네 Git revision 중 하나라도 canonical commit 문법이 아니면 non-repository
+// 위치에서도 Git root 탐색보다 그 필드 진단이 먼저 나와 untrusted 값을 Git에 넘기지 않는다.
+#[test]
+fn published_verifier_validates_every_manifest_revision_before_git() {
+    let root = crate::test_support::unique_path("review-published-revisions");
+    std::fs::create_dir_all(&root).unwrap();
+    let inputs = sample_inputs("/tmp/validation.json");
+    let (valid, _, _) = produced_artifacts(&inputs);
+
+    for (case, expected_label) in [
+        ("base", "published review base"),
+        ("candidate", "published review candidate"),
+        ("trusted", "published review trusted integration"),
+        ("checkpoint", "published review Checkpoint authority basis"),
+    ] {
+        let mut manifest = valid.clone();
+        match case {
+            "base" => manifest.plan.base_commit = "--base".to_owned(),
+            "candidate" => manifest.plan.candidate_commit = "--candidate".to_owned(),
+            "trusted" => manifest.plan.trusted_commit = "--trusted".to_owned(),
+            "checkpoint" => {
+                manifest.plan.active_checkpoint.authority_basis_commit = "--checkpoint".to_owned();
+            },
+            _ => unreachable!("closed revision fixture"),
+        }
+        let mut bytes = serde_json::to_vec_pretty(&manifest).unwrap();
+        bytes.push(b'\n');
+        let path = root.join(format!("{case}.json"));
+        std::fs::write(&path, &bytes).unwrap();
+
+        assert_eq!(
+            verify_published(&root, &path, &digest(&bytes)).unwrap_err(),
+            format!("{expected_label} must be a full lowercase SHA-1 commit ID")
+        );
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// 40자리 annotated-tag object ID는 commit으로 peel될 수 있어도 manifest가 그 exact
+// commit ID를 직접 이름 붙인 것이 아니므로 ContextBuild나 authority 재생 전에 거부한다.
+#[test]
+fn published_verifier_rejects_a_tag_object_as_the_candidate_commit() {
+    let repository = crate::test_support::TestRepository::new("review-published-tag-object");
+    repository.write(".gitignore", ".local-exclude/\n");
+    repository.write("owned.txt", "base\n");
+    repository.git(["add", ".gitignore", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "base"]);
+    let base = repository_head(&repository.path);
+    repository.write("owned.txt", "candidate\n");
+    repository.git(["add", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "candidate"]);
+    let candidate = repository_head(&repository.path);
+    repository.git([
+        "tag",
+        "--annotate",
+        "candidate-tag",
+        "--message",
+        "candidate tag",
+        &candidate,
+    ]);
+    let tag_object = crate::git::output_in(
+        &repository.path,
+        &["rev-parse", "refs/tags/candidate-tag"],
+        false,
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    let contract = repository.write(".local-exclude/contract.json", "contract\n");
+    let validation = repository.write(".local-exclude/validation.txt", "passed\n");
+    let published = publish_original(
+        &repository.path,
+        &base,
+        &tag_object,
+        &candidate,
+        &contract,
+        &validation,
+    );
+
+    let error = verify_published(
+        &repository.path,
+        &repository.path.join(&published.manifest_path),
+        &published.manifest_hash,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        "published review candidate revision does not name the exact commit object"
+    );
+}
+
+// 실제 descendant commit 두 개는 exact object와 ancestry 검사를 모두 통과해 새 gate가
+// 정상 published history까지 거부하지 않음을 같은 trusted Git 경로로 확인한다.
+#[test]
+fn published_provenance_accepts_exact_descendant_commit_objects() {
+    let repository = crate::test_support::TestRepository::new("review-published-descendant");
+    repository.write("owned.txt", "base\n");
+    repository.git(["add", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "base"]);
+    let base = repository_head(&repository.path);
+    repository.write("owned.txt", "candidate\n");
+    repository.git(["add", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "candidate"]);
+    let candidate = repository_head(&repository.path);
+
+    require_base_candidate_provenance(&repository.path, &base, &candidate).unwrap();
+}
+
+// canonical serializer가 만든 artifact라도 candidate object가 저장소에 없으면 diff나
+// model-visible 입력을 읽기 전에 exact commit resolution 단계에서 실패한다.
+#[test]
+fn published_verifier_rejects_a_missing_candidate_commit_before_input_replay() {
+    let repository = crate::test_support::TestRepository::new("review-published-missing-object");
+    repository.write("owned.txt", "base\n");
+    repository.git(["add", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "base"]);
+    let base = repository_head(&repository.path);
+    let mut inputs = sample_inputs("/tmp/validation.json");
+    inputs.base_commit = base.clone();
+    inputs.candidate_commit = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_owned();
+    inputs.context.result.trusted_commit = base;
+    let (manifest, manifest_bytes, packet) = produced_artifacts(&inputs);
+    let directory = repository
+        .path
+        .join(".local-exclude/methexis/slice-reviews")
+        .join(manifest.review_id.strip_prefix("sha256:").unwrap());
+    storage::publish(&directory, &packet, &manifest_bytes, || Ok(())).unwrap();
+    let manifest_path = directory.join("manifest.json");
+
+    let error =
+        verify_published(&repository.path, &manifest_path, &digest(&manifest_bytes)).unwrap_err();
+
+    assert!(error.starts_with("cannot resolve published review candidate revision:"));
+}
+
+// base와 candidate가 각각 존재하는 commit이어도 서로 무관한 history면 canonical diff를
+// 만들 수 있다는 이유만으로 accepted provenance가 되지 않고 ancestry gate에서 거부된다.
+#[test]
+fn published_verifier_rejects_unrelated_base_and_candidate_histories() {
+    let repository = crate::test_support::TestRepository::new("review-published-unrelated");
+    repository.write(".gitignore", ".local-exclude/\n");
+    repository.write("owned.txt", "base\n");
+    repository.git(["add", ".gitignore", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "base"]);
+    let base = repository_head(&repository.path);
+    repository.git(["switch", "--orphan", "unrelated"]);
+    repository.write("owned.txt", "unrelated candidate\n");
+    repository.git(["add", "--all"]);
+    repository.git(["commit", "--quiet", "-m", "unrelated candidate"]);
+    let candidate = repository_head(&repository.path);
+    repository.git(["switch", "develop"]);
+    let contract = repository.write(".local-exclude/contract.json", "contract\n");
+    let validation = repository.write(".local-exclude/validation.txt", "passed\n");
+    let published = publish_original(
+        &repository.path,
+        &base,
+        &candidate,
+        &base,
+        &contract,
+        &validation,
+    );
+
+    let error = verify_published(
+        &repository.path,
+        &repository.path.join(&published.manifest_path),
+        &published.manifest_hash,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        "published review base is not an ancestor of its candidate"
     );
 }

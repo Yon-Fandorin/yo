@@ -590,6 +590,13 @@ content-addressed `packet.md` plus manifest. Deliver those packet bytes
 unchanged to the recorded reviewer session. This command does not start or
 select a provider.
 
+Before replaying a published original review, its verifier validates every
+manifest Git revision without invoking Git. It then requires the base and
+candidate fields to name those exact commit objects and requires the base to
+be an ancestor of the candidate before reading ContextBuild, authority,
+validation, contract, or diff inputs. Malformed, tag-object, missing-object,
+and unrelated-history identities therefore fail before input replay.
+
 The continuation payload and question are bounded. Policy does not impose a
 finding-resolution round count, but the verifier has a 64-hop safety limit; at
 that boundary, start a fresh review instead of extending the chain. Keep
