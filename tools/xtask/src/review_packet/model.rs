@@ -7,12 +7,22 @@ pub(super) use crate::review_protocol::{
 
 pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-packet-request/v1";
 pub(super) const PLAN_SCHEMA: &str = "yo.slice-review-plan/v1";
-pub(super) const MANIFEST_SCHEMA: &str = "yo.slice-review-manifest/v1";
+pub(super) const MANIFEST_SCHEMA_V1: &str = "yo.slice-review-manifest/v1";
+pub(super) const MANIFEST_SCHEMA_V1_ALPHA1: &str = "yo.slice-review-manifest/v1alpha1";
+pub(super) const MANIFEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-manifest/v1alpha2";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-packet-result/v1";
-pub(super) const PREFLIGHT_RESULT_SCHEMA: &str = "yo.slice-review-packet-preflight-result/v1";
+pub(super) const PREFLIGHT_RESULT_SCHEMA_V1: &str = "yo.slice-review-packet-preflight-result/v1";
+pub(super) const PREFLIGHT_RESULT_SCHEMA_V1_ALPHA1: &str =
+    "yo.slice-review-packet-preflight-result/v1alpha1";
+pub(super) const PREFLIGHT_RESULT_SCHEMA_V1_ALPHA2: &str =
+    "yo.slice-review-packet-preflight-result/v1alpha2";
 pub(super) const READINESS_RESULT_SCHEMA: &str = "yo.slice-review-request-readiness-result/v1";
 pub(super) const SECTION_TOKEN_ACCOUNTING: &str = "independently-tokenized-non-additive/v1";
-pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-markdown/v1";
+pub(super) const DELIVERY_PROFILE_V1: &str = "yo.slice-review-markdown/v1";
+pub(super) const DELIVERY_PROFILE_V1_ALPHA1: &str = "yo.slice-review-markdown/v1alpha1";
+pub(super) const DELIVERY_PROFILE_V1_ALPHA2: &str = "yo.slice-review-markdown/v1alpha2";
+pub(super) const INPUT_PREFIX_PROFILE: &str = "yo.slice-review-input-prefix/v1";
+pub(super) const SENTINEL_ESCAPE_PROFILE: &str = "yo.slice-review-sentinel-escape/v1";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,12 +110,25 @@ pub(super) struct SemanticInput {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct Manifest {
     pub(super) schema: String,
     pub(super) review_id: String,
     pub(super) plan: ReviewPlan,
     pub(super) inputs: ManifestInputs,
     pub(super) packet: PacketRecord,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) input_prefix: Option<InputPrefixRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct InputPrefixRecord {
+    pub(super) boundary_profile: String,
+    pub(super) bytes: usize,
+    pub(super) hash: String,
+    pub(super) tokenizer_profile: String,
+    pub(super) standalone_tokens: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -146,6 +169,8 @@ pub(super) struct PreflightResultRecord {
     pub(super) packet: PreflightPacket,
     pub(super) section_token_accounting: &'static str,
     pub(super) sections: Vec<PreflightSection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) input_prefix: Option<InputPrefixRecord>,
 }
 
 #[derive(Debug, Serialize)]

@@ -1,10 +1,11 @@
 use super::{
-    METADATA_SUFFIX, PAYLOAD_SUFFIX, PREAMBLE, SECTION_PREFIX, SECTION_SUFFIX,
     capture::Inputs,
     model::{
-        DELIVERY_PROFILE, DeliveryProfile, MANIFEST_SCHEMA, Manifest, ManifestInputs,
-        NamedArtifact, NamedSemanticInput, PLAN_SCHEMA, PacketRecord, ReviewPlan, SemanticInput,
-        TOKENIZER_COMPILER, TOKENIZER_PROFILE,
+        DELIVERY_PROFILE_V1, DELIVERY_PROFILE_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA2,
+        DeliveryProfile, InputPrefixRecord, MANIFEST_SCHEMA_V1, MANIFEST_SCHEMA_V1_ALPHA1,
+        MANIFEST_SCHEMA_V1_ALPHA2, Manifest, ManifestInputs, NamedArtifact, NamedSemanticInput,
+        PLAN_SCHEMA, PacketRecord, ReviewPlan, SemanticInput, TOKENIZER_COMPILER,
+        TOKENIZER_PROFILE,
     },
 };
 use crate::review_protocol::artifact;
@@ -42,7 +43,8 @@ pub(super) fn build_plan(inputs: &Inputs) -> ReviewPlan {
             .collect(),
         review_lenses: inputs.lenses.clone(),
         review_questions: inputs.questions.clone(),
-        delivery_profile: delivery_profile(),
+        delivery_profile: serde_json::from_slice(&inputs.delivery_profile_bytes)
+            .expect("captured delivery profile bytes deserialize"),
         tokenizer_profile: TOKENIZER_PROFILE.to_owned(),
         tokenizer_compiler: TOKENIZER_COMPILER.to_owned(),
         max_managed_payload_tokens: inputs.max_tokens,
@@ -55,9 +57,16 @@ pub(super) fn build_manifest(
     inputs: &Inputs,
     packet_hash: String,
     managed_payload_tokens: usize,
+    input_prefix: Option<InputPrefixRecord>,
 ) -> Manifest {
+    let schema = match plan.delivery_profile.id.as_str() {
+        DELIVERY_PROFILE_V1 => MANIFEST_SCHEMA_V1,
+        DELIVERY_PROFILE_V1_ALPHA1 => MANIFEST_SCHEMA_V1_ALPHA1,
+        DELIVERY_PROFILE_V1_ALPHA2 => MANIFEST_SCHEMA_V1_ALPHA2,
+        _ => unreachable!("validated original review delivery profile"),
+    };
     Manifest {
-        schema: MANIFEST_SCHEMA.to_owned(),
+        schema: schema.to_owned(),
         review_id,
         plan,
         inputs: ManifestInputs {
@@ -82,6 +91,7 @@ pub(super) fn build_manifest(
             managed_payload_tokens,
             max_managed_payload_tokens: inputs.max_tokens,
         },
+        input_prefix,
     }
 }
 
@@ -92,17 +102,39 @@ pub(super) fn semantic_input(input: &crate::review_protocol::Captured) -> Semant
     }
 }
 
-pub(super) fn delivery_profile() -> DeliveryProfile {
-    DeliveryProfile {
-        id: DELIVERY_PROFILE.to_owned(),
-        preamble: PREAMBLE.to_owned(),
-        section_prefix: SECTION_PREFIX.to_owned(),
-        metadata_suffix: METADATA_SUFFIX.to_owned(),
-        section_suffix: SECTION_SUFFIX.to_owned(),
-        payload_suffix: PAYLOAD_SUFFIX.to_owned(),
-    }
+pub(super) fn delivery_profile_for_id(id: &str) -> Result<DeliveryProfile, String> {
+    let preamble = match id {
+        DELIVERY_PROFILE_V1 => super::PREAMBLE,
+        DELIVERY_PROFILE_V1_ALPHA1 => super::PREAMBLE_V1_ALPHA1,
+        DELIVERY_PROFILE_V1_ALPHA2 => super::PREAMBLE_V1_ALPHA2,
+        _ => {
+            return Err(format!(
+                "unsupported original review delivery profile `{id}`"
+            ));
+        },
+    };
+    Ok(DeliveryProfile {
+        id: id.to_owned(),
+        preamble: preamble.to_owned(),
+        section_prefix: super::SECTION_PREFIX.to_owned(),
+        metadata_suffix: super::METADATA_SUFFIX.to_owned(),
+        section_suffix: super::SECTION_SUFFIX.to_owned(),
+        payload_suffix: super::PAYLOAD_SUFFIX.to_owned(),
+    })
 }
 
-pub(super) fn delivery_profile_bytes() -> Vec<u8> {
-    serde_json::to_vec(&delivery_profile()).expect("closed delivery profile serializes")
+#[cfg(test)]
+fn delivery_profile_v1() -> DeliveryProfile {
+    delivery_profile_for_id(DELIVERY_PROFILE_V1)
+        .expect("frozen original review v1 delivery profile is supported")
+}
+
+pub(super) fn delivery_profile_bytes_for_id(id: &str) -> Result<Vec<u8>, String> {
+    Ok(serde_json::to_vec(&delivery_profile_for_id(id)?)
+        .expect("closed delivery profile serializes"))
+}
+
+#[cfg(test)]
+pub(super) fn delivery_profile_v1_bytes() -> Vec<u8> {
+    serde_json::to_vec(&delivery_profile_v1()).expect("closed v1 delivery profile serializes")
 }

@@ -323,3 +323,91 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
         .contains("does not bind")
     );
 }
+
+type PublishOriginal = fn(&Path, &str, &str, &str, &Path, &Path) -> VerifiedReview;
+
+fn assert_experimental_original_roots_unchanged_v1_delta_chain(
+    case: &str,
+    publish_original: PublishOriginal,
+) {
+    let repository = crate::test_support::TestRepository::new(case);
+    repository.write(".gitignore", ".local-exclude/\n");
+    repository.write("owned.txt", "base\n");
+    repository.git(["add", ".gitignore", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "base"]);
+    let base = repository_head(&repository.path);
+    repository.write("owned.txt", "candidate a\n");
+    repository.git(["add", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "candidate a"]);
+    let candidate_a = repository_head(&repository.path);
+    repository.git(["switch", "-c", "slice/direct/review-delta-alpha"]);
+    let contract = repository.write(".local-exclude/contract.json", "contract\n");
+    let baseline = repository.write(
+        ".local-exclude/evidence-a.txt",
+        &format!("Candidate: {candidate_a}\n"),
+    );
+    let seed = publish_original(
+        &repository.path,
+        &base,
+        &candidate_a,
+        &candidate_a,
+        &contract,
+        &baseline,
+    );
+    let seed_path = resolve_input_path(&repository.path, &seed.manifest_path);
+    let verify_seed = |_: &Path, path: &Path, expected: &str| {
+        if std::fs::canonicalize(path).unwrap() == std::fs::canonicalize(&seed_path).unwrap()
+            && expected == seed.manifest_hash
+        {
+            Ok(seed.clone())
+        } else {
+            Err("unexpected alpha seed review".to_owned())
+        }
+    };
+
+    repository.write("owned.txt", "candidate b\n");
+    repository.git(["add", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "candidate b"]);
+    let candidate_b = repository_head(&repository.path);
+    let inputs = delta_inputs(
+        &repository.path,
+        seed.clone(),
+        &candidate_b,
+        "F1",
+        format!("Candidate: {candidate_b}\npassed\n").as_bytes(),
+        "alpha-b",
+    );
+    let (manifest, hash, _) = publish_delta_fixture(&repository.path, &inputs);
+    let verified = verify_chain_head_with(
+        &repository.path,
+        &manifest,
+        &hash,
+        &mut BTreeSet::new(),
+        0,
+        &verify_seed,
+    )
+    .unwrap();
+
+    assert_eq!(verified.base_commit, base);
+    assert_eq!(verified.candidate_commit, candidate_b);
+}
+
+// 이미 발행된 v1alpha1 original manifest가 alpha2 도입 뒤에도 같은 delta-v1 chain
+// root로 재현되어 기존 finding-resolution hop을 끝까지 검증한다.
+#[test]
+fn v1_alpha1_original_roots_unchanged_v1_delta_chain() {
+    assert_experimental_original_roots_unchanged_v1_delta_chain(
+        "review-delta-alpha1-root",
+        crate::review_packet::tests::support::publish_original_v1_alpha1,
+    );
+}
+
+// sentinel-safe v1alpha2 original manifest도 delta 자체의 frozen v1 bytes/schema를
+// 바꾸지 않고 동일한 recursive continuation protocol을 사용한다.
+#[test]
+fn v1_alpha2_original_roots_unchanged_v1_delta_chain() {
+    assert_experimental_original_roots_unchanged_v1_delta_chain(
+        "review-delta-alpha2-root",
+        crate::review_packet::tests::support::publish_original_v1_alpha2,
+    );
+}

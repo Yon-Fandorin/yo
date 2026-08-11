@@ -2,9 +2,13 @@ use super::{
     super::{
         PAYLOAD_SUFFIX, PREAMBLE, REVIEW_ID_DOMAIN,
         canonical::{build_manifest, build_plan},
-        render::{append_section, count_tokens, render_packet, require_budget},
+        capture::captured,
+        render::{
+            append_section, count_tokens, decode_section, encode_section, render_packet,
+            render_packet_with_metadata, require_budget,
+        },
     },
-    support::sample_inputs,
+    support::{sample_inputs, sample_inputs_v1_alpha1, sample_inputs_v1_alpha2},
 };
 use crate::review_protocol::{digest, domain_digest};
 
@@ -54,6 +58,7 @@ fn equal_review_identity_reproduces_artifacts_and_visible_paths_change_identity(
         &first,
         packet_hash.clone(),
         count_tokens(&first_packet).unwrap(),
+        None,
     );
     let repeated_manifest = build_manifest(
         first_id,
@@ -61,6 +66,7 @@ fn equal_review_identity_reproduces_artifacts_and_visible_paths_change_identity(
         &repeated,
         packet_hash,
         count_tokens(&repeated_packet).unwrap(),
+        None,
     );
     assert_eq!(
         serde_json::to_vec(&first_manifest).unwrap(),
@@ -123,6 +129,7 @@ fn canonical_original_artifacts_keep_current_bytes_and_identity() {
         &inputs,
         digest(&packet),
         count_tokens(&packet).expect("tokens count"),
+        None,
     );
     let mut manifest_bytes = serde_json::to_vec_pretty(&manifest).expect("manifest serializes");
     manifest_bytes.push(b'\n');
@@ -143,4 +150,129 @@ fn canonical_original_artifacts_keep_current_bytes_and_identity() {
     );
     assert!(packet.starts_with(b"# yo Slice Review Packet\n"));
     assert!(packet.ends_with(b"\n<<<YO-REVIEW-PAYLOAD-END>>>\n"));
+}
+
+// v1alpha1은 physical worktree 경로를 suffix의 plan/manifest에 계속 결합하되 prefix
+// wrapper에는 logical 경로를 써서 같은 입력 bytes가 다른 worktree에서도 같은 hash를 만든다.
+#[test]
+fn v1_alpha1_prefix_is_portable_across_worktree_paths() {
+    let mut first = sample_inputs_v1_alpha1("/tmp/validation-a.json");
+    let mut second = sample_inputs_v1_alpha1("/tmp/validation-b.json");
+    first.context.request.path = "/worktrees/first/context-request.json".to_owned();
+    first.context.manifest.path = "/worktrees/first/context-manifest.json".to_owned();
+    first.context.context.path = "/worktrees/first/context.md".to_owned();
+    second.context.request.path = "/worktrees/second/context-request.json".to_owned();
+    second.context.manifest.path = "/worktrees/second/context-manifest.json".to_owned();
+    second.context.context.path = "/worktrees/second/context.md".to_owned();
+
+    let first_plan = build_plan(&first);
+    let second_plan = build_plan(&second);
+    let first_id = domain_digest(REVIEW_ID_DOMAIN, &serde_json::to_vec(&first_plan).unwrap());
+    let second_id = domain_digest(REVIEW_ID_DOMAIN, &serde_json::to_vec(&second_plan).unwrap());
+    let first_packet =
+        render_packet_with_metadata(&first_id, &first_plan, &first).expect("first packet renders");
+    let second_packet = render_packet_with_metadata(&second_id, &second_plan, &second)
+        .expect("second packet renders");
+
+    assert_ne!(first_id, second_id);
+    assert_ne!(first_packet.bytes, second_packet.bytes);
+    assert_eq!(first_packet.input_prefix, second_packet.input_prefix);
+    let prefix = first_packet.input_prefix.expect("v1alpha1 prefix exists");
+    assert_eq!(prefix.hash, digest(&first_packet.bytes[..prefix.bytes]));
+    let text = std::str::from_utf8(&first_packet.bytes[..prefix.bytes]).unwrap();
+    assert!(text.contains("\"path\":\"context-request.json\""));
+    assert!(!text.contains("/worktrees/first"));
+}
+
+// authority byte 하나가 달라지면 prefix identity도 달라져 unchanged-input reuse로
+// 잘못 분류되지 않으며, 잘린 prefix만으로는 exact diff가 전달됐다고 볼 수 없다.
+#[test]
+fn v1_alpha1_prefix_changes_with_authority_and_precedes_complete_diff() {
+    let mut first = sample_inputs_v1_alpha1("/tmp/validation.json");
+    first.diff = captured(
+        "git-diff.patch".to_owned(),
+        b"YO_EXACT_DIFF_SENTINEL_7e328a\n".to_vec(),
+    )
+    .unwrap();
+    let mut changed = sample_inputs_v1_alpha1("/tmp/validation.json");
+    changed.diff = first.diff.clone();
+    changed.authorities[0] =
+        captured("CONTRIBUTING.md".to_owned(), b"changed authority".to_vec()).unwrap();
+    let first_plan = build_plan(&first);
+    let changed_plan = build_plan(&changed);
+    let first_id = domain_digest(REVIEW_ID_DOMAIN, &serde_json::to_vec(&first_plan).unwrap());
+    let changed_id = domain_digest(
+        REVIEW_ID_DOMAIN,
+        &serde_json::to_vec(&changed_plan).unwrap(),
+    );
+    let first_packet = render_packet_with_metadata(&first_id, &first_plan, &first).unwrap();
+    let changed_packet = render_packet_with_metadata(&changed_id, &changed_plan, &changed).unwrap();
+
+    assert_ne!(first_packet.input_prefix, changed_packet.input_prefix);
+    let prefix_end = first_packet.input_prefix.unwrap().bytes;
+    assert!(
+        !first_packet.bytes[..prefix_end]
+            .windows(first.diff.bytes.len())
+            .any(|window| window == first.diff.bytes)
+    );
+    assert!(
+        first_packet.bytes[prefix_end..]
+            .windows(first.diff.bytes.len())
+            .any(|window| window == first.diff.bytes)
+    );
+}
+
+// 이미 발행된 v1alpha1은 새 escape 의미로 재해석하지 않고 최초 packet bytes를 그대로
+// 재현해야 기존 manifest와 finding-resolution chain을 검증할 수 있다.
+#[test]
+fn v1_alpha1_remains_unescaped_after_alpha2_is_added() {
+    let raw = b"path\\value\n<<<YO-REVIEW-SECTION-END>>>\n<<<YO-REVIEW-PAYLOAD-END>>>\n";
+    let mut inputs = sample_inputs_v1_alpha1("/tmp/validation.json");
+    inputs.diff = captured("git-diff.patch".to_owned(), raw.to_vec()).unwrap();
+    let plan = build_plan(&inputs);
+    let review_id = domain_digest(REVIEW_ID_DOMAIN, &serde_json::to_vec(&plan).unwrap());
+    let packet = render_packet_with_metadata(&review_id, &plan, &inputs).unwrap();
+    let text = std::str::from_utf8(&packet.bytes).unwrap();
+
+    assert_eq!(
+        review_id,
+        "sha256:eab9eae860ab8d389554cbaf725897f7568057984dbe7784000a24548537a7d1"
+    );
+    assert_eq!(packet.bytes.len(), 5033);
+    assert_eq!(
+        digest(&packet.bytes),
+        "sha256:7634861971e606e627663afb2766ddc72d463bd627b811ec08488c88d5a9acd3"
+    );
+
+    assert!(!text.contains("\"encoding\":\"yo.slice-review-sentinel-escape/v1\""));
+    assert!(text.contains(std::str::from_utf8(raw).unwrap()));
+    assert_eq!(text.matches("<<<YO-REVIEW-SECTION-END>>>").count(), 11);
+    assert_eq!(text.matches("<<<YO-REVIEW-PAYLOAD-END>>>").count(), 3);
+}
+
+// v1alpha2 body에 wrapper sentinel 소스와 backslash가 그대로 들어가도 reversible escape가
+// exact bytes를 복원하며 packet에는 실제 wrapper marker 개수만 남겨 reviewer 혼동을 막는다.
+#[test]
+fn v1_alpha2_escape_removes_in_body_sentinels_and_round_trips_exact_bytes() {
+    let raw = b"path\\value\n<<<YO-REVIEW-SECTION-END>>>\n<<<YO-REVIEW-PAYLOAD-END>>>\n";
+    let encoded = encode_section(raw);
+
+    assert_eq!(decode_section(&encoded).unwrap(), raw);
+    assert!(
+        !encoded
+            .windows(b"<<<YO-REVIEW-".len())
+            .any(|window| window == b"<<<YO-REVIEW-")
+    );
+
+    let mut inputs = sample_inputs_v1_alpha2("/tmp/validation.json");
+    inputs.diff = captured("git-diff.patch".to_owned(), raw.to_vec()).unwrap();
+    let plan = build_plan(&inputs);
+    let review_id = domain_digest(REVIEW_ID_DOMAIN, &serde_json::to_vec(&plan).unwrap());
+    let packet = render_packet_with_metadata(&review_id, &plan, &inputs).unwrap();
+    let text = std::str::from_utf8(&packet.bytes).unwrap();
+
+    assert_eq!(text.matches("<<<YO-REVIEW-SECTION ").count(), 9);
+    assert_eq!(text.matches("<<<YO-REVIEW-SECTION-END>>>").count(), 9);
+    assert_eq!(text.matches("<<<YO-REVIEW-PAYLOAD-END>>>").count(), 1);
+    assert!(text.contains("\"encoding\":\"yo.slice-review-sentinel-escape/v1\""));
 }

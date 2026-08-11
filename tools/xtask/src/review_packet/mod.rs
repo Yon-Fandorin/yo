@@ -19,17 +19,21 @@ use std::{
 };
 
 use self::{
-    canonical::{build_manifest, build_plan, delivery_profile_bytes},
+    canonical::{build_manifest, build_plan, delivery_profile_bytes_for_id},
     capture::{
         Inputs, capture_authorities, capture_context_request, capture_context_with_request,
         capture_diff, capture_validation, captured,
     },
     model::{
-        Artifact, ArtifactWithTokens, DELIVERY_PROFILE, PREFLIGHT_RESULT_SCHEMA, PreflightPacket,
-        PreflightResultRecord, REQUEST_SCHEMA, RESULT_SCHEMA, Request, ResultRecord, ReviewPlan,
-        SECTION_TOKEN_ACCOUNTING, TOKENIZER_PROFILE,
+        Artifact, ArtifactWithTokens, DELIVERY_PROFILE_V1, DELIVERY_PROFILE_V1_ALPHA1,
+        DELIVERY_PROFILE_V1_ALPHA2, PREFLIGHT_RESULT_SCHEMA_V1, PREFLIGHT_RESULT_SCHEMA_V1_ALPHA1,
+        PREFLIGHT_RESULT_SCHEMA_V1_ALPHA2, PreflightPacket, PreflightResultRecord, REQUEST_SCHEMA,
+        RESULT_SCHEMA, Request, ResultRecord, ReviewPlan, SECTION_TOKEN_ACCOUNTING,
+        TOKENIZER_PROFILE,
     },
-    render::{count_tokens, render_packet, render_packet_with_measurements, require_budget},
+    render::{
+        count_tokens, render_packet_with_measurements, render_packet_with_metadata, require_budget,
+    },
     revalidate::final_revalidate,
     trusted_git::{
         expected_slice_ref, trusted_ensure_clean, trusted_git_succeeds, trusted_git_text,
@@ -50,12 +54,23 @@ const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PACKET_BYTES: usize = 32 * 1024 * 1024;
 const PREAMBLE: &str = "# yo Slice Review Packet\n\nThis packet is the complete caller-controlled model-visible review payload. Review only the immutable candidate described here against the included authority, contract, evidence, and questions.\n";
+const PREAMBLE_V1_ALPHA1: &str = "# yo Slice Review Packet\n\nThis packet is the complete caller-controlled model-visible review payload. Do not return a verdict unless the full review plan, exact base-to-candidate diff, and final YO-REVIEW-PAYLOAD-END marker are present. Review only that immutable candidate against the included authority, contract, evidence, and questions.\n";
+const PREAMBLE_V1_ALPHA2: &str = "# yo Slice Review Packet\n\nThis packet is the complete caller-controlled model-visible review payload. Do not return a verdict unless the full review plan, exact base-to-candidate diff, and final YO-REVIEW-PAYLOAD-END marker are present. A section whose metadata names yo.slice-review-sentinel-escape/v1 is reversible model-visible text: every literal backslash is doubled, and the first less-than byte of any literal wrapper-sentinel prefix is written as ASCII backslash-x3c. Interpret that decoded content when reviewing. Review only the immutable candidate against the included authority, contract, evidence, and questions.\n";
 const SECTION_PREFIX: &str = "\n<<<YO-REVIEW-SECTION ";
 const METADATA_SUFFIX: &str = ">>>\n";
 const SECTION_SUFFIX: &str = "\n<<<YO-REVIEW-SECTION-END>>>\n";
 const PAYLOAD_SUFFIX: &str = "\n<<<YO-REVIEW-PAYLOAD-END>>>\n";
 
 pub(crate) use verifier::{VerifiedEvidence, VerifiedReview, verify_published};
+
+pub(crate) fn is_original_manifest_schema(schema: &str) -> bool {
+    matches!(
+        schema,
+        model::MANIFEST_SCHEMA_V1
+            | model::MANIFEST_SCHEMA_V1_ALPHA1
+            | model::MANIFEST_SCHEMA_V1_ALPHA2
+    )
+}
 
 pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
     let PreparedReview {
@@ -65,15 +80,16 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         plan,
         review_id,
     } = prepare_review(repository, request_path)?;
-    let packet = render_packet(&review_id, &plan, &inputs)?;
-    let managed_payload_tokens = require_packet_budget(&packet, inputs.max_tokens)?;
-    let packet_hash = digest(&packet);
+    let rendered = render_packet_with_metadata(&review_id, &plan, &inputs)?;
+    let managed_payload_tokens = require_packet_budget(&rendered.bytes, inputs.max_tokens)?;
+    let packet_hash = digest(&rendered.bytes);
     let manifest = build_manifest(
         review_id.clone(),
         plan,
         &inputs,
         packet_hash.clone(),
         managed_payload_tokens,
+        rendered.input_prefix,
     );
     let mut manifest_bytes =
         serde_json::to_vec_pretty(&manifest).expect("closed review manifest serializes");
@@ -85,7 +101,7 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let output_directory = repository
         .join(".local-exclude/methexis/slice-reviews")
         .join(suffix);
-    let status = storage::publish(&output_directory, &packet, &manifest_bytes, || {
+    let status = storage::publish(&output_directory, &rendered.bytes, &manifest_bytes, || {
         final_revalidate(&repository, &request, &inputs)
     })?;
 
@@ -133,7 +149,7 @@ pub(super) fn preflight(
     write_result_to(
         output,
         &PreflightResultRecord {
-            schema: PREFLIGHT_RESULT_SCHEMA,
+            schema: preflight_result_schema(&plan.delivery_profile.id)?,
             ok: true,
             operation: "preflight_slice_review_packet",
             status: "ready",
@@ -148,6 +164,7 @@ pub(super) fn preflight(
             },
             section_token_accounting: SECTION_TOKEN_ACCOUNTING,
             sections: rendered.sections,
+            input_prefix: rendered.input_prefix,
         },
         "review packet preflight result",
     )
@@ -218,7 +235,7 @@ fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedRevi
         lenses: readiness.lenses,
         questions: readiness.request.review_questions.clone(),
         required_knowledge_ids: readiness.required_knowledge_ids,
-        delivery_profile_bytes: delivery_profile_bytes(),
+        delivery_profile_bytes: delivery_profile_bytes_for_id(&readiness.request.delivery_profile)?,
         max_tokens: readiness.request.max_managed_payload_tokens,
     };
 
@@ -391,8 +408,13 @@ fn validate_request(request: &Request) -> Result<(), String> {
     if request.schema != REQUEST_SCHEMA {
         return Err(format!("expected request schema `{REQUEST_SCHEMA}`"));
     }
-    if request.delivery_profile != DELIVERY_PROFILE {
-        return Err(format!("expected delivery profile `{DELIVERY_PROFILE}`"));
+    if !matches!(
+        request.delivery_profile.as_str(),
+        DELIVERY_PROFILE_V1 | DELIVERY_PROFILE_V1_ALPHA1 | DELIVERY_PROFILE_V1_ALPHA2
+    ) {
+        return Err(format!(
+            "expected delivery profile `{DELIVERY_PROFILE_V1}`, `{DELIVERY_PROFILE_V1_ALPHA1}`, or `{DELIVERY_PROFILE_V1_ALPHA2}`"
+        ));
     }
     if request.tokenizer_profile != TOKENIZER_PROFILE {
         return Err(format!("expected tokenizer profile `{TOKENIZER_PROFILE}`"));
@@ -421,4 +443,15 @@ fn validate_request(request: &Request) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn preflight_result_schema(profile: &str) -> Result<&'static str, String> {
+    match profile {
+        DELIVERY_PROFILE_V1 => Ok(PREFLIGHT_RESULT_SCHEMA_V1),
+        DELIVERY_PROFILE_V1_ALPHA1 => Ok(PREFLIGHT_RESULT_SCHEMA_V1_ALPHA1),
+        DELIVERY_PROFILE_V1_ALPHA2 => Ok(PREFLIGHT_RESULT_SCHEMA_V1_ALPHA2),
+        _ => Err(format!(
+            "unsupported original review delivery profile `{profile}`"
+        )),
+    }
 }

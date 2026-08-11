@@ -7,14 +7,14 @@ use super::{
         REVIEW_ID_DOMAIN,
         canonical::build_plan,
         model::{
-            PREFLIGHT_RESULT_SCHEMA, PreflightPacket, PreflightResultRecord,
+            PREFLIGHT_RESULT_SCHEMA_V1, PreflightPacket, PreflightResultRecord,
             SECTION_TOKEN_ACCOUNTING,
         },
         preflight,
         render::{render_packet, render_packet_with_measurements},
         set_preflight_test_hook,
     },
-    support::sample_inputs,
+    support::{sample_inputs, sample_inputs_v1_alpha1},
 };
 use crate::{
     review_protocol::domain_digest,
@@ -55,12 +55,35 @@ fn preflight_measurement_preserves_canonical_packet_and_exposes_section_costs() 
     }
 }
 
+// v1alpha1 preflight은 complete packet budget과 별도로 exact input-prefix 진단을
+// 보고하고 plan/diff를 prefix 밖에 두어 cache hit으로 과장하지 않는다.
+#[test]
+fn v1_alpha1_preflight_exposes_non_additive_input_prefix() {
+    let inputs = sample_inputs_v1_alpha1("/tmp/validation.json");
+    let plan = build_plan(&inputs);
+    let review_id = domain_digest(REVIEW_ID_DOMAIN, &serde_json::to_vec(&plan).unwrap());
+    let measured = render_packet_with_measurements(&review_id, &plan, &inputs).unwrap();
+    let prefix = measured.input_prefix.expect("v1alpha1 prefix exists");
+
+    assert_eq!(measured.sections[0].kind, "context_request");
+    assert_eq!(measured.sections[3].kind, "repository_authority");
+    assert_eq!(measured.sections[4].kind, "review_plan");
+    assert_eq!(
+        prefix.hash,
+        crate::review_protocol::digest(&measured.bytes[..prefix.bytes])
+    );
+    assert_eq!(
+        prefix.standalone_tokens,
+        super::super::render::count_tokens(&measured.bytes[..prefix.bytes]).unwrap()
+    );
+}
+
 // preflight 성공 결과는 prospective identity와 budget만 보고하고 eligible packet/manifest
 // 경로나 hash를 제공하지 않아 publication이나 완료된 review evidence로 오인할 수 없다.
 #[test]
 fn preflight_result_is_explicitly_non_publishing_and_has_no_artifact_paths() {
     let value = serde_json::to_value(PreflightResultRecord {
-        schema: PREFLIGHT_RESULT_SCHEMA,
+        schema: PREFLIGHT_RESULT_SCHEMA_V1,
         ok: true,
         operation: "preflight_slice_review_packet",
         status: "ready",
@@ -75,6 +98,7 @@ fn preflight_result_is_explicitly_non_publishing_and_has_no_artifact_paths() {
         },
         section_token_accounting: SECTION_TOKEN_ACCOUNTING,
         sections: Vec::new(),
+        input_prefix: None,
     })
     .unwrap();
 
@@ -229,7 +253,7 @@ impl PreflightFixture {
                 }],
                 "review_lenses": ["fresh-context", "code-quality"],
                 "review_questions": ["Is the preflight boundary correct?"],
-                "delivery_profile": "yo.slice-review-markdown/v1",
+                "delivery_profile": "yo.slice-review-markdown/v1alpha2",
                 "tokenizer_profile": "o200k_base/v1",
                 "max_managed_payload_tokens": 90000
             })),

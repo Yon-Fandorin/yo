@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::{
     MAX_INPUT_BYTES,
-    canonical::delivery_profile_bytes,
+    canonical::delivery_profile_bytes_for_id,
     capture::{
         Inputs, capture_authorities, capture_context, capture_diff, capture_validation,
         same_captures, same_named_captures,
@@ -79,7 +79,7 @@ pub(super) fn final_revalidate(
     {
         return Err("ContextBuild identity, freshness, or artifact bytes changed".to_owned());
     }
-    if delivery_profile_bytes() != inputs.delivery_profile_bytes {
+    if delivery_profile_bytes_for_id(&request.delivery_profile)? != inputs.delivery_profile_bytes {
         return Err("delivery profile bytes changed during review packet construction".to_owned());
     }
     Ok(())

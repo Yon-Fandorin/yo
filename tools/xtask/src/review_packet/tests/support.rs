@@ -2,12 +2,17 @@ use std::path::Path;
 
 use super::super::{
     MAX_REQUEST_BYTES, REVIEW_ID_DOMAIN,
-    canonical::{build_manifest, build_plan, delivery_profile_bytes},
+    canonical::{
+        build_manifest, build_plan, delivery_profile_bytes_for_id, delivery_profile_v1_bytes,
+    },
     capture::{
         ContextCapture, Inputs, capture_authorities, capture_diff, capture_validation, captured,
     },
-    model::{CheckpointIdentity, ContextResult, EvidenceRequest, Manifest},
-    render::{count_tokens, render_packet},
+    model::{
+        CheckpointIdentity, ContextResult, DELIVERY_PROFILE_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA2,
+        EvidenceRequest, Manifest,
+    },
+    render::{count_tokens, render_packet_with_metadata},
     storage,
     verifier::{VerifiedEvidence, VerifiedReview, verify_canonical_artifacts},
 };
@@ -24,7 +29,69 @@ pub(crate) fn publish_original(
     contract_path: &Path,
     validation_path: &Path,
 ) -> VerifiedReview {
+    publish_original_with_profile(
+        repository,
+        base_commit,
+        candidate_commit,
+        trusted_commit,
+        contract_path,
+        validation_path,
+        None,
+    )
+}
+
+pub(crate) fn publish_original_v1_alpha1(
+    repository: &Path,
+    base_commit: &str,
+    candidate_commit: &str,
+    trusted_commit: &str,
+    contract_path: &Path,
+    validation_path: &Path,
+) -> VerifiedReview {
+    publish_original_with_profile(
+        repository,
+        base_commit,
+        candidate_commit,
+        trusted_commit,
+        contract_path,
+        validation_path,
+        Some(DELIVERY_PROFILE_V1_ALPHA1),
+    )
+}
+
+pub(crate) fn publish_original_v1_alpha2(
+    repository: &Path,
+    base_commit: &str,
+    candidate_commit: &str,
+    trusted_commit: &str,
+    contract_path: &Path,
+    validation_path: &Path,
+) -> VerifiedReview {
+    publish_original_with_profile(
+        repository,
+        base_commit,
+        candidate_commit,
+        trusted_commit,
+        contract_path,
+        validation_path,
+        Some(DELIVERY_PROFILE_V1_ALPHA2),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn publish_original_with_profile(
+    repository: &Path,
+    base_commit: &str,
+    candidate_commit: &str,
+    trusted_commit: &str,
+    contract_path: &Path,
+    validation_path: &Path,
+    experimental_profile: Option<&str>,
+) -> VerifiedReview {
     let mut inputs = sample_inputs("producer-shaped-validation");
+    if let Some(profile) = experimental_profile {
+        inputs.delivery_profile_bytes = delivery_profile_bytes_for_id(profile).unwrap();
+    }
     inputs.base_commit = base_commit.to_owned();
     inputs.candidate_commit = candidate_commit.to_owned();
     inputs.diff = captured(
@@ -53,13 +120,14 @@ pub(crate) fn publish_original(
     let plan = build_plan(&inputs);
     let plan_bytes = serde_json::to_vec(&plan).unwrap();
     let review_id = domain_digest(REVIEW_ID_DOMAIN, &plan_bytes);
-    let packet = render_packet(&review_id, &plan, &inputs).unwrap();
+    let rendered = render_packet_with_metadata(&review_id, &plan, &inputs).unwrap();
     let manifest = build_manifest(
         review_id,
         plan,
         &inputs,
-        digest(&packet),
-        count_tokens(&packet).unwrap(),
+        digest(&rendered.bytes),
+        count_tokens(&rendered.bytes).unwrap(),
+        rendered.input_prefix,
     );
     let mut manifest_bytes = serde_json::to_vec_pretty(&manifest).unwrap();
     manifest_bytes.push(b'\n');
@@ -67,7 +135,7 @@ pub(crate) fn publish_original(
         .join(".local-exclude/methexis/slice-reviews")
         .join(manifest.review_id.strip_prefix("sha256:").unwrap());
     assert_eq!(
-        storage::publish(&directory, &packet, &manifest_bytes, || Ok(())).unwrap(),
+        storage::publish(&directory, &rendered.bytes, &manifest_bytes, || Ok(())).unwrap(),
         "created"
     );
 
@@ -76,7 +144,7 @@ pub(crate) fn publish_original(
     let published_manifest_bytes = std::fs::read(&manifest_path).unwrap();
     let published_packet_bytes = std::fs::read(&packet_path).unwrap();
     assert_eq!(published_manifest_bytes, manifest_bytes);
-    assert_eq!(published_packet_bytes, packet);
+    assert_eq!(published_packet_bytes, rendered.bytes);
     let published_manifest: Manifest = serde_json::from_slice(&published_manifest_bytes).unwrap();
     verify_canonical_artifacts(
         &published_manifest,
@@ -157,7 +225,21 @@ pub(super) fn sample_inputs(validation_path: &str) -> Inputs {
         lenses: vec!["fresh-context".to_owned()],
         questions: vec!["Is it correct?".to_owned()],
         required_knowledge_ids: vec!["methexis.review.bounded-packet".to_owned()],
-        delivery_profile_bytes: delivery_profile_bytes(),
+        delivery_profile_bytes: delivery_profile_v1_bytes(),
         max_tokens: 10_000,
     }
+}
+
+pub(super) fn sample_inputs_v1_alpha1(validation_path: &str) -> Inputs {
+    let mut inputs = sample_inputs(validation_path);
+    inputs.delivery_profile_bytes =
+        delivery_profile_bytes_for_id(DELIVERY_PROFILE_V1_ALPHA1).unwrap();
+    inputs
+}
+
+pub(super) fn sample_inputs_v1_alpha2(validation_path: &str) -> Inputs {
+    let mut inputs = sample_inputs(validation_path);
+    inputs.delivery_profile_bytes =
+        delivery_profile_bytes_for_id(DELIVERY_PROFILE_V1_ALPHA2).unwrap();
+    inputs
 }

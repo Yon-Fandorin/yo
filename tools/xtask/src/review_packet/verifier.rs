@@ -2,13 +2,19 @@ use std::path::Path;
 
 use super::{
     MAX_INPUT_BYTES, MAX_PACKET_BYTES, REVIEW_ID_DOMAIN,
-    canonical::{build_manifest, build_plan, delivery_profile},
+    canonical::{
+        build_manifest, build_plan, delivery_profile_bytes_for_id, delivery_profile_for_id,
+    },
     capture::{
         Inputs, capture_authorities, capture_context, capture_diff, capture_validation, captured,
         require_hash,
     },
-    model::{EvidenceRequest, Manifest, PLAN_SCHEMA, TOKENIZER_COMPILER, TOKENIZER_PROFILE},
-    render::{count_tokens, render_packet},
+    model::{
+        DELIVERY_PROFILE_V1, DELIVERY_PROFILE_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA2,
+        EvidenceRequest, MANIFEST_SCHEMA_V1, MANIFEST_SCHEMA_V1_ALPHA1, MANIFEST_SCHEMA_V1_ALPHA2,
+        Manifest, PLAN_SCHEMA, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
+    },
+    render::{count_tokens, render_packet_with_metadata},
     trusted_git::{trusted_repository_root, trusted_resolve_commit},
 };
 use crate::review_protocol::{Captured, digest, domain_digest, relative, resolve_input_path};
@@ -136,7 +142,7 @@ pub(crate) fn verify_published(
         lenses: manifest.plan.review_lenses.clone(),
         questions: manifest.plan.review_questions.clone(),
         required_knowledge_ids: manifest.plan.required_knowledge_ids.clone(),
-        delivery_profile_bytes: super::canonical::delivery_profile_bytes(),
+        delivery_profile_bytes: delivery_profile_bytes_for_id(&manifest.plan.delivery_profile.id)?,
         max_tokens: manifest.plan.max_managed_payload_tokens,
     };
     let packet_path = expected_path
@@ -190,8 +196,14 @@ pub(super) fn verify_canonical_artifacts(
     if domain_digest(REVIEW_ID_DOMAIN, &plan_bytes) != manifest.review_id {
         return Err("published ReviewId does not match its canonical plan".to_owned());
     }
-    let reproduced_packet = render_packet(&manifest.review_id, &reproduced_plan, inputs)?;
-    if packet_bytes != reproduced_packet {
+    let reproduced_packet =
+        render_packet_with_metadata(&manifest.review_id, &reproduced_plan, inputs)?;
+    if manifest.input_prefix != reproduced_packet.input_prefix {
+        return Err(
+            "published review input-prefix record does not match its exact packet bytes".to_owned(),
+        );
+    }
+    if packet_bytes != reproduced_packet.bytes {
         return Err(
             "published review packet does not reproduce from its complete inputs".to_owned(),
         );
@@ -215,6 +227,7 @@ pub(super) fn verify_canonical_artifacts(
         inputs,
         manifest.packet.hash.clone(),
         tokens,
+        reproduced_packet.input_prefix,
     );
     let mut reproduced_manifest_bytes = serde_json::to_vec_pretty(&reproduced_manifest)
         .expect("published review manifest serializes");
@@ -226,9 +239,20 @@ pub(super) fn verify_canonical_artifacts(
 }
 
 fn require_supported_manifest(manifest: &Manifest) -> Result<(), String> {
-    if manifest.schema != super::model::MANIFEST_SCHEMA
+    let profile_id = manifest.plan.delivery_profile.id.as_str();
+    let schema_and_prefix_match = matches!(
+        (
+            manifest.schema.as_str(),
+            profile_id,
+            manifest.input_prefix.is_some()
+        ),
+        (MANIFEST_SCHEMA_V1, DELIVERY_PROFILE_V1, false)
+            | (MANIFEST_SCHEMA_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA1, true)
+            | (MANIFEST_SCHEMA_V1_ALPHA2, DELIVERY_PROFILE_V1_ALPHA2, true)
+    );
+    if !schema_and_prefix_match
         || manifest.plan.schema != PLAN_SCHEMA
-        || manifest.plan.delivery_profile != delivery_profile()
+        || manifest.plan.delivery_profile != delivery_profile_for_id(profile_id)?
         || manifest.plan.tokenizer_profile != TOKENIZER_PROFILE
         || manifest.plan.tokenizer_compiler != TOKENIZER_COMPILER
         || manifest.packet.path != "packet.md"

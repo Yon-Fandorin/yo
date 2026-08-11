@@ -69,7 +69,7 @@ pub(super) fn verify_chain_head_with(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| "published review-chain manifest has no schema".to_owned())?
         .to_owned();
-    if schema == "yo.slice-review-manifest/v1" {
+    if review_packet::is_original_manifest_schema(&schema) {
         return verify_original(repository, manifest_path, expected_hash);
     }
     if schema != MANIFEST_SCHEMA {

@@ -458,6 +458,12 @@ count as the authoritative budget value. Preflight writes no eligible packet or
 manifest. Any changed input invalidates the result; do not cite it as review
 evidence.
 
+For `yo.slice-review-markdown/v1alpha2`, preflight also reports an exact
+content-addressed input prefix ending after the repository-authority sections.
+Its standalone token count is another non-additive diagnostic, not a cached
+token count. Matching prefix bytes create only a cache opportunity; record an
+actual cache hit only when the provider exposes matching runtime metrics.
+
 When the preflight is ready and its inputs are frozen, build the
 content-addressed review input:
 
@@ -467,13 +473,31 @@ cargo xtask slice review-packet <request.json>
 
 The request names the ContextBuild request and required included KnowledgeIds, exact Slice Contract,
 repository-authority paths not carried by that build, validation evidence,
-review lenses and questions, `yo.slice-review-markdown/v1`,
+review lenses and questions, experimental `yo.slice-review-markdown/v1alpha2`,
 `o200k_base/v1`, and the maximum managed-payload tokens. The command derives
 the base from the bound Slice Contract and the candidate from clean `HEAD`,
 captures a no-renames binary diff, and returns only the immutable packet and
 manifest paths, hashes, ReviewId, and token count. An over-budget packet fails
 without truncation. Deliver the exact `packet.md` bytes as the provider's sole
 caller-controlled prompt; do not add parallel instructions or authority.
+
+The current experimental profile renders the ContextBuild and repository authorities
+under stable logical wrapper paths before the candidate-specific plan,
+contract, evidence, instructions, and complete diff. Its manifest binds the
+exact prefix boundary, hash, and standalone token count while preserving all
+physical input paths in the complete plan and manifest. It never emits a
+prefix-only or reference-only review. Frozen `yo.slice-review-markdown/v1` and
+the superseded experimental `yo.slice-review-markdown/v1alpha1` requests and
+manifests remain supported for exact in-flight reproduction and may root the
+same unchanged review-delta v1 chain. New requests use `v1alpha2`; a published
+profile identifier is never reinterpreted in place.
+
+Because a self-hosting diff may contain the wrapper's own sentinel source,
+v1alpha2 section metadata names its reversible sentinel-escape profile. The
+encoding doubles literal backslashes and replaces the first less-than byte of
+a literal wrapper-sentinel prefix with ASCII `\x3c`; hashes and byte counts
+continue to bind the decoded original. This keeps in-body source text from
+being mistaken for a real section or payload boundary.
 
 Use a separate fresh-context Codex session by default. Use a configured
 different-perspective provider when the lens needs hidden assumptions,
