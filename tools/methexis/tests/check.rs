@@ -92,6 +92,45 @@ fn global_failures_include_missing_targets_and_cycles() {
             .iter()
             .any(|diagnostic| diagnostic.code == "required_relation_cycle")
     );
+
+    // 전역 진단은 phase를 유지하면서 repository-relative path, code 순으로 정렬되고,
+    // cycle은 canonical한 affected ID와 닫힌 message를 사용한다.
+    assert_eq!(
+        report
+            .diagnostics
+            .iter()
+            .map(|diagnostic| (
+                diagnostic.phase,
+                diagnostic.path.as_str(),
+                diagnostic.code.as_str()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                methexis::DiagnosticPhase::Global,
+                "methexis/knowledge/cycle-a.md",
+                "required_relation_cycle",
+            ),
+            (
+                methexis::DiagnosticPhase::Global,
+                "methexis/knowledge/missing-target.md",
+                "missing_relation_target",
+            ),
+        ]
+    );
+    let cycle = &report.diagnostics[0];
+    assert_eq!(
+        cycle.affected_ids,
+        [
+            "tui.cycle-a".to_owned(),
+            "tui.cycle-b".to_owned(),
+            "tui.cycle-a".to_owned(),
+        ]
+    );
+    assert_eq!(
+        cycle.message,
+        "cycle detected: tui.cycle-a -> tui.cycle-b -> tui.cycle-a"
+    );
 }
 
 // 중복 KnowledgeId가 있으면 충돌한 두 파일 모두에 진단을 남긴다.

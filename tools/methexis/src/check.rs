@@ -1284,8 +1284,8 @@ fn global_diagnostic(
 #[cfg(test)]
 mod tests {
     use super::{
-        DiagnosticPhase, knowledge_revision, local_diagnostic, parse_yaml, sort_diagnostics,
-        validate_metadata,
+        DiagnosticPhase, canonical_cycle, knowledge_revision, local_diagnostic, parse_yaml,
+        sort_diagnostics, validate_metadata,
     };
 
     // YAML 키 순서와 줄바꿈(CRLF·LF)이 달라도 같은 내용의 revision은 동일하다.
@@ -1500,6 +1500,68 @@ mod tests {
             diagnostics
                 .iter()
                 .all(|diagnostic| diagnostic.code != "raw_html_forbidden")
+        );
+    }
+
+    // 보이는 HTML은 fenced code가 아니므로 raw_html_forbidden으로 거부하고, 진단 위치도
+    // 본문의 해당 line을 가리켜 실제로 찾아 고칠 수 있는 현재 동작을 고정한다.
+    #[test]
+    fn visible_html_outside_fenced_code_is_forbidden() {
+        let diagnostics = validate_metadata(
+            &metadata_for_test(),
+            "## Statement\n\nVisible text.\n<div>Rendered HTML</div>\n",
+            4,
+            "unit.md",
+        );
+
+        let html = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "raw_html_forbidden")
+            .expect("visible HTML diagnostic");
+        assert_eq!(html.line, Some(7));
+        assert_eq!(html.column, Some(1));
+    }
+
+    // tilde fence 안에만 있는 Statement heading은 필수 section을 충족하지 않지만, 같은
+    // fence 안의 raw HTML 예시는 허용되는 현재 경계를 각각의 진단으로 고정한다.
+    #[test]
+    fn tilde_fenced_content_does_not_satisfy_the_required_statement() {
+        let diagnostics = validate_metadata(
+            &metadata_for_test(),
+            "~~~markdown\n## Statement\n<div>Code example</div>\n~~~\n",
+            1,
+            "unit.md",
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "missing_body_section")
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.code != "raw_html_forbidden")
+        );
+    }
+
+    // cycle 입력의 시작점이 달라도 KnowledgeId가 가장 작은 항목부터 닫힌 경로로
+    // 표현되어야 하므로, 전역 진단이 사용할 canonical cycle 모양을 직접 고정한다.
+    #[test]
+    fn canonical_cycle_starts_at_the_smallest_id_and_closes_the_path() {
+        assert_eq!(
+            canonical_cycle(vec![
+                "tui.cycle-z".to_owned(),
+                "tui.cycle-a".to_owned(),
+                "tui.cycle-m".to_owned(),
+                "tui.cycle-z".to_owned(),
+            ]),
+            [
+                "tui.cycle-a".to_owned(),
+                "tui.cycle-m".to_owned(),
+                "tui.cycle-z".to_owned(),
+                "tui.cycle-a".to_owned(),
+            ]
         );
     }
 
