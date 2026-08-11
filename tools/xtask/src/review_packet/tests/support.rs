@@ -42,6 +42,7 @@ pub(crate) fn publish_original(
         captured(contract_path.to_string_lossy().into_owned(), contract_bytes).unwrap();
     inputs.validation = capture_validation(
         repository,
+        candidate_commit,
         &[EvidenceRequest {
             name: "baseline".to_owned(),
             path: validation_path.to_string_lossy().into_owned(),

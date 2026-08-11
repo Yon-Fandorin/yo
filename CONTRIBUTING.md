@@ -398,6 +398,45 @@ an artifact. Methexis still owns and validates ContextBuild request semantics
 when resolution starts. A green readiness result covers only these input
 boundaries; it is preparation, not review evidence.
 
+When correctness depends on behavior owned by an external executable rather
+than the repository's typed seam—such as Git hook source selection, process
+exit, signal, timeout, or filesystem publication ordering—include at least one
+validation item named `external-operation/<portable-label>`. Its path must be a
+JSON artifact with this shape:
+
+```json
+{
+  "schema": "yo.external-operation-evidence/v1",
+  "candidate_commit": "<full-candidate-commit>",
+  "operation": {
+    "working_directory": ".",
+    "argv": ["git", "commit", "--amend", "--file", "message"],
+    "expected_exit": {"kind": "code", "value": 1},
+    "observed_exit": {"kind": "code", "value": 1}
+  },
+  "counterfactual": "The amend must fail before changing HEAD.",
+  "observations": [
+    {
+      "name": "HEAD",
+      "expected_relation": "equal",
+      "before": "<full-before-commit>",
+      "after": "<full-before-commit>"
+    }
+  ]
+}
+```
+
+Record the working directory and use an argv array, not a shell transcript.
+Exit kinds are `code`, `signal`, or `timeout`; observations use `equal` or
+`different` and record explicit before/after values. Readiness requires a
+well-formed, internally consistent artifact bound to the exact candidate,
+reports how many such items it froze, and revalidates the same bytes before
+returning. It does not execute arbitrary commands or prove the author ran them.
+Root self-check and independent review still own whether the chosen
+counterfactual discriminates the claimed failure boundary. A finding-resolution
+delta may explicitly reuse unchanged evidence; an affected
+`external-operation/*` item must bind its replacement candidate.
+
 After readiness succeeds, inspect the exact candidate and run the
 non-publishing preflight from that unchanged request:
 

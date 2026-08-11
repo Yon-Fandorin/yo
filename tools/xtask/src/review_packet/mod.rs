@@ -1,5 +1,6 @@
 mod canonical;
 mod capture;
+pub(crate) mod external_operation;
 mod model;
 mod readiness;
 mod render;
@@ -294,7 +295,8 @@ fn prepare_readiness(
         &candidate_commit,
         &request.repository_authority_paths,
     )?;
-    let validation = capture_validation(&repository, &request.validation_evidence)?;
+    let validation =
+        capture_validation(&repository, &candidate_commit, &request.validation_evidence)?;
     let slice_contract = Captured {
         path: contract_path.to_string_lossy().into_owned(),
         hash: digest(&contract_bytes),

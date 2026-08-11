@@ -102,7 +102,11 @@ pub(crate) fn verify_published(
             path: input.artifact.path.clone(),
         })
         .collect::<Vec<_>>();
-    let validation = capture_validation(&repository, &validation_requests)?;
+    let validation = capture_validation(
+        &repository,
+        &manifest.plan.candidate_commit,
+        &validation_requests,
+    )?;
     let contract_path = resolve_input_path(&repository, &manifest.inputs.slice_contract.path);
     let contract_bytes = crate::bounded_file::read_regular(
         &contract_path,

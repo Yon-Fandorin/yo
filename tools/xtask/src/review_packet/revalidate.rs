@@ -55,7 +55,11 @@ pub(super) fn final_revalidate(
     {
         return Err("bound Slice contract identity changed".to_owned());
     }
-    let validation = capture_validation(repository, &request.validation_evidence)?;
+    let validation = capture_validation(
+        repository,
+        &inputs.candidate_commit,
+        &request.validation_evidence,
+    )?;
     require_named_captures(&validation, &inputs.validation)?;
     let context_request_path = resolve_input_path(repository, &request.context_request_path);
     require_current_file(

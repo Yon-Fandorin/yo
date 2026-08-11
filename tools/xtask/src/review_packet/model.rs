@@ -184,6 +184,7 @@ pub(super) struct ReadinessResultRecord {
     pub(super) required_knowledge_id_count: usize,
     pub(super) repository_authority_count: usize,
     pub(super) validation_evidence_count: usize,
+    pub(super) external_operation_evidence_count: usize,
     pub(super) review_lens_count: usize,
     pub(super) review_question_count: usize,
 }

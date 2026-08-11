@@ -75,6 +75,11 @@ pub(super) fn validate_transition(
         }
     }
     for evidence in affected {
+        crate::review_packet::external_operation::validate(
+            &evidence.name,
+            &evidence.artifact.bytes,
+            replacement_candidate,
+        )?;
         if let Some(previous) = prior_by_name.get(evidence.name.as_str())
             && previous.path == evidence.artifact.path
             && previous.hash == evidence.artifact.hash

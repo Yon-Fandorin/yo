@@ -220,3 +220,62 @@ fn transition_validator_rejects_noncanonical_or_unrelated_evidence() {
         .contains("does not bind")
     );
 }
+
+// external-operation evidence를 affected로 교체하면 delta validator도 새 candidate를
+// 요구하고, 이전 candidate를 담은 구조화 evidence는 일반 문자열 포함 검사 전에 거부한다.
+#[test]
+fn affected_external_operation_evidence_binds_the_replacement_candidate() {
+    let candidate = commit(3);
+    let name = "external-operation/git-amend";
+    let prior = prior(vec![review_packet::VerifiedEvidence {
+        name: name.to_owned(),
+        path: "old-operation.json".to_owned(),
+        hash: digest(b"old operation"),
+    }]);
+    let delta = captured("git-delta.patch".to_owned(), b"delta".to_vec()).unwrap();
+    let affected = |bound_candidate: &str| NamedCaptured {
+        name: name.to_owned(),
+        artifact: captured(
+            "new-operation.json".to_owned(),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "yo.external-operation-evidence/v1",
+                "candidate_commit": bound_candidate,
+                "operation": {
+                    "working_directory": ".",
+                    "argv": ["git", "commit", "--amend", "--file", "message"],
+                    "expected_exit": {"kind": "code", "value": 1},
+                    "observed_exit": {"kind": "code", "value": 1}
+                },
+                "counterfactual": "The amend must fail before changing HEAD.",
+                "observations": [{
+                    "name": "HEAD",
+                    "expected_relation": "equal",
+                    "before": "same-head",
+                    "after": "same-head"
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap(),
+    };
+
+    validate_transition(
+        &prior,
+        &candidate,
+        &delta,
+        &[finding("F1")],
+        &[],
+        &[affected(&candidate)],
+    )
+    .unwrap();
+    let error = validate_transition(
+        &prior,
+        &candidate,
+        &delta,
+        &[finding("F1")],
+        &[],
+        &[affected(&commit(2))],
+    )
+    .unwrap_err();
+    assert!(error.contains("does not identify the exact candidate commit"));
+}

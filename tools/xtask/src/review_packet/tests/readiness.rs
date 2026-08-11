@@ -117,6 +117,100 @@ fn readiness_rejects_duplicate_validation_paths() {
     assert!(!fixture.artifact_root.exists());
 }
 
+// 실제 argv와 exit, HEAD 전후 관계를 기록한 구조화 evidence가 정확한 candidate를
+// 가리키면 readiness가 별도 실행 없이 그 경계를 고정하고 개수를 보고한다.
+#[test]
+fn readiness_accepts_candidate_bound_external_operation_evidence() {
+    let fixture = ReadinessFixture::new();
+    let evidence_path = fixture.repository.write(
+        ".local-exclude/readiness/git-amend.json",
+        &external_evidence(&fixture.candidate_commit, 1, 1, "equal", "head", "head"),
+    );
+    fixture.write_review_request_entries(vec![json!({
+        "name": "external-operation/git-amend-file",
+        "path": relative(&fixture.repository.path, &evidence_path)
+    })]);
+    let mut output = Vec::new();
+
+    check_readiness(&fixture.repository.path, &fixture.request_path, &mut output).unwrap();
+
+    let result: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(result["external_operation_evidence_count"], 1);
+    assert_eq!(result["validation_evidence_count"], 1);
+    assert!(!fixture.artifact_root.exists());
+}
+
+// 이전 candidate의 외부 동작 결과는 내용과 관계가 그럴듯해도 현재 patch의 증거가
+// 아니므로 readiness가 ContextBuild와 review artifact 생성 전에 거부한다.
+#[test]
+fn readiness_rejects_external_operation_evidence_for_another_candidate() {
+    let fixture = ReadinessFixture::new();
+    let evidence_path = fixture.repository.write(
+        ".local-exclude/readiness/stale-operation.json",
+        &external_evidence(
+            "0000000000000000000000000000000000000000",
+            1,
+            1,
+            "equal",
+            "head",
+            "head",
+        ),
+    );
+    fixture.write_review_request_entries(vec![json!({
+        "name": "external-operation/stale-amend",
+        "path": relative(&fixture.repository.path, &evidence_path)
+    })]);
+    let mut output = Vec::new();
+
+    let error =
+        check_readiness(&fixture.repository.path, &fixture.request_path, &mut output).unwrap_err();
+
+    assert!(error.contains("does not identify the exact candidate commit"));
+    assert!(output.is_empty());
+    assert!(!fixture.artifact_root.exists());
+}
+
+// expected/observed exit가 다르거나 equal 관찰의 실제 전후 값이 다르면 단순한
+// 성공 선언을 discriminating counterfactual로 포장하지 못하게 각각 거부한다.
+#[test]
+fn external_operation_schema_rejects_logically_inconsistent_evidence() {
+    for (label, evidence, expected) in [
+        (
+            "exit",
+            external_evidence(
+                "1111111111111111111111111111111111111111",
+                1,
+                0,
+                "equal",
+                "head",
+                "head",
+            ),
+            "different exit status",
+        ),
+        (
+            "relation",
+            external_evidence(
+                "1111111111111111111111111111111111111111",
+                1,
+                1,
+                "equal",
+                "before",
+                "after",
+            ),
+            "contradicts its expected relation",
+        ),
+    ] {
+        let candidate = "1111111111111111111111111111111111111111";
+        let error = super::super::external_operation::validate(
+            &format!("external-operation/{label}"),
+            evidence.as_bytes(),
+            candidate,
+        )
+        .unwrap_err();
+        assert!(error.contains(expected), "{label}: {error}");
+    }
+}
+
 struct ReadinessFixture {
     repository: TestRepository,
     contract_path: PathBuf,
@@ -124,6 +218,7 @@ struct ReadinessFixture {
     context_path: PathBuf,
     validation_path: PathBuf,
     artifact_root: PathBuf,
+    candidate_commit: String,
 }
 
 impl ReadinessFixture {
@@ -141,6 +236,11 @@ impl ReadinessFixture {
         repository.write("candidate.txt", "candidate\n");
         repository.git(["add", "candidate.txt"]);
         repository.git(["commit", "--quiet", "-m", "readiness fixture candidate"]);
+        let candidate_commit =
+            crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+                .unwrap()
+                .trim()
+                .to_owned();
 
         let contract_path = repository.write(
             ".git/readiness-contract.json",
@@ -184,6 +284,7 @@ impl ReadinessFixture {
             context_path,
             validation_path,
             artifact_root,
+            candidate_commit,
         };
         fixture.write_review_request(&fixture.context_path, &["validation"]);
         assert!(
@@ -204,6 +305,18 @@ impl ReadinessFixture {
                 })
             })
             .collect::<Vec<_>>();
+        self.write_review_request_with_context(context_path, validation);
+    }
+
+    fn write_review_request_entries(&self, validation: Vec<serde_json::Value>) {
+        self.write_review_request_with_context(&self.context_path, validation);
+    }
+
+    fn write_review_request_with_context(
+        &self,
+        context_path: &Path,
+        validation: Vec<serde_json::Value>,
+    ) {
         self.repository.write(
             ".local-exclude/readiness/review-request.json",
             &json_text(&json!({
@@ -221,6 +334,33 @@ impl ReadinessFixture {
             })),
         );
     }
+}
+
+fn external_evidence(
+    candidate: &str,
+    expected_exit: i32,
+    observed_exit: i32,
+    relation: &str,
+    before: &str,
+    after: &str,
+) -> String {
+    json_text(&json!({
+        "schema": "yo.external-operation-evidence/v1",
+        "candidate_commit": candidate,
+        "operation": {
+            "working_directory": ".",
+            "argv": ["git", "commit", "--amend", "--file", "message"],
+            "expected_exit": {"kind": "code", "value": expected_exit},
+            "observed_exit": {"kind": "code", "value": observed_exit}
+        },
+        "counterfactual": "The amend must fail before changing HEAD.",
+        "observations": [{
+            "name": "HEAD",
+            "expected_relation": relation,
+            "before": before,
+            "after": after
+        }]
+    }))
 }
 
 fn json_text(value: &serde_json::Value) -> String {

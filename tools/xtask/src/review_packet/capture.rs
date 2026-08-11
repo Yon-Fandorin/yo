@@ -210,6 +210,7 @@ pub(super) fn capture_authorities(
 
 pub(super) fn capture_validation(
     repository: &Path,
+    candidate_commit: &str,
     requests: &[EvidenceRequest],
 ) -> Result<Vec<NamedCaptured>, String> {
     let mut names = BTreeSet::new();
@@ -221,6 +222,7 @@ pub(super) fn capture_validation(
         }
         let path = resolve_input_path(repository, &request.path);
         let bytes = bounded_file::read_regular(&path, MAX_INPUT_BYTES, "validation evidence")?;
+        super::external_operation::validate(&request.name, &bytes, candidate_commit)?;
         let canonical = std::fs::canonicalize(&path).map_err(|error| {
             format!(
                 "cannot resolve validation evidence path {}: {error}",

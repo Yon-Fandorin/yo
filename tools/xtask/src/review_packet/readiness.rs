@@ -48,6 +48,11 @@ pub(super) fn run(
             required_knowledge_id_count: prepared.required_knowledge_ids.len(),
             repository_authority_count: prepared.authorities.len(),
             validation_evidence_count: prepared.validation.len(),
+            external_operation_evidence_count: prepared
+                .validation
+                .iter()
+                .filter(|evidence| super::external_operation::is_evidence_name(&evidence.name))
+                .count(),
             review_lens_count: prepared.lenses.len(),
             review_question_count: prepared.request.review_questions.len(),
         },
@@ -103,7 +108,11 @@ fn final_revalidate(prepared: &PreparedReadiness) -> Result<(), String> {
     if !same_captures(&authorities, &prepared.authorities) {
         return Err("repository authority inputs changed during readiness check".to_owned());
     }
-    let validation = capture_validation(repository, &prepared.request.validation_evidence)?;
+    let validation = capture_validation(
+        repository,
+        &prepared.candidate_commit,
+        &prepared.request.validation_evidence,
+    )?;
     if !same_named_captures(&validation, &prepared.validation) {
         return Err("validation evidence changed during readiness check".to_owned());
     }
