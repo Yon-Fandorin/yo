@@ -9,6 +9,8 @@ pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-packet-request/v1";
 pub(super) const PLAN_SCHEMA: &str = "yo.slice-review-plan/v1";
 pub(super) const MANIFEST_SCHEMA: &str = "yo.slice-review-manifest/v1";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-packet-result/v1";
+pub(super) const PREFLIGHT_RESULT_SCHEMA: &str = "yo.slice-review-packet-preflight-result/v1";
+pub(super) const SECTION_TOKEN_ACCOUNTING: &str = "independently-tokenized-non-additive/v1";
 pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-markdown/v1";
 
 #[derive(Debug, Deserialize)]
@@ -128,4 +130,38 @@ pub(super) struct ResultRecord {
     pub(super) packet: ArtifactWithTokens,
     pub(super) manifest: Artifact,
     pub(super) max_managed_payload_tokens: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct PreflightResultRecord {
+    pub(super) schema: &'static str,
+    pub(super) ok: bool,
+    pub(super) operation: &'static str,
+    pub(super) status: &'static str,
+    pub(super) artifacts_published: bool,
+    pub(super) review_id: String,
+    pub(super) trusted_commit: String,
+    pub(super) candidate_commit: String,
+    pub(super) packet: PreflightPacket,
+    pub(super) section_token_accounting: &'static str,
+    pub(super) sections: Vec<PreflightSection>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct PreflightPacket {
+    pub(super) bytes: usize,
+    pub(super) managed_payload_tokens: usize,
+    pub(super) max_managed_payload_tokens: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct PreflightSection {
+    pub(super) kind: String,
+    pub(super) name: String,
+    pub(super) path: String,
+    pub(super) hash: String,
+    pub(super) content_bytes: usize,
+    pub(super) content_tokens_independent: usize,
+    pub(super) rendered_bytes: usize,
+    pub(super) rendered_tokens_independent: usize,
 }

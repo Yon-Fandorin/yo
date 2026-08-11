@@ -10,7 +10,11 @@ mod verifier;
 #[cfg(test)]
 pub(crate) mod tests;
 
-use std::{collections::BTreeSet, io, path::Path};
+use std::{
+    collections::BTreeSet,
+    io,
+    path::{Path, PathBuf},
+};
 
 use self::{
     canonical::{build_manifest, build_plan, delivery_profile_bytes},
@@ -18,10 +22,11 @@ use self::{
         Inputs, capture_authorities, capture_context, capture_diff, capture_validation, captured,
     },
     model::{
-        Artifact, ArtifactWithTokens, DELIVERY_PROFILE, REQUEST_SCHEMA, RESULT_SCHEMA, Request,
-        ResultRecord, TOKENIZER_PROFILE,
+        Artifact, ArtifactWithTokens, DELIVERY_PROFILE, PREFLIGHT_RESULT_SCHEMA, PreflightPacket,
+        PreflightResultRecord, REQUEST_SCHEMA, RESULT_SCHEMA, Request, ResultRecord, ReviewPlan,
+        SECTION_TOKEN_ACCOUNTING, TOKENIZER_PROFILE,
     },
-    render::{count_tokens, render_packet, require_budget},
+    render::{count_tokens, render_packet, render_packet_with_measurements, require_budget},
     revalidate::final_revalidate,
     trusted_git::{
         expected_slice_ref, trusted_ensure_clean, trusted_git_succeeds, trusted_git_text,
@@ -50,6 +55,110 @@ const PAYLOAD_SUFFIX: &str = "\n<<<YO-REVIEW-PAYLOAD-END>>>\n";
 pub(crate) use verifier::{VerifiedEvidence, VerifiedReview, verify_published};
 
 pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
+    let PreparedReview {
+        repository,
+        request,
+        inputs,
+        plan,
+        review_id,
+    } = prepare_review(repository, request_path)?;
+    let packet = render_packet(&review_id, &plan, &inputs)?;
+    let managed_payload_tokens = require_packet_budget(&packet, inputs.max_tokens)?;
+    let packet_hash = digest(&packet);
+    let manifest = build_manifest(
+        review_id.clone(),
+        plan,
+        &inputs,
+        packet_hash.clone(),
+        managed_payload_tokens,
+    );
+    let mut manifest_bytes =
+        serde_json::to_vec_pretty(&manifest).expect("closed review manifest serializes");
+    manifest_bytes.push(b'\n');
+    let manifest_hash = digest(&manifest_bytes);
+    let suffix = review_id
+        .strip_prefix("sha256:")
+        .expect("generated ReviewId has a sha256 prefix");
+    let output_directory = repository
+        .join(".local-exclude/methexis/slice-reviews")
+        .join(suffix);
+    let status = storage::publish(&output_directory, &packet, &manifest_bytes, || {
+        final_revalidate(&repository, &request, &inputs)
+    })?;
+
+    write_result(
+        &ResultRecord {
+            schema: RESULT_SCHEMA,
+            ok: true,
+            operation: "build_slice_review_packet",
+            status,
+            review_id,
+            trusted_commit: inputs.context.result.trusted_commit.clone(),
+            candidate_commit: inputs.candidate_commit.clone(),
+            packet: ArtifactWithTokens {
+                path: relative(&repository, &output_directory.join("packet.md")),
+                hash: packet_hash,
+                managed_payload_tokens,
+            },
+            manifest: Artifact {
+                path: relative(&repository, &output_directory.join("manifest.json")),
+                hash: manifest_hash,
+            },
+            max_managed_payload_tokens: inputs.max_tokens,
+        },
+        "review packet result",
+    )
+}
+
+pub(super) fn preflight(
+    repository: &Path,
+    request_path: &Path,
+    output: &mut impl io::Write,
+) -> Result<(), String> {
+    let PreparedReview {
+        repository,
+        request,
+        inputs,
+        plan,
+        review_id,
+    } = prepare_review(repository, request_path)?;
+    let rendered = render_packet_with_measurements(&review_id, &plan, &inputs)?;
+    let managed_payload_tokens = require_packet_budget(&rendered.bytes, inputs.max_tokens)?;
+    run_preflight_test_hook()?;
+    final_revalidate(&repository, &request, &inputs)?;
+
+    write_result_to(
+        output,
+        &PreflightResultRecord {
+            schema: PREFLIGHT_RESULT_SCHEMA,
+            ok: true,
+            operation: "preflight_slice_review_packet",
+            status: "ready",
+            artifacts_published: false,
+            review_id,
+            trusted_commit: inputs.context.result.trusted_commit.clone(),
+            candidate_commit: inputs.candidate_commit.clone(),
+            packet: PreflightPacket {
+                bytes: rendered.bytes.len(),
+                managed_payload_tokens,
+                max_managed_payload_tokens: inputs.max_tokens,
+            },
+            section_token_accounting: SECTION_TOKEN_ACCOUNTING,
+            sections: rendered.sections,
+        },
+        "review packet preflight result",
+    )
+}
+
+struct PreparedReview {
+    repository: PathBuf,
+    request: Request,
+    inputs: Inputs,
+    plan: ReviewPlan,
+    review_id: String,
+}
+
+fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedReview, String> {
     let repository = trusted_repository_root(repository)?;
     let request_bytes = bounded_file::read_regular(
         request_path,
@@ -138,59 +247,65 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let plan = build_plan(&inputs);
     let plan_bytes = serde_json::to_vec(&plan).expect("closed review plan serializes");
     let review_id = domain_digest(REVIEW_ID_DOMAIN, &plan_bytes);
-    let packet = render_packet(&review_id, &plan, &inputs)?;
+    Ok(PreparedReview {
+        repository,
+        request,
+        inputs,
+        plan,
+        review_id,
+    })
+}
+
+fn require_packet_budget(packet: &[u8], max_tokens: usize) -> Result<usize, String> {
     if packet.len() > MAX_PACKET_BYTES {
         return Err(format!(
             "canonical review packet exceeds the {MAX_PACKET_BYTES}-byte safety limit"
         ));
     }
-    let managed_payload_tokens = count_tokens(&packet)?;
-    require_budget(managed_payload_tokens, inputs.max_tokens)?;
-    let packet_hash = digest(&packet);
-    let manifest = build_manifest(
-        review_id.clone(),
-        plan,
-        &inputs,
-        packet_hash.clone(),
-        managed_payload_tokens,
-    );
-    let mut manifest_bytes =
-        serde_json::to_vec_pretty(&manifest).expect("closed review manifest serializes");
-    manifest_bytes.push(b'\n');
-    let manifest_hash = digest(&manifest_bytes);
-    let suffix = review_id
-        .strip_prefix("sha256:")
-        .expect("generated ReviewId has a sha256 prefix");
-    let output_directory = repository
-        .join(".local-exclude/methexis/slice-reviews")
-        .join(suffix);
-    let status = storage::publish(&output_directory, &packet, &manifest_bytes, || {
-        final_revalidate(&repository, &request, &inputs)
-    })?;
+    let managed_payload_tokens = count_tokens(packet)?;
+    require_budget(managed_payload_tokens, max_tokens)?;
+    Ok(managed_payload_tokens)
+}
 
-    let result = ResultRecord {
-        schema: RESULT_SCHEMA,
-        ok: true,
-        operation: "build_slice_review_packet",
-        status,
-        review_id,
-        trusted_commit: inputs.context.result.trusted_commit.clone(),
-        candidate_commit: inputs.candidate_commit.clone(),
-        packet: ArtifactWithTokens {
-            path: relative(&repository, &output_directory.join("packet.md")),
-            hash: packet_hash,
-            managed_payload_tokens,
-        },
-        manifest: Artifact {
-            path: relative(&repository, &output_directory.join("manifest.json")),
-            hash: manifest_hash,
-        },
-        max_managed_payload_tokens: inputs.max_tokens,
-    };
-    let mut output = serde_json::to_vec(&result).expect("closed result serializes");
-    output.push(b'\n');
-    io::Write::write_all(&mut io::stdout().lock(), &output)
-        .map_err(|error| format!("cannot write review packet result: {error}"))
+fn write_result(result: &impl serde::Serialize, label: &str) -> Result<(), String> {
+    write_result_to(&mut io::stdout().lock(), result, label)
+}
+
+fn write_result_to(
+    output: &mut impl io::Write,
+    result: &impl serde::Serialize,
+    label: &str,
+) -> Result<(), String> {
+    let mut bytes = serde_json::to_vec(result).expect("closed review result serializes");
+    bytes.push(b'\n');
+    io::Write::write_all(output, &bytes).map_err(|error| format!("cannot write {label}: {error}"))
+}
+
+#[cfg(test)]
+type PreflightTestHook = Box<dyn FnOnce() -> Result<(), String>>;
+
+#[cfg(test)]
+thread_local! {
+    static PREFLIGHT_TEST_HOOK: std::cell::RefCell<Option<PreflightTestHook>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn set_preflight_test_hook(hook: impl FnOnce() -> Result<(), String> + 'static) {
+    PREFLIGHT_TEST_HOOK.with(|slot| {
+        assert!(slot.replace(Some(Box::new(hook))).is_none());
+    });
+}
+
+#[cfg(test)]
+fn run_preflight_test_hook() -> Result<(), String> {
+    let hook = PREFLIGHT_TEST_HOOK.with(|slot| slot.borrow_mut().take());
+    hook.map_or(Ok(()), |hook| hook())
+}
+
+#[cfg(not(test))]
+fn run_preflight_test_hook() -> Result<(), String> {
+    Ok(())
 }
 
 fn validate_request(request: &Request) -> Result<(), String> {

@@ -314,6 +314,14 @@ After a command fails, classify the failure and change the input or state before
 retrying. Rerun a validation group only when its reviewed inputs changed or at a
 declared Slice gate.
 
+Before publishing immutable review input, finish the coordinator's actual-code
+check and freeze the candidate, fixture prerequisites, planned Developer Docs
+impact, review questions, and uniquely named validation evidence. Run
+review-packet preflight to expose the exact managed-payload budget and section
+costs without publishing an eligible packet. Publish only after the preflight
+is ready and no input is expected to change; preflight is preparation, not
+completed review.
+
 ## Ownership and reconciliation
 
 One public contract or design decision has one active owner; concurrent work never shares it. Workers must not silently expand scope, decide a shared interface, or edit outside the allowed write-set. Return a focused proposal and evidence when an out-of-scope decision is required.
@@ -374,8 +382,29 @@ but must inspect and record the lenses separately.
 ### Agent review protocol
 
 After committing a clean candidate and saving declared validation output as
-bounded evidence files, build the content-addressed review input from a
-versioned request:
+bounded evidence files, inspect the exact candidate and run the non-publishing
+preflight from the same versioned request:
+
+```bash
+cargo xtask slice review-packet --preflight <request.json>
+```
+
+Keep the named ContextBuild request inside the candidate Slice worktree;
+Methexis rejects a request path that escapes that repository before resolving
+any context.
+
+The preflight captures and final-revalidates the same request, contract,
+ContextBuild, authorities, validation evidence, and base-to-candidate diff used
+by publication. It returns the prospective ReviewId, exact complete-packet byte
+and token totals, maximum budget, and independently measured content/rendered
+cost for each section. Section token counts are independently tokenized,
+non-additive diagnostics; never sum them, and use the complete-packet token
+count as the authoritative budget value. Preflight writes no eligible packet or
+manifest. Any changed input invalidates the result; do not cite it as review
+evidence.
+
+When the preflight is ready and its inputs are frozen, build the
+content-addressed review input:
 
 ```bash
 cargo xtask slice review-packet <request.json>

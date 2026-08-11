@@ -66,15 +66,25 @@ fn run_activation_slice(arguments: &mut impl Iterator<Item = OsString>) -> Resul
 }
 
 fn run_review_packet(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
-    let request = arguments
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(review_packet_usage)?;
+    let first = arguments.next().ok_or_else(review_packet_usage)?;
+    let (preflight, request) = if first == "--preflight" {
+        let request = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(review_packet_usage)?;
+        (true, request)
+    } else {
+        (false, PathBuf::from(first))
+    };
     if arguments.next().is_some() {
         return Err(review_packet_usage());
     }
     let repository = current_repository()?;
-    review_packet::run(&repository, &request)
+    if preflight {
+        review_packet::preflight(&repository, &request, &mut std::io::stdout().lock())
+    } else {
+        review_packet::run(&repository, &request)
+    }
 }
 
 fn run_review_delta(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -272,7 +282,7 @@ fn usage(check: &str) -> String {
 fn general_usage() -> String {
     "usage:\n\
      cargo xtask slice create-activation <request.json>\n\
-     cargo xtask slice review-packet <request.json>\n\
+     cargo xtask slice review-packet [--preflight] <request.json>\n\
      cargo xtask slice review-delta <request.json>\n\
      cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
@@ -291,7 +301,7 @@ fn activation_slice_usage() -> String {
 }
 
 fn review_packet_usage() -> String {
-    "usage: cargo xtask slice review-packet <request.json>".to_owned()
+    "usage: cargo xtask slice review-packet [--preflight] <request.json>".to_owned()
 }
 
 fn review_delta_usage() -> String {
@@ -329,7 +339,7 @@ mod cli_tests {
             error,
             "usage:\n\
              cargo xtask slice create-activation <request.json>\n\
-             cargo xtask slice review-packet <request.json>\n\
+             cargo xtask slice review-packet [--preflight] <request.json>\n\
              cargo xtask slice review-delta <request.json>\n\
              cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
@@ -385,6 +395,25 @@ mod cli_tests {
         let missing = run(["slice", "review-packet"].map(Into::into)).unwrap_err();
         let extra = run(["slice", "review-packet", "request.json", "extra.json"].map(Into::into))
             .unwrap_err();
+
+        assert_eq!(missing, review_packet_usage());
+        assert_eq!(extra, review_packet_usage());
+    }
+
+    // preflight도 publication과 같은 하나의 versioned request를 요구하여, request가
+    // 빠지거나 추가 입력이 있는 호출을 준비 완료로 오인하지 않는다.
+    #[test]
+    fn review_packet_preflight_requires_exactly_one_request() {
+        let missing = run(["slice", "review-packet", "--preflight"].map(Into::into)).unwrap_err();
+        let extra = run([
+            "slice",
+            "review-packet",
+            "--preflight",
+            "request.json",
+            "extra.json",
+        ]
+        .map(Into::into))
+        .unwrap_err();
 
         assert_eq!(missing, review_packet_usage());
         assert_eq!(extra, review_packet_usage());

@@ -1,59 +1,103 @@
 use serde::Serialize;
 
 use super::{
-    METADATA_SUFFIX, PAYLOAD_SUFFIX, PREAMBLE, SECTION_PREFIX, SECTION_SUFFIX, capture::Inputs,
-    model::ReviewPlan,
+    METADATA_SUFFIX, PAYLOAD_SUFFIX, PREAMBLE, SECTION_PREFIX, SECTION_SUFFIX,
+    capture::Inputs,
+    model::{PreflightSection, ReviewPlan},
 };
 use crate::review_protocol::digest;
+
+pub(super) struct RenderedPacket {
+    pub(super) bytes: Vec<u8>,
+    pub(super) sections: Vec<PreflightSection>,
+}
 
 pub(super) fn render_packet(
     review_id: &str,
     plan: &ReviewPlan,
     inputs: &Inputs,
 ) -> Result<Vec<u8>, String> {
+    Ok(render_packet_inner(review_id, plan, inputs, false)?.bytes)
+}
+
+pub(super) fn render_packet_with_measurements(
+    review_id: &str,
+    plan: &ReviewPlan,
+    inputs: &Inputs,
+) -> Result<RenderedPacket, String> {
+    render_packet_inner(review_id, plan, inputs, true)
+}
+
+fn render_packet_inner(
+    review_id: &str,
+    plan: &ReviewPlan,
+    inputs: &Inputs,
+    measure: bool,
+) -> Result<RenderedPacket, String> {
     let mut packet = PREAMBLE.as_bytes().to_vec();
+    let mut sections = Vec::new();
     let plan_bytes = serde_json::to_vec_pretty(plan).expect("closed review plan serializes");
-    append_section(&mut packet, "review_plan", review_id, "", &plan_bytes)?;
-    append_section(
+    append_review_section(
         &mut packet,
+        &mut sections,
+        measure,
+        "review_plan",
+        review_id,
+        "",
+        &plan_bytes,
+    )?;
+    append_review_section(
+        &mut packet,
+        &mut sections,
+        measure,
         "context_request",
         "context-request",
         &inputs.context.request.path,
         &inputs.context.request.bytes,
     )?;
-    append_section(
+    append_review_section(
         &mut packet,
+        &mut sections,
+        measure,
         "context_manifest",
         &inputs.context.result.build_id,
         &inputs.context.manifest.path,
         &inputs.context.manifest.bytes,
     )?;
-    append_section(
+    append_review_section(
         &mut packet,
+        &mut sections,
+        measure,
         "context",
         &inputs.context.result.build_id,
         &inputs.context.context.path,
         &inputs.context.context.bytes,
     )?;
     for authority in &inputs.authorities {
-        append_section(
+        append_review_section(
             &mut packet,
+            &mut sections,
+            measure,
             "repository_authority",
             &authority.path,
             &authority.path,
             &authority.bytes,
         )?;
     }
-    append_section(
+    append_review_section(
         &mut packet,
+        &mut sections,
+        measure,
         "slice_contract",
         "slice-contract",
         &inputs.slice_contract.path,
         &inputs.slice_contract.bytes,
     )?;
     for evidence in &inputs.validation {
-        append_section(
+        append_review_section(
             &mut packet,
+            &mut sections,
+            measure,
             "validation_evidence",
             &evidence.name,
             &evidence.artifact.path,
@@ -65,22 +109,55 @@ pub(super) fn render_packet(
         "review_questions": inputs.questions,
     }))
     .expect("review instructions serialize");
-    append_section(
+    append_review_section(
         &mut packet,
+        &mut sections,
+        measure,
         "review_instructions",
         "requested-review",
         "",
         &instructions,
     )?;
-    append_section(
+    append_review_section(
         &mut packet,
+        &mut sections,
+        measure,
         "git_diff",
         "base-to-candidate",
         &inputs.diff.path,
         &inputs.diff.bytes,
     )?;
     packet.extend_from_slice(PAYLOAD_SUFFIX.as_bytes());
-    Ok(packet)
+    Ok(RenderedPacket {
+        bytes: packet,
+        sections,
+    })
+}
+
+fn append_review_section(
+    output: &mut Vec<u8>,
+    sections: &mut Vec<PreflightSection>,
+    measure: bool,
+    kind: &str,
+    name: &str,
+    path: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let start = output.len();
+    append_section(output, kind, name, path, bytes)?;
+    if measure {
+        sections.push(PreflightSection {
+            kind: kind.to_owned(),
+            name: name.to_owned(),
+            path: path.to_owned(),
+            hash: digest(bytes),
+            content_bytes: bytes.len(),
+            content_tokens_independent: count_tokens(bytes)?,
+            rendered_bytes: output.len() - start,
+            rendered_tokens_independent: count_tokens(&output[start..])?,
+        });
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
