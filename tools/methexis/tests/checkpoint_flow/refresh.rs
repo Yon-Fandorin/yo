@@ -4,7 +4,7 @@ use std::{fs, path::PathBuf};
 
 use serde_json::{Value, json};
 
-use super::support::*;
+use super::support::{GitRepository, KNOWLEDGE_ID, failure_json, success_json};
 
 const DIRECT_REQUEST: &str = "tools/methexis/examples/context-contract/direct-request.json";
 const DIRECT_CONTEXT: &str = "tools/methexis/examples/context-contract/context.md";
@@ -38,6 +38,16 @@ fn refresh_is_deterministic_and_idempotent() {
 
     assert_eq!(first["status"], "written");
     assert_eq!(second["status"], "unchanged");
+    assert_eq!(
+        first["manifests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|manifest| manifest["path"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        vec![DIRECT_MANIFEST, LEAF_MANIFEST]
+    );
+    assert_eq!(first["affected_ids"], json!([KNOWLEDGE_ID, SECOND_ID]));
     for index in 0..2 {
         assert_eq!(
             first["manifests"][index]["build_id"],
@@ -56,6 +66,63 @@ fn refresh_is_deterministic_and_idempotent() {
         fs::read(candidate.repository.path.join(DIRECT_MANIFEST)).unwrap(),
         first_bytes
     );
+    assert!(
+        !candidate
+            .repository
+            .path
+            .join("tools/methexis/examples/context-contract/.manifest-refresh-transaction.json")
+            .exists()
+    );
+}
+
+// 이전 실행의 혼합 PREPARED journal을 먼저 복구한 뒤, 뒤이은 payload 오류로 멈춘다.
+#[test]
+fn refresh_recovers_a_mixed_prepared_journal_before_a_later_failure() {
+    let candidate = refresh_candidate();
+    let old_direct = fs::read(candidate.repository.path.join(DIRECT_MANIFEST)).unwrap();
+    let old_leaf = fs::read(candidate.repository.path.join(LEAF_MANIFEST)).unwrap();
+    let new_direct = b"new direct manifest\n".to_vec();
+    let new_leaf = b"new leaf manifest\n".to_vec();
+    fs::write(candidate.repository.path.join(DIRECT_MANIFEST), &new_direct).unwrap();
+    let entries = vec![
+        json!({"path": DIRECT_MANIFEST, "old": old_direct.clone(), "new": new_direct}),
+        json!({"path": LEAF_MANIFEST, "old": old_leaf.clone(), "new": new_leaf}),
+    ];
+    let journal_path = candidate
+        .repository
+        .path
+        .join("tools/methexis/examples/context-contract/.manifest-refresh-transaction.json");
+    fs::write(
+        &journal_path,
+        serde_json::to_vec(&json!({
+            "schema": "methexis.context-manifest-refresh-transaction/v1alpha1",
+            "state": "prepared",
+            "entries": entries,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        candidate.repository.path.join(DIRECT_CONTEXT),
+        b"changed payload\n",
+    )
+    .unwrap();
+
+    let failure = failure_json(candidate.repository.run(&[
+        "refresh-context-manifests",
+        candidate.activation_request.to_str().unwrap(),
+    ]));
+
+    assert_eq!(failure["error"]["code"], "context_payload_changed");
+    assert_eq!(
+        fs::read(candidate.repository.path.join(DIRECT_MANIFEST)).unwrap(),
+        old_direct
+    );
+    assert_eq!(
+        fs::read(candidate.repository.path.join(LEAF_MANIFEST)).unwrap(),
+        old_leaf
+    );
+    assert!(!journal_path.exists());
 }
 
 // prospective compile 결과의 context.md가 tracked golden과 달라지면 manifest만 새 값으로
@@ -76,6 +143,14 @@ fn refresh_rejects_payload_changes_before_mutating_manifests() {
     ]));
 
     assert_eq!(failure["error"]["code"], "context_payload_changed");
+    assert_eq!(failure["error"]["affected_ids"], json!([KNOWLEDGE_ID]));
+    assert_eq!(failure["error"]["affected_paths"], json!([DIRECT_CONTEXT]));
+    assert!(
+        !failure["error"]["next_actions"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         fs::read(candidate.repository.path.join(DIRECT_MANIFEST)).unwrap(),
         before

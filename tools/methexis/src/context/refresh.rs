@@ -635,6 +635,117 @@ mod tests {
         assert_eq!(*state.borrow(), vec![0, 0]);
     }
 
+    // 여러 manifest를 순서대로 쓴 뒤 실패하면 이미 쓴 항목을 역순으로 되돌린다.
+    #[test]
+    fn publication_seam_rolls_back_in_reverse_order() {
+        let state = RefCell::new(vec![0, 0, 0]);
+        let write_order = RefCell::new(Vec::new());
+        let rollback_order = RefCell::new(Vec::new());
+        let failure = super::publish_sequence(
+            &[0_usize, 1, 2],
+            |_| true,
+            |index| {
+                write_order.borrow_mut().push(*index);
+                if *index == 2 {
+                    return Err("late write");
+                }
+                state.borrow_mut()[*index] = 1;
+                Ok(())
+            },
+            |index| {
+                rollback_order.borrow_mut().push(*index);
+                state.borrow_mut()[*index] = 0;
+                Ok(())
+            },
+            |_| false,
+        )
+        .unwrap_err();
+
+        assert_eq!(failure.write, "late write");
+        assert!(failure.rollback.is_none());
+        assert_eq!(*write_order.borrow(), vec![0, 1, 2]);
+        assert_eq!(*rollback_order.borrow(), vec![1, 0]);
+        assert_eq!(*state.borrow(), vec![0, 0, 0]);
+    }
+
+    // rollback 자체가 실패하면 이미 namespace에 반영된 상태를 숨기지 않고 recovery를 요구한다.
+    #[test]
+    fn publication_seam_preserves_a_rollback_failure() {
+        let state = RefCell::new(vec![0, 0]);
+        let failure = super::publish_sequence(
+            &[0_usize, 1],
+            |_| true,
+            |index| {
+                if *index == 1 {
+                    return Err("late write");
+                }
+                state.borrow_mut()[*index] = 1;
+                Ok(())
+            },
+            |index| {
+                if *index == 0 {
+                    return Err("rollback failed");
+                }
+                state.borrow_mut()[*index] = 0;
+                Ok(())
+            },
+            |_| false,
+        )
+        .unwrap_err();
+
+        assert_eq!(failure.write, "late write");
+        assert_eq!(failure.rollback, Some("rollback failed"));
+        assert_eq!(*state.borrow(), vec![1, 0]);
+    }
+
+    // publication은 prospective guard, compiled-input guard, 실제 write 순서를 고정한다.
+    #[test]
+    fn guarded_publication_runs_guards_before_publication() {
+        let order = RefCell::new(Vec::new());
+        let result = super::run_guarded_publication(
+            || {
+                order.borrow_mut().push("prospective");
+                Ok::<(), &'static str>(())
+            },
+            || {
+                order.borrow_mut().push("compiled");
+                Ok(())
+            },
+            || {
+                order.borrow_mut().push("publish");
+                Ok::<_, &'static str>("published")
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result, "published");
+        assert_eq!(*order.borrow(), vec!["prospective", "compiled", "publish"]);
+    }
+
+    // compiled-input guard가 실패하면 publication callback은 실행되지 않는다.
+    #[test]
+    fn guarded_publication_stops_before_publication_on_compiled_guard_failure() {
+        let order = RefCell::new(Vec::new());
+        let failure = super::run_guarded_publication(
+            || {
+                order.borrow_mut().push("prospective");
+                Ok::<(), &'static str>(())
+            },
+            || {
+                order.borrow_mut().push("compiled");
+                Err::<(), _>("compiled changed")
+            },
+            || {
+                order.borrow_mut().push("publish");
+                Ok::<_, &'static str>(())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(failure, "compiled changed");
+        assert_eq!(*order.borrow(), vec!["prospective", "compiled"]);
+    }
+
     // refresh 전용 capture seam은 동일 bytes request의 inode 교체도 최종 검증에서 거부한다.
     #[test]
     fn registered_request_identity_change_is_rejected_without_environment_hooks() {
@@ -663,6 +774,129 @@ mod tests {
 
         assert!(super::revalidate_registered_inputs(&request, &context).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    // context.md가 같은 경로에서 다른 bytes로 바뀌면 capture identity 검증이 즉시 거부한다.
+    #[test]
+    fn registered_context_bytes_change_is_rejected_without_environment_hooks() {
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "methexis-refresh-context-bytes-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let request_path = root.join("request.json");
+        let context_path = root.join("context.md");
+        fs::write(&request_path, b"{}\n").unwrap();
+        fs::write(&context_path, b"context\n").unwrap();
+        let request = super::publication::capture_file(&root, &request_path, 32).unwrap();
+        let context = super::publication::capture_file(&root, &context_path, 32).unwrap();
+        fs::write(&context_path, b"changed context\n").unwrap();
+
+        assert!(super::revalidate_registered_inputs(&request, &context).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // manifest의 현재 bytes가 capture 이후 달라지면 publication 직전 guard가 거부한다.
+    #[test]
+    fn captured_manifest_bytes_change_is_rejected_before_publication() {
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "methexis-refresh-manifest-bytes-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let manifest_path = root.join("manifest.json");
+        fs::write(&manifest_path, b"old manifest\n").unwrap();
+        let lock = super::publication::lock_target(&root, &manifest_path).unwrap();
+        let capture = lock.capture(64).unwrap();
+        fs::write(&manifest_path, b"new manifest\n").unwrap();
+
+        assert!(capture.revalidate().is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // journal schema, 등록 순서, entry별 크기 bound는 모두 한 번에 검증한다.
+    #[test]
+    fn journal_validation_rejects_schema_paths_and_entry_sizes() {
+        let registrations = super::registry::REGISTRATIONS;
+        let mut journal = super::BatchJournal {
+            schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
+            state: super::BatchState::Prepared,
+            entries: registrations
+                .iter()
+                .map(|registration| super::BatchEntry {
+                    path: registration.manifest.to_owned(),
+                    old: b"old\n".to_vec(),
+                    new: b"new\n".to_vec(),
+                })
+                .collect(),
+        };
+
+        assert!(super::validate_journal(&journal).is_ok());
+        journal.schema = "wrong-schema".to_owned();
+        assert_eq!(
+            serde_json::to_value(super::validate_journal(&journal).unwrap_err()).unwrap()["error"]
+                ["code"],
+            "batch_recovery_conflict"
+        );
+
+        journal.schema = "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned();
+        journal.entries.swap(0, 1);
+        assert_eq!(
+            serde_json::to_value(super::validate_journal(&journal).unwrap_err()).unwrap()["error"]
+                ["affected_paths"],
+            serde_json::json!([super::JOURNAL_PATH])
+        );
+
+        journal.entries.swap(0, 1);
+        journal.entries[0].new = vec![b'x'; super::MAX_REGISTERED_BYTES + 1];
+        assert_eq!(
+            serde_json::to_value(super::validate_journal(&journal).unwrap_err()).unwrap()["error"]
+                ["code"],
+            "batch_recovery_conflict"
+        );
+    }
+
+    // 두 registered manifest가 함께 직렬화될 때 journal 자체도 전체 크기 bound를 지킨다.
+    #[test]
+    fn journal_serialization_rejects_an_oversized_batch() {
+        let journal = super::BatchJournal {
+            schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
+            state: super::BatchState::Prepared,
+            entries: super::registry::REGISTRATIONS
+                .iter()
+                .map(|registration| super::BatchEntry {
+                    path: registration.manifest.to_owned(),
+                    old: vec![b'o'; super::MAX_REGISTERED_BYTES],
+                    new: vec![b'n'; super::MAX_REGISTERED_BYTES],
+                })
+                .collect(),
+        };
+
+        let failure = super::journal_bytes(&journal).unwrap_err();
+        let failure = serde_json::to_value(failure).unwrap();
+        assert_eq!(failure["error"]["code"], "manifest_publication_failed");
+        assert_eq!(
+            failure["error"]["affected_paths"],
+            serde_json::json!([super::JOURNAL_PATH])
+        );
     }
 
     // 실제 prospective owner guard는 Source identity 변경을 고유 오류로 반환하고 publication을
@@ -766,6 +1000,157 @@ mod tests {
         .unwrap_err();
         assert_eq!(failure.parts().1, expected);
         assert!(!*publication_ran.borrow());
+    }
+
+    // PREPARED recovery는 혼합 상태를 old bytes로, COMMITTED recovery는 new bytes로 수렴시킨다.
+    #[test]
+    fn recovery_converges_prepared_and_committed_batches() {
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let prepared_root = std::env::temp_dir().join(format!(
+            "methexis-refresh-prepared-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&prepared_root).unwrap();
+        let prepared_entries = super::registry::manifest_paths()
+            .map(|path| super::BatchEntry {
+                path: path.to_owned(),
+                old: format!("old:{path}\n").into_bytes(),
+                new: format!("new:{path}\n").into_bytes(),
+            })
+            .collect::<Vec<_>>();
+        for entry in &prepared_entries {
+            let target = prepared_root.join(&entry.path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(&target, &entry.old).unwrap();
+        }
+        let prepared_journal = super::BatchJournal {
+            schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
+            state: super::BatchState::Prepared,
+            entries: prepared_entries,
+        };
+        let journal_path = prepared_root.join(super::JOURNAL_PATH);
+        fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
+        fs::write(
+            &journal_path,
+            super::journal_bytes(&prepared_journal).unwrap(),
+        )
+        .unwrap();
+        let first = &prepared_journal.entries[0];
+        fs::write(prepared_root.join(&first.path), &first.new).unwrap();
+
+        super::recover_batch(&prepared_root).unwrap();
+
+        for entry in &prepared_journal.entries {
+            assert_eq!(
+                fs::read(prepared_root.join(&entry.path)).unwrap(),
+                entry.old
+            );
+        }
+        assert!(!journal_path.exists());
+        fs::remove_dir_all(&prepared_root).unwrap();
+
+        let committed_root = std::env::temp_dir().join(format!(
+            "methexis-refresh-committed-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&committed_root).unwrap();
+        let committed_entries = super::registry::manifest_paths()
+            .map(|path| super::BatchEntry {
+                path: path.to_owned(),
+                old: format!("old:{path}\n").into_bytes(),
+                new: format!("new:{path}\n").into_bytes(),
+            })
+            .collect::<Vec<_>>();
+        for entry in &committed_entries {
+            let target = committed_root.join(&entry.path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(&target, &entry.old).unwrap();
+        }
+        let committed_journal = super::BatchJournal {
+            schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
+            state: super::BatchState::Committed,
+            entries: committed_entries,
+        };
+        let journal_path = committed_root.join(super::JOURNAL_PATH);
+        fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
+        fs::write(
+            &journal_path,
+            super::journal_bytes(&committed_journal).unwrap(),
+        )
+        .unwrap();
+        let first = &committed_journal.entries[0];
+        fs::write(committed_root.join(&first.path), &first.new).unwrap();
+
+        super::recover_batch(&committed_root).unwrap();
+
+        for entry in &committed_journal.entries {
+            assert_eq!(
+                fs::read(committed_root.join(&entry.path)).unwrap(),
+                entry.new
+            );
+        }
+        assert!(!journal_path.exists());
+        fs::remove_dir_all(&committed_root).unwrap();
+    }
+
+    // journal과 old/new 어느 쪽에도 없는 manifest는 보존하고 recovery를 중단한다.
+    #[test]
+    fn recovery_retains_conflicting_manifest_and_journal() {
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "methexis-refresh-conflict-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let entries = super::registry::manifest_paths()
+            .map(|path| super::BatchEntry {
+                path: path.to_owned(),
+                old: format!("old:{path}\n").into_bytes(),
+                new: format!("new:{path}\n").into_bytes(),
+            })
+            .collect::<Vec<_>>();
+        for entry in &entries {
+            let target = root.join(&entry.path);
+            fs::create_dir_all(target.parent().unwrap()).unwrap();
+            fs::write(&target, &entry.old).unwrap();
+        }
+        let conflict_path = root.join(&entries[0].path);
+        fs::write(&conflict_path, b"unrecognized\n").unwrap();
+        let journal = super::BatchJournal {
+            schema: "methexis.context-manifest-refresh-transaction/v1alpha1".to_owned(),
+            state: super::BatchState::Prepared,
+            entries,
+        };
+        let journal_path = root.join(super::JOURNAL_PATH);
+        fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
+        fs::write(&journal_path, super::journal_bytes(&journal).unwrap()).unwrap();
+
+        let failure = super::recover_batch(&root).unwrap_err();
+        let failure = serde_json::to_value(failure).unwrap();
+        assert_eq!(failure["error"]["code"], "batch_recovery_conflict");
+        assert_eq!(
+            failure["error"]["affected_paths"],
+            serde_json::json!([journal.entries[0].path])
+        );
+        assert_eq!(fs::read(&conflict_path).unwrap(), b"unrecognized\n");
+        assert!(journal_path.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
