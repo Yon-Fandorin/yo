@@ -49,14 +49,20 @@ fn main() -> ExitCode {
 
 #[cfg(unix)]
 fn run(command: command::Command) -> Result<(), AppError> {
-    let mut options = match command {
-        command::Command::Session(command) => {
-            let output = session::run(command)?;
-            write_session_command_output(output)?;
-            return Ok(());
-        },
-        command::Command::Live(options) => options,
-    };
+    match command {
+        command::Command::Session(command) => run_session_command(command),
+        command::Command::Live(options) => run_live_session(options),
+    }
+}
+
+#[cfg(unix)]
+fn run_session_command(command: command::SessionCommand) -> Result<(), AppError> {
+    let output = session::run(command)?;
+    write_session_command_output(output)
+}
+
+#[cfg(unix)]
+fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let launch_failure_selection =
