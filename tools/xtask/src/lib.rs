@@ -15,176 +15,239 @@ mod validation_stage;
 #[cfg(test)]
 mod test_support;
 
-use std::{ffi::OsString, path::PathBuf};
+use std::{
+    ffi::{OsStr, OsString},
+    path::PathBuf,
+};
 
 use impact::ImpactInput;
 
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> {
     let mut arguments = arguments.into_iter();
-    match (arguments.next().as_deref(), arguments.next().as_deref()) {
-        (Some(command), Some(scope)) if command == "slice" && scope == "create-activation" => {
-            let request = arguments
-                .next()
-                .map(PathBuf::from)
-                .ok_or_else(activation_slice_usage)?;
-            if arguments.next().is_some() {
-                return Err(activation_slice_usage());
-            }
-            let repository = std::env::current_dir()
-                .map_err(|error| format!("cannot locate the repository: {error}"))?;
-            activation_slice::run(&repository, &request)
+    let command = arguments.next();
+    let scope = arguments.next();
+    match (command.as_deref(), scope.as_deref()) {
+        (Some(command), Some(scope)) if command == "slice" => run_slice(scope, &mut arguments),
+        (Some(command), Some(action)) if command == "docs" => run_docs(action, &mut arguments),
+        (Some(command), Some(action)) if command == "slice-contract" => {
+            run_slice_contract(action, &mut arguments)
         },
-        (Some(command), Some(scope)) if command == "slice" && scope == "review-packet" => {
-            let request = arguments
-                .next()
-                .map(PathBuf::from)
-                .ok_or_else(review_packet_usage)?;
-            if arguments.next().is_some() {
-                return Err(review_packet_usage());
-            }
-            let repository = std::env::current_dir()
-                .map_err(|error| format!("cannot locate the repository: {error}"))?;
-            review_packet::run(&repository, &request)
-        },
-        (Some(command), Some(scope)) if command == "slice" && scope == "review-delta" => {
-            let request = arguments
-                .next()
-                .map(PathBuf::from)
-                .ok_or_else(review_delta_usage)?;
-            if arguments.next().is_some() {
-                return Err(review_delta_usage());
-            }
-            let repository = std::env::current_dir()
-                .map_err(|error| format!("cannot locate the repository: {error}"))?;
-            review_delta::run(&repository, &request)
-        },
-        (Some(command), Some(scope)) if command == "slice" && scope == "close" => {
-            let action = arguments
-                .next()
-                .ok_or_else(slice_close_usage)?
-                .to_string_lossy()
-                .into_owned();
-            let value = arguments
-                .next()
-                .map(PathBuf::from)
-                .ok_or_else(slice_close_usage)?;
-            let output = arguments.next().map(PathBuf::from);
-            if arguments.next().is_some() {
-                return Err(slice_close_usage());
-            }
-            let repository = std::env::current_dir()
-                .map_err(|error| format!("cannot locate the repository: {error}"))?;
-            match action.as_str() {
-                "plan" => {
-                    let slice = value
-                        .to_str()
-                        .ok_or_else(|| "Slice name must be valid UTF-8".to_owned())?;
-                    slice_close::plan(&repository, slice, output.as_deref())
-                },
-                "apply" if output.is_none() => slice_close::apply(&repository, &value),
-                _ => Err(slice_close_usage()),
-            }
-        },
-        (Some(command), Some(action)) if command == "docs" && action == "accept-translation" => {
-            let page = arguments
-                .next()
-                .map(PathBuf::from)
-                .ok_or_else(docs_accept_translation_usage)?;
-            if arguments.next().is_some() {
-                return Err(docs_accept_translation_usage());
-            }
-            let repository = std::env::current_dir()
-                .map_err(|error| format!("cannot locate the repository: {error}"))?;
-            docs_translation::accept(&repository, &page)
-        },
-        (Some(command), Some(action)) if command == "slice-contract" && action == "bind" => {
-            let contract = arguments
-                .next()
-                .map(PathBuf::from)
-                .ok_or_else(slice_contract_usage)?;
-            if arguments.next().is_some() {
-                return Err(slice_contract_usage());
-            }
-            let repository = std::env::current_dir()
-                .map_err(|error| format!("cannot locate the repository: {error}"))?;
-            slice_contract::bind(&repository, &contract)
-        },
-        (Some(command), Some(check)) if command == "check" => {
-            let check = check.to_string_lossy();
-            if check == "test-explanations" {
-                if arguments.next().is_some() {
-                    return Err(usage(check.as_ref()));
-                }
-                let repository = std::env::current_dir()
-                    .map_err(|error| format!("cannot locate the repository: {error}"))?;
-                return test_explanations::check(&repository);
-            }
-            if check == "slice-scope" {
-                let contract = arguments.next().map(PathBuf::from);
-                if arguments.next().is_some() {
-                    return Err(usage(check.as_ref()));
-                }
-                let repository = std::env::current_dir()
-                    .map_err(|error| format!("cannot locate the repository: {error}"))?;
-                return match contract {
-                    Some(contract) => slice_contract::check_scope(&repository, &contract),
-                    None => slice_contract::check_bound_scope(&repository),
-                };
-            }
-            if check == "slice-parallel" {
-                let left = arguments
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or_else(|| usage(check.as_ref()))?;
-                let right = arguments
-                    .next()
-                    .map(PathBuf::from)
-                    .ok_or_else(|| usage(check.as_ref()))?;
-                if arguments.next().is_some() {
-                    return Err(usage(check.as_ref()));
-                }
-                let repository = std::env::current_dir()
-                    .map_err(|error| format!("cannot locate the repository: {error}"))?;
-                return slice_contract::check_parallel(&repository, &left, &right);
-            }
-            if check == "methexis-check-for-stage" {
-                if arguments.next().is_some() {
-                    return Err(usage(check.as_ref()));
-                }
-                let repository = std::env::current_dir()
-                    .map_err(|error| format!("cannot locate the repository: {error}"))?;
-                return validation_stage::run_methexis_check(&repository);
-            }
-
-            let head_fallback =
-                matches!(check.as_ref(), "commit-preflight" | "slice-review-impact");
-            if !matches!(
-                check.as_ref(),
-                "commit-preflight" | "developer-docs-impact" | "slice-review-impact"
-            ) {
-                return Err(usage(check.as_ref()));
-            }
-            let message = arguments
-                .next()
-                .map(PathBuf::from)
-                .ok_or_else(|| usage(check.as_ref()))?;
-            let changed_paths = arguments.next().map(PathBuf::from);
-            let branch = arguments
-                .next()
-                .map(|value| value.to_string_lossy().into_owned());
-            if arguments.next().is_some() {
-                return Err(usage(check.as_ref()));
-            }
-            let input = ImpactInput::load(message, changed_paths, branch, head_fallback)?;
-            match check.as_ref() {
-                "commit-preflight" => impact::preflight::check(&input),
-                "developer-docs-impact" => impact::developer_docs::check(&input),
-                "slice-review-impact" => impact::slice_review::check(&input),
-                _ => unreachable!("the check name was validated before loading input"),
-            }
-        },
+        (Some(command), Some(check)) if command == "check" => run_check(check, &mut arguments),
         _ => Err(general_usage()),
     }
+}
+
+fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    if scope == "create-activation" {
+        return run_activation_slice(arguments);
+    }
+    if scope == "review-packet" {
+        return run_review_packet(arguments);
+    }
+    if scope == "review-delta" {
+        return run_review_delta(arguments);
+    }
+    if scope == "close" {
+        return run_slice_close(arguments);
+    }
+    Err(general_usage())
+}
+
+fn run_activation_slice(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(activation_slice_usage)?;
+    if arguments.next().is_some() {
+        return Err(activation_slice_usage());
+    }
+    let repository = current_repository()?;
+    activation_slice::run(&repository, &request)
+}
+
+fn run_review_packet(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(review_packet_usage)?;
+    if arguments.next().is_some() {
+        return Err(review_packet_usage());
+    }
+    let repository = current_repository()?;
+    review_packet::run(&repository, &request)
+}
+
+fn run_review_delta(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(review_delta_usage)?;
+    if arguments.next().is_some() {
+        return Err(review_delta_usage());
+    }
+    let repository = current_repository()?;
+    review_delta::run(&repository, &request)
+}
+
+fn run_slice_close(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let action = arguments
+        .next()
+        .ok_or_else(slice_close_usage)?
+        .to_string_lossy()
+        .into_owned();
+    let value = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(slice_close_usage)?;
+    let output = arguments.next().map(PathBuf::from);
+    if arguments.next().is_some() {
+        return Err(slice_close_usage());
+    }
+    let repository = current_repository()?;
+    match action.as_str() {
+        "plan" => {
+            let slice = value
+                .to_str()
+                .ok_or_else(|| "Slice name must be valid UTF-8".to_owned())?;
+            slice_close::plan(&repository, slice, output.as_deref())
+        },
+        "apply" if output.is_none() => slice_close::apply(&repository, &value),
+        _ => Err(slice_close_usage()),
+    }
+}
+
+fn run_docs(action: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    if action == "accept-translation" {
+        return run_docs_accept_translation(arguments);
+    }
+    Err(general_usage())
+}
+
+fn run_docs_accept_translation(
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    let page = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(docs_accept_translation_usage)?;
+    if arguments.next().is_some() {
+        return Err(docs_accept_translation_usage());
+    }
+    let repository = current_repository()?;
+    docs_translation::accept(&repository, &page)
+}
+
+fn run_slice_contract(
+    action: &OsStr,
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    if action == "bind" {
+        return run_slice_contract_bind(arguments);
+    }
+    Err(general_usage())
+}
+
+fn run_slice_contract_bind(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let contract = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(slice_contract_usage)?;
+    if arguments.next().is_some() {
+        return Err(slice_contract_usage());
+    }
+    let repository = current_repository()?;
+    slice_contract::bind(&repository, &contract)
+}
+
+fn run_check(check: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let check = check.to_string_lossy();
+    match check.as_ref() {
+        "test-explanations" => run_test_explanations_check(arguments),
+        "slice-scope" => run_slice_scope_check(arguments),
+        "slice-parallel" => run_slice_parallel_check(arguments),
+        "methexis-check-for-stage" => run_methexis_check_for_stage(arguments),
+        "commit-preflight" | "developer-docs-impact" | "slice-review-impact" => {
+            run_impact_check(arguments, check.as_ref())
+        },
+        _ => Err(usage(check.as_ref())),
+    }
+}
+
+fn run_test_explanations_check(
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    if arguments.next().is_some() {
+        return Err(usage("test-explanations"));
+    }
+    let repository = current_repository()?;
+    test_explanations::check(&repository)
+}
+
+fn run_slice_scope_check(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let contract = arguments.next().map(PathBuf::from);
+    if arguments.next().is_some() {
+        return Err(usage("slice-scope"));
+    }
+    let repository = current_repository()?;
+    match contract {
+        Some(contract) => slice_contract::check_scope(&repository, &contract),
+        None => slice_contract::check_bound_scope(&repository),
+    }
+}
+
+fn run_slice_parallel_check(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let left = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| usage("slice-parallel"))?;
+    let right = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| usage("slice-parallel"))?;
+    if arguments.next().is_some() {
+        return Err(usage("slice-parallel"));
+    }
+    let repository = current_repository()?;
+    slice_contract::check_parallel(&repository, &left, &right)
+}
+
+fn run_methexis_check_for_stage(
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    if arguments.next().is_some() {
+        return Err(usage("methexis-check-for-stage"));
+    }
+    let repository = current_repository()?;
+    validation_stage::run_methexis_check(&repository)
+}
+
+fn run_impact_check(
+    arguments: &mut impl Iterator<Item = OsString>,
+    check: &str,
+) -> Result<(), String> {
+    let head_fallback = matches!(check, "commit-preflight" | "slice-review-impact");
+    let message = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| usage(check))?;
+    let changed_paths = arguments.next().map(PathBuf::from);
+    let branch = arguments
+        .next()
+        .map(|value| value.to_string_lossy().into_owned());
+    if arguments.next().is_some() {
+        return Err(usage(check));
+    }
+    let input = ImpactInput::load(message, changed_paths, branch, head_fallback)?;
+    match check {
+        "commit-preflight" => impact::preflight::check(&input),
+        "developer-docs-impact" => impact::developer_docs::check(&input),
+        "slice-review-impact" => impact::slice_review::check(&input),
+        _ => unreachable!("the check name was validated before loading input"),
+    }
+}
+
+fn current_repository() -> Result<PathBuf, String> {
+    std::env::current_dir().map_err(|error| format!("cannot locate the repository: {error}"))
 }
 
 fn usage(check: &str) -> String {
@@ -249,6 +312,8 @@ fn slice_contract_usage() -> String {
 
 #[cfg(test)]
 mod cli_tests {
+    use std::{cell::Cell, ffi::OsString};
+
     use super::{
         activation_slice_usage, docs_accept_translation_usage, review_delta_usage,
         review_packet_usage, run, slice_close_usage,
@@ -276,6 +341,28 @@ mod cli_tests {
              cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
              <commit-message-file> [changed-paths-file] [branch]"
         );
+    }
+
+    // 최상위 명령 분배는 첫 번째 명령이 없거나 알 수 없는 경우에도 기존 구현처럼 비교할 두 값을
+    // 모두 미리 읽어야 하므로, 호출 횟수를 관찰할 수 있는 반복자에서도 두 번 읽는 계약을 유지한다.
+    #[test]
+    fn general_dispatch_prefetches_command_and_scope() {
+        let empty_calls = Cell::new(0);
+        let empty = std::iter::from_fn(|| {
+            empty_calls.set(empty_calls.get() + 1);
+            None::<OsString>
+        });
+        assert!(run(empty).is_err());
+        assert_eq!(empty_calls.get(), 2);
+
+        let unknown_calls = Cell::new(0);
+        let mut values = ["unknown", "scope"].into_iter().map(OsString::from);
+        let unknown = std::iter::from_fn(|| {
+            unknown_calls.set(unknown_calls.get() + 1);
+            values.next()
+        });
+        assert!(run(unknown).is_err());
+        assert_eq!(unknown_calls.get(), 2);
     }
 
     // activation Slice 생성은 정확히 한 versioned request만 받아 누락되거나
