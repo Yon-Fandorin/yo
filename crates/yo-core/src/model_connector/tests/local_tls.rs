@@ -115,22 +115,22 @@ impl LocalTlsServer {
             },
         };
         fs::write(&payload, payload_bytes).unwrap();
-        let child = spawn_local_tls_child(
-            include_str!("local_tls_server.py"),
-            certificate.as_os_str(),
-            key.as_os_str(),
-            &ready,
-            &requests,
-            &accepted,
-            &sent,
+        let child = spawn_local_tls_child(LocalTlsChildSpec {
+            script: include_str!("local_tls_server.py"),
+            certificate: certificate.as_os_str(),
+            key: key.as_os_str(),
+            ready: &ready,
+            requests: &requests,
+            accepted: &accepted,
+            sent: &sent,
             mode,
-            &closed,
-            &payload,
-            &content_type,
+            closed: &closed,
+            payload: &payload,
+            content_type: &content_type,
             status,
-            &location,
+            location: &location,
             max_connections,
-        );
+        });
         let (child, port) = wait_for_local_tls_ready(child, &ready, Duration::from_secs(2));
         Self {
             _child: child,
@@ -196,58 +196,60 @@ impl LocalTlsServer {
     }
 }
 
-fn spawn_local_tls_child(
-    script: &str,
-    certificate: &OsStr,
-    key: &OsStr,
-    ready: &Path,
-    requests: &Path,
-    accepted: &Path,
-    sent: &Path,
-    mode: &str,
-    closed: &Path,
-    payload: &Path,
-    content_type: &str,
+struct LocalTlsChildSpec<'a> {
+    script: &'a str,
+    certificate: &'a OsStr,
+    key: &'a OsStr,
+    ready: &'a Path,
+    requests: &'a Path,
+    accepted: &'a Path,
+    sent: &'a Path,
+    mode: &'a str,
+    closed: &'a Path,
+    payload: &'a Path,
+    content_type: &'a str,
     status: u16,
-    location: &str,
+    location: &'a str,
     max_connections: usize,
-) -> ChildGuard {
+}
+
+fn spawn_local_tls_child(spec: LocalTlsChildSpec<'_>) -> ChildGuard {
     let child = Command::new("python3")
         .arg("-c")
-        .arg(script)
-        .arg(certificate)
-        .arg(key)
-        .arg(ready)
-        .arg(requests)
-        .arg(accepted)
-        .arg(sent)
-        .arg(mode)
-        .arg(closed)
-        .arg(payload)
-        .arg(content_type)
-        .arg(status.to_string())
-        .arg(location)
-        .arg(max_connections.to_string())
+        .arg(spec.script)
+        .arg(spec.certificate)
+        .arg(spec.key)
+        .arg(spec.ready)
+        .arg(spec.requests)
+        .arg(spec.accepted)
+        .arg(spec.sent)
+        .arg(spec.mode)
+        .arg(spec.closed)
+        .arg(spec.payload)
+        .arg(spec.content_type)
+        .arg(spec.status.to_string())
+        .arg(spec.location)
+        .arg(spec.max_connections.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .expect("python3 is required for the local TLS listener fixture");
     let mut sensitive_paths = vec![
-        certificate,
-        key,
-        ready.as_os_str(),
-        requests.as_os_str(),
-        accepted.as_os_str(),
-        sent.as_os_str(),
-        closed.as_os_str(),
-        payload.as_os_str(),
+        spec.certificate,
+        spec.key,
+        spec.ready.as_os_str(),
+        spec.requests.as_os_str(),
+        spec.accepted.as_os_str(),
+        spec.sent.as_os_str(),
+        spec.closed.as_os_str(),
+        spec.payload.as_os_str(),
     ];
-    if let Some(server_root) = ready.parent() {
+    if let Some(server_root) = spec.ready.parent() {
         sensitive_paths.push(server_root.as_os_str());
     }
     ChildGuard::new(
         child,
-        child_sensitive_values(&sensitive_paths, location, key),
+        child_sensitive_values(&sensitive_paths, spec.location, spec.key),
     )
 }
 
@@ -295,8 +297,7 @@ impl ChildGuard {
         }));
         let stderr_reader = child.stderr.take().map(|pipe| {
             let captured = Arc::clone(&stderr);
-            let reader = thread::spawn(move || capture_stderr(pipe, captured));
-            reader
+            thread::spawn(move || capture_stderr(pipe, captured))
         });
         Self {
             child: Some(child),
@@ -508,7 +509,7 @@ fn truncate_diagnostic(text: String) -> String {
     }
     let mut truncated = text[..end].to_owned();
     if end < text.len() {
-        truncated.push_str("…");
+        truncated.push('…');
     }
     truncated
 }
@@ -539,22 +540,22 @@ fn diagnostic_test_child(
         create_private_file(path);
     }
     fs::write(&key, b"private-key-bytes-must-not-escape").unwrap();
-    let child = spawn_local_tls_child(
+    let child = spawn_local_tls_child(LocalTlsChildSpec {
         script,
-        certificate.as_os_str(),
-        key.as_os_str(),
-        &ready,
-        &requests,
-        &accepted,
-        &sent,
-        "success",
-        &closed,
-        &payload,
-        "text/plain",
-        200,
+        certificate: certificate.as_os_str(),
+        key: key.as_os_str(),
+        ready: &ready,
+        requests: &requests,
+        accepted: &accepted,
+        sent: &sent,
+        mode: "success",
+        closed: &closed,
+        payload: &payload,
+        content_type: "text/plain",
+        status: 200,
         location,
-        1,
-    );
+        max_connections: 1,
+    });
     (child, root, ready, sent)
 }
 
