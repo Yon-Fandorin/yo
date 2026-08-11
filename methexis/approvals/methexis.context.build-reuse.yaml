@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: methexis.context.build-reuse
-revision: sha256:6f36c8f68142907af9849cdcae85f3e96351d1df9eac3d0019b4c234d2e88184
+revision: sha256:54126046e0a163adcb094284128e0466dc09c87c0018616f1bb561545b46d5be
 reviewer: methexis
-reviewed_at: 2026-08-09T17:08:05Z
+reviewed_at: 2026-08-11T16:35:56Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:ecc2cea7e77f57a01cec055c57f8e056343e8794c0b88ba0bee26b6f628a851b
-request_hash: sha256:e8c8a2f4e2eac38fdd294faffe0653e39957b3c1f12fe329dc314840c4ef83e5
+projection_hash: sha256:9bfbb6738c8d0bce3092b00d59a38136ee0511664ed18cfc212d66dd13f17b6a
+request_hash: sha256:de6c12d03588a9857f5dc8549d13a81937303e05eb0c5b4503f0f5ffa256fd9c

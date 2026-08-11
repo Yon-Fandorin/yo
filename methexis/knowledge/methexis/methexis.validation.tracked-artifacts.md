@@ -5,7 +5,7 @@ kind: rule
 owner: methexis
 sources:
   - id: methexis.validation-model.tracked-artifacts
-    revision: sha256:f13b4e00381a390a533d7dc2fbeb53bf562984b9df93f17ca3e9697a73d43bcb
+    revision: sha256:4a2fff560d8f979571b4248f91c6d72bd5de54485d40a5e5c4e5c6d7ea56bba5
 ---
 # Tracked artifact validation boundary
 
@@ -24,3 +24,10 @@ registered artifact is required. If no active trusted Checkpoint is available,
 `authority` may pass as an evaluation while `artifacts` is `blocked`; the
 requested validation is incomplete, so the overall report fails and directs
 the caller to establish active trusted authority.
+
+A separately invoked ContextBuild deep verifier MAY reproduce and compare one
+caller-named rebuildable local build under the current trusted authority. That
+operation is not a fifth check class, a prerequisite of `artifacts`, a default
+`check` selection, or an `hk` gate, and it MUST NOT scan unnamed cache entries.
+Its result cannot promote a local cache into tracked authority or replace the
+registered-manifest checks.
