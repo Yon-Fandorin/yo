@@ -21,7 +21,7 @@ use yo_core::{
 use crate::{
     appearance::{AppearanceCandidate, ColorCapability, GlyphProfile, MotionPreference},
     runner::{
-        AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch,
+        AgentAction, AgentConnection, AgentPoll, DispatchOutcome, FrameRateLimit, PendingDispatch,
         TerminationEvent, TerminationSource, TuiSession,
         unix::{FrameViewport, LivePresenter, LoopError, LoopExit, drive},
     },
@@ -125,6 +125,44 @@ impl EventSource for Events {
     }
 }
 
+struct ResizeOnce {
+    resized: Rc<Cell<bool>>,
+    emitted: bool,
+}
+
+impl EventSource for ResizeOnce {
+    type Error = io::Error;
+
+    fn poll_event(&mut self, _context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
+        if self.emitted {
+            Poll::Pending
+        } else {
+            self.emitted = true;
+            self.resized.set(true);
+            Poll::Ready(Ok(Event::Resize(32, 8)))
+        }
+    }
+}
+
+struct TerminateAfterResize {
+    resized: Rc<Cell<bool>>,
+    observed_after_resize: bool,
+}
+
+impl TerminationSource for TerminateAfterResize {
+    fn poll_termination(&mut self, _context: &mut Context<'_>) -> Poll<TerminationEvent> {
+        if !self.resized.get() {
+            return Poll::Pending;
+        }
+        if !self.observed_after_resize {
+            self.observed_after_resize = true;
+            Poll::Pending
+        } else {
+            Poll::Ready(TerminationEvent::Requested)
+        }
+    }
+}
+
 struct StopAfter {
     counter: Rc<Cell<usize>>,
     threshold: usize,
@@ -209,13 +247,16 @@ impl AgentConnection for SimpleAgent {
 
 #[derive(Default)]
 struct Presenter {
+    invalidations: usize,
     previous_on_render: Vec<bool>,
     frames: Vec<Surface>,
     render_count: Rc<Cell<usize>>,
 }
 
 impl FrameViewport for Presenter {
-    fn invalidate_frame(&mut self) {}
+    fn invalidate_frame(&mut self) {
+        self.invalidations += 1;
+    }
 }
 
 impl LivePresenter<Backend> for Presenter {
@@ -596,6 +637,52 @@ fn normal_wait_coalesces_input_and_due_motion_into_one_redraw() {
     assert_eq!(presenter.frames.len(), 2);
 }
 
+// 첫 frame 직후 ordinary coalescing 간격 안에 resize가 들어오면 viewport를 무효화하고
+// resize frame을 즉시 그려, 기존 frame limiter가 correctness frame을 지연시키지 않는다.
+#[test]
+fn resize_frame_is_immediate_and_invalidates_the_previous_viewport() {
+    let mut retained = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard)
+        .with_frame_rate_limit(FrameRateLimit::Fps60);
+    let mut agent = SimpleAgent::default();
+    let resized = Rc::new(Cell::new(false));
+    let mut backend = Backend::default();
+    let mut terminal = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
+    let render_count = Rc::new(Cell::new(0));
+    let mut presenter = Presenter {
+        render_count,
+        ..Presenter::default()
+    };
+    let mut reader = UnixEventReader::new(
+        ResizeOnce {
+            resized: Rc::clone(&resized),
+            emitted: false,
+        },
+        TerminateAfterResize {
+            resized,
+            observed_after_resize: false,
+        },
+    );
+
+    assert!(matches!(
+        drive(
+            &mut terminal,
+            &mut presenter,
+            &mut reader,
+            &mut retained,
+            &mut agent,
+            Size::new(16, 6),
+            Instant::now(),
+        )
+        .unwrap(),
+        LoopExit::Termination
+    ));
+    terminal.close().unwrap();
+
+    assert_eq!(presenter.frames.len(), 2);
+    assert_eq!(presenter.invalidations, 1);
+    assert_eq!(presenter.previous_on_render, [false, true]);
+}
+
 // 전송 재시도 중 10ms backpressure poll이 motion 마감을 지나더라도 이를 놓치지 않고
 // 실제 marker frame을 다시 그린다. OS sleep 오차에 따른 더 짧은 timeout은 요구하지 않는다.
 #[test]
@@ -688,6 +775,7 @@ fn zero_size_resize_preserves_the_generation_motion_epoch() {
     terminal.close().unwrap();
 
     assert_eq!(presenter.frames.len(), 1);
+    assert_eq!(presenter.invalidations, 1);
     assert!(surface_text(&presenter.frames[0]).contains("* Working"));
     assert_eq!(
         styles_for_ascii_text(&presenter.frames[0], "* Working")[0].attributes,

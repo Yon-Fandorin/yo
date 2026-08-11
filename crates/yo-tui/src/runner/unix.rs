@@ -985,6 +985,40 @@ mod motion_tests {
         );
     }
 
+    // frame 마감은 backpressure 재시도와 motion 마감보다 가까운 경우 owner wait의
+    // 최솟값으로 선택되어 ordinary coalescing 경계를 넘지 않습니다.
+    #[test]
+    fn nearer_frame_deadline_shortens_the_combined_wait() {
+        let now = Instant::now();
+
+        assert_eq!(
+            wait_timeout_at(
+                Some(Duration::from_millis(10)),
+                now.checked_add(Duration::from_millis(7)),
+                now.checked_add(Duration::from_millis(3)),
+                now,
+            ),
+            Some(Duration::from_millis(3))
+        );
+    }
+
+    // 이미 지난 deadline은 음수 duration으로 변환되지 않고 zero로 포화되어 즉시
+    // 재선택하게 하며, 현재 시각 이후의 다른 마감값을 잘못 기다리지 않습니다.
+    #[test]
+    fn overdue_deadlines_saturate_to_zero_wait() {
+        let now = Instant::now();
+        let past = now.checked_sub(Duration::from_millis(1)).unwrap();
+
+        assert_eq!(
+            wait_timeout_at(Some(Duration::from_millis(10)), Some(past), None, now),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(
+            wait_timeout_at(Some(Duration::from_millis(10)), None, Some(past), now),
+            Some(Duration::ZERO)
+        );
+    }
+
     // 16ms motion tick을 60fps frame 요청으로 승격하면 지난 motion deadline은 소비되어
     // 남은 frame limiter 간격 동안 zero-timeout busy loop를 만들지 않습니다.
     #[test]
