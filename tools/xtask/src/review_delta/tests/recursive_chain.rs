@@ -3,10 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{
-    super::*,
-    support::{finding, hash},
-};
+use super::{super::*, support::finding};
 use crate::review_delta::model::{PriorFinding, PriorFindings};
 
 fn repository_head(repository: &Path) -> String {
@@ -112,51 +109,37 @@ fn delta_inputs(
     }
 }
 
-// synthetic original review에서 두 번의 published delta를 재생해 중앙 verifier가
-// 실제 재귀 chain과 alias reuse를 수락하고 canonical-but-ineligible evidence는
-// 거부하는지 끝까지 확인한다.
+// 실제 review-packet serialization/publication/canonical verification으로 원본을 만든 뒤 두 번의
+// published delta를 재생해 중앙 verifier가 재귀 chain과 alias reuse를 수락하고
+// canonical-but-ineligible evidence는 거부하는지 끝까지 확인한다.
 #[test]
 fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() {
     let repository = crate::test_support::TestRepository::new("review-delta-chain-e2e");
     repository.write(".gitignore", ".local-exclude/\n");
-    repository.write("owned.txt", "candidate a\n");
+    repository.write("owned.txt", "base\n");
     repository.git(["add", ".gitignore", "owned.txt"]);
+    repository.git(["commit", "--quiet", "-m", "base"]);
+    let base_commit = repository_head(&repository.path);
+    repository.write("owned.txt", "candidate a\n");
+    repository.git(["add", "owned.txt"]);
     repository.git(["commit", "--quiet", "-m", "candidate a"]);
     let candidate_a = repository_head(&repository.path);
     repository.git(["switch", "-c", "slice/direct/review-delta-chain"]);
 
-    let seed_directory = repository
-        .path
-        .join(".local-exclude/methexis/slice-reviews/seed");
-    std::fs::create_dir_all(&seed_directory).unwrap();
-    let seed_manifest_path = seed_directory.join("manifest.json");
-    let seed_manifest_bytes = b"{\"schema\":\"yo.slice-review-manifest/v1\"}\n";
-    std::fs::write(&seed_manifest_path, seed_manifest_bytes).unwrap();
-    let seed_packet_path = seed_directory.join("packet.md");
-    std::fs::write(&seed_packet_path, b"seed packet\n").unwrap();
-    let contract_path = repository.path.join(".local-exclude/contract.json");
-    std::fs::write(&contract_path, b"contract\n").unwrap();
-    let baseline_path = repository.path.join(".local-exclude/evidence-a.txt");
-    std::fs::write(&baseline_path, format!("Candidate: {candidate_a}\n")).unwrap();
-    let seed = VerifiedReview {
-        review_id: hash(90),
-        manifest_path: relative(&repository.path, &seed_manifest_path),
-        manifest_hash: digest(seed_manifest_bytes),
-        packet_path: relative(&repository.path, &seed_packet_path),
-        packet_hash: digest(b"seed packet\n"),
-        base_commit: candidate_a.clone(),
-        candidate_commit: candidate_a.clone(),
-        trusted_commit: candidate_a.clone(),
-        slice_contract_path: contract_path.to_string_lossy().into_owned(),
-        slice_contract_hash: digest(b"contract\n"),
-        validation_evidence: vec![review_packet::VerifiedEvidence {
-            name: "baseline".to_owned(),
-            path: baseline_path.to_string_lossy().into_owned(),
-            hash: digest(format!("Candidate: {candidate_a}\n").as_bytes()),
-        }],
-        review_lenses: vec!["fresh-context".to_owned()],
-        review_questions: vec!["Is the chain eligible?".to_owned()],
-    };
+    let contract_path = repository.write(".local-exclude/contract.json", "contract\n");
+    let baseline_path = repository.write(
+        ".local-exclude/evidence-a.txt",
+        &format!("Candidate: {candidate_a}\n"),
+    );
+    let seed = crate::review_packet::tests::support::publish_original(
+        &repository.path,
+        &base_commit,
+        &candidate_a,
+        &candidate_a,
+        &contract_path,
+        &baseline_path,
+    );
+    let seed_manifest_path = resolve_input_path(&repository.path, &seed.manifest_path);
     let verify_seed = |_: &Path, path: &Path, expected: &str| {
         if std::fs::canonicalize(path).unwrap()
             == std::fs::canonicalize(&seed_manifest_path).unwrap()
@@ -205,8 +188,26 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
         &verify_seed,
     )
     .unwrap();
+    let first_manifest_value: Manifest =
+        serde_json::from_slice(&std::fs::read(&first_manifest).unwrap()).unwrap();
+    assert_eq!(
+        first_manifest_value.plan.prior_candidate_commit,
+        candidate_a
+    );
+    assert_eq!(
+        first_manifest_value.plan.replacement_candidate_commit,
+        candidate_b
+    );
+    assert_eq!(
+        first_manifest_value.inputs.prior_manifest.path,
+        seed.manifest_path
+    );
+    assert_eq!(
+        first_manifest_value.inputs.prior_packet.path,
+        seed.packet_path
+    );
     assert_eq!(first.candidate_commit, candidate_b);
-    assert_eq!(first.base_commit, candidate_a);
+    assert_eq!(first.base_commit, base_commit);
     assert_eq!(first.trusted_commit, candidate_a);
     assert_eq!(first.slice_contract_path, contract_path.to_string_lossy());
     assert_eq!(first.validation_evidence.len(), 1);
@@ -243,7 +244,7 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
     )
     .unwrap();
     assert_eq!(second.candidate_commit, candidate_c);
-    assert_eq!(second.base_commit, candidate_a);
+    assert_eq!(second.base_commit, base_commit);
     assert_eq!(second.trusted_commit, candidate_a);
     assert_eq!(second.slice_contract_path, contract_path.to_string_lossy());
     assert_eq!(second.validation_evidence.len(), 1);
