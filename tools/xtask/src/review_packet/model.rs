@@ -10,6 +10,7 @@ pub(super) const PLAN_SCHEMA: &str = "yo.slice-review-plan/v1";
 pub(super) const MANIFEST_SCHEMA: &str = "yo.slice-review-manifest/v1";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-packet-result/v1";
 pub(super) const PREFLIGHT_RESULT_SCHEMA: &str = "yo.slice-review-packet-preflight-result/v1";
+pub(super) const READINESS_RESULT_SCHEMA: &str = "yo.slice-review-request-readiness-result/v1";
 pub(super) const SECTION_TOKEN_ACCOUNTING: &str = "independently-tokenized-non-additive/v1";
 pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-markdown/v1";
 
@@ -164,4 +165,25 @@ pub(super) struct PreflightSection {
     pub(super) content_tokens_independent: usize,
     pub(super) rendered_bytes: usize,
     pub(super) rendered_tokens_independent: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct ReadinessResultRecord {
+    pub(super) schema: &'static str,
+    pub(super) ok: bool,
+    pub(super) operation: &'static str,
+    pub(super) status: &'static str,
+    pub(super) artifacts_published: bool,
+    pub(super) slice: String,
+    pub(super) base_commit: String,
+    pub(super) trusted_commit: String,
+    pub(super) candidate_commit: String,
+    pub(super) request: Artifact,
+    pub(super) slice_contract: Artifact,
+    pub(super) context_request: Artifact,
+    pub(super) required_knowledge_id_count: usize,
+    pub(super) repository_authority_count: usize,
+    pub(super) validation_evidence_count: usize,
+    pub(super) review_lens_count: usize,
+    pub(super) review_question_count: usize,
 }

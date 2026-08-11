@@ -382,8 +382,24 @@ but must inspect and record the lenses separately.
 ### Agent review protocol
 
 After committing a clean candidate and saving declared validation output as
-bounded evidence files, inspect the exact candidate and run the non-publishing
-preflight from the same versioned request:
+bounded evidence files, check the same versioned request before running
+ContextBuild or packet measurement:
+
+```bash
+cargo xtask slice review-packet --check-readiness <request.json>
+```
+
+Readiness requires the exact bound Slice branch, base, contract, and clean
+candidate; a direct ContextBuild request path inside that candidate worktree;
+and unique, readable authority, validation, KnowledgeId, lens, and question
+inputs. It final-revalidates those inputs before returning. It does not run
+ContextBuild, capture the diff, tokenize a packet, create a ReviewId, or publish
+an artifact. Methexis still owns and validates ContextBuild request semantics
+when resolution starts. A green readiness result covers only these input
+boundaries; it is preparation, not review evidence.
+
+After readiness succeeds, inspect the exact candidate and run the
+non-publishing preflight from that unchanged request:
 
 ```bash
 cargo xtask slice review-packet --preflight <request.json>

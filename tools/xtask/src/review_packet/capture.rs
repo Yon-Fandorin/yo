@@ -45,11 +45,40 @@ pub(super) fn capture_context(
     repository: &Path,
     request_path: &Path,
 ) -> Result<ContextCapture, String> {
+    let request = capture_context_request(repository, request_path)?;
+    capture_context_with_request(repository, request_path, request)
+}
+
+pub(super) fn capture_context_request(
+    repository: &Path,
+    request_path: &Path,
+) -> Result<Captured, String> {
+    let relative = request_path.strip_prefix(repository).map_err(|_| {
+        "Methexis ContextBuild request must be inside the candidate worktree".to_owned()
+    })?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(
+            "Methexis ContextBuild request must use a direct path inside the candidate worktree"
+                .to_owned(),
+        );
+    }
     let request_bytes = bounded_file::read_regular(
         request_path,
         MAX_REQUEST_BYTES,
         "Methexis ContextBuild request",
     )?;
+    captured(request_path.to_string_lossy().into_owned(), request_bytes)
+}
+
+pub(super) fn capture_context_with_request(
+    repository: &Path,
+    request_path: &Path,
+    request: Captured,
+) -> Result<ContextCapture, String> {
     let result = resolve_context(request_path)?;
     if result.schema != "methexis.context-result/v1alpha1"
         || !result.ok
@@ -88,7 +117,7 @@ pub(super) fn capture_context(
     }
     Ok(ContextCapture {
         result,
-        request: captured(request_path.to_string_lossy().into_owned(), request_bytes)?,
+        request,
         context: captured(context_path.to_string_lossy().into_owned(), context_bytes)?,
         manifest: captured(manifest_path.to_string_lossy().into_owned(), manifest_bytes)?,
         active_checkpoint: manifest.plan.checkpoint,
@@ -184,6 +213,7 @@ pub(super) fn capture_validation(
     requests: &[EvidenceRequest],
 ) -> Result<Vec<NamedCaptured>, String> {
     let mut names = BTreeSet::new();
+    let mut paths = BTreeSet::new();
     let mut captured_inputs = Vec::new();
     for request in requests {
         if request.name.trim().is_empty() || !names.insert(request.name.clone()) {
@@ -191,6 +221,15 @@ pub(super) fn capture_validation(
         }
         let path = resolve_input_path(repository, &request.path);
         let bytes = bounded_file::read_regular(&path, MAX_INPUT_BYTES, "validation evidence")?;
+        let canonical = std::fs::canonicalize(&path).map_err(|error| {
+            format!(
+                "cannot resolve validation evidence path {}: {error}",
+                path.display()
+            )
+        })?;
+        if !paths.insert(canonical) {
+            return Err("validation evidence paths must be unique".to_owned());
+        }
         captured_inputs.push(NamedCaptured {
             name: request.name.clone(),
             artifact: captured(path.to_string_lossy().into_owned(), bytes)?,
@@ -213,6 +252,25 @@ pub(super) fn captured(path: String, bytes: Vec<u8>) -> Result<Captured, String>
         hash: digest(&bytes),
         bytes,
     })
+}
+
+pub(super) fn same_capture(left: &Captured, right: &Captured) -> bool {
+    left.path == right.path && left.hash == right.hash && left.bytes == right.bytes
+}
+
+pub(super) fn same_captures(actual: &[Captured], expected: &[Captured]) -> bool {
+    actual.len() == expected.len()
+        && actual
+            .iter()
+            .zip(expected)
+            .all(|(left, right)| same_capture(left, right))
+}
+
+pub(super) fn same_named_captures(actual: &[NamedCaptured], expected: &[NamedCaptured]) -> bool {
+    actual.len() == expected.len()
+        && actual.iter().zip(expected).all(|(left, right)| {
+            left.name == right.name && same_capture(&left.artifact, &right.artifact)
+        })
 }
 
 pub(super) fn require_repository_path(path: &str) -> Result<(), String> {

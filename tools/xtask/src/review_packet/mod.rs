@@ -1,6 +1,7 @@
 mod canonical;
 mod capture;
 mod model;
+mod readiness;
 mod render;
 mod revalidate;
 pub(crate) mod storage;
@@ -19,7 +20,8 @@ use std::{
 use self::{
     canonical::{build_manifest, build_plan, delivery_profile_bytes},
     capture::{
-        Inputs, capture_authorities, capture_context, capture_diff, capture_validation, captured,
+        Inputs, capture_authorities, capture_context_request, capture_context_with_request,
+        capture_diff, capture_validation, captured,
     },
     model::{
         Artifact, ArtifactWithTokens, DELIVERY_PROFILE, PREFLIGHT_RESULT_SCHEMA, PreflightPacket,
@@ -36,8 +38,8 @@ use self::{
 use crate::{
     bounded_file,
     review_protocol::{
-        Captured, digest, domain_digest, relative, require_commit, resolve_input_path,
-        sorted_unique,
+        Captured, NamedCaptured, digest, domain_digest, relative, require_commit,
+        resolve_input_path, sorted_unique,
     },
     slice_contract,
 };
@@ -150,6 +152,14 @@ pub(super) fn preflight(
     )
 }
 
+pub(super) fn check_readiness(
+    repository: &Path,
+    request_path: &Path,
+    output: &mut impl io::Write,
+) -> Result<(), String> {
+    readiness::run(repository, request_path, output)
+}
+
 struct PreparedReview {
     repository: PathBuf,
     request: Request,
@@ -158,23 +168,98 @@ struct PreparedReview {
     review_id: String,
 }
 
+struct PreparedReadiness {
+    repository: PathBuf,
+    request_capture: Captured,
+    request: Request,
+    slice: String,
+    base_commit: String,
+    trusted_commit: String,
+    candidate_commit: String,
+    slice_contract: Captured,
+    context_request: Captured,
+    authorities: Vec<Captured>,
+    validation: Vec<NamedCaptured>,
+    required_knowledge_ids: Vec<String>,
+    lenses: Vec<String>,
+}
+
 fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedReview, String> {
+    let readiness = prepare_readiness(repository, request_path, "building a review packet")?;
+    let context_request_path = Path::new(&readiness.context_request.path);
+    let context = capture_context_with_request(
+        &readiness.repository,
+        context_request_path,
+        readiness.context_request.clone(),
+    )?;
+    let included = context.included_ids.iter().collect::<BTreeSet<_>>();
+    if readiness
+        .required_knowledge_ids
+        .iter()
+        .any(|knowledge_id| !included.contains(knowledge_id))
+    {
+        return Err("ContextBuild does not include every required KnowledgeId".to_owned());
+    }
+    let diff_bytes = capture_diff(
+        &readiness.repository,
+        &readiness.base_commit,
+        &readiness.candidate_commit,
+    )?;
+    let diff = captured("git-diff.patch".to_owned(), diff_bytes)?;
+    let inputs = Inputs {
+        base_commit: readiness.base_commit,
+        candidate_commit: readiness.candidate_commit,
+        diff,
+        context,
+        authorities: readiness.authorities,
+        slice_contract: readiness.slice_contract,
+        validation: readiness.validation,
+        lenses: readiness.lenses,
+        questions: readiness.request.review_questions.clone(),
+        required_knowledge_ids: readiness.required_knowledge_ids,
+        delivery_profile_bytes: delivery_profile_bytes(),
+        max_tokens: readiness.request.max_managed_payload_tokens,
+    };
+
+    let plan = build_plan(&inputs);
+    let plan_bytes = serde_json::to_vec(&plan).expect("closed review plan serializes");
+    let review_id = domain_digest(REVIEW_ID_DOMAIN, &plan_bytes);
+    Ok(PreparedReview {
+        repository: readiness.repository,
+        request: readiness.request,
+        inputs,
+        plan,
+        review_id,
+    })
+}
+
+fn prepare_readiness(
+    repository: &Path,
+    request_path: &Path,
+    operation: &str,
+) -> Result<PreparedReadiness, String> {
+    let request_path = if request_path.is_absolute() {
+        request_path.to_owned()
+    } else {
+        repository.join(request_path)
+    };
     let repository = trusted_repository_root(repository)?;
     let request_bytes = bounded_file::read_regular(
-        request_path,
+        &request_path,
         MAX_REQUEST_BYTES,
         "Slice review packet request",
+    )?;
+    let request_capture = captured(
+        request_path.to_string_lossy().into_owned(),
+        request_bytes.clone(),
     )?;
     let request: Request = serde_json::from_slice(&request_bytes)
         .map_err(|error| format!("invalid Slice review packet request: {error}"))?;
     validate_request(&request)?;
-    trusted_ensure_clean(
-        &repository,
-        "candidate worktree",
-        "building a review packet",
-    )?;
+    trusted_ensure_clean(&repository, "candidate worktree", operation)?;
 
     let candidate_commit = trusted_resolve_commit(&repository, "HEAD")?;
+    let trusted_commit = trusted_resolve_commit(&repository, "refs/heads/develop")?;
     let contract_path = resolve_input_path(&repository, &request.slice_contract_path);
     let contract_bytes =
         bounded_file::read_regular(&contract_path, MAX_REQUEST_BYTES, "Slice review contract")?;
@@ -184,13 +269,7 @@ fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedRevi
     if canonical_contract != bound.contract_path || digest(&contract_bytes) != bound.contract_id {
         return Err("request does not identify the exact bound Slice contract".to_owned());
     }
-    let branch = trusted_git_text(&repository, &["symbolic-ref", "--quiet", "HEAD"])?;
-    let expected_branch = expected_slice_ref(&bound.base_ref, &bound.slice)?;
-    if branch.trim() != expected_branch {
-        return Err(format!(
-            "trusted Git branch does not match bound Slice; expected {expected_branch}"
-        ));
-    }
+    require_exact_slice_branch(&repository, &bound)?;
     require_commit(&bound.base, "Slice base")?;
     let base_commit = trusted_resolve_commit(&repository, &bound.base)?;
     if !trusted_git_succeeds(
@@ -204,20 +283,12 @@ fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedRevi
     )? {
         return Err("Slice base is not an ancestor of the candidate commit".to_owned());
     }
+    slice_contract::trusted_check_bound_scope(&repository)?;
 
     let context_request_path = resolve_input_path(&repository, &request.context_request_path);
-    let context = capture_context(&repository, &context_request_path)?;
+    let context_request = capture_context_request(&repository, &context_request_path)?;
     let required_knowledge_ids =
         sorted_unique(&request.required_knowledge_ids, "required KnowledgeId")?;
-    let included = context.included_ids.iter().collect::<BTreeSet<_>>();
-    if required_knowledge_ids
-        .iter()
-        .any(|knowledge_id| !included.contains(knowledge_id))
-    {
-        return Err("ContextBuild does not include every required KnowledgeId".to_owned());
-    }
-    let diff_bytes = capture_diff(&repository, &base_commit, &candidate_commit)?;
-    let diff = captured("git-diff.patch".to_owned(), diff_bytes)?;
     let authorities = capture_authorities(
         &repository,
         &candidate_commit,
@@ -229,30 +300,21 @@ fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedRevi
         hash: digest(&contract_bytes),
         bytes: contract_bytes,
     };
-    let inputs = Inputs {
-        base_commit,
-        candidate_commit,
-        diff,
-        context,
-        authorities,
-        slice_contract,
-        validation,
-        lenses: sorted_unique(&request.review_lenses, "review lens")?,
-        questions: request.review_questions.clone(),
-        required_knowledge_ids,
-        delivery_profile_bytes: delivery_profile_bytes(),
-        max_tokens: request.max_managed_payload_tokens,
-    };
-
-    let plan = build_plan(&inputs);
-    let plan_bytes = serde_json::to_vec(&plan).expect("closed review plan serializes");
-    let review_id = domain_digest(REVIEW_ID_DOMAIN, &plan_bytes);
-    Ok(PreparedReview {
+    let lenses = sorted_unique(&request.review_lenses, "review lens")?;
+    Ok(PreparedReadiness {
         repository,
+        request_capture,
         request,
-        inputs,
-        plan,
-        review_id,
+        slice: bound.slice,
+        base_commit,
+        trusted_commit,
+        candidate_commit,
+        slice_contract,
+        context_request,
+        authorities,
+        validation,
+        lenses,
+        required_knowledge_ids,
     })
 }
 
@@ -308,6 +370,21 @@ fn run_preflight_test_hook() -> Result<(), String> {
     Ok(())
 }
 
+fn require_exact_slice_branch(
+    repository: &Path,
+    bound: &slice_contract::BoundSlice,
+) -> Result<(), String> {
+    let branch = trusted_git_text(repository, &["symbolic-ref", "--quiet", "HEAD"])?;
+    let expected_branch = expected_slice_ref(&bound.base_ref, &bound.slice)?;
+    if branch.trim() == expected_branch {
+        Ok(())
+    } else {
+        Err(format!(
+            "trusted Git branch does not match bound Slice; expected {expected_branch}"
+        ))
+    }
+}
+
 fn validate_request(request: &Request) -> Result<(), String> {
     if request.schema != REQUEST_SCHEMA {
         return Err(format!("expected request schema `{REQUEST_SCHEMA}`"));
@@ -332,12 +409,14 @@ fn validate_request(request: &Request) -> Result<(), String> {
                 .to_owned(),
         );
     }
-    if request
-        .review_questions
-        .iter()
-        .any(|question| question.trim().is_empty())
-    {
-        return Err("review questions must not be blank".to_owned());
+    let mut questions = BTreeSet::new();
+    for question in &request.review_questions {
+        if question.trim().is_empty() {
+            return Err("review questions must not be blank".to_owned());
+        }
+        if !questions.insert(question) {
+            return Err("review questions must be unique".to_owned());
+        }
     }
     Ok(())
 }

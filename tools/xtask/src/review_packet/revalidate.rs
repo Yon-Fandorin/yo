@@ -3,7 +3,10 @@ use std::path::Path;
 use super::{
     MAX_INPUT_BYTES,
     canonical::delivery_profile_bytes,
-    capture::{Inputs, capture_authorities, capture_context, capture_diff, capture_validation},
+    capture::{
+        Inputs, capture_authorities, capture_context, capture_diff, capture_validation,
+        same_captures, same_named_captures,
+    },
     model::Request,
     trusted_git::{trusted_ensure_clean, trusted_resolve_commit},
 };
@@ -88,11 +91,7 @@ fn require_current_file(path: &Path, expected: &Captured, label: &str) -> Result
 }
 
 fn require_captures(actual: &[Captured], expected: &[Captured], label: &str) -> Result<(), String> {
-    if actual.len() == expected.len()
-        && actual.iter().zip(expected).all(|(left, right)| {
-            left.path == right.path && left.hash == right.hash && left.bytes == right.bytes
-        })
-    {
+    if same_captures(actual, expected) {
         Ok(())
     } else {
         Err(format!(
@@ -105,14 +104,7 @@ fn require_named_captures(
     actual: &[NamedCaptured],
     expected: &[NamedCaptured],
 ) -> Result<(), String> {
-    if actual.len() == expected.len()
-        && actual.iter().zip(expected).all(|(left, right)| {
-            left.name == right.name
-                && left.artifact.path == right.artifact.path
-                && left.artifact.hash == right.artifact.hash
-                && left.artifact.bytes == right.artifact.bytes
-        })
-    {
+    if same_named_captures(actual, expected) {
         Ok(())
     } else {
         Err("validation evidence changed during review packet construction".to_owned())
