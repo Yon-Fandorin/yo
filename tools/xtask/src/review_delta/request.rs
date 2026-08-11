@@ -1,6 +1,7 @@
 use super::{
     capture::require_hash,
-    model::{DELIVERY_PROFILE, REQUEST_SCHEMA, Request, TOKENIZER_PROFILE},
+    model::{Request, TOKENIZER_PROFILE},
+    v1alpha1::{DELIVERY_PROFILE, REQUEST_SCHEMA},
 };
 use crate::{review_packet::VerifiedReview, review_protocol::require_commit, slice_contract};
 

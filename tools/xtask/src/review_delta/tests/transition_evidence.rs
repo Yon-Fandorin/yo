@@ -1,17 +1,19 @@
 use super::{
     super::{
-        MAX_AGGREGATE_EVIDENCE_BYTES,
+        AffectedPathPolicy, MAX_AGGREGATE_EVIDENCE_BYTES,
         capture::captured,
         evidence::{
-            add_evidence_bytes, capture_validation, require_exact_finding_set, validate_transition,
+            TransitionContext, add_evidence_bytes, capture_validation, require_exact_finding_set,
+            validate_transition,
         },
         request::validate_request,
     },
     support::{commit, finding, hash, prior, prior_findings},
 };
 use crate::{
-    review_delta::model::{
-        DELIVERY_PROFILE, EvidenceRequest, REQUEST_SCHEMA, Request, TOKENIZER_PROFILE,
+    review_delta::{
+        model::{EvidenceRequest, Request, TOKENIZER_PROFILE},
+        v1alpha1::{DELIVERY_PROFILE, REQUEST_SCHEMA},
     },
     review_packet,
     review_protocol::{NamedCaptured, digest},
@@ -130,24 +132,32 @@ fn aggregate_evidence_limit_is_checked_incrementally() {
 // 적격성 규칙을 우회할 수 없음을 확인한다.
 #[test]
 fn transition_validator_rejects_noncanonical_or_unrelated_evidence() {
+    let root = crate::test_support::unique_path("review-delta-transition");
+    std::fs::create_dir_all(&root).unwrap();
     let candidate = commit(3);
+    let previous_path = root.join("baseline.txt");
+    let bound_path = root.join("new-baseline.txt");
+    let extra_path = root.join("extra.txt");
+    let unbound_path = root.join("unbound.txt");
+    std::fs::write(&previous_path, b"old evidence").unwrap();
+    std::fs::write(&extra_path, b"extra").unwrap();
+    std::fs::write(&unbound_path, b"passed").unwrap();
+    let bound_bytes = format!("Candidate: {candidate}\npassed\n").into_bytes();
+    std::fs::write(&bound_path, &bound_bytes).unwrap();
     let previous = review_packet::VerifiedEvidence {
         name: "baseline".to_owned(),
-        path: "baseline.txt".to_owned(),
+        path: previous_path.to_string_lossy().into_owned(),
         hash: digest(b"old evidence"),
     };
     let prior = prior(vec![previous.clone()]);
     let delta = captured("git-delta.patch".to_owned(), b"delta".to_vec()).unwrap();
     let bound = NamedCaptured {
         name: "baseline".to_owned(),
-        artifact: captured(
-            "new-baseline.txt".to_owned(),
-            format!("Candidate: {candidate}\npassed\n").into_bytes(),
-        )
-        .unwrap(),
+        artifact: captured(bound_path.to_string_lossy().into_owned(), bound_bytes).unwrap(),
     };
     assert!(
         validate_transition(
+            TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
             &prior,
             &candidate,
             &delta,
@@ -162,6 +172,7 @@ fn transition_validator_rejects_noncanonical_or_unrelated_evidence() {
     blank.summary.clear();
     assert!(
         validate_transition(
+            TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
             &prior,
             &candidate,
             &delta,
@@ -173,10 +184,11 @@ fn transition_validator_rejects_noncanonical_or_unrelated_evidence() {
     );
     let extra_reused = NamedCaptured {
         name: "unrelated".to_owned(),
-        artifact: captured("extra.txt".to_owned(), b"extra".to_vec()).unwrap(),
+        artifact: captured(extra_path.to_string_lossy().into_owned(), b"extra".to_vec()).unwrap(),
     };
     assert!(
         validate_transition(
+            TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
             &prior,
             &candidate,
             &delta,
@@ -187,28 +199,38 @@ fn transition_validator_rejects_noncanonical_or_unrelated_evidence() {
         .unwrap_err()
         .contains("unknown reused")
     );
-    let unchanged = NamedCaptured {
+    let same_path_with_new_bytes = NamedCaptured {
         name: previous.name.clone(),
-        artifact: captured(previous.path.clone(), b"old evidence".to_vec()).unwrap(),
+        artifact: captured(
+            previous.path.clone(),
+            format!("Candidate: {candidate}\nnew result\n").into_bytes(),
+        )
+        .unwrap(),
     };
     assert!(
         validate_transition(
+            TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
             &prior,
             &candidate,
             &delta,
             &[finding("F1")],
             &[],
-            &[unchanged],
+            &[same_path_with_new_bytes],
         )
         .unwrap_err()
-        .contains("unchanged")
+        .contains("new immutable path")
     );
     let unbound = NamedCaptured {
         name: "baseline".to_owned(),
-        artifact: captured("new.txt".to_owned(), b"passed".to_vec()).unwrap(),
+        artifact: captured(
+            unbound_path.to_string_lossy().into_owned(),
+            b"passed".to_vec(),
+        )
+        .unwrap(),
     };
     assert!(
         validate_transition(
+            TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
             &prior,
             &candidate,
             &delta,
@@ -219,24 +241,123 @@ fn transition_validator_rejects_noncanonical_or_unrelated_evidence() {
         .unwrap_err()
         .contains("does not bind")
     );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// 문자열이 다른 `nested/../baseline` alias도 같은 canonical 파일을 가리키면 새 evidence
+// path가 아니므로 candidate를 미리 포함한 bytes라도 immutable-path gate에서 거부한다.
+#[test]
+fn affected_evidence_rejects_a_canonical_alias_of_the_prior_path() {
+    let root = crate::test_support::unique_path("review-delta-evidence-alias");
+    std::fs::create_dir_all(root.join("nested")).unwrap();
+    let candidate = commit(3);
+    let bytes = format!("Candidate: {candidate}\nprecomputed result\n").into_bytes();
+    let previous_path = root.join("baseline.txt");
+    std::fs::write(&previous_path, &bytes).unwrap();
+    let prior = prior(vec![review_packet::VerifiedEvidence {
+        name: "baseline".to_owned(),
+        path: previous_path.to_string_lossy().into_owned(),
+        hash: digest(&bytes),
+    }]);
+    let alias = root.join("nested/../baseline.txt");
+    let affected = NamedCaptured {
+        name: "baseline".to_owned(),
+        artifact: captured(alias.to_string_lossy().into_owned(), bytes).unwrap(),
+    };
+
+    let error = validate_transition(
+        TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
+        &prior,
+        &candidate,
+        &captured("git-delta.patch".to_owned(), b"delta".to_vec()).unwrap(),
+        &[finding("F1")],
+        &[],
+        &[affected],
+    )
+    .unwrap_err();
+
+    assert!(error.contains("new immutable path"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// 초기 검사 때 별도 파일을 가리키던 symlink가 같은 bytes/hash의 prior file로
+// retarget되면 captured evidence 비교만으로는 구분되지 않지만, publication 직전과 같은
+// transition 재검사가 현재 canonical identity를 다시 읽어 거부함을 확인한다.
+#[test]
+#[cfg(unix)]
+fn canonical_path_gate_detects_alias_retarget_during_revalidation() {
+    use std::os::unix::fs::symlink;
+
+    let root = crate::test_support::unique_path("review-delta-evidence-retarget");
+    std::fs::create_dir_all(&root).unwrap();
+    let candidate = commit(3);
+    let bytes = format!("Prior: {}\nCandidate: {candidate}\n", commit(2)).into_bytes();
+    let prior_path = root.join("prior.txt");
+    let new_path = root.join("new.txt");
+    let affected_path = root.join("current.txt");
+    std::fs::write(&prior_path, &bytes).unwrap();
+    std::fs::write(&new_path, &bytes).unwrap();
+    symlink(&new_path, &affected_path).unwrap();
+    let prior = prior(vec![review_packet::VerifiedEvidence {
+        name: "baseline".to_owned(),
+        path: prior_path.to_string_lossy().into_owned(),
+        hash: digest(&bytes),
+    }]);
+    let affected = NamedCaptured {
+        name: "baseline".to_owned(),
+        artifact: captured(affected_path.to_string_lossy().into_owned(), bytes.clone()).unwrap(),
+    };
+    let delta = captured("git-delta.patch".to_owned(), b"delta".to_vec()).unwrap();
+
+    validate_transition(
+        TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
+        &prior,
+        &candidate,
+        &delta,
+        &[finding("F1")],
+        &[],
+        std::slice::from_ref(&affected),
+    )
+    .unwrap();
+    std::fs::remove_file(&affected_path).unwrap();
+    symlink(&prior_path, &affected_path).unwrap();
+    let error = validate_transition(
+        TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
+        &prior,
+        &candidate,
+        &delta,
+        &[finding("F1")],
+        &[],
+        &[affected],
+    )
+    .unwrap_err();
+
+    assert!(error.contains("new immutable path"));
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 // external-operation evidence를 affected로 교체하면 delta validator도 새 candidate를
 // 요구하고, 이전 candidate를 담은 구조화 evidence는 일반 문자열 포함 검사 전에 거부한다.
 #[test]
 fn affected_external_operation_evidence_binds_the_replacement_candidate() {
+    let root = crate::test_support::unique_path("review-delta-external-operation");
+    std::fs::create_dir_all(&root).unwrap();
     let candidate = commit(3);
     let name = "external-operation/git-amend";
+    let previous_path = root.join("old-operation.json");
+    let affected_path = root.join("new-operation.json");
+    std::fs::write(&previous_path, b"old operation").unwrap();
+    std::fs::write(&affected_path, b"new operation").unwrap();
     let prior = prior(vec![review_packet::VerifiedEvidence {
         name: name.to_owned(),
-        path: "old-operation.json".to_owned(),
+        path: previous_path.to_string_lossy().into_owned(),
         hash: digest(b"old operation"),
     }]);
     let delta = captured("git-delta.patch".to_owned(), b"delta".to_vec()).unwrap();
     let affected = |bound_candidate: &str| NamedCaptured {
         name: name.to_owned(),
         artifact: captured(
-            "new-operation.json".to_owned(),
+            affected_path.to_string_lossy().into_owned(),
             serde_json::to_vec(&serde_json::json!({
                 "schema": "yo.external-operation-evidence/v1",
                 "candidate_commit": bound_candidate,
@@ -260,6 +381,7 @@ fn affected_external_operation_evidence_binds_the_replacement_candidate() {
     };
 
     validate_transition(
+        TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
         &prior,
         &candidate,
         &delta,
@@ -269,6 +391,7 @@ fn affected_external_operation_evidence_binds_the_replacement_candidate() {
     )
     .unwrap();
     let error = validate_transition(
+        TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
         &prior,
         &candidate,
         &delta,
@@ -278,4 +401,55 @@ fn affected_external_operation_evidence_binds_the_replacement_candidate() {
     )
     .unwrap_err();
     assert!(error.contains("does not identify the exact candidate commit"));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// malformed external-operation bytes와 prior와 동일한 path/hash를 함께 주면 frozen v1은
+// 기존처럼 구조 오류를 먼저 반환하고, v1alpha1만 새 canonical-path 오류를 먼저 반환해
+// 두 wire version의 이중 오류 failure ordering이 서로 섞이지 않음을 확인한다.
+#[test]
+fn frozen_v1_keeps_structure_before_identity_for_dual_invalid_evidence() {
+    let root = crate::test_support::unique_path("review-delta-v1-failure-order");
+    std::fs::create_dir_all(&root).unwrap();
+    let candidate = commit(3);
+    let name = "external-operation/git-amend";
+    let evidence_path = root.join("operation.json");
+    let malformed = b"not structured operation evidence\n".to_vec();
+    std::fs::write(&evidence_path, &malformed).unwrap();
+    let prior = prior(vec![review_packet::VerifiedEvidence {
+        name: name.to_owned(),
+        path: evidence_path.to_string_lossy().into_owned(),
+        hash: digest(&malformed),
+    }]);
+    let affected = NamedCaptured {
+        name: name.to_owned(),
+        artifact: captured(evidence_path.to_string_lossy().into_owned(), malformed).unwrap(),
+    };
+    let delta = captured("git-delta.patch".to_owned(), b"delta".to_vec()).unwrap();
+
+    let legacy_error = validate_transition(
+        TransitionContext::new(&root, AffectedPathPolicy::LegacyStringIdentity),
+        &prior,
+        &candidate,
+        &delta,
+        &[finding("F1")],
+        &[],
+        std::slice::from_ref(&affected),
+    )
+    .unwrap_err();
+    assert!(legacy_error.contains("invalid external-operation evidence"));
+    assert!(!legacy_error.contains("unchanged from the prior candidate"));
+
+    let alpha_error = validate_transition(
+        TransitionContext::new(&root, AffectedPathPolicy::CanonicalIdentity),
+        &prior,
+        &candidate,
+        &delta,
+        &[finding("F1")],
+        &[],
+        &[affected],
+    )
+    .unwrap_err();
+    assert!(alpha_error.contains("new immutable path"));
+    std::fs::remove_dir_all(root).unwrap();
 }

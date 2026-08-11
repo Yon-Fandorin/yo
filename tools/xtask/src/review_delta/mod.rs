@@ -5,6 +5,8 @@ mod git_state;
 mod model;
 mod render;
 mod request;
+mod v1;
+mod v1alpha1;
 
 #[cfg(test)]
 mod tests;
@@ -18,19 +20,17 @@ use self::{
     },
     chain::verify_chain_head,
     evidence::{
-        capture_prior_findings, capture_validation, require_exact_finding_set, sorted_findings,
-        validate_transition,
+        TransitionContext, capture_prior_findings, capture_validation, require_exact_finding_set,
+        sorted_findings, validate_transition,
     },
     git_state::{
         capture_delta, require_expected_branch, trusted_ensure_clean, trusted_repository_root,
         trusted_resolve_commit,
     },
-    model::{
-        Artifact, ArtifactWithTokens, FindingDisposition, RESULT_SCHEMA, Request, ResultRecord,
-    },
+    model::{Artifact, ArtifactWithTokens, FindingDisposition, Request, ResultRecord},
     render::{
-        build_manifest, build_plan, count_tokens, delivery_profile_bytes, render_packet,
-        require_budget,
+        build_manifest_for, build_plan_for, count_tokens, delivery_profile_bytes_for,
+        render_packet, require_budget,
     },
     request::{validate_prior, validate_request},
 };
@@ -43,7 +43,6 @@ use crate::{
     slice_contract,
 };
 
-const REVIEW_DELTA_ID_DOMAIN: &[u8] = b"yo.slice-review-delta/v1";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PACKET_BYTES: usize = 32 * 1024 * 1024;
@@ -53,6 +52,21 @@ const SECTION_PREFIX: &str = "\n<<<YO-REVIEW-DELTA-SECTION ";
 const METADATA_SUFFIX: &str = ">>>\n";
 const SECTION_SUFFIX: &str = "\n<<<YO-REVIEW-DELTA-SECTION-END>>>\n";
 const PAYLOAD_SUFFIX: &str = "\n<<<YO-REVIEW-DELTA-PAYLOAD-END>>>\n";
+
+#[derive(Clone, Copy)]
+enum AffectedPathPolicy {
+    LegacyStringIdentity,
+    CanonicalIdentity,
+}
+
+#[derive(Clone, Copy)]
+struct WireContract {
+    plan_schema: &'static str,
+    manifest_schema: &'static str,
+    delivery_profile: &'static str,
+    review_id_domain: &'static [u8],
+    affected_path_policy: AffectedPathPolicy,
+}
 
 struct Inputs {
     request: Captured,
@@ -80,6 +94,7 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let request: Request = serde_json::from_slice(&request_bytes)
         .map_err(|error| format!("invalid Slice review delta request: {error}"))?;
     validate_request(&request)?;
+    let contract = v1alpha1::contract();
     trusted_ensure_clean(&repository, "building a review delta")?;
 
     let bound = slice_contract::trusted_bound_slice(&repository)?;
@@ -144,6 +159,7 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         &request.affected_validation_evidence,
     )?;
     validate_transition(
+        TransitionContext::new(&repository, contract.affected_path_policy),
         &prior,
         &replacement_candidate,
         &delta,
@@ -163,13 +179,13 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         findings,
         reused_validation,
         affected_validation,
-        delivery_profile_bytes: delivery_profile_bytes(),
+        delivery_profile_bytes: delivery_profile_bytes_for(contract),
         max_tokens: request.max_managed_payload_tokens,
     };
 
-    let plan = build_plan(&inputs);
+    let plan = build_plan_for(&inputs, contract);
     let plan_bytes = serde_json::to_vec(&plan).expect("closed review delta plan serializes");
-    let review_delta_id = domain_digest(REVIEW_DELTA_ID_DOMAIN, &plan_bytes);
+    let review_delta_id = domain_digest(contract.review_id_domain, &plan_bytes);
     let packet = render_packet(&review_delta_id, &plan, &inputs)?;
     if packet.len() > MAX_PACKET_BYTES {
         return Err(format!(
@@ -179,12 +195,13 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let managed_payload_tokens = count_tokens(&packet)?;
     require_budget(managed_payload_tokens, inputs.max_tokens)?;
     let packet_hash = digest(&packet);
-    let manifest = build_manifest(
+    let manifest = build_manifest_for(
         review_delta_id.clone(),
         plan,
         &inputs,
         packet_hash.clone(),
         managed_payload_tokens,
+        contract,
     );
     let mut manifest_bytes =
         serde_json::to_vec_pretty(&manifest).expect("closed review delta manifest serializes");
@@ -197,11 +214,11 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         .join(".local-exclude/methexis/slice-review-deltas")
         .join(suffix);
     let status = storage::publish(&output_directory, &packet, &manifest_bytes, || {
-        final_revalidate(&repository, &request, &inputs)
+        final_revalidate(&repository, &request, &inputs, contract)
     })?;
 
     let result = ResultRecord {
-        schema: RESULT_SCHEMA,
+        schema: v1alpha1::RESULT_SCHEMA,
         ok: true,
         operation: "build_slice_review_delta",
         status,
@@ -226,7 +243,12 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         .map_err(|error| format!("cannot write review delta result: {error}"))
 }
 
-fn final_revalidate(repository: &Path, request: &Request, inputs: &Inputs) -> Result<(), String> {
+fn final_revalidate(
+    repository: &Path,
+    request: &Request,
+    inputs: &Inputs,
+    contract: WireContract,
+) -> Result<(), String> {
     trusted_ensure_clean(repository, "returning a review delta")?;
     let bound = slice_contract::trusted_bound_slice(repository)?;
     require_expected_branch(repository, &bound.base_ref, &bound.slice)?;
@@ -296,7 +318,16 @@ fn final_revalidate(repository: &Path, request: &Request, inputs: &Inputs) -> Re
     )?;
     require_named_captures(&reused, &inputs.reused_validation)?;
     require_named_captures(&affected, &inputs.affected_validation)?;
-    if delivery_profile_bytes() != inputs.delivery_profile_bytes {
+    validate_transition(
+        TransitionContext::new(repository, contract.affected_path_policy),
+        &inputs.prior,
+        &inputs.replacement_candidate,
+        &inputs.delta,
+        &inputs.findings,
+        &reused,
+        &affected,
+    )?;
+    if delivery_profile_bytes_for(contract) != inputs.delivery_profile_bytes {
         return Err("delivery profile bytes changed during delta construction".to_owned());
     }
     Ok(())

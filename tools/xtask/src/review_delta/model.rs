@@ -5,12 +5,7 @@ pub(super) use crate::review_protocol::{
     NamedSemanticInput, PacketRecord, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
 };
 
-pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-delta-request/v1";
-pub(super) const PLAN_SCHEMA: &str = "yo.slice-review-delta-plan/v1";
-pub(super) const MANIFEST_SCHEMA: &str = "yo.slice-review-delta-manifest/v1";
-pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-delta-result/v1";
 pub(super) const PRIOR_FINDINGS_SCHEMA: &str = "yo.slice-review-findings/v1";
-pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-delta-markdown/v1";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]

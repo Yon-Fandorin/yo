@@ -4,7 +4,7 @@ use std::{
 };
 
 use super::{
-    MAX_AGGREGATE_EVIDENCE_BYTES, MAX_INPUT_BYTES,
+    AffectedPathPolicy, MAX_AGGREGATE_EVIDENCE_BYTES, MAX_INPUT_BYTES,
     capture::{capture_file, captured, require_exact_hash},
     model::{
         EvidenceRequest, FindingDisposition, NamedArtifact, PRIOR_FINDINGS_SCHEMA, PriorFindings,
@@ -20,6 +20,7 @@ use crate::{
 };
 
 pub(super) fn validate_transition(
+    context: TransitionContext<'_>,
     prior: &VerifiedReview,
     replacement_candidate: &str,
     delta: &Captured,
@@ -75,19 +76,39 @@ pub(super) fn validate_transition(
         }
     }
     for evidence in affected {
-        crate::review_packet::external_operation::validate(
-            &evidence.name,
-            &evidence.artifact.bytes,
-            replacement_candidate,
-        )?;
-        if let Some(previous) = prior_by_name.get(evidence.name.as_str())
-            && previous.path == evidence.artifact.path
-            && previous.hash == evidence.artifact.hash
-        {
-            return Err(format!(
-                "affected validation evidence `{}` is unchanged from the prior candidate",
-                evidence.name
-            ));
+        let previous = prior_by_name.get(evidence.name.as_str());
+        match context.affected_path_policy {
+            AffectedPathPolicy::LegacyStringIdentity => {
+                crate::review_packet::external_operation::validate(
+                    &evidence.name,
+                    &evidence.artifact.bytes,
+                    replacement_candidate,
+                )?;
+                if previous.is_some_and(|previous| {
+                    previous.path == evidence.artifact.path
+                        && previous.hash == evidence.artifact.hash
+                }) {
+                    return Err(format!(
+                        "affected validation evidence `{}` is unchanged from the prior candidate",
+                        evidence.name
+                    ));
+                }
+            },
+            AffectedPathPolicy::CanonicalIdentity => {
+                if let Some(previous) = previous {
+                    require_new_affected_path(
+                        context.repository,
+                        &evidence.name,
+                        &previous.path,
+                        &evidence.artifact.path,
+                    )?;
+                }
+                crate::review_packet::external_operation::validate(
+                    &evidence.name,
+                    &evidence.artifact.bytes,
+                    replacement_candidate,
+                )?;
+            },
         }
         if !evidence
             .artifact
@@ -102,6 +123,45 @@ pub(super) fn validate_transition(
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct TransitionContext<'a> {
+    repository: &'a Path,
+    affected_path_policy: AffectedPathPolicy,
+}
+
+impl<'a> TransitionContext<'a> {
+    pub(super) fn new(repository: &'a Path, affected_path_policy: AffectedPathPolicy) -> Self {
+        Self {
+            repository,
+            affected_path_policy,
+        }
+    }
+}
+
+fn require_new_affected_path(
+    repository: &Path,
+    name: &str,
+    previous: &str,
+    affected: &str,
+) -> Result<(), String> {
+    let canonical = |value: &str| {
+        let path = resolve_input_path(repository, value);
+        std::fs::canonicalize(&path).map_err(|error| {
+            format!(
+                "cannot resolve validation evidence path {}: {error}",
+                path.display()
+            )
+        })
+    };
+    if canonical(previous)? == canonical(affected)? {
+        Err(format!(
+            "affected validation evidence `{name}` must use a new immutable path"
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 pub(super) fn validate_findings_artifact(

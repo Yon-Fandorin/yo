@@ -492,6 +492,16 @@ manifests remain supported for exact in-flight reproduction and may root the
 same unchanged review-delta v1 chain. New requests use `v1alpha2`; a published
 profile identifier is never reinterpreted in place.
 
+Treat every published wire identifier as a frozen behavior boundary, not only
+as a serialization label. If validation or failure semantics change, keep the
+old producer/verifier behavior in its existing version-owned module and add the
+smallest required `v1alphaN` module; do not reinterpret the old identifier or
+jump to v2 while the contract remains experimental. The facade and verifier
+must dispatch explicitly from the recorded schema/profile, while shared
+capture and rendering code stays version-neutral. A compatibility test must
+replay a discriminating artifact accepted by the frozen version and show that
+the new version applies only its own stronger rule.
+
 Because a self-hosting diff may contain the wrapper's own sentinel source,
 v1alpha2 section metadata names its reversible sentinel-escape profile. The
 encoding doubles literal backslashes and replaces the first less-than byte of
@@ -549,7 +559,7 @@ reviewer-authored evidence, not a worker-selected subset:
 
 ```json
 {
-  "schema": "yo.slice-review-delta-request/v1",
+  "schema": "yo.slice-review-delta-request/v1alpha1",
   "prior_manifest_path": ".local-exclude/methexis/slice-reviews/<review-id>/manifest.json",
   "prior_manifest_hash": "sha256:<manifest-hash-from-review-packet-result>",
   "prior_findings_path": ".local-exclude/coordination/<slice>/review-findings.json",
@@ -565,7 +575,7 @@ reviewer-authored evidence, not a worker-selected subset:
   "affected_validation_evidence": [
     {"name": "focused-finding-check", "path": "/tmp/focused-check.txt"}
   ],
-  "delivery_profile": "yo.slice-review-delta-markdown/v1",
+  "delivery_profile": "yo.slice-review-delta-markdown/v1alpha1",
   "tokenizer_profile": "o200k_base/v1",
   "max_managed_payload_tokens": 12000
 }
@@ -596,6 +606,13 @@ candidate fields to name those exact commit objects and requires the base to
 be an ancestor of the candidate before reading ContextBuild, authority,
 validation, contract, or diff inputs. Malformed, tag-object, missing-object,
 and unrelated-history identities therefore fail before input replay.
+
+New continuation requests use experimental
+`yo.slice-review-delta-markdown/v1alpha1`, which compares affected evidence by
+canonical filesystem identity. Published delta-v1 manifests retain their
+frozen path-string transition rule so an old alias-shaped chain remains
+reproducible; accepting that legacy artifact does not permit a new v1 request.
+The verifier selects these semantics from the exact published manifest schema.
 
 The continuation payload and question are bounded. Policy does not impose a
 finding-resolution round count, but the verifier has a 64-hop safety limit; at

@@ -2,17 +2,17 @@ use serde::Serialize;
 
 use super::{
     Inputs, METADATA_SUFFIX, PAYLOAD_SUFFIX, PREAMBLE, SECTION_PREFIX, SECTION_SUFFIX,
+    WireContract,
     model::{
-        DELIVERY_PROFILE, DeliveryProfile, MANIFEST_SCHEMA, Manifest, ManifestInputs,
-        NamedArtifact, NamedSemanticInput, PLAN_SCHEMA, PacketRecord, ReviewDeltaPlan,
-        TOKENIZER_COMPILER, TOKENIZER_PROFILE,
+        DeliveryProfile, Manifest, ManifestInputs, NamedArtifact, NamedSemanticInput, PacketRecord,
+        ReviewDeltaPlan, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
     },
 };
 use crate::review_protocol::{NamedCaptured, artifact, digest};
 
-pub(super) fn build_plan(inputs: &Inputs) -> ReviewDeltaPlan {
+pub(super) fn build_plan_for(inputs: &Inputs, contract: WireContract) -> ReviewDeltaPlan {
     ReviewDeltaPlan {
-        schema: PLAN_SCHEMA.to_owned(),
+        schema: contract.plan_schema.to_owned(),
         prior_review_id: inputs.prior.review_id.clone(),
         prior_manifest_hash: inputs.prior_manifest.hash.clone(),
         prior_packet_hash: inputs.prior_packet.hash.clone(),
@@ -35,7 +35,7 @@ pub(super) fn build_plan(inputs: &Inputs) -> ReviewDeltaPlan {
             .collect(),
         review_lenses: inputs.prior.review_lenses.clone(),
         review_questions: inputs.prior.review_questions.clone(),
-        delivery_profile: delivery_profile(),
+        delivery_profile: delivery_profile_for(contract),
         tokenizer_profile: TOKENIZER_PROFILE.to_owned(),
         tokenizer_compiler: TOKENIZER_COMPILER.to_owned(),
         max_managed_payload_tokens: inputs.max_tokens,
@@ -141,15 +141,16 @@ fn append_section(
     Ok(())
 }
 
-pub(super) fn build_manifest(
+pub(super) fn build_manifest_for(
     review_delta_id: String,
     plan: ReviewDeltaPlan,
     inputs: &Inputs,
     packet_hash: String,
     managed_payload_tokens: usize,
+    contract: WireContract,
 ) -> Manifest {
     Manifest {
-        schema: MANIFEST_SCHEMA.to_owned(),
+        schema: contract.manifest_schema.to_owned(),
         review_delta_id,
         plan,
         inputs: ManifestInputs {
@@ -178,9 +179,9 @@ pub(super) fn build_manifest(
     }
 }
 
-pub(super) fn delivery_profile() -> DeliveryProfile {
+pub(super) fn delivery_profile_for(contract: WireContract) -> DeliveryProfile {
     DeliveryProfile {
-        id: DELIVERY_PROFILE.to_owned(),
+        id: contract.delivery_profile.to_owned(),
         preamble: PREAMBLE.to_owned(),
         section_prefix: SECTION_PREFIX.to_owned(),
         metadata_suffix: METADATA_SUFFIX.to_owned(),
@@ -189,8 +190,8 @@ pub(super) fn delivery_profile() -> DeliveryProfile {
     }
 }
 
-pub(super) fn delivery_profile_bytes() -> Vec<u8> {
-    serde_json::to_vec(&delivery_profile()).expect("closed delivery profile serializes")
+pub(super) fn delivery_profile_bytes_for(contract: WireContract) -> Vec<u8> {
+    serde_json::to_vec(&delivery_profile_for(contract)).expect("closed delivery profile serializes")
 }
 
 pub(super) fn count_tokens(bytes: &[u8]) -> Result<usize, String> {

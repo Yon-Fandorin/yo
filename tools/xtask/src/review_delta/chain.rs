@@ -1,20 +1,21 @@
 use std::{collections::BTreeSet, path::Path};
 
 use super::{
-    Inputs, MAX_INPUT_BYTES, MAX_PACKET_BYTES, REVIEW_DELTA_ID_DOMAIN,
+    Inputs, MAX_INPUT_BYTES, MAX_PACKET_BYTES, WireContract,
     capture::{
         capture_file, capture_packet, capture_published, captured, require_exact_hash, require_hash,
     },
     evidence::{
-        add_evidence_size, capture_named_artifacts, require_exact_finding_set,
+        TransitionContext, add_evidence_size, capture_named_artifacts, require_exact_finding_set,
         validate_findings_artifact, validate_transition,
     },
     git_state::capture_delta,
-    model::{MANIFEST_SCHEMA, Manifest, PLAN_SCHEMA, TOKENIZER_COMPILER, TOKENIZER_PROFILE},
+    model::{Manifest, TOKENIZER_COMPILER, TOKENIZER_PROFILE},
     render::{
-        build_manifest, build_plan, count_tokens, delivery_profile, delivery_profile_bytes,
-        render_packet,
+        build_manifest_for, build_plan_for, count_tokens, delivery_profile_bytes_for,
+        delivery_profile_for, render_packet,
     },
+    v1, v1alpha1,
 };
 use crate::{
     bounded_file,
@@ -72,17 +73,13 @@ pub(super) fn verify_chain_head_with(
     if review_packet::is_original_manifest_schema(&schema) {
         return verify_original(repository, manifest_path, expected_hash);
     }
-    if schema != MANIFEST_SCHEMA {
-        return Err(format!(
-            "unsupported review-chain manifest schema `{schema}`"
-        ));
-    }
+    let contract = contract_for_manifest_schema(&schema)?;
 
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("invalid published review delta manifest: {error}"))?;
     require_hash(&manifest.review_delta_id, "published ReviewDeltaId")?;
-    if manifest.plan.schema != PLAN_SCHEMA
-        || manifest.plan.delivery_profile != delivery_profile()
+    if manifest.plan.schema != contract.plan_schema
+        || manifest.plan.delivery_profile != delivery_profile_for(contract)
         || manifest.plan.tokenizer_profile != TOKENIZER_PROFILE
         || manifest.plan.tokenizer_compiler != TOKENIZER_COMPILER
         || manifest.packet.path != "packet.md"
@@ -174,6 +171,7 @@ pub(super) fn verify_chain_head_with(
         capture_delta(repository, &prior.candidate_commit, &replacement_candidate)?,
     )?;
     validate_transition(
+        TransitionContext::new(repository, contract.affected_path_policy),
         &prior,
         &replacement_candidate,
         &delta,
@@ -196,15 +194,15 @@ pub(super) fn verify_chain_head_with(
         findings: manifest.plan.finding_dispositions.clone(),
         reused_validation,
         affected_validation,
-        delivery_profile_bytes: delivery_profile_bytes(),
+        delivery_profile_bytes: delivery_profile_bytes_for(contract),
         max_tokens: manifest.plan.max_managed_payload_tokens,
     };
-    let plan = build_plan(&inputs);
+    let plan = build_plan_for(&inputs, contract);
     if plan != manifest.plan {
         return Err("published review delta plan does not reproduce from its inputs".to_owned());
     }
     let review_delta_id = domain_digest(
-        REVIEW_DELTA_ID_DOMAIN,
+        contract.review_id_domain,
         &serde_json::to_vec(&plan).expect("review delta plan serializes"),
     );
     if review_delta_id != manifest.review_delta_id {
@@ -225,12 +223,13 @@ pub(super) fn verify_chain_head_with(
     {
         return Err("published review delta token record does not match exact bytes".to_owned());
     }
-    let reproduced_manifest = build_manifest(
+    let reproduced_manifest = build_manifest_for(
         review_delta_id.clone(),
         plan,
         &inputs,
         packet.hash.clone(),
         tokens,
+        contract,
     );
     let mut reproduced_manifest_bytes =
         serde_json::to_vec_pretty(&reproduced_manifest).expect("review delta manifest serializes");
@@ -263,4 +262,14 @@ pub(super) fn verify_chain_head_with(
         review_lenses: inputs.prior.review_lenses,
         review_questions: inputs.prior.review_questions,
     })
+}
+
+fn contract_for_manifest_schema(schema: &str) -> Result<WireContract, String> {
+    match schema {
+        v1::MANIFEST_SCHEMA => Ok(v1::contract()),
+        v1alpha1::MANIFEST_SCHEMA => Ok(v1alpha1::contract()),
+        _ => Err(format!(
+            "unsupported review-chain manifest schema `{schema}`"
+        )),
+    }
 }
