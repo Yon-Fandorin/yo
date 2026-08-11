@@ -27,6 +27,9 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
     let command = arguments.next();
     let scope = arguments.next();
     match (command.as_deref(), scope.as_deref()) {
+        (Some(command), Some(target)) if command == "__accepted-commit-message-editor" => {
+            run_accepted_commit_message_editor(target, &mut arguments)
+        },
         (Some(command), Some(scope)) if command == "slice" => run_slice(scope, &mut arguments),
         (Some(command), Some(action)) if command == "docs" => run_docs(action, &mut arguments),
         (Some(command), Some(action)) if command == "slice-contract" => {
@@ -50,7 +53,33 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     if scope == "close" {
         return run_slice_close(arguments);
     }
+    if scope == "commit" {
+        return run_slice_commit(arguments);
+    }
     Err(general_usage())
+}
+
+fn run_slice_commit(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let message = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(slice_commit_usage)?;
+    if arguments.next().is_some() {
+        return Err(slice_commit_usage());
+    }
+    let input = ImpactInput::load(message.clone(), None, None, true)?;
+    impact::preflight::check(&input)?;
+    impact::review_coverage::create_accepted_commit(&input.repository, &message)
+}
+
+fn run_accepted_commit_message_editor(
+    target: &OsStr,
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    if arguments.next().is_some() {
+        return Err("invalid internal accepted-commit editor invocation".to_owned());
+    }
+    impact::review_coverage::copy_accepted_commit_message(&PathBuf::from(target))
 }
 
 fn run_activation_slice(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -194,6 +223,7 @@ fn run_check(check: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
         "slice-scope" => run_slice_scope_check(arguments),
         "slice-parallel" => run_slice_parallel_check(arguments),
         "methexis-check-for-stage" => run_methexis_check_for_stage(arguments),
+        "review-coverage-operation" => run_review_coverage_operation_check(arguments),
         "commit-preflight" | "developer-docs-impact" | "slice-review-impact" => {
             run_impact_check(arguments, check.as_ref())
         },
@@ -249,6 +279,40 @@ fn run_methexis_check_for_stage(
     validation_stage::run_methexis_check(&repository)
 }
 
+fn run_review_coverage_operation_check(
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    let _message = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| usage("review-coverage-operation"))?;
+    let source = arguments
+        .next()
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| "prepare-commit-msg source must be valid UTF-8".to_owned())
+        })
+        .transpose()?;
+    let commit = arguments
+        .next()
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| "prepare-commit-msg commit must be valid UTF-8".to_owned())
+        })
+        .transpose()?;
+    if arguments.next().is_some() {
+        return Err(usage("review-coverage-operation"));
+    }
+    let repository = current_repository()?;
+    impact::review_coverage::check_prepare_commit_message(
+        &repository,
+        source.as_deref(),
+        commit.as_deref(),
+    )
+}
+
 fn run_impact_check(
     arguments: &mut impl Iterator<Item = OsString>,
     check: &str,
@@ -289,6 +353,11 @@ fn usage(check: &str) -> String {
         "slice-parallel" => {
             return "usage: cargo xtask check slice-parallel <left.json> <right.json>".to_owned();
         },
+        "review-coverage-operation" => {
+            return "usage: cargo xtask check review-coverage-operation \
+                    <commit-message-file> [source] [commit]"
+                .to_owned();
+        },
         _ => {},
     }
     format!(
@@ -303,12 +372,14 @@ fn general_usage() -> String {
      cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
      cargo xtask slice review-delta <request.json>\n\
      cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
+     cargo xtask slice commit <commit-message-file>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
      cargo xtask check test-explanations\n\
      cargo xtask check methexis-check-for-stage\n\
      cargo xtask check slice-scope [slice-contract.json]\n\
      cargo xtask check slice-parallel <left.json> <right.json>\n\
+     cargo xtask check review-coverage-operation <commit-message-file> [source] [commit]\n\
      cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
@@ -331,6 +402,10 @@ fn slice_close_usage() -> String {
     "usage: cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>".to_owned()
 }
 
+fn slice_commit_usage() -> String {
+    "usage: cargo xtask slice commit <commit-message-file>".to_owned()
+}
+
 fn docs_accept_translation_usage() -> String {
     "usage: cargo xtask docs accept-translation <relative-page.md>".to_owned()
 }
@@ -345,7 +420,7 @@ mod cli_tests {
 
     use super::{
         activation_slice_usage, docs_accept_translation_usage, review_delta_usage,
-        review_packet_usage, run, slice_close_usage,
+        review_packet_usage, run, slice_close_usage, slice_commit_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -361,12 +436,15 @@ mod cli_tests {
              cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
              cargo xtask slice review-delta <request.json>\n\
              cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
+             cargo xtask slice commit <commit-message-file>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
              cargo xtask check test-explanations\n\
              cargo xtask check methexis-check-for-stage\n\
              cargo xtask check slice-scope [slice-contract.json]\n\
              cargo xtask check slice-parallel <left.json> <right.json>\n\
+             cargo xtask check review-coverage-operation \
+             <commit-message-file> [source] [commit]\n\
              cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
              <commit-message-file> [changed-paths-file] [branch]"
         );
@@ -489,6 +567,27 @@ mod cli_tests {
         assert_eq!(error, "usage: cargo xtask check test-explanations");
     }
 
+    // prepare-commit-msg 경계는 Git이 전달하는 메시지 파일과 선택적 source/commit만
+    // 받아, 누락되거나 추가된 hook 인자를 다른 커밋 동작으로 오인하지 않는다.
+    #[test]
+    fn review_coverage_operation_requires_the_prepare_commit_message_shape() {
+        let expected = super::usage("review-coverage-operation");
+        let missing = run(["check", "review-coverage-operation"].map(Into::into)).unwrap_err();
+        let extra = run([
+            "check",
+            "review-coverage-operation",
+            "message",
+            "commit",
+            "0123456789abcdef0123456789abcdef01234567",
+            "extra",
+        ]
+        .map(Into::into))
+        .unwrap_err();
+
+        assert_eq!(missing, expected);
+        assert_eq!(extra, expected);
+    }
+
     // 번역 승인 명령은 검토할 한 페이지를 반드시 요구하고 추가 인자를
     // 무시하지 않아, 호출자가 의도치 않게 여러 페이지를 승인하지 못하게 한다.
     #[test]
@@ -518,5 +617,16 @@ mod cli_tests {
                 slice_close_usage()
             );
         }
+    }
+
+    // accepted commit 명령은 사전 검증할 메시지 파일 하나만 받아, 누락되거나
+    // 추가된 입력으로 다른 메시지를 커밋하는 경로를 만들지 않는다.
+    #[test]
+    fn slice_commit_requires_exactly_one_prepared_message() {
+        let missing = run(["slice", "commit"].map(Into::into)).unwrap_err();
+        let extra = run(["slice", "commit", "message", "extra"].map(Into::into)).unwrap_err();
+
+        assert_eq!(missing, slice_commit_usage());
+        assert_eq!(extra, slice_commit_usage());
     }
 }

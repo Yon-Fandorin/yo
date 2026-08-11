@@ -1,19 +1,20 @@
 use super::{check, combine};
 use crate::{impact::ImpactInput, test_support::TestRepository};
 
-// 두 impact 검사가 모두 성공하면 preflight도 추가 출력 없이 성공해 준비된 메시지를
+// 세 impact 검사가 모두 성공하면 preflight도 추가 출력 없이 성공해 준비된 메시지를
 // 그대로 실제 commit에 사용할 수 있는지 확인한다.
 #[test]
-fn succeeds_only_when_both_impact_checks_succeed() {
-    assert_eq!(combine(Ok(()), Ok(())), Ok(()));
+fn succeeds_only_when_all_impact_checks_succeed() {
+    assert_eq!(combine(Ok(()), Ok(()), Ok(())), Ok(()));
 }
 
-// 두 검사가 함께 실패하면 첫 오류에서 멈추지 않고 각각의 소유 영역과 진단을 한 번에
-// 보여줘 비싼 commit hook을 반복 실행하기 전에 메시지를 모두 고칠 수 있게 한다.
+// review와 Developer Docs 검사가 함께 실패하면 첫 오류에서 멈추지 않고 각 소유 영역과 진단을 한
+// 번에 보여줘 비싼 commit hook을 반복 실행하기 전에 메시지를 모두 고칠 수 있게 한다.
 #[test]
 fn reports_both_impact_failures_in_one_bounded_diagnostic() {
     let error = combine(
         Err("missing review trailer".to_owned()),
+        Ok(()),
         Err("missing docs trailer".to_owned()),
     )
     .unwrap_err();
@@ -30,11 +31,29 @@ fn reports_both_impact_failures_in_one_bounded_diagnostic() {
 // 표시해 진단의 원인을 과장하지 않는지 확인한다.
 #[test]
 fn reports_only_the_failed_impact_boundary() {
-    let error = combine(Ok(()), Err("invalid docs trailer".to_owned())).unwrap_err();
+    let error = combine(Ok(()), Ok(()), Err("invalid docs trailer".to_owned())).unwrap_err();
 
     assert_eq!(
         error,
         "commit preflight failed:\n\nDeveloper Docs impact:\ninvalid docs trailer"
+    );
+}
+
+// exact diff coverage만 실패하면 기존 review나 Developer Docs 오류를 덧붙이지 않고
+// accepted-review ledger 진단과 예상 hash만 독립적으로 보여 준다.
+#[test]
+fn reports_only_the_failed_review_coverage_boundary() {
+    let error = combine(
+        Ok(()),
+        Err("reviewed diff hash mismatch; expected sha256:abc".to_owned()),
+        Ok(()),
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        "commit preflight failed:\n\n\
+         Accepted review coverage:\nreviewed diff hash mismatch; expected sha256:abc"
     );
 }
 

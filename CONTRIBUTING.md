@@ -596,6 +596,56 @@ final diff with no remaining actionable finding. Reviewer IDs are compact
 tokens such as `kimi/session-id`, `codex/session-id`, or `human/name`; put
 operational detail in the Slice status rather than free text in the trailer.
 
+Accepted commits prepared from review-coverage cutover
+`edf376fd33dc10e8fa3e02ca0e4543025249838a` or its descendants also record one
+exact ledger entry for every completed lens:
+
+```text
+Review-Coverage: fresh-context - exact - model-high/codex/gpt-5.6-sol/session-id - sha256:<canonical-diff>
+Review-Coverage: code-quality - exact - model/codex/gpt-5.6-luna/session-id - sha256:<canonical-diff>
+```
+
+`model-high/<provider>/<model>/<session>` records an independently selected
+high-capability model and is required for model-performed fresh-context and
+integration review. Mechanical code-quality review may use
+`model/<provider>/<model>/<session>`. The provider and session must reproduce
+the compact `<provider>/<session>` identity in the matching `Slice-Review`.
+This records the actual route without hard-coding one vendor as policy.
+
+A person may perform any lens instead:
+
+```text
+Slice-Review: fresh-context - completed - human/yon - clear
+Review-Coverage: fresh-context - exact - human/yon - sha256:<canonical-diff>
+```
+
+Human coverage means that named person inspected the exact patch for that
+lens and explicitly returned the recorded verdict. A general `go`, standing
+authorization, integration approval, or review of an earlier candidate is not
+human review evidence. Human and model review use the same exact-diff gate;
+neither is a bypass for the other validation requirements.
+
+The ledger hash is SHA-256 of the canonical binary, full-index, no-renames
+base-to-candidate diff carried as `git_diff` by the immutable review packet.
+At accepted squash time, commit preflight recomputes the same bytes from the
+integration `HEAD` and staged index. Slice close recomputes them from the
+accepted commit and its first parent. A changed integration surface therefore
+requires review again instead of inheriting an earlier verdict. Commits at or
+before the cutover retain their historical evidence and are not backfilled.
+
+After that cutover, accepted integration branches do not use
+`git commit --amend`, `-c`, or `-C`: those operations can combine an earlier
+accepted surface with only an incremental staged diff. Working `slice/`, `task/`, and
+`spike/` branches may still rewrite their disposable candidate history. When
+an accepted change needs correction, prepare the complete message in a file
+and create a new commit with `cargo xtask slice commit <message>` so both
+preflight and Slice close observe the same first-parent surface. The command
+invokes a non-amend Git commit through the ordinary editor boundary; the
+`prepare-commit-msg` hook rejects ambiguous `-m`, `-F`, `-t`, `-c`, `-C`, and
+`--amend` operations before the message is edited. A person may instead use
+plain `git commit` without a configured message template, read the complete
+message in the editor, and accept it there.
+
 When no additional lens applies, record `Slice-Review: none - <reason>`.
 `cargo xtask check slice-review-impact` reads the final trailer block and fails
 closed when the disposition is missing or malformed. It requires
@@ -773,13 +823,18 @@ invoking `git commit`:
 
 ```bash
 cargo xtask check commit-preflight /tmp/yo-commit-message
-git commit --file /tmp/yo-commit-message
+cargo xtask slice commit /tmp/yo-commit-message
 ```
 
-The preflight loads the staged impact once and reports both Slice review and
-Developer Docs trailer failures together. Git `commit-msg` repeats that same
-combined check as the final enforcement boundary; the explicit preflight is
-what catches message errors before expensive `pre-commit` checks run.
+The explicit preflight loads the staged impact once and reports both Slice
+review and Developer Docs trailer failures before expensive `pre-commit`
+checks run. The commit command repeats preflight, copies the exact prepared
+message through Git's ordinary editor boundary, and lets Git `commit-msg`
+repeat the same combined check as final enforcement. Direct `-m`, `-F`, and
+template sources are rejected on accepted branches because Git otherwise
+reports amend combinations under those indistinguishable source names. The
+command therefore also fails with a focused diagnostic when `commit.template`
+is configured; unset it for this commit path.
 
 For accepted review commits on `develop`, `main`, or `wave/*` that change code
 under `crates/` or `tools/`, delete code there, or change workspace Cargo

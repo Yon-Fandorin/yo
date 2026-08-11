@@ -328,6 +328,9 @@ fn validate_accepted_commit(
         .ok_or_else(|| format!("unsupported integration ref `{integration_ref}`"))?;
     impact::slice_review::check_commit(repository, accepted_commit, branch).map_err(|error| {
         format!("accepted commit {accepted_commit} has invalid review evidence: {error}")
+    })?;
+    impact::review_coverage::check_commit(repository, accepted_commit, branch).map_err(|error| {
+        format!("accepted commit {accepted_commit} has invalid review coverage: {error}")
     })
 }
 

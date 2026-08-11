@@ -74,60 +74,23 @@ pub(crate) fn check(input: &ImpactInput) -> Result<(), String> {
         .map(String::as_str)
         .filter(|path| requires_code_quality(path))
         .collect::<Vec<_>>();
-    let parsed = crate::git::interpret_trailers(&input.message)?;
-    let values = parsed
-        .lines()
-        .filter_map(|line| line.strip_prefix("Slice-Review:"))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    let recognized = values
-        .iter()
-        .filter_map(|value| Review::parse(value))
-        .collect::<Vec<_>>();
+    let evidence = evidence(&input.message)?;
 
-    if values.is_empty() {
-        return Err(with_usage(
-            "accepted commits must record Slice review disposition",
-        ));
-    }
-    if recognized.len() != values.len() {
-        return Err(with_usage("invalid Slice-Review trailer"));
-    }
-
-    let none_count = count(&recognized, Review::None);
-    if none_count > 0 && values.len() != 1 {
-        return Err(with_usage(
-            "Slice-Review none cannot be combined with completed review lenses",
-        ));
-    }
-    for (review, label) in [
-        (Review::FreshContext, "fresh-context"),
-        (Review::CodeQuality, "code-quality"),
-        (Review::Integration, "integration"),
-    ] {
-        if count(&recognized, review) > 1 {
-            return Err(with_usage(&format!(
-                "{label} review must be recorded exactly once"
-            )));
-        }
-    }
-
-    if !fresh_context_paths.is_empty() && count(&recognized, Review::FreshContext) == 0 {
+    if !fresh_context_paths.is_empty() && !evidence.has(Lens::FreshContext) {
         return Err(format!(
             "these changes require fresh-context review:\n{}\n{}",
             changed_list(&fresh_context_paths),
             with_usage("fresh-context review evidence is missing")
         ));
     }
-    if !code_quality_paths.is_empty() && count(&recognized, Review::CodeQuality) == 0 {
+    if !code_quality_paths.is_empty() && !evidence.has(Lens::CodeQuality) {
         return Err(format!(
             "these changes require code-quality review:\n{}\n{}",
             changed_list(&code_quality_paths),
             with_usage("code-quality review evidence is missing")
         ));
     }
-    if input.branch.starts_with("wave/") && count(&recognized, Review::Integration) == 0 {
+    if input.branch.starts_with("wave/") && !evidence.has(Lens::Integration) {
         return Err(with_usage(
             "accepted Wave Slice commits require integration review evidence",
         ));
@@ -135,37 +98,105 @@ pub(crate) fn check(input: &ImpactInput) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Review {
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) enum Lens {
     FreshContext,
     CodeQuality,
     Integration,
-    None,
 }
 
-impl Review {
-    fn parse(value: &str) -> Option<Self> {
-        if value
-            .strip_prefix("none - ")
-            .is_some_and(|reason| !reason.is_empty())
-        {
-            return Some(Self::None);
-        }
-        let mut parts = value.split(" - ");
-        let lens = parts.next()?;
-        if parts.next()? != "completed" || !valid_reviewer(parts.next()?) {
-            return None;
-        }
-        if !matches!(parts.next()?, "clear" | "resolved") || parts.next().is_some() {
-            return None;
-        }
-        match lens {
+impl Lens {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
             "fresh-context" => Some(Self::FreshContext),
             "code-quality" => Some(Self::CodeQuality),
             "integration" => Some(Self::Integration),
             _ => None,
         }
     }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::FreshContext => "fresh-context",
+            Self::CodeQuality => "code-quality",
+            Self::Integration => "integration",
+        }
+    }
+}
+
+pub(crate) struct CompletedReview {
+    pub(crate) lens: Lens,
+    pub(crate) reviewer: String,
+}
+
+pub(crate) struct Evidence {
+    pub(crate) completed: Vec<CompletedReview>,
+}
+
+impl Evidence {
+    fn has(&self, lens: Lens) -> bool {
+        self.completed.iter().any(|review| review.lens == lens)
+    }
+}
+
+pub(crate) fn evidence(message: &str) -> Result<Evidence, String> {
+    let parsed = crate::git::interpret_trailers(message)?;
+    let values = parsed
+        .lines()
+        .filter_map(|line| line.strip_prefix("Slice-Review:"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return Err(with_usage(
+            "accepted commits must record Slice review disposition",
+        ));
+    }
+    if values.len() == 1
+        && values[0]
+            .strip_prefix("none - ")
+            .is_some_and(|reason| !reason.is_empty())
+    {
+        return Ok(Evidence {
+            completed: Vec::new(),
+        });
+    }
+    if values.iter().any(|value| value.starts_with("none - ")) {
+        return Err(with_usage(
+            "Slice-Review none cannot be combined with completed review lenses",
+        ));
+    }
+
+    let mut completed = Vec::new();
+    for value in values {
+        let mut parts = value.split(" - ");
+        let Some(lens) = parts.next().and_then(Lens::parse) else {
+            return Err(with_usage("invalid Slice-Review trailer"));
+        };
+        if parts.next() != Some("completed") {
+            return Err(with_usage("invalid Slice-Review trailer"));
+        }
+        let Some(reviewer) = parts.next().filter(|reviewer| valid_reviewer(reviewer)) else {
+            return Err(with_usage("invalid Slice-Review trailer"));
+        };
+        if !matches!(parts.next(), Some("clear" | "resolved")) || parts.next().is_some() {
+            return Err(with_usage("invalid Slice-Review trailer"));
+        }
+        if completed
+            .iter()
+            .any(|review: &CompletedReview| review.lens == lens)
+        {
+            return Err(with_usage(&format!(
+                "{} review must be recorded exactly once",
+                lens.label()
+            )));
+        }
+        completed.push(CompletedReview {
+            lens,
+            reviewer: reviewer.to_owned(),
+        });
+    }
+    Ok(Evidence { completed })
 }
 
 fn valid_reviewer(value: &str) -> bool {
@@ -175,10 +206,6 @@ fn valid_reviewer(value: &str) -> bool {
         .is_some_and(|character| character.is_ascii_alphanumeric())
         && characters
             .all(|character| character.is_ascii_alphanumeric() || "._/+:-".contains(character))
-}
-
-fn count(reviews: &[Review], target: Review) -> usize {
-    reviews.iter().filter(|review| **review == target).count()
 }
 
 fn requires_fresh_context(path: &str) -> bool {
