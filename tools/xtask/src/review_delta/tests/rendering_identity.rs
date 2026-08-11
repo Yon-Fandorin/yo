@@ -1,6 +1,14 @@
 use super::{
-    super::*,
+    super::{
+        Inputs, REVIEW_DELTA_ID_DOMAIN,
+        capture::captured,
+        render::{build_manifest, build_plan, count_tokens, delivery_profile_bytes, render_packet},
+    },
     support::{commit, finding, hash, prior, prior_findings},
+};
+use crate::{
+    review_delta::model::PriorFindings,
+    review_protocol::{NamedCaptured, digest, domain_digest},
 };
 
 // continuation은 prior identity와 exact findings를 포함하되 provider-neutral delta에
@@ -46,7 +54,6 @@ fn packet_keeps_prior_identity_without_replaying_the_prior_packet() {
     assert!(text.contains("diff --git"));
     assert!(!text.contains("PRIOR_PACKET_BODY_MUST_NOT_BE_REPLAYED"));
 }
-
 // 후속 continuation은 매번 원본 candidate부터 diff하지 않고 직전 replacement를
 // chain head로 사용함을 확인한다.
 #[test]
@@ -114,7 +121,7 @@ fn canonical_delta_artifacts_keep_current_bytes_and_identity() {
             name: "focused".to_owned(),
             artifact: captured("focused.txt".to_owned(), b"focused green\n".to_vec()).unwrap(),
         }],
-        delivery_profile_bytes: super::super::delivery_profile_bytes(),
+        delivery_profile_bytes: delivery_profile_bytes(),
         max_tokens: 10_000,
     };
     let plan = build_plan(&inputs);
