@@ -79,80 +79,82 @@ pub fn run(
 ) -> io::Result<ExitCode> {
     let args = args.into_iter().collect::<Vec<_>>();
 
+    if let Some(result) = run_bootstrap(&args, &mut stdout) {
+        return result;
+    }
+
+    run_command(&args, &mut stdout, &mut stderr)
+}
+
+fn run_bootstrap(args: &[OsString], stdout: &mut impl Write) -> Option<io::Result<ExitCode>> {
+    match args {
+        [] => Some(write_text(stdout, HELP, ExitCode::SUCCESS)),
+        [arg] if arg == OsStr::new("--help") || arg == OsStr::new("-h") => {
+            Some(write_text(stdout, HELP, ExitCode::SUCCESS))
+        },
+        [arg] if arg == OsStr::new("--version") || arg == OsStr::new("-V") => Some(
+            writeln!(stdout, "methexis {}", env!("CARGO_PKG_VERSION")).map(|()| ExitCode::SUCCESS),
+        ),
+        [command] if command == OsStr::new("capabilities") => Some(write_json(
+            stdout,
+            &Capabilities {
+                schema: "methexis.capabilities/v1",
+                capabilities: ["semantic-first-ko-on-demand/v1"],
+            },
+            ExitCode::SUCCESS,
+        )),
+        _ => None,
+    }
+}
+
+fn run_command(
+    args: &[OsString],
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
     if args.first().is_some_and(|arg| arg == OsStr::new("check")) {
-        return run_check(&args[1..], &mut stdout, &mut stderr);
+        return run_check(&args[1..], stdout, stderr);
     }
 
     if args
         .first()
         .is_some_and(|arg| arg == OsStr::new("prepare-approval"))
     {
-        return run_prepare_approval(&args[1..], &mut stdout, &mut stderr);
+        return run_prepare_approval(&args[1..], stdout, stderr);
     }
 
-    match args.as_slice() {
-        [] => write_text(&mut stdout, HELP, ExitCode::SUCCESS),
-        [arg] if arg == OsStr::new("--help") || arg == OsStr::new("-h") => {
-            write_text(&mut stdout, HELP, ExitCode::SUCCESS)
-        },
-        [arg] if arg == OsStr::new("--version") || arg == OsStr::new("-V") => {
-            writeln!(stdout, "methexis {}", env!("CARGO_PKG_VERSION"))?;
-            Ok(ExitCode::SUCCESS)
-        },
-        [command] if command == OsStr::new("capabilities") => write_json(
-            &mut stdout,
-            &Capabilities {
-                schema: "methexis.capabilities/v1",
-                capabilities: ["semantic-first-ko-on-demand/v1"],
-            },
-            ExitCode::SUCCESS,
-        ),
+    match args {
         [command] if command == OsStr::new("prepare-checkpoint") => {
-            run_prepare_checkpoint(&mut stdout, &mut stderr)
+            run_prepare_checkpoint(stdout, stderr)
         },
         [command, request] if command == OsStr::new("author-revision") => {
-            run_author_operation(request, &mut stdout, &mut stderr)
+            run_author_operation(request, stdout, stderr)
         },
         [command, request] if command == OsStr::new("project-review") => {
-            run_operation(ReviewOperation::Project, request, &mut stdout, &mut stderr)
+            run_review_operation(ReviewOperation::Project, request, stdout, stderr)
         },
         [command, request] if command == OsStr::new("build-review") => {
-            run_operation(ReviewOperation::Build, request, &mut stdout, &mut stderr)
+            run_review_operation(ReviewOperation::Build, request, stdout, stderr)
         },
         [command, request] if command == OsStr::new("approve") => {
-            run_operation(ReviewOperation::Approve, request, &mut stdout, &mut stderr)
+            run_review_operation(ReviewOperation::Approve, request, stdout, stderr)
         },
         [command, request] if command == OsStr::new("create-checkpoint") => {
-            run_checkpoint_operation(
-                CheckpointOperation::Create,
-                request,
-                &mut stdout,
-                &mut stderr,
-            )
+            run_checkpoint_operation(CheckpointOperation::Create, request, stdout, stderr)
         },
         [command, request] if command == OsStr::new("propose-activation") => {
-            run_checkpoint_operation(
-                CheckpointOperation::Activate,
-                request,
-                &mut stdout,
-                &mut stderr,
-            )
+            run_checkpoint_operation(CheckpointOperation::Activate, request, stdout, stderr)
         },
         [command, output] if command == OsStr::new("prepare-activation") => {
-            run_prepare_activation(output, &mut stdout, &mut stderr)
+            run_prepare_activation(output, stdout, stderr)
         },
         [command, request] if command == OsStr::new("resolve-context") => {
-            run_context_operation(request, &mut stdout, &mut stderr)
+            run_context_operation(request, stdout, stderr)
         },
         [command, request] if command == OsStr::new("refresh-context-manifests") => {
-            let root = env::current_dir()?;
-            let service = ContextService::new(&root);
-            match service.refresh_manifests(Path::new(request)) {
-                Ok(result) => write_json(&mut stdout, &result, ExitCode::SUCCESS),
-                Err(error) => write_json(&mut stderr, &error, ExitCode::from(2)),
-            }
+            run_refresh_context_manifests(request, stdout, stderr)
         },
-        _ => write_text(&mut stderr, UNSUPPORTED_COMMAND, ExitCode::from(2)),
+        _ => write_text(stderr, UNSUPPORTED_COMMAND, ExitCode::from(2)),
     }
 }
 
@@ -464,6 +466,19 @@ fn run_context_operation(
     }
 }
 
+fn run_refresh_context_manifests(
+    request: &OsStr,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let root = env::current_dir()?;
+    let service = ContextService::new(&root);
+    match service.refresh_manifests(Path::new(request)) {
+        Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
+    }
+}
+
 enum CheckpointOperation {
     Create,
     Activate,
@@ -507,7 +522,7 @@ fn run_author_operation(
     }
 }
 
-fn run_operation(
+fn run_review_operation(
     operation: ReviewOperation,
     request: &OsStr,
     stdout: &mut impl Write,
