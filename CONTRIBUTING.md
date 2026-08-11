@@ -749,6 +749,88 @@ The resulting commit is the durable review unit; Task commits are not preserved.
 After the accepted commit exists, close its local Slice in two explicit steps
 from the integration worktree:
 
+First write
+`.local-exclude/coordination/<slice>/close-metrics.json`. This compact local
+record is operational evidence, not durable workflow authority:
+
+```json
+{
+  "schema": "yo.slice-close-metrics/v1",
+  "slice": "example",
+  "slice_candidate": "<full-Slice-HEAD>",
+  "accepted_commit": "<full-accepted-commit>",
+  "execution_lanes": [
+    {
+      "lane": "cargo_validation",
+      "mode": "serial",
+      "operation_count": 3,
+      "max_concurrency": 1
+    },
+    {
+      "lane": "integration",
+      "mode": "serial",
+      "operation_count": 1,
+      "max_concurrency": 1
+    }
+  ],
+  "review": {
+    "rounds": 2,
+    "findings": {
+      "reported": 1,
+      "resolved": 1,
+      "not_reproduced": 0,
+      "accepted_limits": 0,
+      "remaining": 0
+    }
+  },
+  "review_packets": {
+    "publication_count": 2,
+    "total_managed_tokens": 32000,
+    "largest_sections": [
+      {
+        "kind": "git_diff",
+        "name": "base-to-candidate",
+        "rendered_bytes": 24000,
+        "rendered_tokens": 6000
+      }
+    ],
+    "reused_inputs": ["context-build/sha256:<content-id>"]
+  },
+  "validation": [
+    {
+      "name": "workspace-tests",
+      "argv": ["cargo", "test", "--workspace", "--all-targets"],
+      "runs": 1,
+      "status": "passed",
+      "reused": false
+    }
+  ],
+  "elapsed_bottleneck": {
+    "name": "independent review",
+    "elapsed_milliseconds": 45000
+  },
+  "known_unverified_environments": []
+}
+```
+
+Lane names are `discovery`, `editing`, `review`, `cargo_validation`, and
+`integration`; modes are `parallel` and `serial`. Record only lanes that ran,
+but always record integration. Cargo-heavy validation and shared integration
+must be serial with `max_concurrency: 1`; other lanes report their actual mode.
+Validation status is `passed` or `unverified`; an unverified item has zero runs,
+cannot be reused, and names its missing environment in
+`known_unverified_environments`. Human review may legitimately have zero
+published packets. Packet measurements are compact close diagnostics, not a
+replacement for their immutable manifests.
+
+The close planner requires this standard file, checks internally reconcilable
+counts and exact candidate/accepted-commit identity, and binds its path and
+hash into the plan. Apply revalidates the same bytes before cleanup. These
+checks prevent stale, contradictory, or silently edited records; they do not
+prove that the reported operations ran. Root self-check and completed review
+still own factual accuracy. Delete the local metrics with other completed Slice
+coordination after promoting any aggregate lesson to its proper owner.
+
 ```bash
 cargo xtask slice close plan <slice> /tmp/<slice>-close.json
 cargo xtask slice close apply /tmp/<slice>-close.json
@@ -760,7 +842,11 @@ closes. `plan` requires clean
 integration and Slice worktrees, the bound contract, accepted review evidence,
 and exact Slice/accepted-commit patch identity. It fixes refs, paths, binding,
 effects, and the coordination entries that will remain. Generate a fresh plan
-if integration advances.
+if integration advances. Newly generated plans use
+`yo.slice-close-plan/v4`. A v2 or v3 plan remains resumable under its original
+identity and safety checks only when its accepted commit predates the tracked
+close-metrics cutover marker; commits containing that marker require v4 even if
+a caller rewrites and rehashes a legacy-shaped plan.
 
 `apply` revalidates that state and the retained-entry list, then removes only
 the registered worktree and binding, the exact standard

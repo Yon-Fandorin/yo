@@ -1,5 +1,6 @@
 mod apply;
 mod environment;
+mod metrics;
 mod plan;
 mod storage;
 
@@ -12,19 +13,24 @@ struct CloseFixture {
     repository: test_support::TestRepository,
     slice_worktree: PathBuf,
     contract_path: PathBuf,
+    metrics_path: PathBuf,
     plan_path: PathBuf,
 }
 
 impl CloseFixture {
     fn new() -> Self {
-        Self::new_for("refs/heads/develop", "slice/direct/sample")
+        Self::new_for("refs/heads/develop", "slice/direct/sample", false)
     }
 
     fn new_wave() -> Self {
-        Self::new_for("refs/heads/wave/w1", "slice/w1/sample")
+        Self::new_for("refs/heads/wave/w1", "slice/w1/sample", false)
     }
 
-    fn new_for(integration_ref: &str, slice_branch: &str) -> Self {
+    fn new_after_metrics_cutover() -> Self {
+        Self::new_for("refs/heads/develop", "slice/direct/sample", true)
+    }
+
+    fn new_for(integration_ref: &str, slice_branch: &str, after_metrics_cutover: bool) -> Self {
         let repository = test_support::TestRepository::new("slice-close");
         std::fs::write(
             repository.path.join(".git/info/exclude"),
@@ -33,6 +39,13 @@ impl CloseFixture {
         .unwrap();
         repository.write("base.txt", "base\n");
         repository.git(["add", "base.txt"]);
+        if after_metrics_cutover {
+            repository.write(
+                "tools/xtask/src/slice_close/metrics-cutover",
+                "yo.slice-close-metrics/v1\n",
+            );
+            repository.git(["add", "tools/xtask/src/slice_close/metrics-cutover"]);
+        }
         repository.git(["commit", "--quiet", "-m", "test: base"]);
         let base = output(&repository.path, &["rev-parse", "HEAD"]);
         if integration_ref != "refs/heads/develop" {
@@ -87,10 +100,20 @@ impl CloseFixture {
         .unwrap();
         slice_contract::bind(&slice_worktree, &contract_path).unwrap();
 
+        let slice_candidate = output(&slice_worktree, &["rev-parse", "HEAD"]);
+        let accepted_commit = output(&repository.path, &["rev-parse", "HEAD"]);
+        let metrics_path = contract_directory.join("close-metrics.json");
+        std::fs::write(
+            &metrics_path,
+            close_metrics(&slice_candidate, &accepted_commit),
+        )
+        .unwrap();
+
         Self {
             repository,
             slice_worktree,
             contract_path,
+            metrics_path,
             plan_path: test_support::unique_path("slice-close-plan.json"),
         }
     }
@@ -113,6 +136,65 @@ impl CloseFixture {
             "feat: later Slice\n\nSlice-Review: fresh-context - completed - codex/test - clear",
         ]);
     }
+}
+
+fn close_metrics(slice_candidate: &str, accepted_commit: &str) -> Vec<u8> {
+    let mut bytes = serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": "yo.slice-close-metrics/v1",
+        "slice": "sample",
+        "slice_candidate": slice_candidate,
+        "accepted_commit": accepted_commit,
+        "execution_lanes": [
+            {
+                "lane": "cargo_validation",
+                "mode": "serial",
+                "operation_count": 2,
+                "max_concurrency": 1
+            },
+            {
+                "lane": "integration",
+                "mode": "serial",
+                "operation_count": 1,
+                "max_concurrency": 1
+            }
+        ],
+        "review": {
+            "rounds": 1,
+            "findings": {
+                "reported": 0,
+                "resolved": 0,
+                "not_reproduced": 0,
+                "accepted_limits": 0,
+                "remaining": 0
+            }
+        },
+        "review_packets": {
+            "publication_count": 1,
+            "total_managed_tokens": 100,
+            "largest_sections": [{
+                "kind": "git_diff",
+                "name": "base-to-candidate",
+                "rendered_bytes": 200,
+                "rendered_tokens": 50
+            }],
+            "reused_inputs": []
+        },
+        "validation": [{
+            "name": "focused",
+            "argv": ["cargo", "test", "--locked", "-p", "xtask"],
+            "runs": 1,
+            "status": "passed",
+            "reused": false
+        }],
+        "elapsed_bottleneck": {
+            "name": "full validation",
+            "elapsed_milliseconds": 1000
+        },
+        "known_unverified_environments": []
+    }))
+    .unwrap();
+    bytes.push(b'\n');
+    bytes
 }
 
 impl Drop for CloseFixture {

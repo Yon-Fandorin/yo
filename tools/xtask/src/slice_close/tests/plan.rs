@@ -11,7 +11,7 @@ fn describes_only_the_verified_slice_cleanup() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
 
-    assert_eq!(plan.schema, "yo.slice-close-plan/v3");
+    assert_eq!(plan.schema, "yo.slice-close-plan/v4");
     assert_eq!(plan.slice, "sample");
     assert_eq!(plan.integration_ref, "refs/heads/develop");
     assert_eq!(plan.integration_head, plan.accepted_commit);
@@ -20,7 +20,14 @@ fn describes_only_the_verified_slice_cleanup() {
     assert!(plan.effects.remove_binding);
     assert!(plan.effects.remove_coordination_contract);
     assert!(plan.effects.delete_slice_branch);
-    assert!(plan.retained_coordination_paths.is_empty());
+    assert_eq!(
+        plan.retained_coordination_paths,
+        vec![fixture.metrics_path.clone()]
+    );
+    assert_eq!(
+        plan.close_metrics.as_ref().unwrap().path,
+        fixture.metrics_path
+    );
     assert_eq!(plan.plan_id, identity(&plan).unwrap());
 }
 
@@ -37,7 +44,10 @@ fn reports_retained_coordination_paths_without_claiming_cleanup() {
 
     let plan = fixture.plan();
 
-    assert_eq!(plan.retained_coordination_paths, vec![handoff, notes],);
+    assert_eq!(
+        plan.retained_coordination_paths,
+        vec![fixture.metrics_path.clone(), handoff, notes],
+    );
 }
 
 // retained coordination 항목이 너무 많아 plan의 보고가 불완전해질 수 있으면
@@ -117,7 +127,10 @@ fn linked_integration_worktree_reports_shared_coordination_paths() {
 
     let plan = build_plan(&linked, "sample").unwrap();
 
-    assert_eq!(plan.retained_coordination_paths, vec![handoff]);
+    assert_eq!(
+        plan.retained_coordination_paths,
+        vec![fixture.metrics_path.clone(), handoff]
+    );
     git(
         &fixture.repository.path,
         &["worktree", "remove", "--", linked.to_str().unwrap()],

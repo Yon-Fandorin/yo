@@ -1,5 +1,6 @@
 mod coordination;
 mod git_state;
+mod metrics;
 mod model;
 mod storage;
 
@@ -12,12 +13,13 @@ use serde::Serialize;
 
 use self::{
     git_state::{
-        Worktree, acquire_cleanup_lock, current_branch_ref, delete_slice_ref_guarded, ensure_clean,
-        expect_ref, find_accepted_commit, matching_patch_id, remove_worktree, repository_root,
-        resolve_commit, worktrees,
+        Worktree, accepted_commit_requires_close_metrics, acquire_cleanup_lock, current_branch_ref,
+        delete_slice_ref_guarded, ensure_clean, expect_ref, find_accepted_commit,
+        matching_patch_id, remove_worktree, repository_root, resolve_commit, worktrees,
     },
     model::{
-        Effects, Plan, SCHEMA, identity, slice_ref_for, validate_plan_shape, validate_slice_name,
+        Effects, Plan, SCHEMA, binds_retained_coordination, identity, slice_ref_for,
+        validate_plan_shape, validate_slice_name,
     },
 };
 use crate::{impact, slice_contract, slice_worktree};
@@ -103,6 +105,10 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
     let remove_coordination_contract =
         bound.contract_path == standard_contract_path(&repository, slice)?;
     let workspace = slice_worktree::workspace_root(&repository)?;
+    let close_metrics_path =
+        standard_coordination_directory(&repository, slice)?.join(metrics::FILE_NAME);
+    let close_metrics =
+        metrics::capture(&close_metrics_path, slice, &slice_head, &accepted_commit)?;
     let retained_coordination_paths =
         coordination::retained_paths(&workspace, slice, remove_coordination_contract)?;
     let mut plan = Plan {
@@ -121,6 +127,7 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
         contract_path: bound.contract_path,
         contract_id: bound.contract_id,
         retained_coordination_paths,
+        close_metrics: Some(close_metrics),
         effects: Effects::new(remove_coordination_contract),
     };
     plan.plan_id = identity(&plan)?;
@@ -151,8 +158,16 @@ fn apply_with_before_delete(
             plan.plan_id
         ));
     }
+    if plan.schema != SCHEMA
+        && accepted_commit_requires_close_metrics(&repository, &plan.accepted_commit)?
+    {
+        return Err(
+            "accepted commits at or after the close-metrics cutover require a v4 Slice close plan"
+                .to_owned(),
+        );
+    }
     validate_plan_storage(&repository, plan_path, &plan)?;
-    if plan.schema == SCHEMA {
+    if binds_retained_coordination(&plan) {
         let workspace = slice_worktree::workspace_root(&repository)?;
         let retained = coordination::retained_paths(
             &workspace,
@@ -161,6 +176,16 @@ fn apply_with_before_delete(
         )?;
         if retained != plan.retained_coordination_paths {
             return Err("retained Slice coordination paths changed after planning".to_owned());
+        }
+        if plan.schema == SCHEMA {
+            metrics::require_current(
+                plan.close_metrics
+                    .as_ref()
+                    .expect("validated v4 plan has close metrics"),
+                &plan.slice,
+                &plan.slice_head,
+                &plan.accepted_commit,
+            )?;
         }
     }
     if current_branch_ref(&repository)? != plan.integration_ref {
@@ -285,11 +310,23 @@ fn validate_bound_plan(plan: &Plan, bound: &slice_contract::BoundSlice) -> Resul
 
 fn validate_plan_effects(repository: &Path, plan: &Plan) -> Result<(), String> {
     let expected = plan.contract_path == standard_contract_path(repository, &plan.slice)?;
-    if plan.effects.remove_coordination_contract == expected {
-        Ok(())
-    } else {
-        Err("Slice close plan coordination-contract effect does not match its bounded standard path".to_owned())
+    if plan.effects.remove_coordination_contract != expected {
+        return Err("Slice close plan coordination-contract effect does not match its bounded standard path".to_owned());
     }
+    if plan.schema == SCHEMA {
+        let expected_metrics =
+            standard_coordination_directory(repository, &plan.slice)?.join(metrics::FILE_NAME);
+        if plan
+            .close_metrics
+            .as_ref()
+            .is_none_or(|artifact| artifact.path != expected_metrics)
+        {
+            return Err(
+                "Slice close plan metrics do not use the standard coordination path".to_owned(),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn standard_contract_path(repository: &Path, slice: &str) -> Result<PathBuf, String> {
@@ -304,7 +341,7 @@ fn standard_coordination_directory(repository: &Path, slice: &str) -> Result<Pat
 
 fn validate_plan_storage(repository: &Path, path: &Path, plan: &Plan) -> Result<(), String> {
     if path_within(path, &plan.worktree_path)?
-        || (plan.schema == SCHEMA
+        || (binds_retained_coordination(plan)
             && path_within(
                 path,
                 &standard_coordination_directory(repository, &plan.slice)?,

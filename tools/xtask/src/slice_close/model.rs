@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub(super) const SCHEMA: &str = "yo.slice-close-plan/v3";
+pub(super) const SCHEMA: &str = "yo.slice-close-plan/v4";
+const LEGACY_SCHEMA_V3: &str = "yo.slice-close-plan/v3";
 const LEGACY_SCHEMA_V2: &str = "yo.slice-close-plan/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -25,7 +26,16 @@ pub(super) struct Plan {
     pub(super) contract_id: String,
     #[serde(default)]
     pub(super) retained_coordination_paths: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) close_metrics: Option<CloseMetricsArtifact>,
     pub(super) effects: Effects,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CloseMetricsArtifact {
+    pub(super) path: PathBuf,
+    pub(super) hash: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -56,6 +66,13 @@ struct PlanIdentityV3<'a> {
 }
 
 #[derive(Serialize)]
+struct PlanIdentityV4<'a> {
+    #[serde(flatten)]
+    legacy: PlanIdentityV3<'a>,
+    close_metrics: &'a CloseMetricsArtifact,
+}
+
+#[derive(Serialize)]
 struct LegacyPlanIdentityV2<'a> {
     schema: &'a str,
     slice: &'a str,
@@ -74,9 +91,12 @@ struct LegacyPlanIdentityV2<'a> {
 }
 
 pub(super) fn validate_plan_shape(plan: &Plan) -> Result<(), String> {
-    if !matches!(plan.schema.as_str(), SCHEMA | LEGACY_SCHEMA_V2) {
+    if !matches!(
+        plan.schema.as_str(),
+        SCHEMA | LEGACY_SCHEMA_V3 | LEGACY_SCHEMA_V2
+    ) {
         return Err(format!(
-            "unsupported Slice close plan schema `{}`; expected `{SCHEMA}` or `{LEGACY_SCHEMA_V2}`",
+            "unsupported Slice close plan schema `{}`; expected `{SCHEMA}`, `{LEGACY_SCHEMA_V3}`, or `{LEGACY_SCHEMA_V2}`",
             plan.schema
         ));
     }
@@ -84,6 +104,12 @@ pub(super) fn validate_plan_shape(plan: &Plan) -> Result<(), String> {
         return Err(
             "legacy Slice close plans cannot contain retained coordination paths".to_owned(),
         );
+    }
+    if plan.schema == SCHEMA && plan.close_metrics.is_none() {
+        return Err("Slice close plan v4 requires bound close metrics".to_owned());
+    }
+    if plan.schema != SCHEMA && plan.close_metrics.is_some() {
+        return Err("legacy Slice close plans cannot contain close metrics".to_owned());
     }
     validate_slice_name(&plan.slice)?;
     if !plan.effects.remove_worktree
@@ -96,6 +122,10 @@ pub(super) fn validate_plan_shape(plan: &Plan) -> Result<(), String> {
         return Err("Slice close plan branch does not match its Slice name".to_owned());
     }
     Ok(())
+}
+
+pub(super) fn binds_retained_coordination(plan: &Plan) -> bool {
+    plan.schema != LEGACY_SCHEMA_V2
 }
 
 pub(super) fn identity(plan: &Plan) -> Result<String, String> {
@@ -115,13 +145,29 @@ pub(super) fn identity(plan: &Plan) -> Result<String, String> {
         contract_id: &plan.contract_id,
         effects: &plan.effects,
     };
-    let bytes = if plan.schema == LEGACY_SCHEMA_V2 {
-        serde_json::to_vec(&legacy)
-    } else {
-        serde_json::to_vec(&PlanIdentityV3 {
-            legacy,
-            retained_coordination_paths: &plan.retained_coordination_paths,
-        })
+    let v3 = PlanIdentityV3 {
+        legacy,
+        retained_coordination_paths: &plan.retained_coordination_paths,
+    };
+    let bytes = match plan.schema.as_str() {
+        LEGACY_SCHEMA_V2 => serde_json::to_vec(&v3.legacy),
+        LEGACY_SCHEMA_V3 => serde_json::to_vec(&v3),
+        SCHEMA => {
+            let close_metrics = plan
+                .close_metrics
+                .as_ref()
+                .ok_or_else(|| "Slice close plan v4 requires bound close metrics".to_owned())?;
+            serde_json::to_vec(&PlanIdentityV4 {
+                legacy: v3,
+                close_metrics,
+            })
+        },
+        _ => {
+            return Err(format!(
+                "unsupported Slice close plan schema `{}`",
+                plan.schema
+            ));
+        },
     }
     .map_err(|error| format!("cannot encode Slice close plan identity: {error}"))?;
     let digest = Sha256::digest(bytes)

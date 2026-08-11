@@ -244,6 +244,8 @@ fn applies_a_legacy_v2_plan() {
     let fixture = CloseFixture::new();
     let mut plan = fixture.plan();
     plan.schema = "yo.slice-close-plan/v2".to_owned();
+    plan.close_metrics = None;
+    plan.retained_coordination_paths.clear();
     plan.plan_id = identity(&plan).unwrap();
     let mut encoded = serde_json::to_value(&plan).unwrap();
     encoded
@@ -269,6 +271,7 @@ fn rejects_retained_paths_added_to_a_legacy_plan() {
     let fixture = CloseFixture::new();
     let mut plan = fixture.plan();
     plan.schema = "yo.slice-close-plan/v2".to_owned();
+    plan.close_metrics = None;
     plan.retained_coordination_paths = vec![fixture.contract_path.with_file_name("handoff.md")];
     plan.plan_id = identity(&plan).unwrap();
     fixture.write_plan(&plan);
@@ -277,6 +280,27 @@ fn rejects_retained_paths_added_to_a_legacy_plan() {
 
     assert!(error.contains("legacy Slice close plans cannot contain"));
     assert!(fixture.slice_worktree.exists());
+}
+
+// v4에서 metrics를 빼거나 v3에 새 metrics 필드를 붙이면 어느 identity 규칙으로
+// 검증할지 모호하므로 apply가 cleanup 전에 두 schema/field 조합을 모두 거부한다.
+#[test]
+fn rejects_close_metrics_that_do_not_match_the_plan_schema() {
+    let current = CloseFixture::new();
+    let mut missing = current.plan();
+    missing.close_metrics = None;
+    current.write_plan(&missing);
+    let missing_error = apply(&current.repository.path, &current.plan_path).unwrap_err();
+    assert!(missing_error.contains("v4 requires bound close metrics"));
+    assert!(current.slice_worktree.exists());
+
+    let legacy = CloseFixture::new();
+    let mut unexpected = legacy.plan();
+    unexpected.schema = "yo.slice-close-plan/v3".to_owned();
+    legacy.write_plan(&unexpected);
+    let unexpected_error = apply(&legacy.repository.path, &legacy.plan_path).unwrap_err();
+    assert!(unexpected_error.contains("legacy Slice close plans cannot contain close metrics"));
+    assert!(legacy.slice_worktree.exists());
 }
 
 // worktree 제거 직후 프로세스가 중단된 경우에도 계획된 경로와 binding이 사라지고

@@ -10,6 +10,9 @@ pub(super) use slice_worktree::Worktree;
 
 use crate::{git, slice_worktree};
 
+const CLOSE_METRICS_CUTOVER_MARKER: &str = "tools/xtask/src/slice_close/metrics-cutover";
+const _: &[u8] = include_bytes!("metrics-cutover");
+
 pub(super) struct CleanupLock {
     _file: File,
 }
@@ -116,6 +119,26 @@ pub(super) fn matching_patch_id(
         ));
     }
     Ok(slice_patch)
+}
+
+pub(super) fn accepted_commit_requires_close_metrics(
+    repository: &Path,
+    accepted_commit: &str,
+) -> Result<bool, String> {
+    let marker = git::output_in(
+        repository,
+        &[
+            "ls-tree",
+            "--name-only",
+            accepted_commit,
+            "--",
+            CLOSE_METRICS_CUTOVER_MARKER,
+        ],
+        false,
+    )?;
+    Ok(marker
+        .lines()
+        .any(|path| path == CLOSE_METRICS_CUTOVER_MARKER))
 }
 
 fn single_parent(repository: &Path, commit: &str) -> Result<Option<String>, String> {
