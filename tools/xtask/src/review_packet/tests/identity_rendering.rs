@@ -1,4 +1,12 @@
-use super::{super::*, support::sample_inputs};
+use super::{
+    super::{
+        PAYLOAD_SUFFIX, PREAMBLE, REVIEW_ID_DOMAIN,
+        canonical::{build_manifest, build_plan},
+        render::{append_section, count_tokens, render_packet, require_budget},
+    },
+    support::sample_inputs,
+};
+use crate::review_protocol::{digest, domain_digest};
 
 // ReviewId는 output path나 packet hash가 아니라 versioned canonical plan bytes에만
 // domain-separated로 결합되어 동일 plan을 항상 같은 identity로 만든다.

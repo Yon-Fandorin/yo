@@ -1,4 +1,7 @@
-use super::super::*;
+use super::super::{
+    capture::capture_authorities,
+    trusted_git::{expected_slice_ref, trusted_ensure_clean},
+};
 
 #[cfg(unix)]
 // immutable authority capture는 repository replacement ref를 무시해 recorded commit의
