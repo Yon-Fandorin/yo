@@ -1,4 +1,4 @@
-use super::super::*;
+use super::super::storage;
 
 // packet과 manifest는 한 directory rename으로 함께 나타나며, 같은 bytes는 재사용하고
 // extra artifact가 있는 ReviewId directory는 교체하지 않고 corruption으로 거부한다.
