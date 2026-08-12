@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.model.session-selection
-revision: sha256:745454ff373a9c4f29a1add66e5146dcdfe5c7d76ef3c1c900a636501b8a522b
+revision: sha256:24a507d1b87bce0c9f12c7b36076c19b8245e0a054ab3428369787b382b081e1
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:3e028f10370257568651725ac3c6c67b28a6bfeec9a728118ffb1fc1a7a61e0e
+request_hash: sha256:e9e0c168472c0d5782ffa3df915d7e33c0590396c5b8ca594e8b65695d97e022
 ---
 # Korean Review Projection
 
@@ -24,11 +24,11 @@ Startup은 선택 가능한 source 네 개를 한 번씩 캡처합니다. Invoca
 
 필요한 source의 캡처나 구조 decode 실패, stale repository revision, 같은 좌표의 unequal manual/managed identity, malformed policy는 fatal입니다. 상위 target이 있어도 숨기지 않습니다. Enforced 형태는 enforced target을 선택합니다. 다른 invocation target은 fatal policy conflict이고 stored/operator target은 선택되지 않은 provenance로만 남습니다. Overridable 형태는 invocation, stored preference, policy default, operator `model.startup` 순서로 처음 존재하는 값을 고릅니다. Implicit target은 없으며 `host:codex`를 조용히 넣지 않습니다. 선택 가능한 source가 모두 없으면 interactive startup은 Yo Session이나 backend epoch를 만들기 전에 setup으로 들어가고, non-interactive startup은 `StartupTargetRequired`로 실패하면서 정확한 `yo connect`와 `--model host:codex` 안내를 보여줍니다. Target을 선택한 뒤에는 missing, stale, unavailable, unsupported, policy-denied 상태가 fallback 없이 fatal입니다.
 
-Stored user preference는 이 unit만 소유하며 unset, HostTarget, ModelTarget 중 하나입니다. `yo default TARGET`은 허용된 선택을 저장하고 `--unset`은 지웁니다. Policy 또는 operator target도 없다면 삭제 후 다음 startup이 setup으로 들어갈 수 있습니다. Interactive picker는 inherited, Local Codex, complete configured model을 보여주고 non-interactive value-less command는 실패합니다.
+Stored user preference는 이 unit만 소유하며 unset, HostTarget, ModelTarget 중 하나입니다. `yo default TARGET`은 허용된 선택을 저장하고 `yo default --unset`은 지웁니다. Service-binding 계약이 이 preference-only publication 경계를 소유합니다. Shared operation lock과 pending-journal recovery 뒤에 필요한 fresh admission 또는 verification, 마지막 ConfigSnapshot guard, 정확히 하나의 ConnectionRepository CAS가 이어집니다. Operation journal을 게시하거나 credential revision 또는 action을 명명하지 않습니다. Caller가 outcome을 확인하지 못한 경우 current preference를 먼저 확인해야 합니다. Explicit default command를 반복하는 것은 새로운 authorization입니다. 이미 같은 outcome이면 no-op이고 current preference가 다르면 새 CAS로 바꿀 수 있습니다. 반면 Local Codex connect는 fresh invocation이 관찰한 non-unset preference를 모두 보존합니다. Policy 또는 operator target도 없다면 삭제 후 다음 startup이 setup으로 들어갈 수 있습니다. Interactive picker는 inherited, Local Codex, complete configured model을 보여주고 non-interactive value-less command는 실패합니다.
 
-Target 없는 `yo connect`는 Session 생성 전에 onboarding을 엽니다. Local Codex와 정확히 configured된 외부 모델 또는 새로 입력할 외부 모델을 제시하되 어느 것도 implicit default로 취급하지 않습니다. Local Codex를 선택하면 local Codex backend와 stable host identity가 사용 가능한지 검증한 뒤 HostTarget preference mutation을 준비합니다. 외부 모델을 선택하면 service-binding 계약의 credential, endpoint, dialect, entitlement, semantic terminal 검증을 마치고 ModelTarget과 managed binding mutation을 준비합니다. Non-interactive connect는 exact target 하나가 필요합니다.
+Target 없는 `yo connect`는 Session 생성 전에 onboarding을 엽니다. Local Codex와 정확히 configured된 외부 모델 또는 새로 입력할 외부 모델을 제시하되 어느 것도 implicit default로 취급하지 않습니다. Local Codex를 선택하면 local Codex backend와 stable host identity가 사용 가능한지 검증한 뒤 service-binding 계약이 소유하는 preference-only HostTarget mutation을 준비합니다. 외부 모델을 선택하면 같은 계약의 credential, endpoint, dialect, entitlement, semantic terminal 검증을 마치고 ModelTarget과 managed binding mutation을 준비합니다. Non-interactive connect는 exact target 하나가 필요합니다.
 
-캡처한 stored preference가 unset인 상태에서 처음 성공적으로 검증된 `yo connect`는 그 exact HostTarget 또는 ModelTarget을 성공 outcome과 같은 ConnectionRepository CAS로 preference에 기록합니다. 실패하거나 취소한 시도는 preference를 기록하지 않습니다. 이후 성공한 연결은 기존 preference를 유지하며 변경하려면 `yo default` 또는 명시적인 default-selection UI를 사용합니다. 동시에 일어난 첫 연결들은 같은 public revision을 두고 경쟁합니다. Exact CAS 하나만 이기고 loser는 winner의 preference를 다시 읽은 뒤 암묵적으로 교체하면 안 됩니다.
+캡처한 stored preference가 unset인 상태에서 처음 성공적으로 검증된 `yo connect`는 그 exact HostTarget 또는 ModelTarget을 게시합니다. Local Codex에서는 하나의 preference-only ConnectionRepository CAS가 성공한 연결 outcome입니다. 이 CAS 전에 실패, 취소, 중단되면 preference를 기록하지 않고, CAS 뒤에 중단되면 caller가 성공을 보지 못했더라도 exact preference는 완전히 commit된 상태입니다. Local Codex retry는 fresh snapshot을 캡처하고 필요한 verification과 admission을 반복한 뒤 fresh preference가 계속 unset일 때만 게시합니다. 그렇지 않으면 별도 invocation 사이에서 이전 CAS를 식별하려 하지 않고 current preference를 보존합니다. 외부 모델에서는 같은 public CAS가 credential 변경 journal operation 안에서 managed binding과 preference transition을 함께 게시합니다. Durable intent 전에 실패하거나 취소하면 preference를 기록하지 않습니다. Intent가 durable해진 뒤에는 retry가 verification evidence를 reconstruct하지 않고 먼저 service-binding의 `connect_credential_change` recovery table을 따릅니다. Exact abandonment 뒤에 새 operation을 시작할 때만 secret을 다시 받고 새 verification을 수행합니다. 이후 성공한 연결은 기존 preference를 유지하며 변경하려면 `yo default` 또는 명시적인 default-selection UI를 사용합니다. 동시에 일어난 첫 연결들은 같은 public revision을 두고 경쟁합니다. Exact CAS 하나만 이기고 loser는 winner의 preference를 다시 읽은 뒤 암묵적으로 교체하면 안 됩니다.
 
 Disconnect 전에 selection은 prospective transition 하나를 계산합니다. Exact explicit ModelTarget preference가 제거되면 같은 public CAS로 지우고, 아니면 유지합니다. Preview는 이전 값, transition, effective lower target 또는 setup-required outcome을 보여줍니다. Model 제거로 HostTarget을 지우지 않습니다.
 
@@ -44,4 +44,4 @@ Backend-managed-state binding은 recorded locator와 검증된 backend identity�
 
 ## 이유
 
-Implicit target을 두지 않으면 설정이 빠진 상태에서 Local Codex로 조용히 작업을 시작하지 않고 setup 필요성을 드러냅니다. 처음 성공적으로 검증된 선택만 저장하면 이후 startup의 default가 예측 가능하고, 뒤이은 `connect`가 이를 갑자기 교체하지 않습니다. 양쪽 replay evidence를 요구하면 backend-managed source가 내보낸 적 없는 prefix를 target capability만으로 발명하는 일을 막습니다.
+Implicit target을 두지 않으면 설정이 빠진 상태에서 Local Codex로 조용히 작업을 시작하지 않고 setup 필요성을 드러냅니다. 처음 성공적으로 검증된 선택만 저장하면 이후 startup의 default가 예측 가능하고, 뒤이은 `connect`가 이를 갑자기 교체하지 않습니다. Local Codex와 explicit default 변경을 preference-only public CAS operation으로 다루면 fictitious credential transition을 피하면서 shared serialization과 fresh retry로 interruption과 concurrency outcome을 명확히 유지할 수 있습니다. 양쪽 replay evidence를 요구하면 backend-managed source가 내보낸 적 없는 prefix를 target capability만으로 발명하는 일을 막습니다.
