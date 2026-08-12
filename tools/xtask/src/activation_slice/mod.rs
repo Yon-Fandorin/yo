@@ -13,6 +13,11 @@ use crate::{git, slice_contract, slice_worktree};
 
 const DEVELOP_REF: &str = "refs/heads/develop";
 
+enum ExistingRef {
+    Direct(String),
+    Symbolic(String),
+}
+
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
     let bytes = match storage::read_request(request_path) {
         Ok(bytes) => bytes,
@@ -85,6 +90,15 @@ fn prepare_bytes_with_post_binding(
     }
     let branch_ref = format!("refs/heads/slice/direct/{}", request.slice);
     validate_branch_ref(&repository, &branch_ref)?;
+    let existing_commit = match existing_ref(&repository, &branch_ref)? {
+        Some(ExistingRef::Direct(commit)) => Some(commit),
+        Some(ExistingRef::Symbolic(target)) => {
+            return Err(format!(
+                "{branch_ref} is a symbolic ref to {target}; activation Slice setup requires a direct branch ref"
+            ));
+        },
+        None => None,
+    };
 
     let workspace = slice_worktree::workspace_root(&repository)?;
     let local = workspace.join(".local-exclude");
@@ -116,15 +130,14 @@ fn prepare_bytes_with_post_binding(
     let existing_worktree = registered.iter().find(|worktree| {
         worktree.path == worktree_path || worktree.branch.as_deref() == Some(&branch_ref)
     });
-    let existing_ref = existing_ref(&repository, &branch_ref)?;
     let contract_exists = existing_contract.is_some();
-    if !contract_exists && (existing_ref.is_some() || existing_worktree.is_some()) {
+    if !contract_exists && (existing_commit.is_some() || existing_worktree.is_some()) {
         return Err(format!(
             "Slice ref or worktree already exists without the exact activation contract {}",
             contract_path.display()
         ));
     }
-    if let Some(actual) = existing_ref.as_deref()
+    if let Some(actual) = existing_commit.as_deref()
         && actual != base
     {
         return Err(format!(
@@ -156,7 +169,7 @@ fn prepare_bytes_with_post_binding(
             &worktree_path,
             &branch_ref,
             &base,
-            existing_ref.is_some(),
+            existing_commit.is_some(),
         )
         .map_err(|error| {
             format!(
@@ -190,7 +203,7 @@ fn prepare_bytes_with_post_binding(
         binding_path: binding.binding_path,
         effects: Effects {
             contract: effect(contract_created),
-            branch: effect(existing_ref.is_none()),
+            branch: effect(existing_commit.is_none()),
             worktree: effect(worktree_created),
             binding: effect(binding.created),
         },
@@ -271,15 +284,52 @@ fn validate_prepared_worktree(
     )
 }
 
-fn existing_ref(repository: &Path, reference: &str) -> Result<Option<String>, String> {
+fn existing_ref(repository: &Path, reference: &str) -> Result<Option<ExistingRef>, String> {
+    if let Some(target) = symbolic_ref_target(repository, reference)? {
+        return Ok(Some(ExistingRef::Symbolic(target)));
+    }
     if git::succeeds_in(
         repository,
         &["show-ref", "--verify", "--quiet", reference],
         false,
     )? {
-        slice_worktree::resolve_commit(repository, reference).map(Some)
+        slice_worktree::resolve_commit(repository, reference)
+            .map(ExistingRef::Direct)
+            .map(Some)
     } else {
         Ok(None)
+    }
+}
+
+fn symbolic_ref_target(repository: &Path, reference: &str) -> Result<Option<String>, String> {
+    let output = git::command_in(repository, false)
+        .args(["symbolic-ref", "--quiet", reference])
+        .output()
+        .map_err(|error| format!("cannot inspect Slice ref `{reference}`: {error}"))?;
+    if output.status.success() {
+        let target = String::from_utf8(output.stdout)
+            .map_err(|error| format!("Git returned a non-UTF-8 symbolic ref target: {error}"))?;
+        let target = target.trim();
+        if target.is_empty() {
+            Err(format!(
+                "Git returned an empty symbolic ref target for `{reference}`"
+            ))
+        } else {
+            Ok(Some(target.to_owned()))
+        }
+    } else if output.status.code() == Some(1) {
+        Ok(None)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!(
+            "cannot inspect Slice ref `{reference}` with Git symbolic-ref: {}{}",
+            output.status,
+            if stderr.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr.trim())
+            }
+        ))
     }
 }
 

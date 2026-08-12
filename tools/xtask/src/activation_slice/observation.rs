@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use super::{
-    existing_ref,
+    ExistingRef, existing_ref,
     model::{
         FailureRecord, Observation, ObservedEffects, ObservedState, RESULT_SCHEMA, Request,
         recover_contract_base,
@@ -69,10 +69,15 @@ pub(super) fn failure(
     record.base = base.clone();
     let contract_prepared = matches!(record.effects.contract.state, ObservedState::Prepared);
     record.effects.branch = match existing_ref(&repository, &branch_ref) {
-        Ok(Some(actual)) if contract_prepared && base.as_deref() == Some(actual.as_str()) => {
+        Ok(Some(ExistingRef::Direct(actual)))
+            if contract_prepared && base.as_deref() == Some(actual.as_str()) =>
+        {
             prepared()
         },
-        Ok(Some(actual)) => conflicting(format!("branch points to {actual}")),
+        Ok(Some(ExistingRef::Direct(actual))) => conflicting(format!("branch points to {actual}")),
+        Ok(Some(ExistingRef::Symbolic(target))) => {
+            conflicting(format!("branch is a symbolic ref to {target}"))
+        },
         Ok(None) => absent(),
         Err(detail) => observation(ObservedState::Unknown, detail),
     };

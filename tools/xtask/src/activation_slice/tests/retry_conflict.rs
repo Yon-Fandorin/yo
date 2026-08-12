@@ -67,6 +67,53 @@ fn rejects_a_preexisting_branch_without_the_exact_contract() {
     assert!(!fixture.worktree().exists());
 }
 
+// exact contract가 남은 retry에서도 direct-Slice ref가 다른 branch의 symbolic
+// alias라면 최종 commit이 같아도 직접 branch로 인수하지 않는다. 검증 실패 전에
+// unrelated target을 worktree에 attach했던 회귀를 막기 위해 ref bytes와 target,
+// worktree 부재를 함께 확인한다.
+#[test]
+fn rejects_a_symbolic_direct_slice_ref_before_worktree_creation() {
+    let fixture = Fixture::new("activation-symbolic-ref");
+    let first = fixture.prepare();
+    fixture.repository.git([
+        "worktree",
+        "remove",
+        "--force",
+        "--",
+        first.worktree_path.to_str().unwrap(),
+    ]);
+    let branch = format!("slice/direct/{}", fixture.slice);
+    fixture.repository.git(["branch", "-D", &branch]);
+    let target = "unrelated-symbolic-target";
+    fixture.repository.git(["branch", target]);
+    let branch_ref = format!("refs/heads/{branch}");
+    let target_ref = format!("refs/heads/{target}");
+    fixture
+        .repository
+        .git(["symbolic-ref", &branch_ref, &target_ref]);
+    let target_before = output(&fixture.repository.path, &["rev-parse", &target_ref]);
+
+    let encoded = run(&fixture.repository.path, &fixture.request).unwrap_err();
+    let failure: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    let error = failure["error"].as_str().unwrap();
+
+    assert!(error.contains("is a symbolic ref"), "{failure:#}");
+    assert!(error.contains(&target_ref), "{failure:#}");
+    assert_eq!(failure["effects"]["contract"]["state"], "prepared");
+    assert_eq!(failure["effects"]["branch"]["state"], "conflicting");
+    assert_eq!(failure["effects"]["worktree"]["state"], "absent");
+    assert_eq!(failure["effects"]["binding"]["state"], "unknown");
+    assert_eq!(
+        output(&fixture.repository.path, &["symbolic-ref", &branch_ref]),
+        target_ref
+    );
+    assert_eq!(
+        output(&fixture.repository.path, &["rev-parse", &target_ref]),
+        target_before
+    );
+    assert!(!fixture.worktree().exists());
+}
+
 // exact contract 증거 없이 branch만 남은 상태는 ref가 같은 base여도 helper가
 // 준비한 effect로 인수하지 않고 conflicting으로 재조회한다.
 #[test]
