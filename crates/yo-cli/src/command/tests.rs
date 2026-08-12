@@ -54,6 +54,38 @@ fn option_like_model_reference_reaches_the_model_resolver_unchanged() {
     assert_eq!(options.model.as_deref(), Some("-vendor-model"));
 }
 
+// `default TARGET`과 `default --unset`은 정확히 하나의 새 기본값 의도를 만들고, 둘을
+// 함께 주거나 아무것도 주지 않으면 어떤 상태를 게시할지 추측하지 않고 거절합니다.
+#[test]
+fn default_command_requires_exactly_one_set_or_clear_intent() {
+    assert_eq!(
+        parse(["default".into(), "host:codex".into()]).unwrap(),
+        Command::Default(DefaultCommand {
+            target: Some("host:codex".to_owned())
+        })
+    );
+    assert_eq!(
+        parse(["default".into(), "--unset".into()]).unwrap(),
+        Command::Default(DefaultCommand { target: None })
+    );
+    assert!(parse(["default".into()]).is_err());
+    assert!(parse(["default".into(), "host:codex".into(), "--unset".into(),]).is_err());
+}
+
+// 비대화식 connect는 하나의 exact target을 필수로 보존하고 값 없는 호출이나 복수
+// target을 onboarding 선택으로 오해하지 않아 아직 준비되지 않은 결정을 만들지 않습니다.
+#[test]
+fn connect_command_requires_one_exact_target() {
+    assert_eq!(
+        parse(["connect".into(), "host:codex".into()]).unwrap(),
+        Command::Connect(ConnectCommand {
+            target: "host:codex".to_owned()
+        })
+    );
+    assert!(parse(["connect".into()]).is_err());
+    assert!(parse(["connect".into(), "host:codex".into(), "second".into(),]).is_err());
+}
+
 // 명시한 UUID 재개와 현재 작업공간의 최근 세션 재개는 새 Session 시작과 구분되고,
 // 동시에 지정하면 어느 쪽도 임의로 우선하지 않는다.
 #[test]

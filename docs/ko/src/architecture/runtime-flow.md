@@ -90,12 +90,13 @@ Account 안에 머물고, namespace가 없으면 catalog 전체에서 정확히 
 정확한 완전 좌표 하나여야 한다. 없거나 모호하면 안정적으로 정렬한 canonical 완전
 좌표와 함께 명시적으로 실패한다.
 
-새 Session에서는 명시적인 invocation target이 operator `model.startup`보다 우선하고,
-option을 생략하면 그 operator target을 보존한다. 둘 다 없으면 Codex를 조용히 선택하지
-않고 Session 생성 전에 정확한 `yo connect`와 `yo --model host:codex` 안내로 실패한다.
-core resolver는 stored preference와 injected policy 계층도 이미 수용하지만, 로컬
-repository와 command 연결은 connection-management Slice에 남아 있다. 저장된
-Yo-managed Session은 최신 durable binding을 bare namespace로 쓰고 startup 기본값은 그
+새 Session에서는 명시적인 invocation target이 저장된 `connections.yaml` preference보다
+우선하고, 저장 preference는 operator `model.startup`보다 우선한다. 한 계층을 생략하면
+그다음 존재하는 계층을 보존한다. 세 계층이 모두 없으면 Codex를 조용히 선택하지 않고
+Session 생성 전에 정확한 `yo connect`와 `yo --model host:codex` 안내로 실패한다.
+`yo default TARGET`은 정확한 HostTarget 또는 설정된 ModelTarget 하나를 admission하고
+저장하며, `yo default --unset`은 이 저장 계층만 지운다. 재개하는 Yo-managed Session은
+저장 preference를 읽지 않고 최신 durable binding을 bare namespace로 쓰며 startup 기본값은 그
 namespace를 바꾸지 않는다. 정확한 `host:codex`는 Codex resume을 확인하며, 서로 다른
 cross-backend target은 handoff가 아직 미뤄져 있으므로 명시적으로 실패한다.
 
@@ -120,7 +121,9 @@ binding epoch를 닫고 replacement epoch 하나를 연 뒤 backend를 제자리
 ```text
 yo-cli
   표시 mode, glyph profile, optional 모델 좌표 해석, cwd 확보
-  검증된 모델 catalog와 선택한 Provider/Account의 정확한 credential 읽기
+  새 Session을 위해 config.yaml과 생성하지 않는 저장 preference capture
+  invocation > 저장 preference > operator startup 순서로 resolve
+  managed model을 선택하면 해당 Provider/Account의 정확한 credential 읽기
   TerminationCoordinator 설치
   Host identity와 Session repository 열기
   workspace 정규화와 SessionDescriptor 생성
@@ -142,8 +145,8 @@ yo-tui
 
 | 단계 | 현재 소유자 | 확인할 내용 |
 |---|---|---|
-| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run`이 표시 옵션과 작업 디렉터리를 확보하고 종료 coordinator를 설치한다. Host identity와 Session storage를 열고 workspace를 canonicalize한 뒤 시각이 일치하는 UUIDv7 `SessionDescriptor`를 만든다. |
-| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | process host가 Codex stdio transport를 시작하거나 startup snapshot과 주입된 tool로 선택한 native binding을 조립한다. 두 경로 모두 worker가 backend를 소유할 때까지 remote model 작업을 미룬다. |
+| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/connection.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection.rs) | `run`이 표시 옵션·작업 디렉터리·command-local 설정을 확보하고 새 Session의 저장 preference를 상태 생성 없이 읽는다. 종료 coordinator를 설치하고 Host identity와 Session storage를 열며 workspace를 canonicalize한 뒤 시각이 일치하는 UUIDv7 `SessionDescriptor`를 만든다. Resume은 저장 preference를 읽지 않는다. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | process host가 invocation·저장·operator 계층을 resolve한 다음 Codex stdio transport를 시작하거나 startup snapshot과 주입된 tool로 선택한 native binding을 조립한다. 두 경로 모두 worker가 backend를 소유할 때까지 remote model 작업을 미룬다. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 descriptor-only Journal envelope를 먼저 시도한 뒤 `AgentRuntime`을 통해 `CreateSession`을 보낸다. storage pressure가 있으면 descriptor와 이후 activity를 복구 가능한 volatile prefix로 함께 유지한다. |
 | 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | Codex에서는 `CreateSession`이 `initialize`와 `thread/start`를 수행한다. native backend는 provider 요청 없이 local exact-replay Session state를 연결한다. 두 경로 모두 semantic engine이 `SessionCreated`를 만들게 한다. |
@@ -517,9 +520,11 @@ Codex를 조용히 선택하지 않고 setup 안내를 표시한다. 위 YAML은
 아니라 운영자가 소유하는 native 모델 예시다. 파일을 읽을 수
 없거나 version/field/크기/date
 format/frame rate가 잘못되면 조용히 기본값으로 대체하지 않고
-명시적으로 실패한다. reader는 nonblocking descriptor 하나를 열어 regular file인지
-확인하고 64 KiB와 판별용 한 byte까지만 읽으므로 FIFO가 command를 멈추거나 동시에
-커지는 파일이 상한을 우회하지 못한다. 모델 API key는 환경 변수에서 읽지 않는다.
+명시적으로 실패한다. reader는 no-follow nonblocking descriptor 하나를 열어 regular file인지
+확인하고 안정적인 identity와 metadata를 capture하며 1 MiB와 판별용 한 byte까지만 읽으므로
+FIFO가 command를 멈추거나 동시에 커지는 파일이 상한을 우회하지 못한다. Preference mutation은
+이 파일을 다시 capture하고 public commit 전에 정확한 command-local snapshot이 바뀌지 않았음을
+요구한다. 모델 API key는 환경 변수에서 읽지 않는다.
 설정한 모델을 선택하면 Yo는 선택된 `config.yaml` 옆의 별도
 `credentials.yaml`을 다음 Provider-Account 순서의 versioned 구조로 읽는다.
 
@@ -543,6 +548,34 @@ Model ID는 운영자가 관리하는 예시이며 현재 Provider의 정확한 
 profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 binding에만 쓸 수
 있고 모르는 profile은 startup에서 실패한다. `max_output_tokens`는 wire output cap인
 동시에 local context admission에서 입력 한도로부터 제외하는 값이다.
+
+공개 sibling `connections.yaml`은 operator가 소유하는 `config.yaml`, secret인
+`credentials.yaml`과 분리된다. 현재 preference-only writer는 다음 shape를 사용한다
+(불투명 revision 값은 예시다).
+
+```yaml
+version: 1
+revision: rev-0123456789abcdef0123456789abcdef
+preference:
+  kind: host
+  target: host:codex
+```
+
+파일이 없으면 canonical unset snapshot이며 디렉터리를 만들지 않고 읽는다. `yo default
+TARGET`, `yo default --unset`, 명시적 `yo connect host:codex`는 nonblocking process
+operation lock 하나를 사용하고 pending multi-repository operation이 없음을 확인한다.
+이어 크기가 제한된 mode `0600` regular snapshot을 capture하고 새 불투명 revision으로
+정확한 새 byte를 준비한다. Target admission 또는 Local Codex process와 안정적인 Host
+identity 검증, 마지막 configuration guard 뒤 repository CAS 정확히 하나가 byte를 게시한다.
+파일이 없을 때의 첫 write는 같은 디렉터리에서 exclusive publication을 사용하고 이후 write는
+durable atomic replacement를 사용한다. 계획한 revision과 byte가 정확히 같으면 idempotent
+success이며 다른 revision이면 conflict다. Local Codex는 새로 관찰한 unset preference에서만
+게시한다. 다른 preference가 CAS에서 이기면 command가 다시 읽고 그 winner를 보존한다.
+이 preference-only command들은 operation journal을 만들거나 credential revision을 확인하지
+않는다. Credential을 바꾸는 external connect와 disconnect는 아직 이 구현 경로 밖에 있으며
+preference-only recovery를 빌리지 않고 명시적으로 실패한다. 해당 Slice가 typed managed
+entry와 composition을 정의하기 전까지 이 preference-only build는 startup에서 검증할 수 없는
+opaque 상태를 받아들이지 않고, 비어 있지 않은 `bindings`나 `accounts`가 든 snapshot을 거절한다.
 
 repository가
 없으면 빈 목록을 반환하고 상태를 만들지 않는다.

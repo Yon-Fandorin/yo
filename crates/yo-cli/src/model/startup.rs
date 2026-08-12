@@ -25,6 +25,7 @@ pub(super) fn replacement(selection: &yo_core::ModelSelection) -> StartupBackend
 
 pub(super) fn resolve(
     config: &Config,
+    stored_preference: Option<StartupTarget>,
     override_model: Option<&str>,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
@@ -32,11 +33,17 @@ pub(super) fn resolve(
         return resolve_resume(config, override_model, target);
     }
     let startup = config.startup_target().cloned();
-    resolve_new_session(config.model_catalog(), startup, override_model)
+    resolve_new_session(
+        config.model_catalog(),
+        stored_preference,
+        startup,
+        override_model,
+    )
 }
 
 fn resolve_new_session(
     catalog: &yo_core::ModelCatalog,
+    stored_preference: Option<StartupTarget>,
     operator: Option<StartupTarget>,
     reference: Option<&str>,
 ) -> Result<StartupBackend, AppError> {
@@ -45,7 +52,7 @@ fn resolve_new_session(
         &StartupPolicy::initial(),
         StartupSelectionSources {
             invocation: reference,
-            stored_preference: None,
+            stored_preference,
             operator_target: operator,
         },
     )
@@ -226,26 +233,63 @@ mod tests {
             ("openrouter", "default", "openrouter/free"),
         ]);
 
-        let missing = resolve_new_session(&catalog, None, None).unwrap_err();
+        let missing = resolve_new_session(&catalog, None, None, None).unwrap_err();
         assert_eq!(missing.to_string(), "no startup target is selected");
         assert_eq!(missing.help(), ["yo connect", "yo --model host:codex"]);
 
         assert!(matches!(
-            resolve_new_session(&catalog, None, Some("host:codex")).unwrap(),
+            resolve_new_session(&catalog, None, None, Some("host:codex")).unwrap(),
             StartupBackend::Codex
         ));
-        let bare = resolve_new_session(&catalog, None, Some("qwen3.8-max")).unwrap();
+        let bare = resolve_new_session(&catalog, None, None, Some("qwen3.8-max")).unwrap();
         let selected = bare.model_selection().unwrap();
         assert_eq!(selected.provider().as_str(), "qwencloud");
         assert_eq!(selected.account().as_str(), "default");
         assert_eq!(selected.model().as_str(), "qwen3.8-max");
 
-        let complete =
-            resolve_new_session(&catalog, None, Some("openrouter:default:openrouter/free"))
-                .unwrap();
+        let complete = resolve_new_session(
+            &catalog,
+            None,
+            None,
+            Some("openrouter:default:openrouter/free"),
+        )
+        .unwrap();
         assert_eq!(
             complete.model_selection().unwrap().model().as_str(),
             "openrouter/free"
+        );
+    }
+
+    // 새 Session은 explicit invocation이 저장 기본값보다 우선하고, invocation이 없을 때는
+    // 저장 기본값이 operator startup보다 먼저 선택되어 영속화한 사용자 의도가 적용됩니다.
+    #[test]
+    fn stored_preference_sits_between_invocation_and_operator_startup() {
+        let catalog = selection_catalog(&[("qwencloud", "default", "operator")]);
+        let operator = StartupTarget::Model(ModelSelection::new(
+            ProviderId::new("qwencloud").unwrap(),
+            AccountId::new("default").unwrap(),
+            ModelId::new("operator").unwrap(),
+        ));
+
+        let stored = resolve_new_session(
+            &catalog,
+            Some(StartupTarget::HostCodex),
+            Some(operator.clone()),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(stored, StartupBackend::Codex));
+
+        let invoked = resolve_new_session(
+            &catalog,
+            Some(StartupTarget::HostCodex),
+            Some(operator),
+            Some("qwencloud:default:operator"),
+        )
+        .unwrap();
+        assert_eq!(
+            invoked.model_selection().unwrap().model().as_str(),
+            "operator"
         );
     }
 
@@ -266,6 +310,7 @@ mod tests {
 
         let contextual = resolve_new_session(
             &catalog,
+            None,
             Some(StartupTarget::Model(startup.clone())),
             Some("same"),
         )
@@ -276,6 +321,7 @@ mod tests {
         );
         let qualified = resolve_new_session(
             &catalog,
+            None,
             Some(StartupTarget::Model(startup)),
             Some("openrouter::same"),
         )
@@ -285,7 +331,7 @@ mod tests {
             "openrouter"
         );
 
-        let error = match resolve_new_session(&catalog, None, Some("same")) {
+        let error = match resolve_new_session(&catalog, None, None, Some("same")) {
             Ok(_) => panic!("duplicate bare ModelId must remain ambiguous"),
             Err(error) => error.to_string(),
         };
@@ -305,10 +351,11 @@ mod tests {
             ModelId::new("removed").unwrap(),
         );
 
-        let error = match resolve_new_session(&catalog, Some(StartupTarget::Model(stale)), None) {
-            Ok(_) => panic!("a stale configured startup must fail closed"),
-            Err(error) => error.to_string(),
-        };
+        let error =
+            match resolve_new_session(&catalog, None, Some(StartupTarget::Model(stale)), None) {
+                Ok(_) => panic!("a stale configured startup must fail closed"),
+                Err(error) => error.to_string(),
+            };
 
         assert!(error.contains("resolving startup target"));
         assert!(error.contains("Model removed"));

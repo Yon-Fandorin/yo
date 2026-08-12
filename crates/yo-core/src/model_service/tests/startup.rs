@@ -47,7 +47,12 @@ fn target_reference_uses_canonical_coordinate_escaping() {
     let selected = controller
         .resolve_target_reference("vendor%3Aedge:team%25blue:model:latest/v1")
         .unwrap();
-    assert_eq!(selected.model().unwrap().provider().as_str(), "vendor:edge");
+    let selection = selected.model().unwrap();
+    assert_eq!(selection.provider().as_str(), "vendor:edge");
+    assert_eq!(
+        selection.canonical_reference(),
+        "vendor%3Aedge:team%25blue:model:latest/v1"
+    );
     assert!(
         controller
             .resolve_target_reference("vendor%3aedge:team%25blue:model:latest/v1")

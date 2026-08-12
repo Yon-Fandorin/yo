@@ -14,6 +14,8 @@ mod command;
 #[cfg(unix)]
 mod config;
 #[cfg(unix)]
+mod connection;
+#[cfg(unix)]
 mod diagnostic;
 #[cfg(unix)]
 mod live;
@@ -50,9 +52,24 @@ fn main() -> ExitCode {
 #[cfg(unix)]
 fn run(command: command::Command) -> Result<(), AppError> {
     match command {
+        command::Command::Connect(command) => {
+            write_command_output(connection::run_connect(command)?)
+        },
+        command::Command::Default(command) => {
+            write_command_output(connection::run_default(command)?)
+        },
         command::Command::Session(command) => run_session_command(command),
         command::Command::Live(options) => run_live_session(options),
     }
+}
+
+#[cfg(unix)]
+fn write_command_output(output: String) -> Result<(), AppError> {
+    let mut stdout = std::io::stdout().lock();
+    stdout
+        .write_all(output.as_bytes())
+        .and_then(|()| stdout.flush())
+        .map_err(|error| AppError::single("writing command output", error))
 }
 
 #[cfg(unix)]
@@ -83,7 +100,11 @@ fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
     // Live configuration is snapshotted once and retained across terminal ownership generations.
     let config =
         config::load().map_err(|error| AppError::single("reading Yo configuration", error))?;
-    let credentials = model::open_credentials(&config.credential_path())?;
+    let stored_preference = match options.selection {
+        command::LiveSelection::New => connection::stored_preference(&config)?,
+        command::LiveSelection::Resume(_) | command::LiveSelection::Continue => None,
+    };
+    let mut credentials = None;
     let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
         AppError::single("installing the process termination coordinator", error)
     })?;
@@ -100,8 +121,11 @@ fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
                     &cwd,
                     options.clone(),
                     launch_failure_selection,
-                    &config,
-                    &credentials,
+                    StartupSnapshots {
+                        config: &config,
+                        credentials: &mut credentials,
+                        stored_preference: stored_preference.as_ref(),
+                    },
                 )
             },
             shutdown_live_session,
@@ -160,15 +184,26 @@ enum SessionStep {
 }
 
 #[cfg(unix)]
+struct StartupSnapshots<'a> {
+    config: &'a config::Config,
+    credentials: &'a mut Option<yo_core::CredentialStore>,
+    stored_preference: Option<&'a yo_core::StartupTarget>,
+}
+
+#[cfg(unix)]
 fn run_agent_generation(
     termination: &mut impl yo_tui::TerminationSource,
     live: &mut Option<LiveSession>,
     cwd: &std::path::Path,
     options: command::LiveOptions,
     launch_failure_selection: command::LiveSelection,
-    config: &config::Config,
-    credentials: &yo_core::CredentialStore,
+    snapshots: StartupSnapshots<'_>,
 ) -> Result<SessionStep, AppError> {
+    let StartupSnapshots {
+        config,
+        credentials,
+        stored_preference,
+    } = snapshots;
     if live.is_none() {
         let storage = match storage::open_default() {
             Ok(storage) => storage,
@@ -268,6 +303,7 @@ fn run_agent_generation(
         };
         let selection = match model::resolve(
             config,
+            stored_preference.cloned(),
             options.model.as_deref(),
             match &launch {
                 Launch::New(_) => None,
@@ -326,9 +362,10 @@ fn run_agent_generation(
                 (Box::new(backend), Some(skills))
             },
             model::StartupBackend::Native { .. } => {
-                let backend =
-                    match model::start_native(config, credentials, &selection, &session_cwd) {
-                        Ok(backend) => backend,
+                let selected_credentials =
+                    match model::credentials_for_startup(config, credentials, &selection) {
+                        Ok(Some(credentials)) => credentials,
+                        Ok(None) => unreachable!("native selection requires credentials"),
                         Err(error) if launch.resume_id().is_some() => {
                             drop(repository);
                             return handle_launch_failure(
@@ -340,6 +377,24 @@ fn run_agent_generation(
                         },
                         Err(error) => return Err(error),
                     };
+                let backend = match model::start_native(
+                    config,
+                    selected_credentials,
+                    &selection,
+                    &session_cwd,
+                ) {
+                    Ok(backend) => backend,
+                    Err(error) if launch.resume_id().is_some() => {
+                        drop(repository);
+                        return handle_launch_failure(
+                            launch_failure_selection,
+                            options.glyph_profile,
+                            live::ResumeFailureStage::BackendSpawn,
+                            error,
+                        );
+                    },
+                    Err(error) => return Err(error),
+                };
                 (backend, None)
             },
         };
@@ -413,7 +468,14 @@ fn run_agent_generation(
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
         Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(selection)) => {
             let replacement = model::replacement(&selection);
-            match model::start_native(config, credentials, &replacement, &session.workspace) {
+            match model::start_native(
+                config,
+                credentials
+                    .as_ref()
+                    .expect("a live native Session retained its credential snapshot"),
+                &replacement,
+                &session.workspace,
+            ) {
                 Ok(backend) => match session.agent.replace_backend(backend, termination) {
                     Ok(outcome) => {
                         let cleanup_warning = outcome.cleanup_failure().map(ToString::to_string);

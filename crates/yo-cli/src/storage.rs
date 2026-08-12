@@ -48,6 +48,10 @@ pub(crate) fn open_default_reader() -> Result<LocalReadStorage, StorageConfigErr
     open_reader_at(state_root, repository_root)
 }
 
+pub(crate) fn open_default_host_identity() -> Result<WorkspaceHostId, StorageConfigError> {
+    open_host_identity_at(platform_state_root()?)
+}
+
 fn platform_state_root() -> Result<PathBuf, StorageConfigError> {
     platform_state_root_from(std::env::var_os("XDG_STATE_HOME"), std::env::var_os("HOME"))
 }
@@ -96,6 +100,12 @@ fn open_at(
         repository,
         workspace_host_id,
     })
+}
+
+fn open_host_identity_at(state_root: PathBuf) -> Result<WorkspaceHostId, StorageConfigError> {
+    Ok(LocalWorkspaceHostIdentity::open(state_root.join("host"))
+        .map_err(StorageConfigError::HostIdentity)?
+        .id())
 }
 
 fn open_reader_at(

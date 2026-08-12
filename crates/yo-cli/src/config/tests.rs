@@ -19,6 +19,22 @@ fn missing_configuration_uses_defaults_without_creating_a_file() {
     assert!(config.date_formatter().is_ok());
     assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps120);
     assert!(!path.exists());
+    assert_eq!(
+        config.snapshot_digest(),
+        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+}
+
+// ConfigSnapshot digest는 exact bytes의 lowercase SHA-256 domain으로 안정적이어야 향후
+// recovery journal이 같은 invocation의 공개 계획을 비밀 없이 식별할 수 있습니다.
+#[test]
+fn config_snapshot_digest_is_lowercase_sha256_of_exact_bytes() {
+    let config = parse(Path::new("config.yaml"), "version: 1\n").unwrap();
+
+    assert_eq!(
+        config.snapshot_digest(),
+        "sha256:09bfcc6a14b83e2192b8673677725c84883ee9cd0c70e45c9ec09daa8f2b2847"
+    );
 }
 
 // 사용자가 60fps를 선택하면 설정을 시작 시의 typed frame 정책으로 해석합니다.
@@ -199,6 +215,41 @@ fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {
 
     fs::remove_file(&path).unwrap();
     assert!(matches!(error, ConfigError::UnsupportedFileType(found) if found == path));
+}
+
+// config 최종 경로가 symlink이면 target의 내용과 권한이 정상이어도 no-follow open에서
+// 거절되어 capture와 final guard 사이에 다른 파일로 바뀔 경로를 신뢰하지 않습니다.
+#[test]
+fn symlink_configuration_is_rejected_without_following_its_target() {
+    let root = std::env::temp_dir().join(format!("yo-config-symlink-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let target = root.join("target.yaml");
+    let alias = root.join("config.yaml");
+    fs::write(&target, "version: 1\n").unwrap();
+    std::os::unix::fs::symlink(&target, &alias).unwrap();
+
+    let error = load_from(&alias).unwrap_err();
+
+    fs::remove_dir_all(root).unwrap();
+    assert!(matches!(error, ConfigError::Io { .. }));
+}
+
+// 한 invocation이 capture한 config handle의 bytes와 identity는 그대로면 guard가 통과하고,
+// 같은 bytes를 다시 써도 새 identity metadata가 되면 stale 준비를 게시하지 않게 거절합니다.
+#[test]
+fn final_config_guard_detects_same_byte_replacement() {
+    let path = std::env::temp_dir().join(format!("yo-config-guard-{}", std::process::id()));
+    fs::write(&path, "version: 1\n").unwrap();
+    let config = load_from(&path).unwrap();
+    assert!(config.verify_unchanged().is_ok());
+
+    let replacement = path.with_extension("replacement");
+    fs::write(&replacement, "version: 1\n").unwrap();
+    fs::rename(&replacement, &path).unwrap();
+    let error = config.verify_unchanged().unwrap_err();
+
+    fs::remove_file(path).unwrap();
+    assert!(matches!(error, ConfigError::Changed(_)));
 }
 
 // 오타 난 설정 키를 무시하면 사용자는 형식이 적용됐다고 오해하므로, 정확한 파일

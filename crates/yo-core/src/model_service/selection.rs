@@ -48,6 +48,17 @@ impl ModelSelection {
             self.model
         )
     }
+
+    /// Canonical complete startup reference with Provider and Account separators escaped.
+    #[must_use]
+    pub fn canonical_reference(&self) -> String {
+        format!(
+            "{}:{}:{}",
+            encode_coordinate_segment(self.provider.as_str()),
+            encode_coordinate_segment(self.account.as_str()),
+            self.model
+        )
+    }
 }
 
 /// A presentation-neutral catalog projection in Provider -> Account -> Model order.
@@ -160,7 +171,7 @@ impl ModelSelectionController {
                     && current.account() == selection.account()
             });
             let provider_model_matches = reference == provider_model_reference(selection);
-            let complete_coordinate_matches = reference == complete_reference(selection);
+            let complete_coordinate_matches = reference == selection.canonical_reference();
             if (bare_is_applicable && reference == selection.model().as_str())
                 || provider_model_matches
                 || complete_coordinate_matches
@@ -233,15 +244,6 @@ fn provider_model_reference(selection: &ModelSelection) -> String {
     )
 }
 
-fn complete_reference(selection: &ModelSelection) -> String {
-    format!(
-        "{}:{}:{}",
-        encode_coordinate_segment(selection.provider().as_str()),
-        encode_coordinate_segment(selection.account().as_str()),
-        selection.model()
-    )
-}
-
 fn reference_error(
     reference: &str,
     outcome: &str,
@@ -265,7 +267,7 @@ fn reference_error(
         message.push_str("\n- none configured");
     } else {
         for coordinate in coordinates {
-            message.push_str(&format!("\n- {}", complete_reference(&coordinate)));
+            message.push_str(&format!("\n- {}", coordinate.canonical_reference()));
         }
     }
     ModelServiceError::new(message)

@@ -6,8 +6,8 @@ use std::{
 };
 
 use super::{
-    DEFAULT_CAPACITY_BYTES, capacity_bytes_from, open_at, open_reader_at, platform_state_root_from,
-    repository_root_from,
+    DEFAULT_CAPACITY_BYTES, capacity_bytes_from, open_at, open_host_identity_at, open_reader_at,
+    platform_state_root_from, repository_root_from,
 };
 
 struct TestDirectory(PathBuf);
@@ -33,6 +33,20 @@ impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+// connect 검증은 Session repository를 만들지 않고 live startup과 같은 state-root의 stable
+// WorkspaceHostId를 재사용해야 두 진입점이 서로 다른 Host identity를 만들지 않습니다.
+#[test]
+fn host_identity_can_open_without_a_session_repository() {
+    let directory = TestDirectory::new("host-only");
+
+    let first = open_host_identity_at(directory.path().to_owned()).unwrap();
+    let second = open_host_identity_at(directory.path().to_owned()).unwrap();
+
+    assert_eq!(first, second);
+    assert!(directory.path().join("host/host-id").is_file());
+    assert!(!directory.path().join("sessions").exists());
 }
 
 // 명시적인 repository override는 OS 기본 위치보다 먼저 선택되어 test와 운영자가

@@ -65,6 +65,20 @@ fn initializes_before_starting_a_thread() {
     assert!(sent[2]["params"].get("ephemeral").is_none());
 }
 
+// 연결 대상 검증은 initialize handshake까지만 수행하고 thread/start나 thread/resume을
+// 보내지 않아, 기본값을 고르는 과정이 새 backend Session을 만들지 않음을 확인합니다.
+#[test]
+fn verifies_the_handshake_without_creating_a_thread() {
+    let (mut backend, sent) = backend([]);
+
+    backend.verify().unwrap();
+
+    let sent = sent.0.borrow();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0]["method"], "initialize");
+    assert_eq!(sent[1], json!({ "method": "initialized" }));
+}
+
 // 저장된 locator로 재개할 때 새 thread를 만들지 않고 `thread/resume` 한 번만 보내며,
 // app-server 버전이 달라도 thread·Session·model·provider 신원이 같으면 같은 binding이다.
 #[test]
@@ -107,7 +121,7 @@ fn rejects_a_resumed_thread_with_different_model_identity() {
 }
 
 // 검증하지 않은 Codex minor 버전이면 initialized 알림이나 Session 명령을 보내기 전에
-// Initialization 실패로 연결을 중단하고, 새로 검증한 0.146은 이 경로에 들지 않게 한다.
+// Initialization 실패로 연결을 중단하고, 검증된 0.146은 이 경로에 들지 않게 한다.
 #[test]
 fn incompatible_version_fails_during_initialization() {
     let (peer, sent) = FakePeer::new([initialize_response(1, "0.147.0")]);

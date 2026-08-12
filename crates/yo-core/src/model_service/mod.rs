@@ -2,6 +2,7 @@
 
 mod binding;
 mod catalog;
+mod connection_repository;
 mod credential;
 mod identity;
 mod local_credentials;
@@ -11,6 +12,11 @@ mod startup;
 pub use binding::{ApiDialect, ConnectorId, EffectiveModelBinding, NormalizedEndpoint};
 pub use catalog::{
     ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelTokenCounter, ModelTokenCounterError,
+};
+pub use connection_repository::{
+    ConnectionCommit, ConnectionRepository, ConnectionRepositoryError, ConnectionRevision,
+    ConnectionSnapshot, LocalConnectionOperationGuard, LocalConnectionRepository,
+    PreparedConnectionMutation,
 };
 pub use credential::{ApiCredential, CredentialStore};
 pub use identity::{AccountId, ModelId, ModelServiceError, ProviderId};

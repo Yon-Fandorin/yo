@@ -93,13 +93,14 @@ ModelId when no namespace exists. The two qualified forms require respectively
 one exact Provider-and-Model account match or one exact complete coordinate.
 Absence and ambiguity fail with stable, sorted canonical complete coordinates.
 
-For a new Session, an explicit invocation target overrides operator
-`model.startup`; omitting the option preserves that operator target. When both
-are absent, startup fails before Session creation with exact `yo connect` and
-`yo --model host:codex` guidance instead of silently choosing Codex. The core
-resolver already admits the stored-preference and injected-policy layers, while
-their local repository and command wiring remain in the connection-management
-Slice. A resumed Yo-managed Session uses its newest durable binding as the bare
+For a new Session, an explicit invocation target overrides the stored
+`connections.yaml` preference, which overrides operator `model.startup`.
+Omitting one layer preserves the next present layer. When all three are absent,
+startup fails before Session creation with exact `yo connect` and `yo --model
+host:codex` guidance instead of silently choosing Codex. `yo default TARGET`
+admits and stores one exact HostTarget or configured ModelTarget, while `yo
+default --unset` clears only this stored layer. A resumed Yo-managed Session
+does not read the stored preference and uses its newest durable binding as the bare
 namespace; startup defaults never replace it. Exact `host:codex` confirms a
 Codex resume, while a different cross-backend target fails explicitly because
 cross-backend handoff remains deferred.
@@ -130,7 +131,9 @@ ready:
 ```text
 yo-cli
   parse presentation mode, glyph profile, and optional model coordinates; capture cwd
-  load validated model catalog and exact Provider/Account credential when selected
+  capture config.yaml and the non-creating stored preference for a new Session
+  resolve invocation > stored preference > operator startup
+  load the exact Provider/Account credential when a managed model is selected
   install TerminationCoordinator
   open Host identity and Session repository
   normalize workspace and create SessionDescriptor
@@ -152,8 +155,8 @@ yo-tui
 
 | Step | Current owner | What to follow |
 |---|---|---|
-| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) | `run` selects presentation options, captures the working directory, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`. |
-| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | The process host either starts the Codex stdio transport or assembles the selected native binding from the startup snapshots and injected tools. Both defer remote model work until the worker owns the backend. |
+| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/connection.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection.rs) | `run` selects presentation options, captures the working directory and command-local configuration, reads a new Session's stored preference without creating state, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`. Resume omits the stored-preference read. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | The process host resolves invocation, stored, and operator layers, then either starts the Codex stdio transport or assembles the selected native binding from the startup snapshots and injected tools. Both defer remote model work until the worker owns the backend. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` first attempts the descriptor-only Journal envelope, then sends `CreateSession` through `AgentRuntime`; storage pressure keeps both the descriptor and later activity in the recoverable volatile prefix. |
 | 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | For Codex, `CreateSession` performs `initialize` and `thread/start`. The native backend binds local exact-replay Session state without a provider request. Both let the semantic engine produce `SessionCreated`. |
@@ -547,9 +550,11 @@ silently selecting Codex. The YAML above is an operator-owned native model
 example rather than an implicit model default.
 Unreadable files, unsupported versions, unknown fields, oversized files,
 invalid date formats, and unsupported frame rates are explicit failures rather than silent
-fallbacks. The reader opens one nonblocking descriptor, requires it to be a
-regular file, and consumes at most 64 KiB plus one sentinel byte, so a FIFO
-cannot stall the command and concurrent file growth cannot bypass the bound. A
+fallbacks. The reader opens one no-follow nonblocking descriptor, requires it to be a
+regular file, captures stable identity and metadata, and consumes at most 1 MiB plus one sentinel
+byte, so a FIFO cannot stall the command and concurrent file growth cannot bypass the bound.
+Preference mutations recapture this file and require the exact command-local snapshot to remain
+unchanged before public commit. A
 model API key is never read from an environment variable. When a configured
 model is selected, Yo reads a separate `credentials.yaml` beside the selected
 `config.yaml`. Its versioned Provider-then-Account shape is:
@@ -576,6 +581,37 @@ request one token per UTF-8 byte; `o200k_base/v1` is available only for bindings
 whose tokenizer is actually o200k-compatible. Unknown profiles fail startup.
 `max_output_tokens` is both the wire output cap and the amount excluded from the
 configured input limit during local context admission.
+
+The public sibling `connections.yaml` is separate from operator-owned
+`config.yaml` and secret `credentials.yaml`. The current preference-only writer
+uses this shape (the opaque revision value is illustrative):
+
+```yaml
+version: 1
+revision: rev-0123456789abcdef0123456789abcdef
+preference:
+  kind: host
+  target: host:codex
+```
+
+An absent file is the canonical unset snapshot and is read without creating a
+directory. `yo default TARGET`, `yo default --unset`, and explicit `yo connect
+host:codex` use one nonblocking process operation lock, resolve the absence of a
+pending multi-repository operation, capture a bounded mode-`0600` regular
+snapshot, and prepare exact new bytes with a new opaque revision. After target
+admission or Local Codex process and stable Host-identity verification plus the
+final configuration guard, exactly one repository CAS publishes the bytes. An
+absent first write uses same-directory exclusive publication; later writes use
+durable atomic replacement. The exact planned revision and bytes are
+idempotent success, while another revision is a conflict. Local Codex publishes
+only from a freshly observed unset preference; if another preference wins its
+CAS, the command re-reads and preserves that winner. These preference-only
+commands never create an operation journal or inspect credential revisions.
+Credential-changing external connect and disconnect remain outside this
+implemented path and fail explicitly rather than borrowing preference-only
+recovery. Until that Slice defines typed managed entries and composition, this
+preference-only build rejects a snapshot with non-empty `bindings` or
+`accounts` instead of accepting opaque state that startup cannot validate.
 
 A missing repository produces an empty list and does not create state. Direct
 history reads preserve a message-recovery

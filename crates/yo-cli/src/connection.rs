@@ -1,0 +1,472 @@
+use std::path::Path;
+
+use yo_core::{
+    ConnectionRepository, ConnectionRepositoryError, LocalConnectionRepository, StartupPolicy,
+    StartupSelectionSources, StartupTarget, resolve_startup_target,
+};
+
+use crate::{
+    AppError,
+    command::{ConnectCommand, DefaultCommand},
+    config::{self, Config},
+    storage,
+};
+
+pub(crate) fn stored_preference(config: &Config) -> Result<Option<StartupTarget>, AppError> {
+    repository(config)
+        .capture()
+        .map(|snapshot| snapshot.preference().cloned())
+        .map_err(|error| AppError::single("reading the stored startup default", error))
+}
+
+pub(crate) fn run_default(command: DefaultCommand) -> Result<String, AppError> {
+    let config_path = config::selected_path()
+        .map_err(|error| AppError::single("locating Yo configuration", error))?;
+    let repository = repository_at(&config_path);
+    execute_default_with(&config_path, &repository, command, || Ok(()))
+}
+
+pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
+    let config_path = config::selected_path()
+        .map_err(|error| AppError::single("locating Yo configuration", error))?;
+    let repository = repository_at(&config_path);
+    execute_connect_with(&config_path, &repository, command, verify_local_codex)
+}
+
+fn execute_default_with(
+    config_path: &Path,
+    repository: &impl ConnectionRepository,
+    command: DefaultCommand,
+    before_guard: impl FnOnce() -> Result<(), AppError>,
+) -> Result<String, AppError> {
+    let _operation = acquire_operation(repository)?;
+    recover_pending(repository)?;
+    let config = config::load_from(config_path)
+        .map_err(|error| AppError::single("reading Yo configuration", error))?;
+    let snapshot = repository
+        .capture()
+        .map_err(|error| AppError::single("capturing the connection repository", error))?;
+    let preference = command
+        .target
+        .as_deref()
+        .map(|reference| admit_target(&config, reference))
+        .transpose()?;
+    let mutation = snapshot
+        .prepare_preference(preference.clone())
+        .map_err(|error| AppError::single("preparing the startup default", error))?;
+
+    before_guard()?;
+    config
+        .verify_unchanged()
+        .map_err(|error| AppError::single("guarding Yo configuration", error))?;
+    if let Some(mutation) = mutation {
+        repository
+            .commit(&mutation)
+            .map_err(|error| AppError::single("publishing the startup default", error))?;
+    }
+    Ok(format!(
+        "default: {}\n",
+        display_target(preference.as_ref())
+    ))
+}
+
+fn execute_connect_with(
+    config_path: &Path,
+    repository: &impl ConnectionRepository,
+    command: ConnectCommand,
+    verify: impl FnOnce() -> Result<(), AppError>,
+) -> Result<String, AppError> {
+    let _operation = acquire_operation(repository)?;
+    recover_pending(repository)?;
+    let config = config::load_from(config_path)
+        .map_err(|error| AppError::single("reading Yo configuration", error))?;
+    if command.target != StartupTarget::HOST_CODEX_REFERENCE {
+        return Err(AppError::message(format!(
+            "preference-only connect currently accepts exactly {}; external model connection requires the credential operation Slice",
+            StartupTarget::HOST_CODEX_REFERENCE
+        )));
+    }
+    let admitted = admit_target(&config, &command.target)?;
+    if admitted != StartupTarget::HostCodex {
+        return Err(AppError::message(
+            "Local Codex connect admission did not preserve the exact HostTarget",
+        ));
+    }
+    let snapshot = repository
+        .capture()
+        .map_err(|error| AppError::single("capturing the connection repository", error))?;
+    let mutation = snapshot
+        .preference()
+        .is_none()
+        .then(|| snapshot.prepare_preference(Some(StartupTarget::HostCodex)))
+        .transpose()
+        .map_err(|error| AppError::single("preparing the Local Codex default", error))?
+        .flatten();
+
+    verify()?;
+    config
+        .verify_unchanged()
+        .map_err(|error| AppError::single("guarding Yo configuration", error))?;
+    let Some(mutation) = mutation else {
+        return Ok(format!(
+            "connected: {}; default preserved as {}\n",
+            StartupTarget::HOST_CODEX_REFERENCE,
+            display_target(snapshot.preference())
+        ));
+    };
+    match repository.commit(&mutation) {
+        Ok(_) => Ok(format!(
+            "connected: {}; default: {}\n",
+            StartupTarget::HOST_CODEX_REFERENCE,
+            StartupTarget::HOST_CODEX_REFERENCE
+        )),
+        Err(ConnectionRepositoryError::Conflict { .. }) => {
+            let current = repository.capture().map_err(|error| {
+                AppError::single("inspecting the concurrent connection winner", error)
+            })?;
+            if current.preference().is_some() {
+                Ok(format!(
+                    "connected: {}; default preserved as {}\n",
+                    StartupTarget::HOST_CODEX_REFERENCE,
+                    display_target(current.preference())
+                ))
+            } else {
+                Err(AppError::message(
+                    "the connection repository changed without publishing a default; retry Local Codex connect",
+                ))
+            }
+        },
+        Err(error) => Err(AppError::single(
+            "publishing the Local Codex default",
+            error,
+        )),
+    }
+}
+
+fn acquire_operation<R: ConnectionRepository>(
+    repository: &R,
+) -> Result<R::OperationGuard, AppError> {
+    repository
+        .acquire_operation()
+        .map_err(|error| AppError::single("acquiring the connection operation lane", error))
+}
+
+fn recover_pending(repository: &impl ConnectionRepository) -> Result<(), AppError> {
+    repository
+        .recover_pending_operation()
+        .map_err(|error| AppError::single("recovering a pending connection operation", error))
+}
+
+fn repository(config: &Config) -> LocalConnectionRepository {
+    LocalConnectionRepository::new(config.connection_path())
+}
+
+fn repository_at(config_path: &Path) -> LocalConnectionRepository {
+    LocalConnectionRepository::new(
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("connections.yaml"),
+    )
+}
+
+fn admit_target(config: &Config, reference: &str) -> Result<StartupTarget, AppError> {
+    resolve_startup_target(
+        config.model_catalog(),
+        &StartupPolicy::initial(),
+        StartupSelectionSources {
+            invocation: Some(reference),
+            stored_preference: None,
+            operator_target: None,
+        },
+    )
+    .map_err(|error| AppError::single("admitting the startup target", error))?
+    .ok_or_else(|| AppError::message("target admission returned no startup target"))
+}
+
+fn verify_local_codex() -> Result<(), AppError> {
+    let workspace = std::env::current_dir()
+        .map_err(|error| AppError::single("reading the working directory", error))?;
+    verify_local_codex_at(&workspace)
+}
+
+fn verify_local_codex_at(workspace: &Path) -> Result<(), AppError> {
+    let _workspace_host_id = storage::open_default_host_identity()
+        .map_err(|error| AppError::single("opening the stable workspace Host identity", error))?;
+    yo_core::CodexBackend::verify(yo_core::CodexBackendConfig::new(workspace))
+        .map_err(|error| AppError::single("verifying Local Codex", error))
+}
+
+fn display_target(target: Option<&StartupTarget>) -> String {
+    match target {
+        None => "unset".to_owned(),
+        Some(StartupTarget::HostCodex) => StartupTarget::HOST_CODEX_REFERENCE.to_owned(),
+        Some(StartupTarget::Model(selection)) => selection.canonical_reference(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::RefCell,
+        fs,
+        path::PathBuf,
+        rc::Rc,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::*;
+
+    struct RecordingRepository {
+        inner: LocalConnectionRepository,
+        events: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl ConnectionRepository for RecordingRepository {
+        type OperationGuard = yo_core::LocalConnectionOperationGuard;
+
+        fn acquire_operation(&self) -> Result<Self::OperationGuard, ConnectionRepositoryError> {
+            self.events.borrow_mut().push("acquire");
+            self.inner.acquire_operation()
+        }
+
+        fn recover_pending_operation(&self) -> Result<(), ConnectionRepositoryError> {
+            self.events.borrow_mut().push("recover");
+            self.inner.recover_pending_operation()
+        }
+
+        fn capture(&self) -> Result<yo_core::ConnectionSnapshot, ConnectionRepositoryError> {
+            self.events.borrow_mut().push("capture");
+            self.inner.capture()
+        }
+
+        fn commit(
+            &self,
+            mutation: &yo_core::PreparedConnectionMutation,
+        ) -> Result<yo_core::ConnectionCommit, ConnectionRepositoryError> {
+            self.events.borrow_mut().push("commit");
+            self.inner.commit(mutation)
+        }
+    }
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(name: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "yo-cli-connection-{}-{name}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn config_path(&self, contents: &str) -> PathBuf {
+            let path = self.0.join("config.yaml");
+            fs::write(&path, contents).unwrap();
+            path
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn empty_config(directory: &TestDirectory) -> PathBuf {
+        directory.config_path("version: 1\n")
+    }
+
+    // explicit default는 admitted HostTarget을 한 CAS로 저장하고 같은 명령 재실행은 revision을
+    // 바꾸지 않으며, --unset에 해당하는 새 authorization만 다음 CAS로 preference를 지웁니다.
+    #[test]
+    fn explicit_default_is_idempotent_and_clear_is_a_new_cas() {
+        let directory = TestDirectory::new("default");
+        let config_path = empty_config(&directory);
+        let repository = repository_at(&config_path);
+        let command = DefaultCommand {
+            target: Some("host:codex".to_owned()),
+        };
+
+        execute_default_with(&config_path, &repository, command.clone(), || Ok(())).unwrap();
+        let first = repository.capture().unwrap();
+        execute_default_with(&config_path, &repository, command, || Ok(())).unwrap();
+        assert_eq!(repository.capture().unwrap().revision(), first.revision());
+
+        execute_default_with(
+            &config_path,
+            &repository,
+            DefaultCommand { target: None },
+            || Ok(()),
+        )
+        .unwrap();
+        assert!(repository.capture().unwrap().preference().is_none());
+        assert!(!directory.0.join("connection-operation.yaml").exists());
+    }
+
+    // target admission 뒤 config.yaml bytes가 바뀌면 final guard가 CAS 전에 실패하고 absent
+    // connections.yaml을 만들지 않아 stale catalog 선택이 공개 상태로 남지 않습니다.
+    #[test]
+    fn changed_config_aborts_before_default_publication() {
+        let directory = TestDirectory::new("config-guard");
+        let config_path = empty_config(&directory);
+        let repository = repository_at(&config_path);
+
+        let error = execute_default_with(
+            &config_path,
+            &repository,
+            DefaultCommand {
+                target: Some("host:codex".to_owned()),
+            },
+            || {
+                fs::write(&config_path, "version: 1\ntui:\n  max_fps: 60\n").unwrap();
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("changed while this command was preparing")
+        );
+        assert!(!repository.path().exists());
+    }
+
+    // Local Codex 검증이 실패하면 준비된 preference bytes가 있어도 CAS를 호출하지 않고
+    // repository는 unset으로 남아 실패를 성공한 첫 연결처럼 기억하지 않습니다.
+    #[test]
+    fn local_codex_verification_failure_writes_no_preference() {
+        let directory = TestDirectory::new("verification-failure");
+        let config_path = empty_config(&directory);
+        let repository = repository_at(&config_path);
+
+        let error = execute_connect_with(
+            &config_path,
+            &repository,
+            ConnectCommand {
+                target: "host:codex".to_owned(),
+            },
+            || Err(AppError::message("verification failed")),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("verification failed"));
+        assert!(!repository.path().exists());
+    }
+
+    // injected repository seam에서도 operation lock과 pending recovery가 snapshot capture보다
+    // 먼저, Local Codex 검증이 public commit보다 먼저 일어나야 순서가 바뀐 구현을 잡습니다.
+    #[test]
+    fn local_codex_operation_order_is_lock_recovery_capture_verify_commit() {
+        let directory = TestDirectory::new("operation-order");
+        let config_path = empty_config(&directory);
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let repository = RecordingRepository {
+            inner: repository_at(&config_path),
+            events: Rc::clone(&events),
+        };
+        let verification_events = Rc::clone(&events);
+
+        execute_connect_with(
+            &config_path,
+            &repository,
+            ConnectCommand {
+                target: "host:codex".to_owned(),
+            },
+            move || {
+                verification_events.borrow_mut().push("verify");
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["acquire", "recover", "capture", "verify", "commit"]
+        );
+    }
+
+    // pending journal과 malformed config가 함께 있어도 recovery failure가 먼저 반환되어야
+    // 새 command의 config parse가 기존 recoverable operation 해결을 가리지 않습니다.
+    #[test]
+    fn pending_recovery_precedes_new_command_configuration_capture() {
+        let directory = TestDirectory::new("recovery-before-config");
+        let config_path = directory.config_path("not valid: [");
+        let repository = repository_at(&config_path);
+        fs::write(directory.0.join("connection-operation.yaml"), "pending\n").unwrap();
+
+        let error = execute_default_with(
+            &config_path,
+            &repository,
+            DefaultCommand {
+                target: Some("host:codex".to_owned()),
+            },
+            || Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("pending connection operation"));
+        assert!(!error.to_string().contains("invalid configuration"));
+    }
+
+    // Local Codex 검증 중 별도 CAS가 model default를 먼저 게시하면 stale HostTarget CAS는
+    // conflict 뒤 현재 승자를 다시 읽고 보존하여 first-success retry가 기본값을 덮지 않습니다.
+    #[test]
+    fn local_codex_conflict_preserves_a_concurrent_preference_winner() {
+        let directory = TestDirectory::new("concurrent-winner");
+        let config_path = directory.config_path(
+            "version: 1\nmodel:\n  catalog:\n    - provider: qwencloud\n      account: default\n      model: winner\n      api_dialect: openai-responses\n      base_url: https://example.test/v1\n      input_token_limit: 1000\n      max_output_tokens: 100\n      tokenizer_profile: utf8-bytes/v1\n",
+        );
+        let config = config::load_from(&config_path).unwrap();
+        let repository = repository_at(&config_path);
+        let racing_repository = repository.clone();
+        let winner = admit_target(&config, "qwencloud:default:winner").unwrap();
+
+        let output = execute_connect_with(
+            &config_path,
+            &repository,
+            ConnectCommand {
+                target: "host:codex".to_owned(),
+            },
+            move || {
+                let mutation = racing_repository
+                    .capture()
+                    .unwrap()
+                    .prepare_preference(Some(winner))
+                    .unwrap()
+                    .unwrap();
+                racing_repository.commit(&mutation).unwrap();
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert!(output.contains("default preserved as qwencloud:default:winner"));
+        assert!(matches!(
+            repository.capture().unwrap().preference(),
+            Some(StartupTarget::Model(_))
+        ));
+    }
+
+    // 사용자에게 돌려주는 ModelTarget은 Provider와 Account의 예약 문자를 canonical
+    // uppercase escape로 표시해 출력값을 다음 exact 명령에 그대로 재사용할 수 있어야 합니다.
+    #[test]
+    fn model_target_output_uses_the_shared_canonical_reference() {
+        let target = StartupTarget::Model(yo_core::ModelSelection::new(
+            yo_core::ProviderId::new("vendor:edge").unwrap(),
+            yo_core::AccountId::new("team%blue").unwrap(),
+            yo_core::ModelId::new("model:latest/v1").unwrap(),
+        ));
+
+        assert_eq!(
+            display_target(Some(&target)),
+            "vendor%3Aedge:team%25blue:model:latest/v1"
+        );
+    }
+}

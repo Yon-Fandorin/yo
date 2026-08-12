@@ -63,6 +63,26 @@ impl CodexBackend {
             inner: Backend::new_uninitialized(client, cwd),
         })
     }
+
+    /// Verifies the local app-server handshake without creating a backend Session.
+    pub fn verify(config: CodexBackendConfig) -> Result<(), BackendFailure> {
+        let mut backend = Self::spawn(config)?;
+        let verification = backend.inner.verify();
+        let cleanup = backend.inner.shutdown();
+        match (verification, cleanup) {
+            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Err(cleanup)) => Err(cleanup),
+            (Err(verification), Ok(())) => Err(verification),
+            (Err(verification), Err(cleanup)) => Err(BackendFailure::new(
+                verification.kind(),
+                format!(
+                    "{}; cleanup also failed: {}",
+                    verification.message(),
+                    cleanup
+                ),
+            )),
+        }
+    }
 }
 
 impl AgentBackend for CodexBackend {
@@ -286,6 +306,10 @@ impl<P: JsonPeer> Backend<P> {
             self.initialized = true;
         }
         Ok(())
+    }
+
+    fn verify(&mut self) -> Result<(), BackendFailure> {
+        self.initialize()
     }
 
     fn resume_session(

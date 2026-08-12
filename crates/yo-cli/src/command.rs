@@ -42,8 +42,33 @@ struct Cli {
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
 enum CliCommand {
+    /// Verify and connect one service target.
+    Connect(ConnectArguments),
+
+    /// Show or change the stored startup default.
+    Default(DefaultArguments),
+
     /// List stored Sessions or inspect one Session.
     Session(SessionArguments),
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+struct ConnectArguments {
+    /// Exact target to verify and connect.
+    #[arg(value_name = "TARGET", allow_hyphen_values = true)]
+    target: String,
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+#[group(required = true, multiple = false)]
+struct DefaultArguments {
+    /// Exact admitted startup target to persist.
+    #[arg(value_name = "TARGET", allow_hyphen_values = true)]
+    target: Option<String>,
+
+    /// Clear the stored startup default.
+    #[arg(long)]
+    unset: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -87,8 +112,20 @@ pub(crate) enum LiveSelection {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
+    Connect(ConnectCommand),
+    Default(DefaultCommand),
     Live(LiveOptions),
     Session(SessionCommand),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ConnectCommand {
+    pub(crate) target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DefaultCommand {
+    pub(crate) target: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -111,6 +148,12 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
     let cli = Cli::try_parse_from(std::iter::once(OsString::from("yo")).chain(arguments))?;
 
     match cli.command {
+        Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {
+            target: arguments.target,
+        })),
+        Some(CliCommand::Default(arguments)) => Ok(Command::Default(DefaultCommand {
+            target: arguments.target,
+        })),
         Some(CliCommand::Session(arguments)) => Ok(Command::Session(SessionCommand {
             session_id: arguments.session_id,
             all: arguments.all,

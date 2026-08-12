@@ -4,19 +4,20 @@ use std::{
     ffi::OsString,
     fmt, fs,
     io::Read,
-    os::unix::fs::OpenOptionsExt,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
 };
 
 use jiff::{Timestamp, fmt::strtime, tz::TimeZone};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use yo_core::{
     AccountId, EffectiveModelBinding, ModelCatalog, ModelCatalogEntry, ModelContextProfile,
     ModelId, ModelSelection, NormalizedEndpoint, ProviderId, StartupTarget,
 };
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
-const MAX_CONFIG_BYTES: u64 = 64 * 1024;
+const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_DATE_FORMAT_BYTES: usize = 128;
 
 #[derive(Clone, Debug)]
@@ -24,6 +25,7 @@ pub(crate) struct Config {
     date_format: String,
     frame_rate_limit: yo_tui::FrameRateLimit,
     source_path: PathBuf,
+    snapshot: ConfigSnapshot,
     model_catalog: ModelCatalog,
     startup_target: Option<StartupTarget>,
 }
@@ -34,6 +36,7 @@ impl Default for Config {
             date_format: DEFAULT_DATE_FORMAT.to_owned(),
             frame_rate_limit: yo_tui::FrameRateLimit::Fps120,
             source_path: PathBuf::new(),
+            snapshot: ConfigSnapshot::absent(),
             model_catalog: ModelCatalog::default(),
             startup_target: None,
         }
@@ -63,6 +66,58 @@ impl Config {
             .unwrap_or_else(|| Path::new("."))
             .join("credentials.yaml")
     }
+
+    pub(crate) fn connection_path(&self) -> PathBuf {
+        self.source_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("connections.yaml")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn snapshot_digest(&self) -> &str {
+        &self.snapshot.digest
+    }
+
+    pub(crate) fn verify_unchanged(&self) -> Result<(), ConfigError> {
+        let current = capture_snapshot(&self.source_path)?;
+        if current == self.snapshot {
+            Ok(())
+        } else {
+            Err(ConfigError::Changed(self.source_path.clone()))
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ConfigSnapshot {
+    metadata: Option<ConfigMetadata>,
+    bytes: Vec<u8>,
+    digest: String,
+}
+
+impl ConfigSnapshot {
+    fn absent() -> Self {
+        Self {
+            metadata: None,
+            bytes: Vec::new(),
+            digest: config_digest(&[]),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ConfigMetadata {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    user: u32,
+    group: u32,
+    len: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+    changed_seconds: i64,
+    changed_nanoseconds: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -118,6 +173,7 @@ pub(crate) enum ConfigError {
         path: PathBuf,
         source: std::string::FromUtf8Error,
     },
+    Changed(PathBuf),
     InvalidYaml {
         path: PathBuf,
         source: serde_norway::Error,
@@ -183,6 +239,11 @@ impl fmt::Display for ConfigError {
                     "timestamp {millis}ms is outside the supported date range"
                 )
             },
+            Self::Changed(path) => write!(
+                formatter,
+                "{} changed while this command was preparing; retry with the current configuration",
+                path.display()
+            ),
         }
     }
 }
@@ -197,6 +258,7 @@ impl Error for ConfigError {
             | Self::UnsupportedFileType(_)
             | Self::TooLarge(_)
             | Self::UnsupportedVersion { .. }
+            | Self::Changed(_)
             | Self::InvalidDateFormat(_)
             | Self::InvalidMaxFps { .. }
             | Self::InvalidModel { .. }
@@ -277,54 +339,45 @@ pub(crate) fn load() -> Result<Config, ConfigError> {
     load_from(&path)
 }
 
-fn load_from(path: &Path) -> Result<Config, ConfigError> {
-    let mut file = match fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Config {
-                source_path: path.to_owned(),
-                ..Config::default()
-            });
-        },
-        Err(source) => {
-            return Err(ConfigError::Io {
-                path: path.to_owned(),
-                source,
-            });
-        },
-    };
-    let metadata = file.metadata().map_err(|source| ConfigError::Io {
-        path: path.to_owned(),
-        source,
-    })?;
-    if !metadata.is_file() {
-        return Err(ConfigError::UnsupportedFileType(path.to_owned()));
+pub(crate) fn selected_path() -> Result<PathBuf, ConfigError> {
+    config_path()
+}
+
+pub(crate) fn load_from(path: &Path) -> Result<Config, ConfigError> {
+    let snapshot = capture_snapshot(path)?;
+    if snapshot.metadata.is_none() {
+        return Ok(Config {
+            source_path: path.to_owned(),
+            snapshot,
+            ..Config::default()
+        });
     }
-    let mut bytes = Vec::with_capacity(
-        usize::try_from(metadata.len().min(MAX_CONFIG_BYTES)).unwrap_or(MAX_CONFIG_BYTES as usize),
-    );
-    file.by_ref()
-        .take(MAX_CONFIG_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|source| ConfigError::Io {
+    let contents =
+        String::from_utf8(snapshot.bytes.clone()).map_err(|source| ConfigError::InvalidUtf8 {
             path: path.to_owned(),
             source,
         })?;
-    if bytes.len() as u64 > MAX_CONFIG_BYTES {
-        return Err(ConfigError::TooLarge(path.to_owned()));
-    }
-    let contents = String::from_utf8(bytes).map_err(|source| ConfigError::InvalidUtf8 {
-        path: path.to_owned(),
-        source,
-    })?;
-    parse(path, &contents)
+    parse_snapshot(path, &contents, snapshot)
 }
 
+#[cfg(test)]
 fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
+    parse_snapshot(
+        path,
+        contents,
+        ConfigSnapshot {
+            metadata: None,
+            bytes: contents.as_bytes().to_vec(),
+            digest: config_digest(contents.as_bytes()),
+        },
+    )
+}
+
+fn parse_snapshot(
+    path: &Path,
+    contents: &str,
+    snapshot: ConfigSnapshot,
+) -> Result<Config, ConfigError> {
     let decoded: FileConfig =
         serde_norway::from_str(contents).map_err(|source| ConfigError::InvalidYaml {
             path: path.to_owned(),
@@ -371,6 +424,7 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
             .unwrap_or_else(|| DEFAULT_DATE_FORMAT.to_owned()),
         frame_rate_limit,
         source_path: path.to_owned(),
+        snapshot,
         model_catalog,
         startup_target,
     };
@@ -381,6 +435,85 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
         other => other,
     })?;
     Ok(config)
+}
+
+fn capture_snapshot(path: &Path) -> Result<ConfigSnapshot, ConfigError> {
+    let mut file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ConfigSnapshot::absent());
+        },
+        Err(source) => {
+            return Err(ConfigError::Io {
+                path: path.to_owned(),
+                source,
+            });
+        },
+    };
+    let before = config_metadata(path, &file)?;
+    if before.mode & libc::S_IFMT != libc::S_IFREG {
+        return Err(ConfigError::UnsupportedFileType(path.to_owned()));
+    }
+    if before.len > MAX_CONFIG_BYTES {
+        return Err(ConfigError::TooLarge(path.to_owned()));
+    }
+    let mut bytes = Vec::with_capacity(
+        usize::try_from(before.len.min(MAX_CONFIG_BYTES)).unwrap_or(MAX_CONFIG_BYTES as usize),
+    );
+    Read::by_ref(&mut file)
+        .take(MAX_CONFIG_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|source| ConfigError::Io {
+            path: path.to_owned(),
+            source,
+        })?;
+    if bytes.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(ConfigError::TooLarge(path.to_owned()));
+    }
+    let after = config_metadata(path, &file)?;
+    if before != after {
+        return Err(ConfigError::Changed(path.to_owned()));
+    }
+    let digest = config_digest(&bytes);
+    Ok(ConfigSnapshot {
+        metadata: Some(before),
+        bytes,
+        digest,
+    })
+}
+
+fn config_digest(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut encoded = String::with_capacity(71);
+    encoded.push_str("sha256:");
+    for byte in digest {
+        use fmt::Write as _;
+        write!(encoded, "{byte:02x}").expect("formatting into a String cannot fail");
+    }
+    encoded
+}
+
+fn config_metadata(path: &Path, file: &fs::File) -> Result<ConfigMetadata, ConfigError> {
+    let metadata = file.metadata().map_err(|source| ConfigError::Io {
+        path: path.to_owned(),
+        source,
+    })?;
+    Ok(ConfigMetadata {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode: metadata.mode(),
+        user: metadata.uid(),
+        group: metadata.gid(),
+        len: metadata.len(),
+        modified_seconds: metadata.mtime(),
+        modified_nanoseconds: metadata.mtime_nsec(),
+        changed_seconds: metadata.ctime(),
+        changed_nanoseconds: metadata.ctime_nsec(),
+    })
 }
 
 fn model_entry(path: &Path, entry: ModelEntryConfig) -> Result<ModelCatalogEntry, ConfigError> {

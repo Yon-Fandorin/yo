@@ -64,10 +64,11 @@ pub(crate) fn replacement(selection: &yo_core::ModelSelection) -> StartupBackend
 
 pub(crate) fn resolve(
     config: &Config,
+    stored_preference: Option<yo_core::StartupTarget>,
     override_model: Option<&str>,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
-    startup::resolve(config, override_model, resume)
+    startup::resolve(config, stored_preference, override_model, resume)
 }
 
 pub(crate) fn start_native(
@@ -83,8 +84,27 @@ pub(crate) fn open_credentials(path: &Path) -> Result<CredentialStore, AppError>
     native::open_credentials(path)
 }
 
+pub(crate) fn credentials_for_startup<'a>(
+    config: &Config,
+    retained: &'a mut Option<CredentialStore>,
+    selection: &StartupBackend,
+) -> Result<Option<&'a CredentialStore>, AppError> {
+    if matches!(selection, StartupBackend::Codex) {
+        return Ok(None);
+    }
+    if retained.is_none() {
+        *retained = Some(open_credentials(&config.credential_path())?);
+    }
+    Ok(retained.as_ref())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use super::*;
 
     // backend facade는 host와 native selection의 label·좌표·replacement flag를 각각
@@ -116,5 +136,44 @@ mod tests {
         assert_eq!(replacement.label(), "qwen3.8max");
         assert!(replacement.replaces_binding());
         assert_eq!(replacement.model_selection(), Some(selection));
+    }
+
+    // Local Codex 선택은 옆의 credentials.yaml이 잘못되어도 그 파일을 required source로
+    // 열지 않고, native 선택에서만 같은 파일 오류가 startup을 막는지 확인합니다.
+    #[test]
+    fn startup_opens_credentials_only_for_a_native_selection() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "yo-credential-selection-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&path).unwrap();
+        let config_path = path.join("config.yaml");
+        fs::write(&config_path, "version: 1\n").unwrap();
+        fs::write(path.join("credentials.yaml"), "invalid: [").unwrap();
+        let config = crate::config::load_from(&config_path).unwrap();
+        let mut retained = None;
+
+        assert!(
+            credentials_for_startup(&config, &mut retained, &StartupBackend::Codex)
+                .unwrap()
+                .is_none()
+        );
+        assert!(retained.is_none());
+
+        let native = StartupBackend::Native {
+            provider: ProviderId::new("provider").unwrap(),
+            account: AccountId::new("account").unwrap(),
+            model: ModelId::new("model").unwrap(),
+            replace_binding: false,
+        };
+        let error = credentials_for_startup(&config, &mut retained, &native).unwrap_err();
+
+        fs::remove_dir_all(path).unwrap();
+        assert!(error.to_string().contains("reading model credentials"));
+        assert!(retained.is_none());
     }
 }
