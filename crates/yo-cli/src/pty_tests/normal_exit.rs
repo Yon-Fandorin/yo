@@ -2,13 +2,15 @@ use std::{
     error::Error,
     io::Write,
     task::{Context, Poll},
+    time::Duration,
 };
 
+use nix::{sys::signal::Signal, unistd::Pid};
 use yo_tui::{PresentationMode, TerminationEvent, TerminationSource};
 
 use super::support::{
-    CHILD_MARKER, ENTER_ALTERNATE_SCREEN, PendingAgent, PtyChild, RetainedChatAgent,
-    assert_fullscreen_pair, run_fullscreen,
+    CHILD_MARKER, ChildReapReceipt, ENTER_ALTERNATE_SCREEN, PendingAgent, PtyChild,
+    RetainedChatAgent, assert_fullscreen_pair, run_fullscreen,
 };
 
 struct PendingTermination;
@@ -28,11 +30,11 @@ fn position(haystack: &[u8], needle: &[u8]) -> usize {
 
 fn run_inline_with_retained_chat(
     termination: &mut impl TerminationSource,
+    agent: &mut RetainedChatAgent,
 ) -> Result<(), Box<dyn Error>> {
-    let mut agent = RetainedChatAgent::new();
     let outcome = yo_tui::run_with_mode(
         termination,
-        &mut agent,
+        agent,
         PresentationMode::Inline,
         yo_tui::ColorCapability::Unknown,
         yo_tui::MotionPreference::Standard,
@@ -118,20 +120,46 @@ fn inline_empty_prompt_uses_a_compact_live_region() {
     );
 }
 
-// 실제 Linux PTY 크기를 바꾸고 SIGWINCH를 전달해도 이미 persistent scrollback으로
-// acknowledge한 Final 항목은 다시 출력하지 않고 compact live viewport만 새 폭으로 그린다.
+// 큰 persistent publication의 capture를 marker 직후 멈춰 writer가 flush를 끝내지 못하게
+// 한 상태에서 PTY를 100열로 바꾼다. capture 재개 뒤 post-flush geometry 재검사가 80열에는
+// 불가능한 90칸 rule과 새 frame을 입력보다 먼저 그려도 acknowledged Final은 재출력하지 않는다.
 #[test]
 fn inline_resize_does_not_replay_published_history() {
     const RETAINED: &[u8] = b"YO_INLINE_RETAINED";
-    let mut child = PtyChild::spawn(
-        "pty_tests::normal_exit::child_inline_retains_chat",
-        b"\x1b[?25l",
+    const RESIZED_FRAME_COMPLETE: &[u8] = b"inline\x1b[3A\x1b[3G\x1b[?25h";
+    const POST_RESIZE_INPUT_READY: &[u8] = b"}";
+    const RESIZED_RULE: &[u8] = concat!(
+        "──────────",
+        "──────────",
+        "──────────",
+        "──────────",
+        "──────────",
+        "──────────",
+        "──────────",
+        "──────────",
+        "──────────"
+    )
+    .as_bytes();
+    let mut child = PtyChild::spawn_with_capture_pause(
+        "pty_tests::normal_exit::child_inline_retains_large_chat",
+        &[
+            RETAINED,
+            POST_RESIZE_INPUT_READY,
+            RESIZED_RULE,
+            RESIZED_FRAME_COMPLETE,
+        ],
+        0,
     );
-    child.wait_until_ready();
-    child.wait_until_ready();
+    let retained_end = child.wait_until_ready_marker(0);
     child.resize(100, 30);
-    child.wait_until_ready();
-    child.input.write_all(&[0x04]).unwrap();
+    child.release_capture();
+    let resized_rule_end = child.wait_until_ready_marker_after(2, retained_end);
+    let resized_generation_end = child.wait_until_ready_marker_after(3, resized_rule_end);
+    child.input.write_all(POST_RESIZE_INPUT_READY).unwrap();
+    child.input.flush().unwrap();
+    let resized_input_end = child.wait_until_ready_marker_after(1, resized_generation_end);
+    child.wait_until_output_reaches(resized_input_end);
+    child.input.write_all(&[0x7f, 0x04]).unwrap();
     child.input.flush().unwrap();
 
     let (status, output) = child.finish();
@@ -147,6 +175,37 @@ fn inline_resize_does_not_replay_published_history() {
             .count(),
         1,
         "ordinary resize must not replay acknowledged native history"
+    );
+}
+
+// PTY 준비 표식을 기다리다 시간 초과가 발생해도 중첩 테스트 자식을 즉시 회수해 후속
+// PTY 테스트와 훅 실행을 가로막는 고아 프로세스를 남기지 않는다.
+#[test]
+fn readiness_timeout_reaps_the_nested_pty_child() {
+    let child = PtyChild::spawn(
+        "pty_tests::normal_exit::child_inline_empty_prompt",
+        b"YO_MARKER_THAT_NEVER_APPEARS",
+    );
+    let pid = Pid::from_raw(i32::try_from(child.child.id()).unwrap());
+
+    let started = std::time::Instant::now();
+    let error = child
+        .wait_until_ready_marker_with_timeout(0, Duration::from_millis(100))
+        .expect_err("the fixture marker must remain absent");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "readiness cleanup must remain bounded: {error}"
+    );
+    assert!(
+        matches!(
+            error.cleanup(),
+            Ok(ChildReapReceipt::Waitpid(nix::sys::wait::WaitStatus::Signaled(
+                reaped,
+                Signal::SIGKILL,
+                _
+            ))) if *reaped == pid
+        ),
+        "a readiness timeout must retain the exact-child waitpid receipt: {error}"
     );
 }
 
@@ -187,7 +246,20 @@ fn child_inline_retains_chat() {
     if std::env::var_os(CHILD_MARKER).is_none() {
         return;
     }
-    run_inline_with_retained_chat(&mut PendingTermination).unwrap();
+    let mut agent = RetainedChatAgent::new();
+    run_inline_with_retained_chat(&mut PendingTermination, &mut agent).unwrap();
+}
+
+// resize publication 자식은 PTY backpressure를 만들 만큼 큰 한 항목을 발행해 부모가
+// post-flush geometry 재검사 전에 크기를 변경할 수 있는 deterministic 경계를 제공한다.
+#[test]
+#[ignore]
+fn child_inline_retains_large_chat() {
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        return;
+    }
+    let mut agent = RetainedChatAgent::new_with_large_publication();
+    run_inline_with_retained_chat(&mut PendingTermination, &mut agent).unwrap();
 }
 
 // 부모 테스트가 마련한 PTY에서 semantic Chat 없이 compact Inline prompt만 그린다.
