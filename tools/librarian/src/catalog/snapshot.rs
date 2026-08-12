@@ -374,7 +374,9 @@ fn os_string(bytes: &[u8], parent: &Path) -> Result<OsString, DiscoveryError> {
 }
 
 fn display(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    path.to_str()
+        .expect("catalog path components were validated as UTF-8")
+        .to_owned()
 }
 
 fn differing_paths(left: &[CapturedFile], right: &[CapturedFile]) -> Vec<String> {

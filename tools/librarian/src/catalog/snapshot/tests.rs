@@ -1,11 +1,34 @@
 use std::{fs, os::unix::fs::symlink};
 
-use super::capture_with_hook;
+use super::{capture, capture_with_hook};
 use crate::test_support::TestDirectory;
 
 fn create_supporting_directories(root: &TestDirectory) {
     fs::create_dir_all(root.path().join("methexis/owners")).expect("owner directory");
     fs::create_dir_all(root.path().join("methexis/sources")).expect("source directory");
+}
+
+// Unix에서 역슬래시는 경로 구분자가 아니라 합법적인 파일명 바이트다. snapshot이
+// `domain\\unit.md`를 `domain/unit.md`로 바꾸면 서로 다른 두 레코드의 path와 hash 입력이
+// 충돌하므로 두 이름을 정확히 보존한다.
+#[test]
+fn unix_backslash_and_separator_paths_remain_distinct() {
+    let root = TestDirectory::new("unix-path-identity");
+    create_supporting_directories(&root);
+    let knowledge = root.path().join("methexis/knowledge");
+    fs::create_dir_all(knowledge.join("domain")).expect("nested knowledge directory");
+    fs::write(knowledge.join(r"domain\unit.md"), b"backslash").expect("backslash record");
+    fs::write(knowledge.join("domain/unit.md"), b"separator").expect("separator record");
+
+    let captured = capture(root.path()).expect("catalog snapshot");
+    let paths = captured
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(paths.contains(&r"methexis/knowledge/domain\unit.md"));
+    assert!(paths.contains(&"methexis/knowledge/domain/unit.md"));
 }
 
 // 카탈로그를 읽는 도중 파일이 바뀌면 서로 다른 시점의 내용을 섞은 snapshot을 만들지 않는다.

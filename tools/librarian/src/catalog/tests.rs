@@ -7,7 +7,7 @@ use super::{
 use crate::{
     discovery,
     test_support::TestDirectory,
-    wire::{DiscoveryRequest, REQUEST_SCHEMA},
+    wire::{Anchor, DiscoveryRequest, REQUEST_SCHEMA},
 };
 
 const HASH: &str = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
@@ -62,6 +62,37 @@ The catalog contains a stable test statement.
         ),
     )
     .expect("knowledge record");
+}
+
+// snapshot에서 보존한 Unix 역슬래시 파일명은 separator 경로와 다른 Knowledge path다.
+// 슬래시 경로 exact anchor가 두 후보를 모두 8000점으로 선택했던 회귀를 막기 위해 실제
+// catalog load와 discovery 경계를 함께 통과시켜 separator 쪽 하나만 매칭되는지 확인한다.
+#[test]
+fn exact_path_anchor_does_not_match_a_distinct_unix_backslash_path() {
+    let root = TestDirectory::new("exact-unix-path-anchor");
+    write_knowledge(&root, r"domain\unit.md", "test.backslash");
+    write_knowledge(&root, "domain/unit.md", "test.separator");
+    let catalog = load(root.path()).expect("both distinct paths form one catalog");
+    let result = discovery::discover(
+        DiscoveryRequest {
+            schema: REQUEST_SCHEMA.to_owned(),
+            query: None,
+            anchors: vec![Anchor::Path {
+                value: "methexis/knowledge/domain/unit.md".to_owned(),
+            }],
+        },
+        &catalog,
+    )
+    .expect("exact path discovery succeeds");
+
+    assert_eq!(
+        catalog.units["test.backslash"].path,
+        r"methexis/knowledge/domain\unit.md"
+    );
+    assert_eq!(result.candidates.len(), 1);
+    assert_eq!(result.candidates[0].id, "test.separator");
+    assert_eq!(result.candidates[0].score, 8_000);
+    assert!(result.unresolved_anchors.is_empty());
 }
 
 // 같은 KnowledgeId가 두 번 등장하면 catalog 전체 load가 duplicate_knowledge_id로 실패한다.
