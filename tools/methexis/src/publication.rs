@@ -1,6 +1,7 @@
 //! Directory-handle-relative publication, locking, and path-safety policy.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
     fs::File,
     io::{self, Read, Seek, Write},
@@ -14,7 +15,7 @@ use std::{
 
 use rustix::{
     fs::{
-        AtFlags, Dir, FileType, FlockOperation, Mode, OFlags, RenameFlags, flock, fstat, ftruncate,
+        AtFlags, Dir, FileType, FlockOperation, Mode, OFlags, RenameFlags, flock, ftruncate,
         linkat, mkdirat, open, openat, renameat, renameat_with, statat, unlinkat,
     },
     io::Errno,
@@ -60,6 +61,8 @@ pub(crate) enum DirectoryState {
 
 pub(crate) struct VerifiedDirectory {
     _directory: OwnedFd,
+    identity: FileIdentity,
+    files: BTreeMap<OsString, FileIdentity>,
 }
 
 pub(crate) struct TargetLock {
@@ -221,26 +224,18 @@ impl TargetLock {
             },
             Err(error) => return Err(PublicationError::Io(errno(error))),
         };
-        let expected_names = files
-            .iter()
-            .map(|(name, _)| OsString::from(name))
-            .collect::<std::collections::BTreeSet<_>>();
-        let mut actual_names = std::collections::BTreeSet::new();
-        for entry in
-            Dir::read_from(&directory).map_err(|error| PublicationError::Io(errno(error)))?
-        {
-            let entry = entry.map_err(|error| PublicationError::Io(errno(error)))?;
-            let name = entry.file_name().to_bytes();
-            if name != b"." && name != b".." {
-                actual_names.insert(OsString::from(OsStr::from_bytes(name)));
-            }
-        }
-        if actual_names != expected_names {
+        let identity = FileIdentity::capture(&directory).map_err(PublicationError::Io)?;
+        if directory_names(&directory)? != expected_names(files) {
             return Ok(DirectoryState::Different);
         }
+        let mut identities = BTreeMap::new();
         for (name, expected) in files {
-            let actual = match read_relative(&directory, name, expected.len()) {
-                Ok(actual) => actual,
+            let (file, file_identity, actual) = match capture_relative(
+                rustix::io::dup(&directory).map_err(|error| PublicationError::Io(errno(error)))?,
+                OsStr::new(name),
+                expected.len(),
+            ) {
+                Ok(capture) => capture,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     return Ok(DirectoryState::Different);
                 },
@@ -249,13 +244,75 @@ impl TargetLock {
                 },
                 Err(error) => return Err(PublicationError::Io(error)),
             };
+            drop(file);
             if actual != *expected {
                 return Ok(DirectoryState::Different);
             }
+            identities.insert(OsString::from(name), file_identity);
+        }
+        if FileIdentity::capture(&directory).map_err(PublicationError::Io)? != identity {
+            return Ok(DirectoryState::Different);
         }
         Ok(DirectoryState::Matches(VerifiedDirectory {
             _directory: directory,
+            identity,
+            files: identities,
         }))
+    }
+
+    pub(crate) fn revalidate_directory(
+        &self,
+        verified: &VerifiedDirectory,
+        files: &[(&str, &[u8])],
+    ) -> Result<bool, PublicationError> {
+        let directory = match openat(
+            &self.parent,
+            &self.target_name,
+            OPEN_DIRECTORY,
+            Mode::empty(),
+        ) {
+            Ok(directory) => directory,
+            Err(Errno::NOENT) => return Ok(false),
+            Err(Errno::LOOP) => {
+                return Err(PublicationError::Symlink(PathBuf::from(&self.target_name)));
+            },
+            Err(Errno::NOTDIR) => {
+                return Err(PublicationError::NotDirectory(PathBuf::from(
+                    &self.target_name,
+                )));
+            },
+            Err(error) => return Err(PublicationError::Io(errno(error))),
+        };
+        if FileIdentity::capture(&directory).map_err(PublicationError::Io)? != verified.identity
+            || directory_names(&directory)? != expected_names(files)
+        {
+            return Ok(false);
+        }
+        for (name, expected) in files {
+            let (file, identity, actual) = match capture_relative(
+                rustix::io::dup(&directory).map_err(|error| PublicationError::Io(errno(error)))?,
+                OsStr::new(name),
+                expected.len(),
+            ) {
+                Ok(capture) => capture,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::InvalidData
+                    ) =>
+                {
+                    return Ok(false);
+                },
+                Err(error) => return Err(PublicationError::Io(error)),
+            };
+            drop(file);
+            if actual != *expected
+                || verified.files.get(OsStr::new(name)).copied() != Some(identity)
+            {
+                return Ok(false);
+            }
+        }
+        Ok(FileIdentity::capture(&directory).map_err(PublicationError::Io)? == verified.identity)
     }
 
     pub(crate) fn atomic_create_directory(
@@ -592,39 +649,20 @@ fn capture_relative(
     Ok((file, before, bytes))
 }
 
-fn read_relative(parent: &OwnedFd, name: &str, expected_len: usize) -> io::Result<Vec<u8>> {
-    let fd = openat(
-        parent,
-        name,
-        OFlags::RDONLY | OFlags::NONBLOCK | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
-    .map_err(errno)?;
-    let before = fstat(&fd).map_err(errno)?;
-    if FileType::from_raw_mode(before.st_mode) != FileType::RegularFile {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "artifact is not a regular file",
-        ));
+fn expected_names(files: &[(&str, &[u8])]) -> BTreeSet<OsString> {
+    files.iter().map(|(name, _)| OsString::from(name)).collect()
+}
+
+fn directory_names(directory: &OwnedFd) -> Result<BTreeSet<OsString>, PublicationError> {
+    let mut names = BTreeSet::new();
+    for entry in Dir::read_from(directory).map_err(|error| PublicationError::Io(errno(error)))? {
+        let entry = entry.map_err(|error| PublicationError::Io(errno(error)))?;
+        let name = entry.file_name().to_bytes();
+        if name != b"." && name != b".." {
+            names.insert(OsString::from(OsStr::from_bytes(name)));
+        }
     }
-    let mut bytes = Vec::new();
-    let mut file = File::from(fd);
-    (&mut file)
-        .take((expected_len + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    let after = fstat(&file).map_err(errno)?;
-    if before.st_dev != after.st_dev
-        || before.st_ino != after.st_ino
-        || before.st_size != after.st_size
-        || before.st_mtime != after.st_mtime
-        || before.st_mtime_nsec != after.st_mtime_nsec
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "artifact changed during verification",
-        ));
-    }
-    Ok(bytes)
+    Ok(names)
 }
 
 fn cleanup_directory(parent: &OwnedFd, temporary: &OsStr, files: &[(&str, &[u8])]) {

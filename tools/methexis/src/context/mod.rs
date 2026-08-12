@@ -8,12 +8,13 @@ mod refresh;
 pub(crate) mod registry;
 mod selection;
 mod storage;
+mod verify;
 mod wire;
 
 use std::path::Path;
 
 pub(crate) use refresh::{RefreshFailure, RefreshSuccess};
-pub(crate) use wire::{ResolveFailure, ResolveSuccess};
+pub(crate) use wire::{ResolveFailure, ResolveSuccess, VerifySuccess};
 
 pub(crate) struct ContextService<'a> {
     repository_root: &'a Path,
@@ -32,6 +33,14 @@ impl<'a> ContextService<'a> {
 
     pub(crate) fn resolve(&self, request_path: &Path) -> Result<ResolveSuccess, ResolveFailure> {
         operations::resolve(self.repository_root, request_path)
+    }
+
+    pub(crate) fn verify(
+        &self,
+        request_path: &Path,
+        expected_build_id: &str,
+    ) -> Result<VerifySuccess, ResolveFailure> {
+        verify::run(self.repository_root, request_path, expected_build_id)
     }
 
     pub(crate) fn refresh_manifests(

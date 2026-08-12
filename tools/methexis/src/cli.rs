@@ -39,6 +39,7 @@ USAGE:
     methexis propose-activation <request.json>
     methexis refresh-context-manifests <activation-request.json>
     methexis resolve-context <request.json>
+    methexis verify-context-build <request.json> <sha256:BuildId>
 
 COMMANDS:
     capabilities      Report complete supported workflow profiles
@@ -54,6 +55,7 @@ COMMANDS:
     propose-activation Propose the active Checkpoint with compare-and-swap
     refresh-context-manifests Refresh registered manifests for an activation proposal
     resolve-context    Build or reuse deterministic token-bounded agent context
+    verify-context-build Independently reproduce and verify one managed ContextBuild
 
 Run commands from the repository root. Mutations remain Draft proposals until
 trusted integration. Check derives approval and active/degraded eligibility
@@ -150,6 +152,9 @@ fn run_command(
         },
         [command, request] if command == OsStr::new("resolve-context") => {
             run_context_operation(request, stdout, stderr)
+        },
+        [command, request, build_id] if command == OsStr::new("verify-context-build") => {
+            run_context_verification(request, build_id, stdout, stderr)
         },
         [command, request] if command == OsStr::new("refresh-context-manifests") => {
             run_refresh_context_manifests(request, stdout, stderr)
@@ -460,6 +465,27 @@ fn run_context_operation(
 ) -> io::Result<ExitCode> {
     let root = env::current_dir()?;
     let result = ContextService::new(&root).resolve(std::path::Path::new(request));
+    match result {
+        Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
+    }
+}
+
+fn run_context_verification(
+    request: &OsStr,
+    build_id: &OsStr,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let Some(build_id) = build_id.to_str() else {
+        return write_json(
+            stderr,
+            &argument_failure("invalid_verify_arguments", Vec::new()),
+            ExitCode::from(2),
+        );
+    };
+    let root = env::current_dir()?;
+    let result = ContextService::new(&root).verify(Path::new(request), build_id);
     match result {
         Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
         Err(error) => write_json(stderr, &error, ExitCode::from(2)),

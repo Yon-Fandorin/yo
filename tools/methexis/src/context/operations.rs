@@ -13,7 +13,7 @@ use crate::{
     publication::{self, PublicationError},
 };
 
-const MAX_REQUEST_BYTES: usize = 256 * 1024;
+pub(super) const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_ANCHORS: usize = 128;
 const MAX_ANCHOR_BYTES: usize = 4 * 1024;
 const MAX_PATH_BYTES: usize = 4 * 1024;
@@ -138,7 +138,7 @@ fn parse_request(bytes: &[u8], path: &Path) -> Result<ResolveRequest, ResolveFai
     })
 }
 
-fn request_capture_failure(error: PublicationError, path: &Path) -> ResolveFailure {
+pub(super) fn request_capture_failure(error: PublicationError, path: &Path) -> ResolveFailure {
     let (code, message) = match error {
         PublicationError::OutsideRepository => (
             "request_path_invalid",
@@ -238,7 +238,7 @@ fn validate_request(request: &mut ResolveRequest) -> Result<(), ResolveFailure> 
     Ok(())
 }
 
-fn authority_failure(failure: AuthorityFailure) -> ResolveFailure {
+pub(super) fn authority_failure(failure: AuthorityFailure) -> ResolveFailure {
     let code = failure
         .diagnostics
         .first()

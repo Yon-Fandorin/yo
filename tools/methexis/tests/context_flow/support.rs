@@ -82,6 +82,14 @@ pub(super) fn raw_resolve(repository: &GitRepository, request: &Path) -> Output 
     repository.run(&["resolve-context", request.to_str().unwrap()])
 }
 
+pub(super) fn verify(repository: &GitRepository, request: &Path, build_id: &str) -> Value {
+    success_json(repository.run(&["verify-context-build", request.to_str().unwrap(), build_id]))
+}
+
+pub(super) fn verify_failure(repository: &GitRepository, request: &Path, build_id: &str) -> Value {
+    failure_json(repository.run(&["verify-context-build", request.to_str().unwrap(), build_id]))
+}
+
 fn write_candidates(
     repository: &GitRepository,
     candidates: &[(&str, u64)],

@@ -33,6 +33,7 @@ methexis prepare-activation <create-output.json>
 methexis propose-activation <activation-request.json>
 methexis refresh-context-manifests <activation-request.json>
 methexis resolve-context <context-request.json>
+methexis verify-context-build <context-request.json> <sha256:BuildId>
 methexis check
 methexis check --only authority,artifacts
 methexis check --summary
@@ -185,6 +186,15 @@ an immutable `context.md` and `manifest.json` under
 `.local-exclude/methexis/builds/`. Identical relevant inputs reuse the same
 BuildId after final Source and authority revalidation.
 
+`verify-context-build` is the opt-in deep check for one known BuildId. It
+captures and independently compiles the supplied request against current
+trusted authority before reading the managed build. It then requires the
+derived BuildId, exact `context.md` and `manifest.json` file set, regular path
+types, bytes, and final directory/file identities to remain unchanged through
+the same request, Source, trusted-ref, and active-Checkpoint freshness guard.
+The command never creates, replaces, or quarantines a ContextBuild; success
+returns the current trusted commit and both artifact hashes.
+
 Every operation prints one JSON value. Success uses stdout and exit code `0`;
 failure uses stderr and exit code `2`. Treat returned paths and hashes as the
 handoff contract instead of scraping prose.
@@ -267,6 +277,7 @@ src/context/
   operations.rs  request-to-publication orchestration
   registry.rs    typed owner of registered request, payload, and manifest triples
   refresh.rs     captured compilation and recoverable batch publication
+  verify.rs      independent reproduction and final managed-build identity guard
   wire.rs        independent versioned request, result, and candidate structs
   payload.rs     canonical Markdown, actual token count, BuildId, and manifest
   storage.rs     verified reuse, atomic publication, and collision quarantine
@@ -293,6 +304,7 @@ tests/checkpoint_flow/
 tests/context_flow/
   contract.rs deterministic closure, packing, reuse, and BuildId behavior
   failures.rs stale, budget, corruption, and symlink failures
+  verification.rs deep-verification success, ordering, and corruption boundaries
   support.rs   candidate wire builder and request helpers
 
 tests/context_golden.rs exact tracked payload, manifest, and failure fixtures

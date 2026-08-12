@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 pub(super) const REQUEST_SCHEMA: &str = "methexis.context-request/v1alpha1";
 pub(super) const RESULT_SCHEMA: &str = "methexis.context-result/v1alpha1";
+pub(super) const VERIFICATION_RESULT_SCHEMA: &str = "methexis.context-verification-result/v1alpha1";
 pub(super) const FAILURE_SCHEMA: &str = "methexis.context-failure/v1alpha1";
 pub(super) const CANDIDATE_SCHEMA: &str = "librarian.candidate-set/v1alpha1";
 pub(super) const TOKENIZER_PROFILE: &str = "o200k_base/v1";
@@ -166,6 +167,40 @@ impl ResolveSuccess {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(crate) struct VerifySuccess {
+    schema: &'static str,
+    pub(crate) ok: bool,
+    operation: &'static str,
+    status: &'static str,
+    authority: &'static str,
+    trusted_commit: String,
+    build_id: String,
+    context: ArtifactReference,
+    manifest: ArtifactReference,
+}
+
+impl VerifySuccess {
+    pub(super) fn new(
+        trusted_commit: String,
+        build_id: String,
+        context: ArtifactReference,
+        manifest: ArtifactReference,
+    ) -> Self {
+        Self {
+            schema: VERIFICATION_RESULT_SCHEMA,
+            ok: true,
+            operation: "verify_context_build",
+            status: "verified",
+            authority: "trusted_integration",
+            trusted_commit,
+            build_id,
+            context,
+            manifest,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct ResolveFailure {
     schema: &'static str,
     pub(crate) ok: bool,
@@ -216,6 +251,11 @@ impl ResolveFailure {
         if self.trusted_commit.is_none() {
             self.trusted_commit = Some(trusted_commit.to_owned());
         }
+        self
+    }
+
+    pub(super) fn into_verification(mut self) -> Self {
+        self.operation = "verify_context_build";
         self
     }
 

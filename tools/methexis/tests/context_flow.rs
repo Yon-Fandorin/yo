@@ -9,3 +9,5 @@ mod failures;
 mod repository;
 #[path = "context_flow/support.rs"]
 mod support;
+#[path = "context_flow/verification.rs"]
+mod verification;

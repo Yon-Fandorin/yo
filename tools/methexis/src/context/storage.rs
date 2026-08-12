@@ -130,13 +130,13 @@ fn quarantine(repository_root: &Path, artifacts: &BuildArtifacts) -> Result<(), 
     }
 }
 
-fn build_directory(repository_root: &Path, build_id: &str) -> PathBuf {
+pub(super) fn build_directory(repository_root: &Path, build_id: &str) -> PathBuf {
     repository_root
         .join(".local-exclude/methexis/builds")
         .join(build_id.strip_prefix("sha256:").unwrap_or(build_id))
 }
 
-fn publication_failure(error: PublicationError, path: &Path) -> ResolveFailure {
+pub(super) fn publication_failure(error: PublicationError, path: &Path) -> ResolveFailure {
     let (code, message, retryable) = match error {
         PublicationError::OutsideRepository => (
             "context_path_invalid",
@@ -179,7 +179,7 @@ fn publication_failure(error: PublicationError, path: &Path) -> ResolveFailure {
     )
 }
 
-fn relative(root: &Path, path: &Path) -> String {
+pub(super) fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
