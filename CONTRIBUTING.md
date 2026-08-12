@@ -322,6 +322,23 @@ costs without publishing an eligible packet. Publish only after the preflight
 is ready and no input is expected to change; preflight is preparation, not
 completed review.
 
+Treat preflight section costs as a Slice-sizing gate, not only a protocol
+limit. When the Git diff dominates a packet that is no longer human-reviewable
+or fits only by raising the configured budget, split the outcome at independent
+responsibility and failure boundaries before publication. Do not raise a
+packet budget merely to preserve an oversized Slice. An indivisible exception
+must name why a smaller accepted outcome cannot preserve the contract and must
+receive preliminary human authorization for that sizing exception before
+external review. The completed exact Slice still receives its ordinary final
+human-attention disposition after review and integration readiness.
+
+Run the declared complete candidate baseline after the last implementation
+change and before publishing its full review packet. A finding-resolution
+candidate may reuse unaffected evidence and rerun only affected checks for its
+delta review, but it must pass the complete Slice-close baseline before the
+accepted squash. Never defer that final-candidate baseline until after
+integration or push.
+
 ## Ownership and reconciliation
 
 One public contract or design decision has one active owner; concurrent work never shares it. Workers must not silently expand scope, decide a shared interface, or edit outside the allowed write-set. Return a focused proposal and evidence when an out-of-scope decision is required.
@@ -634,6 +651,17 @@ non-interactive surface:
 codex exec resume --json <session-id> - < <delta-review-packet.md>
 ```
 
+Do not return a large reviewer's prompt echo or event stream to the coordinating
+agent context. For full and delta packets, direct complete process output to a
+task-specific local log, request the final message in a separate file when the
+reviewer supports it, and read back only the exposed session identity, terminal
+status, and final response. Preserve the exact reviewer-authored finding set
+and verdict when findings exist so a later review delta can reproduce them;
+discard prompt echoes and event or tool streams. The immutable packet and
+manifest already own the review input, so copying them through orchestration
+output wastes context and can terminate an otherwise valid review run. Preserve
+the local log only while a finding remains unresolved.
+
 For Kimi, use plain `kimi -p`: never `--continue` or `--session`. Omit `--model`
 unless its exact configured CLI alias is known, and consult `kimi --help`
 instead of guessing flags. Require empty `git status --short
@@ -934,6 +962,12 @@ At Slice or Wave close:
 - move stable contracts and rationale to their existing decision owner;
 - add short, repeated operational knowledge to this workflow authority;
 - discard Task-local context and facts already expressed by code.
+
+Inspect close metrics before applying cleanup. If the completed Slice exposes a
+repeatable workflow correction that is not already owned here, promote only
+that rule through a separate reviewed workflow Slice before deleting the local
+metrics. Metrics and transcripts remain temporary evidence and are not copied
+into durable history.
 
 Do not preserve full agent transcripts by default. Measure progress by accepted Slices, validation coverage, unresolved conflicts, unverified cases, and executable milestone evidence—not commit, Task, or line counts.
 
