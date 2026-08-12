@@ -175,26 +175,27 @@ transport 공유 구조를 추출한다.
 
 | 모듈 | 소유하는 책임 | 다음 탐색 지점 |
 |---|---|---|
-| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, 모든 live source의 필수 readiness, 무기한 idle 대기, 설정 가능한 120/60fps frame 합치기, 비동기 prompt assist 중 editor frame 공개, 마지막 정리 결과 보고, 터미널에 독립적인 저장 Chat·Transcript·Request Projection | UI 의미 상태 전이는 `runner/state.rs`, frame-rate 정책은 `runner/frame.rs`, 저장 출력은 `runner/archival.rs`, 실행 중 조율과 보이는 motion scheduling은 `runner/unix.rs` |
+| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | 실행 중인 session의 공개 facade, 터미널을 단독 소유하는 loop, 모든 live source의 필수 readiness, 무기한 idle 대기, 설정 가능한 120/60fps frame 합치기, 보존되는 Inline Chat publication cursor, 마지막 정리 결과 보고, 터미널에 독립적인 저장 Chat·Transcript·Request Projection | UI 의미 상태 전이와 후보 조율은 `runner/state.rs`, persistent 행 준비와 compact live size는 `runner/publication.rs`, frame-rate 정책은 `runner/frame.rs`, 저장 출력은 `runner/archival.rs`, 실행 중 조율·flush 후 geometry 관찰·보이는 motion scheduling은 `runner/unix.rs`·`runner/unix/presenter.rs` |
 | [`runner/archival.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/archival.rs), [`runner/archival/request.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/archival/request.rs) | 읽기 전용 저장 Session 출력. Request는 정확한 관찰 경계, typed detail availability와 명시적인 Request Audit 미연결 상태를 포함해 payload-free correlation trace 전체를 durable Journal 순서로 그린다 | 저장 복구 또는 Request Audit 영속화 |
 | [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | session이 소유하는 불변 appearance snapshot, 단조 증가 revision, resolved style role, 공개된 built-in Rich/ASCII glyph profile | 검증된 activity frame 순서·elapsed 기반 선택·최대 예약 marker 폭·연속 shimmer 계산·색상 깊이 해석·reduced motion은 `appearance/activity.rs`, profile 생성은 `runner/session.rs`, frame pinning은 `runner/state.rs` |
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | terminal cell 폭에 맞춰 고정 열을 유지하고 짧은 접힌 label/value pair는 폭 안에서 flow로 채우며 block 값은 독립된 한 줄을 사용하되 필요할 때만 label과 값을 분리하고, grapheme을 자르지 않고 개행한 뒤 필요하면 세로 card layout으로 전환하는 plain 목록 | 열의 의미와 접기 우선순위 또는 continuation hint, 설정, stdout TTY 정책, terminal 소유권 |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집, typed view-switch 표시 정책, 사용 가능한 key action의 공용 terminal 표기 | terminal label만 다루는 곳은 `input/key_notation.rs`, 보이는 cursor 배치는 `prompt`, 선택한 Projection은 `runner/view.rs` |
-| [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, 대화 기록 layout, scroll 상태 | prompt와 조합하는 일은 `shell` |
+| [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, separator를 보존하는 범위 Projection, 대화 기록 layout, scroll 상태 | 단조 증가 publication cursor는 `runner/chat.rs`, prompt와 compact 조합하는 일은 `shell` |
 | [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Chat·Transcript·Request 선택, 상단 헤더가 없는 편집 가능한 Chat 화면, 읽기 전용 mode 헤더, 전체 Transcript Projection, 선택적인 정확한 context 강조를 포함한 Session 전체 payload-free Request trace, mode별 context·viewport 상태 | Journal 관찰과 editor dispatch는 `runner/state.rs`, 공통 layout·scroll은 `transcript` |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | editor 내용과 cursor가 보이는 상태를 측정하고 그리며, 유효한 `@`·`$` token scan, 대체 query가 pending인 동안 마지막 usable panel 보존, stale provider update 거절, 선택 span 치환과 typed identity 보존, 보고된 scope에 따른 cached skill 후보 filtering | 편집 의미는 `input/editor`, 탐색은 실행 provider, freshness-gated 표시는 `overlay`, structured admission은 `yo-core` |
 | [`overlay`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/overlay/mod.rs) | 검증된 선택 panel snapshot, 항목 availability와 독립적인 snapshot freshness, typed static/activity title status, enabled 항목 navigation·fitting, 선택적인 왼쪽 하단 filter 표시, 원자적인 `Surface` paint, token 범위의 단일 prompt-overlay slot | provider는 query·후보 filtering·preview와 accept된 제품 effect를 유지하고, routing·receipt는 `runner/state.rs`, 아래에 고정된 목적지는 `shell`이 소유한다 |
-| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | 안정적인 작업·prompt·metric·도움말 stack을 배분하고 상태에 맞는 도움말을 원자적 우선순위 segment로 폭에 맞추며 pinned activity frame을 최대 폭 marker 영역 안에 그리고 고정 문구 style sheen을 적용한 뒤, 완성된 frame의 cursor와 가장 짧은 보이는 motion demand를 보고 | 작업 행은 `shell/chrome.rs`, footer는 `shell/chrome/help.rs`, 표기는 `input/key_notation.rs`, cell 쓰기는 `surface`, host가 실제로 아는 status 값은 `runner/session.rs` |
+| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | overflow를 typed 오류로 보고하며 Inline live 영역의 자연 높이를 측정하고 작업·prompt·metric·도움말 stack을 배분하며, 상태에 맞는 도움말을 원자적 우선순위 segment로 폭에 맞추고 pinned activity frame과 고정 문구 style sheen을 그린 뒤 완성된 frame의 cursor와 가장 짧은 보이는 motion demand를 보고 | 작업 행은 `shell/chrome.rs`, footer는 `shell/chrome/help.rs`, 표기는 `input/key_notation.rs`, cell 쓰기는 `surface`, host가 실제로 아는 status 값은 `runner/session.rs` |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | adapter에 독립적인 cell 상태, Unicode grapheme과 너비, 경계가 있는 view, diff span, 터미널에 독립적인 text flow | Projection은 `terminal` 또는 `html` |
 | [`terminal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mod.rs) | typed terminal operation과 ANSI encoding | 표시 정책은 `terminal/mode`, Unix effect는 `terminal/backend` |
-| [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | 공유 transactional restoration, Inline·Fullscreen presenter, panic routing, crate-private platform boundary | 프로세스 signal 정책이 바뀔 때만 `yo-cli/process` |
+| [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | 공유 transactional restoration, Inline·Fullscreen presenter, cursor 범위와 실제 scroll 증거를 가진 Inline typed-operation effect ledger, bounded write recovery, panic routing, crate-private direct unbuffered Unix 출력 경계 | operation/effect 순서와 exact correction은 `terminal/mode/inline/transaction.rs`, 정확한 downstream write와 flush 후 event는 `terminal/backend/unix`, 프로세스 signal 정책이 바뀔 때만 `yo-cli/process` |
 | [`html`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/html/mod.rs) | 완성된 `Surface` 상태를 결정론적으로 브라우저에 Projection | 터미널과 브라우저 출력이 다르면 `surface` |
 
 `runner::TuiSession`은 한 번의 터미널 소유 기간보다 오래 유지할 수 있는
 간결한 Chat 대화 기록, editor, 대기 중인 요청, 세 observability view,
 token 범위의 prompt-overlay slot 하나와 대기 중인 acceptance receipt,
-backpressure로 전달되지 못한 agent dispatch 상태와 하나의 committed
-appearance snapshot을 소유한다. Chat은 편집 가능한 기본 mode다. 현재
+backpressure로 전달되지 못한 agent dispatch 상태, 하나의 committed appearance
+snapshot, bounded recovered-publication 증거를 소유한다. Chat은 편집 가능한 기본
+mode다. 현재
 Chat, Transcript, Request의 typed 표시 정책 binding은 각각 F1, F2, F3이며
 Projection 상태는 이 key 선택을 소유하지 않는다. Transcript는 같은 읽기
 전용 Journal 경로에서 받은 모든 committed command와 event를 그린다.
@@ -206,6 +207,21 @@ prompt를 대체하며 editor submission을 dispatch하지 않고 input을 소�
 각 view는 자체 context와 viewport 상태를 보존한다.
 저장된 `yo session SESSION_ID --view request` 경로는 검증된 저장 Session 복구 뒤
 같은 bounded record model을 Projection하며 context 강조를 제공하지 않는다.
+
+Inline Chat은 완료되고 안정된 item의 최대 연속 prefix만 native terminal
+history로 옮긴다. 준비 단계에서 후보를 이전 publication cursor, appearance
+revision, terminal size, geometry epoch에 묶고, downstream write가 완료된
+뒤에만 acknowledge한다. 아직 publication하지 않은 suffix, prompt, chrome,
+overlay는 compact live `Surface`를 이룬다. Chat을 tail에서 떼어 검토하거나
+읽기 전용 Transcript·Request를 보면 publication을 멈추고 terminal 전체 높이를
+쓰며, Fullscreen은 항상 전체 semantic 상태를 그린다. flush가 성공하면 Unix
+presenter가 대기 중인 resize 알림을 drain하고 terminal size를 새로 읽는다.
+persistent prefix는 acknowledge하면서 stale live geometry는 버린 뒤 새 suffix
+frame을 즉시 준비할 수 있다. terminal transaction이 output 오류를 exact하게
+복구하면 controller는 correction 종류를 `TuiSession::publication_recovery_evidence`에
+보존한다. Suspend는 semantic suffix를 출력하지 않고
+cursor를 보존하며, 일반 종료와 typed termination은 아직 publication하지 않은
+semantic 출력만 뒤에 붙인다.
 
 승인된 view 의미는
 [Chat, Transcript, Request Projection](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.view-projections.md)
@@ -269,6 +285,9 @@ Appearance 계약:
 Runtime scheduling 계약:
 [bounded frame scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.frame-scheduling.md)과
 [공정한 readiness 기반 event source](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.event-source-scheduling.md).
+
+Inline publication과 compact live geometry는
+[Inline viewport 계약](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.inline-viewport.md)이 소유한다.
 
 `surface`는 공통으로 완성된 상태다. 터미널과 HTML Projection은 이를
 각자 소비하며, 어느 쪽도 다른 쪽의 layout 의미를 정의하지 않는다.

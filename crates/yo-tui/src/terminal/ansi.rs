@@ -56,7 +56,16 @@ impl<Writer: Write> AnsiEncoder<Writer> {
             TerminalOp::SetStyle(style) => self.encode_style(style),
             TerminalOp::WriteGrapheme { text, .. } => self.writer.write_all(text.as_bytes()),
             TerminalOp::WriteBlank { count } => self.encode_blanks(count.get()),
-            TerminalOp::FrameSizeChanged { .. } | TerminalOp::MoveTo(_) => {
+            TerminalOp::FrameSizeChanged { .. }
+            | TerminalOp::MoveTo(_)
+            | TerminalOp::SetCursorVisible(_)
+            | TerminalOp::MoveUp { .. }
+            | TerminalOp::MoveDown { .. }
+            | TerminalOp::MoveToColumn(_)
+            | TerminalOp::CarriageReturn
+            | TerminalOp::LineFeed
+            | TerminalOp::EraseLine
+            | TerminalOp::EraseToLineEnd => {
                 unreachable!("position and geometry operations belong to the mode controller")
             },
         }
@@ -78,6 +87,19 @@ impl<Writer: Write> AnsiEncoder<Writer> {
             TerminalOp::SetStyle(_)
             | TerminalOp::WriteGrapheme { .. }
             | TerminalOp::WriteBlank { .. } => self.encode_content_operation(operation),
+            TerminalOp::SetCursorVisible(visible) => {
+                self.writer
+                    .write_all(if visible { b"\x1b[?25h" } else { b"\x1b[?25l" })
+            },
+            TerminalOp::MoveUp { rows } => write!(self.writer, "\x1b[{}A", rows.get()),
+            TerminalOp::MoveDown { rows } => write!(self.writer, "\x1b[{}B", rows.get()),
+            TerminalOp::MoveToColumn(column) => {
+                write!(self.writer, "\x1b[{}G", u32::from(column) + 1)
+            },
+            TerminalOp::CarriageReturn => self.writer.write_all(b"\r"),
+            TerminalOp::LineFeed => self.writer.write_all(b"\n"),
+            TerminalOp::EraseLine => self.writer.write_all(b"\x1b[2K"),
+            TerminalOp::EraseToLineEnd => self.writer.write_all(b"\x1b[K"),
         }
     }
 

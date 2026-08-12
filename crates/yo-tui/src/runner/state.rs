@@ -25,13 +25,14 @@ use crate::{
         AgentAction, PresentationMode,
         chat::{ChatProjection, ChatProjectionChange},
         model::ModelSelectionState,
+        publication::{self, PreparedPublication, PublicationPrepareError},
         session::TuiSessionInfo,
         view::{
             ObservabilityRenderError, ObservabilityRenderOptions, ObservabilityViewState,
             ObservabilityViews, ViewInputEffect,
         },
     },
-    shell::ShellChromeSnapshot,
+    shell::{AgentShellMeasureError, AgentShellRenderOptions, ShellChromeSnapshot},
     surface::{Point, Rect, Size, Surface, SurfaceError},
     transcript::{TranscriptMeasureError, TranscriptStateError},
 };
@@ -54,11 +55,14 @@ pub(super) enum StateError {
     UnknownActivity(ActivityRef),
     ItemIdOverflow,
     SubmissionIdentityUnavailable,
+    StalePublication,
 }
 
 #[derive(Debug)]
 pub(super) enum FrameError {
     Allocate(SurfaceError),
+    Measure(AgentShellMeasureError),
+    Publication(PublicationPrepareError),
     Render(ObservabilityRenderError),
 }
 
@@ -66,6 +70,8 @@ impl FrameError {
     pub(super) fn detail(&self) -> String {
         match self {
             Self::Allocate(error) => format!("allocating the frame failed: {error}"),
+            Self::Measure(error) => format!("measuring the compact agent shell failed: {error:?}"),
+            Self::Publication(error) => error.detail(),
             Self::Render(error) => format!("composing the agent shell failed: {error:?}"),
         }
     }
@@ -73,10 +79,12 @@ impl FrameError {
 
 pub(super) struct PreparedFrame {
     pub(super) surface: Surface,
+    pub(super) publication: Option<PreparedPublication>,
     pub(super) cursor: Point,
     pub(super) appearance_revision: AppearanceRevision,
     pub(super) motion_demand: Option<MotionDemand>,
     pub(super) overlay_presented: bool,
+    pub(super) reprepare_for_publication: bool,
     view_state: ObservabilityViewState,
 }
 
@@ -419,13 +427,31 @@ impl TuiState {
         self.prepare_frame_at(size, appearance, Duration::ZERO)
     }
 
+    #[cfg(test)]
     pub(super) fn prepare_frame_at(
         &self,
         size: Size,
         appearance: &AppearancePin,
         elapsed: Duration,
     ) -> Result<PreparedFrame, FrameError> {
-        self.prepare_frame_at_with_measure_hook(size, appearance, elapsed, || {})
+        self.prepare_frame_at_with_measure_hook(size, appearance, elapsed, 0, false, || {})
+    }
+
+    pub(super) fn prepare_frame_for_geometry(
+        &self,
+        size: Size,
+        appearance: &AppearancePin,
+        elapsed: Duration,
+        geometry_epoch: u64,
+    ) -> Result<PreparedFrame, FrameError> {
+        self.prepare_frame_at_with_measure_hook(
+            size,
+            appearance,
+            elapsed,
+            geometry_epoch,
+            true,
+            || {},
+        )
     }
 
     #[cfg(test)]
@@ -435,7 +461,14 @@ impl TuiState {
         appearance: &AppearancePin,
         after_measure: impl FnOnce(),
     ) -> Result<PreparedFrame, FrameError> {
-        self.prepare_frame_at_with_measure_hook(size, appearance, Duration::ZERO, after_measure)
+        self.prepare_frame_at_with_measure_hook(
+            size,
+            appearance,
+            Duration::ZERO,
+            0,
+            false,
+            after_measure,
+        )
     }
 
     fn prepare_frame_at_with_measure_hook(
@@ -443,27 +476,74 @@ impl TuiState {
         size: Size,
         appearance: &AppearancePin,
         elapsed: Duration,
+        geometry_epoch: u64,
+        publication_enabled: bool,
         after_measure: impl FnOnce(),
     ) -> Result<PreparedFrame, FrameError> {
-        let mut surface = Surface::new(size).map_err(FrameError::Allocate)?;
         let snapshot = appearance.snapshot();
+        let publication_eligible = publication_enabled
+            && self.presentation_mode == PresentationMode::Inline
+            && self.views.inline_publication_eligible();
+        let candidate = publication_eligible
+            .then(|| self.chat.publication_candidate())
+            .flatten();
+        let live_start = if publication_eligible {
+            candidate.as_ref().map_or_else(
+                || self.chat.published_item_count(),
+                |candidate| candidate.range().end,
+            )
+        } else {
+            0
+        };
+        let live_transcript = self.chat.transcript().suffix(live_start);
+        let render_options = ObservabilityRenderOptions {
+            appearance: snapshot,
+            chrome: self.chrome_snapshot(),
+            elapsed,
+            overlay: self.overlay.panel(),
+            overlay_bindings: self.overlay.bindings(),
+        };
+        let frame_size = if publication_eligible {
+            let shell_options = AgentShellRenderOptions {
+                transcript_config: snapshot.transcript_config(),
+                styles: snapshot.styles(),
+                scroll: None,
+                frame_prompt: true,
+                chrome: render_options.chrome,
+                activity_motion: snapshot.activity_motion_frame(elapsed),
+                overlay: render_options.overlay,
+                overlay_bindings: render_options.overlay_bindings,
+            };
+            publication::compact_live_size(live_transcript, &self.editor, size, shell_options)
+                .map_err(FrameError::Measure)?
+        } else {
+            size
+        };
+        let publication = candidate
+            .map(|candidate| {
+                publication::prepare(
+                    self.chat.transcript().slice(candidate.range()),
+                    candidate,
+                    size,
+                    geometry_epoch,
+                    appearance.revision(),
+                    snapshot,
+                )
+            })
+            .transpose()
+            .map_err(FrameError::Publication)?;
+        let mut surface = Surface::new(frame_size).map_err(FrameError::Allocate)?;
         let frame = {
-            let area = Rect::new(Point::new(0, 0), size);
+            let area = Rect::new(Point::new(0, 0), frame_size);
             let mut view = surface
                 .view(area)
                 .expect("the complete surface is always a valid view");
             self.views
                 .render(
-                    self.chat.transcript(),
+                    live_transcript,
                     &self.editor,
                     &mut view,
-                    ObservabilityRenderOptions {
-                        appearance: snapshot,
-                        chrome: self.chrome_snapshot(),
-                        elapsed,
-                        overlay: self.overlay.panel(),
-                        overlay_bindings: self.overlay.bindings(),
-                    },
+                    render_options,
                     after_measure,
                 )
                 .map_err(FrameError::Render)?
@@ -471,11 +551,16 @@ impl TuiState {
 
         Ok(PreparedFrame {
             surface,
+            publication,
             cursor: frame.cursor,
             appearance_revision: appearance.revision(),
             motion_demand: frame.motion_period.map(|period| MotionDemand { period }),
             view_state: frame.state,
             overlay_presented: frame.overlay_presented,
+            reprepare_for_publication: publication_enabled
+                && self.presentation_mode == PresentationMode::Inline
+                && !publication_eligible
+                && frame.state.inline_publication_eligible(),
         })
     }
 
@@ -494,9 +579,11 @@ impl TuiState {
         &self,
         appearance: &AppearancePin,
     ) -> Result<Option<String>, TranscriptMeasureError> {
-        self.chat
-            .transcript()
-            .plain_output(appearance.snapshot().transcript_config())
+        let transcript = self.chat.transcript();
+        transcript.plain_output_slice(
+            transcript.suffix(self.chat.published_item_count()),
+            appearance.snapshot().transcript_config(),
+        )
     }
 
     pub(super) fn has_pending_request(&self) -> bool {
@@ -655,6 +742,13 @@ impl TuiState {
     pub(super) fn commit_frame(&mut self, frame: &PreparedFrame) {
         self.views.commit(frame.view_state);
         self.overlay.set_presented(frame.overlay_presented);
+    }
+
+    pub(super) fn acknowledge_publication(&mut self, frame: &PreparedFrame) -> bool {
+        frame
+            .publication
+            .as_ref()
+            .is_none_or(|publication| self.chat.acknowledge_publication(&publication.candidate))
     }
 
     fn request_response(

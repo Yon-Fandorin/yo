@@ -19,6 +19,18 @@ pub enum TerminalOp<'frame> {
     WriteBlank {
         count: NonZeroU16,
     },
+    SetCursorVisible(bool),
+    MoveUp {
+        rows: NonZeroU16,
+    },
+    MoveDown {
+        rows: NonZeroU16,
+    },
+    MoveToColumn(u16),
+    CarriageReturn,
+    LineFeed,
+    EraseLine,
+    EraseToLineEnd,
 }
 
 /// Deterministic terminal operations compiled from a completed-frame diff.

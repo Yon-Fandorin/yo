@@ -18,6 +18,7 @@ mod interrupt;
 mod job_control;
 mod model_selection;
 mod overlay;
+mod publication;
 mod reentry;
 mod request_responses;
 mod session_lifecycle;

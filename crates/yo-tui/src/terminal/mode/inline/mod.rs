@@ -1,8 +1,11 @@
 mod renderer;
+mod transaction;
 
 use std::{error::Error, fmt};
 
-pub(crate) use renderer::{InlineRenderError, InlineRenderer, InlineRestoreOutcome};
+pub(crate) use renderer::{
+    InlineRecovery, InlineRenderError, InlineRenderReceipt, InlineRenderer, InlineRestoreOutcome,
+};
 
 use crate::surface::{FrameDiff, Point, Size, Surface};
 
@@ -44,6 +47,8 @@ pub(crate) enum InlineFrameError {
     PreviousFrameRequired,
     PreviousSizeMismatch { expected: Size, actual: Size },
     CursorOutOfBounds { cursor: Point, size: Size },
+    PublicationWidthMismatch { expected: u16, actual: u16 },
+    TerminalGeometryMismatch { terminal: Size, live: Size },
 }
 
 impl fmt::Display for InlineFrameError {
@@ -64,6 +69,15 @@ impl fmt::Display for InlineFrameError {
                 formatter,
                 "inline cursor {},{} is outside {}x{}",
                 cursor.x, cursor.y, size.width, size.height
+            ),
+            Self::PublicationWidthMismatch { expected, actual } => write!(
+                formatter,
+                "persistent rows are {actual} columns wide, expected {expected}"
+            ),
+            Self::TerminalGeometryMismatch { terminal, live } => write!(
+                formatter,
+                "inline live frame is {}x{}, outside observed terminal {}x{}",
+                live.width, live.height, terminal.width, terminal.height
             ),
         }
     }
@@ -207,6 +221,35 @@ impl PendingFrame<'_> {
         previous: Option<&Surface>,
         current: &'current Surface,
     ) -> Result<FrameDiff<'current>, InlineFrameError> {
+        self.validate_surfaces(previous, current)?;
+        match self.plan {
+            InlineFramePlan::Update { .. } => Ok(FrameDiff::between(
+                previous.expect("validated above"),
+                current,
+            )),
+            InlineFramePlan::Reconcile { previous, .. } => {
+                Ok(FrameDiff::complete(previous, current))
+            },
+            InlineFramePlan::Initialize { .. } | InlineFramePlan::Reanchor { .. } => {
+                Ok(FrameDiff::complete(current.size(), current))
+            },
+        }
+    }
+
+    pub(super) fn redraw_diff<'current>(
+        &self,
+        previous: Option<&Surface>,
+        current: &'current Surface,
+    ) -> Result<FrameDiff<'current>, InlineFrameError> {
+        self.validate_surfaces(previous, current)?;
+        Ok(FrameDiff::complete(current.size(), current))
+    }
+
+    fn validate_surfaces(
+        &self,
+        previous: Option<&Surface>,
+        current: &Surface,
+    ) -> Result<(), InlineFrameError> {
         let expected_current = current_size(self.plan);
         if current.size() != expected_current {
             return Err(InlineFrameError::CurrentSizeMismatch {
@@ -230,15 +273,9 @@ impl PendingFrame<'_> {
                     });
                 }
 
-                if matches!(self.plan, InlineFramePlan::Update { .. }) {
-                    Ok(FrameDiff::between(previous, current))
-                } else {
-                    Ok(FrameDiff::complete(previous.size(), current))
-                }
+                Ok(())
             },
-            InlineFramePlan::Initialize { .. } | InlineFramePlan::Reanchor { .. } => {
-                Ok(FrameDiff::complete(current.size(), current))
-            },
+            InlineFramePlan::Initialize { .. } | InlineFramePlan::Reanchor { .. } => Ok(()),
         }
     }
 

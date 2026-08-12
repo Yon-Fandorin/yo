@@ -8,6 +8,8 @@
     )
 )]
 
+use std::io::{self as std_io, Write};
+
 use rustix::{
     fd::BorrowedFd,
     io, stdio,
@@ -61,6 +63,31 @@ where
 pub(crate) struct RustixTermiosDriver {
     input: BorrowedFd<'static>,
 }
+
+pub(crate) struct DirectTerminalWriter {
+    output: BorrowedFd<'static>,
+}
+
+impl DirectTerminalWriter {
+    pub(crate) fn stdout() -> Self {
+        Self {
+            output: stdio::stdout(),
+        }
+    }
+}
+
+impl Write for DirectTerminalWriter {
+    fn write(&mut self, bytes: &[u8]) -> std_io::Result<usize> {
+        rustix::io::write(self.output, bytes)
+            .map_err(|error| std_io::Error::from_raw_os_error(error.raw_os_error()))
+    }
+
+    fn flush(&mut self) -> std_io::Result<()> {
+        Ok(())
+    }
+}
+
+impl crate::terminal::backend::UnbufferedTerminalOutput for DirectTerminalWriter {}
 
 impl RustixTermiosDriver {
     pub(crate) fn stdin() -> Self {

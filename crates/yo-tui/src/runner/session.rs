@@ -26,6 +26,7 @@ pub struct TuiSession {
     frame_rate_limit: FrameRateLimit,
     workspace_references: Option<Box<dyn WorkspaceReferenceConnection>>,
     skill_references: Option<Box<dyn SkillReferenceConnection>>,
+    publication_recovery_evidence: PublicationRecoveryEvidence,
 }
 
 /// Host-known labels displayed in the TUI status line.
@@ -33,6 +34,27 @@ pub struct TuiSession {
 pub struct TuiSessionInfo {
     backend: Option<String>,
     workspace: String,
+}
+
+/// One exact terminal-publication correction observed during this Session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum PublicationRecoveryKind {
+    /// Cleared a provably addressable prefix and restarted its publication.
+    ReversibleRestart,
+    /// Preserved a proven native-history prefix and resumed its exact suffix.
+    IrreversibleResume,
+    /// Retried only an unbuffered transport flush.
+    FlushRetry,
+}
+
+/// Bounded environmental evidence for recovered terminal-publication errors.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct PublicationRecoveryEvidence {
+    reversible_restarts: u64,
+    irreversible_resumes: u64,
+    flush_retries: u64,
+    last: Option<PublicationRecoveryKind>,
 }
 
 pub(super) struct SessionParts<'session> {
@@ -43,6 +65,7 @@ pub(super) struct SessionParts<'session> {
     pub(super) frame_rate_limit: FrameRateLimit,
     pub(super) workspace_references: &'session mut Option<Box<dyn WorkspaceReferenceConnection>>,
     pub(super) skill_references: &'session mut Option<Box<dyn SkillReferenceConnection>>,
+    pub(super) publication_recovery_evidence: &'session mut PublicationRecoveryEvidence,
 }
 
 impl TuiSession {
@@ -90,6 +113,7 @@ impl TuiSession {
             frame_rate_limit: FrameRateLimit::default(),
             workspace_references: None,
             skill_references: None,
+            publication_recovery_evidence: PublicationRecoveryEvidence::default(),
         }
     }
 
@@ -157,6 +181,12 @@ impl TuiSession {
         self.state.session_output(&self.appearance.pin())
     }
 
+    /// Returns recovered publication errors retained as environmental evidence.
+    #[must_use]
+    pub const fn publication_recovery_evidence(&self) -> PublicationRecoveryEvidence {
+        self.publication_recovery_evidence
+    }
+
     pub(super) fn parts_mut(&mut self) -> SessionParts<'_> {
         SessionParts {
             state: &mut self.state,
@@ -166,6 +196,7 @@ impl TuiSession {
             frame_rate_limit: self.frame_rate_limit,
             workspace_references: &mut self.workspace_references,
             skill_references: &mut self.skill_references,
+            publication_recovery_evidence: &mut self.publication_recovery_evidence,
         }
     }
 
@@ -248,6 +279,50 @@ impl TuiSession {
     #[cfg(test)]
     pub(super) fn appearance_pin(&self) -> AppearancePin {
         self.appearance.pin()
+    }
+}
+
+impl PublicationRecoveryEvidence {
+    /// Returns how many addressable prefixes were cleared and restarted.
+    #[must_use]
+    pub const fn reversible_restarts(self) -> u64 {
+        self.reversible_restarts
+    }
+
+    /// Returns how many proven native-history prefixes resumed from their exact suffix.
+    #[must_use]
+    pub const fn irreversible_resumes(self) -> u64 {
+        self.irreversible_resumes
+    }
+
+    /// Returns how many unbuffered flushes were retried without replaying bytes.
+    #[must_use]
+    pub const fn flush_retries(self) -> u64 {
+        self.flush_retries
+    }
+
+    /// Returns the most recently observed correction, if any.
+    #[must_use]
+    pub const fn last(self) -> Option<PublicationRecoveryKind> {
+        self.last
+    }
+
+    pub(super) fn record(&mut self, recovery: crate::terminal::mode::inline::InlineRecovery) {
+        let (counter, kind) = match recovery {
+            crate::terminal::mode::inline::InlineRecovery::ReversibleRestart => (
+                &mut self.reversible_restarts,
+                PublicationRecoveryKind::ReversibleRestart,
+            ),
+            crate::terminal::mode::inline::InlineRecovery::IrreversibleResume => (
+                &mut self.irreversible_resumes,
+                PublicationRecoveryKind::IrreversibleResume,
+            ),
+            crate::terminal::mode::inline::InlineRecovery::FlushRetry => {
+                (&mut self.flush_retries, PublicationRecoveryKind::FlushRetry)
+            },
+        };
+        *counter = counter.saturating_add(1);
+        self.last = Some(kind);
     }
 }
 

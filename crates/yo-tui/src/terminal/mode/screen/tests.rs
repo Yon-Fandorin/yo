@@ -71,6 +71,8 @@ impl Write for RecordingWriter {
     }
 }
 
+impl crate::terminal::backend::UnbufferedTerminalOutput for RecordingWriter {}
+
 struct RecordingBackend {
     events: Rc<RefCell<Vec<Event>>>,
     output: RecordingWriter,
@@ -160,7 +162,16 @@ fn rendered_session<'backend>(
 ) -> crate::terminal::mode::TerminalSession<'backend, RecordingBackend> {
     let mut session = enter_screen(backend, ScreenMode::Inline).unwrap();
     let current = Surface::new(Size::new(1, 1)).unwrap();
-    render_inline(&mut session, viewport, None, &current, Point::new(0, 0)).unwrap();
+    render_inline(
+        &mut session,
+        viewport,
+        None,
+        &current,
+        Point::new(0, 0),
+        None,
+        Size::new(80, 24),
+    )
+    .unwrap();
     session
 }
 
@@ -222,6 +233,8 @@ fn inline_renderer_rejects_a_fullscreen_session() {
         None,
         &current,
         Point::new(0, 0),
+        None,
+        Size::new(80, 24),
     )
     .unwrap_err();
 
@@ -245,6 +258,8 @@ fn inline_renderer_requires_cursor_visibility_ownership() {
         None,
         &current,
         Point::new(0, 0),
+        None,
+        Size::new(80, 24),
     )
     .unwrap_err();
 

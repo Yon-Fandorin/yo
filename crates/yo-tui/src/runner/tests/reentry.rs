@@ -15,7 +15,7 @@ use crossterm::event::{
 use yo_core::{
     AgentBackend, AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionError,
     AgentSessionPoll, BackendCapabilities, BackendCommandEvidence, BackendFailure, BackendPoll,
-    BackendStopHandle, CommandAdmission, TranscriptRecord, TurnRef,
+    BackendStopHandle, CommandAdmission, TranscriptRecord, TurnRef, UserInput,
 };
 
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
     runner::{
         AgentAction, AgentConnection, AgentPoll, DispatchOutcome, FrameRateLimit, PendingDispatch,
         TerminationEvent, TerminationSource, TuiSession,
-        unix::{FrameViewport, LivePresenter, LoopError, LoopExit, drive},
+        unix::{FrameViewport, GenerationStart, LivePresenter, LoopError, LoopExit, drive},
     },
     surface::{CellContent, Point, Size, Surface},
     terminal::{
@@ -33,10 +33,13 @@ use crate::{
         },
         mode::{
             TerminalSession,
+            inline::InlineRecovery,
             screen::{ScreenMode, enter_screen},
         },
     },
 };
+
+mod publication;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Mode {
@@ -250,7 +253,9 @@ struct Presenter {
     invalidations: usize,
     previous_on_render: Vec<bool>,
     frames: Vec<Surface>,
+    publications: Vec<Surface>,
     render_count: Rc<Cell<usize>>,
+    recovery: Option<InlineRecovery>,
 }
 
 impl FrameViewport for Presenter {
@@ -266,11 +271,19 @@ impl LivePresenter<Backend> for Presenter {
         previous: Option<&Surface>,
         current: &Surface,
         _cursor: Point,
-    ) -> Result<(), LoopError> {
+        publication: Option<&Surface>,
+        _terminal_size: Size,
+    ) -> Result<super::super::unix::RenderReceipt, LoopError> {
         self.previous_on_render.push(previous.is_some());
         self.frames.push(current.clone());
+        if let Some(publication) = publication {
+            self.publications.push(publication.clone());
+        }
         self.render_count.set(self.render_count.get() + 1);
-        Ok(())
+        Ok(super::super::unix::RenderReceipt {
+            publication_complete: publication.is_some(),
+            publication_recovery: publication.and(self.recovery),
+        })
     }
 }
 
@@ -392,8 +405,8 @@ fn run_generation_at(
             &mut reader,
             retained,
             agent,
-            Size::new(16, 6),
-            started,
+            GenerationStart::new(Size::new(16, 6), started),
+            &mut || Ok::<Size, Infallible>(Size::new(16, 6)),
         )
         .unwrap(),
         LoopExit::Termination
@@ -670,8 +683,8 @@ fn resize_frame_is_immediate_and_invalidates_the_previous_viewport() {
             &mut reader,
             &mut retained,
             &mut agent,
-            Size::new(16, 6),
-            Instant::now(),
+            GenerationStart::new(Size::new(16, 6), Instant::now()),
+            &mut || Ok::<Size, Infallible>(Size::new(16, 6)),
         )
         .unwrap(),
         LoopExit::Termination
@@ -766,8 +779,8 @@ fn zero_size_resize_preserves_the_generation_motion_epoch() {
             &mut reader,
             &mut retained,
             &mut agent,
-            Size::new(0, 0),
-            started,
+            GenerationStart::new(Size::new(0, 0), started),
+            &mut || Ok::<Size, Infallible>(Size::new(16, 6)),
         )
         .unwrap(),
         LoopExit::Termination

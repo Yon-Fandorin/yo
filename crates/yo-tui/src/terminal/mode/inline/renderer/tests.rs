@@ -6,6 +6,9 @@ use crate::{
     terminal::mode::inline::{InlineFramePlan, InlineViewport},
 };
 
+const TERMINAL_SIZE: Size = Size::new(80, 24);
+
+mod publication;
 mod restore;
 
 fn surface(size: Size, point: Point, text: &str) -> Surface {
@@ -27,7 +30,9 @@ fn initial_render_uses_only_relative_row_and_column_controls() {
     let pending = viewport.begin_frame(current.size());
     let mut renderer = InlineRenderer::new(Vec::new());
 
-    renderer.render(pending, None, &current).unwrap();
+    renderer
+        .render(pending, None, &current, None, TERMINAL_SIZE)
+        .unwrap();
 
     let output = renderer.into_inner();
     assert_eq!(
@@ -48,7 +53,9 @@ fn shrinking_clears_only_the_owned_surplus_rows() {
     assert!(matches!(pending.plan(), InlineFramePlan::Reconcile { .. }));
     let mut renderer = InlineRenderer::new(Vec::new());
 
-    renderer.render(pending, Some(&previous), &current).unwrap();
+    renderer
+        .render(pending, Some(&previous), &current, None, TERMINAL_SIZE)
+        .unwrap();
 
     let output = renderer.into_inner();
     assert!(
@@ -71,7 +78,9 @@ fn growing_allocates_only_the_added_rows() {
     let pending = viewport.begin_frame(current.size());
     let mut renderer = InlineRenderer::new(Vec::new());
 
-    renderer.render(pending, Some(&previous), &current).unwrap();
+    renderer
+        .render(pending, Some(&previous), &current, None, TERMINAL_SIZE)
+        .unwrap();
 
     assert!(
         renderer
@@ -89,7 +98,9 @@ fn reanchor_skips_abandoned_rows_before_allocating_the_new_viewport() {
     let pending = viewport.begin_frame(current.size());
     let mut renderer = InlineRenderer::new(Vec::new());
 
-    renderer.render(pending, None, &current).unwrap();
+    renderer
+        .render(pending, None, &current, None, TERMINAL_SIZE)
+        .unwrap();
 
     assert!(
         renderer
@@ -106,7 +117,9 @@ fn zero_sized_viewport_emits_no_row_movement() {
     let pending = viewport.begin_frame(current.size());
     let mut renderer = InlineRenderer::new(Vec::new());
 
-    renderer.render(pending, None, &current).unwrap();
+    renderer
+        .render(pending, None, &current, None, TERMINAL_SIZE)
+        .unwrap();
 
     assert_eq!(renderer.into_inner(), b"\x1b[?25l\x1b[1G\x1b[1G\x1b[?25h");
 }
@@ -119,7 +132,9 @@ fn flush_failure_leaves_the_viewport_untrusted() {
     let pending = viewport.begin_frame(current.size());
     let mut renderer = InlineRenderer::new(FlushFailingWriter(Vec::new()));
 
-    let error = renderer.render(pending, None, &current).unwrap_err();
+    let error = renderer
+        .render(pending, None, &current, None, TERMINAL_SIZE)
+        .unwrap_err();
 
     assert!(matches!(error, InlineRenderError::Output(_)));
     assert!(matches!(
@@ -136,7 +151,9 @@ fn partial_write_failure_leaves_the_viewport_untrusted() {
     let pending = viewport.begin_frame(current.size());
     let mut renderer = InlineRenderer::new(PartialFailingWriter { remaining: 2 });
 
-    let error = renderer.render(pending, None, &current).unwrap_err();
+    let error = renderer
+        .render(pending, None, &current, None, TERMINAL_SIZE)
+        .unwrap_err();
 
     assert!(matches!(error, InlineRenderError::Output(_)));
     assert!(matches!(
@@ -157,7 +174,9 @@ fn recoverable_write_failure_attempts_to_show_the_cursor_immediately() {
         failed: false,
     });
 
-    let error = renderer.render(pending, None, &current).unwrap_err();
+    let error = renderer
+        .render(pending, None, &current, None, TERMINAL_SIZE)
+        .unwrap_err();
     let output = renderer.into_inner().bytes;
 
     assert!(matches!(error, InlineRenderError::Output(_)));
@@ -174,7 +193,9 @@ fn initial_frame_places_the_physical_cursor_at_the_prompt_caret() {
         .unwrap();
     let mut renderer = InlineRenderer::new(Vec::new());
 
-    renderer.render(pending, None, &current).unwrap();
+    renderer
+        .render(pending, None, &current, None, TERMINAL_SIZE)
+        .unwrap();
 
     assert!(renderer.into_inner().ends_with(b"\x1b[1A\x1b[3G\x1b[?25h"));
 }
@@ -193,7 +214,9 @@ fn steady_frame_returns_from_the_remembered_caret_with_relative_moves() {
     let pending = viewport.begin_frame_at(size, Point::new(1, 0)).unwrap();
     let mut renderer = InlineRenderer::new(Vec::new());
 
-    renderer.render(pending, Some(&previous), &current).unwrap();
+    renderer
+        .render(pending, Some(&previous), &current, None, TERMINAL_SIZE)
+        .unwrap();
 
     assert_eq!(
         renderer.into_inner(),

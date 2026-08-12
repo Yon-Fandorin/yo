@@ -5,7 +5,10 @@ use std::{
 
 use super::{
     fullscreen::{FullscreenRenderError, FullscreenRenderer, FullscreenViewport},
-    inline::{InlineRenderError, InlineRenderer, InlineRestoreOutcome, InlineViewport},
+    inline::{
+        InlineRenderError, InlineRenderReceipt, InlineRenderer, InlineRestoreOutcome,
+        InlineViewport,
+    },
     panic_route::{PanicOutcome, PanicPayload, PanicRouteError, catch_owner_panic},
     transaction::{
         CleanupFailureCause, CleanupFailures, SessionFailure, SessionFailureCause, TerminalSession,
@@ -52,7 +55,9 @@ pub(crate) fn render_inline<B>(
     previous: Option<&Surface>,
     current: &Surface,
     cursor: Point,
-) -> Result<(), InlineRenderError>
+    publication: Option<&Surface>,
+    terminal_size: crate::surface::Size,
+) -> Result<InlineRenderReceipt, InlineRenderError>
 where
     B: ScreenModeBackend + TerminalOutputBackend,
     B::Mode: PartialEq,
@@ -67,7 +72,7 @@ where
         .begin_frame_at(current.size(), cursor)
         .map_err(InlineRenderError::Frame)?;
     let mut renderer = InlineRenderer::new(session.output());
-    renderer.render(pending, previous, current)
+    renderer.render(pending, previous, current, publication, terminal_size)
 }
 
 pub(crate) fn render_fullscreen<B>(

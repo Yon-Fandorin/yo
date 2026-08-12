@@ -1,7 +1,18 @@
 use super::{
-    AgentShellRenderError, AgentShellViewState, TranscriptLayoutConfig, TranscriptScrollCommand,
-    TranscriptState, editor_with, id, render, render_into, styles,
+    AgentShellMeasureError, AgentShellRenderError, AgentShellViewState, TranscriptLayoutConfig,
+    TranscriptScrollCommand, TranscriptState, checked_natural_height, editor_with, id, render,
+    render_into, styles,
 };
+
+// transcript/prompt/chrome의 자연 높이가 u16 범위를 넘으면 compact viewport가 조용히
+// u16::MAX로 붙지 않고 typed measurement 오류를 반환해 잘못된 geometry를 게시하지 않는다.
+#[test]
+fn natural_height_overflow_is_reported_instead_of_saturated() {
+    assert_eq!(
+        checked_natural_height(u16::MAX, 1),
+        Err(AgentShellMeasureError::HeightOverflow)
+    );
+}
 use crate::{
     input::editor::layout::LayoutError,
     layout::vertical::VerticalLayoutError,

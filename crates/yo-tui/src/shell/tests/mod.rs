@@ -1,8 +1,9 @@
 use std::time::Duration;
 
 use super::{
-    AgentShellFrame, AgentShellRenderError, AgentShellRenderOptions, AgentShellStyles,
-    AgentShellViewState, ShellChromeSnapshot, render, render_with_measure_hook,
+    AgentShellFrame, AgentShellMeasureError, AgentShellRenderError, AgentShellRenderOptions,
+    AgentShellStyles, AgentShellViewState, ShellChromeSnapshot, checked_natural_height, render,
+    render_with_measure_hook,
 };
 use crate::{
     appearance::{ActivityMotionFrame, ActivityStyles},
@@ -135,7 +136,7 @@ fn render_into_with_overlay(
     let frame = {
         let mut view = surface.view(Rect::new(Point::new(0, 0), size)).unwrap();
         render_with_measure_hook(
-            transcript,
+            transcript.all(),
             editor,
             &mut view,
             AgentShellRenderOptions {

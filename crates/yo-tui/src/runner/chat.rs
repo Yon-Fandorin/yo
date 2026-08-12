@@ -8,13 +8,38 @@ use yo_core::{
 };
 
 use super::state::StateError;
-use crate::transcript::{TranscriptItemId, TranscriptState};
+use crate::transcript::{TranscriptItemId, TranscriptPhase, TranscriptState};
 
 #[derive(Debug, Default)]
 pub(super) struct ChatProjection {
     transcript: TranscriptState,
+    publication_cursor: PublicationCursor,
     next_item_id: u64,
     activities: HashMap<ActivityRef, ActivityPresentation>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct PublicationCursor {
+    boundary: Option<PublicationBoundary>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct PublicationBoundary {
+    item: TranscriptItemId,
+    final_revision: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PublicationCandidate {
+    expected: PublicationCursor,
+    range: std::ops::Range<usize>,
+    boundary: PublicationBoundary,
+}
+
+impl PublicationCandidate {
+    pub(super) fn range(&self) -> std::ops::Range<usize> {
+        self.range.clone()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,6 +66,64 @@ impl ChatProjection {
 
     pub(super) fn transcript(&self) -> &TranscriptState {
         &self.transcript
+    }
+
+    pub(super) fn publication_candidate(&self) -> Option<PublicationCandidate> {
+        let start = self.published_item_count();
+        let end = self.transcript.items()[start..]
+            .iter()
+            .take_while(|item| item.phase() == TranscriptPhase::Final)
+            .count()
+            + start;
+        if end == start {
+            return None;
+        }
+        let last = self.transcript.items().get(end.checked_sub(1)?)?;
+        Some(PublicationCandidate {
+            expected: self.publication_cursor,
+            range: start..end,
+            boundary: PublicationBoundary {
+                item: last.id(),
+                final_revision: last.revision(),
+            },
+        })
+    }
+
+    pub(super) fn published_item_count(&self) -> usize {
+        let Some(boundary) = self.publication_cursor.boundary else {
+            return 0;
+        };
+        self.transcript
+            .items()
+            .iter()
+            .position(|item| {
+                item.id() == boundary.item
+                    && item.revision() == boundary.final_revision
+                    && item.phase() == TranscriptPhase::Final
+            })
+            .map(|index| index + 1)
+            .expect("the publication cursor must name an immutable Final transcript item")
+    }
+
+    pub(super) fn acknowledge_publication(&mut self, candidate: &PublicationCandidate) -> bool {
+        if self.publication_cursor != candidate.expected {
+            return false;
+        }
+        let Some(last) = self
+            .transcript
+            .items()
+            .get(candidate.range.end.saturating_sub(1))
+        else {
+            return false;
+        };
+        if last.id() != candidate.boundary.item
+            || last.revision() != candidate.boundary.final_revision
+            || last.phase() != TranscriptPhase::Final
+        {
+            return false;
+        }
+        self.publication_cursor.boundary = Some(candidate.boundary);
+        true
     }
 
     pub(super) fn observe_record(

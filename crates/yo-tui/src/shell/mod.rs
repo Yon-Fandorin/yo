@@ -20,8 +20,9 @@ use crate::{
     surface::{Point, Rect, SurfaceView, WriteOutcome},
     transcript::{
         TranscriptLayoutConfig, TranscriptMeasureError, TranscriptPaintError,
-        TranscriptRenderFrame, TranscriptScrollCommand, TranscriptState, TranscriptStyles,
-        TranscriptViewState, paint_prepared as paint_transcript, prepare as prepare_transcript,
+        TranscriptRenderFrame, TranscriptScrollCommand, TranscriptSlice, TranscriptState,
+        TranscriptStyles, TranscriptViewMode, TranscriptViewState,
+        paint_prepared as paint_transcript, prepare_slice as prepare_transcript,
     },
 };
 
@@ -40,6 +41,17 @@ pub(crate) struct AgentShellViewState {
 impl AgentShellViewState {
     pub(crate) const fn transcript_first_visible_row(self) -> u16 {
         self.transcript.first_visible_row()
+    }
+
+    pub(crate) const fn transcript_mode(self) -> TranscriptViewMode {
+        self.transcript.mode()
+    }
+}
+
+#[cfg(not(test))]
+impl AgentShellViewState {
+    pub(crate) const fn transcript_mode(self) -> TranscriptViewMode {
+        self.transcript.mode()
     }
 }
 
@@ -89,6 +101,13 @@ pub(crate) enum AgentShellRenderError {
     Chrome(chrome::ShellChromeError),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AgentShellMeasureError {
+    Prompt(PromptMeasureError),
+    Transcript(TranscriptMeasureError),
+    HeightOverflow,
+}
+
 pub(crate) fn render(
     transcript: &TranscriptState,
     editor: &PromptEditor,
@@ -99,7 +118,7 @@ pub(crate) fn render(
     scroll: Option<TranscriptScrollCommand>,
 ) -> Result<AgentShellFrame, AgentShellRenderError> {
     render_with_measure_hook(
-        transcript,
+        transcript.all(),
         editor,
         view,
         AgentShellRenderOptions {
@@ -123,7 +142,7 @@ pub(crate) fn render(
 }
 
 pub(crate) fn render_with_measure_hook(
-    transcript: &TranscriptState,
+    transcript: TranscriptSlice<'_>,
     editor: &PromptEditor,
     view: &mut SurfaceView<'_>,
     options: AgentShellRenderOptions<'_>,
@@ -281,6 +300,48 @@ pub(crate) fn render_with_measure_hook(
         motion_period,
         overlay_area,
     })
+}
+
+pub(crate) fn natural_height(
+    transcript: TranscriptSlice<'_>,
+    editor: &PromptEditor,
+    width: u16,
+    options: AgentShellRenderOptions<'_>,
+) -> Result<u16, AgentShellMeasureError> {
+    let prompt = prepare_prompt(editor, width)
+        .map_err(AgentShellMeasureError::Prompt)?
+        .with_frame(true);
+    let transcript = prepare_transcript(transcript, width, options.transcript_config)
+        .map_err(AgentShellMeasureError::Transcript)?;
+    let overlay_height = options
+        .overlay
+        .and_then(|panel| {
+            panel.prepare_with_motion(
+                crate::surface::Size::new(width, u16::MAX),
+                options.styles.overlay,
+                options.overlay_bindings,
+                options.chrome.turn_active,
+                options.activity_motion,
+            )
+        })
+        .map_or(0, |prepared| prepared.size().height);
+
+    let transcript_rows = transcript
+        .content_height()
+        .max(2)
+        .max(overlay_height.saturating_sub(2));
+    checked_natural_height(transcript_rows, prompt.desired_height().get())
+}
+
+fn checked_natural_height(
+    transcript_rows: u16,
+    prompt_rows: u16,
+) -> Result<u16, AgentShellMeasureError> {
+    transcript_rows
+        .checked_add(2)
+        .and_then(|height| height.checked_add(prompt_rows))
+        .and_then(|height| height.checked_add(2))
+        .ok_or(AgentShellMeasureError::HeightOverflow)
 }
 
 fn earliest_motion_period(

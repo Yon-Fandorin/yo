@@ -390,6 +390,26 @@ The useful inspection points are:
    do not arm that timer. A one-grapheme activity status can still pulse and therefore
    remains animated.
 
+   Inline Chat preparation is a two-part transaction. `runner/state.rs` selects
+   the maximal contiguous prefix of complete unpublished items as persistent
+   output, then composes only the remaining transcript suffix, prompt, chrome,
+   and overlay into a natural-height live `Surface`. `terminal/mode/inline`
+   compiles the persistent rows and live update into retained typed
+   `TerminalOp` groups before the shared ANSI encoder and direct unbuffered Unix
+   transport. The effect ledger carries the observed terminal geometry plus
+   cursor ranges and distinguishes an addressable prefix, definite scrolling,
+   and a possible-scroll state whose anchor is not exact. Exact downstream
+   progress permits one bounded clear-and-restart or suffix-resume recovery at a
+   complete operation boundary; a partial operation, possible scroll, or second
+   failure is fatal. A recovered correction is retained as bounded `TuiSession`
+   environmental evidence. The publication cursor advances only after that
+   write and flush complete. The presenter then drains queued resize notifications and
+   samples terminal size: it keeps the persistent acknowledgement but rejects
+   the prepared live geometry whenever either the size or geometry epoch is
+   stale, and requests an immediate suffix-only reprepare. A detached Chat
+   viewport, Transcript, and Request freeze publication; Fullscreen does not use
+   the cursor.
+
 The accepted ordering, interruption gestures, honest status data, and
 responsive fitting policy are owned by the
 [static input chrome contract](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md).
@@ -835,6 +855,7 @@ independent cleanup boundaries and reports their contexts together.
 - [Typed TUI flow](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md)
 - [Presentation mode selection](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md)
 - [Terminal lifecycle restoration](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md)
+- [Inline viewport publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.inline-viewport.md)
 - [Process termination coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md)
 - [Terminal job-control suspend and resume](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md)
 

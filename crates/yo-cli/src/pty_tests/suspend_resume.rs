@@ -70,14 +70,16 @@ fn fullscreen_repeated_suspend_resume_restores_each_terminal_generation() {
 }
 
 // 실제 Linux PTY의 Inline mode에서도 두 번 연속 일시정지할 때마다 viewport와 termios를
-// 복구하고, SIGCONT 뒤 같은 대화 상태를 새 viewport의 첫 전체 frame으로 다시 그린다.
+// 복구한다. SIGCONT 뒤에는 publication cursor를 보존해 acknowledged history를 새 live
+// viewport나 최종 exit suffix로 재생하지 않는다.
 #[test]
 fn inline_repeated_suspend_resume_reacquires_a_fresh_viewport() {
     const RETAINED: &[u8] = b"YO_INLINE_RETAINED";
     let mut child = PtyChild::spawn(
         "pty_tests::suspend_resume::child_inline_repeated_suspend_resume",
-        RETAINED,
+        b"\x1b[?25l",
     );
+    child.wait_until_ready();
     child.wait_until_ready();
 
     for _ in 0..2 {
@@ -111,8 +113,8 @@ fn inline_repeated_suspend_resume_reacquires_a_fresh_viewport() {
             .windows(RETAINED.len())
             .filter(|candidate| *candidate == RETAINED)
             .count(),
-        4,
-        "one frame per terminal generation plus one final plain transcript is expected"
+        1,
+        "suspend/resume and final exit must not replay acknowledged native history"
     );
 }
 

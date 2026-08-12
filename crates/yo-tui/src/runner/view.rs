@@ -19,8 +19,8 @@ use crate::{
     surface::{Point, Rect, Style, SurfaceView, WriteOutcome},
     text::flow::{TextFlowError, flow_text},
     transcript::{
-        TranscriptItemId, TranscriptRenderError, TranscriptScrollCommand, TranscriptState,
-        TranscriptStateError, TranscriptViewState,
+        TranscriptItemId, TranscriptRenderError, TranscriptScrollCommand, TranscriptSlice,
+        TranscriptState, TranscriptStateError, TranscriptViewMode, TranscriptViewState,
     },
 };
 
@@ -221,7 +221,7 @@ impl ObservabilityViews {
 
     pub(super) fn render(
         &self,
-        chat: &TranscriptState,
+        chat: TranscriptSlice<'_>,
         editor: &PromptEditor,
         view: &mut SurfaceView<'_>,
         options: ObservabilityRenderOptions<'_>,
@@ -406,9 +406,8 @@ impl ObservabilityViews {
         self.state.active
     }
 
-    #[cfg(test)]
-    pub(super) fn request_reason(&self) -> RequestUnavailableReason {
-        projection::request_reason(&self.records, self.state.request_anchor)
+    pub(super) const fn inline_publication_eligible(&self) -> bool {
+        self.state.inline_publication_eligible()
     }
 
     #[cfg(test)]
@@ -428,6 +427,33 @@ impl ObservabilityViews {
     #[cfg(test)]
     pub(super) fn chat_context_count(&self) -> usize {
         self.chat_contexts.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn request_reason(&self) -> RequestUnavailableReason {
+        projection::request_reason(&self.records, self.state.request_anchor)
+    }
+}
+
+impl ObservabilityViewState {
+    pub(super) const fn inline_publication_eligible(self) -> bool {
+        if !matches!(self.active, ObservabilityView::Chat) {
+            return false;
+        }
+        match self.chat.pending_scroll {
+            Some(
+                TranscriptScrollCommand::LineUp
+                | TranscriptScrollCommand::PageUp
+                | TranscriptScrollCommand::JumpToStart,
+            ) => false,
+            Some(TranscriptScrollCommand::JumpToTail) => true,
+            Some(TranscriptScrollCommand::LineDown | TranscriptScrollCommand::PageDown) | None => {
+                matches!(
+                    self.chat_shell.transcript_mode(),
+                    TranscriptViewMode::FollowTail
+                )
+            },
+        }
     }
 }
 

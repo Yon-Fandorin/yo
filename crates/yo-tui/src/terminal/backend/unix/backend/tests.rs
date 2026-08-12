@@ -80,6 +80,8 @@ impl Write for RecordingWriter {
     }
 }
 
+impl crate::terminal::backend::UnbufferedTerminalOutput for RecordingWriter {}
+
 fn backend(writer: RecordingWriter) -> UnixBackend<RecordingTermios, RecordingWriter> {
     UnixBackend::new(TtyStateAdapter::new(RecordingTermios::default()), writer)
 }
@@ -238,6 +240,8 @@ fn inline_renderer_writes_through_the_active_session_backend() {
         None,
         &current,
         Point::new(0, 0),
+        None,
+        Size::new(80, 24),
     )
     .unwrap();
     session.close().unwrap();

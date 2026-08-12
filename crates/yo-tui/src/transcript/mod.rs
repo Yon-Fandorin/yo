@@ -9,7 +9,7 @@
     )
 )]
 
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Range};
 
 mod layout;
 mod viewport;
@@ -17,7 +17,7 @@ mod viewport;
 pub(crate) use layout::{
     TranscriptLayoutConfig, TranscriptLayoutConfigError, TranscriptMeasure, TranscriptMeasureError,
     TranscriptPaintError, TranscriptRenderError, TranscriptRenderFrame, TranscriptStyles, measure,
-    paint_prepared, prepare, render,
+    measure_slice, paint_prepared, prepare, prepare_slice, render, render_slice,
 };
 pub(crate) use viewport::{TranscriptScrollCommand, TranscriptViewMode, TranscriptViewState};
 
@@ -73,6 +73,22 @@ pub(crate) struct TranscriptItem {
     revision: u64,
     phase: TranscriptPhase,
     body: TranscriptBody,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TranscriptSlice<'transcript> {
+    items: &'transcript [TranscriptItem],
+    has_visible_predecessor: bool,
+}
+
+impl<'transcript> TranscriptSlice<'transcript> {
+    pub(crate) const fn items(self) -> &'transcript [TranscriptItem] {
+        self.items
+    }
+
+    pub(crate) const fn has_visible_predecessor(self) -> bool {
+        self.has_visible_predecessor
+    }
 }
 
 impl TranscriptItem {
@@ -140,11 +156,40 @@ impl TranscriptState {
         &self.items
     }
 
+    pub(crate) fn slice(&self, range: Range<usize>) -> TranscriptSlice<'_> {
+        assert!(
+            range.start <= range.end && range.end <= self.items.len(),
+            "transcript slice must stay inside the ordered item list"
+        );
+        TranscriptSlice {
+            items: &self.items[range.clone()],
+            has_visible_predecessor: self.items[..range.start]
+                .iter()
+                .any(transcript_item_is_visible),
+        }
+    }
+
+    pub(crate) fn all(&self) -> TranscriptSlice<'_> {
+        self.slice(0..self.items.len())
+    }
+
+    pub(crate) fn suffix(&self, start: usize) -> TranscriptSlice<'_> {
+        self.slice(start..self.items.len())
+    }
+
     pub(crate) fn plain_output(
         &self,
         config: &TranscriptLayoutConfig,
     ) -> Result<Option<String>, TranscriptMeasureError> {
-        prepare(self, u16::MAX, config).map(|prepared| prepared.into_plain_text())
+        self.plain_output_slice(self.all(), config)
+    }
+
+    pub(crate) fn plain_output_slice(
+        &self,
+        slice: TranscriptSlice<'_>,
+        config: &TranscriptLayoutConfig,
+    ) -> Result<Option<String>, TranscriptMeasureError> {
+        prepare_slice(slice, u16::MAX, config).map(|prepared| prepared.into_plain_text())
     }
 
     pub(crate) fn push_user(
@@ -256,6 +301,11 @@ impl TranscriptState {
             .ok_or(TranscriptStateError::UnknownId(id))?;
         Ok(&mut self.items[index])
     }
+}
+
+fn transcript_item_is_visible(item: &TranscriptItem) -> bool {
+    let TranscriptBody::Message(message) = item.body();
+    !message.text().is_empty() || item.phase() == TranscriptPhase::Final
 }
 
 #[cfg(test)]

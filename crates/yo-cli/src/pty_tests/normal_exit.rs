@@ -7,8 +7,8 @@ use std::{
 use yo_tui::{PresentationMode, TerminationEvent, TerminationSource};
 
 use super::support::{
-    CHILD_MARKER, ENTER_ALTERNATE_SCREEN, PtyChild, RetainedChatAgent, assert_fullscreen_pair,
-    run_fullscreen,
+    CHILD_MARKER, ENTER_ALTERNATE_SCREEN, PendingAgent, PtyChild, RetainedChatAgent,
+    assert_fullscreen_pair, run_fullscreen,
 };
 
 struct PendingTermination;
@@ -51,11 +51,11 @@ fn run_inline_with_retained_chat(
     Ok(())
 }
 
-// 실제 Linux PTY에서 세 buffered record가 one-at-a-time 순회 중에도 계속 ready로 남아
-// 대화를 완성하고, Inline viewport 복구 뒤 그 텍스트가 native scrollback에 남는지 확인한다.
+// 실제 Linux PTY에서 Final Chat 항목은 active viewport 복구 전에 persistent output으로 한
+// 번만 기록되고, 정상 종료 뒤 unpublished suffix가 없어 다시 출력되지 않는다.
 #[test]
 fn inline_normal_exit_retains_chat_after_viewport_restoration() {
-    const RETAINED: &[u8] = "• YO_INLINE_RETAINED\r\n".as_bytes();
+    const RETAINED: &[u8] = "YO_INLINE_RETAINED".as_bytes();
     let mut child = PtyChild::spawn(
         "pty_tests::normal_exit::child_inline_retains_chat",
         b"YO_INLINE_RETAINED",
@@ -71,9 +71,82 @@ fn inline_normal_exit_retains_chat_after_viewport_restoration() {
         String::from_utf8_lossy(&output)
     );
     assert!(
-        position(&output, b"\x1b[2K") < position(&output, RETAINED),
-        "plain chat output must follow viewport restoration:\n{}",
+        position(&output, RETAINED) < position(&output, b"\x1b[2K"),
+        "persistent Chat output must precede final live-viewport restoration:\n{}",
         String::from_utf8_lossy(&output)
+    );
+    assert_eq!(
+        output
+            .windows(RETAINED.len())
+            .filter(|candidate| *candidate == RETAINED)
+            .count(),
+        1,
+        "acknowledged Chat output must not be replayed as an exit suffix"
+    );
+}
+
+// 80x24 실제 Linux PTY에서 비어 있는 Inline Chat은 terminal 전체 24행을 확보하지 않고
+// transcript floor, framed prompt와 chrome에 필요한 9행만 live region으로 할당한다.
+#[test]
+fn inline_empty_prompt_uses_a_compact_live_region() {
+    let mut child = PtyChild::spawn(
+        "pty_tests::normal_exit::child_inline_empty_prompt",
+        b"\x1b[?25l",
+    );
+    child.wait_until_ready();
+    child.input.write_all(&[0x04]).unwrap();
+    child.input.flush().unwrap();
+
+    let (status, output) = child.finish();
+    assert!(
+        status.success(),
+        "child failed:\n{}",
+        String::from_utf8_lossy(&output)
+    );
+    assert!(
+        output
+            .windows(10)
+            .any(|window| window == b"\r\n\n\n\n\n\n\n\n\n"),
+        "Inline must allocate the compact nine-row live region:\n{}",
+        String::from_utf8_lossy(&output)
+    );
+    assert!(
+        !output
+            .windows(25)
+            .any(|window| window == b"\r\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"),
+        "Inline must not allocate all 24 terminal rows"
+    );
+}
+
+// 실제 Linux PTY 크기를 바꾸고 SIGWINCH를 전달해도 이미 persistent scrollback으로
+// acknowledge한 Final 항목은 다시 출력하지 않고 compact live viewport만 새 폭으로 그린다.
+#[test]
+fn inline_resize_does_not_replay_published_history() {
+    const RETAINED: &[u8] = b"YO_INLINE_RETAINED";
+    let mut child = PtyChild::spawn(
+        "pty_tests::normal_exit::child_inline_retains_chat",
+        b"\x1b[?25l",
+    );
+    child.wait_until_ready();
+    child.wait_until_ready();
+    child.resize(100, 30);
+    child.wait_until_ready();
+    child.input.write_all(&[0x04]).unwrap();
+    child.input.flush().unwrap();
+
+    let (status, output) = child.finish();
+    assert!(
+        status.success(),
+        "child failed:\n{}",
+        String::from_utf8_lossy(&output)
+    );
+    assert_eq!(
+        output
+            .windows(RETAINED.len())
+            .filter(|candidate| *candidate == RETAINED)
+            .count(),
+        1,
+        "ordinary resize must not replay acknowledged native history"
     );
 }
 
@@ -115,4 +188,22 @@ fn child_inline_retains_chat() {
         return;
     }
     run_inline_with_retained_chat(&mut PendingTermination).unwrap();
+}
+
+// 부모 테스트가 마련한 PTY에서 semantic Chat 없이 compact Inline prompt만 그린다.
+#[test]
+#[ignore]
+fn child_inline_empty_prompt() {
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        return;
+    }
+    let mut agent = PendingAgent;
+    yo_tui::run_with_mode(
+        &mut PendingTermination,
+        &mut agent,
+        PresentationMode::Inline,
+        yo_tui::ColorCapability::Unknown,
+        yo_tui::MotionPreference::Standard,
+    )
+    .unwrap();
 }

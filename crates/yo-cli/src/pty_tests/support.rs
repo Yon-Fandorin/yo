@@ -14,16 +14,13 @@ use std::{
 use nix::{
     pty::{Winsize, openpty},
     sys::{
-        signal::Signal,
+        signal::{Signal, kill},
         termios::tcgetattr,
         wait::{WaitPidFlag, WaitStatus, waitpid},
     },
     unistd::Pid,
 };
-use yo_core::{
-    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent,
-    TranscriptRecord, TurnId, TurnRef,
-};
+use yo_core::{AgentCommand, TranscriptRecord, TurnId, TurnRef, UserInput};
 use yo_tui::{
     AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch, PresentationMode,
     TerminationSource,
@@ -65,23 +62,13 @@ impl RetainedChatAgent {
             .parse()
             .expect("the fixture is a UUIDv7");
         let turn = TurnRef::new(session_id, id(TurnId::new));
-        let activity = ActivityRef::new(turn, id(ActivityId::new));
         Self {
-            records: [
-                AgentEvent::ActivityStarted {
-                    activity,
-                    kind: ActivityKind::AgentMessage,
+            records: [TranscriptRecord::CommandCommitted(
+                AgentCommand::StartTurn {
+                    turn,
+                    input: UserInput::from("YO_INLINE_RETAINED"),
                 },
-                AgentEvent::ActivityUpdated {
-                    activity,
-                    update: ActivityUpdate::TextSnapshot("YO_INLINE_RETAINED".to_owned()),
-                },
-                AgentEvent::ActivityFinished {
-                    activity,
-                    outcome: ActivityOutcome::Completed,
-                },
-            ]
-            .map(TranscriptRecord::EventCommitted)
+            )]
             .into(),
         }
     }
@@ -207,6 +194,22 @@ impl PtyChild {
             );
             thread::sleep(Duration::from_millis(10));
         }
+    }
+
+    pub(super) fn resize(&self, columns: u16, rows: u16) {
+        let size = rustix::termios::Winsize {
+            ws_row: rows,
+            ws_col: columns,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        rustix::termios::tcsetwinsize(&self.slave, size)
+            .expect("updating the PTY window size must succeed");
+        kill(
+            Pid::from_raw(i32::try_from(self.child.id()).unwrap()),
+            Signal::SIGWINCH,
+        )
+        .expect("the child must receive the PTY resize notification");
     }
 
     pub(super) fn finish(mut self) -> (std::process::ExitStatus, Vec<u8>) {

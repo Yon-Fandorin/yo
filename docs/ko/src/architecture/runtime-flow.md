@@ -372,6 +372,23 @@ Inline 또는 Fullscreen presenter
    indicator는 timer를 활성화하지 않는다. 한 grapheme activity status도 pulse할 수
    있으므로 계속 animated indicator다.
 
+   Inline Chat frame 준비는 두 부분의 transaction이다. `runner/state.rs`는
+   완료된 unpublished item의 최대 연속 prefix를 persistent 출력으로
+   선택하고, 나머지 transcript suffix·prompt·chrome·overlay만 자연 높이의
+   live `Surface`로 조합한다. `terminal/mode/inline`은 persistent 행과 live
+   update를 공유 ANSI encoder 이전에 보존되는 typed `TerminalOp` group으로
+   compile한 뒤 direct unbuffered Unix transport로 출력한다. effect ledger는
+   관찰한 terminal geometry, cursor 범위, addressable prefix, 확정 scroll, anchor가
+   정확하지 않은 possible-scroll 상태를 구분한다. 정확한 downstream 진행률이
+   complete operation 경계에서 한 번의 clear-and-restart 또는 suffix-resume
+   recovery를 허용하며, partial operation·possible scroll·두 번째 실패는 fatal이다.
+   복구된 correction은 bounded `TuiSession` 환경 증거로 보존한다. write와 flush가
+   모두 완료된 뒤에만 publication cursor가 전진한다. 이어 presenter가 대기 중인
+   resize 알림을 drain하고 terminal size를 새로 읽는다. size나 geometry epoch가
+   stale이면 persistent acknowledgement는 유지하되 준비한 live geometry는 버리고
+   suffix만 즉시 다시 준비한다. tail에서 떨어진 Chat viewport, Transcript,
+   Request는 publication을 멈추고, Fullscreen은 cursor를 사용하지 않는다.
+
 승인된 순서, 중단 gesture, 정직한 status 데이터, 반응형 맞춤 정책은
 [정적 입력 chrome 계약](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.chrome.input-stack.md)이
 소유한다. 이 runtime에서 `shell::chrome`은 활성 상태와 `TuiSessionInfo`로
@@ -789,6 +806,7 @@ disposition을 적용한다.
 - [typed TUI 흐름](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.typed-flow.md)
 - [표시 mode 선택](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.mode-selection.md)
 - [터미널 생명주기 복원](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.lifecycle-restoration.md)
+- [Inline viewport publication](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.inline-viewport.md)
 - [프로세스 종료 coordinator](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.process-termination-coordinator.md)
 - [터미널 job-control 일시정지와 재개](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.job-control-suspend-resume.md)
 

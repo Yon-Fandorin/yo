@@ -8,7 +8,8 @@ use std::num::NonZeroU16;
 pub(crate) use config::{TranscriptLayoutConfig, TranscriptLayoutConfigError};
 
 use super::{
-    MessageRole, TranscriptBody, TranscriptItemId, TranscriptPhase, TranscriptState,
+    MessageRole, TranscriptBody, TranscriptItemId, TranscriptPhase, TranscriptSlice,
+    TranscriptState,
     viewport::{TranscriptScrollCommand, TranscriptViewState, VisibleRows},
 };
 use crate::{
@@ -109,8 +110,27 @@ pub(crate) fn measure(
     })
 }
 
+pub(crate) fn measure_slice(
+    transcript: TranscriptSlice<'_>,
+    width: u16,
+    config: &TranscriptLayoutConfig,
+) -> Result<TranscriptMeasure, TranscriptMeasureError> {
+    let prepared = prepare_slice(transcript, width, config)?;
+    Ok(TranscriptMeasure {
+        content_height: prepared.content_height(),
+    })
+}
+
 pub(crate) fn prepare(
     transcript: &TranscriptState,
+    width: u16,
+    config: &TranscriptLayoutConfig,
+) -> Result<PreparedTranscript, TranscriptMeasureError> {
+    prepare_slice(transcript.all(), width, config)
+}
+
+pub(crate) fn prepare_slice(
+    transcript: TranscriptSlice<'_>,
     width: u16,
     config: &TranscriptLayoutConfig,
 ) -> Result<PreparedTranscript, TranscriptMeasureError> {
@@ -130,10 +150,21 @@ pub(crate) fn render(
     state: &mut TranscriptViewState,
     command: Option<TranscriptScrollCommand>,
 ) -> Result<TranscriptRenderFrame, TranscriptRenderError> {
+    render_slice(transcript.all(), view, config, styles, state, command)
+}
+
+pub(crate) fn render_slice(
+    transcript: TranscriptSlice<'_>,
+    view: &mut SurfaceView<'_>,
+    config: &TranscriptLayoutConfig,
+    styles: TranscriptStyles,
+    state: &mut TranscriptViewState,
+    command: Option<TranscriptScrollCommand>,
+) -> Result<TranscriptRenderFrame, TranscriptRenderError> {
     let size = view.size();
     let width = NonZeroU16::new(size.width).ok_or(TranscriptRenderError::ZeroWidth)?;
     NonZeroU16::new(size.height).ok_or(TranscriptRenderError::ZeroHeight)?;
-    let prepared = prepare(transcript, width.get(), config).map_err(render_error)?;
+    let prepared = prepare_slice(transcript, width.get(), config).map_err(render_error)?;
 
     if view.clear(styles.background) == WriteOutcome::Clipped {
         return Err(TranscriptRenderError::SurfaceConflict);
@@ -229,7 +260,7 @@ impl TranscriptStyles {
 }
 
 fn layout(
-    transcript: &TranscriptState,
+    transcript: TranscriptSlice<'_>,
     view_width: NonZeroU16,
     config: &TranscriptLayoutConfig,
 ) -> Result<TranscriptLayout, TranscriptRenderError> {
@@ -240,7 +271,7 @@ fn layout(
     let mut glyphs = Vec::new();
     let mut items = Vec::new();
     let mut height = 0_u16;
-    let mut has_visible_item = false;
+    let mut has_visible_item = transcript.has_visible_predecessor();
 
     for item in transcript.items() {
         let TranscriptBody::Message(message) = item.body();

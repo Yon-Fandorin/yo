@@ -6,6 +6,7 @@ mod chat;
 mod error;
 mod frame;
 mod model;
+mod publication;
 mod session;
 mod skill;
 mod source_schedule;
@@ -18,7 +19,9 @@ pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, Pendin
 pub use archival::{ArchivedProjectionError, ArchivedSessionView, project_archived_session};
 pub use error::RunError;
 pub use frame::FrameRateLimit;
-pub use session::{TuiSession, TuiSessionInfo};
+pub use session::{
+    PublicationRecoveryEvidence, PublicationRecoveryKind, TuiSession, TuiSessionInfo,
+};
 pub use skill::{SkillReferenceConnection, SkillReferencePoll};
 pub use unix::{run, run_session_with_mode, run_with_mode};
 pub use workspace::{WorkspaceReferenceConnection, WorkspaceReferencePoll};

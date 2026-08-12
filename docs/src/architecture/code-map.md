@@ -181,26 +181,27 @@ terminal-operation, and HTML-projection types.
 
 | Module | Owns | Follow next |
 |---|---|---|
-| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, required readiness for every live source, indefinite idle waiting, configurable 120/60fps frame coalescing, editor-frame publication around asynchronous prompt assistance, final cleanup reporting, and terminal-independent archived Chat, Transcript, and Request projection | `runner/state.rs` for semantic UI transitions; `runner/frame.rs` for frame-rate policy; `runner/archival.rs` for stored output; `runner/unix.rs` for live orchestration and visible motion scheduling |
+| [`runner`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/mod.rs) | Public live-session facade, single terminal-owning loop, required readiness for every live source, indefinite idle waiting, configurable 120/60fps frame coalescing, a retained Inline Chat publication cursor, final cleanup reporting, and terminal-independent archived Chat, Transcript, and Request projection | `runner/state.rs` for semantic UI transitions and candidate orchestration; `runner/publication.rs` for persistent-row preparation and compact live size; `runner/frame.rs` for frame-rate policy; `runner/archival.rs` for stored output; `runner/unix.rs` and `runner/unix/presenter.rs` for live orchestration, post-flush geometry observation, and visible motion scheduling |
 | [`runner/archival.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/archival.rs), [`runner/archival/request.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/archival/request.rs) | Read-only stored-Session output. Request renders the complete payload-free correlation trace in durable Journal order with its exact observation boundary, typed detail availability, and explicit unavailable Request Audit seam | Stored recovery or Request Audit persistence |
 | [`appearance`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/appearance/mod.rs) | Session-owned immutable appearance snapshots, monotonic revisions, resolved style roles, and the public built-in Rich/ASCII glyph profiles | `appearance/activity.rs` for validated activity-frame sequences, elapsed-time selection, maximum reserved marker width, continuous shimmer math, color-depth resolution, and reduced motion; `runner/session.rs` for profile-aware construction; `runner/state.rs` for frame pinning |
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain/mod.rs) | Terminal-cell-aware plain lists that preserve pinned columns, pack short collapsed label/value pairs as a width-bounded flow, give block values an independent row and split their label from the value only when needed, wrap grapheme clusters without truncation, and fall back to a vertical card layout | Which columns mean what, their fold priorities or continuation hints, configuration, stdout TTY policy, or terminal ownership |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input/mod.rs) | Decoded semantic key events, edit buffer, configurable bindings, exit gestures, prompt editing, typed view-switch presentation policy, and shared terminal notation for available key actions | `input/key_notation.rs` for terminal labels only; `prompt` for visible cursor layout; `runner/view.rs` for the selected projection |
-| [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, transcript layout, and scrolling state | `shell` for composition with the prompt |
+| [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript/mod.rs) | Ordered user and agent items, streaming revisions, separator-preserving range projection, transcript layout, and scrolling state | `runner/chat.rs` for the monotonic publication cursor; `shell` for compact composition with the prompt |
 | [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Chat, Transcript, and Request selection; a header-free editable Chat surface; read-only mode headers; full Transcript projection; full-Session payload-free Request trace with optional exact-context highlighting; and mode-local context and viewport state | `runner/state.rs` for Journal observation and editor dispatch; `transcript` for shared layout and scrolling |
 | [`prompt`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/prompt/mod.rs) | Measuring and painting editor content plus cursor visibility; scanning eligible `@` and `$` tokens; preserving the last usable panel while a replacement query is pending; rejecting stale provider updates; replacing an accepted span; retaining its typed identity; and filtering cached skill candidates by reported scope | `input/editor` for edit semantics; the execution provider for discovery; `overlay` for freshness-gated presentation; `yo-core` for structured admission |
 | [`overlay`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/overlay/mod.rs) | Validated selectable-panel snapshots, snapshot freshness independent of entry availability, typed static/activity title status, enabled-entry navigation and fitting, optional bottom-left filter presentation, atomic `Surface` paint, and a token-scoped single prompt-overlay slot | Providers retain query, candidate filtering, preview, and accepted product effects; `runner/state.rs` owns routing and receipts; `shell` owns the bottom-anchored destination |
-| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | Allocating the stable work/prompt/metrics/help stack, fitting state-valid help as atomic priority segments, painting the pinned activity frame inside its maximum-width marker region plus the fixed-text style sheen, and reporting the shortest visible motion demand with the cursor from one completed frame | `shell/chrome.rs` for the work row, `shell/chrome/help.rs` for the footer; `input/key_notation.rs` for labels; `surface` for cell writes; `runner/session.rs` for honest host-known status values |
+| [`shell`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/shell/mod.rs) | Measuring the natural Inline live height with checked overflow reporting, allocating the work/prompt/metrics/help stack, fitting state-valid help as atomic priority segments, painting the pinned activity frame inside its maximum-width marker region plus the fixed-text style sheen, and reporting the shortest visible motion demand with the cursor from one completed frame | `shell/chrome.rs` for the work row, `shell/chrome/help.rs` for the footer; `input/key_notation.rs` for labels; `surface` for cell writes; `runner/session.rs` for honest host-known status values |
 | [`surface`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/surface/mod.rs), [`text`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/text/mod.rs) | Adapter-independent cell state, Unicode graphemes and width, bounded views, diff spans, and terminal-independent text flow | `terminal` or `html` for projection |
 | [`terminal`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mod.rs) | Typed terminal operations and ANSI encoding | `terminal/mode` for presentation policy; `terminal/backend` for Unix effects |
-| [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | Shared transactional restoration, Inline and Fullscreen presenters, panic routing, and the crate-private platform boundary | `yo-cli/process` only when process signal policy changes |
+| [`terminal/mode`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/mode/mod.rs), [`terminal/backend`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/terminal/backend/mod.rs) | Shared transactional restoration, Inline and Fullscreen presenters, Inline's typed-operation effect ledger with cursor-range and actual-scroll evidence, bounded write recovery, panic routing, and the crate-private direct unbuffered Unix output boundary | `terminal/mode/inline/transaction.rs` for operation/effect ordering and exact correction; `terminal/backend/unix` for exact downstream writes and post-flush events; `yo-cli/process` only when process signal policy changes |
 | [`html`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/html/mod.rs) | Deterministic browser projection of completed `Surface` state | `surface` when terminal and browser output disagree |
 
 `runner::TuiSession` owns the concise Chat transcript, editor, pending request,
 three observability views, one token-scoped prompt-overlay slot and its pending
-acceptance receipts, backpressured agent-dispatch state, and one committed
-appearance snapshot that can outlive one terminal ownership generation. Chat is
-the editable default. F1, F2, and F3 are the current typed presentation-policy
+acceptance receipts, backpressured agent-dispatch state, one committed
+appearance snapshot, and bounded recovered-publication evidence that can
+outlive one terminal ownership generation. Chat is the editable default. F1,
+F2, and F3 are the current typed presentation-policy
 bindings for Chat, Transcript, and Request; the projection state does not own
 those key choices. Transcript renders every committed command and event received
 from the same read-only Journal path. Request renders every bounded correlation
@@ -212,6 +213,21 @@ editor submissions. Each view retains its own context and viewport state.
 The archived `yo session SESSION_ID --view request` path projects the same
 bounded record model after validated stored-Session recovery and has no context
 highlight.
+
+Inline Chat moves only the maximal contiguous prefix of complete, stable items
+into native terminal history. Preparation binds that candidate to the previous
+publication cursor, appearance revision, terminal size, and geometry epoch;
+only a completed downstream write acknowledges it. The remaining unpublished
+suffix, prompt, chrome, and overlay form a compact live `Surface`. Detached Chat
+review and the read-only Transcript and Request views freeze publication and use
+the full terminal height; Fullscreen always renders complete semantic state.
+After a successful flush, the Unix presenter drains queued resize notifications
+and samples the terminal size. It may acknowledge the persistent prefix while
+discarding stale live geometry, then immediately prepares a fresh suffix frame.
+If the terminal transaction recovered an exact output error, the controller
+retains its correction kind in `TuiSession::publication_recovery_evidence`.
+Suspend emits no semantic suffix and preserves the cursor; normal exit and typed
+termination append only still-unpublished semantic output.
 
 The accepted view semantics are owned by the
 [Chat, Transcript, and Request projections](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.view-projections.md)
@@ -279,6 +295,9 @@ Runtime scheduling contracts:
 [bounded frame scheduling](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.frame-scheduling.md)
 and
 [fair readiness-driven event sources](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.runtime.event-source-scheduling.md).
+
+Inline publication and compact live geometry are owned by the
+[Inline viewport contract](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.terminal.inline-viewport.md).
 
 The `surface` is the common completed state. Terminal and HTML projections
 consume it independently; neither projection defines layout meaning for the

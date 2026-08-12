@@ -23,7 +23,16 @@ pub(crate) trait ScreenModeBackend: TerminalBackend {
 }
 
 pub(crate) trait TerminalOutputBackend: TerminalBackend {
-    type Output: Write;
+    type Output: UnbufferedTerminalOutput;
 
     fn output(&mut self) -> &mut Self::Output;
 }
+
+/// A terminal sink whose successful `write` count is the exact downstream byte prefix and whose
+/// `flush` implementation never transfers bytes hidden above that count.
+pub(crate) trait UnbufferedTerminalOutput: Write {}
+
+impl UnbufferedTerminalOutput for Vec<u8> {}
+
+impl<Output> UnbufferedTerminalOutput for &mut Output where Output: UnbufferedTerminalOutput + ?Sized
+{}

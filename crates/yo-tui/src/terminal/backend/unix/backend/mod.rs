@@ -1,7 +1,9 @@
 use std::io::{self, Write};
 
 use super::{TermiosDriver, TtyStateAdapter};
-use crate::terminal::backend::{ScreenModeBackend, TerminalBackend, TerminalOutputBackend};
+use crate::terminal::backend::{
+    ScreenModeBackend, TerminalBackend, TerminalOutputBackend, UnbufferedTerminalOutput,
+};
 
 const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
@@ -94,7 +96,7 @@ where
 impl<D, W> TerminalOutputBackend for UnixBackend<D, W>
 where
     D: TermiosDriver,
-    W: Write,
+    W: UnbufferedTerminalOutput,
 {
     type Output = W;
 

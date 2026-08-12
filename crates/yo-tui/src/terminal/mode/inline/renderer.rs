@@ -4,9 +4,12 @@ use std::{
     io::{self, Write},
 };
 
-use super::{InlineFrameError, InlineFramePlan, InlineRestorePlan, PendingFrame, PendingRestore};
+use super::{
+    InlineFrameError, InlineFramePlan, InlineRestorePlan, PendingFrame, PendingRestore,
+    transaction::{ExactCorrection, PublicationTransaction},
+};
 use crate::{
-    surface::{Point, Surface},
+    surface::{Point, Size, Surface},
     terminal::{AnsiEncoder, TerminalOp, TerminalOps},
 };
 
@@ -18,7 +21,13 @@ pub(crate) enum InlineRenderError {
     AlternateScreenOwned,
     CursorVisibilityNotOwned,
     Frame(InlineFrameError),
-    Output(io::Error),
+    Output(InlineOutputError),
+}
+
+#[derive(Debug)]
+pub(crate) struct InlineOutputError {
+    primary: io::Error,
+    reconciliation: Option<io::Error>,
 }
 
 impl fmt::Display for InlineRenderError {
@@ -31,7 +40,21 @@ impl fmt::Display for InlineRenderError {
                 formatter.write_str("inline rendering requires cursor visibility ownership")
             },
             Self::Frame(error) => write!(formatter, "inline frame is inconsistent: {error}"),
-            Self::Output(_) => formatter.write_str("writing the inline viewport failed"),
+            Self::Output(error) => {
+                if let Some(reconciliation) = &error.reconciliation {
+                    write!(
+                        formatter,
+                        "writing the inline viewport failed: {}; bounded reconciliation also failed: {reconciliation}",
+                        error.primary
+                    )
+                } else {
+                    write!(
+                        formatter,
+                        "writing the inline viewport failed: {}",
+                        error.primary
+                    )
+                }
+            },
         }
     }
 }
@@ -41,7 +64,7 @@ impl Error for InlineRenderError {
         match self {
             Self::AlternateScreenOwned | Self::CursorVisibilityNotOwned => None,
             Self::Frame(error) => Some(error),
-            Self::Output(error) => Some(error),
+            Self::Output(error) => Some(&error.primary),
         }
     }
 }
@@ -54,7 +77,10 @@ impl From<InlineFrameError> for InlineRenderError {
 
 impl From<io::Error> for InlineRenderError {
     fn from(error: io::Error) -> Self {
-        Self::Output(error)
+        Self::Output(InlineOutputError {
+            primary: error,
+            reconciliation: None,
+        })
     }
 }
 
@@ -69,6 +95,19 @@ pub(crate) enum InlineRestoreOutcome {
     LeftUntrusted { abandoned_rows: u16 },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InlineRecovery {
+    ReversibleRestart,
+    IrreversibleResume,
+    FlushRetry,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct InlineRenderReceipt {
+    pub(crate) publication_complete: bool,
+    pub(crate) recovery: Option<InlineRecovery>,
+}
+
 impl<Writer: Write> InlineRenderer<Writer> {
     pub(crate) const fn new(writer: Writer) -> Self {
         Self {
@@ -77,6 +116,88 @@ impl<Writer: Write> InlineRenderer<Writer> {
     }
 
     pub(crate) fn render(
+        &mut self,
+        pending: PendingFrame<'_>,
+        previous: Option<&Surface>,
+        current: &Surface,
+        publication: Option<&Surface>,
+        terminal_size: Size,
+    ) -> Result<InlineRenderReceipt, InlineRenderError> {
+        let Some(publication) = publication else {
+            self.render_live(pending, previous, current)?;
+            return Ok(InlineRenderReceipt {
+                publication_complete: false,
+                recovery: None,
+            });
+        };
+        if publication.size().width != current.size().width {
+            return Err(InlineFrameError::PublicationWidthMismatch {
+                expected: current.size().width,
+                actual: publication.size().width,
+            }
+            .into());
+        }
+        if terminal_size.width != current.size().width
+            || terminal_size.height < current.size().height
+        {
+            return Err(InlineFrameError::TerminalGeometryMismatch {
+                terminal: terminal_size,
+                live: current.size(),
+            }
+            .into());
+        }
+        let plan = pending.plan();
+        let operations = TerminalOps::from_diff(&pending.redraw_diff(previous, current)?);
+        let transaction =
+            PublicationTransaction::compile(plan, terminal_size, publication, &operations);
+        let first = transaction.execute_from(self.ansi.writer_mut(), 0);
+        let recovery = match first {
+            Ok(()) => None,
+            Err(failure) if failure.admitted_in_operation > 0 => {
+                return Err(output_error(failure.error, None));
+            },
+            Err(failure) => {
+                let (recovery, correction) = match failure.operation {
+                    None => (InlineRecovery::FlushRetry, None),
+                    Some(operation) => {
+                        let Some(correction) = transaction.exact_correction_before(operation)
+                        else {
+                            return Err(output_error(failure.error, None));
+                        };
+                        let recovery = match correction {
+                            ExactCorrection::ReversibleRestart { .. } => {
+                                InlineRecovery::ReversibleRestart
+                            },
+                            ExactCorrection::IrreversibleResume => {
+                                InlineRecovery::IrreversibleResume
+                            },
+                        };
+                        (recovery, Some(correction))
+                    },
+                };
+                let reconciled = match failure.operation {
+                    None => self.ansi.writer_mut().flush(),
+                    Some(operation) => transaction.reconcile(
+                        self.ansi.writer_mut(),
+                        operation,
+                        correction.expect("write failures have an exact correction"),
+                    ),
+                };
+                if let Err(reconciliation) = reconciled {
+                    return Err(output_error(failure.error, Some(reconciliation)));
+                }
+                Some(recovery)
+            },
+        };
+
+        pending.commit();
+        Ok(InlineRenderReceipt {
+            publication_complete: true,
+            recovery,
+        })
+    }
+
+    fn render_live(
         &mut self,
         pending: PendingFrame<'_>,
         previous: Option<&Surface>,
@@ -106,7 +227,7 @@ impl<Writer: Write> InlineRenderer<Writer> {
         if let Err(primary) = output {
             let _ = self.ansi.writer_mut().write_all(SHOW_CURSOR);
             let _ = self.ansi.writer_mut().flush();
-            return Err(InlineRenderError::Output(primary));
+            return Err(primary.into());
         }
 
         pending.commit();
@@ -140,6 +261,13 @@ impl<Writer: Write> InlineRenderer<Writer> {
     pub(crate) fn into_inner(self) -> Writer {
         self.ansi.into_inner()
     }
+}
+
+fn output_error(primary: io::Error, reconciliation: Option<io::Error>) -> InlineRenderError {
+    InlineRenderError::Output(InlineOutputError {
+        primary,
+        reconciliation,
+    })
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -164,6 +164,82 @@ fn preserves_terminal_poll_failure() {
     );
 }
 
+// flush 직후 이미 ready인 모든 resize는 blocking 없이 세고 마지막 크기를 반환하며, 그
+// 사이의 일반 input은 버리지 않고 원래 순서대로 다음 ordinary poll에 넘긴다.
+#[test]
+fn post_flush_observation_drains_resizes_and_preserves_ordinary_input() {
+    let mut reader = UnixEventReader::new(
+        RecordingEventSource {
+            ready: VecDeque::from([Ok(true), Ok(true), Ok(true), Ok(false)]),
+            events: VecDeque::from([
+                Ok(Event::Resize(80, 24)),
+                Ok(Event::Paste("kept".to_owned())),
+                Ok(Event::Resize(100, 30)),
+            ]),
+        },
+        PendingTermination::default(),
+    );
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+
+    let observed = reader.observe_post_flush_resizes(&mut context).unwrap();
+
+    assert_eq!(observed.count, 2);
+    assert_eq!(observed.latest, Some(crate::surface::Size::new(100, 30)));
+    assert_eq!(
+        reader.poll_input(&mut context),
+        Poll::Ready(Ok(InputEvent::Paste("kept".to_owned())))
+    );
+}
+
+// post-flush drain 중 source 오류도 성공적인 geometry 관찰로 축약하지 않아 presenter가
+// live ownership을 버리고 기존 input failure 진단을 유지할 수 있다.
+#[test]
+fn post_flush_observation_preserves_input_failure() {
+    let mut reader = UnixEventReader::new(
+        RecordingEventSource {
+            ready: VecDeque::from([Err("post-flush failure")]),
+            ..RecordingEventSource::default()
+        },
+        PendingTermination::default(),
+    );
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+
+    assert!(matches!(
+        reader.observe_post_flush_resizes(&mut context),
+        Err(super::PostFlushObservationError::Input(
+            InputReadFailure::Source("post-flush failure")
+        ))
+    ));
+}
+
+// 지속적으로 ready인 input producer가 flush 이후 관찰을 무한 loop나 무제한 queue로
+// 바꾸지 못한다. 한 세대의 명시적 상한에 도달하면 성공으로 축약하지 않고 typed 오류를
+// 반환해 presenter가 live ownership을 폐기하게 한다.
+#[test]
+fn post_flush_observation_bounds_a_continuously_ready_source() {
+    let limit = super::POST_FLUSH_EVENT_LIMIT;
+    let mut reader = UnixEventReader::new(
+        RecordingEventSource {
+            ready: std::iter::repeat_n(Ok(true), limit).collect(),
+            events: std::iter::repeat_with(|| Ok(Event::Paste("kept".to_owned())))
+                .take(limit)
+                .collect(),
+        },
+        PendingTermination::default(),
+    );
+    let waker = Waker::noop();
+    let mut context = Context::from_waker(waker);
+
+    assert!(matches!(
+        reader.observe_post_flush_resizes(&mut context),
+        Err(super::PostFlushObservationError::EventLimitExceeded {
+            limit: observed
+        }) if observed == limit
+    ));
+}
+
 // bounded wait는 source를 몰래 poll하지 않고 지정된 deadline이 지난 뒤 caller가 모든
 // source readiness를 다시 선택하도록 제어를 반환한다.
 #[test]

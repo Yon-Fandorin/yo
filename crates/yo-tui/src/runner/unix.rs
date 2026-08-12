@@ -1,6 +1,5 @@
 use std::{
     error::Error,
-    io,
     panic::AssertUnwindSafe,
     sync::Arc,
     task::{Context, Wake, Waker},
@@ -22,8 +21,8 @@ use crate::{
     surface::Size,
     terminal::{
         backend::unix::{
-            CrosstermEventSource, RustixTermiosDriver, TtyStateAdapter, UnixBackend,
-            UnixBackendError, UnixEventReader, terminal_size,
+            CrosstermEventSource, DirectTerminalWriter, RustixTermiosDriver, TtyStateAdapter,
+            UnixBackend, UnixBackendError, UnixEventReader, terminal_size,
         },
         mode::{
             TerminalSession,
@@ -42,8 +41,14 @@ mod timing;
 
 pub(super) trait FrameViewport {
     fn invalidate_frame(&mut self);
+
+    fn abandon_frame(&mut self) {
+        self.invalidate_frame();
+    }
 }
 
+#[cfg(test)]
+pub(super) use presenter::RenderReceipt;
 pub(super) use presenter::{LivePresenter, prepare_resize};
 pub(super) use sources::{
     OrdinaryObservation, OrdinaryPoll, apply_agent_poll, apply_skill_poll, apply_workspace_poll,
@@ -51,12 +56,24 @@ pub(super) use sources::{
 };
 
 use self::{
-    presenter::render_requested_frame,
+    presenter::{PresentationState, render_requested_frame},
     sources::{dispatch_skill_search, dispatch_workspace_search},
     timing::{WORKER_RETRY_INTERVAL, request_due_motion, wait_timeout},
 };
 
 pub(super) type LiveBackendError = UnixBackendError<rustix::io::Errno>;
+
+#[derive(Clone, Copy)]
+pub(super) struct GenerationStart {
+    size: Size,
+    started: Instant,
+}
+
+impl GenerationStart {
+    pub(super) const fn new(size: Size, started: Instant) -> Self {
+        Self { size, started }
+    }
+}
 
 pub(super) enum LoopExit {
     User,
@@ -72,6 +89,7 @@ pub(super) enum LoopError {
     Frame(FrameError),
     InlineRender(InlineRenderError),
     FullscreenRender(FullscreenRenderError),
+    GeometryEpochOverflow,
 }
 
 impl LoopError {
@@ -91,10 +109,16 @@ impl LoopError {
             Self::State(StateError::SubmissionIdentityUnavailable) => {
                 "allocating a submission identity failed".to_owned()
             },
+            Self::State(StateError::StalePublication) => {
+                "acknowledging a stale transcript publication failed".to_owned()
+            },
             Self::Frame(error) => error.detail(),
             Self::InlineRender(error) => format!("rendering the inline frame failed: {error}"),
             Self::FullscreenRender(error) => {
                 format!("rendering the fullscreen frame failed: {error}")
+            },
+            Self::GeometryEpochOverflow => {
+                "tracking terminal geometry changes overflowed".to_owned()
             },
         }
     }
@@ -198,8 +222,7 @@ where
     validate_size(size)?;
     let mut events = UnixEventReader::new(source, termination);
 
-    let stdout = io::stdout();
-    let output = stdout.lock();
+    let output = DirectTerminalWriter::stdout();
     let tty = TtyStateAdapter::new(RustixTermiosDriver::stdin());
     let mut backend = UnixBackend::new(tty, output);
     let started = Instant::now();
@@ -216,8 +239,8 @@ where
                     &mut events,
                     retained,
                     agent,
-                    size,
-                    started,
+                    GenerationStart::new(size, started),
+                    &mut terminal_size,
                 )
             });
             let (operation, output) = match report.operation {
@@ -248,8 +271,8 @@ where
                     &mut events,
                     retained,
                     agent,
-                    size,
-                    started,
+                    GenerationStart::new(size, started),
+                    &mut terminal_size,
                 )
             });
             Ok(LiveRunReport {
@@ -265,14 +288,14 @@ pub(super) fn retained_session_output(session: &TuiSession) -> Option<String> {
     session.session_output().ok().flatten()
 }
 
-pub(super) fn drive<B, E, T, A, P>(
+pub(super) fn drive<B, E, T, A, P, G, GE>(
     session: &mut TerminalSession<'_, B>,
     viewport: &mut P,
     events: &mut UnixEventReader<E, T>,
     retained: &mut TuiSession,
     agent: &mut A,
-    mut size: Size,
-    started: Instant,
+    start: GenerationStart,
+    sample_geometry: &mut G,
 ) -> Result<LoopExit, LoopError>
 where
     B: crate::terminal::backend::ScreenModeBackend
@@ -283,11 +306,9 @@ where
     T: TerminationSource,
     A: AgentConnection,
     P: LivePresenter<B>,
+    G: FnMut() -> Result<Size, GE>,
+    GE: std::fmt::Display,
 {
-    let mut previous = None;
-    let mut frame_visible = false;
-    let epoch = started;
-    let mut motion_deadline = None;
     let waker = Waker::from(Arc::new(OwnerThreadWake(thread::current())));
     let mut context = Context::from_waker(&waker);
     let SessionParts {
@@ -298,7 +319,10 @@ where
         frame_rate_limit,
         workspace_references,
         skill_references,
+        publication_recovery_evidence,
     } = retained.parts_mut();
+    let mut presentation =
+        PresentationState::new(start.size, start.started, publication_recovery_evidence);
     let mut frames = FrameScheduler::new(frame_rate_limit);
     let mut source_schedule = SourceSchedule::default();
     frames.request(FrameRequest::Immediate);
@@ -306,21 +330,30 @@ where
     loop {
         request_due_motion(
             &mut frames,
-            frame_visible,
-            &mut motion_deadline,
+            presentation.frame_visible,
+            &mut presentation.motion_deadline,
             Instant::now(),
         );
+        let mut observe_geometry = || {
+            let resizes = events
+                .observe_post_flush_resizes(&mut context)
+                .map_err(|error| LoopError::Input(format!("{error:?}")))?;
+            let sampled_size = sample_geometry().map_err(|error| {
+                LoopError::Input(format!("reading terminal size failed: {error}"))
+            })?;
+            Ok(presenter::GeometryObservation {
+                resize_count: resizes.count,
+                sampled_size,
+            })
+        };
         render_requested_frame(
             session,
             viewport,
             state,
             appearance,
-            size,
-            &mut previous,
-            epoch,
+            &mut presentation,
             &mut frames,
-            &mut frame_visible,
-            &mut motion_deadline,
+            &mut observe_geometry,
         )?;
 
         if let Some(action) = pending_control.take() {
@@ -349,7 +382,11 @@ where
         }
         let backpressured = pending_control.is_some() || pending_dispatch.is_some();
         let base = backpressured.then_some(WORKER_RETRY_INTERVAL);
-        let timeout = wait_timeout(base, motion_deadline, frames.deadline(Instant::now()));
+        let timeout = wait_timeout(
+            base,
+            presentation.motion_deadline,
+            frames.deadline(Instant::now()),
+        );
         let observation = match poll_ordinary(
             events,
             agent,
@@ -395,11 +432,11 @@ where
                     handle_backpressured_input(
                         state,
                         input,
-                        started.elapsed(),
+                        presentation.started.elapsed(),
                         pending_control.is_none(),
                     )
                 } else {
-                    state.handle(input, started.elapsed())
+                    state.handle(input, presentation.started.elapsed())
                 }
                 .map_err(LoopError::State)?;
                 match effect {
@@ -438,9 +475,13 @@ where
                         frames.request(FrameRequest::Coalesced);
                     },
                     StateEffect::Resize(next) => {
-                        prepare_resize(viewport, &mut size, next);
-                        frame_visible = false;
-                        motion_deadline = None;
+                        presentation.geometry_epoch = presentation
+                            .geometry_epoch
+                            .checked_add(1)
+                            .ok_or(LoopError::GeometryEpochOverflow)?;
+                        prepare_resize(viewport, &mut presentation.size, next);
+                        presentation.frame_visible = false;
+                        presentation.motion_deadline = None;
                         frames.request(FrameRequest::Immediate);
                     },
                 }
