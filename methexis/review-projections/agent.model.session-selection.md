@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.model.session-selection
-revision: sha256:24a507d1b87bce0c9f12c7b36076c19b8245e0a054ab3428369787b382b081e1
+revision: sha256:75bf7399192adbc7c1f6c925a637e7c945a4b6463511ed61e8ae9fadd7e5ff15
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:e9e0c168472c0d5782ffa3df915d7e33c0590396c5b8ca594e8b65695d97e022
+request_hash: sha256:e32cd11fda81cd05d09731ee7787ed81c7b8b5ec41d6817711e46fe4b2dc2326
 ---
 # Korean Review Projection
 
@@ -32,7 +32,7 @@ Target 없는 `yo connect`는 Session 생성 전에 onboarding을 엽니다. Loc
 
 Disconnect 전에 selection은 prospective transition 하나를 계산합니다. Exact explicit ModelTarget preference가 제거되면 같은 public CAS로 지우고, 아니면 유지합니다. Preview는 이전 값, transition, effective lower target 또는 setup-required outcome을 보여줍니다. Model 제거로 HostTarget을 지우지 않습니다.
 
-`yo model`과 `/model`은 ModelTarget만 다룹니다. Preparation은 policy, credential, tokenizer, protocol, connector, endpoint, profile digest, staleness를 검증합니다. Live TUI switch는 기존 binding을 사용할 수 있는 동안 준비하고 active Turn 중에는 거절하며, old epoch를 닫고 new epoch를 atomically 엽니다. Preparation, replay, publication이 실패하면 기존 binding을 계속 사용할 수 있어야 합니다.
+`yo model`과 `/model`은 ModelTarget만 다룹니다. Preparation은 policy, credential, tokenizer, protocol, 파생된 connector, normalized endpoint, resolved effective-profile의 모든 field, complete-binding freshness, staleness를 검증합니다. Live TUI switch는 기존 binding을 사용할 수 있는 동안 준비하고 active Turn 중에는 거절하며, old epoch를 닫고 new epoch를 atomically 엽니다. Preparation, replay, publication이 실패하면 기존 binding을 계속 사용할 수 있어야 합니다.
 
 Resume은 override를 보기 전에 newest durable Continuation Anchor를 선택하며 stored preference, policy default, operator `model.startup`은 사용하지 않습니다. Explicit override가 없으면 current policy와 exact credential availability 아래에서 Anchor binding을 사용합니다. Policy denial이나 missing credential이면 denial 또는 reconnect 안내와 함께 history를 read-only로 열고 fallback, Anchor mutation, epoch를 만들지 않습니다. 같은 Codex backend를 가리키는 HostTarget override는 same-binding confirmation이며 Anchor binding과 정확히 같은 override는 replacement epoch를 만들지 않습니다.
 
