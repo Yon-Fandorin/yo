@@ -1,6 +1,7 @@
 //! Secret-free durable intent and pure recovery planning for multi-repository connections.
 
 mod connect;
+mod disconnect;
 mod error;
 mod execution;
 mod journal;
@@ -12,6 +13,9 @@ mod wire;
 pub use connect::{
     ExternalConnectionError, PreparedExternalConnection, VerifiedExternalConnection,
     verify_external_connection,
+};
+pub use disconnect::{
+    ExternalDisconnectCredentialAction, ExternalDisconnectError, PreparedExternalDisconnect,
 };
 pub use error::ConnectionOperationError;
 pub use execution::{

@@ -1,17 +1,18 @@
 use std::path::Path;
 
+mod disconnect;
 mod external;
 mod input;
 
 use yo_core::{
-    ConnectionOperationExecutionError, ConnectionRepositoryError, ConnectionSnapshot,
-    LocalConnectionOperationRepositories, LocalConnectionRepository, StartupPolicy,
-    StartupSelectionSources, StartupTarget, resolve_startup_target,
+    CompleteModelBinding, ConnectionOperationExecutionError, ConnectionRepositoryError,
+    ConnectionSnapshot, LocalConnectionOperationRepositories, LocalConnectionRepository,
+    ModelSelection, StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
 use crate::{
     AppError,
-    command::{ConnectCommand, DefaultCommand},
+    command::{ConnectCommand, DefaultCommand, DisconnectCommand},
     config::{self, Config},
     storage,
 };
@@ -55,6 +56,14 @@ pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
         return external::run_external_connect(&config_path, command);
     }
     execute_local_connect_managed(&config_path, command)
+}
+
+pub(crate) fn run_disconnect(command: DisconnectCommand) -> Result<String, AppError> {
+    let config_path = absolute_config_path(
+        config::selected_path()
+            .map_err(|error| AppError::single("locating Yo configuration", error))?,
+    )?;
+    disconnect::run_external_disconnect(&config_path, command)
 }
 
 fn absolute_config_path(path: std::path::PathBuf) -> Result<std::path::PathBuf, AppError> {
@@ -250,6 +259,33 @@ fn display_target(target: Option<&StartupTarget>) -> String {
         Some(StartupTarget::HostCodex) => StartupTarget::HOST_CODEX_REFERENCE.to_owned(),
         Some(StartupTarget::Model(selection)) => selection.canonical_reference(),
     }
+}
+
+fn selection_for_binding(binding: &yo_core::EffectiveModelBinding) -> ModelSelection {
+    ModelSelection::new(
+        binding.provider_id().clone(),
+        binding.account_id().clone(),
+        binding.model_id().clone(),
+    )
+}
+
+fn complete_binding_summary(complete: &CompleteModelBinding) -> String {
+    let binding = complete.binding();
+    let profile = complete.profile();
+    format!(
+        "{} [endpoint={}, dialect={}, connector={}, tokenizer={}, input_limit={}, output_limit={}, reasoning={}, optional={}, tools={}, verification={}]",
+        selection_for_binding(binding).canonical_reference(),
+        binding.endpoint(),
+        binding.api_dialect(),
+        binding.connector_id(),
+        profile.context().tokenizer_profile(),
+        profile.context().input_token_limit(),
+        profile.context().max_output_tokens(),
+        profile.reasoning_parameters().to_json_value(),
+        profile.optional_request_parameters().to_json_value(),
+        profile.tool_capability_policy(),
+        profile.verification_profile(),
+    )
 }
 
 #[cfg(test)]

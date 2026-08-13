@@ -113,6 +113,18 @@ impl ConnectionSnapshot {
             .map_err(ConnectionRepositoryError::ManagedCatalogConflict)
     }
 
+    /// Composes the exact prospective managed removal with manual configuration before mutation.
+    pub fn compose_catalog_after_managed_remove(
+        &self,
+        manual: &ModelCatalog,
+        selection: &ModelSelection,
+    ) -> Result<ModelCatalog, ConnectionRepositoryError> {
+        let (_, accounts, bindings) = self.managed_remove_state(selection)?;
+        manual
+            .compose_managed(&accounts, &bindings)
+            .map_err(ConnectionRepositoryError::ManagedCatalogConflict)
+    }
+
     pub(crate) fn matches_planned(&self, mutation: &PreparedConnectionMutation) -> bool {
         self.revision == mutation.planned_revision && self.encoded == mutation.planned_bytes
     }
@@ -193,6 +205,15 @@ impl ConnectionSnapshot {
         &self,
         selection: &ModelSelection,
     ) -> Result<PreparedConnectionMutation, ConnectionRepositoryError> {
+        let (preference, accounts, bindings) = self.managed_remove_state(selection)?;
+        self.prepare_snapshot(preference, accounts, bindings)?
+            .ok_or(ConnectionRepositoryError::InvalidManagedMutation)
+    }
+
+    fn managed_remove_state(
+        &self,
+        selection: &ModelSelection,
+    ) -> Result<ManagedSnapshotState, ConnectionRepositoryError> {
         let mut bindings = self.bindings.clone();
         let Some(index) = bindings
             .iter()
@@ -225,8 +246,7 @@ impl ConnectionSnapshot {
         } else {
             self.preference.clone()
         };
-        self.prepare_snapshot(preference, accounts, bindings)?
-            .ok_or(ConnectionRepositoryError::InvalidManagedMutation)
+        Ok((preference, accounts, bindings))
     }
 
     fn prepare_snapshot(

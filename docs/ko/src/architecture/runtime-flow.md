@@ -601,7 +601,8 @@ table이 정한 결정만 실행한다. Commit되지 않은 intent는 abandon하
 Disconnect remove는 candidate 없이 commit하고 preserve는 credential mutation boundary를
 호출하지 않는다. Repository와 journal 오류는 private credential revision을 투영하지 않고
 안전한 operation kind, action, phase만 유지한다. External connect는 이제 준비와 commit에 같은
-held session을 사용한다. External disconnect는 아직 구현한 command 경로 밖에 있다.
+held session을 사용한다. External disconnect도 선택한 managed target 하나에서 같은
+Provider·Account credential action을 묶고 어떤 credential 제거보다 public 제거를 먼저 commit한다.
 
 `yo connect Provider:Account:Model`은 설정에 있는 exact reference 하나를 받는다. 해당
 Provider와 Account에 속한 완전한 manual binding, 현재 managed binding, prospective selected
@@ -622,6 +623,23 @@ connector failure class만 남는다. 모든 binding이
 replace credential을 commit한다. 이어 journal을 전진시키고 exact managed public snapshot을
 게시하며 complete까지 전진한 뒤 journal을 지운다. Credential commit 뒤 crash가 나면 저장된
 public byte만 재개하고 secret을 재구성하거나 다시 검증하지 않는다.
+
+`yo disconnect`는 대화형으로 유일한 managed target을 추론하거나 capture한 정확한
+`Provider:Account:Model` reference 하나를 입력받는다. 자동 실행은
+`yo disconnect PROVIDER --account ACCOUNT --yes`를 요구하며 해당 pair에 managed target이
+정확히 하나일 때만 진행한다. `--yes`는 여러 model 중 하나를 추측하지 않는다. Manual-only
+일치는 command가 managed provenance만 지울 수 있으므로 운영자에게 `config.yaml` 편집을
+안내한다. 확인 전에 Yo는 prospective managed removal과 capture한 manual catalog를 합성하고
+정확히 제거할 complete binding, provenance 전이, 저장 preference 전이, 같은 pair에 남는
+binding, 파생 credential action, resume 위험을 보여 준다. 같은 manual binding이 있으면
+manual provenance가 남으므로 credential을 보존한다. 제거 뒤 dependent set이 비었을 때만
+credential 제거를 준비하며, credential이 이미 없으면 상태를 꾸며내지 않고 intent 전에
+실패한다. 확인과 마지막 config guard 뒤에는 secret-free intent를 게시하고 public 제거를
+commit하며 `public_committed`로 전진한다. 필요한 경우에만 credential을 제거하고
+`complete`까지 전진한 뒤 journal을 지운다. 기존 Session history는 삭제하지 않지만, 같은
+manual binding이 남거나 exact binding을 다시 연결하지 않으면 제거한 complete binding에
+귀속된 Session이 native resume되지 않을 수 있다. Preview는 이 continuation 결과를 저장
+history 보존과 구분해 보여 준다.
 
 endpoint, model, API dialect, 파생된 connector identity, resolved profile과 표시 이름은
 secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과
@@ -696,12 +714,12 @@ Account, Model에서 field가 다르면 어느 source도 선택하지 않고 non
 `BindingConflict`를 반환한다. 합성 catalog는 초기 선택, resume matching, live model picker가 쓴다.
 
 `yo default TARGET`, `yo default --unset`, 명시적 `yo connect host:codex`, external model
-connect는 nonblocking process operation lock 하나를 사용하고 새 command configuration을 읽기
-전에 pending multi-repository work를 해결한다. Preference-only command는 target admission 또는
+connect, external model disconnect는 nonblocking process operation lock 하나를 사용하고 새
+command configuration을 읽기 전에 pending multi-repository work를 해결한다. Preference-only command는 target admission 또는
 Local Codex 검증과 마지막 configuration guard 뒤 public CAS 하나를 게시하고, 새 operation
 journal을 만들거나 credential revision을 확인하지 않으며 managed entry를 보존한다. External
-connect는 위 journal 순서를 사용한다. External disconnect와 자유 형식 Provider onboarding은
-더 약한 경로를 빌리지 않고 아직 구현하지 않은 상태로 남는다.
+connect와 disconnect는 위의 operation별 journal 순서를 사용한다. 자유 형식 Provider
+onboarding은 더 약한 경로를 빌리지 않고 아직 구현하지 않은 상태로 남는다.
 
 repository가
 없으면 빈 목록을 반환하고 상태를 만들지 않는다.

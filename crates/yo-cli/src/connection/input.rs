@@ -15,11 +15,16 @@ pub(super) trait ExternalConnectInput {
     fn read_credential(&mut self, account: &str) -> Result<ApiCredential, AppError>;
 }
 
-pub(super) struct TtyExternalConnectInput {
+pub(super) trait ExternalDisconnectInput {
+    fn select_target(&mut self, choices: &[String]) -> Result<String, AppError>;
+    fn confirm(&mut self, summary: &str) -> Result<bool, AppError>;
+}
+
+pub(super) struct TtyConnectionInput {
     terminal: Option<File>,
 }
 
-impl TtyExternalConnectInput {
+impl TtyConnectionInput {
     pub(super) const fn new() -> Self {
         Self { terminal: None }
     }
@@ -63,7 +68,7 @@ impl TtyExternalConnectInput {
     }
 }
 
-impl ExternalConnectInput for TtyExternalConnectInput {
+impl ExternalConnectInput for TtyConnectionInput {
     fn confirm(&mut self, summary: &str) -> Result<bool, AppError> {
         let terminal = self.terminal()?;
         write!(terminal, "{summary}\nContinue? [y/N] ")
@@ -95,6 +100,24 @@ impl ExternalConnectInput for TtyExternalConnectInput {
             .map_err(|error| AppError::single("finishing the API-key prompt", error))?;
         restore_result?;
         ApiCredential::new(value?).map_err(|error| AppError::single("reading the API key", error))
+    }
+}
+
+impl ExternalDisconnectInput for TtyConnectionInput {
+    fn select_target(&mut self, choices: &[String]) -> Result<String, AppError> {
+        let terminal = self.terminal()?;
+        write!(
+            terminal,
+            "Select one managed target by entering its exact reference:\n  - {}\nTarget: ",
+            choices.join("\n  - ")
+        )
+        .and_then(|()| terminal.flush())
+        .map_err(|error| AppError::single("writing the disconnect target prompt", error))?;
+        Self::read_line(terminal)
+    }
+
+    fn confirm(&mut self, summary: &str) -> Result<bool, AppError> {
+        <Self as ExternalConnectInput>::confirm(self, summary)
     }
 }
 
@@ -159,7 +182,7 @@ mod tests {
         let observed_slave = pty.slave.try_clone().unwrap();
         let original = tcgetattr(&observed_slave).unwrap();
         let child = thread::spawn(move || {
-            let mut input = TtyExternalConnectInput {
+            let mut input = TtyConnectionInput {
                 terminal: Some(File::from(pty.slave)),
             };
             input.read_credential("vendor:team").unwrap()

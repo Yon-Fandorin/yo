@@ -24,8 +24,9 @@ pub use connection_operation::{
     ConnectionOperationExecutionOutcome, ConnectionOperationJournalEntry,
     ConnectionOperationJournalRepository, ConnectionOperationKind, ConnectionOperationPhase,
     ConnectionOperationRecovery, ConnectionOperationRepositoryKind, ExternalConnectionError,
-    LocalConnectionOperationJournal, LocalConnectionOperationRepositories,
-    LocalConnectionOperationSession, PreparedExternalConnection, VerifiedExternalConnection,
+    ExternalDisconnectCredentialAction, ExternalDisconnectError, LocalConnectionOperationJournal,
+    LocalConnectionOperationRepositories, LocalConnectionOperationSession,
+    PreparedExternalConnection, PreparedExternalDisconnect, VerifiedExternalConnection,
     plan_connection_recovery, verify_external_connection,
 };
 pub use connection_repository::{

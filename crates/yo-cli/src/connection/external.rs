@@ -7,9 +7,9 @@ use yo_core::{
 };
 
 use super::{
-    display_target,
-    input::{ExternalConnectInput, TtyExternalConnectInput},
-    operation_repositories,
+    complete_binding_summary, display_target,
+    input::{ExternalConnectInput, TtyConnectionInput},
+    operation_repositories, selection_for_binding,
 };
 use crate::{AppError, command::ConnectCommand, config};
 
@@ -17,7 +17,7 @@ pub(super) fn run_external_connect(
     config_path: &Path,
     command: ConnectCommand,
 ) -> Result<String, AppError> {
-    let mut input = TtyExternalConnectInput::new();
+    let mut input = TtyConnectionInput::new();
     execute_external_connect_with(config_path, command, &mut input)
 }
 
@@ -203,25 +203,6 @@ fn admit_external_target(
     }
 }
 
-fn complete_binding_summary(complete: &CompleteModelBinding) -> String {
-    let binding = complete.binding();
-    let profile = complete.profile();
-    format!(
-        "{} [endpoint={}, dialect={}, connector={}, tokenizer={}, input_limit={}, output_limit={}, reasoning={}, optional={}, tools={}, verification={}]",
-        selection_for_binding(binding).canonical_reference(),
-        binding.endpoint(),
-        binding.api_dialect(),
-        binding.connector_id(),
-        profile.context().tokenizer_profile(),
-        profile.context().input_token_limit(),
-        profile.context().max_output_tokens(),
-        profile.reasoning_parameters().to_json_value(),
-        profile.optional_request_parameters().to_json_value(),
-        profile.tool_capability_policy(),
-        profile.verification_profile(),
-    )
-}
-
 fn selected_entry(
     snapshot: &ConnectionSnapshot,
     manual: &ModelCatalog,
@@ -256,14 +237,6 @@ fn same_account(entry: &ModelCatalogEntry, selection: &ModelSelection) -> bool {
 
 fn selection_for(entry: &ModelCatalogEntry) -> ModelSelection {
     selection_for_binding(entry.binding())
-}
-
-fn selection_for_binding(binding: &yo_core::EffectiveModelBinding) -> ModelSelection {
-    ModelSelection::new(
-        binding.provider_id().clone(),
-        binding.account_id().clone(),
-        binding.model_id().clone(),
-    )
 }
 
 #[cfg(test)]

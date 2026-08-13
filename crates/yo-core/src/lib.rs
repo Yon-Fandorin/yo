@@ -70,17 +70,18 @@ pub use model_service::{
     ConnectionRepositoryError, ConnectionRevision, ConnectionSnapshot, ConnectorId,
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
     CredentialSnapshot, CredentialStore, EffectiveModelBinding, EffectiveModelProfile,
-    ExternalConnectionError, LocalConnectionOperationGuard, LocalConnectionOperationJournal,
+    ExternalConnectionError, ExternalDisconnectCredentialAction, ExternalDisconnectError,
+    LocalConnectionOperationGuard, LocalConnectionOperationJournal,
     LocalConnectionOperationRepositories, LocalConnectionOperationSession,
     LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStore,
     LocalCredentialStoreError, ManagedConnectionAccount, ManagedConnectionBinding, ModelCatalog,
     ModelCatalogEntry, ModelCatalogProvenance, ModelContextProfile, ModelId, ModelProfileLayer,
     ModelProfileParameters, ModelSelection, ModelSelectionChoice, ModelSelectionController,
     ModelServiceError, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint,
-    PreparedConnectionMutation, PreparedCredentialMutation, PreparedExternalConnection, ProviderId,
-    StartupPolicy, StartupSelectionSources, StartupTarget, VerifiedExternalConnection,
-    VersionedProfileId, plan_connection_recovery, resolve_startup_target,
-    validate_profile_yaml_number_spellings, verify_external_connection,
+    PreparedConnectionMutation, PreparedCredentialMutation, PreparedExternalConnection,
+    PreparedExternalDisconnect, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
+    VerifiedExternalConnection, VersionedProfileId, plan_connection_recovery,
+    resolve_startup_target, validate_profile_yaml_number_spellings, verify_external_connection,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

@@ -640,8 +640,9 @@ journal. Connect recovery never reconstructs or commits a secret; disconnect
 removal passes no candidate, while preserve never calls the credential mutation boundary.
 Repository and journal failures retain the safe operation kind, action, and
 phase without projecting a private credential revision. External connect now
-uses this same held session for preparation and commit; external disconnect
-remains outside the implemented command path.
+uses this same held session for preparation and commit. External disconnect
+uses it to bind one selected managed target to the same Provider-and-Account
+credential action and commits the public removal before any credential removal.
 
 `yo connect Provider:Account:Model` accepts one exact configured reference. It
 forms the union of every complete manual and currently managed binding for that
@@ -667,6 +668,26 @@ secret-free intent, commits the exact add or replacement credential, advances
 the journal, publishes the exact managed public snapshot, advances to complete,
 and clears the journal. A crash after credential commit resumes only the stored
 public bytes and never reconstructs or re-verifies a secret.
+
+`yo disconnect` interactively infers a unique managed target or asks for one
+exact captured `Provider:Account:Model` reference. Automatic execution requires
+`yo disconnect PROVIDER --account ACCOUNT --yes` and proceeds only when that
+pair has exactly one managed target; `--yes` never guesses among multiple
+models. A manual-only match directs the operator to edit `config.yaml` because
+the command removes only managed provenance. Before confirmation, Yo composes
+the prospective managed removal with the captured manual catalog and lists the
+exact removed complete binding, provenance transition, stored-preference
+transition, remaining bindings for the pair, derived credential action, and
+resume risk. An equal manual binding remains manual and therefore preserves the
+credential. Only an empty post-removal dependent set prepares credential
+removal; an absent credential fails before intent rather than inventing state.
+After confirmation and the final config guard, the command publishes the
+secret-free intent, commits the public removal, advances `public_committed`,
+optionally removes the credential, advances to `complete`, and clears the
+journal. Existing Session history is not deleted, but a Session attributed to
+the removed complete binding may no longer resume natively unless an equal
+manual binding remains or the exact binding is reconnected; the preview states
+that continuation result separately from stored-history preservation.
 
 Endpoint, model, API dialect, derived connector identity, the resolved profile, and display
 names remain non-secret binding data rather than secret-file content. Catalog limits and model
@@ -749,15 +770,16 @@ Account, and Model returns `BindingConflict` with the non-secret differing field
 names instead of selecting a source. The composed catalog supplies initial
 selection, resume matching, and the live model picker.
 
-`yo default TARGET`, `yo default --unset`, explicit `yo connect host:codex`, and
-external model connect use one nonblocking process operation lock and resolve
-pending multi-repository work before reading new command configuration. The
+`yo default TARGET`, `yo default --unset`, explicit `yo connect host:codex`,
+external model connect, and external model disconnect use one nonblocking
+process operation lock and resolve pending multi-repository work before reading
+new command configuration. The
 preference-only commands publish one public CAS after target admission or Local
 Codex verification plus the final configuration guard; they do not create a new
 operation journal or inspect credential revisions, and re-encoding preserves
-managed entries. External connect uses the journaled sequence above. External
-disconnect and free-form Provider onboarding remain unimplemented rather than
-borrowing a weaker path.
+managed entries. External connect and disconnect use their operation-specific
+journaled sequences above. Free-form Provider onboarding remains unimplemented
+rather than borrowing a weaker path.
 
 A missing repository produces an empty list and does not create state. Direct
 history reads preserve a message-recovery

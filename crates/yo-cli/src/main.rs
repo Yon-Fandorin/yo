@@ -58,6 +58,9 @@ fn run(command: command::Command) -> Result<(), AppError> {
         command::Command::Default(command) => {
             write_command_output(connection::run_default(command)?)
         },
+        command::Command::Disconnect(command) => {
+            write_command_output(connection::run_disconnect(command)?)
+        },
         command::Command::Session(command) => run_session_command(command),
         command::Command::Live(options) => run_live_session(options),
     }

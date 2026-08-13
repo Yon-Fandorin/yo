@@ -53,6 +53,7 @@ pub enum ConnectionOperationExecutionError {
     OperationLock(ConnectionRepositoryError),
     JournalCapture(ConnectionOperationError),
     ExternalPreparation(ExternalConnectionError),
+    ExternalDisconnectPreparation(super::ExternalDisconnectError),
     PublicCapture(ConnectionRepositoryError),
     PublicCommit(ConnectionRepositoryError),
     PublicRepository {
@@ -98,6 +99,7 @@ impl fmt::Display for ConnectionOperationExecutionError {
                 )
             },
             Self::ExternalPreparation(source) => write!(formatter, "{source}"),
+            Self::ExternalDisconnectPreparation(source) => write!(formatter, "{source}"),
             Self::PublicCapture(source) => {
                 write!(
                     formatter,
@@ -152,6 +154,7 @@ impl Error for ConnectionOperationExecutionError {
             Self::OperationLock(source) | Self::PublicRepository { source, .. } => Some(source),
             Self::JournalCapture(source) | Self::Journal { source, .. } => Some(source),
             Self::ExternalPreparation(source) => Some(source),
+            Self::ExternalDisconnectPreparation(source) => Some(source),
             Self::PublicCapture(source) | Self::PublicCommit(source) => Some(source),
             Self::CredentialRepository { source, .. } => Some(source),
             #[cfg(test)]

@@ -86,6 +86,38 @@ fn connect_command_requires_one_exact_target() {
     assert!(parse(["connect".into(), "host:codex".into(), "second".into(),]).is_err());
 }
 
+// disconnect는 인자 없는 대화형 선택을 허용하되, 자동 실행은 exact Provider와 Account와
+// --yes를 모두 요구해 범위가 빠진 승인을 비대화형 삭제 권한으로 해석하지 않습니다.
+#[test]
+fn disconnect_separates_interactive_selection_from_exact_automatic_authorization() {
+    assert_eq!(
+        parse(["disconnect".into()]).unwrap(),
+        Command::Disconnect(DisconnectCommand {
+            provider: None,
+            account: None,
+            yes: false,
+        })
+    );
+    assert_eq!(
+        parse([
+            "disconnect".into(),
+            "vendor".into(),
+            "--account".into(),
+            "team".into(),
+            "--yes".into(),
+        ])
+        .unwrap(),
+        Command::Disconnect(DisconnectCommand {
+            provider: Some("vendor".to_owned()),
+            account: Some("team".to_owned()),
+            yes: true,
+        })
+    );
+    assert!(parse(["disconnect".into(), "--yes".into()]).is_err());
+    assert!(parse(["disconnect".into(), "vendor".into(), "--yes".into(),]).is_err());
+    assert!(parse(["disconnect".into(), "--account".into(), "team".into(),]).is_err());
+}
+
 // 명시한 UUID 재개와 현재 작업공간의 최근 세션 재개는 새 Session 시작과 구분되고,
 // 동시에 지정하면 어느 쪽도 임의로 우선하지 않는다.
 #[test]
@@ -200,6 +232,7 @@ fn help_is_successful_generated_command_documentation() {
     assert!(rendered.contains("Usage: yo [OPTIONS]"));
     assert!(rendered.contains("yo <COMMAND>"));
     assert!(rendered.contains("session"));
+    assert!(rendered.contains("disconnect"));
     assert!(rendered.contains("--model <MODEL_REFERENCE>"));
 }
 

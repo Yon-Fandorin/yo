@@ -45,6 +45,9 @@ enum CliCommand {
     /// Verify and connect one service target.
     Connect(ConnectArguments),
 
+    /// Remove one Yo-managed external model connection.
+    Disconnect(DisconnectArguments),
+
     /// Show or change the stored startup default.
     Default(DefaultArguments),
 
@@ -57,6 +60,21 @@ struct ConnectArguments {
     /// Exact target to verify and connect.
     #[arg(value_name = "TARGET", allow_hyphen_values = true)]
     target: String,
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+struct DisconnectArguments {
+    /// Provider whose managed model connection should be removed.
+    #[arg(value_name = "PROVIDER", allow_hyphen_values = true)]
+    provider: Option<String>,
+
+    /// Exact Account within the Provider.
+    #[arg(long, value_name = "ACCOUNT", requires = "provider")]
+    account: Option<String>,
+
+    /// Apply the captured unambiguous plan without an interactive confirmation.
+    #[arg(long, requires_all = ["provider", "account"])]
+    yes: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -113,6 +131,7 @@ pub(crate) enum LiveSelection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
     Connect(ConnectCommand),
+    Disconnect(DisconnectCommand),
     Default(DefaultCommand),
     Live(LiveOptions),
     Session(SessionCommand),
@@ -121,6 +140,13 @@ pub(crate) enum Command {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConnectCommand {
     pub(crate) target: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DisconnectCommand {
+    pub(crate) provider: Option<String>,
+    pub(crate) account: Option<String>,
+    pub(crate) yes: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -150,6 +176,11 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
     match cli.command {
         Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {
             target: arguments.target,
+        })),
+        Some(CliCommand::Disconnect(arguments)) => Ok(Command::Disconnect(DisconnectCommand {
+            provider: arguments.provider,
+            account: arguments.account,
+            yes: arguments.yes,
         })),
         Some(CliCommand::Default(arguments)) => Ok(Command::Default(DefaultCommand {
             target: arguments.target,
