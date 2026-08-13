@@ -15,7 +15,13 @@ pub use error::ConnectionRepositoryError;
 const MAX_CONNECTION_BYTES: u64 = 1024 * 1024;
 const FILE_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
+#[cfg(target_vendor = "apple")]
+const REGULAR_FILE_MODE: u32 = libc::S_IFREG as u32;
+#[cfg(not(target_vendor = "apple"))]
 const REGULAR_FILE_MODE: u32 = libc::S_IFREG;
+#[cfg(target_vendor = "apple")]
+const FILE_TYPE_MASK: u32 = libc::S_IFMT as u32;
+#[cfg(not(target_vendor = "apple"))]
 const FILE_TYPE_MASK: u32 = libc::S_IFMT;
 const REPOSITORY_LOCK_FILE: &str = ".connections.lock";
 const OPERATION_LOCK_FILE: &str = ".connection-operation.lock";

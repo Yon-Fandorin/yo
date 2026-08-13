@@ -19,6 +19,14 @@ use yo_core::{
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_DATE_FORMAT_BYTES: usize = 128;
+#[cfg(target_vendor = "apple")]
+const FILE_TYPE_MASK: u32 = libc::S_IFMT as u32;
+#[cfg(not(target_vendor = "apple"))]
+const FILE_TYPE_MASK: u32 = libc::S_IFMT;
+#[cfg(target_vendor = "apple")]
+const REGULAR_FILE_MODE: u32 = libc::S_IFREG as u32;
+#[cfg(not(target_vendor = "apple"))]
+const REGULAR_FILE_MODE: u32 = libc::S_IFREG;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Config {
@@ -455,7 +463,7 @@ fn capture_snapshot(path: &Path) -> Result<ConfigSnapshot, ConfigError> {
         },
     };
     let before = config_metadata(path, &file)?;
-    if before.mode & libc::S_IFMT != libc::S_IFREG {
+    if before.mode & FILE_TYPE_MASK != REGULAR_FILE_MODE {
         return Err(ConfigError::UnsupportedFileType(path.to_owned()));
     }
     if before.len > MAX_CONFIG_BYTES {

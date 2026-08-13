@@ -63,12 +63,14 @@ pub use model_connector::{
 pub use model_service::{
     AccountId, ApiCredential, ApiDialect, ConnectionCommit, ConnectionRepository,
     ConnectionRepositoryError, ConnectionRevision, ConnectionSnapshot, ConnectorId,
-    CredentialStore, EffectiveModelBinding, LocalConnectionOperationGuard,
-    LocalConnectionRepository, LocalCredentialStore, LocalCredentialStoreError, ModelCatalog,
-    ModelCatalogEntry, ModelContextProfile, ModelId, ModelSelection, ModelSelectionChoice,
-    ModelSelectionController, ModelServiceError, ModelTokenCounter, ModelTokenCounterError,
-    NormalizedEndpoint, PreparedConnectionMutation, ProviderId, StartupPolicy,
-    StartupSelectionSources, StartupTarget, resolve_startup_target,
+    CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
+    CredentialSnapshot, CredentialStore, EffectiveModelBinding, LocalConnectionOperationGuard,
+    LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStore,
+    LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelId,
+    ModelSelection, ModelSelectionChoice, ModelSelectionController, ModelServiceError,
+    ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint, PreparedConnectionMutation,
+    PreparedCredentialMutation, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
+    resolve_startup_target,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

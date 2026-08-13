@@ -20,7 +20,11 @@ pub use connection_repository::{
 };
 pub use credential::{ApiCredential, CredentialStore};
 pub use identity::{AccountId, ModelId, ModelServiceError, ProviderId};
-pub use local_credentials::{LocalCredentialStore, LocalCredentialStoreError};
+pub use local_credentials::{
+    CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
+    CredentialSnapshot, LocalCredentialRepository, LocalCredentialStore, LocalCredentialStoreError,
+    PreparedCredentialMutation,
+};
 pub use selection::{ModelSelection, ModelSelectionChoice, ModelSelectionController};
 pub use startup::{StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target};
 

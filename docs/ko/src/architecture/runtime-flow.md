@@ -541,7 +541,18 @@ providers:
 
 credential 파일은 현재 사용자가 소유한 regular file이어야 하고 group/other 권한 bit가
 없어야 한다(보통 mode `0600`). 서로 다른 Provider 아래에는 같은 Account ID를 사용할
-수 있으며 선택된 Provider·Account exact pair만 resolve한다. endpoint, model, API dialect,
+수 있으며 선택된 Provider·Account exact pair만 resolve한다. Revision이 없는 version 1
+파일도 legacy snapshot으로 계속 읽을 수 있다. `LocalCredentialRepository`는 private store
+lock 아래에서 파일을 다시 읽고 candidate secret을 보관하지 않은 채 정확히 한 pair의 add,
+replace 또는 remove를 준비한다. Commit은 add 또는 replace일 때만 candidate를 받고, 관련
+없는 pair를 모두 보존하며, 독립적으로 만든 private `crev-...` receipt가 든 완전한 mode
+`0600` snapshot을 원자적으로 게시한다. 예정 receipt와 exact pair 상태가 같으면 반복
+commit은 idempotent하고, 관찰한 revision이 다르면 conflict다. 마지막 pair를 제거해도
+`absent`로 돌아가지 않고 versioned empty file을 남긴다. 이 write는 core storage
+boundary이며, external connect와 disconnect는 credential-public operation journal이 이를
+`connections.yaml`과 조합할 때까지 비활성 상태다.
+
+endpoint, model, API dialect,
 파생된 connector identity와 표시 이름은 secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과
 Model ID는 운영자가 관리하는 예시이며 현재 Provider의 정확한 제공 목록과 대조해야 한다.
 `utf8-bytes/v1`은 직렬화한 전체 request의 UTF-8 byte마다 token 하나를 세는 보수적인

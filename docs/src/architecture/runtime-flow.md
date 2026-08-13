@@ -573,7 +573,19 @@ providers:
 The credential file must be a current-user-owned regular file with no group or
 other permission bits (normally mode `0600`). The same Account ID may be used
 under different Providers; only the exact selected Provider-and-Account pair is
-resolved. Endpoint, model, API dialect, derived connector identity, and display
+resolved. A revision-less version 1 file remains a readable legacy snapshot.
+`LocalCredentialRepository` re-reads it under a private store lock and can
+prepare exactly one add, replace, or remove without retaining the candidate
+secret. Commit accepts the candidate only for add or replace, preserves every
+unrelated pair, and atomically publishes a complete mode-`0600` snapshot with
+an independently generated private `crev-...` receipt. The planned receipt and
+exact pair state make a repeated commit idempotent, while a different observed
+revision is a conflict. Removing the final pair leaves a versioned empty file
+rather than returning to `absent`. These writes are a core storage boundary;
+external connect and disconnect remain disabled until the credential-and-public
+operation journal composes them with `connections.yaml`.
+
+Endpoint, model, API dialect, derived connector identity, and display
 names remain non-secret binding data rather than secret-file content. Catalog limits and model
 IDs are operator-owned examples and must be checked against the exact current
 Provider offering. `utf8-bytes/v1` conservatively counts the complete serialized
