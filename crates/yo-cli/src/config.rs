@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     env,
     error::Error,
     ffi::OsString,
@@ -12,9 +13,12 @@ use jiff::{Timestamp, fmt::strtime, tz::TimeZone};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use yo_core::{
-    AccountId, EffectiveModelBinding, ModelCatalog, ModelCatalogEntry, ModelContextProfile,
-    ModelId, ModelSelection, NormalizedEndpoint, ProviderId, StartupTarget,
+    AccountId, EffectiveModelBinding, EffectiveModelProfile, ModelCatalog, ModelCatalogEntry,
+    ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters, ModelSelection,
+    NormalizedEndpoint, ProviderId, StartupTarget, VersionedProfileId,
 };
+
+mod profile_numbers;
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
@@ -311,7 +315,37 @@ struct TuiConfig {
 struct ModelConfig {
     startup: Option<StartupTargetConfig>,
     #[serde(default)]
-    catalog: Vec<ModelEntryConfig>,
+    catalog: Authored<Vec<ModelEntryConfig>>,
+    #[serde(default)]
+    bindings: Authored<Vec<ModelBindingConfig>>,
+}
+
+#[derive(Debug, Default)]
+enum Authored<T> {
+    #[default]
+    Missing,
+    Present(T),
+}
+
+impl<T> Authored<T> {
+    fn into_option(self) -> Option<T> {
+        match self {
+            Self::Missing => None,
+            Self::Present(value) => Some(value),
+        }
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Authored<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        T::deserialize(deserializer).map(Self::Present)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -340,6 +374,49 @@ struct ModelEntryConfig {
     input_token_limit: u64,
     max_output_tokens: u64,
     tokenizer_profile: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelBindingConfig {
+    provider: String,
+    provider_display_name: Option<String>,
+    account: String,
+    account_display_name: Option<String>,
+    base_url: String,
+    #[serde(default)]
+    profile: Authored<ModelProfileConfig>,
+    models: Vec<ModelBindingEntryConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelBindingEntryConfig {
+    model: String,
+    model_display_name: Option<String>,
+    #[serde(default)]
+    profile: Authored<ModelProfileConfig>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelProfileConfig {
+    #[serde(default)]
+    api_dialect: Authored<String>,
+    #[serde(default)]
+    tokenizer_profile: Authored<String>,
+    #[serde(default)]
+    input_token_limit: Authored<u64>,
+    #[serde(default)]
+    max_output_tokens: Authored<u64>,
+    #[serde(default)]
+    reasoning_parameters: Authored<ModelProfileParameters>,
+    #[serde(default)]
+    optional_request_parameters: Authored<ModelProfileParameters>,
+    #[serde(default)]
+    tool_capability_policy: Authored<String>,
+    #[serde(default)]
+    verification_profile: Authored<String>,
 }
 
 pub(crate) fn load() -> Result<Config, ConfigError> {
@@ -386,6 +463,8 @@ fn parse_snapshot(
     contents: &str,
     snapshot: ConfigSnapshot,
 ) -> Result<Config, ConfigError> {
+    profile_numbers::validate_plain_number_spellings(contents)
+        .map_err(|message| invalid_model(path, message))?;
     let decoded: FileConfig =
         serde_norway::from_str(contents).map_err(|source| ConfigError::InvalidYaml {
             path: path.to_owned(),
@@ -407,21 +486,33 @@ fn parse_snapshot(
             });
         },
     };
-    let model_catalog = ModelCatalog::new(
-        decoded
-            .model
-            .catalog
+    let ModelConfig {
+        startup,
+        catalog,
+        bindings,
+    } = decoded.model;
+    if matches!(&catalog, Authored::Present(_)) && matches!(&bindings, Authored::Present(_)) {
+        return Err(invalid_model(
+            path,
+            "model.catalog and model.bindings cannot be authored together",
+        ));
+    }
+    let entries = match (catalog, bindings) {
+        (Authored::Missing, Authored::Present(bindings)) => model_binding_entries(path, bindings)?,
+        (Authored::Present(catalog), Authored::Missing) => catalog
             .into_iter()
             .map(|entry| model_entry(path, entry))
             .collect::<Result<Vec<_>, _>>()?,
-    )
-    .map_err(|error| ConfigError::InvalidModel {
+        (Authored::Missing, Authored::Missing) => Vec::new(),
+        (Authored::Present(_), Authored::Present(_)) => {
+            unreachable!("both authored model collections were rejected")
+        },
+    };
+    let model_catalog = ModelCatalog::new(entries).map_err(|error| ConfigError::InvalidModel {
         path: path.to_owned(),
         message: error.to_string(),
     })?;
-    let startup_target = decoded
-        .model
-        .startup
+    let startup_target = startup
         .map(|startup| startup_target(path, startup, &model_catalog))
         .transpose()?;
     let config = Config {
@@ -551,6 +642,118 @@ fn model_entry(path: &Path, entry: ModelEntryConfig) -> Result<ModelCatalogEntry
         context,
     )
     .map_err(invalid)
+}
+
+fn model_binding_entries(
+    path: &Path,
+    bindings: Vec<ModelBindingConfig>,
+) -> Result<Vec<ModelCatalogEntry>, ConfigError> {
+    let mut pairs = HashSet::new();
+    let mut entries = Vec::new();
+    for binding in bindings {
+        let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
+            path: path.to_owned(),
+            message: error.to_string(),
+        };
+        let provider = ProviderId::new(binding.provider).map_err(&invalid)?;
+        let account = AccountId::new(binding.account).map_err(&invalid)?;
+        if !pairs.insert((provider.clone(), account.clone())) {
+            return Err(invalid_model(
+                path,
+                format!("model.bindings repeats Provider {provider} and Account {account}"),
+            ));
+        }
+        if binding.models.is_empty() {
+            return Err(invalid_model(
+                path,
+                format!(
+                    "model.bindings entry for Provider {provider} and Account {account} requires at least one model"
+                ),
+            ));
+        }
+        let endpoint = NormalizedEndpoint::parse(&binding.base_url).map_err(&invalid)?;
+        let base_profile = binding
+            .profile
+            .into_option()
+            .map(|profile| model_profile_layer(path, profile))
+            .transpose()?;
+        for model in binding.models {
+            let model_id = ModelId::new(model.model).map_err(&invalid)?;
+            let model_profile = model
+                .profile
+                .into_option()
+                .map(|profile| model_profile_layer(path, profile))
+                .transpose()?
+                .unwrap_or_default();
+            let profile = EffectiveModelProfile::resolve(base_profile.as_ref(), &model_profile)
+                .map_err(&invalid)?;
+            let effective_binding = EffectiveModelBinding::new(
+                provider.clone(),
+                account.clone(),
+                model_id,
+                profile.api_dialect(),
+                endpoint.clone(),
+            );
+            entries.push(
+                ModelCatalogEntry::with_explicit_profile(
+                    effective_binding,
+                    binding.provider_display_name.clone(),
+                    binding.account_display_name.clone(),
+                    model.model_display_name,
+                    profile,
+                )
+                .map_err(&invalid)?,
+            );
+        }
+    }
+    Ok(entries)
+}
+
+fn model_profile_layer(
+    path: &Path,
+    profile: ModelProfileConfig,
+) -> Result<ModelProfileLayer, ConfigError> {
+    let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
+        path: path.to_owned(),
+        message: error.to_string(),
+    };
+    Ok(ModelProfileLayer::new(
+        profile
+            .api_dialect
+            .into_option()
+            .map(|value| value.parse())
+            .transpose()
+            .map_err(&invalid)?,
+        profile
+            .tokenizer_profile
+            .into_option()
+            .map(VersionedProfileId::new)
+            .transpose()
+            .map_err(&invalid)?,
+        profile.input_token_limit.into_option(),
+        profile.max_output_tokens.into_option(),
+        profile.reasoning_parameters.into_option(),
+        profile.optional_request_parameters.into_option(),
+        profile
+            .tool_capability_policy
+            .into_option()
+            .map(VersionedProfileId::new)
+            .transpose()
+            .map_err(&invalid)?,
+        profile
+            .verification_profile
+            .into_option()
+            .map(VersionedProfileId::new)
+            .transpose()
+            .map_err(invalid)?,
+    ))
+}
+
+fn invalid_model(path: &Path, message: impl Into<String>) -> ConfigError {
+    ConfigError::InvalidModel {
+        path: path.to_owned(),
+        message: message.into(),
+    }
 }
 
 fn startup_target(

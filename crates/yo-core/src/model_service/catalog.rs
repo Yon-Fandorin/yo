@@ -2,17 +2,28 @@ use std::collections::{HashMap, HashSet, hash_map::Entry};
 
 use serde_json::Value;
 
-use super::{AccountId, EffectiveModelBinding, ModelId, ModelServiceError, ProviderId};
+use super::{
+    AccountId, CompleteModelBinding, EffectiveModelBinding, EffectiveModelProfile, ModelId,
+    ModelServiceError, ProviderId, VersionedProfileId,
+};
 
 const MAX_DISPLAY_NAME_BYTES: usize = 256;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelCatalogEntry {
-    binding: EffectiveModelBinding,
+    binding: CatalogBinding,
     provider_display_name: Option<String>,
     account_display_name: Option<String>,
     model_display_name: Option<String>,
-    context: ModelContextProfile,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum CatalogBinding {
+    Legacy {
+        binding: EffectiveModelBinding,
+        context: ModelContextProfile,
+    },
+    Complete(CompleteModelBinding),
 }
 
 impl ModelCatalogEntry {
@@ -27,17 +38,38 @@ impl ModelCatalogEntry {
         validate_display_name("Account", account_display_name.as_deref())?;
         validate_display_name("Model", model_display_name.as_deref())?;
         Ok(Self {
-            binding,
+            binding: CatalogBinding::Legacy { binding, context },
             provider_display_name,
             account_display_name,
             model_display_name,
-            context,
+        })
+    }
+
+    pub fn with_explicit_profile(
+        binding: EffectiveModelBinding,
+        provider_display_name: Option<String>,
+        account_display_name: Option<String>,
+        model_display_name: Option<String>,
+        profile: EffectiveModelProfile,
+    ) -> Result<Self, ModelServiceError> {
+        let binding = CompleteModelBinding::new(binding, profile)?;
+        validate_display_name("Provider", provider_display_name.as_deref())?;
+        validate_display_name("Account", account_display_name.as_deref())?;
+        validate_display_name("Model", model_display_name.as_deref())?;
+        Ok(Self {
+            provider_display_name,
+            account_display_name,
+            model_display_name,
+            binding: CatalogBinding::Complete(binding),
         })
     }
 
     #[must_use]
     pub const fn binding(&self) -> &EffectiveModelBinding {
-        &self.binding
+        match &self.binding {
+            CatalogBinding::Legacy { binding, .. } => binding,
+            CatalogBinding::Complete(binding) => binding.binding(),
+        }
     }
 
     #[must_use]
@@ -56,7 +88,26 @@ impl ModelCatalogEntry {
     }
 
     pub const fn context(&self) -> &ModelContextProfile {
-        &self.context
+        match &self.binding {
+            CatalogBinding::Legacy { context, .. } => context,
+            CatalogBinding::Complete(binding) => binding.profile().context(),
+        }
+    }
+
+    #[must_use]
+    pub const fn explicit_profile(&self) -> Option<&EffectiveModelProfile> {
+        match &self.binding {
+            CatalogBinding::Legacy { .. } => None,
+            CatalogBinding::Complete(binding) => Some(binding.profile()),
+        }
+    }
+
+    #[must_use]
+    pub const fn complete_binding(&self) -> Option<&CompleteModelBinding> {
+        match &self.binding {
+            CatalogBinding::Legacy { .. } => None,
+            CatalogBinding::Complete(binding) => Some(binding),
+        }
     }
 }
 
@@ -64,7 +115,7 @@ impl ModelCatalogEntry {
 pub struct ModelContextProfile {
     input_token_limit: u64,
     max_output_tokens: u64,
-    tokenizer_profile: String,
+    tokenizer_profile: VersionedProfileId,
 }
 
 impl ModelContextProfile {
@@ -73,16 +124,21 @@ impl ModelContextProfile {
         max_output_tokens: u64,
         tokenizer_profile: impl Into<String>,
     ) -> Result<Self, ModelServiceError> {
-        let tokenizer_profile = tokenizer_profile.into();
+        let tokenizer_profile = VersionedProfileId::new(tokenizer_profile)?;
+        Self::from_versioned(input_token_limit, max_output_tokens, tokenizer_profile)
+    }
+
+    pub(super) fn from_versioned(
+        input_token_limit: u64,
+        max_output_tokens: u64,
+        tokenizer_profile: VersionedProfileId,
+    ) -> Result<Self, ModelServiceError> {
         if input_token_limit == 0
             || max_output_tokens == 0
             || max_output_tokens >= input_token_limit
-            || tokenizer_profile.is_empty()
-            || tokenizer_profile.len() > 128
-            || !tokenizer_profile.is_ascii()
         {
             return Err(ModelServiceError::new(
-                "model context profile requires a positive limit, a smaller positive max_output_tokens value, and a bounded ASCII tokenizer profile",
+                "model context profile requires positive limits and max_output_tokens smaller than input_token_limit",
             ));
         }
         Ok(Self {
@@ -101,7 +157,7 @@ impl ModelContextProfile {
     }
 
     pub fn tokenizer_profile(&self) -> &str {
-        &self.tokenizer_profile
+        self.tokenizer_profile.as_str()
     }
 }
 

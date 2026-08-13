@@ -50,7 +50,6 @@ impl Fixture {
             .expect("the credential mutation must be preparable");
         ConnectionOperationJournalEntry::connect_credential_change(
             digest('a'),
-            vec![digest('b')],
             connection,
             credential,
         )
@@ -100,13 +99,8 @@ impl Fixture {
             .prepare_remove(&provider(), &account())
             .expect("the credential removal must be preparable")
             .expect("the existing credential must produce a removal");
-        ConnectionOperationJournalEntry::disconnect_remove(
-            digest('c'),
-            vec![digest('d')],
-            connection,
-            credential,
-        )
-        .expect("the disconnect intent must be valid")
+        ConnectionOperationJournalEntry::disconnect_remove(digest('c'), connection, credential)
+            .expect("the disconnect intent must be valid")
     }
 
     pub(super) fn seed_disconnect_preserve(&self) -> ConnectionOperationJournalEntry {
@@ -148,7 +142,6 @@ impl Fixture {
             .clone();
         ConnectionOperationJournalEntry::disconnect_preserve(
             digest('e'),
-            vec![],
             connection,
             expected_credential_revision,
         )

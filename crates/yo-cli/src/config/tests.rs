@@ -90,6 +90,549 @@ fn model_catalog_resolves_the_configured_startup_binding() {
         config.credential_path(),
         Path::new("/tmp/yo/credentials.yaml")
     );
+    assert!(selected.explicit_profile().is_none());
+}
+
+// 새 bindings 형식은 Provider·Account의 endpoint와 base profile을 두 모델이 공유하고,
+// 두 번째 모델이 명시한 출력 한도와 reasoning mapping만 완전 교체해 catalog를 만듭니다.
+#[test]
+fn model_bindings_resolve_base_profile_and_model_overrides() {
+    let config = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        r#"version: 1
+model:
+  startup:
+    provider: qwencloud
+    account: token-plan
+    model: qwen-flash
+  bindings:
+    - provider: qwencloud
+      provider_display_name: Qwen Cloud
+      account: token-plan
+      account_display_name: Token Plan
+      base_url: https://example.test/v1/
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000000
+        max_output_tokens: 65536
+        reasoning_parameters:
+          effort: medium
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: qwen-max
+          model_display_name: Qwen Max
+        - model: qwen-flash
+          model_display_name: Qwen Flash
+          profile:
+            max_output_tokens: 8192
+            reasoning_parameters:
+              effort: high
+"#,
+    )
+    .unwrap();
+
+    let max = &config.model_catalog().entries()[0];
+    let flash = &config.model_catalog().entries()[1];
+    assert_eq!(max.binding().endpoint(), flash.binding().endpoint());
+    assert_eq!(max.binding().endpoint().as_str(), "https://example.test/v1");
+    assert_eq!(max.context().max_output_tokens(), 65_536);
+    assert_eq!(flash.context().max_output_tokens(), 8_192);
+    let max_profile = max.explicit_profile().unwrap();
+    let flash_profile = flash.explicit_profile().unwrap();
+    assert_eq!(
+        max_profile.reasoning_parameters(),
+        &serde_norway::from_str::<yo_core::ModelProfileParameters>("{effort: medium}").unwrap()
+    );
+    assert_eq!(
+        flash_profile.reasoning_parameters(),
+        &serde_norway::from_str::<yo_core::ModelProfileParameters>("{effort: high}").unwrap()
+    );
+    assert_eq!(
+        flash_profile.tool_capability_policy().as_str(),
+        "local-tools/v1"
+    );
+    assert_eq!(
+        config
+            .startup_target()
+            .unwrap()
+            .model()
+            .unwrap()
+            .model()
+            .as_str(),
+        "qwen-flash"
+    );
+}
+
+// 같은 v1 문서에서 legacy catalog와 새 bindings를 함께 쓰면 어느 쪽이 우선인지
+// 추측하지 않고 정확한 상호배타 오류로 거절합니다.
+#[test]
+fn model_catalog_and_bindings_are_mutually_exclusive() {
+    let error = parse(
+        Path::new("config.yaml"),
+        r#"version: 1
+model:
+  catalog: []
+  bindings:
+    - provider: explicit
+      account: default
+      base_url: https://explicit.test/v1
+      models: []
+"#,
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("model.catalog and model.bindings cannot be authored together")
+    );
+}
+
+// catalog와 bindings는 배열만 받으므로 null을 누락으로 축약하지 않으며, 단독 null과
+// 다른 키를 동반한 null 모두 닫힌 authored shape 경계에서 실패합니다.
+#[test]
+fn model_catalog_and_bindings_reject_null_instead_of_treating_it_as_absent() {
+    for model in [
+        "catalog: null",
+        "bindings: null",
+        "catalog: null\n  bindings: []",
+        "catalog: []\n  bindings: null",
+    ] {
+        let yaml = format!("version: 1\nmodel:\n  {model}\n");
+        let error = parse(Path::new("config.yaml"), &yaml).unwrap_err();
+        assert!(
+            error.to_string().contains("expected a sequence"),
+            "{model}: {error}"
+        );
+    }
+}
+
+// structured null은 필드 누락과 다르므로 모델 override가 상위 mapping을 상속하지 않고
+// exact Null 값으로 교체하며, native runtime이 지원 여부를 별도로 판단할 수 있습니다.
+#[test]
+fn model_profile_structured_null_is_an_explicit_whole_field_override() {
+    let config = parse(
+        Path::new("config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        reasoning_parameters: {effort: medium}
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: null-reasoning
+          profile:
+            reasoning_parameters: null
+"#,
+    )
+    .unwrap();
+
+    assert_eq!(
+        config.model_catalog().entries()[0]
+            .explicit_profile()
+            .unwrap()
+            .reasoning_parameters()
+            .to_json_value(),
+        serde_json::Value::Null
+    );
+}
+
+// profile의 문자열·정수 같은 shape 필드는 null을 상속 표시로 사용하지 않으므로,
+// structured Null과 달리 authored type 경계에서 즉시 거절합니다.
+#[test]
+fn model_profile_scalar_null_is_not_treated_as_an_inherited_field() {
+    let error = parse(
+        Path::new("config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: null
+        reasoning_parameters: {}
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: null-limit
+"#,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("expected u64"));
+}
+
+// YAML plain 숫자는 spelling 기준 variant를 정하기 전에 범위를 검증하여 큰 정수가
+// float/string으로 바뀌지 않으며, 유한 exponent와 따옴표 문자열은 구분해 허용합니다.
+#[test]
+fn model_profile_plain_numbers_reject_retyping_but_preserve_quoted_strings() {
+    let prefix = r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+        reasoning_parameters:
+          value: "#;
+    let suffix = "\n      models:\n        - model: numeric\n";
+    for invalid in [
+        "18446744073709551616",
+        "340282366920938463463374607431768211456",
+        "1e400",
+    ] {
+        let error = parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{invalid}{suffix}"),
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("plain profile")
+                || error.to_string().contains("profile integer"),
+            "{invalid}: {error}"
+        );
+    }
+
+    for invalid in [".5e400", "-.5e400", "0x10000000000000000"] {
+        let error = parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{invalid}{suffix}"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("profile"), "{invalid}: {error}");
+    }
+
+    for valid in [
+        "1e2",
+        ".5e2",
+        "\"1e400\"",
+        "'1e400'",
+        "!!str 1e400",
+        "plain 1e400 text",
+        "0x32",
+        "1_000",
+    ] {
+        parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{valid}{suffix}"),
+        )
+        .unwrap();
+    }
+
+    for (authored, expected) in [
+        (".5e2", serde_json::json!(50.0)),
+        ("0x32", serde_json::json!(50)),
+        ("1_000", serde_json::json!("1_000")),
+    ] {
+        let config = parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{authored}{suffix}"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.model_catalog().entries()[0]
+                .explicit_profile()
+                .unwrap()
+                .reasoning_parameters()
+                .to_json_value()["value"],
+            expected,
+            "{authored}"
+        );
+    }
+
+    for block_string in ["|\n            1e400", ">\n            1e400"] {
+        parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{block_string}{suffix}"),
+        )
+        .unwrap();
+    }
+
+    parse(
+        Path::new("config.yaml"),
+        &format!("{prefix}plain\n            1e400{suffix}"),
+    )
+    .unwrap();
+
+    let error = parse(
+        Path::new("config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: &overflow 1e400
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        reasoning_parameters:
+          value: *overflow
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: numeric
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("plain profile number"),
+        "{error}"
+    );
+}
+
+// structured map의 key도 같은 lexical 경계를 통과하므로 범위 밖 plain 숫자와
+// 그 alias는 문자열 key로 재해석되지 않고, 명시적으로 quote한 key만 허용합니다.
+#[test]
+fn model_profile_plain_number_map_keys_cannot_bypass_range_validation() {
+    let prefix = r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        reasoning_parameters: "#;
+    let suffix = r#"
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: numeric-key
+"#;
+
+    for parameters in [
+        "{1e400: value}",
+        "{0x100000000000000000000000000000000: value}",
+    ] {
+        let error = parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{parameters}{suffix}"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("plain profile"), "{error}");
+    }
+
+    let error = parse(
+        Path::new("config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: &overflow 1e400
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        reasoning_parameters:
+          ? *overflow
+          : value
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: numeric-key
+"#,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("plain profile number"),
+        "{error}"
+    );
+
+    let config = parse(
+        Path::new("config.yaml"),
+        &format!("{prefix}{{\"1e400\": value}}{suffix}"),
+    )
+    .unwrap();
+    assert_eq!(
+        config.model_catalog().entries()[0]
+            .explicit_profile()
+            .unwrap()
+            .reasoning_parameters()
+            .to_json_value()["1e400"],
+        "value"
+    );
+}
+
+// 명시적 YAML 숫자 tag도 spelling이 정한 integer/float variant를 바꿀 수 없으며,
+// 일치하는 tag만 같은 typed profile 값으로 decode됩니다.
+#[test]
+fn model_profile_numeric_tags_must_match_the_authored_spelling() {
+    let prefix = r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        reasoning_parameters: {value: "#;
+    let suffix = r#"}
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: tagged-number
+"#;
+
+    for mismatched in ["!!float 1", "!!int 1.0"] {
+        let error = parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{mismatched}{suffix}"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("numeric tag"), "{error}");
+    }
+
+    for matching in ["!!int 1", "!!float 1.0"] {
+        parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{matching}{suffix}"),
+        )
+        .unwrap();
+    }
+}
+
+// profile 밖의 typed String은 숫자 모양이어도 그대로 식별자이므로 구조화 parameter의
+// lexical 숫자 검사가 vendor ModelId까지 넓어지지 않습니다.
+#[test]
+fn model_profile_number_validation_does_not_retype_numeric_looking_model_ids() {
+    for model in ["1e400", "18446744073709551616"] {
+        let config = parse(
+            Path::new("config.yaml"),
+            &format!(
+                r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        reasoning_parameters: {{}}
+        optional_request_parameters: {{}}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: {model}
+"#
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.model_catalog().entries()[0]
+                .binding()
+                .model_id()
+                .as_str(),
+            model
+        );
+    }
+}
+
+// 상위와 모델 profile을 합쳐도 필수 필드가 빠진 새 binding은 legacy 기본값을 끌어오지
+// 않고 누락된 첫 필드를 지목해 실패합니다.
+#[test]
+fn model_bindings_require_a_complete_resolved_profile() {
+    let error = parse(
+        Path::new("config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+      models:
+        - model: incomplete
+"#,
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("resolved model profile is missing tokenizer_profile")
+    );
+}
+
+// 한 Provider·Account가 두 binding 블록에서 서로 다른 endpoint나 profile을 갖지 않도록
+// 좌표 중복을 catalog 평탄화 전에 거절합니다.
+#[test]
+fn model_bindings_reject_duplicate_provider_account_blocks() {
+    let error = parse(
+        Path::new("config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://one.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        reasoning_parameters: {}
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: one
+    - provider: qwencloud
+      account: default
+      base_url: https://two.test/v1
+      models:
+        - model: two
+"#,
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("repeats Provider qwencloud and Account default")
+    );
 }
 
 // operator startup은 model 좌표뿐 아니라 exact HostTarget도 표현해야 Local Codex를

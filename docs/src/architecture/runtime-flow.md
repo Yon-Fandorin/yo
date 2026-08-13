@@ -11,7 +11,9 @@ The provider-neutral service inputs, explicit remote API dialect, and Yo-managed
 loop form one typed route:
 
 ```text
-configured ProviderId + AccountId + ModelId
+configured ProviderId + AccountId + normalized endpoint
+  ↓ optional base profile + whole-field model overrides
+complete EffectiveModelProfile for one ModelId
   ↓ exact ModelCatalog namespace lookup
 EffectiveModelBinding
   ├── explicit ApiDialect → exactly one built-in ConnectorId
@@ -67,7 +69,7 @@ host gate decides the semantic form allowed into Activities, replay, and later
 requests. The backend records only that admitted call/result replay, defers an
 approved effect until its approval and attempt Activities can be journaled, and
 attributes each terminal response's usage to its exact Provider, Account,
-Model, connector, API dialect, and endpoint. The process host owns startup
+Model, connector, endpoint, and complete resolved profile. The process host owns startup
 selection and assembly of these inputs and concrete local tools.
 
 Every opened backend binding declares its continuation strategy. The current
@@ -503,40 +505,34 @@ session:
 tui:
   max_fps: 120
 model:
-  catalog:
-    - provider: openrouter
-      provider_display_name: OpenRouter
-      account: default
-      account_display_name: Default
-      model: openrouter/free
-      model_display_name: OpenRouter Free Router
-      api_dialect: openai-responses
-      base_url: https://openrouter.ai/api/v1
-      input_token_limit: 32000
-      max_output_tokens: 4096
-      tokenizer_profile: utf8-bytes/v1
+  startup:
+    provider: qwencloud
+    account: default
+    model: qwen3.8-max
+  bindings:
     - provider: qwencloud
       provider_display_name: QwenCloud
       account: default
       account_display_name: Default
-      model: qwen3.8-max
-      model_display_name: Qwen 3.8 Max
-      api_dialect: openai-responses
       base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-      input_token_limit: 1000000
-      max_output_tokens: 65536
-      tokenizer_profile: utf8-bytes/v1
-    - provider: qwencloud
-      provider_display_name: QwenCloud
-      account: default
-      account_display_name: Default
-      model: deepseek-v4-flash-0731
-      model_display_name: DeepSeek V4 Flash
-      api_dialect: openai-chat-completions
-      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-      input_token_limit: 1000000
-      max_output_tokens: 8192
-      tokenizer_profile: utf8-bytes/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000000
+        max_output_tokens: 65536
+        reasoning_parameters:
+          effort: medium
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: qwen3.8-max
+          model_display_name: Qwen 3.8 Max
+        - model: deepseek-v4-flash-0731
+          model_display_name: DeepSeek V4 Flash
+          profile:
+            api_dialect: openai-chat-completions
+            max_output_tokens: 8192
 ```
 
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
@@ -544,7 +540,23 @@ in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
 `120`; live startup reads it once and applies it to retained TUI generations.
 Runtime reload is not supported. Operator `model.startup` accepts either exact
 scalar `host:codex` or a `provider`, `account`, and `model` mapping that names
-one catalog entry. Missing configuration retains built-in Session/TUI settings
+one catalog entry. Each `model.bindings` item owns one Provider-and-Account
+endpoint and an optional base profile. A model inherits every base field and
+replaces only fields present in its own `profile`; a structured field is one
+whole replacement rather than a recursive merge. The resolved result must
+contain all eight profile fields. Duplicate Provider-and-Account blocks,
+unknown fields, duplicate structured keys, and incomplete results fail.
+Structured numbers keep the variant selected by their authored spelling; an
+explicit YAML numeric tag cannot retype that spelling. Startup and native
+resume use the same closed durable complete-binding decoder, so out-of-range
+JSON numbers cannot acquire a different variant at a later boundary.
+
+The earlier flat `model.catalog` list remains readable under version 1 and
+keeps its existing `yo.model-binding/v1` durable identity. It cannot appear in
+the same document as `model.bindings`. A new explicit profile is attributed as
+`yo.complete-model-binding/v1`; changing the endpoint, derived connector, or
+any resolved profile field requires a new binding epoch on resume instead of
+silently reusing the old one. Missing configuration retains built-in Session/TUI settings
 but supplies no startup target, so live startup gives setup guidance instead of
 silently selecting Codex. The YAML above is an operator-owned native model
 example rather than an implicit model default.
@@ -585,10 +597,13 @@ rather than returning to `absent`. These writes are a core storage boundary.
 
 The sibling `connection-operation.yaml` now owns the secret-free durable intent
 for a future credential-and-public operation. A closed version 1 record carries
-an opaque operation ID, the config snapshot digest, profile digests, exact
+an opaque operation ID, the config snapshot digest, a required legacy
+`profile_digests` field that new writers leave empty, exact
 expected and planned public revisions plus the complete bounded prospective
 public snapshot, one add, replace, remove, or preserve credential receipt, and
-one legal phase. It cannot accept an `ApiCredential`, candidate identity, or
+one legal phase. Readers still validate and ignore non-empty values from an
+older valid version 1 intent so an interrupted operation remains recoverable.
+It cannot accept an `ApiCredential`, candidate identity, or
 verification payload. Missing capture is non-creating; first intent publication
 is exclusive; every phase replacement is bounded, mode `0600`, no-follow,
 current-user-owned, durable, atomic, and exact-entry checked.
@@ -628,14 +643,19 @@ phase without projecting a private credential revision. External connect and
 disconnect remain disabled until command orchestration composes this executor
 with typed managed entries, verification, and the final config guard.
 
-Endpoint, model, API dialect, derived connector identity, and display
+Endpoint, model, API dialect, derived connector identity, the resolved profile, and display
 names remain non-secret binding data rather than secret-file content. Catalog limits and model
 IDs are operator-owned examples and must be checked against the exact current
 Provider offering. `utf8-bytes/v1` conservatively counts the complete serialized
 request one token per UTF-8 byte; `o200k_base/v1` is available only for bindings
 whose tokenizer is actually o200k-compatible. Unknown profiles fail startup.
 `max_output_tokens` is both the wire output cap and the amount excluded from the
-configured input limit during local context admission.
+configured input limit during local context admission. The first explicit
+runtime supports an empty reasoning mapping or an `effort` of `none`,
+`minimal`, `medium`, or `high`; it requires empty
+`optional_request_parameters`, `local-tools/v1`, and
+`semantic-terminal/v1`. Other validated profile identifiers remain readable
+configuration but fail startup until their runtime behavior exists.
 
 The public sibling `connections.yaml` is separate from operator-owned
 `config.yaml` and secret `credentials.yaml`. The current preference-only writer

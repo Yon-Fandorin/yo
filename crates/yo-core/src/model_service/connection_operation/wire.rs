@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationJournalEntry,
-    ConnectionOperationKind, ConnectionOperationPhase, journal::JournalCredential,
+    ConnectionOperationKind, ConnectionOperationPhase,
+    journal::{JournalCredential, valid_digest},
 };
 use crate::model_service::{
     AccountId, ConnectionRevision, CredentialMutationAction, CredentialRevision,
@@ -21,7 +22,10 @@ pub(super) fn encode(
         operation_id: entry.operation_id(),
         kind: entry.kind().into(),
         config_snapshot_digest: entry.config_snapshot_digest(),
-        profile_digests: entry.profile_digests(),
+        // Wire v1 published this required field before recovery stopped needing
+        // a duplicate profile identity. Keep the field byte-compatible while
+        // new entries record no values.
+        profile_digests: &[],
         phase: entry.phase().into(),
         connection: WireConnection {
             expected_revision: entry.connection_mutation().expected_revision().to_string(),
@@ -47,6 +51,13 @@ pub(super) fn decode(
         });
     }
     let invalid = || ConnectionOperationError::InvalidContents(path.to_owned());
+    if !wire
+        .profile_digests
+        .iter()
+        .all(|digest| valid_digest(digest))
+    {
+        return Err(invalid());
+    }
     let expected_connection =
         ConnectionRevision::from_operation_journal(&wire.connection.expected_revision)
             .ok_or_else(invalid)?;
@@ -64,7 +75,6 @@ pub(super) fn decode(
         wire.operation_id,
         wire.kind.into(),
         wire.config_snapshot_digest,
-        wire.profile_digests,
         wire.phase.into(),
         connection,
         credential,

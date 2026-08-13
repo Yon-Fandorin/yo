@@ -10,7 +10,9 @@ provider 중립 service 입력, 명시적인 remote API dialect, Yo-managed loop
 typed 경로를 이룬다.
 
 ```text
-설정된 ProviderId + AccountId + ModelId
+설정된 ProviderId + AccountId + 정규화한 endpoint
+  ↓ optional base profile + whole-field model override
+ModelId 하나의 완전한 EffectiveModelProfile
   ↓ 정확한 ModelCatalog namespace lookup
 EffectiveModelBinding
   ├── 명시적인 ApiDialect → 정확히 하나의 built-in ConnectorId
@@ -65,7 +67,7 @@ argument는 schema 검증을 거치고 tool output은 제한된 뒤, 주입한 h
 replay, 이후 request에 들어갈 수 있는 semantic 형태를 결정한다. backend는 이렇게
 admission된 call/result replay만 기록하고, 승인과 실행 시도 Activity를 Journal에 남길
 수 있을 때까지 승인된 effect를 미루며, 각 terminal response의 usage를 정확한
-Provider·Account·Model·connector·API dialect·endpoint에 귀속한다. process host가 startup
+Provider·Account·Model·connector·endpoint·완전한 resolved profile에 귀속한다. process host가 startup
 선택, 이 입력들의 조립, 구체적인 local tool을 소유한다.
 
 열린 모든 backend binding은 continuation strategy를 선언한다. 현재 Yo-managed
@@ -474,47 +476,56 @@ session:
 tui:
   max_fps: 120
 model:
-  catalog:
-    - provider: openrouter
-      provider_display_name: OpenRouter
-      account: default
-      account_display_name: Default
-      model: openrouter/free
-      model_display_name: OpenRouter Free Router
-      api_dialect: openai-responses
-      base_url: https://openrouter.ai/api/v1
-      input_token_limit: 32000
-      max_output_tokens: 4096
-      tokenizer_profile: utf8-bytes/v1
+  startup:
+    provider: qwencloud
+    account: default
+    model: qwen3.8-max
+  bindings:
     - provider: qwencloud
       provider_display_name: QwenCloud
       account: default
       account_display_name: Default
-      model: qwen3.8-max
-      model_display_name: Qwen 3.8 Max
-      api_dialect: openai-responses
       base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-      input_token_limit: 1000000
-      max_output_tokens: 65536
-      tokenizer_profile: utf8-bytes/v1
-    - provider: qwencloud
-      provider_display_name: QwenCloud
-      account: default
-      account_display_name: Default
-      model: deepseek-v4-flash-0731
-      model_display_name: DeepSeek V4 Flash
-      api_dialect: openai-chat-completions
-      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-      input_token_limit: 1000000
-      max_output_tokens: 8192
-      tokenizer_profile: utf8-bytes/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000000
+        max_output_tokens: 65536
+        reasoning_parameters:
+          effort: medium
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: qwen3.8-max
+          model_display_name: Qwen 3.8 Max
+        - model: deepseek-v4-flash-0731
+          model_display_name: DeepSeek V4 Flash
+          profile:
+            api_dialect: openai-chat-completions
+            max_output_tokens: 8192
 ```
 
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
 한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. operator
 `model.startup`은 정확한 scalar `host:codex` 또는 catalog entry 하나를 가리키는
-`provider`, `account`, `model` mapping을 받는다. 설정 파일이 없으면 built-in
+`provider`, `account`, `model` mapping을 받는다. 각 `model.bindings` 항목은
+Provider·Account endpoint 하나와 optional base profile을 소유한다. Model은 base의
+모든 필드를 상속하고 자신의 `profile`에 있는 필드만 교체한다. 구조화 필드는 재귀
+merge하지 않고 전체를 교체한다. 합친 결과에는 profile 필드 여덟 개가 모두 있어야
+한다. Provider·Account block 중복, 알 수 없는 field, 구조화 mapping key 중복,
+불완전한 결과는 실패한다.
+구조화 숫자는 작성한 spelling이 고른 variant를 유지하며, 명시적인 YAML 숫자 tag로 그
+spelling을 다른 variant로 바꿀 수 없다. startup과 native resume은 같은 닫힌 durable
+complete-binding decoder를 사용하므로 범위 밖 JSON 숫자가 뒤 경계에서 다른 variant를
+얻을 수 없다.
+
+이전 flat `model.catalog` 목록은 version 1에서 계속 읽으며 기존
+`yo.model-binding/v1` durable identity를 유지한다. 같은 문서에 `model.bindings`와 함께
+쓸 수 없다. 새 explicit profile은 `yo.complete-model-binding/v1`으로 귀속하며 endpoint,
+파생 connector 또는 resolved profile 필드 하나라도 바뀌면 resume에서 기존 값을 조용히
+재사용하지 않고 새 binding epoch를 요구한다. 설정 파일이 없으면 built-in
 Session/TUI 설정은 유지하지만 startup target은 제공하지 않으므로, live startup은
 Codex를 조용히 선택하지 않고 setup 안내를 표시한다. 위 YAML은 암묵적 모델 기본값이
 아니라 운영자가 소유하는 native 모델 예시다. 파일을 읽을 수
@@ -553,9 +564,12 @@ boundary다.
 
 Sibling `connection-operation.yaml`은 앞으로 credential과 public repository를 함께 바꾸는
 operation의 secret-free durable intent를 소유한다. 닫힌 version 1 record는 불투명 operation
-ID, config snapshot digest, profile digest, 정확한 expected·planned public revision과 크기가
+ID, config snapshot digest, 새 writer는 비워 두는 필수 legacy `profile_digests` field,
+정확한 expected·planned public revision과 크기가
 제한된 완전한 prospective public snapshot, add·replace·remove·preserve 중 하나인 credential
-receipt, legal phase 하나를 담는다. `ApiCredential`, candidate identity, verification payload는
+receipt, legal phase 하나를 담는다. Reader는 이전의 올바른 version 1 intent에 값이 있으면
+계속 검증한 뒤 복구 판단에서는 무시하므로 중단된 operation은 복구 가능하다.
+`ApiCredential`, candidate identity, verification payload는
 받을 수 없다. 파일이 없을 때 capture는 아무것도 만들지 않으며, 첫 intent publication은
 exclusive다. 각 phase replacement는 크기가 제한되고 mode `0600`, no-follow,
 current-user-owned이며 durable·atomic하고 exact entry를 확인한다.
@@ -590,13 +604,17 @@ private credential revision을 투영하지 않고 안전한 operation kind, act
 External connect와 disconnect는 command orchestration이 이 executor를 typed managed entry,
 verification, 마지막 config guard와 조합할 때까지 비활성 상태다.
 
-endpoint, model, API dialect,
-파생된 connector identity와 표시 이름은 secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과
+endpoint, model, API dialect, 파생된 connector identity, resolved profile과 표시 이름은
+secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과
 Model ID는 운영자가 관리하는 예시이며 현재 Provider의 정확한 제공 목록과 대조해야 한다.
 `utf8-bytes/v1`은 직렬화한 전체 request의 UTF-8 byte마다 token 하나를 세는 보수적인
 profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 binding에만 쓸 수
 있고 모르는 profile은 startup에서 실패한다. `max_output_tokens`는 wire output cap인
-동시에 local context admission에서 입력 한도로부터 제외하는 값이다.
+동시에 local context admission에서 입력 한도로부터 제외하는 값이다. 첫 explicit runtime은
+빈 reasoning mapping 또는 `none`, `minimal`, `medium`, `high` 중 하나인 `effort`를
+지원하며, 빈 `optional_request_parameters`, `local-tools/v1`,
+`semantic-terminal/v1`을 요구한다. 다른 검증된 profile identifier는 설정으로 읽을 수
+있지만 그 runtime 동작이 구현될 때까지 startup에서 실패한다.
 
 공개 sibling `connections.yaml`은 operator가 소유하는 `config.yaml`, secret인
 `credentials.yaml`과 분리된다. 현재 preference-only writer는 다음 shape를 사용한다

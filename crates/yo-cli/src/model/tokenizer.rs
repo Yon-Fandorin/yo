@@ -87,7 +87,7 @@ mod tests {
 
         assert!(TokenizerRegistry::supports(O200K_PROFILE));
         assert!(TokenizerRegistry::supports(UTF8_BYTES_PROFILE));
-        assert!(!TokenizerRegistry::supports("qwen/latest"));
+        assert!(!TokenizerRegistry::supports("qwen-latest/v1"));
         assert_eq!(
             registry
                 .count_input_tokens(UTF8_BYTES_PROFILE, &payload)
@@ -96,7 +96,7 @@ mod tests {
         );
         assert!(
             registry
-                .count_input_tokens("qwen/latest", &payload)
+                .count_input_tokens("qwen-latest/v1", &payload)
                 .is_err()
         );
     }
@@ -107,14 +107,14 @@ mod tests {
     fn unsupported_tokenizer_profile_reports_exact_profile_and_allowlist() {
         let catalog = selection_catalog_with_tokenizer(
             &[("qwencloud", "default", "qwen3.8-max")],
-            "qwen/latest",
+            "qwen-latest/v1",
         );
 
         let error = require_supported_tokenizer(&catalog.entries()[0]).unwrap_err();
 
         assert_eq!(
             error.to_string(),
-            "unsupported tokenizer profile \"qwen/latest\"; this build supports o200k_base/v1 and utf8-bytes/v1"
+            "unsupported tokenizer profile \"qwen-latest/v1\"; this build supports o200k_base/v1 and utf8-bytes/v1"
         );
     }
 }

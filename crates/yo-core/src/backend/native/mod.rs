@@ -12,6 +12,7 @@ use std::{
 };
 
 use connector::{ModelConnector, ModelConnectorStreamPort};
+use serde::Deserialize;
 use serde_json::json;
 
 use super::{
@@ -21,12 +22,12 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentCommand, ApiCredential, ApiDialect, ApprovalDecision, ContinuationStrategy,
-    EffectiveModelBinding, Failure, FrozenToolRegistry, ModelCatalogEntry,
-    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
-    ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
-    ModelConnectorTerminal, ModelContextProfile, ModelReplay, ModelReplayContract,
-    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelTokenCounter,
+    AgentCommand, ApiCredential, ApiDialect, ApprovalDecision, CompleteModelBinding,
+    ContinuationStrategy, EffectiveModelBinding, EffectiveModelProfile, Failure,
+    FrozenToolRegistry, ModelCatalogEntry, ModelConnectorCancellation, ModelConnectorEvent,
+    ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll,
+    ModelConnectorRequest, ModelConnectorTerminal, ModelContextProfile, ModelReplay,
+    ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelTokenCounter,
     OpenAiChatCompletionsConnector, OpenAiResponsesConnector, ReasoningChannel, ReasoningEffort,
     ReplayExecutor, RequestId, SessionId, ToolApprovalBinding, ToolApprovalRequirement,
     ToolExecution, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
@@ -37,6 +38,8 @@ use crate::{
 const BACKEND_KIND: &str = "yo-managed-model";
 const BACKEND_VERSION: &str = "1";
 const TOOL_TRUNCATION_MARKER: &str = "\n[yo: tool output truncated]";
+const LOCAL_TOOLS_PROFILE: &str = "local-tools/v1";
+const SEMANTIC_TERMINAL_PROFILE: &str = "semantic-terminal/v1";
 
 #[derive(Clone, Debug)]
 pub struct NativeModelBackendConfig {
@@ -129,6 +132,7 @@ struct TurnState {
 pub struct NativeModelBackend {
     connector: Box<dyn ModelConnector>,
     binding: EffectiveModelBinding,
+    binding_identity: BackendIdentity,
     registry: FrozenToolRegistry,
     semantic_admission: Option<Box<dyn ToolSemanticAdmission>>,
     tool_host: Box<dyn ToolExecutionHost>,
@@ -169,16 +173,18 @@ impl NativeModelBackend {
                     .map_err(map_connector_initialization)?,
             ),
         };
-        Self::with_connector(
+        Self::with_connector_and_profile(
             connector,
             binding,
             registry,
             services,
             catalog_entry.context().clone(),
+            catalog_entry.explicit_profile().cloned(),
             config,
         )
     }
 
+    #[cfg(test)]
     fn with_connector(
         connector: Box<dyn ModelConnector>,
         binding: EffectiveModelBinding,
@@ -187,6 +193,31 @@ impl NativeModelBackend {
         model_context: ModelContextProfile,
         config: NativeModelBackendConfig,
     ) -> Result<Self, BackendFailure> {
+        Self::with_connector_and_profile(
+            connector,
+            binding,
+            registry,
+            services,
+            model_context,
+            None,
+            config,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_connector_and_profile(
+        connector: Box<dyn ModelConnector>,
+        binding: EffectiveModelBinding,
+        registry: FrozenToolRegistry,
+        services: NativeModelBackendServices,
+        model_context: ModelContextProfile,
+        explicit_profile: Option<EffectiveModelProfile>,
+        mut config: NativeModelBackendConfig,
+    ) -> Result<Self, BackendFailure> {
+        if let Some(profile) = explicit_profile.as_ref() {
+            config.reasoning_effort = supported_reasoning_effort(profile)?;
+            validate_supported_explicit_profile(profile)?;
+        }
         if config.system_prompt.is_empty()
             || config.maximum_model_rounds == 0
             || config.maximum_tool_argument_bytes == 0
@@ -211,9 +242,11 @@ impl NativeModelBackend {
                 "native model replay contract is invalid or exceeds its bounds",
             ));
         }
+        let binding_identity = native_binding_identity(&binding, explicit_profile.as_ref())?;
         Ok(Self {
             connector,
             binding,
+            binding_identity,
             registry,
             semantic_admission: services.semantic_admission,
             tool_host: services.tool_host,
@@ -236,19 +269,10 @@ impl NativeModelBackend {
     }
 
     fn binding_evidence(&self, session_id: SessionId) -> BackendBindingEvidence {
-        let binding = json!({
-            "provider": self.binding.provider_id().as_str(),
-            "account": self.binding.account_id().as_str(),
-            "model": self.binding.model_id().as_str(),
-            "connector": self.binding.connector_id().as_str(),
-            "api_dialect": self.binding.api_dialect().as_str(),
-            "base_url": self.binding.endpoint().as_str(),
-        })
-        .to_string();
         BackendBindingEvidence::new(
             BACKEND_KIND,
             BACKEND_VERSION,
-            BackendIdentity::new("yo.model-binding/v1", binding),
+            self.binding_identity.clone(),
             BackendIdentity::new("yo.model-id/v1", self.binding.model_id().as_str()),
             BackendIdentity::new("yo.session-id/v1", session_id.to_string()),
             ContinuationStrategy::ExactReplay {
@@ -1467,7 +1491,7 @@ impl AgentBackend for NativeModelBackend {
             ));
         }
         let expected = self.binding_evidence(target.session_id());
-        if !expected.same_resume_identity(target.binding())
+        if !same_native_resume_identity(&expected, target.binding())
             || target.model_replay().contract() != Some(&self.contract)
         {
             return Err(failure(
@@ -1477,7 +1501,7 @@ impl AgentBackend for NativeModelBackend {
         }
         self.session = Some(target.session_id());
         self.replay = target.model_replay().clone();
-        Ok(expected)
+        Ok(target.binding().clone())
     }
 
     fn resume_session_replacing_binding(
@@ -1686,6 +1710,165 @@ impl AgentBackend for NativeModelBackend {
         self.shutdown_result = Some(result.clone());
         result
     }
+}
+
+fn supported_reasoning_effort(
+    profile: &EffectiveModelProfile,
+) -> Result<Option<ReasoningEffort>, BackendFailure> {
+    let value = profile.reasoning_parameters().to_json_value();
+    let serde_json::Value::Object(parameters) = value else {
+        return Err(failure(
+            BackendFailureKind::Initialization,
+            "reasoning_parameters must be a mapping supported by the native model loop",
+        ));
+    };
+    if parameters.is_empty() {
+        return Ok(None);
+    }
+    if parameters.len() != 1 {
+        return Err(failure(
+            BackendFailureKind::Initialization,
+            "reasoning_parameters supports only the effort field",
+        ));
+    }
+    let effort = parameters.get("effort").and_then(|value| value.as_str());
+    match effort {
+        Some("none") => Ok(Some(ReasoningEffort::None)),
+        Some("minimal") => Ok(Some(ReasoningEffort::Minimal)),
+        Some("medium") => Ok(Some(ReasoningEffort::Medium)),
+        Some("high") => Ok(Some(ReasoningEffort::High)),
+        _ => Err(failure(
+            BackendFailureKind::Initialization,
+            "reasoning_parameters.effort must be none, minimal, medium, or high",
+        )),
+    }
+}
+
+fn validate_supported_explicit_profile(
+    profile: &EffectiveModelProfile,
+) -> Result<(), BackendFailure> {
+    if !profile.optional_request_parameters().is_empty_mapping() {
+        return Err(failure(
+            BackendFailureKind::Initialization,
+            "optional_request_parameters is not yet supported by the native model loop",
+        ));
+    }
+    if profile.tool_capability_policy().as_str() != LOCAL_TOOLS_PROFILE {
+        return Err(failure(
+            BackendFailureKind::Initialization,
+            format!(
+                "unsupported tool_capability_policy {:?}; expected {LOCAL_TOOLS_PROFILE}",
+                profile.tool_capability_policy().as_str()
+            ),
+        ));
+    }
+    if profile.verification_profile().as_str() != SEMANTIC_TERMINAL_PROFILE {
+        return Err(failure(
+            BackendFailureKind::Initialization,
+            format!(
+                "unsupported verification_profile {:?}; expected {SEMANTIC_TERMINAL_PROFILE}",
+                profile.verification_profile().as_str()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn native_binding_identity(
+    binding: &EffectiveModelBinding,
+    profile: Option<&EffectiveModelProfile>,
+) -> Result<BackendIdentity, BackendFailure> {
+    let (schema, value) = match profile {
+        Some(profile) => (
+            "yo.complete-model-binding/v1",
+            json!({
+                "provider": binding.provider_id().as_str(),
+                "account": binding.account_id().as_str(),
+                "model": binding.model_id().as_str(),
+                "connector": binding.connector_id().as_str(),
+                "base_url": binding.endpoint().as_str(),
+                "api_dialect": profile.api_dialect().as_str(),
+                "tokenizer_profile": profile.context().tokenizer_profile(),
+                "input_token_limit": profile.context().input_token_limit(),
+                "max_output_tokens": profile.context().max_output_tokens(),
+                "reasoning_parameters": profile.reasoning_parameters(),
+                "optional_request_parameters": profile.optional_request_parameters(),
+                "tool_capability_policy": profile.tool_capability_policy().as_str(),
+                "verification_profile": profile.verification_profile().as_str(),
+            })
+            .to_string(),
+        ),
+        None => (
+            "yo.model-binding/v1",
+            json!({
+                "provider": binding.provider_id().as_str(),
+                "account": binding.account_id().as_str(),
+                "model": binding.model_id().as_str(),
+                "connector": binding.connector_id().as_str(),
+                "api_dialect": binding.api_dialect().as_str(),
+                "base_url": binding.endpoint().as_str(),
+            })
+            .to_string(),
+        ),
+    };
+    let identity = BackendIdentity::new(schema, value);
+    if !identity.is_valid() {
+        return Err(failure(
+            BackendFailureKind::Initialization,
+            "complete native model binding exceeds the durable identity boundary",
+        ));
+    }
+    Ok(identity)
+}
+
+fn same_native_resume_identity(
+    current: &BackendBindingEvidence,
+    durable: &BackendBindingEvidence,
+) -> bool {
+    current.backend_kind() == durable.backend_kind()
+        && current.model_identity() == durable.model_identity()
+        && current.session_locator() == durable.session_locator()
+        && current.continuation_strategy() == durable.continuation_strategy()
+        && semantically_equal_native_binding_identity(
+            current.binding_identity(),
+            durable.binding_identity(),
+        )
+}
+
+fn semantically_equal_native_binding_identity(
+    current: &BackendIdentity,
+    durable: &BackendIdentity,
+) -> bool {
+    if current.schema() != durable.schema() {
+        return false;
+    }
+    match current.schema() {
+        "yo.model-binding/v1" => match (
+            serde_json::from_str::<LegacyNativeBindingIdentity>(current.value()),
+            serde_json::from_str::<LegacyNativeBindingIdentity>(durable.value()),
+        ) {
+            (Ok(current), Ok(durable)) => current == durable,
+            _ => false,
+        },
+        "yo.complete-model-binding/v1" => match (
+            CompleteModelBinding::from_durable_json(current.value()),
+            CompleteModelBinding::from_durable_json(durable.value()),
+        ) {
+            (Ok(current), Ok(durable)) => current == durable,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+#[derive(Deserialize, Eq, PartialEq)]
+struct LegacyNativeBindingIdentity {
+    provider: String,
+    account: String,
+    model: String,
+    connector: String,
+    api_dialect: String,
+    base_url: String,
 }
 
 fn replay_input(item: &ModelReplayItem) -> ModelConnectorInputItem {

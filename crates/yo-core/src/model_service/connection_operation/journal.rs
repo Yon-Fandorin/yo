@@ -34,7 +34,6 @@ pub struct ConnectionOperationJournalEntry {
     operation_id: String,
     kind: ConnectionOperationKind,
     config_snapshot_digest: String,
-    profile_digests: Vec<String>,
     phase: ConnectionOperationPhase,
     connection: PreparedConnectionMutation,
     credential: JournalCredential,
@@ -49,7 +48,6 @@ pub(super) enum JournalCredential {
 impl ConnectionOperationJournalEntry {
     pub fn connect_credential_change(
         config_snapshot_digest: impl Into<String>,
-        profile_digests: Vec<String>,
         connection: PreparedConnectionMutation,
         credential: PreparedCredentialMutation,
     ) -> Result<Self, ConnectionOperationError> {
@@ -62,7 +60,6 @@ impl ConnectionOperationJournalEntry {
         Self::new(
             ConnectionOperationKind::ConnectCredentialChange,
             config_snapshot_digest.into(),
-            profile_digests,
             connection,
             JournalCredential::Mutation(credential),
         )
@@ -70,7 +67,6 @@ impl ConnectionOperationJournalEntry {
 
     pub fn disconnect_remove(
         config_snapshot_digest: impl Into<String>,
-        profile_digests: Vec<String>,
         connection: PreparedConnectionMutation,
         credential: PreparedCredentialMutation,
     ) -> Result<Self, ConnectionOperationError> {
@@ -80,7 +76,6 @@ impl ConnectionOperationJournalEntry {
         Self::new(
             ConnectionOperationKind::Disconnect,
             config_snapshot_digest.into(),
-            profile_digests,
             connection,
             JournalCredential::Mutation(credential),
         )
@@ -88,14 +83,12 @@ impl ConnectionOperationJournalEntry {
 
     pub fn disconnect_preserve(
         config_snapshot_digest: impl Into<String>,
-        profile_digests: Vec<String>,
         connection: PreparedConnectionMutation,
         expected_credential_revision: CredentialRevision,
     ) -> Result<Self, ConnectionOperationError> {
         Self::new(
             ConnectionOperationKind::Disconnect,
             config_snapshot_digest.into(),
-            profile_digests,
             connection,
             JournalCredential::Preserve(expected_credential_revision),
         )
@@ -104,7 +97,6 @@ impl ConnectionOperationJournalEntry {
     fn new(
         kind: ConnectionOperationKind,
         config_snapshot_digest: String,
-        profile_digests: Vec<String>,
         connection: PreparedConnectionMutation,
         credential: JournalCredential,
     ) -> Result<Self, ConnectionOperationError> {
@@ -113,7 +105,6 @@ impl ConnectionOperationJournalEntry {
             operation_id,
             kind,
             config_snapshot_digest,
-            profile_digests,
             ConnectionOperationPhase::Intent,
             connection,
             credential,
@@ -124,22 +115,17 @@ impl ConnectionOperationJournalEntry {
         operation_id: String,
         kind: ConnectionOperationKind,
         config_snapshot_digest: String,
-        profile_digests: Vec<String>,
         phase: ConnectionOperationPhase,
         connection: PreparedConnectionMutation,
         credential: JournalCredential,
     ) -> Result<Self, ConnectionOperationError> {
-        if !valid_operation_id(&operation_id)
-            || !valid_digest(&config_snapshot_digest)
-            || !profile_digests.iter().all(|digest| valid_digest(digest))
-        {
+        if !valid_operation_id(&operation_id) || !valid_digest(&config_snapshot_digest) {
             return Err(ConnectionOperationError::InvalidEntry);
         }
         let entry = Self {
             operation_id,
             kind,
             config_snapshot_digest,
-            profile_digests,
             phase,
             connection,
             credential,
@@ -173,11 +159,6 @@ impl ConnectionOperationJournalEntry {
     #[must_use]
     pub fn config_snapshot_digest(&self) -> &str {
         &self.config_snapshot_digest
-    }
-
-    #[must_use]
-    pub fn profile_digests(&self) -> &[String] {
-        &self.profile_digests
     }
 
     #[must_use]
@@ -315,7 +296,6 @@ impl fmt::Debug for ConnectionOperationJournalEntry {
             .field("operation_id", &self.operation_id)
             .field("kind", &self.kind)
             .field("config_snapshot_digest", &self.config_snapshot_digest)
-            .field("profile_digest_count", &self.profile_digests.len())
             .field("phase", &self.phase)
             .field("credential_action", &self.credential_action())
             .finish_non_exhaustive()

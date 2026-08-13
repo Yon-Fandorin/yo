@@ -1,0 +1,282 @@
+use std::sync::{Arc, Mutex};
+
+use super::{
+    super::{
+        NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+        semantically_equal_native_binding_identity,
+    },
+    support::{
+        ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, context_profile,
+        event_rounds, registry,
+    },
+};
+use crate::{
+    AgentRuntime, ApiDialect, BackendBindingEvidence, BackendIdentity, BackendResumeTarget,
+    EffectiveModelProfile, JournalSequence, ModelProfileLayer, ModelProfileParameters, ModelReplay,
+    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReasoningEffort, ToolApprovalRequirement,
+    VersionedProfileId, fixture_descriptor, fixture_session,
+    journal::SessionJournal,
+    session_repository::{
+        AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
+        RepositorySequence, SessionRepository,
+    },
+};
+
+fn parameters(value: &str) -> ModelProfileParameters {
+    serde_json::from_str(value).unwrap()
+}
+
+fn profile(
+    reasoning: &str,
+    optional: &str,
+    policy: &str,
+    verification: &str,
+) -> EffectiveModelProfile {
+    EffectiveModelProfile::resolve(
+        None,
+        &ModelProfileLayer::new(
+            Some(ApiDialect::OpenAiResponses),
+            Some(VersionedProfileId::new("test-tokenizer/v1").unwrap()),
+            Some(1_000_000),
+            Some(4_096),
+            Some(parameters(reasoning)),
+            Some(parameters(optional)),
+            Some(VersionedProfileId::new(policy).unwrap()),
+            Some(VersionedProfileId::new(verification).unwrap()),
+        ),
+    )
+    .unwrap()
+}
+
+fn backend_with_profile(
+    profile: EffectiveModelProfile,
+) -> Result<NativeModelBackend, crate::BackendFailure> {
+    NativeModelBackend::with_connector_and_profile(
+        Box::new(MockConnector {
+            rounds: event_rounds(Vec::new()),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        Some(profile),
+        NativeModelBackendConfig::default(),
+    )
+}
+
+fn backend_without_profile() -> NativeModelBackend {
+    NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(Vec::new()),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig::default(),
+    )
+    .unwrap()
+}
+
+fn resume_target(
+    backend: &NativeModelBackend,
+    binding_identity: BackendIdentity,
+) -> BackendResumeTarget {
+    let session_id = fixture_session(9);
+    let current = backend.binding_evidence(session_id);
+    let binding = BackendBindingEvidence::new(
+        current.backend_kind(),
+        current.backend_version(),
+        binding_identity,
+        current.model_identity().clone(),
+        current.session_locator().clone(),
+        current.continuation_strategy(),
+    );
+    let mut replay = ModelReplay::default();
+    replay
+        .apply(&ModelReplayDelta::new(
+            Some(backend.contract.clone()),
+            vec![ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: "durable request".to_owned(),
+                refusal: None,
+            }],
+        ))
+        .unwrap();
+    BackendResumeTarget::new(session_id, 1, binding, JournalSequence::new(1))
+        .with_model_replay(replay)
+}
+
+#[derive(Default)]
+struct DurableTestRepository {
+    next_sequence: u64,
+}
+
+impl SessionRepository for DurableTestRepository {
+    fn append(
+        &mut self,
+        _session_id: crate::SessionId,
+        _record: DurableRecord,
+    ) -> Result<AppendReceipt, AppendError> {
+        self.next_sequence += 1;
+        Ok(AppendReceipt::new(RepositorySequence::new(
+            self.next_sequence,
+        )))
+    }
+
+    fn read_after(
+        &self,
+        _session_id: crate::SessionId,
+        _sequence: Option<RepositorySequence>,
+        _limit: usize,
+    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+        Ok(Vec::new())
+    }
+}
+
+fn resume_runtime(backend: NativeModelBackend) -> AgentRuntime<NativeModelBackend> {
+    let session_id = fixture_session(9);
+    let journal = SessionJournal::with_repository_and_descriptor(
+        Box::new(DurableTestRepository::default()),
+        fixture_descriptor(session_id),
+    );
+    AgentRuntime::with_journal(backend, journal)
+}
+
+// explicit profile로 시작한 native backend는 profile의 reasoning effort를 실제 request
+// 설정에 적용하고, durable identity에 endpoint와 여덟 resolved 필드를 모두 기록합니다.
+#[test]
+fn explicit_profile_controls_reasoning_and_complete_binding_identity() {
+    let backend = backend_with_profile(profile(
+        r#"{"effort":"high"}"#,
+        "{}",
+        "local-tools/v1",
+        "semantic-terminal/v1",
+    ))
+    .unwrap();
+
+    assert_eq!(backend.config.reasoning_effort, Some(ReasoningEffort::High));
+    let evidence = backend.binding_evidence(fixture_session(7));
+    assert_eq!(
+        evidence.binding_identity().schema(),
+        "yo.complete-model-binding/v1"
+    );
+    let value: serde_json::Value =
+        serde_json::from_str(evidence.binding_identity().value()).unwrap();
+    assert_eq!(value["api_dialect"], "openai-responses");
+    assert_eq!(value["reasoning_parameters"]["effort"], "high");
+    assert_eq!(value["optional_request_parameters"], serde_json::json!({}));
+    assert_eq!(value["tool_capability_policy"], "local-tools/v1");
+    assert_eq!(value["verification_profile"], "semantic-terminal/v1");
+}
+
+// runtime이 아직 보내지 못하는 optional parameter나 알 수 없는 policy/profile은 설정
+// 단계에서 조용히 무시하지 않고 backend 초기화를 명시적으로 실패시킵니다.
+#[test]
+fn explicit_profile_rejects_unsupported_runtime_fields() {
+    for unsupported in [
+        profile(
+            "{}",
+            r#"{"temperature":1.0}"#,
+            "local-tools/v1",
+            "semantic-terminal/v1",
+        ),
+        profile("{}", "{}", "other-tools/v1", "semantic-terminal/v1"),
+        profile("{}", "{}", "local-tools/v1", "other-terminal/v1"),
+        profile("null", "{}", "local-tools/v1", "semantic-terminal/v1"),
+    ] {
+        assert!(backend_with_profile(unsupported).is_err());
+    }
+}
+
+// legacy catalog entry는 새 profile을 추정하지 않고 기존 yo.model-binding/v1 identity와
+// caller가 준 reasoning 설정을 그대로 유지해 이전 Session resume 의미를 보존합니다.
+#[test]
+fn legacy_backend_keeps_the_existing_binding_identity() {
+    let backend = backend_without_profile();
+
+    assert_eq!(
+        backend
+            .binding_evidence(fixture_session(8))
+            .binding_identity()
+            .schema(),
+        "yo.model-binding/v1"
+    );
+    assert_eq!(
+        backend.config.reasoning_effort,
+        Some(ReasoningEffort::Medium)
+    );
+}
+
+// complete identity의 JSON key 순서가 달라도 typed 값이 같으면 native resume이 이를
+// 다시 raw-byte 비교로 거절하지 않고 durable identity 그대로 runtime에 반환합니다.
+#[test]
+fn complete_resume_preserves_semantically_equal_durable_identity_bytes() {
+    let backend = backend_with_profile(profile(
+        r#"{"effort":"high"}"#,
+        "{}",
+        "local-tools/v1",
+        "semantic-terminal/v1",
+    ))
+    .unwrap();
+    let durable = BackendIdentity::new(
+        "yo.complete-model-binding/v1",
+        r#"{"verification_profile":"semantic-terminal/v1","tool_capability_policy":"local-tools/v1","optional_request_parameters":{},"reasoning_parameters":{"effort":"high"},"max_output_tokens":4096,"input_token_limit":1000000,"tokenizer_profile":"test-tokenizer/v1","api_dialect":"openai-responses","base_url":"https://example.invalid/v1","connector":"openai-responses","model":"qwen3.8max","account":"default","provider":"qwencloud"}"#,
+    );
+    let target = resume_target(&backend, durable);
+    let mut runtime = resume_runtime(backend);
+
+    runtime.initialize_resume(&target).unwrap();
+}
+
+// native resume의 core 비교기도 CLI 전처리에 기대지 않고 범위 밖 integer와 유한하지
+// 않은 float spelling을 거절해, 두 malformed identity를 같은 값으로 인정하지 않습니다.
+#[test]
+fn complete_resume_identity_rejects_closed_number_admission_failures() {
+    let backend = backend_with_profile(profile(
+        r#"{"effort":"high"}"#,
+        "{}",
+        "local-tools/v1",
+        "semantic-terminal/v1",
+    ))
+    .unwrap();
+    let evidence = backend.binding_evidence(fixture_session(7));
+    let canonical = evidence.binding_identity().value();
+
+    for invalid in ["18446744073709551616", "1e400"] {
+        let value = canonical.replace(
+            r#""reasoning_parameters":{"effort":"high"}"#,
+            &format!(r#""reasoning_parameters":{{"value":{invalid}}}"#),
+        );
+        assert_ne!(value, canonical);
+        let identity = BackendIdentity::new("yo.complete-model-binding/v1", value);
+        assert!(!semantically_equal_native_binding_identity(
+            &identity, &identity
+        ));
+    }
+}
+
+// legacy v1이 가진 알 수 없는 역사적 필드는 typed 좌표 비교에서 무시하고, 성공한
+// resume은 runtime exact check를 위해 원래 durable evidence를 손실 없이 돌려줍니다.
+#[test]
+fn legacy_resume_preserves_valid_unknown_durable_fields() {
+    let backend = backend_without_profile();
+    let durable = BackendIdentity::new(
+        "yo.model-binding/v1",
+        r#"{"provider":"qwencloud","account":"default","model":"qwen3.8max","connector":"openai-responses","api_dialect":"openai-responses","base_url":"https://example.invalid/v1","historical":"retained"}"#,
+    );
+    let target = resume_target(&backend, durable);
+    let mut runtime = resume_runtime(backend);
+
+    runtime.initialize_resume(&target).unwrap();
+}

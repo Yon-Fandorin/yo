@@ -49,6 +49,36 @@ fn connect_intent_round_trips_without_secret_or_private_debug_receipts() {
     assert!(!debug.contains("planned_snapshot"));
 }
 
+// 새 wire-v1 intent는 legacy profile_digests 칸을 빈 배열로 유지하고, 이전 writer가 남긴
+// 올바른 digest는 복구 entry에 영향을 주지 않지만 형식이 틀리면 전체 intent를 거절합니다.
+#[test]
+fn legacy_profile_digests_are_validated_but_do_not_change_recovery_identity() {
+    let fixture = Fixture::new("legacy-profile-digests");
+    let entry = fixture.connect_entry();
+    let mut guard = fixture.operation_guard();
+    fixture.journal.publish_intent(&mut guard, &entry).unwrap();
+    let current = fs::read_to_string(fixture.journal.path()).unwrap();
+    assert!(current.contains("profile_digests: []"));
+
+    let legacy = current.replacen(
+        "profile_digests: []",
+        &format!("profile_digests:\n- {}", super::support::digest('b')),
+        1,
+    );
+    fs::write(fixture.journal.path(), &legacy).unwrap();
+    assert_eq!(fixture.journal.capture().unwrap(), Some(entry));
+
+    fs::write(
+        fixture.journal.path(),
+        legacy.replacen(&super::support::digest('b'), "sha256:not-a-digest", 1),
+    )
+    .unwrap();
+    assert!(matches!(
+        fixture.journal.capture(),
+        Err(ConnectionOperationError::InvalidContents(_))
+    ));
+}
+
 // connect 저널은 intent부터 credential_committed, public_committed, complete 순서로만
 // 원자 교체되고 complete의 정확한 현재 entry만 durable remove할 수 있음을 검증합니다.
 #[test]

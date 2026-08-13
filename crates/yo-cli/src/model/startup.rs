@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use yo_core::{
-    AccountId, ApiDialect, BackendResumeTarget, ConnectorId, ModelId, ModelSelection,
-    ModelSelectionController, NormalizedEndpoint, ProviderId, StartupPolicy,
+    AccountId, ApiDialect, BackendResumeTarget, CompleteModelBinding, ConnectorId, ModelId,
+    ModelSelection, ModelSelectionController, NormalizedEndpoint, ProviderId, StartupPolicy,
     StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
@@ -77,12 +77,8 @@ fn resolve_resume(
         DurableBackendKind::Native => {},
     }
     let binding_identity = target.binding().binding_identity();
-    if binding_identity.schema() != "yo.model-binding/v1" {
-        return Err(AppError::many([
-            "the durable native binding has an unsupported identity schema".to_owned(),
-        ]));
-    }
-    let durable_binding = parse_durable_binding(binding_identity.value())?;
+    let durable_binding =
+        parse_durable_binding(binding_identity.schema(), binding_identity.value())?;
     resolve_native_resume(config.model_catalog(), durable_binding, override_model)
 }
 
@@ -108,13 +104,14 @@ fn resolve_codex_resume(override_model: Option<&str>) -> Result<StartupBackend, 
 
 fn resolve_native_resume(
     catalog: &yo_core::ModelCatalog,
-    durable_binding: yo_core::EffectiveModelBinding,
+    durable_binding: DurableNativeBinding,
     reference: Option<&str>,
 ) -> Result<StartupBackend, AppError> {
+    let binding = durable_binding.binding();
     let durable_selection = ModelSelection::new(
-        durable_binding.provider_id().clone(),
-        durable_binding.account_id().clone(),
-        durable_binding.model_id().clone(),
+        binding.provider_id().clone(),
+        binding.account_id().clone(),
+        binding.model_id().clone(),
     );
     let selection = match reference {
         Some(reference) => {
@@ -136,7 +133,7 @@ fn resolve_native_resume(
     let entry = catalog
         .resolve_model(selection.provider(), selection.account(), selection.model())
         .map_err(|error| AppError::single("resolving resumed model", error))?;
-    let replace_binding = entry.binding() != &durable_binding;
+    let replace_binding = !durable_binding.matches(entry);
     Ok(native_selection(selection, replace_binding))
 }
 
@@ -149,23 +146,56 @@ fn native_selection(selection: ModelSelection, replace_binding: bool) -> Startup
     }
 }
 
-fn parse_durable_binding(value: &str) -> Result<yo_core::EffectiveModelBinding, AppError> {
-    let durable: DurableBinding = serde_json::from_str(value).map_err(|_| {
-        AppError::many(["the durable native binding identity is malformed".to_owned()])
-    })?;
-    let durable_provider = ProviderId::new(durable.provider)
+fn parse_durable_binding(schema: &str, value: &str) -> Result<DurableNativeBinding, AppError> {
+    match schema {
+        "yo.model-binding/v1" => {
+            let durable: DurableBinding = serde_json::from_str(value).map_err(|_| {
+                AppError::many(["the durable native binding identity is malformed".to_owned()])
+            })?;
+            parse_legacy_binding(durable).map(DurableNativeBinding::Legacy)
+        },
+        "yo.complete-model-binding/v1" => CompleteModelBinding::from_durable_json(value)
+            .map(DurableNativeBinding::Complete)
+            .map_err(|error| AppError::single("validating durable complete binding", error)),
+        _ => Err(AppError::many([
+            "the durable native binding has an unsupported identity schema".to_owned(),
+        ])),
+    }
+}
+
+fn parse_legacy_binding(
+    durable: DurableBinding,
+) -> Result<yo_core::EffectiveModelBinding, AppError> {
+    parse_binding_coordinates(
+        durable.provider,
+        durable.account,
+        durable.model,
+        durable.connector,
+        durable.api_dialect,
+        durable.base_url,
+    )
+}
+
+fn parse_binding_coordinates(
+    provider: String,
+    account: String,
+    model: String,
+    connector: String,
+    api_dialect: String,
+    base_url: String,
+) -> Result<yo_core::EffectiveModelBinding, AppError> {
+    let durable_provider = ProviderId::new(provider)
         .map_err(|error| AppError::single("validating durable Provider", error))?;
-    let durable_account = AccountId::new(durable.account)
+    let durable_account = AccountId::new(account)
         .map_err(|error| AppError::single("validating durable Account", error))?;
-    let durable_model = ModelId::new(durable.model)
-        .map_err(|error| AppError::single("validating durable Model", error))?;
-    let durable_connector = ConnectorId::new(durable.connector)
+    let durable_model =
+        ModelId::new(model).map_err(|error| AppError::single("validating durable Model", error))?;
+    let durable_connector = ConnectorId::new(connector)
         .map_err(|error| AppError::single("validating durable connector", error))?;
-    let durable_dialect = durable
-        .api_dialect
+    let durable_dialect = api_dialect
         .parse::<ApiDialect>()
         .map_err(|error| AppError::single("validating durable API dialect", error))?;
-    let durable_endpoint = NormalizedEndpoint::parse(&durable.base_url)
+    let durable_endpoint = NormalizedEndpoint::parse(&base_url)
         .map_err(|error| AppError::single("validating durable endpoint", error))?;
     yo_core::EffectiveModelBinding::from_durable(
         durable_provider,
@@ -176,6 +206,30 @@ fn parse_durable_binding(value: &str) -> Result<yo_core::EffectiveModelBinding, 
         durable_endpoint,
     )
     .map_err(|error| AppError::single("validating durable model binding", error))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum DurableNativeBinding {
+    Legacy(yo_core::EffectiveModelBinding),
+    Complete(CompleteModelBinding),
+}
+
+impl DurableNativeBinding {
+    fn binding(&self) -> &yo_core::EffectiveModelBinding {
+        match self {
+            Self::Legacy(binding) => binding,
+            Self::Complete(binding) => binding.binding(),
+        }
+    }
+
+    fn matches(&self, entry: &yo_core::ModelCatalogEntry) -> bool {
+        match self {
+            Self::Legacy(binding) => {
+                entry.explicit_profile().is_none() && entry.binding() == binding
+            },
+            Self::Complete(binding) => entry.complete_binding() == Some(binding),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -190,6 +244,8 @@ struct DurableBinding {
 
 #[cfg(test)]
 mod tests {
+    use yo_core::{EffectiveModelProfile, ModelProfileParameters, VersionedProfileId};
+
     use super::*;
 
     fn selection_catalog(entries: &[(&str, &str, &str)]) -> yo_core::ModelCatalog {
@@ -413,15 +469,24 @@ mod tests {
             .binding()
             .clone();
 
-        let same = resolve_native_resume(&catalog, durable.clone(), Some("same")).unwrap();
+        let same = resolve_native_resume(
+            &catalog,
+            DurableNativeBinding::Legacy(durable.clone()),
+            Some("same"),
+        )
+        .unwrap();
         assert!(!same.replaces_binding());
         assert_eq!(
             same.model_selection().unwrap().provider().as_str(),
             "qwencloud"
         );
 
-        let replacement =
-            resolve_native_resume(&catalog, durable, Some("openrouter::same")).unwrap();
+        let replacement = resolve_native_resume(
+            &catalog,
+            DurableNativeBinding::Legacy(durable),
+            Some("openrouter::same"),
+        )
+        .unwrap();
         assert!(replacement.replaces_binding());
         assert_eq!(
             replacement.model_selection().unwrap().provider().as_str(),
@@ -433,10 +498,12 @@ mod tests {
     // Provider·Account·Model 아래 endpoint 변경도 새 binding으로 구분된다.
     #[test]
     fn durable_binding_parser_preserves_the_complete_effective_identity() {
-        let binding = parse_durable_binding(
+        let durable = parse_durable_binding(
+            "yo.model-binding/v1",
             r#"{"provider":"qwencloud","account":"token-plan","model":"qwen3.8max","connector":"openai-responses","api_dialect":"openai-responses","base_url":"https://old.example/v1"}"#,
         )
         .unwrap();
+        let binding = durable.binding();
         let changed = yo_core::EffectiveModelBinding::new(
             binding.provider_id().clone(),
             binding.account_id().clone(),
@@ -445,7 +512,7 @@ mod tests {
             NormalizedEndpoint::parse("https://new.example/v1").unwrap(),
         );
 
-        assert_ne!(binding, changed);
+        assert_ne!(binding, &changed);
         assert_eq!(binding.endpoint().as_str(), "https://old.example/v1");
     }
 
@@ -456,9 +523,156 @@ mod tests {
         let canonical = r#"{"provider":"qwencloud","account":"token-plan","model":"qwen3.8max","connector":"openai-responses","api_dialect":"openai-responses","base_url":"https://old.example/v1"}"#;
         let with_unknown_field = r#"{"provider":"qwencloud","account":"token-plan","model":"qwen3.8max","connector":"openai-responses","api_dialect":"openai-responses","base_url":"https://old.example/v1","unknown_field":"ignored"}"#;
 
-        let binding = parse_durable_binding(canonical).unwrap();
-        let binding_with_unknown_field = parse_durable_binding(with_unknown_field).unwrap();
+        let binding = parse_durable_binding("yo.model-binding/v1", canonical).unwrap();
+        let binding_with_unknown_field =
+            parse_durable_binding("yo.model-binding/v1", with_unknown_field).unwrap();
 
         assert_eq!(binding_with_unknown_field, binding);
+    }
+
+    // 새 complete binding은 endpoint·connector와 여덟 profile 필드를 모두 복원하고,
+    // structured integer/float 구분을 포함한 exact profile이 같을 때만 같은 epoch입니다.
+    #[test]
+    fn complete_durable_binding_preserves_every_resolved_profile_field() {
+        let durable = parse_durable_binding(
+            "yo.complete-model-binding/v1",
+            r#"{"provider":"qwencloud","account":"token-plan","model":"qwen3.8max","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000000,"max_output_tokens":65536,"reasoning_parameters":{"effort":"medium","integer":1,"float":1.0},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+        )
+        .unwrap();
+        let DurableNativeBinding::Complete(complete) = durable else {
+            panic!("complete schema must produce a complete binding");
+        };
+        let binding = complete.binding();
+        let profile = complete.profile();
+
+        assert_eq!(binding.endpoint().as_str(), "https://example.test/v1");
+        assert_eq!(profile.context().input_token_limit(), 1_000_000);
+        assert_eq!(profile.context().max_output_tokens(), 65_536);
+        assert_eq!(profile.context().tokenizer_profile(), "utf8-bytes/v1");
+        assert_eq!(
+            profile.reasoning_parameters(),
+            &serde_json::from_str::<ModelProfileParameters>(
+                r#"{"effort":"medium","integer":1,"float":1.0}"#
+            )
+            .unwrap()
+        );
+        assert_eq!(profile.tool_capability_policy().as_str(), "local-tools/v1");
+        assert_eq!(
+            profile.verification_profile().as_str(),
+            "semantic-terminal/v1"
+        );
+    }
+
+    // resume은 좌표와 endpoint가 같아도 현재 resolved profile이 달라지면 replacement를
+    // 요구하고, exact complete binding일 때만 기존 epoch를 그대로 재사용합니다.
+    #[test]
+    fn native_resume_compares_the_complete_explicit_profile() {
+        let durable = parse_durable_binding(
+            "yo.complete-model-binding/v1",
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"effort":"medium"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+        )
+        .unwrap();
+        let DurableNativeBinding::Complete(complete) = &durable else {
+            panic!("complete schema must produce a complete binding");
+        };
+        let binding = complete.binding();
+        let profile = complete.profile();
+        let exact_catalog = yo_core::ModelCatalog::new(vec![
+            yo_core::ModelCatalogEntry::with_explicit_profile(
+                binding.clone(),
+                None,
+                None,
+                None,
+                profile.clone(),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        assert!(
+            !resolve_native_resume(&exact_catalog, durable.clone(), None)
+                .unwrap()
+                .replaces_binding()
+        );
+
+        let changed_layer = yo_core::ModelProfileLayer::new(
+            Some(ApiDialect::OpenAiResponses),
+            Some(VersionedProfileId::new("utf8-bytes/v1").unwrap()),
+            Some(1_000),
+            Some(50),
+            Some(serde_json::from_str(r#"{"effort":"medium"}"#).unwrap()),
+            Some(serde_json::from_str("{}").unwrap()),
+            Some(VersionedProfileId::new("local-tools/v1").unwrap()),
+            Some(VersionedProfileId::new("semantic-terminal/v1").unwrap()),
+        );
+        let changed_profile = EffectiveModelProfile::resolve(None, &changed_layer).unwrap();
+        let changed_catalog = yo_core::ModelCatalog::new(vec![
+            yo_core::ModelCatalogEntry::with_explicit_profile(
+                binding.clone(),
+                None,
+                None,
+                None,
+                changed_profile,
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        assert!(
+            resolve_native_resume(&changed_catalog, durable, None)
+                .unwrap()
+                .replaces_binding()
+        );
+    }
+
+    // complete schema는 full-binding attribution이므로 알 수 없는 필드를 legacy v1처럼
+    // 무시하지 않고 거절해 새 profile 의미가 소실되는 것을 막습니다.
+    #[test]
+    fn complete_durable_binding_rejects_unknown_fields() {
+        let error = parse_durable_binding(
+            "yo.complete-model-binding/v1",
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","unknown":true}"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("malformed"));
+    }
+
+    // durable JSON 숫자는 serde가 큰 정수를 float로 바꾸기 전에 spelling대로 범위를
+    // 검사하고, 유한 exponent와 따옴표로 명시한 숫자 모양 문자열은 구분합니다.
+    #[test]
+    fn complete_durable_binding_rejects_out_of_range_number_spellings() {
+        let prefix = r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"value":"#;
+        let suffix = r#"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#;
+        for invalid in [
+            "18446744073709551616",
+            "340282366920938463463374607431768211456",
+            "1e400",
+        ] {
+            let error = parse_durable_binding(
+                "yo.complete-model-binding/v1",
+                &format!("{prefix}{invalid}{suffix}"),
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("out-of-range number"),
+                "{invalid}: {error}"
+            );
+        }
+
+        let exponent = parse_durable_binding(
+            "yo.complete-model-binding/v1",
+            &format!("{prefix}1e2{suffix}"),
+        )
+        .unwrap();
+        let decimal = parse_durable_binding(
+            "yo.complete-model-binding/v1",
+            &format!("{prefix}100.0{suffix}"),
+        )
+        .unwrap();
+        assert_eq!(exponent, decimal);
+        parse_durable_binding(
+            "yo.complete-model-binding/v1",
+            &format!(r#"{prefix}"1e400"{suffix}"#),
+        )
+        .unwrap();
     }
 }

@@ -8,11 +8,12 @@ mod connection_repository;
 mod credential;
 mod identity;
 mod local_credentials;
+mod profile;
 mod selection;
 mod startup;
 
 pub use binding::{ApiDialect, ConnectorId, EffectiveModelBinding, NormalizedEndpoint};
-pub use binding_profile::{BindingProfileDigest, BindingProfileSchema, BindingProfileV1};
+pub use binding_profile::CompleteModelBinding;
 pub use catalog::{
     ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelTokenCounter, ModelTokenCounterError,
 };
@@ -35,6 +36,9 @@ pub use local_credentials::{
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
     CredentialSnapshot, LocalCredentialRepository, LocalCredentialStore, LocalCredentialStoreError,
     PreparedCredentialMutation,
+};
+pub use profile::{
+    EffectiveModelProfile, ModelProfileLayer, ModelProfileParameters, VersionedProfileId,
 };
 pub use selection::{ModelSelection, ModelSelectionChoice, ModelSelectionController};
 pub use startup::{StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target};
