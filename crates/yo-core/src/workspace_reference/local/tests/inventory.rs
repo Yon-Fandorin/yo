@@ -8,7 +8,7 @@ use super::{
     super::{build_inventory, discover_entries, git_command},
     support::{TempFixture, host_id},
 };
-use crate::{WorkspaceReferenceKind, WorkspaceReferenceSearchStatus};
+use crate::WorkspaceReferenceKind;
 
 // 실제 Git 저장소에서 nested .gitignore와 repository exclude를 적용하면서
 // 숨김 파일과 파일을 가진 디렉터리는 후보로 남기고 Git 내부는 노출하지 않는다.
@@ -182,18 +182,26 @@ fn inventory_assigns_stable_identities_and_excludes_directory_symlinks() {
     assert_eq!(file.reference().kind(), WorkspaceReferenceKind::File);
 }
 
-// UTF-8이 아닌 Unix entry를 추가해 inventory가 Incomplete가 되고 replacement character를 포함한
-// 후보가 생기지 않는지 확인한다.
+// host filesystem이 UTF-8이 아닌 entry를 허용하면 inventory가 lossy 후보 없이
+// Incomplete를 보고하고, 허용하지 않으면 fixture 생성의 EILSEQ만 구분한다.
 #[test]
 fn inventory_marks_non_utf8_entries_incomplete_without_lossy_candidates() {
     let fixture = TempFixture::new("inventory-non-utf8");
     let invalid_name = OsString::from_vec(b"bad-\xff".to_vec());
-    fs::write(fixture.path().join(&invalid_name), "bad\n").unwrap();
+    if let Err(error) = fs::write(fixture.path().join(&invalid_name), "bad\n") {
+        assert_eq!(
+            error.raw_os_error(),
+            Some(libc::EILSEQ),
+            "creating the non-UTF-8 fixture entry under {} failed unexpectedly: {error}",
+            fixture.path().display()
+        );
+        return;
+    }
     fs::write(fixture.path().join("normal.txt"), "normal\n").unwrap();
 
     let inventory = build_inventory(fixture.path(), host_id()).unwrap();
     match &inventory.status {
-        WorkspaceReferenceSearchStatus::Incomplete(reason) => {
+        crate::WorkspaceReferenceSearchStatus::Incomplete(reason) => {
             assert!(!reason.trim().is_empty());
         },
         status => panic!("expected incomplete inventory, got {status:?}"),
