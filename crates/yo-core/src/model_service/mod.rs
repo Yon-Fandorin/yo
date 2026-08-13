@@ -1,6 +1,7 @@
 //! Provider-neutral model-service identities, bindings, catalogs, and resolved credentials.
 
 mod binding;
+mod binding_profile;
 mod catalog;
 mod connection_operation;
 mod connection_repository;
@@ -11,6 +12,7 @@ mod selection;
 mod startup;
 
 pub use binding::{ApiDialect, ConnectorId, EffectiveModelBinding, NormalizedEndpoint};
+pub use binding_profile::{BindingProfileDigest, BindingProfileSchema, BindingProfileV1};
 pub use catalog::{
     ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelTokenCounter, ModelTokenCounterError,
 };
