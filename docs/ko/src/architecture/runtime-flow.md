@@ -613,6 +613,14 @@ secret-free endpoint, dialect, resolved profile field를 모두 보여 주고 �
 controlling TTY에서만 크기가 제한된 API key 하나를 읽는다. 이때 echo를 끄고 정확한 terminal
 설정을 복구한다. 명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
 환경 변수, argument, standard input, config file은 credential channel이 아니다.
+확인 화면은 선택 target을 먼저 보여주고, 안정적인 의미 plan marker(`+`, `~`, `−`, `=`)로
+생성, 변경, 제거, 유지 효과를 구분한 뒤 검증할 각 profile의 구조화된 exact 상세 영역을 둔다.
+Credential 행은 repository가 준비한 action에서 파생하므로 새 key 추가와 기존 key 교체가
+오해를 부르는 같은 문구를 쓰지 않는다. 간결한 plan 개수와 check 표시가 있는 성공 요약으로
+command를 끝낸다. 색과 강조는 terminal에서만 의미 marker를 보조하며 `NO_COLOR`와 redirect된
+standard output은 평문을 유지한다. Controlling TTY 폭을 읽어 terminal-safe한 폭 0이 아닌
+grapheme을 직접 줄바꿈하고, shell의 우연한 줄바꿈에 의존하지 않으면서 secret이 아닌 값의
+exact bytes를 보존한다. 폭을 읽을 수 없으면 80열 fallback을 사용한다.
 
 Candidate key는 저장 key로 fallback하지 않고 capture한 각 binding profile에 크기가 제한된
 no-tool semantic request 하나를 보낼 때만 쓴다. 각 검증은 completed message와 completed
@@ -631,7 +639,13 @@ public byte만 재개하고 secret을 재구성하거나 다시 검증하지 않
 일치는 command가 managed provenance만 지울 수 있으므로 운영자에게 `config.yaml` 편집을
 안내한다. 확인 전에 Yo는 prospective managed removal과 capture한 manual catalog를 합성하고
 정확히 제거할 complete binding, provenance 전이, 저장 preference 전이, 같은 pair에 남는
-binding, 파생 credential action, resume 위험을 보여 준다. 같은 manual binding이 있으면
+binding, 파생 credential action, resume 위험을 보여 준다. 판단 정보를 먼저 두는 preview는
+같은 의미 plan marker로 default와 API-key 변경, 새 Session과 저장된 Session에 미치는 영향을
+제거할 binding의 구조화된 exact 상세 영역보다 앞에 둔다. Prospective startup layer를 실제로
+해석해 새 Session이 사용할 정확한 낮은 우선순위 target을 이름으로 보여주거나 남는 target이
+없다고 알리며, preference 제거만 보고 동작을 추측하지 않는다. 남은 account model은 compact
+reference로 표시하므로 같은 manual binding이 남는다는 사실을 제거 profile 전체를 반복하지
+않고 보여준다. 같은 controlling-TTY 폭 경계가 모든 preview row를 관찰한 폭 안에 둔다. 같은 manual binding이 있으면
 manual provenance가 남으므로 credential을 보존한다. 제거 뒤 dependent set이 비었을 때만
 credential 제거를 준비하며, credential이 이미 없으면 상태를 꾸며내지 않고 intent 전에
 실패한다. 확인과 마지막 config guard 뒤에는 secret-free intent를 게시하고 public 제거를

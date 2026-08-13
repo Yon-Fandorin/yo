@@ -7,9 +7,11 @@ use yo_core::{
 };
 
 use super::{
-    complete_binding_summary, display_target,
+    complete_binding_details, display_target,
     input::{ExternalConnectInput, TtyConnectionInput},
-    operation_repositories, selection_for_binding,
+    operation_repositories,
+    presentation::{Confirmation, ConnectPreview, ManagedConnectionChange, connect_success},
+    selection_for_binding,
 };
 use crate::{AppError, command::ConnectCommand, config};
 
@@ -49,16 +51,33 @@ fn execute_external_connect_with(
         &selected,
         &startup_policy,
     )?;
+    let ExternalConnectPlan {
+        connection,
+        verification_bindings,
+        binding_count,
+        preference,
+        target,
+        account,
+        default_after,
+        managed_change,
+        default_changed,
+        binding_details,
+    } = plan;
     let prepared = session
-        .prepare_external_connection(
-            config.snapshot_digest(),
-            plan.connection,
-            plan.verification_bindings,
-        )
+        .prepare_external_connection(config.snapshot_digest(), connection, verification_bindings)
         .map_err(|error| AppError::single("preparing the external connection", error))?;
 
-    if !input.confirm(&plan.summary)? {
-        return Ok("connection cancelled; no state changed\n".to_owned());
+    let preview = Confirmation::Connect(Box::new(ConnectPreview::new(
+        target,
+        account,
+        default_after,
+        managed_change,
+        prepared.credential_action(),
+        default_changed,
+        binding_details,
+    )));
+    if !input.confirm(&preview)? {
+        return Ok("Connection cancelled; nothing changed.\n".to_owned());
     }
     let account_reference = format!("{}:{}", selection.provider(), selection.account());
     let candidate = input.read_credential(&account_reference)?;
@@ -74,11 +93,10 @@ fn execute_external_connect_with(
         .commit_verified_external_connection(verified)
         .map_err(|error| AppError::single("publishing the external connection", error))?;
 
-    Ok(format!(
-        "connected: {}; verified bindings: {}; default: {}\n",
-        selection.canonical_reference(),
-        plan.binding_count,
-        display_target(plan.preference.as_ref())
+    Ok(connect_success(
+        &selection.canonical_reference(),
+        binding_count,
+        &display_target(preference.as_ref()),
     ))
 }
 
@@ -87,7 +105,12 @@ struct ExternalConnectPlan {
     verification_bindings: Vec<CompleteModelBinding>,
     binding_count: usize,
     preference: Option<StartupTarget>,
-    summary: String,
+    target: String,
+    account: String,
+    default_after: String,
+    managed_change: ManagedConnectionChange,
+    default_changed: bool,
+    binding_details: Vec<super::presentation::BindingDetails>,
 }
 
 impl ExternalConnectPlan {
@@ -146,6 +169,21 @@ impl ExternalConnectPlan {
             selected.model_display_name().map(str::to_owned),
         )
         .map_err(|error| AppError::single("preparing the managed model binding", error))?;
+        let account_unchanged = snapshot
+            .managed_accounts()
+            .iter()
+            .any(|current| current == &account);
+        let managed_change = match snapshot
+            .managed_bindings()
+            .iter()
+            .find(|current| current.selection() == *selection)
+        {
+            None => ManagedConnectionChange::Create,
+            Some(current) if account_unchanged && current == &binding => {
+                ManagedConnectionChange::Keep
+            },
+            Some(_) => ManagedConnectionChange::Update,
+        };
         let prospective_catalog = snapshot
             .compose_catalog_after_managed_upsert(manual, account.clone(), binding.clone())
             .map_err(|error| {
@@ -157,24 +195,46 @@ impl ExternalConnectPlan {
             .map_err(|error| AppError::single("preparing managed connection state", error))?;
         let preference = connection.preference().cloned();
         let binding_count = verification_bindings.len();
-        let mut binding_summaries = verification_bindings
+        let mut binding_details = verification_bindings
             .iter()
-            .map(complete_binding_summary)
+            .map(complete_binding_details)
             .collect::<Vec<_>>();
-        binding_summaries.sort();
-        let summary = format!(
-            "Connect Provider {} / Account {} and send one new API key to these {binding_count} exact binding profile(s):\n  - {}",
-            selection.provider(),
-            selection.account(),
-            binding_summaries.join("\n  - ")
-        );
+        binding_details.sort();
+        let default_changed = snapshot.preference() != preference.as_ref();
+        let default_after = if !default_changed {
+            format!("Keep {}", display_target(preference.as_ref()))
+        } else {
+            format!(
+                "{}  →  {}",
+                display_target(snapshot.preference()),
+                display_target(preference.as_ref())
+            )
+        };
         Ok(Self {
             connection,
             verification_bindings,
             binding_count,
             preference,
-            summary,
+            target: selection.canonical_reference(),
+            account: format!("{}:{}", selection.provider(), selection.account()),
+            default_after,
+            managed_change,
+            default_changed,
+            binding_details,
         })
+    }
+
+    #[cfg(test)]
+    fn preview(&self, credential_action: yo_core::CredentialMutationAction) -> Confirmation {
+        Confirmation::Connect(Box::new(ConnectPreview::new(
+            self.target.clone(),
+            self.account.clone(),
+            self.default_after.clone(),
+            self.managed_change,
+            credential_action,
+            self.default_changed,
+            self.binding_details.clone(),
+        )))
     }
 }
 
@@ -249,8 +309,12 @@ mod tests {
     }
 
     impl ExternalConnectInput for CancelInput {
-        fn confirm(&mut self, summary: &str) -> Result<bool, AppError> {
-            self.summary = Some(summary.to_owned());
+        fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError> {
+            self.summary = Some(
+                preview
+                    .render(super::super::presentation::default_width())
+                    .unwrap(),
+            );
             Ok(false)
         }
 
@@ -291,8 +355,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(output, "connection cancelled; no state changed\n");
-        assert!(input.summary.unwrap().contains("vendor:team:alpha"));
+        assert_eq!(output, "Connection cancelled; nothing changed.\n");
+        let summary = input.summary.unwrap();
+        assert!(summary.contains("vendor:team:alpha"));
+        assert!(summary.contains("+ API key\n      Save a new key"));
         assert_eq!(input.credential_reads, 0);
         for name in [
             "connections.yaml",
@@ -301,6 +367,59 @@ mod tests {
         ] {
             assert!(!root.join(name).exists(), "{name} must remain absent");
         }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // 이미 같은 Provider/Account credential이 있으면 repository가 준비한 exact Replace action을
+    // confirmation까지 전달해 새 key 추가라고 오해시키지 않으며 취소는 기존 secret을 보존합니다.
+    #[test]
+    fn cancelled_rotation_discloses_exact_credential_replacement() {
+        let root = std::env::temp_dir().join(format!(
+            "yo-external-replace-preview-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.yaml");
+        std::fs::write(&config_path, explicit_config()).unwrap();
+        let credentials = yo_core::LocalCredentialRepository::new(root.join("credentials.yaml"));
+        let provider = yo_core::ProviderId::new("vendor").unwrap();
+        let account = yo_core::AccountId::new("team").unwrap();
+        let mutation =
+            yo_core::CredentialRepository::prepare_set(&credentials, &provider, &account).unwrap();
+        let original = yo_core::ApiCredential::new("existing-secret").unwrap();
+        yo_core::CredentialRepository::commit(&credentials, &mutation, Some(&original)).unwrap();
+        let mut input = CancelInput {
+            summary: None,
+            credential_reads: 0,
+        };
+
+        execute_external_connect_with(
+            &config_path,
+            ConnectCommand {
+                target: "vendor:team:alpha".to_owned(),
+            },
+            &mut input,
+        )
+        .unwrap();
+
+        assert!(
+            input
+                .summary
+                .unwrap()
+                .contains("~ API key\n      Replace the saved key")
+        );
+        assert_eq!(
+            yo_core::CredentialRepository::capture(&credentials)
+                .unwrap()
+                .resolve(&provider, &account)
+                .unwrap()
+                .expose_secret(),
+            "existing-secret"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -329,8 +448,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.binding_count, 2);
-        assert!(plan.summary.contains("vendor:team:alpha"));
-        assert!(plan.summary.contains("vendor:team:beta"));
+        let preview = plan
+            .preview(yo_core::CredentialMutationAction::Replace)
+            .render(super::super::presentation::default_width())
+            .unwrap();
+        assert!(preview.contains("vendor:team:alpha"));
+        assert!(preview.contains("vendor:team:beta"));
         assert_eq!(plan.preference, Some(StartupTarget::Model(selection)));
     }
 
@@ -409,16 +532,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.binding_count, 2);
-        assert_eq!(plan.summary.matches("vendor:team:alpha").count(), 2);
-        assert!(plan.summary.contains("endpoint=https://example.test/v1"));
-        assert!(
-            plan.summary
-                .contains("endpoint=https://old.example.test/v1")
-        );
-        assert!(plan.summary.contains("dialect=openai-responses"));
-        assert!(plan.summary.contains("dialect=openai-chat-completions"));
-        assert!(plan.summary.contains("reasoning={}"));
-        assert!(plan.summary.contains(r#"reasoning={"effort":"medium"}"#));
+        let preview = plan
+            .preview(yo_core::CredentialMutationAction::Replace)
+            .render(super::super::presentation::default_width())
+            .unwrap();
+        assert!(preview.matches("vendor:team:alpha").count() >= 2);
+        assert!(preview.contains("https://example.test/v1"));
+        assert!(preview.contains("https://old.example.test/v1"));
+        assert!(preview.contains("openai-responses"));
+        assert!(preview.contains("openai-chat-completions"));
+        assert!(preview.contains("~ Managed connection\n      Update vendor:team:alpha"));
+        assert!(preview.matches("{}").count() >= 3);
+        assert!(preview.contains(r#"{"effort":"medium"}"#));
     }
 
     // external connect도 startup target policy를 통과해야 하므로 Host 강제 policy에서는

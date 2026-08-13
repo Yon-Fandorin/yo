@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf, time::SystemTime};
 
 use yo_core::{
     AccountId, ApiCredential, CompleteModelBinding, LocalConnectionRepository,
-    LocalCredentialRepository, ManagedConnectionAccount, ProviderId,
+    LocalCredentialRepository, ManagedConnectionAccount, ModelId, ProviderId,
 };
 
 use super::*;
@@ -22,8 +22,12 @@ impl ExternalDisconnectInput for FakeInput {
             .ok_or_else(|| AppError::message("no fake selection"))
     }
 
-    fn confirm(&mut self, summary: &str) -> Result<bool, AppError> {
-        self.summaries.push(summary.to_owned());
+    fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError> {
+        self.summaries.push(
+            preview
+                .render(super::super::presentation::default_width())
+                .unwrap(),
+        );
         Ok(self.confirmed)
     }
 }
@@ -56,7 +60,7 @@ fn automatic_unique_disconnect_removes_public_then_credential_without_prompt() {
 
     assert_eq!(
         output,
-        "disconnected: vendor:team:alpha; credential: remove; default: unset\n"
+        "✓ Disconnected\n\n  Model    vendor:team:alpha\n  API key  Removed\n  Default  unset\n"
     );
     assert!(input.selections.is_empty());
     assert!(input.summaries.is_empty());
@@ -105,7 +109,7 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
     )
     .unwrap();
 
-    assert_eq!(output, "disconnect cancelled; no state changed\n");
+    assert_eq!(output, "Disconnect cancelled; nothing changed.\n");
     assert_eq!(
         input.selections,
         [vec![
@@ -114,14 +118,12 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
         ]]
     );
     let summary = &input.summaries[0];
-    assert!(summary.contains("Exact removed binding:"));
-    assert!(summary.contains("vendor:team:beta [endpoint="));
-    assert!(summary.contains("Preference: vendor:team:alpha -> vendor:team:alpha"));
-    assert!(summary.contains("Credential action: preserve"));
-    assert!(summary.contains("vendor:team:alpha [endpoint="));
-    assert!(summary.contains(
-        "existing Sessions bound to this removed complete model may no longer resume natively"
-    ));
+    assert!(summary.contains("Connection being removed"));
+    assert!(summary.contains("vendor:team:beta"));
+    assert!(summary.contains("Keep vendor:team:alpha"));
+    assert!(summary.contains("Keep it because another configured model"));
+    assert!(summary.contains("vendor:team:alpha"));
+    assert!(summary.contains("May not resume until this exact model is restored"));
     assert_eq!(
         fixture
             .connections()
@@ -167,14 +169,11 @@ fn equal_manual_binding_preserves_credential_and_preview_names_provenance_transi
     )
     .unwrap();
 
-    assert!(output.contains("credential: preserve"));
+    assert!(output.contains("API key  Kept"));
     assert!(
-        input.summaries[0]
-            .contains("managed part of an equal manual+managed binding (manual remains)")
+        input.summaries[0].contains("Managed copy removed; equal manual configuration remains")
     );
-    assert!(input.summaries[0].contains(
-        "existing Sessions bound to this complete model can still resolve through the equal manual binding"
-    ));
+    assert!(input.summaries[0].contains("Can resume through the equal manual configuration"));
     assert!(
         fixture
             .credentials()
@@ -182,6 +181,84 @@ fn equal_manual_binding_preserves_credential_and_preview_names_provenance_transi
             .unwrap()
             .resolve(&provider(), &account())
             .is_some()
+    );
+}
+
+// 저장 preference를 제거해도 더 낮은 startup source가 있으면 preview는 막연한 재설정
+// 경고 대신 실제 prospective resolver가 선택할 exact target을 보여 줍니다.
+#[test]
+fn preview_resolves_the_exact_lower_priority_startup_target() {
+    let fixture = Fixture::new("startup-fallback");
+    fixture.seed_managed(&["alpha"], Some("alpha"));
+    let snapshot = fixture.connections().capture().unwrap();
+    let selection = ModelSelection::new(provider(), account(), ModelId::new("alpha").unwrap());
+    let policies = [
+        (
+            StartupPolicy::new(true, None, Some(StartupTarget::HostCodex)).unwrap(),
+            None,
+        ),
+        (
+            StartupPolicy::new(false, Some(StartupTarget::HostCodex), None).unwrap(),
+            None,
+        ),
+        (StartupPolicy::initial(), Some(StartupTarget::HostCodex)),
+    ];
+
+    for (policy, operator_target) in policies {
+        let plan = ExternalDisconnectPlan::prepare(
+            &snapshot,
+            &ModelCatalog::default(),
+            &selection,
+            &policy,
+            operator_target,
+        )
+        .unwrap();
+        let preview = plan
+            .preview
+            .render(super::super::presentation::default_width())
+            .unwrap();
+
+        assert!(preview.contains("✓ New sessions\n      Use host:codex"));
+        assert!(!preview.contains("No startup target remains"));
+    }
+}
+
+// 실제 disconnect command는 command-local config.yaml의 operator model.startup을 capture해
+// preference 제거 뒤 새 Session이 사용할 exact fallback으로 preview에 전달합니다.
+#[test]
+fn command_preview_uses_the_captured_operator_startup_target() {
+    let fixture = Fixture::new("operator-startup");
+    let config_path = fixture.config_path("version: 1\nmodel:\n  startup: host:codex\n");
+    fixture.seed_managed(&["alpha"], Some("alpha"));
+    fixture.seed_credential();
+    let mut input = FakeInput {
+        selected: None,
+        confirmed: false,
+        selections: Vec::new(),
+        summaries: Vec::new(),
+    };
+
+    let output = execute_external_disconnect_with(
+        &config_path,
+        DisconnectCommand {
+            provider: Some("vendor".to_owned()),
+            account: Some("team".to_owned()),
+            yes: false,
+        },
+        &mut input,
+    )
+    .unwrap();
+
+    assert_eq!(output, "Disconnect cancelled; nothing changed.\n");
+    assert!(input.summaries[0].contains("✓ New sessions\n      Use host:codex"));
+    assert!(!input.summaries[0].contains("No startup target remains"));
+    assert_eq!(
+        fixture.connections().capture().unwrap().preference(),
+        Some(&StartupTarget::Model(ModelSelection::new(
+            provider(),
+            account(),
+            ModelId::new("alpha").unwrap(),
+        )))
     );
 }
 
@@ -252,11 +329,9 @@ fn last_binding_preview_warns_about_remove_continuation_risk() {
     )
     .unwrap();
 
-    assert_eq!(output, "disconnect cancelled; no state changed\n");
-    assert!(input.summaries[0].contains("Credential action: remove"));
-    assert!(input.summaries[0].contains(
-        "existing Sessions bound to this removed complete model may no longer resume natively"
-    ));
+    assert_eq!(output, "Disconnect cancelled; nothing changed.\n");
+    assert!(input.summaries[0].contains("Remove it because no configured model"));
+    assert!(input.summaries[0].contains("May not resume until this exact model is restored"));
 }
 
 struct ConfigChangingInput {
@@ -269,7 +344,7 @@ impl ExternalDisconnectInput for ConfigChangingInput {
         Err(AppError::message("the unique target must not prompt"))
     }
 
-    fn confirm(&mut self, _: &str) -> Result<bool, AppError> {
+    fn confirm(&mut self, _: &Confirmation) -> Result<bool, AppError> {
         self.confirmation_reads += 1;
         fs::write(&self.config_path, "version: 1\ntui:\n  max_fps: 60\n").unwrap();
         Ok(true)

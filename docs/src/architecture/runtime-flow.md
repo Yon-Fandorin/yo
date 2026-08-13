@@ -656,6 +656,17 @@ only from the controlling TTY with echo disabled and exact terminal settings
 restored. If explicit restoration reports an error, the retained guard retries
 restoration while unwinding. Environment,
 arguments, standard input, and config files are not credential channels.
+The confirmation presents the selected target, then uses stable semantic plan
+markers (`+`, `~`, `−`, and `=`) to distinguish create, change, remove, and keep
+effects before one structured exact-detail section per verified profile. The
+credential row is derived from the prepared repository action, so adding a new
+key and replacing an existing key cannot share misleading copy. A concise plan
+count and checked success summary close the command. Color and emphasis augment
+those markers only on a terminal; `NO_COLOR` and redirected standard output stay
+plain. The presenter reads the controlling TTY width and wraps terminal-safe
+nonzero-width graphemes itself, preserving exact non-secret value bytes rather
+than relying on the shell's incidental line wrapping; an unavailable width uses
+an 80-column fallback.
 
 The candidate key is used—without fallback to a stored key—to issue one bounded,
 no-tool semantic request for every captured binding profile. Each verification
@@ -678,7 +689,15 @@ the command removes only managed provenance. Before confirmation, Yo composes
 the prospective managed removal with the captured manual catalog and lists the
 exact removed complete binding, provenance transition, stored-preference
 transition, remaining bindings for the pair, derived credential action, and
-resume risk. An equal manual binding remains manual and therefore preserves the
+resume risk. The decision-first preview uses the same semantic plan markers for
+the default and API-key changes plus new- versus saved-Session effects before the
+removed binding's structured exact-detail section. It resolves the prospective
+startup layers and names the exact lower-priority target for new Sessions, or
+states that no target remains; it does not infer that behavior from preference
+removal alone. Remaining account models are compact references, so an equal
+manual binding is visible without repeating the removed profile. The same
+controlling-TTY width boundary keeps every preview row within the observed width.
+An equal manual binding remains manual and therefore preserves the
 credential. Only an empty post-removal dependent set prepares credential
 removal; an absent credential fails before intent rather than inventing state.
 After confirmation and the final config guard, the command publishes the

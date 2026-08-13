@@ -13,11 +13,11 @@ use super::{
 };
 use crate::{
     ApiCredential, ApiDialect, CompleteModelBinding, ConnectorFailureKind,
-    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
-    ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
-    ModelConnectorStream, ModelConnectorTerminal, OpenAiChatCompletionsConnector,
-    OpenAiResponsesConnector, PreparedConnectionMutation, PreparedCredentialMutation,
-    model_profile_admission::admit_explicit_model_profile,
+    CredentialMutationAction, ModelConnectorCancellation, ModelConnectorEvent,
+    ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll,
+    ModelConnectorRequest, ModelConnectorStream, ModelConnectorTerminal,
+    OpenAiChatCompletionsConnector, OpenAiResponsesConnector, PreparedConnectionMutation,
+    PreparedCredentialMutation, model_profile_admission::admit_explicit_model_profile,
     model_service::LocalCredentialStoreError,
 };
 
@@ -126,6 +126,12 @@ impl PreparedExternalConnection {
     #[must_use]
     pub fn binding_count(&self) -> usize {
         self.bindings.len()
+    }
+
+    /// Exact add-or-replace action prepared from the captured credential repository.
+    #[must_use]
+    pub const fn credential_action(&self) -> CredentialMutationAction {
+        self.credential.action()
     }
 }
 

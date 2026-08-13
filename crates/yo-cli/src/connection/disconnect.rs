@@ -2,13 +2,19 @@ use std::path::Path;
 
 use yo_core::{
     ConnectionSnapshot, ExternalDisconnectCredentialAction, ManagedConnectionBinding, ModelCatalog,
-    ModelCatalogEntry, ModelSelection, StartupTarget,
+    ModelCatalogEntry, ModelSelection, StartupPolicy, StartupSelectionSources, StartupTarget,
+    resolve_startup_target,
 };
 
 use super::{
-    complete_binding_summary, display_target,
+    complete_binding_details, display_target,
     input::{ExternalDisconnectInput, TtyConnectionInput},
-    operation_repositories, selection_for_binding,
+    operation_repositories,
+    presentation::{
+        Confirmation, DisconnectEffect, DisconnectImpact, DisconnectPreview, RemainingBinding,
+        disconnect_success,
+    },
+    selection_for_binding,
 };
 use crate::{AppError, command::DisconnectCommand, config};
 
@@ -39,7 +45,14 @@ fn execute_external_disconnect_with(
         .capture_connections()
         .map_err(|error| AppError::single("capturing managed connections", error))?;
     let selection = select_managed_target(&snapshot, config.model_catalog(), &command, input)?;
-    let plan = ExternalDisconnectPlan::prepare(&snapshot, config.model_catalog(), &selection)?;
+    let startup_policy = StartupPolicy::initial();
+    let plan = ExternalDisconnectPlan::prepare(
+        &snapshot,
+        config.model_catalog(),
+        &selection,
+        &startup_policy,
+        config.startup_target().cloned(),
+    )?;
     let prepared = session
         .prepare_external_disconnect(
             config.snapshot_digest(),
@@ -49,8 +62,8 @@ fn execute_external_disconnect_with(
         )
         .map_err(|error| AppError::single("preparing the external disconnect", error))?;
 
-    if !command.yes && !input.confirm(&plan.summary)? {
-        return Ok("disconnect cancelled; no state changed\n".to_owned());
+    if !command.yes && !input.confirm(&plan.preview)? {
+        return Ok("Disconnect cancelled; nothing changed.\n".to_owned());
     }
     config
         .verify_unchanged()
@@ -59,11 +72,10 @@ fn execute_external_disconnect_with(
         .commit_external_disconnect(prepared)
         .map_err(|error| AppError::single("publishing the external disconnect", error))?;
 
-    Ok(format!(
-        "disconnected: {}; credential: {}; default: {}\n",
-        selection.canonical_reference(),
+    Ok(disconnect_success(
+        &selection.canonical_reference(),
         action_label(plan.credential_action),
-        display_target(plan.preference_after.as_ref())
+        &display_target(plan.preference_after.as_ref()),
     ))
 }
 
@@ -142,7 +154,7 @@ fn no_managed_target_error(manual: &ModelCatalog, command: &DisconnectCommand) -
 struct ExternalDisconnectPlan {
     credential_action: ExternalDisconnectCredentialAction,
     preference_after: Option<StartupTarget>,
-    summary: String,
+    preview: Confirmation,
 }
 
 impl ExternalDisconnectPlan {
@@ -150,6 +162,8 @@ impl ExternalDisconnectPlan {
         snapshot: &ConnectionSnapshot,
         manual: &ModelCatalog,
         selection: &ModelSelection,
+        startup_policy: &StartupPolicy,
+        operator_target: Option<StartupTarget>,
     ) -> Result<Self, AppError> {
         let removed = snapshot
             .managed_bindings()
@@ -180,42 +194,89 @@ impl ExternalDisconnectPlan {
                 snapshot.preference().cloned()
             };
         let provenance = removed_provenance(manual, removed);
-        let remaining_summary = if remaining.is_empty() {
-            "  - none".to_owned()
-        } else {
-            format!("  - {}", remaining.join("\n  - "))
-        };
         let preference_before = display_target(snapshot.preference());
         let preference_after_label = display_target(preference_after.as_ref());
-        let startup_risk = if snapshot.preference()
-            == Some(&StartupTarget::Model(selection.clone()))
-        {
-            "the stored startup default is cleared, so a new startup needs another admitted target"
+        let default_changed = preference_before != preference_after_label;
+        let default_change = if !default_changed {
+            format!("Keep {preference_after_label}")
         } else {
-            "the stored startup default is unchanged"
+            format!("{preference_before}  →  {preference_after_label}")
+        };
+        let startup_after = resolve_startup_target(
+            &prospective,
+            startup_policy,
+            StartupSelectionSources {
+                invocation: None,
+                stored_preference: preference_after.clone(),
+                operator_target,
+            },
+        )
+        .map_err(|error| AppError::single("resolving startup behavior after disconnect", error))?;
+        let (new_sessions, new_sessions_ready) = match startup_after.as_ref() {
+            Some(target) if !default_changed => {
+                (format!("Keep using {}", display_target(Some(target))), true)
+            },
+            Some(target) => (format!("Use {}", display_target(Some(target))), true),
+            None => (
+                "No startup target remains; configure or select one before starting a new session"
+                    .to_owned(),
+                false,
+            ),
         };
         let exact_binding_remains = prospective
             .resolve_model(selection.provider(), selection.account(), selection.model())
             .ok()
             .and_then(ModelCatalogEntry::complete_binding)
             == Some(removed.complete());
-        let continuation_risk = if exact_binding_remains {
-            "existing Sessions bound to this complete model can still resolve through the equal manual binding; durable Session history is retained"
+        let saved_sessions = if exact_binding_remains {
+            "Can resume through the equal manual configuration; history is kept"
         } else {
-            "existing Sessions bound to this removed complete model may no longer resume natively; reconnect the exact binding or restore equivalent manual configuration; durable Session history is retained"
+            "May not resume until this exact model is restored; history is kept"
         };
-        let summary = format!(
-            "Disconnect managed target {}\nRemoved provenance: {provenance}\nExact removed binding:\n  - {}\nPreference: {preference_before} -> {preference_after_label}\nCredential action: {}\nRemaining bindings using Provider {} / Account {}:\n{remaining_summary}\nStartup risk: {startup_risk}\nContinuation risk: {continuation_risk}",
+        let api_key = match credential_action {
+            ExternalDisconnectCredentialAction::Preserve => format!(
+                "Keep it because another configured model still uses {}:{}",
+                selection.provider(),
+                selection.account()
+            ),
+            ExternalDisconnectCredentialAction::Remove => format!(
+                "Remove it because no configured model still uses {}:{}",
+                selection.provider(),
+                selection.account()
+            ),
+        };
+        let preview = Confirmation::Disconnect(Box::new(DisconnectPreview::new(
             selection.canonical_reference(),
-            complete_binding_summary(removed.complete()),
-            action_label(credential_action),
-            selection.provider(),
-            selection.account(),
-        );
+            provenance.to_owned(),
+            complete_binding_details(removed.complete()),
+            DisconnectImpact::new(
+                if default_changed {
+                    DisconnectEffect::change(default_change)
+                } else {
+                    DisconnectEffect::keep(default_change)
+                },
+                if credential_action == ExternalDisconnectCredentialAction::Remove {
+                    DisconnectEffect::remove(api_key)
+                } else {
+                    DisconnectEffect::keep(api_key)
+                },
+                if new_sessions_ready {
+                    DisconnectEffect::ready(new_sessions)
+                } else {
+                    DisconnectEffect::attention(new_sessions)
+                },
+                if exact_binding_remains {
+                    DisconnectEffect::ready(saved_sessions.to_owned())
+                } else {
+                    DisconnectEffect::attention(saved_sessions.to_owned())
+                },
+            ),
+            remaining,
+        )));
         Ok(Self {
             credential_action,
             preference_after,
-            summary,
+            preview,
         })
     }
 }
@@ -226,12 +287,12 @@ fn removed_provenance(manual: &ModelCatalog, removed: &ManagedConnectionBinding)
         .iter()
         .find(|entry| selection_for_binding(entry.binding()) == removed.selection())
         .map_or(
-            "managed (no manual binding remains at this coordinate)",
+            "Managed connection only; no manual configuration remains for this model",
             |entry| {
                 if entry.complete_binding() == Some(removed.complete()) {
-                    "managed part of an equal manual+managed binding (manual remains)"
+                    "Managed copy removed; equal manual configuration remains"
                 } else {
-                    "managed binding (a distinct manual binding remains at this coordinate)"
+                    "Managed connection removed; different manual configuration remains"
                 }
             },
         )
@@ -242,22 +303,17 @@ fn same_account(entry: &ModelCatalogEntry, selection: &ModelSelection) -> bool {
     binding.provider_id() == selection.provider() && binding.account_id() == selection.account()
 }
 
-fn binding_summary(entry: &ModelCatalogEntry) -> String {
+fn binding_summary(entry: &ModelCatalogEntry) -> RemainingBinding {
     entry.complete_binding().map_or_else(
-        || {
-            format!(
-                "{} [manual legacy profile]",
-                selection_for_binding(entry.binding()).canonical_reference()
-            )
-        },
-        complete_binding_summary,
+        || RemainingBinding::legacy(selection_for_binding(entry.binding())),
+        |complete| RemainingBinding::complete(selection_for_binding(complete.binding())),
     )
 }
 
 const fn action_label(action: ExternalDisconnectCredentialAction) -> &'static str {
     match action {
-        ExternalDisconnectCredentialAction::Preserve => "preserve",
-        ExternalDisconnectCredentialAction::Remove => "remove",
+        ExternalDisconnectCredentialAction::Preserve => "Kept",
+        ExternalDisconnectCredentialAction::Remove => "Removed",
     }
 }
 

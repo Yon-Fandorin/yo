@@ -6,27 +6,32 @@ use std::{
 use nix::sys::termios::{self, LocalFlags, SetArg, Termios};
 use yo_core::ApiCredential;
 
+use super::presentation::{Confirmation, PresentationStyle, default_width};
 use crate::AppError;
 
 const MAX_INPUT_BYTES: usize = 16 * 1024;
 
 pub(super) trait ExternalConnectInput {
-    fn confirm(&mut self, summary: &str) -> Result<bool, AppError>;
+    fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError>;
     fn read_credential(&mut self, account: &str) -> Result<ApiCredential, AppError>;
 }
 
 pub(super) trait ExternalDisconnectInput {
     fn select_target(&mut self, choices: &[String]) -> Result<String, AppError>;
-    fn confirm(&mut self, summary: &str) -> Result<bool, AppError>;
+    fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError>;
 }
 
 pub(super) struct TtyConnectionInput {
     terminal: Option<File>,
+    style: PresentationStyle,
 }
 
 impl TtyConnectionInput {
-    pub(super) const fn new() -> Self {
-        Self { terminal: None }
+    pub(super) fn new() -> Self {
+        Self {
+            terminal: None,
+            style: PresentationStyle::for_controlling_terminal(),
+        }
     }
 
     fn terminal(&mut self) -> Result<&mut File, AppError> {
@@ -69,9 +74,17 @@ impl TtyConnectionInput {
 }
 
 impl ExternalConnectInput for TtyConnectionInput {
-    fn confirm(&mut self, summary: &str) -> Result<bool, AppError> {
+    fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError> {
+        let style = self.style;
         let terminal = self.terminal()?;
-        write!(terminal, "{summary}\nContinue? [y/N] ")
+        let width = rustix::termios::tcgetwinsize(&*terminal)
+            .ok()
+            .and_then(|size| std::num::NonZeroU16::new(size.ws_col))
+            .unwrap_or_else(default_width);
+        let rendered = preview
+            .render_styled(width, style)
+            .map_err(|error| AppError::single("formatting the connection confirmation", error))?;
+        write!(terminal, "{rendered}\n\n{}", preview.prompt())
             .and_then(|()| terminal.flush())
             .map_err(|error| AppError::single("writing the connection confirmation", error))?;
         let answer = Self::read_line(terminal)?;
@@ -116,8 +129,8 @@ impl ExternalDisconnectInput for TtyConnectionInput {
         Self::read_line(terminal)
     }
 
-    fn confirm(&mut self, summary: &str) -> Result<bool, AppError> {
-        <Self as ExternalConnectInput>::confirm(self, summary)
+    fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError> {
+        <Self as ExternalConnectInput>::confirm(self, preview)
     }
 }
 
@@ -171,8 +184,14 @@ mod tests {
         sys::termios::{LocalFlags, tcgetattr},
         unistd::write,
     };
+    use rustix::termios::{Winsize, tcsetwinsize};
+    use yo_core::CompleteModelBinding;
+    use yo_tui::surface::cell_width;
 
-    use super::*;
+    use super::{
+        super::presentation::{BindingDetails, ConnectPreview},
+        *,
+    };
 
     // 실제 PTY에서 API key 입력 동안 ECHO가 꺼져 master 출력에 secret이 나타나지 않고,
     // 성공 뒤에는 호출 전 termios 전체가 정확히 복구됩니다.
@@ -184,6 +203,7 @@ mod tests {
         let child = thread::spawn(move || {
             let mut input = TtyConnectionInput {
                 terminal: Some(File::from(pty.slave)),
+                style: PresentationStyle::Plain,
             };
             input.read_credential("vendor:team").unwrap()
         });
@@ -245,5 +265,82 @@ mod tests {
                 .contains("restoring terminal echo settings")
         );
         assert_eq!(tcgetattr(&terminal).unwrap(), original);
+    }
+
+    // 실제 48열 PTY의 winsize를 읽은 confirmation 경로가 connect 핵심 정보와 exact profile을
+    // 모두 보존하면서 모든 preview 물리 줄을 48셀 안에서 직접 감싸는지 검증합니다.
+    #[test]
+    fn confirmation_uses_the_controlling_tty_width_instead_of_shell_wrapping() {
+        let pty = openpty(None, None).unwrap();
+        tcsetwinsize(
+            &pty.slave,
+            Winsize {
+                ws_row: 24,
+                ws_col: 48,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            },
+        )
+        .unwrap();
+        let complete = CompleteModelBinding::from_durable_json(
+            r#"{"provider":"vendor","account":"team","model":"alpha","connector":"openai-responses","base_url":"https://long-provider.example.test/compatible-mode/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":4096,"max_output_tokens":128,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+        )
+        .unwrap();
+        let preview = Confirmation::Connect(Box::new(ConnectPreview::new(
+            "vendor:team:alpha".to_owned(),
+            "vendor:team".to_owned(),
+            "unset  →  vendor:team:alpha".to_owned(),
+            super::super::presentation::ManagedConnectionChange::Create,
+            yo_core::CredentialMutationAction::Add,
+            true,
+            vec![BindingDetails::from(&complete)],
+        )));
+        let child = thread::spawn(move || {
+            let mut input = TtyConnectionInput {
+                terminal: Some(File::from(pty.slave)),
+                style: PresentationStyle::Plain,
+            };
+            <TtyConnectionInput as ExternalConnectInput>::confirm(&mut input, &preview).unwrap()
+        });
+
+        fcntl(&pty.master, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).unwrap();
+        let mut master = File::from(pty.master);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut output = Vec::new();
+        while !output
+            .windows(b"Apply this connection plan? [y/N] ".len())
+            .any(|window| window == b"Apply this connection plan? [y/N] ")
+        {
+            let mut buffer = [0_u8; 1024];
+            match master.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => output.extend_from_slice(&buffer[..count]),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "confirmation prompt did not appear"
+                    );
+                    thread::yield_now();
+                },
+                Err(error) => panic!("reading confirmation PTY failed: {error}"),
+            }
+        }
+        write(&master, b"n\n").unwrap();
+        assert!(!child.join().unwrap());
+
+        let output = String::from_utf8(output).unwrap().replace('\r', "");
+        let preview_output = output
+            .split("Apply this connection plan? [y/N]")
+            .next()
+            .unwrap();
+        assert!(preview_output.contains("CONNECT"));
+        assert!(preview_output.contains("vendor:team:alpha"));
+        assert!(preview_output.contains("semantic-terminal/v1"));
+        for line in preview_output.lines() {
+            assert!(
+                cell_width(line).unwrap() <= 48,
+                "48-cell PTY received overwide preview line {line:?}"
+            );
+        }
     }
 }

@@ -2187,6 +2187,7 @@ dependencies = [
  "sha2",
  "signal-hook",
  "tiktoken-rs",
+ "unicode-segmentation",
  "yo-core",
  "yo-tui",
 ]

@@ -3,6 +3,7 @@ use std::path::Path;
 mod disconnect;
 mod external;
 mod input;
+mod presentation;
 
 use yo_core::{
     CompleteModelBinding, ConnectionOperationExecutionError, ConnectionRepositoryError,
@@ -269,23 +270,8 @@ fn selection_for_binding(binding: &yo_core::EffectiveModelBinding) -> ModelSelec
     )
 }
 
-fn complete_binding_summary(complete: &CompleteModelBinding) -> String {
-    let binding = complete.binding();
-    let profile = complete.profile();
-    format!(
-        "{} [endpoint={}, dialect={}, connector={}, tokenizer={}, input_limit={}, output_limit={}, reasoning={}, optional={}, tools={}, verification={}]",
-        selection_for_binding(binding).canonical_reference(),
-        binding.endpoint(),
-        binding.api_dialect(),
-        binding.connector_id(),
-        profile.context().tokenizer_profile(),
-        profile.context().input_token_limit(),
-        profile.context().max_output_tokens(),
-        profile.reasoning_parameters().to_json_value(),
-        profile.optional_request_parameters().to_json_value(),
-        profile.tool_capability_policy(),
-        profile.verification_profile(),
-    )
+fn complete_binding_details(complete: &CompleteModelBinding) -> presentation::BindingDetails {
+    presentation::BindingDetails::from(complete)
 }
 
 #[cfg(test)]
