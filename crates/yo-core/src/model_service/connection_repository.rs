@@ -12,7 +12,7 @@ mod wire;
 
 pub use error::ConnectionRepositoryError;
 
-const MAX_CONNECTION_BYTES: u64 = 1024 * 1024;
+pub(crate) const MAX_CONNECTION_BYTES: u64 = 1024 * 1024;
 const FILE_MODE: u32 = 0o600;
 const DIRECTORY_MODE: u32 = 0o700;
 #[cfg(target_vendor = "apple")]
@@ -38,6 +38,13 @@ impl ConnectionRevision {
     #[must_use]
     pub const fn is_absent(&self) -> bool {
         matches!(self, Self::Absent)
+    }
+
+    pub(crate) fn from_operation_journal(value: &str) -> Option<Self> {
+        if value == "absent" {
+            return Some(Self::Absent);
+        }
+        wire::parse_revision_token(value).map(Self::Token)
     }
 }
 
@@ -69,6 +76,10 @@ impl ConnectionSnapshot {
         self.preference.as_ref()
     }
 
+    pub(crate) fn matches_planned(&self, mutation: &PreparedConnectionMutation) -> bool {
+        self.revision == mutation.planned_revision && self.encoded == mutation.planned_bytes
+    }
+
     /// Prepares exact old-or-new bytes without changing the repository.
     pub fn prepare_preference(
         &self,
@@ -92,7 +103,7 @@ impl ConnectionSnapshot {
 }
 
 /// One immutable exact public mutation prepared from a captured revision.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedConnectionMutation {
     expected_revision: ConnectionRevision,
     planned_revision: ConnectionRevision,
@@ -114,6 +125,33 @@ impl PreparedConnectionMutation {
     #[must_use]
     pub const fn preference(&self) -> Option<&StartupTarget> {
         self.preference.as_ref()
+    }
+
+    pub(crate) fn planned_bytes(&self) -> &[u8] {
+        &self.planned_bytes
+    }
+
+    pub(crate) fn from_operation_journal(
+        expected_revision: ConnectionRevision,
+        planned_revision: ConnectionRevision,
+        planned_bytes: Vec<u8>,
+    ) -> Result<Self, ConnectionRepositoryError> {
+        if planned_revision.is_absent()
+            || expected_revision == planned_revision
+            || planned_bytes.len() as u64 > MAX_CONNECTION_BYTES
+        {
+            return Err(ConnectionRepositoryError::InvalidContents(PathBuf::new()));
+        }
+        let decoded = wire::decode(Path::new(""), &planned_bytes)?;
+        if decoded.revision != planned_revision {
+            return Err(ConnectionRepositoryError::InvalidContents(PathBuf::new()));
+        }
+        Ok(Self {
+            expected_revision,
+            planned_revision,
+            planned_bytes,
+            preference: decoded.preference,
+        })
     }
 }
 
@@ -166,7 +204,7 @@ impl LocalConnectionRepository {
         let path = parent.join(OPERATION_LOCK_FILE);
         let file = open_lock_file(&path)?;
         match file.try_lock() {
-            Ok(()) => Ok(LocalConnectionOperationGuard { file }),
+            Ok(()) => Ok(LocalConnectionOperationGuard { file, parent }),
             Err(fs::TryLockError::WouldBlock) => {
                 Err(ConnectionRepositoryError::OperationBusy(path))
             },
@@ -282,6 +320,13 @@ impl ConnectionRepository for LocalConnectionRepository {
 #[derive(Debug)]
 pub struct LocalConnectionOperationGuard {
     file: fs::File,
+    parent: PathBuf,
+}
+
+impl LocalConnectionOperationGuard {
+    pub(crate) fn authorizes(&self, journal_path: &Path) -> bool {
+        journal_path.parent() == Some(self.parent.as_path())
+    }
 }
 
 impl Drop for LocalConnectionOperationGuard {

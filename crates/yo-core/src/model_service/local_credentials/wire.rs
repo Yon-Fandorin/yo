@@ -99,15 +99,27 @@ fn parse_revision(
     path: &Path,
     revision: &str,
 ) -> Result<CredentialRevision, LocalCredentialStoreError> {
+    parse_managed_revision_token(revision)
+        .map(CredentialRevision::managed)
+        .ok_or_else(|| LocalCredentialStoreError::InvalidContents(path.to_owned()))
+}
+
+pub(super) fn parse_managed_revision_token(revision: &str) -> Option<String> {
     let valid = revision.len() == 37
         && revision.starts_with("crev-")
         && revision[5..]
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
-    if !valid {
-        return Err(LocalCredentialStoreError::InvalidContents(path.to_owned()));
-    }
-    Ok(CredentialRevision::managed(revision.to_owned()))
+    valid.then(|| revision.to_owned())
+}
+
+pub(super) fn parse_legacy_revision_token(revision: &str) -> Option<String> {
+    let valid = revision.len() == 119
+        && revision.starts_with("legacy-")
+        && revision[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+    valid.then(|| revision.to_owned())
 }
 
 #[derive(Deserialize)]

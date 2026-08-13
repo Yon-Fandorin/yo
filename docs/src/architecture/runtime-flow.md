@@ -581,9 +581,34 @@ unrelated pair, and atomically publishes a complete mode-`0600` snapshot with
 an independently generated private `crev-...` receipt. The planned receipt and
 exact pair state make a repeated commit idempotent, while a different observed
 revision is a conflict. Removing the final pair leaves a versioned empty file
-rather than returning to `absent`. These writes are a core storage boundary;
-external connect and disconnect remain disabled until the credential-and-public
-operation journal composes them with `connections.yaml`.
+rather than returning to `absent`. These writes are a core storage boundary.
+
+The sibling `connection-operation.yaml` now owns the secret-free durable intent
+for a future credential-and-public operation. A closed version 1 record carries
+an opaque operation ID, the config snapshot digest, profile digests, exact
+expected and planned public revisions plus the complete bounded prospective
+public snapshot, one add, replace, remove, or preserve credential receipt, and
+one legal phase. It cannot accept an `ApiCredential`, candidate identity, or
+verification payload. Missing capture is non-creating; first intent publication
+is exclusive; every phase replacement is bounded, mode `0600`, no-follow,
+current-user-owned, durable, atomic, and exact-entry checked.
+Every journal mutation requires a mutable `LocalConnectionOperationGuard` for
+the same repository directory. The guard's nonblocking file lock excludes a
+second process-equivalent owner across the capture-and-publication boundary;
+the mutable borrow prevents concurrent mutation calls from sharing one guard,
+and a guard from another directory fails before any journal bytes change.
+
+`plan_connection_recovery` is a pure state-table boundary. Connect abandons an
+uncommitted expected/expected intent, resumes only the public CAS after the
+credential reaches its exact planned receipt, and completes only on the exact
+planned public bytes. Disconnect abandons expected/expected, commits a prepared
+remove only after the public snapshot is exact planned, or preserves the exact
+credential revision without mutation. A phase ahead of repository facts, a
+credential-first disconnect, a different public winner, or any unlisted state
+is a typed conflict without exposing a private credential revision. External
+connect and disconnect remain disabled until command orchestration composes
+this boundary with typed managed entries, verification, and the final config
+guard.
 
 Endpoint, model, API dialect, derived connector identity, and display
 names remain non-secret binding data rather than secret-file content. Catalog limits and model

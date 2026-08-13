@@ -61,16 +61,19 @@ pub use model_connector::{
     ResponsesPoll, ResponsesRequest, ResponsesStream, ResponsesUsage,
 };
 pub use model_service::{
-    AccountId, ApiCredential, ApiDialect, ConnectionCommit, ConnectionRepository,
-    ConnectionRepositoryError, ConnectionRevision, ConnectionSnapshot, ConnectorId,
-    CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
-    CredentialSnapshot, CredentialStore, EffectiveModelBinding, LocalConnectionOperationGuard,
-    LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStore,
-    LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelId,
-    ModelSelection, ModelSelectionChoice, ModelSelectionController, ModelServiceError,
-    ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint, PreparedConnectionMutation,
-    PreparedCredentialMutation, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
-    resolve_startup_target,
+    AccountId, ApiCredential, ApiDialect, ConnectionCommit, ConnectionCredentialAction,
+    ConnectionOperationError, ConnectionOperationJournalEntry,
+    ConnectionOperationJournalRepository, ConnectionOperationKind, ConnectionOperationPhase,
+    ConnectionOperationRecovery, ConnectionRepository, ConnectionRepositoryError,
+    ConnectionRevision, ConnectionSnapshot, ConnectorId, CredentialCommit,
+    CredentialMutationAction, CredentialRepository, CredentialRevision, CredentialSnapshot,
+    CredentialStore, EffectiveModelBinding, LocalConnectionOperationGuard,
+    LocalConnectionOperationJournal, LocalConnectionRepository, LocalCredentialRepository,
+    LocalCredentialStore, LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry,
+    ModelContextProfile, ModelId, ModelSelection, ModelSelectionChoice, ModelSelectionController,
+    ModelServiceError, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint,
+    PreparedConnectionMutation, PreparedCredentialMutation, ProviderId, StartupPolicy,
+    StartupSelectionSources, StartupTarget, plan_connection_recovery, resolve_startup_target,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

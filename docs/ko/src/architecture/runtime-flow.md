@@ -549,8 +549,31 @@ replace 또는 remove를 준비한다. Commit은 add 또는 replace일 때만 ca
 `0600` snapshot을 원자적으로 게시한다. 예정 receipt와 exact pair 상태가 같으면 반복
 commit은 idempotent하고, 관찰한 revision이 다르면 conflict다. 마지막 pair를 제거해도
 `absent`로 돌아가지 않고 versioned empty file을 남긴다. 이 write는 core storage
-boundary이며, external connect와 disconnect는 credential-public operation journal이 이를
-`connections.yaml`과 조합할 때까지 비활성 상태다.
+boundary다.
+
+Sibling `connection-operation.yaml`은 앞으로 credential과 public repository를 함께 바꾸는
+operation의 secret-free durable intent를 소유한다. 닫힌 version 1 record는 불투명 operation
+ID, config snapshot digest, profile digest, 정확한 expected·planned public revision과 크기가
+제한된 완전한 prospective public snapshot, add·replace·remove·preserve 중 하나인 credential
+receipt, legal phase 하나를 담는다. `ApiCredential`, candidate identity, verification payload는
+받을 수 없다. 파일이 없을 때 capture는 아무것도 만들지 않으며, 첫 intent publication은
+exclusive다. 각 phase replacement는 크기가 제한되고 mode `0600`, no-follow,
+current-user-owned이며 durable·atomic하고 exact entry를 확인한다.
+모든 journal mutation은 같은 repository directory의 mutable
+`LocalConnectionOperationGuard`를 요구한다. Guard의 nonblocking file lock은 capture와
+publication 사이에서 두 번째 process-equivalent owner를 배제하고, mutable borrow는 guard
+하나를 공유하는 동시 mutation call을 막으며, 다른 directory의 guard는 journal byte를 바꾸기
+전에 실패한다.
+
+`plan_connection_recovery`는 순수 state-table boundary다. Connect는 commit되지 않은
+expected/expected intent를 abandon하고 credential이 exact planned receipt에 도달한 뒤 public
+CAS만 재개하며, exact planned public byte에서만 complete한다. Disconnect는
+expected/expected를 abandon하고 public snapshot이 exact planned가 된 뒤에만 준비한 remove를
+commit하거나, exact credential revision을 mutation 없이 preserve한다. Repository 사실보다
+앞선 phase, credential-first disconnect, 다른 public winner, 계약에 없는 모든 상태는 private
+credential revision을 노출하지 않는 typed conflict다. External connect와 disconnect는 command
+orchestration이 이 boundary를 typed managed entry, verification, 마지막 config guard와 조합할
+때까지 비활성 상태다.
 
 endpoint, model, API dialect,
 파생된 connector identity와 표시 이름은 secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과

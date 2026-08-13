@@ -114,15 +114,18 @@ fn parse_revision(
     path: &Path,
     revision: &str,
 ) -> Result<ConnectionRevision, ConnectionRepositoryError> {
+    parse_revision_token(revision)
+        .map(ConnectionRevision::Token)
+        .ok_or_else(|| ConnectionRepositoryError::InvalidContents(path.to_owned()))
+}
+
+pub(super) fn parse_revision_token(revision: &str) -> Option<String> {
     let valid = revision.len() == 36
         && revision.starts_with("rev-")
         && revision[4..]
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
-    if !valid {
-        return Err(ConnectionRepositoryError::InvalidContents(path.to_owned()));
-    }
-    Ok(ConnectionRevision::Token(revision.to_owned()))
+    valid.then(|| revision.to_owned())
 }
 
 fn parse_target(

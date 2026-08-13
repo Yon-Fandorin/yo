@@ -44,6 +44,22 @@ impl CredentialRevision {
             CredentialRevisionKind::Absent | CredentialRevisionKind::Legacy(_) => None,
         }
     }
+
+    pub(crate) fn operation_journal_token(&self) -> &str {
+        match &self.0 {
+            CredentialRevisionKind::Absent => "absent",
+            CredentialRevisionKind::Managed(token) | CredentialRevisionKind::Legacy(token) => token,
+        }
+    }
+
+    pub(crate) fn from_operation_journal(value: &str) -> Option<Self> {
+        if value == "absent" {
+            return Some(Self::absent());
+        }
+        wire::parse_managed_revision_token(value)
+            .map(Self::managed)
+            .or_else(|| wire::parse_legacy_revision_token(value).map(Self::legacy))
+    }
 }
 
 impl std::fmt::Debug for CredentialRevision {
@@ -79,6 +95,27 @@ impl CredentialSnapshot {
     pub fn is_empty(&self) -> bool {
         self.credentials.is_empty()
     }
+
+    pub(crate) fn matches_expected(&self, mutation: &PreparedCredentialMutation) -> bool {
+        self.revision == mutation.expected_revision
+            && mutation.action.matches_presence(
+                self.resolve(&mutation.provider, &mutation.account)
+                    .is_some(),
+            )
+    }
+
+    pub(crate) fn matches_planned(&self, mutation: &PreparedCredentialMutation) -> bool {
+        if self.revision != mutation.planned_revision {
+            return false;
+        }
+        let present = self
+            .resolve(&mutation.provider, &mutation.account)
+            .is_some();
+        match mutation.action {
+            CredentialMutationAction::Add | CredentialMutationAction::Replace => present,
+            CredentialMutationAction::Remove => !present,
+        }
+    }
 }
 
 impl std::fmt::Debug for CredentialSnapshot {
@@ -100,7 +137,7 @@ pub enum CredentialMutationAction {
 }
 
 /// One prepared mutation. It contains coordinates and private revisions but never secret bytes.
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct PreparedCredentialMutation {
     expected_revision: CredentialRevision,
     planned_revision: CredentialRevision,
@@ -133,6 +170,25 @@ impl PreparedCredentialMutation {
     #[must_use]
     pub const fn account(&self) -> &AccountId {
         &self.account
+    }
+
+    pub(crate) fn from_operation_journal(
+        expected_revision: CredentialRevision,
+        planned_revision: CredentialRevision,
+        provider: ProviderId,
+        account: AccountId,
+        action: CredentialMutationAction,
+    ) -> Option<Self> {
+        if planned_revision.managed_token().is_none() || expected_revision == planned_revision {
+            return None;
+        }
+        Some(Self {
+            expected_revision,
+            planned_revision,
+            provider,
+            account,
+            action,
+        })
     }
 }
 
