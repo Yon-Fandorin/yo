@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.model.service-binding
-revision: sha256:e35e7fd4a90fbf3f5a2ebbb8d84dad55119391a3266b3f4e561f02089385f8bb
+revision: sha256:f3cb6a3af89e61eb8b70334131bbb779ff76e723fea4319870aede7ecf370ddf
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:4b2993f1aab3d672e4addd02f69b0deb9a988aacf058aaa5550108b4fa25fd96
+request_hash: sha256:e6fa2e91e99f150f002a48838831f72c3a395875a8cb28d3e6a87869937eaa53
 ---
 # Korean Review Projection
 
@@ -16,7 +16,13 @@ request_hash: sha256:4b2993f1aab3d672e4addd02f69b0deb9a988aacf058aaa5550108b4fa2
 
 라우팅은 typed stable ProviderId, AccountId, ModelId를 사용합니다. 새 관리형 ProviderId로 `host`를 사용할 수 없습니다. 다만 기존 수동 또는 durable `host` 좌표는 안정적인 자격증명, attribution, continuation identity를 가진 qualified ModelTarget으로 유지합니다. Provider는 서비스 그룹, Account는 자격증명 범위, Model은 wire 모델 이름입니다. 외부 key는 `provider`, `account`, `model`입니다. 정확한 Responses 또는 Chat Completions dialect는 닫힌 registry를 통해 Connector 하나로 해석하며 probing과 fallback은 금지합니다.
 
-이 unit은 `yo.binding-profile/v1`을 소유합니다. 필드는 다음 순서로 정확히 존재합니다: normalized endpoint, api_dialect, resolved connector_id, tokenizer_profile, context_limit, output_limit, reasoning_parameters, optional_request_parameters, tool_capability_policy, verification_profile. 구조화 parameter는 RFC 8785 canonical JSON을 사용하고 나머지는 버전이 있는 normalized UTF-8 또는 unsigned-decimal encoding을 사용합니다. Canonical byte는 ASCII domain `yo.binding-profile/v1`, NUL, 그리고 위 순서대로 각 field name과 value의 byte length를 unsigned big-endian 64-bit로 쓴 뒤 그 byte를 붙인 값입니다. BindingProfileDigest는 이 byte의 SHA-256에 소문자 `sha256:`를 붙인 값입니다. 알 수 없거나 중복된 v1 field는 실패합니다. Profile schema version 변경은 검토된 migration이 필요하고 다른 digest와 binding epoch를 만들며, 기존 durable profile은 기록된 version으로 해석하거나 명시적으로 실패해야 합니다.
+이 unit은 `yo.binding-profile/v1`을 소유합니다. 정확한 field-name byte string은 다음 순서입니다: `normalized_endpoint`, `api_dialect`, `resolved_connector_id`, `tokenizer_profile`, `context_limit`, `output_limit`, `reasoning_parameters`, `optional_request_parameters`, `tool_capability_policy`, `verification_profile`. `reasoning_parameters`와 `optional_request_parameters`만 구조화 parameter이며 RFC 8785 canonical JSON을 사용합니다. 나머지 여섯 string field는 공통 normalization algorithm 대신 아래에 정의한 검증 완료 value byte를 정확히 사용합니다.
+
+`normalized_endpoint`는 Rust `url` crate version 2.5.8의 정확한 parser와 serializer 동작을 고정한 `yo.normalized-model-endpoint/v1`을 사용합니다. Host가 있는 absolute HTTPS URL을 요구하고 user information, query, fragment를 거절합니다. Parse한 path string 끝의 모든 U+002F를 제거하고 결과가 비면 U+002F 하나를 대신 넣은 뒤 같은 serializer로 path를 설정하여 최종 `Url::as_str()` ASCII byte를 사용합니다. Parser 또는 serializer 동작이 달라지면 새 endpoint-profile version과 binding epoch가 필요합니다. `api_dialect`는 정확히 `openai-responses` 또는 `openai-chat-completions`이고, `resolved_connector_id`는 그에 대응하는 같은 string이며 pair가 일치하지 않으면 실패합니다.
+
+`tokenizer_profile`, `tool_capability_policy`, `verification_profile`은 `yo.versioned-profile-id/v1`을 사용합니다. 전체 문법은 1~128 ASCII octet, `[a-z0-9][a-z0-9._-]*`에 맞는 비어 있지 않은 name, 이어지는 `/v`, 그리고 `[1-9][0-9]*`에 맞는 version입니다. Profile 생성과 durable decoding은 이 고정 문법만 검증하고 mutable registry를 조회하지 않습니다. Runtime 사용은 별도로 구현 지원을 요구하며 지원하지 않으면 명시적으로 실패하고, 이후 등록 해제는 저장 byte나 digest identity를 바꿀 수 없습니다. Digest encoder는 검증된 여섯 string-field byte sequence를 그대로 소비하며 trim, case-fold, Unicode normalization, URL normalization, percent normalization 또는 다른 변환을 수행하지 않습니다. 서로 다른 허용 byte sequence는 서로 다른 profile입니다.
+
+Canonical byte는 ASCII domain `yo.binding-profile/v1` 뒤에 NUL을 붙여 시작합니다. 위 순서의 각 field마다 `u64be(name_octet_length) || name_bytes || u64be(value_octet_length) || value_bytes`를 이어 붙이며, 각 length는 octet 수를 셉니다. Limit 값은 ASCII `0` 또는 `[1-9][0-9]*`를 사용합니다. BindingProfileDigest는 이 canonical byte의 SHA-256을 나타내는 정확히 64개의 소문자 16진수 digit 앞에 `sha256:`를 붙인 값입니다. 알 수 없거나 중복된 v1 field는 실패합니다. Profile schema version 변경은 검토된 migration이 필요하고 다른 digest와 binding epoch를 만들며, 기존 durable profile은 기록된 version으로 해석하거나 명시적으로 실패해야 합니다.
 
 완전한 binding identity는 Provider, Account, Model, normalized endpoint, api_dialect, connector_id, tokenizer_profile, profile schema, profile digest입니다. 어느 identity든 바뀌면 새 epoch를 엽니다. Durable attribution은 이 identity를 사용하고 display name과 secret은 제외합니다.
 

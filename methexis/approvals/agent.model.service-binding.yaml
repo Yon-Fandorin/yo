@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: agent.model.service-binding
-revision: sha256:e35e7fd4a90fbf3f5a2ebbb8d84dad55119391a3266b3f4e561f02089385f8bb
+revision: sha256:f3cb6a3af89e61eb8b70334131bbb779ff76e723fea4319870aede7ecf370ddf
 reviewer: agent-runtime
-reviewed_at: 2026-08-12T14:49:22Z
+reviewed_at: 2026-08-13T05:26:17Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:2cb835c6fa17dc8039866f80b97425987f313d6681ed279fe15ce4e5a0ea1197
-request_hash: sha256:8897a3b64b8dfa32b6c76d8cc5d07d6f82dc0ad9e991436908ff698c5f8ba5d9
+projection_hash: sha256:cf8e09ed84a0a3a8474170c67a19af9c1cae2ac666ad6dee7201c7dbc4f64ba0
+request_hash: sha256:a7a42dfc77b0feebf4a03828760c5ae1cb30c6cabf9e0f647e76cece611cdbda
