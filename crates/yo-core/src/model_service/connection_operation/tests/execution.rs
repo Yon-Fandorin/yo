@@ -437,6 +437,66 @@ fn acquired_directory_identity_rejects_swap_and_symlink_retarget_before_mutation
     }
 }
 
+// directory identity를 lock 전에 잡고 lock 직후 다시 검사하므로, 두 시점 사이에 pathname이
+// 새 directory나 symlink로 바뀌면 acquire 자체가 실패하고 원본과 대체 journal을 보존합니다.
+#[test]
+fn acquisition_rejects_directory_swap_between_lock_and_identity_recheck() {
+    for symlink_retarget in [false, true] {
+        let fixture = Fixture::new(if symlink_retarget {
+            "execution-acquire-symlink"
+        } else {
+            "execution-acquire-swap"
+        });
+        let entry = fixture.connect_entry();
+        publish_at_phase(&fixture, &entry, ConnectionOperationPhase::Intent);
+        let original_directory = fixture.connections.path().parent().unwrap().to_owned();
+        let displaced_directory = original_directory
+            .parent()
+            .unwrap()
+            .join("acquire-displaced-state");
+        let original_journal = fs::read(fixture.journal.path()).unwrap();
+        let replacement_journal = original_directory.join("connection-operation.yaml");
+        let repositories = repositories(&fixture);
+
+        let result = repositories.acquire_after_lock(|| {
+            fs::rename(&original_directory, &displaced_directory).unwrap();
+            if symlink_retarget {
+                let unrelated = original_directory
+                    .parent()
+                    .unwrap()
+                    .join("acquire-unrelated-state");
+                fs::create_dir(&unrelated).unwrap();
+                fs::write(unrelated.join("connection-operation.yaml"), b"unrelated\n").unwrap();
+                symlink(&unrelated, &original_directory).unwrap();
+            } else {
+                fs::create_dir(&original_directory).unwrap();
+                fs::write(&replacement_journal, b"replacement\n").unwrap();
+            }
+        });
+
+        assert!(matches!(
+            result,
+            Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
+                repository: ConnectionOperationRepositoryKind::Public,
+                ..
+            })
+        ));
+        assert_eq!(
+            fs::read(displaced_directory.join("connection-operation.yaml")).unwrap(),
+            original_journal
+        );
+        let replacement_bytes = fs::read(replacement_journal).unwrap();
+        assert_eq!(
+            replacement_bytes,
+            if symlink_retarget {
+                b"unrelated\n".as_slice()
+            } else {
+                b"replacement\n".as_slice()
+            }
+        );
+    }
+}
+
 // connect recovery를 실제 실행하다 각 phase/public-CAS/clear 직후 중단하면 journal phase와
 // 두 revision이 정확한 cut state를 보이고, 새 session은 secret 없이 같은 계획으로 수렴합니다.
 #[test]

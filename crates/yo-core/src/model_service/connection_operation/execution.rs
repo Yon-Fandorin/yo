@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     fmt, fs,
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
 };
 
@@ -227,18 +227,65 @@ impl LocalConnectionOperationRepositories {
     pub fn acquire(
         &self,
     ) -> Result<LocalConnectionOperationSession<'_>, ConnectionOperationExecutionError> {
-        validate_path_components(ConnectionOperationRepositoryKind::Public, &self.directory)?;
+        self.acquire_with(|| {})
+    }
+
+    fn acquire_with(
+        &self,
+        after_lock: impl FnOnce(),
+    ) -> Result<LocalConnectionOperationSession<'_>, ConnectionOperationExecutionError> {
+        prepare_identity_directory(&self.directory)?;
+        let directory_identity = LocalDirectoryIdentity::capture(&self.directory)?;
         let guard = self
             .connections
             .acquire_operation()
             .map_err(ConnectionOperationExecutionError::OperationLock)?;
-        let directory_identity = LocalDirectoryIdentity::capture(&self.directory)?;
+        after_lock();
+        directory_identity.revalidate()?;
         Ok(LocalConnectionOperationSession {
             repositories: self,
             guard,
             directory_identity,
         })
     }
+
+    #[cfg(test)]
+    pub(super) fn acquire_after_lock(
+        &self,
+        after_lock: impl FnOnce(),
+    ) -> Result<LocalConnectionOperationSession<'_>, ConnectionOperationExecutionError> {
+        self.acquire_with(after_lock)
+    }
+}
+
+fn prepare_identity_directory(path: &Path) -> Result<(), ConnectionOperationExecutionError> {
+    validate_path_components(ConnectionOperationRepositoryKind::Public, path)?;
+    let invalid = |path: &Path| ConnectionOperationExecutionError::InvalidRepositoryLayout {
+        repository: ConnectionOperationRepositoryKind::Public,
+        path: path.to_owned(),
+    };
+    let mut current = PathBuf::from("/");
+    for component in path.components().skip(1) {
+        current.push(component.as_os_str());
+        loop {
+            match fs::symlink_metadata(&current) {
+                Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => break,
+                Ok(_) => return Err(invalid(&current)),
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                    match fs::create_dir(&current) {
+                        Ok(()) => {
+                            fs::set_permissions(&current, fs::Permissions::from_mode(0o700))
+                                .map_err(|_| invalid(&current))?;
+                        },
+                        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {},
+                        Err(_) => return Err(invalid(&current)),
+                    }
+                },
+                Err(_) => return Err(invalid(&current)),
+            }
+        }
+    }
+    validate_path_components(ConnectionOperationRepositoryKind::Public, path)
 }
 
 /// One held local operation lane. The guard remains alive after recovery for subsequent planning.

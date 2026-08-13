@@ -605,16 +605,19 @@ planned public bytes. Disconnect abandons expected/expected, commits a prepared
 remove only after the public snapshot is exact planned, or preserves the exact
 credential revision without mutation. A phase ahead of repository facts, a
 credential-first disconnect, a different public winner, or any unlisted state
-is a typed conflict without exposing a private credential revision. External
+is a typed conflict without exposing a private credential revision.
 `LocalConnectionOperationRepositories` admits only absolute normalized paths
 with the three closed sibling filenames in one lexical directory and rejects a
 symbolic-link component before acquiring the shared operation lock. The
-retained session captures that directory's device and inode after lock
-acquisition, then checks the pathname components and directory identity again
-before each journal or repository capture and effect. A directory replacement
-or symbolic-link retarget therefore fails before that next mutation. This is a
-fail-closed pathname revalidation boundary, not an atomic directory-descriptor
-anchor across the check and following filesystem call. The session executes
+acquisition. After creating a missing state directory with user-only mode, it
+captures the directory's device and inode before acquiring the lock and verifies
+the same pathname identity immediately after acquisition,
+then checks the pathname components and identity again before each journal or
+repository capture and effect. A directory replacement or symbolic-link
+retarget in those checked gaps therefore fails before the next mutation. This
+is a fail-closed pathname revalidation boundary; it does not claim protection
+against an adversarial ABA replacement or provide an atomic directory-descriptor
+anchor across a check and following filesystem call. The session executes
 only the state-table decision: it abandons an uncommitted intent, catches a
 lagging phase up before and after the exact next repository CAS, or advances an
 already completed repository pair through `complete` and clears the exact

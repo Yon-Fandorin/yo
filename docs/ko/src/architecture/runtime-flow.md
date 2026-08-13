@@ -574,11 +574,13 @@ commit하거나, exact credential revision을 mutation 없이 preserve한다. Re
 credential revision을 노출하지 않는 typed conflict다.
 `LocalConnectionOperationRepositories`는 shared operation lock을 얻기 전에 absolute normalized
 path, lexical directory 하나, 닫힌 sibling 파일명 세 개만 허용하고 symbolic-link component를
-거절한다. Lock을 유지하는 session은 획득 직후 directory의 device와 inode를 capture하고,
-각 journal·repository capture와 effect 전에 pathname component와 directory identity를 다시
-검사한다. 따라서 directory replacement나 symbolic-link retarget은 그 다음 mutation 전에
-실패한다. 이 보장은 검사와 뒤따르는 filesystem call을 하나로 묶는 원자적 directory-descriptor
-anchor가 아니라 fail-closed pathname 재검증 경계다. Session은 journal을 capture한 뒤 state
+거절한다. 없는 state directory는 사용자 전용 mode로 만든 뒤, session이 lock 획득 전에
+directory의 device와 inode를 capture하고 획득 직후 같은 pathname identity인지 검사한다. 이어
+각 journal·repository capture와 effect 전에 pathname
+component와 directory identity를 다시 검사한다. 따라서 검사하는 틈의 directory replacement나
+symbolic-link retarget은 그 다음 mutation 전에 실패한다. 이 fail-closed pathname 재검증은
+적대적인 ABA replacement를 막거나 검사와 뒤따르는 filesystem call을 하나로 묶는 원자적
+directory-descriptor anchor라고 주장하지 않는다. Session은 journal을 capture한 뒤 state
 table이 정한 결정만 실행한다. Commit되지 않은 intent는 abandon하고, 뒤처진 phase는 정확한
 다음 repository CAS 앞뒤로 따라잡으며, repository pair가 이미 완료된 경우에는 `complete`까지
 전진한 뒤 exact journal을 지운다. Connect recovery는 secret을 재구성하거나 commit하지 않는다.
