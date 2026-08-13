@@ -1,4 +1,4 @@
-//! Preserves YAML scalar style only where structured model profiles need lexical number identity.
+//! Preserves YAML scalar style where structured model profiles need lexical number identity.
 //!
 //! `serde_norway` correctly owns configuration decoding, but its visitor boundary cannot
 //! distinguish an out-of-range plain number that fell back to a string from an authored string.
@@ -9,9 +9,15 @@ use std::collections::{HashMap, HashSet};
 
 use saphyr_parser::{Event, EventReceiver, Parser, ScalarStyle};
 
+use super::ModelServiceError;
+
 const STRUCTURED_FIELDS: [&str; 2] = ["reasoning_parameters", "optional_request_parameters"];
 
-pub(super) fn validate_plain_number_spellings(contents: &str) -> Result<(), String> {
+pub fn validate_profile_yaml_number_spellings(contents: &str) -> Result<(), ModelServiceError> {
+    validate_plain_number_spellings(contents).map_err(ModelServiceError::new)
+}
+
+fn validate_plain_number_spellings(contents: &str) -> Result<(), String> {
     let root = parse_document(contents)?;
     let mut anchors = HashMap::new();
     collect_anchors(&root, &mut anchors)?;

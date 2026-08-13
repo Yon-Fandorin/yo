@@ -23,7 +23,13 @@ pub enum ConnectionRepositoryError {
         path: PathBuf,
         version: u32,
     },
-    ManagedStateUnsupported(PathBuf),
+    ManagedCoordinateMismatch,
+    ManagedBindingNotFound {
+        provider: String,
+        account: String,
+        model: String,
+    },
+    InvalidManagedMutation,
     PreparedTooLarge,
     OperationBusy(PathBuf),
     PendingOperation(PathBuf),
@@ -88,11 +94,20 @@ impl fmt::Display for ConnectionRepositoryError {
                 "{} uses unsupported connection version {version}; expected 1",
                 path.display()
             ),
-            Self::ManagedStateUnsupported(path) => write!(
-                formatter,
-                "{} contains managed bindings or accounts that this preference-only build cannot compose",
-                path.display()
+            Self::ManagedCoordinateMismatch => formatter.write_str(
+                "the managed account and binding must name the same Provider and Account",
             ),
+            Self::ManagedBindingNotFound {
+                provider,
+                account,
+                model,
+            } => write!(
+                formatter,
+                "managed binding not found for Provider {provider}, Account {account}, Model {model}",
+            ),
+            Self::InvalidManagedMutation => {
+                formatter.write_str("the prepared managed connection mutation is invalid")
+            },
             Self::PreparedTooLarge => {
                 formatter.write_str("the prepared connection snapshot exceeds its bounded size")
             },

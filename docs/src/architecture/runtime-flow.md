@@ -623,8 +623,8 @@ credential-first disconnect, a different public winner, or any unlisted state
 is a typed conflict without exposing a private credential revision.
 `LocalConnectionOperationRepositories` admits only absolute normalized paths
 with the three closed sibling filenames in one lexical directory and rejects a
-symbolic-link component before acquiring the shared operation lock. The
-acquisition. After creating a missing state directory with user-only mode, it
+symbolic-link component before acquiring the shared operation lock. After
+creating a missing state directory with user-only mode, it
 captures the directory's device and inode before acquiring the lock and verifies
 the same pathname identity immediately after acquisition,
 then checks the pathname components and identity again before each journal or
@@ -640,8 +640,8 @@ journal. Connect recovery never reconstructs or commits a secret; disconnect
 removal passes no candidate, while preserve never calls the credential mutation boundary.
 Repository and journal failures retain the safe operation kind, action, and
 phase without projecting a private credential revision. External connect and
-disconnect remain disabled until command orchestration composes this executor
-with typed managed entries, verification, and the final config guard.
+disconnect remain disabled until their command leaves compose this executor
+with credential verification and the final config guard.
 
 Endpoint, model, API dialect, derived connector identity, the resolved profile, and display
 names remain non-secret binding data rather than secret-file content. Catalog limits and model
@@ -658,35 +658,77 @@ runtime supports an empty reasoning mapping or an `effort` of `none`,
 configuration but fail startup until their runtime behavior exists.
 
 The public sibling `connections.yaml` is separate from operator-owned
-`config.yaml` and secret `credentials.yaml`. The current preference-only writer
-uses this shape (the opaque revision value is illustrative):
+`config.yaml` and secret `credentials.yaml`. It stores one typed managed account
+list, one flat complete-binding list, and the selection-owned preference. A
+representative snapshot is below (the opaque revision value is illustrative):
 
 ```yaml
 version: 1
 revision: rev-0123456789abcdef0123456789abcdef
 preference:
-  kind: host
-  target: host:codex
+  kind: model
+  provider: qwencloud
+  account: default
+  model: qwen3.8-max
+bindings:
+  - provider: qwencloud
+    account: default
+    model: qwen3.8-max
+    model_display_name: Qwen 3.8 Max
+    connector: openai-responses
+    base_url: https://example.test/v1
+    profile:
+      api_dialect: openai-responses
+      tokenizer_profile: utf8-bytes/v1
+      input_token_limit: 262144
+      max_output_tokens: 8192
+      reasoning_parameters: { effort: medium }
+      optional_request_parameters: {}
+      tool_capability_policy: local-tools/v1
+      verification_profile: semantic-terminal/v1
+accounts:
+  - provider: qwencloud
+    provider_display_name: QwenCloud
+    account: default
+    account_display_name: Default
 ```
 
 An absent file is the canonical unset snapshot and is read without creating a
-directory. `yo default TARGET`, `yo default --unset`, and explicit `yo connect
-host:codex` use one nonblocking process operation lock, resolve the absence of a
-pending multi-repository operation, capture a bounded mode-`0600` regular
-snapshot, and prepare exact new bytes with a new opaque revision. After target
-admission or Local Codex process and stable Host-identity verification plus the
-final configuration guard, exactly one repository CAS publishes the bytes. An
-absent first write uses same-directory exclusive publication; later writes use
-durable atomic replacement. The exact planned revision and bytes are
-idempotent success, while another revision is a conflict. Local Codex publishes
-only from a freshly observed unset preference; if another preference wins its
-CAS, the command re-reads and preserves that winner. These preference-only
-commands never create an operation journal or inspect credential revisions.
-Credential-changing external connect and disconnect remain outside this
-implemented path and fail explicitly rather than borrowing preference-only
-recovery. Until that Slice defines typed managed entries and composition, this
-preference-only build rejects a snapshot with non-empty `bindings` or
-`accounts` instead of accepting opaque state that startup cannot validate.
+directory. Capture rejects unknown fields, duplicate account or binding
+coordinates, bindings without their account, inconsistent Provider display
+metadata, invalid complete bindings, and out-of-range unquoted structured-profile
+numbers. The same scalar-style validator protects manual and managed YAML, so a
+quoted numeric-looking string remains a string while a plain invalid number
+cannot be retyped silently.
+
+Managed upsert adds or replaces one exact complete coordinate, preserves every
+unrelated entry, and publishes the first ModelTarget preference only from an
+unset capture. Managed removal removes one exact binding, drops its account only
+when no managed sibling still uses that pair, and clears only an exact matching
+ModelTarget preference. Preference-only preparation preserves both managed
+arrays byte-semantically. All mutations reserve one new opaque revision and use
+the existing old-or-exact-new CAS. An absent first write uses same-directory
+exclusive publication; later writes use durable atomic replacement. Exact
+planned revision and bytes are idempotent success, while another revision is a
+conflict.
+
+Every live startup captures `config.yaml` and `connections.yaml`, then composes
+manual and managed entries by complete-binding equality. Equal entries coalesce
+while retaining `manual-and-managed` provenance; manual display metadata wins
+and managed display fills omissions. A field difference at the same Provider,
+Account, and Model returns `BindingConflict` with the non-secret differing field
+names instead of selecting a source. The composed catalog supplies initial
+selection, resume matching, and the live model picker.
+
+`yo default TARGET`, `yo default --unset`, and explicit `yo connect host:codex`
+continue to use one nonblocking process operation lock, resolve pending
+multi-repository work first, and publish one public CAS after target admission or
+Local Codex verification plus the final configuration guard. These
+preference-only commands never create an operation journal or inspect credential
+revisions, and their re-encoding preserves managed entries. Credential-changing
+external connect and disconnect command orchestration remains outside this
+implemented path and fails explicitly rather than borrowing preference-only
+recovery.
 
 A missing repository produces an empty list and does not create state. Direct
 history reads preserve a message-recovery

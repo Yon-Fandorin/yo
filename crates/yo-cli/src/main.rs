@@ -98,10 +98,11 @@ fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
             },
         };
     // Live configuration is snapshotted once and retained across terminal ownership generations.
-    let config =
+    let mut config =
         config::load().map_err(|error| AppError::single("reading Yo configuration", error))?;
+    let captured_preference = connection::load_startup_connections(&mut config)?;
     let stored_preference = match options.selection {
-        command::LiveSelection::New => connection::stored_preference(&config)?,
+        command::LiveSelection::New => captured_preference,
         command::LiveSelection::Resume(_) | command::LiveSelection::Continue => None,
     };
     let mut credentials = None;

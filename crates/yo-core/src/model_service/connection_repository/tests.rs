@@ -45,6 +45,27 @@ fn model_target(model: &str) -> StartupTarget {
     ))
 }
 
+fn managed_account() -> ManagedConnectionAccount {
+    ManagedConnectionAccount::new(
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("default").unwrap(),
+        Some("QwenCloud".to_owned()),
+        Some("Default".to_owned()),
+    )
+    .unwrap()
+}
+
+fn managed_binding(model: &str, effort: &str) -> ManagedConnectionBinding {
+    let durable = format!(
+        r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}}"#
+    );
+    ManagedConnectionBinding::new(
+        crate::CompleteModelBinding::from_durable_json(&durable).unwrap(),
+        Some(format!("Model {model}")),
+    )
+    .unwrap()
+}
+
 // 파일이 없는 첫 capture는 부모 경로도 만들지 않은 채 absent revision과 unset preference를
 // 반환해야 읽기와 준비만 수행한 중단이 사용자 상태를 바꾸지 않음을 검증합니다.
 #[test]
@@ -192,10 +213,10 @@ fn insecure_existing_snapshot_is_rejected() {
     ));
 }
 
-// preference-only build가 아직 compose할 수 없는 managed binding/account를 발견하면
-// opaque 값으로 보존한 척 CAS하지 않고 명시적으로 실패해 기존 상태를 바꾸지 않습니다.
+// 닫힌 managed schema와 맞지 않는 opaque binding/account는 typed state로 오인하지 않고
+// capture 단계에서 실패해 기존 상태를 바꾸지 않습니다.
 #[test]
-fn managed_bindings_and_accounts_fail_closed_before_preference_mutation() {
+fn malformed_managed_bindings_and_accounts_fail_closed() {
     let (_directory, repository) = repository("unsupported-managed-state");
     fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
     fs::write(
@@ -215,7 +236,225 @@ fn managed_bindings_and_accounts_fail_closed_before_preference_mutation() {
 
     assert!(matches!(
         error,
-        ConnectionRepositoryError::ManagedStateUnsupported(_)
+        ConnectionRepositoryError::InvalidContents(_)
     ));
     assert_eq!(fs::read(repository.path()).unwrap(), before);
+}
+
+// 첫 managed upsert는 account와 complete binding을 readable typed YAML로 함께 게시하고,
+// 첫 성공 preference를 같은 CAS에 포함하며 exact retry 뒤에도 typed 값이 보존됩니다.
+#[test]
+fn managed_upsert_round_trips_complete_state_and_first_preference() {
+    let (_directory, repository) = repository("managed-upsert");
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        repository.commit(&mutation).unwrap(),
+        ConnectionCommit::Committed
+    );
+    assert_eq!(
+        repository.commit(&mutation).unwrap(),
+        ConnectionCommit::AlreadyCommitted
+    );
+    let captured = repository.capture().unwrap();
+
+    assert_eq!(captured.managed_accounts(), &[managed_account()]);
+    assert_eq!(
+        captured.managed_bindings(),
+        &[managed_binding("model-a", "medium")]
+    );
+    assert_eq!(captured.preference(), Some(&model_target("model-a")));
+    let encoded = fs::read_to_string(repository.path()).unwrap();
+    assert!(encoded.contains("reasoning_parameters:"));
+    assert!(encoded.contains("effort: medium"));
+    assert!(!encoded.contains("secret"));
+}
+
+// 같은 account에 model을 추가하거나 기존 model profile을 교체할 때 unrelated binding과
+// 이미 정해진 preference는 그대로 남고 exact coordinate 하나만 바뀝니다.
+#[test]
+fn managed_upsert_preserves_unrelated_binding_and_existing_preference() {
+    let (_directory, repository) = repository("managed-replace");
+    for binding in [
+        managed_binding("model-a", "medium"),
+        managed_binding("model-b", "medium"),
+    ] {
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_managed_upsert(managed_account(), binding)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+    }
+    let replacement = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_account(), managed_binding("model-b", "high"))
+        .unwrap()
+        .unwrap();
+    repository.commit(&replacement).unwrap();
+
+    let captured = repository.capture().unwrap();
+    assert_eq!(
+        captured.managed_bindings(),
+        &[
+            managed_binding("model-a", "medium"),
+            managed_binding("model-b", "high"),
+        ]
+    );
+    assert_eq!(captured.preference(), Some(&model_target("model-a")));
+}
+
+// managed remove는 선택한 binding만 지우고 같은 account의 다른 model이 있으면 account를
+// 보존하며, 마지막 model과 exact matching preference가 사라질 때 둘을 함께 clear합니다.
+#[test]
+fn managed_remove_preserves_shared_account_then_clears_last_account_and_preference() {
+    let (_directory, repository) = repository("managed-remove");
+    for binding in [
+        managed_binding("model-a", "medium"),
+        managed_binding("model-b", "medium"),
+    ] {
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_managed_upsert(managed_account(), binding)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+    }
+
+    let remove_a = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_remove(match model_target("model-a") {
+            StartupTarget::Model(ref selection) => selection,
+            StartupTarget::HostCodex => unreachable!(),
+        })
+        .unwrap();
+    repository.commit(&remove_a).unwrap();
+    let after_a = repository.capture().unwrap();
+    assert!(after_a.preference().is_none());
+    assert_eq!(after_a.managed_accounts(), &[managed_account()]);
+    assert_eq!(
+        after_a.managed_bindings(),
+        &[managed_binding("model-b", "medium")]
+    );
+
+    let remove_b = after_a
+        .prepare_managed_remove(match model_target("model-b") {
+            StartupTarget::Model(ref selection) => selection,
+            StartupTarget::HostCodex => unreachable!(),
+        })
+        .unwrap();
+    repository.commit(&remove_b).unwrap();
+    let empty = repository.capture().unwrap();
+    assert!(empty.managed_accounts().is_empty());
+    assert!(empty.managed_bindings().is_empty());
+}
+
+// preference-only CAS는 typed managed arrays를 다시 encode할 때도 의미를 바꾸거나 버리지
+// 않아 default 변경이 connection catalog를 손상하지 않습니다.
+#[test]
+fn preference_mutation_preserves_managed_state() {
+    let (_directory, repository) = repository("preference-preserves-managed");
+    let managed = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap()
+        .unwrap();
+    repository.commit(&managed).unwrap();
+    let before = repository.capture().unwrap();
+    let preference = before
+        .prepare_preference(Some(StartupTarget::HostCodex))
+        .unwrap()
+        .unwrap();
+    repository.commit(&preference).unwrap();
+
+    let after = repository.capture().unwrap();
+    assert_eq!(after.managed_accounts(), before.managed_accounts());
+    assert_eq!(after.managed_bindings(), before.managed_bindings());
+    assert_eq!(after.preference(), Some(&StartupTarget::HostCodex));
+}
+
+// 새 API는 reserved host Provider를 만들 수 없지만 이미 존재하는 durable host coordinate는
+// decoder가 읽어 보존해 이전 공개 상태를 새 binary가 임의로 소실하지 않습니다.
+#[test]
+fn new_host_managed_state_is_forbidden_while_existing_durable_state_remains_readable() {
+    assert!(
+        ManagedConnectionAccount::new(
+            ProviderId::new("host").unwrap(),
+            AccountId::new("default").unwrap(),
+            None,
+            None,
+        )
+        .is_err()
+    );
+
+    let (_directory, repository) = repository("legacy-host");
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    let encoded = fs::read_to_string(repository.path())
+        .unwrap()
+        .replace("qwencloud", "host");
+    fs::write(repository.path(), encoded).unwrap();
+
+    let captured = repository.capture().unwrap();
+    assert_eq!(
+        captured.managed_accounts()[0].provider_id().as_str(),
+        "host"
+    );
+    assert_eq!(
+        captured.managed_bindings()[0]
+            .complete()
+            .binding()
+            .provider_id()
+            .as_str(),
+        "host"
+    );
+}
+
+// managed YAML도 authored config와 같은 scalar-style 검사를 거쳐 plain overflow가 String으로
+// 재분류되는 우회를 막고, 사용자가 명시적으로 quote한 같은 spelling만 String으로 보존합니다.
+#[test]
+fn managed_profile_numbers_reject_plain_overflow_and_preserve_quoted_string() {
+    let (_directory, repository) = repository("managed-profile-number");
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    let original = fs::read_to_string(repository.path()).unwrap();
+
+    let overflow = original.replace("effort: medium", "value: 1e400");
+    fs::write(repository.path(), &overflow).unwrap();
+    assert!(matches!(
+        repository.capture(),
+        Err(ConnectionRepositoryError::InvalidContents(_))
+    ));
+
+    let quoted = original.replace("effort: medium", "value: '1e400'");
+    fs::write(repository.path(), quoted).unwrap();
+    let captured = repository.capture().unwrap();
+    assert_eq!(
+        captured.managed_bindings()[0]
+            .complete()
+            .profile()
+            .reasoning_parameters()
+            .to_json_value(),
+        serde_json::json!({"value": "1e400"})
+    );
 }

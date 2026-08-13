@@ -61,7 +61,7 @@ pub use model_connector::{
     ResponsesPoll, ResponsesRequest, ResponsesStream, ResponsesUsage,
 };
 pub use model_service::{
-    AccountId, ApiCredential, ApiDialect, CompleteModelBinding, ConnectionCommit,
+    AccountId, ApiCredential, ApiDialect, BindingConflict, CompleteModelBinding, ConnectionCommit,
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationExecutionError,
     ConnectionOperationExecutionOutcome, ConnectionOperationJournalEntry,
     ConnectionOperationJournalRepository, ConnectionOperationKind, ConnectionOperationPhase,
@@ -72,12 +72,13 @@ pub use model_service::{
     LocalConnectionOperationGuard, LocalConnectionOperationJournal,
     LocalConnectionOperationRepositories, LocalConnectionOperationSession,
     LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStore,
-    LocalCredentialStoreError, ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelId,
-    ModelProfileLayer, ModelProfileParameters, ModelSelection, ModelSelectionChoice,
-    ModelSelectionController, ModelServiceError, ModelTokenCounter, ModelTokenCounterError,
-    NormalizedEndpoint, PreparedConnectionMutation, PreparedCredentialMutation, ProviderId,
-    StartupPolicy, StartupSelectionSources, StartupTarget, VersionedProfileId,
-    plan_connection_recovery, resolve_startup_target,
+    LocalCredentialStoreError, ManagedConnectionAccount, ManagedConnectionBinding, ModelCatalog,
+    ModelCatalogEntry, ModelCatalogProvenance, ModelContextProfile, ModelId, ModelProfileLayer,
+    ModelProfileParameters, ModelSelection, ModelSelectionChoice, ModelSelectionController,
+    ModelServiceError, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint,
+    PreparedConnectionMutation, PreparedCredentialMutation, ProviderId, StartupPolicy,
+    StartupSelectionSources, StartupTarget, VersionedProfileId, plan_connection_recovery,
+    resolve_startup_target, validate_profile_yaml_number_spellings,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

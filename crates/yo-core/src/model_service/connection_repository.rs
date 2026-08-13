@@ -5,12 +5,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::StartupTarget;
+use super::{ModelCatalog, ModelSelection, StartupTarget, catalog::BindingConflict};
 
 mod error;
+mod managed;
 mod wire;
 
 pub use error::ConnectionRepositoryError;
+pub use managed::{ManagedConnectionAccount, ManagedConnectionBinding};
 
 pub(crate) const MAX_CONNECTION_BYTES: u64 = 1024 * 1024;
 const FILE_MODE: u32 = 0o600;
@@ -62,6 +64,8 @@ impl fmt::Display for ConnectionRevision {
 pub struct ConnectionSnapshot {
     revision: ConnectionRevision,
     preference: Option<StartupTarget>,
+    accounts: Vec<ManagedConnectionAccount>,
+    bindings: Vec<ManagedConnectionBinding>,
     encoded: Vec<u8>,
 }
 
@@ -76,6 +80,20 @@ impl ConnectionSnapshot {
         self.preference.as_ref()
     }
 
+    #[must_use]
+    pub fn managed_accounts(&self) -> &[ManagedConnectionAccount] {
+        &self.accounts
+    }
+
+    #[must_use]
+    pub fn managed_bindings(&self) -> &[ManagedConnectionBinding] {
+        &self.bindings
+    }
+
+    pub fn compose_catalog(&self, manual: &ModelCatalog) -> Result<ModelCatalog, BindingConflict> {
+        manual.compose_managed(&self.accounts, &self.bindings)
+    }
+
     pub(crate) fn matches_planned(&self, mutation: &PreparedConnectionMutation) -> bool {
         self.revision == mutation.planned_revision && self.encoded == mutation.planned_bytes
     }
@@ -88,8 +106,99 @@ impl ConnectionSnapshot {
         if self.preference == preference {
             return Ok(None);
         }
+        self.prepare_snapshot(preference, self.accounts.clone(), self.bindings.clone())
+    }
+
+    /// Adds or replaces one managed binding while preserving unrelated public state.
+    pub fn prepare_managed_upsert(
+        &self,
+        account: ManagedConnectionAccount,
+        binding: ManagedConnectionBinding,
+    ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
+        if !managed::account_matches_binding(&account, &binding) {
+            return Err(ConnectionRepositoryError::ManagedCoordinateMismatch);
+        }
+        let mut accounts = self.accounts.clone();
+        let account_position = accounts.iter().position(|current| {
+            current.provider_id() == account.provider_id()
+                && current.account_id() == account.account_id()
+        });
+        match account_position {
+            Some(index) => accounts[index] = account,
+            None => accounts.push(account),
+        }
+
+        let mut bindings = self.bindings.clone();
+        let selection = binding.selection();
+        let binding_position = bindings
+            .iter()
+            .position(|current| managed::binding_matches_selection(current, &selection));
+        match binding_position {
+            Some(index) => bindings[index] = binding,
+            None => bindings.push(binding),
+        }
+        managed::validate_state(&accounts, &bindings)
+            .map_err(|_| ConnectionRepositoryError::InvalidManagedMutation)?;
+        let preference = self
+            .preference
+            .clone()
+            .or(Some(StartupTarget::Model(selection)));
+        self.prepare_snapshot(preference, accounts, bindings)
+    }
+
+    /// Removes one managed binding, its unused account, and an exact matching preference.
+    pub fn prepare_managed_remove(
+        &self,
+        selection: &ModelSelection,
+    ) -> Result<PreparedConnectionMutation, ConnectionRepositoryError> {
+        let mut bindings = self.bindings.clone();
+        let Some(index) = bindings
+            .iter()
+            .position(|binding| managed::binding_matches_selection(binding, selection))
+        else {
+            return Err(ConnectionRepositoryError::ManagedBindingNotFound {
+                provider: selection.provider().to_string(),
+                account: selection.account().to_string(),
+                model: selection.model().to_string(),
+            });
+        };
+        bindings.remove(index);
+        let account_is_still_used = bindings.iter().any(|binding| {
+            let complete = binding.complete().binding();
+            complete.provider_id() == selection.provider()
+                && complete.account_id() == selection.account()
+        });
+        let mut accounts = self.accounts.clone();
+        if !account_is_still_used {
+            accounts.retain(|account| {
+                account.provider_id() != selection.provider()
+                    || account.account_id() != selection.account()
+            });
+        }
+        managed::validate_state(&accounts, &bindings)
+            .map_err(|_| ConnectionRepositoryError::InvalidManagedMutation)?;
+        let removed_target = StartupTarget::Model(selection.clone());
+        let preference = if self.preference.as_ref() == Some(&removed_target) {
+            None
+        } else {
+            self.preference.clone()
+        };
+        self.prepare_snapshot(preference, accounts, bindings)?
+            .ok_or(ConnectionRepositoryError::InvalidManagedMutation)
+    }
+
+    fn prepare_snapshot(
+        &self,
+        preference: Option<StartupTarget>,
+        accounts: Vec<ManagedConnectionAccount>,
+        bindings: Vec<ManagedConnectionBinding>,
+    ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
+        if self.preference == preference && self.accounts == accounts && self.bindings == bindings {
+            return Ok(None);
+        }
         let planned_revision = wire::new_revision()?;
-        let planned_bytes = wire::encode(&planned_revision, preference.as_ref())?;
+        let planned_bytes =
+            wire::encode(&planned_revision, preference.as_ref(), &accounts, &bindings)?;
         if planned_bytes.len() as u64 > MAX_CONNECTION_BYTES {
             return Err(ConnectionRepositoryError::PreparedTooLarge);
         }
@@ -346,6 +455,8 @@ fn read_snapshot(path: &Path) -> Result<ConnectionSnapshot, ConnectionRepository
             return Ok(ConnectionSnapshot {
                 revision: ConnectionRevision::Absent,
                 preference: None,
+                accounts: Vec::new(),
+                bindings: Vec::new(),
                 encoded: Vec::new(),
             });
         },
@@ -372,6 +483,8 @@ fn read_snapshot(path: &Path) -> Result<ConnectionSnapshot, ConnectionRepository
     Ok(ConnectionSnapshot {
         revision: decoded.revision,
         preference: decoded.preference,
+        accounts: decoded.accounts,
+        bindings: decoded.bindings,
         encoded,
     })
 }

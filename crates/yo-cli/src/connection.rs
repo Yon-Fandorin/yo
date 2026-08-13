@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use yo_core::{
-    ConnectionRepository, ConnectionRepositoryError, LocalConnectionRepository, StartupPolicy,
-    StartupSelectionSources, StartupTarget, resolve_startup_target,
+    ConnectionRepository, ConnectionRepositoryError, ConnectionSnapshot, LocalConnectionRepository,
+    StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
 use crate::{
@@ -12,11 +12,26 @@ use crate::{
     storage,
 };
 
-pub(crate) fn stored_preference(config: &Config) -> Result<Option<StartupTarget>, AppError> {
-    repository(config)
+pub(crate) fn load_startup_connections(
+    config: &mut Config,
+) -> Result<Option<StartupTarget>, AppError> {
+    let snapshot = repository(config)
         .capture()
-        .map(|snapshot| snapshot.preference().cloned())
-        .map_err(|error| AppError::single("reading the stored startup default", error))
+        .map_err(|error| AppError::single("reading managed connections", error))?;
+    let preference = snapshot.preference().cloned();
+    compose_managed_catalog(config, &snapshot)?;
+    Ok(preference)
+}
+
+fn compose_managed_catalog(
+    config: &mut Config,
+    snapshot: &ConnectionSnapshot,
+) -> Result<(), AppError> {
+    let catalog = snapshot
+        .compose_catalog(config.model_catalog())
+        .map_err(|error| AppError::single("composing manual and managed model bindings", error))?;
+    config.replace_model_catalog(catalog);
+    Ok(())
 }
 
 pub(crate) fn run_default(command: DefaultCommand) -> Result<String, AppError> {
@@ -41,11 +56,12 @@ fn execute_default_with(
 ) -> Result<String, AppError> {
     let _operation = acquire_operation(repository)?;
     recover_pending(repository)?;
-    let config = config::load_from(config_path)
+    let mut config = config::load_from(config_path)
         .map_err(|error| AppError::single("reading Yo configuration", error))?;
     let snapshot = repository
         .capture()
         .map_err(|error| AppError::single("capturing the connection repository", error))?;
+    compose_managed_catalog(&mut config, &snapshot)?;
     let preference = command
         .target
         .as_deref()
@@ -338,6 +354,86 @@ mod tests {
         assert!(!repository.path().exists());
     }
 
+    // explicit default도 live startup과 같은 captured managed catalog를 사용해야 manual
+    // config에 없는 managed-only ModelTarget을 admit하고 그대로 preference로 게시합니다.
+    #[test]
+    fn default_admits_a_managed_only_model_from_the_captured_snapshot() {
+        let directory = TestDirectory::new("default-managed-only");
+        let config_path = empty_config(&directory);
+        let repository = repository_at(&config_path);
+        let (account, binding) = managed_fixture("managed", "medium");
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_managed_upsert(account, binding)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        let host_default = repository
+            .capture()
+            .unwrap()
+            .prepare_preference(Some(StartupTarget::HostCodex))
+            .unwrap()
+            .unwrap();
+        repository.commit(&host_default).unwrap();
+        let before_revision = repository.capture().unwrap().revision().clone();
+
+        let output = execute_default_with(
+            &config_path,
+            &repository,
+            DefaultCommand {
+                target: Some("qwencloud:default:managed".to_owned()),
+            },
+            || Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(output, "default: qwencloud:default:managed\n");
+        let after = repository.capture().unwrap();
+        assert_eq!(
+            display_target(after.preference()),
+            "qwencloud:default:managed"
+        );
+        assert_ne!(after.revision(), &before_revision);
+    }
+
+    // 같은 coordinate의 manual legacy binding과 managed explicit binding이 다르면 default
+    // admission 전에 BindingConflict로 중단하고 기존 connections.yaml bytes를 건드리지 않습니다.
+    #[test]
+    fn default_binding_conflict_preserves_the_captured_repository() {
+        let directory = TestDirectory::new("default-binding-conflict");
+        let config_path = directory.config_path(
+            "version: 1\nmodel:\n  catalog:\n    - provider: qwencloud\n      account: default\n      model: managed\n      api_dialect: openai-responses\n      base_url: https://example.test/v1\n      input_token_limit: 1000\n      max_output_tokens: 100\n      tokenizer_profile: utf8-bytes/v1\n",
+        );
+        let repository = repository_at(&config_path);
+        let (account, binding) = managed_fixture("managed", "medium");
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_managed_upsert(account, binding)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        let before = fs::read(repository.path()).unwrap();
+
+        let error = execute_default_with(
+            &config_path,
+            &repository,
+            DefaultCommand {
+                target: Some("qwencloud:default:managed".to_owned()),
+            },
+            || Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("composing manual and managed model bindings")
+        );
+        assert_eq!(fs::read(repository.path()).unwrap(), before);
+    }
+
     // Local Codex 검증이 실패하면 준비된 preference bytes가 있어도 CAS를 호출하지 않고
     // repository는 unset으로 남아 실패를 성공한 첫 연결처럼 기억하지 않습니다.
     #[test]
@@ -452,6 +548,62 @@ mod tests {
             repository.capture().unwrap().preference(),
             Some(StartupTarget::Model(_))
         ));
+    }
+
+    // live startup은 connections.yaml의 typed managed binding을 manual catalog와 합친 뒤
+    // preference와 같은 snapshot에서 읽어 managed-only target도 즉시 선택할 수 있습니다.
+    #[test]
+    fn startup_load_composes_managed_catalog_and_preference_from_one_snapshot() {
+        let directory = TestDirectory::new("startup-managed-catalog");
+        let config_path = empty_config(&directory);
+        let repository = repository_at(&config_path);
+        let (account, binding) = managed_fixture("managed", "medium");
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_managed_upsert(account, binding)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+
+        let mut config = config::load_from(&config_path).unwrap();
+        let preference = load_startup_connections(&mut config).unwrap();
+
+        assert!(matches!(preference, Some(StartupTarget::Model(_))));
+        let entry = config
+            .model_catalog()
+            .resolve_model(
+                &yo_core::ProviderId::new("qwencloud").unwrap(),
+                &yo_core::AccountId::new("default").unwrap(),
+                &yo_core::ModelId::new("managed").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(entry.provenance(), yo_core::ModelCatalogProvenance::Managed);
+        assert_eq!(entry.model_display_name(), Some("Model managed"));
+    }
+
+    fn managed_fixture(
+        model: &str,
+        effort: &str,
+    ) -> (
+        yo_core::ManagedConnectionAccount,
+        yo_core::ManagedConnectionBinding,
+    ) {
+        let durable = format!(
+            r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}}"#,
+        );
+        let complete = yo_core::CompleteModelBinding::from_durable_json(&durable).unwrap();
+        let account = yo_core::ManagedConnectionAccount::new(
+            yo_core::ProviderId::new("qwencloud").unwrap(),
+            yo_core::AccountId::new("default").unwrap(),
+            Some("QwenCloud".to_owned()),
+            Some("Default".to_owned()),
+        )
+        .unwrap();
+        let binding =
+            yo_core::ManagedConnectionBinding::new(complete, Some(format!("Model {model}")))
+                .unwrap();
+        (account, binding)
     }
 
     // 사용자에게 돌려주는 ModelTarget은 Provider와 Account의 예약 문자를 canonical

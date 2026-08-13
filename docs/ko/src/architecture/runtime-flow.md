@@ -601,8 +601,8 @@ table이 정한 결정만 실행한다. Commit되지 않은 intent는 abandon하
 Disconnect remove는 candidate 없이 commit하고 preserve는 credential mutation boundary를
 호출하지 않는다. Repository와 journal 오류는
 private credential revision을 투영하지 않고 안전한 operation kind, action, phase만 유지한다.
-External connect와 disconnect는 command orchestration이 이 executor를 typed managed entry,
-verification, 마지막 config guard와 조합할 때까지 비활성 상태다.
+External connect와 disconnect는 각 command leaf가 이 executor를 credential verification,
+마지막 config guard와 조합할 때까지 비활성 상태다.
 
 endpoint, model, API dialect, 파생된 connector identity, resolved profile과 표시 이름은
 secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과
@@ -617,32 +617,69 @@ profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 bind
 있지만 그 runtime 동작이 구현될 때까지 startup에서 실패한다.
 
 공개 sibling `connections.yaml`은 operator가 소유하는 `config.yaml`, secret인
-`credentials.yaml`과 분리된다. 현재 preference-only writer는 다음 shape를 사용한다
-(불투명 revision 값은 예시다).
+`credentials.yaml`과 분리된다. Typed managed account 목록 하나, flat complete-binding 목록
+하나, selection이 소유하는 preference를 저장한다. 다음은 대표 snapshot이다(불투명 revision
+값은 예시다).
 
 ```yaml
 version: 1
 revision: rev-0123456789abcdef0123456789abcdef
 preference:
-  kind: host
-  target: host:codex
+  kind: model
+  provider: qwencloud
+  account: default
+  model: qwen3.8-max
+bindings:
+  - provider: qwencloud
+    account: default
+    model: qwen3.8-max
+    model_display_name: Qwen 3.8 Max
+    connector: openai-responses
+    base_url: https://example.test/v1
+    profile:
+      api_dialect: openai-responses
+      tokenizer_profile: utf8-bytes/v1
+      input_token_limit: 262144
+      max_output_tokens: 8192
+      reasoning_parameters: { effort: medium }
+      optional_request_parameters: {}
+      tool_capability_policy: local-tools/v1
+      verification_profile: semantic-terminal/v1
+accounts:
+  - provider: qwencloud
+    provider_display_name: QwenCloud
+    account: default
+    account_display_name: Default
 ```
 
-파일이 없으면 canonical unset snapshot이며 디렉터리를 만들지 않고 읽는다. `yo default
-TARGET`, `yo default --unset`, 명시적 `yo connect host:codex`는 nonblocking process
-operation lock 하나를 사용하고 pending multi-repository operation이 없음을 확인한다.
-이어 크기가 제한된 mode `0600` regular snapshot을 capture하고 새 불투명 revision으로
-정확한 새 byte를 준비한다. Target admission 또는 Local Codex process와 안정적인 Host
-identity 검증, 마지막 configuration guard 뒤 repository CAS 정확히 하나가 byte를 게시한다.
-파일이 없을 때의 첫 write는 같은 디렉터리에서 exclusive publication을 사용하고 이후 write는
-durable atomic replacement를 사용한다. 계획한 revision과 byte가 정확히 같으면 idempotent
-success이며 다른 revision이면 conflict다. Local Codex는 새로 관찰한 unset preference에서만
-게시한다. 다른 preference가 CAS에서 이기면 command가 다시 읽고 그 winner를 보존한다.
-이 preference-only command들은 operation journal을 만들거나 credential revision을 확인하지
-않는다. Credential을 바꾸는 external connect와 disconnect는 아직 이 구현 경로 밖에 있으며
-preference-only recovery를 빌리지 않고 명시적으로 실패한다. 해당 Slice가 typed managed
-entry와 composition을 정의하기 전까지 이 preference-only build는 startup에서 검증할 수 없는
-opaque 상태를 받아들이지 않고, 비어 있지 않은 `bindings`나 `accounts`가 든 snapshot을 거절한다.
+파일이 없으면 canonical unset snapshot이며 디렉터리를 만들지 않고 읽는다. Capture는 모르는
+field, 중복 account나 binding coordinate, 대응 account가 없는 binding, 모순된 Provider 표시
+metadata, 올바르지 않은 complete binding, 범위를 벗어난 quote 없는 structured-profile 숫자를
+거절한다. 같은 scalar-style validator가 manual YAML과 managed YAML을 보호하므로 quote한
+숫자 모양 string은 string으로 남고 올바르지 않은 plain number가 조용히 string으로 바뀔 수 없다.
+
+Managed upsert는 exact complete coordinate 하나를 추가하거나 교체하고 unrelated entry를 모두
+보존하며 unset capture에서만 첫 ModelTarget preference를 함께 게시한다. Managed remove는 exact
+binding 하나를 지우고 같은 pair를 쓰는 managed sibling이 없을 때만 account를 제거하며, exact
+matching ModelTarget preference만 clear한다. Preference-only 준비는 managed array 둘의 의미를
+그대로 보존한다. 모든 mutation은 새 불투명 revision 하나를 예약하고 기존 old-or-exact-new CAS를
+사용한다. 파일이 없을 때 첫 write는 같은 디렉터리 exclusive publication, 이후 write는 durable
+atomic replacement를 사용한다. 계획한 revision과 byte가 정확히 같으면 idempotent success이고
+다른 revision은 conflict다.
+
+모든 live startup은 `config.yaml`과 `connections.yaml`을 capture한 뒤 complete-binding equality로
+manual과 managed entry를 합성한다. 같은 entry는 `manual-and-managed` provenance를 유지한 채
+하나로 합치고, manual 표시 metadata가 우선하며 빠진 값은 managed 표시가 채운다. 같은 Provider,
+Account, Model에서 field가 다르면 어느 source도 선택하지 않고 non-secret 차이 field 이름을 담은
+`BindingConflict`를 반환한다. 합성 catalog는 초기 선택, resume matching, live model picker가 쓴다.
+
+`yo default TARGET`, `yo default --unset`, 명시적 `yo connect host:codex`는 계속 nonblocking
+process operation lock 하나를 사용하고 pending multi-repository work를 먼저 해결하며, target
+admission 또는 Local Codex 검증과 마지막 configuration guard 뒤 public CAS 하나를 게시한다. 이
+preference-only command는 operation journal을 만들거나 credential revision을 확인하지 않고,
+다시 encode할 때 managed entry를 보존한다. Credential을 바꾸는 external connect와 disconnect
+command orchestration은 아직 이 구현 경로 밖에 있으며 preference-only recovery를 빌리지 않고
+명시적으로 실패한다.
 
 repository가
 없으면 빈 목록을 반환하고 상태를 만들지 않는다.

@@ -18,8 +18,6 @@ use yo_core::{
     NormalizedEndpoint, ProviderId, StartupTarget, VersionedProfileId,
 };
 
-mod profile_numbers;
-
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const MAX_DATE_FORMAT_BYTES: usize = 128;
@@ -66,6 +64,10 @@ impl Config {
 
     pub(crate) fn model_catalog(&self) -> &ModelCatalog {
         &self.model_catalog
+    }
+
+    pub(crate) fn replace_model_catalog(&mut self, model_catalog: ModelCatalog) {
+        self.model_catalog = model_catalog;
     }
 
     pub(crate) fn startup_target(&self) -> Option<&StartupTarget> {
@@ -463,8 +465,8 @@ fn parse_snapshot(
     contents: &str,
     snapshot: ConfigSnapshot,
 ) -> Result<Config, ConfigError> {
-    profile_numbers::validate_plain_number_spellings(contents)
-        .map_err(|message| invalid_model(path, message))?;
+    yo_core::validate_profile_yaml_number_spellings(contents)
+        .map_err(|error| invalid_model(path, error.to_string()))?;
     let decoded: FileConfig =
         serde_norway::from_str(contents).map_err(|source| ConfigError::InvalidYaml {
             path: path.to_owned(),

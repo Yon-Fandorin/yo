@@ -7,6 +7,10 @@ use super::{
     ModelServiceError, ProviderId, VersionedProfileId,
 };
 
+mod composition;
+
+pub use composition::BindingConflict;
+
 const MAX_DISPLAY_NAME_BYTES: usize = 256;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -15,6 +19,14 @@ pub struct ModelCatalogEntry {
     provider_display_name: Option<String>,
     account_display_name: Option<String>,
     model_display_name: Option<String>,
+    provenance: ModelCatalogProvenance,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModelCatalogProvenance {
+    Manual,
+    Managed,
+    ManualAndManaged,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,6 +54,7 @@ impl ModelCatalogEntry {
             provider_display_name,
             account_display_name,
             model_display_name,
+            provenance: ModelCatalogProvenance::Manual,
         })
     }
 
@@ -61,6 +74,7 @@ impl ModelCatalogEntry {
             account_display_name,
             model_display_name,
             binding: CatalogBinding::Complete(binding),
+            provenance: ModelCatalogProvenance::Manual,
         })
     }
 
@@ -108,6 +122,11 @@ impl ModelCatalogEntry {
             CatalogBinding::Legacy { .. } => None,
             CatalogBinding::Complete(binding) => Some(binding),
         }
+    }
+
+    #[must_use]
+    pub const fn provenance(&self) -> ModelCatalogProvenance {
+        self.provenance
     }
 }
 
@@ -282,7 +301,7 @@ where
     }
 }
 
-fn validate_display_name(
+pub(super) fn validate_display_name(
     label: &'static str,
     value: Option<&str>,
 ) -> Result<(), ModelServiceError> {
