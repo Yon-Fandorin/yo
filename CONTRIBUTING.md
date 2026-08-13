@@ -166,6 +166,15 @@ allowed write-set is closed, so every omitted path is forbidden. Commands in
 the check lists are reviewable evidence declarations and are never executed
 from the JSON. Before dispatch, run:
 
+Lease an exact file when the accepted responsibility is confined to that
+file. When the same cohesive responsibility can reasonably require a new
+sibling implementation, fixture, or focused test file, lease the narrowest
+owning subtree with `/**` before work starts. Do not use a crate-wide or other
+broad subtree merely to avoid coordination, and do not use a subtree lease to
+absorb a second responsibility. This keeps ordinary module extraction and
+finding resolution inside the reviewed ownership boundary without turning the
+write-set into an open scope.
+
 ```bash
 cargo xtask check slice-parallel <left.json> <right.json>
 ```
@@ -314,6 +323,13 @@ After a command fails, classify the failure and change the input or state before
 retrying. Rerun a validation group only when its reviewed inputs changed or at a
 declared Slice gate.
 
+If a required full suite fails outside the changed boundary, run each exact
+failing test once in isolation to classify timing or shared-load sensitivity.
+An isolated pass is diagnostic evidence, not a replacement for the failed
+gate: rerun the original required suite and count both suite attempts and the
+classification runs in the Slice close metrics. Do not loop retries or weaken
+the assertion to manufacture a pass.
+
 Before publishing immutable review input, finish the coordinator's actual-code
 check and freeze the candidate, fixture prerequisites, planned Developer Docs
 impact, review questions, and uniquely named validation evidence. Run
@@ -331,6 +347,28 @@ must name why a smaller accepted outcome cannot preserve the contract and must
 receive preliminary human authorization for that sizing exception before
 external review. The completed exact Slice still receives its ordinary final
 human-attention disposition after review and integration readiness.
+
+At the first ready preflight, record why the configured maximum is appropriate
+for the selected review route. Do not select or increase a maximum merely to
+avoid a sizing gate. When managed payload is at or above 80% of that maximum,
+or a later request increases the maximum, write a compact split assessment in
+local Slice coordination before publication. Separate fixed ContextBuild and
+repository-authority costs from candidate-specific diff and evidence costs,
+estimate the plausible responsibility and failure-boundary splits, and record
+the decision.
+
+For this assessment, a material reduction is at least the greater of 2,000
+managed tokens or 10% of the configured maximum. Split when an estimate
+reduces total reviewer payload by that amount, or reduces the largest required
+packet by that amount while increasing total payload by less than that same
+amount, without breaking the accepted outcome. Remaining whole is also valid
+when measured section costs show that no plausible responsibility split meets
+either comparison because it would mostly duplicate fixed input; record the
+estimated before-and-after values instead of requesting unnecessary human
+authorization. An indivisible candidate-specific sizing exception still
+requires the preliminary human authorization described above. The threshold
+is an early-warning gate, not permission to reduce required authority, diff,
+evidence, or review lenses.
 
 Run the declared complete candidate baseline after the last implementation
 change and before publishing its full review packet. A finding-resolution
