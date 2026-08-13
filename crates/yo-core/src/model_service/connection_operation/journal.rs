@@ -239,7 +239,7 @@ impl ConnectionOperationJournalEntry {
         Ok(advanced)
     }
 
-    fn next_phase(&self) -> Option<ConnectionOperationPhase> {
+    pub(super) fn next_phase(&self) -> Option<ConnectionOperationPhase> {
         use ConnectionOperationPhase::{
             Complete, CredentialCommitted, CredentialRemoved, Intent, PublicCommitted,
         };

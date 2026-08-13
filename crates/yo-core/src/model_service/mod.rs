@@ -15,9 +15,12 @@ pub use catalog::{
     ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelTokenCounter, ModelTokenCounterError,
 };
 pub use connection_operation::{
-    ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationJournalEntry,
+    ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationExecutionError,
+    ConnectionOperationExecutionOutcome, ConnectionOperationJournalEntry,
     ConnectionOperationJournalRepository, ConnectionOperationKind, ConnectionOperationPhase,
-    ConnectionOperationRecovery, LocalConnectionOperationJournal, plan_connection_recovery,
+    ConnectionOperationRecovery, ConnectionOperationRepositoryKind,
+    LocalConnectionOperationJournal, LocalConnectionOperationRepositories,
+    LocalConnectionOperationSession, plan_connection_recovery,
 };
 pub use connection_repository::{
     ConnectionCommit, ConnectionRepository, ConnectionRepositoryError, ConnectionRevision,
