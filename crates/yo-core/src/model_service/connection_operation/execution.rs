@@ -1,4 +1,9 @@
-use std::{error::Error, fmt, path::PathBuf};
+use std::{
+    error::Error,
+    fmt, fs,
+    os::unix::fs::{MetadataExt, OpenOptionsExt},
+    path::{Component, Path, PathBuf},
+};
 
 use super::{
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationJournalEntry,
@@ -64,6 +69,8 @@ pub enum ConnectionOperationExecutionError {
         phase: ConnectionOperationPhase,
         source: ConnectionOperationError,
     },
+    #[cfg(test)]
+    InjectedInterruption,
 }
 
 impl fmt::Display for ConnectionOperationExecutionError {
@@ -113,6 +120,10 @@ impl fmt::Display for ConnectionOperationExecutionError {
                 formatter,
                 "{kind:?} recovery at {phase:?} with {action:?} failed in the operation journal: {source}"
             ),
+            #[cfg(test)]
+            Self::InjectedInterruption => {
+                formatter.write_str("connection recovery interrupted at an injected test boundary")
+            },
         }
     }
 }
@@ -124,6 +135,8 @@ impl Error for ConnectionOperationExecutionError {
             Self::OperationLock(source) | Self::PublicRepository { source, .. } => Some(source),
             Self::JournalCapture(source) | Self::Journal { source, .. } => Some(source),
             Self::CredentialRepository { source, .. } => Some(source),
+            #[cfg(test)]
+            Self::InjectedInterruption => None,
         }
     }
 }
@@ -137,6 +150,7 @@ pub struct LocalConnectionOperationRepositories {
     connections: LocalConnectionRepository,
     credentials: LocalCredentialRepository,
     journal: LocalConnectionOperationJournal,
+    directory: PathBuf,
 }
 
 impl LocalConnectionOperationRepositories {
@@ -164,6 +178,7 @@ impl LocalConnectionOperationRepositories {
             &connection_path,
             CONNECTION_FILE,
         )?;
+        validate_path_components(ConnectionOperationRepositoryKind::Public, parent)?;
         for (repository, path, filename) in [
             (
                 ConnectionOperationRepositoryKind::Credential,
@@ -183,11 +198,14 @@ impl LocalConnectionOperationRepositories {
                     path: path.clone(),
                 });
             }
+            validate_path_components(repository, observed_parent)?;
         }
+        let directory = parent.to_owned();
         Ok(Self {
             connections: LocalConnectionRepository::new(connection_path),
             credentials: LocalCredentialRepository::new(credential_path),
             journal: LocalConnectionOperationJournal::new(journal_path),
+            directory,
         })
     }
 
@@ -209,13 +227,16 @@ impl LocalConnectionOperationRepositories {
     pub fn acquire(
         &self,
     ) -> Result<LocalConnectionOperationSession<'_>, ConnectionOperationExecutionError> {
+        validate_path_components(ConnectionOperationRepositoryKind::Public, &self.directory)?;
         let guard = self
             .connections
             .acquire_operation()
             .map_err(ConnectionOperationExecutionError::OperationLock)?;
+        let directory_identity = LocalDirectoryIdentity::capture(&self.directory)?;
         Ok(LocalConnectionOperationSession {
             repositories: self,
             guard,
+            directory_identity,
         })
     }
 }
@@ -224,12 +245,21 @@ impl LocalConnectionOperationRepositories {
 pub struct LocalConnectionOperationSession<'a> {
     repositories: &'a LocalConnectionOperationRepositories,
     guard: LocalConnectionOperationGuard,
+    directory_identity: LocalDirectoryIdentity,
 }
 
 impl LocalConnectionOperationSession<'_> {
     pub fn recover_pending_operation(
         &mut self,
     ) -> Result<ConnectionOperationExecutionOutcome, ConnectionOperationExecutionError> {
+        self.recover_pending_operation_with(|_| Ok(()))
+    }
+
+    fn recover_pending_operation_with(
+        &mut self,
+        mut observe: impl FnMut(RecoveryStep) -> Result<(), ConnectionOperationExecutionError>,
+    ) -> Result<ConnectionOperationExecutionOutcome, ConnectionOperationExecutionError> {
+        self.directory_identity.revalidate()?;
         let Some(entry) = self
             .repositories
             .journal
@@ -238,7 +268,27 @@ impl LocalConnectionOperationSession<'_> {
         else {
             return Ok(ConnectionOperationExecutionOutcome::NoPendingOperation);
         };
-        execute_recovery(self.repositories, &mut self.guard, entry)
+        execute_recovery(
+            self.repositories,
+            &self.directory_identity,
+            &mut self.guard,
+            entry,
+            &mut observe,
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn recover_pending_operation_until(
+        &mut self,
+        stop: RecoveryStep,
+    ) -> Result<ConnectionOperationExecutionOutcome, ConnectionOperationExecutionError> {
+        self.recover_pending_operation_with(|step| {
+            if step == stop {
+                Err(ConnectionOperationExecutionError::InjectedInterruption)
+            } else {
+                Ok(())
+            }
+        })
     }
 }
 
@@ -257,7 +307,7 @@ fn validated_parent<'a>(
             path: path.to_owned(),
         });
     };
-    if !valid_filename {
+    if !path.is_absolute() || !valid_filename {
         return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
             repository,
             path: path.to_owned(),
@@ -266,16 +316,117 @@ fn validated_parent<'a>(
     Ok(parent)
 }
 
+fn validate_path_components(
+    repository: ConnectionOperationRepositoryKind,
+    path: &Path,
+) -> Result<(), ConnectionOperationExecutionError> {
+    if !path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::RootDir | Component::Normal(_)))
+    {
+        return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
+            repository,
+            path: path.to_owned(),
+        });
+    }
+    let mut current = PathBuf::from("/");
+    for component in path.components().skip(1) {
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
+                    repository,
+                    path: current,
+                });
+            },
+            Ok(_) => {},
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => break,
+            Err(_) => {
+                return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
+                    repository,
+                    path: current,
+                });
+            },
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct LocalDirectoryIdentity {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+}
+
+impl LocalDirectoryIdentity {
+    fn capture(path: &Path) -> Result<Self, ConnectionOperationExecutionError> {
+        validate_path_components(ConnectionOperationRepositoryKind::Public, path)?;
+        let directory = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_DIRECTORY)
+            .open(path)
+            .map_err(
+                |_| ConnectionOperationExecutionError::InvalidRepositoryLayout {
+                    repository: ConnectionOperationRepositoryKind::Public,
+                    path: path.to_owned(),
+                },
+            )?;
+        let metadata = directory.metadata().map_err(|_| {
+            ConnectionOperationExecutionError::InvalidRepositoryLayout {
+                repository: ConnectionOperationRepositoryKind::Public,
+                path: path.to_owned(),
+            }
+        })?;
+        if !metadata.is_dir() || metadata.uid() != rustix::process::geteuid().as_raw() {
+            return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
+                repository: ConnectionOperationRepositoryKind::Public,
+                path: path.to_owned(),
+            });
+        }
+        Ok(Self {
+            path: path.to_owned(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+
+    fn revalidate(&self) -> Result<(), ConnectionOperationExecutionError> {
+        let observed = Self::capture(&self.path)?;
+        if (observed.device, observed.inode) != (self.device, self.inode) {
+            return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
+                repository: ConnectionOperationRepositoryKind::Public,
+                path: self.path.clone(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RecoveryStep {
+    JournalAbandoned,
+    JournalAdvanced(ConnectionOperationPhase),
+    PublicCommitted,
+    CredentialRemoved,
+    JournalCleared,
+}
+
 fn execute_recovery(
     repositories: &LocalConnectionOperationRepositories,
+    directory_identity: &LocalDirectoryIdentity,
     guard: &mut LocalConnectionOperationGuard,
     entry: ConnectionOperationJournalEntry,
+    observe: &mut impl FnMut(RecoveryStep) -> Result<(), ConnectionOperationExecutionError>,
 ) -> Result<ConnectionOperationExecutionOutcome, ConnectionOperationExecutionError> {
     let recovered_from = entry.phase();
+    directory_identity.revalidate()?;
     let credentials = repositories
         .credentials
         .capture()
         .map_err(|source| credential_error(&entry, source))?;
+    directory_identity.revalidate()?;
     let connections = repositories
         .connections
         .capture()
@@ -286,10 +437,12 @@ fn execute_recovery(
     let action = entry.credential_action();
     let outcome = match decision {
         ConnectionOperationRecovery::Abandon => {
+            directory_identity.revalidate()?;
             repositories
                 .journal
                 .abandon_intent(guard, &entry)
                 .map_err(|source| journal_error(&entry, source))?;
+            observe(RecoveryStep::JournalAbandoned)?;
             ConnectionOperationExecutionOutcome::Abandoned { kind, action }
         },
         ConnectionOperationRecovery::CommitPublic => {
@@ -298,18 +451,24 @@ fn execute_recovery(
                 guard,
                 entry,
                 ConnectionOperationPhase::CredentialCommitted,
+                directory_identity,
+                observe,
             )?;
+            directory_identity.revalidate()?;
             repositories
                 .connections
                 .commit(entry.connection_mutation())
                 .map_err(|source| public_error(&entry, source))?;
+            observe(RecoveryStep::PublicCommitted)?;
             entry = advance_to(
                 repositories,
                 guard,
                 entry,
                 ConnectionOperationPhase::PublicCommitted,
+                directory_identity,
+                observe,
             )?;
-            complete_and_clear(repositories, guard, entry)?;
+            complete_and_clear(repositories, directory_identity, guard, entry, observe)?;
             ConnectionOperationExecutionOutcome::Completed {
                 kind,
                 action,
@@ -322,21 +481,27 @@ fn execute_recovery(
                 guard,
                 entry,
                 ConnectionOperationPhase::PublicCommitted,
+                directory_identity,
+                observe,
             )?;
             let mutation = entry
                 .credential_mutation()
                 .expect("disconnect-remove journal entries always contain a mutation");
+            directory_identity.revalidate()?;
             repositories
                 .credentials
                 .commit(mutation, None)
                 .map_err(|source| credential_error(&entry, source))?;
+            observe(RecoveryStep::CredentialRemoved)?;
             entry = advance_to(
                 repositories,
                 guard,
                 entry,
                 ConnectionOperationPhase::CredentialRemoved,
+                directory_identity,
+                observe,
             )?;
-            complete_and_clear(repositories, guard, entry)?;
+            complete_and_clear(repositories, directory_identity, guard, entry, observe)?;
             ConnectionOperationExecutionOutcome::Completed {
                 kind,
                 action,
@@ -344,7 +509,7 @@ fn execute_recovery(
             }
         },
         ConnectionOperationRecovery::Complete => {
-            complete_and_clear(repositories, guard, entry)?;
+            complete_and_clear(repositories, directory_identity, guard, entry, observe)?;
             ConnectionOperationExecutionOutcome::Completed {
                 kind,
                 action,
@@ -360,34 +525,44 @@ fn advance_to(
     guard: &mut LocalConnectionOperationGuard,
     mut entry: ConnectionOperationJournalEntry,
     target: ConnectionOperationPhase,
+    directory_identity: &LocalDirectoryIdentity,
+    observe: &mut impl FnMut(RecoveryStep) -> Result<(), ConnectionOperationExecutionError>,
 ) -> Result<ConnectionOperationJournalEntry, ConnectionOperationExecutionError> {
     while entry.phase() != target {
         let next = entry
             .next_phase()
             .ok_or_else(|| journal_error(&entry, ConnectionOperationError::InvalidEntry))?;
+        directory_identity.revalidate()?;
         entry = repositories
             .journal
             .advance(guard, &entry, next)
             .map_err(|source| journal_error(&entry, source))?;
+        observe(RecoveryStep::JournalAdvanced(next))?;
     }
     Ok(entry)
 }
 
 fn complete_and_clear(
     repositories: &LocalConnectionOperationRepositories,
+    directory_identity: &LocalDirectoryIdentity,
     guard: &mut LocalConnectionOperationGuard,
     entry: ConnectionOperationJournalEntry,
+    observe: &mut impl FnMut(RecoveryStep) -> Result<(), ConnectionOperationExecutionError>,
 ) -> Result<(), ConnectionOperationExecutionError> {
     let entry = advance_to(
         repositories,
         guard,
         entry,
         ConnectionOperationPhase::Complete,
+        directory_identity,
+        observe,
     )?;
+    directory_identity.revalidate()?;
     repositories
         .journal
         .clear_complete(guard, &entry)
-        .map_err(|source| journal_error(&entry, source))
+        .map_err(|source| journal_error(&entry, source))?;
+    observe(RecoveryStep::JournalCleared)
 }
 
 fn public_error(

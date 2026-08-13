@@ -606,14 +606,20 @@ remove only after the public snapshot is exact planned, or preserves the exact
 credential revision without mutation. A phase ahead of repository facts, a
 credential-first disconnect, a different public winner, or any unlisted state
 is a typed conflict without exposing a private credential revision. External
-`LocalConnectionOperationRepositories` admits only the three closed sibling
-filenames in one lexical directory before acquiring the shared operation lock.
-Its retained session captures the journal and executes only the state-table
-decision: it abandons an uncommitted intent, catches a lagging phase up before
-and after the exact next repository CAS, or advances an already completed
-repository pair through `complete` and clears the exact journal. Connect
-recovery never reconstructs or commits a secret; disconnect removal passes no
-candidate, while preserve never calls the credential mutation boundary.
+`LocalConnectionOperationRepositories` admits only absolute normalized paths
+with the three closed sibling filenames in one lexical directory and rejects a
+symbolic-link component before acquiring the shared operation lock. The
+retained session captures that directory's device and inode after lock
+acquisition, then checks the pathname components and directory identity again
+before each journal or repository capture and effect. A directory replacement
+or symbolic-link retarget therefore fails before that next mutation. This is a
+fail-closed pathname revalidation boundary, not an atomic directory-descriptor
+anchor across the check and following filesystem call. The session executes
+only the state-table decision: it abandons an uncommitted intent, catches a
+lagging phase up before and after the exact next repository CAS, or advances an
+already completed repository pair through `complete` and clears the exact
+journal. Connect recovery never reconstructs or commits a secret; disconnect
+removal passes no candidate, while preserve never calls the credential mutation boundary.
 Repository and journal failures retain the safe operation kind, action, and
 phase without projecting a private credential revision. External connect and
 disconnect remain disabled until command orchestration composes this executor

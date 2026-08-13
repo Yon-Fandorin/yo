@@ -572,13 +572,18 @@ expected/expected를 abandon하고 public snapshot이 exact planned가 된 뒤�
 commit하거나, exact credential revision을 mutation 없이 preserve한다. Repository 사실보다
 앞선 phase, credential-first disconnect, 다른 public winner, 계약에 없는 모든 상태는 private
 credential revision을 노출하지 않는 typed conflict다.
-`LocalConnectionOperationRepositories`는 shared operation lock을 얻기 전에 lexical directory
-하나에 있는 닫힌 sibling 파일명 세 개만 허용한다. Lock을 유지하는 session은 journal을
-capture한 뒤 state table이 정한 결정만 실행한다. Commit되지 않은 intent는 abandon하고,
-뒤처진 phase는 정확한 다음 repository CAS 앞뒤로 따라잡으며, repository pair가 이미
-완료된 경우에는 `complete`까지 전진한 뒤 exact journal을 지운다. Connect recovery는
-secret을 재구성하거나 commit하지 않는다. Disconnect remove는 candidate 없이 commit하고
-preserve는 credential mutation boundary를 호출하지 않는다. Repository와 journal 오류는
+`LocalConnectionOperationRepositories`는 shared operation lock을 얻기 전에 absolute normalized
+path, lexical directory 하나, 닫힌 sibling 파일명 세 개만 허용하고 symbolic-link component를
+거절한다. Lock을 유지하는 session은 획득 직후 directory의 device와 inode를 capture하고,
+각 journal·repository capture와 effect 전에 pathname component와 directory identity를 다시
+검사한다. 따라서 directory replacement나 symbolic-link retarget은 그 다음 mutation 전에
+실패한다. 이 보장은 검사와 뒤따르는 filesystem call을 하나로 묶는 원자적 directory-descriptor
+anchor가 아니라 fail-closed pathname 재검증 경계다. Session은 journal을 capture한 뒤 state
+table이 정한 결정만 실행한다. Commit되지 않은 intent는 abandon하고, 뒤처진 phase는 정확한
+다음 repository CAS 앞뒤로 따라잡으며, repository pair가 이미 완료된 경우에는 `complete`까지
+전진한 뒤 exact journal을 지운다. Connect recovery는 secret을 재구성하거나 commit하지 않는다.
+Disconnect remove는 candidate 없이 commit하고 preserve는 credential mutation boundary를
+호출하지 않는다. Repository와 journal 오류는
 private credential revision을 투영하지 않고 안전한 operation kind, action, phase만 유지한다.
 External connect와 disconnect는 command orchestration이 이 executor를 typed managed entry,
 verification, 마지막 config guard와 조합할 때까지 비활성 상태다.
