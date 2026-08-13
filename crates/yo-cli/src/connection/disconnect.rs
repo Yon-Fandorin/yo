@@ -52,6 +52,7 @@ fn execute_external_disconnect_with(
         &selection,
         &startup_policy,
         config.startup_target().cloned(),
+        command.verbose,
     )?;
     let prepared = session
         .prepare_external_disconnect(
@@ -164,6 +165,7 @@ impl ExternalDisconnectPlan {
         selection: &ModelSelection,
         startup_policy: &StartupPolicy,
         operator_target: Option<StartupTarget>,
+        verbose: bool,
     ) -> Result<Self, AppError> {
         let removed = snapshot
             .managed_bindings()
@@ -217,11 +219,7 @@ impl ExternalDisconnectPlan {
                 (format!("Keep using {}", display_target(Some(target))), true)
             },
             Some(target) => (format!("Use {}", display_target(Some(target))), true),
-            None => (
-                "No startup target remains; configure or select one before starting a new session"
-                    .to_owned(),
-                false,
-            ),
+            None => ("No startup target remains".to_owned(), false),
         };
         let exact_binding_remains = prospective
             .resolve_model(selection.provider(), selection.account(), selection.model())
@@ -229,18 +227,21 @@ impl ExternalDisconnectPlan {
             .and_then(ModelCatalogEntry::complete_binding)
             == Some(removed.complete());
         let saved_sessions = if exact_binding_remains {
-            "Can resume through the equal manual configuration; history is kept"
+            "Resume through equal manual configuration; history stays"
         } else {
-            "May not resume until this exact model is restored; history is kept"
+            "Unavailable until this exact model is restored; history stays"
         };
         let api_key = match credential_action {
             ExternalDisconnectCredentialAction::Preserve => format!(
-                "Keep it because another configured model still uses {}:{}",
-                selection.provider(),
-                selection.account()
+                "Keep — still used by {}",
+                remaining
+                    .iter()
+                    .map(RemainingBinding::target)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             ExternalDisconnectCredentialAction::Remove => format!(
-                "Remove it because no configured model still uses {}:{}",
+                "Remove — no configured model uses {}:{}",
                 selection.provider(),
                 selection.account()
             ),
@@ -272,6 +273,7 @@ impl ExternalDisconnectPlan {
                 },
             ),
             remaining,
+            verbose,
         )));
         Ok(Self {
             credential_action,

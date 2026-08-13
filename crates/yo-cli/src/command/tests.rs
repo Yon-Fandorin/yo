@@ -79,7 +79,15 @@ fn connect_command_requires_one_exact_target() {
     assert_eq!(
         parse(["connect".into(), "host:codex".into()]).unwrap(),
         Command::Connect(ConnectCommand {
-            target: "host:codex".to_owned()
+            target: "host:codex".to_owned(),
+            verbose: false,
+        })
+    );
+    assert_eq!(
+        parse(["connect".into(), "host:codex".into(), "-v".into()]).unwrap(),
+        Command::Connect(ConnectCommand {
+            target: "host:codex".to_owned(),
+            verbose: true,
         })
     );
     assert!(parse(["connect".into()]).is_err());
@@ -96,6 +104,7 @@ fn disconnect_separates_interactive_selection_from_exact_automatic_authorization
             provider: None,
             account: None,
             yes: false,
+            verbose: false,
         })
     );
     assert_eq!(
@@ -111,6 +120,16 @@ fn disconnect_separates_interactive_selection_from_exact_automatic_authorization
             provider: Some("vendor".to_owned()),
             account: Some("team".to_owned()),
             yes: true,
+            verbose: false,
+        })
+    );
+    assert_eq!(
+        parse(["disconnect".into(), "-v".into()]).unwrap(),
+        Command::Disconnect(DisconnectCommand {
+            provider: None,
+            account: None,
+            yes: false,
+            verbose: true,
         })
     );
     assert!(parse(["disconnect".into(), "--yes".into()]).is_err());

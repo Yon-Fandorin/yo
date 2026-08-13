@@ -457,6 +457,7 @@ mod tests {
             &config_path,
             ConnectCommand {
                 target: "host:codex".to_owned(),
+                verbose: false,
             },
             || Err(AppError::message("verification failed")),
         )
@@ -504,6 +505,7 @@ mod tests {
             &config_path,
             ConnectCommand {
                 target: "host:codex".to_owned(),
+                verbose: false,
             },
             move || {
                 let mutation = racing_repository

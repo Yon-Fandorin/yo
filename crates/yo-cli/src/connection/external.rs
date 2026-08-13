@@ -67,15 +67,18 @@ fn execute_external_connect_with(
         .prepare_external_connection(config.snapshot_digest(), connection, verification_bindings)
         .map_err(|error| AppError::single("preparing the external connection", error))?;
 
-    let preview = Confirmation::Connect(Box::new(ConnectPreview::new(
-        target,
-        account,
-        default_after,
-        managed_change,
-        prepared.credential_action(),
-        default_changed,
-        binding_details,
-    )));
+    let preview = Confirmation::Connect(Box::new(
+        ConnectPreview::new(
+            target,
+            account,
+            default_after,
+            managed_change,
+            prepared.credential_action(),
+            default_changed,
+            binding_details,
+        )
+        .with_verbose(command.verbose),
+    ));
     if !input.confirm(&preview)? {
         return Ok("Connection cancelled; nothing changed.\n".to_owned());
     }
@@ -225,16 +228,23 @@ impl ExternalConnectPlan {
     }
 
     #[cfg(test)]
-    fn preview(&self, credential_action: yo_core::CredentialMutationAction) -> Confirmation {
-        Confirmation::Connect(Box::new(ConnectPreview::new(
-            self.target.clone(),
-            self.account.clone(),
-            self.default_after.clone(),
-            self.managed_change,
-            credential_action,
-            self.default_changed,
-            self.binding_details.clone(),
-        )))
+    fn preview(
+        &self,
+        credential_action: yo_core::CredentialMutationAction,
+        verbose: bool,
+    ) -> Confirmation {
+        Confirmation::Connect(Box::new(
+            ConnectPreview::new(
+                self.target.clone(),
+                self.account.clone(),
+                self.default_after.clone(),
+                self.managed_change,
+                credential_action,
+                self.default_changed,
+                self.binding_details.clone(),
+            )
+            .with_verbose(verbose),
+        ))
     }
 }
 
@@ -350,6 +360,7 @@ mod tests {
             &config_path,
             ConnectCommand {
                 target: "vendor:team:alpha".to_owned(),
+                verbose: false,
             },
             &mut input,
         )
@@ -358,7 +369,8 @@ mod tests {
         assert_eq!(output, "Connection cancelled; nothing changed.\n");
         let summary = input.summary.unwrap();
         assert!(summary.contains("vendor:team:alpha"));
-        assert!(summary.contains("+ API key\n      Save a new key"));
+        assert!(summary.contains("+ API key\n  Save for vendor:team"));
+        assert!(!summary.contains("Connection profile"));
         assert_eq!(input.credential_reads, 0);
         for name in [
             "connections.yaml",
@@ -401,6 +413,7 @@ mod tests {
             &config_path,
             ConnectCommand {
                 target: "vendor:team:alpha".to_owned(),
+                verbose: false,
             },
             &mut input,
         )
@@ -410,7 +423,7 @@ mod tests {
             input
                 .summary
                 .unwrap()
-                .contains("~ API key\n      Replace the saved key")
+                .contains("~ API key\n  Replace for vendor:team")
         );
         assert_eq!(
             yo_core::CredentialRepository::capture(&credentials)
@@ -449,11 +462,35 @@ mod tests {
 
         assert_eq!(plan.binding_count, 2);
         let preview = plan
-            .preview(yo_core::CredentialMutationAction::Replace)
+            .preview(yo_core::CredentialMutationAction::Replace, true)
             .render(super::super::presentation::default_width())
             .unwrap();
         assert!(preview.contains("vendor:team:alpha"));
         assert!(preview.contains("vendor:team:beta"));
+        let compact = plan
+            .preview(yo_core::CredentialMutationAction::Replace, false)
+            .render(std::num::NonZeroU16::new(160).unwrap())
+            .unwrap();
+        let credential_row = compact
+            .split("~ API key\n")
+            .nth(1)
+            .unwrap()
+            .split("\n= Default model")
+            .next()
+            .unwrap();
+        assert!(
+            credential_row.contains("verify 2 profiles:"),
+            "credential row: {credential_row:?}"
+        );
+        assert!(
+            credential_row.contains("vendor:team:alpha"),
+            "credential row: {credential_row:?}"
+        );
+        assert!(
+            credential_row.contains("vendor:team:beta"),
+            "credential row: {credential_row:?}"
+        );
+        assert!(!compact.contains("Connection profile"));
         assert_eq!(plan.preference, Some(StartupTarget::Model(selection)));
     }
 
@@ -533,7 +570,7 @@ mod tests {
 
         assert_eq!(plan.binding_count, 2);
         let preview = plan
-            .preview(yo_core::CredentialMutationAction::Replace)
+            .preview(yo_core::CredentialMutationAction::Replace, true)
             .render(super::super::presentation::default_width())
             .unwrap();
         assert!(preview.matches("vendor:team:alpha").count() >= 2);
@@ -541,7 +578,7 @@ mod tests {
         assert!(preview.contains("https://old.example.test/v1"));
         assert!(preview.contains("openai-responses"));
         assert!(preview.contains("openai-chat-completions"));
-        assert!(preview.contains("~ Managed connection\n      Update vendor:team:alpha"));
+        assert!(preview.contains("~ Managed connection\n  Update vendor:team:alpha"));
         assert!(preview.matches("{}").count() >= 3);
         assert!(preview.contains(r#"{"effort":"medium"}"#));
     }

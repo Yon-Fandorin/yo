@@ -286,15 +286,18 @@ mod tests {
             r#"{"provider":"vendor","account":"team","model":"alpha","connector":"openai-responses","base_url":"https://long-provider.example.test/compatible-mode/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":4096,"max_output_tokens":128,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
         )
         .unwrap();
-        let preview = Confirmation::Connect(Box::new(ConnectPreview::new(
-            "vendor:team:alpha".to_owned(),
-            "vendor:team".to_owned(),
-            "unset  →  vendor:team:alpha".to_owned(),
-            super::super::presentation::ManagedConnectionChange::Create,
-            yo_core::CredentialMutationAction::Add,
-            true,
-            vec![BindingDetails::from(&complete)],
-        )));
+        let preview = Confirmation::Connect(Box::new(
+            ConnectPreview::new(
+                "vendor:team:alpha".to_owned(),
+                "vendor:team".to_owned(),
+                "unset  →  vendor:team:alpha".to_owned(),
+                super::super::presentation::ManagedConnectionChange::Create,
+                yo_core::CredentialMutationAction::Add,
+                true,
+                vec![BindingDetails::from(&complete)],
+            )
+            .with_verbose(true),
+        ));
         let child = thread::spawn(move || {
             let mut input = TtyConnectionInput {
                 terminal: Some(File::from(pty.slave)),

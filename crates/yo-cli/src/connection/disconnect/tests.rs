@@ -53,6 +53,7 @@ fn automatic_unique_disconnect_removes_public_then_credential_without_prompt() {
             provider: Some("vendor".to_owned()),
             account: Some("team".to_owned()),
             yes: true,
+            verbose: false,
         },
         &mut input,
     )
@@ -104,6 +105,7 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
             provider: None,
             account: None,
             yes: false,
+            verbose: true,
         },
         &mut input,
     )
@@ -121,9 +123,9 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
     assert!(summary.contains("Connection being removed"));
     assert!(summary.contains("vendor:team:beta"));
     assert!(summary.contains("Keep vendor:team:alpha"));
-    assert!(summary.contains("Keep it because another configured model"));
+    assert!(summary.contains("Keep — still used by vendor:team:alpha"));
     assert!(summary.contains("vendor:team:alpha"));
-    assert!(summary.contains("May not resume until this exact model is restored"));
+    assert!(summary.contains("Unavailable until this exact model is restored"));
     assert_eq!(
         fixture
             .connections()
@@ -141,6 +143,28 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
             .resolve(&provider(), &account())
             .is_some()
     );
+
+    let mut compact_input = FakeInput {
+        selected: Some("vendor:team:beta".to_owned()),
+        confirmed: false,
+        selections: Vec::new(),
+        summaries: Vec::new(),
+    };
+    execute_external_disconnect_with(
+        &config_path,
+        DisconnectCommand {
+            provider: None,
+            account: None,
+            yes: false,
+            verbose: false,
+        },
+        &mut compact_input,
+    )
+    .unwrap();
+    let compact = &compact_input.summaries[0];
+    assert!(compact.contains("Keep — still used by vendor:team:alpha"));
+    assert!(!compact.contains("Connection being removed"));
+    assert!(!compact.contains("Still available for this account"));
 }
 
 // 같은 complete binding의 manual provenance가 남으면 managed provenance만 제거하고
@@ -164,6 +188,7 @@ fn equal_manual_binding_preserves_credential_and_preview_names_provenance_transi
             provider: Some("vendor".to_owned()),
             account: Some("team".to_owned()),
             yes: false,
+            verbose: true,
         },
         &mut input,
     )
@@ -173,7 +198,7 @@ fn equal_manual_binding_preserves_credential_and_preview_names_provenance_transi
     assert!(
         input.summaries[0].contains("Managed copy removed; equal manual configuration remains")
     );
-    assert!(input.summaries[0].contains("Can resume through the equal manual configuration"));
+    assert!(input.summaries[0].contains("Resume through equal manual configuration"));
     assert!(
         fixture
             .credentials()
@@ -211,6 +236,7 @@ fn preview_resolves_the_exact_lower_priority_startup_target() {
             &selection,
             &policy,
             operator_target,
+            false,
         )
         .unwrap();
         let preview = plan
@@ -218,7 +244,7 @@ fn preview_resolves_the_exact_lower_priority_startup_target() {
             .render(super::super::presentation::default_width())
             .unwrap();
 
-        assert!(preview.contains("✓ New sessions\n      Use host:codex"));
+        assert!(preview.contains("✓ New sessions\n  Use host:codex"));
         assert!(!preview.contains("No startup target remains"));
     }
 }
@@ -244,13 +270,14 @@ fn command_preview_uses_the_captured_operator_startup_target() {
             provider: Some("vendor".to_owned()),
             account: Some("team".to_owned()),
             yes: false,
+            verbose: false,
         },
         &mut input,
     )
     .unwrap();
 
     assert_eq!(output, "Disconnect cancelled; nothing changed.\n");
-    assert!(input.summaries[0].contains("✓ New sessions\n      Use host:codex"));
+    assert!(input.summaries[0].contains("✓ New sessions\n  Use host:codex"));
     assert!(!input.summaries[0].contains("No startup target remains"));
     assert_eq!(
         fixture.connections().capture().unwrap().preference(),
@@ -281,6 +308,7 @@ fn automatic_ambiguity_and_manual_only_targets_fail_before_mutation() {
             provider: Some("vendor".to_owned()),
             account: Some("team".to_owned()),
             yes: true,
+            verbose: false,
         },
         &mut input,
     )
@@ -295,6 +323,7 @@ fn automatic_ambiguity_and_manual_only_targets_fail_before_mutation() {
             provider: Some("vendor".to_owned()),
             account: Some("team".to_owned()),
             yes: true,
+            verbose: false,
         },
         &mut input,
     )
@@ -324,14 +353,17 @@ fn last_binding_preview_warns_about_remove_continuation_risk() {
             provider: Some("vendor".to_owned()),
             account: Some("team".to_owned()),
             yes: false,
+            verbose: false,
         },
         &mut input,
     )
     .unwrap();
 
     assert_eq!(output, "Disconnect cancelled; nothing changed.\n");
-    assert!(input.summaries[0].contains("Remove it because no configured model"));
-    assert!(input.summaries[0].contains("May not resume until this exact model is restored"));
+    assert!(input.summaries[0].contains("Remove — no configured model uses vendor:team"));
+    assert!(input.summaries[0].contains("Unavailable until this exact model is restored"));
+    assert!(!input.summaries[0].contains("Connection being removed"));
+    assert!(!input.summaries[0].contains("Still available for this account"));
 }
 
 struct ConfigChangingInput {
@@ -372,6 +404,7 @@ fn changed_config_after_confirmation_aborts_before_disconnect_intent() {
             provider: Some("vendor".to_owned()),
             account: Some("team".to_owned()),
             yes: false,
+            verbose: false,
         },
         &mut input,
     )
@@ -414,6 +447,7 @@ fn pending_recovery_failure_precedes_new_disconnect_input() {
             provider: None,
             account: None,
             yes: false,
+            verbose: false,
         },
         &mut input,
     )

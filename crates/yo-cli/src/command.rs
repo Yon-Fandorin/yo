@@ -60,6 +60,10 @@ struct ConnectArguments {
     /// Exact target to verify and connect.
     #[arg(value_name = "TARGET", allow_hyphen_values = true)]
     target: String,
+
+    /// Show the exact connection profile in the confirmation.
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -75,6 +79,10 @@ struct DisconnectArguments {
     /// Apply the captured unambiguous plan without an interactive confirmation.
     #[arg(long, requires_all = ["provider", "account"])]
     yes: bool,
+
+    /// Show provenance, the exact profile, and remaining models in the confirmation.
+    #[arg(short, long)]
+    verbose: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -140,6 +148,7 @@ pub(crate) enum Command {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConnectCommand {
     pub(crate) target: String,
+    pub(crate) verbose: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,6 +156,7 @@ pub(crate) struct DisconnectCommand {
     pub(crate) provider: Option<String>,
     pub(crate) account: Option<String>,
     pub(crate) yes: bool,
+    pub(crate) verbose: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -176,11 +186,13 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
     match cli.command {
         Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {
             target: arguments.target,
+            verbose: arguments.verbose,
         })),
         Some(CliCommand::Disconnect(arguments)) => Ok(Command::Disconnect(DisconnectCommand {
             provider: arguments.provider,
             account: arguments.account,
             yes: arguments.yes,
+            verbose: arguments.verbose,
         })),
         Some(CliCommand::Default(arguments)) => Ok(Command::Default(DefaultCommand {
             target: arguments.target,

@@ -649,24 +649,26 @@ forms the union of every complete manual and currently managed binding for that
 Provider and Account, plus the prospective selected binding. A retained legacy
 binding fails before prompting because its full behavior cannot be verified.
 The prospective managed upsert must also compose with the complete manual
-catalog and pass startup-policy admission before any secret is read. Yo lists
-every distinct complete binding with its non-secret endpoint, dialect, and
-resolved profile fields, requires confirmation, then reads one bounded API key
-only from the controlling TTY with echo disabled and exact terminal settings
+catalog and pass startup-policy admission before any secret is read. Yo
+requires confirmation, then reads one bounded API key only from the controlling
+TTY with echo disabled and exact terminal settings
 restored. If explicit restoration reports an error, the retained guard retries
 restoration while unwinding. Environment,
 arguments, standard input, and config files are not credential channels.
 The confirmation presents the selected target, then uses stable semantic plan
 markers (`+`, `~`, `−`, and `=`) to distinguish create, change, remove, and keep
-effects before one structured exact-detail section per verified profile. The
-credential row is derived from the prepared repository action, so adding a new
-key and replacing an existing key cannot share misleading copy. A concise plan
-count and checked success summary close the command. Color and emphasis augment
-those markers only on a terminal; `NO_COLOR` and redirected standard output stay
-plain. The presenter reads the controlling TTY width and wraps terminal-safe
-nonzero-width graphemes itself, preserving exact non-secret value bytes rather
-than relying on the shell's incidental line wrapping; an unavailable width uses
-an 80-column fallback.
+effects. The default view keeps that decision-facing change set, the exact
+target references for every profile verified with the key, and a concise plan
+count. `-v` or `--verbose` additionally lists every distinct complete binding
+in one structured exact-detail section with its non-secret endpoint, dialect,
+and resolved profile fields. The credential row is derived
+from the prepared repository action, so adding a new key and replacing an
+existing key cannot share misleading copy. A checked success summary closes the
+command. Color and emphasis augment those markers only on a terminal; `NO_COLOR`
+and redirected standard output stay plain. The presenter reads the controlling
+TTY width and wraps terminal-safe nonzero-width graphemes itself, preserving
+exact non-secret value bytes rather than relying on the shell's incidental line
+wrapping; an unavailable width uses an 80-column fallback.
 
 The candidate key is used—without fallback to a stored key—to issue one bounded,
 no-tool semantic request for every captured binding profile. Each verification
@@ -686,12 +688,12 @@ exact captured `Provider:Account:Model` reference. Automatic execution requires
 pair has exactly one managed target; `--yes` never guesses among multiple
 models. A manual-only match directs the operator to edit `config.yaml` because
 the command removes only managed provenance. Before confirmation, Yo composes
-the prospective managed removal with the captured manual catalog and lists the
-exact removed complete binding, provenance transition, stored-preference
-transition, remaining bindings for the pair, derived credential action, and
-resume risk. The decision-first preview uses the same semantic plan markers for
-the default and API-key changes plus new- versus saved-Session effects before the
-removed binding's structured exact-detail section. It resolves the prospective
+the prospective managed removal with the captured manual catalog. The compact
+default preview uses the same semantic plan markers for the managed removal,
+default and API-key changes, and new- versus saved-Session effects. Its API-key
+row names every remaining model that still depends on that key. `-v` or
+`--verbose` also shows the exact removed complete binding, provenance
+transition, and remaining bindings for the pair. The preview resolves the prospective
 startup layers and names the exact lower-priority target for new Sessions, or
 states that no target remains; it does not infer that behavior from preference
 removal alone. Remaining account models are compact references, so an equal

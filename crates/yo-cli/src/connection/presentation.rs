@@ -219,6 +219,12 @@ impl RemainingBinding {
         }
     }
 
+    pub(super) fn target(&self) -> &str {
+        match self {
+            Self::Complete { target } | Self::Legacy { target } => target,
+        }
+    }
+
     fn render(
         &self,
         output: &mut String,
@@ -276,6 +282,7 @@ pub(super) struct ConnectPreview {
     managed_change: ManagedConnectionChange,
     credential_action: CredentialMutationAction,
     default_changed: bool,
+    verbose: bool,
     bindings: Vec<BindingDetails>,
 }
 
@@ -296,8 +303,14 @@ impl ConnectPreview {
             managed_change,
             credential_action,
             default_changed,
+            verbose: false,
             bindings,
         }
+    }
+
+    pub(super) const fn with_verbose(mut self, verbose: bool) -> Self {
+        self.verbose = verbose;
+        self
     }
 
     fn render(
@@ -327,23 +340,31 @@ impl ConnectPreview {
             style,
         )?;
         counts.record(managed_action);
+        let verified_targets = self
+            .bindings
+            .iter()
+            .map(|binding| binding.target.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         let (credential_action, credential_detail) = match self.credential_action {
             CredentialMutationAction::Add => (
                 PlanAction::Add,
                 format!(
-                    "Save a new key for {} after verifying {} exact model {}",
+                    "Save for {} · verify {} {}: {}",
                     self.account,
                     self.bindings.len(),
                     plural(self.bindings.len(), "profile", "profiles"),
+                    verified_targets,
                 ),
             ),
             CredentialMutationAction::Replace => (
                 PlanAction::Change,
                 format!(
-                    "Replace the saved key for {} after verifying {} exact model {}",
+                    "Replace for {} · verify {} {}: {}",
                     self.account,
                     self.bindings.len(),
                     plural(self.bindings.len(), "profile", "profiles"),
+                    verified_targets,
                 ),
             ),
             CredentialMutationAction::Remove => {
@@ -375,23 +396,25 @@ impl ConnectPreview {
             style,
         )?;
         counts.record(default_action);
-        output.push('\n');
-        let multiple = self.bindings.len() > 1;
-        for (index, binding) in self.bindings.iter().enumerate() {
-            if index > 0 {
-                output.push('\n');
+        if self.verbose {
+            output.push('\n');
+            let multiple = self.bindings.len() > 1;
+            for (index, binding) in self.bindings.iter().enumerate() {
+                if index > 0 {
+                    output.push('\n');
+                }
+                let heading = if multiple {
+                    format!(
+                        "Connection profile {} of {}",
+                        index + 1,
+                        self.bindings.len()
+                    )
+                } else {
+                    "Connection profile".to_owned()
+                };
+                push_section_heading(&mut output, &heading, width, style)?;
+                binding.render(&mut output, width, style)?;
             }
-            let heading = if multiple {
-                format!(
-                    "Connection profile {} of {}",
-                    index + 1,
-                    self.bindings.len()
-                )
-            } else {
-                "Connection profile".to_owned()
-            };
-            push_section_heading(&mut output, &heading, width, style)?;
-            binding.render(&mut output, width, style)?;
         }
         output.push('\n');
         push_plan_summary(&mut output, &counts, width, style)?;
@@ -407,6 +430,7 @@ pub(super) struct DisconnectPreview {
     removed: BindingDetails,
     impact: DisconnectImpact,
     remaining: Vec<RemainingBinding>,
+    verbose: bool,
 }
 
 impl DisconnectPreview {
@@ -416,6 +440,7 @@ impl DisconnectPreview {
         removed: BindingDetails,
         impact: DisconnectImpact,
         remaining: Vec<RemainingBinding>,
+        verbose: bool,
     ) -> Self {
         Self {
             target,
@@ -423,6 +448,7 @@ impl DisconnectPreview {
             removed,
             impact,
             remaining,
+            verbose,
         }
     }
 
@@ -480,28 +506,30 @@ impl DisconnectPreview {
             width,
             style,
         )?;
-        output.push('\n');
-        push_section_heading(&mut output, "Connection being removed", width, style)?;
-        push_detail_field(&mut output, "Source", &self.managed_source, width, style)?;
-        self.removed.render(&mut output, width, style)?;
-        output.push('\n');
-        push_section_heading(
-            &mut output,
-            &format!(
-                "Still available for this account ({})",
-                self.remaining.len()
-            ),
-            width,
-            style,
-        )?;
-        if self.remaining.is_empty() {
-            push_bullet(&mut output, "None", width, style)?;
-        } else {
-            for (index, binding) in self.remaining.iter().enumerate() {
-                if index > 0 {
-                    output.push('\n');
+        if self.verbose {
+            output.push('\n');
+            push_section_heading(&mut output, "Connection being removed", width, style)?;
+            push_detail_field(&mut output, "Source", &self.managed_source, width, style)?;
+            self.removed.render(&mut output, width, style)?;
+            output.push('\n');
+            push_section_heading(
+                &mut output,
+                &format!(
+                    "Still available for this account ({})",
+                    self.remaining.len()
+                ),
+                width,
+                style,
+            )?;
+            if self.remaining.is_empty() {
+                push_bullet(&mut output, "None", width, style)?;
+            } else {
+                for (index, binding) in self.remaining.iter().enumerate() {
+                    if index > 0 {
+                        output.push('\n');
+                    }
+                    binding.render(&mut output, width, style)?;
                 }
-                binding.render(&mut output, width, style)?;
             }
         }
         output.push('\n');
@@ -692,7 +720,7 @@ fn push_change(
     width: usize,
     style: PresentationStyle,
 ) -> Result<(), PresentationError> {
-    const PREFIX_WIDTH: usize = 4;
+    const PREFIX_WIDTH: usize = 2;
     if width <= PREFIX_WIDTH {
         style.push(output, action.ansi(), action.marker());
         output.push('\n');
@@ -703,17 +731,16 @@ fn push_change(
     } else {
         for (index, line) in wrap(label, width - PREFIX_WIDTH)?.iter().enumerate() {
             if index == 0 {
-                output.push_str("  ");
                 style.push(output, action.ansi(), action.marker());
                 output.push(' ');
             } else {
-                output.push_str("    ");
+                output.push_str("  ");
             }
             style.push(output, ANSI_BOLD, line);
             output.push('\n');
         }
     }
-    let detail_indent = 6_usize;
+    let detail_indent = 2_usize;
     if width <= detail_indent {
         for line in wrap(detail, width)? {
             style.push(output, ANSI_DIM, &line);
@@ -721,7 +748,7 @@ fn push_change(
         }
     } else {
         for line in wrap(detail, width - detail_indent)? {
-            output.push_str("      ");
+            output.push_str("  ");
             style.push(output, ANSI_DIM, &line);
             output.push('\n');
         }
@@ -878,10 +905,10 @@ mod tests {
         )
     }
 
-    // 80열 connect 확인 화면은 먼저 사람이 결정할 대상·API key·default를 보여 주고,
-    // exact profile 세부정보를 이름 있는 보조 영역에 배치합니다.
+    // 기본 confirmation은 적용 판단에 필요한 change set과 요약만 보여 주며, exact profile은
+    // -v를 선택한 경우에만 노출해 반복 실행의 기본 화면을 짧게 유지합니다.
     #[test]
-    fn connect_preview_prioritizes_the_decision_before_exact_details() {
+    fn compact_connect_preview_hides_exact_profile_until_verbose() {
         let preview = Confirmation::Connect(Box::new(ConnectPreview::new(
             "vendor:team:alpha".to_owned(),
             "vendor:team".to_owned(),
@@ -894,9 +921,40 @@ mod tests {
 
         let output = preview.render(width(80)).unwrap();
 
+        assert!(output.contains("Yo will make these changes:\n+ Managed connection"));
+        assert!(
+            output.contains(
+                "+ API key\n  Save for vendor:team · verify 1 profile: vendor:team:alpha"
+            )
+        );
+        assert!(output.contains("~ Default model\n  unset  →  vendor:team:alpha"));
+        assert!(!output.contains("Connection profile"));
+        assert!(!output.contains("long-provider.example.test"));
+        assert!(output.ends_with("Plan: 2 to add, 1 to change."));
+    }
+
+    // 80열 connect 확인 화면은 먼저 사람이 결정할 대상·API key·default를 보여 주고,
+    // exact profile 세부정보를 이름 있는 보조 영역에 배치합니다.
+    #[test]
+    fn connect_preview_prioritizes_the_decision_before_exact_details() {
+        let preview = Confirmation::Connect(Box::new(
+            ConnectPreview::new(
+                "vendor:team:alpha".to_owned(),
+                "vendor:team".to_owned(),
+                "unset  →  vendor:team:alpha".to_owned(),
+                ManagedConnectionChange::Create,
+                CredentialMutationAction::Add,
+                true,
+                vec![fixture_binding()],
+            )
+            .with_verbose(true),
+        ));
+
+        let output = preview.render(width(80)).unwrap();
+
         assert!(output.starts_with("CONNECT  vendor:team:alpha"));
-        assert!(output.contains("Yo will make these changes:\n  + Managed connection"));
-        assert!(output.contains("+ API key\n      Save a new key"));
+        assert!(output.contains("Yo will make these changes:\n+ Managed connection"));
+        assert!(output.contains("+ API key\n  Save for vendor:team"));
         assert!(output.contains("Connection profile"));
         assert!(output.contains("  Endpoint"));
         assert!(output.contains("  Request options"));
@@ -911,15 +969,18 @@ mod tests {
     #[test]
     fn narrow_preview_wraps_every_line_without_losing_exact_values() {
         let binding = fixture_binding();
-        let preview = Confirmation::Connect(Box::new(ConnectPreview::new(
-            binding.target.clone(),
-            "vendor:team".to_owned(),
-            "unset  →  vendor:team:alpha".to_owned(),
-            ManagedConnectionChange::Create,
-            CredentialMutationAction::Add,
-            true,
-            vec![binding],
-        )));
+        let preview = Confirmation::Connect(Box::new(
+            ConnectPreview::new(
+                binding.target.clone(),
+                "vendor:team".to_owned(),
+                "unset  →  vendor:team:alpha".to_owned(),
+                ManagedConnectionChange::Create,
+                CredentialMutationAction::Add,
+                true,
+                vec![binding],
+            )
+            .with_verbose(true),
+        ));
 
         let output = preview.render(width(36)).unwrap();
 
@@ -959,6 +1020,7 @@ mod tests {
             vec![RemainingBinding::Complete {
                 target: "vendor:team:alpha".to_owned(),
             }],
+            true,
         )));
 
         let output = preview.render(width(80)).unwrap();
@@ -995,6 +1057,7 @@ mod tests {
                 ),
             ),
             Vec::new(),
+            true,
         )));
 
         let output = preview.render(width(36)).unwrap();
@@ -1048,15 +1111,18 @@ mod tests {
     // 제외한 각 물리 줄이 관찰한 폭을 넘지 않습니다.
     #[test]
     fn every_heading_fits_terminals_narrower_than_the_title() {
-        let preview = Confirmation::Connect(Box::new(ConnectPreview::new(
-            "vendor:team:alpha".to_owned(),
-            "vendor:team".to_owned(),
-            "unset  →  vendor:team:alpha".to_owned(),
-            ManagedConnectionChange::Create,
-            CredentialMutationAction::Add,
-            true,
-            vec![fixture_binding()],
-        )));
+        let preview = Confirmation::Connect(Box::new(
+            ConnectPreview::new(
+                "vendor:team:alpha".to_owned(),
+                "vendor:team".to_owned(),
+                "unset  →  vendor:team:alpha".to_owned(),
+                ManagedConnectionChange::Create,
+                CredentialMutationAction::Add,
+                true,
+                vec![fixture_binding()],
+            )
+            .with_verbose(true),
+        ));
 
         for columns in 1..=15 {
             let output = preview.render(width(columns)).unwrap();
