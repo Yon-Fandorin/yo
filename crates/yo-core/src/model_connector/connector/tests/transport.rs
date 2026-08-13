@@ -2,9 +2,26 @@ use reqwest::{StatusCode, Url};
 
 use super::super::{
     failure::http_status_failure,
-    transport::{Origin, validate_redirect},
+    transport::{Origin, http_client_with_test_root, validate_redirect},
 };
-use crate::model_connector::ConnectorFailureKind;
+use crate::model_connector::{ConnectorFailureKind, ResponsesConnectorLimits};
+
+// fixture root가 PEM certificate가 아니면 network worker를 시작하기 전에 test-only client
+// 구성 경계에서 secret-free Configuration 진단으로 실패하는지 고정합니다.
+#[test]
+fn rejects_an_invalid_local_tls_fixture_root_before_network_work() {
+    let error = http_client_with_test_root(
+        &Url::parse("https://127.0.0.1:443/v1/responses").unwrap(),
+        &ResponsesConnectorLimits::default(),
+        b"invalid-local-root-private-sentinel",
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind(), ConnectorFailureKind::Configuration);
+    assert!(error.message().contains("local-TLS fixture"));
+    assert!(error.message().contains("root certificate"));
+    assert!(!error.message().contains("private-sentinel"));
+}
 
 // 인증·rate-limit·server 오류는 상태 코드만 보존하고 민감한 body는 진단에 싣지 않는다.
 #[test]

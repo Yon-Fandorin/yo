@@ -91,6 +91,27 @@ impl OpenAiResponsesConnector {
         credential: ApiCredential,
         limits: ResponsesConnectorLimits,
     ) -> Result<Self, ConnectorError> {
+        Self::new_with_client_factory(binding, credential, limits, transport::http_client)
+    }
+
+    #[cfg(test)]
+    pub(super) fn new_with_test_root(
+        binding: &EffectiveModelBinding,
+        credential: ApiCredential,
+        limits: ResponsesConnectorLimits,
+        root_pem: &[u8],
+    ) -> Result<Self, ConnectorError> {
+        Self::new_with_client_factory(binding, credential, limits, |request_url, limits| {
+            transport::http_client_with_test_root(request_url, limits, root_pem)
+        })
+    }
+
+    fn new_with_client_factory(
+        binding: &EffectiveModelBinding,
+        credential: ApiCredential,
+        limits: ResponsesConnectorLimits,
+        client_factory: impl FnOnce(&Url, &ResponsesConnectorLimits) -> Result<Client, ConnectorError>,
+    ) -> Result<Self, ConnectorError> {
         limits.validate()?;
         if binding.connector_id().as_str() != ConnectorId::OPENAI_RESPONSES
             || binding.api_dialect() != ApiDialect::OpenAiResponses
@@ -103,7 +124,7 @@ impl OpenAiResponsesConnector {
             .endpoint()
             .append_path_segment("responses")
             .map_err(|_| configuration_failure("cannot append responses to the base endpoint"))?;
-        let client = transport::http_client(&request_url, &limits)?;
+        let client = client_factory(&request_url, &limits)?;
         Ok(Self {
             client,
             request_url,

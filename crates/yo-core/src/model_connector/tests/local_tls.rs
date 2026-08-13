@@ -3,16 +3,26 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, File, OpenOptions},
-    io::Read,
+    io::{self, Read},
     panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const CHILD_STDERR_LIMIT: usize = 4 * 1024;
+// Apple caps recently issued TLS server certificates at 825 days. Keep both fixture
+// certificates well below that bound, with the root outliving the server leaf.
+const LOCAL_TLS_ROOT_VALIDITY_DAYS: &str = "398";
+const LOCAL_TLS_SERVER_VALIDITY_DAYS: &str = "397";
+const FIXTURE_CERTIFICATE_MAX_VALIDITY_SECONDS: &str = "71280000";
+const TEMP_DIRECTORY_CREATE_ATTEMPTS: usize = 16;
+static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(super) enum LocalServerMode {
     Success {
@@ -316,6 +326,17 @@ impl ChildGuard {
             .unwrap_or_else(|error| panic!("{message}: cannot inspect child process: {error}"));
         if let Some(status) = status {
             self.join_stderr_reader();
+            panic!("{}", self.failure_message(message, status));
+        }
+    }
+
+    fn assert_success(&mut self, message: &str) {
+        let status =
+            self.child.as_mut().unwrap().wait().unwrap_or_else(|error| {
+                panic!("{message}: cannot wait for child process: {error}")
+            });
+        self.join_stderr_reader();
+        if !status.success() {
             panic!("{}", self.failure_message(message, status));
         }
     }
@@ -638,6 +659,29 @@ fn reports_sanitized_stderr_for_a_readiness_timeout() {
     assert!(!diagnostic.contains("private-key-bytes-must-not-escape"));
 }
 
+// exact characterization wrapper와 같은 wait 경로로 실패한 child를 회수하여 exit status와
+// stderr 원인은 남기되 private argv path·location·key bytes는 바깥 진단에 노출하지 않습니다.
+#[test]
+fn reports_sanitized_stderr_for_a_waited_child_failure() {
+    let location = "wait-location-private-path-sentinel";
+    let (mut child, _root, _ready, _started) = diagnostic_test_child(
+        "import sys\nsys.stderr.write('waited child failure: ' + ' '.join(sys.argv[1:]))\nsys.stderr.flush()\nsys.exit(29)",
+        location,
+    );
+    let failure = catch_unwind(AssertUnwindSafe(|| {
+        child.assert_success("local TLS characterization child failed");
+    }))
+    .expect_err("the waited child must report its failed exit");
+    let diagnostic = panic_message(failure);
+
+    assert!(diagnostic.contains("local TLS characterization child failed"));
+    assert!(diagnostic.contains("child exited with 29"));
+    assert!(diagnostic.contains("waited child failure"));
+    assert!(!diagnostic.contains("private-path-sentinel"));
+    assert!(!diagnostic.contains(location));
+    assert!(!diagnostic.contains("private-key-bytes-must-not-escape"));
+}
+
 // known-sensitive 목록이 비어도 delimiter 없는 authorization 다중 token과 Bearer 및 PEM 본문을
 // fail-closed redaction하는지 독립적으로 고정합니다.
 #[test]
@@ -719,8 +763,150 @@ fn omits_child_stderr_when_a_sensitive_path_is_not_safely_representable() {
     assert!(!diagnostic.contains("unavailable-sensitive-stderr-sentinel"));
 }
 
-// NormalizedEndpoint는 HTTPS만 허용하고 production client에는 test root 주입구가 없으므로,
-// child process에만 ephemeral root를 신뢰시키고 loopback TLS listener를 띄웁니다.
+struct LocalTlsMaterial {
+    root: TempDirectory,
+    root_certificate: PathBuf,
+    root_key: PathBuf,
+    certificate: PathBuf,
+    key: PathBuf,
+    csr: PathBuf,
+    extensions: PathBuf,
+}
+
+impl LocalTlsMaterial {
+    fn generate() -> Self {
+        let root = TempDirectory::new("yo-model-connector-cert");
+        let root_certificate = root.path().join("root.pem");
+        let root_key = root.path().join("root-key.pem");
+        let certificate = root.path().join("certificate.pem");
+        let key = root.path().join("key.pem");
+        let csr = root.path().join("certificate.csr");
+        let extensions = root.path().join("extensions.cnf");
+        create_private_file(&extensions);
+        fs::write(
+            &extensions,
+            "[v3_server]\nsubjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n",
+        )
+        .unwrap();
+        openssl(&[
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            root_key.to_str().unwrap(),
+            "-out",
+            root_certificate.to_str().unwrap(),
+            "-days",
+            LOCAL_TLS_ROOT_VALIDITY_DAYS,
+            "-subj",
+            "/CN=yo local test root",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+        ]);
+        openssl(&[
+            "req",
+            "-new",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            key.to_str().unwrap(),
+            "-out",
+            csr.to_str().unwrap(),
+            "-subj",
+            "/CN=127.0.0.1",
+        ]);
+        openssl(&[
+            "x509",
+            "-req",
+            "-in",
+            csr.to_str().unwrap(),
+            "-CA",
+            root_certificate.to_str().unwrap(),
+            "-CAkey",
+            root_key.to_str().unwrap(),
+            "-CAcreateserial",
+            "-out",
+            certificate.to_str().unwrap(),
+            "-days",
+            LOCAL_TLS_SERVER_VALIDITY_DAYS,
+            "-extfile",
+            extensions.to_str().unwrap(),
+            "-extensions",
+            "v3_server",
+        ]);
+        for path in [
+            &root_certificate,
+            &root_key,
+            &certificate,
+            &key,
+            &csr,
+            &extensions,
+        ] {
+            set_private_permissions(path);
+        }
+
+        Self {
+            root,
+            root_certificate,
+            root_key,
+            certificate,
+            key,
+            csr,
+            extensions,
+        }
+    }
+
+    fn assert_server_auth_and_conservative_validity(&self) {
+        openssl(&[
+            "verify",
+            "-purpose",
+            "sslserver",
+            "-CAfile",
+            self.root_certificate.to_str().unwrap(),
+            self.certificate.to_str().unwrap(),
+        ]);
+        for (certificate, role) in [
+            (&self.root_certificate, "root"),
+            (&self.certificate, "server"),
+        ] {
+            openssl(&[
+                "x509",
+                "-in",
+                certificate.to_str().unwrap(),
+                "-noout",
+                "-checkend",
+                "0",
+            ]);
+            let exceeds_fixture_horizon = openssl_succeeds(&[
+                "x509",
+                "-in",
+                certificate.to_str().unwrap(),
+                "-noout",
+                "-checkend",
+                FIXTURE_CERTIFICATE_MAX_VALIDITY_SECONDS,
+            ]);
+            assert!(
+                !exceeds_fixture_horizon,
+                "generated local TLS {role} certificate remains valid beyond the fixture's conservative 825-day horizon"
+            );
+        }
+    }
+}
+
+// 실제 child가 사용하는 인증서가 serverAuth 체인으로 검증되고 Apple의 825일 TLS
+// 유효기간 상한 안에서 만료됨을 관찰해, root 주입만으로 fixture 회귀가 통과하지 못하게 합니다.
+#[test]
+fn generates_current_server_auth_material_that_expires_within_apple_limit() {
+    LocalTlsMaterial::generate().assert_server_auth_and_conservative_validity();
+}
+
+// OS별 platform verifier의 SSL_CERT_FILE 해석에 의존하지 않고, child process의 test-only
+// client에만 ephemeral root를 명시적으로 더해 HTTPS loopback listener를 띄웁니다.
 pub(super) fn run_in_tls_child(test_name: &str) -> bool {
     if env::var_os("YO_MODEL_CONNECTOR_TEST_CHILD").is_some() {
         let marker = env::var_os("YO_MODEL_CONNECTOR_TEST_MARKER")
@@ -728,95 +914,38 @@ pub(super) fn run_in_tls_child(test_name: &str) -> bool {
         fs::write(marker, b"1\n").expect("the local TLS child must publish its execution marker");
         return false;
     }
-    let root = TempDirectory::new("yo-model-connector-cert");
-    let root_certificate = root.path().join("root.pem");
-    let root_key = root.path().join("root-key.pem");
-    let certificate = root.path().join("certificate.pem");
-    let key = root.path().join("key.pem");
-    let csr = root.path().join("certificate.csr");
-    let extensions = root.path().join("extensions.cnf");
-    let marker = root.path().join("executed");
+    let material = LocalTlsMaterial::generate();
+    let marker = material.root.path().join("executed");
     create_private_file(&marker);
-    create_private_file(&extensions);
-    fs::write(
-        &extensions,
-        "[v3_server]\nsubjectAltName=IP:127.0.0.1\nextendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n",
-    )
-    .unwrap();
-    openssl(&[
-        "req",
-        "-x509",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-keyout",
-        root_key.to_str().unwrap(),
-        "-out",
-        root_certificate.to_str().unwrap(),
-        "-days",
-        "3650",
-        "-subj",
-        "/CN=yo local test root",
-        "-addext",
-        "basicConstraints=critical,CA:TRUE",
-        "-addext",
-        "keyUsage=critical,keyCertSign,cRLSign",
-    ]);
-    openssl(&[
-        "req",
-        "-new",
-        "-newkey",
-        "rsa:2048",
-        "-nodes",
-        "-keyout",
-        key.to_str().unwrap(),
-        "-out",
-        csr.to_str().unwrap(),
-        "-subj",
-        "/CN=127.0.0.1",
-    ]);
-    openssl(&[
-        "x509",
-        "-req",
-        "-in",
-        csr.to_str().unwrap(),
-        "-CA",
-        root_certificate.to_str().unwrap(),
-        "-CAkey",
-        root_key.to_str().unwrap(),
-        "-CAcreateserial",
-        "-out",
-        certificate.to_str().unwrap(),
-        "-days",
-        "3650",
-        "-extfile",
-        extensions.to_str().unwrap(),
-        "-extensions",
-        "v3_server",
-    ]);
-    for path in [
-        &root_certificate,
-        &root_key,
-        &certificate,
-        &key,
-        &csr,
-        &extensions,
-    ] {
-        set_private_permissions(path);
-    }
-    let status = Command::new(env::current_exe().unwrap())
+    let child = Command::new(env::current_exe().unwrap())
         .arg("--exact")
         .arg(test_name)
         .arg("--nocapture")
         .env("YO_MODEL_CONNECTOR_TEST_CHILD", "1")
-        .env("YO_MODEL_CONNECTOR_TEST_CERT", &certificate)
-        .env("YO_MODEL_CONNECTOR_TEST_KEY", &key)
+        .env("YO_MODEL_CONNECTOR_TEST_ROOT", &material.root_certificate)
+        .env("YO_MODEL_CONNECTOR_TEST_CERT", &material.certificate)
+        .env("YO_MODEL_CONNECTOR_TEST_KEY", &material.key)
         .env("YO_MODEL_CONNECTOR_TEST_MARKER", &marker)
-        .env("SSL_CERT_FILE", &root_certificate)
-        .env("SSL_CERT_DIR", "")
-        .status()
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
         .expect("the local TLS characterization child must start");
-    assert!(status.success(), "local TLS characterization child failed");
+    let sensitive_values = child_sensitive_values(
+        &[
+            material.root.path().as_os_str(),
+            material.root_certificate.as_os_str(),
+            material.root_key.as_os_str(),
+            material.certificate.as_os_str(),
+            material.key.as_os_str(),
+            material.csr.as_os_str(),
+            material.extensions.as_os_str(),
+            marker.as_os_str(),
+        ],
+        "",
+        material.key.as_os_str(),
+    );
+    let mut child = ChildGuard::new(child, sensitive_values);
+    child.assert_success("local TLS characterization child failed");
     assert_eq!(
         fs::read_to_string(marker).unwrap(),
         "1\n",
@@ -826,33 +955,59 @@ pub(super) fn run_in_tls_child(test_name: &str) -> bool {
 }
 
 fn openssl(args: &[&str]) {
+    assert!(
+        openssl_succeeds(args),
+        "openssl failed to create or validate local TLS material"
+    );
+}
+
+fn openssl_succeeds(args: &[&str]) -> bool {
     let status = Command::new("openssl")
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .expect("openssl is required for the local TLS characterization fixture");
-    assert!(
-        status.success(),
-        "openssl failed to create local TLS material"
-    );
+    status.success()
 }
 
 struct TempDirectory(PathBuf);
 
 impl TempDirectory {
     fn new(prefix: &str) -> Self {
-        let path = unique_temp_dir(prefix);
-        let mut builder = fs::DirBuilder::new();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
+        Self::try_from_candidates(|| unique_temp_dir(prefix)).unwrap_or_else(|error| {
+            panic!("failed to create a private local TLS fixture directory: {error}")
+        })
+    }
 
-            builder.mode(0o700);
+    fn try_from_candidates(mut next_candidate: impl FnMut() -> PathBuf) -> io::Result<Self> {
+        let mut last_collision = None;
+        for _ in 0..TEMP_DIRECTORY_CREATE_ATTEMPTS {
+            let path = next_candidate();
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+
+                builder.mode(0o700);
+            }
+            match builder.create(&path) {
+                Ok(()) => {
+                    set_directory_permissions(&path);
+                    return Ok(Self(path));
+                },
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    last_collision = Some(error);
+                },
+                Err(error) => return Err(error),
+            }
         }
-        builder.create(&path).unwrap();
-        set_directory_permissions(&path);
-        Self(path)
+        Err(last_collision.unwrap_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "local TLS fixture exhausted its private directory candidates",
+            )
+        }))
     }
 
     fn path(&self) -> &Path {
@@ -906,5 +1061,57 @@ fn unique_temp_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    env::temp_dir().join(format!("{prefix}-{}-{stamp}", std::process::id()))
+    let sequence = TEMP_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    env::temp_dir().join(format!(
+        "{prefix}-{}-{stamp}-{sequence}",
+        std::process::id()
+    ))
+}
+
+// 첫 후보가 이미 존재해도 그 디렉터리를 건드리지 않고 다음 process-local 후보를 만들어,
+// macOS의 낮은 시계 해상도에서 병렬 fixture가 같은 이름을 얻는 경우를 안전하게 흡수합니다.
+#[test]
+fn retries_only_an_existing_temp_directory_candidate() {
+    let parent = TempDirectory::new("yo-model-connector-collision-parent");
+    let collision = parent.path().join("existing");
+    let available = parent.path().join("available");
+    fs::create_dir(&collision).unwrap();
+    let mut calls = 0;
+    let allocated = TempDirectory::try_from_candidates(|| {
+        calls += 1;
+        if calls == 1 {
+            collision.clone()
+        } else {
+            available.clone()
+        }
+    })
+    .unwrap();
+
+    assert_eq!(calls, 2);
+    assert_eq!(allocated.path(), available);
+    assert!(collision.is_dir());
+}
+
+// 존재하지 않는 부모 같은 실제 I/O 오류는 다른 후보로 숨기지 않고 첫 시도에서 그대로 반환해,
+// fixture 설정 결함이 이름 충돌로 오인되어 재시도되지 않게 합니다.
+#[test]
+fn preserves_a_non_collision_temp_directory_error() {
+    let parent = TempDirectory::new("yo-model-connector-io-error-parent");
+    let missing_parent = parent.path().join("missing");
+    let available = parent.path().join("available");
+    let mut calls = 0;
+    let error = TempDirectory::try_from_candidates(|| {
+        calls += 1;
+        if calls == 1 {
+            missing_parent.join("candidate")
+        } else {
+            available.clone()
+        }
+    })
+    .err()
+    .expect("a non-collision error must stop allocation");
+
+    assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    assert_eq!(calls, 1);
+    assert!(!available.exists());
 }

@@ -1,4 +1,4 @@
-use reqwest::{Client, Url, redirect};
+use reqwest::{Client, ClientBuilder, Url, redirect};
 
 use super::{ConnectorError, ResponsesConnectorLimits, failure::configuration_failure};
 
@@ -6,6 +6,39 @@ pub(super) fn http_client(
     request_url: &Url,
     limits: &ResponsesConnectorLimits,
 ) -> Result<Client, ConnectorError> {
+    http_client_builder(request_url, limits)?
+        .build()
+        .map_err(|_| configuration_failure("cannot initialize the model-connector HTTP client"))
+}
+
+#[cfg(test)]
+pub(super) fn http_client_with_test_root(
+    request_url: &Url,
+    limits: &ResponsesConnectorLimits,
+    root_pem: &[u8],
+) -> Result<Client, ConnectorError> {
+    let roots = reqwest::Certificate::from_pem_bundle(root_pem).map_err(|_| {
+        configuration_failure("cannot parse the local-TLS fixture root certificate")
+    })?;
+    let [root] = roots.as_slice() else {
+        return Err(configuration_failure(
+            "the local-TLS fixture must provide exactly one root certificate",
+        ));
+    };
+    http_client_builder(request_url, limits)?
+        .add_root_certificate(root.clone())
+        .build()
+        .map_err(|_| {
+            configuration_failure(
+                "cannot initialize the model-connector HTTP client with the local-TLS fixture root",
+            )
+        })
+}
+
+fn http_client_builder(
+    request_url: &Url,
+    limits: &ResponsesConnectorLimits,
+) -> Result<ClientBuilder, ConnectorError> {
     let origin = Origin::from_url(request_url)?;
     let max_redirects = limits.max_redirects;
     let redirect_policy = redirect::Policy::custom(move |attempt| {
@@ -19,12 +52,10 @@ pub(super) fn http_client(
             Err(message) => attempt.error(message),
         }
     });
-    Client::builder()
+    Ok(Client::builder()
         .connect_timeout(limits.connect_timeout)
         .redirect(redirect_policy)
-        .retry(reqwest::retry::never())
-        .build()
-        .map_err(|_| configuration_failure("cannot initialize the model-connector HTTP client"))
+        .retry(reqwest::retry::never()))
 }
 
 pub(super) fn validate_redirect(

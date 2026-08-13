@@ -1,5 +1,5 @@
 use std::{
-    thread,
+    env, fs, thread,
     time::{Duration, Instant},
 };
 
@@ -51,10 +51,14 @@ fn connector(
     server: &LocalTlsServer,
     limits: ResponsesConnectorLimits,
 ) -> OpenAiResponsesConnector {
-    OpenAiResponsesConnector::new(
+    let root = env::var_os("YO_MODEL_CONNECTOR_TEST_ROOT")
+        .expect("the local TLS child must provide its test root certificate path");
+    let root = fs::read(root).expect("the local TLS child must read its test root certificate");
+    OpenAiResponsesConnector::new_with_test_root(
         &loopback_binding(server.endpoint()),
         ApiCredential::new("sk-local-characterization").unwrap(),
         limits,
+        &root,
     )
     .unwrap()
 }
