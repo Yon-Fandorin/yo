@@ -72,8 +72,8 @@ fn default_command_requires_exactly_one_set_or_clear_intent() {
     assert!(parse(["default".into(), "host:codex".into(), "--unset".into(),]).is_err());
 }
 
-// 비대화식 connect는 하나의 exact target을 필수로 보존하고 값 없는 호출이나 복수
-// target을 onboarding 선택으로 오해하지 않아 아직 준비되지 않은 결정을 만들지 않습니다.
+// connect 문법은 하나의 exact target을 필수로 보존하고 값 없는 호출이나 복수 target을
+// onboarding 선택으로 오해하지 않아 아직 준비되지 않은 결정을 만들지 않습니다.
 #[test]
 fn connect_command_requires_one_exact_target() {
     assert_eq!(

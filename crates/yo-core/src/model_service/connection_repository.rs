@@ -29,6 +29,12 @@ const REPOSITORY_LOCK_FILE: &str = ".connections.lock";
 const OPERATION_LOCK_FILE: &str = ".connection-operation.lock";
 const PENDING_OPERATION_FILE: &str = "connection-operation.yaml";
 
+type ManagedSnapshotState = (
+    Option<StartupTarget>,
+    Vec<ManagedConnectionAccount>,
+    Vec<ManagedConnectionBinding>,
+);
+
 /// Opaque compare-and-swap token for one complete public connection snapshot.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ConnectionRevision {
@@ -94,6 +100,19 @@ impl ConnectionSnapshot {
         manual.compose_managed(&self.accounts, &self.bindings)
     }
 
+    /// Composes the exact prospective managed upsert with manual configuration before mutation.
+    pub fn compose_catalog_after_managed_upsert(
+        &self,
+        manual: &ModelCatalog,
+        account: ManagedConnectionAccount,
+        binding: ManagedConnectionBinding,
+    ) -> Result<ModelCatalog, ConnectionRepositoryError> {
+        let (_, accounts, bindings) = self.managed_upsert_state(account, binding)?;
+        manual
+            .compose_managed(&accounts, &bindings)
+            .map_err(ConnectionRepositoryError::ManagedCatalogConflict)
+    }
+
     pub(crate) fn matches_planned(&self, mutation: &PreparedConnectionMutation) -> bool {
         self.revision == mutation.planned_revision && self.encoded == mutation.planned_bytes
     }
@@ -115,6 +134,29 @@ impl ConnectionSnapshot {
         account: ManagedConnectionAccount,
         binding: ManagedConnectionBinding,
     ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
+        let (preference, accounts, bindings) = self.managed_upsert_state(account, binding)?;
+        self.prepare_snapshot(preference, accounts, bindings)
+    }
+
+    /// Prepares an external connect epoch even when its public binding is unchanged.
+    ///
+    /// Credential replacement recovery needs an exact prospective public revision. Rotating a
+    /// key therefore receives a new public revision while preserving semantically equal state.
+    pub fn prepare_managed_connect(
+        &self,
+        account: ManagedConnectionAccount,
+        binding: ManagedConnectionBinding,
+    ) -> Result<PreparedConnectionMutation, ConnectionRepositoryError> {
+        let (preference, accounts, bindings) = self.managed_upsert_state(account, binding)?;
+        self.prepare_snapshot_with_mode(preference, accounts, bindings, true)?
+            .ok_or(ConnectionRepositoryError::InvalidManagedMutation)
+    }
+
+    fn managed_upsert_state(
+        &self,
+        account: ManagedConnectionAccount,
+        binding: ManagedConnectionBinding,
+    ) -> Result<ManagedSnapshotState, ConnectionRepositoryError> {
         if !managed::account_matches_binding(&account, &binding) {
             return Err(ConnectionRepositoryError::ManagedCoordinateMismatch);
         }
@@ -143,7 +185,7 @@ impl ConnectionSnapshot {
             .preference
             .clone()
             .or(Some(StartupTarget::Model(selection)));
-        self.prepare_snapshot(preference, accounts, bindings)
+        Ok((preference, accounts, bindings))
     }
 
     /// Removes one managed binding, its unused account, and an exact matching preference.
@@ -193,7 +235,21 @@ impl ConnectionSnapshot {
         accounts: Vec<ManagedConnectionAccount>,
         bindings: Vec<ManagedConnectionBinding>,
     ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
-        if self.preference == preference && self.accounts == accounts && self.bindings == bindings {
+        self.prepare_snapshot_with_mode(preference, accounts, bindings, false)
+    }
+
+    fn prepare_snapshot_with_mode(
+        &self,
+        preference: Option<StartupTarget>,
+        accounts: Vec<ManagedConnectionAccount>,
+        bindings: Vec<ManagedConnectionBinding>,
+        force_new_revision: bool,
+    ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
+        if !force_new_revision
+            && self.preference == preference
+            && self.accounts == accounts
+            && self.bindings == bindings
+        {
             return Ok(None);
         }
         let planned_revision = wire::new_revision()?;

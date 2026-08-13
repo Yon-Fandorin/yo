@@ -22,7 +22,7 @@ yo-tui = { path = "../yo-tui" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
-nix = { version = "=0.31.3", default-features = false, features = ["dir", "fs", "process", "signal"] }
+nix = { version = "=0.31.3", default-features = false, features = ["dir", "fs", "process", "signal", "term"] }
 signal-hook = { version = "=0.3.18", default-features = false }
 
 [target.'cfg(unix)'.dev-dependencies]

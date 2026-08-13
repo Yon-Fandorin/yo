@@ -8,11 +8,12 @@ use std::{
 use super::{
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationJournalEntry,
     ConnectionOperationKind, ConnectionOperationPhase, ConnectionOperationRecovery,
-    LocalConnectionOperationJournal, plan_connection_recovery,
+    ExternalConnectionError, LocalConnectionOperationJournal, plan_connection_recovery,
 };
 use crate::model_service::{
-    ConnectionRepositoryError, LocalConnectionOperationGuard, LocalConnectionRepository,
-    LocalCredentialRepository, LocalCredentialStoreError,
+    ConnectionCommit, ConnectionRepositoryError, ConnectionSnapshot, LocalConnectionOperationGuard,
+    LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStoreError,
+    PreparedConnectionMutation,
 };
 
 const CONNECTION_FILE: &str = "connections.yaml";
@@ -51,6 +52,9 @@ pub enum ConnectionOperationExecutionError {
     },
     OperationLock(ConnectionRepositoryError),
     JournalCapture(ConnectionOperationError),
+    ExternalPreparation(ExternalConnectionError),
+    PublicCapture(ConnectionRepositoryError),
+    PublicCommit(ConnectionRepositoryError),
     PublicRepository {
         kind: ConnectionOperationKind,
         action: ConnectionCredentialAction,
@@ -91,6 +95,19 @@ impl fmt::Display for ConnectionOperationExecutionError {
                 write!(
                     formatter,
                     "capturing the pending connection operation failed: {source}"
+                )
+            },
+            Self::ExternalPreparation(source) => write!(formatter, "{source}"),
+            Self::PublicCapture(source) => {
+                write!(
+                    formatter,
+                    "capturing public connection state failed: {source}"
+                )
+            },
+            Self::PublicCommit(source) => {
+                write!(
+                    formatter,
+                    "committing public connection state failed: {source}"
                 )
             },
             Self::PublicRepository {
@@ -134,6 +151,8 @@ impl Error for ConnectionOperationExecutionError {
             Self::InvalidRepositoryLayout { .. } => None,
             Self::OperationLock(source) | Self::PublicRepository { source, .. } => Some(source),
             Self::JournalCapture(source) | Self::Journal { source, .. } => Some(source),
+            Self::ExternalPreparation(source) => Some(source),
+            Self::PublicCapture(source) | Self::PublicCommit(source) => Some(source),
             Self::CredentialRepository { source, .. } => Some(source),
             #[cfg(test)]
             Self::InjectedInterruption => None,
@@ -147,9 +166,9 @@ impl Error for ConnectionOperationExecutionError {
 /// caller from pairing a journal with unrelated public or credential state.
 #[derive(Clone, Debug)]
 pub struct LocalConnectionOperationRepositories {
-    connections: LocalConnectionRepository,
-    credentials: LocalCredentialRepository,
-    journal: LocalConnectionOperationJournal,
+    pub(super) connections: LocalConnectionRepository,
+    pub(super) credentials: LocalCredentialRepository,
+    pub(super) journal: LocalConnectionOperationJournal,
     directory: PathBuf,
 }
 
@@ -290,9 +309,9 @@ fn prepare_identity_directory(path: &Path) -> Result<(), ConnectionOperationExec
 
 /// One held local operation lane. The guard remains alive after recovery for subsequent planning.
 pub struct LocalConnectionOperationSession<'a> {
-    repositories: &'a LocalConnectionOperationRepositories,
-    guard: LocalConnectionOperationGuard,
-    directory_identity: LocalDirectoryIdentity,
+    pub(super) repositories: &'a LocalConnectionOperationRepositories,
+    pub(super) guard: LocalConnectionOperationGuard,
+    pub(super) directory_identity: LocalDirectoryIdentity,
 }
 
 impl LocalConnectionOperationSession<'_> {
@@ -300,6 +319,29 @@ impl LocalConnectionOperationSession<'_> {
         &mut self,
     ) -> Result<ConnectionOperationExecutionOutcome, ConnectionOperationExecutionError> {
         self.recover_pending_operation_with(|_| Ok(()))
+    }
+
+    /// Captures public state while retaining the same serialized operation lane.
+    pub fn capture_connections(
+        &self,
+    ) -> Result<ConnectionSnapshot, ConnectionOperationExecutionError> {
+        self.directory_identity.revalidate()?;
+        self.repositories
+            .connections
+            .capture()
+            .map_err(ConnectionOperationExecutionError::PublicCapture)
+    }
+
+    /// Publishes a preference-only or managed public mutation under the held lane.
+    pub fn commit_connection_mutation(
+        &mut self,
+        mutation: &PreparedConnectionMutation,
+    ) -> Result<ConnectionCommit, ConnectionOperationExecutionError> {
+        self.directory_identity.revalidate()?;
+        self.repositories
+            .connections
+            .commit(mutation)
+            .map_err(ConnectionOperationExecutionError::PublicCommit)
     }
 
     fn recover_pending_operation_with(
@@ -401,7 +443,7 @@ fn validate_path_components(
 }
 
 #[derive(Debug)]
-struct LocalDirectoryIdentity {
+pub(super) struct LocalDirectoryIdentity {
     path: PathBuf,
     device: u64,
     inode: u64,
@@ -439,7 +481,7 @@ impl LocalDirectoryIdentity {
         })
     }
 
-    fn revalidate(&self) -> Result<(), ConnectionOperationExecutionError> {
+    pub(super) fn revalidate(&self) -> Result<(), ConnectionOperationExecutionError> {
         let observed = Self::capture(&self.path)?;
         if (observed.device, observed.inode) != (self.device, self.inode) {
             return Err(ConnectionOperationExecutionError::InvalidRepositoryLayout {
@@ -612,7 +654,7 @@ fn complete_and_clear(
     observe(RecoveryStep::JournalCleared)
 }
 
-fn public_error(
+pub(super) fn public_error(
     entry: &ConnectionOperationJournalEntry,
     source: ConnectionRepositoryError,
 ) -> ConnectionOperationExecutionError {
@@ -624,7 +666,7 @@ fn public_error(
     }
 }
 
-fn credential_error(
+pub(super) fn credential_error(
     entry: &ConnectionOperationJournalEntry,
     source: LocalCredentialStoreError,
 ) -> ConnectionOperationExecutionError {
@@ -636,7 +678,7 @@ fn credential_error(
     }
 }
 
-fn journal_error(
+pub(super) fn journal_error(
     entry: &ConnectionOperationJournalEntry,
     source: ConnectionOperationError,
 ) -> ConnectionOperationExecutionError {

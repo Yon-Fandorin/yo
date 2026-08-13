@@ -38,8 +38,6 @@ use crate::{
 const BACKEND_KIND: &str = "yo-managed-model";
 const BACKEND_VERSION: &str = "1";
 const TOOL_TRUNCATION_MARKER: &str = "\n[yo: tool output truncated]";
-const LOCAL_TOOLS_PROFILE: &str = "local-tools/v1";
-const SEMANTIC_TERMINAL_PROFILE: &str = "semantic-terminal/v1";
 
 #[derive(Clone, Debug)]
 pub struct NativeModelBackendConfig {
@@ -215,8 +213,9 @@ impl NativeModelBackend {
         mut config: NativeModelBackendConfig,
     ) -> Result<Self, BackendFailure> {
         if let Some(profile) = explicit_profile.as_ref() {
-            config.reasoning_effort = supported_reasoning_effort(profile)?;
-            validate_supported_explicit_profile(profile)?;
+            config.reasoning_effort =
+                crate::model_profile_admission::admit_explicit_model_profile(profile)
+                    .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
         }
         if config.system_prompt.is_empty()
             || config.maximum_model_rounds == 0
@@ -1710,68 +1709,6 @@ impl AgentBackend for NativeModelBackend {
         self.shutdown_result = Some(result.clone());
         result
     }
-}
-
-fn supported_reasoning_effort(
-    profile: &EffectiveModelProfile,
-) -> Result<Option<ReasoningEffort>, BackendFailure> {
-    let value = profile.reasoning_parameters().to_json_value();
-    let serde_json::Value::Object(parameters) = value else {
-        return Err(failure(
-            BackendFailureKind::Initialization,
-            "reasoning_parameters must be a mapping supported by the native model loop",
-        ));
-    };
-    if parameters.is_empty() {
-        return Ok(None);
-    }
-    if parameters.len() != 1 {
-        return Err(failure(
-            BackendFailureKind::Initialization,
-            "reasoning_parameters supports only the effort field",
-        ));
-    }
-    let effort = parameters.get("effort").and_then(|value| value.as_str());
-    match effort {
-        Some("none") => Ok(Some(ReasoningEffort::None)),
-        Some("minimal") => Ok(Some(ReasoningEffort::Minimal)),
-        Some("medium") => Ok(Some(ReasoningEffort::Medium)),
-        Some("high") => Ok(Some(ReasoningEffort::High)),
-        _ => Err(failure(
-            BackendFailureKind::Initialization,
-            "reasoning_parameters.effort must be none, minimal, medium, or high",
-        )),
-    }
-}
-
-fn validate_supported_explicit_profile(
-    profile: &EffectiveModelProfile,
-) -> Result<(), BackendFailure> {
-    if !profile.optional_request_parameters().is_empty_mapping() {
-        return Err(failure(
-            BackendFailureKind::Initialization,
-            "optional_request_parameters is not yet supported by the native model loop",
-        ));
-    }
-    if profile.tool_capability_policy().as_str() != LOCAL_TOOLS_PROFILE {
-        return Err(failure(
-            BackendFailureKind::Initialization,
-            format!(
-                "unsupported tool_capability_policy {:?}; expected {LOCAL_TOOLS_PROFILE}",
-                profile.tool_capability_policy().as_str()
-            ),
-        ));
-    }
-    if profile.verification_profile().as_str() != SEMANTIC_TERMINAL_PROFILE {
-        return Err(failure(
-            BackendFailureKind::Initialization,
-            format!(
-                "unsupported verification_profile {:?}; expected {SEMANTIC_TERMINAL_PROFILE}",
-                profile.verification_profile().as_str()
-            ),
-        ));
-    }
-    Ok(())
 }
 
 fn native_binding_identity(

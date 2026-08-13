@@ -5,6 +5,7 @@ use std::{
 };
 
 use super::{ConnectionRevision, MAX_CONNECTION_BYTES};
+use crate::model_service::BindingConflict;
 
 #[derive(Debug)]
 pub enum ConnectionRepositoryError {
@@ -30,6 +31,7 @@ pub enum ConnectionRepositoryError {
         model: String,
     },
     InvalidManagedMutation,
+    ManagedCatalogConflict(BindingConflict),
     PreparedTooLarge,
     OperationBusy(PathBuf),
     PendingOperation(PathBuf),
@@ -108,6 +110,12 @@ impl fmt::Display for ConnectionRepositoryError {
             Self::InvalidManagedMutation => {
                 formatter.write_str("the prepared managed connection mutation is invalid")
             },
+            Self::ManagedCatalogConflict(source) => {
+                write!(
+                    formatter,
+                    "prospective managed catalog conflicts with configuration: {source}"
+                )
+            },
             Self::PreparedTooLarge => {
                 formatter.write_str("the prepared connection snapshot exceeds its bounded size")
             },
@@ -137,6 +145,7 @@ impl Error for ConnectionRepositoryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
+            Self::ManagedCatalogConflict(source) => Some(source),
             _ => None,
         }
     }

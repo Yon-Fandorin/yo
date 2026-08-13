@@ -88,7 +88,6 @@ impl Config {
             .join("connections.yaml")
     }
 
-    #[cfg(test)]
     pub(crate) fn snapshot_digest(&self) -> &str {
         &self.snapshot.digest
     }

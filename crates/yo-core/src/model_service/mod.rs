@@ -23,9 +23,10 @@ pub use connection_operation::{
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationExecutionError,
     ConnectionOperationExecutionOutcome, ConnectionOperationJournalEntry,
     ConnectionOperationJournalRepository, ConnectionOperationKind, ConnectionOperationPhase,
-    ConnectionOperationRecovery, ConnectionOperationRepositoryKind,
+    ConnectionOperationRecovery, ConnectionOperationRepositoryKind, ExternalConnectionError,
     LocalConnectionOperationJournal, LocalConnectionOperationRepositories,
-    LocalConnectionOperationSession, plan_connection_recovery,
+    LocalConnectionOperationSession, PreparedExternalConnection, VerifiedExternalConnection,
+    plan_connection_recovery, verify_external_connection,
 };
 pub use connection_repository::{
     ConnectionCommit, ConnectionRepository, ConnectionRepositoryError, ConnectionRevision,

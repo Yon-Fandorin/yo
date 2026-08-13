@@ -562,7 +562,7 @@ commit은 idempotent하고, 관찰한 revision이 다르면 conflict다. 마지�
 `absent`로 돌아가지 않고 versioned empty file을 남긴다. 이 write는 core storage
 boundary다.
 
-Sibling `connection-operation.yaml`은 앞으로 credential과 public repository를 함께 바꾸는
+Sibling `connection-operation.yaml`은 credential과 public repository를 함께 바꾸는
 operation의 secret-free durable intent를 소유한다. 닫힌 version 1 record는 불투명 operation
 ID, config snapshot digest, 새 writer는 비워 두는 필수 legacy `profile_digests` field,
 정확한 expected·planned public revision과 크기가
@@ -599,10 +599,29 @@ table이 정한 결정만 실행한다. Commit되지 않은 intent는 abandon하
 다음 repository CAS 앞뒤로 따라잡으며, repository pair가 이미 완료된 경우에는 `complete`까지
 전진한 뒤 exact journal을 지운다. Connect recovery는 secret을 재구성하거나 commit하지 않는다.
 Disconnect remove는 candidate 없이 commit하고 preserve는 credential mutation boundary를
-호출하지 않는다. Repository와 journal 오류는
-private credential revision을 투영하지 않고 안전한 operation kind, action, phase만 유지한다.
-External connect와 disconnect는 각 command leaf가 이 executor를 credential verification,
-마지막 config guard와 조합할 때까지 비활성 상태다.
+호출하지 않는다. Repository와 journal 오류는 private credential revision을 투영하지 않고
+안전한 operation kind, action, phase만 유지한다. External connect는 이제 준비와 commit에 같은
+held session을 사용한다. External disconnect는 아직 구현한 command 경로 밖에 있다.
+
+`yo connect Provider:Account:Model`은 설정에 있는 exact reference 하나를 받는다. 해당
+Provider와 Account에 속한 완전한 manual binding, 현재 managed binding, prospective selected
+binding을 모두 합집합으로 만든다. 남는 legacy binding은 전체 동작을 검증할 수 없으므로
+prompt 전에 실패한다. Prospective managed upsert도 secret을 읽기 전에 전체 manual catalog와
+합성되고 startup-policy admission을 통과해야 한다. Yo는 서로 다른 complete binding 각각의
+secret-free endpoint, dialect, resolved profile field를 모두 보여 주고 확인을 받은 뒤,
+controlling TTY에서만 크기가 제한된 API key 하나를 읽는다. 이때 echo를 끄고 정확한 terminal
+설정을 복구한다. 명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
+환경 변수, argument, standard input, config file은 credential channel이 아니다.
+
+Candidate key는 저장 key로 fallback하지 않고 capture한 각 binding profile에 크기가 제한된
+no-tool semantic request 하나를 보낼 때만 쓴다. 각 검증은 completed message와 completed
+terminal status를 요구한다. 완료된 visible refusal은 유효한 semantic 결과이며 tool call,
+incomplete, failed, 조기 close, timeout은 검증 실패다. 진단에는 secret이 아닌 target과
+connector failure class만 남는다. 모든 binding이
+성공하면 capture한 config를 다시 검사하고 secret-free intent를 게시한 뒤 exact add 또는
+replace credential을 commit한다. 이어 journal을 전진시키고 exact managed public snapshot을
+게시하며 complete까지 전진한 뒤 journal을 지운다. Credential commit 뒤 crash가 나면 저장된
+public byte만 재개하고 secret을 재구성하거나 다시 검증하지 않는다.
 
 endpoint, model, API dialect, 파생된 connector identity, resolved profile과 표시 이름은
 secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과
@@ -666,6 +685,9 @@ matching ModelTarget preference만 clear한다. Preference-only 준비는 manage
 사용한다. 파일이 없을 때 첫 write는 같은 디렉터리 exclusive publication, 이후 write는 durable
 atomic replacement를 사용한다. 계획한 revision과 byte가 정확히 같으면 idempotent success이고
 다른 revision은 conflict다.
+Credential을 바꾸는 managed connect는 표시되는 binding byte가 같아도 새 public revision을
+예약한다. 따라서 key rotation은 unrelated state나 기존 preference를 바꾸지 않으면서도
+복구가 구별할 exact public epoch를 갖는다.
 
 모든 live startup은 `config.yaml`과 `connections.yaml`을 capture한 뒤 complete-binding equality로
 manual과 managed entry를 합성한다. 같은 entry는 `manual-and-managed` provenance를 유지한 채
@@ -673,13 +695,13 @@ manual과 managed entry를 합성한다. 같은 entry는 `manual-and-managed` pr
 Account, Model에서 field가 다르면 어느 source도 선택하지 않고 non-secret 차이 field 이름을 담은
 `BindingConflict`를 반환한다. 합성 catalog는 초기 선택, resume matching, live model picker가 쓴다.
 
-`yo default TARGET`, `yo default --unset`, 명시적 `yo connect host:codex`는 계속 nonblocking
-process operation lock 하나를 사용하고 pending multi-repository work를 먼저 해결하며, target
-admission 또는 Local Codex 검증과 마지막 configuration guard 뒤 public CAS 하나를 게시한다. 이
-preference-only command는 operation journal을 만들거나 credential revision을 확인하지 않고,
-다시 encode할 때 managed entry를 보존한다. Credential을 바꾸는 external connect와 disconnect
-command orchestration은 아직 이 구현 경로 밖에 있으며 preference-only recovery를 빌리지 않고
-명시적으로 실패한다.
+`yo default TARGET`, `yo default --unset`, 명시적 `yo connect host:codex`, external model
+connect는 nonblocking process operation lock 하나를 사용하고 새 command configuration을 읽기
+전에 pending multi-repository work를 해결한다. Preference-only command는 target admission 또는
+Local Codex 검증과 마지막 configuration guard 뒤 public CAS 하나를 게시하고, 새 operation
+journal을 만들거나 credential revision을 확인하지 않으며 managed entry를 보존한다. External
+connect는 위 journal 순서를 사용한다. External disconnect와 자유 형식 Provider onboarding은
+더 약한 경로를 빌리지 않고 아직 구현하지 않은 상태로 남는다.
 
 repository가
 없으면 빈 목록을 반환하고 상태를 만들지 않는다.

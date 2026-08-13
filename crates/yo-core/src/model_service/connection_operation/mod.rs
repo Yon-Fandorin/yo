@@ -1,5 +1,6 @@
 //! Secret-free durable intent and pure recovery planning for multi-repository connections.
 
+mod connect;
 mod error;
 mod execution;
 mod journal;
@@ -8,6 +9,10 @@ mod repository;
 mod storage;
 mod wire;
 
+pub use connect::{
+    ExternalConnectionError, PreparedExternalConnection, VerifiedExternalConnection,
+    verify_external_connection,
+};
 pub use error::ConnectionOperationError;
 pub use execution::{
     ConnectionOperationExecutionError, ConnectionOperationExecutionOutcome,

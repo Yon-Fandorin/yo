@@ -595,8 +595,8 @@ exact pair state make a repeated commit idempotent, while a different observed
 revision is a conflict. Removing the final pair leaves a versioned empty file
 rather than returning to `absent`. These writes are a core storage boundary.
 
-The sibling `connection-operation.yaml` now owns the secret-free durable intent
-for a future credential-and-public operation. A closed version 1 record carries
+The sibling `connection-operation.yaml` owns the secret-free durable intent
+for a credential-and-public operation. A closed version 1 record carries
 an opaque operation ID, the config snapshot digest, a required legacy
 `profile_digests` field that new writers leave empty, exact
 expected and planned public revisions plus the complete bounded prospective
@@ -639,9 +639,34 @@ already completed repository pair through `complete` and clears the exact
 journal. Connect recovery never reconstructs or commits a secret; disconnect
 removal passes no candidate, while preserve never calls the credential mutation boundary.
 Repository and journal failures retain the safe operation kind, action, and
-phase without projecting a private credential revision. External connect and
-disconnect remain disabled until their command leaves compose this executor
-with credential verification and the final config guard.
+phase without projecting a private credential revision. External connect now
+uses this same held session for preparation and commit; external disconnect
+remains outside the implemented command path.
+
+`yo connect Provider:Account:Model` accepts one exact configured reference. It
+forms the union of every complete manual and currently managed binding for that
+Provider and Account, plus the prospective selected binding. A retained legacy
+binding fails before prompting because its full behavior cannot be verified.
+The prospective managed upsert must also compose with the complete manual
+catalog and pass startup-policy admission before any secret is read. Yo lists
+every distinct complete binding with its non-secret endpoint, dialect, and
+resolved profile fields, requires confirmation, then reads one bounded API key
+only from the controlling TTY with echo disabled and exact terminal settings
+restored. If explicit restoration reports an error, the retained guard retries
+restoration while unwinding. Environment,
+arguments, standard input, and config files are not credential channels.
+
+The candidate key is used—without fallback to a stored key—to issue one bounded,
+no-tool semantic request for every captured binding profile. Each verification
+requires a completed message and completed terminal status. A completed visible
+refusal is a valid semantic result; tool-call, incomplete, failed, closed-early,
+or timeout outcomes fail verification. Diagnostics
+retain only the non-secret target and connector failure class. After every
+binding succeeds, the command revalidates the captured config, publishes a
+secret-free intent, commits the exact add or replacement credential, advances
+the journal, publishes the exact managed public snapshot, advances to complete,
+and clears the journal. A crash after credential commit resumes only the stored
+public bytes and never reconstructs or re-verifies a secret.
 
 Endpoint, model, API dialect, derived connector identity, the resolved profile, and display
 names remain non-secret binding data rather than secret-file content. Catalog limits and model
@@ -711,6 +736,10 @@ the existing old-or-exact-new CAS. An absent first write uses same-directory
 exclusive publication; later writes use durable atomic replacement. Exact
 planned revision and bytes are idempotent success, while another revision is a
 conflict.
+Credential-changing managed connect reserves a new public revision even when
+the visible binding bytes are otherwise equal, giving recovery an exact public
+epoch for a key rotation without changing unrelated state or an existing
+preference.
 
 Every live startup captures `config.yaml` and `connections.yaml`, then composes
 manual and managed entries by complete-binding equality. Equal entries coalesce
@@ -720,15 +749,15 @@ Account, and Model returns `BindingConflict` with the non-secret differing field
 names instead of selecting a source. The composed catalog supplies initial
 selection, resume matching, and the live model picker.
 
-`yo default TARGET`, `yo default --unset`, and explicit `yo connect host:codex`
-continue to use one nonblocking process operation lock, resolve pending
-multi-repository work first, and publish one public CAS after target admission or
-Local Codex verification plus the final configuration guard. These
-preference-only commands never create an operation journal or inspect credential
-revisions, and their re-encoding preserves managed entries. Credential-changing
-external connect and disconnect command orchestration remains outside this
-implemented path and fails explicitly rather than borrowing preference-only
-recovery.
+`yo default TARGET`, `yo default --unset`, explicit `yo connect host:codex`, and
+external model connect use one nonblocking process operation lock and resolve
+pending multi-repository work before reading new command configuration. The
+preference-only commands publish one public CAS after target admission or Local
+Codex verification plus the final configuration guard; they do not create a new
+operation journal or inspect credential revisions, and re-encoding preserves
+managed entries. External connect uses the journaled sequence above. External
+disconnect and free-form Provider onboarding remain unimplemented rather than
+borrowing a weaker path.
 
 A missing repository produces an empty list and does not create state. Direct
 history reads preserve a message-recovery

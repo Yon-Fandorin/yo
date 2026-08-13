@@ -1,8 +1,12 @@
 use std::path::Path;
 
+mod external;
+mod input;
+
 use yo_core::{
-    ConnectionRepository, ConnectionRepositoryError, ConnectionSnapshot, LocalConnectionRepository,
-    StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
+    ConnectionOperationExecutionError, ConnectionRepositoryError, ConnectionSnapshot,
+    LocalConnectionOperationRepositories, LocalConnectionRepository, StartupPolicy,
+    StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
 use crate::{
@@ -35,32 +39,67 @@ fn compose_managed_catalog(
 }
 
 pub(crate) fn run_default(command: DefaultCommand) -> Result<String, AppError> {
-    let config_path = config::selected_path()
-        .map_err(|error| AppError::single("locating Yo configuration", error))?;
-    let repository = repository_at(&config_path);
-    execute_default_with(&config_path, &repository, command, || Ok(()))
+    let config_path = absolute_config_path(
+        config::selected_path()
+            .map_err(|error| AppError::single("locating Yo configuration", error))?,
+    )?;
+    execute_default_managed(&config_path, command)
 }
 
 pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
-    let config_path = config::selected_path()
-        .map_err(|error| AppError::single("locating Yo configuration", error))?;
-    let repository = repository_at(&config_path);
-    execute_connect_with(&config_path, &repository, command, verify_local_codex)
+    let config_path = absolute_config_path(
+        config::selected_path()
+            .map_err(|error| AppError::single("locating Yo configuration", error))?,
+    )?;
+    if command.target != StartupTarget::HOST_CODEX_REFERENCE {
+        return external::run_external_connect(&config_path, command);
+    }
+    execute_local_connect_managed(&config_path, command)
 }
 
-fn execute_default_with(
+fn absolute_config_path(path: std::path::PathBuf) -> Result<std::path::PathBuf, AppError> {
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    std::env::current_dir()
+        .map(|directory| directory.join(path))
+        .map_err(|error| AppError::single("resolving the Yo configuration path", error))
+}
+
+fn operation_repositories(
     config_path: &Path,
-    repository: &impl ConnectionRepository,
+) -> Result<LocalConnectionOperationRepositories, AppError> {
+    let directory = config_path.parent().ok_or_else(|| {
+        AppError::message("Yo configuration must have an absolute parent directory")
+    })?;
+    LocalConnectionOperationRepositories::in_directory(directory)
+        .map_err(|error| AppError::single("opening connection repositories", error))
+}
+
+fn execute_default_managed(
+    config_path: &Path,
+    command: DefaultCommand,
+) -> Result<String, AppError> {
+    execute_default_managed_with(config_path, command, || Ok(()))
+}
+
+fn execute_default_managed_with(
+    config_path: &Path,
     command: DefaultCommand,
     before_guard: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<String, AppError> {
-    let _operation = acquire_operation(repository)?;
-    recover_pending(repository)?;
+    let repositories = operation_repositories(config_path)?;
+    let mut session = repositories
+        .acquire()
+        .map_err(|error| AppError::single("acquiring the connection operation lane", error))?;
+    session
+        .recover_pending_operation()
+        .map_err(|error| AppError::single("recovering a pending connection operation", error))?;
     let mut config = config::load_from(config_path)
         .map_err(|error| AppError::single("reading Yo configuration", error))?;
-    let snapshot = repository
-        .capture()
-        .map_err(|error| AppError::single("capturing the connection repository", error))?;
+    let snapshot = session
+        .capture_connections()
+        .map_err(|error| AppError::single("capturing managed connections", error))?;
     compose_managed_catalog(&mut config, &snapshot)?;
     let preference = command
         .target
@@ -70,14 +109,13 @@ fn execute_default_with(
     let mutation = snapshot
         .prepare_preference(preference.clone())
         .map_err(|error| AppError::single("preparing the startup default", error))?;
-
     before_guard()?;
     config
         .verify_unchanged()
         .map_err(|error| AppError::single("guarding Yo configuration", error))?;
     if let Some(mutation) = mutation {
-        repository
-            .commit(&mutation)
+        session
+            .commit_connection_mutation(&mutation)
             .map_err(|error| AppError::single("publishing the startup default", error))?;
     }
     Ok(format!(
@@ -86,31 +124,36 @@ fn execute_default_with(
     ))
 }
 
-fn execute_connect_with(
+fn execute_local_connect_managed(
     config_path: &Path,
-    repository: &impl ConnectionRepository,
+    command: ConnectCommand,
+) -> Result<String, AppError> {
+    execute_local_connect_managed_with(config_path, command, verify_local_codex)
+}
+
+fn execute_local_connect_managed_with(
+    config_path: &Path,
     command: ConnectCommand,
     verify: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<String, AppError> {
-    let _operation = acquire_operation(repository)?;
-    recover_pending(repository)?;
+    let repositories = operation_repositories(config_path)?;
+    let mut session = repositories
+        .acquire()
+        .map_err(|error| AppError::single("acquiring the connection operation lane", error))?;
+    session
+        .recover_pending_operation()
+        .map_err(|error| AppError::single("recovering a pending connection operation", error))?;
     let config = config::load_from(config_path)
         .map_err(|error| AppError::single("reading Yo configuration", error))?;
-    if command.target != StartupTarget::HOST_CODEX_REFERENCE {
-        return Err(AppError::message(format!(
-            "preference-only connect currently accepts exactly {}; external model connection requires the credential operation Slice",
-            StartupTarget::HOST_CODEX_REFERENCE
-        )));
-    }
     let admitted = admit_target(&config, &command.target)?;
     if admitted != StartupTarget::HostCodex {
         return Err(AppError::message(
             "Local Codex connect admission did not preserve the exact HostTarget",
         ));
     }
-    let snapshot = repository
-        .capture()
-        .map_err(|error| AppError::single("capturing the connection repository", error))?;
+    let snapshot = session
+        .capture_connections()
+        .map_err(|error| AppError::single("capturing managed connections", error))?;
     let mutation = snapshot
         .preference()
         .is_none()
@@ -118,7 +161,6 @@ fn execute_connect_with(
         .transpose()
         .map_err(|error| AppError::single("preparing the Local Codex default", error))?
         .flatten();
-
     verify()?;
     config
         .verify_unchanged()
@@ -130,14 +172,16 @@ fn execute_connect_with(
             display_target(snapshot.preference())
         ));
     };
-    match repository.commit(&mutation) {
+    match session.commit_connection_mutation(&mutation) {
         Ok(_) => Ok(format!(
             "connected: {}; default: {}\n",
             StartupTarget::HOST_CODEX_REFERENCE,
             StartupTarget::HOST_CODEX_REFERENCE
         )),
-        Err(ConnectionRepositoryError::Conflict { .. }) => {
-            let current = repository.capture().map_err(|error| {
+        Err(ConnectionOperationExecutionError::PublicCommit(
+            ConnectionRepositoryError::Conflict { .. },
+        )) => {
+            let current = session.capture_connections().map_err(|error| {
                 AppError::single("inspecting the concurrent connection winner", error)
             })?;
             if current.preference().is_some() {
@@ -159,24 +203,11 @@ fn execute_connect_with(
     }
 }
 
-fn acquire_operation<R: ConnectionRepository>(
-    repository: &R,
-) -> Result<R::OperationGuard, AppError> {
-    repository
-        .acquire_operation()
-        .map_err(|error| AppError::single("acquiring the connection operation lane", error))
-}
-
-fn recover_pending(repository: &impl ConnectionRepository) -> Result<(), AppError> {
-    repository
-        .recover_pending_operation()
-        .map_err(|error| AppError::single("recovering a pending connection operation", error))
-}
-
 fn repository(config: &Config) -> LocalConnectionRepository {
     LocalConnectionRepository::new(config.connection_path())
 }
 
+#[cfg(test)]
 fn repository_at(config_path: &Path) -> LocalConnectionRepository {
     LocalConnectionRepository::new(
         config_path
@@ -224,46 +255,12 @@ fn display_target(target: Option<&StartupTarget>) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::RefCell,
         fs,
         path::PathBuf,
-        rc::Rc,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     use super::*;
-
-    struct RecordingRepository {
-        inner: LocalConnectionRepository,
-        events: Rc<RefCell<Vec<&'static str>>>,
-    }
-
-    impl ConnectionRepository for RecordingRepository {
-        type OperationGuard = yo_core::LocalConnectionOperationGuard;
-
-        fn acquire_operation(&self) -> Result<Self::OperationGuard, ConnectionRepositoryError> {
-            self.events.borrow_mut().push("acquire");
-            self.inner.acquire_operation()
-        }
-
-        fn recover_pending_operation(&self) -> Result<(), ConnectionRepositoryError> {
-            self.events.borrow_mut().push("recover");
-            self.inner.recover_pending_operation()
-        }
-
-        fn capture(&self) -> Result<yo_core::ConnectionSnapshot, ConnectionRepositoryError> {
-            self.events.borrow_mut().push("capture");
-            self.inner.capture()
-        }
-
-        fn commit(
-            &self,
-            mutation: &yo_core::PreparedConnectionMutation,
-        ) -> Result<yo_core::ConnectionCommit, ConnectionRepositoryError> {
-            self.events.borrow_mut().push("commit");
-            self.inner.commit(mutation)
-        }
-    }
 
     struct TestDirectory(PathBuf);
 
@@ -309,18 +306,13 @@ mod tests {
             target: Some("host:codex".to_owned()),
         };
 
-        execute_default_with(&config_path, &repository, command.clone(), || Ok(())).unwrap();
+        execute_default_managed_with(&config_path, command.clone(), || Ok(())).unwrap();
         let first = repository.capture().unwrap();
-        execute_default_with(&config_path, &repository, command, || Ok(())).unwrap();
+        execute_default_managed_with(&config_path, command, || Ok(())).unwrap();
         assert_eq!(repository.capture().unwrap().revision(), first.revision());
 
-        execute_default_with(
-            &config_path,
-            &repository,
-            DefaultCommand { target: None },
-            || Ok(()),
-        )
-        .unwrap();
+        execute_default_managed_with(&config_path, DefaultCommand { target: None }, || Ok(()))
+            .unwrap();
         assert!(repository.capture().unwrap().preference().is_none());
         assert!(!directory.0.join("connection-operation.yaml").exists());
     }
@@ -333,9 +325,8 @@ mod tests {
         let config_path = empty_config(&directory);
         let repository = repository_at(&config_path);
 
-        let error = execute_default_with(
+        let error = execute_default_managed_with(
             &config_path,
-            &repository,
             DefaultCommand {
                 target: Some("host:codex".to_owned()),
             },
@@ -378,9 +369,8 @@ mod tests {
         repository.commit(&host_default).unwrap();
         let before_revision = repository.capture().unwrap().revision().clone();
 
-        let output = execute_default_with(
+        let output = execute_default_managed_with(
             &config_path,
-            &repository,
             DefaultCommand {
                 target: Some("qwencloud:default:managed".to_owned()),
             },
@@ -416,9 +406,8 @@ mod tests {
         repository.commit(&mutation).unwrap();
         let before = fs::read(repository.path()).unwrap();
 
-        let error = execute_default_with(
+        let error = execute_default_managed_with(
             &config_path,
-            &repository,
             DefaultCommand {
                 target: Some("qwencloud:default:managed".to_owned()),
             },
@@ -442,9 +431,8 @@ mod tests {
         let config_path = empty_config(&directory);
         let repository = repository_at(&config_path);
 
-        let error = execute_connect_with(
+        let error = execute_local_connect_managed_with(
             &config_path,
-            &repository,
             ConnectCommand {
                 target: "host:codex".to_owned(),
             },
@@ -456,50 +444,16 @@ mod tests {
         assert!(!repository.path().exists());
     }
 
-    // injected repository seam에서도 operation lock과 pending recovery가 snapshot capture보다
-    // 먼저, Local Codex 검증이 public commit보다 먼저 일어나야 순서가 바뀐 구현을 잡습니다.
-    #[test]
-    fn local_codex_operation_order_is_lock_recovery_capture_verify_commit() {
-        let directory = TestDirectory::new("operation-order");
-        let config_path = empty_config(&directory);
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let repository = RecordingRepository {
-            inner: repository_at(&config_path),
-            events: Rc::clone(&events),
-        };
-        let verification_events = Rc::clone(&events);
-
-        execute_connect_with(
-            &config_path,
-            &repository,
-            ConnectCommand {
-                target: "host:codex".to_owned(),
-            },
-            move || {
-                verification_events.borrow_mut().push("verify");
-                Ok(())
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            events.borrow().as_slice(),
-            ["acquire", "recover", "capture", "verify", "commit"]
-        );
-    }
-
     // pending journal과 malformed config가 함께 있어도 recovery failure가 먼저 반환되어야
     // 새 command의 config parse가 기존 recoverable operation 해결을 가리지 않습니다.
     #[test]
     fn pending_recovery_precedes_new_command_configuration_capture() {
         let directory = TestDirectory::new("recovery-before-config");
         let config_path = directory.config_path("not valid: [");
-        let repository = repository_at(&config_path);
         fs::write(directory.0.join("connection-operation.yaml"), "pending\n").unwrap();
 
-        let error = execute_default_with(
+        let error = execute_default_managed_with(
             &config_path,
-            &repository,
             DefaultCommand {
                 target: Some("host:codex".to_owned()),
             },
@@ -524,9 +478,8 @@ mod tests {
         let racing_repository = repository.clone();
         let winner = admit_target(&config, "qwencloud:default:winner").unwrap();
 
-        let output = execute_connect_with(
+        let output = execute_local_connect_managed_with(
             &config_path,
-            &repository,
             ConnectCommand {
                 target: "host:codex".to_owned(),
             },

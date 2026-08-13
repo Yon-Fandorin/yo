@@ -275,6 +275,32 @@ fn managed_upsert_round_trips_complete_state_and_first_preference() {
     assert!(!encoded.contains("secret"));
 }
 
+// credential rotation은 public binding이 byte-for-byte 같아도 새 planned revision을 만들어
+// journal recovery가 credential-first 절단점 뒤 exact public winner를 식별할 수 있습니다.
+#[test]
+fn managed_connect_forces_a_new_public_revision_for_equal_state() {
+    let (_directory, repository) = repository("managed-connect-epoch");
+    let first = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_connect(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap();
+    repository.commit(&first).unwrap();
+    let captured = repository.capture().unwrap();
+
+    let rotation = captured
+        .prepare_managed_connect(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap();
+
+    assert_ne!(rotation.expected_revision(), rotation.planned_revision());
+    assert_eq!(rotation.expected_revision(), captured.revision());
+    repository.commit(&rotation).unwrap();
+    assert_eq!(
+        repository.capture().unwrap().managed_bindings(),
+        captured.managed_bindings()
+    );
+}
+
 // 같은 account에 model을 추가하거나 기존 model profile을 교체할 때 unrelated binding과
 // 이미 정해진 preference는 그대로 남고 exact coordinate 하나만 바뀝니다.
 #[test]
