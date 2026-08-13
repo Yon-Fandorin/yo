@@ -369,7 +369,7 @@ mod tests {
         assert_eq!(output, "Connection cancelled; nothing changed.\n");
         let summary = input.summary.unwrap();
         assert!(summary.contains("vendor:team:alpha"));
-        assert!(summary.contains("+ API key\n  Save for vendor:team"));
+        assert!(summary.contains("+ API key\n  Save vendor:team"));
         assert!(!summary.contains("Connection profile"));
         assert_eq!(input.credential_reads, 0);
         for name in [
@@ -423,7 +423,7 @@ mod tests {
             input
                 .summary
                 .unwrap()
-                .contains("~ API key\n  Replace for vendor:team")
+                .contains("~ API key\n  Replace vendor:team")
         );
         assert_eq!(
             yo_core::CredentialRepository::capture(&credentials)
@@ -465,8 +465,10 @@ mod tests {
             .preview(yo_core::CredentialMutationAction::Replace, true)
             .render(super::super::presentation::default_width())
             .unwrap();
-        assert!(preview.contains("vendor:team:alpha"));
-        assert!(preview.contains("vendor:team:beta"));
+        assert!(preview.contains("Models (2)"));
+        assert!(preview.contains("alpha, beta"));
+        assert_eq!(preview.matches("Connection profile").count(), 1);
+        assert_eq!(preview.matches("https://example.test/v1").count(), 1);
         let compact = plan
             .preview(yo_core::CredentialMutationAction::Replace, false)
             .render(std::num::NonZeroU16::new(160).unwrap())
@@ -479,17 +481,23 @@ mod tests {
             .next()
             .unwrap();
         assert!(
-            credential_row.contains("verify 2 profiles:"),
+            credential_row.contains("verify 2 models"),
             "credential row: {credential_row:?}"
         );
         assert!(
-            credential_row.contains("vendor:team:alpha"),
+            credential_row.contains("alpha"),
             "credential row: {credential_row:?}"
         );
         assert!(
-            credential_row.contains("vendor:team:beta"),
+            credential_row.contains("beta"),
             "credential row: {credential_row:?}"
         );
+        let models_row = credential_row
+            .lines()
+            .find(|line| line.trim_start().starts_with("Models"))
+            .unwrap();
+        assert_eq!(models_row.trim(), "Models          alpha, beta");
+        assert!(!models_row.contains("vendor:team"));
         assert!(!compact.contains("Connection profile"));
         assert_eq!(plan.preference, Some(StartupTarget::Model(selection)));
     }
@@ -573,7 +581,9 @@ mod tests {
             .preview(yo_core::CredentialMutationAction::Replace, true)
             .render(super::super::presentation::default_width())
             .unwrap();
-        assert!(preview.matches("vendor:team:alpha").count() >= 2);
+        assert!(preview.contains("Connection profile 1 of 2"));
+        assert!(preview.contains("Connection profile 2 of 2"));
+        assert!(preview.matches("Models (1)").count() == 2);
         assert!(preview.contains("https://example.test/v1"));
         assert!(preview.contains("https://old.example.test/v1"));
         assert!(preview.contains("openai-responses"));
@@ -581,6 +591,13 @@ mod tests {
         assert!(preview.contains("~ Managed connection\n  Update vendor:team:alpha"));
         assert!(preview.matches("{}").count() >= 3);
         assert!(preview.contains(r#"{"effort":"medium"}"#));
+        let compact = plan
+            .preview(yo_core::CredentialMutationAction::Replace, false)
+            .render(std::num::NonZeroU16::new(80).unwrap())
+            .unwrap();
+        assert!(compact.contains("Replace vendor:team · verify 1 model · 2 configurations"));
+        assert!(compact.contains("Models          alpha"));
+        assert_eq!(compact.matches("Models          alpha").count(), 1);
     }
 
     // external connect도 startup target policy를 통과해야 하므로 Host 강제 policy에서는

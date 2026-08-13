@@ -613,10 +613,17 @@ prompt 전에 실패한다. Prospective managed upsert도 secret을 읽기 전�
 설정을 복구한다. 명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
 환경 변수, argument, standard input, config file은 credential channel이 아니다.
 확인 화면은 선택 target을 먼저 보여주고, 안정적인 의미 plan marker(`+`, `~`, `−`, `=`)로
-생성, 변경, 제거, 유지 효과를 구분한다. 기본 화면은 판단에 필요한 이 변경 집합, key로 검증할
-모든 profile의 exact target reference, 간결한 plan 개수를 유지한다. `-v` 또는 `--verbose`는
-각 complete binding의 secret-free endpoint, dialect, resolved profile field를 구조화된 exact
-상세 영역으로 추가한다. Credential 행은
+생성, 변경, 제거, 유지 효과를 구분한다. 기본 화면은 판단에 필요한 이 변경 집합을 유지하고,
+credential action에 Provider와 Account를 한 번만 표시한 뒤 그 account 문맥에서 key로 검증할
+각각의 정확한 Model ID를 한 번씩 나열하며, 간결한 plan 개수로 끝난다. Model ID 하나에서
+검증할 기존 또는 prospective binding이 둘 이상이면 Model ID를 반복하지 않고 별도 configuration
+개수도 action에 표시한다. `-v` 또는 `--verbose`는 model을
+제외한 connection field와 resolved profile field가 정확히 같은 model을 한 그룹으로 묶고,
+공유하는 secret-free endpoint, dialect, profile field를 한 번만 표시한다. 어느 field든 다르면
+별도 profile group을 만들므로 압축 때문에 서로 다른 binding 동작이 가려지지 않는다. 일반적인
+Model ID는 그대로 표시하고, 목록 구분자나 모호한 공백·따옴표 문자가 든 ID는 되돌릴 수 있는
+JSON string 따옴표로 표시한다. 항목과 구분자가 inline 목록 폭에 함께 맞지 않으면 맞는 ID를
+자르거나 구분자만 다음 줄에 두지 않고 별도 bullet 행으로 전환한다. Credential 행은
 repository가 준비한 action에서 파생하므로 새 key 추가와 기존 key 교체가 오해를 부르는 같은
 문구를 쓰지 않는다. Check 표시가 있는 성공 요약으로 command를 끝낸다. 색과 강조는
 terminal에서만 의미 marker를 보조하며 `NO_COLOR`와 redirect된 standard output은 평문을
@@ -641,12 +648,13 @@ public byte만 재개하고 secret을 재구성하거나 다시 검증하지 않
 일치는 command가 managed provenance만 지울 수 있으므로 운영자에게 `config.yaml` 편집을
 안내한다. 확인 전에 Yo는 prospective managed removal과 capture한 manual catalog를 합성한다.
 간결한 기본 preview는 같은 의미 plan marker로 managed removal, default와 API-key 변경, 새
-Session과 저장된 Session에 미치는 영향을 보여 주며, API-key 행은 그 key를 계속 사용하는 모든
-남은 model을 이름으로 표시한다. `-v` 또는 `--verbose`는 정확히 제거할 complete binding,
+Session과 저장된 Session에 미치는 영향을 보여 주며, API-key 행은 이미 표시한 Provider·Account
+문맥에서 그 key를 계속 사용하는 모든 정확한 Model ID를 표시하고 모호한 ID에는 같은 방식의
+되돌릴 수 있는 따옴표를 쓴다. `-v` 또는 `--verbose`는 정확히 제거할 complete binding,
 provenance 전이, 같은 pair에 남는 binding을 추가로 보여 준다. Prospective startup layer를 실제로
 해석해 새 Session이 사용할 정확한 낮은 우선순위 target을 이름으로 보여주거나 남는 target이
-없다고 알리며, preference 제거만 보고 동작을 추측하지 않는다. 남은 account model은 compact
-reference로 표시하므로 같은 manual binding이 남는다는 사실을 제거 profile 전체를 반복하지
+없다고 알리며, preference 제거만 보고 동작을 추측하지 않는다. 남은 account model은 명시된
+account 문맥 안의 정확한 Model ID로 표시하므로 같은 manual binding이 남는다는 사실을 제거 profile 전체를 반복하지
 않고 보여준다. 같은 controlling-TTY 폭 경계가 모든 preview row를 관찰한 폭 안에 둔다. 같은 manual binding이 있으면
 manual provenance가 남으므로 credential을 보존한다. 제거 뒤 dependent set이 비었을 때만
 credential 제거를 준비하며, credential이 이미 없으면 상태를 꾸며내지 않고 intent 전에

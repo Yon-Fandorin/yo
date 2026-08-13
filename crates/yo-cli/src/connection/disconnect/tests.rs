@@ -123,7 +123,7 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
     assert!(summary.contains("Connection being removed"));
     assert!(summary.contains("vendor:team:beta"));
     assert!(summary.contains("Keep vendor:team:alpha"));
-    assert!(summary.contains("Keep — still used by vendor:team:alpha"));
+    assert!(summary.contains("Keep — still used by alpha"));
     assert!(summary.contains("vendor:team:alpha"));
     assert!(summary.contains("Unavailable until this exact model is restored"));
     assert_eq!(
@@ -162,9 +162,40 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
     )
     .unwrap();
     let compact = &compact_input.summaries[0];
-    assert!(compact.contains("Keep — still used by vendor:team:alpha"));
+    assert!(compact.contains("Keep — still used by alpha"));
     assert!(!compact.contains("Connection being removed"));
     assert!(!compact.contains("Still available for this account"));
+}
+
+// Compact disconnect의 credential 보존 목록도 쉼표·공백이 든 합법적 Model ID를
+// 따옴표로 구분해, 여러 평범한 ID를 이어 쓴 목록과 혼동되지 않게 합니다.
+#[test]
+fn compact_preview_quotes_a_delimiter_bearing_remaining_model() {
+    let fixture = Fixture::new("quoted-model-list");
+    let config_path = fixture.config_path("version: 1\n");
+    fixture.seed_managed(&["alpha, beta", "gamma"], None);
+    fixture.seed_credential();
+    let mut input = FakeInput {
+        selected: Some("vendor:team:gamma".to_owned()),
+        confirmed: false,
+        selections: Vec::new(),
+        summaries: Vec::new(),
+    };
+
+    execute_external_disconnect_with(
+        &config_path,
+        DisconnectCommand {
+            provider: None,
+            account: None,
+            yes: false,
+            verbose: false,
+        },
+        &mut input,
+    )
+    .unwrap();
+
+    assert!(input.summaries[0].contains("Keep — still used by \"alpha, beta\""));
+    assert!(!input.summaries[0].contains("Keep — still used by alpha, beta"));
 }
 
 // 같은 complete binding의 manual provenance가 남으면 managed provenance만 제거하고

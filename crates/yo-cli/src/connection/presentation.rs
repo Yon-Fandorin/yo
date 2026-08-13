@@ -1,10 +1,8 @@
-use std::{env, fmt::Write as _, io::IsTerminal as _, num::NonZeroU16};
+use std::{collections::BTreeSet, env, fmt::Write as _, io::IsTerminal as _, num::NonZeroU16};
 
 use unicode_segmentation::UnicodeSegmentation;
 use yo_core::{CompleteModelBinding, CredentialMutationAction, ModelSelection};
 use yo_tui::surface::{Grapheme, GraphemeError};
-
-use super::selection_for_binding;
 
 const DEFAULT_WIDTH: u16 = 80;
 const FIELD_LABEL_WIDTH: usize = 16;
@@ -128,7 +126,12 @@ impl PlanCounts {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct BindingDetails {
-    target: String,
+    model: String,
+    profile: ProfileDetails,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct ProfileDetails {
     endpoint: String,
     protocol: String,
     connector: String,
@@ -148,7 +151,18 @@ impl BindingDetails {
         width: usize,
         style: PresentationStyle,
     ) -> Result<(), PresentationError> {
-        push_detail_field(output, "Model", &self.target, width, style)?;
+        push_detail_field(output, "Model", &self.model, width, style)?;
+        self.profile.render(output, width, style)
+    }
+}
+
+impl ProfileDetails {
+    fn render(
+        &self,
+        output: &mut String,
+        width: usize,
+        style: PresentationStyle,
+    ) -> Result<(), PresentationError> {
         push_detail_field(output, "Endpoint", &self.endpoint, width, style)?;
         push_detail_field(output, "Protocol", &self.protocol, width, style)?;
         push_detail_field(output, "Connector", &self.connector, width, style)?;
@@ -177,51 +191,76 @@ impl BindingDetails {
     }
 }
 
+struct ProfileGroup<'a> {
+    profile: &'a ProfileDetails,
+    models: Vec<&'a str>,
+}
+
+fn group_profiles(bindings: &[BindingDetails]) -> Vec<ProfileGroup<'_>> {
+    let mut groups: Vec<ProfileGroup<'_>> = Vec::new();
+    for binding in bindings {
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|group| group.profile == &binding.profile)
+        {
+            group.models.push(&binding.model);
+        } else {
+            groups.push(ProfileGroup {
+                profile: &binding.profile,
+                models: vec![&binding.model],
+            });
+        }
+    }
+    groups
+}
+
 impl From<&CompleteModelBinding> for BindingDetails {
     fn from(complete: &CompleteModelBinding) -> Self {
         let binding = complete.binding();
         let profile = complete.profile();
         Self {
-            target: selection_for_binding(binding).canonical_reference(),
-            endpoint: binding.endpoint().to_string(),
-            protocol: binding.api_dialect().to_string(),
-            connector: binding.connector_id().to_string(),
-            tokenizer: profile.context().tokenizer_profile().to_owned(),
-            input_limit: profile.context().input_token_limit(),
-            output_limit: profile.context().max_output_tokens(),
-            reasoning: profile.reasoning_parameters().to_json_value().to_string(),
-            request_options: profile
-                .optional_request_parameters()
-                .to_json_value()
-                .to_string(),
-            tools: profile.tool_capability_policy().to_string(),
-            verification: profile.verification_profile().to_string(),
+            model: binding.model_id().to_string(),
+            profile: ProfileDetails {
+                endpoint: binding.endpoint().to_string(),
+                protocol: binding.api_dialect().to_string(),
+                connector: binding.connector_id().to_string(),
+                tokenizer: profile.context().tokenizer_profile().to_owned(),
+                input_limit: profile.context().input_token_limit(),
+                output_limit: profile.context().max_output_tokens(),
+                reasoning: profile.reasoning_parameters().to_json_value().to_string(),
+                request_options: profile
+                    .optional_request_parameters()
+                    .to_json_value()
+                    .to_string(),
+                tools: profile.tool_capability_policy().to_string(),
+                verification: profile.verification_profile().to_string(),
+            },
         }
     }
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum RemainingBinding {
-    Complete { target: String },
-    Legacy { target: String },
+    Complete { model: String },
+    Legacy { model: String },
 }
 
 impl RemainingBinding {
     pub(super) fn complete(selection: ModelSelection) -> Self {
         Self::Complete {
-            target: selection.canonical_reference(),
+            model: selection.model().to_string(),
         }
     }
 
     pub(super) fn legacy(selection: ModelSelection) -> Self {
         Self::Legacy {
-            target: selection.canonical_reference(),
+            model: selection.model().to_string(),
         }
     }
 
-    pub(super) fn target(&self) -> &str {
+    pub(super) fn model(&self) -> &str {
         match self {
-            Self::Complete { target } | Self::Legacy { target } => target,
+            Self::Complete { model } | Self::Legacy { model } => model,
         }
     }
 
@@ -232,10 +271,10 @@ impl RemainingBinding {
         style: PresentationStyle,
     ) -> Result<(), PresentationError> {
         match self {
-            Self::Complete { target } => push_bullet(output, target, width, style),
-            Self::Legacy { target } => push_bullet(
+            Self::Complete { model } => push_bullet(output, model, width, style),
+            Self::Legacy { model } => push_bullet(
                 output,
-                &format!("{target}  ·  manual legacy profile"),
+                &format!("{model}  ·  manual legacy profile"),
                 width,
                 style,
             ),
@@ -340,32 +379,35 @@ impl ConnectPreview {
             style,
         )?;
         counts.record(managed_action);
-        let verified_targets = self
+        let verified_models = self
             .bindings
             .iter()
-            .map(|binding| binding.target.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
+            .map(|binding| binding.model.as_str())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let verification_detail = if verified_models.len() == self.bindings.len() {
+            format!(
+                "verify {} {}",
+                verified_models.len(),
+                plural(verified_models.len(), "model", "models")
+            )
+        } else {
+            format!(
+                "verify {} {} · {} configurations",
+                verified_models.len(),
+                plural(verified_models.len(), "model", "models"),
+                self.bindings.len()
+            )
+        };
         let (credential_action, credential_detail) = match self.credential_action {
             CredentialMutationAction::Add => (
                 PlanAction::Add,
-                format!(
-                    "Save for {} · verify {} {}: {}",
-                    self.account,
-                    self.bindings.len(),
-                    plural(self.bindings.len(), "profile", "profiles"),
-                    verified_targets,
-                ),
+                format!("Save {} · {verification_detail}", self.account),
             ),
             CredentialMutationAction::Replace => (
                 PlanAction::Change,
-                format!(
-                    "Replace for {} · verify {} {}: {}",
-                    self.account,
-                    self.bindings.len(),
-                    plural(self.bindings.len(), "profile", "profiles"),
-                    verified_targets,
-                ),
+                format!("Replace {} · {verification_detail}", self.account),
             ),
             CredentialMutationAction::Remove => {
                 return Err(PresentationError::InvalidPlan(
@@ -381,6 +423,7 @@ impl ConnectPreview {
             width,
             style,
         )?;
+        push_model_list_field(&mut output, "Models", &verified_models, width, style)?;
         counts.record(credential_action);
         let default_action = if self.default_changed {
             PlanAction::Change
@@ -398,22 +441,26 @@ impl ConnectPreview {
         counts.record(default_action);
         if self.verbose {
             output.push('\n');
-            let multiple = self.bindings.len() > 1;
-            for (index, binding) in self.bindings.iter().enumerate() {
+            let groups = group_profiles(&self.bindings);
+            let multiple = groups.len() > 1;
+            for (index, group) in groups.iter().enumerate() {
                 if index > 0 {
                     output.push('\n');
                 }
                 let heading = if multiple {
-                    format!(
-                        "Connection profile {} of {}",
-                        index + 1,
-                        self.bindings.len()
-                    )
+                    format!("Connection profile {} of {}", index + 1, groups.len())
                 } else {
                     "Connection profile".to_owned()
                 };
                 push_section_heading(&mut output, &heading, width, style)?;
-                binding.render(&mut output, width, style)?;
+                push_model_list_field(
+                    &mut output,
+                    &format!("Models ({})", group.models.len()),
+                    &group.models,
+                    width,
+                    style,
+                )?;
+                group.profile.render(&mut output, width, style)?;
             }
         }
         output.push('\n');
@@ -792,6 +839,104 @@ fn push_detail_field(
     Ok(())
 }
 
+fn push_model_list_field(
+    output: &mut String,
+    label: &str,
+    values: &[&str],
+    width: usize,
+    style: PresentationStyle,
+) -> Result<(), PresentationError> {
+    let displayed = values
+        .iter()
+        .map(|value| display_model_item(value))
+        .collect::<Vec<_>>();
+    let displayed = displayed.iter().map(String::as_str).collect::<Vec<_>>();
+    let inline_prefix = FIELD_INDENT + FIELD_LABEL_WIDTH;
+    let inline_width = width.saturating_sub(inline_prefix);
+    let every_item_fits = displayed.iter().enumerate().all(|(index, value)| {
+        safe_width(value).is_ok_and(|item_width| {
+            item_width + usize::from(index + 1 < displayed.len()) <= inline_width
+        })
+    });
+    if safe_width(label)? <= FIELD_LABEL_WIDTH && width > inline_prefix && every_item_fits {
+        let prefix = format!("  {label:<FIELD_LABEL_WIDTH$}");
+        let continuation = " ".repeat(inline_prefix);
+        for (index, line) in wrap_list(&displayed, inline_width)?.iter().enumerate() {
+            style.push(
+                output,
+                ANSI_DIM,
+                if index == 0 { &prefix } else { &continuation },
+            );
+            style.push(output, ANSI_DIM, line);
+            output.push('\n');
+        }
+    } else {
+        let indent = FIELD_INDENT.min(width.saturating_sub(1));
+        let content_width = width.saturating_sub(indent).max(1);
+        for line in wrap(label, content_width)? {
+            output.push_str(&" ".repeat(indent));
+            style.push(output, ANSI_DIM, &line);
+            output.push('\n');
+        }
+        for value in displayed {
+            push_bullet(output, value, width, style)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn display_model_item(model: &str) -> String {
+    if model.chars().any(|character| {
+        character == ',' || character == '"' || character == '\\' || character.is_whitespace()
+    }) {
+        serde_json::to_string(model).expect("serializing a model ID string cannot fail")
+    } else {
+        model.to_owned()
+    }
+}
+
+fn wrap_list(values: &[&str], width: usize) -> Result<Vec<String>, PresentationError> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut used = 0_usize;
+    for (index, value) in values.iter().enumerate() {
+        let item = if index + 1 == values.len() {
+            (*value).to_owned()
+        } else {
+            format!("{value},")
+        };
+        let item_width = safe_width(&item)?;
+        let separator_width = usize::from(!line.is_empty());
+        if !line.is_empty() && used + separator_width + item_width > width {
+            lines.push(std::mem::take(&mut line));
+            used = 0;
+        }
+        if item_width <= width {
+            if !line.is_empty() {
+                line.push(' ');
+                used += 1;
+            }
+            line.push_str(&item);
+            used += item_width;
+            continue;
+        }
+        if !line.is_empty() {
+            lines.push(std::mem::take(&mut line));
+        }
+        let mut wrapped = wrap(&item, width)?;
+        line = wrapped
+            .pop()
+            .expect("wrap always returns at least one line");
+        used = safe_width(&line)?;
+        lines.extend(wrapped);
+    }
+    if !line.is_empty() || lines.is_empty() {
+        lines.push(line);
+    }
+    Ok(lines)
+}
+
 fn push_plan_summary(
     output: &mut String,
     counts: &PlanCounts,
@@ -897,11 +1042,17 @@ mod tests {
     }
 
     fn fixture_binding() -> BindingDetails {
+        fixture_binding_for_model("alpha")
+    }
+
+    fn fixture_binding_for_model(model: &str) -> BindingDetails {
+        let mut durable = serde_json::from_str::<serde_json::Value>(
+            r#"{"provider":"vendor","account":"team","model":"alpha","connector":"openai-responses","base_url":"https://long-provider.example.test/compatible-mode/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":4096,"max_output_tokens":128,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+        )
+        .unwrap();
+        durable["model"] = serde_json::Value::String(model.to_owned());
         BindingDetails::from(
-            &CompleteModelBinding::from_durable_json(
-                r#"{"provider":"vendor","account":"team","model":"alpha","connector":"openai-responses","base_url":"https://long-provider.example.test/compatible-mode/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":4096,"max_output_tokens":128,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
-            )
-            .unwrap(),
+            &CompleteModelBinding::from_durable_json(&durable.to_string()).unwrap(),
         )
     }
 
@@ -922,11 +1073,8 @@ mod tests {
         let output = preview.render(width(80)).unwrap();
 
         assert!(output.contains("Yo will make these changes:\n+ Managed connection"));
-        assert!(
-            output.contains(
-                "+ API key\n  Save for vendor:team · verify 1 profile: vendor:team:alpha"
-            )
-        );
+        assert!(output.contains("+ API key\n  Save vendor:team · verify 1 model"));
+        assert!(output.contains("  Models          alpha"));
         assert!(output.contains("~ Default model\n  unset  →  vendor:team:alpha"));
         assert!(!output.contains("Connection profile"));
         assert!(!output.contains("long-provider.example.test"));
@@ -954,14 +1102,86 @@ mod tests {
 
         assert!(output.starts_with("CONNECT  vendor:team:alpha"));
         assert!(output.contains("Yo will make these changes:\n+ Managed connection"));
-        assert!(output.contains("+ API key\n  Save for vendor:team"));
+        assert!(output.contains("+ API key\n  Save vendor:team"));
         assert!(output.contains("Connection profile"));
+        assert!(output.contains("  Models (1)      alpha"));
         assert!(output.contains("  Endpoint"));
         assert!(output.contains("  Request options"));
         assert!(
             output.find("~ Default model").unwrap() < output.find("Connection profile").unwrap()
         );
         assert!(output.ends_with("Plan: 2 to add, 1 to change."));
+    }
+
+    // 여러 모델 목록은 쉼표 경계에서만 다음 줄로 넘겨 충분한 폭이 있는데도 긴 모델 ID를
+    // 중간에서 자르지 않으며, 각 모델을 정확히 한 번씩 그대로 보여 줍니다.
+    #[test]
+    fn model_list_wraps_between_models_without_splitting_identifiers() {
+        let models = [
+            "anthropic/claude-opus-4",
+            "deepseek/deepseek-r1",
+            "mistralai/mistral-large",
+        ];
+
+        let lines = wrap_list(&models, 30).unwrap();
+
+        assert_eq!(
+            lines,
+            [
+                "anthropic/claude-opus-4,",
+                "deepseek/deepseek-r1,",
+                "mistralai/mistral-large",
+            ]
+        );
+    }
+
+    // 쉼표나 내부 공백이 허용된 Model ID는 일반 ID와 섞여도 따옴표로 경계를 보존하며,
+    // compact와 verbose 목록이 같은 두 모델을 서로 다른 항목으로 표시합니다.
+    #[test]
+    fn model_lists_quote_delimiter_bearing_identifiers_in_both_views() {
+        let render = |verbose| {
+            Confirmation::Connect(Box::new(
+                ConnectPreview::new(
+                    "vendor:team:a".to_owned(),
+                    "vendor:team".to_owned(),
+                    "unset  →  vendor:team:a".to_owned(),
+                    ManagedConnectionChange::Create,
+                    CredentialMutationAction::Add,
+                    true,
+                    vec![
+                        fixture_binding_for_model("a"),
+                        fixture_binding_for_model("b, c"),
+                    ],
+                )
+                .with_verbose(verbose),
+            ))
+            .render(width(80))
+            .unwrap()
+        };
+
+        let compact = render(false);
+        let verbose = render(true);
+
+        assert!(compact.contains("Models          a, \"b, c\""));
+        assert_eq!(verbose.matches("Models (2)      a, \"b, c\"").count(), 1);
+    }
+
+    // Model ID 자체는 inline 폭에 맞지만 뒤 구분자까지 맞지 않으면 쉼표를 별도 줄로
+    // 떼거나 ID를 자르지 않고 명확한 bullet 항목으로 전환합니다.
+    #[test]
+    fn model_list_uses_bullets_when_an_inline_separator_would_not_fit() {
+        let mut output = String::new();
+
+        push_model_list_field(
+            &mut output,
+            "Models",
+            &["abcde", "f"],
+            23,
+            PresentationStyle::Plain,
+        )
+        .unwrap();
+
+        assert_eq!(output, "  Models\n  • abcde\n  • f\n");
     }
 
     // 좁은 terminal에서도 long endpoint와 versioned profile을 Yo가 직접 grapheme 단위로
@@ -971,7 +1191,7 @@ mod tests {
         let binding = fixture_binding();
         let preview = Confirmation::Connect(Box::new(
             ConnectPreview::new(
-                binding.target.clone(),
+                "vendor:team:alpha".to_owned(),
                 "vendor:team".to_owned(),
                 "unset  →  vendor:team:alpha".to_owned(),
                 ManagedConnectionChange::Create,
@@ -1018,7 +1238,7 @@ mod tests {
                 ),
             ),
             vec![RemainingBinding::Complete {
-                target: "vendor:team:alpha".to_owned(),
+                model: "alpha".to_owned(),
             }],
             true,
         )));
@@ -1033,7 +1253,7 @@ mod tests {
             output.matches("https://long-provider.example.test").count(),
             1
         );
-        assert!(output.contains("Still available for this account (1)\n  • vendor:team:alpha"));
+        assert!(output.contains("Still available for this account (1)\n  • alpha"));
     }
 
     // disconnect의 문장형 risk와 exact endpoint도 좁은 폭에서 셸의 임의 개행에 의존하지

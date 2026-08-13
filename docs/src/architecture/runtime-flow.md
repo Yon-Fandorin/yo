@@ -657,11 +657,21 @@ restoration while unwinding. Environment,
 arguments, standard input, and config files are not credential channels.
 The confirmation presents the selected target, then uses stable semantic plan
 markers (`+`, `~`, `−`, and `=`) to distinguish create, change, remove, and keep
-effects. The default view keeps that decision-facing change set, the exact
-target references for every profile verified with the key, and a concise plan
-count. `-v` or `--verbose` additionally lists every distinct complete binding
-in one structured exact-detail section with its non-secret endpoint, dialect,
-and resolved profile fields. The credential row is derived
+effects. The default view keeps that decision-facing change set, names the
+Provider and Account once on the credential action, lists each exact Model ID
+verified with the key once inside that account context, and ends with a concise
+plan count. When one Model ID has more than one old or prospective binding to
+verify, the action also states the distinct configuration count instead of
+duplicating the Model ID. `-v` or `--verbose` groups models whose non-model connection and resolved
+profile fields are exactly equal, then prints their shared non-secret endpoint,
+dialect, and profile fields once. Any field difference creates a separate
+profile group, so compaction never hides a distinct binding behavior. The
+usual Model IDs remain bare; an ID containing a list delimiter or ambiguous
+whitespace/quoting character uses reversible JSON-string quoting. When an item
+and its separator cannot fit the inline list width, the list becomes distinct
+bullet rows rather than splitting an otherwise fitting ID or orphaning a
+separator. The
+credential row is derived
 from the prepared repository action, so adding a new key and replacing an
 existing key cannot share misleading copy. A checked success summary closes the
 command. Color and emphasis augment those markers only on a terminal; `NO_COLOR`
@@ -691,12 +701,15 @@ the command removes only managed provenance. Before confirmation, Yo composes
 the prospective managed removal with the captured manual catalog. The compact
 default preview uses the same semantic plan markers for the managed removal,
 default and API-key changes, and new- versus saved-Session effects. Its API-key
-row names every remaining model that still depends on that key. `-v` or
+row names every remaining Model ID that still depends on that key within the
+already named Provider-and-Account context, using the same reversible quoting
+for an ambiguous ID. `-v` or
 `--verbose` also shows the exact removed complete binding, provenance
 transition, and remaining bindings for the pair. The preview resolves the prospective
 startup layers and names the exact lower-priority target for new Sessions, or
 states that no target remains; it does not infer that behavior from preference
-removal alone. Remaining account models are compact references, so an equal
+removal alone. Remaining account models are exact Model IDs in that explicit
+account context, so an equal
 manual binding is visible without repeating the removed profile. The same
 controlling-TTY width boundary keeps every preview row within the observed width.
 An equal manual binding remains manual and therefore preserves the

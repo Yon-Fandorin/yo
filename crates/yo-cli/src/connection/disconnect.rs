@@ -12,7 +12,7 @@ use super::{
     operation_repositories,
     presentation::{
         Confirmation, DisconnectEffect, DisconnectImpact, DisconnectPreview, RemainingBinding,
-        disconnect_success,
+        disconnect_success, display_model_item,
     },
     selection_for_binding,
 };
@@ -236,7 +236,8 @@ impl ExternalDisconnectPlan {
                 "Keep — still used by {}",
                 remaining
                     .iter()
-                    .map(RemainingBinding::target)
+                    .map(RemainingBinding::model)
+                    .map(display_model_item)
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
