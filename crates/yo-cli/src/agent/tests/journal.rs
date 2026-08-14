@@ -2,14 +2,14 @@ use std::{
     num::NonZeroU64,
     sync::{Arc, Mutex, mpsc},
     thread,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use yo_core::{
     ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentBackend, AgentCommand, AgentEvent,
     AgentIntent, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
-    BackendPoll, BackendScriptStep, BackendStopHandle, CommandAdmission, DurabilityGapCause,
-    JournalDurability, ScriptedBackend, SessionId, TranscriptRecord, TurnOutcome, UserInput,
+    BackendPoll, BackendScriptStep, BackendStopHandle, DurabilityGapCause, JournalDurability,
+    ScriptedBackend, SessionId, TranscriptRecord, TurnOutcome, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableCutoff, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
@@ -17,7 +17,9 @@ use yo_core::{
 };
 use yo_tui::{AgentConnection, AgentPoll};
 
-use super::support::{NeverTerminated, collect_until, session_id, turn};
+use super::support::{
+    NeverTerminated, TEST_DEADLOCK_GUARD, collect_until, dispatch_until_queued, session_id, turn,
+};
 use crate::agent::TuiAgentConnection;
 
 struct CapacityPressureRepository;
@@ -103,8 +105,8 @@ fn completion_signal_is_deferred_until_the_poll_after_the_last_event() {
     ));
     assert_eq!(backend.poll_event(), Ok(BackendPoll::Pending));
     completed
-        .recv_timeout(Duration::from_secs(1))
-        .expect("the poll after the final event publishes completion");
+        .try_recv()
+        .expect("the synchronous poll after the final event publishes completion");
 }
 
 #[derive(Clone, Default)]
@@ -216,12 +218,11 @@ fn exposes_committed_commands_and_events_in_journal_order() {
         .unwrap()
         .unwrap();
 
-    assert_eq!(
-        connection
-            .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-            .unwrap(),
-        CommandAdmission::Queued
-    );
+    dispatch_until_queued(
+        &mut connection,
+        AgentIntent::submit("inspect".to_owned()).unwrap(),
+    )
+    .unwrap();
     let records = collect_until(&mut connection, |records| {
         records.iter().any(|record| {
             matches!(
@@ -271,7 +272,7 @@ fn exposes_initial_storage_pressure_to_the_connected_frontend() {
     .unwrap()
     .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + TEST_DEADLOCK_GUARD;
     loop {
         match connection.poll().unwrap() {
             AgentPoll::Durability(JournalDurability::Gap {
@@ -325,14 +326,16 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
     )
     .unwrap()
     .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-        .unwrap();
+    dispatch_until_queued(
+        &mut connection,
+        AgentIntent::submit("inspect".to_owned()).unwrap(),
+    )
+    .unwrap();
 
     // Backend completion is the ordering boundary. This longer timeout is only a finite
     // deadlock guard for cold hooks that compile and test several Rust targets concurrently.
     completed
-        .recv_timeout(Duration::from_secs(30))
+        .recv_timeout(TEST_DEADLOCK_GUARD)
         .expect("worker did not finish the scripted Turn");
     assert_eq!(
         connection.transcript.head_sequence().map(|head| head.get()),
@@ -440,12 +443,14 @@ fn drains_more_than_one_bounded_page_from_one_coalesced_wake() {
     let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
         .unwrap()
         .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-        .unwrap();
+    dispatch_until_queued(
+        &mut connection,
+        AgentIntent::submit("inspect".to_owned()).unwrap(),
+    )
+    .unwrap();
 
     completed
-        .recv_timeout(Duration::from_secs(10))
+        .recv_timeout(TEST_DEADLOCK_GUARD)
         .expect("worker did not finish the scripted Journal suffix");
     assert_eq!(
         connection.transcript.head_sequence().map(|head| head.get()),

@@ -5,10 +5,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use yo_core::{SessionId, TranscriptRecord, TurnId, TurnRef};
+use yo_core::{AgentIntent, CommandAdmission, SessionId, TranscriptRecord, TurnId, TurnRef};
 use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
 
 use crate::agent::TuiAgentConnection;
+
+/// Finite guard for a test worker that failed to publish an already-selected typed boundary.
+///
+/// Tests still complete only after observing their exact record or signal. This duration is not
+/// a semantic completion oracle; it only prevents a broken test from hanging indefinitely under
+/// slow full-suite scheduling.
+pub(super) const TEST_DEADLOCK_GUARD: Duration = Duration::from_secs(30);
 
 pub(super) struct NeverTerminated;
 
@@ -28,11 +35,35 @@ pub(super) fn turn() -> TurnRef {
     TurnRef::new(session_id(), TurnId::new(NonZeroU64::MIN))
 }
 
+pub(super) fn dispatch_until_queued(
+    connection: &mut TuiAgentConnection,
+    intent: AgentIntent,
+) -> Result<(), String> {
+    let deadline = Instant::now() + TEST_DEADLOCK_GUARD;
+    let mut admission = connection
+        .dispatch(intent)
+        .map_err(|error| error.to_string())?;
+    loop {
+        match admission {
+            CommandAdmission::Queued => return Ok(()),
+            CommandAdmission::Backpressured(pending) if Instant::now() < deadline => {
+                thread::yield_now();
+                admission = connection
+                    .retry(pending)
+                    .map_err(|error| error.to_string())?;
+            },
+            CommandAdmission::Backpressured(_) => {
+                return Err("timed out retrying a backpressured test command".to_owned());
+            },
+        }
+    }
+}
+
 pub(super) fn collect_until(
     connection: &mut TuiAgentConnection,
     done: impl Fn(&[TranscriptRecord]) -> bool,
 ) -> Result<Vec<TranscriptRecord>, String> {
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + TEST_DEADLOCK_GUARD;
     let mut records = Vec::new();
     loop {
         match connection.poll() {

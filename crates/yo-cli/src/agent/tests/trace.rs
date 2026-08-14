@@ -1,7 +1,4 @@
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
+use std::{thread, time::Instant};
 
 use yo_core::{
     AgentCommand, AgentIntent, BackendBindingEvidence, BackendCommandEvidence, BackendEvent,
@@ -10,7 +7,9 @@ use yo_core::{
 };
 use yo_tui::{AgentConnection, AgentPoll};
 
-use super::support::{NeverTerminated, session_id, turn};
+use super::support::{
+    NeverTerminated, TEST_DEADLOCK_GUARD, dispatch_until_queued, session_id, turn,
+};
 use crate::agent::TuiAgentConnection;
 
 // CLI adapter는 worker 알림 하나에서 Transcript와 payload-free Request trace를 함께
@@ -55,11 +54,13 @@ fn exposes_live_request_trace_through_the_frontend_connection() {
     let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
         .unwrap()
         .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-        .unwrap();
+    dispatch_until_queued(
+        &mut connection,
+        AgentIntent::submit("inspect".to_owned()).unwrap(),
+    )
+    .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + TEST_DEADLOCK_GUARD;
     let mut trace = Vec::new();
     while trace.len() < 5 {
         match connection.poll().unwrap() {

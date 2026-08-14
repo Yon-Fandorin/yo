@@ -1,7 +1,4 @@
-use std::{
-    thread,
-    time::{Duration, Instant},
-};
+use std::{thread, time::Instant};
 
 use yo_core::{
     AgentCommand, AgentEvent, AgentIntent, BackendCapabilities, BackendFailure, BackendFailureKind,
@@ -9,7 +6,9 @@ use yo_core::{
 };
 use yo_tui::{AgentConnection, AgentPoll};
 
-use super::support::{NeverTerminated, collect_until, session_id, turn};
+use super::support::{
+    NeverTerminated, TEST_DEADLOCK_GUARD, collect_until, dispatch_until_queued, session_id, turn,
+};
 use crate::agent::TuiAgentConnection;
 
 // 백엔드 실패가 저널에 Turn 실패를 확정한 경우 CLI 어댑터는 그 레코드를 먼저 모두
@@ -35,11 +34,13 @@ fn drains_committed_failure_record_before_reporting_connection_failure() {
     let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
         .unwrap()
         .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-        .unwrap();
+    dispatch_until_queued(
+        &mut connection,
+        AgentIntent::submit("inspect".to_owned()).unwrap(),
+    )
+    .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + TEST_DEADLOCK_GUARD;
     let mut saw_failed_turn = false;
     loop {
         match connection.poll() {
@@ -98,9 +99,11 @@ fn drains_cleanup_record_before_reporting_command_failure() {
     let mut connection = TuiAgentConnection::start(backend, session_id(), &mut termination)
         .unwrap()
         .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
-        .unwrap();
+    dispatch_until_queued(
+        &mut connection,
+        AgentIntent::submit("inspect".to_owned()).unwrap(),
+    )
+    .unwrap();
     collect_until(&mut connection, |records| {
         records.iter().any(|record| {
             matches!(
@@ -110,11 +113,13 @@ fn drains_cleanup_record_before_reporting_command_failure() {
         })
     })
     .unwrap();
-    connection
-        .dispatch(AgentIntent::submit("focus".to_owned()).unwrap())
-        .unwrap();
+    dispatch_until_queued(
+        &mut connection,
+        AgentIntent::submit("focus".to_owned()).unwrap(),
+    )
+    .unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + TEST_DEADLOCK_GUARD;
     let mut records = Vec::new();
     loop {
         match connection.poll() {

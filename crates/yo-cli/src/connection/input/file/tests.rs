@@ -2,7 +2,7 @@ use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use super::*;
@@ -12,17 +12,23 @@ struct Fixture {
     path: PathBuf,
 }
 
+static NEXT_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
+
 impl Fixture {
     fn new(contents: &[u8], mode: u32) -> Self {
-        let root = super::super::super::canonical_test_temp_dir().join(format!(
-            "yo-credential-input-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(&root).unwrap();
+        let root = loop {
+            let fixture_id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
+            let candidate = super::super::super::canonical_test_temp_dir().join(format!(
+                "yo-credential-input-{}-{}",
+                std::process::id(),
+                fixture_id
+            ));
+            match fs::create_dir(&candidate) {
+                Ok(()) => break candidate,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                Err(error) => panic!("credential fixture directory creation failed: {error}"),
+            }
+        };
         let path = root.join("credential");
         fs::write(&path, contents).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
@@ -60,12 +66,8 @@ fn accepts_one_crlf_but_rejects_an_additional_line_break() {
     assert_eq!(read(&accepted.path).unwrap().expose_secret(), "secret");
 
     let rejected = Fixture::new(b"first\nsecond\r\n", 0o600);
-    assert!(
-        read(&rejected.path)
-            .unwrap_err()
-            .to_string()
-            .contains("control")
-    );
+    let error = read(&rejected.path).unwrap_err().to_string();
+    assert!(error.contains("control"), "{error}");
 }
 
 // Terminal LF/CRLF 외의 control은 보존한 채 ApiCredential에서 거절하고, file bytes가
@@ -73,28 +75,16 @@ fn accepts_one_crlf_but_rejects_an_additional_line_break() {
 #[test]
 fn rejects_invalid_utf8_lone_cr_and_empty_value() {
     let invalid_utf8 = Fixture::new(&[0xff, b'\n'], 0o600);
-    assert!(
-        read(&invalid_utf8.path)
-            .unwrap_err()
-            .to_string()
-            .contains("valid UTF-8")
-    );
+    let error = read(&invalid_utf8.path).unwrap_err().to_string();
+    assert!(error.contains("valid UTF-8"), "{error}");
 
     let lone_cr = Fixture::new(b"secret\r", 0o600);
-    assert!(
-        read(&lone_cr.path)
-            .unwrap_err()
-            .to_string()
-            .contains("control")
-    );
+    let error = read(&lone_cr.path).unwrap_err().to_string();
+    assert!(error.contains("control"), "{error}");
 
     let empty = Fixture::new(b"\n", 0o600);
-    assert!(
-        read(&empty.path)
-            .unwrap_err()
-            .to_string()
-            .contains("1 to 16384 bytes")
-    );
+    let error = read(&empty.path).unwrap_err().to_string();
+    assert!(error.contains("1 to 16384 bytes"), "{error}");
 }
 
 // final symlink과 directory는 no-follow regular-file 경계를 통과하지 못하고 target bytes를
@@ -142,20 +132,12 @@ fn enforces_file_and_credential_size_boundaries() {
     );
 
     let oversized_file = Fixture::new(&vec![b'x'; MAX_FILE_BYTES + 1], 0o600);
-    assert!(
-        read(&oversized_file.path)
-            .unwrap_err()
-            .to_string()
-            .contains("16,386")
-    );
+    let error = read(&oversized_file.path).unwrap_err().to_string();
+    assert!(error.contains("16,386"), "{error}");
 
     let oversized_secret = Fixture::new(&vec![b'x'; MAX_CREDENTIAL_BYTES + 1], 0o600);
-    assert!(
-        read(&oversized_secret.path)
-            .unwrap_err()
-            .to_string()
-            .contains("16,384")
-    );
+    let error = read(&oversized_secret.path).unwrap_err().to_string();
+    assert!(error.contains("16,384"), "{error}");
 }
 
 // handle read 뒤 같은 pathname을 더 긴 내용으로 바꾸는 seam은 before/after metadata 또는
@@ -172,7 +154,7 @@ fn rejects_a_file_changed_during_capture() {
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("changed while"));
+    assert!(error.contains("changed while"), "{error}");
     assert!(!error.contains("old-secret"));
     assert!(!error.contains("new-secret"));
 }
