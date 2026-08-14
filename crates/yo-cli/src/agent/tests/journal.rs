@@ -22,6 +22,9 @@ use crate::agent::TuiAgentConnection;
 
 struct CapacityPressureRepository;
 
+/// Signals only when the backend is polled *after* the declared events were returned.
+/// The intervening Runtime return and worker loop must therefore append the final event and
+/// publish its change before the next poll can send the completion acknowledgment.
 struct CompletionSignalingBackend {
     inner: ScriptedBackend,
     remaining_events: usize,
@@ -79,6 +82,29 @@ impl AgentBackend for CompletionSignalingBackend {
     fn shutdown(&mut self) -> Result<(), BackendFailure> {
         self.inner.shutdown()
     }
+}
+
+// completion fixture는 마지막 event를 반환한 같은 poll에서는 신호하지 않고 다음 poll에
+// 진입할 때만 신호해 Runtime append와 worker publication 사이의 barrier를 보존합니다.
+#[test]
+fn completion_signal_is_deferred_until_the_poll_after_the_last_event() {
+    let (mut backend, completed) = CompletionSignalingBackend::new(
+        ScriptedBackend::new([BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: turn(),
+            outcome: TurnOutcome::Completed,
+        })]),
+        1,
+    );
+
+    assert!(matches!(backend.poll_event(), Ok(BackendPoll::Event(_))));
+    assert!(matches!(
+        completed.try_recv(),
+        Err(mpsc::TryRecvError::Empty)
+    ));
+    assert_eq!(backend.poll_event(), Ok(BackendPoll::Pending));
+    completed
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the poll after the final event publishes completion");
 }
 
 #[derive(Clone, Default)]
@@ -273,20 +299,23 @@ fn exposes_initial_storage_pressure_to_the_connected_frontend() {
 // Durable이 먼저 전달되어 화면 계층이 각 record의 저장 여부를 추측하지 않게 한다.
 #[test]
 fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
-    let backend = ScriptedBackend::new([
-        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
-            session_id: session_id(),
-        }),
-        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
-            turn: turn(),
-            input: UserInput::from("inspect"),
-        }),
-        BackendScriptStep::Emit(BackendEvent::TurnFinished {
-            turn: turn(),
-            outcome: TurnOutcome::Completed,
-        }),
-        BackendScriptStep::Shutdown(Ok(())),
-    ]);
+    let (backend, completed) = CompletionSignalingBackend::new(
+        ScriptedBackend::new([
+            BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+                session_id: session_id(),
+            }),
+            BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("inspect"),
+            }),
+            BackendScriptStep::Emit(BackendEvent::TurnFinished {
+                turn: turn(),
+                outcome: TurnOutcome::Completed,
+            }),
+            BackendScriptStep::Shutdown(Ok(())),
+        ]),
+        1,
+    );
     let mut termination = NeverTerminated;
     let mut connection = TuiAgentConnection::start_persistent(
         backend,
@@ -300,16 +329,16 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
         .dispatch(AgentIntent::submit("inspect".to_owned()).unwrap())
         .unwrap();
 
-    // hk runs several Rust suites concurrently; allow scheduler delay without weakening the
-    // semantic head-sequence assertion that follows.
-    let deadline = Instant::now() + Duration::from_secs(4);
-    while connection.transcript.head_sequence().map(|head| head.get()) != Some(5) {
-        assert!(
-            Instant::now() < deadline,
-            "worker did not complete the scripted Turn"
-        );
-        thread::yield_now();
-    }
+    // Backend completion is the ordering boundary. This longer timeout is only a finite
+    // deadlock guard for cold hooks that compile and test several Rust targets concurrently.
+    completed
+        .recv_timeout(Duration::from_secs(30))
+        .expect("worker did not finish the scripted Turn");
+    assert_eq!(
+        connection.transcript.head_sequence().map(|head| head.get()),
+        Some(5),
+        "backend completion must make the complete Journal prefix observable"
+    );
 
     let mut observations = Vec::new();
     while !observations.iter().any(|observation| {
