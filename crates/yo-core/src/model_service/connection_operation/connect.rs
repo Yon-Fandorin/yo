@@ -21,6 +21,8 @@ use crate::{
     model_service::LocalCredentialStoreError,
 };
 
+const CONNECTION_VERIFICATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
 /// A safe external-connect failure. It never retains or formats candidate credential bytes.
 #[derive(Debug)]
 pub enum ExternalConnectionError {
@@ -341,7 +343,10 @@ fn verify_complete_binding(
     }
     .map_err(|error| error.kind())?;
 
-    verify_semantic_stream(&mut stream, Instant::now() + Duration::from_secs(65))
+    verify_semantic_stream(
+        &mut stream,
+        Instant::now() + CONNECTION_VERIFICATION_TIMEOUT,
+    )
 }
 
 pub(super) trait VerificationStreamPort {
@@ -403,12 +408,9 @@ pub(super) fn verify_semantic_stream(
     result.and(cleanup)
 }
 
-fn verification_limits() -> ModelConnectorLimits {
+pub(super) fn verification_limits() -> ModelConnectorLimits {
     ModelConnectorLimits {
-        connect_timeout: Duration::from_secs(10),
-        response_header_timeout: Duration::from_secs(20),
-        stream_idle_timeout: Duration::from_secs(20),
-        total_request_timeout: Duration::from_secs(60),
+        absolute_request_timeout: Some(CONNECTION_VERIFICATION_TIMEOUT),
         max_redirects: 1,
         max_error_body_bytes: 16 * 1024,
         max_sse_event_bytes: 64 * 1024,
@@ -418,6 +420,7 @@ fn verification_limits() -> ModelConnectorLimits {
         max_refusal_bytes: 16 * 1024,
         max_reasoning_bytes: 64 * 1024,
         max_function_argument_bytes: 16 * 1024,
+        ..ModelConnectorLimits::default()
     }
 }
 

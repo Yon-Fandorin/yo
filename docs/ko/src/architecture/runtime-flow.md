@@ -57,7 +57,14 @@ provider conversation authority 또는 built-in tool을 켜지 않는다. Chat d
 choice 하나, finish 뒤 final usage와 `[DONE]` 순서를 요구하고 content와 refusal을 독립적으로
 보존하며 index가 있는 tool-call fragment를 correlate한다. 두 dialect 모두 SSE event와 누적
 payload를 읽는 동안 제한하며 cancellation은
-header·stream·queue wait를 중단한다. `yo-core::backend::native`가 semantic
+header·stream·queue wait를 중단한다. 기본 agent 경로에는 absolute model-request deadline이
+없다. 그래도 connection setup은 30초, 각 redirect attempt의 response header는 5분,
+successful-stream inactivity는 5분, non-success error-body inactivity는 30초, 각 내부 event
+handoff는 5분으로 제한한다.
+비어 있지 않은 raw HTTP body chunk만 SSE decode 또는 error-body retention 전에 body
+inactivity clock을 reset하며, observation마다 새로운 event-handoff wait를 시작한다. External
+connection verification은 별도의 10분 absolute request deadline을 제공한다.
+`yo-core::backend::native`가 semantic
 Activity와 제한된 model/tool loop를 소유한다. 매 dispatch 전에 catalog가 선택한
 tokenizer profile로 실제 request를 계산한다. 예약 출력량을 제외한 input budget이나
 admission된 replay prefix가 소진되면 현재 Turn을 재개 evidence 없이 완료하고, 한도를

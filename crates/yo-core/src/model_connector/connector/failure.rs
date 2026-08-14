@@ -62,34 +62,53 @@ pub(super) struct EffectiveTimeout {
     pub(super) message: &'static str,
 }
 
-pub(super) fn effective_timeout(
-    started: Instant,
-    total: Duration,
-    phase: Duration,
+pub(super) fn phase_timeout(
+    request_started: Instant,
+    absolute_request_timeout: Option<Duration>,
+    phase_started: Instant,
+    phase_timeout: Duration,
     phase_message: &'static str,
 ) -> Result<EffectiveTimeout, ConnectorError> {
-    let remaining = total.checked_sub(started.elapsed()).ok_or_else(|| {
-        ConnectorError::new(
-            ConnectorFailureKind::Timeout,
-            "model-connector total request deadline expired",
-        )
-    })?;
-    if remaining.is_zero() {
-        return Err(ConnectorError::new(
-            ConnectorFailureKind::Timeout,
-            "model-connector total request deadline expired",
-        ));
-    }
-    if remaining <= phase {
+    let now = Instant::now();
+    let phase_remaining = phase_timeout
+        .checked_sub(now.saturating_duration_since(phase_started))
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| ConnectorError::new(ConnectorFailureKind::Timeout, phase_message))?;
+    let Some(absolute_request_timeout) = absolute_request_timeout else {
+        return Ok(EffectiveTimeout {
+            duration: phase_remaining,
+            message: phase_message,
+        });
+    };
+    let absolute_remaining = absolute_request_timeout
+        .checked_sub(now.saturating_duration_since(request_started))
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| {
+            ConnectorError::new(
+                ConnectorFailureKind::Timeout,
+                "model-connector absolute request deadline expired",
+            )
+        })?;
+    if absolute_remaining <= phase_remaining {
         Ok(EffectiveTimeout {
-            duration: remaining,
-            message: "model-connector total request deadline expired",
+            duration: absolute_remaining,
+            message: "model-connector absolute request deadline expired",
         })
     } else {
         Ok(EffectiveTimeout {
-            duration: phase,
+            duration: phase_remaining,
             message: phase_message,
         })
+    }
+}
+
+pub(super) fn record_body_progress(
+    phase_started: &mut Instant,
+    bytes: &[u8],
+    observed_at: Instant,
+) {
+    if !bytes.is_empty() {
+        *phase_started = observed_at;
     }
 }
 

@@ -58,7 +58,14 @@ or enables provider conversation authority or built-in tools. The Chat decoder
 requires one index-zero choice, finish then final usage then `[DONE]`, preserves
 content and refusal independently, and correlates indexed tool-call fragments.
 Both dialects bound SSE events and cumulative payloads while reading, and
-cancellation interrupts header, stream, and queue waits. `yo-core::backend::native` owns semantic Activities and the bounded
+cancellation interrupts header, stream, and queue waits. The default agent
+route has no absolute model-request deadline. It still bounds connection setup
+at 30 seconds, each redirect attempt's response headers at 5 minutes,
+successful-stream inactivity at 5 minutes, non-success error-body inactivity at
+30 seconds, and each internal event handoff at 5 minutes. Only a non-empty raw HTTP body chunk resets a body
+inactivity clock, before SSE decoding or error-body retention; each observation
+starts a fresh event-handoff wait. External connection verification supplies a
+separate 10-minute absolute request deadline. `yo-core::backend::native` owns semantic Activities and the bounded
 model/tool loop. Before each dispatch it counts the exact request with the
 catalog-selected tokenizer profile. If the input budget or admitted replay
 prefix is exhausted, it completes the current Turn without resumable evidence,

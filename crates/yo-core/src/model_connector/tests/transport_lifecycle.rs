@@ -265,6 +265,72 @@ fn forwards_credentials_across_a_same_origin_redirect() {
     assert_eq!(request_body(&records[0]), request_body(&records[1]));
 }
 
+// 각 307 hop의 header 지연은 개별 limit보다 짧지만 합계는 한 window보다 긴 실제 TLS
+// chain에서 세 POST가 모두 완료되어 redirect마다 header clock이 새로 시작하는지 판별합니다.
+#[test]
+fn each_redirect_attempt_gets_a_fresh_response_header_deadline() {
+    if run_in_tls_child(
+        "model_connector::tests::transport_lifecycle::each_redirect_attempt_gets_a_fresh_response_header_deadline",
+    ) {
+        return;
+    }
+    let server = LocalTlsServer::start(LocalServerMode::DelayedRedirectChain {
+        final_body: terminal_stream(),
+    });
+    let limits = ResponsesConnectorLimits {
+        connect_timeout: Duration::from_secs(1),
+        response_header_timeout: Duration::from_millis(150),
+        ..ResponsesConnectorLimits::default()
+    };
+    let started = Instant::now();
+    let mut stream = connector(&server, limits)
+        .start(request(), ResponsesCancellation::new())
+        .unwrap();
+    let _ = poll_until_closed(&mut stream);
+    drop(stream);
+
+    assert!(started.elapsed() >= Duration::from_millis(200));
+    let records = server.requests();
+    assert_eq!(records.len(), 3);
+    assert_eq!(records[0]["path"], "/v1/responses");
+    assert_eq!(records[1]["path"], "/v1/redirect-1");
+    assert_eq!(records[2]["path"], "/v1/redirect-2");
+    assert!(
+        records
+            .iter()
+            .all(|record| record["authorization_sha256"] == AUTHORIZATION_SHA256)
+    );
+}
+
+// redirect attempt마다 header clock은 새로 열어도 logical request의 optional absolute clock은
+// 최초 POST에서 유지되어 누적 chain이 전체 budget을 넘으면 final success 전에 끝납니다.
+#[test]
+fn redirect_attempts_do_not_reset_the_absolute_request_deadline() {
+    if run_in_tls_child(
+        "model_connector::tests::transport_lifecycle::redirect_attempts_do_not_reset_the_absolute_request_deadline",
+    ) {
+        return;
+    }
+    let server = LocalTlsServer::start(LocalServerMode::DelayedRedirectChain {
+        final_body: terminal_stream(),
+    });
+    let limits = ResponsesConnectorLimits {
+        connect_timeout: Duration::from_secs(1),
+        response_header_timeout: Duration::from_millis(150),
+        absolute_request_timeout: Some(Duration::from_millis(190)),
+        ..ResponsesConnectorLimits::default()
+    };
+    let started = Instant::now();
+    let error = connector(&server, limits)
+        .start(request(), ResponsesCancellation::new())
+        .unwrap_err();
+
+    assert_eq!(error.kind(), ConnectorFailureKind::Timeout);
+    assert!(error.message().contains("absolute request"));
+    assert!(started.elapsed() < Duration::from_millis(400));
+    assert!((2..=3).contains(&server.requests().len()));
+}
+
 // 다른 loopback port를 별도 origin으로 취급하여 redirect를 거부하고 target listener에는
 // 요청이 도착하지 않음을 직접 확인해 bearer credential의 cross-origin forwarding 경계를 고정합니다.
 #[test]
@@ -329,7 +395,7 @@ fn times_out_waiting_for_response_headers_at_the_header_deadline() {
     let limits = ResponsesConnectorLimits {
         connect_timeout: Duration::from_secs(1),
         response_header_timeout: Duration::from_millis(100),
-        total_request_timeout: Duration::from_secs(1),
+        absolute_request_timeout: Some(Duration::from_secs(1)),
         ..ResponsesConnectorLimits::default()
     };
     let started = Instant::now();
@@ -357,7 +423,7 @@ fn times_out_a_stalled_tls_handshake_at_the_connect_deadline() {
     let limits = ResponsesConnectorLimits {
         connect_timeout: Duration::from_millis(100),
         response_header_timeout: Duration::from_secs(5),
-        total_request_timeout: Duration::from_secs(5),
+        absolute_request_timeout: Some(Duration::from_secs(5)),
         ..ResponsesConnectorLimits::default()
     };
     let started = Instant::now();
@@ -372,13 +438,12 @@ fn times_out_a_stalled_tls_handshake_at_the_connect_deadline() {
     server.wait_for_peer_closed();
 }
 
-// 같은 accepted stream에서 idle phase만 짧게 둔 경우와 overall total만 짧게 둔 경우를 각각
-// 관찰하여 읽기 deadline과 전체 deadline이 같은 성공 SSE를 서로 다른 Timeout 메시지로 끝내는지
-// 고정합니다.
+// 같은 accepted stream에서 idle phase만 짧게 둔 경우와 optional absolute request만 짧게 둔
+// 경우를 각각 관찰하여 두 deadline이 서로 다른 typed Timeout 메시지로 끝나는지 고정합니다.
 #[test]
-fn distinguishes_stream_idle_and_total_request_deadlines() {
+fn distinguishes_stream_idle_and_absolute_request_deadlines() {
     if run_in_tls_child(
-        "model_connector::tests::transport_lifecycle::distinguishes_stream_idle_and_total_request_deadlines",
+        "model_connector::tests::transport_lifecycle::distinguishes_stream_idle_and_absolute_request_deadlines",
     ) {
         return;
     }
@@ -387,7 +452,6 @@ fn distinguishes_stream_idle_and_total_request_deadlines() {
     });
     let idle_limits = ResponsesConnectorLimits {
         stream_idle_timeout: Duration::from_millis(100),
-        total_request_timeout: Duration::from_secs(1),
         ..ResponsesConnectorLimits::default()
     };
     let mut idle_stream = connector(&idle_server, idle_limits)
@@ -405,7 +469,7 @@ fn distinguishes_stream_idle_and_total_request_deadlines() {
     });
     let total_limits = ResponsesConnectorLimits {
         stream_idle_timeout: Duration::from_secs(1),
-        total_request_timeout: Duration::from_millis(500),
+        absolute_request_timeout: Some(Duration::from_millis(500)),
         ..ResponsesConnectorLimits::default()
     };
     let mut total_stream = connector(&total_server, total_limits)
@@ -414,9 +478,94 @@ fn distinguishes_stream_idle_and_total_request_deadlines() {
     total_server.wait_for_response_sent();
     assert_eq!(total_server.requests().len(), 1);
     let total_message = poll_until_error(&mut total_stream, ConnectorFailureKind::Timeout);
-    assert!(total_message.contains("total request"));
+    assert!(total_message.contains("absolute request"));
     drop(total_stream);
     total_server.wait_for_peer_closed();
+}
+
+// non-success header 뒤 일부 body를 보낸 채 멈추는 실제 HTTPS peer에서 성공 stream의 idle
+// 설정과 분리된 error-body inactivity가 시작되고 phase 이름을 보존하는지 관찰합니다.
+#[test]
+fn times_out_a_stalled_error_body_at_its_own_inactivity_deadline() {
+    if run_in_tls_child(
+        "model_connector::tests::transport_lifecycle::times_out_a_stalled_error_body_at_its_own_inactivity_deadline",
+    ) {
+        return;
+    }
+    let server = LocalTlsServer::start(LocalServerMode::ErrorBodyThenStall {
+        status: 500,
+        body: b"bounded partial error".to_vec(),
+    });
+    let limits = ResponsesConnectorLimits {
+        stream_idle_timeout: Duration::from_secs(2),
+        error_body_idle_timeout: Duration::from_millis(100),
+        ..ResponsesConnectorLimits::default()
+    };
+    let started = Instant::now();
+    let error = connector(&server, limits)
+        .start(request(), ResponsesCancellation::new())
+        .unwrap_err();
+
+    assert_eq!(error.kind(), ConnectorFailureKind::Timeout);
+    assert!(error.message().contains("error-body idle"));
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(server.requests().len(), 1);
+    server.wait_for_peer_closed();
+}
+
+// semantic SSE event가 완성되지 않아도 실제 HTTPS peer의 non-empty heartbeat/comment raw
+// chunk가 도착할 때마다 successful-stream inactivity가 연장되는지 누적 시간으로 판별합니다.
+#[test]
+fn non_empty_raw_heartbeats_reset_successful_stream_inactivity() {
+    if run_in_tls_child(
+        "model_connector::tests::transport_lifecycle::non_empty_raw_heartbeats_reset_successful_stream_inactivity",
+    ) {
+        return;
+    }
+    let server = LocalTlsServer::start(LocalServerMode::HeartbeatsThenStall);
+    let limits = ResponsesConnectorLimits {
+        stream_idle_timeout: Duration::from_millis(90),
+        ..ResponsesConnectorLimits::default()
+    };
+    let started = Instant::now();
+    let mut stream = connector(&server, limits)
+        .start(request(), ResponsesCancellation::new())
+        .unwrap();
+    server.wait_for_response_sent();
+
+    let message = poll_until_error(&mut stream, ConnectorFailureKind::Timeout);
+    assert!(message.contains("stream idle"));
+    assert!(started.elapsed() >= Duration::from_millis(180));
+    drop(stream);
+    server.wait_for_peer_closed();
+}
+
+// non-empty heartbeat가 stream inactivity를 연장하는 동안에도 optional absolute request clock은
+// 한 번 시작한 뒤 reset되지 않아 더 짧은 전체 work budget이 정확한 phase로 끝나는지 검증합니다.
+#[test]
+fn raw_heartbeats_do_not_reset_an_absolute_request_deadline() {
+    if run_in_tls_child(
+        "model_connector::tests::transport_lifecycle::raw_heartbeats_do_not_reset_an_absolute_request_deadline",
+    ) {
+        return;
+    }
+    let server = LocalTlsServer::start(LocalServerMode::HeartbeatsThenStall);
+    let limits = ResponsesConnectorLimits {
+        stream_idle_timeout: Duration::from_secs(1),
+        absolute_request_timeout: Some(Duration::from_millis(130)),
+        ..ResponsesConnectorLimits::default()
+    };
+    let started = Instant::now();
+    let mut stream = connector(&server, limits)
+        .start(request(), ResponsesCancellation::new())
+        .unwrap();
+    server.wait_for_response_sent();
+
+    let message = poll_until_error(&mut stream, ConnectorFailureKind::Timeout);
+    assert!(message.contains("absolute request"));
+    assert!(started.elapsed() < Duration::from_millis(400));
+    drop(stream);
+    server.wait_for_peer_closed();
 }
 
 // acceptance 후 cancellation은 pending read를 깨우고, shutdown은 같은 worker를 join하며,

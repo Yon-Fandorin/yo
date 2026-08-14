@@ -5,7 +5,9 @@ pub struct ResponsesConnectorLimits {
     pub connect_timeout: Duration,
     pub response_header_timeout: Duration,
     pub stream_idle_timeout: Duration,
-    pub total_request_timeout: Duration,
+    pub error_body_idle_timeout: Duration,
+    pub event_delivery_timeout: Duration,
+    pub absolute_request_timeout: Option<Duration>,
     pub max_redirects: usize,
     pub max_error_body_bytes: usize,
     pub max_sse_event_bytes: usize,
@@ -20,10 +22,12 @@ pub struct ResponsesConnectorLimits {
 impl Default for ResponsesConnectorLimits {
     fn default() -> Self {
         Self {
-            connect_timeout: Duration::from_secs(10),
-            response_header_timeout: Duration::from_secs(30),
-            stream_idle_timeout: Duration::from_secs(30),
-            total_request_timeout: Duration::from_secs(10 * 60),
+            connect_timeout: Duration::from_secs(30),
+            response_header_timeout: Duration::from_secs(5 * 60),
+            stream_idle_timeout: Duration::from_secs(5 * 60),
+            error_body_idle_timeout: Duration::from_secs(30),
+            event_delivery_timeout: Duration::from_secs(5 * 60),
+            absolute_request_timeout: None,
             max_redirects: 3,
             max_error_body_bytes: 64 * 1024,
             max_sse_event_bytes: 1024 * 1024,
@@ -43,12 +47,17 @@ impl ResponsesConnectorLimits {
             self.connect_timeout,
             self.response_header_timeout,
             self.stream_idle_timeout,
-            self.total_request_timeout,
+            self.error_body_idle_timeout,
+            self.event_delivery_timeout,
         ];
-        if durations.into_iter().any(|duration| duration.is_zero()) {
+        if durations.into_iter().any(|duration| duration.is_zero())
+            || self
+                .absolute_request_timeout
+                .is_some_and(|duration| duration.is_zero())
+        {
             return Err(ConnectorError::new(
                 ConnectorFailureKind::Configuration,
-                "Responses connector deadlines must be non-zero",
+                "Responses connector configured deadlines must be non-zero",
             ));
         }
         let bounds = [

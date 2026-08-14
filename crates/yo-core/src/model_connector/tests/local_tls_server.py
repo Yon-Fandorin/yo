@@ -3,6 +3,7 @@ import json
 import socket
 import ssl
 import sys
+import time
 
 certificate, key, ready, requests, accepted, sent, mode, closed, payload, media_type, status, location, max_connections = sys.argv[1:]
 max_connections = int(max_connections)
@@ -111,6 +112,23 @@ def serve(connection, index):
         )
     elif mode == "redirect":
         send_response(connection, 200, body, media_type)
+    elif mode == "delayed-redirect-chain":
+        time.sleep(0.08)
+        if index < 2:
+            try:
+                connection.sendall(
+                    f"HTTP/1.1 307 Temporary Redirect\r\nLocation: /v1/redirect-{index + 1}\r\n"
+                    "Content-Length: 0\r\nConnection: close\r\n\r\n".encode("ascii")
+                )
+            except (ConnectionError, OSError):
+                mark(closed)
+                return
+        else:
+            try:
+                send_response(connection, 200, body, media_type)
+            except (ConnectionError, OSError):
+                mark(closed)
+                return
     elif mode == "headers-stall":
         connection.sendall(
             f"HTTP/1.1 200 OK\r\nContent-Type: {media_type}\r\n"
@@ -121,6 +139,21 @@ def serve(connection, index):
         return
     elif mode == "event-stall":
         send_response(connection, 200, body, media_type, close=False)
+        wait_for_close(connection)
+        return
+    elif mode == "error-body-stall":
+        send_response(connection, int(status), body, media_type, close=False)
+        wait_for_close(connection)
+        return
+    elif mode == "heartbeat-stall":
+        send_response(connection, 200, b"", media_type, close=False)
+        for _ in range(4):
+            try:
+                connection.sendall(b": heartbeat\n\n")
+            except (ConnectionError, OSError):
+                mark(closed)
+                return
+            time.sleep(0.05)
         wait_for_close(connection)
         return
     connection.close()

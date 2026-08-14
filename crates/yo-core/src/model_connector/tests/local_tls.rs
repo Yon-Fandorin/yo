@@ -37,12 +37,20 @@ pub(super) enum LocalServerMode {
         location: String,
         final_body: Vec<u8>,
     },
+    DelayedRedirectChain {
+        final_body: Vec<u8>,
+    },
     HeadersThenStall {
         content_type: String,
     },
     EventThenStall {
         body: Vec<u8>,
     },
+    ErrorBodyThenStall {
+        status: u16,
+        body: Vec<u8>,
+    },
+    HeartbeatsThenStall,
     ResponseHeaderStall,
     TlsHandshakeStall,
 }
@@ -96,6 +104,14 @@ impl LocalTlsServer {
                 2,
                 final_body,
             ),
+            LocalServerMode::DelayedRedirectChain { final_body } => (
+                "delayed-redirect-chain",
+                "text/event-stream".to_owned(),
+                307,
+                String::new(),
+                3,
+                final_body,
+            ),
             LocalServerMode::HeadersThenStall { content_type } => (
                 "headers-stall",
                 content_type,
@@ -111,6 +127,22 @@ impl LocalTlsServer {
                 String::new(),
                 1,
                 body,
+            ),
+            LocalServerMode::ErrorBodyThenStall { status, body } => (
+                "error-body-stall",
+                "text/plain; charset=utf-8".to_owned(),
+                status,
+                String::new(),
+                1,
+                body,
+            ),
+            LocalServerMode::HeartbeatsThenStall => (
+                "heartbeat-stall",
+                "text/event-stream".to_owned(),
+                200,
+                String::new(),
+                1,
+                Vec::new(),
             ),
             LocalServerMode::ResponseHeaderStall => (
                 "header-stall",

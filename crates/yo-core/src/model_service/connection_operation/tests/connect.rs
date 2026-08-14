@@ -7,8 +7,8 @@ use std::{
 
 use super::{
     super::connect::{
-        ConnectStep, VerificationStreamPort, verify_external_connection_for_test,
-        verify_semantic_stream,
+        ConnectStep, VerificationStreamPort, verification_limits,
+        verify_external_connection_for_test, verify_semantic_stream,
     },
     support::{CANDIDATE_SECRET, Fixture, account, candidate, digest, provider},
 };
@@ -21,6 +21,23 @@ use crate::{
         LocalConnectionOperationRepositories, StartupTarget,
     },
 };
+
+// interactive agent와 달리 connection verification은 explicit 10분 absolute deadline을
+// 제공하면서 같은 finite transport phase 기본값을 유지하는지 고정합니다.
+#[test]
+fn connection_verification_supplies_the_non_agent_absolute_deadline() {
+    let limits = verification_limits();
+
+    assert_eq!(
+        limits.absolute_request_timeout,
+        Some(Duration::from_secs(10 * 60))
+    );
+    assert_eq!(limits.connect_timeout, Duration::from_secs(30));
+    assert_eq!(limits.response_header_timeout, Duration::from_secs(5 * 60));
+    assert_eq!(limits.stream_idle_timeout, Duration::from_secs(5 * 60));
+    assert_eq!(limits.error_body_idle_timeout, Duration::from_secs(30));
+    assert_eq!(limits.event_delivery_timeout, Duration::from_secs(5 * 60));
+}
 
 struct FakeVerificationStream {
     polls: VecDeque<Result<ModelConnectorPoll, ConnectorFailureKind>>,

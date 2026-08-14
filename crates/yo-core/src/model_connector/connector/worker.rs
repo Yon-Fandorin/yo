@@ -9,9 +9,11 @@ use super::{
     super::{ConnectorError, ConnectorFailureKind, ResponsesConnectorLimits, ResponsesEvent},
     EVENT_QUEUE_CAPACITY, ResponsesCancellation, ResponsesStream, SseDecoder,
     failure::{
-        cancellable_timeout, cancelled_failure, effective_timeout, http_status_failure,
-        limit_failure, map_reqwest_error, protocol_failure, transport_failure,
+        cancellable_timeout, cancelled_failure, http_status_failure, limit_failure,
+        map_reqwest_error, phase_timeout, protocol_failure, record_body_progress,
+        transport_failure,
     },
+    transport::{Origin, validate_redirect},
 };
 use crate::ApiCredential;
 
@@ -29,6 +31,7 @@ pub(super) fn start_stream(
     if cancellation.is_cancelled() {
         return Err(cancelled_failure());
     }
+    let request_started = Instant::now();
     let (acceptance_sender, acceptance_receiver) = mpsc::sync_channel(1);
     let (event_sender, event_receiver) = async_mpsc::channel(EVENT_QUEUE_CAPACITY);
     let (outcome_sender, outcome_receiver) = mpsc::sync_channel(1);
@@ -44,6 +47,7 @@ pub(super) fn start_stream(
                 body,
                 decoder,
                 worker_cancellation,
+                request_started,
                 acceptance_sender,
                 event_sender,
                 outcome_sender,
@@ -81,6 +85,7 @@ fn run_worker(
     body: Value,
     decoder: Box<dyn SseDecoder>,
     cancellation: ResponsesCancellation,
+    request_started: Instant,
     acceptance_sender: mpsc::SyncSender<Result<(), ConnectorError>>,
     event_sender: async_mpsc::Sender<ResponsesEvent>,
     outcome_sender: mpsc::SyncSender<Result<(), ConnectorError>>,
@@ -107,6 +112,7 @@ fn run_worker(
         &body,
         decoder,
         &cancellation,
+        request_started,
         &mut acceptance_sender,
         &event_sender,
     ));
@@ -134,31 +140,56 @@ async fn execute_request(
     body: &Value,
     mut decoder: Box<dyn SseDecoder>,
     cancellation: &ResponsesCancellation,
+    request_started: Instant,
     acceptance_sender: &mut Option<mpsc::SyncSender<Result<(), ConnectorError>>>,
     event_sender: &async_mpsc::Sender<ResponsesEvent>,
 ) -> Result<(), ConnectorError> {
-    let started = Instant::now();
-    let response = cancellable_timeout(
-        cancellation,
-        effective_timeout(
-            started,
-            limits.total_request_timeout,
-            limits.response_header_timeout,
-            "model-connector response-header deadline expired",
-        )?,
-        client
-            .post(request_url)
-            .bearer_auth(credential.expose_secret())
-            .header(header::ACCEPT, "text/event-stream")
-            .json(body)
-            .send(),
-    )
-    .await?
-    .map_err(map_reqwest_error)?;
+    let origin = Origin::from_url(&request_url)?;
+    let mut attempt_url = request_url;
+    let mut followed_redirects = 0_usize;
+    let response = loop {
+        let response_header_started = Instant::now();
+        let response = cancellable_timeout(
+            cancellation,
+            phase_timeout(
+                request_started,
+                limits.absolute_request_timeout,
+                response_header_started,
+                limits.response_header_timeout,
+                "model-connector response-header deadline expired",
+            )?,
+            client
+                .post(attempt_url.clone())
+                .bearer_auth(credential.expose_secret())
+                .header(header::ACCEPT, "text/event-stream")
+                .json(body)
+                .send(),
+        )
+        .await?
+        .map_err(map_reqwest_error)?;
+        if !matches!(
+            response.status(),
+            reqwest::StatusCode::TEMPORARY_REDIRECT | reqwest::StatusCode::PERMANENT_REDIRECT
+        ) {
+            break response;
+        }
+        let location = response
+            .headers()
+            .get(header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| transport_failure("model-connector redirect has no valid location"))?;
+        let target = attempt_url
+            .join(location)
+            .map_err(|_| transport_failure("model-connector redirect location is invalid"))?;
+        validate_redirect(&origin, &target, followed_redirects, limits.max_redirects)
+            .map_err(transport_failure)?;
+        followed_redirects += 1;
+        attempt_url = target;
+    };
 
     if !response.status().is_success() {
         let status = response.status();
-        consume_error_body(response, limits, cancellation, started).await?;
+        consume_error_body(response, limits, cancellation, request_started).await?;
         return Err(http_status_failure(status));
     }
     let content_type = response
@@ -184,19 +215,22 @@ async fn execute_request(
         .map_err(|_| transport_failure("model-connector caller stopped before HTTP acceptance"))?;
 
     let mut chunks = response.bytes_stream();
+    let mut stream_progress = Instant::now();
     loop {
-        let timeout = effective_timeout(
-            started,
-            limits.total_request_timeout,
+        let timeout = phase_timeout(
+            request_started,
+            limits.absolute_request_timeout,
+            stream_progress,
             limits.stream_idle_timeout,
             "model-connector stream idle deadline expired",
         )?;
         let next = cancellable_timeout(cancellation, timeout, chunks.next()).await?;
         match next {
             Some(Ok(bytes)) => {
+                record_body_progress(&mut stream_progress, &bytes, Instant::now());
                 let batch = decoder.push(&bytes);
                 for event in batch.events {
-                    send_event(event_sender, cancellation, started, limits, event).await?;
+                    send_event(event_sender, cancellation, request_started, limits, event).await?;
                 }
                 if let Some(failure) = batch.failure {
                     return Err(failure);
@@ -205,7 +239,7 @@ async fn execute_request(
             Some(Err(_)) => return Err(transport_failure("model-connector stream read failed")),
             None => {
                 for event in decoder.finish()? {
-                    send_event(event_sender, cancellation, started, limits, event).await?;
+                    send_event(event_sender, cancellation, request_started, limits, event).await?;
                 }
                 return Ok(());
             },
@@ -217,20 +251,23 @@ async fn consume_error_body(
     response: reqwest::Response,
     limits: &ResponsesConnectorLimits,
     cancellation: &ResponsesCancellation,
-    started: Instant,
+    request_started: Instant,
 ) -> Result<(), ConnectorError> {
     let mut total = 0_usize;
     let mut chunks = response.bytes_stream();
+    let mut error_body_progress = Instant::now();
     loop {
-        let timeout = effective_timeout(
-            started,
-            limits.total_request_timeout,
-            limits.stream_idle_timeout,
+        let timeout = phase_timeout(
+            request_started,
+            limits.absolute_request_timeout,
+            error_body_progress,
+            limits.error_body_idle_timeout,
             "model-connector error-body idle deadline expired",
         )?;
         let next = cancellable_timeout(cancellation, timeout, chunks.next()).await?;
         match next {
             Some(Ok(bytes)) => {
+                record_body_progress(&mut error_body_progress, &bytes, Instant::now());
                 total = total
                     .checked_add(bytes.len())
                     .ok_or_else(|| limit_failure("model-connector error body size overflowed"))?;
@@ -249,14 +286,15 @@ async fn consume_error_body(
 pub(super) async fn send_event(
     sender: &async_mpsc::Sender<ResponsesEvent>,
     cancellation: &ResponsesCancellation,
-    started: Instant,
+    request_started: Instant,
     limits: &ResponsesConnectorLimits,
     event: ResponsesEvent,
 ) -> Result<(), ConnectorError> {
-    let timeout = effective_timeout(
-        started,
-        limits.total_request_timeout,
-        limits.total_request_timeout,
+    let timeout = phase_timeout(
+        request_started,
+        limits.absolute_request_timeout,
+        Instant::now(),
+        limits.event_delivery_timeout,
         "model-connector event delivery deadline expired",
     )?;
     tokio::select! {

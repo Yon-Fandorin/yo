@@ -39,22 +39,10 @@ fn http_client_builder(
     request_url: &Url,
     limits: &ResponsesConnectorLimits,
 ) -> Result<ClientBuilder, ConnectorError> {
-    let origin = Origin::from_url(request_url)?;
-    let max_redirects = limits.max_redirects;
-    let redirect_policy = redirect::Policy::custom(move |attempt| {
-        match validate_redirect(
-            &origin,
-            attempt.url(),
-            attempt.previous().len(),
-            max_redirects,
-        ) {
-            Ok(()) => attempt.follow(),
-            Err(message) => attempt.error(message),
-        }
-    });
+    let _origin = Origin::from_url(request_url)?;
     Ok(Client::builder()
         .connect_timeout(limits.connect_timeout)
-        .redirect(redirect_policy)
+        .redirect(redirect::Policy::none())
         .retry(reqwest::retry::never()))
 }
 
