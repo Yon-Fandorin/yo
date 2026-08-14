@@ -307,6 +307,16 @@ transition. Reuse that note instead of repeatedly loading broad history or full
 documents. A continuation handoff contains these fields and unresolved work,
 not transcripts or copied tool output.
 
+Before marking a platform or external environment unverified, inspect the
+registered local environment inventory and repository-owned runner entry
+points. Use a compatible registered runner when its prerequisites and
+authorization are present. Distinguish an absent registration, an unavailable
+runner, and an executed failing check; only the first two are unverified. Add
+every affected registered platform check to the candidate validation plan.
+Before the full review packet, record each check as passed, failed, or
+unverified instead of leaving it undiscovered; failed or unverified coverage
+keeps the Slice from routine acceptance.
+
 Use the narrowest evidence-producing command. Start with `rg`, `git status
 --short --untracked-files=all`, `git diff --stat`, and targeted line ranges;
 expand only when the result leaves a named uncertainty. Cap command output and
@@ -337,6 +347,12 @@ review-packet preflight to expose the exact managed-payload budget and section
 costs without publishing an eligible packet. Publish only after the preflight
 is ready and no input is expected to change; preflight is preparation, not
 completed review.
+
+Select review Knowledge anchors from the current active Checkpoint before
+constructing the request. A known Knowledge file, earlier packet, or previously
+active revision is not evidence that the anchor is active now. Resolve an
+inactive anchor before packet publication instead of increasing the budget or
+rebuilding broad context around it.
 
 Treat preflight section costs as a Slice-sizing gate, not only a protocol
 limit. When the Git diff dominates a packet that is no longer human-reviewable
@@ -413,6 +429,14 @@ failure matrices, or distinct behavior groups make the production module hard
 to scan, move tests into a named `tests` module or integration-test files.
 Choose the boundary by responsibility, not an arbitrary line-count threshold,
 and keep shared test support separate from individual scenarios.
+
+Validation code that coordinates a terminal, pipe, socket, child process, or
+external runner must place a finite deadline on every potentially blocking
+operation, including reads, writes, connection setup, accept, waits, and prompt
+synchronization. An outer command or test timeout does not bound an inner
+blocking operation. Consume protocol output required for peer progress before
+observing dependent state, and make timeout cleanup terminate, reap, join, and
+restore every resource the fixture owns.
 
 ## Review and integration
 
