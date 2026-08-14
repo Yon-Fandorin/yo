@@ -5,7 +5,7 @@ kind: procedure
 owner: methexis
 sources:
   - id: methexis.review-001
-    revision: sha256:d148a894a905de6d15ce865e07bc60ec786abfdacbf0268b9ad409398b3d39d0
+    revision: sha256:641af3e734a6547c3f12230653f574b600d29234970167442da00cf819869ab5
 ---
 # Managed-payload-bounded Slice review packet
 
@@ -18,6 +18,8 @@ An experimental activation-review packet MAY instead use one prospective Context
 `ReviewId` MUST be a domain-separated hash of a versioned canonical review plan containing the authority mode, base and candidate commits, exact diff hash, trusted commit, exact context Checkpoint identity and stable authority-basis commit, ContextBuild and artifact hashes, the activation-request path and content hash for prospective mode, repository-authority path and content hashes, Slice-contract content hash, validation-evidence hashes, review lenses and questions, delivery profile, tokenizer profile, and managed-payload budget. Output paths, publication time, operation status, packet hash, and manifest hash MUST be excluded because they are non-semantic or circular. Canonical plan encoding MUST be deterministic and unambiguous.
 
 Every published request, plan, manifest, delivery-profile, and verifier identifier is a frozen behavior boundary. Prospective activation review MUST use the smallest new experimental `v1alphaN` family and explicit schema dispatch; it MUST NOT reinterpret an older identifier. Older packets remain exactly reproducible and MAY continue to root compatible delta chains.
+
+This new path has a closed bootstrap. Its enabling Source and Knowledge revisions, executable implementation, versioned request/plan/manifest/delivery/verifier family, and `CONTRIBUTING.md` workflow adoption MUST each complete the existing ordinary active-ContextBuild review, approval, activation, and integration sequence. Before all enabling changes are trusted and these contracts are active, the path MUST remain disabled and MUST NOT build, verify, or supply review evidence for any change that enables itself. Its first eligible use is a later independent activation candidate. Changing workflow ownership instead requires the complete atomic migration owned by `methexis.workflow.self-hosting-boundary`; this path is not such a migration.
 
 The delivery profile MUST define the exact fixed preamble and wrapper bytes and MUST make the canonical packet the complete caller-controlled model-visible payload. The token budget MUST count every byte of that payload with the declared tokenizer profile. Provider-controlled system, policy, or tool-description overhead that the caller cannot observe is outside this managed-payload budget and MUST NOT be described as part of a total reviewer-input budget. The packet MUST NOT rely on uncounted caller-controlled instructions or authority.
 
@@ -37,4 +39,4 @@ The packet and manifest MUST be published as one atomic create-if-absent artifac
 
 ## Completion Criteria
 
-The operation is complete only when one immutable packet and manifest reproduce the exact version-owned ReviewId plan, base and candidate commits, trusted basis, authority mode, active or prospective Checkpoint, optional activation request and canonical transition lineage, ContextBuild lineage, repository-authority bytes, Slice-contract bytes, validation evidence, diff, review instructions, delivery profile, tokenizer, managed-payload count, and budget; the count is within budget; final revalidation succeeds for both publication and reuse; the candidate worktree remains clean; and no partial, extra, different, inferred, or authority-promoting artifact is accepted or replaced.
+The operation is complete only when one immutable packet and manifest reproduce the exact version-owned ReviewId plan, base and candidate commits, trusted basis, authority mode, active or prospective Checkpoint, optional activation request and canonical transition lineage, ContextBuild lineage, repository-authority bytes, Slice-contract bytes, validation evidence, diff, review instructions, delivery profile, tokenizer, managed-payload count, and budget; the count is within budget; final revalidation succeeds for both publication and reuse; the candidate worktree remains clean; and no partial, extra, different, inferred, self-enabling, or authority-promoting artifact is accepted or replaced.
