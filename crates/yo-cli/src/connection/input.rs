@@ -193,8 +193,8 @@ mod tests {
         *,
     };
 
-    // 실제 PTY에서 API key 입력 동안 ECHO가 꺼져 master 출력에 secret이 나타나지 않고,
-    // 성공 뒤에는 호출 전 termios 전체가 정확히 복구됩니다.
+    // 실제 terminal처럼 PTY master가 prompt를 먼저 소비한 뒤 API key 입력 동안 ECHO가
+    // 꺼지고, master에 secret이 나타나지 않으며 성공 뒤 termios가 정확히 복구됩니다.
     #[test]
     fn credential_input_hides_secret_and_restores_exact_termios() {
         let pty = openpty(None, None).unwrap();
@@ -208,7 +208,28 @@ mod tests {
             input.read_credential("vendor:team").unwrap()
         });
 
+        let mut master = File::from(pty.master);
+        fcntl(&master, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).unwrap();
+        let expected_prompt = b"API key for vendor:team: ";
+        let mut output = vec![0_u8; expected_prompt.len()];
         let deadline = Instant::now() + Duration::from_secs(2);
+        let mut prompt_bytes = 0;
+        while prompt_bytes < output.len() {
+            match master.read(&mut output[prompt_bytes..]) {
+                Ok(0) => panic!("credential prompt closed its PTY before completing"),
+                Ok(count) => prompt_bytes += count,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "credential prompt did not complete"
+                    );
+                    thread::yield_now();
+                },
+                Err(error) => panic!("reading credential prompt failed: {error}"),
+            }
+        }
+        assert_eq!(output, expected_prompt);
+
         while tcgetattr(&observed_slave)
             .unwrap()
             .local_flags
@@ -220,13 +241,10 @@ mod tests {
             );
             thread::yield_now();
         }
-        write(&pty.master, b"sentinel-secret\n").unwrap();
+        write(&master, b"sentinel-secret\n").unwrap();
         assert_eq!(child.join().unwrap().expose_secret(), "sentinel-secret");
         assert_eq!(tcgetattr(&observed_slave).unwrap(), original);
 
-        fcntl(&pty.master, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).unwrap();
-        let mut master = File::from(pty.master);
-        let mut output = Vec::new();
         let mut buffer = [0_u8; 256];
         loop {
             match master.read(&mut buffer) {

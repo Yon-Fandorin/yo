@@ -340,7 +340,7 @@ mod tests {
     // 거절하면 credential을 읽거나 세 repository 파일을 만들지 않습니다.
     #[test]
     fn cancelled_command_stops_before_secret_or_repository_mutation() {
-        let root = std::env::temp_dir().join(format!(
+        let root = super::super::canonical_test_temp_dir().join(format!(
             "yo-external-cancel-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -386,7 +386,7 @@ mod tests {
     // confirmation까지 전달해 새 key 추가라고 오해시키지 않으며 취소는 기존 secret을 보존합니다.
     #[test]
     fn cancelled_rotation_discloses_exact_credential_replacement() {
-        let root = std::env::temp_dir().join(format!(
+        let root = super::super::canonical_test_temp_dir().join(format!(
             "yo-external-replace-preview-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

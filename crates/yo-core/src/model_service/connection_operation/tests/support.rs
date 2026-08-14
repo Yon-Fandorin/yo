@@ -21,7 +21,9 @@ impl Fixture {
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("the fixture clock must be after the Unix epoch")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let temp_dir = fs::canonicalize(std::env::temp_dir())
+            .expect("the fixture temp directory must resolve to its physical path");
+        let root = temp_dir.join(format!(
             "yo-connection-operation-{}-{name}-{nonce}",
             std::process::id()
         ));

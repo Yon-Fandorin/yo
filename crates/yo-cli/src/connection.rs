@@ -270,6 +270,12 @@ fn selection_for_binding(binding: &yo_core::EffectiveModelBinding) -> ModelSelec
     )
 }
 
+#[cfg(test)]
+fn canonical_test_temp_dir() -> std::path::PathBuf {
+    std::fs::canonicalize(std::env::temp_dir())
+        .expect("the connection test temp directory must resolve to its physical path")
+}
+
 fn complete_binding_details(complete: &CompleteModelBinding) -> presentation::BindingDetails {
     presentation::BindingDetails::from(complete)
 }
@@ -292,7 +298,7 @@ mod tests {
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let path = std::env::temp_dir().join(format!(
+            let path = canonical_test_temp_dir().join(format!(
                 "yo-cli-connection-{}-{name}-{nonce}",
                 std::process::id()
             ));

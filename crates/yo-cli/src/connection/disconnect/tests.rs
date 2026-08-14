@@ -500,7 +500,7 @@ impl Fixture {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
+        let root = super::super::canonical_test_temp_dir().join(format!(
             "yo-cli-disconnect-{}-{name}-{nonce}",
             std::process::id()
         ));
