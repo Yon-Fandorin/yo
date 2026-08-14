@@ -688,8 +688,20 @@ catalog and pass startup-policy admission before any secret is read. Yo
 requires confirmation, then reads one bounded API key only from the controlling
 TTY with echo disabled and exact terminal settings
 restored. If explicit restoration reports an error, the retained guard retries
-restoration while unwinding. Environment,
-arguments, standard input, and config files are not credential channels.
+restoration while unwinding. An external exact target may instead use
+`--credential-file PATH --yes`; both options are required together, `--yes`
+conflicts with the interactive `--verbose` view, and Local Codex rejects the
+pair before opening the file. After recovery and exact-plan preparation, this
+path suppresses confirmation and opens the final credential path once with
+no-follow semantics. It accepts only a current-user-owned regular file whose
+mode is exactly `0400` or `0600`, reads through EOF under a 16,386-byte stable
+metadata bound, removes at most one final LF or CRLF, and then applies the
+16,384-byte UTF-8 `ApiCredential` rules. Capture or verification failure creates
+no new intent or repository mutation, does not fall back to the TTY, and never
+changes or exposes the source file. Recovery may already have completed an
+older operation before the new plan. Environment variables, secret argument
+values, standard input, child processes, and config files are not credential
+channels.
 The confirmation presents the selected target, then uses stable semantic plan
 markers (`+`, `~`, `−`, and `=`) to distinguish create, change, remove, and keep
 effects. The default view keeps that decision-facing change set, names the

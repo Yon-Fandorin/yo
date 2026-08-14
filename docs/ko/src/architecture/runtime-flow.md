@@ -645,7 +645,16 @@ prompt 전에 실패한다. Prospective managed upsert도 secret을 읽기 전�
 합성되고 startup-policy admission을 통과해야 한다. Yo는 확인을 받은 뒤 controlling TTY에서만
 크기가 제한된 API key 하나를 읽는다. 이때 echo를 끄고 정확한 terminal
 설정을 복구한다. 명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
-환경 변수, argument, standard input, config file은 credential channel이 아니다.
+External exact target은 대신 `--credential-file PATH --yes`를 사용할 수 있다. 두 option은
+반드시 함께 있어야 하고 `--yes`는 interactive `--verbose` view와 충돌하며 Local Codex는 파일을
+열기 전에 이 조합을 거절한다. Recovery와 exact plan 준비 뒤 이 경로는 확인을 생략하고 final
+credential path를 no-follow로 한 번만 연다. 현재 사용자 소유 regular file이면서 mode가 정확히
+`0400` 또는 `0600`인 경우만 받고, 16,386-byte 안정 metadata 경계 안에서 EOF까지 읽은 뒤 마지막
+LF 또는 CRLF 하나만 제거하고 16,384-byte UTF-8 `ApiCredential` 규칙을 적용한다. Capture 또는
+검증 실패는 새 intent나 repository mutation을 만들지 않고 TTY로 fallback하지 않으며 source
+file을 바꾸거나 노출하지 않는다. 새 plan 전에 recovery가 이전 operation을 이미 완료했을 수는
+있다. 환경 변수, secret argument 값, standard input, child process, config file은 credential
+channel이 아니다.
 확인 화면은 선택 target을 먼저 보여주고, 안정적인 의미 plan marker(`+`, `~`, `−`, `=`)로
 생성, 변경, 제거, 유지 효과를 구분한다. 기본 화면은 판단에 필요한 이 변경 집합을 유지하고,
 credential action에 Provider와 Account를 한 번만 표시한 뒤 그 account 문맥에서 key로 검증할

@@ -81,6 +81,8 @@ fn connect_command_requires_one_exact_target() {
         Command::Connect(ConnectCommand {
             target: "host:codex".to_owned(),
             verbose: false,
+            credential_file: None,
+            yes: false,
         })
     );
     assert_eq!(
@@ -88,10 +90,60 @@ fn connect_command_requires_one_exact_target() {
         Command::Connect(ConnectCommand {
             target: "host:codex".to_owned(),
             verbose: true,
+            credential_file: None,
+            yes: false,
         })
     );
     assert!(parse(["connect".into()]).is_err());
     assert!(parse(["connect".into(), "host:codex".into(), "second".into(),]).is_err());
+}
+
+// 비대화형 external connect는 credential path와 exact-plan 승인 둘을 함께 요구하고,
+// verbose interactive confirmation과 조합하거나 어느 한쪽만 주는 호출을 문법에서 거절합니다.
+#[test]
+fn non_interactive_connect_requires_the_closed_file_and_yes_pair() {
+    assert_eq!(
+        parse([
+            "connect".into(),
+            "vendor:team:model".into(),
+            "--credential-file".into(),
+            "/run/secrets/vendor".into(),
+            "--yes".into(),
+        ])
+        .unwrap(),
+        Command::Connect(ConnectCommand {
+            target: "vendor:team:model".to_owned(),
+            verbose: false,
+            credential_file: Some("/run/secrets/vendor".into()),
+            yes: true,
+        })
+    );
+    assert!(
+        parse([
+            "connect".into(),
+            "vendor:team:model".into(),
+            "--credential-file".into(),
+            "/run/secrets/vendor".into(),
+        ])
+        .is_err()
+    );
+    assert!(parse(["connect".into(), "vendor:team:model".into(), "--yes".into(),]).is_err());
+    assert!(
+        parse([
+            "connect".into(),
+            "vendor:team:model".into(),
+            "--credential-file".into(),
+            "/run/secrets/vendor".into(),
+            "--yes".into(),
+            "--verbose".into(),
+        ])
+        .is_err()
+    );
+
+    let help = parse(["connect".into(), "--help".into()]).unwrap_err();
+    let rendered = help.to_string();
+    assert!(rendered.contains("--credential-file <PATH>"));
+    assert!(rendered.contains("--yes"));
 }
 
 // disconnect는 인자 없는 대화형 선택을 허용하되, 자동 실행은 exact Provider와 Account와

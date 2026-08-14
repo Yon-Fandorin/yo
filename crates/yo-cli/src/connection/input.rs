@@ -6,6 +6,10 @@ use std::{
 use nix::sys::termios::{self, LocalFlags, SetArg, Termios};
 use yo_core::ApiCredential;
 
+mod file;
+
+pub(super) use file::AuthorizedCredentialFileInput;
+
 use super::presentation::{Confirmation, PresentationStyle, default_width};
 use crate::AppError;
 

@@ -49,6 +49,9 @@ pub(crate) fn run_default(command: DefaultCommand) -> Result<String, AppError> {
 }
 
 pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
+    if command.target == StartupTarget::HOST_CODEX_REFERENCE {
+        validate_local_connect_options(&command)?;
+    }
     let config_path = absolute_config_path(
         config::selected_path()
             .map_err(|error| AppError::single("locating Yo configuration", error))?,
@@ -57,6 +60,16 @@ pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
         return external::run_external_connect(&config_path, command);
     }
     execute_local_connect_managed(&config_path, command)
+}
+
+fn validate_local_connect_options(command: &ConnectCommand) -> Result<(), AppError> {
+    if command.credential_file.is_some() || command.yes {
+        Err(AppError::message(
+            "--credential-file and --yes are supported only for an external model connection; Local Codex uses no API credential",
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn run_disconnect(command: DisconnectCommand) -> Result<String, AppError> {
@@ -464,6 +477,8 @@ mod tests {
             ConnectCommand {
                 target: "host:codex".to_owned(),
                 verbose: false,
+                credential_file: None,
+                yes: false,
             },
             || Err(AppError::message("verification failed")),
         )
@@ -471,6 +486,25 @@ mod tests {
 
         assert!(error.to_string().contains("verification failed"));
         assert!(!repository.path().exists());
+    }
+
+    // Local Codex는 credential source가 없는 HostTarget이므로 비대화형 파일 option을
+    // config나 파일 경로에 접근하기 전에 거절하고 외부 연결 의미로 재해석하지 않습니다.
+    #[test]
+    fn local_codex_rejects_non_interactive_credential_options() {
+        let command = ConnectCommand {
+            target: "host:codex".to_owned(),
+            verbose: false,
+            credential_file: Some("/definitely/not/read".into()),
+            yes: true,
+        };
+
+        let error = validate_local_connect_options(&command)
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("only for an external model connection"));
+        assert!(error.contains("Local Codex uses no API credential"));
     }
 
     // pending journal과 malformed config가 함께 있어도 recovery failure가 먼저 반환되어야
@@ -512,6 +546,8 @@ mod tests {
             ConnectCommand {
                 target: "host:codex".to_owned(),
                 verbose: false,
+                credential_file: None,
+                yes: false,
             },
             move || {
                 let mutation = racing_repository

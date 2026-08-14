@@ -1,4 +1,4 @@
-use std::ffi::OsString;
+use std::{ffi::OsString, path::PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use yo_tui::{GlyphProfile, PresentationMode};
@@ -64,6 +64,14 @@ struct ConnectArguments {
     /// Show the exact connection profile in the confirmation.
     #[arg(short, long)]
     verbose: bool,
+
+    /// Read the external API key from this owner-only file.
+    #[arg(long, value_name = "PATH", requires = "yes")]
+    credential_file: Option<PathBuf>,
+
+    /// Apply the captured external connection plan without an interactive confirmation.
+    #[arg(long, requires = "credential_file", conflicts_with = "verbose")]
+    yes: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -149,6 +157,8 @@ pub(crate) enum Command {
 pub(crate) struct ConnectCommand {
     pub(crate) target: String,
     pub(crate) verbose: bool,
+    pub(crate) credential_file: Option<PathBuf>,
+    pub(crate) yes: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -187,6 +197,8 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
         Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {
             target: arguments.target,
             verbose: arguments.verbose,
+            credential_file: arguments.credential_file,
+            yes: arguments.yes,
         })),
         Some(CliCommand::Disconnect(arguments)) => Ok(Command::Disconnect(DisconnectCommand {
             provider: arguments.provider,

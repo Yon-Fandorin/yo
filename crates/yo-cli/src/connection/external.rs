@@ -8,7 +8,7 @@ use yo_core::{
 
 use super::{
     complete_binding_details, display_target,
-    input::{ExternalConnectInput, TtyConnectionInput},
+    input::{AuthorizedCredentialFileInput, ExternalConnectInput, TtyConnectionInput},
     operation_repositories,
     presentation::{Confirmation, ConnectPreview, ManagedConnectionChange, connect_success},
     selection_for_binding,
@@ -19,8 +19,23 @@ pub(super) fn run_external_connect(
     config_path: &Path,
     command: ConnectCommand,
 ) -> Result<String, AppError> {
-    let mut input = TtyConnectionInput::new();
-    execute_external_connect_with(config_path, command, &mut input)
+    match (
+        command.credential_file.clone(),
+        command.yes,
+        command.verbose,
+    ) {
+        (Some(path), true, false) => {
+            let mut input = AuthorizedCredentialFileInput::new(path);
+            execute_external_connect_with(config_path, command, &mut input)
+        },
+        (None, false, _) => {
+            let mut input = TtyConnectionInput::new();
+            execute_external_connect_with(config_path, command, &mut input)
+        },
+        _ => Err(AppError::message(
+            "non-interactive external connect requires --credential-file and --yes together, without --verbose",
+        )),
+    }
 }
 
 fn execute_external_connect_with(
@@ -361,6 +376,8 @@ mod tests {
             ConnectCommand {
                 target: "vendor:team:alpha".to_owned(),
                 verbose: false,
+                credential_file: None,
+                yes: false,
             },
             &mut input,
         )
@@ -380,6 +397,86 @@ mod tests {
             assert!(!root.join(name).exists(), "{name} must remain absent");
         }
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // `--yes` 경로는 TTY를 열지 않고 plan 준비 뒤 지정 파일을 읽으며, 안전하지 않은
+    // credential 파일은 새 intent나 public/credential repository mutation 전에 실패합니다.
+    #[test]
+    fn non_interactive_file_failure_stops_before_new_repository_mutation() {
+        let root = super::super::canonical_test_temp_dir().join(format!(
+            "yo-external-file-failure-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.yaml");
+        std::fs::write(&config_path, explicit_config()).unwrap();
+        let credential_path = root.join("credential");
+        std::fs::write(&credential_path, b"diagnostic-sentinel-secret").unwrap();
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&credential_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let error = run_external_connect(
+            &config_path,
+            ConnectCommand {
+                target: "vendor:team:alpha".to_owned(),
+                verbose: false,
+                credential_file: Some(credential_path.clone()),
+                yes: true,
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("0400 or 0600"));
+        assert!(!error.contains("diagnostic-sentinel-secret"));
+        assert_eq!(
+            std::fs::read(&credential_path).unwrap(),
+            b"diagnostic-sentinel-secret"
+        );
+        for name in [
+            "connections.yaml",
+            "credentials.yaml",
+            "connection-operation.yaml",
+        ] {
+            assert!(!root.join(name).exists(), "{name} must remain absent");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Parser 밖의 injected caller도 두 option 중 하나만 주거나 `--verbose`를 함께 주어
+    // TTY/file 흐름을 우회할 수 없고 config와 repository를 읽기 전에 같은 오류로 닫힙니다.
+    #[test]
+    fn runtime_rejects_an_invalid_non_interactive_option_combination() {
+        let config_path = std::path::Path::new("/not/read/config.yaml");
+        for command in [
+            ConnectCommand {
+                target: "vendor:team:alpha".to_owned(),
+                verbose: false,
+                credential_file: Some("/not/read/credential".into()),
+                yes: false,
+            },
+            ConnectCommand {
+                target: "vendor:team:alpha".to_owned(),
+                verbose: false,
+                credential_file: None,
+                yes: true,
+            },
+            ConnectCommand {
+                target: "vendor:team:alpha".to_owned(),
+                verbose: true,
+                credential_file: Some("/not/read/credential".into()),
+                yes: true,
+            },
+        ] {
+            let error = run_external_connect(config_path, command)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("requires --credential-file and --yes together"));
+        }
     }
 
     // 이미 같은 Provider/Account credential이 있으면 repository가 준비한 exact Replace action을
@@ -414,6 +511,8 @@ mod tests {
             ConnectCommand {
                 target: "vendor:team:alpha".to_owned(),
                 verbose: false,
+                credential_file: None,
+                yes: false,
             },
             &mut input,
         )
