@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.model.service-binding
-revision: sha256:f4c2d907a6583c2e24830079c0d0a5a69b7156a2e7dcbf8cff0f0bfc1bf38f17
+revision: sha256:344754559d9f6bd35bce442db69c10680f8b81858471d82f399e079ce97969d9
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:a2d578f66dfa8fb97a8837980033fb0ed3ce32c0701dfd1a98ceea721bd1b471
+request_hash: sha256:ecdf9b7f5788473cfcc9c3378f57161114dc4c250a6b2f27caaa6e264326f49b
 ---
 # Korean Review Projection
 
@@ -49,6 +49,8 @@ ConnectionRepository 경로가 없으면 revision token `absent`와 binding 및 
 OpenRouter와 QwenCloud는 provider-neutral configured Provider로 유지합니다. Base profile은 여러 model entry의 반복을 줄일 수 있고 model override는 예외적인 값을 해당 model 옆에 둘 수 있습니다. 저장된 snapshot은 이 값을 명시적이고 읽기 쉽게 유지하며 custom profile은 advanced path로 둡니다.
 
 외부 서비스용 interactive `yo connect`는 Provider가 생략되면 묻고 Model 하나만 선택합니다. 모든 모델이나 profile default를 추론하지 않으며 invocation 하나는 binding 하나만 바꿉니다. 캡처한 effective Provider에 수동·관리 account가 모두 0개일 때만 AccountId를 `default`로 정합니다. 그 밖에는 기존 account를 interactive하게 고르거나 새 ID를 명시해야 하고 새 account 추가에는 `--account`가 필요합니다. 같은 exact pair는 secret을 교체하거나 추가합니다. 검증은 정확한 binding union과 사용량을 공개하고 한 번 확인하며 retry하지 않습니다. 성공은 인증, 정확한 entitlement, endpoint와 dialect 수용, 유한한 경계 안의 semantic terminal result를 증명합니다. 실패 종류는 구분합니다. Session-selection 계약이 first-success preference transition을 제공하며 같은 public CAS가 binding과 함께 게시합니다.
+
+Non-interactive external connect는 정확한 ModelTarget 하나와 `--credential-file PATH`, `--yes`를 요구합니다. 두 옵션은 항상 함께 사용하고 Local Codex에서는 거절합니다. `--yes`는 이미 캡처한 unambiguous plan, 정확한 ConfigSnapshot, CredentialRevision, ConnectionRevision만 승인하므로 target 범위를 넓히지 않고 confirmation만 생략합니다. Command는 pending recovery를 해결하고 plan을 준비한 다음 credential-store 계약을 통해 credential file을 열고, interactive connect와 같은 one-attempt complete binding-union verification, 마지막 ConfigSnapshot guard, journal publication, commit을 수행합니다. Credential-file 캡처 또는 verification 실패는 새로 계획한 connect의 intent나 repository mutation을 만들지 않고 TTY나 다른 secret source로 fallback하지 않으며 source file을 그대로 둡니다. Plan 이전의 mandatory recovery는 기존 journaled operation을 이미 완료했을 수 있고, 이 earlier recovery는 새 connect의 failure guarantee에 포함하지 않습니다. 두 옵션이 모두 없으면 기존 controlling-TTY confirmation과 no-echo secret input을 그대로 사용합니다. `--verbose`는 interactive confirmation 전용이므로 non-interactive `--yes`와 함께 사용할 수 없습니다.
 
 Interactive disconnect는 관리형 target 하나를 묻거나 추론합니다. Non-interactive disconnect는 정확한 Provider와 `--account`, `--yes`가 필요하고, `--yes`는 캡처한 plan과 revision만 승인합니다. 캡처한 ConfigSnapshot과 prospective managed snapshot에서 target Provider·Account pair의 post-public effective binding set을 계산합니다. 남는 수동 또는 관리형 외부 binding이 그 pair를 계속 요구하면 credential action은 `preserve`이고, post-public dependent가 없을 때만 prepared `remove`를 허용합니다. 따라서 같은 identity의 수동·관리 binding이 합쳐진 상태에서 관리 provenance만 제거하면 수동 binding과 credential은 계속 사용할 수 있습니다. Preview는 영향받는 binding, preference transition, resume risk, 계산된 credential action을 보여줍니다. 수동 전용 entry는 Yo가 제거할 수 없고 `config.yaml`을 수정하도록 안내합니다. Public removal과 preference transition을 credential removal보다 먼저 commit하며 public-first recovery table이 모든 exact crash state를 이어가거나 완료로 인식합니다. Durable history는 유지합니다.
 

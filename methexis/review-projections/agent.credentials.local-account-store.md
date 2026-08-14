@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.credentials.local-account-store
-revision: sha256:8b8c3351eb1e70c9ec28240366060de2fe8196ee2fc0be585fd3f23d8ee0b086
+revision: sha256:0ae0d11b00139c2b931f496e1c4e3033b9d4ada3def8312c738dc0acf1ece40f
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:746c77eb613479f1e909833b2ab42899e5103bdc635390105b3165d1ce252520
+request_hash: sha256:e223c3470618d5265af3bdac4987a1f8ada5f2715435b51a60f4f11bff052266
 ---
 # Korean Review Projection
 
@@ -26,8 +26,8 @@ API 자격증명은 공개 설정과 분리합니다. 첫 로컬 저장소는 �
 
 CredentialRevision은 private opaque CAS이자 복구 receipt입니다. 권한이 제한된 로컬 자격증명 snapshot, secret-safe store API, 그리고 모델 서비스 계약이 소유하는 권한 제한·redacted 연결 operation journal에만 나타날 수 있습니다. 사용자에게 보이는 partial outcome, 일반 diagnostics와 logs, Session Journal, Request Audit, binding evidence, 공개 설정에서는 제외합니다. 저장소 API는 내부적으로 prepare 또는 commit status와 정확한 expected/planned opaque revision만 노출하고 secret byte는 반환하지 않습니다. 바인딩 검증, operation locking, 공개 저장소 순서, command-local config 조합, 저장소 간 복구는 모델 서비스 계약의 책임입니다.
 
-환경 변수와 command-line argument로 key를 공급하지 않습니다. 최초 interactive setup은 controlling TTY의 no-echo channel로 읽으며 non-interactive secret channel은 미룹니다. Secret type은 display와 debug 출력을 가리고, Connector에는 정확한 pair의 opaque secret만 전달합니다. Runtime reload, refresh, failover, keychain 연동은 미룹니다. 주입되는 resolver는 지금 TenantId, tenant field, tenant UI를 추가하지 않으면서도 미래에 tenant가 소유하는 선택 경계를 유지합니다.
+환경 변수, command-line secret 값, standard input, child process로 key를 공급하지 않습니다. Interactive setup은 controlling TTY의 no-echo channel로 읽습니다. Non-interactive external connect는 명시적인 `--yes` authorization과 함께 `--credential-file PATH` 하나만 받습니다. 이 path는 secret material이 아니라 locator입니다. Yo는 마지막 path를 no-follow 방식으로 정확히 한 번 열고, 그 handle이 현재 사용자 소유의 일반 파일이며 mode가 정확히 `0400` 또는 `0600`인지 요구합니다. 최초 크기가 16,386 byte를 넘으면 거절하고, overflow를 판별하기 위한 byte 하나를 더 확인하면서 파일 전체를 EOF까지 읽습니다. 캡처 길이가 16,386 byte 이하이고 read 전후의 안정적인 크기와 정확히 같을 때만 받아들입니다. 읽는 동안 identity, size, ownership, permission 또는 관련 timestamp가 바뀌면 거절하고, 마지막 LF 또는 CRLF 하나만 제거한 뒤 `ApiCredential`이 허용하는 1~16,384 byte의 유효한 UTF-8인지 요구합니다. 다른 byte를 trim하거나 마지막 symlink를 따르거나 교체된 pathname을 다시 읽거나 파일 내용을 diagnostics로 보내지 않습니다. 성공하거나 실패해도 source file을 수정하거나 삭제하지 않습니다. Secret type은 display와 debug 출력을 가리고 Connector에는 정확한 pair의 opaque secret만 전달합니다. Runtime reload, refresh, failover, keychain 연동 및 다른 non-interactive secret channel은 미룹니다. 주입되는 resolver는 지금 TenantId, tenant field, tenant UI를 추가하지 않으면서도 미래에 tenant가 소유하는 선택 경계를 유지합니다.
 
 ## 이유
 
-mutation 전에 독립적으로 생성한 CredentialRevision을 예약하면 write-ahead 복구 기록이 비밀 byte에서 identity를 만들지 않고도 정확한 예정 winner와 관련 없는 변경을 구분할 수 있습니다. 예약된 absent revision은 의도적으로 비어 있는 기존 저장소와 아직 없는 경로를 혼동하지 않으면서 최초 설치 CAS를 닫습니다.
+mutation 전에 독립적으로 생성한 CredentialRevision을 예약하면 write-ahead 복구 기록이 비밀 byte에서 identity를 만들지 않고도 정확한 예정 winner와 관련 없는 변경을 구분할 수 있습니다. 예약된 absent revision은 의도적으로 비어 있는 기존 저장소와 아직 없는 경로를 혼동하지 않으면서 최초 설치 CAS를 닫습니다. 좁은 owner-only file channel은 key를 process argument, environment, inherited input, terminal scrollback에 두지 않으면서 agent가 만든 임시 파일과 mounted secret file을 사용할 수 있게 합니다. 마지막 line ending 외의 byte를 모두 보존하여 credential identity가 조용히 바뀌는 일을 막습니다.
