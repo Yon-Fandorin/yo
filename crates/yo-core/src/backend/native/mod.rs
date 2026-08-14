@@ -9,6 +9,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 use connector::{ModelConnector, ModelConnectorStreamPort};
@@ -46,6 +47,7 @@ pub struct NativeModelBackendConfig {
     pub maximum_model_rounds: usize,
     pub maximum_tool_argument_bytes: usize,
     pub maximum_tool_output_bytes: usize,
+    pub absolute_tool_execution_timeout: Option<Duration>,
 }
 
 impl Default for NativeModelBackendConfig {
@@ -56,6 +58,7 @@ impl Default for NativeModelBackendConfig {
             maximum_model_rounds: 32,
             maximum_tool_argument_bytes: 4 * 1024 * 1024,
             maximum_tool_output_bytes: 4 * 1024 * 1024,
+            absolute_tool_execution_timeout: None,
         }
     }
 }
@@ -221,6 +224,9 @@ impl NativeModelBackend {
             || config.maximum_model_rounds == 0
             || config.maximum_tool_argument_bytes == 0
             || config.maximum_tool_output_bytes < TOOL_TRUNCATION_MARKER.len()
+            || config
+                .absolute_tool_execution_timeout
+                .is_some_and(|timeout| timeout.is_zero())
         {
             return Err(failure(
                 BackendFailureKind::Initialization,
@@ -1021,6 +1027,7 @@ impl NativeModelBackend {
             turn: state.turn,
             call: call.clone(),
             maximum_output_bytes: self.config.maximum_tool_output_bytes,
+            absolute_execution_timeout: self.config.absolute_tool_execution_timeout,
         };
         match self.tool_host.start(request) {
             Ok(execution) => {

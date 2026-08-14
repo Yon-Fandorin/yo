@@ -77,6 +77,14 @@ admission된 call/result replay만 기록하고, 승인과 실행 시도 Activit
 Provider·Account·Model·connector·endpoint·완전한 resolved profile에 귀속한다. process host가 startup
 선택, 이 입력들의 조립, 구체적인 local tool을 소유한다.
 
+Local `run_command` host는 비어 있지 않은 stdout 또는 stderr chunk를 하나의 공유 progress
+signal로 취급한다. 기본 attempt에는 5분 output-inactivity window가 있고 absolute execution
+deadline은 없다. Runtime policy는 execution request에 absolute deadline 하나를 추가할 수
+있으며, 이 clock은 한 번 시작되고 output으로 reset되지 않는다. Inactivity, 선택적인
+absolute deadline, cancellation은 모두 유한한 process-group termination, child reap, output
+drain 경로로 들어가며 diagnostic은 그 원인들과 cleanup failure를 구분한다. Host는 command를
+자동으로 재시도하지 않는다.
+
 열린 모든 backend binding은 continuation strategy를 선언한다. 현재 Yo-managed
 경로는 local client의 exact replay를 선언하고 Codex는 backend-managed state를
 선언한다. Exact replay는 별도의 제한된 `ModelReplayDelta`, 그 delta를 가리키는

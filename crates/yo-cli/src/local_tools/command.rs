@@ -1,29 +1,27 @@
 use std::{
-    io::Read,
-    os::{fd::AsFd, unix::process::CommandExt},
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex, atomic::AtomicBool},
     thread,
     time::{Duration, Instant},
 };
 
-use nix::{
-    fcntl::{FcntlArg, OFlag, fcntl},
-    sys::signal::{Signal, kill},
-    unistd::Pid,
+use limits::{CommandExecutionLimits, StopReason, expired_reason};
+use nix::unistd::Pid;
+use pipe::{PipeState, read_nonblocking_bounded, set_nonblocking};
+use process::{
+    child_exited_without_reaping, reap_child, terminate_process_group, terminate_process_group_id,
 };
 use yo_core::{
     ToolExecution, ToolExecutionError, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionResult,
 };
 
-use super::execution::{ThreadExecution, failed, interrupted};
+use super::execution::{ThreadExecution, failed};
 
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
-const PROCESS_CLEANUP_GRACE: Duration = Duration::from_secs(1);
+mod limits;
+mod pipe;
+mod process;
 
 pub(super) struct CommandExecution {
     inner: ThreadExecution,
@@ -35,10 +33,30 @@ impl CommandExecution {
         workspace: PathBuf,
         command: String,
         maximum_output_bytes: usize,
+        absolute_execution_timeout: Option<Duration>,
+    ) -> Result<Self, ToolExecutionError> {
+        Self::spawn_with_limits(
+            workspace,
+            command,
+            maximum_output_bytes,
+            CommandExecutionLimits::for_agent(absolute_execution_timeout),
+        )
+    }
+
+    fn spawn_with_limits(
+        workspace: PathBuf,
+        command: String,
+        maximum_output_bytes: usize,
+        limits: CommandExecutionLimits,
     ) -> Result<Self, ToolExecutionError> {
         if command.is_empty() || command.chars().any(|character| character == '\0') {
             return Err(ToolExecutionError::new(
                 "run_command requires a non-empty command",
+            ));
+        }
+        if !limits.is_valid() {
+            return Err(ToolExecutionError::new(
+                "run_command deadlines must be non-zero",
             ));
         }
         let child = Arc::new(Mutex::new(None));
@@ -48,6 +66,7 @@ impl CommandExecution {
                 &workspace,
                 &command,
                 maximum_output_bytes,
+                limits,
                 &cancelled,
                 &worker_child,
             )
@@ -84,9 +103,11 @@ fn run_command(
     workspace: &Path,
     command: &str,
     maximum_output_bytes: usize,
+    limits: CommandExecutionLimits,
     cancelled: &AtomicBool,
     shared_child: &Mutex<Option<Child>>,
 ) -> ToolExecutionResult {
+    let attempt_started = Instant::now();
     let spawned = Command::new("/bin/sh")
         .arg("-lc")
         .arg(command)
@@ -105,19 +126,28 @@ fn run_command(
     let stderr = child.stderr.take();
     let process_group = i32::try_from(child.id()).ok().map(Pid::from_raw);
     let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
-        terminate_process_group(&mut child);
-        return failed("run_command output pipes are unavailable");
+        return fail_after_early_cleanup(
+            &mut child,
+            "run_command output pipes are unavailable",
+            limits.cleanup_grace,
+        );
     };
     if set_nonblocking(&stdout).is_err() || set_nonblocking(&stderr).is_err() {
-        terminate_process_group(&mut child);
-        return failed("run_command output pipes are unavailable");
+        return fail_after_early_cleanup(
+            &mut child,
+            "run_command output pipes are unavailable",
+            limits.cleanup_grace,
+        );
     }
     let mut stdout = Some(stdout);
     let mut stderr = Some(stderr);
     {
         let Ok(mut slot) = shared_child.lock() else {
-            terminate_process_group(&mut child);
-            return failed("run_command state is unavailable");
+            return fail_after_early_cleanup(
+                &mut child,
+                "run_command state is unavailable",
+                limits.cleanup_grace,
+            );
         };
         *slot = Some(child);
     }
@@ -128,19 +158,31 @@ fn run_command(
     let mut stderr_bytes = Vec::with_capacity(stderr_limit.min(64 * 1024));
     let mut stdout_truncated = false;
     let mut stderr_truncated = false;
-    let started = Instant::now();
-    let mut timed_out = false;
+    let mut last_output_progress = attempt_started;
+    let mut stop_reason = None;
     let mut leader_exited = false;
     let mut status = None;
     let mut cleanup_started = None;
+    let mut cleanup_failed = false;
     loop {
         let stdout_read = stdout
             .as_mut()
             .map(|pipe| read_nonblocking_bounded(pipe, &mut stdout_bytes, stdout_limit));
         match stdout_read {
-            Some(Ok(PipeRead::Open)) => {},
-            Some(Ok(PipeRead::Closed)) => stdout = None,
-            Some(Ok(PipeRead::Truncated) | Err(())) => {
+            Some(Ok(read)) => {
+                if read.progressed {
+                    last_output_progress = Instant::now();
+                }
+                match read.state {
+                    PipeState::Open => {},
+                    PipeState::Closed => stdout = None,
+                    PipeState::Truncated => {
+                        stdout = None;
+                        stdout_truncated = true;
+                    },
+                }
+            },
+            Some(Err(())) => {
                 stdout = None;
                 stdout_truncated = true;
             },
@@ -150,16 +192,35 @@ fn run_command(
             .as_mut()
             .map(|pipe| read_nonblocking_bounded(pipe, &mut stderr_bytes, stderr_limit));
         match stderr_read {
-            Some(Ok(PipeRead::Open)) => {},
-            Some(Ok(PipeRead::Closed)) => stderr = None,
-            Some(Ok(PipeRead::Truncated) | Err(())) => {
+            Some(Ok(read)) => {
+                if read.progressed {
+                    last_output_progress = Instant::now();
+                }
+                match read.state {
+                    PipeState::Open => {},
+                    PipeState::Closed => stderr = None,
+                    PipeState::Truncated => {
+                        stderr = None;
+                        stderr_truncated = true;
+                    },
+                }
+            },
+            Some(Err(())) => {
                 stderr = None;
                 stderr_truncated = true;
             },
             None => {},
         }
-        if cancelled.load(Ordering::Acquire) || started.elapsed() >= COMMAND_TIMEOUT {
-            timed_out = started.elapsed() >= COMMAND_TIMEOUT;
+        if stop_reason.is_none() {
+            stop_reason = expired_reason(
+                cancelled,
+                attempt_started,
+                last_output_progress,
+                limits,
+                Instant::now(),
+            );
+        }
+        if stop_reason.is_some() {
             cleanup_started.get_or_insert_with(Instant::now);
             if let Some(process_group) = process_group {
                 terminate_process_group_id(process_group);
@@ -182,7 +243,8 @@ fn run_command(
         if leader_exited && stdout.is_none() && stderr.is_none() {
             break;
         }
-        if cleanup_started.is_some_and(|cleanup| cleanup.elapsed() >= PROCESS_CLEANUP_GRACE) {
+        if cleanup_started.is_some_and(|cleanup| cleanup.elapsed() >= limits.cleanup_grace) {
+            cleanup_failed = !leader_exited || stdout.is_some() || stderr.is_some();
             break;
         }
         thread::sleep(Duration::from_millis(10));
@@ -190,26 +252,31 @@ fn run_command(
     if let Some(process_group) = process_group {
         terminate_process_group_id(process_group);
     }
-    if let Ok(mut slot) = shared_child.lock()
-        && let Some(mut child) = slot.take()
-    {
-        if leader_exited {
-            status = child.wait().ok();
-        } else {
-            let _ = child.kill();
-            status = child.try_wait().ok().flatten();
+    if let Ok(mut slot) = shared_child.lock() {
+        if let Some(mut child) = slot.take() {
+            let (reaped_status, reap_failed) =
+                reap_child(&mut child, leader_exited, limits.cleanup_grace);
+            status = reaped_status;
+            cleanup_failed |= reap_failed;
         }
+    } else {
+        cleanup_failed = true;
     }
     drop(stdout);
     drop(stderr);
-    if cancelled.load(Ordering::Acquire) {
-        return interrupted();
+    if cleanup_failed {
+        let cause = stop_reason.map_or("normal process exit", StopReason::description);
+        return ToolExecutionResult::new(
+            ToolExecutionOutcome::Failed,
+            format!("run_command cleanup failed after {cause}"),
+            stdout_truncated || stderr_truncated,
+        );
     }
-    if timed_out {
+    if let Some(reason) = stop_reason {
         return ToolExecutionResult::new(
             ToolExecutionOutcome::Interrupted,
-            "run_command timed out",
-            false,
+            reason.description(),
+            stdout_truncated || stderr_truncated,
         );
     }
     let stdout = String::from_utf8_lossy(&stdout_bytes);
@@ -233,73 +300,19 @@ fn run_command(
     )
 }
 
-fn set_nonblocking(descriptor: &impl AsFd) -> Result<(), ()> {
-    let flags = fcntl(descriptor, FcntlArg::F_GETFL).map_err(|_| ())?;
-    fcntl(
-        descriptor,
-        FcntlArg::F_SETFL(OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK),
-    )
-    .map(|_| ())
-    .map_err(|_| ())
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PipeRead {
-    Open,
-    Closed,
-    Truncated,
-}
-
-fn read_nonblocking_bounded(
-    reader: &mut impl Read,
-    output: &mut Vec<u8>,
-    limit: usize,
-) -> Result<PipeRead, ()> {
-    let mut chunk = [0_u8; 8 * 1024];
-    loop {
-        let target = limit.saturating_add(1);
-        if output.len() >= target {
-            output.truncate(limit);
-            return Ok(PipeRead::Truncated);
-        }
-        let read_len = chunk.len().min(target - output.len());
-        match reader.read(&mut chunk[..read_len]) {
-            Ok(0) => return Ok(PipeRead::Closed),
-            Ok(count) => output.extend_from_slice(&chunk[..count]),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                return Ok(PipeRead::Open);
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
-            Err(_) => return Err(()),
-        }
+fn fail_after_early_cleanup(
+    child: &mut Child,
+    cause: &'static str,
+    cleanup_grace: Duration,
+) -> ToolExecutionResult {
+    terminate_process_group(child);
+    let (_, cleanup_failed) = reap_child(child, false, cleanup_grace);
+    if cleanup_failed {
+        failed("run_command cleanup failed after setup failure")
+    } else {
+        failed(cause)
     }
 }
 
-fn terminate_process_group(child: &mut Child) {
-    if let Ok(pid) = i32::try_from(child.id()) {
-        terminate_process_group_id(Pid::from_raw(pid));
-    }
-    let _ = child.kill();
-}
-
-fn terminate_process_group_id(process_group: Pid) {
-    let _ = kill(Pid::from_raw(-process_group.as_raw()), Signal::SIGKILL);
-}
-
-// WNOWAIT leaves the exited group leader as a zombie, so its numeric process-group ID
-// remains pinned until the caller has killed any descendants and explicitly reaped it.
-#[allow(unsafe_code)]
-fn child_exited_without_reaping(child: Pid) -> bool {
-    // SAFETY: waitid initializes siginfo_t on success. The zeroed value also makes the
-    // WNOHANG/no-state-change result distinguishable by its zero si_pid on Linux and macOS.
-    let mut information = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
-    let result = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            child.as_raw() as libc::id_t,
-            &mut information,
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    result == 0 && unsafe { information.si_pid() } != 0
-}
+#[cfg(test)]
+mod tests;

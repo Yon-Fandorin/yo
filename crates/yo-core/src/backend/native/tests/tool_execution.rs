@@ -1,4 +1,7 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use super::{
     super::{
@@ -20,6 +23,41 @@ use crate::{
 
 struct OrderedHost {
     starts: Arc<Mutex<Vec<String>>>,
+}
+
+struct DeadlineHost {
+    observed: Arc<Mutex<Vec<Option<Duration>>>>,
+}
+
+impl ToolExecutionHost for DeadlineHost {
+    fn identity(&self) -> &str {
+        "deadline-host-v1"
+    }
+
+    fn is_available(&self, _tool: &ToolId) -> bool {
+        true
+    }
+
+    fn start(
+        &mut self,
+        request: ToolExecutionRequest,
+    ) -> Result<Box<dyn ToolExecution>, ToolExecutionError> {
+        self.observed
+            .lock()
+            .unwrap()
+            .push(request.absolute_execution_timeout);
+        Ok(Box::new(MockExecution {
+            result: Some(ToolExecutionResult::new(
+                ToolExecutionOutcome::Completed,
+                r#"{"contents":"ok"}"#,
+                false,
+            )),
+        }))
+    }
+
+    fn shutdown(&mut self) -> Result<(), ToolExecutionError> {
+        Ok(())
+    }
 }
 
 impl ToolExecutionHost for OrderedHost {
@@ -148,6 +186,83 @@ fn native_backend_runs_automatic_tool_once_and_replays_it_before_the_next_round(
             refusal: None,
         }
     );
+}
+
+// agent-owned absolute tool budget은 binding identity가 아니라 runtime config에서 한 attempt의
+// ToolExecutionRequest로 전달되고, 기본값 없음과 구분되는 exact Duration을 보존합니다.
+#[test]
+fn native_backend_forwards_the_optional_absolute_tool_deadline() {
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let rounds = vec![
+        vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "r1".to_owned(),
+            },
+            ModelConnectorEvent::FunctionCallStarted {
+                output_index: 0,
+                item_id: "item-1".to_owned(),
+                call_id: "call-1".to_owned(),
+                name: "read_file".to_owned(),
+            },
+            ModelConnectorEvent::FunctionCallDone {
+                output_index: 0,
+                item_id: "item-1".to_owned(),
+                call_id: "call-1".to_owned(),
+                name: "read_file".to_owned(),
+                arguments: r#"{"path":"README.md"}"#.to_owned(),
+            },
+            completed("r1"),
+        ],
+        vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "r2".to_owned(),
+            },
+            ModelConnectorEvent::MessageDone {
+                output_index: 0,
+                item_id: "message".to_owned(),
+            },
+            completed("r2"),
+        ],
+    ];
+    let absolute_timeout = Duration::from_secs(37);
+    let mut backend = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(rounds),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Some(Box::new(ExactAdmission)),
+            Box::new(DeadlineHost {
+                observed: Arc::clone(&observed),
+            }),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig {
+            absolute_tool_execution_timeout: Some(absolute_timeout),
+            ..NativeModelBackendConfig::default()
+        },
+    )
+    .unwrap();
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("요청"),
+        })
+        .unwrap();
+
+    assert!(matches!(
+        drain_until_turn(&mut backend),
+        BackendEvent::ResumableTurnFinished { .. }
+    ));
+    assert_eq!(&*observed.lock().unwrap(), &[Some(absolute_timeout)]);
 }
 
 // 함수 호출 완료 event가 뒤집혀 도착해도 output index 순서로 한 번씩 실행하고,

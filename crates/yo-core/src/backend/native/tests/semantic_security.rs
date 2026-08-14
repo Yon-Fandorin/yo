@@ -132,6 +132,32 @@ fn bounded_tool_output_includes_its_marker_inside_the_limit() {
     );
 }
 
+// agent policy의 explicit absolute tool deadline에서 0은 즉시 만료나 무제한으로 해석하지
+// 않고 native backend 초기화 단계에서 invalid bound로 거절합니다.
+#[test]
+fn native_backend_rejects_a_zero_absolute_tool_deadline() {
+    let result = NativeModelBackend::with_connector(
+        Box::new(MockConnector {
+            rounds: event_rounds(Vec::new()),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        context_profile(),
+        NativeModelBackendConfig {
+            absolute_tool_execution_timeout: Some(std::time::Duration::ZERO),
+            ..NativeModelBackendConfig::default()
+        },
+    );
+
+    assert!(result.is_err());
+}
+
 // local tool을 노출하면 원시 argument와 output이 semantic 경계를 우회하지 못하도록 startup을
 // 거부하는지 검증합니다.
 #[test]

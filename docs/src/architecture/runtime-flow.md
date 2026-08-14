@@ -79,6 +79,15 @@ attributes each terminal response's usage to its exact Provider, Account,
 Model, connector, endpoint, and complete resolved profile. The process host owns startup
 selection and assembly of these inputs and concrete local tools.
 
+The local `run_command` host treats every non-empty stdout or stderr chunk as
+one shared progress signal. Its default attempt has a 5-minute output-inactivity
+window and no absolute execution deadline. A runtime policy may add one
+absolute deadline to the execution request; that clock starts once and output
+does not reset it. Inactivity, the optional absolute deadline, and cancellation
+all enter the same finite process-group termination, child reap, and output
+drain path, while diagnostics keep those causes and cleanup failure distinct.
+The host never retries the command automatically.
+
 Every opened backend binding declares its continuation strategy. The current
 Yo-managed route declares exact replay by the local client; Codex declares
 backend-managed state. Exact replay commits a separate bounded

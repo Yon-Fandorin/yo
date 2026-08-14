@@ -49,6 +49,7 @@ pub(super) fn request(
             .validate_call("call-1", name, arguments, 4096)
             .unwrap(),
         maximum_output_bytes: 4096,
+        absolute_execution_timeout: None,
     }
 }
 

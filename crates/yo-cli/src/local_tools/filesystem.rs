@@ -209,6 +209,7 @@ impl ToolExecutionHost for LocalToolHost {
                     self.workspace.clone(),
                     command,
                     maximum_output_bytes,
+                    request.absolute_execution_timeout,
                 )?))
             },
             _ => Err(ToolExecutionError::new("unknown local tool")),

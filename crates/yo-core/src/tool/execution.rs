@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use super::{errors::ToolExecutionError, registry::ValidatedToolCall, schema::ToolId};
 use crate::TurnRef;
 
@@ -6,6 +8,7 @@ pub struct ToolExecutionRequest {
     pub turn: TurnRef,
     pub call: ValidatedToolCall,
     pub maximum_output_bytes: usize,
+    pub absolute_execution_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
