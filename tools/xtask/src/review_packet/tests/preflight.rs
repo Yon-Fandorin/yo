@@ -88,6 +88,7 @@ fn preflight_result_is_explicitly_non_publishing_and_has_no_artifact_paths() {
         operation: "preflight_slice_review_packet",
         status: "ready",
         artifacts_published: false,
+        authority: None,
         review_id: "sha256:review".to_owned(),
         trusted_commit: "0".repeat(40),
         candidate_commit: "1".repeat(40),

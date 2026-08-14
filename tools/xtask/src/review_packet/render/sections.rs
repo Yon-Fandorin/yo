@@ -4,7 +4,10 @@ use serde::Serialize;
 use super::super::{METADATA_SUFFIX, SECTION_PREFIX, SECTION_SUFFIX};
 use super::super::{
     capture::Inputs,
-    model::{DELIVERY_PROFILE_V1_ALPHA2, PreflightSection, ReviewPlan, SENTINEL_ESCAPE_PROFILE},
+    model::{
+        DELIVERY_PROFILE_V1_ALPHA2, DELIVERY_PROFILE_V1_ALPHA3, PreflightSection, ReviewPlan,
+        SENTINEL_ESCAPE_PROFILE,
+    },
 };
 use crate::review_protocol::{DeliveryProfile, digest};
 
@@ -68,7 +71,28 @@ pub(super) fn append_context(
         &inputs.context.result.build_id,
         context_path,
         &inputs.context.context.bytes,
-    )
+    )?;
+    if let Some(proposal) = &inputs.prospective {
+        sink.append(
+            "prospective_activation_request",
+            "activation-request",
+            &proposal.activation_request.path,
+            &proposal.activation_request.bytes,
+        )?;
+        sink.append(
+            "prospective_checkpoint",
+            "proposed-checkpoint",
+            &proposal.proposed_checkpoint.path,
+            &proposal.proposed_checkpoint.bytes,
+        )?;
+        sink.append(
+            "prospective_active_record",
+            "proposed-active-record",
+            &proposal.proposed_active_record.path,
+            &proposal.proposed_active_record.bytes,
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn append_authorities(
@@ -209,7 +233,10 @@ fn append_section_with_profile(
     bytes: &[u8],
 ) -> Result<(), String> {
     let encoded;
-    let (rendered, encoding) = if profile.id == DELIVERY_PROFILE_V1_ALPHA2 {
+    let (rendered, encoding) = if matches!(
+        profile.id.as_str(),
+        DELIVERY_PROFILE_V1_ALPHA2 | DELIVERY_PROFILE_V1_ALPHA3
+    ) {
         encoded = encode_section(bytes);
         (encoded.as_slice(), Some(SENTINEL_ESCAPE_PROFILE))
     } else {

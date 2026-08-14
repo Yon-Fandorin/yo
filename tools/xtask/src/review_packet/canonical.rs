@@ -2,22 +2,41 @@ use super::{
     capture::Inputs,
     model::{
         DELIVERY_PROFILE_V1, DELIVERY_PROFILE_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA2,
-        DeliveryProfile, InputPrefixRecord, MANIFEST_SCHEMA_V1, MANIFEST_SCHEMA_V1_ALPHA1,
-        MANIFEST_SCHEMA_V1_ALPHA2, Manifest, ManifestInputs, NamedArtifact, NamedSemanticInput,
-        PLAN_SCHEMA, PacketRecord, ReviewPlan, SemanticInput, TOKENIZER_COMPILER,
-        TOKENIZER_PROFILE,
+        DELIVERY_PROFILE_V1_ALPHA3, DeliveryProfile, InputPrefixRecord, MANIFEST_SCHEMA_V1,
+        MANIFEST_SCHEMA_V1_ALPHA1, MANIFEST_SCHEMA_V1_ALPHA2, MANIFEST_SCHEMA_V1_ALPHA3, Manifest,
+        ManifestInputs, NamedArtifact, NamedSemanticInput, PLAN_SCHEMA, PLAN_SCHEMA_V1_ALPHA3,
+        PacketRecord, ProspectiveActivationPlan, ProspectiveManifestInputs, ReviewPlan,
+        SemanticInput, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
     },
 };
 use crate::review_protocol::artifact;
 
 pub(super) fn build_plan(inputs: &Inputs) -> ReviewPlan {
+    let prospective = inputs.prospective.as_ref();
     ReviewPlan {
-        schema: PLAN_SCHEMA.to_owned(),
+        schema: if prospective.is_some() {
+            PLAN_SCHEMA_V1_ALPHA3
+        } else {
+            PLAN_SCHEMA
+        }
+        .to_owned(),
         base_commit: inputs.base_commit.clone(),
         candidate_commit: inputs.candidate_commit.clone(),
         diff_hash: inputs.diff.hash.clone(),
         trusted_commit: inputs.context.result.trusted_commit.clone(),
-        active_checkpoint: inputs.context.active_checkpoint.clone(),
+        authority_mode: prospective.map(|_| "prospective".to_owned()),
+        active_checkpoint: prospective
+            .is_none()
+            .then(|| inputs.context.active_checkpoint.clone()),
+        prospective_checkpoint: prospective
+            .is_some()
+            .then(|| inputs.context.active_checkpoint.clone()),
+        prospective_activation: prospective.map(|proposal| ProspectiveActivationPlan {
+            activation_request: semantic_input(&proposal.activation_request),
+            proposed_checkpoint: semantic_input(&proposal.proposed_checkpoint),
+            proposed_active_record: semantic_input(&proposal.proposed_active_record),
+            predecessor_active_record_hash: proposal.predecessor_active_record_hash.clone(),
+        }),
         context_build_id: inputs.context.result.build_id.clone(),
         context_request: semantic_input(&inputs.context.request),
         context: semantic_input(&inputs.context.context),
@@ -63,6 +82,7 @@ pub(super) fn build_manifest(
         DELIVERY_PROFILE_V1 => MANIFEST_SCHEMA_V1,
         DELIVERY_PROFILE_V1_ALPHA1 => MANIFEST_SCHEMA_V1_ALPHA1,
         DELIVERY_PROFILE_V1_ALPHA2 => MANIFEST_SCHEMA_V1_ALPHA2,
+        DELIVERY_PROFILE_V1_ALPHA3 => MANIFEST_SCHEMA_V1_ALPHA3,
         _ => unreachable!("validated original review delivery profile"),
     };
     Manifest {
@@ -84,6 +104,13 @@ pub(super) fn build_manifest(
                 })
                 .collect(),
             diff: artifact(&inputs.diff),
+            prospective_activation: inputs.prospective.as_ref().map(|proposal| {
+                ProspectiveManifestInputs {
+                    activation_request: artifact(&proposal.activation_request),
+                    proposed_checkpoint: artifact(&proposal.proposed_checkpoint),
+                    proposed_active_record: artifact(&proposal.proposed_active_record),
+                }
+            }),
         },
         packet: PacketRecord {
             path: "packet.md".to_owned(),
@@ -107,6 +134,7 @@ pub(super) fn delivery_profile_for_id(id: &str) -> Result<DeliveryProfile, Strin
         DELIVERY_PROFILE_V1 => super::PREAMBLE,
         DELIVERY_PROFILE_V1_ALPHA1 => super::PREAMBLE_V1_ALPHA1,
         DELIVERY_PROFILE_V1_ALPHA2 => super::PREAMBLE_V1_ALPHA2,
+        DELIVERY_PROFILE_V1_ALPHA3 => super::PREAMBLE_V1_ALPHA3,
         _ => {
             return Err(format!(
                 "unsupported original review delivery profile `{id}`"

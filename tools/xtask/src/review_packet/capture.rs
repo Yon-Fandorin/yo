@@ -5,6 +5,8 @@ use std::{
     process::ExitCode,
 };
 
+use serde::Deserialize;
+
 use super::{
     MAX_INPUT_BYTES, MAX_REQUEST_BYTES,
     model::{
@@ -26,11 +28,19 @@ pub(super) struct ContextCapture {
     pub(super) included_ids: Vec<String>,
 }
 
+pub(super) struct ProspectiveCapture {
+    pub(super) activation_request: Captured,
+    pub(super) proposed_checkpoint: Captured,
+    pub(super) proposed_active_record: Captured,
+    pub(super) predecessor_active_record_hash: Option<String>,
+}
+
 pub(super) struct Inputs {
     pub(super) base_commit: String,
     pub(super) candidate_commit: String,
     pub(super) diff: Captured,
     pub(super) context: ContextCapture,
+    pub(super) prospective: Option<ProspectiveCapture>,
     pub(super) authorities: Vec<Captured>,
     pub(super) slice_contract: Captured,
     pub(super) validation: Vec<NamedCaptured>,
@@ -84,9 +94,137 @@ pub(super) fn capture_context_with_request(
         || !result.ok
         || result.operation != "resolve_context"
         || result.authority != "trusted_integration"
+        || result.checkpoint.is_some()
+        || result.activation_request.is_some()
+        || result.predecessor_active_record_hash.is_some()
+        || result.proposed_active_record_hash.is_some()
     {
         return Err("Methexis returned a non-success ContextBuild result".to_owned());
     }
+    capture_context_artifacts(repository, request, result)
+}
+
+pub(super) fn capture_prospective_context_with_request(
+    repository: &Path,
+    candidate_commit: &str,
+    activation_request_path: &Path,
+    activation_request: Captured,
+    context_request_path: &Path,
+    context_request: Captured,
+) -> Result<(ContextCapture, ProspectiveCapture), String> {
+    capture_prospective_context(
+        repository,
+        candidate_commit,
+        activation_request_path,
+        activation_request,
+        context_request,
+        || resolve_prospective_context(activation_request_path, context_request_path),
+    )
+}
+
+#[cfg(test)]
+pub(super) fn capture_prospective_context_from_result(
+    repository: &Path,
+    candidate_commit: &str,
+    activation_request_path: &Path,
+    activation_request: Captured,
+    context_request: Captured,
+    result: ContextResult,
+) -> Result<(ContextCapture, ProspectiveCapture), String> {
+    capture_prospective_context(
+        repository,
+        candidate_commit,
+        activation_request_path,
+        activation_request,
+        context_request,
+        || Ok(result),
+    )
+}
+
+fn capture_prospective_context(
+    repository: &Path,
+    candidate_commit: &str,
+    activation_request_path: &Path,
+    activation_request: Captured,
+    context_request: Captured,
+    resolve: impl FnOnce() -> Result<ContextResult, String>,
+) -> Result<(ContextCapture, ProspectiveCapture), String> {
+    let activation = parse_activation_request(&activation_request.bytes)?;
+    let checkpoint_path = format!(
+        "methexis/checkpoints/{}.yaml",
+        activation
+            .checkpoint_id
+            .strip_prefix("sha256:")
+            .expect("validated activation CheckpointId")
+    );
+    let proposal = capture_authorities(
+        repository,
+        candidate_commit,
+        &[
+            checkpoint_path.clone(),
+            "methexis/active-checkpoint.yaml".to_owned(),
+        ],
+    )?;
+    let proposed_active_record = proposal
+        .iter()
+        .find(|capture| capture.path == "methexis/active-checkpoint.yaml")
+        .cloned()
+        .ok_or_else(|| "prospective active record capture is missing".to_owned())?;
+    let proposed_checkpoint = proposal
+        .iter()
+        .find(|capture| capture.path == checkpoint_path)
+        .cloned()
+        .ok_or_else(|| "prospective Checkpoint capture is missing".to_owned())?;
+    require_hash(
+        &activation.checkpoint_hash,
+        &proposed_checkpoint.bytes,
+        "prospective Checkpoint",
+    )?;
+    let result = resolve()?;
+    let context = capture_context_artifacts(repository, context_request, result)?;
+    let result = &context.result;
+    let checkpoint = result
+        .checkpoint
+        .as_ref()
+        .ok_or_else(|| "prospective ContextBuild result omitted its Checkpoint".to_owned())?;
+    let result_request = result.activation_request.as_ref().ok_or_else(|| {
+        "prospective ContextBuild result omitted its activation request".to_owned()
+    })?;
+    if result.schema != "methexis.activation-review-context-result/v1alpha1"
+        || !result.ok
+        || result.operation != "resolve_activation_review_context"
+        || result.authority != "prospective"
+        || checkpoint != &context.active_checkpoint
+        || checkpoint.id != activation.checkpoint_id
+        || checkpoint.hash != activation.checkpoint_hash
+        || checkpoint.authority_basis_commit != result.trusted_commit
+        || result_request.hash != activation_request.hash
+        || resolve_input_path(repository, &result_request.path) != activation_request_path
+        || result.predecessor_active_record_hash != activation.replace_active_hash
+        || result.proposed_active_record_hash.as_deref()
+            != Some(proposed_active_record.hash.as_str())
+    {
+        return Err(
+            "prospective ContextBuild result, activation proposal, and manifest identities differ"
+                .to_owned(),
+        );
+    }
+    Ok((
+        context,
+        ProspectiveCapture {
+            activation_request,
+            proposed_checkpoint,
+            proposed_active_record,
+            predecessor_active_record_hash: activation.replace_active_hash,
+        },
+    ))
+}
+
+fn capture_context_artifacts(
+    repository: &Path,
+    request: Captured,
+    result: ContextResult,
+) -> Result<ContextCapture, String> {
     let context_path = repository.join(&result.context.path);
     let manifest_path = repository.join(&result.manifest.path);
     let context_bytes = bounded_file::read_regular(
@@ -130,6 +268,45 @@ pub(super) fn capture_context_with_request(
     })
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ActivationRequest {
+    pub(super) schema: String,
+    pub(super) checkpoint_id: String,
+    pub(super) checkpoint_hash: String,
+    pub(super) replace_active_hash: Option<String>,
+}
+
+pub(super) fn parse_activation_request(bytes: &[u8]) -> Result<ActivationRequest, String> {
+    let request = serde_json::from_slice(bytes)
+        .map_err(|error| format!("invalid activation request: {error}"))?;
+    validate_activation_request(&request)?;
+    Ok(request)
+}
+
+fn validate_activation_request(request: &ActivationRequest) -> Result<(), String> {
+    if request.schema == "methexis.activation-request/v1alpha1"
+        && valid_hash(&request.checkpoint_id)
+        && valid_hash(&request.checkpoint_hash)
+        && request
+            .replace_active_hash
+            .as_ref()
+            .is_none_or(|hash| valid_hash(hash))
+    {
+        Ok(())
+    } else {
+        Err("activation request schema or hashes are invalid".to_owned())
+    }
+}
+
+fn valid_hash(value: &str) -> bool {
+    value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 fn resolve_context(request_path: &Path) -> Result<ContextResult, String> {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -147,6 +324,29 @@ fn resolve_context(request_path: &Path) -> Result<ContextResult, String> {
     }
     serde_json::from_slice(&stdout)
         .map_err(|error| format!("invalid Methexis ContextBuild result: {error}"))
+}
+
+fn resolve_prospective_context(
+    activation_request_path: &Path,
+    context_request_path: &Path,
+) -> Result<ContextResult, String> {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let arguments = [
+        OsString::from("resolve-activation-review-context"),
+        activation_request_path.as_os_str().to_owned(),
+        context_request_path.as_os_str().to_owned(),
+    ];
+    let code = methexis::run(arguments, &mut stdout, &mut stderr)
+        .map_err(|error| format!("cannot run prospective Methexis ContextBuild: {error}"))?;
+    if code != ExitCode::SUCCESS {
+        return Err(format!(
+            "prospective Methexis ContextBuild failed: {}",
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    serde_json::from_slice(&stdout)
+        .map_err(|error| format!("invalid prospective Methexis ContextBuild result: {error}"))
 }
 
 pub(super) fn capture_diff(

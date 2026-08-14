@@ -314,7 +314,13 @@ and Developer Docs impact, and verify that Rust tests carry nearby explanatory
 comments. The `activation_slice` module consumes a small semantic request,
 pins current `develop`, publishes the canonical Methexis activation contract,
 creates its Direct Slice worktree, and binds the two while recovering exact
-partial setup. The `slice_close` module produces and applies a hash-addressed local
+partial setup. The review-packet modules use ordinary active ContextBuilds for
+normal candidates and an explicitly versioned prospective operation for one
+exact later activation request; the latter binds the proposed Checkpoint and
+active-record transition without granting activation. Its bootstrap module
+requires an exact versioned capability in trusted `develop` and admits only the
+closed four-path activation transition, so implementation and workflow changes
+remain on the ordinary review route. The `slice_close` module produces and applies a hash-addressed local
 cleanup plan only after the accepted commit, Slice patch, review evidence,
 binding, refs, and clean worktrees agree; its storage boundary rejects unsafe
 plan-file inputs. `hk.pkl` decides when to run checks; `xtask` implements and

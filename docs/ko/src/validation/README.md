@@ -47,6 +47,7 @@ command, host, credential, platform을 기록한다.
 | 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
 | 수용된 Slice가 여전히 검수한 로컬 branch patch와 정확히 같고 안전하게 정리할 수 있는지 | 표준 `close-metrics.json`을 작성한 뒤 `cargo xtask slice close plan <slice> <plan.json>`과 `cargo xtask slice close apply <plan.json>` 실행 | 깨끗한 통합 worktree에서 실행하고 apply 전에 결속된 metrics, 제거 효과, 보존할 coordination 경로를 검토 |
 | 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | `tools/xtask/src` |
+| Prospective activation ContextBuild와 review-packet identity | `cargo test -p methexis activation_review_context`와 `cargo test -p xtask review_packet::tests::prospective` | 정확한 activation request, 제안 Checkpoint·active record, authority mode, packet 재생, active-authority 교차 사용 거절 |
 | Linux/macOS 조건부 compile | `bash tools/validation/yo-cli-unix-matrix.sh` | 로컬 host 결과와 두 host를 위한 `.github/workflows/unix-compile.yml` |
 | tmux, SSH, SSH 내부 tmux 동작 | [터미널 환경 매트릭스](./terminal-matrix.md) 참고 | ignored `yo-cli` 환경 test |
 
@@ -112,6 +113,12 @@ contract는 active record, Checkpoint tree, 등록된 context manifest 두 개�
 lease한다. 집중 검사인 `methexis check --staged-activation`은 새 immutable
 Checkpoint를 정확히 하나만 허용한다. Slice 생성은 coordination setup일 뿐
 prospective transition이 유효하다는 증거가 아니다.
+
+이후 독립 activation을 검수할 때는 이를 지원하는 workflow 구현이 이미 trusted인
+경우에만 명시적인 v1alpha3 review request를 쓴다. 위 집중 test는 trusted-capability
+bootstrap, 정확한 activation-only 경로 경계, proposal identity와 canonical packet 재생을
+확인하지만, 후보는 통합 전 staged activation 검증과 통합 직후
+일반 전체 Methexis 검증을 여전히 거쳐야 한다.
 
 Slice가 platform이나 외부 환경 경계를 바꾼다면 기준선이 이를 검사했다고
 주장하지 말고 관련 matrix 명령을 추가한다.

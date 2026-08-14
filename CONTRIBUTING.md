@@ -543,6 +543,31 @@ Its standalone token count is another non-additive diagnostic, not a cached
 token count. Matching prefix bytes create only a cache opportunity; record an
 actual cache hit only when the provider exposes matching runtime metrics.
 
+A later independent Methexis activation may use the experimental request
+schema `yo.slice-review-packet-request/v1alpha3` with delivery profile
+`yo.slice-review-markdown/v1alpha3`. It must add `activation_request_path`
+naming the exact activation request inside the clean candidate worktree. The
+packet resolves a review-only prospective ContextBuild, binds that request,
+the proposed immutable Checkpoint, the proposed active record, its canonical
+predecessor, and the trusted `develop` basis, and labels every result and
+manifest `prospective`. It grants no approval, activation, or general context
+eligibility. Do not infer an activation request or fall back to active
+authority when any proposal input disagrees.
+
+The change that introduces or modifies this prospective packet path must use
+the already accepted ordinary review protocol. It cannot use the new path to
+review its own enabling contract or implementation. Its first eligible use is
+a later, independently prepared activation candidate; after that candidate is
+integrated, ordinary full Methexis validation must still establish trusted
+active authority.
+
+The implementation enforces that bootstrap boundary: trusted `develop` must
+contain the exact versioned capability record, and the candidate diff must be
+the closed activation-only transition (active record, one immutable
+Checkpoint, and the complete registered ContextBuild manifests). A missing or
+different trusted capability, or any implementation, workflow, documentation,
+or unrelated candidate path, requires the ordinary review protocol.
+
 When the preflight is ready and its inputs are frozen, build the
 content-addressed review input:
 
@@ -569,7 +594,9 @@ prefix-only or reference-only review. Frozen `yo.slice-review-markdown/v1` and
 the superseded experimental `yo.slice-review-markdown/v1alpha1` requests and
 manifests remain supported for exact in-flight reproduction and may root the
 same unchanged review-delta v1 chain. New requests use `v1alpha2`; a published
-profile identifier is never reinterpreted in place.
+profile identifier is never reinterpreted in place. `v1alpha3` is reserved for
+the explicit prospective-activation request above and does not replace the
+ordinary `v1alpha2` route.
 
 Treat every published wire identifier as a frozen behavior boundary, not only
 as a serialization label. If validation or failure semantics change, keep the

@@ -1,11 +1,10 @@
 use super::{
     super::{
-        REVIEW_ID_DOMAIN,
         canonical::{build_manifest, build_plan},
         capture::{Inputs, captured},
         model::Manifest,
         render::{count_tokens, render_packet_with_metadata},
-        storage,
+        review_id_domain, storage,
         verifier::{
             require_base_candidate_provenance, verify_canonical_artifacts, verify_published,
         },
@@ -24,7 +23,7 @@ fn repository_head(repository: &std::path::Path) -> String {
 fn produced_artifacts(inputs: &Inputs) -> (Manifest, Vec<u8>, Vec<u8>) {
     let plan = build_plan(inputs);
     let review_id = domain_digest(
-        REVIEW_ID_DOMAIN,
+        review_id_domain(&plan.delivery_profile.id),
         &serde_json::to_vec(&plan).expect("plan serializes"),
     );
     let rendered = render_packet_with_metadata(&review_id, &plan, inputs).expect("packet renders");
@@ -169,7 +168,12 @@ fn published_verifier_validates_every_manifest_revision_before_git() {
             "candidate" => manifest.plan.candidate_commit = "--candidate".to_owned(),
             "trusted" => manifest.plan.trusted_commit = "--trusted".to_owned(),
             "checkpoint" => {
-                manifest.plan.active_checkpoint.authority_basis_commit = "--checkpoint".to_owned();
+                manifest
+                    .plan
+                    .active_checkpoint
+                    .as_mut()
+                    .expect("ordinary fixture has active Checkpoint")
+                    .authority_basis_commit = "--checkpoint".to_owned();
             },
             _ => unreachable!("closed revision fixture"),
         }

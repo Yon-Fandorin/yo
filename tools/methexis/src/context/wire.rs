@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 pub(super) const REQUEST_SCHEMA: &str = "methexis.context-request/v1alpha1";
 pub(super) const RESULT_SCHEMA: &str = "methexis.context-result/v1alpha1";
+pub(super) const PROSPECTIVE_RESULT_SCHEMA: &str =
+    "methexis.activation-review-context-result/v1alpha1";
 pub(super) const VERIFICATION_RESULT_SCHEMA: &str = "methexis.context-verification-result/v1alpha1";
 pub(super) const FAILURE_SCHEMA: &str = "methexis.context-failure/v1alpha1";
 pub(super) const CANDIDATE_SCHEMA: &str = "librarian.candidate-set/v1alpha1";
@@ -167,6 +169,86 @@ impl ResolveSuccess {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(crate) struct ProspectiveResolveSuccess {
+    schema: &'static str,
+    pub(crate) ok: bool,
+    operation: &'static str,
+    status: &'static str,
+    authority: &'static str,
+    trusted_commit: String,
+    checkpoint: ProspectiveCheckpoint,
+    activation_request: InputReference,
+    predecessor_active_record_hash: Option<String>,
+    proposed_active_record_hash: String,
+    build_id: String,
+    context: ArtifactReference,
+    manifest: ArtifactReference,
+    affected_ids: Vec<String>,
+    next_actions: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ProspectiveCheckpoint {
+    id: String,
+    hash: String,
+    authority_basis_commit: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct InputReference {
+    path: String,
+    hash: String,
+}
+
+pub(super) struct ProspectiveSuccessInput {
+    pub(super) status: &'static str,
+    pub(super) trusted_commit: String,
+    pub(super) checkpoint_id: String,
+    pub(super) checkpoint_hash: String,
+    pub(super) authority_basis_commit: String,
+    pub(super) activation_request_path: String,
+    pub(super) activation_request_hash: String,
+    pub(super) predecessor_active_record_hash: Option<String>,
+    pub(super) proposed_active_record_hash: String,
+    pub(super) build_id: String,
+    pub(super) context: ArtifactReference,
+    pub(super) manifest: ArtifactReference,
+    pub(super) affected_ids: Vec<String>,
+}
+
+impl ProspectiveResolveSuccess {
+    pub(super) fn new(input: ProspectiveSuccessInput) -> Self {
+        Self {
+            schema: PROSPECTIVE_RESULT_SCHEMA,
+            ok: true,
+            operation: "resolve_activation_review_context",
+            status: input.status,
+            authority: "prospective",
+            trusted_commit: input.trusted_commit,
+            checkpoint: ProspectiveCheckpoint {
+                id: input.checkpoint_id,
+                hash: input.checkpoint_hash,
+                authority_basis_commit: input.authority_basis_commit,
+            },
+            activation_request: InputReference {
+                path: input.activation_request_path,
+                hash: input.activation_request_hash,
+            },
+            predecessor_active_record_hash: input.predecessor_active_record_hash,
+            proposed_active_record_hash: input.proposed_active_record_hash,
+            build_id: input.build_id,
+            context: input.context,
+            manifest: input.manifest,
+            affected_ids: input.affected_ids,
+            next_actions: vec![
+                "use this prospective build only in the exact immutable activation-review packet"
+                    .to_owned(),
+            ],
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct VerifySuccess {
     schema: &'static str,
     pub(crate) ok: bool,
@@ -256,6 +338,11 @@ impl ResolveFailure {
 
     pub(super) fn into_verification(mut self) -> Self {
         self.operation = "verify_context_build";
+        self
+    }
+
+    pub(super) fn into_activation_review(mut self) -> Self {
+        self.operation = "resolve_activation_review_context";
         self
     }
 

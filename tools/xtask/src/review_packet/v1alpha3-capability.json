@@ -1,0 +1,11 @@
+{
+  "schema": "yo.prospective-activation-review-capability/v1alpha1",
+  "request_schema": "yo.slice-review-packet-request/v1alpha3",
+  "delivery_profile": "yo.slice-review-markdown/v1alpha3",
+  "active_record_path": "methexis/active-checkpoint.yaml",
+  "checkpoint_directory": "methexis/checkpoints",
+  "registered_manifest_paths": [
+    "tools/methexis/examples/context-contract/manifest.json",
+    "tools/methexis/examples/context-contract/stable-leaf-manifest.json"
+  ]
+}

@@ -39,6 +39,7 @@ USAGE:
     methexis propose-activation <request.json>
     methexis refresh-context-manifests <activation-request.json>
     methexis resolve-context <request.json>
+    methexis resolve-activation-review-context <activation-request.json> <context-request.json>
     methexis verify-context-build <request.json> <sha256:BuildId>
 
 COMMANDS:
@@ -55,6 +56,7 @@ COMMANDS:
     propose-activation Propose the active Checkpoint with compare-and-swap
     refresh-context-manifests Refresh registered manifests for an activation proposal
     resolve-context    Build or reuse deterministic token-bounded agent context
+    resolve-activation-review-context Build review-only context from one activation proposal
     verify-context-build Independently reproduce and verify one managed ContextBuild
 
 Run commands from the repository root. Mutations remain Draft proposals until
@@ -152,6 +154,11 @@ fn run_command(
         },
         [command, request] if command == OsStr::new("resolve-context") => {
             run_context_operation(request, stdout, stderr)
+        },
+        [command, activation, request]
+            if command == OsStr::new("resolve-activation-review-context") =>
+        {
+            run_prospective_context_operation(activation, request, stdout, stderr)
         },
         [command, request, build_id] if command == OsStr::new("verify-context-build") => {
             run_context_verification(request, build_id, stdout, stderr)
@@ -465,6 +472,21 @@ fn run_context_operation(
 ) -> io::Result<ExitCode> {
     let root = env::current_dir()?;
     let result = ContextService::new(&root).resolve(std::path::Path::new(request));
+    match result {
+        Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
+        Err(error) => write_json(stderr, &error, ExitCode::from(2)),
+    }
+}
+
+fn run_prospective_context_operation(
+    activation_request: &OsStr,
+    context_request: &OsStr,
+    stdout: &mut impl Write,
+    stderr: &mut impl Write,
+) -> io::Result<ExitCode> {
+    let root = env::current_dir()?;
+    let result = ContextService::new(&root)
+        .resolve_activation_review(Path::new(activation_request), Path::new(context_request));
     match result {
         Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
         Err(error) => write_json(stderr, &error, ExitCode::from(2)),

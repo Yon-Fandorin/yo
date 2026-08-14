@@ -36,7 +36,7 @@ pub(crate) use context_tests::Repository as TestRepository;
 pub(crate) use evaluation::{ActiveCheckpoint, AuthorityFailure};
 #[cfg(test)]
 pub(crate) use refresh::ProspectiveContext;
-pub(crate) use refresh::prepare_context_refresh;
+pub(crate) use refresh::{prepare_context_refresh, prepare_prospective_context};
 
 pub(crate) enum StagedTransition {
     Prospective(prospective::ProspectiveActivation),

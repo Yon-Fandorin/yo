@@ -302,7 +302,12 @@ Inline publication과 compact live geometry는
 확인하고, Rust test에 이해 가능한 인접 설명이 있는지도 검사한다.
 `activation_slice` 모듈은 작은 semantic request를 받아 현재 `develop`을
 고정하고 canonical Methexis activation contract를 발행하며, Direct Slice
-worktree를 생성해 둘을 bind하고 exact 부분 setup을 복구한다. `slice_close`
+worktree를 생성해 둘을 bind하고 exact 부분 setup을 복구한다. review-packet
+모듈은 일반 후보에는 active ContextBuild를 쓰고, 이후 activation request 하나에는
+명시적으로 versioning한 prospective operation을 쓴다. 후자는 activation을 허가하지
+않고 제안된 Checkpoint와 active-record 전환을 결속한다. bootstrap 모듈은 trusted
+`develop`의 정확한 versioned capability를 요구하고 닫힌 4개 경로 activation 전환만
+허용하므로 구현과 workflow 변경은 계속 일반 검수 경로를 쓴다. `slice_close`
 모듈은 수용 commit, Slice patch, 검수 증거, binding, ref,
 깨끗한 worktree가 모두 일치한 뒤에만 hash-addressed 로컬 정리 plan을 만들고
 적용한다. 그 storage 경계는 안전하지 않은 plan file 입력을 거절한다.

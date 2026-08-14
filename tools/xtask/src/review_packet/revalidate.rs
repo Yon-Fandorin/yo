@@ -4,8 +4,9 @@ use super::{
     MAX_INPUT_BYTES,
     canonical::delivery_profile_bytes_for_id,
     capture::{
-        Inputs, capture_authorities, capture_context, capture_diff, capture_validation,
-        same_captures, same_named_captures,
+        Inputs, capture_authorities, capture_context, capture_diff,
+        capture_prospective_context_with_request, capture_validation, same_capture, same_captures,
+        same_named_captures,
     },
     model::Request,
     trusted_git::{trusted_ensure_clean, trusted_resolve_commit},
@@ -67,7 +68,44 @@ pub(super) fn final_revalidate(
         &inputs.context.request,
         "ContextBuild request",
     )?;
-    let current = capture_context(repository, &context_request_path)?;
+    let current = if let Some(expected_proposal) = &inputs.prospective {
+        let activation_request_path = resolve_input_path(
+            repository,
+            request.activation_request_path.as_deref().ok_or_else(|| {
+                "prospective review request lost activation_request_path".to_owned()
+            })?,
+        );
+        require_current_file(
+            &activation_request_path,
+            &expected_proposal.activation_request,
+            "activation request",
+        )?;
+        let (current, proposal) = capture_prospective_context_with_request(
+            repository,
+            &inputs.candidate_commit,
+            &activation_request_path,
+            expected_proposal.activation_request.clone(),
+            &context_request_path,
+            inputs.context.request.clone(),
+        )?;
+        if !same_capture(
+            &proposal.proposed_checkpoint,
+            &expected_proposal.proposed_checkpoint,
+        ) || !same_capture(
+            &proposal.proposed_active_record,
+            &expected_proposal.proposed_active_record,
+        ) || proposal.predecessor_active_record_hash
+            != expected_proposal.predecessor_active_record_hash
+        {
+            return Err(
+                "prospective activation proposal changed during review packet construction"
+                    .to_owned(),
+            );
+        }
+        current
+    } else {
+        capture_context(repository, &context_request_path)?
+    };
     if current.result.trusted_commit != inputs.context.result.trusted_commit
         || current.result.build_id != inputs.context.result.build_id
         || current.result.context != inputs.context.result.context

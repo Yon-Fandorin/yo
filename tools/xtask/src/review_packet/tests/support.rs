@@ -6,11 +6,12 @@ use super::super::{
         build_manifest, build_plan, delivery_profile_bytes_for_id, delivery_profile_v1_bytes,
     },
     capture::{
-        ContextCapture, Inputs, capture_authorities, capture_diff, capture_validation, captured,
+        ContextCapture, Inputs, ProspectiveCapture, capture_authorities, capture_diff,
+        capture_validation, captured,
     },
     model::{
         CheckpointIdentity, ContextResult, DELIVERY_PROFILE_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA2,
-        EvidenceRequest, Manifest,
+        DELIVERY_PROFILE_V1_ALPHA3, EvidenceRequest, Manifest, SemanticInput,
     },
     render::{count_tokens, render_packet_with_metadata},
     storage,
@@ -205,6 +206,10 @@ pub(super) fn sample_inputs(validation_path: &str) -> Inputs {
                 build_id: "sha256:build".to_owned(),
                 context: artifact(&context),
                 manifest: artifact(&manifest),
+                checkpoint: None,
+                activation_request: None,
+                predecessor_active_record_hash: None,
+                proposed_active_record_hash: None,
             },
             request: context_request,
             context,
@@ -216,6 +221,7 @@ pub(super) fn sample_inputs(validation_path: &str) -> Inputs {
             },
             included_ids: vec!["methexis.review.bounded-packet".to_owned()],
         },
+        prospective: None,
         authorities: vec![captured("CONTRIBUTING.md".to_owned(), b"authority".to_vec()).unwrap()],
         slice_contract: captured("slice-contract.json".to_owned(), b"contract".to_vec()).unwrap(),
         validation: vec![NamedCaptured {
@@ -241,5 +247,54 @@ pub(super) fn sample_inputs_v1_alpha2(validation_path: &str) -> Inputs {
     let mut inputs = sample_inputs(validation_path);
     inputs.delivery_profile_bytes =
         delivery_profile_bytes_for_id(DELIVERY_PROFILE_V1_ALPHA2).unwrap();
+    inputs
+}
+
+pub(super) fn sample_inputs_v1_alpha3(validation_path: &str) -> Inputs {
+    let mut inputs = sample_inputs(validation_path);
+    let activation_request = captured(
+        "/worktree/.local-exclude/activation.json".to_owned(),
+        b"{\"schema\":\"methexis.activation-request/v1alpha1\"}\n".to_vec(),
+    )
+    .unwrap();
+    let proposed_checkpoint = captured(
+        "methexis/checkpoints/proposed.yaml".to_owned(),
+        b"proposed checkpoint\n".to_vec(),
+    )
+    .unwrap();
+    let proposed_active_record = captured(
+        "methexis/active-checkpoint.yaml".to_owned(),
+        b"proposed active record\n".to_vec(),
+    )
+    .unwrap();
+    let checkpoint = CheckpointIdentity {
+        id: "sha256:prospective-checkpoint".to_owned(),
+        hash: proposed_checkpoint.hash.clone(),
+        authority_basis_commit: inputs.context.result.trusted_commit.clone(),
+    };
+    inputs.context.result.schema = "methexis.activation-review-context-result/v1alpha1".to_owned();
+    inputs.context.result.operation = "resolve_activation_review_context".to_owned();
+    inputs.context.result.authority = "prospective".to_owned();
+    inputs.context.result.checkpoint = Some(checkpoint.clone());
+    inputs.context.result.activation_request = Some(SemanticInput {
+        path: activation_request.path.clone(),
+        hash: activation_request.hash.clone(),
+    });
+    inputs.context.result.predecessor_active_record_hash =
+        Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned());
+    inputs.context.result.proposed_active_record_hash = Some(proposed_active_record.hash.clone());
+    inputs.context.active_checkpoint = checkpoint;
+    inputs.prospective = Some(ProspectiveCapture {
+        activation_request,
+        proposed_checkpoint,
+        proposed_active_record,
+        predecessor_active_record_hash: inputs
+            .context
+            .result
+            .predecessor_active_record_hash
+            .clone(),
+    });
+    inputs.delivery_profile_bytes =
+        delivery_profile_bytes_for_id(DELIVERY_PROFILE_V1_ALPHA3).unwrap();
     inputs
 }

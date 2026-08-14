@@ -32,6 +32,7 @@ USAGE:
     methexis propose-activation <request.json>
     methexis refresh-context-manifests <activation-request.json>
     methexis resolve-context <request.json>
+    methexis resolve-activation-review-context <activation-request.json> <context-request.json>
     methexis verify-context-build <request.json> <sha256:BuildId>
 
 COMMANDS:
@@ -48,6 +49,7 @@ COMMANDS:
     propose-activation Propose the active Checkpoint with compare-and-swap
     refresh-context-manifests Refresh registered manifests for an activation proposal
     resolve-context    Build or reuse deterministic token-bounded agent context
+    resolve-activation-review-context Build review-only context from one activation proposal
     verify-context-build Independently reproduce and verify one managed ContextBuild
 
 Run commands from the repository root. Mutations remain Draft proposals until

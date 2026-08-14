@@ -5,6 +5,25 @@ message does not make its owner obvious. They describe the current
 implementation path. Methexis remains the authority for what each boundary
 must mean.
 
+## Prospective activation review
+
+One later independent activation can be reviewed before it becomes trusted:
+
+```text
+exact activation request in a clean candidate worktree
+  ↓ require trusted v1alpha3 capability + exact four-path activation-only diff
+  ↓ validate trusted develop basis + predecessor CAS + approved Checkpoint
+review-only prospective ContextBuild
+  ↓ same deterministic BuildId as that exact Checkpoint after activation
+v1alpha3 review packet
+  ↓ bind request + proposed Checkpoint + proposed active record + complete diff
+prospective review evidence only; no activation or general eligibility
+```
+
+Ordinary candidates continue to use the active-authority packet route. The
+prospective route never infers a proposal, falls back to active authority, or
+reviews a candidate that changes its own implementation or workflow.
+
 ## Model-service and OpenAI-compatible connectors
 
 The provider-neutral service inputs, explicit remote API dialect, and Yo-managed

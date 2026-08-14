@@ -6,21 +6,30 @@ pub(super) use crate::review_protocol::{
 };
 
 pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-packet-request/v1";
+pub(super) const REQUEST_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-packet-request/v1alpha3";
 pub(super) const PLAN_SCHEMA: &str = "yo.slice-review-plan/v1";
+pub(super) const PLAN_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-plan/v1alpha3";
 pub(super) const MANIFEST_SCHEMA_V1: &str = "yo.slice-review-manifest/v1";
 pub(super) const MANIFEST_SCHEMA_V1_ALPHA1: &str = "yo.slice-review-manifest/v1alpha1";
 pub(super) const MANIFEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-manifest/v1alpha2";
+pub(super) const MANIFEST_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-manifest/v1alpha3";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-packet-result/v1";
+pub(super) const RESULT_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-packet-result/v1alpha3";
 pub(super) const PREFLIGHT_RESULT_SCHEMA_V1: &str = "yo.slice-review-packet-preflight-result/v1";
 pub(super) const PREFLIGHT_RESULT_SCHEMA_V1_ALPHA1: &str =
     "yo.slice-review-packet-preflight-result/v1alpha1";
 pub(super) const PREFLIGHT_RESULT_SCHEMA_V1_ALPHA2: &str =
     "yo.slice-review-packet-preflight-result/v1alpha2";
+pub(super) const PREFLIGHT_RESULT_SCHEMA_V1_ALPHA3: &str =
+    "yo.slice-review-packet-preflight-result/v1alpha3";
 pub(super) const READINESS_RESULT_SCHEMA: &str = "yo.slice-review-request-readiness-result/v1";
+pub(super) const READINESS_RESULT_SCHEMA_V1_ALPHA3: &str =
+    "yo.slice-review-request-readiness-result/v1alpha3";
 pub(super) const SECTION_TOKEN_ACCOUNTING: &str = "independently-tokenized-non-additive/v1";
 pub(super) const DELIVERY_PROFILE_V1: &str = "yo.slice-review-markdown/v1";
 pub(super) const DELIVERY_PROFILE_V1_ALPHA1: &str = "yo.slice-review-markdown/v1alpha1";
 pub(super) const DELIVERY_PROFILE_V1_ALPHA2: &str = "yo.slice-review-markdown/v1alpha2";
+pub(super) const DELIVERY_PROFILE_V1_ALPHA3: &str = "yo.slice-review-markdown/v1alpha3";
 pub(super) const INPUT_PREFIX_PROFILE: &str = "yo.slice-review-input-prefix/v1";
 pub(super) const SENTINEL_ESCAPE_PROFILE: &str = "yo.slice-review-sentinel-escape/v1";
 
@@ -29,6 +38,8 @@ pub(super) const SENTINEL_ESCAPE_PROFILE: &str = "yo.slice-review-sentinel-escap
 pub(super) struct Request {
     pub(super) schema: String,
     pub(super) context_request_path: String,
+    #[serde(default)]
+    pub(super) activation_request_path: Option<String>,
     pub(super) required_knowledge_ids: Vec<String>,
     pub(super) slice_contract_path: String,
     pub(super) repository_authority_paths: Vec<String>,
@@ -50,6 +61,14 @@ pub(super) struct ContextResult {
     pub(super) build_id: String,
     pub(super) context: Artifact,
     pub(super) manifest: Artifact,
+    #[serde(default)]
+    pub(super) checkpoint: Option<CheckpointIdentity>,
+    #[serde(default)]
+    pub(super) activation_request: Option<SemanticInput>,
+    #[serde(default)]
+    pub(super) predecessor_active_record_hash: Option<String>,
+    #[serde(default)]
+    pub(super) proposed_active_record_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,7 +105,14 @@ pub(super) struct ReviewPlan {
     pub(super) candidate_commit: String,
     pub(super) diff_hash: String,
     pub(super) trusted_commit: String,
-    pub(super) active_checkpoint: CheckpointIdentity,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) authority_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) active_checkpoint: Option<CheckpointIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) prospective_checkpoint: Option<CheckpointIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) prospective_activation: Option<ProspectiveActivationPlan>,
     pub(super) context_build_id: String,
     pub(super) context_request: SemanticInput,
     pub(super) context: SemanticInput,
@@ -101,6 +127,14 @@ pub(super) struct ReviewPlan {
     pub(super) tokenizer_profile: String,
     pub(super) tokenizer_compiler: String,
     pub(super) max_managed_payload_tokens: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) struct ProspectiveActivationPlan {
+    pub(super) activation_request: SemanticInput,
+    pub(super) proposed_checkpoint: SemanticInput,
+    pub(super) proposed_active_record: SemanticInput,
+    pub(super) predecessor_active_record_hash: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -140,6 +174,15 @@ pub(super) struct ManifestInputs {
     pub(super) slice_contract: Artifact,
     pub(super) validation_evidence: Vec<NamedArtifact>,
     pub(super) diff: Artifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) prospective_activation: Option<ProspectiveManifestInputs>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) struct ProspectiveManifestInputs {
+    pub(super) activation_request: Artifact,
+    pub(super) proposed_checkpoint: Artifact,
+    pub(super) proposed_active_record: Artifact,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,6 +191,8 @@ pub(super) struct ResultRecord {
     pub(super) ok: bool,
     pub(super) operation: &'static str,
     pub(super) status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) authority: Option<&'static str>,
     pub(super) review_id: String,
     pub(super) trusted_commit: String,
     pub(super) candidate_commit: String,
@@ -163,6 +208,8 @@ pub(super) struct PreflightResultRecord {
     pub(super) operation: &'static str,
     pub(super) status: &'static str,
     pub(super) artifacts_published: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) authority: Option<&'static str>,
     pub(super) review_id: String,
     pub(super) trusted_commit: String,
     pub(super) candidate_commit: String,
@@ -199,6 +246,8 @@ pub(super) struct ReadinessResultRecord {
     pub(super) operation: &'static str,
     pub(super) status: &'static str,
     pub(super) artifacts_published: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) authority: Option<&'static str>,
     pub(super) slice: String,
     pub(super) base_commit: String,
     pub(super) trusted_commit: String,
@@ -206,6 +255,8 @@ pub(super) struct ReadinessResultRecord {
     pub(super) request: Artifact,
     pub(super) slice_contract: Artifact,
     pub(super) context_request: Artifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) activation_request: Option<Artifact>,
     pub(super) required_knowledge_id_count: usize,
     pub(super) repository_authority_count: usize,
     pub(super) validation_evidence_count: usize,

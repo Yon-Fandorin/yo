@@ -1,3 +1,4 @@
+mod bootstrap;
 mod canonical;
 mod capture;
 pub(crate) mod external_operation;
@@ -19,17 +20,19 @@ use std::{
 };
 
 use self::{
+    bootstrap::require_prospective_activation_boundary,
     canonical::{build_manifest, build_plan, delivery_profile_bytes_for_id},
     capture::{
         Inputs, capture_authorities, capture_context_request, capture_context_with_request,
-        capture_diff, capture_validation, captured,
+        capture_diff, capture_prospective_context_with_request, capture_validation, captured,
     },
     model::{
         Artifact, ArtifactWithTokens, DELIVERY_PROFILE_V1, DELIVERY_PROFILE_V1_ALPHA1,
-        DELIVERY_PROFILE_V1_ALPHA2, PREFLIGHT_RESULT_SCHEMA_V1, PREFLIGHT_RESULT_SCHEMA_V1_ALPHA1,
-        PREFLIGHT_RESULT_SCHEMA_V1_ALPHA2, PreflightPacket, PreflightResultRecord, REQUEST_SCHEMA,
-        RESULT_SCHEMA, Request, ResultRecord, ReviewPlan, SECTION_TOKEN_ACCOUNTING,
-        TOKENIZER_PROFILE,
+        DELIVERY_PROFILE_V1_ALPHA2, DELIVERY_PROFILE_V1_ALPHA3, PREFLIGHT_RESULT_SCHEMA_V1,
+        PREFLIGHT_RESULT_SCHEMA_V1_ALPHA1, PREFLIGHT_RESULT_SCHEMA_V1_ALPHA2,
+        PREFLIGHT_RESULT_SCHEMA_V1_ALPHA3, PreflightPacket, PreflightResultRecord, REQUEST_SCHEMA,
+        REQUEST_SCHEMA_V1_ALPHA3, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA3, Request, ResultRecord,
+        ReviewPlan, SECTION_TOKEN_ACCOUNTING, TOKENIZER_PROFILE,
     },
     render::{
         count_tokens, render_packet_with_measurements, render_packet_with_metadata, require_budget,
@@ -50,12 +53,14 @@ use crate::{
 };
 
 const REVIEW_ID_DOMAIN: &[u8] = b"yo.slice-review/v1";
+const REVIEW_ID_DOMAIN_V1_ALPHA3: &[u8] = b"yo.slice-review/v1alpha3";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PACKET_BYTES: usize = 32 * 1024 * 1024;
 const PREAMBLE: &str = "# yo Slice Review Packet\n\nThis packet is the complete caller-controlled model-visible review payload. Review only the immutable candidate described here against the included authority, contract, evidence, and questions.\n";
 const PREAMBLE_V1_ALPHA1: &str = "# yo Slice Review Packet\n\nThis packet is the complete caller-controlled model-visible review payload. Do not return a verdict unless the full review plan, exact base-to-candidate diff, and final YO-REVIEW-PAYLOAD-END marker are present. Review only that immutable candidate against the included authority, contract, evidence, and questions.\n";
 const PREAMBLE_V1_ALPHA2: &str = "# yo Slice Review Packet\n\nThis packet is the complete caller-controlled model-visible review payload. Do not return a verdict unless the full review plan, exact base-to-candidate diff, and final YO-REVIEW-PAYLOAD-END marker are present. A section whose metadata names yo.slice-review-sentinel-escape/v1 is reversible model-visible text: every literal backslash is doubled, and the first less-than byte of any literal wrapper-sentinel prefix is written as ASCII backslash-x3c. Interpret that decoded content when reviewing. Review only the immutable candidate against the included authority, contract, evidence, and questions.\n";
+const PREAMBLE_V1_ALPHA3: &str = "# yo Prospective Activation Review Packet\n\nThis packet is review-only and its ContextBuild authority is prospective, not active or trusted. Do not return a verdict unless the exact activation request, proposed Checkpoint, canonical active-record transition, complete review plan, base-to-candidate diff, and final YO-REVIEW-PAYLOAD-END marker are present. A section whose metadata names yo.slice-review-sentinel-escape/v1 is reversible model-visible text: every literal backslash is doubled, and the first less-than byte of any literal wrapper-sentinel prefix is written as ASCII backslash-x3c. Interpret that decoded content when reviewing. This packet grants no approval, activation, or general ContextBuild eligibility.\n";
 const SECTION_PREFIX: &str = "\n<<<YO-REVIEW-SECTION ";
 const METADATA_SUFFIX: &str = ">>>\n";
 const SECTION_SUFFIX: &str = "\n<<<YO-REVIEW-SECTION-END>>>\n";
@@ -69,6 +74,7 @@ pub(crate) fn is_original_manifest_schema(schema: &str) -> bool {
         model::MANIFEST_SCHEMA_V1
             | model::MANIFEST_SCHEMA_V1_ALPHA1
             | model::MANIFEST_SCHEMA_V1_ALPHA2
+            | model::MANIFEST_SCHEMA_V1_ALPHA3
     )
 }
 
@@ -83,6 +89,7 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let rendered = render_packet_with_metadata(&review_id, &plan, &inputs)?;
     let managed_payload_tokens = require_packet_budget(&rendered.bytes, inputs.max_tokens)?;
     let packet_hash = digest(&rendered.bytes);
+    let delivery_profile_id = plan.delivery_profile.id.clone();
     let manifest = build_manifest(
         review_id.clone(),
         plan,
@@ -107,10 +114,11 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
 
     write_result(
         &ResultRecord {
-            schema: RESULT_SCHEMA,
+            schema: result_schema(&delivery_profile_id)?,
             ok: true,
             operation: "build_slice_review_packet",
             status,
+            authority: authority_label(&delivery_profile_id),
             review_id,
             trusted_commit: inputs.context.result.trusted_commit.clone(),
             candidate_commit: inputs.candidate_commit.clone(),
@@ -154,6 +162,7 @@ pub(super) fn preflight(
             operation: "preflight_slice_review_packet",
             status: "ready",
             artifacts_published: false,
+            authority: authority_label(&plan.delivery_profile.id),
             review_id,
             trusted_commit: inputs.context.result.trusted_commit.clone(),
             candidate_commit: inputs.candidate_commit.clone(),
@@ -196,6 +205,7 @@ struct PreparedReadiness {
     candidate_commit: String,
     slice_contract: Captured,
     context_request: Captured,
+    activation_request: Option<Captured>,
     authorities: Vec<Captured>,
     validation: Vec<NamedCaptured>,
     required_knowledge_ids: Vec<String>,
@@ -205,11 +215,28 @@ struct PreparedReadiness {
 fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedReview, String> {
     let readiness = prepare_readiness(repository, request_path, "building a review packet")?;
     let context_request_path = Path::new(&readiness.context_request.path);
-    let context = capture_context_with_request(
-        &readiness.repository,
-        context_request_path,
-        readiness.context_request.clone(),
-    )?;
+    let (context, prospective) = match readiness.activation_request.clone() {
+        Some(activation_request) => {
+            let activation_request_path = PathBuf::from(&activation_request.path);
+            let (context, prospective) = capture_prospective_context_with_request(
+                &readiness.repository,
+                &readiness.candidate_commit,
+                &activation_request_path,
+                activation_request,
+                context_request_path,
+                readiness.context_request.clone(),
+            )?;
+            (context, Some(prospective))
+        },
+        None => (
+            capture_context_with_request(
+                &readiness.repository,
+                context_request_path,
+                readiness.context_request.clone(),
+            )?,
+            None,
+        ),
+    };
     let included = context.included_ids.iter().collect::<BTreeSet<_>>();
     if readiness
         .required_knowledge_ids
@@ -229,6 +256,7 @@ fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedRevi
         candidate_commit: readiness.candidate_commit,
         diff,
         context,
+        prospective,
         authorities: readiness.authorities,
         slice_contract: readiness.slice_contract,
         validation: readiness.validation,
@@ -241,7 +269,7 @@ fn prepare_review(repository: &Path, request_path: &Path) -> Result<PreparedRevi
 
     let plan = build_plan(&inputs);
     let plan_bytes = serde_json::to_vec(&plan).expect("closed review plan serializes");
-    let review_id = domain_digest(REVIEW_ID_DOMAIN, &plan_bytes);
+    let review_id = domain_digest(review_id_domain(&plan.delivery_profile.id), &plan_bytes);
     Ok(PreparedReview {
         repository: readiness.repository,
         request: readiness.request,
@@ -305,6 +333,22 @@ fn prepare_readiness(
 
     let context_request_path = resolve_input_path(&repository, &request.context_request_path);
     let context_request = capture_context_request(&repository, &context_request_path)?;
+    let activation_request = request
+        .activation_request_path
+        .as_deref()
+        .map(|path| {
+            let path = resolve_input_path(&repository, path);
+            capture_context_request(&repository, &path)
+        })
+        .transpose()?;
+    if let Some(activation_request) = &activation_request {
+        require_prospective_activation_boundary(
+            &repository,
+            &trusted_commit,
+            &candidate_commit,
+            activation_request,
+        )?;
+    }
     let required_knowledge_ids =
         sorted_unique(&request.required_knowledge_ids, "required KnowledgeId")?;
     let authorities = capture_authorities(
@@ -330,6 +374,7 @@ fn prepare_readiness(
         candidate_commit,
         slice_contract,
         context_request,
+        activation_request,
         authorities,
         validation,
         lenses,
@@ -405,16 +450,31 @@ fn require_exact_slice_branch(
 }
 
 fn validate_request(request: &Request) -> Result<(), String> {
-    if request.schema != REQUEST_SCHEMA {
-        return Err(format!("expected request schema `{REQUEST_SCHEMA}`"));
-    }
-    if !matches!(
-        request.delivery_profile.as_str(),
-        DELIVERY_PROFILE_V1 | DELIVERY_PROFILE_V1_ALPHA1 | DELIVERY_PROFILE_V1_ALPHA2
-    ) {
-        return Err(format!(
-            "expected delivery profile `{DELIVERY_PROFILE_V1}`, `{DELIVERY_PROFILE_V1_ALPHA1}`, or `{DELIVERY_PROFILE_V1_ALPHA2}`"
-        ));
+    match request.schema.as_str() {
+        REQUEST_SCHEMA => {
+            if request.activation_request_path.is_some()
+                || !matches!(
+                    request.delivery_profile.as_str(),
+                    DELIVERY_PROFILE_V1 | DELIVERY_PROFILE_V1_ALPHA1 | DELIVERY_PROFILE_V1_ALPHA2
+                )
+            {
+                return Err("ordinary review requests must omit activation_request_path and use an ordinary delivery profile".to_owned());
+            }
+        },
+        REQUEST_SCHEMA_V1_ALPHA3 => {
+            if request.activation_request_path.is_none()
+                || request.delivery_profile != DELIVERY_PROFILE_V1_ALPHA3
+            {
+                return Err(format!(
+                    "prospective activation review requests must name activation_request_path and use delivery profile `{DELIVERY_PROFILE_V1_ALPHA3}`"
+                ));
+            }
+        },
+        _ => {
+            return Err(format!(
+                "expected request schema `{REQUEST_SCHEMA}` or `{REQUEST_SCHEMA_V1_ALPHA3}`"
+            ));
+        },
     }
     if request.tokenizer_profile != TOKENIZER_PROFILE {
         return Err(format!("expected tokenizer profile `{TOKENIZER_PROFILE}`"));
@@ -450,8 +510,36 @@ fn preflight_result_schema(profile: &str) -> Result<&'static str, String> {
         DELIVERY_PROFILE_V1 => Ok(PREFLIGHT_RESULT_SCHEMA_V1),
         DELIVERY_PROFILE_V1_ALPHA1 => Ok(PREFLIGHT_RESULT_SCHEMA_V1_ALPHA1),
         DELIVERY_PROFILE_V1_ALPHA2 => Ok(PREFLIGHT_RESULT_SCHEMA_V1_ALPHA2),
+        DELIVERY_PROFILE_V1_ALPHA3 => Ok(PREFLIGHT_RESULT_SCHEMA_V1_ALPHA3),
         _ => Err(format!(
             "unsupported original review delivery profile `{profile}`"
         )),
+    }
+}
+
+fn result_schema(profile: &str) -> Result<&'static str, String> {
+    if profile == DELIVERY_PROFILE_V1_ALPHA3 {
+        Ok(RESULT_SCHEMA_V1_ALPHA3)
+    } else if matches!(
+        profile,
+        DELIVERY_PROFILE_V1 | DELIVERY_PROFILE_V1_ALPHA1 | DELIVERY_PROFILE_V1_ALPHA2
+    ) {
+        Ok(RESULT_SCHEMA)
+    } else {
+        Err(format!(
+            "unsupported original review delivery profile `{profile}`"
+        ))
+    }
+}
+
+fn authority_label(profile: &str) -> Option<&'static str> {
+    (profile == DELIVERY_PROFILE_V1_ALPHA3).then_some("prospective")
+}
+
+fn review_id_domain(profile: &str) -> &'static [u8] {
+    if profile == DELIVERY_PROFILE_V1_ALPHA3 {
+        REVIEW_ID_DOMAIN_V1_ALPHA3
+    } else {
+        REVIEW_ID_DOMAIN
     }
 }

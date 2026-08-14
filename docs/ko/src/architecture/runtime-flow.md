@@ -4,6 +4,25 @@
 때 이 흐름을 사용한다. 여기에는 현재 구현 경로가 담겨 있다. 각 경계가
 어떤 의미여야 하는지는 계속 Methexis가 기준이다.
 
+## Prospective activation 검수
+
+이후 독립 activation 하나는 trusted 상태가 되기 전에 검수할 수 있다.
+
+```text
+깨끗한 candidate worktree 안의 정확한 activation request
+  ↓ trusted v1alpha3 capability + 정확한 4개 경로 activation-only diff 요구
+  ↓ trusted develop 기준 + predecessor CAS + 승인된 Checkpoint 검증
+검수 전용 prospective ContextBuild
+  ↓ activation 뒤 같은 exact Checkpoint가 재사용하는 결정론적 BuildId
+v1alpha3 review packet
+  ↓ request + 제안 Checkpoint + 제안 active record + 완전한 diff 결속
+prospective 검수 증거만 생성; activation이나 일반 eligibility는 부여하지 않음
+```
+
+일반 후보는 계속 active-authority packet 경로를 쓴다. prospective 경로는 proposal을
+추론하거나 active authority로 fallback하지 않으며 자기 구현이나 workflow를 바꾸는
+후보를 검수하지 않는다.
+
 ## Model-service와 OpenAI-compatible connector
 
 provider 중립 service 입력, 명시적인 remote API dialect, Yo-managed loop는 하나의

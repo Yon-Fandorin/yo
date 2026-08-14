@@ -1,18 +1,20 @@
 use std::path::Path;
 
 use super::{
-    MAX_INPUT_BYTES, MAX_PACKET_BYTES, REVIEW_ID_DOMAIN,
+    MAX_INPUT_BYTES, MAX_PACKET_BYTES,
+    bootstrap::require_prospective_activation_boundary,
     canonical::{
         build_manifest, build_plan, delivery_profile_bytes_for_id, delivery_profile_for_id,
     },
     capture::{
-        Inputs, capture_authorities, capture_context, capture_diff, capture_validation, captured,
-        require_hash,
+        Inputs, capture_authorities, capture_context, capture_context_request, capture_diff,
+        capture_prospective_context_with_request, capture_validation, captured, require_hash,
     },
     model::{
         DELIVERY_PROFILE_V1, DELIVERY_PROFILE_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA2,
-        EvidenceRequest, MANIFEST_SCHEMA_V1, MANIFEST_SCHEMA_V1_ALPHA1, MANIFEST_SCHEMA_V1_ALPHA2,
-        Manifest, PLAN_SCHEMA, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
+        DELIVERY_PROFILE_V1_ALPHA3, EvidenceRequest, MANIFEST_SCHEMA_V1, MANIFEST_SCHEMA_V1_ALPHA1,
+        MANIFEST_SCHEMA_V1_ALPHA2, MANIFEST_SCHEMA_V1_ALPHA3, Manifest, PLAN_SCHEMA,
+        PLAN_SCHEMA_V1_ALPHA3, TOKENIZER_COMPILER, TOKENIZER_PROFILE,
     },
     render::{count_tokens, render_packet_with_metadata},
     trusted_git::{trusted_git_succeeds, trusted_repository_root, trusted_resolve_commit},
@@ -65,7 +67,10 @@ pub(crate) fn verify_published(
     require_supported_manifest(&manifest)?;
     require_manifest_revisions(&manifest)?;
     let plan_bytes = serde_json::to_vec(&manifest.plan).expect("review plan serializes");
-    let reproduced_id = domain_digest(REVIEW_ID_DOMAIN, &plan_bytes);
+    let reproduced_id = domain_digest(
+        review_id_domain(&manifest.plan.delivery_profile.id),
+        &plan_bytes,
+    );
     if reproduced_id != manifest.review_id {
         return Err("published ReviewId does not match its canonical plan".to_owned());
     }
@@ -97,7 +102,42 @@ pub(crate) fn verify_published(
     }
     let context_request_path =
         resolve_input_path(&repository, &manifest.inputs.context_request.path);
-    let context = capture_context(&repository, &context_request_path)?;
+    let (context, prospective) = if let Some(proposal) = &manifest.inputs.prospective_activation {
+        let activation_request_path =
+            resolve_input_path(&repository, &proposal.activation_request.path);
+        let activation_request_bytes = crate::bounded_file::read_regular(
+            &activation_request_path,
+            super::MAX_REQUEST_BYTES,
+            "prospective activation request",
+        )?;
+        require_hash(
+            &proposal.activation_request.hash,
+            &activation_request_bytes,
+            "prospective activation request",
+        )?;
+        let activation_request = captured(
+            activation_request_path.to_string_lossy().into_owned(),
+            activation_request_bytes,
+        )?;
+        require_prospective_activation_boundary(
+            &repository,
+            &manifest.plan.trusted_commit,
+            &manifest.plan.candidate_commit,
+            &activation_request,
+        )?;
+        let context_request = capture_context_request(&repository, &context_request_path)?;
+        let (context, prospective) = capture_prospective_context_with_request(
+            &repository,
+            &manifest.plan.candidate_commit,
+            &activation_request_path,
+            activation_request,
+            &context_request_path,
+            context_request,
+        )?;
+        (context, Some(prospective))
+    } else {
+        (capture_context(&repository, &context_request_path)?, None)
+    };
     let authorities = capture_authorities(
         &repository,
         &manifest.plan.candidate_commit,
@@ -145,6 +185,7 @@ pub(crate) fn verify_published(
             )?,
         )?,
         context,
+        prospective,
         authorities,
         slice_contract,
         validation,
@@ -191,6 +232,12 @@ pub(crate) fn verify_published(
 }
 
 fn require_manifest_revisions(manifest: &Manifest) -> Result<(), String> {
+    let checkpoint = manifest
+        .plan
+        .active_checkpoint
+        .as_ref()
+        .or(manifest.plan.prospective_checkpoint.as_ref())
+        .ok_or_else(|| "published review plan omits its Checkpoint identity".to_owned())?;
     for (value, label) in [
         (manifest.plan.base_commit.as_str(), "published review base"),
         (
@@ -202,11 +249,7 @@ fn require_manifest_revisions(manifest: &Manifest) -> Result<(), String> {
             "published review trusted integration",
         ),
         (
-            manifest
-                .plan
-                .active_checkpoint
-                .authority_basis_commit
-                .as_str(),
+            checkpoint.authority_basis_commit.as_str(),
             "published review Checkpoint authority basis",
         ),
     ] {
@@ -256,7 +299,11 @@ pub(super) fn verify_canonical_artifacts(
         return Err("published review plan does not match its complete captured inputs".to_owned());
     }
     let plan_bytes = serde_json::to_vec(&reproduced_plan).expect("review plan serializes");
-    if domain_digest(REVIEW_ID_DOMAIN, &plan_bytes) != manifest.review_id {
+    if domain_digest(
+        review_id_domain(&manifest.plan.delivery_profile.id),
+        &plan_bytes,
+    ) != manifest.review_id
+    {
         return Err("published ReviewId does not match its canonical plan".to_owned());
     }
     let reproduced_packet =
@@ -312,9 +359,25 @@ fn require_supported_manifest(manifest: &Manifest) -> Result<(), String> {
         (MANIFEST_SCHEMA_V1, DELIVERY_PROFILE_V1, false)
             | (MANIFEST_SCHEMA_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA1, true)
             | (MANIFEST_SCHEMA_V1_ALPHA2, DELIVERY_PROFILE_V1_ALPHA2, true)
+            | (MANIFEST_SCHEMA_V1_ALPHA3, DELIVERY_PROFILE_V1_ALPHA3, true)
     );
+    let authority_shape_matches = if profile_id == DELIVERY_PROFILE_V1_ALPHA3 {
+        manifest.plan.schema == PLAN_SCHEMA_V1_ALPHA3
+            && manifest.plan.authority_mode.as_deref() == Some("prospective")
+            && manifest.plan.active_checkpoint.is_none()
+            && manifest.plan.prospective_checkpoint.is_some()
+            && manifest.plan.prospective_activation.is_some()
+            && manifest.inputs.prospective_activation.is_some()
+    } else {
+        manifest.plan.schema == PLAN_SCHEMA
+            && manifest.plan.authority_mode.is_none()
+            && manifest.plan.active_checkpoint.is_some()
+            && manifest.plan.prospective_checkpoint.is_none()
+            && manifest.plan.prospective_activation.is_none()
+            && manifest.inputs.prospective_activation.is_none()
+    };
     if !schema_and_prefix_match
-        || manifest.plan.schema != PLAN_SCHEMA
+        || !authority_shape_matches
         || manifest.plan.delivery_profile != delivery_profile_for_id(profile_id)?
         || manifest.plan.tokenizer_profile != TOKENIZER_PROFILE
         || manifest.plan.tokenizer_compiler != TOKENIZER_COMPILER
@@ -324,4 +387,12 @@ fn require_supported_manifest(manifest: &Manifest) -> Result<(), String> {
         return Err("published Slice review manifest uses an unsupported contract".to_owned());
     }
     Ok(())
+}
+
+fn review_id_domain(profile: &str) -> &'static [u8] {
+    if profile == DELIVERY_PROFILE_V1_ALPHA3 {
+        super::REVIEW_ID_DOMAIN_V1_ALPHA3
+    } else {
+        super::REVIEW_ID_DOMAIN
+    }
 }

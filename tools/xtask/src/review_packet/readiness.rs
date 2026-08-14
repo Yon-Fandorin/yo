@@ -6,7 +6,7 @@ use super::{
         capture_authorities, capture_context_request, capture_validation, same_capture,
         same_captures, same_named_captures,
     },
-    model::{READINESS_RESULT_SCHEMA, ReadinessResultRecord},
+    model::{READINESS_RESULT_SCHEMA, READINESS_RESULT_SCHEMA_V1_ALPHA3, ReadinessResultRecord},
     prepare_readiness, require_exact_slice_branch,
     trusted_git::{trusted_ensure_clean, trusted_resolve_commit},
     write_result_to,
@@ -33,11 +33,16 @@ pub(super) fn run(
     write_result_to(
         output,
         &ReadinessResultRecord {
-            schema: READINESS_RESULT_SCHEMA,
+            schema: if prepared.activation_request.is_some() {
+                READINESS_RESULT_SCHEMA_V1_ALPHA3
+            } else {
+                READINESS_RESULT_SCHEMA
+            },
             ok: true,
             operation: "check_slice_review_request_readiness",
             status: "input_boundaries_ready",
             artifacts_published: false,
+            authority: prepared.activation_request.as_ref().map(|_| "prospective"),
             slice: prepared.slice.clone(),
             base_commit: prepared.base_commit.clone(),
             trusted_commit: prepared.trusted_commit.clone(),
@@ -45,6 +50,7 @@ pub(super) fn run(
             request: artifact(&prepared.request_capture),
             slice_contract: artifact(&prepared.slice_contract),
             context_request: artifact(&prepared.context_request),
+            activation_request: prepared.activation_request.as_ref().map(artifact),
             required_knowledge_id_count: prepared.required_knowledge_ids.len(),
             repository_authority_count: prepared.authorities.len(),
             validation_evidence_count: prepared.validation.len(),
@@ -99,6 +105,15 @@ fn final_revalidate(prepared: &PreparedReadiness) -> Result<(), String> {
     )?;
     if !same_capture(&context, &prepared.context_request) {
         return Err("ContextBuild request changed during readiness check".to_owned());
+    }
+    if let (Some(path), Some(expected)) = (
+        prepared.request.activation_request_path.as_deref(),
+        prepared.activation_request.as_ref(),
+    ) {
+        let current = capture_context_request(repository, &resolve_input_path(repository, path))?;
+        if !same_capture(&current, expected) {
+            return Err("activation request changed during readiness check".to_owned());
+        }
     }
     let authorities = capture_authorities(
         repository,

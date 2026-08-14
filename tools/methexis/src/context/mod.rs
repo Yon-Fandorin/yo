@@ -4,6 +4,7 @@ mod candidate;
 mod hash;
 mod operations;
 mod payload;
+mod prospective;
 mod refresh;
 pub(crate) mod registry;
 mod selection;
@@ -14,7 +15,7 @@ mod wire;
 use std::path::Path;
 
 pub(crate) use refresh::{RefreshFailure, RefreshSuccess};
-pub(crate) use wire::{ResolveFailure, ResolveSuccess, VerifySuccess};
+pub(crate) use wire::{ProspectiveResolveSuccess, ResolveFailure, ResolveSuccess, VerifySuccess};
 
 pub(crate) struct ContextService<'a> {
     repository_root: &'a Path,
@@ -33,6 +34,18 @@ impl<'a> ContextService<'a> {
 
     pub(crate) fn resolve(&self, request_path: &Path) -> Result<ResolveSuccess, ResolveFailure> {
         operations::resolve(self.repository_root, request_path)
+    }
+
+    pub(crate) fn resolve_activation_review(
+        &self,
+        activation_request_path: &Path,
+        context_request_path: &Path,
+    ) -> Result<ProspectiveResolveSuccess, ResolveFailure> {
+        prospective::resolve(
+            self.repository_root,
+            activation_request_path,
+            context_request_path,
+        )
     }
 
     pub(crate) fn verify(

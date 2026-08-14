@@ -11,7 +11,8 @@ use super::{
     capture::Inputs,
     model::{
         DELIVERY_PROFILE_V1, DELIVERY_PROFILE_V1_ALPHA1, DELIVERY_PROFILE_V1_ALPHA2,
-        INPUT_PREFIX_PROFILE, InputPrefixRecord, PreflightSection, ReviewPlan, TOKENIZER_PROFILE,
+        DELIVERY_PROFILE_V1_ALPHA3, INPUT_PREFIX_PROFILE, InputPrefixRecord, PreflightSection,
+        ReviewPlan, TOKENIZER_PROFILE,
     },
 };
 use crate::review_protocol::digest;
@@ -55,7 +56,7 @@ fn render_packet_inner(
 ) -> Result<RenderedPacket, String> {
     match plan.delivery_profile.id.as_str() {
         DELIVERY_PROFILE_V1 => render_v1(review_id, plan, inputs, measure),
-        DELIVERY_PROFILE_V1_ALPHA1 | DELIVERY_PROFILE_V1_ALPHA2 => {
+        DELIVERY_PROFILE_V1_ALPHA1 | DELIVERY_PROFILE_V1_ALPHA2 | DELIVERY_PROFILE_V1_ALPHA3 => {
             render_prefixed(review_id, plan, inputs, measure)
         },
         profile => Err(format!(

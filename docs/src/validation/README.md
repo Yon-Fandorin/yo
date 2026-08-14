@@ -47,6 +47,7 @@ the assertion or silently skipping it.
 | Two Slice contracts have a common current integration base and disjoint declared ownership | `cargo xtask check slice-parallel <left.json> <right.json>` | Direct Slices use `develop`; Wave Slices use their Wave branch |
 | An accepted Slice is still exactly the reviewed local branch patch and is safe to clean up | Write the standard `close-metrics.json`, then run `cargo xtask slice close plan <slice> <plan.json>` and `cargo xtask slice close apply <plan.json>` | Run from the clean integration worktree; inspect the bound metrics, removal effects, and retained coordination paths before apply |
 | Repository hook policy or structured development checks | `cargo test -p xtask` | `tools/xtask/src` |
+| Prospective activation ContextBuild and review-packet identity | `cargo test -p methexis activation_review_context` and `cargo test -p xtask review_packet::tests::prospective` | Exact activation request, proposed Checkpoint/active record, authority mode, packet replay, and active-authority cross-use rejection |
 | Linux/macOS conditional compilation | `bash tools/validation/yo-cli-unix-matrix.sh` | Local host result plus `.github/workflows/unix-compile.yml` for both hosts |
 | tmux, SSH, or nested tmux behavior | See the [terminal environment matrix](./terminal-matrix.md) | Ignored `yo-cli` environment tests |
 
@@ -115,6 +116,13 @@ leases the active record, the Checkpoint tree, and the two registered context
 manifests. Its focused `methexis check --staged-activation` admits exactly one
 new immutable Checkpoint. Slice creation is coordination setup, not evidence
 that the prospective transition is valid.
+
+For a later independent activation review, use the explicit v1alpha3 review
+request only after the enabling workflow implementation is already trusted.
+The focused tests above prove the trusted-capability bootstrap, exact
+activation-only path boundary, proposal identity, and canonical packet replay;
+the candidate still requires staged activation validation before integration
+and ordinary full Methexis validation immediately afterward.
 
 If the Slice changes a platform or external-environment boundary, add the
 relevant matrix command rather than claiming the baseline covered it.

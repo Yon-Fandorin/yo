@@ -128,6 +128,106 @@ fn exact_staged_replacement_is_validated_as_prospective() {
     assert_eq!(integrated["checkpoint"], "active");
 }
 
+// activation-review 전용 ContextBuild는 exact proposal의 Checkpoint를 사용하고, 같은
+// proposal이 trusted active가 된 뒤 ordinary resolution이 동일 BuildId를 재사용하는지
+// 확인한다. authority mode는 결과에만 달라지고 BuildId 입력에는 들어가지 않는다.
+#[test]
+fn activation_review_context_reuses_the_same_build_after_trusted_activation() {
+    let repository = replacement_candidate();
+    let activation = repository
+        .path
+        .join(".local-exclude/methexis/requests/activation-second.json");
+    let context_request = repository.request(
+        "activation-review-context.json",
+        &json!({
+            "schema": "methexis.context-request/v1alpha1",
+            "anchors": [{"kind": "knowledge_id", "value": KNOWLEDGE_ID}],
+            "tokenizer_profile": "o200k_base/v1",
+            "max_tokens": 8000
+        }),
+    );
+
+    let prospective = success_json(repository.run(&[
+        "resolve-activation-review-context",
+        activation.to_str().unwrap(),
+        context_request.to_str().unwrap(),
+    ]));
+    assert_eq!(
+        prospective["schema"],
+        "methexis.activation-review-context-result/v1alpha1"
+    );
+    assert_eq!(prospective["authority"], "prospective");
+    assert_eq!(
+        prospective["checkpoint"]["authority_basis_commit"],
+        prospective["trusted_commit"]
+    );
+    assert_eq!(
+        prospective["activation_request"]["path"],
+        ".local-exclude/methexis/requests/activation-second.json"
+    );
+
+    let before =
+        success_json(repository.run(&["resolve-context", context_request.to_str().unwrap()]));
+    assert_ne!(before["build_id"], prospective["build_id"]);
+
+    repository.git(&["commit", "-m", "activate reviewed fixture checkpoint"]);
+    repository.git(&["branch", "-f", "develop", "HEAD"]);
+    let active =
+        success_json(repository.run(&["resolve-context", context_request.to_str().unwrap()]));
+
+    assert_eq!(active["authority"], "trusted_integration");
+    assert_eq!(active["status"], "reused");
+    assert_eq!(active["build_id"], prospective["build_id"]);
+    assert_eq!(active["context"], prospective["context"]);
+    assert_eq!(active["manifest"], prospective["manifest"]);
+}
+
+// 명시된 activation request가 trusted predecessor와 다르면 review-only 명령은 ordinary
+// authority로 fallback하지 않고 exact CAS 오류를 반환한다.
+#[test]
+fn activation_review_context_rejects_a_different_predecessor_without_fallback() {
+    let repository = replacement_candidate();
+    let checkpoint: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            repository
+                .path
+                .join(".local-exclude/methexis/requests/activation-second.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let wrong = repository.request(
+        "activation-review-wrong-predecessor.json",
+        &json!({
+            "schema": "methexis.activation-request/v1alpha1",
+            "checkpoint_id": checkpoint["checkpoint_id"],
+            "checkpoint_hash": checkpoint["checkpoint_hash"],
+            "replace_active_hash": hash_bytes(b"different predecessor")
+        }),
+    );
+    let context_request = repository.request(
+        "activation-review-wrong-context.json",
+        &json!({
+            "schema": "methexis.context-request/v1alpha1",
+            "anchors": [{"kind": "knowledge_id", "value": KNOWLEDGE_ID}],
+            "tokenizer_profile": "o200k_base/v1",
+            "max_tokens": 8000
+        }),
+    );
+
+    let failure = failure_json(repository.run(&[
+        "resolve-activation-review-context",
+        wrong.to_str().unwrap(),
+        context_request.to_str().unwrap(),
+    ]));
+
+    assert_eq!(failure["operation"], "resolve_activation_review_context");
+    assert_eq!(
+        failure["error"]["code"],
+        "active_checkpoint_compare_and_swap_mismatch"
+    );
+}
+
 // activation과 무관한 파일을 함께 stage하면 hook 전용 경로가 일반 변경을 숨기지 않고
 // exact candidate 경계 위반으로 실패하는지 확인한다.
 #[test]
