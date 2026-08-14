@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-008
-    revision: sha256:e217dbe1738d7d6d8fb1e2d761cee5ccf07795a2d1b1801a379447e75adec2dd
+    revision: sha256:77ea0653efe73b5398a6bdb5290c56f5bb52948dbc398c682e42976e4f81d4cd
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -29,6 +29,8 @@ The backend MUST record each function call and its exact tool outcome before sub
 
 The loop continues across model response, local tool execution, and tool-result submission until the model emits a final assistant message, cancellation is accepted, a bounded model-round limit is reached, or a typed failure occurs. One active Turn remains the Session limit. Cancellation MUST stop outstanding connector work promptly, prevent new tool execution, seal active Activities as interrupted, and run explicit connector and tool cleanup.
 
+The loop owns any absolute model-request work deadline. That deadline MUST be optional and MUST default to absent. When the agent supplies it, the deadline MUST begin once for one logical model request, MUST cover every bounded connector-internal retry for that request, and MUST NOT reset on transport bytes, model output, decoded events, or retry. The next model request after a tool result, or a separately admitted request after an earlier failure, MUST receive a fresh deadline. A whole-Turn wall-clock budget is a separate optional cancellation policy and MUST NOT be inferred from the per-request deadline. Absence of either absolute budget MUST NOT disable the connector's finite transport-progress, event-delivery, data, round-count, cancellation, or cleanup bounds. Runtime deadline policy MUST remain outside the effective binding and MUST NOT open a binding epoch.
+
 Provider response IDs, cache handles, and conversation IDs MAY be retained as diagnostic correlation but MUST NOT be the only continuation locator. A Yo-managed binding MUST explicitly declare `exact_replay` with `local_client` as the current executor rather than provider-native resume. Executable continuation MUST reconstruct the model-visible semantic boundary named by the newest durable Continuation Anchor from the Session Journal and open a new binding epoch when endpoint, API dialect, Provider, Account, Model, or connector identity changes. A committed mid-Turn function call, tool result, partial stream, or other suffix beyond that Anchor MUST remain diagnostic and MUST NOT become automatic continuation input. When no durable Anchor exists, the Session MUST follow the continuation contract's read-only fallback rather than constructing replay input. Exact replay MUST preserve message roles and order, exact visible text, function-call and tool-result relationships, and the recorded system/tool contract. Hidden reasoning and provider cache state are not replay claims.
 
 No Continuation Anchor may cover a partial model stream, an uncommitted tool result, an uncertain request, or a failed final response. Usage and the exact effective binding MUST be attributed to the model response that produced them, including when the model changes inside one Yo Session.
@@ -41,4 +43,4 @@ A future `managed_server` executor MAY load the same validated replay prefix and
 
 ## Rationale
 
-Owning the loop in `yo-core` provides a genuinely native backend while preserving the existing frontend-independent Session contract. An explicit connector boundary lets multiple API dialects share the semantic loop without weakening their distinct wire grammars. Exact semantic replay avoids coupling durable continuation to a provider's temporary response retention and keeps tool side effects correlated with Yo's own authority.
+Owning the loop in `yo-core` provides a genuinely native backend while preserving the existing frontend-independent Session contract. An explicit connector boundary lets multiple API dialects share the semantic loop without weakening their distinct wire grammars. Agent ownership of optional work budgets permits intentionally long model work without weakening transport-stall detection or binding identity. Exact semantic replay avoids coupling durable continuation to a provider's temporary response retention and keeps tool side effects correlated with Yo's own authority.

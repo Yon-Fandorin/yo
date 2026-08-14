@@ -1,9 +1,9 @@
 schema: methexis.source/v1alpha1
 id: agent.tool-001
-revision: sha256:b389a08da03fa99c06a14f2657543146269a35ee4304a1055eba629a56dda9be
+revision: sha256:a840431b5a438967abd623cd018c6a7e1e11508f7f800e0c77f419688e124455
 payload:
   kind: decision
   content: |-
-    A Yo-managed model loop exposes only locally registered function tools through a frontend-independent registry and injected execution-host port. Stable tool identity, JSON-schema validation, approval, mutable-resource admission, exact call/result correlation, cancellation, and result bounds are decided before connector submission or local side effects. A tool call is attempted at most once after dispatch and is never automatically retried. Calls execute serially unless the scheduler proves their approvals and mutable resource leases independent. Provider built-in tools and direct provider MCP execution are deferred.
+    A Yo-managed model loop exposes only locally registered function tools through a frontend-independent registry and injected execution-host port. Stable tool identity, JSON-schema validation, approval, mutable-resource admission, exact call/result correlation, cancellation, and result bounds are decided before connector submission or local side effects. A tool call is attempted at most once after dispatch and is never automatically retried. Calls execute serially unless the scheduler proves their approvals and mutable resource leases independent. Agent policy may supply a non-resetting absolute execution deadline, which defaults to absent. The first local command tool instead always detects 5 minutes without stdout or stderr progress, resetting that inactivity window on each non-empty output chunk, while cancellation and cleanup remain independently finite. Provider built-in tools and direct provider MCP execution are deferred.
 
     The local tool boundary accepts only the closed yo.tool-schema/v1 JSON-schema subset, emits stable typed validation failure codes, and applies semantic redaction before arguments or outputs become Activities, model input, or durable replay. No concrete tool may bypass that gate.

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.tool-001
-    revision: sha256:b389a08da03fa99c06a14f2657543146269a35ee4304a1055eba629a56dda9be
+    revision: sha256:a840431b5a438967abd623cd018c6a7e1e11508f7f800e0c77f419688e124455
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -47,6 +47,19 @@ explicit truncation when applicable. The Session Journal MUST correlate the
 exact call, approval, execution attempt, and tool result before that result is
 eligible for model submission.
 
+Execution progress and absolute work budgets MUST remain distinct. Every
+execution host MUST define a finite progress-inactivity deadline and the exact
+signal that resets it. The first local command tool MUST treat each non-empty
+stdout or stderr chunk as progress, MUST reset a 5-minute inactivity window on
+that progress, and MUST fail the attempt when no such output arrives for 5
+minutes even if the process is still alive. Agent policy MAY additionally
+supply one absolute execution deadline; it MUST default to absent, begin once
+for that attempt, and MUST NOT reset on output or other progress. Cancellation
+MUST interrupt both waits, and timeout or cancellation MUST use finite
+termination, reap, and output-drain bounds. Diagnostics MUST distinguish
+inactivity, an agent-supplied absolute deadline, cancellation, and cleanup
+failure. None of these outcomes permits an automatic retry.
+
 Calls MUST execute serially in model order by default. They MAY execute
 concurrently only when the scheduler proves that approval scopes and mutable
 resource leases are disjoint. Result publication and model submission MUST use
@@ -85,3 +98,6 @@ gate is installed, no local tool registry may be exposed to a native model.
 Delegated backends hide tool policy inside another agent host. A native loop
 needs an explicit local boundary so model protocol cannot bypass approval,
 repeat side effects, or confuse tool completion order with semantic order.
+Separating output inactivity from an optional agent-owned absolute deadline
+allows productive long commands to continue while still detecting silent
+stalls and preserving cancellation.
