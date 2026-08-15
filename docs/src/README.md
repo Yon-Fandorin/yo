@@ -39,6 +39,8 @@ For a first change:
    crosses boundaries.
 4. Select focused and Slice-close evidence in
    [Validation](./validation/).
+5. For model inventory or Provider onboarding, use
+   [Maintain Provider catalogs](./workflows/provider-catalogs.md).
 
 ## Maintaining the Korean Projection
 

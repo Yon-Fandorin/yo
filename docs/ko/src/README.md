@@ -40,6 +40,8 @@ KnowledgeUnit으로 연결한다.
    따라간다.
 4. [검증](./validation/)에서 개발 중에 실행할 집중 검사와
    Slice를 닫기 전에 실행할 검사를 선택한다.
+5. 모델 목록이나 Provider onboarding을 변경할 때는
+   [Provider 카탈로그 관리](./workflows/provider-catalogs.md)를 사용한다.
 
 ## 한국어 Projection 관리하기
 
