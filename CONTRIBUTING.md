@@ -418,6 +418,13 @@ detail. Cover the happy path and discriminating failure paths at contract
 boundaries; record environment-dependent cases separately instead of presenting
 them as internally verified.
 
+At an orchestration handoff, assert the exact authoritative value consumed by
+the next effect. A parallel copy, redundant callback argument, or collection
+count does not prove that an opaque prepared object contains the same value. If
+that object otherwise hides the boundary, expose the narrowest read-only,
+secret-free typed projection needed for the assertion or exercise the real
+downstream effect.
+
 Every built-in Rust test in the workspace must have an understandable Korean
 line-comment immediately above `#[test]`. Use multiple lines when one line would
 hide the setup, expected result, or reason. Do not merely translate the function
