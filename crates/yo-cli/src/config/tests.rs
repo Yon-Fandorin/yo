@@ -166,6 +166,50 @@ model:
     );
 }
 
+// 완전한 base profile을 가진 빈 OpenRouter binding은 routable catalog entry를 만들지
+// 않으면서 정확한 Provider·Account discovery seed로 남고 다른 Provider의 빈 목록은 거절됩니다.
+#[test]
+fn empty_openrouter_binding_is_a_discovery_seed_only() {
+    let config = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: openrouter
+      provider_display_name: OpenRouter
+      account: team
+      account_display_name: Team
+      base_url: https://openrouter.ai/api/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: o200k_base/v1
+        input_token_limit: 200000
+        max_output_tokens: 16000
+        reasoning_parameters: {}
+        optional_request_parameters: {}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models: []
+"#,
+    )
+    .unwrap();
+    assert!(config.model_catalog().entries().is_empty());
+    let provider = yo_core::ProviderId::new("openrouter").unwrap();
+    let account = yo_core::AccountId::new("team").unwrap();
+    let seed = config
+        .openrouter_discovery_seed(&provider, &account)
+        .unwrap();
+    assert_eq!(seed.provider(), &provider);
+    assert_eq!(seed.account(), &account);
+
+    let error = parse(
+        Path::new("config.yaml"),
+        "version: 1\nmodel:\n  bindings:\n    - provider: qwencloud\n      account: team\n      base_url: https://example.test/v1\n      models: []\n",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("requires at least one model"));
+}
+
 // 같은 v1 문서에서 legacy catalog와 새 bindings를 함께 쓰면 어느 쪽이 우선인지
 // 추측하지 않고 정확한 상호배타 오류로 거절합니다.
 #[test]

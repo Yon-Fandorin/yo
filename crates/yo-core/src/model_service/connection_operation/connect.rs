@@ -83,6 +83,11 @@ pub struct PreparedExternalConnection {
 }
 
 impl PreparedExternalConnection {
+    /// Returns the exact, secret-free complete bindings awaiting verification.
+    pub fn verification_bindings(&self) -> &[CompleteModelBinding] {
+        &self.bindings
+    }
+
     pub(super) fn new(
         config_snapshot_digest: String,
         connection: PreparedConnectionMutation,

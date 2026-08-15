@@ -276,6 +276,7 @@ fn each_redirect_attempt_gets_a_fresh_response_header_deadline() {
     }
     let server = LocalTlsServer::start(LocalServerMode::DelayedRedirectChain {
         final_body: terminal_stream(),
+        response_delay_millis: 80,
     });
     let limits = ResponsesConnectorLimits {
         connect_timeout: Duration::from_secs(1),
@@ -313,6 +314,7 @@ fn redirect_attempts_do_not_reset_the_absolute_request_deadline() {
     }
     let server = LocalTlsServer::start(LocalServerMode::DelayedRedirectChain {
         final_body: terminal_stream(),
+        response_delay_millis: 80,
     });
     let limits = ResponsesConnectorLimits {
         connect_timeout: Duration::from_secs(1),

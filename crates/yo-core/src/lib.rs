@@ -78,9 +78,11 @@ pub use model_service::{
     ModelCatalogEntry, ModelCatalogProvenance, ModelContextProfile, ModelId, ModelProfileLayer,
     ModelProfileParameters, ModelSelection, ModelSelectionChoice, ModelSelectionController,
     ModelServiceError, ModelTokenCounter, ModelTokenCounterError, NormalizedEndpoint,
-    PreparedConnectionMutation, PreparedCredentialMutation, PreparedExternalConnection,
-    PreparedExternalDisconnect, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
-    VerifiedExternalConnection, VersionedProfileId, plan_connection_recovery,
+    OpenRouterAuthoredModel, OpenRouterDiscoveredModel, OpenRouterDiscoveryError,
+    OpenRouterDiscoveryFailureKind, OpenRouterDiscoverySeed, PreparedConnectionMutation,
+    PreparedCredentialMutation, PreparedExternalConnection, PreparedExternalDisconnect, ProviderId,
+    StartupPolicy, StartupSelectionSources, StartupTarget, VerifiedExternalConnection,
+    VersionedProfileId, discover_openrouter_models, plan_connection_recovery,
     resolve_startup_target, validate_profile_yaml_number_spellings, verify_external_connection,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};

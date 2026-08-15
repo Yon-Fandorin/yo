@@ -271,7 +271,9 @@ fn display_target(target: Option<&StartupTarget>) -> String {
     match target {
         None => "unset".to_owned(),
         Some(StartupTarget::HostCodex) => StartupTarget::HOST_CODEX_REFERENCE.to_owned(),
-        Some(StartupTarget::Model(selection)) => selection.canonical_reference(),
+        Some(StartupTarget::Model(selection)) => {
+            presentation::escape_remote_text(&selection.canonical_reference())
+        },
     }
 }
 

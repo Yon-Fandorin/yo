@@ -15,7 +15,8 @@ use sha2::{Digest, Sha256};
 use yo_core::{
     AccountId, EffectiveModelBinding, EffectiveModelProfile, ModelCatalog, ModelCatalogEntry,
     ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters, ModelSelection,
-    NormalizedEndpoint, ProviderId, StartupTarget, VersionedProfileId,
+    NormalizedEndpoint, OpenRouterAuthoredModel, OpenRouterDiscoverySeed, ProviderId,
+    StartupTarget, VersionedProfileId,
 };
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
@@ -37,6 +38,7 @@ pub(crate) struct Config {
     source_path: PathBuf,
     snapshot: ConfigSnapshot,
     model_catalog: ModelCatalog,
+    openrouter_discovery_seeds: Vec<OpenRouterDiscoverySeed>,
     startup_target: Option<StartupTarget>,
 }
 
@@ -48,6 +50,7 @@ impl Default for Config {
             source_path: PathBuf::new(),
             snapshot: ConfigSnapshot::absent(),
             model_catalog: ModelCatalog::default(),
+            openrouter_discovery_seeds: Vec::new(),
             startup_target: None,
         }
     }
@@ -64,6 +67,16 @@ impl Config {
 
     pub(crate) fn model_catalog(&self) -> &ModelCatalog {
         &self.model_catalog
+    }
+
+    pub(crate) fn openrouter_discovery_seed(
+        &self,
+        provider: &ProviderId,
+        account: &AccountId,
+    ) -> Option<&OpenRouterDiscoverySeed> {
+        self.openrouter_discovery_seeds
+            .iter()
+            .find(|seed| seed.provider() == provider && seed.account() == account)
     }
 
     pub(crate) fn replace_model_catalog(&mut self, model_catalog: ModelCatalog) {
@@ -329,6 +342,13 @@ enum Authored<T> {
 }
 
 impl<T> Authored<T> {
+    fn as_ref(&self) -> Option<&T> {
+        match self {
+            Self::Missing => None,
+            Self::Present(value) => Some(value),
+        }
+    }
+
     fn into_option(self) -> Option<T> {
         match self {
             Self::Missing => None,
@@ -498,13 +518,14 @@ fn parse_snapshot(
             "model.catalog and model.bindings cannot be authored together",
         ));
     }
-    let entries = match (catalog, bindings) {
+    let (entries, openrouter_discovery_seeds) = match (catalog, bindings) {
         (Authored::Missing, Authored::Present(bindings)) => model_binding_entries(path, bindings)?,
         (Authored::Present(catalog), Authored::Missing) => catalog
             .into_iter()
             .map(|entry| model_entry(path, entry))
-            .collect::<Result<Vec<_>, _>>()?,
-        (Authored::Missing, Authored::Missing) => Vec::new(),
+            .collect::<Result<Vec<_>, _>>()
+            .map(|entries| (entries, Vec::new()))?,
+        (Authored::Missing, Authored::Missing) => (Vec::new(), Vec::new()),
         (Authored::Present(_), Authored::Present(_)) => {
             unreachable!("both authored model collections were rejected")
         },
@@ -526,6 +547,7 @@ fn parse_snapshot(
         source_path: path.to_owned(),
         snapshot,
         model_catalog,
+        openrouter_discovery_seeds,
         startup_target,
     };
     config.date_formatter().map_err(|error| match error {
@@ -648,9 +670,10 @@ fn model_entry(path: &Path, entry: ModelEntryConfig) -> Result<ModelCatalogEntry
 fn model_binding_entries(
     path: &Path,
     bindings: Vec<ModelBindingConfig>,
-) -> Result<Vec<ModelCatalogEntry>, ConfigError> {
+) -> Result<(Vec<ModelCatalogEntry>, Vec<OpenRouterDiscoverySeed>), ConfigError> {
     let mut pairs = HashSet::new();
     let mut entries = Vec::new();
+    let mut discovery_seeds = Vec::new();
     for binding in bindings {
         let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
             path: path.to_owned(),
@@ -664,7 +687,7 @@ fn model_binding_entries(
                 format!("model.bindings repeats Provider {provider} and Account {account}"),
             ));
         }
-        if binding.models.is_empty() {
+        if binding.models.is_empty() && provider.as_str() != "openrouter" {
             return Err(invalid_model(
                 path,
                 format!(
@@ -678,8 +701,19 @@ fn model_binding_entries(
             .into_option()
             .map(|profile| model_profile_layer(path, profile))
             .transpose()?;
+        let mut authored_models = Vec::new();
         for model in binding.models {
             let model_id = ModelId::new(model.model).map_err(&invalid)?;
+            let (authored_input_token_limit, authored_max_output_tokens) = model
+                .profile
+                .as_ref()
+                .map(|profile| {
+                    (
+                        profile.input_token_limit.as_ref().copied(),
+                        profile.max_output_tokens.as_ref().copied(),
+                    )
+                })
+                .unwrap_or((None, None));
             let model_profile = model
                 .profile
                 .into_option()
@@ -695,19 +729,47 @@ fn model_binding_entries(
                 profile.api_dialect(),
                 endpoint.clone(),
             );
-            entries.push(
-                ModelCatalogEntry::with_explicit_profile(
-                    effective_binding,
-                    binding.provider_display_name.clone(),
-                    binding.account_display_name.clone(),
-                    model.model_display_name,
-                    profile,
+            let entry = ModelCatalogEntry::with_explicit_profile(
+                effective_binding,
+                binding.provider_display_name.clone(),
+                binding.account_display_name.clone(),
+                model.model_display_name,
+                profile,
+            )
+            .map_err(&invalid)?;
+            authored_models.push(
+                OpenRouterAuthoredModel::new(
+                    entry.clone(),
+                    authored_input_token_limit,
+                    authored_max_output_tokens,
                 )
                 .map_err(&invalid)?,
             );
+            entries.push(entry);
+        }
+        if provider.as_str() == "openrouter" {
+            match EffectiveModelProfile::resolve(
+                base_profile.as_ref(),
+                &ModelProfileLayer::default(),
+            ) {
+                Ok(profile) => discovery_seeds.push(
+                    OpenRouterDiscoverySeed::new(
+                        provider,
+                        account,
+                        binding.provider_display_name,
+                        binding.account_display_name,
+                        endpoint,
+                        profile,
+                        authored_models,
+                    )
+                    .map_err(&invalid)?,
+                ),
+                Err(error) if authored_models.is_empty() => return Err(invalid(error)),
+                Err(_) => {},
+            }
         }
     }
-    Ok(entries)
+    Ok((entries, discovery_seeds))
 }
 
 fn model_profile_layer(

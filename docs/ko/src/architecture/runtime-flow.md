@@ -638,6 +638,21 @@ Disconnect remove는 candidate 없이 commit하고 preserve는 credential mutati
 held session을 사용한다. External disconnect도 선택한 managed target 하나에서 같은
 Provider·Account credential action을 묶고 어떤 credential 제거보다 public 제거를 먼저 commit한다.
 
+`yo connect openrouter:Account`는 정확히 설정한 binding에 normalized endpoint와 complete base
+profile이 있을 때만 대화형 discovery target이다. Recovery와 snapshot capture 뒤 Yo는 no-echo
+candidate key 하나를 읽고 endpoint prefix에 `/models/user`를 더한 주소로 인증 `GET`을 보낸다.
+요청은 same-origin redirect 수와 connect, attempt별 response-header, body inactivity, absolute
+deadline이 제한되고 성공 응답은 bounded JSON이어야 한다. Core normalization은 exact Model ID마다
+첫 valid row만 남기고 text input, text output, tools를 요구한다. Authored model override가 이미
+있지 않으면 valid remote context limit을 base 위에 적용하고, 완성된 binding을 정렬한다.
+Controlling-TTY picker는 name과 ID를 검색하고 한 번에 최대 여덟 result row를 보여 주면서 모든
+match에 scroll로 도달하게 한다. 선택, 취소, input·render 실패, unwind에서 terminal mode, cursor,
+dynamic panel을 한 cleanup owner가 복원한다. Remote string은 terminal 출력 전에 printable하고
+되돌릴 수 있는 byte escape 경계를 지난다. 선택 뒤에는 기존 concise connection preview로 들어가고
+`--verbose`는 그 preview만 확장한다. 취소는 새 intent나 repository mutation을 만들지 않으며,
+discovery에 쓴 같은 in-memory key가 마지막 binding-union 검증을 수행한다. 두 부분 discovery는
+`--credential-file`과 `--yes`를 거절한다.
+
 `yo connect Provider:Account:Model`은 설정에 있는 exact reference 하나를 받는다. 해당
 Provider와 Account에 속한 완전한 manual binding, 현재 managed binding, prospective selected
 binding을 모두 합집합으로 만든다. 남는 legacy binding은 전체 동작을 검증할 수 없으므로

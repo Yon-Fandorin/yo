@@ -1,5 +1,5 @@
 mod bounds_cancellation;
-mod local_tls;
+pub(crate) mod local_tls;
 mod request_construction;
 mod responses_sse;
 mod support;

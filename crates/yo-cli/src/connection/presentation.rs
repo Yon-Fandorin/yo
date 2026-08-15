@@ -145,6 +145,12 @@ struct ProfileDetails {
 }
 
 impl BindingDetails {
+    pub(super) fn escape_remote_model(&mut self, model_id: &str) {
+        if self.model == model_id {
+            self.model = escape_remote_text(&display_model_item(model_id));
+        }
+    }
+
     fn render(
         &self,
         output: &mut String,
@@ -893,6 +899,18 @@ pub(super) fn display_model_item(model: &str) -> String {
     } else {
         model.to_owned()
     }
+}
+
+pub(super) fn escape_remote_text(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if matches!(byte, 0x20..=0x7e) && !matches!(byte, b'"' | b'\\') {
+            escaped.push(char::from(byte));
+        } else {
+            write!(escaped, "\\x{byte:02X}").expect("formatting into a String cannot fail");
+        }
+    }
+    escaped
 }
 
 fn wrap_list(values: &[&str], width: usize) -> Result<Vec<String>, PresentationError> {

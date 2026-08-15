@@ -679,6 +679,25 @@ uses this same held session for preparation and commit. External disconnect
 uses it to bind one selected managed target to the same Provider-and-Account
 credential action and commits the public removal before any credential removal.
 
+`yo connect openrouter:Account` is an interactive discovery target only when
+that exact configured binding has a normalized endpoint and complete base
+profile. After recovery and snapshot capture, Yo reads one no-echo candidate
+key and issues an authenticated `GET` to the endpoint prefix plus
+`/models/user`. The request has bounded same-origin redirects and separate
+connect, per-attempt response-header, body-inactivity, and absolute deadlines;
+success must be bounded JSON. Core normalization keeps only the first valid row
+for each exact Model ID, requires text input, text output, and tools, applies
+valid remote context limits over the base unless an authored model override
+already exists, and sorts the resulting complete bindings. The controlling-TTY
+picker searches name and ID, exposes at most eight scrolling rows while keeping
+every match reachable, and restores terminal mode, cursor, and dynamic panel on
+selection, cancellation, input/render failure, or unwind. Remote strings cross
+a printable reversible byte-escape boundary before terminal output. Selection
+then enters the existing concise connection preview; `--verbose` expands only
+that preview. Cancellation creates no new intent or repository mutation, and
+the same in-memory key used for discovery performs the final binding-union
+verification. Two-part discovery rejects `--credential-file` and `--yes`.
+
 `yo connect Provider:Account:Model` accepts one exact configured reference. It
 forms the union of every complete manual and currently managed binding for that
 Provider and Account, plus the prospective selected binding. A retained legacy

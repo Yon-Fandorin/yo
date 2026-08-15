@@ -24,7 +24,7 @@ const FIXTURE_CERTIFICATE_MAX_VALIDITY_SECONDS: &str = "71280000";
 const TEMP_DIRECTORY_CREATE_ATTEMPTS: usize = 16;
 static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub(super) enum LocalServerMode {
+pub(crate) enum LocalServerMode {
     Success {
         body: Vec<u8>,
         content_type: String,
@@ -39,6 +39,13 @@ pub(super) enum LocalServerMode {
     },
     DelayedRedirectChain {
         final_body: Vec<u8>,
+        response_delay_millis: u16,
+    },
+    RedirectLoop,
+    DeclaredOversize,
+    UnframedSuccess {
+        body: Vec<u8>,
+        content_type: String,
     },
     HeadersThenStall {
         content_type: String,
@@ -55,7 +62,7 @@ pub(super) enum LocalServerMode {
     TlsHandshakeStall,
 }
 
-pub(super) struct LocalTlsServer {
+pub(crate) struct LocalTlsServer {
     _child: ChildGuard,
     _root: TempDirectory,
     requests: PathBuf,
@@ -66,7 +73,7 @@ pub(super) struct LocalTlsServer {
 }
 
 impl LocalTlsServer {
-    pub(super) fn start(mode: LocalServerMode) -> Self {
+    pub(crate) fn start(mode: LocalServerMode) -> Self {
         let certificate = env::var_os("YO_MODEL_CONNECTOR_TEST_CERT")
             .expect("the local TLS child must provide its test certificate path");
         let key = env::var_os("YO_MODEL_CONNECTOR_TEST_KEY")
@@ -104,13 +111,40 @@ impl LocalTlsServer {
                 2,
                 final_body,
             ),
-            LocalServerMode::DelayedRedirectChain { final_body } => (
+            LocalServerMode::DelayedRedirectChain {
+                final_body,
+                response_delay_millis,
+            } => (
                 "delayed-redirect-chain",
                 "text/event-stream".to_owned(),
-                307,
+                response_delay_millis,
                 String::new(),
                 3,
                 final_body,
+            ),
+            LocalServerMode::RedirectLoop => (
+                "redirect-loop",
+                "application/json".to_owned(),
+                307,
+                String::new(),
+                4,
+                Vec::new(),
+            ),
+            LocalServerMode::DeclaredOversize => (
+                "declared-oversize",
+                "application/json".to_owned(),
+                200,
+                String::new(),
+                1,
+                Vec::new(),
+            ),
+            LocalServerMode::UnframedSuccess { body, content_type } => (
+                "unframed-success",
+                content_type,
+                200,
+                String::new(),
+                1,
+                body,
             ),
             LocalServerMode::HeadersThenStall { content_type } => (
                 "headers-stall",
@@ -185,29 +219,29 @@ impl LocalTlsServer {
         }
     }
 
-    pub(super) fn endpoint(&self) -> &str {
+    pub(crate) fn endpoint(&self) -> &str {
         &self.endpoint
     }
 
-    pub(super) fn wait_for_response_sent(&self) {
+    pub(crate) fn wait_for_response_sent(&self) {
         self.wait_for_marker(
             &self.sent,
             "local TLS listener did not report its response boundary",
         );
     }
 
-    pub(super) fn wait_for_peer_closed(&self) {
+    pub(crate) fn wait_for_peer_closed(&self) {
         self.wait_for_marker(
             &self.closed,
             "local TLS listener did not observe the connector closing its peer",
         );
     }
 
-    pub(super) fn accepted_connections(&self) -> usize {
+    pub(crate) fn accepted_connections(&self) -> usize {
         self.marker_count(&self.accepted)
     }
 
-    pub(super) fn requests(&self) -> Vec<serde_json::Value> {
+    pub(crate) fn requests(&self) -> Vec<serde_json::Value> {
         let mut source = String::new();
         File::open(&self.requests)
             .unwrap()
@@ -939,7 +973,7 @@ fn generates_current_server_auth_material_that_expires_within_apple_limit() {
 
 // OS별 platform verifier의 SSL_CERT_FILE 해석에 의존하지 않고, child process의 test-only
 // client에만 ephemeral root를 명시적으로 더해 HTTPS loopback listener를 띄웁니다.
-pub(super) fn run_in_tls_child(test_name: &str) -> bool {
+pub(crate) fn run_in_tls_child(test_name: &str) -> bool {
     if env::var_os("YO_MODEL_CONNECTOR_TEST_CHILD").is_some() {
         let marker = env::var_os("YO_MODEL_CONNECTOR_TEST_MARKER")
             .expect("the local TLS child must provide its execution marker path");

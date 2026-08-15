@@ -1,9 +1,10 @@
 use std::path::Path;
 
 use yo_core::{
-    CompleteModelBinding, ConnectionSnapshot, ManagedConnectionAccount, ManagedConnectionBinding,
-    ModelCatalog, ModelCatalogEntry, ModelSelection, PreparedConnectionMutation, StartupPolicy,
-    StartupSelectionSources, StartupTarget, resolve_startup_target, verify_external_connection,
+    AccountId, CompleteModelBinding, ConnectionSnapshot, ManagedConnectionAccount,
+    ManagedConnectionBinding, ModelCatalog, ModelCatalogEntry, ModelSelection,
+    PreparedConnectionMutation, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
+    discover_openrouter_models, resolve_startup_target, verify_external_connection,
 };
 
 use super::{
@@ -19,6 +20,13 @@ pub(super) fn run_external_connect(
     config_path: &Path,
     command: ConnectCommand,
 ) -> Result<String, AppError> {
+    if discovery_pair(&command.target)?.is_some()
+        && (command.credential_file.is_some() || command.yes)
+    {
+        return Err(AppError::message(
+            "OpenRouter Provider:Account discovery is interactive only and rejects --credential-file and --yes",
+        ));
+    }
     match (
         command.credential_file.clone(),
         command.yes,
@@ -43,6 +51,67 @@ fn execute_external_connect_with(
     command: ConnectCommand,
     input: &mut impl ExternalConnectInput,
 ) -> Result<String, AppError> {
+    execute_external_connect_with_discovery(
+        config_path,
+        command,
+        input,
+        |seed, candidate, input| {
+            let models = discover_openrouter_models(seed, candidate).map_err(|error| {
+                AppError::single("discovering OpenRouter account models", error)
+            })?;
+            if models.is_empty() {
+                return Err(AppError::message(
+                    "OpenRouter discovery returned no selectable text-and-tools model",
+                ));
+            }
+            let Some(selected) = input.select_openrouter_model(&models)? else {
+                return Ok(None);
+            };
+            models
+                .get(selected)
+                .map(|model| Some(model.entry().clone()))
+                .ok_or_else(|| {
+                    AppError::message("the OpenRouter picker returned an invalid model selection")
+                })
+        },
+        |session, config, prepared, candidate, discovered| {
+            let verified = verify_external_connection(prepared, candidate).map_err(|error| {
+                safe_discovery_error(AppError::message(format!(
+                    "verifying the candidate API key failed: {error}; remove or edit the rejected binding before retrying"
+                )), discovered)
+            })?;
+            config
+                .verify_unchanged()
+                .map_err(|error| AppError::single("guarding Yo configuration", error))?;
+            session
+                .commit_verified_external_connection(verified)
+                .map_err(|error| {
+                    safe_discovery_source("publishing the external connection", error, discovered)
+                })
+        },
+    )
+}
+
+fn execute_external_connect_with_discovery<I>(
+    config_path: &Path,
+    command: ConnectCommand,
+    input: &mut I,
+    discover_and_select: impl FnOnce(
+        &yo_core::OpenRouterDiscoverySeed,
+        &yo_core::ApiCredential,
+        &mut I,
+    ) -> Result<Option<ModelCatalogEntry>, AppError>,
+    finalize: impl FnOnce(
+        &mut yo_core::LocalConnectionOperationSession<'_>,
+        &config::Config,
+        yo_core::PreparedExternalConnection,
+        yo_core::ApiCredential,
+        bool,
+    ) -> Result<(), AppError>,
+) -> Result<String, AppError>
+where
+    I: ExternalConnectInput,
+{
     let repositories = operation_repositories(config_path)?;
     let mut session = repositories
         .acquire()
@@ -56,16 +125,42 @@ fn execute_external_connect_with(
     let snapshot = session
         .capture_connections()
         .map_err(|error| AppError::single("capturing managed connections", error))?;
-    let selected = selected_entry(&snapshot, config.model_catalog(), &command.target)?;
+    let (selected, discovered_candidate) = match discovery_pair(&command.target)? {
+        Some((provider, account)) => {
+            let seed = config
+                .openrouter_discovery_seed(&provider, &account)
+                .ok_or_else(|| {
+                    AppError::message(format!(
+                        "OpenRouter discovery target {} is not an exact configured Provider:Account seed with a complete base profile",
+                        command.target
+                    ))
+                })?;
+            let account_reference = format!("{provider}:{account}");
+            let candidate = input.read_credential(&account_reference)?;
+            let Some(entry) = discover_and_select(seed, &candidate, input)? else {
+                return Ok("Connection cancelled; nothing changed.\n".to_owned());
+            };
+            (entry, Some(candidate))
+        },
+        None => (
+            selected_entry(&snapshot, config.model_catalog(), &command.target)?,
+            None,
+        ),
+    };
     let selection = selection_for(&selected);
     let startup_policy = StartupPolicy::initial();
-    let plan = ExternalConnectPlan::prepare(
+    let discovered = discovered_candidate.is_some();
+    let mut plan = ExternalConnectPlan::prepare(
         &snapshot,
         config.model_catalog(),
         &selection,
         &selected,
         &startup_policy,
-    )?;
+    )
+    .map_err(|error| safe_discovery_error(error, discovered))?;
+    if discovered {
+        plan.escape_remote_model(selection.model().as_str());
+    }
     let ExternalConnectPlan {
         connection,
         verification_bindings,
@@ -80,7 +175,9 @@ fn execute_external_connect_with(
     } = plan;
     let prepared = session
         .prepare_external_connection(config.snapshot_digest(), connection, verification_bindings)
-        .map_err(|error| AppError::single("preparing the external connection", error))?;
+        .map_err(|error| {
+            safe_discovery_source("preparing the external connection", error, discovered)
+        })?;
 
     let preview = Confirmation::Connect(Box::new(
         ConnectPreview::new(
@@ -97,22 +194,17 @@ fn execute_external_connect_with(
     if !input.confirm(&preview)? {
         return Ok("Connection cancelled; nothing changed.\n".to_owned());
     }
-    let account_reference = format!("{}:{}", selection.provider(), selection.account());
-    let candidate = input.read_credential(&account_reference)?;
-    let verified = verify_external_connection(prepared, candidate).map_err(|error| {
-        AppError::message(format!(
-            "verifying the candidate API key failed: {error}; remove or edit the rejected binding before retrying"
-        ))
-    })?;
-    config
-        .verify_unchanged()
-        .map_err(|error| AppError::single("guarding Yo configuration", error))?;
-    session
-        .commit_verified_external_connection(verified)
-        .map_err(|error| AppError::single("publishing the external connection", error))?;
+    let candidate = match discovered_candidate {
+        Some(candidate) => candidate,
+        None => {
+            let account_reference = format!("{}:{}", selection.provider(), selection.account());
+            input.read_credential(&account_reference)?
+        },
+    };
+    finalize(&mut session, &config, prepared, candidate, discovered)?;
 
     Ok(connect_success(
-        &selection.canonical_reference(),
+        &display_target(Some(&StartupTarget::Model(selection.clone()))),
         binding_count,
         &display_target(preference.as_ref()),
     ))
@@ -132,6 +224,12 @@ struct ExternalConnectPlan {
 }
 
 impl ExternalConnectPlan {
+    fn escape_remote_model(&mut self, model_id: &str) {
+        for details in &mut self.binding_details {
+            details.escape_remote_model(model_id);
+        }
+    }
+
     fn prepare(
         snapshot: &ConnectionSnapshot,
         manual: &ModelCatalog,
@@ -233,8 +331,12 @@ impl ExternalConnectPlan {
             verification_bindings,
             binding_count,
             preference,
-            target: selection.canonical_reference(),
-            account: format!("{}:{}", selection.provider(), selection.account()),
+            target: display_target(Some(&StartupTarget::Model(selection.clone()))),
+            account: super::presentation::escape_remote_text(&format!(
+                "{}:{}",
+                selection.provider(),
+                selection.account()
+            )),
             default_after,
             managed_change,
             default_changed,
@@ -315,6 +417,52 @@ fn selected_entry(
         })
 }
 
+fn discovery_pair(reference: &str) -> Result<Option<(ProviderId, AccountId)>, AppError> {
+    let mut segments = reference.split(':');
+    let Some(provider) = segments.next() else {
+        return Ok(None);
+    };
+    let Some(account) = segments.next() else {
+        return Ok(None);
+    };
+    if segments.next().is_some() {
+        return Ok(None);
+    }
+    if provider != "openrouter" {
+        return Err(AppError::message(format!(
+            "two-part external connect target {reference:?} is unsupported; only configured openrouter:Account discovery is admitted"
+        )));
+    }
+    let provider = ProviderId::new(provider)
+        .map_err(|error| AppError::single("reading the discovery ProviderId", error))?;
+    let account = AccountId::new(account)
+        .map_err(|error| AppError::single("reading the discovery AccountId", error))?;
+    Ok(Some((provider, account)))
+}
+
+fn safe_discovery_error(error: AppError, discovered: bool) -> AppError {
+    if discovered {
+        AppError::message(super::presentation::escape_remote_text(&error.to_string()))
+    } else {
+        error
+    }
+}
+
+fn safe_discovery_source(
+    context: &'static str,
+    error: impl std::error::Error,
+    discovered: bool,
+) -> AppError {
+    if discovered {
+        AppError::message(format!(
+            "{context}: {}",
+            super::presentation::escape_remote_text(&error.to_string())
+        ))
+    } else {
+        AppError::single(context, error)
+    }
+}
+
 fn same_account(entry: &ModelCatalogEntry, selection: &ModelSelection) -> bool {
     let binding = entry.binding();
     binding.provider_id() == selection.provider() && binding.account_id() == selection.account()
@@ -323,6 +471,9 @@ fn same_account(entry: &ModelCatalogEntry, selection: &ModelSelection) -> bool {
 fn selection_for(entry: &ModelCatalogEntry) -> ModelSelection {
     selection_for_binding(entry.binding())
 }
+
+#[cfg(test)]
+mod discovery_tests;
 
 #[cfg(test)]
 mod tests {

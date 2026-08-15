@@ -113,7 +113,7 @@ def serve(connection, index):
     elif mode == "redirect":
         send_response(connection, 200, body, media_type)
     elif mode == "delayed-redirect-chain":
-        time.sleep(0.08)
+        time.sleep(int(status) / 1000)
         if index < 2:
             try:
                 connection.sendall(
@@ -129,6 +129,21 @@ def serve(connection, index):
             except (ConnectionError, OSError):
                 mark(closed)
                 return
+    elif mode == "redirect-loop":
+        connection.sendall(
+            f"HTTP/1.1 307 Temporary Redirect\r\nLocation: /v1/redirect-{index + 1}\r\n"
+            "Content-Length: 0\r\nConnection: close\r\n\r\n".encode("ascii")
+        )
+    elif mode == "declared-oversize":
+        connection.sendall(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+            b"Content-Length: 8388609\r\nConnection: keep-alive\r\n\r\n"
+        )
+        mark(sent)
+        wait_for_close(connection)
+        return
+    elif mode == "unframed-success":
+        send_response(connection, 200, body, media_type, close=False)
     elif mode == "headers-stall":
         connection.sendall(
             f"HTTP/1.1 200 OK\r\nContent-Type: {media_type}\r\n"

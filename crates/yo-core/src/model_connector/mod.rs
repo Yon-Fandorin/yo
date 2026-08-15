@@ -37,4 +37,4 @@ pub type ModelConnectorTerminal = ResponseTerminal;
 pub type ModelConnectorUsage = ResponsesUsage;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

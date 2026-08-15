@@ -8,6 +8,7 @@ mod connection_repository;
 mod credential;
 mod identity;
 mod local_credentials;
+mod openrouter_discovery;
 mod profile;
 mod profile_yaml;
 mod selection;
@@ -40,6 +41,10 @@ pub use local_credentials::{
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
     CredentialSnapshot, LocalCredentialRepository, LocalCredentialStore, LocalCredentialStoreError,
     PreparedCredentialMutation,
+};
+pub use openrouter_discovery::{
+    OpenRouterAuthoredModel, OpenRouterDiscoveredModel, OpenRouterDiscoveryError,
+    OpenRouterDiscoveryFailureKind, OpenRouterDiscoverySeed, discover_openrouter_models,
 };
 pub use profile::{
     EffectiveModelProfile, ModelProfileLayer, ModelProfileParameters, VersionedProfileId,

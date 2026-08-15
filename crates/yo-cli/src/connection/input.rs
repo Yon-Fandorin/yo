@@ -7,6 +7,7 @@ use nix::sys::termios::{self, LocalFlags, SetArg, Termios};
 use yo_core::ApiCredential;
 
 mod file;
+mod picker;
 
 pub(super) use file::AuthorizedCredentialFileInput;
 
@@ -18,6 +19,15 @@ const MAX_INPUT_BYTES: usize = 16 * 1024;
 pub(super) trait ExternalConnectInput {
     fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError>;
     fn read_credential(&mut self, account: &str) -> Result<ApiCredential, AppError>;
+    fn select_openrouter_model(
+        &mut self,
+        models: &[yo_core::OpenRouterDiscoveredModel],
+    ) -> Result<Option<usize>, AppError> {
+        let _ = models;
+        Err(AppError::message(
+            "OpenRouter model discovery requires an interactive controlling terminal",
+        ))
+    }
 }
 
 pub(super) trait ExternalDisconnectInput {
@@ -117,6 +127,14 @@ impl ExternalConnectInput for TtyConnectionInput {
             .map_err(|error| AppError::single("finishing the API-key prompt", error))?;
         restore_result?;
         ApiCredential::new(value?).map_err(|error| AppError::single("reading the API key", error))
+    }
+
+    fn select_openrouter_model(
+        &mut self,
+        models: &[yo_core::OpenRouterDiscoveredModel],
+    ) -> Result<Option<usize>, AppError> {
+        let style = self.style;
+        picker::select_model(self.terminal()?, models, style)
     }
 }
 
