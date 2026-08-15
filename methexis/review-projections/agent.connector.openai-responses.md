@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.connector.openai-responses
-revision: sha256:bf85533d725ea64ec6e69806d97b4d2af4805a0b5a9bb15b120e95bf1c77c06a
+revision: sha256:642a69729a7d8424dff7ab115bde8348bcb5a554cf9af6e4947d5c4b30acf80d
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:368debcd6bd58307a7e6f74b25f4e7b207a1b74848abefda5ed822afaad538b4
+request_hash: sha256:2a2d19e9eaa9c2f23ecea3df0f1b423dd231970ec1c7af2ef93295751fdbaf93
 ---
 # Korean Review Projection
 
@@ -18,7 +18,7 @@ request_hash: sha256:368debcd6bd58307a7e6f74b25f4e7b207a1b74848abefda5ed822afaad
 
 Connector는 URL user information, query, fragment를 거절해야 합니다. Redirect는 횟수를 제한하고 완전히 같은 origin의 정규화된 HTTPS target만 허용해야 합니다. Cross-origin redirect는 credential, model context, tool schema, argument, result를 전달하지 않고 실패해야 합니다. Connector는 정규화된 base URL에 `responses` path segment 하나만 추가해야 합니다. 추가 `v1`, vendor path 추론, 다른 endpoint probe, Chat Completions fallback은 금지합니다. 구체적인 Provider endpoint, Model ID, tokenizer profile은 connector identity가 아니라 catalog 설정과 conformance evidence에 속합니다.
 
-해석된 API key는 HTTP client 밖에서 관찰되지 않도록 bearer authorization으로 보내야 합니다. Request는 wire Model, input item, 선언된 function tool, tool choice, streaming mode, output-token cap, 선택된 binding이 지원하는 model option만 포함해야 합니다. Provider session cache, `previous_response_id`, provider Conversation을 Yo continuation authority로 사용하면 안 됩니다.
+해석된 API key는 HTTP client 밖에서 관찰되지 않도록 bearer authorization으로 보내야 합니다. 모든 request는 wire Model, input item, streaming mode, output-token cap, 선택한 binding이 지원하는 model option, 허용된 request-local tool exposure를 식별해야 합니다. Enabled exposure는 effective `local-tools/v1`에서만 유효하며 frozen registry의 선언된 function tool과 정확한 tool-choice field를 포함해야 합니다. Disabled exposure는 tool definition과 tool-selection field를 모두 생략해야 합니다. Effective `no-tools/v1`과 모든 connection-verification request는 disabled exposure를 요구하며, `local-tools/v1` binding의 verification request도 durable policy는 바꾸지 않습니다. 과거 function-call 및 function-call-output input item은 정확한 semantic replay로 남고 current tool registry를 노출하지 않습니다. 다른 tool policy 또는 policy와 exposure 조합은 transport 전에 실패해야 합니다. Provider session cache, `previous_response_id`, provider Conversation을 Yo continuation authority로 사용하면 안 됩니다.
 
 SSE decoder는 text byte와 function-call `call_id`, name, JSON argument byte를 정확히 보존하면서 output item과 delta를 연결해야 합니다. Response completion, incomplete 또는 failed termination, usage, reasoning-token count가 있으면 보고해야 합니다. 알 수 없는 JSON field는 무시할 수 있습니다. 유효한 `response.completed`, `response.incomplete`, `response.failed` event만 semantic terminal입니다. `data` field가 없는 SSE event는 terminal 전후의 transport framing으로 무시할 수 있습니다. 유효한 semantic terminal 뒤에는 declared event name이 없는 정확한 `data: [DONE]` payload 하나를 제외한 모든 `data` field 포함 SSE event가 실패해야 합니다. 이 sentinel은 마지막 data payload여야 하고 terminal을 대신하거나 반복할 수 없으며, 그 뒤에는 data 없는 framing과 stream 종료만 허용합니다. `[DONE]`이 terminal 전에 나오거나 event name을 선언하면 실패해야 합니다. 알 수 없는 output item, 잘못된 correlation, 중복 terminal, 종료 뒤 그 밖의 모든 data, invalid UTF-8, terminal 없는 stream 종료는 completed Turn이 아니라 typed protocol failure가 되어야 합니다.
 

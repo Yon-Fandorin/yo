@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.connector.openai-chat-completions
-revision: sha256:514a5c17cdb681248efe7a97ea36b599cc8a6d2c99f08cdc41c3729a9989d2e5
+revision: sha256:a10aa42dd164693bdaa263700cc859242ec92fc4e9c6518c907831aa14556adb
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:ac83aeff142f9337f96cb0e28fee6827369e5112d6367f5450c826a6b42270b5
+request_hash: sha256:533d76747d5275c986a8fed3eaedad9d9cfb3c221736a29db1253f59ad9d52fc
 ---
 # Korean Review Projection
 
@@ -18,7 +18,7 @@ request_hash: sha256:ac83aeff142f9337f96cb0e28fee6827369e5112d6367f5450c826a6b42
 
 Connector는 URL user information, query, fragment를 거절해야 합니다. Redirect는 횟수를 제한하고 완전히 같은 origin의 정규화된 HTTPS target만 허용해야 합니다. Cross-origin redirect는 credential, model context, tool schema, argument, result를 전달하지 않고 실패해야 합니다. Connector는 정규화된 base URL에 `chat`과 `completions` 두 path segment를 추가해야 합니다. 추가 `v1`, vendor path 추론, 다른 endpoint probe, Responses fallback은 금지합니다. 구체적인 Provider endpoint, Model ID, tokenizer profile, 모델 기본값, 선택적 Provider parameter는 connector identity가 아니라 catalog 설정과 conformance evidence에 속합니다.
 
-Connector는 해석된 API key를 HTTP client 밖에서 관찰 가능하게 만들지 않고 bearer authorization으로 전송해야 합니다. Request는 wire Model, 순서가 있는 `messages` replay, 선언된 function `tools`, automatic tool choice, streaming mode, `stream_options.include_usage`, `max_tokens`로 표현된 설정 output-token cap을 식별해야 합니다. 첫 profile은 선언되지 않은 Provider-specific option을 주입하면 안 됩니다. Replay는 system 및 visible text message를 정확한 role과 byte로 encode해야 합니다. 이전 assistant round는 visible `content`, visible `refusal`, correlated `tool_calls`를 서로 독립된 field로 정확히 보존하는 assistant message 하나로 encode해야 하며 content나 refusal이 tool call과 함께 온 경우도 포함합니다. 허용된 각 tool result는 정확한 `tool_call_id`를 가진 뒤따르는 `tool` message가 되어야 합니다. Provider conversation state나 hidden reasoning content를 continuation authority로 전송하면 안 됩니다.
+Connector는 해석된 API key를 HTTP client 밖에서 관찰 가능하게 만들지 않고 bearer authorization으로 전송해야 합니다. 모든 request는 wire Model, 순서가 있는 `messages` replay, streaming mode, `stream_options.include_usage`, `max_tokens`로 표현된 설정 output-token cap, 허용된 request-local tool exposure를 식별해야 합니다. Enabled exposure는 effective `local-tools/v1`에서만 유효하며 frozen registry의 선언된 function `tools`와 automatic tool choice를 포함해야 합니다. Disabled exposure는 tool definition과 tool-selection field를 모두 생략해야 합니다. Effective `no-tools/v1`과 모든 connection-verification request는 disabled exposure를 요구하며, `local-tools/v1` binding의 verification request도 durable policy는 바꾸지 않습니다. 과거 assistant `tool_calls`와 `tool` result message는 정확한 semantic replay로 남고 current tool registry를 노출하지 않습니다. 다른 tool policy 또는 policy와 exposure 조합은 transport 전에 실패해야 합니다. 첫 profile은 선언되지 않은 Provider-specific option을 주입하면 안 됩니다. Replay는 system 및 visible text message를 정확한 role과 byte로 encode해야 합니다. 이전 assistant round는 visible `content`, visible `refusal`, correlated `tool_calls`를 서로 독립된 field로 정확히 보존하는 assistant message 하나로 encode해야 하며 content나 refusal이 tool call과 함께 온 경우도 포함합니다. 허용된 각 tool result는 정확한 `tool_call_id`를 가진 뒤따르는 `tool` message가 되어야 합니다. Provider conversation state나 hidden reasoning content를 continuation authority로 전송하면 안 됩니다.
 
 SSE decoder는 index가 0인 correlated choice 하나만 허용해야 합니다. 정확한 `delta.content` byte를 보존하고, 정확한 `delta.refusal` byte를 visible refusal observation으로 노출해야 하며, `delta.reasoning_content`는 exact replay에 추가하지 않으면서 reasoning observation으로 노출할 수 있습니다. Indexed `delta.tool_calls` fragment를 연계하면서 각 call ID, function name, 정확히 누적된 JSON argument byte를 보존해야 합니다. Content, refusal, tool-call delta는 서로 독립된 선택적 field이며 하나의 assistant round에 함께 올 수 있습니다. `stop`으로 완료된 refusal은 transport 또는 protocol failure가 아니라 완료된 visible assistant response로 표시하고 commit해야 하며 그 정확한 visible byte를 replay에 유지해야 합니다. Tool-call index는 처음 등장할 때 오름차순의 연속된 값이어야 하고 이미 허용된 index의 이후 fragment는 서로 interleave할 수 있습니다. 최초 role-only delta는 무시할 수 있습니다. 여러 choice, 변경된 response ID, 중복되거나 빠진 tool-call ID, 일관되지 않은 function name, 처음 등장한 비연속 index 또는 아직 도입되지 않은 index의 fragment, malformed delta는 typed protocol failure가 되어야 합니다.
 
