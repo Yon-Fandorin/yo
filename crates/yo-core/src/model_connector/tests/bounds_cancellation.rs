@@ -106,7 +106,7 @@ fn rejects_a_cancelled_request_before_starting_network_work() {
             content: "hello".to_owned(),
             refusal: None,
         }],
-        Vec::new(),
+        crate::RequestToolExposure::disabled(),
         8_192,
         None,
     )

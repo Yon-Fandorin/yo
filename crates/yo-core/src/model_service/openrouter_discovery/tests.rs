@@ -10,6 +10,10 @@ use crate::{
 };
 
 fn base_profile() -> EffectiveModelProfile {
+    profile_with_tool_policy("local-tools/v1")
+}
+
+fn profile_with_tool_policy(policy: &str) -> EffectiveModelProfile {
     EffectiveModelProfile::resolve(
         None,
         &ModelProfileLayer::new(
@@ -19,7 +23,7 @@ fn base_profile() -> EffectiveModelProfile {
             Some(8_192),
             Some(serde_json::from_value(Value::Null).unwrap()),
             Some(serde_json::from_value(Value::Null).unwrap()),
-            Some(VersionedProfileId::new("tools-required/v1").unwrap()),
+            Some(VersionedProfileId::new(policy).unwrap()),
             Some(VersionedProfileId::new("semantic-terminal/v1").unwrap()),
         ),
     )
@@ -47,7 +51,7 @@ fn row(id: &str) -> Value {
             "input_modalities": ["text"],
             "output_modalities": ["text"]
         },
-        "supported_parameters": ["tools", "reasoning"],
+        "supported_parameters": ["tools", "tool_choice", "reasoning"],
         "context_length": 120000,
         "top_provider": {"max_completion_tokens": 12000}
     })
@@ -67,9 +71,10 @@ fn normalizes_selectable_rows_into_complete_bindings() {
     let [model] = models.as_slice() else {
         panic!("one model expected")
     };
-    assert!(model.reasoning());
+    assert_eq!(model.reasoning(), Some(true));
+    assert_eq!(model.availability(), OpenRouterModelAvailability::Enabled);
     assert_eq!(model.display_name(), "vendor/alpha");
-    let complete = model.entry().complete_binding().unwrap();
+    let complete = model.entry().unwrap().complete_binding().unwrap();
     assert_eq!(complete.profile().context().input_token_limit(), 120_000);
     assert_eq!(complete.profile().context().max_output_tokens(), 12_000);
     assert_eq!(
@@ -78,12 +83,159 @@ fn normalizes_selectable_rows_into_complete_bindings() {
     );
 }
 
+// valid text row는 tools와 tool_choice가 모두 있을 때만 local-tools를 유지하고, 둘 중
+// 하나라도 없으면 숨기지 않은 채 no-tools로 좁힙니다. Capability set은 중복·순서와
+// 무관한 typed evidence로 남습니다.
+#[test]
+fn intersects_configured_tool_policy_without_hiding_text_models() {
+    let mut without_choice = row("vendor/no-choice");
+    without_choice["supported_parameters"] =
+        json!(["reasoning", "tools", "tools", "unknown-option"]);
+    let models = normalize_catalog(
+        &seed(),
+        json!({"data": [without_choice]}).to_string().as_bytes(),
+    )
+    .unwrap();
+    let [model] = models.as_slice() else {
+        panic!("one inventory item expected")
+    };
+
+    assert!(model.is_enabled());
+    assert_eq!(
+        model
+            .effective_tool_policy()
+            .map(VersionedProfileId::as_str),
+        Some("no-tools/v1")
+    );
+    assert_eq!(
+        model
+            .entry()
+            .unwrap()
+            .explicit_profile()
+            .unwrap()
+            .tool_capability_policy()
+            .as_str(),
+        "no-tools/v1"
+    );
+    let capabilities = model.capabilities().unwrap();
+    assert_eq!(capabilities.input_modalities().len(), 1);
+    assert_eq!(capabilities.output_modalities().len(), 1);
+    assert_eq!(capabilities.supported_parameters().len(), 3);
+    assert!(
+        capabilities
+            .supported_parameters()
+            .contains("unknown-option")
+    );
+}
+
+// configured no-tools는 remote가 tool support를 광고해도 넓어지지 않고 exact
+// no-tools profile로 남습니다.
+#[test]
+fn remote_capabilities_never_broaden_configured_no_tools_policy() {
+    let seed = OpenRouterDiscoverySeed::new(
+        ProviderId::new("openrouter").unwrap(),
+        AccountId::new("team").unwrap(),
+        None,
+        None,
+        NormalizedEndpoint::parse("https://openrouter.ai/api/v1").unwrap(),
+        profile_with_tool_policy("no-tools/v1"),
+        Vec::new(),
+    )
+    .unwrap();
+    let models = normalize_catalog(
+        &seed,
+        json!({"data": [row("vendor/no-tools")]})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        models[0]
+            .effective_tool_policy()
+            .map(VersionedProfileId::as_str),
+        Some("no-tools/v1")
+    );
+    assert!(models[0].is_enabled());
+}
+
+// valid ModelId 이후의 모든 capability/profile 실패는 inventory membership을 지우지
+// 않고 계약의 우선순위대로 하나의 concise disabled reason을 선택합니다.
+#[test]
+fn retains_disabled_inventory_with_deterministic_primary_reasons() {
+    let mut missing_capabilities = row("vendor/a-capabilities");
+    missing_capabilities
+        .as_object_mut()
+        .unwrap()
+        .remove("architecture");
+    missing_capabilities["context_length"] = json!(0);
+    let mut input = row("vendor/b-input");
+    input["architecture"]["input_modalities"] = json!(["image"]);
+    let mut output = row("vendor/c-output");
+    output["architecture"]["output_modalities"] = json!(["image"]);
+    let mut profile = row("vendor/d-profile");
+    profile["top_provider"]["max_completion_tokens"] = json!(0);
+    let models = normalize_catalog(
+        &seed(),
+        json!({"data": [missing_capabilities, input, output, profile]})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+
+    assert_eq!(models.len(), 4);
+    assert_eq!(
+        models
+            .iter()
+            .map(OpenRouterDiscoveredModel::availability)
+            .collect::<Vec<_>>(),
+        vec![
+            OpenRouterModelAvailability::Disabled(
+                OpenRouterDisabledReason::CapabilitiesUnavailable
+            ),
+            OpenRouterModelAvailability::Disabled(OpenRouterDisabledReason::TextInputUnsupported),
+            OpenRouterModelAvailability::Disabled(OpenRouterDisabledReason::TextOutputUnsupported),
+            OpenRouterModelAvailability::Disabled(OpenRouterDisabledReason::ProfileUnavailable),
+        ]
+    );
+    assert!(models.iter().all(|model| model.entry().is_none()));
+}
+
+// 닫힌 두 policy 밖의 configured profile은 valid text capability와 profile을 가져도
+// 선택 불가로 남아 runtime이 알 수 없는 policy를 조용히 실행하지 않습니다.
+#[test]
+fn disables_an_unknown_configured_tool_policy() {
+    let seed = OpenRouterDiscoverySeed::new(
+        ProviderId::new("openrouter").unwrap(),
+        AccountId::new("team").unwrap(),
+        None,
+        None,
+        NormalizedEndpoint::parse("https://openrouter.ai/api/v1").unwrap(),
+        profile_with_tool_policy("future-tools/v1"),
+        Vec::new(),
+    )
+    .unwrap();
+    let models = normalize_catalog(
+        &seed,
+        json!({"data": [row("vendor/future-tools")]})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        models[0].availability(),
+        OpenRouterModelAvailability::Disabled(OpenRouterDisabledReason::ToolPolicyUnsupported)
+    );
+    assert!(models[0].entry().is_none());
+}
+
 // 첫 valid ModelId 행이 기능 미달이어도 duplicate winner로 남아 나중의 selectable
 // duplicate가 권한 목록을 다시 해석해 들어오지 못하는지 관찰합니다.
 #[test]
 fn first_valid_duplicate_wins_even_when_unselectable() {
     let mut first = row("vendor/duplicate");
-    first["supported_parameters"] = json!(["reasoning"]);
+    first["architecture"]["input_modalities"] = json!(["image"]);
     let models = normalize_catalog(
         &seed(),
         json!({"data": [first, row("vendor/duplicate")]})
@@ -91,13 +243,20 @@ fn first_valid_duplicate_wins_even_when_unselectable() {
             .as_bytes(),
     )
     .unwrap();
-    assert!(models.is_empty());
+    let [model] = models.as_slice() else {
+        panic!("the first exact ModelId must remain the duplicate winner")
+    };
+    assert_eq!(
+        model.availability(),
+        OpenRouterModelAvailability::Disabled(OpenRouterDisabledReason::TextInputUnsupported)
+    );
+    assert!(model.entry().is_none());
 }
 
-// 4097번째 행을 일부 잘라 쓰지 않고 응답 전체를 거절하고, malformed optional
-// 숫자나 capability shape는 해당 행만 누락하는 두 limit 경계를 구분합니다.
+// 4097번째 행을 일부 잘라 쓰지 않고 응답 전체를 거절하고, valid ModelId 뒤 malformed
+// 숫자나 capability shape는 inventory에 disabled로 남기는 두 경계를 구분합니다.
 #[test]
-fn rejects_row_overflow_and_omits_malformed_rows() {
+fn rejects_row_overflow_and_disables_malformed_rows() {
     let exact_rows = vec![Value::Null; MAX_ROWS];
     assert!(
         normalize_catalog(&seed(), json!({"data": exact_rows}).to_string().as_bytes())
@@ -113,15 +272,21 @@ fn rejects_row_overflow_and_omits_malformed_rows() {
     bad_number["context_length"] = json!(0);
     let mut bad_shape = row("vendor/bad-shape");
     bad_shape["architecture"]["input_modalities"] = json!(["text", 1]);
-    assert!(
-        normalize_catalog(
-            &seed(),
-            json!({"data": [bad_number, bad_shape]})
-                .to_string()
-                .as_bytes(),
-        )
-        .unwrap()
-        .is_empty()
+    let models = normalize_catalog(
+        &seed(),
+        json!({"data": [bad_number, bad_shape]})
+            .to_string()
+            .as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(models.len(), 2);
+    assert_eq!(
+        models[0].availability(),
+        OpenRouterModelAvailability::Disabled(OpenRouterDisabledReason::ProfileUnavailable)
+    );
+    assert_eq!(
+        models[1].availability(),
+        OpenRouterModelAvailability::Disabled(OpenRouterDisabledReason::CapabilitiesUnavailable)
     );
 }
 
@@ -175,21 +340,33 @@ fn preserves_authored_overrides_and_base_values_for_absent_remote_limits() {
     .unwrap();
     let authored = models
         .iter()
-        .find(|model| model.entry().binding().model_id().as_str() == "vendor/authored")
+        .find(|model| model.model_id().as_str() == "vendor/authored")
         .unwrap();
     assert_eq!(authored.display_name(), "Remote label");
-    assert_eq!(authored.entry().context().input_token_limit(), 80_000);
-    assert_eq!(authored.entry().context().max_output_tokens(), 4_000);
     assert_eq!(
-        authored.entry().model_display_name(),
+        authored.entry().unwrap().context().input_token_limit(),
+        80_000
+    );
+    assert_eq!(
+        authored.entry().unwrap().context().max_output_tokens(),
+        4_000
+    );
+    assert_eq!(
+        authored.entry().unwrap().model_display_name(),
         Some("Configured label")
     );
     let inherited = models
         .iter()
-        .find(|model| model.entry().binding().model_id().as_str() == "vendor/inherited")
+        .find(|model| model.model_id().as_str() == "vendor/inherited")
         .unwrap();
-    assert_eq!(inherited.entry().context().input_token_limit(), 100_000);
-    assert_eq!(inherited.entry().context().max_output_tokens(), 8_192);
+    assert_eq!(
+        inherited.entry().unwrap().context().input_token_limit(),
+        100_000
+    );
+    assert_eq!(
+        inherited.entry().unwrap().context().max_output_tokens(),
+        8_192
+    );
 }
 
 // configured model 자체가 limit 필드를 쓰지 않았으면 base에서 완성된 값이 있더라도
@@ -244,9 +421,10 @@ fn applies_remote_limits_per_field_without_losing_authored_provenance() {
     let limits = |model: &str| {
         let context = models
             .iter()
-            .find(|candidate| candidate.entry().binding().model_id().as_str() == model)
+            .find(|candidate| candidate.model_id().as_str() == model)
             .unwrap()
             .entry()
+            .unwrap()
             .context();
         (context.input_token_limit(), context.max_output_tokens())
     };

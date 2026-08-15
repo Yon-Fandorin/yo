@@ -19,7 +19,7 @@ pub(super) fn select_model(
 ) -> Result<Option<usize>, AppError> {
     if models.is_empty() {
         return Err(AppError::message(
-            "OpenRouter discovery returned no selectable text-and-tools model",
+            "OpenRouter discovery returned no valid ModelId",
         ));
     }
     let identity = PickerIdentity::from_models(models)?;
@@ -34,7 +34,7 @@ pub(super) fn select_model(
             PickerKey::Backspace => state.pop_query(&choices),
             PickerKey::Text(value) => state.push_query(&value, &choices),
             PickerKey::Enter => {
-                if let Some(selected) = state.selected_model_index() {
+                if let Some(selected) = state.accept_selected(&choices) {
                     scope.finish()?;
                     return Ok(Some(selected));
                 }
@@ -56,19 +56,18 @@ struct PickerIdentity {
 
 impl PickerIdentity {
     fn from_models(models: &[OpenRouterDiscoveredModel]) -> Result<Self, AppError> {
-        let first = models[0].entry().binding();
-        if models.iter().any(|model| {
-            let binding = model.entry().binding();
-            binding.provider_id() != first.provider_id()
-                || binding.account_id() != first.account_id()
-        }) {
+        let first = &models[0];
+        if models
+            .iter()
+            .any(|model| model.provider() != first.provider() || model.account() != first.account())
+        {
             return Err(AppError::message(
                 "OpenRouter picker models must belong to one Provider and Account",
             ));
         }
         Ok(Self {
-            provider: first.provider_id().as_str().to_owned(),
-            account: first.account_id().as_str().to_owned(),
+            provider: first.provider().as_str().to_owned(),
+            account: first.account().as_str().to_owned(),
         })
     }
 }
@@ -77,23 +76,33 @@ impl PickerIdentity {
 struct PickerChoice {
     display_name: String,
     model_id: String,
-    input_limit: u64,
-    output_limit: u64,
-    reasoning: bool,
+    input_limit: Option<u64>,
+    output_limit: Option<u64>,
+    tool_policy: Option<String>,
+    reasoning: Option<bool>,
+    enabled: bool,
+    disabled_reason: Option<String>,
 }
 
 impl From<&OpenRouterDiscoveredModel> for PickerChoice {
     fn from(model: &OpenRouterDiscoveredModel) -> Self {
-        let complete = model
-            .entry()
-            .complete_binding()
-            .expect("discovered models always carry complete profiles");
+        let disabled_reason = match model.availability() {
+            yo_core::OpenRouterModelAvailability::Enabled => None,
+            yo_core::OpenRouterModelAvailability::Disabled(reason) => {
+                Some(reason.as_str().to_owned())
+            },
+        };
         Self {
             display_name: model.display_name().to_owned(),
-            model_id: complete.binding().model_id().as_str().to_owned(),
-            input_limit: complete.profile().context().input_token_limit(),
-            output_limit: complete.profile().context().max_output_tokens(),
+            model_id: model.model_id().as_str().to_owned(),
+            input_limit: model.input_limit(),
+            output_limit: model.output_limit(),
+            tool_policy: model
+                .effective_tool_policy()
+                .map(|policy| policy.as_str().to_owned()),
             reasoning: model.reasoning(),
+            enabled: model.is_enabled(),
+            disabled_reason,
         }
     }
 }
@@ -104,6 +113,7 @@ struct PickerState {
     matches: Vec<usize>,
     selected: Option<usize>,
     viewport_start: usize,
+    disabled_notice: Option<String>,
 }
 
 impl PickerState {
@@ -113,6 +123,7 @@ impl PickerState {
             matches: Vec::new(),
             selected: None,
             viewport_start: 0,
+            disabled_notice: None,
         };
         state.recompute(choices);
         state
@@ -132,6 +143,7 @@ impl PickerState {
             .collect();
         self.selected = (!self.matches.is_empty()).then_some(0);
         self.viewport_start = 0;
+        self.disabled_notice = None;
     }
 
     fn push_query(&mut self, value: &str, choices: &[PickerChoice]) {
@@ -153,6 +165,7 @@ impl PickerState {
         };
         let selected = selected.saturating_sub(1);
         self.selected = Some(selected);
+        self.disabled_notice = None;
         if selected < self.viewport_start {
             self.viewport_start = selected;
         }
@@ -164,6 +177,7 @@ impl PickerState {
         };
         let selected = (selected + 1).min(self.matches.len() - 1);
         self.selected = Some(selected);
+        self.disabled_notice = None;
         if selected >= self.viewport_start + MAX_VISIBLE_RESULTS {
             self.viewport_start = selected + 1 - MAX_VISIBLE_RESULTS;
         }
@@ -171,6 +185,16 @@ impl PickerState {
 
     fn selected_model_index(&self) -> Option<usize> {
         self.selected.map(|selected| self.matches[selected])
+    }
+
+    fn accept_selected(&mut self, choices: &[PickerChoice]) -> Option<usize> {
+        let index = self.selected_model_index()?;
+        if choices[index].enabled {
+            Some(index)
+        } else {
+            self.disabled_notice = choices[index].disabled_reason.clone();
+            None
+        }
     }
 }
 
@@ -211,16 +235,23 @@ fn render_lines(
             } else {
                 " "
             };
-            let badge = if choice.reasoning {
-                " · reasoning"
-            } else {
-                ""
+            let tools = match choice.tool_policy.as_deref() {
+                Some("local-tools/v1") => "tools",
+                Some("no-tools/v1") => "no tools",
+                Some(_) => "tools unsupported",
+                None => "tools ?",
             };
+            let reasoning = match choice.reasoning {
+                Some(true) => "reasoning",
+                Some(false) => "no reasoning",
+                None => "reasoning ?",
+            };
+            let availability = if choice.enabled { "ready" } else { "disabled" };
             let row = format!(
-                "{marker} {}  {} ctx · {} out · tools{badge}",
+                "{marker} {}  {} ctx · {} out · {tools} · {reasoning} · {availability}",
                 escape_remote_text(&choice.display_name),
-                readable_limit(choice.input_limit),
-                readable_limit(choice.output_limit),
+                readable_optional_limit(choice.input_limit),
+                readable_optional_limit(choice.output_limit),
             );
             lines.push(if state.selected == Some(match_index) {
                 styled(&clip_line(&row, width), "\x1b[30;46m", style)
@@ -233,6 +264,17 @@ fn render_lines(
     if let Some(index) = state.selected_model_index() {
         let id = format!("Model  {}", escape_remote_text(&choices[index].model_id));
         lines.extend(wrap_ascii(&id, width));
+        let availability = state.disabled_notice.as_deref().map_or_else(
+            || {
+                if choices[index].enabled {
+                    "Availability  ready".to_owned()
+                } else {
+                    "Availability  disabled · Enter for reason".to_owned()
+                }
+            },
+            |reason| format!("Unavailable  {reason}"),
+        );
+        lines.extend(wrap_ascii(&availability, width));
     }
     lines.push(styled(
         "↑↓ navigate · type to filter · Enter select · Esc cancel",
@@ -251,6 +293,10 @@ fn readable_limit(value: u64) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn readable_optional_limit(value: Option<u64>) -> String {
+    value.map_or_else(|| "?".to_owned(), readable_limit)
 }
 
 fn styled(value: &str, ansi: &str, style: PresentationStyle) -> String {

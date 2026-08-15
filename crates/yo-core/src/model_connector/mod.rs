@@ -18,7 +18,8 @@ pub use connector::{
     ResponsesStream,
 };
 pub use request::{
-    FunctionTool, ReasoningEffort, ResponsesInputItem, ResponsesInputRole, ResponsesRequest,
+    FunctionTool, ReasoningEffort, RequestToolExposure, ResponsesInputItem, ResponsesInputRole,
+    ResponsesRequest,
 };
 pub use types::{
     ConnectorError, ConnectorFailureKind, ReasoningChannel, ResponseTerminal,

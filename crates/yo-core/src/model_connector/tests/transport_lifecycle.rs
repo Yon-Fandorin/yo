@@ -40,7 +40,7 @@ fn request() -> ResponsesRequest {
             content: "hello".to_owned(),
             refusal: None,
         }],
-        Vec::new(),
+        crate::RequestToolExposure::disabled(),
         128,
         None,
     )
@@ -184,9 +184,7 @@ fn posts_exact_wire_request_and_emits_events() {
             "input": [{"content": "hello", "role": "user"}],
             "max_output_tokens": 128,
             "model": "test-model",
-            "stream": true,
-            "tool_choice": "auto",
-            "tools": []
+            "stream": true
         })
     );
 }

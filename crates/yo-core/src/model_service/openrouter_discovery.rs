@@ -1,4 +1,8 @@
-use std::{collections::HashMap, error::Error, fmt};
+use std::{
+    collections::{BTreeSet, HashMap},
+    error::Error,
+    fmt,
+};
 
 use super::{
     AccountId, ApiCredential, EffectiveModelProfile, ModelCatalogEntry, ModelId, ModelServiceError,
@@ -123,15 +127,39 @@ impl OpenRouterDiscoverySeed {
 
 #[derive(Clone, Debug)]
 pub struct OpenRouterDiscoveredModel {
-    entry: ModelCatalogEntry,
+    provider: ProviderId,
+    account: AccountId,
+    model_id: ModelId,
+    entry: Option<ModelCatalogEntry>,
     display_name: String,
-    reasoning: bool,
+    capabilities: Option<OpenRouterModelCapabilities>,
+    input_limit: Option<u64>,
+    output_limit: Option<u64>,
+    effective_tool_policy: Option<super::VersionedProfileId>,
+    reasoning: Option<bool>,
+    availability: OpenRouterModelAvailability,
 }
 
 impl OpenRouterDiscoveredModel {
     #[must_use]
-    pub const fn entry(&self) -> &ModelCatalogEntry {
-        &self.entry
+    pub const fn provider(&self) -> &ProviderId {
+        &self.provider
+    }
+
+    #[must_use]
+    pub const fn account(&self) -> &AccountId {
+        &self.account
+    }
+
+    #[must_use]
+    pub const fn model_id(&self) -> &ModelId {
+        &self.model_id
+    }
+
+    /// Returns a routable entry only for an enabled inventory item.
+    #[must_use]
+    pub const fn entry(&self) -> Option<&ModelCatalogEntry> {
+        self.entry.as_ref()
     }
 
     #[must_use]
@@ -140,8 +168,90 @@ impl OpenRouterDiscoveredModel {
     }
 
     #[must_use]
-    pub const fn reasoning(&self) -> bool {
+    pub const fn capabilities(&self) -> Option<&OpenRouterModelCapabilities> {
+        self.capabilities.as_ref()
+    }
+
+    #[must_use]
+    pub const fn input_limit(&self) -> Option<u64> {
+        self.input_limit
+    }
+
+    #[must_use]
+    pub const fn output_limit(&self) -> Option<u64> {
+        self.output_limit
+    }
+
+    #[must_use]
+    pub const fn effective_tool_policy(&self) -> Option<&super::VersionedProfileId> {
+        self.effective_tool_policy.as_ref()
+    }
+
+    #[must_use]
+    pub const fn reasoning(&self) -> Option<bool> {
         self.reasoning
+    }
+
+    #[must_use]
+    pub const fn availability(&self) -> OpenRouterModelAvailability {
+        self.availability
+    }
+
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        matches!(self.availability, OpenRouterModelAvailability::Enabled)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OpenRouterModelCapabilities {
+    input_modalities: BTreeSet<String>,
+    output_modalities: BTreeSet<String>,
+    supported_parameters: BTreeSet<String>,
+}
+
+impl OpenRouterModelCapabilities {
+    #[must_use]
+    pub const fn input_modalities(&self) -> &BTreeSet<String> {
+        &self.input_modalities
+    }
+
+    #[must_use]
+    pub const fn output_modalities(&self) -> &BTreeSet<String> {
+        &self.output_modalities
+    }
+
+    #[must_use]
+    pub const fn supported_parameters(&self) -> &BTreeSet<String> {
+        &self.supported_parameters
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenRouterModelAvailability {
+    Enabled,
+    Disabled(OpenRouterDisabledReason),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OpenRouterDisabledReason {
+    CapabilitiesUnavailable,
+    TextInputUnsupported,
+    TextOutputUnsupported,
+    ToolPolicyUnsupported,
+    ProfileUnavailable,
+}
+
+impl OpenRouterDisabledReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CapabilitiesUnavailable => "capabilities unavailable",
+            Self::TextInputUnsupported => "text input unsupported",
+            Self::TextOutputUnsupported => "text output unsupported",
+            Self::ToolPolicyUnsupported => "tool policy unsupported",
+            Self::ProfileUnavailable => "profile unavailable",
+        }
     }
 }
 

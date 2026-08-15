@@ -17,7 +17,8 @@ use crate::{
     ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll,
     ModelConnectorRequest, ModelConnectorStream, ModelConnectorTerminal,
     OpenAiChatCompletionsConnector, OpenAiResponsesConnector, PreparedConnectionMutation,
-    PreparedCredentialMutation, model_profile_admission::admit_explicit_model_profile,
+    PreparedCredentialMutation, RequestToolExposure,
+    model_profile_admission::admit_explicit_model_profile,
     model_service::LocalCredentialStoreError,
 };
 
@@ -321,20 +322,8 @@ fn verify_complete_binding(
     complete: &CompleteModelBinding,
     candidate: &ApiCredential,
 ) -> Result<(), ConnectorFailureKind> {
-    let reasoning = admit_explicit_model_profile(complete.profile())
-        .map_err(|_| ConnectorFailureKind::Configuration)?;
+    let request = verification_request(complete)?;
     let limits = verification_limits();
-    let request = ModelConnectorRequest::new(
-        vec![ModelConnectorInputItem::Message {
-            role: ModelConnectorInputRole::User,
-            content: "Reply briefly to confirm this model connection.".to_owned(),
-            refusal: None,
-        }],
-        Vec::new(),
-        complete.profile().context().max_output_tokens().min(32),
-        reasoning,
-    )
-    .map_err(|error| error.kind())?;
     let cancellation = ModelConnectorCancellation::new();
     let mut stream = match complete.binding().api_dialect() {
         ApiDialect::OpenAiResponses => {
@@ -352,6 +341,25 @@ fn verify_complete_binding(
         &mut stream,
         Instant::now() + CONNECTION_VERIFICATION_TIMEOUT,
     )
+}
+
+pub(super) fn verification_request(
+    complete: &CompleteModelBinding,
+) -> Result<ModelConnectorRequest, ConnectorFailureKind> {
+    let reasoning = admit_explicit_model_profile(complete.profile())
+        .map_err(|_| ConnectorFailureKind::Configuration)?
+        .reasoning_effort();
+    ModelConnectorRequest::new(
+        vec![ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::User,
+            content: "Reply briefly to confirm this model connection.".to_owned(),
+            refusal: None,
+        }],
+        RequestToolExposure::disabled(),
+        complete.profile().context().max_output_tokens().min(32),
+        reasoning,
+    )
+    .map_err(|error| error.kind())
 }
 
 pub(super) trait VerificationStreamPort {

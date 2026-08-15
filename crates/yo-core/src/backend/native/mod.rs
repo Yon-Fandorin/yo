@@ -30,10 +30,10 @@ use crate::{
     ModelConnectorRequest, ModelConnectorTerminal, ModelContextProfile, ModelReplay,
     ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelTokenCounter,
     OpenAiChatCompletionsConnector, OpenAiResponsesConnector, ReasoningChannel, ReasoningEffort,
-    ReplayExecutor, RequestId, SessionId, ToolApprovalBinding, ToolApprovalRequirement,
-    ToolExecution, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
-    ToolExecutionRequest, ToolSemanticAdmission, ToolValidationFailure, TurnOutcome, TurnRef,
-    ValidatedToolCall,
+    ReplayExecutor, RequestId, RequestToolExposure, SessionId, ToolApprovalBinding,
+    ToolApprovalRequirement, ToolExecution, ToolExecutionHost, ToolExecutionOutcome,
+    ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission, ToolValidationFailure,
+    TurnOutcome, TurnRef, ValidatedToolCall,
 };
 
 const BACKEND_KIND: &str = "yo-managed-model";
@@ -135,6 +135,7 @@ pub struct NativeModelBackend {
     binding: EffectiveModelBinding,
     binding_identity: BackendIdentity,
     registry: FrozenToolRegistry,
+    tool_exposure_enabled: bool,
     semantic_admission: Option<Box<dyn ToolSemanticAdmission>>,
     tool_host: Box<dyn ToolExecutionHost>,
     config: NativeModelBackendConfig,
@@ -215,11 +216,33 @@ impl NativeModelBackend {
         explicit_profile: Option<EffectiveModelProfile>,
         mut config: NativeModelBackendConfig,
     ) -> Result<Self, BackendFailure> {
-        if let Some(profile) = explicit_profile.as_ref() {
-            config.reasoning_effort =
-                crate::model_profile_admission::admit_explicit_model_profile(profile)
-                    .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
-        }
+        let tool_exposure_enabled = if let Some(profile) = explicit_profile.as_ref() {
+            let admitted = crate::model_profile_admission::admit_explicit_model_profile(profile)
+                .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
+            config.reasoning_effort = admitted.reasoning_effort();
+            match admitted.tool_policy() {
+                crate::model_profile_admission::AdmittedToolPolicy::LocalTools => {
+                    if registry.is_empty() {
+                        return Err(failure(
+                            BackendFailureKind::Initialization,
+                            "local-tools/v1 requires a non-empty frozen tool registry",
+                        ));
+                    }
+                    true
+                },
+                crate::model_profile_admission::AdmittedToolPolicy::NoTools => {
+                    if !registry.is_empty() {
+                        return Err(failure(
+                            BackendFailureKind::Initialization,
+                            "no-tools/v1 requires an empty frozen tool registry",
+                        ));
+                    }
+                    false
+                },
+            }
+        } else {
+            !registry.is_empty()
+        };
         if config.system_prompt.is_empty()
             || config.maximum_model_rounds == 0
             || config.maximum_tool_argument_bytes == 0
@@ -253,6 +276,7 @@ impl NativeModelBackend {
             binding,
             binding_identity,
             registry,
+            tool_exposure_enabled,
             semantic_admission: services.semantic_admission,
             tool_host: services.tool_host,
             config,
@@ -389,11 +413,17 @@ impl NativeModelBackend {
         });
         items.extend(self.replay.items().iter().map(replay_input));
         items.extend(state.delta.iter().map(replay_input));
+        let tool_exposure =
+            if self.tool_exposure_enabled {
+                RequestToolExposure::enabled(self.registry.function_tools().map_err(|error| {
+                    failure(BackendFailureKind::Initialization, error.to_string())
+                })?)
+            } else {
+                RequestToolExposure::disabled()
+            };
         let request = ModelConnectorRequest::new(
             items,
-            self.registry
-                .function_tools()
-                .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?,
+            tool_exposure,
             self.model_context.max_output_tokens(),
             self.config.reasoning_effort,
         )

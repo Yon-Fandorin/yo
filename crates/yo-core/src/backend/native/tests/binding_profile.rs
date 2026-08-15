@@ -2,19 +2,20 @@ use std::sync::{Arc, Mutex};
 
 use super::{
     super::{
-        NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+        AgentBackend, AgentCommand, BackendCommandEvidence, NativeModelBackend,
+        NativeModelBackendConfig, NativeModelBackendServices,
         semantically_equal_native_binding_identity,
     },
     support::{
         ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, context_profile,
-        event_rounds, registry,
+        event_rounds, registry, turn,
     },
 };
 use crate::{
     AgentRuntime, ApiDialect, BackendBindingEvidence, BackendIdentity, BackendResumeTarget,
     EffectiveModelProfile, JournalSequence, ModelProfileLayer, ModelProfileParameters, ModelReplay,
     ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReasoningEffort, ToolApprovalRequirement,
-    VersionedProfileId, fixture_descriptor, fixture_session,
+    ToolRegistry, UserInput, VersionedProfileId, fixture_descriptor, fixture_session,
     journal::SessionJournal,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
@@ -51,13 +52,25 @@ fn profile(
 fn backend_with_profile(
     profile: EffectiveModelProfile,
 ) -> Result<NativeModelBackend, crate::BackendFailure> {
+    backend_with_profile_and_registry(
+        profile,
+        registry(ToolApprovalRequirement::Automatic),
+        Arc::new(Mutex::new(Vec::new())),
+    )
+}
+
+fn backend_with_profile_and_registry(
+    profile: EffectiveModelProfile,
+    registry: crate::FrozenToolRegistry,
+    requests: Arc<Mutex<Vec<crate::ModelConnectorRequest>>>,
+) -> Result<NativeModelBackend, crate::BackendFailure> {
     NativeModelBackend::with_connector_and_profile(
         Box::new(MockConnector {
-            rounds: event_rounds(Vec::new()),
-            requests: Arc::new(Mutex::new(Vec::new())),
+            rounds: event_rounds(vec![Vec::new()]),
+            requests,
         }),
         binding(),
-        registry(ToolApprovalRequirement::Automatic),
+        registry,
         NativeModelBackendServices::new(
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
@@ -197,6 +210,45 @@ fn explicit_profile_rejects_unsupported_runtime_fields() {
     ] {
         assert!(backend_with_profile(unsupported).is_err());
     }
+}
+
+// no-tools profile은 empty runtime registry만 허용하고 실제 첫 model request에서도 현재
+// tools와 tool_choice를 생략합니다. 같은 profile에 non-empty registry를 주면 fail-closed
+// 하여 policy와 request-local exposure가 어긋나지 않습니다.
+#[test]
+fn no_tools_profile_requires_an_empty_registry_and_disables_request_exposure() {
+    let no_tools = profile("{}", "{}", "no-tools/v1", "semantic-terminal/v1");
+    assert!(backend_with_profile(no_tools.clone()).is_err());
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = backend_with_profile_and_registry(
+        no_tools,
+        ToolRegistry::default().freeze(),
+        Arc::clone(&requests),
+    )
+    .unwrap();
+    assert!(backend.registry.is_empty());
+    assert!(!backend.tool_exposure_enabled);
+    assert!(backend.contract.tools().is_empty());
+
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    assert!(matches!(
+        backend
+            .execute_command(AgentCommand::StartTurn {
+                turn: turn(),
+                input: UserInput::from("plain text request"),
+            })
+            .unwrap(),
+        BackendCommandEvidence::RequestAccepted(_)
+    ));
+    let requests = requests.lock().unwrap();
+    let body = requests[0].tokenization_payload("qwen3.8max");
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
 }
 
 // legacy catalog entry는 새 profile을 추정하지 않고 기존 yo.model-binding/v1 identity와

@@ -685,12 +685,17 @@ profile. After recovery and snapshot capture, Yo reads one no-echo candidate
 key and issues an authenticated `GET` to the endpoint prefix plus
 `/models/user`. The request has bounded same-origin redirects and separate
 connect, per-attempt response-header, body-inactivity, and absolute deadlines;
-success must be bounded JSON. Core normalization keeps only the first valid row
-for each exact Model ID, requires text input, text output, and tools, applies
-valid remote context limits over the base unless an authored model override
-already exists, and sorts the resulting complete bindings. The controlling-TTY
-picker searches name and ID, exposes at most eight scrolling rows while keeping
-every match reachable, and restores terminal mode, cursor, and dynamic panel on
+success must be bounded JSON. Core normalization keeps the first row with a
+valid exact Model ID even when its capabilities or profile make it unavailable.
+It treats capability arrays as duplicate-free, order-insensitive sets, requires
+text input and output, and narrows a configured local-tools policy to no-tools
+when either remote `tools` or `tool_choice` capability is absent. Valid remote
+context limits replace only fields without an authored model override. An exact
+priority selects one typed disabled reason, while enabled rows alone carry a
+selectable complete binding. The controlling-TTY picker searches name and ID,
+exposes at most eight scrolling rows while keeping every match—including
+disabled rows with their reason—reachable, blocks disabled selection, and
+restores terminal mode, cursor, and dynamic panel on
 selection, cancellation, input/render failure, or unwind. Remote strings cross
 a printable reversible byte-escape boundary before terminal output. Selection
 then enters the existing concise connection preview; `--verbose` expands only
@@ -747,7 +752,9 @@ exact non-secret value bytes rather than relying on the shell's incidental line
 wrapping; an unavailable width uses an 80-column fallback.
 
 The candidate key is used—without fallback to a stored key—to issue one bounded,
-no-tool semantic request for every captured binding profile. Each verification
+no-tool semantic request for every captured binding profile. Request-local tool
+exposure is omitted from both supported wire dialects, while historical tool
+calls and results remain replayable. Each verification
 requires a completed message and completed terminal status. A completed visible
 refusal is a valid semantic result; tool-call, incomplete, failed, closed-early,
 or timeout outcomes fail verification. Diagnostics

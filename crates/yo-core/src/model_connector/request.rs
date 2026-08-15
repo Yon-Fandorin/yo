@@ -98,6 +98,35 @@ impl FunctionTool {
     }
 }
 
+/// Request-local exposure of the current frozen tool registry.
+///
+/// Historical function-call input items are independent replay data and remain
+/// valid when current exposure is disabled.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RequestToolExposure {
+    Enabled(Vec<FunctionTool>),
+    Disabled,
+}
+
+impl RequestToolExposure {
+    #[must_use]
+    pub fn enabled(tools: Vec<FunctionTool>) -> Self {
+        Self::Enabled(tools)
+    }
+
+    #[must_use]
+    pub const fn disabled() -> Self {
+        Self::Disabled
+    }
+
+    fn tools(&self) -> Option<&[FunctionTool]> {
+        match self {
+            Self::Enabled(tools) => Some(tools),
+            Self::Disabled => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReasoningEffort {
     None,
@@ -120,7 +149,7 @@ impl ReasoningEffort {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResponsesRequest {
     input: Vec<ResponsesInputItem>,
-    tools: Vec<FunctionTool>,
+    tool_exposure: RequestToolExposure,
     max_output_tokens: u64,
     reasoning_effort: Option<ReasoningEffort>,
 }
@@ -128,7 +157,7 @@ pub struct ResponsesRequest {
 impl ResponsesRequest {
     pub fn new(
         input: Vec<ResponsesInputItem>,
-        tools: Vec<FunctionTool>,
+        tool_exposure: RequestToolExposure,
         max_output_tokens: u64,
         reasoning_effort: Option<ReasoningEffort>,
     ) -> Result<Self, ConnectorError> {
@@ -144,13 +173,21 @@ impl ResponsesRequest {
                 "Responses max_output_tokens must be positive",
             ));
         }
-        let mut names = HashSet::new();
-        for tool in &tools {
-            if !names.insert(tool.name()) {
+        if let Some(tools) = tool_exposure.tools() {
+            if tools.is_empty() {
                 return Err(ConnectorError::new(
                     ConnectorFailureKind::Configuration,
-                    format!("duplicate function tool name {:?}", tool.name()),
+                    "enabled tool exposure requires at least one function tool",
                 ));
+            }
+            let mut names = HashSet::new();
+            for tool in tools {
+                if !names.insert(tool.name()) {
+                    return Err(ConnectorError::new(
+                        ConnectorFailureKind::Configuration,
+                        format!("duplicate function tool name {:?}", tool.name()),
+                    ));
+                }
             }
         }
         for item in &input {
@@ -174,7 +211,7 @@ impl ResponsesRequest {
         }
         Ok(Self {
             input,
-            tools,
+            tool_exposure,
             max_output_tokens,
             reasoning_effort,
         })
@@ -184,8 +221,8 @@ impl ResponsesRequest {
         &self.input
     }
 
-    pub(super) fn tools(&self) -> &[FunctionTool] {
-        &self.tools
+    pub(super) fn tools(&self) -> Option<&[FunctionTool]> {
+        self.tool_exposure.tools()
     }
 
     pub(super) const fn max_output_tokens(&self) -> u64 {
@@ -232,26 +269,28 @@ impl ResponsesRequest {
                 }),
             })
             .collect::<Vec<_>>();
-        let tools = self
-            .tools
-            .iter()
-            .map(|tool| {
-                json!({
-                    "type": "function",
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.parameters,
-                })
-            })
-            .collect::<Vec<_>>();
         let mut body = json!({
             "model": model,
             "input": input,
-            "tools": tools,
-            "tool_choice": "auto",
             "stream": true,
             "max_output_tokens": self.max_output_tokens,
         });
+        if let Some(tools) = self.tools() {
+            body["tools"] = Value::Array(
+                tools
+                    .iter()
+                    .map(|tool| {
+                        json!({
+                            "type": "function",
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters,
+                        })
+                    })
+                    .collect(),
+            );
+            body["tool_choice"] = Value::String("auto".to_owned());
+        }
         if let Some(effort) = self.reasoning_effort {
             body["reasoning"] = json!({ "effort": effort.as_str() });
         }

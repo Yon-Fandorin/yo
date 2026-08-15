@@ -7,7 +7,7 @@ use std::{
 
 use super::{
     super::connect::{
-        ConnectStep, VerificationStreamPort, verification_limits,
+        ConnectStep, VerificationStreamPort, verification_limits, verification_request,
         verify_external_connection_for_test, verify_semantic_stream,
     },
     support::{CANDIDATE_SECRET, Fixture, account, candidate, digest, provider},
@@ -37,6 +37,17 @@ fn connection_verification_supplies_the_non_agent_absolute_deadline() {
     assert_eq!(limits.stream_idle_timeout, Duration::from_secs(5 * 60));
     assert_eq!(limits.error_body_idle_timeout, Duration::from_secs(30));
     assert_eq!(limits.event_delivery_timeout, Duration::from_secs(5 * 60));
+}
+
+// binding의 durable policy가 local-tools여도 connection verification은 request-local
+// exposure를 disabled로 고정해 두 Connector wire에서 현재 tools를 보내지 않습니다.
+#[test]
+fn connection_verification_always_disables_current_tool_exposure() {
+    let request = verification_request(&complete("verified")).unwrap();
+    let body = request.tokenization_payload("verified");
+
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
 }
 
 struct FakeVerificationStream {

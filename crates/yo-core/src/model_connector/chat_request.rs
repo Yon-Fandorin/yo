@@ -50,30 +50,32 @@ pub(super) fn wire_body(request: &ResponsesRequest, model: &str) -> Result<Value
         }
     }
 
-    let tools = request
-        .tools()
-        .iter()
-        .map(|tool| {
-            json!({
-                "type": "function",
-                "function": {
-                    "name": tool.name(),
-                    "description": tool.description(),
-                    "parameters": tool.parameters(),
-                },
-            })
-        })
-        .collect::<Vec<_>>();
-
-    Ok(json!({
+    let mut body = json!({
         "model": model,
         "messages": messages,
-        "tools": tools,
-        "tool_choice": "auto",
         "stream": true,
         "stream_options": {"include_usage": true},
         "max_tokens": request.max_output_tokens(),
-    }))
+    });
+    if let Some(tools) = request.tools() {
+        body["tools"] = Value::Array(
+            tools
+                .iter()
+                .map(|tool| {
+                    json!({
+                        "type": "function",
+                        "function": {
+                            "name": tool.name(),
+                            "description": tool.description(),
+                            "parameters": tool.parameters(),
+                        },
+                    })
+                })
+                .collect(),
+        );
+        body["tool_choice"] = Value::String("auto".to_owned());
+    }
+    Ok(body)
 }
 
 fn collect_tool_calls(input: &[ResponsesInputItem], start: usize) -> (Vec<Value>, usize) {
@@ -125,7 +127,7 @@ fn configuration_failure(message: impl Into<String>) -> ConnectorError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FunctionTool, ReasoningEffort};
+    use crate::{FunctionTool, ReasoningEffort, RequestToolExposure};
 
     // 한 assistant round의 content·refusal·tool calls가 서로 덮어쓰지 않고 한 message로 직렬화된다.
     #[test]
@@ -152,9 +154,9 @@ mod tests {
                     output: "contents".to_owned(),
                 },
             ],
-            vec![
+            RequestToolExposure::enabled(vec![
                 FunctionTool::new("read_file", "read one file", json!({"type":"object"})).unwrap(),
-            ],
+            ]),
             512,
             Some(ReasoningEffort::High),
         )
@@ -169,5 +171,34 @@ mod tests {
         assert_eq!(body["max_tokens"], 512);
         assert!(body.get("reasoning").is_none());
         assert!(body.get("enable_thinking").is_none());
+    }
+
+    // Chat Completions도 disabled exposure에서 현재 tool fields만 생략하고 historical
+    // assistant tool_calls와 tool 결과 message는 그대로 replay합니다.
+    #[test]
+    fn disabled_exposure_omits_current_chat_tools_but_preserves_replay() {
+        let request = ResponsesRequest::new(
+            vec![
+                ResponsesInputItem::FunctionCall {
+                    call_id: "call-1".to_owned(),
+                    name: "old_tool".to_owned(),
+                    arguments: "{}".to_owned(),
+                },
+                ResponsesInputItem::FunctionCallOutput {
+                    call_id: "call-1".to_owned(),
+                    output: "done".to_owned(),
+                },
+            ],
+            RequestToolExposure::disabled(),
+            128,
+            None,
+        )
+        .unwrap();
+
+        let body = wire_body(&request, "model").unwrap();
+        assert!(body.get("tools").is_none());
+        assert!(body.get("tool_choice").is_none());
+        assert_eq!(body["messages"][0]["tool_calls"][0]["id"], "call-1");
+        assert_eq!(body["messages"][1]["role"], "tool");
     }
 }

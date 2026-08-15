@@ -61,7 +61,7 @@ fn execute_external_connect_with(
             })?;
             if models.is_empty() {
                 return Err(AppError::message(
-                    "OpenRouter discovery returned no selectable text-and-tools model",
+                    "OpenRouter discovery returned no valid ModelId",
                 ));
             }
             let Some(selected) = input.select_openrouter_model(&models)? else {
@@ -69,9 +69,12 @@ fn execute_external_connect_with(
             };
             models
                 .get(selected)
-                .map(|model| Some(model.entry().clone()))
+                .and_then(|model| model.entry().cloned())
+                .map(Some)
                 .ok_or_else(|| {
-                    AppError::message("the OpenRouter picker returned an invalid model selection")
+                    AppError::message(
+                        "the OpenRouter picker returned an invalid or disabled model selection",
+                    )
                 })
         },
         |session, config, prepared, candidate, discovered| {

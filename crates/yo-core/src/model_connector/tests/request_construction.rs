@@ -5,7 +5,8 @@ use super::{
         ConnectorFailureKind, ResponsesConnectorLimits,
         connector::{OpenAiChatCompletionsConnector, OpenAiResponsesConnector},
         request::{
-            FunctionTool, ReasoningEffort, ResponsesInputItem, ResponsesInputRole, ResponsesRequest,
+            FunctionTool, ReasoningEffort, RequestToolExposure, ResponsesInputItem,
+            ResponsesInputRole, ResponsesRequest,
         },
     },
     support::qwen_binding,
@@ -79,7 +80,7 @@ fn serializes_only_the_declared_responses_request_capabilities() {
             content: "hello".to_owned(),
             refusal: None,
         }],
-        vec![tool],
+        RequestToolExposure::enabled(vec![tool]),
         8_192,
         Some(ReasoningEffort::High),
     )
@@ -98,6 +99,59 @@ fn serializes_only_the_declared_responses_request_capabilities() {
     assert!(body.get("x-dashscope-session-cache").is_none());
 }
 
+// disabled exposure는 historical function-call replay를 보존하면서 현재 registry의 tools와
+// tool_choice만 wire에서 완전히 생략해 no-tools/verification 요청을 구분합니다.
+#[test]
+fn disabled_exposure_omits_current_tools_without_dropping_historical_replay() {
+    let request = ResponsesRequest::new(
+        vec![
+            ResponsesInputItem::Message {
+                role: ResponsesInputRole::Assistant,
+                content: String::new(),
+                refusal: None,
+            },
+            ResponsesInputItem::FunctionCall {
+                call_id: "historical-call".to_owned(),
+                name: "old_tool".to_owned(),
+                arguments: "{}".to_owned(),
+            },
+            ResponsesInputItem::FunctionCallOutput {
+                call_id: "historical-call".to_owned(),
+                output: "done".to_owned(),
+            },
+        ],
+        RequestToolExposure::disabled(),
+        128,
+        None,
+    )
+    .unwrap();
+
+    let body = request.wire_body("model");
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
+    assert_eq!(body["input"][1]["type"], "function_call");
+    assert_eq!(body["input"][2]["type"], "function_call_output");
+}
+
+// enabled는 현재 registry projection을 뜻하므로 빈 목록을 disabled와 같은 의미로
+// 축약하지 않고 생성 단계에서 거절합니다.
+#[test]
+fn enabled_exposure_requires_a_non_empty_registry_projection() {
+    let error = ResponsesRequest::new(
+        vec![ResponsesInputItem::Message {
+            role: ResponsesInputRole::User,
+            content: "hello".to_owned(),
+            refusal: None,
+        }],
+        RequestToolExposure::enabled(Vec::new()),
+        128,
+        None,
+    )
+    .unwrap_err();
+
+    assert_eq!(error.kind(), ConnectorFailureKind::Configuration);
+}
+
 // output cap 0은 무제한처럼 해석하지 않고 network dispatch 전에 configuration 오류로
 // 거절합니다.
 #[test]
@@ -108,7 +162,7 @@ fn rejects_a_zero_responses_output_cap() {
             content: "hello".to_owned(),
             refusal: None,
         }],
-        Vec::new(),
+        RequestToolExposure::disabled(),
         0,
         None,
     )
@@ -127,7 +181,7 @@ fn rejects_visible_refusal_on_a_non_assistant_connector_message() {
             content: "hello".to_owned(),
             refusal: Some("declined".to_owned()),
         }],
-        Vec::new(),
+        RequestToolExposure::disabled(),
         8_192,
         None,
     )

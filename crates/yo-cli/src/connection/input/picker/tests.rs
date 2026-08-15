@@ -18,9 +18,12 @@ fn choices(count: usize) -> Vec<PickerChoice> {
         .map(|index| PickerChoice {
             display_name: format!("Model {index:02}"),
             model_id: format!("vendor/model-{index:02}"),
-            input_limit: 100_000 + index as u64,
-            output_limit: 8_000,
-            reasoning: index.is_multiple_of(2),
+            input_limit: Some(100_000 + index as u64),
+            output_limit: Some(8_000),
+            tool_policy: Some("local-tools/v1".to_owned()),
+            reasoning: Some(index.is_multiple_of(2)),
+            enabled: true,
+            disabled_reason: None,
         })
         .collect()
 }
@@ -60,16 +63,22 @@ fn query_edits_reset_selection_and_allow_a_recoverable_empty_result() {
         PickerChoice {
             display_name: "Alpha".to_owned(),
             model_id: "vendor/one".to_owned(),
-            input_limit: 1,
-            output_limit: 1,
-            reasoning: false,
+            input_limit: Some(1),
+            output_limit: Some(1),
+            tool_policy: Some("no-tools/v1".to_owned()),
+            reasoning: Some(false),
+            enabled: true,
+            disabled_reason: None,
         },
         PickerChoice {
             display_name: "ＢＥＴＡ".to_owned(),
             model_id: "vendor/two".to_owned(),
-            input_limit: 1,
-            output_limit: 1,
-            reasoning: false,
+            input_limit: Some(1),
+            output_limit: Some(1),
+            tool_policy: Some("no-tools/v1".to_owned()),
+            reasoning: Some(false),
+            enabled: true,
+            disabled_reason: None,
         },
     ];
     let mut state = PickerState::new(&choices);
@@ -81,6 +90,28 @@ fn query_edits_reset_selection_and_allow_a_recoverable_empty_result() {
     assert_eq!(state.selected_model_index(), None);
     state.pop_query(&choices);
     assert_eq!(state.selected_model_index(), None);
+}
+
+// disabled 행의 Enter는 picker를 닫거나 선택 index를 반환하지 않고 정확한 이유를
+// panel에 노출하며, 다음 enabled 행으로 이동하면 정상 선택할 수 있습니다.
+#[test]
+fn disabled_enter_keeps_the_picker_active_and_exposes_the_reason() {
+    let mut choices = choices(2);
+    choices[0].enabled = false;
+    choices[0].disabled_reason = Some("text output unsupported".to_owned());
+    choices[0].output_limit = None;
+    choices[0].tool_policy = None;
+    choices[0].reasoning = None;
+    let mut state = PickerState::new(&choices);
+
+    assert_eq!(state.accept_selected(&choices), None);
+    let rendered =
+        render_lines(&identity(), &state, &choices, 120, PresentationStyle::Plain).join("\n");
+    assert!(rendered.contains("Unavailable  text output unsupported"));
+    assert!(rendered.contains("? out"));
+
+    state.move_down();
+    assert_eq!(state.accept_selected(&choices), Some(1));
 }
 
 // remote UTF-8, quote, backslash, newline, ESC를 모두 printable ASCII byte escape로 바꿔

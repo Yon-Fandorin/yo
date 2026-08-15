@@ -642,11 +642,15 @@ Provider·Account credential action을 묶고 어떤 credential 제거보다 pub
 profile이 있을 때만 대화형 discovery target이다. Recovery와 snapshot capture 뒤 Yo는 no-echo
 candidate key 하나를 읽고 endpoint prefix에 `/models/user`를 더한 주소로 인증 `GET`을 보낸다.
 요청은 same-origin redirect 수와 connect, attempt별 response-header, body inactivity, absolute
-deadline이 제한되고 성공 응답은 bounded JSON이어야 한다. Core normalization은 exact Model ID마다
-첫 valid row만 남기고 text input, text output, tools를 요구한다. Authored model override가 이미
-있지 않으면 valid remote context limit을 base 위에 적용하고, 완성된 binding을 정렬한다.
-Controlling-TTY picker는 name과 ID를 검색하고 한 번에 최대 여덟 result row를 보여 주면서 모든
-match에 scroll로 도달하게 한다. 선택, 취소, input·render 실패, unwind에서 terminal mode, cursor,
+deadline이 제한되고 성공 응답은 bounded JSON이어야 한다. Core normalization은 capability나
+profile 때문에 unavailable인 row도 exact Model ID가 valid하면 첫 row를 유지한다. Capability 배열은
+중복이 없고 순서와 무관한 set으로 다루며 text input과 output을 요구한다. 설정한 local-tools
+policy는 remote `tools`나 `tool_choice` capability 중 하나라도 없으면 no-tools로 좁힌다. Authored
+model override가 없는 field에만 valid remote context limit을 적용한다. 정확한 우선순위로 typed
+disabled 이유 하나를 고르고 enabled row만 선택 가능한 complete binding을 가진다.
+Controlling-TTY picker는 name과 ID를 검색하고 한 번에 최대 여덟 result row를 보여 주면서 disabled
+row와 그 이유를 포함한 모든 match에 scroll로 도달하게 하며 disabled 선택은 막는다. 선택, 취소,
+input·render 실패, unwind에서 terminal mode, cursor,
 dynamic panel을 한 cleanup owner가 복원한다. Remote string은 terminal 출력 전에 printable하고
 되돌릴 수 있는 byte escape 경계를 지난다. 선택 뒤에는 기존 concise connection preview로 들어가고
 `--verbose`는 그 preview만 확장한다. 취소는 새 intent나 repository mutation을 만들지 않으며,
@@ -690,7 +694,8 @@ shell의 우연한 줄바꿈에 의존하지 않으면서 secret이 아닌 값�
 읽을 수 없으면 80열 fallback을 사용한다.
 
 Candidate key는 저장 key로 fallback하지 않고 capture한 각 binding profile에 크기가 제한된
-no-tool semantic request 하나를 보낼 때만 쓴다. 각 검증은 completed message와 completed
+no-tool semantic request 하나를 보낼 때만 쓴다. 두 supported wire dialect 모두 request-local tool
+노출을 생략하지만 historical tool call과 result replay는 유지한다. 각 검증은 completed message와 completed
 terminal status를 요구한다. 완료된 visible refusal은 유효한 semantic 결과이며 tool call,
 incomplete, failed, 조기 close, timeout은 검증 실패다. 진단에는 secret이 아닌 target과
 connector failure class만 남는다. 모든 binding이

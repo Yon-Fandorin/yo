@@ -43,8 +43,9 @@ pub use local_credentials::{
     PreparedCredentialMutation,
 };
 pub use openrouter_discovery::{
-    OpenRouterAuthoredModel, OpenRouterDiscoveredModel, OpenRouterDiscoveryError,
-    OpenRouterDiscoveryFailureKind, OpenRouterDiscoverySeed, discover_openrouter_models,
+    OpenRouterAuthoredModel, OpenRouterDisabledReason, OpenRouterDiscoveredModel,
+    OpenRouterDiscoveryError, OpenRouterDiscoveryFailureKind, OpenRouterDiscoverySeed,
+    OpenRouterModelAvailability, OpenRouterModelCapabilities, discover_openrouter_models,
 };
 pub use profile::{
     EffectiveModelProfile, ModelProfileLayer, ModelProfileParameters, VersionedProfileId,
