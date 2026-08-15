@@ -11,6 +11,7 @@ mod local_credentials;
 mod openrouter_discovery;
 mod profile;
 mod profile_yaml;
+mod qwencloud_catalog;
 mod selection;
 mod startup;
 
@@ -51,6 +52,10 @@ pub use profile::{
     EffectiveModelProfile, ModelProfileLayer, ModelProfileParameters, VersionedProfileId,
 };
 pub use profile_yaml::validate_profile_yaml_number_spellings;
+pub use qwencloud_catalog::{
+    QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogModel,
+    QwenCloudCatalogSeed,
+};
 pub use selection::{ModelSelection, ModelSelectionChoice, ModelSelectionController};
 pub use startup::{StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target};
 

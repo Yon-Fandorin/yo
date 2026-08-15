@@ -7,16 +7,19 @@ use crate::{
     connection::{input::ExternalConnectInput, presentation::Confirmation},
 };
 
-// 두 부분 target은 정확히 configured OpenRouter discovery에만 예약하고, 다른 Provider나
-// 세 부분의 기존 exact ModelTarget은 같은 파서에서 섞이지 않는지 판별합니다.
+// 두 부분 target은 정확히 configured OpenRouter discovery와 QwenCloud catalog에만
+// 예약하고, 다른 Provider나 세 부분 exact ModelTarget과 섞이지 않는지 판별합니다.
 #[test]
-fn recognizes_only_the_openrouter_two_part_discovery_shape() {
-    let (provider, account) = discovery_pair("openrouter:team").unwrap().unwrap();
+fn recognizes_only_the_closed_two_part_onboarding_shapes() {
+    let (provider, account) = catalog_pair("openrouter:team").unwrap().unwrap();
     assert_eq!(provider.as_str(), "openrouter");
     assert_eq!(account.as_str(), "team");
-    assert!(discovery_pair("openrouter:team:model").unwrap().is_none());
+    let (provider, account) = catalog_pair("qwencloud:team").unwrap().unwrap();
+    assert_eq!(provider.as_str(), "qwencloud");
+    assert_eq!(account.as_str(), "team");
+    assert!(catalog_pair("openrouter:team:model").unwrap().is_none());
     assert!(
-        discovery_pair("vendor:team")
+        catalog_pair("vendor:team")
             .unwrap_err()
             .to_string()
             .contains("unsupported")
@@ -27,26 +30,28 @@ fn recognizes_only_the_openrouter_two_part_discovery_shape() {
 // credential 파일을 열기 전에 명시적으로 거절합니다.
 #[test]
 fn discovery_rejects_non_interactive_options_before_io() {
-    for (credential_file, yes) in [
-        (Some(std::path::PathBuf::from("/not/read/credential")), true),
-        (
-            Some(std::path::PathBuf::from("/not/read/credential")),
-            false,
-        ),
-        (None, true),
-    ] {
-        let error = run_external_connect(
-            Path::new("/not/read/config.yaml"),
-            ConnectCommand {
-                target: "openrouter:team".to_owned(),
-                verbose: false,
-                credential_file,
-                yes,
-            },
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("interactive only"));
+    for target in ["openrouter:team", "qwencloud:team"] {
+        for (credential_file, yes) in [
+            (Some(std::path::PathBuf::from("/not/read/credential")), true),
+            (
+                Some(std::path::PathBuf::from("/not/read/credential")),
+                false,
+            ),
+            (None, true),
+        ] {
+            let error = run_external_connect(
+                Path::new("/not/read/config.yaml"),
+                ConnectCommand {
+                    target: target.to_owned(),
+                    verbose: false,
+                    credential_file,
+                    yes,
+                },
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("interactive only"));
+        }
     }
 }
 

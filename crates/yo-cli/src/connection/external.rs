@@ -9,7 +9,9 @@ use yo_core::{
 
 use super::{
     complete_binding_details, display_target,
-    input::{AuthorizedCredentialFileInput, ExternalConnectInput, TtyConnectionInput},
+    input::{
+        AuthorizedCredentialFileInput, ExternalConnectInput, ModelPickerItem, TtyConnectionInput,
+    },
     operation_repositories,
     presentation::{Confirmation, ConnectPreview, ManagedConnectionChange, connect_success},
     selection_for_binding,
@@ -20,11 +22,11 @@ pub(super) fn run_external_connect(
     config_path: &Path,
     command: ConnectCommand,
 ) -> Result<String, AppError> {
-    if discovery_pair(&command.target)?.is_some()
+    if catalog_pair(&command.target)?.is_some()
         && (command.credential_file.is_some() || command.yes)
     {
         return Err(AppError::message(
-            "OpenRouter Provider:Account discovery is interactive only and rejects --credential-file and --yes",
+            "Provider:Account model selection is interactive only and rejects --credential-file and --yes",
         ));
     }
     match (
@@ -64,7 +66,11 @@ fn execute_external_connect_with(
                     "OpenRouter discovery returned no valid ModelId",
                 ));
             }
-            let Some(selected) = input.select_openrouter_model(&models)? else {
+            let choices = models
+                .iter()
+                .map(ModelPickerItem::from_openrouter)
+                .collect::<Vec<_>>();
+            let Some(selected) = input.select_model(&choices)? else {
                 return Ok(None);
             };
             models
@@ -128,8 +134,8 @@ where
     let snapshot = session
         .capture_connections()
         .map_err(|error| AppError::single("capturing managed connections", error))?;
-    let (selected, discovered_candidate) = match discovery_pair(&command.target)? {
-        Some((provider, account)) => {
+    let (selected, preselected_candidate, remote_selected) = match catalog_pair(&command.target)? {
+        Some((provider, account)) if provider.as_str() == "openrouter" => {
             let seed = config
                 .openrouter_discovery_seed(&provider, &account)
                 .ok_or_else(|| {
@@ -143,16 +149,46 @@ where
             let Some(entry) = discover_and_select(seed, &candidate, input)? else {
                 return Ok("Connection cancelled; nothing changed.\n".to_owned());
             };
-            (entry, Some(candidate))
+            (entry, Some(candidate), true)
+        },
+        Some((provider, account)) => {
+            let seed = config
+                .qwencloud_catalog_seed(&provider, &account)
+                .ok_or_else(|| {
+                    AppError::message(format!(
+                        "QwenCloud catalog target {} is not an exact configured Provider:Account seed",
+                        command.target
+                    ))
+                })?;
+            let choices = seed
+                .models()
+                .iter()
+                .map(ModelPickerItem::from_qwencloud)
+                .collect::<Vec<_>>();
+            let Some(selected) = input.select_model(&choices)? else {
+                return Ok("Connection cancelled; nothing changed.\n".to_owned());
+            };
+            let entry = seed
+                .models()
+                .get(selected)
+                .and_then(|model| model.entry().cloned())
+                .ok_or_else(|| {
+                    AppError::message(
+                        "the QwenCloud picker returned an invalid or disabled model selection",
+                    )
+                })?;
+            let account_reference = format!("{provider}:{account}");
+            let candidate = input.read_credential(&account_reference)?;
+            (entry, Some(candidate), false)
         },
         None => (
-            selected_entry(&snapshot, config.model_catalog(), &command.target)?,
+            selected_entry(&snapshot, &config, &command.target)?,
             None,
+            false,
         ),
     };
     let selection = selection_for(&selected);
     let startup_policy = StartupPolicy::initial();
-    let discovered = discovered_candidate.is_some();
     let mut plan = ExternalConnectPlan::prepare(
         &snapshot,
         config.model_catalog(),
@@ -160,8 +196,8 @@ where
         &selected,
         &startup_policy,
     )
-    .map_err(|error| safe_discovery_error(error, discovered))?;
-    if discovered {
+    .map_err(|error| safe_discovery_error(error, remote_selected))?;
+    if remote_selected {
         plan.escape_remote_model(selection.model().as_str());
     }
     let ExternalConnectPlan {
@@ -179,7 +215,7 @@ where
     let prepared = session
         .prepare_external_connection(config.snapshot_digest(), connection, verification_bindings)
         .map_err(|error| {
-            safe_discovery_source("preparing the external connection", error, discovered)
+            safe_discovery_source("preparing the external connection", error, remote_selected)
         })?;
 
     let preview = Confirmation::Connect(Box::new(
@@ -197,14 +233,14 @@ where
     if !input.confirm(&preview)? {
         return Ok("Connection cancelled; nothing changed.\n".to_owned());
     }
-    let candidate = match discovered_candidate {
+    let candidate = match preselected_candidate {
         Some(candidate) => candidate,
         None => {
             let account_reference = format!("{}:{}", selection.provider(), selection.account());
             input.read_credential(&account_reference)?
         },
     };
-    finalize(&mut session, &config, prepared, candidate, discovered)?;
+    finalize(&mut session, &config, prepared, candidate, remote_selected)?;
 
     Ok(connect_success(
         &display_target(Some(&StartupTarget::Model(selection.clone()))),
@@ -395,9 +431,10 @@ fn admit_external_target(
 
 fn selected_entry(
     snapshot: &ConnectionSnapshot,
-    manual: &ModelCatalog,
+    config: &config::Config,
     reference: &str,
 ) -> Result<ModelCatalogEntry, AppError> {
+    let manual = config.model_catalog();
     if let Some(selected) = manual
         .entries()
         .iter()
@@ -405,6 +442,25 @@ fn selected_entry(
         .cloned()
     {
         return Ok(selected);
+    }
+    if let Some(model) = config.qwencloud_catalog_model_for_reference(reference) {
+        return model.entry().cloned().ok_or_else(|| {
+            let reason = match model.availability() {
+                yo_core::QwenCloudCatalogAvailability::Enabled => "invalid catalog row",
+                yo_core::QwenCloudCatalogAvailability::Disabled(reason) => reason.as_str(),
+            };
+            AppError::message(format!(
+                "QwenCloud catalog model {reference:?} is disabled: {reason}; use an explicit manual binding only when its runtime interface is supported"
+            ))
+        });
+    }
+    if reference
+        .split_once(':')
+        .is_some_and(|(provider, _)| provider == "qwencloud")
+    {
+        return Err(AppError::message(format!(
+            "QwenCloud catalog model {reference:?} is outside the configured catalog; use an explicit manual binding"
+        )));
     }
     snapshot
         .compose_catalog(&ModelCatalog::default())
@@ -415,12 +471,12 @@ fn selected_entry(
         .cloned()
         .ok_or_else(|| {
             AppError::message(format!(
-                "external connect target {reference:?} is not an exact configured Provider:Account:Model reference"
+                "external connect target {reference:?} is not an exact configured or QwenCloud catalog Provider:Account:Model reference; use an explicit manual binding for models outside the selected catalog"
             ))
         })
 }
 
-fn discovery_pair(reference: &str) -> Result<Option<(ProviderId, AccountId)>, AppError> {
+fn catalog_pair(reference: &str) -> Result<Option<(ProviderId, AccountId)>, AppError> {
     let mut segments = reference.split(':');
     let Some(provider) = segments.next() else {
         return Ok(None);
@@ -431,9 +487,9 @@ fn discovery_pair(reference: &str) -> Result<Option<(ProviderId, AccountId)>, Ap
     if segments.next().is_some() {
         return Ok(None);
     }
-    if provider != "openrouter" {
+    if !matches!(provider, "openrouter" | "qwencloud") {
         return Err(AppError::message(format!(
-            "two-part external connect target {reference:?} is unsupported; only configured openrouter:Account discovery is admitted"
+            "two-part external connect target {reference:?} is unsupported; only configured openrouter:Account discovery or qwencloud:Account catalog selection is admitted"
         )));
     }
     let provider = ProviderId::new(provider)
@@ -477,6 +533,9 @@ fn selection_for(entry: &ModelCatalogEntry) -> ModelSelection {
 
 #[cfg(test)]
 mod discovery_tests;
+
+#[cfg(test)]
+mod qwencloud_catalog_tests;
 
 #[cfg(test)]
 mod tests {

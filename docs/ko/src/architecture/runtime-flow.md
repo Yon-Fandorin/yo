@@ -540,6 +540,28 @@ model:
             max_output_tokens: 8192
 ```
 
+Release 시점에 알려진 QwenCloud plan은 운영자가 endpoint, profile, model 목록을 직접
+작성하는 대신 같은 경계에 local catalog seed를 둘 수도 있다.
+
+```yaml
+model:
+  bindings:
+    - provider: qwencloud
+      provider_display_name: QwenCloud
+      account: team
+      account_display_name: Coding Team
+      catalog: qwencloud-coding-plan-intl/v1
+```
+
+`catalog`는 `base_url`, `profile`, `models`와 함께 쓸 수 없다. 최초의 닫힌 catalog ID는
+`qwencloud-coding-plan-cn/v1`, `qwencloud-coding-plan-intl/v1`,
+`qwencloud-token-plan-team-intl/v1`이며 각각 공식 plan endpoint 하나를 고정한다. 이
+seed는 connect candidate로만 펼쳐지고 startup에서 바로 route하는 manual binding이 되지
+않는다. 이 표는 release 시점의 capability snapshot이지 해당 Account의 구독이나 entitlement
+증명이 아니다. 지원하지 않는 row도 숨기지 않고 안정적인 사유와 함께 보존하며, 선택 가능한
+text-agent row에는 보수적인 Yo output 상한 8,192 token을 적용한다. Yo를 갱신해도 이미
+managed 상태로 저장한 complete binding을 다시 쓰지 않는다.
+
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
 한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. operator
@@ -637,6 +659,15 @@ Disconnect remove는 candidate 없이 commit하고 preserve는 credential mutati
 안전한 operation kind, action, phase만 유지한다. External connect는 이제 준비와 commit에 같은
 held session을 사용한다. External disconnect도 선택한 managed target 하나에서 같은
 Provider·Account credential action을 묶고 어떤 credential 제거보다 public 제거를 먼저 commit한다.
+
+`yo connect qwencloud:Account`는 그 Account에 설정한 QwenCloud catalog를 로컬에서
+해석하고 credential을 읽기 전에 같은 controlling-TTY picker를 연다. Release 시점에 알려진
+row는 모두 보이며 Yo가 지원하지 않는 row는 사유와 함께 disabled 상태가 된다. 취소하거나
+disabled row를 고르면 credential을 읽지 않고 intent나 repository mutation도 만들지 않는다.
+정확한 `yo connect qwencloud:Account:Model`은 picker를 건너뛰며, 닫힌 catalog 밖의 Model은
+명시적인 manual binding을 작성하라는 안내와 함께 실패한다. 원격 model-list 요청은 없다.
+선택 가능한 row 하나를 고른 뒤에는 기존 credential, complete binding-union 검증, journal,
+commit 경로가 그대로 권위 경계다.
 
 `yo connect openrouter:Account`는 정확히 설정한 binding에 normalized endpoint와 complete base
 profile이 있을 때만 대화형 discovery target이다. Recovery와 snapshot capture 뒤 Yo는 no-echo

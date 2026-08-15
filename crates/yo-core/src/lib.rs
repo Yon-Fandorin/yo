@@ -82,9 +82,11 @@ pub use model_service::{
     OpenRouterDiscoveryError, OpenRouterDiscoveryFailureKind, OpenRouterDiscoverySeed,
     OpenRouterModelAvailability, OpenRouterModelCapabilities, PreparedConnectionMutation,
     PreparedCredentialMutation, PreparedExternalConnection, PreparedExternalDisconnect, ProviderId,
-    StartupPolicy, StartupSelectionSources, StartupTarget, VerifiedExternalConnection,
-    VersionedProfileId, discover_openrouter_models, plan_connection_recovery,
-    resolve_startup_target, validate_profile_yaml_number_spellings, verify_external_connection,
+    QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogModel,
+    QwenCloudCatalogSeed, StartupPolicy, StartupSelectionSources, StartupTarget,
+    VerifiedExternalConnection, VersionedProfileId, discover_openrouter_models,
+    plan_connection_recovery, resolve_startup_target, validate_profile_yaml_number_spellings,
+    verify_external_connection,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

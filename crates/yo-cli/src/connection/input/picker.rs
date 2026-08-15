@@ -1,7 +1,5 @@
 use std::fs::File;
 
-use yo_core::OpenRouterDiscoveredModel;
-
 use super::super::presentation::{PresentationStyle, default_width, escape_remote_text};
 use crate::AppError;
 
@@ -14,12 +12,12 @@ use self::terminal::{PickerKey, PickerTerminalScope, read_key};
 
 pub(super) fn select_model(
     terminal: &mut File,
-    models: &[OpenRouterDiscoveredModel],
+    models: &[ModelPickerItem],
     style: PresentationStyle,
 ) -> Result<Option<usize>, AppError> {
     if models.is_empty() {
         return Err(AppError::message(
-            "OpenRouter discovery returned no valid ModelId",
+            "model inventory contains no valid ModelId",
         ));
     }
     let identity = PickerIdentity::from_models(models)?;
@@ -48,6 +46,83 @@ pub(super) fn select_model(
     }
 }
 
+#[derive(Clone, Debug)]
+pub(in crate::connection) struct ModelPickerItem {
+    provider: String,
+    account: String,
+    display_name: String,
+    model_id: String,
+    input_limit: Option<u64>,
+    output_limit: Option<u64>,
+    tool_policy: Option<String>,
+    reasoning: Option<bool>,
+    enabled: bool,
+    disabled_reason: Option<String>,
+}
+
+impl ModelPickerItem {
+    pub(in crate::connection) fn from_openrouter(
+        model: &yo_core::OpenRouterDiscoveredModel,
+    ) -> Self {
+        let disabled_reason = match model.availability() {
+            yo_core::OpenRouterModelAvailability::Enabled => None,
+            yo_core::OpenRouterModelAvailability::Disabled(reason) => {
+                Some(reason.as_str().to_owned())
+            },
+        };
+        Self {
+            provider: model.provider().as_str().to_owned(),
+            account: model.account().as_str().to_owned(),
+            display_name: model.display_name().to_owned(),
+            model_id: model.model_id().as_str().to_owned(),
+            input_limit: model.input_limit(),
+            output_limit: model.output_limit(),
+            tool_policy: model
+                .effective_tool_policy()
+                .map(|policy| policy.as_str().to_owned()),
+            reasoning: model.reasoning(),
+            enabled: model.is_enabled(),
+            disabled_reason,
+        }
+    }
+
+    pub(in crate::connection) fn from_qwencloud(model: &yo_core::QwenCloudCatalogModel) -> Self {
+        let disabled_reason = match model.availability() {
+            yo_core::QwenCloudCatalogAvailability::Enabled => None,
+            yo_core::QwenCloudCatalogAvailability::Disabled(reason) => {
+                Some(reason.as_str().to_owned())
+            },
+        };
+        Self {
+            provider: model.provider().as_str().to_owned(),
+            account: model.account().as_str().to_owned(),
+            display_name: model.display_name().to_owned(),
+            model_id: model.model_id().as_str().to_owned(),
+            input_limit: model.input_limit(),
+            output_limit: model.output_limit(),
+            tool_policy: model.tool_policy().map(str::to_owned),
+            reasoning: model.reasoning(),
+            enabled: model.is_enabled(),
+            disabled_reason,
+        }
+    }
+
+    #[cfg(test)]
+    pub(in crate::connection) fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    #[cfg(test)]
+    pub(in crate::connection) const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[cfg(test)]
+    pub(in crate::connection) fn disabled_reason(&self) -> Option<&str> {
+        self.disabled_reason.as_deref()
+    }
+}
+
 #[derive(Debug)]
 struct PickerIdentity {
     provider: String,
@@ -55,19 +130,19 @@ struct PickerIdentity {
 }
 
 impl PickerIdentity {
-    fn from_models(models: &[OpenRouterDiscoveredModel]) -> Result<Self, AppError> {
+    fn from_models(models: &[ModelPickerItem]) -> Result<Self, AppError> {
         let first = &models[0];
         if models
             .iter()
-            .any(|model| model.provider() != first.provider() || model.account() != first.account())
+            .any(|model| model.provider != first.provider || model.account != first.account)
         {
             return Err(AppError::message(
-                "OpenRouter picker models must belong to one Provider and Account",
+                "model picker items must belong to one Provider and Account",
             ));
         }
         Ok(Self {
-            provider: first.provider().as_str().to_owned(),
-            account: first.account().as_str().to_owned(),
+            provider: first.provider.clone(),
+            account: first.account.clone(),
         })
     }
 }
@@ -84,25 +159,17 @@ struct PickerChoice {
     disabled_reason: Option<String>,
 }
 
-impl From<&OpenRouterDiscoveredModel> for PickerChoice {
-    fn from(model: &OpenRouterDiscoveredModel) -> Self {
-        let disabled_reason = match model.availability() {
-            yo_core::OpenRouterModelAvailability::Enabled => None,
-            yo_core::OpenRouterModelAvailability::Disabled(reason) => {
-                Some(reason.as_str().to_owned())
-            },
-        };
+impl From<&ModelPickerItem> for PickerChoice {
+    fn from(model: &ModelPickerItem) -> Self {
         Self {
-            display_name: model.display_name().to_owned(),
-            model_id: model.model_id().as_str().to_owned(),
-            input_limit: model.input_limit(),
-            output_limit: model.output_limit(),
-            tool_policy: model
-                .effective_tool_policy()
-                .map(|policy| policy.as_str().to_owned()),
-            reasoning: model.reasoning(),
-            enabled: model.is_enabled(),
-            disabled_reason,
+            display_name: model.display_name.clone(),
+            model_id: model.model_id.clone(),
+            input_limit: model.input_limit,
+            output_limit: model.output_limit,
+            tool_policy: model.tool_policy.clone(),
+            reasoning: model.reasoning,
+            enabled: model.enabled,
+            disabled_reason: model.disabled_reason.clone(),
         }
     }
 }
@@ -206,7 +273,7 @@ fn render_lines(
     style: PresentationStyle,
 ) -> Vec<String> {
     let width = width.saturating_sub(1).max(1);
-    let mut lines = vec![styled("Model discovery", "\x1b[1;36m", style)];
+    let mut lines = vec![styled("Model catalog", "\x1b[1;36m", style)];
     lines.extend(wrap_ascii(
         &format!("Provider  {}", escape_remote_text(&identity.provider)),
         width,

@@ -570,6 +570,31 @@ model:
             max_output_tokens: 8192
 ```
 
+For a release-known QwenCloud plan, the same boundary also accepts a local
+catalog seed instead of an operator-authored endpoint, profile, and model
+list:
+
+```yaml
+model:
+  bindings:
+    - provider: qwencloud
+      provider_display_name: QwenCloud
+      account: team
+      account_display_name: Coding Team
+      catalog: qwencloud-coding-plan-intl/v1
+```
+
+`catalog` is mutually exclusive with `base_url`, `profile`, and `models`.
+The closed initial catalog identifiers are
+`qwencloud-coding-plan-cn/v1`, `qwencloud-coding-plan-intl/v1`, and
+`qwencloud-token-plan-team-intl/v1`; each fixes its official plan endpoint.
+They expand only into connect candidates, not startup-routable manual
+bindings. The table is a release-known capability snapshot, not proof that an
+Account is subscribed or entitled. It retains unsupported rows with a stable
+reason instead of hiding them, and uses a conservative 8,192-token Yo output
+cap for selectable text-agent rows. Updating Yo does not rewrite a previously
+managed complete binding.
+
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
 in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
 `120`; live startup reads it once and applies it to retained TUI generations.
@@ -678,6 +703,17 @@ phase without projecting a private credential revision. External connect now
 uses this same held session for preparation and commit. External disconnect
 uses it to bind one selected managed target to the same Provider-and-Account
 credential action and commits the public removal before any credential removal.
+
+`yo connect qwencloud:Account` resolves that Account's configured QwenCloud
+catalog locally and opens the same controlling-TTY picker before reading a
+credential. Every release-known row remains visible; a row unsupported by
+Yo is disabled with its reason. Cancellation or disabled selection performs
+no credential read and creates no intent or repository mutation. An exact
+`yo connect qwencloud:Account:Model` bypasses the picker, while a Model outside
+the selected closed catalog fails with guidance to author an explicit manual
+binding. There is no remote model-list request: after one selectable row is
+chosen, the ordinary credential, complete binding-union verification, journal,
+and commit path remains authoritative.
 
 `yo connect openrouter:Account` is an interactive discovery target only when
 that exact configured binding has a normalized endpoint and complete base

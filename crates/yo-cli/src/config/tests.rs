@@ -210,6 +210,86 @@ model:
     assert!(error.to_string().contains("requires at least one model"));
 }
 
+// QwenCloud catalog binding은 Account와 표시 이름만 설정에서 받아 로컬 registry seed를
+// 만들고, bundled 행 전체를 startup용 수동 ModelCatalog에 미리 확장하지 않습니다.
+#[test]
+fn qwencloud_catalog_binding_is_a_non_routable_local_seed() {
+    let config = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: qwencloud
+      account: team
+      account_display_name: Coding Team
+      catalog: qwencloud-coding-plan-intl/v1
+"#,
+    )
+    .unwrap();
+
+    assert!(config.model_catalog().entries().is_empty());
+    let provider = yo_core::ProviderId::new("qwencloud").unwrap();
+    let account = yo_core::AccountId::new("team").unwrap();
+    let seed = config.qwencloud_catalog_seed(&provider, &account).unwrap();
+    assert_eq!(seed.profile().as_str(), "qwencloud-coding-plan-intl/v1");
+    assert_eq!(seed.models().len(), 10);
+    let row = seed
+        .model(&yo_core::ModelId::new("qwen3-coder-next").unwrap())
+        .unwrap();
+    assert!(row.entry().is_some());
+    assert_eq!(
+        row.entry().unwrap().account_display_name(),
+        Some("Coding Team")
+    );
+}
+
+// catalog는 endpoint·profile·models를 하나의 registry 원자 단위로 소유하므로 같은
+// binding에서 어느 수동 필드도 함께 쓰지 못하고 unknown profile/provider도 실패합니다.
+#[test]
+fn qwencloud_catalog_binding_rejects_mixed_or_unknown_shapes() {
+    for extra in [
+        "      base_url: https://example.test/v1\n",
+        "      profile: {}\n",
+        "      models: []\n",
+    ] {
+        let error = parse(
+            Path::new("config.yaml"),
+            &format!(
+                "version: 1\nmodel:\n  bindings:\n    - provider: qwencloud\n      account: team\n      catalog: qwencloud-coding-plan-intl/v1\n{extra}"
+            ),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot author base_url, profile, or models"),
+            "{error}"
+        );
+    }
+
+    for (provider, catalog, expected) in [
+        (
+            "qwencloud",
+            "qwencloud-future/v1",
+            "unknown built-in catalog profile",
+        ),
+        (
+            "vendor",
+            "qwencloud-coding-plan-intl/v1",
+            "requires ProviderId qwencloud",
+        ),
+    ] {
+        let error = parse(
+            Path::new("config.yaml"),
+            &format!(
+                "version: 1\nmodel:\n  bindings:\n    - provider: {provider}\n      account: team\n      catalog: {catalog}\n"
+            ),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
 // 같은 v1 문서에서 legacy catalog와 새 bindings를 함께 쓰면 어느 쪽이 우선인지
 // 추측하지 않고 정확한 상호배타 오류로 거절합니다.
 #[test]

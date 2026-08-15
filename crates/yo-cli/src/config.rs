@@ -16,7 +16,7 @@ use yo_core::{
     AccountId, EffectiveModelBinding, EffectiveModelProfile, ModelCatalog, ModelCatalogEntry,
     ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters, ModelSelection,
     NormalizedEndpoint, OpenRouterAuthoredModel, OpenRouterDiscoverySeed, ProviderId,
-    StartupTarget, VersionedProfileId,
+    QwenCloudCatalogSeed, StartupTarget, VersionedProfileId,
 };
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
@@ -39,6 +39,7 @@ pub(crate) struct Config {
     snapshot: ConfigSnapshot,
     model_catalog: ModelCatalog,
     openrouter_discovery_seeds: Vec<OpenRouterDiscoverySeed>,
+    qwencloud_catalog_seeds: Vec<QwenCloudCatalogSeed>,
     startup_target: Option<StartupTarget>,
 }
 
@@ -51,6 +52,7 @@ impl Default for Config {
             snapshot: ConfigSnapshot::absent(),
             model_catalog: ModelCatalog::default(),
             openrouter_discovery_seeds: Vec::new(),
+            qwencloud_catalog_seeds: Vec::new(),
             startup_target: None,
         }
     }
@@ -77,6 +79,33 @@ impl Config {
         self.openrouter_discovery_seeds
             .iter()
             .find(|seed| seed.provider() == provider && seed.account() == account)
+    }
+
+    pub(crate) fn qwencloud_catalog_seed(
+        &self,
+        provider: &ProviderId,
+        account: &AccountId,
+    ) -> Option<&QwenCloudCatalogSeed> {
+        self.qwencloud_catalog_seeds
+            .iter()
+            .find(|seed| seed.provider() == provider && seed.account() == account)
+    }
+
+    pub(crate) fn qwencloud_catalog_model_for_reference(
+        &self,
+        reference: &str,
+    ) -> Option<&yo_core::QwenCloudCatalogModel> {
+        self.qwencloud_catalog_seeds.iter().find_map(|seed| {
+            seed.models().iter().find(|model| {
+                ModelSelection::new(
+                    model.provider().clone(),
+                    model.account().clone(),
+                    model.model_id().clone(),
+                )
+                .canonical_reference()
+                    == reference
+            })
+        })
     }
 
     pub(crate) fn replace_model_catalog(&mut self, model_catalog: ModelCatalog) {
@@ -404,10 +433,14 @@ struct ModelBindingConfig {
     provider_display_name: Option<String>,
     account: String,
     account_display_name: Option<String>,
-    base_url: String,
+    #[serde(default)]
+    catalog: Authored<String>,
+    #[serde(default)]
+    base_url: Authored<String>,
     #[serde(default)]
     profile: Authored<ModelProfileConfig>,
-    models: Vec<ModelBindingEntryConfig>,
+    #[serde(default)]
+    models: Authored<Vec<ModelBindingEntryConfig>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -439,6 +472,12 @@ struct ModelProfileConfig {
     #[serde(default)]
     verification_profile: Authored<String>,
 }
+
+type ResolvedModelBindings = (
+    Vec<ModelCatalogEntry>,
+    Vec<OpenRouterDiscoverySeed>,
+    Vec<QwenCloudCatalogSeed>,
+);
 
 pub(crate) fn load() -> Result<Config, ConfigError> {
     let path = config_path()?;
@@ -518,14 +557,14 @@ fn parse_snapshot(
             "model.catalog and model.bindings cannot be authored together",
         ));
     }
-    let (entries, openrouter_discovery_seeds) = match (catalog, bindings) {
+    let (entries, openrouter_discovery_seeds, qwencloud_catalog_seeds) = match (catalog, bindings) {
         (Authored::Missing, Authored::Present(bindings)) => model_binding_entries(path, bindings)?,
         (Authored::Present(catalog), Authored::Missing) => catalog
             .into_iter()
             .map(|entry| model_entry(path, entry))
             .collect::<Result<Vec<_>, _>>()
-            .map(|entries| (entries, Vec::new()))?,
-        (Authored::Missing, Authored::Missing) => (Vec::new(), Vec::new()),
+            .map(|entries| (entries, Vec::new(), Vec::new()))?,
+        (Authored::Missing, Authored::Missing) => (Vec::new(), Vec::new(), Vec::new()),
         (Authored::Present(_), Authored::Present(_)) => {
             unreachable!("both authored model collections were rejected")
         },
@@ -548,6 +587,7 @@ fn parse_snapshot(
         snapshot,
         model_catalog,
         openrouter_discovery_seeds,
+        qwencloud_catalog_seeds,
         startup_target,
     };
     config.date_formatter().map_err(|error| match error {
@@ -670,24 +710,76 @@ fn model_entry(path: &Path, entry: ModelEntryConfig) -> Result<ModelCatalogEntry
 fn model_binding_entries(
     path: &Path,
     bindings: Vec<ModelBindingConfig>,
-) -> Result<(Vec<ModelCatalogEntry>, Vec<OpenRouterDiscoverySeed>), ConfigError> {
+) -> Result<ResolvedModelBindings, ConfigError> {
     let mut pairs = HashSet::new();
     let mut entries = Vec::new();
     let mut discovery_seeds = Vec::new();
+    let mut catalog_seeds = Vec::new();
     for binding in bindings {
         let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
             path: path.to_owned(),
             message: error.to_string(),
         };
-        let provider = ProviderId::new(binding.provider).map_err(&invalid)?;
-        let account = AccountId::new(binding.account).map_err(&invalid)?;
+        let ModelBindingConfig {
+            provider,
+            provider_display_name,
+            account,
+            account_display_name,
+            catalog,
+            base_url,
+            profile,
+            models,
+        } = binding;
+        let provider = ProviderId::new(provider).map_err(&invalid)?;
+        let account = AccountId::new(account).map_err(&invalid)?;
         if !pairs.insert((provider.clone(), account.clone())) {
             return Err(invalid_model(
                 path,
                 format!("model.bindings repeats Provider {provider} and Account {account}"),
             ));
         }
-        if binding.models.is_empty() && provider.as_str() != "openrouter" {
+        if let Authored::Present(catalog) = catalog {
+            if matches!(base_url, Authored::Present(_))
+                || matches!(profile, Authored::Present(_))
+                || matches!(models, Authored::Present(_))
+            {
+                return Err(invalid_model(
+                    path,
+                    format!(
+                        "catalog binding for Provider {provider} and Account {account} cannot author base_url, profile, or models"
+                    ),
+                ));
+            }
+            let catalog = VersionedProfileId::new(catalog).map_err(&invalid)?;
+            catalog_seeds.push(
+                QwenCloudCatalogSeed::resolve(
+                    catalog,
+                    provider,
+                    account,
+                    provider_display_name,
+                    account_display_name,
+                )
+                .map_err(&invalid)?,
+            );
+            continue;
+        }
+        let base_url = base_url.into_option().ok_or_else(|| {
+            invalid_model(
+                path,
+                format!(
+                    "manual binding for Provider {provider} and Account {account} requires base_url"
+                ),
+            )
+        })?;
+        let models = models.into_option().ok_or_else(|| {
+            invalid_model(
+                path,
+                format!(
+                    "manual binding for Provider {provider} and Account {account} requires models"
+                ),
+            )
+        })?;
+        if models.is_empty() && provider.as_str() != "openrouter" {
             return Err(invalid_model(
                 path,
                 format!(
@@ -695,14 +787,13 @@ fn model_binding_entries(
                 ),
             ));
         }
-        let endpoint = NormalizedEndpoint::parse(&binding.base_url).map_err(&invalid)?;
-        let base_profile = binding
-            .profile
+        let endpoint = NormalizedEndpoint::parse(&base_url).map_err(&invalid)?;
+        let base_profile = profile
             .into_option()
             .map(|profile| model_profile_layer(path, profile))
             .transpose()?;
         let mut authored_models = Vec::new();
-        for model in binding.models {
+        for model in models {
             let model_id = ModelId::new(model.model).map_err(&invalid)?;
             let (authored_input_token_limit, authored_max_output_tokens) = model
                 .profile
@@ -731,8 +822,8 @@ fn model_binding_entries(
             );
             let entry = ModelCatalogEntry::with_explicit_profile(
                 effective_binding,
-                binding.provider_display_name.clone(),
-                binding.account_display_name.clone(),
+                provider_display_name.clone(),
+                account_display_name.clone(),
                 model.model_display_name,
                 profile,
             )
@@ -756,8 +847,8 @@ fn model_binding_entries(
                     OpenRouterDiscoverySeed::new(
                         provider,
                         account,
-                        binding.provider_display_name,
-                        binding.account_display_name,
+                        provider_display_name,
+                        account_display_name,
                         endpoint,
                         profile,
                         authored_models,
@@ -769,7 +860,7 @@ fn model_binding_entries(
             }
         }
     }
-    Ok((entries, discovery_seeds))
+    Ok((entries, discovery_seeds, catalog_seeds))
 }
 
 fn model_profile_layer(

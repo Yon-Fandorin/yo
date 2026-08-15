@@ -10,6 +10,7 @@ mod file;
 mod picker;
 
 pub(super) use file::AuthorizedCredentialFileInput;
+pub(super) use picker::ModelPickerItem;
 
 use super::presentation::{Confirmation, PresentationStyle, default_width};
 use crate::AppError;
@@ -19,13 +20,10 @@ const MAX_INPUT_BYTES: usize = 16 * 1024;
 pub(super) trait ExternalConnectInput {
     fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError>;
     fn read_credential(&mut self, account: &str) -> Result<ApiCredential, AppError>;
-    fn select_openrouter_model(
-        &mut self,
-        models: &[yo_core::OpenRouterDiscoveredModel],
-    ) -> Result<Option<usize>, AppError> {
+    fn select_model(&mut self, models: &[ModelPickerItem]) -> Result<Option<usize>, AppError> {
         let _ = models;
         Err(AppError::message(
-            "OpenRouter model discovery requires an interactive controlling terminal",
+            "model selection requires an interactive controlling terminal",
         ))
     }
 }
@@ -129,10 +127,7 @@ impl ExternalConnectInput for TtyConnectionInput {
         ApiCredential::new(value?).map_err(|error| AppError::single("reading the API key", error))
     }
 
-    fn select_openrouter_model(
-        &mut self,
-        models: &[yo_core::OpenRouterDiscoveredModel],
-    ) -> Result<Option<usize>, AppError> {
+    fn select_model(&mut self, models: &[ModelPickerItem]) -> Result<Option<usize>, AppError> {
         let style = self.style;
         picker::select_model(self.terminal()?, models, style)
     }
