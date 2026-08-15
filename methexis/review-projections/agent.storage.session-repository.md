@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.storage.session-repository
-revision: sha256:2f7e673093a05d2d430a3edcbdff6eefa94b705e165d53e6e68a1157ae911c68
+revision: sha256:38952b508ca62a554153e71566ed1b08b9f8108546ea92fec0a0f16bdb0eafe9
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:3d9ba54f7bd18474b642b518b92c7d11e814d91c979eba13ab5e75c8f4e0c64b
+request_hash: sha256:d2c89fcb49acbfc390c326dd5a9c6adc0ce6f467209c80a0d062b8a226b35f02
 ---
 # Korean Review Projection
 
@@ -19,6 +19,8 @@ Storage-neutral Session Repository가 파일이나 SQLite 같은 물리 구조�
 Local 구현은 Session마다 하나의 append-only versioned JSON Lines log를 사용하지만 JSONL은 교체 가능한 내부 세부사항입니다. 하나의 semantic commit은 하나의 physical envelope이며 command와 그 events 또는 observation batch의 절반만 영속하면 안 됩니다. JournalSequence는 semantic replay 순서, RepositorySequence는 physical append 순서이고 서로 추론하지 않습니다.
 
 모든 새 물리 record는 schema, Session ID, RepositorySequence, kind, 정확한 payload bytes, format compatibility 계약의 discovery 객체 전체를 명시적인 preimage로 하는 versioned CRC32C를 가집니다. Checksum이 이미 든 record를 recursive serialization해 checksum을 계산하면 안 됩니다. Repository writer가 append 직전에 discovery timestamp를 지정하고 committed semantic prefix에서 descriptor, 선택적인 binding epoch, 선택적인 최신 valid Continuation Anchor JournalSequence를 도출해 같은 checksummed envelope에 기록합니다. Timestamp는 envelope와 함께 영속될 때만 durable합니다. 별도 mutable summary authority를 만들지 않습니다.
+
+물리 `yo.session-record/v1` envelope, field grammar, CRC32C preimage, failure behavior는 바뀌지 않습니다. Payload string은 현재 pre-release `yo.semantic-journal-commit/v1` shape 안에서 format-compatibility 계약의 additive provider-private replay item을 encode할 수 있고 schema field와 checksum은 그대로 그 정확한 payload byte를 bind합니다. 현재 semantic reader는 한 Session log에서 이전 replay delta와 확장된 private-item union을 모두 받아들이지만, 이전 reader는 private item을 알 수 없는 variant로 거절합니다. 이후 K3 Turn이 extension을 사용했다는 이유만으로 기존 physical 또는 semantic record를 다시 쓰지 않습니다. Compatibility test는 판별 가능한 이전 replay artifact를 byte-for-byte 보존하고, 뒤의 physical-v1 payload에 private item이 있는 log를 받아들이며, 이전 semantic decoder가 이를 조용히 빼지 않고 실패함을 증명해야 합니다.
 
 같은 repository boundary는 각 Session의 마지막 완전한 envelope를 bounded tail read로 찾아 검증하고 storage-neutral discovery summary를 반환하는 read-only port를 제공합니다. 이 port는 writer lease를 얻거나 storage를 만들거나 record를 repair하거나 JSONL path를 노출하지 않습니다. Active writer와 abandoned pending marker를 구분하기 위한 independent read lock은 사용할 수 있지만 writer lease가 아닙니다.
 
@@ -35,10 +37,10 @@ Journal과 Request correlation은 하나의 physical availability와 capacity ce
 Local 저장소는 기본 활성화하고 current-user permission과 configurable capacity ceiling을 적용하며 자동 age expiry나 Session deletion을 하지 않습니다. 첫 구현은 Session마다 synchronous single writer입니다. 측정 evidence 없이 background writer, generic transaction, group commit, compression, index, SQLite projection, alternate encoding, Request Audit physical split을 도입하지 않습니다.
 
 
-Session Repository는 payload-free Request correlation record와 별도의 bounded payload-bearing model_replay_delta semantic record를 같은 checksummed Session log에서 소유합니다. Replay delta, completed outcome, Anchor는 하나의 atomic physical envelope로 기록되어 일부만 durable해질 수 없습니다. Model replay는 repository append 전에 semantic redaction admission을 통과합니다. Repository capacity와 model context limit은 별개이며 replay/context bound를 넘으면 partial chain이나 silent truncation, summary를 기록하지 않고 Turn을 completed but non-resumable로 남깁니다.
+Session Repository는 payload-free Request correlation record와 별도의 bounded payload-bearing `model_replay_delta` semantic record를 같은 checksummed Session log에서 소유합니다. Replay delta, completed outcome, Anchor는 하나의 atomic physical envelope로 기록되어 일부만 durable해질 수 없습니다. Replay delta는 open binding이 정확한 replay profile `kimi-private-local-plaintext/v1`을 가질 때만 provider-private item을 포함할 수 있습니다. 최초의 이 item은 `kimi.assistant-message/v1alpha1`을 사용하고 정확히 제한된 K3 assistant object, binding identity, epoch를 담으며 visible projection이 인접한 semantic replay와 같음을 검증해야 합니다. 이는 payload-bearing Session 의미로 남지만 Transcript, Request trace, discovery, error text, debug output, 모든 frontend read projection에서 제외됩니다. Model replay는 repository append 전에 semantic redaction admission을 통과합니다. Provider-private replay는 correlation이 확인된 완료 Connector response에서만 허용되며 정확한 schema, replay profile, binding, projection, byte-bound 검사를 통과해야 합니다. 내용을 바꾸면 provider continuation을 깨뜨리므로 admission에 실패한 private item은 redact하거나 일부만 저장하지 않고 거절합니다. 허용된 private byte는 다른 Session payload와 같은 user-only local directory와 mode `0600` file에 저장되고 최초 구현에서는 암호화하지 않습니다. 이런 보존 사실은 해당 binding을 선택하기 전에 안내합니다. Repository와 frontend API는 generic record projection으로 그 내용을 노출하면 안 됩니다. Repository capacity와 model context limit은 별개이며 replay/context bound를 넘으면 partial chain이나 silent truncation, summary를 기록하지 않고 Turn을 completed but non-resumable로 남깁니다.
 
 
-Repository는 binding의 explicit continuation strategy에 따라 replay 유무를 해석합니다. exact_replay(local_client)는 local replay-delta chain에서 validated model-visible prefix를 복원합니다. backend_managed_state는 replay delta 없이 payload-free outcome, Anchor, backend locator evidence를 보관하고 Transcript나 Request Audit에서 replay를 합성하지 않습니다. 향후 managed Session Repository는 동일한 semantic Journal과 replay chain으로 exact_replay(managed_server)를 실행할 수 있지만 server와 repository identity, selected boundary, replay-content와 contract digest, binding epoch, availability, retention 검증이 필요합니다. Reserved strategy value만으로 remote storage, replication, conflict handling을 구현했다고 간주하지 않습니다.
+Repository는 binding의 explicit continuation strategy에 따라 replay 유무를 해석합니다. exact_replay(local_client)는 local replay-delta chain에서 validated semantic prefix와 선언된 provider-private extension을 복원합니다. backend_managed_state는 replay delta 없이 payload-free outcome, Anchor, backend locator evidence를 보관하고 Transcript나 Request Audit에서 replay를 합성하지 않습니다. 향후 managed Session Repository는 동일한 semantic Journal과 replay chain으로 exact_replay(managed_server)를 실행할 수 있지만 server와 repository identity, selected boundary, replay-content와 contract digest, binding epoch, availability, retention 검증이 필요합니다. Reserved strategy value만으로 remote storage, replication, conflict handling을 구현했다고 간주하지 않습니다.
 
 ## 이유
 

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:9099aa0899d2315e2472ca8c691a465a39adf5f26694291690303d660b29273e
+    revision: sha256:75cb26dbdc324606d2d6fca178d5aeef51cef1f25121610f3a036243b600c624
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -28,7 +28,10 @@ semantic `/v1` with an anchored-session development shape. A second reviewed rev
 development shape. A third reviewed revision replaced that immediately
 preceding shape with a continuation-strategy-aware anchored-session shape. This
 fourth reviewed revision explicitly extends that same shape with the optional
-assistant-refusal replay field defined below. Its exact shape and UUIDv7 Session identity are part of the
+assistant-refusal replay field defined below. This fifth reviewed revision
+additively extends the same pre-release semantic shape with one provider-private
+replay item and replay-profile evidence while retaining the physical v1 envelope.
+Its exact shape and UUIDv7 Session identity are part of the
 baseline; a matching schema tag alone MUST NOT admit a record.
 
 Every semantic `/v1` commit, including a descriptor-only commit, MUST contain
@@ -152,13 +155,14 @@ semantic Journal data rather than Request Audit detail:
   and `value`;
 - `model_replay_delta` contains positive `epoch`, positive `turn_id`, positive
   `accepted_request_sequence`, an optional replay contract, and an ordered
-  non-empty list of exact provider-neutral replay items. The replay contract is
+  non-empty list of exact replay items. The replay contract is
   present exactly once at the start of a replay chain and contains the exact
   system prompt plus ordered tools with name, safe description, schema version,
   and closed JSON schema. An item is exactly a message with role, visible UTF-8
   content, and an optional independent visible refusal; a function call with
   call identity, tool name, and validated argument JSON bytes; or a function
-  result with call identity and bounded model-visible output bytes. Refusal is
+  result with call identity and bounded model-visible output bytes; or the
+  provider-private assistant item defined below. Refusal is
   valid only on an assistant message. Absence means no refusal. When present,
   refusal MUST be a non-null JSON string containing UTF-8, including the valid
   empty string `""`; null and every non-string value MUST fail closed. Content
@@ -208,14 +212,59 @@ shared semantic validator checks only the closed field shape, bounds, ordering,
 and cross-record relationships; it MUST NOT parse a Codex, Kimi, remote-host,
 or other backend-specific value.
 
-The closed `continuation_strategy` object is exactly either
-`{ mode: exact_replay, executor: local_client | managed_server }` or
+The closed `continuation_strategy` object is exactly either an exact-replay
+object with required `mode: exact_replay`, required `executor: local_client |
+managed_server`, and the optional `replay_profile` defined below, or exact
 `{ mode: backend_managed_state }`. Unknown fields and values fail closed, and
-`backend_managed_state` forbids an `executor` field. The strategy is explicit
+`backend_managed_state` forbids `executor` and `replay_profile`. The strategy is explicit
 binding evidence; validators MUST NOT infer it from `backend_kind`, Provider,
 API dialect, model, or locator. It is distinct from the `transition.mode`
 below: transition records how a new epoch was seeded, while continuation strategy
 records who owns context reconstruction for later requests in that epoch.
+
+The extended exact-replay form MAY additionally contain one non-null
+`replay_profile` string. Absence is the exact preceding representation and
+normalizes to `semantic-only/v1`; a current producer omits the field for that
+value. Presence is initially valid only as exact
+`kimi-private-local-plaintext/v1`, which declares semantic item schema
+`kimi.assistant-message/v1alpha1`; a current producer MUST emit it for that
+profile. `backend_managed_state` forbids `replay_profile`. Unknown, null,
+empty, or other values fail closed. This normalized value is part of the
+versioned `binding_identity` comparison and epoch evidence. Before committing
+the binding-open record, the selected adapter MUST prove that it equals the
+complete effective binding's resolved replay profile. The shared semantic
+validator checks the closed field and cross-record uses but never derives it
+from a ModelId, Connector, or opaque binding value.
+
+The closed provider-private replay variant has exact `kind:
+provider_private_assistant`, exact non-null `schema:
+kimi.assistant-message/v1alpha1`, positive `binding_epoch`, and `message`; no
+other item field is admitted. `binding_epoch` MUST equal the containing replay
+delta epoch and its open binding MUST carry exact replay profile
+`kimi-private-local-plaintext/v1`. The closed message object contains exactly
+required `role: assistant`, required UTF-8 string `reasoning_content`, required
+`content` as either a UTF-8 string or null, and optional `tool_calls`. Absent or
+null reasoning, an absent content field, and every unknown field fail closed.
+When present, `tool_calls` is a non-empty ordered array of at most 1,024 items.
+Each element contains exactly `id` as 1 to 4,096 UTF-8 bytes, exact `type:
+function`, and `function`; the function object contains exactly `name` as 3 to
+64 ASCII bytes matching `^[a-zA-Z_][a-zA-Z0-9-_]{2,63}$` and `arguments` as at
+most 4,194,304 UTF-8 bytes that parse as one JSON value. IDs are unique in the
+assistant group and must equal their generic function-call counterparts. Null,
+duplicate, malformed, or unknown fields fail closed.
+
+One private item MUST immediately follow the matching generic assistant message
+and its zero or more contiguous function-call items, before any function result
+or later message. Its content string projects byte-for-byte to the generic
+assistant content; null projects to an empty generic content and is valid only
+when no visible content fragment existed. Its tool calls project in order and
+field-for-field to those generic function-call items; absence is valid only
+when there are none. The generic assistant refusal MUST be absent. A mismatch,
+second private item for the same assistant group, unpaired private item, or
+private item under another replay profile fails the complete delta. The private
+message replaces that generic assistant group only during the K3 Connector's
+wire projection, so one complete assistant object rather than two is sent; the
+generic items remain the frontend-neutral visible replay authority.
 
 Both exact-replay executors use the same replay item, contract, bounds, digest,
 ordering, and Anchor validation. `local_client` assembles the next request from
@@ -236,6 +285,14 @@ description remains ordinary semantic Journal data rather than an opaque
 backend identity. The binding's backend and model identities, transition mode,
 source Anchor, and cache state therefore remain available without Request Audit
 detail.
+
+When the source Anchor's selected replay prefix contains a provider-private
+item, a replacement `transition.mode: exact_replay` is valid only when the
+target records the same complete binding identity and replay profile or an
+independently reviewed lossless-conversion schema. Without such a converter,
+every different target MUST use `lossy_handoff`; dropping the item while
+recording exact replay fails semantic admission even when the target itself uses
+`semantic-only/v1`.
 
 The first binding epoch is 1 and MUST open after its backend Session has been
 created and the matching semantic `SessionCreated` has been committed. Later
@@ -272,6 +329,16 @@ The existing delta and replay-prefix limits measure the complete canonical
 encoded delta bytes after JSON escaping. A refusal on a system, developer, or
 user message MUST fail closed during evidence validation and wire decoding
 rather than being reinterpreted by a connector.
+
+The complete canonical JSON encoding of one provider-private item is limited to
+16 MiB and counts once inside, never in addition to, the same 16 MiB delta and
+64 MiB prefix ceilings. Reasoning, content, IDs, names, and argument fragments
+are checked incrementally before an excess byte is retained; their final JSON
+escaping is included in the canonical delta metric. Snapshots preserve the
+exact item, its relative order, replay profile, and epoch and revalidate the
+same projection and bounds. A failed private admission rejects the whole delta
+and therefore prevents its outcome and Anchor rather than dropping or redacting
+only the private item.
 
 A `backend_resumable_outcome` is valid only after a matching semantic
 `TurnFinished` with outcome `completed` and MUST reference the latest accepted
@@ -328,10 +395,11 @@ physical `/v1` shape, and the development-only semantic meanings named
 tag MUST fail closed before semantic admission. They MUST NOT be migrated,
 reinterpreted, skipped as valid history, or exposed as readable Session data.
 Recovery MUST read only formats explicitly supported by an accepted
-compatibility contract; at this baseline that set contains only the two current
-closed `/v1` shapes. No legacy parser, dual reader, compatibility shim, or old
-wire model is retained. A minimal rejection fixture MAY remain only to prove
-that a displaced shape fails closed.
+compatibility contract; at this baseline that set contains only the current
+closed semantic and physical `/v1` shapes, including the additive replay-item
+extension defined here. No legacy parser, dual reader, compatibility shim, or
+old wire model is retained. A minimal rejection fixture MAY remain only to
+prove that a displaced shape fails closed.
 
 The current checksummed physical `yo.session-record/v1` envelope remains
 unchanged because its CRC32C already binds the exact semantic payload bytes.
@@ -355,6 +423,24 @@ replay delta is persisted; after that point a downgrade fails closed for that
 Session. No migration, dual write, or downgrade compatibility shim is provided.
 This asymmetric pre-release data impact is explicitly accepted by this
 revision.
+
+This fifth explicitly reviewed pre-release semantic `/v1` change is another
+additive extension of that same `format: anchored-session` generation. The
+physical `yo.session-record/v1` schema, exact top-level fields, record-kind
+grammar, discovery object, `crc32c/v1` representation, and checksum domain and
+preimage remain byte-for-byte unchanged; the already-bound payload string may
+now contain the closed private item and replay-profile evidence above. Every
+valid preceding semantic record remains valid. The current reader accepts a
+Session log containing preceding deltas and later private-bearing deltas without
+rewriting either. A preceding semantic reader rejects the new item variant or
+replay-profile field as unknown, so a Session remains downgrade-readable only
+until either is persisted. This accepted asymmetric pre-release impact provides
+no migration, dual write, item omission, or downgrade shim. Exact fixtures MUST
+prove unchanged preceding bytes, current mixed-history recovery and snapshot,
+preceding-reader failure on both new shapes, canonical encoded bound accounting,
+CRC coverage of the extended payload, and rejection of every null, omission,
+unknown-field, order, projection, schema, profile, epoch, and duplicate case
+defined above.
 
 Any further pre-release replacement under either `/v1` tag requires another
 explicitly reviewed SOT revision that names the replaced shape and accepts its

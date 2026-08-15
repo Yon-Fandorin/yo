@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:06893d7a2264f154d5c2dc2cfe102938dcc833d32957d80420eb782445e0d4c0
+revision: sha256:5a00b929fee95b5fcba0ea8be3ce4bbc111b10c4a318bf573eb8bce543a78453
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:2142432b9a59549a85768e9718a5b3484bb42b27c7c1e7bbf29f25b75b8f09bb
+request_hash: sha256:e161028ee03d072c241cf3c95eaf34bc16a4ec30c0de5f1e7c0d1304eb009200
 ---
 # Korean Review Projection
 
@@ -21,7 +21,7 @@ anchored-session development shape로 교체했고, 두 번째 reviewed revision
 replay-delta development shape로 교체했습니다. 세 번째 reviewed revision은 그 shape를
 continuation strategy를 명시하는 anchored-session shape로 교체했습니다. 이번 네 번째
 reviewed revision은 같은 shape에 아래의 optional assistant-refusal replay field를 명시적으로
-확장합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며 schema
+확장했습니다. 이번 다섯 번째 reviewed revision은 물리 v1 envelope를 유지하면서 같은 공개 전 semantic shape에 provider-private replay item 하나와 replay-profile evidence를 additive하게 확장합니다. 정확한 구조와 UUIDv7 Session ID까지 기준에 포함하며 schema
 태그가 같다는 이유만으로 레코드를 받아들이지 않습니다.
 
 Descriptor만 있는 commit을 포함한 모든 의미 `/v1` commit은 top-level에 정확히
@@ -70,7 +70,7 @@ workspace·user·system·admin scope, 양의 catalog generation, entry revision�
 0 generation, 잘못된 root-relative path와 profile은 fail closed 합니다.
 
 새 의미 `/v1`은 payload를 담지 않는 일반 exchange record 하나와 재개 전용 record
-다섯 종류를 추가합니다.
+다섯 종류를 추가합니다. `model_replay_delta`의 ordered non-empty list는 exact replay item을 담으며, 기존 message, function call, function result 외에 아래에서 정의하는 provider-private assistant item도 포함할 수 있습니다.
 
 - `backend_exchange_observed`: 양의 `epoch`, UUIDv4 `operation_id`, exchange 종류와
   방향, payload schema, 선택적인 상관 sequence와 backend identity, Request Audit
@@ -165,10 +165,22 @@ fail closed 합니다. 현재 checksummed physical envelope 자체는 정확한 
 
 이번 세 번째 reviewed pre-release revision은 바로 앞 replay-delta development shape를 교체합니다. backend_binding_opened는 continuation_strategy를 명시하며 exact_replay는 local_client 또는 managed_server executor를 갖고 backend_managed_state는 executor를 금지합니다. 이는 새 epoch의 seed 방법을 뜻하는 transition.mode와 별개입니다. exact replay binding에서만 model_replay_delta와 outcome의 replay_delta_sequence가 필수이며 delta가 outcome 바로 앞에 있어야 합니다. backend-managed binding에서는 둘 다 금지되고 TurnFinished(completed), payload-free outcome, Anchor가 같은 commit에 연속해서 기록됩니다. 두 exact replay executor의 replay contract, bounds, digest, ordering, Anchor validation은 동일하며 request를 조립하는 위치만 다릅니다. managed_server는 reviewed remote repository 구현 전에는 현재 implementation이 기록할 수 없는 예약 값입니다. 같은 `/v1` tag를 사용한 직전 development shape는 fail closed합니다.
 
+닫힌 `continuation_strategy`는 정확히 두 형태입니다. Exact-replay object는 필수 `mode: exact_replay`, 필수 `executor: local_client | managed_server`, 아래의 optional `replay_profile`을 가지며, 다른 형태는 정확히 `{ mode: backend_managed_state }`입니다. `backend_managed_state`는 `executor`와 `replay_profile`을 금지합니다. Extended exact-replay form의 non-null `replay_profile`은 생략할 수 있고, 생략은 정확한 이전 표현으로서 `semantic-only/v1`로 normalize하며 current producer도 그 값이면 field를 생략합니다. Field가 있으면 최초에는 정확한 `kimi-private-local-plaintext/v1`만 유효하고 이는 semantic item schema `kimi.assistant-message/v1alpha1`을 선언하며 current producer는 이 profile에 field를 반드시 기록합니다. Unknown, null, empty, 다른 값은 fail closed합니다. Normalized 값은 versioned `binding_identity` 비교와 epoch evidence의 일부입니다. Binding-open record를 commit하기 전에 선택된 adapter는 이 값이 complete effective binding의 resolved replay profile과 같음을 증명해야 합니다. Shared semantic validator는 closed field와 cross-record use를 검사하지만 ModelId, Connector, opaque binding value에서 이를 파생하지 않습니다.
+
+닫힌 provider-private replay variant는 정확한 `kind: provider_private_assistant`, 정확한 non-null `schema: kimi.assistant-message/v1alpha1`, 양의 `binding_epoch`, `message`만 가집니다. 다른 item field는 허용하지 않습니다. `binding_epoch`은 containing replay delta epoch과 같아야 하고 open binding은 정확한 replay profile `kimi-private-local-plaintext/v1`을 가져야 합니다. 닫힌 message object는 정확히 필수 `role: assistant`, 필수 UTF-8 string `reasoning_content`, string 또는 null인 필수 `content`, optional `tool_calls`를 가집니다. Reasoning absent/null, content field absent, unknown field는 fail closed합니다. `tool_calls`가 있으면 1~1,024개의 ordered array입니다. 각 item은 정확히 1~4,096 UTF-8 byte `id`, `type: function`, `function`을 가지며, function object는 3~64 ASCII byte이고 `^[a-zA-Z_][a-zA-Z0-9-_]{2,63}$`인 `name`과 최대 4,194,304 UTF-8 byte이며 JSON value 하나로 parse되는 `arguments`만 가집니다. Assistant group 안 ID는 고유하고 generic function-call counterpart와 같아야 합니다. Null, duplicate, malformed, unknown field는 fail closed합니다.
+
+Private item 하나는 matching generic assistant message와 그 뒤의 contiguous function-call item들 바로 다음, function result나 이후 message보다 앞에 있어야 합니다. Content string은 generic assistant content에 byte-for-byte projection되고, null은 빈 generic content로 projection되며 visible content fragment가 없을 때만 유효합니다. Tool call은 generic function-call item과 같은 순서와 field로 projection되고, 없을 때만 생략할 수 있습니다. Generic assistant refusal은 없어야 합니다. Mismatch, 같은 assistant group의 두 번째 private item, 짝이 없는 private item, 다른 replay profile 아래의 private item은 complete delta를 실패시킵니다. K3 Connector의 wire projection에서만 private message가 generic assistant group을 대체하므로 assistant object 하나만 전송됩니다. Generic item은 frontend-neutral visible replay authority로 남습니다.
+
+Source Anchor가 선택한 replay prefix에 provider-private item이 있으면 replacement `transition.mode: exact_replay`는 target이 같은 complete binding identity와 replay profile을 기록하거나 독립적으로 검토된 lossless-conversion schema가 있을 때만 유효합니다. Converter가 없으면 다른 모든 target은 `lossy_handoff`를 사용해야 하며, target이 `semantic-only/v1`이어도 item을 버리면서 exact replay를 기록하면 semantic admission이 실패합니다.
+
+Provider-private item 하나의 complete canonical JSON encoding은 16 MiB로 제한되며, 같은 16 MiB delta와 64 MiB prefix ceiling 안에서 한 번만 계산되고 추가 용량이 되지 않습니다. Reasoning, content, ID, name, argument fragment는 초과 byte를 보존하기 전에 점진적으로 검사하고 최종 JSON escape도 canonical delta metric에 포함합니다. Snapshot은 item의 정확한 값, 상대 순서, replay profile, epoch을 보존하고 같은 projection과 bound를 다시 검증합니다. Private admission 실패는 item만 빼거나 redact하지 않고 delta 전체를 거절하므로 outcome과 Anchor도 만들어지지 않습니다.
+
 
 이번 네 번째 reviewed pre-release revision은 바로 앞 continuation-strategy-aware anchored-session shape와 같은 format generation을 additive extension합니다. Replay message는 정확한 role과 visible UTF-8 content 외에 독립적인 optional visible refusal을 가질 수 있습니다. Refusal은 assistant message에만 유효합니다. Field가 없으면 refusal이 없다는 뜻이고, 존재하면 빈 문자열 `""`도 포함하는 non-null UTF-8 JSON string이어야 하며 null과 다른 타입은 fail closed합니다. Content와 refusal의 decoded UTF-8 bytes를 각각 정확히 보존하고 각자 16 MiB로 제한합니다. 기존 16 MiB delta와 64 MiB 및 4096 item replay prefix 제한은 JSON escape 뒤의 전체 canonical encoded delta bytes에 적용됩니다. System·developer·user message의 refusal은 공통 evidence validation과 wire decoding에서 fail closed해야 합니다.
 
 Refusal이 없는 직전 revision의 모든 유효 record는 확장된 현재 shape에서도 current-generation record입니다. 따라서 refusal이 없는 message와 있는 message가 섞이는 것은 top-level format generation 혼합이 아니며, 서로 다른 `format` discriminator가 섞이는 경우만 계속 fail closed합니다. 새 reader는 직전 record를 그대로 읽지만, 직전 closed-shape reader는 refusal이 실제로 기록된 새 record를 unknown field로 거부합니다. 따라서 기존 Session은 refusal-bearing replay delta가 처음 저장되기 전까지만 이전 binary로 downgrade하여 읽을 수 있고, 그 이후에는 해당 Session이 fail closed합니다. 이 revision은 migration, dual write, downgrade shim 없이 이 비대칭적인 공개 전 data impact를 명시적으로 수용합니다. `format: anchored-session`, checksummed physical envelope, 다른 semantic record는 바뀌지 않습니다.
+
+이번 다섯 번째로 명시적으로 검토된 공개 전 semantic `/v1` 변경은 같은 `format: anchored-session` generation의 additive extension입니다. 물리 `yo.session-record/v1` schema, top-level field, record-kind grammar, discovery object, `crc32c/v1` 표현, checksum domain·preimage는 byte-for-byte 그대로이고 이미 bind된 payload string이 위 private item과 replay-profile evidence를 포함할 수 있게 됩니다. 이전의 모든 유효 semantic record는 계속 유효하고 current reader는 이전 delta와 이후 private-bearing delta가 섞인 Session log를 다시 쓰지 않고 받아들입니다. 이전 semantic reader는 새 item variant나 replay-profile field를 unknown으로 거절하므로 둘 중 하나가 저장되기 전까지만 downgrade-readable합니다. 이 공개 전 비대칭 영향에는 migration, dual write, item omission, downgrade shim이 없습니다. Exact fixture는 이전 byte 불변, current mixed-history recovery와 snapshot, 두 새 shape에 대한 preceding-reader failure, canonical bound 계산, 확장 payload의 CRC coverage, 위에 정의한 null·omission·unknown-field·order·projection·schema·profile·epoch·duplicate case의 거절을 증명해야 합니다.
 
 ## 이유
 

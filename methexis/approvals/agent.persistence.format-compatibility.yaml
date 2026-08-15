@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:06893d7a2264f154d5c2dc2cfe102938dcc833d32957d80420eb782445e0d4c0
+revision: sha256:5a00b929fee95b5fcba0ea8be3ce4bbc111b10c4a318bf573eb8bce543a78453
 reviewer: agent-runtime
-reviewed_at: 2026-08-08T14:49:22Z
+reviewed_at: 2026-08-15T16:09:38Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:cab6aa7c7c511d74c3616dc98443d719205e05604810c56262e7ca81535993c0
-request_hash: sha256:b438e25931672d98754727bd5d14905d3a803a4203253cfc71577b8ca7b93e0e
+projection_hash: sha256:ddeee8f39919f6c12ddc625fcc4853fabe991e93257ab28baaa40d0e6668e9ff
+request_hash: sha256:b8931b2542b4d55506bca0fd750aa5fa06c31309cff97562ebc8abd111bfa745

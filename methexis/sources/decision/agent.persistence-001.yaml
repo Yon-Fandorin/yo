@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:9099aa0899d2315e2472ca8c691a465a39adf5f26694291690303d660b29273e
+revision: sha256:75cb26dbdc324606d2d6fca178d5aeef51cef1f25121610f3a036243b600c624
 payload:
   kind: decision
   content: |-
@@ -13,3 +13,6 @@ payload:
 
 
     Before public release, the continuation-strategy-aware anchored-session semantic Journal /v1 is explicitly extended so a replay message may carry visible content and an optional independent visible refusal. This is an additive extension of the same format generation: every refusal-absent preceding record is also a valid current record, while mixed top-level format discriminators still fail closed. Refusal is valid only for assistant messages. Absence means no refusal; presence requires a non-null UTF-8 JSON string, including the valid empty string, while null and non-string values fail closed. Content and refusal are each bounded over decoded UTF-8 octets before the existing canonical encoded delta and prefix bounds apply. The new reader accepts every preceding record, while a preceding closed-shape reader rejects a new refusal-bearing record. Therefore downgrade remains possible only for Sessions that have not persisted refusal; no migration, dual write, or downgrade shim is provided. The physical envelope and all other semantic records remain unchanged.
+
+
+    Before public release, the same anchored-session semantic Journal /v1 is additively extended again with replay-profile evidence and one closed provider_private_assistant item. Absent replay_profile remains the preceding semantic-only/v1 form; exact kimi-private-local-plaintext/v1 declares kimi.assistant-message/v1alpha1. That item carries the matching epoch and a closed assistant object with exact assistant role, required reasoning string, required string-or-null content, and optional non-empty ordered function-tool calls. It immediately follows and must project exactly to one generic assistant/function-call group, then replaces that group only in K3 wire projection. The complete encoded item counts inside the existing 16 MiB delta and 64 MiB prefix limits. A source Anchor containing private replay cannot open a different exact-replay binding unless a reviewed lossless converter preserves it; otherwise the transition is lossy_handoff. The physical yo.session-record/v1 envelope, fields, discovery, checksum domain, and checksum preimage remain unchanged because they already bind the exact semantic payload bytes. Current readers accept preceding and extended records in one Session and snapshots preserve both; preceding semantic readers reject the new item or replay-profile field. This asymmetric pre-release downgrade impact is accepted without migration, dual write, omission, or shim.

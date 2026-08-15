@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.observability-001
-    revision: sha256:952a09565421cb17d1440a4923f3922226b5d3104b6dc1e9177605ceedc072b5
+    revision: sha256:fa05b630596ab274ec6d9cb22c0c83d8cd97be1be5a1b60b81326de2869f740f
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -69,11 +69,17 @@ domain under the same Session Repository lifecycle. It MUST NOT become
 semantic authority, and its absence MUST NOT block Journal replay or
 Continuation Anchor validation. Missing, unsupported, volatile, or unpersisted
 detail MUST remain explicit rather than blocking unrelated semantic records.
-Redaction MUST happen before any durable detail admission. Credentials,
+Redaction MUST happen before any durable Request-detail admission. Credentials,
 complete environment variables, private reasoning values, and other prohibited
-raw values MUST NOT enter durable storage; removal MUST be represented
-explicitly when it affects interpretation. Until that admission boundary is
-implemented, Request detail MUST remain process-local and volatile.
+raw values MUST NOT enter durable Request Audit storage; removal MUST be
+represented explicitly when it affects interpretation. A schema-bound
+provider-private replay item is not Request detail and MAY enter the semantic
+Journal only when the selected binding, Connector, backend, continuation, and
+Session Repository contracts jointly define its source, lossless validation,
+byte bounds, binding epoch, durable schema, request projection, and exclusion
+from every frontend and diagnostic projection. Until the Request-detail
+admission boundary is implemented, Request detail MUST remain process-local and
+volatile.
 
 
 A model replay delta MUST preserve exact visible message roles and bytes, validated
@@ -83,6 +89,10 @@ outcome and Continuation Anchor in the same physical append. It MUST NOT be
 derived from Chat or Transcript presentation. Tool arguments and outputs MUST
 pass semantic redaction admission before they update an Activity, become later
 model input, or enter replay; the admitted exact replacement is authoritative.
+An admitted provider-private item MUST remain payload-bearing semantic replay,
+MUST be committed atomically with its adjacent visible replay, and MUST NOT be
+copied into a message segment, Activity, correlation record, Live Projection,
+Transcript, Request Audit, discovery summary, error, log, or diagnostic.
 
 ## Rationale
 

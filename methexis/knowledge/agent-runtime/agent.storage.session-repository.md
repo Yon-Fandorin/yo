@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.storage-001
-    revision: sha256:840dce68123f20bb5139961b16970179300e5f8a5c81e76584f13a8b588d54b7
+    revision: sha256:62a8bf8c45912826c33350d3fb8f0b6f71b238b8efc84d98b0d5ea07ca695392
 relations:
   depends_on:
     - agent.persistence.format-compatibility
@@ -51,6 +51,19 @@ them and MUST validate checksummed records
 before admitting them. The checksum MUST NOT be calculated by recursively
 serializing a record that already contains its checksum.
 
+The physical `yo.session-record/v1` envelope, field grammar, CRC32C preimage,
+and failure behavior remain unchanged. Its payload string MAY encode the
+format-compatibility contract's additive provider-private replay item inside the
+current pre-release `yo.semantic-journal-commit/v1` shape; the schema field and
+checksum still bind those exact payload bytes. The current semantic reader
+accepts both preceding replay deltas and the extended private-item union in one
+Session log, while a preceding reader rejects a private item as an unknown
+variant. Existing physical or semantic records are never rewritten merely
+because a later K3 Turn uses the extension. Compatibility tests MUST preserve
+one discriminating preceding replay artifact byte-for-byte, accept a log whose
+later physical-v1 payload contains the private item, and prove that the
+preceding semantic decoder fails rather than silently omitting it.
+
 The repository boundary MUST provide a read-only discovery port that locates
 and validates the last complete envelope of each Session through a bounded tail
 read and returns storage-neutral discovery summaries. Opening or using this port
@@ -62,7 +75,15 @@ The two logical record domains therefore share one physical availability
 boundary and one capacity ceiling in this implementation. It is the initial durable home for bounded, payload-free Request correlation
 records and the separate bounded, payload-bearing `model_replay_delta` semantic
 record. Replay is Session meaning rather than Request detail and MUST share the
-completed Turn, outcome, and Anchor's atomic physical envelope. Durable Request
+completed Turn, outcome, and Anchor's atomic physical envelope. One replay delta
+MAY contain a provider-private item only when the open binding carries exact
+replay profile `kimi-private-local-plaintext/v1`. The first such item uses
+`kimi.assistant-message/v1alpha1`, carries
+the exact bounded K3 assistant object plus its binding identity and epoch, and
+must validate that its visible projection equals the adjacent semantic replay.
+It remains payload-bearing Session meaning but is excluded from Transcript,
+Request trace, discovery, error text, debug output, and every frontend read
+projection. Durable Request
 detail MUST NOT be admitted until a redaction-before-admission contract has an
 implemented gate; until then detail remains process-local and volatile.
 Independent Request-detail retention or eviction is not part of the first
@@ -143,6 +164,15 @@ evidence.
 
 
 Model replay MUST pass semantic redaction admission before repository append.
+Provider-private replay is admitted only from the correlated completed
+Connector response and MUST pass its exact schema, replay profile, binding, projection, and
+byte-bound checks. Because altering it would break provider continuation, a
+private item that fails admission is rejected rather than redacted or partially
+stored. Accepted private bytes use the same user-only local directory and mode
+`0600` files as other Session payloads and are not encrypted by the first
+implementation; this retention fact is disclosed before selecting such a
+binding. Repository and frontend APIs MUST NOT expose the contents through a
+generic record projection.
 Repository capacity and model-context limits are independent: storage capacity
 MUST count replay bytes normally, while replay-prefix or model-context exhaustion
 MUST complete the Turn as non-resumable without silently truncating, summarizing,
@@ -150,7 +180,8 @@ or appending a partial replay chain.
 
 The repository MUST interpret replay presence through the binding's explicit
 continuation strategy. A local `exact_replay(local_client)` binding reconstructs
-the validated model-visible prefix from its replay-delta chain. A
+the validated semantic prefix plus any declared provider-private extension from
+its replay-delta chain. A
 `backend_managed_state` binding persists the payload-free outcome, Anchor, and
 backend locator evidence without a replay delta and MUST NOT synthesize one from
 Transcript or Request Audit data.
