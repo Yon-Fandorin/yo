@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: agent.tool.local-execution-boundary
-revision: sha256:9d93b13ce0cf5967fa567c9cbf9f73750c19a52a89e32479a9a119a5bd5a6dd8
+revision: sha256:fe8e3f495a8e7f026f88d1073c271599fc1ccdbbd1ed1504e8af4f50db17d82b
 reviewer: agent-runtime
-reviewed_at: 2026-08-14T04:23:42Z
+reviewed_at: 2026-08-16T15:07:58Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:b9e5104bbb09ecefe8cfad56f8ec753d0d6fb7785d2d3092fd31ce5fda1f7caf
-request_hash: sha256:234b2c8c1f19b2933a3ca1685919edff776992bb6f6e198da929a163036c0d8e
+projection_hash: sha256:d32d0429269b77530a7a20e15dc5d550aefe731127bfb5767f2dcce4df3e6e1e
+request_hash: sha256:12e29095d9e85bb63249013763a6ddfd791d579f902ceeae429399cc9f3a0c78
