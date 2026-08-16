@@ -425,6 +425,14 @@ that object otherwise hides the boundary, expose the narrowest read-only,
 secret-free typed projection needed for the assertion or exercise the real
 downstream effect.
 
+At an incremental resource or capacity boundary, identify the first unit that
+would cross the limit and assert the contract's boundary result before
+retention or emission. A rejecting boundary must reject it; a backpressure
+boundary must leave it unaccepted or pending until capacity is available,
+using the finite deadline and cleanup rules below. Compare the applicable
+retained-state projection and emitted sequence; a later final-size check alone
+does not prove incremental enforcement.
+
 Every built-in Rust test in the workspace must have an understandable Korean
 line-comment immediately above `#[test]`. Use multiple lines when one line would
 hide the setup, expected result, or reason. Do not merely translate the function
