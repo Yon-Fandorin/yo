@@ -11,6 +11,7 @@ pub(crate) fn check(input: &ImpactInput) -> Result<(), String> {
         .map(String::as_str)
         .filter(|path| {
             path.starts_with("crates/")
+                || path.starts_with("shared/")
                 || path.starts_with("tools/")
                 || matches!(*path, "Cargo.toml" | "Cargo.lock" | ".cargo/config.toml")
         })

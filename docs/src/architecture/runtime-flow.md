@@ -530,10 +530,9 @@ the invoking terminal's width and never contains ANSI styling.
 The optional configuration file is read but never created. Linux uses
 `${XDG_CONFIG_HOME:-$HOME/.config}/yo/config.yaml`; macOS uses
 `$HOME/Library/Application Support/yo/config.yaml`. `YO_CONFIG` selects an
-explicit path. The first schema is:
+explicit path. The current pre-version schema is:
 
 ```yaml
-version: 1
 session:
   list:
     date_format: "%Y-%m-%d %H:%M %:z"
@@ -632,14 +631,17 @@ one catalog entry. Each `model.bindings` item owns one Provider-and-Account
 endpoint and an optional base profile. A model inherits every base field and
 replaces only fields present in its own `profile`; a structured field is one
 whole replacement rather than a recursive merge. The resolved result must
-contain all eight profile fields. Duplicate Provider-and-Account blocks,
-unknown fields, duplicate structured keys, and incomplete results fail.
-Structured numbers keep the variant selected by their authored spelling; an
-explicit YAML numeric tag cannot retype that spelling. Startup and native
-resume use the same closed durable complete-binding decoder, so out-of-range
-JSON numbers cannot acquire a different variant at a later boundary.
+contain all eight profile fields. Omitting a model profile field inherits the
+base value; `{}` explicitly replaces a structured field with an empty mapping;
+a whole-field YAML null fails, while null below a present structured mapping
+remains a structured null value. Duplicate Provider-and-Account blocks,
+unknown fields, duplicate structured keys, and incomplete results fail. Plain
+YAML 1.1 `y`/`yes`/`true`/`on` and `n`/`no`/`false`/`off` spellings are
+case-insensitive booleans, and `1_000` is integer `1000`; quoted forms remain
+strings. Startup and native resume use the same closed durable complete-binding
+decoder, so scalar variants cannot change at a later boundary.
 
-The earlier flat `model.catalog` list remains readable under version 1 and
+The earlier flat `model.catalog` list remains readable in the current shape and
 keeps its existing `yo.model-binding/v1` durable identity. It cannot appear in
 the same document as `model.bindings`. A new explicit profile is attributed as
 `yo.complete-model-binding/v1`; changing the endpoint, derived connector, or
@@ -648,7 +650,7 @@ silently reusing the old one. Missing configuration retains built-in Session/TUI
 but supplies no startup target, so live startup gives setup guidance instead of
 silently selecting Codex. The YAML above is an operator-owned native model
 example rather than an implicit model default.
-Unreadable files, unsupported versions, unknown fields, oversized files,
+Unreadable files, retired fields, unknown fields, oversized files,
 invalid date formats, and unsupported frame rates are explicit failures rather than silent
 fallbacks. The reader opens one no-follow nonblocking descriptor, requires it to be a
 regular file, captures stable identity and metadata, and consumes at most 1 MiB plus one sentinel
@@ -657,10 +659,9 @@ Preference mutations recapture this file and require the exact command-local sna
 unchanged before public commit. A
 model API key is never read from an environment variable. When a configured
 model is selected, Yo reads a separate `credentials.yaml` beside the selected
-`config.yaml`. Its versioned Provider-then-Account shape is:
+`config.yaml`. Its current pre-version Provider-then-Account shape is:
 
 ```yaml
-version: 1
 providers:
   openrouter:
     default:
@@ -673,24 +674,31 @@ providers:
 The credential file must be a current-user-owned regular file with no group or
 other permission bits (normally mode `0600`). The same Account ID may be used
 under different Providers; only the exact selected Provider-and-Account pair is
-resolved. A revision-less version 1 file remains a readable legacy snapshot.
+resolved. A revision-less current-shape file remains a readable snapshot.
 `LocalCredentialRepository` re-reads it under a private store lock and can
 prepare exactly one add, replace, or remove without retaining the candidate
 secret. Commit accepts the candidate only for add or replace, preserves every
 unrelated pair, and atomically publishes a complete mode-`0600` snapshot with
 an independently generated private `crev-...` receipt. The planned receipt and
 exact pair state make a repeated commit idempotent, while a different observed
-revision is a conflict. Removing the final pair leaves a versioned empty file
+revision is a conflict. Removing the final pair leaves a revisioned empty file
 rather than returning to `absent`. These writes are a core storage boundary.
 
+`config.yaml`, `credentials.yaml`, `connections.yaml`, and the operation
+journal share `yo-yaml`: exactly one document, finite structural and replay
+budgets, bounded small aliases, and rejection of duplicate keys, merge keys,
+unknown aliases, cycles, and additional documents. None carries a top-level
+format-version field. A retired `version` field or journal `profile_digests`
+field fails before mutation with guidance to back up or remove the stale local
+state and register affected connections again. Yo does not decode, migrate,
+dual-write, downgrade, or automatically delete the retired pre-release shapes.
+
 The sibling `connection-operation.yaml` owns the secret-free durable intent
-for a credential-and-public operation. A closed version 1 record carries
-an opaque operation ID, the config snapshot digest, a required legacy
-`profile_digests` field that new writers leave empty, exact
+for a credential-and-public operation. The current pre-version record carries
+an opaque operation ID, the config snapshot digest, exact
 expected and planned public revisions plus the complete bounded prospective
 public snapshot, one add, replace, remove, or preserve credential receipt, and
-one legal phase. Readers still validate and ignore non-empty values from an
-older valid version 1 intent so an interrupted operation remains recoverable.
+one legal phase.
 It cannot accept an `ApiCredential`, candidate identity, or
 verification payload. Missing capture is non-creating; first intent publication
 is exclusive; every phase replacement is bounded, mode `0600`, no-follow,
@@ -914,7 +922,6 @@ list, one flat complete-binding list, and the selection-owned preference. A
 representative snapshot is below (the opaque revision value is illustrative):
 
 ```yaml
-version: 1
 revision: rev-0123456789abcdef0123456789abcdef
 preference:
   kind: model
@@ -948,9 +955,9 @@ An absent file is the canonical unset snapshot and is read without creating a
 directory. Capture rejects unknown fields, duplicate account or binding
 coordinates, bindings without their account, inconsistent Provider display
 metadata, invalid complete bindings, and out-of-range unquoted structured-profile
-numbers. The same scalar-style validator protects manual and managed YAML, so a
-quoted numeric-looking string remains a string while a plain invalid number
-cannot be retyped silently.
+numbers. The same shared scalar inference protects manual and managed YAML;
+whole-field structured null fails in both, while nested null and quoted
+numeric-looking strings retain their exact variants.
 
 Managed upsert adds or replaces one exact complete coordinate, preserves every
 unrelated entry, and publishes the first ModelTarget preference only from an

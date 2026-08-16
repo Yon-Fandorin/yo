@@ -42,7 +42,8 @@ the assertion or silently skipping it.
 | Terminal and HTML projection of the same completed frame | `cargo test -p yo-tui --test rendering_parity` | `crates/yo-tui/tests/rendering_parity` and its goldens |
 | Process termination or real terminal restoration | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
 | Unix process-coordinator state and compensation | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |
-| Required explanations immediately above Rust tests | `cargo xtask check test-explanations` | Rust sources under `crates/` and `tools/` |
+| Shared bounded YAML parsing, inference, and failure budgets | `cargo test -p yo-yaml` | `shared/yo-yaml/src/lib.rs` |
+| Required explanations immediately above Rust tests | `cargo xtask check test-explanations` | Rust sources under `crates/`, `shared/`, and `tools/` |
 | Slice changes remain inside their bound local write-set | `cargo xtask check slice-scope` | One active Slice worktree; the planner first runs `cargo xtask slice-contract bind <contract.json>` |
 | Two Slice contracts have a common current integration base and disjoint declared ownership | `cargo xtask check slice-parallel <left.json> <right.json>` | Direct Slices use `develop`; Wave Slices use their Wave branch |
 | An accepted Slice is still exactly the reviewed local branch patch and is safe to clean up | Write the standard `close-metrics.json`, then run `cargo xtask slice close plan <slice> <plan.json>` and `cargo xtask slice close apply <plan.json>` | Run from the clean integration worktree; inspect the bound metrics, removal effects, and retained coordination paths before apply |

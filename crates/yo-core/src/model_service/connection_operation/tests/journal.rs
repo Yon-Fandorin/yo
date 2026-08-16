@@ -43,40 +43,73 @@ fn connect_intent_round_trips_without_secret_or_private_debug_receipts() {
     let raw = fs::read_to_string(fixture.journal.path()).unwrap();
     assert!(!raw.contains(CANDIDATE_SECRET));
     assert!(raw.contains(&private_credential_revision));
+    assert!(!raw.contains("version:"));
+    assert!(!raw.contains("profile_digests:"));
     let debug = format!("{entry:?}");
     assert!(!debug.contains(&private_credential_revision));
     assert!(!debug.contains(&public_revision));
     assert!(!debug.contains("planned_snapshot"));
 }
 
-// 새 wire-v1 intent는 legacy profile_digests 칸을 빈 배열로 유지하고, 이전 writer가 남긴
-// 올바른 digest는 복구 entry에 영향을 주지 않지만 형식이 틀리면 전체 intent를 거절합니다.
+// retired version 또는 profile_digests를 가진 저널은 현재 recovery authority로 해석하지
+// 않고 백업·제거·재연결 안내와 함께 mutation 전에 거절합니다.
 #[test]
-fn legacy_profile_digests_are_validated_but_do_not_change_recovery_identity() {
-    let fixture = Fixture::new("legacy-profile-digests");
+fn retired_journal_fields_report_reset_and_reconnect_guidance() {
+    let fixture = Fixture::new("retired-fields");
     let entry = fixture.connect_entry();
     let mut guard = fixture.operation_guard();
     fixture.journal.publish_intent(&mut guard, &entry).unwrap();
     let current = fs::read_to_string(fixture.journal.path()).unwrap();
-    assert!(current.contains("profile_digests: []"));
 
-    let legacy = current.replacen(
-        "profile_digests: []",
-        &format!("profile_digests:\n- {}", super::support::digest('b')),
-        1,
-    );
-    fs::write(fixture.journal.path(), &legacy).unwrap();
-    assert_eq!(fixture.journal.capture().unwrap(), Some(entry));
+    for retired_field in ["version: 1", "profile_digests: []"] {
+        fs::write(
+            fixture.journal.path(),
+            format!("{retired_field}\n{current}"),
+        )
+        .unwrap();
+        let error = fixture.journal.capture().unwrap_err();
+        let diagnostic = error.to_string();
+        assert!(
+            matches!(error, ConnectionOperationError::RetiredYamlFormat(_)),
+            "{retired_field}: {diagnostic}"
+        );
+        assert!(diagnostic.contains("back up or remove"), "{diagnostic}");
+        assert!(
+            diagnostic.contains("register affected connections again"),
+            "{diagnostic}"
+        );
+    }
+}
 
-    fs::write(
-        fixture.journal.path(),
-        legacy.replacen(&super::support::digest('b'), "sha256:not-a-digest", 1),
-    )
-    .unwrap();
-    assert!(matches!(
-        fixture.journal.capture(),
-        Err(ConnectionOperationError::InvalidContents(_))
-    ));
+// connection 내부의 version/profile_digests 오타는 퇴역 root journal marker로 오인하지
+// 않고 mutation 전 일반 invalid-content 오류로 거절합니다.
+#[test]
+fn nested_retired_names_are_not_classified_as_a_retired_journal() {
+    let fixture = Fixture::new("nested-retired-names");
+    let entry = fixture.connect_entry();
+    let mut guard = fixture.operation_guard();
+    fixture.journal.publish_intent(&mut guard, &entry).unwrap();
+    let current = fs::read_to_string(fixture.journal.path()).unwrap();
+
+    for nested_field in ["  version: 1", "  profile_digests: []"] {
+        let malformed = current.replacen(
+            "connection:\n",
+            &format!("connection:\n{nested_field}\n"),
+            1,
+        );
+        assert_ne!(malformed, current, "fixture must add {nested_field}");
+        fs::write(fixture.journal.path(), &malformed).unwrap();
+        let error = fixture.journal.capture().unwrap_err();
+        assert!(
+            matches!(&error, ConnectionOperationError::InvalidContents(_)),
+            "{nested_field}: {error}"
+        );
+        assert!(!error.to_string().contains("back up or remove"));
+        assert_eq!(
+            fs::read_to_string(fixture.journal.path()).unwrap(),
+            malformed
+        );
+    }
 }
 
 // connect 저널은 intent부터 credential_committed, public_committed, complete 순서로만
@@ -244,16 +277,17 @@ fn oversized_journal_is_rejected_before_decode() {
     ));
 }
 
-// revision 없는 legacy credentials.yaml에서 준비한 replace의 metadata receipt도 private
-// journal token으로 왕복되어 첫 managed credential commit 전 중단을 정확히 판별합니다.
+// revision 없는 current-shape credentials.yaml에서 준비한 replace의 derived metadata
+// receipt도 private journal token으로 왕복되어 첫 managed credential commit 전 중단을
+// 정확히 판별합니다.
 #[test]
-fn legacy_credential_revision_round_trips_as_private_expected_receipt() {
-    let fixture = Fixture::new("legacy-revision");
+fn derived_revision_for_revisionless_credentials_round_trips_privately() {
+    let fixture = Fixture::new("derived-revision");
     fs::create_dir_all(fixture.credentials.path().parent().unwrap()).unwrap();
     fs::write(
         fixture.credentials.path(),
         concat!(
-            "version: 1\n",
+            "",
             "providers:\n",
             "  qwencloud:\n",
             "    default:\n",
@@ -272,10 +306,10 @@ fn legacy_credential_revision_round_trips_as_private_expected_receipt() {
     fixture.journal.publish_intent(&mut guard, &entry).unwrap();
 
     let raw = fs::read_to_string(fixture.journal.path()).unwrap();
-    assert!(raw.contains("legacy-"));
+    assert!(raw.contains("derived-"));
     assert!(!raw.contains("retained-secret"));
     assert_eq!(fixture.journal.capture().unwrap(), Some(entry.clone()));
-    assert!(!format!("{entry:?}").contains("legacy-"));
+    assert!(!format!("{entry:?}").contains("derived-"));
 }
 
 // wire kind를 disconnect로 바꾸고 add action은 그대로 둔 closed-schema 위조는 조합 검증에서

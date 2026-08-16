@@ -75,6 +75,18 @@ fn scans_tracked_and_untracked_rust_sources_but_not_ignored_files() {
     assert!(!result.contains("ignored.rs"));
 }
 
+// shared 아래의 새 공통 크레이트도 product·tool Rust와 같은 test 설명 정책을 적용해
+// 디렉터리 배치만으로 review 가능한 설명 검사를 우회하지 못하게 합니다.
+#[test]
+fn scans_shared_rust_sources() {
+    let repository = TestRepository::new("test-explanation-shared-source");
+    repository.write("shared/example/src/lib.rs", "#[test]\nfn missing() {}\n");
+
+    let result = check_in(&repository.path, false).unwrap_err();
+
+    assert!(result.starts_with("shared/example/src/lib.rs:1:"));
+}
+
 // 작업 사본에서 삭제된 tracked 파일은 기존 `rg --files`와 같이 검사 대상에서 빠져,
 // 파일 삭제나 이름 변경 자체가 설명 검사 오류로 바뀌지 않는다.
 #[test]
@@ -117,7 +129,7 @@ fn recognizes_trailing_text_and_crlf_after_test_attribute() {
     assert!(result.starts_with("tools/example.rs:1:"));
 }
 
-// 저장소 하위 디렉터리에서 실행해도 Git 최상위를 기준으로 crates와 tools를 찾아,
+// 저장소 하위 디렉터리에서 실행해도 Git 최상위를 기준으로 crates·shared·tools를 찾아,
 // 빈 범위를 검사한 뒤 성공하는 대신 실제 설명 누락을 보고한다.
 #[test]
 fn resolves_the_repository_root_from_a_nested_directory() {

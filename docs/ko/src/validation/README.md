@@ -42,7 +42,8 @@ command, host, credential, platform을 기록한다.
 | 같은 완성 frame의 터미널·HTML Projection | `cargo test -p yo-tui --test rendering_parity` | `crates/yo-tui/tests/rendering_parity`와 golden |
 | process termination이나 실제 터미널 복원 | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
 | Unix process coordinator 상태와 보상 | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |
-| Rust test 바로 위에 필요한 설명 | `cargo xtask check test-explanations` | `crates/`와 `tools/` 아래 Rust source |
+| 공통 bounded YAML parse·inference·failure budget | `cargo test -p yo-yaml` | `shared/yo-yaml/src/lib.rs` |
+| Rust test 바로 위에 필요한 설명 | `cargo xtask check test-explanations` | `crates/`, `shared/`, `tools/` 아래 Rust source |
 | Slice 변경이 bind된 로컬 write-set 안에 머무는지 | `cargo xtask check slice-scope` | 하나의 활성 Slice worktree; planner가 먼저 `cargo xtask slice-contract bind <contract.json>` 실행 |
 | 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
 | 수용된 Slice가 여전히 검수한 로컬 branch patch와 정확히 같고 안전하게 정리할 수 있는지 | 표준 `close-metrics.json`을 작성한 뒤 `cargo xtask slice close plan <slice> <plan.json>`과 `cargo xtask slice close apply <plan.json>` 실행 | 깨끗한 통합 worktree에서 실행하고 apply 전에 결속된 metrics, 제거 효과, 보존할 coordination 경로를 검토 |

@@ -147,7 +147,7 @@ fn planned_public_revision_with_different_bytes_is_conflict() {
     fs::write(
         fixture.connections.path(),
         format!(
-            "version: 1\nrevision: {}\n",
+            "revision: {}\n",
             entry.connection_mutation().planned_revision()
         ),
     )

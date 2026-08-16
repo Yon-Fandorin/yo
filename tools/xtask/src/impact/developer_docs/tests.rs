@@ -29,6 +29,13 @@ fn preserves_developer_docs_impact_contract() {
             passes: false,
         },
         Case {
+            name: "shared library changes cannot omit the trailer",
+            message: "refactor(yaml): revise shared parser",
+            paths: &["shared/yo-yaml/src/lib.rs"],
+            branch: "develop",
+            passes: false,
+        },
+        Case {
             name: "cargo alias changes cannot omit the trailer",
             message: "build: revise repository command alias",
             paths: &[".cargo/config.toml"],

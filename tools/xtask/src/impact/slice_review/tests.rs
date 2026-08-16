@@ -29,6 +29,13 @@ fn accepts_only_completed_unambiguous_review_evidence() {
             passes: true,
         },
         Case {
+            name: "shared Rust code requires both review lenses",
+            message: "fix: restore\n\nSlice-Review: fresh-context - completed - reviewer/contract - clear",
+            path: "shared/yo-yaml/src/lib.rs",
+            branch: "develop",
+            passes: false,
+        },
+        Case {
             name: "human review is valid",
             message: "docs: workflow\n\nSlice-Review: fresh-context - completed - human/yon - clear",
             path: "CONTRIBUTING.md",

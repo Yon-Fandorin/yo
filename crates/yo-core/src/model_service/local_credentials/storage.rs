@@ -56,7 +56,7 @@ pub(super) fn read_snapshot(
     let after = MetadataSnapshot::capture(path, &file)?;
     validate_unchanged(path, &before, &after)?;
 
-    let decoded = wire::decode(path, &bytes, before.legacy_revision())?;
+    let decoded = wire::decode(path, &bytes, before.derived_revision())?;
     StoredCredentialSnapshot::new(decoded.revision, decoded.entries)
 }
 
@@ -230,9 +230,9 @@ impl MetadataSnapshot {
         Ok(())
     }
 
-    fn legacy_revision(&self) -> CredentialRevision {
-        CredentialRevision::legacy(format!(
-            "legacy-{:016x}{:016x}{:016x}{:016x}{:016x}{:016x}{:016x}",
+    fn derived_revision(&self) -> CredentialRevision {
+        CredentialRevision::derived(format!(
+            "derived-{:016x}{:016x}{:016x}{:016x}{:016x}{:016x}{:016x}",
             self.device,
             self.inode,
             self.len,

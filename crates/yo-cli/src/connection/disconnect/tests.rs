@@ -37,7 +37,7 @@ impl ExternalDisconnectInput for FakeInput {
 #[test]
 fn automatic_unique_disconnect_removes_public_then_credential_without_prompt() {
     let fixture = Fixture::new("automatic");
-    let config_path = fixture.config_path("version: 1\n");
+    let config_path = fixture.config_path("session: {}\n");
     fixture.seed_managed(&["alpha"], Some("alpha"));
     fixture.seed_credential();
     let mut input = FakeInput {
@@ -89,7 +89,7 @@ fn automatic_unique_disconnect_removes_public_then_credential_without_prompt() {
 #[test]
 fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
     let fixture = Fixture::new("interactive");
-    let config_path = fixture.config_path("version: 1\n");
+    let config_path = fixture.config_path("session: {}\n");
     fixture.seed_managed(&["alpha", "beta"], Some("alpha"));
     fixture.seed_credential();
     let mut input = FakeInput {
@@ -172,7 +172,7 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
 #[test]
 fn compact_preview_quotes_a_delimiter_bearing_remaining_model() {
     let fixture = Fixture::new("quoted-model-list");
-    let config_path = fixture.config_path("version: 1\n");
+    let config_path = fixture.config_path("session: {}\n");
     fixture.seed_managed(&["alpha, beta", "gamma"], None);
     fixture.seed_credential();
     let mut input = FakeInput {
@@ -285,7 +285,7 @@ fn preview_resolves_the_exact_lower_priority_startup_target() {
 #[test]
 fn command_preview_uses_the_captured_operator_startup_target() {
     let fixture = Fixture::new("operator-startup");
-    let config_path = fixture.config_path("version: 1\nmodel:\n  startup: host:codex\n");
+    let config_path = fixture.config_path("model:\n  startup: host:codex\n");
     fixture.seed_managed(&["alpha"], Some("alpha"));
     fixture.seed_credential();
     let mut input = FakeInput {
@@ -368,7 +368,7 @@ fn automatic_ambiguity_and_manual_only_targets_fail_before_mutation() {
 #[test]
 fn last_binding_preview_warns_about_remove_continuation_risk() {
     let fixture = Fixture::new("remove-resume-risk");
-    let config_path = fixture.config_path("version: 1\n");
+    let config_path = fixture.config_path("session: {}\n");
     fixture.seed_managed(&["alpha"], Some("alpha"));
     fixture.seed_credential();
     let mut input = FakeInput {
@@ -409,7 +409,7 @@ impl ExternalDisconnectInput for ConfigChangingInput {
 
     fn confirm(&mut self, _: &Confirmation) -> Result<bool, AppError> {
         self.confirmation_reads += 1;
-        fs::write(&self.config_path, "version: 1\ntui:\n  max_fps: 60\n").unwrap();
+        fs::write(&self.config_path, "tui:\n  max_fps: 60\n").unwrap();
         Ok(true)
     }
 }
@@ -419,7 +419,7 @@ impl ExternalDisconnectInput for ConfigChangingInput {
 #[test]
 fn changed_config_after_confirmation_aborts_before_disconnect_intent() {
     let fixture = Fixture::new("config-change");
-    let config_path = fixture.config_path("version: 1\n");
+    let config_path = fixture.config_path("session: {}\n");
     fixture.seed_managed(&["alpha"], Some("alpha"));
     fixture.seed_credential();
     let before_public = fs::read(fixture.connections().path()).unwrap();
@@ -594,6 +594,6 @@ fn complete(model: &str) -> CompleteModelBinding {
 
 fn explicit_config(model: &str) -> String {
     format!(
-        "version: 1\nmodel:\n  bindings:\n    - provider: vendor\n      account: team\n      base_url: https://example.test/v1\n      profile:\n        api_dialect: openai-responses\n        tokenizer_profile: utf8-bytes/v1\n        input_token_limit: 1000\n        max_output_tokens: 100\n        reasoning_parameters: {{}}\n        optional_request_parameters: {{}}\n        tool_capability_policy: local-tools/v1\n        verification_profile: semantic-terminal/v1\n      models:\n        - model: {model}\n"
+        "model:\n  bindings:\n    - provider: vendor\n      account: team\n      base_url: https://example.test/v1\n      profile:\n        api_dialect: openai-responses\n        tokenizer_profile: utf8-bytes/v1\n        input_token_limit: 1000\n        max_output_tokens: 100\n        reasoning_parameters: {{}}\n        optional_request_parameters: {{}}\n        tool_capability_policy: local-tools/v1\n        verification_profile: semantic-terminal/v1\n      models:\n        - model: {model}\n"
     )
 }

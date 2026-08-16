@@ -868,8 +868,8 @@ message in the editor, and accept it there.
 When no additional lens applies, record `Slice-Review: none - <reason>`.
 `cargo xtask check slice-review-impact` reads the final trailer block and fails
 closed when the disposition is missing or malformed. It requires
-fresh-context review for product/tool code, build/Cargo metadata, workflow, and
-semantic SOT; code-quality for executable `crates/` and `tools/` source plus
+fresh-context review for product/shared/tool code, build/Cargo metadata, workflow, and
+semantic SOT; code-quality for executable `crates/`, `shared/`, and `tools/` source plus
 Developer Docs theme source; and integration review on Wave branches. This is
 a minimum path-based safety net, so the planner adds lenses required by semantic
 impact. `none` cannot accompany completed lenses, and unfinished or unresolved
@@ -1148,7 +1148,7 @@ command therefore also fails with a focused diagnostic when `commit.template`
 is configured; unset it for this commit path.
 
 For accepted review commits on `develop`, `main`, or `wave/*` that change code
-under `crates/` or `tools/`, delete code there, or change workspace Cargo
+under `crates/`, `shared/`, or `tools/`, delete code there, or change workspace Cargo
 metadata or repository Cargo command configuration, Git `commit-msg` requires
 exactly one trailer:
 

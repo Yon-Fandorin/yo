@@ -17,7 +17,7 @@ pub struct CredentialRevision(CredentialRevisionKind);
 enum CredentialRevisionKind {
     Absent,
     Managed(String),
-    Legacy(String),
+    Derived(String),
 }
 
 impl CredentialRevision {
@@ -34,21 +34,23 @@ impl CredentialRevision {
         Self(CredentialRevisionKind::Managed(token))
     }
 
-    pub(super) fn legacy(token: String) -> Self {
-        Self(CredentialRevisionKind::Legacy(token))
+    pub(super) fn derived(token: String) -> Self {
+        Self(CredentialRevisionKind::Derived(token))
     }
 
     pub(super) fn managed_token(&self) -> Option<&str> {
         match &self.0 {
             CredentialRevisionKind::Managed(token) => Some(token),
-            CredentialRevisionKind::Absent | CredentialRevisionKind::Legacy(_) => None,
+            CredentialRevisionKind::Absent | CredentialRevisionKind::Derived(_) => None,
         }
     }
 
     pub(crate) fn operation_journal_token(&self) -> &str {
         match &self.0 {
             CredentialRevisionKind::Absent => "absent",
-            CredentialRevisionKind::Managed(token) | CredentialRevisionKind::Legacy(token) => token,
+            CredentialRevisionKind::Managed(token) | CredentialRevisionKind::Derived(token) => {
+                token
+            },
         }
     }
 
@@ -58,7 +60,7 @@ impl CredentialRevision {
         }
         wire::parse_managed_revision_token(value)
             .map(Self::managed)
-            .or_else(|| wire::parse_legacy_revision_token(value).map(Self::legacy))
+            .or_else(|| wire::parse_derived_revision_token(value).map(Self::derived))
     }
 }
 

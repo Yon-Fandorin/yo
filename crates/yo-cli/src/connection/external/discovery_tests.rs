@@ -222,7 +222,7 @@ fn discovered_entry(model: &str) -> yo_core::ModelCatalogEntry {
 }
 
 fn discovery_config() -> &'static str {
-    r#"version: 1
+    r#"
 model:
   bindings:
     - provider: openrouter

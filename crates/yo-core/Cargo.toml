@@ -8,13 +8,12 @@ publish = false
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
-serde_norway = "=0.9.42"
+yo-yaml = { path = "../../shared/yo-yaml" }
 sha2 = "0.11.0"
 getrandom = "0.4.3"
 futures-util = "=0.3.33"
 libc = "=0.2.189"
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
-saphyr-parser = "=0.0.11"
 rustix = { version = "=1.1.4", default-features = false, features = ["process", "std"] }
 uuid = { version = "1.24.0", features = ["serde", "v7"] }
 unicode-normalization = "=0.1.25"

@@ -1027,7 +1027,7 @@ mod tests {
     }
 
     fn explicit_config() -> &'static str {
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: vendor

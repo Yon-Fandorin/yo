@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationJournalEntry,
-    ConnectionOperationKind, ConnectionOperationPhase,
-    journal::{JournalCredential, valid_digest},
+    ConnectionOperationKind, ConnectionOperationPhase, journal::JournalCredential,
 };
 use crate::model_service::{
     AccountId, ConnectionRevision, CredentialMutationAction, CredentialRevision,
@@ -17,15 +16,10 @@ pub(super) fn encode(
 ) -> Result<Vec<u8>, ConnectionOperationError> {
     let planned_snapshot = std::str::from_utf8(entry.connection_mutation().planned_bytes())
         .map_err(|_| ConnectionOperationError::InvalidEntry)?;
-    serde_norway::to_string(&WireEntry {
-        version: 1,
+    yo_yaml::to_string(&WireEntry {
         operation_id: entry.operation_id(),
         kind: entry.kind().into(),
         config_snapshot_digest: entry.config_snapshot_digest(),
-        // Wire v1 published this required field before recovery stopped needing
-        // a duplicate profile identity. Keep the field byte-compatible while
-        // new entries record no values.
-        profile_digests: &[],
         phase: entry.phase().into(),
         connection: WireConnection {
             expected_revision: entry.connection_mutation().expected_revision().to_string(),
@@ -42,22 +36,16 @@ pub(super) fn decode(
     path: &Path,
     encoded: &[u8],
 ) -> Result<ConnectionOperationJournalEntry, ConnectionOperationError> {
-    let wire: WireEntryOwned = serde_norway::from_slice(encoded)
-        .map_err(|_| ConnectionOperationError::InvalidContents(path.to_owned()))?;
-    if wire.version != 1 {
-        return Err(ConnectionOperationError::UnsupportedVersion {
-            path: path.to_owned(),
-            version: wire.version,
-        });
-    }
+    let wire: WireEntryOwned = yo_yaml::from_slice(encoded).map_err(|_| {
+        if yo_yaml::has_any_top_level_mapping_key(encoded, &["version", "profile_digests"])
+            .unwrap_or(false)
+        {
+            ConnectionOperationError::RetiredYamlFormat(path.to_owned())
+        } else {
+            ConnectionOperationError::InvalidContents(path.to_owned())
+        }
+    })?;
     let invalid = || ConnectionOperationError::InvalidContents(path.to_owned());
-    if !wire
-        .profile_digests
-        .iter()
-        .all(|digest| valid_digest(digest))
-    {
-        return Err(invalid());
-    }
     let expected_connection =
         ConnectionRevision::from_operation_journal(&wire.connection.expected_revision)
             .ok_or_else(invalid)?;
@@ -136,11 +124,9 @@ fn parse_credential(
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
 struct WireEntry<'a> {
-    version: u32,
     operation_id: &'a str,
     kind: WireKind,
     config_snapshot_digest: &'a str,
-    profile_digests: &'a [String],
     phase: WirePhase,
     connection: WireConnection<'a>,
     credential: WireCredentialRef<'a>,
@@ -149,11 +135,9 @@ struct WireEntry<'a> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WireEntryOwned {
-    version: u32,
     operation_id: String,
     kind: WireKind,
     config_snapshot_digest: String,
-    profile_digests: Vec<String>,
     phase: WirePhase,
     connection: WireConnectionOwned,
     credential: WireCredential,

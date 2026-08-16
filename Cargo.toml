@@ -3,6 +3,7 @@ members = [
     "crates/yo-cli",
     "crates/yo-core",
     "crates/yo-tui",
+    "shared/yo-yaml",
     "tools/librarian",
     "tools/methexis",
     "tools/xtask",

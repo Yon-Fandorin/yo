@@ -243,12 +243,9 @@ pub(crate) enum ConfigError {
     Changed(PathBuf),
     InvalidYaml {
         path: PathBuf,
-        source: serde_norway::Error,
+        source: Box<yo_yaml::Error>,
     },
-    UnsupportedVersion {
-        path: PathBuf,
-        version: u32,
-    },
+    RetiredYamlFormat(PathBuf),
     InvalidDateFormat(String),
     InvalidMaxFps {
         path: PathBuf,
@@ -286,9 +283,9 @@ impl fmt::Display for ConfigError {
                     path.display()
                 )
             },
-            Self::UnsupportedVersion { path, version } => write!(
+            Self::RetiredYamlFormat(path) => write!(
                 formatter,
-                "{} uses unsupported configuration version {version}; expected 1",
+                "{} uses a retired pre-release YAML shape; back up or remove the stale local file, then register affected connections again",
                 path.display()
             ),
             Self::InvalidDateFormat(message) => formatter.write_str(message),
@@ -320,11 +317,11 @@ impl Error for ConfigError {
         match self {
             Self::Io { source, .. } => Some(source),
             Self::InvalidUtf8 { source, .. } => Some(source),
-            Self::InvalidYaml { source, .. } => Some(source),
+            Self::InvalidYaml { source, .. } => Some(source.as_ref()),
             Self::Environment(_)
             | Self::UnsupportedFileType(_)
             | Self::TooLarge(_)
-            | Self::UnsupportedVersion { .. }
+            | Self::RetiredYamlFormat(_)
             | Self::Changed(_)
             | Self::InvalidDateFormat(_)
             | Self::InvalidMaxFps { .. }
@@ -337,7 +334,6 @@ impl Error for ConfigError {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileConfig {
-    version: u32,
     #[serde(default)]
     session: SessionConfig,
     #[serde(default)]
@@ -400,14 +396,46 @@ impl<T> Authored<T> {
 
 impl<'de, T> Deserialize<'de> for Authored<T>
 where
-    T: Deserialize<'de>,
+    T: Deserialize<'de> + NonNullAuthoredValue,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        T::deserialize(deserializer).map(Self::Present)
+        Option::<T>::deserialize(deserializer)?.map_or_else(
+            || {
+                Err(serde::de::Error::invalid_type(
+                    serde::de::Unexpected::Unit,
+                    &AuthoredExpected::<T>(std::marker::PhantomData),
+                ))
+            },
+            |value| Ok(Self::Present(value)),
+        )
     }
+}
+
+struct AuthoredExpected<T>(std::marker::PhantomData<T>);
+
+impl<T: NonNullAuthoredValue> serde::de::Expected for AuthoredExpected<T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(T::EXPECTED)
+    }
+}
+
+trait NonNullAuthoredValue {
+    const EXPECTED: &'static str;
+}
+
+impl NonNullAuthoredValue for String {
+    const EXPECTED: &'static str = "a string";
+}
+
+impl NonNullAuthoredValue for u64 {
+    const EXPECTED: &'static str = "u64";
+}
+
+impl<T> NonNullAuthoredValue for Vec<T> {
+    const EXPECTED: &'static str = "a sequence";
 }
 
 #[derive(Debug, Deserialize)]
@@ -487,6 +515,14 @@ struct ModelProfileConfig {
     replay_profile: Authored<String>,
 }
 
+impl NonNullAuthoredValue for ModelProfileConfig {
+    const EXPECTED: &'static str = "a mapping";
+}
+
+impl NonNullAuthoredValue for ModelProfileParameters {
+    const EXPECTED: &'static str = "a structured profile value";
+}
+
 type ResolvedModelBindings = (
     Vec<ModelCatalogEntry>,
     Vec<OpenRouterDiscoverySeed>,
@@ -538,19 +574,22 @@ fn parse_snapshot(
     contents: &str,
     snapshot: ConfigSnapshot,
 ) -> Result<Config, ConfigError> {
-    yo_core::validate_profile_yaml_number_spellings(contents)
-        .map_err(|error| invalid_model(path, error.to_string()))?;
-    let decoded: FileConfig =
-        serde_norway::from_str(contents).map_err(|source| ConfigError::InvalidYaml {
-            path: path.to_owned(),
-            source,
-        })?;
-    if decoded.version != 1 {
-        return Err(ConfigError::UnsupportedVersion {
-            path: path.to_owned(),
-            version: decoded.version,
-        });
-    }
+    let decoded: FileConfig = yo_yaml::from_str_with_limits(
+        contents,
+        yo_yaml::ParseLimits::with_max_total_scalar_bytes(MAX_CONFIG_BYTES as usize),
+    )
+    .map_err(|source| {
+        if yo_yaml::has_any_top_level_mapping_key(contents.as_bytes(), &["version"])
+            .unwrap_or(false)
+        {
+            ConfigError::RetiredYamlFormat(path.to_owned())
+        } else {
+            ConfigError::InvalidYaml {
+                path: path.to_owned(),
+                source: Box::new(source),
+            }
+        }
+    })?;
     let frame_rate_limit = match decoded.tui.max_fps.unwrap_or(120) {
         60 => yo_tui::FrameRateLimit::Fps60,
         120 => yo_tui::FrameRateLimit::Fps120,

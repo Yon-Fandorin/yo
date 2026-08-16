@@ -4,7 +4,7 @@ use super::super::{
 };
 
 fn parameters(yaml: &str) -> ModelProfileParameters {
-    serde_norway::from_str(yaml).unwrap()
+    yo_yaml::from_str(yaml).unwrap()
 }
 
 fn id(value: &str) -> VersionedProfileId {
@@ -116,8 +116,8 @@ fn structured_parameters_have_variant_exact_deterministic_equality() {
 // 비교 불가능한 profile을 만들기 전에 명시적으로 실패합니다.
 #[test]
 fn structured_parameters_reject_duplicate_keys_and_nonfinite_numbers() {
-    assert!(serde_norway::from_str::<ModelProfileParameters>("{a: 1, a: 2}").is_err());
-    assert!(serde_norway::from_str::<ModelProfileParameters>("{1: value}").is_err());
-    assert!(serde_norway::from_str::<ModelProfileParameters>(".nan").is_err());
-    assert!(serde_norway::from_str::<ModelProfileParameters>(".inf").is_err());
+    assert!(yo_yaml::from_str::<ModelProfileParameters>("{a: 1, a: 2}").is_err());
+    assert!(yo_yaml::from_str::<ModelProfileParameters>("{1: value}").is_err());
+    assert!(yo_yaml::from_str::<ModelProfileParameters>(".nan").is_err());
+    assert!(yo_yaml::from_str::<ModelProfileParameters>(".inf").is_err());
 }

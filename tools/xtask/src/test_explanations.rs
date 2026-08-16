@@ -51,6 +51,7 @@ fn rust_source_paths(
             "--exclude-standard",
             "--",
             "crates",
+            "shared",
             "tools",
         ],
         inherit_git_environment,

@@ -500,10 +500,9 @@ identity/status/updated 시각도 들어가지 않으면 공유 table header를 
 선택 설정 파일은 읽기만 하고 만들지 않는다. Linux는
 `${XDG_CONFIG_HOME:-$HOME/.config}/yo/config.yaml`, macOS는
 `$HOME/Library/Application Support/yo/config.yaml`을 사용하며, `YO_CONFIG`로
-명시적인 경로를 고를 수 있다. 첫 schema는 다음과 같다.
+명시적인 경로를 고를 수 있다. 현재 pre-version schema는 다음과 같다.
 
 ```yaml
-version: 1
 session:
   list:
     date_format: "%Y-%m-%d %H:%M %:z"
@@ -597,14 +596,16 @@ timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으
 Provider·Account endpoint 하나와 optional base profile을 소유한다. Model은 base의
 모든 필드를 상속하고 자신의 `profile`에 있는 필드만 교체한다. 구조화 필드는 재귀
 merge하지 않고 전체를 교체한다. 합친 결과에는 profile 필드 여덟 개가 모두 있어야
-한다. Provider·Account block 중복, 알 수 없는 field, 구조화 mapping key 중복,
-불완전한 결과는 실패한다.
-구조화 숫자는 작성한 spelling이 고른 variant를 유지하며, 명시적인 YAML 숫자 tag로 그
-spelling을 다른 variant로 바꿀 수 없다. startup과 native resume은 같은 닫힌 durable
-complete-binding decoder를 사용하므로 범위 밖 JSON 숫자가 뒤 경계에서 다른 variant를
-얻을 수 없다.
+한다. 모델 profile field 생략은 base 값을 상속하고, `{}`는 구조화 field를 빈 mapping으로
+명시적으로 교체한다. Whole-field YAML null은 실패하지만 이미 존재하는 구조화 mapping 아래의
+null은 구조화 null 값으로 유지된다. Provider·Account block 중복, 알 수 없는 field,
+구조화 mapping key 중복, 불완전한 결과는 실패한다. Plain YAML 1.1
+`y`/`yes`/`true`/`on`과 `n`/`no`/`false`/`off`는 대소문자와 무관한 boolean이고,
+`1_000`은 정수 `1000`이다. Quoted 형식은 string으로 남는다. startup과 native resume은
+같은 닫힌 durable complete-binding decoder를 사용하므로 뒤 경계에서 scalar variant가
+바뀌지 않는다.
 
-이전 flat `model.catalog` 목록은 version 1에서 계속 읽으며 기존
+이전 flat `model.catalog` 목록은 현재 shape에서 계속 읽으며 기존
 `yo.model-binding/v1` durable identity를 유지한다. 같은 문서에 `model.bindings`와 함께
 쓸 수 없다. 새 explicit profile은 `yo.complete-model-binding/v1`으로 귀속하며 endpoint,
 파생 connector 또는 resolved profile 필드 하나라도 바뀌면 resume에서 기존 값을 조용히
@@ -612,7 +613,7 @@ complete-binding decoder를 사용하므로 범위 밖 JSON 숫자가 뒤 경계
 Session/TUI 설정은 유지하지만 startup target은 제공하지 않으므로, live startup은
 Codex를 조용히 선택하지 않고 setup 안내를 표시한다. 위 YAML은 암묵적 모델 기본값이
 아니라 운영자가 소유하는 native 모델 예시다. 파일을 읽을 수
-없거나 version/field/크기/date
+없거나 retired field/알 수 없는 field/크기/date
 format/frame rate가 잘못되면 조용히 기본값으로 대체하지 않고
 명시적으로 실패한다. reader는 no-follow nonblocking descriptor 하나를 열어 regular file인지
 확인하고 안정적인 identity와 metadata를 capture하며 1 MiB와 판별용 한 byte까지만 읽으므로
@@ -620,10 +621,9 @@ FIFO가 command를 멈추거나 동시에 커지는 파일이 상한을 우회�
 이 파일을 다시 capture하고 public commit 전에 정확한 command-local snapshot이 바뀌지 않았음을
 요구한다. 모델 API key는 환경 변수에서 읽지 않는다.
 설정한 모델을 선택하면 Yo는 선택된 `config.yaml` 옆의 별도
-`credentials.yaml`을 다음 Provider-Account 순서의 versioned 구조로 읽는다.
+`credentials.yaml`을 다음 Provider-Account 순서의 현재 pre-version 구조로 읽는다.
 
 ```yaml
-version: 1
 providers:
   openrouter:
     default:
@@ -635,23 +635,29 @@ providers:
 
 credential 파일은 현재 사용자가 소유한 regular file이어야 하고 group/other 권한 bit가
 없어야 한다(보통 mode `0600`). 서로 다른 Provider 아래에는 같은 Account ID를 사용할
-수 있으며 선택된 Provider·Account exact pair만 resolve한다. Revision이 없는 version 1
-파일도 legacy snapshot으로 계속 읽을 수 있다. `LocalCredentialRepository`는 private store
+수 있으며 선택된 Provider·Account exact pair만 resolve한다. Revision이 없는 current-shape
+파일도 snapshot으로 계속 읽을 수 있다. `LocalCredentialRepository`는 private store
 lock 아래에서 파일을 다시 읽고 candidate secret을 보관하지 않은 채 정확히 한 pair의 add,
 replace 또는 remove를 준비한다. Commit은 add 또는 replace일 때만 candidate를 받고, 관련
 없는 pair를 모두 보존하며, 독립적으로 만든 private `crev-...` receipt가 든 완전한 mode
 `0600` snapshot을 원자적으로 게시한다. 예정 receipt와 exact pair 상태가 같으면 반복
 commit은 idempotent하고, 관찰한 revision이 다르면 conflict다. 마지막 pair를 제거해도
-`absent`로 돌아가지 않고 versioned empty file을 남긴다. 이 write는 core storage
+`absent`로 돌아가지 않고 revisioned empty file을 남긴다. 이 write는 core storage
 boundary다.
 
+`config.yaml`, `credentials.yaml`, `connections.yaml`, operation journal은 `yo-yaml`을
+공유한다. 문서 하나만 허용하고 구조·replay 예산을 유한하게 제한하며, 제한 안의 작은 alias만
+허용하고 duplicate key·merge key·unknown alias·cycle·추가 문서를 거절한다. 네 문서에는
+top-level format-version field가 없다. Retired `version` field나 journal의
+`profile_digests` field가 있으면 mutation 전에 실패하고 stale local state를 백업 또는 제거한
+뒤 영향을 받은 connection을 다시 등록하라고 안내한다. Yo는 폐기된 pre-release shape를
+decode·migration·dual write·downgrade하거나 자동 삭제하지 않는다.
+
 Sibling `connection-operation.yaml`은 credential과 public repository를 함께 바꾸는
-operation의 secret-free durable intent를 소유한다. 닫힌 version 1 record는 불투명 operation
-ID, config snapshot digest, 새 writer는 비워 두는 필수 legacy `profile_digests` field,
-정확한 expected·planned public revision과 크기가
+operation의 secret-free durable intent를 소유한다. 현재 pre-version record는 불투명 operation
+ID, config snapshot digest, 정확한 expected·planned public revision과 크기가
 제한된 완전한 prospective public snapshot, add·replace·remove·preserve 중 하나인 credential
-receipt, legal phase 하나를 담는다. Reader는 이전의 올바른 version 1 intent에 값이 있으면
-계속 검증한 뒤 복구 판단에서는 무시하므로 중단된 operation은 복구 가능하다.
+receipt, legal phase 하나를 담는다.
 `ApiCredential`, candidate identity, verification payload는
 받을 수 없다. 파일이 없을 때 capture는 아무것도 만들지 않으며, 첫 intent publication은
 exclusive다. 각 phase replacement는 크기가 제한되고 mode `0600`, no-follow,
@@ -832,7 +838,6 @@ profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 bind
 값은 예시다).
 
 ```yaml
-version: 1
 revision: rev-0123456789abcdef0123456789abcdef
 preference:
   kind: model
@@ -865,8 +870,9 @@ accounts:
 파일이 없으면 canonical unset snapshot이며 디렉터리를 만들지 않고 읽는다. Capture는 모르는
 field, 중복 account나 binding coordinate, 대응 account가 없는 binding, 모순된 Provider 표시
 metadata, 올바르지 않은 complete binding, 범위를 벗어난 quote 없는 structured-profile 숫자를
-거절한다. 같은 scalar-style validator가 manual YAML과 managed YAML을 보호하므로 quote한
-숫자 모양 string은 string으로 남고 올바르지 않은 plain number가 조용히 string으로 바뀔 수 없다.
+거절한다. 같은 shared scalar inference가 manual YAML과 managed YAML을 보호한다. 두 경계 모두
+whole-field 구조화 null은 거절하지만 nested null과 quote한 숫자 모양 string은 정확한 variant로
+유지한다.
 
 Managed upsert는 exact complete coordinate 하나를 추가하거나 교체하고 unrelated entry를 모두
 보존하며 unset capture에서만 첫 ModelTarget preference를 함께 게시한다. Managed remove는 exact

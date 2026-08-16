@@ -89,6 +89,11 @@ fn first_add_is_secure_redacted_and_idempotent() {
 
     let metadata = fs::metadata(repository.path()).unwrap();
     assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    assert!(
+        !fs::read_to_string(repository.path())
+            .unwrap()
+            .contains("version:")
+    );
     let captured = repository.capture().unwrap();
     assert_eq!(captured.revision(), mutation.planned_revision());
     assert_eq!(
@@ -139,16 +144,16 @@ fn stale_add_preserves_the_concurrent_winner() {
     assert!(current.resolve(&provider, &loser_account).is_none());
 }
 
-// legacy revision 없는 version 1 파일의 exact pair를 replace하면 기존 account는 보존되고
+// revision 없는 현재 pre-version 파일의 exact pair를 replace하면 기존 account는 보존되고
 // 새 private revision이 추가되어 다음 재시작부터 managed CAS snapshot이 되는지 검증합니다.
 #[test]
-fn replaces_one_pair_and_upgrades_a_legacy_snapshot() {
-    let (directory, repository) = repository("legacy-replace");
+fn replacing_one_pair_materializes_a_revision_for_the_current_snapshot() {
+    let (directory, repository) = repository("revisionless-replace");
     fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
     fs::write(
         repository.path(),
         concat!(
-            "version: 1\n",
+            "",
             "providers:\n",
             "  openrouter:\n",
             "    default:\n",
@@ -190,10 +195,69 @@ fn replaces_one_pair_and_upgrades_a_legacy_snapshot() {
     drop(directory);
 }
 
-// 마지막 pair removal은 파일을 다시 absent로 지우지 않고 non-absent planned revision의
-// versioned empty snapshot을 게시하며 동일 removal 재시도를 완료로 인식하는지 검증합니다.
+// retired top-level version을 가진 credential snapshot은 secret을 진단에 노출하지 않고
+// 원문을 그대로 둔 채 백업·제거·재연결 안내로 실패합니다.
 #[test]
-fn removing_the_final_pair_keeps_a_versioned_empty_snapshot() {
+fn retired_credential_shape_reports_reset_and_reconnect_guidance() {
+    let (_directory, repository) = repository("retired-shape");
+    fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
+    let stale = concat!(
+        "version: 1\n",
+        "providers:\n",
+        "  openrouter:\n",
+        "    default:\n",
+        "      api_key: sk-stale-secret\n",
+    );
+    fs::write(repository.path(), stale).unwrap();
+    fs::set_permissions(repository.path(), fs::Permissions::from_mode(0o600)).unwrap();
+
+    let error = repository.capture().unwrap_err();
+    let diagnostic = format!("{error:?} {error}");
+
+    assert!(matches!(
+        error,
+        LocalCredentialStoreError::RetiredYamlFormat(_)
+    ));
+    assert!(diagnostic.contains("back up or remove"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("register affected connections again"),
+        "{diagnostic}"
+    );
+    assert!(!diagnostic.contains("sk-stale-secret"));
+    assert_eq!(fs::read_to_string(repository.path()).unwrap(), stale);
+}
+
+// account 내부의 version 오타는 퇴역 root credential 형상으로 오인하거나 secret을
+// 진단에 노출하지 않고 일반 invalid-content 오류로 남깁니다.
+#[test]
+fn nested_version_field_is_not_classified_as_a_retired_credential_shape() {
+    let (_directory, repository) = repository("nested-version");
+    fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
+    let malformed = concat!(
+        "providers:\n",
+        "  openrouter:\n",
+        "    default:\n",
+        "      api_key: sk-nested-secret\n",
+        "      version: 1\n",
+    );
+    fs::write(repository.path(), malformed).unwrap();
+    fs::set_permissions(repository.path(), fs::Permissions::from_mode(0o600)).unwrap();
+
+    let error = repository.capture().unwrap_err();
+    let diagnostic = format!("{error:?} {error}");
+    assert!(matches!(
+        error,
+        LocalCredentialStoreError::InvalidContents(_)
+    ));
+    assert!(!diagnostic.contains("back up or remove"), "{diagnostic}");
+    assert!(!diagnostic.contains("sk-nested-secret"), "{diagnostic}");
+    assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
+}
+
+// 마지막 pair removal은 파일을 다시 absent로 지우지 않고 non-absent planned revision의
+// revisioned empty snapshot을 게시하며 동일 removal 재시도를 완료로 인식하는지 검증합니다.
+#[test]
+fn removing_the_final_pair_keeps_a_revisioned_empty_snapshot() {
     let (_directory, repository) = repository("final-remove");
     let (provider, account) = pair("openrouter", "default");
     let add = repository.prepare_set(&provider, &account).unwrap();
@@ -320,7 +384,7 @@ fn oversized_prepared_snapshot_preserves_the_exact_old_file() {
     let (_directory, repository) = repository("prepared-too-large");
     fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
     let large_secret = "x".repeat(15_900);
-    let mut contents = String::from("version: 1\nproviders:\n  openrouter:\n");
+    let mut contents = String::from("providers:\n  openrouter:\n");
     for index in 0..4 {
         contents.push_str(&format!(
             "    account-{index}:\n      api_key: {large_secret}\n"

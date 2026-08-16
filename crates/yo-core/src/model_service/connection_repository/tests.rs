@@ -223,7 +223,7 @@ fn insecure_existing_snapshot_is_rejected() {
     fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
     fs::write(
         repository.path(),
-        "version: 1\nrevision: rev-00000000000000000000000000000000\n",
+        "revision: rev-00000000000000000000000000000000\n",
     )
     .unwrap();
     fs::set_permissions(repository.path(), fs::Permissions::from_mode(0o640)).unwrap();
@@ -243,7 +243,7 @@ fn malformed_managed_bindings_and_accounts_fail_closed() {
     fs::write(
         repository.path(),
         concat!(
-            "version: 1\n",
+            "",
             "revision: rev-00000000000000000000000000000000\n",
             "bindings:\n  - binding: retained\n",
             "accounts:\n  - account: retained\n",
@@ -256,10 +256,61 @@ fn malformed_managed_bindings_and_accounts_fail_closed() {
     let error = repository.capture().unwrap_err();
 
     assert!(matches!(
-        error,
+        &error,
         ConnectionRepositoryError::InvalidContents(_)
     ));
     assert_eq!(fs::read(repository.path()).unwrap(), before);
+}
+
+// retired top-level version을 가진 공개 snapshot은 현재 shape로 재해석하거나 고치지 않고
+// 원문을 보존한 채 백업·제거·재연결 안내를 반환합니다.
+#[test]
+fn retired_connection_shape_reports_reset_and_reconnect_guidance() {
+    let (_directory, repository) = repository("retired-shape");
+    fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
+    let stale = "version: 1\nrevision: rev-00000000000000000000000000000000\n";
+    fs::write(repository.path(), stale).unwrap();
+    fs::set_permissions(repository.path(), fs::Permissions::from_mode(0o600)).unwrap();
+
+    let error = repository.capture().unwrap_err();
+    let diagnostic = error.to_string();
+
+    assert!(matches!(
+        error,
+        ConnectionRepositoryError::RetiredYamlFormat(_)
+    ));
+    assert!(diagnostic.contains("back up or remove"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("register affected connections again"),
+        "{diagnostic}"
+    );
+    assert_eq!(fs::read_to_string(repository.path()).unwrap(), stale);
+}
+
+// binding 내부의 version 오타는 퇴역 root snapshot으로 오인하지 않고 원문을 보존한
+// 일반 invalid-content 오류로 닫힙니다.
+#[test]
+fn nested_version_field_is_not_classified_as_a_retired_connection_shape() {
+    let (_directory, repository) = repository("nested-version");
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    let original = fs::read_to_string(repository.path()).unwrap();
+    let malformed = original.replace("model: model-a", "model: model-a\n    version: 1");
+    assert_ne!(malformed, original, "fixture must add the nested field");
+    fs::write(repository.path(), &malformed).unwrap();
+
+    let error = repository.capture().unwrap_err();
+    assert!(matches!(
+        &error,
+        ConnectionRepositoryError::InvalidContents(_)
+    ));
+    assert!(!error.to_string().contains("back up or remove"));
+    assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
 }
 
 // 첫 managed upsert는 account와 complete binding을 readable typed YAML로 함께 게시하고,
@@ -291,9 +342,40 @@ fn managed_upsert_round_trips_complete_state_and_first_preference() {
     );
     assert_eq!(captured.preference(), Some(&model_target("model-a")));
     let encoded = fs::read_to_string(repository.path()).unwrap();
+    assert!(!encoded.contains("version:"));
     assert!(encoded.contains("reasoning_parameters:"));
     assert!(encoded.contains("effort: medium"));
     assert!(!encoded.contains("secret"));
+}
+
+// durable structured profile 전체의 null은 recursive 내부 null과 구분되어 capture에서
+// 실패하고 기존 connections.yaml bytes를 수정하지 않습니다.
+#[test]
+fn durable_profile_whole_field_null_is_rejected() {
+    let (_directory, repository) = repository("whole-field-null");
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    let encoded = fs::read_to_string(repository.path()).unwrap();
+    let malformed = encoded.replace(
+        "reasoning_parameters:\n      effort: medium",
+        "reasoning_parameters: null",
+    );
+    assert_ne!(
+        malformed, encoded,
+        "fixture must replace the structured field"
+    );
+    fs::write(repository.path(), &malformed).unwrap();
+
+    assert!(matches!(
+        repository.capture(),
+        Err(ConnectionRepositoryError::InvalidContents(_))
+    ));
+    assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
 }
 
 // connections.yaml reader는 명시적 semantic-only도 호환 입력으로 읽지만 producer는 계속
@@ -566,10 +648,10 @@ fn new_host_managed_state_is_forbidden_while_existing_durable_state_remains_read
     );
 }
 
-// managed YAML도 authored config와 같은 scalar-style 검사를 거쳐 plain overflow가 String으로
-// 재분류되는 우회를 막고, 사용자가 명시적으로 quote한 같은 spelling만 String으로 보존합니다.
+// managed YAML도 64-bit 경계의 exact integer/float/String variant를 보존하고, non-finite
+// overflow는 거절하며 사용자가 명시적으로 quote한 같은 spelling만 String으로 보존합니다.
 #[test]
-fn managed_profile_numbers_reject_plain_overflow_and_preserve_quoted_string() {
+fn managed_profile_numbers_pin_range_fallback_and_reject_nonfinite_values() {
     let (_directory, repository) = repository("managed-profile-number");
     let mutation = repository
         .capture()
@@ -579,6 +661,43 @@ fn managed_profile_numbers_reject_plain_overflow_and_preserve_quoted_string() {
         .unwrap();
     repository.commit(&mutation).unwrap();
     let original = fs::read_to_string(repository.path()).unwrap();
+
+    for (authored, expected) in [
+        ("18446744073709551615", serde_json::json!(u64::MAX)),
+        (
+            "18446744073709551616",
+            serde_json::json!(18_446_744_073_709_551_616.0_f64),
+        ),
+        (
+            "340282366920938463463374607431768211456",
+            serde_json::json!(340_282_366_920_938_463_463_374_607_431_768_211_456.0_f64),
+        ),
+        ("-9223372036854775808", serde_json::json!(i64::MIN)),
+        (
+            "-9223372036854775809",
+            serde_json::json!(-9_223_372_036_854_775_809.0_f64),
+        ),
+        ("0xffffffffffffffff", serde_json::json!(u64::MAX)),
+        (
+            "0x10000000000000000",
+            serde_json::json!("0x10000000000000000"),
+        ),
+    ] {
+        let replacement = original.replace("effort: medium", &format!("value: {authored}"));
+        fs::write(repository.path(), replacement).unwrap();
+        let captured = repository
+            .capture()
+            .unwrap_or_else(|error| panic!("{authored}: {error}"));
+        assert_eq!(
+            captured.managed_bindings()[0]
+                .complete()
+                .profile()
+                .reasoning_parameters()
+                .to_json_value()["value"],
+            expected,
+            "{authored}"
+        );
+    }
 
     let overflow = original.replace("effort: medium", "value: 1e400");
     fs::write(repository.path(), &overflow).unwrap();

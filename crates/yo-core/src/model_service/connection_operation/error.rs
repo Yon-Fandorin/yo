@@ -19,10 +19,7 @@ pub enum ConnectionOperationError {
     TooLarge(PathBuf),
     Changed(PathBuf),
     InvalidContents(PathBuf),
-    UnsupportedVersion {
-        path: PathBuf,
-        version: u32,
-    },
+    RetiredYamlFormat(PathBuf),
     Conflict(PathBuf),
     OperationGuardMismatch(PathBuf),
     InvalidEntry,
@@ -90,9 +87,9 @@ impl fmt::Display for ConnectionOperationError {
                 "{} contains an invalid connection operation",
                 path.display()
             ),
-            Self::UnsupportedVersion { path, version } => write!(
+            Self::RetiredYamlFormat(path) => write!(
                 formatter,
-                "{} uses unsupported connection-operation version {version}; expected 1",
+                "{} uses a retired pre-release connection-operation shape; back up or remove the stale local state, then register affected connections again",
                 path.display()
             ),
             Self::Conflict(path) => write!(

@@ -11,7 +11,6 @@ mod kimi_catalog;
 mod local_credentials;
 mod openrouter_discovery;
 mod profile;
-mod profile_yaml;
 mod qwencloud_catalog;
 mod selection;
 mod startup;
@@ -57,7 +56,6 @@ pub use profile::{
     EffectiveModelProfile, KIMI_PRIVATE_REPLAY_PROFILE, ModelProfileLayer, ModelProfileParameters,
     SEMANTIC_REPLAY_PROFILE, VersionedProfileId,
 };
-pub use profile_yaml::validate_profile_yaml_number_spellings;
 pub use qwencloud_catalog::{
     QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogModel,
     QwenCloudCatalogSeed,

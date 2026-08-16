@@ -29,22 +29,18 @@ fn missing_configuration_uses_defaults_without_creating_a_file() {
 // recovery journal이 같은 invocation의 공개 계획을 비밀 없이 식별할 수 있습니다.
 #[test]
 fn config_snapshot_digest_is_lowercase_sha256_of_exact_bytes() {
-    let config = parse(Path::new("config.yaml"), "version: 1\n").unwrap();
+    let config = parse(Path::new("config.yaml"), "session: {}\n").unwrap();
 
     assert_eq!(
         config.snapshot_digest(),
-        "sha256:09bfcc6a14b83e2192b8673677725c84883ee9cd0c70e45c9ec09daa8f2b2847"
+        "sha256:0f0d498f2cd7577f4c783027cbf69f6a061767b8324616fea229ee8880dfbd54"
     );
 }
 
 // 사용자가 60fps를 선택하면 설정을 시작 시의 typed frame 정책으로 해석합니다.
 #[test]
 fn tui_max_fps_accepts_60() {
-    let config = parse(
-        Path::new("config.yaml"),
-        "version: 1\ntui:\n  max_fps: 60\n",
-    )
-    .unwrap();
+    let config = parse(Path::new("config.yaml"), "tui:\n  max_fps: 60\n").unwrap();
 
     assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps60);
 }
@@ -52,11 +48,7 @@ fn tui_max_fps_accepts_60() {
 // 기본값과 같은 120도 명시할 수 있어 설정 파일이 실제 frame 정책을 온전히 표현합니다.
 #[test]
 fn tui_max_fps_accepts_120() {
-    let config = parse(
-        Path::new("config.yaml"),
-        "version: 1\ntui:\n  max_fps: 120\n",
-    )
-    .unwrap();
+    let config = parse(Path::new("config.yaml"), "tui:\n  max_fps: 120\n").unwrap();
 
     assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps120);
 }
@@ -68,7 +60,7 @@ fn model_catalog_resolves_the_configured_startup_binding() {
     let path = Path::new("/tmp/yo/config.yaml");
     let config = parse(
         path,
-        "version: 1\nmodel:\n  startup:\n    provider: qwencloud\n    account: token-plan\n    model: qwen3.8max\n  catalog:\n    - provider: qwencloud\n      provider_display_name: Qwen Cloud\n      account: token-plan\n      account_display_name: Token Plan\n      model: qwen3.8max\n      model_display_name: Qwen 3.8 Max\n      api_dialect: openai-responses\n      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1\n      input_token_limit: 1000000\n      max_output_tokens: 65536\n      tokenizer_profile: utf8-bytes/v1\n",
+        "model:\n  startup:\n    provider: qwencloud\n    account: token-plan\n    model: qwen3.8max\n  catalog:\n    - provider: qwencloud\n      provider_display_name: Qwen Cloud\n      account: token-plan\n      account_display_name: Token Plan\n      model: qwen3.8max\n      model_display_name: Qwen 3.8 Max\n      api_dialect: openai-responses\n      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1\n      input_token_limit: 1000000\n      max_output_tokens: 65536\n      tokenizer_profile: utf8-bytes/v1\n",
     )
     .unwrap();
 
@@ -99,7 +91,7 @@ fn model_catalog_resolves_the_configured_startup_binding() {
 fn model_bindings_resolve_base_profile_and_model_overrides() {
     let config = parse(
         Path::new("/tmp/yo/config.yaml"),
-        r#"version: 1
+        r#"
 model:
   startup:
     provider: qwencloud
@@ -144,11 +136,11 @@ model:
     let flash_profile = flash.explicit_profile().unwrap();
     assert_eq!(
         max_profile.reasoning_parameters(),
-        &serde_norway::from_str::<yo_core::ModelProfileParameters>("{effort: medium}").unwrap()
+        &yo_yaml::from_str::<yo_core::ModelProfileParameters>("{effort: medium}").unwrap()
     );
     assert_eq!(
         flash_profile.reasoning_parameters(),
-        &serde_norway::from_str::<yo_core::ModelProfileParameters>("{effort: high}").unwrap()
+        &yo_yaml::from_str::<yo_core::ModelProfileParameters>("{effort: high}").unwrap()
     );
     assert_eq!(
         flash_profile.tool_capability_policy().as_str(),
@@ -172,7 +164,7 @@ model:
 fn empty_openrouter_binding_is_a_discovery_seed_only() {
     let config = parse(
         Path::new("/tmp/yo/config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: openrouter
@@ -204,7 +196,7 @@ model:
 
     let error = parse(
         Path::new("config.yaml"),
-        "version: 1\nmodel:\n  bindings:\n    - provider: qwencloud\n      account: team\n      base_url: https://example.test/v1\n      models: []\n",
+        "model:\n  bindings:\n    - provider: qwencloud\n      account: team\n      base_url: https://example.test/v1\n      models: []\n",
     )
     .unwrap_err();
     assert!(error.to_string().contains("requires at least one model"));
@@ -216,7 +208,7 @@ model:
 fn qwencloud_catalog_binding_is_a_non_routable_local_seed() {
     let config = parse(
         Path::new("/tmp/yo/config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: qwencloud
@@ -255,7 +247,7 @@ fn qwencloud_catalog_binding_rejects_mixed_or_unknown_shapes() {
         let error = parse(
             Path::new("config.yaml"),
             &format!(
-                "version: 1\nmodel:\n  bindings:\n    - provider: qwencloud\n      account: team\n      catalog: qwencloud-coding-plan-intl/v1\n{extra}"
+                "model:\n  bindings:\n    - provider: qwencloud\n      account: team\n      catalog: qwencloud-coding-plan-intl/v1\n{extra}"
             ),
         )
         .unwrap_err();
@@ -282,7 +274,7 @@ fn qwencloud_catalog_binding_rejects_mixed_or_unknown_shapes() {
         let error = parse(
             Path::new("config.yaml"),
             &format!(
-                "version: 1\nmodel:\n  bindings:\n    - provider: {provider}\n      account: team\n      catalog: {catalog}\n"
+                "model:\n  bindings:\n    - provider: {provider}\n      account: team\n      catalog: {catalog}\n"
             ),
         )
         .unwrap_err();
@@ -290,13 +282,13 @@ fn qwencloud_catalog_binding_rejects_mixed_or_unknown_shapes() {
     }
 }
 
-// 같은 v1 문서에서 legacy catalog와 새 bindings를 함께 쓰면 어느 쪽이 우선인지
+// 같은 문서에서 기존 catalog와 새 bindings를 함께 쓰면 어느 쪽이 우선인지
 // 추측하지 않고 정확한 상호배타 오류로 거절합니다.
 #[test]
 fn model_catalog_and_bindings_are_mutually_exclusive() {
     let error = parse(
         Path::new("config.yaml"),
-        r#"version: 1
+        r#"
 model:
   catalog: []
   bindings:
@@ -325,7 +317,7 @@ fn model_catalog_and_bindings_reject_null_instead_of_treating_it_as_absent() {
         "catalog: null\n  bindings: []",
         "catalog: []\n  bindings: null",
     ] {
-        let yaml = format!("version: 1\nmodel:\n  {model}\n");
+        let yaml = format!("model:\n  {model}\n");
         let error = parse(Path::new("config.yaml"), &yaml).unwrap_err();
         assert!(
             error.to_string().contains("expected a sequence"),
@@ -334,13 +326,13 @@ fn model_catalog_and_bindings_reject_null_instead_of_treating_it_as_absent() {
     }
 }
 
-// structured null은 필드 누락과 다르므로 모델 override가 상위 mapping을 상속하지 않고
-// exact Null 값으로 교체하며, native runtime이 지원 여부를 별도로 판단할 수 있습니다.
+// structured profile 필드 전체의 null은 누락이나 빈 mapping으로 축약하지 않고 authored
+// shape 경계에서 거절해 상속과 명시적 교체가 서로 다른 상태로 남습니다.
 #[test]
-fn model_profile_structured_null_is_an_explicit_whole_field_override() {
-    let config = parse(
+fn model_profile_structured_whole_field_null_is_rejected() {
+    let error = parse(
         Path::new("config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: qwencloud
@@ -361,14 +353,49 @@ model:
             reasoning_parameters: null
 "#,
     )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("expected a structured profile value"),
+        "{error}"
+    );
+}
+
+// present structured profile mapping 아래의 null은 recursive value algebra의 Null로
+// 유지되어 whole-field null 거절이 내부 요청 parameter까지 넓어지지 않습니다.
+#[test]
+fn model_profile_nested_null_is_retained() {
+    let config = parse(
+        Path::new("config.yaml"),
+        r#"
+model:
+  bindings:
+    - provider: qwencloud
+      account: default
+      base_url: https://example.test/v1
+      profile:
+        api_dialect: openai-responses
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 1000
+        max_output_tokens: 100
+        reasoning_parameters: {}
+        optional_request_parameters: {stop: null}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+      models:
+        - model: nested-null
+"#,
+    )
     .unwrap();
 
     assert_eq!(
         config.model_catalog().entries()[0]
             .explicit_profile()
             .unwrap()
-            .reasoning_parameters()
-            .to_json_value(),
+            .optional_request_parameters()
+            .to_json_value()["stop"],
         serde_json::Value::Null
     );
 }
@@ -379,7 +406,7 @@ model:
 fn model_profile_scalar_null_is_not_treated_as_an_inherited_field() {
     let error = parse(
         Path::new("config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: qwencloud
@@ -403,11 +430,11 @@ model:
     assert!(error.to_string().contains("expected u64"));
 }
 
-// YAML plain 숫자는 spelling 기준 variant를 정하기 전에 범위를 검증하여 큰 정수가
-// float/string으로 바뀌지 않으며, 유한 exponent와 따옴표 문자열은 구분해 허용합니다.
+// 동적 profile scalar는 yo-yaml의 닫힌 inference 순서를 config 경계에서도 exact JSON
+// variant로 유지하며, 64-bit 정수 범위 밖 decimal을 String으로 재분류하지 않습니다.
 #[test]
-fn model_profile_plain_numbers_reject_retyping_but_preserve_quoted_strings() {
-    let prefix = r#"version: 1
+fn model_profile_scalars_follow_yo_yaml_inference() {
+    let prefix = r#"
 model:
   bindings:
     - provider: qwencloud
@@ -424,59 +451,42 @@ model:
         reasoning_parameters:
           value: "#;
     let suffix = "\n      models:\n        - model: numeric\n";
-    for invalid in [
-        "18446744073709551616",
-        "340282366920938463463374607431768211456",
-        "1e400",
-    ] {
-        let error = parse(
-            Path::new("config.yaml"),
-            &format!("{prefix}{invalid}{suffix}"),
-        )
-        .unwrap_err();
-        assert!(
-            error.to_string().contains("plain profile")
-                || error.to_string().contains("profile integer"),
-            "{invalid}: {error}"
-        );
-    }
-
-    for invalid in [".5e400", "-.5e400", "0x10000000000000000"] {
-        let error = parse(
-            Path::new("config.yaml"),
-            &format!("{prefix}{invalid}{suffix}"),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("profile"), "{invalid}: {error}");
-    }
-
-    for valid in [
-        "1e2",
-        ".5e2",
-        "\"1e400\"",
-        "'1e400'",
-        "!!str 1e400",
-        "plain 1e400 text",
-        "0x32",
-        "1_000",
-    ] {
-        parse(
-            Path::new("config.yaml"),
-            &format!("{prefix}{valid}{suffix}"),
-        )
-        .unwrap();
-    }
-
     for (authored, expected) in [
+        ("18446744073709551615", serde_json::json!(u64::MAX)),
+        (
+            "18446744073709551616",
+            serde_json::json!(18_446_744_073_709_551_616.0_f64),
+        ),
+        (
+            "340282366920938463463374607431768211456",
+            serde_json::json!(340_282_366_920_938_463_463_374_607_431_768_211_456.0_f64),
+        ),
+        ("-9223372036854775808", serde_json::json!(i64::MIN)),
+        (
+            "-9223372036854775809",
+            serde_json::json!(-9_223_372_036_854_775_809.0_f64),
+        ),
+        ("0xffffffffffffffff", serde_json::json!(u64::MAX)),
+        (
+            "0x10000000000000000",
+            serde_json::json!("0x10000000000000000"),
+        ),
+        ("1e2", serde_json::json!(100.0)),
         (".5e2", serde_json::json!(50.0)),
+        (".5e400", serde_json::json!(".5e400")),
+        ("-.5e400", serde_json::json!("-.5e400")),
+        ("\"1e400\"", serde_json::json!("1e400")),
+        ("'1e400'", serde_json::json!("1e400")),
+        ("!!str 1e400", serde_json::json!("1e400")),
+        ("plain 1e400 text", serde_json::json!("plain 1e400 text")),
         ("0x32", serde_json::json!(50)),
-        ("1_000", serde_json::json!("1_000")),
+        ("1_000", serde_json::json!(1000)),
     ] {
         let config = parse(
             Path::new("config.yaml"),
             &format!("{prefix}{authored}{suffix}"),
         )
-        .unwrap();
+        .unwrap_or_else(|error| panic!("{authored}: {error}"));
         assert_eq!(
             config.model_catalog().entries()[0]
                 .explicit_profile()
@@ -488,26 +498,25 @@ model:
         );
     }
 
-    for block_string in ["|\n            1e400", ">\n            1e400"] {
-        parse(
-            Path::new("config.yaml"),
-            &format!("{prefix}{block_string}{suffix}"),
-        )
-        .unwrap();
+    for authored in ["1e400", "!!float 1", "!!int 1.0", "!!int 1", "!!float 1.0"] {
+        assert!(
+            parse(
+                Path::new("config.yaml"),
+                &format!("{prefix}{authored}{suffix}"),
+            )
+            .is_err(),
+            "{authored}"
+        );
     }
+}
 
-    parse(
-        Path::new("config.yaml"),
-        &format!("{prefix}plain\n            1e400{suffix}"),
-    )
-    .unwrap();
-
-    let error = parse(
-        Path::new("config.yaml"),
-        r#"version: 1
+// 동적 profile boolean은 yo-yaml backend의 편의 표기를 그대로 사용합니다.
+#[test]
+fn model_profile_accepts_convenient_boolean_spellings() {
+    let prefix = r#"
 model:
   bindings:
-    - provider: &overflow 1e400
+    - provider: qwencloud
       account: default
       base_url: https://example.test/v1
       profile:
@@ -515,27 +524,30 @@ model:
         tokenizer_profile: utf8-bytes/v1
         input_token_limit: 1000
         max_output_tokens: 100
-        reasoning_parameters:
-          value: *overflow
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
         verification_profile: semantic-terminal/v1
+        reasoning_parameters: {yes_value: yes, no_value: no, on_value: ON, off_value: Off}
       models:
-        - model: numeric
-"#,
-    )
-    .unwrap_err();
-    assert!(
-        error.to_string().contains("plain profile number"),
-        "{error}"
-    );
+        - model: booleans
+"#;
+    let config = parse(Path::new("config.yaml"), prefix).unwrap();
+    let parameters = config.model_catalog().entries()[0]
+        .explicit_profile()
+        .unwrap()
+        .reasoning_parameters()
+        .to_json_value();
+    assert_eq!(parameters["yes_value"], serde_json::json!(true));
+    assert_eq!(parameters["no_value"], serde_json::json!(false));
+    assert_eq!(parameters["on_value"], serde_json::json!(true));
+    assert_eq!(parameters["off_value"], serde_json::json!(false));
 }
 
-// structured map의 key도 같은 lexical 경계를 통과하므로 범위 밖 plain 숫자와
-// 그 alias는 문자열 key로 재해석되지 않고, 명시적으로 quote한 key만 허용합니다.
+// 동적 profile map key는 String algebra를 exact하게 고정해 non-finite numeric key는
+// 거절하고 float 문법이 아닌 radix overflow와 quoted spelling만 String key로 받습니다.
 #[test]
-fn model_profile_plain_number_map_keys_cannot_bypass_range_validation() {
-    let prefix = r#"version: 1
+fn model_profile_map_keys_follow_yo_yaml_inference() {
+    let prefix = r#"
 model:
   bindings:
     - provider: qwencloud
@@ -555,101 +567,35 @@ model:
         - model: numeric-key
 "#;
 
-    for parameters in [
-        "{1e400: value}",
-        "{0x100000000000000000000000000000000: value}",
+    assert!(
+        parse(
+            Path::new("config.yaml"),
+            &format!("{prefix}{{1e400: value}}{suffix}"),
+        )
+        .is_err()
+    );
+
+    for (parameters, expected_key) in [
+        (
+            "{0x100000000000000000000000000000000: value}",
+            "0x100000000000000000000000000000000",
+        ),
+        ("{\"1e400\": value}", "1e400"),
     ] {
-        let error = parse(
+        let config = parse(
             Path::new("config.yaml"),
             &format!("{prefix}{parameters}{suffix}"),
         )
-        .unwrap_err();
-        assert!(error.to_string().contains("plain profile"), "{error}");
-    }
-
-    let error = parse(
-        Path::new("config.yaml"),
-        r#"version: 1
-model:
-  bindings:
-    - provider: &overflow 1e400
-      account: default
-      base_url: https://example.test/v1
-      profile:
-        api_dialect: openai-responses
-        tokenizer_profile: utf8-bytes/v1
-        input_token_limit: 1000
-        max_output_tokens: 100
-        reasoning_parameters:
-          ? *overflow
-          : value
-        optional_request_parameters: {}
-        tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
-      models:
-        - model: numeric-key
-"#,
-    )
-    .unwrap_err();
-    assert!(
-        error.to_string().contains("plain profile number"),
-        "{error}"
-    );
-
-    let config = parse(
-        Path::new("config.yaml"),
-        &format!("{prefix}{{\"1e400\": value}}{suffix}"),
-    )
-    .unwrap();
-    assert_eq!(
-        config.model_catalog().entries()[0]
-            .explicit_profile()
-            .unwrap()
-            .reasoning_parameters()
-            .to_json_value()["1e400"],
-        "value"
-    );
-}
-
-// 명시적 YAML 숫자 tag도 spelling이 정한 integer/float variant를 바꿀 수 없으며,
-// 일치하는 tag만 같은 typed profile 값으로 decode됩니다.
-#[test]
-fn model_profile_numeric_tags_must_match_the_authored_spelling() {
-    let prefix = r#"version: 1
-model:
-  bindings:
-    - provider: qwencloud
-      account: default
-      base_url: https://example.test/v1
-      profile:
-        api_dialect: openai-responses
-        tokenizer_profile: utf8-bytes/v1
-        input_token_limit: 1000
-        max_output_tokens: 100
-        reasoning_parameters: {value: "#;
-    let suffix = r#"}
-        optional_request_parameters: {}
-        tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
-      models:
-        - model: tagged-number
-"#;
-
-    for mismatched in ["!!float 1", "!!int 1.0"] {
-        let error = parse(
-            Path::new("config.yaml"),
-            &format!("{prefix}{mismatched}{suffix}"),
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("numeric tag"), "{error}");
-    }
-
-    for matching in ["!!int 1", "!!float 1.0"] {
-        parse(
-            Path::new("config.yaml"),
-            &format!("{prefix}{matching}{suffix}"),
-        )
-        .unwrap();
+        .unwrap_or_else(|error| panic!("{parameters}: {error}"));
+        assert_eq!(
+            config.model_catalog().entries()[0]
+                .explicit_profile()
+                .unwrap()
+                .reasoning_parameters()
+                .to_json_value()[expected_key],
+            serde_json::json!("value"),
+            "{parameters}"
+        );
     }
 }
 
@@ -661,7 +607,7 @@ fn model_profile_number_validation_does_not_retype_numeric_looking_model_ids() {
         let config = parse(
             Path::new("config.yaml"),
             &format!(
-                r#"version: 1
+                r#"
 model:
   bindings:
     - provider: qwencloud
@@ -699,7 +645,7 @@ model:
 fn model_bindings_require_a_complete_resolved_profile() {
     let error = parse(
         Path::new("config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: qwencloud
@@ -726,7 +672,7 @@ model:
 fn model_bindings_reject_duplicate_provider_account_blocks() {
     let error = parse(
         Path::new("config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: qwencloud
@@ -765,7 +711,7 @@ model:
 fn kimi_catalog_profile_resolves_one_dynamic_account_seed() {
     let config = parse(
         Path::new("/tmp/yo/config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: kimi
@@ -788,7 +734,7 @@ model:
 fn kimi_code_catalog_profile_resolves_a_separate_account_seed() {
     let config = parse(
         Path::new("/tmp/yo/config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: kimi
@@ -811,7 +757,7 @@ model:
 fn manual_kimi_binding_preserves_explicit_private_replay_profile() {
     let config = parse(
         Path::new("/tmp/yo/config.yaml"),
-        r#"version: 1
+        r#"
 model:
   bindings:
     - provider: kimi
@@ -858,7 +804,7 @@ model:
 fn model_startup_accepts_exact_local_codex_host_target() {
     let config = parse(
         Path::new("/tmp/yo/config.yaml"),
-        "version: 1\nmodel:\n  startup: host:codex\n",
+        "model:\n  startup: host:codex\n",
     )
     .unwrap();
 
@@ -869,12 +815,12 @@ fn model_startup_accepts_exact_local_codex_host_target() {
 }
 
 // 임의 문자열을 host target처럼 받아들이면 새 Host identity를 설정 오타로 만들 수 있어
-// v1 operator 형식은 exact host:codex 외의 scalar를 명시적으로 거절한다.
+// 현재 operator 형식은 exact host:codex 외의 scalar를 명시적으로 거절한다.
 #[test]
 fn model_startup_rejects_unknown_host_target() {
     let error = parse(
         Path::new("/tmp/yo/config.yaml"),
-        "version: 1\nmodel:\n  startup: host:other\n",
+        "model:\n  startup: host:other\n",
     )
     .unwrap_err();
 
@@ -887,7 +833,7 @@ fn model_startup_rejects_unknown_host_target() {
 fn model_startup_rejects_an_unconfigured_model() {
     let error = parse(
         Path::new("/tmp/yo/config.yaml"),
-        "version: 1\nmodel:\n  startup:\n    provider: qwencloud\n    account: token-plan\n    model: absent\n",
+        "model:\n  startup:\n    provider: qwencloud\n    account: token-plan\n    model: absent\n",
     )
     .unwrap_err();
 
@@ -902,11 +848,7 @@ fn model_startup_rejects_an_unconfigured_model() {
 // 지원하지 않는 frame 비율은 조용히 보정하지 않고 정확한 설정 경로와 값으로 거절합니다.
 #[test]
 fn tui_max_fps_rejects_unsupported_values() {
-    let error = parse(
-        Path::new("/tmp/yo-config.yaml"),
-        "version: 1\ntui:\n  max_fps: 30\n",
-    )
-    .unwrap_err();
+    let error = parse(Path::new("/tmp/yo-config.yaml"), "tui:\n  max_fps: 30\n").unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -920,7 +862,7 @@ fn tui_max_fps_rejects_unsupported_values() {
 fn custom_date_format_is_validated_and_applied() {
     let config = parse(
         Path::new("config.yaml"),
-        "version: 1\nsession:\n  list:\n    date_format: '%Y'\n",
+        "session:\n  list:\n    date_format: '%Y'\n",
     )
     .unwrap();
 
@@ -985,7 +927,7 @@ fn symlink_configuration_is_rejected_without_following_its_target() {
     fs::create_dir_all(&root).unwrap();
     let target = root.join("target.yaml");
     let alias = root.join("config.yaml");
-    fs::write(&target, "version: 1\n").unwrap();
+    fs::write(&target, "").unwrap();
     std::os::unix::fs::symlink(&target, &alias).unwrap();
 
     let error = load_from(&alias).unwrap_err();
@@ -999,17 +941,54 @@ fn symlink_configuration_is_rejected_without_following_its_target() {
 #[test]
 fn final_config_guard_detects_same_byte_replacement() {
     let path = std::env::temp_dir().join(format!("yo-config-guard-{}", std::process::id()));
-    fs::write(&path, "version: 1\n").unwrap();
+    fs::write(&path, "session: {}\n").unwrap();
     let config = load_from(&path).unwrap();
     assert!(config.verify_unchanged().is_ok());
 
     let replacement = path.with_extension("replacement");
-    fs::write(&replacement, "version: 1\n").unwrap();
+    fs::write(&replacement, "session: {}\n").unwrap();
     fs::rename(&replacement, &path).unwrap();
     let error = config.verify_unchanged().unwrap_err();
 
     fs::remove_file(path).unwrap();
     assert!(matches!(error, ConfigError::Changed(_)));
+}
+
+// retired top-level version field는 일반 unknown-field 오류로 뭉개지 않고 사용자가 기존
+// 로컬 파일을 백업 또는 제거한 뒤 연결을 다시 등록해야 한다는 reset 안내를 제공합니다.
+#[test]
+fn retired_config_shape_reports_reset_and_reconnect_guidance() {
+    let path = Path::new("/tmp/yo-config.yaml");
+    let error = parse(path, "version: 1\nsession: {}\n").unwrap_err();
+    let diagnostic = error.to_string();
+
+    assert!(
+        matches!(error, ConfigError::RetiredYamlFormat(ref found) if found == path),
+        "{error:?}"
+    );
+    assert!(diagnostic.contains("back up or remove"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("register affected connections again"),
+        "{diagnostic}"
+    );
+}
+
+// 현재 shape 내부의 version 오타는 퇴역 루트 marker가 아니므로 파일 삭제·재연결 안내로
+// 과잉 분류하지 않고 일반적인 typed YAML 오류로 남깁니다.
+#[test]
+fn nested_version_field_is_not_classified_as_a_retired_config() {
+    let error = parse(
+        Path::new("/tmp/yo-config.yaml"),
+        "session:\n  list:\n    version: 1\n",
+    )
+    .unwrap_err();
+    let diagnostic = error.to_string();
+
+    assert!(
+        matches!(error, ConfigError::InvalidYaml { .. }),
+        "{error:?}"
+    );
+    assert!(!diagnostic.contains("back up or remove"), "{diagnostic}");
 }
 
 // 오타 난 설정 키를 무시하면 사용자는 형식이 적용됐다고 오해하므로, 정확한 파일
@@ -1018,7 +997,7 @@ fn final_config_guard_detects_same_byte_replacement() {
 fn unknown_configuration_field_is_rejected() {
     let error = parse(
         Path::new("/tmp/yo-config.yaml"),
-        "version: 1\nsession:\n  list:\n    date_formt: '%Y'\n",
+        "session:\n  list:\n    date_formt: '%Y'\n",
     )
     .unwrap_err();
 
@@ -1032,7 +1011,7 @@ fn unknown_configuration_field_is_rejected() {
 fn obsolete_api_protocol_key_is_rejected() {
     let error = parse(
         Path::new("/tmp/yo-config.yaml"),
-        "version: 1\nmodel:\n  catalog:\n    - provider: openrouter\n      account: default\n      model: openrouter/free\n      api_protocol: openai-responses\n      base_url: https://openrouter.ai/api/v1\n      input_token_limit: 100000\n      max_output_tokens: 8192\n      tokenizer_profile: o200k_base/v1\n",
+        "model:\n  catalog:\n    - provider: openrouter\n      account: default\n      model: openrouter/free\n      api_protocol: openai-responses\n      base_url: https://openrouter.ai/api/v1\n      input_token_limit: 100000\n      max_output_tokens: 8192\n      tokenizer_profile: o200k_base/v1\n",
     )
     .unwrap_err();
 
@@ -1046,7 +1025,7 @@ fn obsolete_api_protocol_key_is_rejected() {
 fn chat_completions_dialect_derives_its_connector_without_a_public_selector() {
     let config = parse(
         Path::new("/tmp/yo/config.yaml"),
-        "version: 1\nmodel:\n  catalog:\n    - provider: qwencloud\n      account: token-plan\n      model: deepseek-v4-flash-0731\n      api_dialect: openai-chat-completions\n      base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1\n      input_token_limit: 65536\n      max_output_tokens: 8192\n      tokenizer_profile: utf8-bytes/v1\n",
+        "model:\n  catalog:\n    - provider: qwencloud\n      account: token-plan\n      model: deepseek-v4-flash-0731\n      api_dialect: openai-chat-completions\n      base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1\n      input_token_limit: 65536\n      max_output_tokens: 8192\n      tokenizer_profile: utf8-bytes/v1\n",
     )
     .unwrap();
     let entry = &config.model_catalog().entries()[0];
@@ -1066,7 +1045,7 @@ fn chat_completions_dialect_derives_its_connector_without_a_public_selector() {
 fn invalid_date_format_is_rejected() {
     let error = parse(
         Path::new("config.yaml"),
-        "version: 1\nsession:\n  list:\n    date_format: '%Y %'\n",
+        "session:\n  list:\n    date_format: '%Y %'\n",
     )
     .unwrap_err();
 

@@ -21,21 +21,20 @@ pub(super) struct DecodedCredentials {
 pub(super) fn decode(
     path: &Path,
     encoded: &[u8],
-    legacy_revision: CredentialRevision,
+    revisionless_snapshot_revision: CredentialRevision,
 ) -> Result<DecodedCredentials, LocalCredentialStoreError> {
-    let decoded: CredentialFile = serde_norway::from_slice(encoded)
-        .map_err(|_| LocalCredentialStoreError::InvalidContents(path.to_owned()))?;
-    if decoded.version != 1 {
-        return Err(LocalCredentialStoreError::UnsupportedVersion {
-            path: path.to_owned(),
-            version: decoded.version,
-        });
-    }
+    let decoded: CredentialFile = yo_yaml::from_slice(encoded).map_err(|_| {
+        if yo_yaml::has_any_top_level_mapping_key(encoded, &["version"]).unwrap_or(false) {
+            LocalCredentialStoreError::RetiredYamlFormat(path.to_owned())
+        } else {
+            LocalCredentialStoreError::InvalidContents(path.to_owned())
+        }
+    })?;
     let revision = decoded
         .revision
         .map(|revision| parse_revision(path, &revision))
         .transpose()?
-        .unwrap_or(legacy_revision);
+        .unwrap_or(revisionless_snapshot_revision);
     Ok(DecodedCredentials {
         revision,
         entries: decoded
@@ -69,8 +68,7 @@ pub(super) fn encode(
             return Err(LocalCredentialStoreError::InvalidContents(PathBuf::new()));
         }
     }
-    let encoded = serde_norway::to_string(&CredentialFileRef {
-        version: 1,
+    let encoded = yo_yaml::to_string(&CredentialFileRef {
         revision,
         providers,
     })
@@ -113,10 +111,10 @@ pub(super) fn parse_managed_revision_token(revision: &str) -> Option<String> {
     valid.then(|| revision.to_owned())
 }
 
-pub(super) fn parse_legacy_revision_token(revision: &str) -> Option<String> {
-    let valid = revision.len() == 119
-        && revision.starts_with("legacy-")
-        && revision[7..]
+pub(super) fn parse_derived_revision_token(revision: &str) -> Option<String> {
+    let valid = revision.len() == 120
+        && revision.starts_with("derived-")
+        && revision[8..]
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
     valid.then(|| revision.to_owned())
@@ -125,7 +123,6 @@ pub(super) fn parse_legacy_revision_token(revision: &str) -> Option<String> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CredentialFile {
-    version: u32,
     #[serde(default)]
     revision: Option<String>,
     #[serde(deserialize_with = "deserialize_providers")]
@@ -134,7 +131,6 @@ struct CredentialFile {
 
 #[derive(Serialize)]
 struct CredentialFileRef<'a> {
-    version: u32,
     revision: &'a str,
     providers: BTreeMap<&'a str, BTreeMap<&'a str, AccountCredentialRef<'a>>>,
 }

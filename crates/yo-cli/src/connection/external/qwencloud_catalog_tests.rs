@@ -288,7 +288,7 @@ fn command(target: &str) -> ConnectCommand {
 }
 
 fn token_plan_config() -> &'static str {
-    r#"version: 1
+    r#"
 model:
   bindings:
     - provider: qwencloud

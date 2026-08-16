@@ -93,7 +93,7 @@ pub use model_service::{
     QwenCloudCatalogSeed, SEMANTIC_REPLAY_PROFILE, StartupPolicy, StartupSelectionSources,
     StartupTarget, VerifiedExternalConnection, VersionedProfileId, discover_kimi_models,
     discover_openrouter_models, parse_kimi_catalog_snapshot, plan_connection_recovery,
-    resolve_startup_target, validate_profile_yaml_number_spellings, verify_external_connection,
+    resolve_startup_target, verify_external_connection,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

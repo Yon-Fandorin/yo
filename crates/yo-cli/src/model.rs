@@ -152,7 +152,7 @@ mod tests {
         ));
         fs::create_dir_all(&path).unwrap();
         let config_path = path.join("config.yaml");
-        fs::write(&config_path, "version: 1\n").unwrap();
+        fs::write(&config_path, "session: {}\n").unwrap();
         fs::write(path.join("credentials.yaml"), "invalid: [").unwrap();
         let config = crate::config::load_from(&config_path).unwrap();
         let mut retained = None;

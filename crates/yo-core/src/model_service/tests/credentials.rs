@@ -82,7 +82,7 @@ fn missing_local_credential_file_is_an_empty_non_creating_store() {
     assert!(!path.parent().unwrap().exists());
 }
 
-// 현재 사용자가 소유한 0600 regular file의 version 1 Provider/Account mapping은 지정된
+// 현재 사용자가 소유한 0600 regular file의 pre-version Provider/Account mapping은 지정된
 // exact pair에서만 원문 API key를 resolve하는 시작 시점 snapshot으로 읽히는지 검증합니다.
 #[test]
 fn loads_a_user_only_provider_account_credential_snapshot() {
@@ -90,7 +90,7 @@ fn loads_a_user_only_provider_account_credential_snapshot() {
     let path = directory.path().join("credentials.yaml");
     write_credential_file(
         &path,
-        "version: 1\nproviders:\n  qwencloud:\n    token-plan:\n      api_key: sk-sensitive-value\n",
+        "providers:\n  qwencloud:\n    token-plan:\n      api_key: sk-sensitive-value\n",
         0o600,
     );
 
@@ -114,7 +114,7 @@ fn isolates_the_same_account_id_between_providers() {
     let path = directory.path().join("credentials.yaml");
     write_credential_file(
         &path,
-        "version: 1\nproviders:\n  openrouter:\n    default:\n      api_key: sk-openrouter\n  qwencloud:\n    default:\n      api_key: sk-qwencloud\n",
+        "providers:\n  openrouter:\n    default:\n      api_key: sk-openrouter\n  qwencloud:\n    default:\n      api_key: sk-qwencloud\n",
         0o600,
     );
 
@@ -148,7 +148,7 @@ fn isolates_the_same_account_id_between_providers() {
 fn rejects_a_credential_file_with_group_or_other_permissions() {
     let directory = TestDirectory::new("permissions");
     let path = directory.path().join("credentials.yaml");
-    write_credential_file(&path, "version: 1\nproviders: {}\n", 0o640);
+    write_credential_file(&path, "providers: {}\n", 0o640);
 
     let error = LocalCredentialStore::open(&path).unwrap_err();
 
@@ -165,7 +165,7 @@ fn rejects_a_symlink_instead_of_following_it_to_credentials() {
     let directory = TestDirectory::new("symlink");
     let target = directory.path().join("actual.yaml");
     let alias = directory.path().join("credentials.yaml");
-    write_credential_file(&target, "version: 1\nproviders: {}\n", 0o600);
+    write_credential_file(&target, "providers: {}\n", 0o600);
     symlink(&target, &alias).unwrap();
 
     assert!(matches!(
@@ -209,7 +209,7 @@ fn redacts_secret_material_from_invalid_credential_diagnostics() {
     let path = directory.path().join("credentials.yaml");
     write_credential_file(
         &path,
-        "version: 1\nproviders:\n  qwencloud:\n    duplicate:\n      api_key: sk-first-secret\n    duplicate:\n      api_key: sk-second-secret\n",
+        "providers:\n  qwencloud:\n    duplicate:\n      api_key: sk-first-secret\n    duplicate:\n      api_key: sk-second-secret\n",
         0o600,
     );
 

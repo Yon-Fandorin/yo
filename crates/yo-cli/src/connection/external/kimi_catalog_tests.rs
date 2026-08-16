@@ -168,7 +168,7 @@ fn kimi_code_entry() -> ModelCatalogEntry {
 }
 
 fn kimi_config() -> &'static str {
-    r#"version: 1
+    r#"
 model:
   bindings:
     - provider: kimi
@@ -180,7 +180,7 @@ model:
 }
 
 fn kimi_code_config() -> &'static str {
-    r#"version: 1
+    r#"
 model:
   bindings:
     - provider: kimi

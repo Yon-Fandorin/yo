@@ -20,10 +20,7 @@ pub enum ConnectionRepositoryError {
     TooLarge(PathBuf),
     Changed(PathBuf),
     InvalidContents(PathBuf),
-    UnsupportedVersion {
-        path: PathBuf,
-        version: u32,
-    },
+    RetiredYamlFormat(PathBuf),
     ManagedCoordinateMismatch,
     ManagedBindingNotFound {
         provider: String,
@@ -91,9 +88,9 @@ impl fmt::Display for ConnectionRepositoryError {
                 "{} contains an invalid connection snapshot",
                 path.display()
             ),
-            Self::UnsupportedVersion { path, version } => write!(
+            Self::RetiredYamlFormat(path) => write!(
                 formatter,
-                "{} uses unsupported connection version {version}; expected 1",
+                "{} uses a retired pre-release connection shape; back up or remove the stale local state, then register affected connections again",
                 path.display()
             ),
             Self::ManagedCoordinateMismatch => formatter.write_str(

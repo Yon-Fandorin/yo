@@ -226,6 +226,7 @@ fn requires_fresh_context(path: &str) -> bool {
     ) || [
         ".github/workflows/",
         "crates/",
+        "shared/",
         "tools/",
         "docs-internal/design/",
         "methexis/",
@@ -235,7 +236,7 @@ fn requires_fresh_context(path: &str) -> bool {
 }
 
 fn requires_code_quality(path: &str) -> bool {
-    ((path.starts_with("crates/") || path.starts_with("tools/"))
+    ((path.starts_with("crates/") || path.starts_with("shared/") || path.starts_with("tools/"))
         && (path.ends_with(".rs") || path.ends_with(".sh")))
         || (path.starts_with("docs/theme/")
             && [".css", ".hbs", ".html", ".js"]

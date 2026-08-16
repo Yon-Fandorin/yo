@@ -13,7 +13,7 @@ use super::{
 use crate::{
     CompleteModelBinding, ConnectorId, EffectiveModelBinding, EffectiveModelProfile,
     ModelProfileLayer, ModelProfileParameters, NormalizedEndpoint, SEMANTIC_REPLAY_PROFILE,
-    VersionedProfileId, validate_profile_yaml_number_spellings,
+    VersionedProfileId,
 };
 
 pub(super) struct DecodedSnapshot {
@@ -29,8 +29,7 @@ pub(super) fn encode(
     accounts: &[ManagedConnectionAccount],
     bindings: &[ManagedConnectionBinding],
 ) -> Result<Vec<u8>, ConnectionRepositoryError> {
-    serde_norway::to_string(&WireSnapshot {
-        version: 1,
+    yo_yaml::to_string(&WireSnapshot {
         revision: revision.to_string(),
         preference: preference.map(WireTarget::from),
         bindings: bindings.iter().map(WireBinding::from).collect(),
@@ -46,16 +45,13 @@ pub(super) fn decode(
 ) -> Result<DecodedSnapshot, ConnectionRepositoryError> {
     let contents = std::str::from_utf8(encoded)
         .map_err(|_| ConnectionRepositoryError::InvalidContents(path.to_owned()))?;
-    validate_profile_yaml_number_spellings(contents)
-        .map_err(|_| ConnectionRepositoryError::InvalidContents(path.to_owned()))?;
-    let wire: WireSnapshot = serde_norway::from_str(contents)
-        .map_err(|_| ConnectionRepositoryError::InvalidContents(path.to_owned()))?;
-    if wire.version != 1 {
-        return Err(ConnectionRepositoryError::UnsupportedVersion {
-            path: path.to_owned(),
-            version: wire.version,
-        });
-    }
+    let wire: WireSnapshot = yo_yaml::from_str(contents).map_err(|_| {
+        if yo_yaml::has_any_top_level_mapping_key(encoded, &["version"]).unwrap_or(false) {
+            ConnectionRepositoryError::RetiredYamlFormat(path.to_owned())
+        } else {
+            ConnectionRepositoryError::InvalidContents(path.to_owned())
+        }
+    })?;
     let invalid = |_| ConnectionRepositoryError::InvalidContents(path.to_owned());
     let accounts = wire
         .accounts
@@ -95,7 +91,6 @@ pub(super) fn new_revision() -> Result<ConnectionRevision, ConnectionRepositoryE
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct WireSnapshot {
-    version: u32,
     revision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     preference: Option<WireTarget>,
@@ -175,7 +170,9 @@ struct WireProfile {
     tokenizer_profile: String,
     input_token_limit: u64,
     max_output_tokens: u64,
+    #[serde(deserialize_with = "deserialize_non_null_profile_parameters")]
     reasoning_parameters: ModelProfileParameters,
+    #[serde(deserialize_with = "deserialize_non_null_profile_parameters")]
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: String,
     verification_profile: String,
@@ -185,6 +182,17 @@ struct WireProfile {
         skip_serializing_if = "Option::is_none"
     )]
     replay_profile: Option<String>,
+}
+
+fn deserialize_non_null_profile_parameters<'de, D>(
+    deserializer: D,
+) -> Result<ModelProfileParameters, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<ModelProfileParameters>::deserialize(deserializer)?.ok_or_else(|| {
+        serde::de::Error::invalid_type(serde::de::Unexpected::Unit, &"a structured profile value")
+    })
 }
 
 fn deserialize_optional_non_null_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>

@@ -9,6 +9,7 @@ local checks = new Mapping<String, Step> {
     ["test-explanations"] = new Step {
         glob = List(
             "crates/**/*.rs",
+            "shared/**/*.rs",
             "tools/**/*.rs",
             "CONTRIBUTING.md",
         )
@@ -58,6 +59,24 @@ local checks = new Mapping<String, Step> {
             "tools/methexis/examples/context-contract/stable-leaf-manifest.json",
         )
         check = "cargo test --quiet --locked -p methexis"
+    }
+    ["yo-yaml-tests"] = new Step {
+        glob = List(
+            "shared/yo-yaml/**/*.rs",
+            "shared/yo-yaml/Cargo.toml",
+            "Cargo.lock",
+            "Cargo.toml",
+        )
+        check = "cargo test --quiet --locked -p yo-yaml"
+    }
+    ["yo-yaml-lints"] = new Step {
+        glob = List(
+            "shared/yo-yaml/**/*.rs",
+            "shared/yo-yaml/Cargo.toml",
+            "Cargo.lock",
+            "Cargo.toml",
+        )
+        check = "cargo clippy --quiet --locked -p yo-yaml --all-targets -- -D warnings"
     }
     ["yo-tui-tests"] = new Step {
         glob = List(

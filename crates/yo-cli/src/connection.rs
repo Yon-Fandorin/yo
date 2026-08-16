@@ -335,7 +335,7 @@ mod tests {
     }
 
     fn empty_config(directory: &TestDirectory) -> PathBuf {
-        directory.config_path("version: 1\n")
+        directory.config_path("session: {}\n")
     }
 
     // explicit default는 admitted HostTarget을 한 CAS로 저장하고 같은 명령 재실행은 revision을
@@ -374,7 +374,7 @@ mod tests {
                 target: Some("host:codex".to_owned()),
             },
             || {
-                fs::write(&config_path, "version: 1\ntui:\n  max_fps: 60\n").unwrap();
+                fs::write(&config_path, "tui:\n  max_fps: 60\n").unwrap();
                 Ok(())
             },
         )
@@ -436,7 +436,7 @@ mod tests {
     fn default_binding_conflict_preserves_the_captured_repository() {
         let directory = TestDirectory::new("default-binding-conflict");
         let config_path = directory.config_path(
-            "version: 1\nmodel:\n  catalog:\n    - provider: qwencloud\n      account: default\n      model: managed\n      api_dialect: openai-responses\n      base_url: https://example.test/v1\n      input_token_limit: 1000\n      max_output_tokens: 100\n      tokenizer_profile: utf8-bytes/v1\n",
+            "model:\n  catalog:\n    - provider: qwencloud\n      account: default\n      model: managed\n      api_dialect: openai-responses\n      base_url: https://example.test/v1\n      input_token_limit: 1000\n      max_output_tokens: 100\n      tokenizer_profile: utf8-bytes/v1\n",
         );
         let repository = repository_at(&config_path);
         let (account, binding) = managed_fixture("managed", "medium");
@@ -536,7 +536,7 @@ mod tests {
     fn local_codex_conflict_preserves_a_concurrent_preference_winner() {
         let directory = TestDirectory::new("concurrent-winner");
         let config_path = directory.config_path(
-            "version: 1\nmodel:\n  catalog:\n    - provider: qwencloud\n      account: default\n      model: winner\n      api_dialect: openai-responses\n      base_url: https://example.test/v1\n      input_token_limit: 1000\n      max_output_tokens: 100\n      tokenizer_profile: utf8-bytes/v1\n",
+            "model:\n  catalog:\n    - provider: qwencloud\n      account: default\n      model: winner\n      api_dialect: openai-responses\n      base_url: https://example.test/v1\n      input_token_limit: 1000\n      max_output_tokens: 100\n      tokenizer_profile: utf8-bytes/v1\n",
         );
         let config = config::load_from(&config_path).unwrap();
         let repository = repository_at(&config_path);
