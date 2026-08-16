@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-001
-    revision: sha256:afe4d2407db31601131efabb9f5a990e6a47956f09ca69ec0f4459609755716e
+    revision: sha256:69c3802dbaa47b00199bfdeca949a476429e93272e38e89a70ee7650a67c1091
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -95,9 +95,9 @@ binding identity and replay profile; it MUST NOT be projected as generic
 history. If the source Anchor covers any private item and the target binding or
 profile cannot consume that exact item, the transition is never `exact_replay`:
 it requires the separately approved `lossy_handoff` path unless an independently
-reviewed lossless conversion contract exists. The same rule covers K3 effort,
-model, endpoint, connector, or schema change even when the target itself does
-not require private state. Missing, wrong-epoch, unbounded, or wrong-schema
+reviewed lossless conversion contract exists. The same rule covers K3 effort or a K2.7 Code ModelId or speed-tier change,
+as well as any endpoint, connector, replay-profile, or schema change, even when
+the target itself does not require private state. Missing, wrong-epoch, unbounded, or wrong-schema
 source state likewise makes exact replay unavailable rather than lossy by
 omission. The binding transition, backend and model identities, replay boundary,
 private-replay availability, and known cache loss MUST be recorded.

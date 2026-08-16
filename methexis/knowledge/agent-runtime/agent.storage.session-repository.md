@@ -59,7 +59,7 @@ checksum still bind those exact payload bytes. The current semantic reader
 accepts both preceding replay deltas and the extended private-item union in one
 Session log, while a preceding reader rejects a private item as an unknown
 variant. Existing physical or semantic records are never rewritten merely
-because a later K3 Turn uses the extension. Compatibility tests MUST preserve
+because a later Kimi private-replay Turn uses the extension. Compatibility tests MUST preserve
 one discriminating preceding replay artifact byte-for-byte, accept a log whose
 later physical-v1 payload contains the private item, and prove that the
 preceding semantic decoder fails rather than silently omitting it.
@@ -79,7 +79,7 @@ completed Turn, outcome, and Anchor's atomic physical envelope. One replay delta
 MAY contain a provider-private item only when the open binding carries exact
 replay profile `kimi-private-local-plaintext/v1`. The first such item uses
 `kimi.assistant-message/v1alpha1`, carries
-the exact bounded K3 assistant object plus its binding identity and epoch, and
+the exact bounded Kimi assistant object plus its binding identity and epoch, and
 must validate that its visible projection equals the adjacent semantic replay.
 It remains payload-bearing Session meaning but is excluded from Transcript,
 Request trace, discovery, error text, debug output, and every frontend read

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:75cb26dbdc324606d2d6fca178d5aeef51cef1f25121610f3a036243b600c624
+    revision: sha256:185f43dededbbe2ed3445f8f868d252d3af36ff45e7657003710c5d93c8b0143
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -262,8 +262,9 @@ field-for-field to those generic function-call items; absence is valid only
 when there are none. The generic assistant refusal MUST be absent. A mismatch,
 second private item for the same assistant group, unpaired private item, or
 private item under another replay profile fails the complete delta. The private
-message replaces that generic assistant group only during the K3 Connector's
-wire projection, so one complete assistant object rather than two is sent; the
+message replaces that generic assistant group only during the exact Kimi
+private-replay Connector projection, so one complete assistant object rather
+than two is sent; the
 generic items remain the frontend-neutral visible replay authority.
 
 Both exact-replay executors use the same replay item, contract, bounds, digest,

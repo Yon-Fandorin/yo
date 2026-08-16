@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:5a00b929fee95b5fcba0ea8be3ce4bbc111b10c4a318bf573eb8bce543a78453
+revision: sha256:b88e480611be02a7522ca6d93abe10589bb30e75cbff5b796e8c6fc5ecbf5209
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:e161028ee03d072c241cf3c95eaf34bc16a4ec30c0de5f1e7c0d1304eb009200
+request_hash: sha256:5e166307e385a9e3eefb3562e0dac243a0470afce0deb6616b70c12dda770249
 ---
 # Korean Review Projection
 
@@ -111,11 +111,7 @@ identity schema는 비어 있지 않은 최대 128-byte ASCII 문자열입니다
 문자열입니다. 공통 codec은 닫힌 구조, 크기, 순서, record 관계만 검증하고 각 adapter가
 값의 해석과 native resume 때 binding identity 비교를 소유합니다.
 
-Binding 전환에는 initial, exact replay, lossy handoff 중 하나와 cache 상태, 선택적인
-source Anchor sequence를 기록합니다. Initial에는 source가 없고 cache가 해당 없음이며,
-두 replacement 방식은 닫힌 앞 epoch의 Anchor를 요구합니다. Exact replay는 cache
-손실을 기록하고 lossy handoff는 cache 손실 또는 알 수 없음을 기록하면서 눈에 보이는
-context-loss 경계가 됩니다.
+닫힌 `transition` object는 exact `mode: initial`, `exact_replay`, `lossy_handoff` 중 하나와 exact `cache: not_applicable`, `lost`, `unknown` 중 하나, 선택적인 양의 `source_anchor_sequence`를 포함합니다. `initial`은 `cache: not_applicable`과 source Anchor 부재를 요구합니다. 두 replacement mode는 모두 앞서 닫힌 epoch의 source Anchor를 요구합니다. `exact_replay`는 `cache: lost`를 요구합니다. `lossy_handoff`는 `cache: lost` 또는 `unknown`을 요구하고 binding open을 눈에 보이는 context-loss 경계로 표시합니다. 사용자가 승인한 transformed-context 설명은 opaque backend identity가 아니라 일반 semantic Journal data로 남습니다. 따라서 binding의 backend·model identity, transition mode, source Anchor, cache state는 Request Audit 상세 없이도 계속 사용할 수 있습니다.
 
 첫 binding epoch는 backend Session 생성과 matching `SessionCreated` commit 뒤에 1로
 열리고 이후 정확히 1씩 증가합니다. 동시에 하나만 열리며 replacement는 기존 epoch를
@@ -169,7 +165,7 @@ fail closed 합니다. 현재 checksummed physical envelope 자체는 정확한 
 
 닫힌 provider-private replay variant는 정확한 `kind: provider_private_assistant`, 정확한 non-null `schema: kimi.assistant-message/v1alpha1`, 양의 `binding_epoch`, `message`만 가집니다. 다른 item field는 허용하지 않습니다. `binding_epoch`은 containing replay delta epoch과 같아야 하고 open binding은 정확한 replay profile `kimi-private-local-plaintext/v1`을 가져야 합니다. 닫힌 message object는 정확히 필수 `role: assistant`, 필수 UTF-8 string `reasoning_content`, string 또는 null인 필수 `content`, optional `tool_calls`를 가집니다. Reasoning absent/null, content field absent, unknown field는 fail closed합니다. `tool_calls`가 있으면 1~1,024개의 ordered array입니다. 각 item은 정확히 1~4,096 UTF-8 byte `id`, `type: function`, `function`을 가지며, function object는 3~64 ASCII byte이고 `^[a-zA-Z_][a-zA-Z0-9-_]{2,63}$`인 `name`과 최대 4,194,304 UTF-8 byte이며 JSON value 하나로 parse되는 `arguments`만 가집니다. Assistant group 안 ID는 고유하고 generic function-call counterpart와 같아야 합니다. Null, duplicate, malformed, unknown field는 fail closed합니다.
 
-Private item 하나는 matching generic assistant message와 그 뒤의 contiguous function-call item들 바로 다음, function result나 이후 message보다 앞에 있어야 합니다. Content string은 generic assistant content에 byte-for-byte projection되고, null은 빈 generic content로 projection되며 visible content fragment가 없을 때만 유효합니다. Tool call은 generic function-call item과 같은 순서와 field로 projection되고, 없을 때만 생략할 수 있습니다. Generic assistant refusal은 없어야 합니다. Mismatch, 같은 assistant group의 두 번째 private item, 짝이 없는 private item, 다른 replay profile 아래의 private item은 complete delta를 실패시킵니다. K3 Connector의 wire projection에서만 private message가 generic assistant group을 대체하므로 assistant object 하나만 전송됩니다. Generic item은 frontend-neutral visible replay authority로 남습니다.
+Private item 하나는 matching generic assistant message와 그 뒤의 contiguous function-call item들 바로 다음, function result나 이후 message보다 앞에 있어야 합니다. Content string은 generic assistant content에 byte-for-byte projection되고, null은 빈 generic content로 projection되며 visible content fragment가 없을 때만 유효합니다. Tool call은 generic function-call item과 같은 순서와 field로 projection되고, 없을 때만 생략할 수 있습니다. Generic assistant refusal은 없어야 합니다. Mismatch, 같은 assistant group의 두 번째 private item, 짝이 없는 private item, 다른 replay profile 아래의 private item은 complete delta를 실패시킵니다. Exact Kimi private-replay Connector의 wire projection에서만 private message가 generic assistant group을 대체하므로 assistant object 하나만 전송됩니다. Generic item은 frontend-neutral visible replay authority로 남습니다.
 
 Source Anchor가 선택한 replay prefix에 provider-private item이 있으면 replacement `transition.mode: exact_replay`는 target이 같은 complete binding identity와 replay profile을 기록하거나 독립적으로 검토된 lossless-conversion schema가 있을 때만 유효합니다. Converter가 없으면 다른 모든 target은 `lossy_handoff`를 사용해야 하며, target이 `semantic-only/v1`이어도 item을 버리면서 exact replay를 기록하면 semantic admission이 실패합니다.
 
