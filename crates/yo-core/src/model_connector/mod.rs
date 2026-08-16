@@ -18,6 +18,7 @@ pub use connector::{
     KimiChatCompletionsConnector, OpenAiChatCompletionsConnector, OpenAiResponsesConnector,
     ResponsesCancellation, ResponsesStream,
 };
+pub(crate) use request::ModelCacheAffinityHint;
 pub use request::{
     FunctionTool, ReasoningEffort, RequestToolExposure, ResponsesInputItem, ResponsesInputRole,
     ResponsesRequest,

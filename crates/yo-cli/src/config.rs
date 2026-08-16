@@ -773,7 +773,10 @@ fn model_binding_entries(
                 ));
             }
             let catalog = VersionedProfileId::new(catalog).map_err(&invalid)?;
-            if catalog.as_str() == "kimi-platform-ai/v1" {
+            if matches!(
+                catalog.as_str(),
+                "kimi-platform-ai/v1" | "kimi-code-membership/v1"
+            ) {
                 kimi_catalog_seeds.push(
                     KimiCatalogSeed::resolve(
                         catalog,

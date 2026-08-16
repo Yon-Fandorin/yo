@@ -207,6 +207,92 @@ fn kimi_inventory_fields_reach_the_rendered_picker_panel() {
     assert!(rendered.contains("Unavailable  profile unavailable"));
 }
 
+// Code membership picker는 k3-256k를 기본 권장 행으로, Code high-speed 변형을 별도
+// badge로 표시하고 Platform 이름을 섞지 않은 채 exact ModelId를 선택합니다.
+#[test]
+fn kimi_code_inventory_renders_recommendation_and_high_speed_badges() {
+    let seed = yo_core::KimiCatalogSeed::resolve(
+        yo_core::VersionedProfileId::new("kimi-code-membership/v1").unwrap(),
+        yo_core::ProviderId::new("kimi").unwrap(),
+        yo_core::AccountId::new("coding").unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    let snapshot = br#"{"object":"list","data":[
+        {"object":"model","id":"k3","context_length":262144},
+        {"object":"model","id":"k3-256k","context_length":262144},
+        {"object":"model","id":"kimi-for-coding-highspeed","context_length":262144}
+    ]}"#;
+    let items = yo_core::parse_kimi_catalog_snapshot(&seed, snapshot)
+        .unwrap()
+        .iter()
+        .map(ModelPickerItem::from_kimi)
+        .collect::<Vec<_>>();
+    let identity = PickerIdentity::from_models(&items).unwrap();
+    let choices = items.iter().map(PickerChoice::from).collect::<Vec<_>>();
+    let mut state = PickerState::new(&choices);
+
+    state.query = "k3-256k".to_owned();
+    state.recompute(&choices);
+    let rendered =
+        render_lines(&identity, &state, &choices, 160, PresentationStyle::Plain).join("\n");
+    assert!(rendered.contains("reasoning required/high · recommended · ready"));
+
+    state.query = "highspeed".to_owned();
+    state.recompute(&choices);
+    let rendered =
+        render_lines(&identity, &state, &choices, 160, PresentationStyle::Plain).join("\n");
+    assert!(rendered.contains("reasoning required · high-speed · ready"));
+}
+
+// 양쪽 제품 inventory에 다른 제품의 K3 ModelId가 나타나도 disabled 행에 그 제품의
+// reviewed reasoning 문구를 붙이지 않아 ModelId만으로 제품 profile을 추론하지 않습니다.
+#[test]
+fn kimi_cross_product_rows_do_not_borrow_reasoning_presentation() {
+    for (profile, foreign_model, forbidden_label) in [
+        ("kimi-platform-ai/v1", "k3", "reasoning required/high"),
+        (
+            "kimi-code-membership/v1",
+            "kimi-k3",
+            "reasoning required/max",
+        ),
+    ] {
+        let seed = yo_core::KimiCatalogSeed::resolve(
+            yo_core::VersionedProfileId::new(profile).unwrap(),
+            yo_core::ProviderId::new("kimi").unwrap(),
+            yo_core::AccountId::new("team").unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+        let snapshot = format!(
+            r#"{{"object":"list","data":[{{"object":"model","id":"{foreign_model}","context_length":1048576}}]}}"#
+        );
+        let item = yo_core::parse_kimi_catalog_snapshot(&seed, snapshot.as_bytes())
+            .unwrap()
+            .into_iter()
+            .map(|model| ModelPickerItem::from_kimi(&model))
+            .next()
+            .unwrap();
+        let identity = PickerIdentity::from_models(std::slice::from_ref(&item)).unwrap();
+        let choices = [PickerChoice::from(&item)];
+        let mut state = PickerState::new(&choices);
+        assert_eq!(state.accept_selected(&choices), None);
+        let rendered =
+            render_lines(&identity, &state, &choices, 160, PresentationStyle::Plain).join("\n");
+
+        assert!(
+            rendered.contains("Unavailable  profile unavailable"),
+            "rendered panel:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains(forbidden_label),
+            "rendered panel:\n{rendered}"
+        );
+    }
+}
+
 // K2.6은 실행 시 thinking off가 고정되므로 remote capability가 없거나 malformed여도
 // generic reasoning-unknown으로 보이지 않고 정확히 unknown/off를 표시합니다.
 #[test]

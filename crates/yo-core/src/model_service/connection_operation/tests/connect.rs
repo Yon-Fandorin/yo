@@ -8,13 +8,15 @@ use std::{
 use super::{
     super::connect::{
         ConnectStep, VerificationStreamPort, verification_limits, verification_request,
-        verify_external_connection_for_test, verify_semantic_stream,
+        verification_request_with_cache, verify_external_connection_for_test,
+        verify_semantic_stream,
     },
     support::{CANDIDATE_SECRET, Fixture, account, candidate, digest, provider},
 };
 use crate::{
     ConnectorFailureKind, ModelConnectorEvent, ModelConnectorPoll, ModelConnectorTerminal,
     ModelConnectorUsage,
+    model_connector::ModelCacheAffinityHint,
     model_service::{
         CompleteModelBinding, ConnectionOperationExecutionError,
         ConnectionOperationExecutionOutcome, ConnectionOperationPhase,
@@ -59,6 +61,21 @@ fn connection_verification_preserves_the_exact_kimi_output_cap() {
         request.tokenization_payload("kimi-k2.6")["max_output_tokens"],
         32_768
     );
+}
+
+// Code verification은 Session이 없으므로 service-owned verification UUID hint를 사용하고,
+// exact Code Connector body에서만 verification- prefix의 opaque key가 직렬화됩니다.
+#[test]
+fn code_verification_uses_one_ephemeral_typed_cache_affinity() {
+    let task = crate::fixture_session(41);
+    let hint = ModelCacheAffinityHint::for_verification(task);
+    let request = verification_request_with_cache(&kimi_code_complete(), Some(&hint)).unwrap();
+
+    let expected = format!("verification-{task}");
+    assert_eq!(request.cache_affinity_hint(), Some(expected.as_str()));
+    let diagnostic = format!("{request:?}");
+    assert!(diagnostic.contains("ModelCacheAffinityHint([redacted])"));
+    assert!(!diagnostic.contains(&format!("verification-{task}")));
 }
 
 struct FakeVerificationStream {
@@ -231,7 +248,11 @@ fn unsupported_profile_fails_during_secret_free_preparation() {
 // secret-free preparation에서 닫아 preview나 credential 입력으로 진행하지 않습니다.
 #[test]
 fn complete_binding_admission_precedes_external_verification() {
-    for binding in [cross_dialect_private_complete(), invalid_kimi_complete()] {
+    for binding in [
+        cross_dialect_private_complete(),
+        invalid_kimi_complete(),
+        cross_product_kimi_complete(),
+    ] {
         let fixture = Fixture::new("complete-binding-preflight");
         let repositories = repositories(&fixture);
         let mut session = repositories.acquire().unwrap();
@@ -438,9 +459,23 @@ fn invalid_kimi_complete() -> CompleteModelBinding {
     .unwrap()
 }
 
+fn cross_product_kimi_complete() -> CompleteModelBinding {
+    CompleteModelBinding::from_durable_json(
+        r#"{"provider":"kimi","account":"default","model":"kimi-k3","connector":"kimi-chat-completions","base_url":"https://api.kimi.com/coding/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
+    )
+    .unwrap()
+}
+
 fn kimi_complete() -> CompleteModelBinding {
     CompleteModelBinding::from_durable_json(
         r#"{"provider":"kimi","account":"default","model":"kimi-k2.6","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":262144,"max_output_tokens":32768,"reasoning_parameters":{},"optional_request_parameters":{"thinking":{"type":"disabled"}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+    )
+    .unwrap()
+}
+
+fn kimi_code_complete() -> CompleteModelBinding {
+    CompleteModelBinding::from_durable_json(
+        r#"{"provider":"kimi","account":"default","model":"k3-256k","connector":"kimi-chat-completions","base_url":"https://api.kimi.com/coding/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":262144,"max_output_tokens":131072,"reasoning_parameters":{"effort":"high"},"optional_request_parameters":{"thinking":{"type":"enabled","keep":"all"}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
     )
     .unwrap()
 }

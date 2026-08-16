@@ -125,29 +125,30 @@ impl ModelPickerItem {
         if model.high_speed() {
             badges.push("high-speed".to_owned());
         }
-        let reasoning_label = match model.model_id().as_str() {
-            "kimi-k3" => Some("reasoning required/max".to_owned()),
-            "kimi-k2.7-code" | "kimi-k2.7-code-highspeed" => Some("reasoning required".to_owned()),
-            "kimi-k2.6" => Some(
-                model
-                    .reasoning()
-                    .map_or("reasoning unknown/off", |available| {
-                        if available {
-                            "reasoning available/off"
-                        } else {
-                            "reasoning unavailable/off"
-                        }
-                    })
-                    .to_owned(),
-            ),
-            _ => model.reasoning().map(|available| {
-                if available {
-                    "reasoning available/off"
-                } else {
-                    "reasoning unavailable/off"
-                }
-                .to_owned()
-            }),
+        let reasoning_label = if model.entry().is_some() {
+            match model.model_id().as_str() {
+                "kimi-k3" => Some("reasoning required/max".to_owned()),
+                "k3" | "k3-256k" => Some("reasoning required/high".to_owned()),
+                "kimi-k2.7-code"
+                | "kimi-k2.7-code-highspeed"
+                | "kimi-for-coding"
+                | "kimi-for-coding-highspeed" => Some("reasoning required".to_owned()),
+                "kimi-k2.6" => Some(
+                    model
+                        .reasoning()
+                        .map_or("reasoning unknown/off", |available| {
+                            if available {
+                                "reasoning available/off"
+                            } else {
+                                "reasoning unavailable/off"
+                            }
+                        })
+                        .to_owned(),
+                ),
+                _ => generic_reasoning_label(model.reasoning()),
+            }
+        } else {
+            generic_reasoning_label(model.reasoning())
         };
         Self {
             provider: model.provider().as_str().to_owned(),
@@ -179,6 +180,17 @@ impl ModelPickerItem {
     pub(in crate::connection) fn disabled_reason(&self) -> Option<&str> {
         self.disabled_reason.as_deref()
     }
+}
+
+fn generic_reasoning_label(reasoning: Option<bool>) -> Option<String> {
+    reasoning.map(|available| {
+        if available {
+            "reasoning available/off"
+        } else {
+            "reasoning unavailable/off"
+        }
+        .to_owned()
+    })
 }
 
 #[derive(Debug)]

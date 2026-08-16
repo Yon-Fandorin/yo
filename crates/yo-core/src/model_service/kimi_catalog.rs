@@ -11,8 +11,16 @@ mod transport;
 use self::normalize::normalize_catalog;
 
 const KIMI_PROVIDER: &str = "kimi";
-const KIMI_CATALOG_PROFILE: &str = "kimi-platform-ai/v1";
-const KIMI_ENDPOINT: &str = "https://api.moonshot.ai/v1/";
+const KIMI_PLATFORM_CATALOG_PROFILE: &str = "kimi-platform-ai/v1";
+const KIMI_CODE_CATALOG_PROFILE: &str = "kimi-code-membership/v1";
+const KIMI_PLATFORM_ENDPOINT: &str = "https://api.moonshot.ai/v1/";
+const KIMI_CODE_ENDPOINT: &str = "https://api.kimi.com/coding/v1/";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum KimiCatalogProduct {
+    Platform,
+    CodeMembership,
+}
 
 #[derive(Clone, Debug)]
 pub struct KimiCatalogSeed {
@@ -22,6 +30,7 @@ pub struct KimiCatalogSeed {
     provider_display_name: Option<String>,
     account_display_name: Option<String>,
     endpoint: NormalizedEndpoint,
+    product: KimiCatalogProduct,
 }
 
 impl KimiCatalogSeed {
@@ -32,11 +41,20 @@ impl KimiCatalogSeed {
         provider_display_name: Option<String>,
         account_display_name: Option<String>,
     ) -> Result<Self, ModelServiceError> {
-        if profile.as_str() != KIMI_CATALOG_PROFILE || provider.as_str() != KIMI_PROVIDER {
+        if provider.as_str() != KIMI_PROVIDER {
             return Err(ModelServiceError::new(format!(
                 "catalog profile {profile} requires ProviderId {KIMI_PROVIDER}"
             )));
         }
+        let (product, endpoint) = match profile.as_str() {
+            KIMI_PLATFORM_CATALOG_PROFILE => (KimiCatalogProduct::Platform, KIMI_PLATFORM_ENDPOINT),
+            KIMI_CODE_CATALOG_PROFILE => (KimiCatalogProduct::CodeMembership, KIMI_CODE_ENDPOINT),
+            _ => {
+                return Err(ModelServiceError::new(format!(
+                    "unsupported Kimi catalog profile {profile}"
+                )));
+            },
+        };
         super::catalog::validate_display_name("Provider", provider_display_name.as_deref())?;
         super::catalog::validate_display_name("Account", account_display_name.as_deref())?;
         Ok(Self {
@@ -45,7 +63,8 @@ impl KimiCatalogSeed {
             account,
             provider_display_name: provider_display_name.or_else(|| Some("Kimi".to_owned())),
             account_display_name,
-            endpoint: NormalizedEndpoint::parse(KIMI_ENDPOINT)?,
+            endpoint: NormalizedEndpoint::parse(endpoint)?,
+            product,
         })
     }
 

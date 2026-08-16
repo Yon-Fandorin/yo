@@ -37,6 +37,7 @@ pub enum ExternalConnectionError {
         target: String,
         kind: ConnectorFailureKind,
     },
+    CacheAffinityPreparation,
 }
 
 impl fmt::Display for ExternalConnectionError {
@@ -59,6 +60,9 @@ impl fmt::Display for ExternalConnectionError {
                 formatter,
                 "external connection verification failed for {target} ({kind:?})"
             ),
+            Self::CacheAffinityPreparation => formatter.write_str(
+                "preparing the Kimi Code verification cache-affinity context failed",
+            ),
         }
     }
 }
@@ -70,7 +74,8 @@ impl Error for ExternalConnectionError {
             Self::JournalPreparation(source) => Some(source),
             Self::InvalidVerificationSet
             | Self::UnsupportedProfile { .. }
-            | Self::Verification { .. } => None,
+            | Self::Verification { .. }
+            | Self::CacheAffinityPreparation => None,
         }
     }
 }
@@ -296,7 +301,22 @@ pub fn verify_external_connection(
     prepared: PreparedExternalConnection,
     candidate: ApiCredential,
 ) -> Result<VerifiedExternalConnection, ExternalConnectionError> {
-    verify_external_connection_with(prepared, candidate, verify_complete_binding)
+    let cache_hint = prepared
+        .bindings
+        .iter()
+        .any(|complete| {
+            admit_new_complete_binding(complete)
+                .is_ok_and(|admitted| admitted.requires_cache_affinity_hint())
+        })
+        .then(|| {
+            crate::SessionId::new()
+                .map(crate::model_connector::ModelCacheAffinityHint::for_verification)
+                .map_err(|_| ExternalConnectionError::CacheAffinityPreparation)
+        })
+        .transpose()?;
+    verify_external_connection_with(prepared, candidate, |complete, candidate| {
+        verify_complete_binding(complete, candidate, cache_hint.as_ref())
+    })
 }
 
 fn verify_external_connection_with(
@@ -321,8 +341,9 @@ fn verify_external_connection_with(
 fn verify_complete_binding(
     complete: &CompleteModelBinding,
     candidate: &ApiCredential,
+    cache_hint: Option<&crate::model_connector::ModelCacheAffinityHint>,
 ) -> Result<(), ConnectorFailureKind> {
-    let request = verification_request(complete)?;
+    let request = verification_request_with_cache(complete, cache_hint)?;
     let limits = verification_limits();
     let cancellation = ModelConnectorCancellation::new();
     let mut stream = match complete.binding().api_dialect() {
@@ -347,13 +368,21 @@ fn verify_complete_binding(
     )
 }
 
+#[cfg(test)]
 pub(super) fn verification_request(
     complete: &CompleteModelBinding,
+) -> Result<ModelConnectorRequest, ConnectorFailureKind> {
+    verification_request_with_cache(complete, None)
+}
+
+pub(super) fn verification_request_with_cache(
+    complete: &CompleteModelBinding,
+    cache_hint: Option<&crate::model_connector::ModelCacheAffinityHint>,
 ) -> Result<ModelConnectorRequest, ConnectorFailureKind> {
     let reasoning = admit_explicit_model_profile(complete.profile())
         .map_err(|_| ConnectorFailureKind::Configuration)?
         .reasoning_effort();
-    ModelConnectorRequest::new(
+    let request = ModelConnectorRequest::new(
         vec![ModelConnectorInputItem::Message {
             role: ModelConnectorInputRole::User,
             content: "Reply briefly to confirm this model connection.".to_owned(),
@@ -368,7 +397,11 @@ pub(super) fn verification_request(
         },
         reasoning,
     )
-    .map_err(|error| error.kind())
+    .map_err(|error| error.kind())?;
+    Ok(match cache_hint {
+        Some(hint) => request.with_cache_affinity_hint(hint.clone()),
+        None => request,
+    })
 }
 
 pub(super) trait VerificationStreamPort {

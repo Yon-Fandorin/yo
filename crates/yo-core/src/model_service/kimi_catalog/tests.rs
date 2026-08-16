@@ -23,6 +23,17 @@ fn seed() -> KimiCatalogSeed {
     .unwrap()
 }
 
+fn code_seed() -> KimiCatalogSeed {
+    KimiCatalogSeed::resolve(
+        VersionedProfileId::new("kimi-code-membership/v1").unwrap(),
+        ProviderId::new("kimi").unwrap(),
+        AccountId::new("code").unwrap(),
+        None,
+        None,
+    )
+    .unwrap()
+}
+
 // 인증 inventory의 네 개 reviewed ModelId만 exact overlay로 실행 가능해지고, K3/K2.7은
 // private replay를, K2.6은 semantic-only replay를 가진 완전한 binding으로 해석됩니다.
 #[test]
@@ -62,6 +73,77 @@ fn reviewed_rows_resolve_exact_profiles_and_badges() {
         .find(|model| model.model_id().as_str() == "kimi-k2.7-code-highspeed")
         .unwrap();
     assert!(fast.high_speed());
+}
+
+// Code membership inventory는 Platform ModelId를 재사용하지 않고 네 exact Code ModelId만
+// 완전한 binding으로 만들며, k3-256k와 high-speed 표시를 원격 행 순서와 무관하게 보존합니다.
+#[test]
+fn code_membership_rows_resolve_the_separate_endpoint_and_profiles() {
+    let rows = json!({
+        "object": "list",
+        "data": [
+            {"object":"model","id":"k3","context_length":262144},
+            {"object":"model","id":"k3-256k","context_length":262144},
+            {"object":"model","id":"kimi-for-coding","context_length":262144},
+            {"object":"model","id":"kimi-for-coding-highspeed","context_length":262144}
+        ]
+    });
+    let models = normalize_catalog(&code_seed(), &serde_json::to_vec(&rows).unwrap()).unwrap();
+    assert_eq!(models.len(), 4);
+    for model in &models {
+        assert!(model.is_enabled(), "{}", model.model_id());
+        let complete = model.entry().unwrap().complete_binding().unwrap();
+        assert_eq!(
+            complete.binding().endpoint().as_str(),
+            "https://api.kimi.com/coding/v1"
+        );
+        assert_eq!(
+            complete.profile().replay_profile().as_str(),
+            "kimi-private-local-plaintext/v1"
+        );
+    }
+    let recommended = models
+        .iter()
+        .find(|model| model.model_id().as_str() == "k3-256k")
+        .unwrap();
+    assert!(recommended.recommended());
+    let fast = models
+        .iter()
+        .find(|model| model.model_id().as_str() == "kimi-for-coding-highspeed")
+        .unwrap();
+    assert!(fast.high_speed());
+}
+
+// exact k3의 256K 하위 membership은 지원하지만 k3-256k의 다른 context와 Platform
+// ModelId 교차 입력은 inventory에 남겨도 선택 불가능하게 해 제품 경계를 추론하지 않습니다.
+#[test]
+fn code_membership_keeps_membership_range_and_cross_product_fail_closed() {
+    let rows = json!({
+        "object": "list",
+        "data": [
+            {"object":"model","id":"k3","context_length":262144},
+            {"object":"model","id":"k3-256k","context_length":1048576},
+            {"object":"model","id":"kimi-k3","context_length":1048576}
+        ]
+    });
+    let models = normalize_catalog(&code_seed(), &serde_json::to_vec(&rows).unwrap()).unwrap();
+    assert!(
+        models
+            .iter()
+            .find(|model| model.model_id().as_str() == "k3")
+            .unwrap()
+            .is_enabled()
+    );
+    for id in ["k3-256k", "kimi-k3"] {
+        assert_eq!(
+            models
+                .iter()
+                .find(|model| model.model_id().as_str() == id)
+                .unwrap()
+                .availability(),
+            KimiCatalogAvailability::Disabled(KimiCatalogDisabledReason::ProfileUnavailable)
+        );
+    }
 }
 
 // provider가 명시적으로 reasoning 불가를 보고한 forced-thinking 모델과 퇴역/미검토

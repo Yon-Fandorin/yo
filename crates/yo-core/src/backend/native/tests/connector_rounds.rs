@@ -209,6 +209,15 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
         .unwrap();
     let _ = drain_until_turn(&mut backend);
     let requests = requests.lock().unwrap();
+    let expected_cache_hint = turn().session_id().to_string();
+    assert_eq!(
+        requests[0].cache_affinity_hint(),
+        Some(expected_cache_hint.as_str())
+    );
+    assert_eq!(
+        requests[1].cache_affinity_hint(),
+        Some(expected_cache_hint.as_str())
+    );
     assert!(requests[1].input().iter().any(|item| matches!(
         item,
         crate::ModelConnectorInputItem::ProviderPrivateAssistant { message, .. }

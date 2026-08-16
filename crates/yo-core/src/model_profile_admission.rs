@@ -21,9 +21,11 @@ pub(crate) struct AdmittedModelProfile {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AdmittedKimiProfile {
-    K3 { effort: ReasoningEffort },
-    K27Code,
-    K26,
+    PlatformK3 { effort: ReasoningEffort },
+    PlatformK27Code,
+    PlatformK26,
+    CodeK3 { effort: ReasoningEffort },
+    CodeK27,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,6 +52,13 @@ impl AdmittedCompleteBinding {
 
     pub(crate) const fn kimi_profile(self) -> Option<AdmittedKimiProfile> {
         self.kimi_profile
+    }
+
+    pub(crate) const fn requires_cache_affinity_hint(self) -> bool {
+        matches!(
+            self.kimi_profile,
+            Some(AdmittedKimiProfile::CodeK3 { .. } | AdmittedKimiProfile::CodeK27)
+        )
     }
 }
 
@@ -159,7 +168,6 @@ pub(crate) fn admit_new_complete_binding(
         || binding.connector_id().as_str() != ConnectorId::KIMI_CHAT_COMPLETIONS
         || binding.api_dialect() != ApiDialect::KimiChatCompletions
         || profile.api_dialect() != ApiDialect::KimiChatCompletions
-        || binding.endpoint().as_str() != "https://api.moonshot.ai/v1"
         || profile.context().tokenizer_profile() != "utf8-bytes/v1"
         || !matches!(
             profile.tool_capability_policy().as_str(),
@@ -175,8 +183,10 @@ pub(crate) fn admit_new_complete_binding(
     let reasoning = profile.reasoning_parameters().to_json_value();
     let optional = profile.optional_request_parameters().to_json_value();
     let replay = profile.replay_profile().as_str();
-    let kimi_profile = match binding.model_id().as_str() {
-        "kimi-k3"
+    let endpoint = binding.endpoint().as_str();
+    let model = binding.model_id().as_str();
+    let kimi_profile = match (endpoint, model) {
+        ("https://api.moonshot.ai/v1", "kimi-k3")
             if (131_073..=1_048_576).contains(&input)
                 && output == 131_072
                 && optional == serde_json::json!({})
@@ -194,9 +204,9 @@ pub(crate) fn admit_new_complete_binding(
                     _ => None,
                 })
                 .ok_or_else(|| "Kimi K3 requires exact low, high, or max reasoning".to_owned())?;
-            AdmittedKimiProfile::K3 { effort }
+            AdmittedKimiProfile::PlatformK3 { effort }
         },
-        "kimi-k2.7-code" | "kimi-k2.7-code-highspeed"
+        ("https://api.moonshot.ai/v1", "kimi-k2.7-code" | "kimi-k2.7-code-highspeed")
             if (32_769..=262_144).contains(&input)
                 && output == 32_768
                 && reasoning == serde_json::json!({})
@@ -204,30 +214,78 @@ pub(crate) fn admit_new_complete_binding(
                     == serde_json::json!({"thinking": {"type": "enabled", "keep": "all"}})
                 && replay == KIMI_PRIVATE_REPLAY_PROFILE =>
         {
-            AdmittedKimiProfile::K27Code
+            AdmittedKimiProfile::PlatformK27Code
         },
-        "kimi-k2.6"
+        ("https://api.moonshot.ai/v1", "kimi-k2.6")
             if (32_769..=262_144).contains(&input)
                 && output == 32_768
                 && reasoning == serde_json::json!({})
                 && optional == serde_json::json!({"thinking": {"type": "disabled"}})
                 && replay == SEMANTIC_REPLAY_PROFILE =>
         {
-            AdmittedKimiProfile::K26
+            AdmittedKimiProfile::PlatformK26
+        },
+        ("https://api.kimi.com/coding/v1", "k3")
+            if (262_144..=1_048_576).contains(&input)
+                && output == 131_072
+                && optional
+                    == serde_json::json!({"thinking": {"type": "enabled", "keep": "all"}})
+                && replay == KIMI_PRIVATE_REPLAY_PROFILE =>
+        {
+            AdmittedKimiProfile::CodeK3 {
+                effort: kimi_effort(&reasoning)?,
+            }
+        },
+        ("https://api.kimi.com/coding/v1", "k3-256k")
+            if input == 262_144
+                && output == 131_072
+                && optional
+                    == serde_json::json!({"thinking": {"type": "enabled", "keep": "all"}})
+                && replay == KIMI_PRIVATE_REPLAY_PROFILE =>
+        {
+            AdmittedKimiProfile::CodeK3 {
+                effort: kimi_effort(&reasoning)?,
+            }
+        },
+        ("https://api.kimi.com/coding/v1", "kimi-for-coding" | "kimi-for-coding-highspeed")
+            if input == 262_144
+                && output == 32_768
+                && reasoning == serde_json::json!({})
+                && optional
+                    == serde_json::json!({"thinking": {"type": "enabled", "keep": "all"}})
+                && replay == KIMI_PRIVATE_REPLAY_PROFILE =>
+        {
+            AdmittedKimiProfile::CodeK27
         },
         _ => {
             return Err("complete binding is not an admitted Kimi model profile".to_owned());
         },
     };
     let replay_profile = match kimi_profile {
-        AdmittedKimiProfile::K26 => AdmittedReplayProfile::SemanticOnly,
-        AdmittedKimiProfile::K3 { .. } | AdmittedKimiProfile::K27Code => {
-            AdmittedReplayProfile::KimiPrivateLocalPlaintext
-        },
+        AdmittedKimiProfile::PlatformK26 => AdmittedReplayProfile::SemanticOnly,
+        AdmittedKimiProfile::PlatformK3 { .. }
+        | AdmittedKimiProfile::PlatformK27Code
+        | AdmittedKimiProfile::CodeK3 { .. }
+        | AdmittedKimiProfile::CodeK27 => AdmittedReplayProfile::KimiPrivateLocalPlaintext,
     };
     Ok(AdmittedCompleteBinding {
         profile: admitted_profile,
         replay_profile,
         kimi_profile: Some(kimi_profile),
     })
+}
+
+fn kimi_effort(reasoning: &serde_json::Value) -> Result<ReasoningEffort, String> {
+    reasoning
+        .as_object()
+        .filter(|mapping| mapping.len() == 1)
+        .and_then(|mapping| mapping.get("effort"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|effort| match effort {
+            "low" => Some(ReasoningEffort::Low),
+            "high" => Some(ReasoningEffort::High),
+            "max" => Some(ReasoningEffort::Max),
+            _ => None,
+        })
+        .ok_or_else(|| "Kimi K3 requires exact low, high, or max reasoning".to_owned())
 }

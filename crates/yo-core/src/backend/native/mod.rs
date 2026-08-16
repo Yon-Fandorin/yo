@@ -595,7 +595,10 @@ impl NativeModelBackend {
             self.config.reasoning_effort,
         )
         .map_err(map_connector_turn)?
-        .with_replay_budget(replay_budget);
+        .with_replay_budget(replay_budget)
+        .with_cache_affinity_hint(
+            crate::model_connector::ModelCacheAffinityHint::for_session(state.turn.session_id()),
+        );
         let input_tokens = self
             .token_counter
             .count_input_tokens(

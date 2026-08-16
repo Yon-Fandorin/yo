@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use super::{
     KimiCatalogAvailability, KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind,
-    KimiCatalogModel, KimiCatalogSeed, failure, limit_failure,
+    KimiCatalogModel, KimiCatalogProduct, KimiCatalogSeed, failure, limit_failure,
 };
 use crate::{
     ApiDialect, EffectiveModelBinding, EffectiveModelProfile, ModelCatalogEntry, ModelId,
@@ -68,7 +68,7 @@ pub(super) fn normalize_catalog(
         let context = positive_u64(object.get("context_length"));
         let supports_reasoning = optional_bool(object.get("supports_reasoning"));
         let (profile, availability, reasoning, recommended, high_speed) =
-            overlay(model_id.as_str(), context, supports_reasoning);
+            overlay(seed.product, model_id.as_str(), context, supports_reasoning);
         let entry = profile.and_then(|profile| build_entry(seed, &model_id, profile).ok());
         let availability =
             if entry.is_none() && matches!(availability, KimiCatalogAvailability::Enabled) {
@@ -101,12 +101,13 @@ pub(super) fn normalize_catalog(
 
 #[derive(Clone, Copy)]
 enum OverlayProfile {
-    K3 { input: u64 },
+    K3 { input: u64, code: bool },
     K27 { input: u64 },
     K26 { input: u64 },
 }
 
 fn overlay(
+    product: KimiCatalogProduct,
     model: &str,
     context: Option<u64>,
     reasoning: Option<bool>,
@@ -117,27 +118,51 @@ fn overlay(
     bool,
     bool,
 ) {
-    let profile = match (model, context) {
-        ("kimi-k3", Some(input)) if (131_073..=1_048_576).contains(&input) => {
-            Some(OverlayProfile::K3 { input })
+    let profile = match product {
+        KimiCatalogProduct::Platform => match (model, context) {
+            ("kimi-k3", Some(input)) if (131_073..=1_048_576).contains(&input) => {
+                Some(OverlayProfile::K3 { input, code: false })
+            },
+            ("kimi-k2.7-code" | "kimi-k2.7-code-highspeed", Some(input))
+                if (32_769..=262_144).contains(&input) =>
+            {
+                Some(OverlayProfile::K27 { input })
+            },
+            ("kimi-k2.6", Some(input)) if (32_769..=262_144).contains(&input) => {
+                Some(OverlayProfile::K26 { input })
+            },
+            _ => None,
         },
-        ("kimi-k2.7-code" | "kimi-k2.7-code-highspeed", Some(input))
-            if (32_769..=262_144).contains(&input) =>
-        {
-            Some(OverlayProfile::K27 { input })
+        KimiCatalogProduct::CodeMembership => match (model, context) {
+            ("k3", Some(input)) if (262_144..=1_048_576).contains(&input) => {
+                Some(OverlayProfile::K3 { input, code: true })
+            },
+            ("k3-256k", Some(262_144)) => Some(OverlayProfile::K3 {
+                input: 262_144,
+                code: true,
+            }),
+            ("kimi-for-coding" | "kimi-for-coding-highspeed", Some(262_144)) => {
+                Some(OverlayProfile::K27 { input: 262_144 })
+            },
+            _ => None,
         },
-        ("kimi-k2.6", Some(input)) if (32_769..=262_144).contains(&input) => {
-            Some(OverlayProfile::K26 { input })
-        },
-        _ => None,
     };
-    let availability = if model == "kimi-k2.5" {
+    let requires_reasoning = matches!(
+        (product, model),
+        (KimiCatalogProduct::Platform, "kimi-k3")
+            | (KimiCatalogProduct::Platform, "kimi-k2.7-code")
+            | (KimiCatalogProduct::Platform, "kimi-k2.7-code-highspeed")
+            | (KimiCatalogProduct::CodeMembership, "k3")
+            | (KimiCatalogProduct::CodeMembership, "k3-256k")
+            | (KimiCatalogProduct::CodeMembership, "kimi-for-coding")
+            | (
+                KimiCatalogProduct::CodeMembership,
+                "kimi-for-coding-highspeed"
+            )
+    );
+    let availability = if product == KimiCatalogProduct::Platform && model == "kimi-k2.5" {
         KimiCatalogAvailability::Disabled(KimiCatalogDisabledReason::ProviderRetirement)
-    } else if matches!(
-        model,
-        "kimi-k3" | "kimi-k2.7-code" | "kimi-k2.7-code-highspeed"
-    ) && reasoning == Some(false)
-    {
+    } else if requires_reasoning && reasoning == Some(false) {
         KimiCatalogAvailability::Disabled(KimiCatalogDisabledReason::CapabilityConflict)
     } else if profile.is_some() {
         KimiCatalogAvailability::Enabled
@@ -153,8 +178,19 @@ fn overlay(
         profile,
         availability,
         effective_reasoning,
-        model == "kimi-k3",
-        model == "kimi-k2.7-code-highspeed",
+        matches!(
+            (product, model),
+            (KimiCatalogProduct::Platform, "kimi-k3")
+                | (KimiCatalogProduct::CodeMembership, "k3-256k")
+        ),
+        matches!(
+            (product, model),
+            (KimiCatalogProduct::Platform, "kimi-k2.7-code-highspeed")
+                | (
+                    KimiCatalogProduct::CodeMembership,
+                    "kimi-for-coding-highspeed"
+                )
+        ),
     )
 }
 
@@ -164,11 +200,19 @@ fn build_entry(
     profile: OverlayProfile,
 ) -> Result<ModelCatalogEntry, crate::ModelServiceError> {
     let (input, output, reasoning, optional, replay) = match profile {
-        OverlayProfile::K3 { input } => (
+        OverlayProfile::K3 { input, code } => (
             input,
             131_072,
-            json!({"effort": "max"}),
-            json!({}),
+            if code {
+                json!({"effort": "high"})
+            } else {
+                json!({"effort": "max"})
+            },
+            if code {
+                json!({"thinking": {"type": "enabled", "keep": "all"}})
+            } else {
+                json!({})
+            },
             "kimi-private-local-plaintext/v1",
         ),
         OverlayProfile::K27 { input } => (

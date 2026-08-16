@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt};
 
 use serde_json::{Value, json};
 
 use super::{ConnectorError, ConnectorFailureKind};
-use crate::KimiAssistantMessage;
+use crate::{KimiAssistantMessage, SessionId};
 
 const MAX_WIRE_ID_BYTES: usize = 256;
 const MAX_TOOL_DESCRIPTION_BYTES: usize = 4 * 1024;
@@ -155,6 +155,30 @@ impl ReasoningEffort {
     }
 }
 
+/// Provider-neutral request context used only by reviewed Connector wire variants.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct ModelCacheAffinityHint(String);
+
+impl ModelCacheAffinityHint {
+    pub(crate) fn for_session(session_id: SessionId) -> Self {
+        Self(session_id.to_string())
+    }
+
+    pub(crate) fn for_verification(task_id: SessionId) -> Self {
+        Self(format!("verification-{task_id}"))
+    }
+
+    pub(super) fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for ModelCacheAffinityHint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ModelCacheAffinityHint([redacted])")
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResponsesRequest {
     input: Vec<ResponsesInputItem>,
@@ -162,6 +186,7 @@ pub struct ResponsesRequest {
     max_output_tokens: u64,
     reasoning_effort: Option<ReasoningEffort>,
     replay_budget: Option<crate::ModelReplayBudget>,
+    cache_affinity_hint: Option<ModelCacheAffinityHint>,
 }
 
 impl ResponsesRequest {
@@ -234,11 +259,17 @@ impl ResponsesRequest {
             max_output_tokens,
             reasoning_effort,
             replay_budget: None,
+            cache_affinity_hint: None,
         })
     }
 
     pub(crate) fn with_replay_budget(mut self, replay_budget: crate::ModelReplayBudget) -> Self {
         self.replay_budget = Some(replay_budget);
+        self
+    }
+
+    pub(crate) fn with_cache_affinity_hint(mut self, hint: ModelCacheAffinityHint) -> Self {
+        self.cache_affinity_hint = Some(hint);
         self
     }
 
@@ -266,6 +297,12 @@ impl ResponsesRequest {
 
     pub(super) const fn replay_budget(&self) -> Option<crate::ModelReplayBudget> {
         self.replay_budget
+    }
+
+    pub(crate) fn cache_affinity_hint(&self) -> Option<&str> {
+        self.cache_affinity_hint
+            .as_ref()
+            .map(ModelCacheAffinityHint::as_str)
     }
 
     pub(crate) fn tokenization_payload(&self, model: &str) -> Value {

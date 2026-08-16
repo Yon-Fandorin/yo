@@ -562,7 +562,8 @@ seed는 connect candidate로만 펼쳐지고 startup에서 바로 route하는 ma
 text-agent row에는 보수적인 Yo output 상한 8,192 token을 적용한다. Yo를 갱신해도 이미
 managed 상태로 저장한 complete binding을 다시 쓰지 않는다.
 
-Kimi는 인증 discovery profile과 함께 같은 간결한 seed 형태를 사용한다.
+Kimi는 제품별 인증 discovery profile 하나를 명시하는 같은 간결한 seed 형태를
+사용한다.
 
 ```yaml
 model:
@@ -572,14 +573,21 @@ model:
       account: team
       account_display_name: Team
       catalog: kimi-platform-ai/v1
+    - provider: kimi
+      provider_display_name: Kimi Code
+      account: coding
+      account_display_name: Coding Membership
+      catalog: kimi-code-membership/v1
 ```
 
-이 seed는 `https://api.moonshot.ai/v1/`을 고정하며 discovery 전에 startup에서
-route할 model을 만들지 않는다. Managed K3나 검토된 K2.7 coding binding은 명시적인
-`kimi-private-local-plaintext/v1` replay profile을 기록하고, K2.6은 호환되는 field
-생략으로 semantic-only replay를 기록한다. Manual K3/K2.7 binding은 private replay
-profile을 명시적으로 작성해야 하므로 ModelId나 connector 선택이 동의를 만들어 낼 수
-없다.
+Platform profile은 `https://api.moonshot.ai/v1/`, Code Membership profile은
+`https://api.kimi.com/coding/v1/`를 고정한다. 둘 다 discovery 전에 startup에서
+route할 model을 만들지 않으며 한 제품의 inventory는 다른 제품의 endpoint나 request
+envelope를 허용하지 않는다. Managed K3나 검토된 K2.7 coding binding은 명시적인
+`kimi-private-local-plaintext/v1` replay profile을 기록하고, Platform K2.6은
+호환되는 field 생략으로 semantic-only replay를 기록한다. Manual K3/K2.7 binding은
+private replay profile을 명시적으로 작성해야 하므로 ModelId나 connector 선택이 동의를
+만들어 낼 수 없다.
 
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
@@ -688,19 +696,28 @@ disabled row를 고르면 credential을 읽지 않고 intent나 repository mutat
 선택 가능한 row 하나를 고른 뒤에는 기존 credential, complete binding-union 검증, journal,
 commit 경로가 그대로 권위 경계다.
 
-`yo connect kimi:Account`는 candidate key 하나를 읽고 bounded 인증
-`GET https://api.moonshot.ai/v1/models` snapshot 하나를 가져와 normalize한 typed row를
-같은 picker로 넘긴다. 첫 valid exact ModelId가 이기며 4,096개보다 많은 행은 snapshot
-전체를 거부한다. K3, K2.7 Code, K2.7 Code Highspeed, K2.6은 remote context와
-reasoning 근거가 검토된 envelope 안에 있을 때만 선택할 수 있다. 다른 valid row는
-숨기지 않고 안정적인 disabled 이유와 함께 표시한다. K3는 recommended, Highspeed는
-별도 badge로 표시하고 forced-thinking과 reasoning-off 동작도 계속 보인다. K3/K2.7
-managed binding을 게시하기 전에 compact preview는 bounded Kimi assistant state를 현재
-사용자 로컬 Session record에 암호화하지 않고 보관한다고 알린다.
+`yo connect kimi:Account`는 candidate key 하나를 읽고 설정한 Kimi 제품 endpoint에서
+bounded 인증 `GET models` snapshot 하나를 가져와 normalize한 typed row를 같은 picker로
+넘긴다. 첫 valid exact ModelId가 이기며 4,096개보다 많은 행은 snapshot 전체를
+거부한다. Platform은 검토된 K3, K2.7 Code, K2.7 Code Highspeed, K2.6 envelope만
+허용한다. Code Membership은 정확한 `k3`, `k3-256k`, `kimi-for-coding`,
+`kimi-for-coding-highspeed` envelope를 허용하며 `k3-256k`를 recommended로 표시한다.
+Cross-product와 future row는 숨기지 않고 안정적인 disabled 이유와 함께 표시한다. 각
+행은 remote context와 reasoning 근거가 그 제품의 검토된 envelope 안에 있을 때만
+선택할 수 있다. K3/K2.7 managed binding을 게시하기 전에 compact preview는 bounded
+Kimi assistant state를 현재 사용자 로컬 Session record에 암호화하지 않고 보관한다고
+알린다.
 
 그 뒤 `kimi-chat-completions` connector가 선택된 complete binding의 exact request와
-stream 문법을 소유한다. 성공한 K3/K2.7 round는 완전한 reasoning, content, tool-call
-message를 담은 bounded provider-private assistant item 하나를 낸다. 이 항목은 frontend와
+stream 문법을 소유한다. Platform은 기존 request shape를 유지한다. Code K3는 허용된
+reasoning effort와 preserved-thinking `keep: all`을 보내고 Code K2.7은 forced
+preserved thinking을 보낸다. 두 Code 계열은 opaque `prompt_cache_key` 하나도 보낸다.
+Backend는 Session identity에서 hint를 한 번 만들고 Provider 분기 없이 일반 요청과 재개
+요청에서 재사용하며, 직렬화 여부는 Connector만 결정한다. 연결 검증은 별도의 ephemeral
+`verification-<UUIDv7>` hint 하나를 검증 task 동안 재사용한다. Hint는 redacted되고
+binding identity, replay evidence, log, diagnostic, Transcript, trace가 되지 않는다.
+성공한 K3/K2.7 round는 완전한 reasoning, content, tool-call message를 담은 bounded
+provider-private assistant item 하나를 낸다. 이 항목은 frontend와
 Request-trace projection에서 숨기고 visible assistant/function projection 옆에 atomically
 저장하며, 일치하는 private replay profile과 binding epoch에서만 허용한다. 다음 Kimi
 request는 그 visible group을 private assistant message 하나로 정확히 한 번 교체한다.

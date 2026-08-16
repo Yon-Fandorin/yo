@@ -782,6 +782,29 @@ model:
     assert!(config.model_catalog().entries().is_empty());
 }
 
+// Kimi Code membership는 Platform과 같은 Provider를 쓰지만 별도 catalog profile로
+// 보존되어 discovery가 .ai endpoint나 Platform ModelId를 추론하지 않습니다.
+#[test]
+fn kimi_code_catalog_profile_resolves_a_separate_account_seed() {
+    let config = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: kimi
+      account: coding
+      catalog: kimi-code-membership/v1
+"#,
+    )
+    .unwrap();
+
+    let provider = ProviderId::new("kimi").unwrap();
+    let account = AccountId::new("coding").unwrap();
+    let seed = config.kimi_catalog_seed(&provider, &account).unwrap();
+    assert_eq!(seed.profile().as_str(), "kimi-code-membership/v1");
+    assert!(config.model_catalog().entries().is_empty());
+}
+
 // manual K3/K2.7 사용자는 plaintext private replay 승인을 replay_profile로 명시해야 하며,
 // 그 값이 model override 없이 base에서 complete binding까지 그대로 상속됩니다.
 #[test]

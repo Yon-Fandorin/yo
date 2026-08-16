@@ -5,8 +5,8 @@ use super::super::{
     chat_sse::ChatCompletionsSseDecoder,
     kimi_request::{admit_binding, wire_body},
     request::{
-        FunctionTool, ReasoningEffort, RequestToolExposure, ResponsesInputItem, ResponsesInputRole,
-        ResponsesRequest,
+        FunctionTool, ModelCacheAffinityHint, ReasoningEffort, RequestToolExposure,
+        ResponsesInputItem, ResponsesInputRole, ResponsesRequest,
     },
     types::ResponsesEvent,
 };
@@ -23,8 +23,28 @@ fn complete(
     optional: &str,
     replay: &str,
 ) -> CompleteModelBinding {
+    complete_at(
+        "https://api.moonshot.ai/v1",
+        model,
+        input,
+        output,
+        reasoning,
+        optional,
+        replay,
+    )
+}
+
+fn complete_at(
+    endpoint: &str,
+    model: &str,
+    input: u64,
+    output: u64,
+    reasoning: &str,
+    optional: &str,
+    replay: &str,
+) -> CompleteModelBinding {
     CompleteModelBinding::from_durable_json(&format!(
-        r#"{{"provider":"kimi","account":"default","model":"{model}","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":{input},"max_output_tokens":{output},"reasoning_parameters":{reasoning},"optional_request_parameters":{optional},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"{replay}"}}"#
+        r#"{{"provider":"kimi","account":"default","model":"{model}","connector":"kimi-chat-completions","base_url":"{endpoint}","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":{input},"max_output_tokens":{output},"reasoning_parameters":{reasoning},"optional_request_parameters":{optional},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"{replay}"}}"#
     ))
     .unwrap()
 }
@@ -73,6 +93,106 @@ fn k3_request_uses_only_the_closed_kimi_wire_fields() {
     ] {
         assert!(body.get(omitted).is_none(), "{omitted}");
     }
+}
+
+// Code K3는 Platform K3와 달리 preserved-thinking과 caller의 typed cache hint를 함께
+// 보내며, hint가 없거나 endpoint/ModelId가 교차되면 transport 전에 실패합니다.
+#[test]
+fn code_k3_requires_preserved_thinking_and_typed_cache_affinity() {
+    let complete = complete_at(
+        "https://api.kimi.com/coding/v1",
+        "k3-256k",
+        262_144,
+        131_072,
+        r#"{"effort":"high"}"#,
+        r#"{"thinking":{"type":"enabled","keep":"all"}}"#,
+        "kimi-private-local-plaintext/v1",
+    );
+    let profile = admit_binding(&complete).unwrap();
+    let request = ResponsesRequest::new(
+        vec![ResponsesInputItem::Message {
+            role: ResponsesInputRole::User,
+            content: "hello".to_owned(),
+            refusal: None,
+        }],
+        RequestToolExposure::disabled(),
+        131_072,
+        Some(ReasoningEffort::High),
+    )
+    .unwrap();
+    assert!(wire_body(&request, "k3-256k", profile).is_err());
+
+    let session = crate::fixture_session(31);
+    let request = request.with_cache_affinity_hint(ModelCacheAffinityHint::for_session(session));
+    let body = wire_body(&request, "k3-256k", profile).unwrap();
+    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["thinking"], json!({"type": "enabled", "keep": "all"}));
+    assert_eq!(body["prompt_cache_key"], session.to_string());
+
+    let crossed = complete_at(
+        "https://api.kimi.com/coding/v1",
+        "kimi-k3",
+        1_048_576,
+        131_072,
+        r#"{"effort":"max"}"#,
+        "{}",
+        "kimi-private-local-plaintext/v1",
+    );
+    assert!(admit_binding(&crossed).is_err());
+}
+
+// Code K2.7도 같은 cache key와 keep-all을 사용하지만 reasoning_effort는 보내지 않으며,
+// ordinary backend hint를 받은 Platform K3는 provider cache field를 직렬화하지 않습니다.
+#[test]
+fn cache_affinity_is_serialized_only_by_code_wire_variants() {
+    let session = crate::fixture_session(32);
+    let hint = ModelCacheAffinityHint::for_session(session);
+    let code = complete_at(
+        "https://api.kimi.com/coding/v1",
+        "kimi-for-coding",
+        262_144,
+        32_768,
+        "{}",
+        r#"{"thinking":{"type":"enabled","keep":"all"}}"#,
+        "kimi-private-local-plaintext/v1",
+    );
+    let code_request = ResponsesRequest::new(
+        vec![ResponsesInputItem::Message {
+            role: ResponsesInputRole::User,
+            content: "hello".to_owned(),
+            refusal: None,
+        }],
+        RequestToolExposure::disabled(),
+        32_768,
+        None,
+    )
+    .unwrap()
+    .with_cache_affinity_hint(hint.clone());
+    let code_body = wire_body(
+        &code_request,
+        "kimi-for-coding",
+        admit_binding(&code).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(code_body["prompt_cache_key"], session.to_string());
+    assert_eq!(code_body["stream_options"]["include_usage"], true);
+    assert!(code_body.get("reasoning_effort").is_none());
+
+    let platform_request = ResponsesRequest::new(
+        vec![ResponsesInputItem::Message {
+            role: ResponsesInputRole::User,
+            content: "hello".to_owned(),
+            refusal: None,
+        }],
+        RequestToolExposure::disabled(),
+        131_072,
+        Some(ReasoningEffort::Max),
+    )
+    .unwrap()
+    .with_cache_affinity_hint(hint);
+    let platform_body =
+        wire_body(&platform_request, "kimi-k3", admit_binding(&k3()).unwrap()).unwrap();
+    assert!(platform_body.get("prompt_cache_key").is_none());
 }
 
 // 저장된 generic assistant+function projection과 private Kimi item은 다음 요청에서 private
