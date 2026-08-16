@@ -66,6 +66,27 @@ fn managed_binding(model: &str, effort: &str) -> ManagedConnectionBinding {
     .unwrap()
 }
 
+fn managed_kimi_binding() -> ManagedConnectionBinding {
+    ManagedConnectionBinding::new(
+        crate::CompleteModelBinding::from_durable_json(
+            r#"{"provider":"kimi","account":"team","model":"kimi-k3","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
+        )
+        .unwrap(),
+        Some("Kimi K3".to_owned()),
+    )
+    .unwrap()
+}
+
+fn managed_kimi_account() -> ManagedConnectionAccount {
+    ManagedConnectionAccount::new(
+        ProviderId::new("kimi").unwrap(),
+        AccountId::new("team").unwrap(),
+        Some("Kimi".to_owned()),
+        Some("Team".to_owned()),
+    )
+    .unwrap()
+}
+
 // 파일이 없는 첫 capture는 부모 경로도 만들지 않은 채 absent revision과 unset preference를
 // 반환해야 읽기와 준비만 수행한 중단이 사용자 상태를 바꾸지 않음을 검증합니다.
 #[test]
@@ -273,6 +294,100 @@ fn managed_upsert_round_trips_complete_state_and_first_preference() {
     assert!(encoded.contains("reasoning_parameters:"));
     assert!(encoded.contains("effort: medium"));
     assert!(!encoded.contains("secret"));
+}
+
+// connections.yaml reader는 명시적 semantic-only도 호환 입력으로 읽지만 producer는 계속
+// 생략하고, null·unknown·duplicate는 private profile이나 omission으로 축약하지 않습니다.
+#[test]
+fn managed_replay_profile_is_presence_aware_and_closed() {
+    let (_directory, semantic_repository) = repository("managed-explicit-semantic-replay-profile");
+    let mutation = semantic_repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_kimi_account(), managed_kimi_binding())
+        .unwrap()
+        .unwrap();
+    semantic_repository.commit(&mutation).unwrap();
+    let private = fs::read_to_string(semantic_repository.path()).unwrap();
+    fs::write(
+        semantic_repository.path(),
+        private.replace(
+            "replay_profile: kimi-private-local-plaintext/v1",
+            "replay_profile: semantic-only/v1",
+        ),
+    )
+    .unwrap();
+    let explicit_semantic = semantic_repository.capture().unwrap();
+    assert_eq!(
+        explicit_semantic.managed_bindings()[0]
+            .complete()
+            .profile()
+            .replay_profile()
+            .as_str(),
+        "semantic-only/v1"
+    );
+
+    for replacement in [
+        "replay_profile: null",
+        "replay_profile: unknown/v1",
+        concat!(
+            "replay_profile: kimi-private-local-plaintext/v1\n",
+            "      replay_profile: kimi-private-local-plaintext/v1"
+        ),
+    ] {
+        let (_directory, repository) = repository("managed-replay-profile");
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_managed_upsert(managed_kimi_account(), managed_kimi_binding())
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        let original = fs::read_to_string(repository.path()).unwrap();
+        let malformed = original.replace(
+            "replay_profile: kimi-private-local-plaintext/v1",
+            replacement,
+        );
+        fs::write(repository.path(), malformed).unwrap();
+
+        assert!(
+            matches!(
+                repository.capture(),
+                Err(ConnectionRepositoryError::InvalidContents(_))
+            ),
+            "{replacement}"
+        );
+    }
+}
+
+// connections.yaml은 Kimi private replay 동의를 readable profile field로 보존하지만
+// 비밀이나 provider-private Session payload 자체는 섞지 않고 capture에서 같은 타입을 복원합니다.
+#[test]
+fn managed_kimi_binding_round_trips_the_private_replay_authorization_only() {
+    let (_directory, repository) = repository("managed-kimi-private-replay");
+    let account = ManagedConnectionAccount::new(
+        ProviderId::new("kimi").unwrap(),
+        AccountId::new("team").unwrap(),
+        Some("Kimi".to_owned()),
+        Some("Team".to_owned()),
+    )
+    .unwrap();
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(account, managed_kimi_binding())
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+
+    let encoded = fs::read_to_string(repository.path()).unwrap();
+    assert!(encoded.contains("replay_profile: kimi-private-local-plaintext/v1"));
+    assert!(!encoded.contains("reasoning_content"));
+    assert!(!encoded.contains("candidate"));
+    assert_eq!(
+        repository.capture().unwrap().managed_bindings(),
+        &[managed_kimi_binding()]
+    );
 }
 
 // credential rotation은 public binding이 byte-for-byte 같아도 새 planned revision을 만들어

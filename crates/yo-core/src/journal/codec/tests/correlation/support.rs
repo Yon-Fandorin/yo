@@ -37,7 +37,7 @@ pub(super) fn identity(name: &str) -> VersionedIdentity {
     VersionedIdentity::new(format!("yo.test.{name}/v1"), format!("{name}:value"))
 }
 
-fn binding_opened() -> JournalRecord {
+fn binding_opened(replay_profile: crate::ReplayProfile) -> JournalRecord {
     JournalRecord::BackendBindingOpened(BackendBindingOpened::new(
         1,
         "codex",
@@ -48,6 +48,7 @@ fn binding_opened() -> JournalRecord {
         BindingTransition::new(TransitionMode::Initial, CacheState::NotApplicable, None),
         ContinuationStrategy::ExactReplay {
             executor: ReplayExecutor::LocalClient,
+            replay_profile,
         },
     ))
 }
@@ -57,6 +58,13 @@ pub(super) fn valid_history() -> Vec<JournalCommit> {
 }
 
 pub(super) fn valid_history_with_replay(replay_delta: ModelReplayDelta) -> Vec<JournalCommit> {
+    valid_history_with_profile_and_replay(crate::ReplayProfile::SemanticOnly, replay_delta)
+}
+
+pub(super) fn valid_history_with_profile_and_replay(
+    replay_profile: crate::ReplayProfile,
+    replay_delta: ModelReplayDelta,
+) -> Vec<JournalCommit> {
     let descriptor =
         JournalCommit::descriptor(super::super::descriptor_with_path(b"/workspace".to_vec()));
     let opened = JournalCommit::incremental_through(
@@ -69,7 +77,7 @@ pub(super) fn valid_history_with_replay(replay_delta: ModelReplayDelta) -> Vec<J
                     session_id: super::super::activity().session_id(),
                 }),
             ),
-            semantic(3, 2, binding_opened()),
+            semantic(3, 2, binding_opened(replay_profile)),
         ],
     );
     let submission_id = super::super::submission(11);

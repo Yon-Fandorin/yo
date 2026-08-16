@@ -85,6 +85,7 @@ fn local_exact_replay_replacement_commit(
                     ),
                     ContinuationStrategy::ExactReplay {
                         executor: ReplayExecutor::LocalClient,
+                        replay_profile: crate::ReplayProfile::SemanticOnly,
                     },
                 )),
             ),

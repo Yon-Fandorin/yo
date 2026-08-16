@@ -8,6 +8,7 @@
 - [Provider 카탈로그 관리](./workflows/provider-catalogs.md)
   - [OpenRouter](./workflows/provider-catalogs/openrouter.md)
   - [QwenCloud](./workflows/provider-catalogs/qwencloud.md)
+  - [Kimi](./workflows/provider-catalogs/kimi.md)
   - [새 Provider 추가](./workflows/provider-catalogs/new-provider.md)
 - [Codex app-server upstream 따라가기](./workflows/codex-upstream.md)
 - [검증](./validation/README.md)

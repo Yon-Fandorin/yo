@@ -295,7 +295,11 @@ pub struct ModelProfileLayer {
     optional_request_parameters: Option<ModelProfileParameters>,
     tool_capability_policy: Option<VersionedProfileId>,
     verification_profile: Option<VersionedProfileId>,
+    replay_profile: Option<VersionedProfileId>,
 }
+
+pub const SEMANTIC_REPLAY_PROFILE: &str = "semantic-only/v1";
+pub const KIMI_PRIVATE_REPLAY_PROFILE: &str = "kimi-private-local-plaintext/v1";
 
 impl ModelProfileLayer {
     #[allow(clippy::too_many_arguments)]
@@ -319,7 +323,14 @@ impl ModelProfileLayer {
             optional_request_parameters,
             tool_capability_policy,
             verification_profile,
+            replay_profile: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_replay_profile(mut self, replay_profile: Option<VersionedProfileId>) -> Self {
+        self.replay_profile = replay_profile;
+        self
     }
 }
 
@@ -331,6 +342,7 @@ pub struct EffectiveModelProfile {
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: VersionedProfileId,
     verification_profile: VersionedProfileId,
+    replay_profile: VersionedProfileId,
 }
 
 impl EffectiveModelProfile {
@@ -380,6 +392,11 @@ impl EffectiveModelProfile {
                 .clone()
                 .or(base.verification_profile),
         )?;
+        let replay_profile = model
+            .replay_profile
+            .clone()
+            .or(base.replay_profile)
+            .map_or_else(|| VersionedProfileId::new(SEMANTIC_REPLAY_PROFILE), Ok)?;
         let context = ModelContextProfile::from_versioned(
             input_token_limit,
             max_output_tokens,
@@ -392,6 +409,7 @@ impl EffectiveModelProfile {
             optional_request_parameters,
             tool_capability_policy,
             verification_profile,
+            replay_profile,
         })
     }
 
@@ -423,6 +441,11 @@ impl EffectiveModelProfile {
     #[must_use]
     pub const fn verification_profile(&self) -> &VersionedProfileId {
         &self.verification_profile
+    }
+
+    #[must_use]
+    pub const fn replay_profile(&self) -> &VersionedProfileId {
+        &self.replay_profile
     }
 }
 

@@ -7,6 +7,7 @@ mod connection_operation;
 mod connection_repository;
 mod credential;
 mod identity;
+mod kimi_catalog;
 mod local_credentials;
 mod openrouter_discovery;
 mod profile;
@@ -38,6 +39,10 @@ pub use connection_repository::{
 };
 pub use credential::{ApiCredential, CredentialStore};
 pub use identity::{AccountId, ModelId, ModelServiceError, ProviderId};
+pub use kimi_catalog::{
+    KimiCatalogAvailability, KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind,
+    KimiCatalogModel, KimiCatalogSeed, discover_kimi_models, parse_kimi_catalog_snapshot,
+};
 pub use local_credentials::{
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
     CredentialSnapshot, LocalCredentialRepository, LocalCredentialStore, LocalCredentialStoreError,
@@ -49,7 +54,8 @@ pub use openrouter_discovery::{
     OpenRouterModelAvailability, OpenRouterModelCapabilities, discover_openrouter_models,
 };
 pub use profile::{
-    EffectiveModelProfile, ModelProfileLayer, ModelProfileParameters, VersionedProfileId,
+    EffectiveModelProfile, KIMI_PRIVATE_REPLAY_PROFILE, ModelProfileLayer, ModelProfileParameters,
+    SEMANTIC_REPLAY_PROFILE, VersionedProfileId,
 };
 pub use profile_yaml::validate_profile_yaml_number_spellings;
 pub use qwencloud_catalog::{

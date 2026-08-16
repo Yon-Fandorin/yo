@@ -1,8 +1,9 @@
 use serde_json::Value;
 
 use crate::{
-    ModelConnectorCancellation, ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStream,
-    OpenAiChatCompletionsConnector, OpenAiResponsesConnector,
+    KimiChatCompletionsConnector, ModelConnectorCancellation, ModelConnectorPoll,
+    ModelConnectorRequest, ModelConnectorStream, OpenAiChatCompletionsConnector,
+    OpenAiResponsesConnector,
 };
 
 pub(super) trait ModelConnector: Send {
@@ -64,6 +65,28 @@ impl ModelConnector for OpenAiChatCompletionsConnector {
         cancellation: ModelConnectorCancellation,
     ) -> Result<Box<dyn ModelConnectorStreamPort>, crate::ConnectorError> {
         OpenAiChatCompletionsConnector::start(self, request, cancellation)
+            .map(|stream| Box::new(stream) as Box<dyn ModelConnectorStreamPort>)
+    }
+}
+
+impl ModelConnector for KimiChatCompletionsConnector {
+    fn request_url(&self) -> &str {
+        self.request_url()
+    }
+
+    fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<Value, crate::ConnectorError> {
+        self.tokenization_payload(request)
+    }
+
+    fn start(
+        &self,
+        request: ModelConnectorRequest,
+        cancellation: ModelConnectorCancellation,
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, crate::ConnectorError> {
+        KimiChatCompletionsConnector::start(self, request, cancellation)
             .map(|stream| Box::new(stream) as Box<dyn ModelConnectorStreamPort>)
     }
 }

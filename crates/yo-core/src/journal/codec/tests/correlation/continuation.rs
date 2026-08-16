@@ -1,9 +1,13 @@
 use super::{
     super::{JournalRecord, decode, encode, recover},
-    support::{model_replay_delta, valid_history, valid_history_with_replay},
+    support::{
+        model_replay_delta, valid_history, valid_history_with_profile_and_replay,
+        valid_history_with_replay,
+    },
 };
 use crate::{
-    JournalSequence, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+    JournalSequence, KimiAssistantMessage, KimiAssistantToolCall, ModelReplayContract,
+    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReplayProfile,
 };
 
 // 완결된 Turn의 command·exchange·accepted request·outcome·Anchor를 encode/decode한 뒤에도
@@ -72,6 +76,187 @@ fn round_trips_refusal_through_physical_recovery_and_anchor_validation() {
             _ => None,
         });
     assert_eq!(recovered_delta, Some(&replay_delta));
+}
+
+// private replay profile과 같은 epoch의 Kimi assistant 물리 항목은 binding_epoch와 완전한
+// message bytes를 보존하고 semantic recovery 뒤에도 최신 Anchor를 구성합니다.
+#[test]
+fn round_trips_private_assistant_only_under_the_private_replay_profile() {
+    let replay_delta = private_replay_delta();
+    let commits = valid_history_with_profile_and_replay(
+        ReplayProfile::KimiPrivateLocalPlaintext,
+        replay_delta.clone(),
+    );
+    let encoded = commits
+        .iter()
+        .map(encode)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let wire: serde_json::Value = serde_json::from_str(&encoded[3]).unwrap();
+    assert_eq!(wire["records"][1]["items"][2]["binding_epoch"], 1);
+    assert_eq!(
+        wire["records"][1]["items"][2]["message"]["reasoning_content"],
+        "private reasoning"
+    );
+
+    let decoded = encoded
+        .iter()
+        .map(|commit| decode(commit).unwrap())
+        .collect::<Vec<_>>();
+    let recovered = recover(&decoded).unwrap();
+    assert_eq!(
+        recovered.continuation_anchor(),
+        Some(JournalSequence::new(9))
+    );
+    assert_eq!(recovered.model_replay().items(), replay_delta.items());
+}
+
+// private message physical shape은 content의 required-nullable 존재와 tool_calls의
+// absent-or-nonempty 구분을 보존하고, 유효한 tool continuation만 정확히 복원합니다.
+#[test]
+fn private_assistant_wire_preserves_required_presence_and_nonempty_calls() {
+    let stop = valid_history_with_profile_and_replay(
+        ReplayProfile::KimiPrivateLocalPlaintext,
+        private_replay_delta(),
+    )
+    .pop()
+    .unwrap();
+    let encoded_stop = encode(&stop).unwrap();
+    let stop_wire: serde_json::Value = serde_json::from_str(&encoded_stop).unwrap();
+    assert!(
+        stop_wire["records"][1]["items"][2]["message"]
+            .get("tool_calls")
+            .is_none()
+    );
+    decode(&encoded_stop).expect("absent tool_calls is the canonical stop shape");
+
+    let mut missing_content = stop_wire.clone();
+    missing_content["records"][1]["items"][2]["message"]
+        .as_object_mut()
+        .unwrap()
+        .remove("content");
+    assert!(decode(&missing_content.to_string()).is_err());
+
+    for malformed_calls in [serde_json::Value::Null, serde_json::json!([])] {
+        let mut malformed = stop_wire.clone();
+        malformed["records"][1]["items"][2]["message"]["tool_calls"] = malformed_calls;
+        assert!(decode(&malformed.to_string()).is_err());
+    }
+
+    let tool = valid_history_with_profile_and_replay(
+        ReplayProfile::KimiPrivateLocalPlaintext,
+        private_tool_replay_delta(),
+    )
+    .pop()
+    .unwrap();
+    let encoded_tool = encode(&tool).unwrap();
+    let tool_wire: serde_json::Value = serde_json::from_str(&encoded_tool).unwrap();
+    assert!(tool_wire["records"][1]["items"][2]["message"]["content"].is_null());
+    assert_eq!(
+        tool_wire["records"][1]["items"][2]["message"]["tool_calls"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    decode(&encoded_tool).expect("one nonempty private tool call remains readable");
+}
+
+// private item이 semantic-only epoch에 들어가거나 private epoch가 해당 item 없이 완료되면
+// durable bytes가 유효해 보여도 profile 경계를 넘는 재생으로 Anchor를 만들지 않습니다.
+#[test]
+fn replay_profile_and_private_items_must_match_in_both_directions() {
+    let semantic_error = recover(&valid_history_with_replay(private_replay_delta())).unwrap_err();
+    assert!(semantic_error.to_string().contains("semantic-only"));
+
+    let private_error = recover(&valid_history_with_profile_and_replay(
+        ReplayProfile::KimiPrivateLocalPlaintext,
+        model_replay_delta(),
+    ))
+    .unwrap_err();
+    assert!(
+        private_error
+            .to_string()
+            .contains("requires a provider-private")
+    );
+}
+
+// physical v1 exact replay은 field 부재만 semantic-only로 해석하고, 명시된 값은 exact
+// private profile 하나뿐이므로 null·explicit semantic·unknown·duplicate를 거부합니다.
+#[test]
+fn exact_replay_profile_wire_is_presence_aware_and_canonical() {
+    let encoded = encode(&valid_history()[1]).unwrap();
+    for malformed in [
+        serde_json::Value::Null,
+        serde_json::json!("semantic-only/v1"),
+        serde_json::json!("unknown/v1"),
+    ] {
+        let mut wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        wire["records"][1]["continuation_strategy"]["replay_profile"] = malformed;
+        assert!(decode(&wire.to_string()).is_err());
+    }
+
+    let duplicate = encoded.replace(
+        r#""executor":"local_client""#,
+        r#""executor":"local_client","replay_profile":"kimi-private-local-plaintext/v1","replay_profile":"kimi-private-local-plaintext/v1""#,
+    );
+    assert!(decode(&duplicate).is_err());
+}
+
+fn private_replay_delta() -> ModelReplayDelta {
+    ModelReplayDelta::new(
+        Some(ModelReplayContract::new("system", Vec::new())),
+        vec![
+            ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: "hello".to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: "visible".to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::ProviderPrivateAssistant {
+                schema: "kimi.assistant-message/v1alpha1".to_owned(),
+                message: KimiAssistantMessage::new(
+                    "private reasoning",
+                    Some("visible".to_owned()),
+                    Vec::new(),
+                ),
+            },
+        ],
+    )
+}
+
+fn private_tool_replay_delta() -> ModelReplayDelta {
+    ModelReplayDelta::new(
+        Some(ModelReplayContract::new("system", Vec::new())),
+        vec![
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: String::new(),
+                refusal: None,
+            },
+            ModelReplayItem::FunctionCall {
+                call_id: "call-1".to_owned(),
+                name: "read_file".to_owned(),
+                arguments: "{}".to_owned(),
+            },
+            ModelReplayItem::ProviderPrivateAssistant {
+                schema: "kimi.assistant-message/v1alpha1".to_owned(),
+                message: KimiAssistantMessage::new(
+                    "private reasoning",
+                    None,
+                    vec![KimiAssistantToolCall::new("call-1", "read_file", "{}")],
+                ),
+            },
+            ModelReplayItem::FunctionCallOutput {
+                call_id: "call-1".to_owned(),
+                output: "contents".to_owned(),
+            },
+        ],
+    )
 }
 
 // additive v1 reader는 직전 refusal-absent message를 계속 읽지만, 명시적 null이나

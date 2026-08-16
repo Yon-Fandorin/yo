@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use serde_json::{Value, json};
 
 use super::{ConnectorError, ConnectorFailureKind};
+use crate::KimiAssistantMessage;
 
 const MAX_WIRE_ID_BYTES: usize = 256;
 const MAX_TOOL_DESCRIPTION_BYTES: usize = 4 * 1024;
@@ -41,6 +42,10 @@ pub enum ResponsesInputItem {
     FunctionCallOutput {
         call_id: String,
         output: String,
+    },
+    ProviderPrivateAssistant {
+        schema: String,
+        message: KimiAssistantMessage,
     },
 }
 
@@ -130,18 +135,22 @@ impl RequestToolExposure {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReasoningEffort {
     None,
+    Low,
     Minimal,
     Medium,
     High,
+    Max,
 }
 
 impl ReasoningEffort {
-    const fn as_str(self) -> &'static str {
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::Low => "low",
             Self::Minimal => "minimal",
             Self::Medium => "medium",
             Self::High => "high",
+            Self::Max => "max",
         }
     }
 }
@@ -152,6 +161,7 @@ pub struct ResponsesRequest {
     tool_exposure: RequestToolExposure,
     max_output_tokens: u64,
     reasoning_effort: Option<ReasoningEffort>,
+    replay_budget: Option<crate::ModelReplayBudget>,
 }
 
 impl ResponsesRequest {
@@ -207,6 +217,15 @@ impl ResponsesRequest {
                 ResponsesInputItem::FunctionCallOutput { call_id, .. } => {
                     validate_wire_id("function call_id", call_id)?;
                 },
+                ResponsesInputItem::ProviderPrivateAssistant { schema, .. }
+                    if schema != "kimi.assistant-message/v1alpha1" =>
+                {
+                    return Err(ConnectorError::new(
+                        ConnectorFailureKind::Configuration,
+                        "provider-private assistant replay schema is unsupported",
+                    ));
+                },
+                ResponsesInputItem::ProviderPrivateAssistant { .. } => {},
             }
         }
         Ok(Self {
@@ -214,11 +233,23 @@ impl ResponsesRequest {
             tool_exposure,
             max_output_tokens,
             reasoning_effort,
+            replay_budget: None,
         })
+    }
+
+    pub(crate) fn with_replay_budget(mut self, replay_budget: crate::ModelReplayBudget) -> Self {
+        self.replay_budget = Some(replay_budget);
+        self
     }
 
     pub(crate) fn input(&self) -> &[ResponsesInputItem] {
         &self.input
+    }
+
+    pub(super) fn contains_provider_private_input(&self) -> bool {
+        self.input
+            .iter()
+            .any(|item| matches!(item, ResponsesInputItem::ProviderPrivateAssistant { .. }))
     }
 
     pub(super) fn tools(&self) -> Option<&[FunctionTool]> {
@@ -227,6 +258,14 @@ impl ResponsesRequest {
 
     pub(super) const fn max_output_tokens(&self) -> u64 {
         self.max_output_tokens
+    }
+
+    pub(super) const fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        self.reasoning_effort
+    }
+
+    pub(super) const fn replay_budget(&self) -> Option<crate::ModelReplayBudget> {
+        self.replay_budget
     }
 
     pub(crate) fn tokenization_payload(&self, model: &str) -> Value {
@@ -266,6 +305,10 @@ impl ResponsesRequest {
                     "type": "function_call_output",
                     "call_id": call_id,
                     "output": output,
+                }),
+                ResponsesInputItem::ProviderPrivateAssistant { schema, .. } => json!({
+                    "type": "provider_private_assistant",
+                    "schema": schema,
                 }),
             })
             .collect::<Vec<_>>();

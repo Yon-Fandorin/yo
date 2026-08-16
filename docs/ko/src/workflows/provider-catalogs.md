@@ -13,9 +13,11 @@ profile 이름, 집중 검사 명령은 별도 런북에 둔다.
   사용한다.
 - [QwenCloud](./provider-catalogs/qwencloud.md)는 공식 plan allowlist에서 얻은
   release-known static registry를 사용한다.
+- [Kimi](./provider-catalogs/kimi.md)는 인증된 runtime discovery, 검토된 실행
+  overlay, 명시적인 로컬 private-replay 동의를 함께 사용한다.
 - [새 Provider 추가](./provider-catalogs/new-provider.md)는 둘 중 하나를 고르기
-  전에 출처를 분류한다. Kimi와 이후 Provider는 설계가 승인될 때 자기
-  런북을 갖는다.
+  전에 출처를 분류한다. 이후 Provider는 설계가 승인될 때 자기 런북을
+  갖는다.
 
 ## 먼저 출처 모델 선택하기
 

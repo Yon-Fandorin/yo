@@ -1,11 +1,14 @@
 mod replay;
 
+pub use replay::{
+    KimiAssistantMessage, KimiAssistantToolCall, ModelReplay, ModelReplayContract,
+    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool,
+};
+pub(crate) use replay::{
+    KimiReplayToolCallSize, ModelReplayBudget, kimi_replay_round_item_lengths,
+};
 #[cfg(test)]
 use replay::{MAX_REPLAY_CONTRACT_BYTES, MAX_REPLAY_DELTA_BYTES};
-pub use replay::{
-    ModelReplay, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    ModelReplayTool,
-};
 
 /// Opaque provider-owned identity with an adapter-versioned interpretation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,8 +56,26 @@ pub enum ReplayExecutor {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReplayProfile {
+    SemanticOnly,
+    KimiPrivateLocalPlaintext,
+}
+
+impl ReplayProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SemanticOnly => crate::SEMANTIC_REPLAY_PROFILE,
+            Self::KimiPrivateLocalPlaintext => crate::KIMI_PRIVATE_REPLAY_PROFILE,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ContinuationStrategy {
-    ExactReplay { executor: ReplayExecutor },
+    ExactReplay {
+        executor: ReplayExecutor,
+        replay_profile: ReplayProfile,
+    },
     BackendManagedState,
 }
 

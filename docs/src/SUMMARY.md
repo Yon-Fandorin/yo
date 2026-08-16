@@ -8,6 +8,7 @@
 - [Maintain Provider catalogs](./workflows/provider-catalogs.md)
   - [OpenRouter](./workflows/provider-catalogs/openrouter.md)
   - [QwenCloud](./workflows/provider-catalogs/qwencloud.md)
+  - [Kimi](./workflows/provider-catalogs/kimi.md)
   - [Add a new Provider](./workflows/provider-catalogs/new-provider.md)
 - [Follow Codex app-server upstream](./workflows/codex-upstream.md)
 - [Validation](./validation/README.md)

@@ -89,7 +89,15 @@ pub(super) struct WireBindingTransition {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub(super) enum WireContinuationStrategy {
-    ExactReplay { executor: WireReplayExecutor },
+    ExactReplay {
+        executor: WireReplayExecutor,
+        #[serde(
+            default,
+            deserialize_with = "deserialize_optional_non_null_string",
+            skip_serializing_if = "Option::is_none"
+        )]
+        replay_profile: Option<String>,
+    },
     BackendManagedState,
 }
 
@@ -103,23 +111,51 @@ pub(super) enum WireReplayExecutor {
 impl From<ContinuationStrategy> for WireContinuationStrategy {
     fn from(value: ContinuationStrategy) -> Self {
         match value {
-            ContinuationStrategy::ExactReplay { executor } => Self::ExactReplay {
+            ContinuationStrategy::ExactReplay {
+                executor,
+                replay_profile,
+            } => Self::ExactReplay {
                 executor: executor.into(),
+                replay_profile: (replay_profile != crate::ReplayProfile::SemanticOnly)
+                    .then(|| replay_profile.as_str().to_owned()),
             },
             ContinuationStrategy::BackendManagedState => Self::BackendManagedState,
         }
     }
 }
 
-impl From<WireContinuationStrategy> for ContinuationStrategy {
-    fn from(value: WireContinuationStrategy) -> Self {
+impl TryFrom<WireContinuationStrategy> for ContinuationStrategy {
+    type Error = JournalCodecError;
+
+    fn try_from(value: WireContinuationStrategy) -> Result<Self, Self::Error> {
         match value {
-            WireContinuationStrategy::ExactReplay { executor } => Self::ExactReplay {
+            WireContinuationStrategy::ExactReplay {
+                executor,
+                replay_profile,
+            } => Ok(Self::ExactReplay {
                 executor: executor.into(),
-            },
-            WireContinuationStrategy::BackendManagedState => Self::BackendManagedState,
+                replay_profile: match replay_profile.as_deref() {
+                    None => crate::ReplayProfile::SemanticOnly,
+                    Some(crate::KIMI_PRIVATE_REPLAY_PROFILE) => {
+                        crate::ReplayProfile::KimiPrivateLocalPlaintext
+                    },
+                    Some(_) => {
+                        return Err(JournalCodecError::new(
+                            "exact replay profile is unsupported or noncanonical",
+                        ));
+                    },
+                },
+            }),
+            WireContinuationStrategy::BackendManagedState => Ok(Self::BackendManagedState),
         }
     }
+}
+
+fn deserialize_optional_non_null_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
 }
 
 impl From<ReplayExecutor> for WireReplayExecutor {

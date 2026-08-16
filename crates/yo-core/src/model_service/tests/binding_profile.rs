@@ -16,6 +16,55 @@ fn complete_binding_equality_includes_the_resolved_profile() {
     assert_ne!(medium, high);
 }
 
+// 기존 durable complete binding의 replay_profile 부재는 semantic-only로만 해석되며,
+// 같은 연결 좌표라도 Kimi private profile을 명시하면 완전한 binding identity가 달라집니다.
+#[test]
+fn replay_profile_omission_is_semantic_and_private_profile_changes_identity() {
+    let semantic = CompleteModelBinding::from_durable_json(COMPLETE_BINDING).unwrap();
+    let private = CompleteModelBinding::from_durable_json(&COMPLETE_BINDING.replace(
+        r#""verification_profile":"semantic-terminal/v1""#,
+        r#""verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1""#,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        semantic.profile().replay_profile().as_str(),
+        "semantic-only/v1"
+    );
+    assert_eq!(semantic.binding(), private.binding());
+    assert_ne!(semantic, private);
+}
+
+// durable reader는 부재와 명시적 semantic-only를 같은 의미로 읽되, null·unknown·duplicate는
+// omission으로 축약하지 않고 exact private profile도 별도 binding identity로 보존합니다.
+#[test]
+fn complete_binding_replay_profile_is_presence_aware_and_closed() {
+    let explicit_semantic = CompleteModelBinding::from_durable_json(&COMPLETE_BINDING.replace(
+        r#""verification_profile":"semantic-terminal/v1""#,
+        r#""verification_profile":"semantic-terminal/v1","replay_profile":"semantic-only/v1""#,
+    ))
+    .unwrap();
+    assert_eq!(
+        explicit_semantic.profile().replay_profile().as_str(),
+        "semantic-only/v1"
+    );
+
+    for field in [
+        r#","replay_profile":null"#,
+        r#","replay_profile":"unknown/v1""#,
+        r#","replay_profile":"kimi-private-local-plaintext/v1","replay_profile":"kimi-private-local-plaintext/v1""#,
+    ] {
+        let value = COMPLETE_BINDING.replace(
+            r#""verification_profile":"semantic-terminal/v1""#,
+            &format!(r#""verification_profile":"semantic-terminal/v1"{field}"#),
+        );
+        assert!(
+            CompleteModelBinding::from_durable_json(&value).is_err(),
+            "{field}"
+        );
+    }
+}
+
 // durable decoder는 serde_json이 범위 밖 정수를 float로 재분류하기 전에 lexical variant를
 // 검사하고, 유한하지 않은 exponent도 frontend와 무관하게 core에서 거절합니다.
 #[test]

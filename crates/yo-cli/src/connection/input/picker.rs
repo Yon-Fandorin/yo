@@ -56,6 +56,8 @@ pub(in crate::connection) struct ModelPickerItem {
     output_limit: Option<u64>,
     tool_policy: Option<String>,
     reasoning: Option<bool>,
+    reasoning_label: Option<String>,
+    badges: Vec<String>,
     enabled: bool,
     disabled_reason: Option<String>,
 }
@@ -81,6 +83,8 @@ impl ModelPickerItem {
                 .effective_tool_policy()
                 .map(|policy| policy.as_str().to_owned()),
             reasoning: model.reasoning(),
+            reasoning_label: None,
+            badges: Vec::new(),
             enabled: model.is_enabled(),
             disabled_reason,
         }
@@ -102,6 +106,60 @@ impl ModelPickerItem {
             output_limit: model.output_limit(),
             tool_policy: model.tool_policy().map(str::to_owned),
             reasoning: model.reasoning(),
+            reasoning_label: None,
+            badges: Vec::new(),
+            enabled: model.is_enabled(),
+            disabled_reason,
+        }
+    }
+
+    pub(in crate::connection) fn from_kimi(model: &yo_core::KimiCatalogModel) -> Self {
+        let disabled_reason = match model.availability() {
+            yo_core::KimiCatalogAvailability::Enabled => None,
+            yo_core::KimiCatalogAvailability::Disabled(reason) => Some(reason.as_str().to_owned()),
+        };
+        let mut badges = Vec::new();
+        if model.recommended() {
+            badges.push("recommended".to_owned());
+        }
+        if model.high_speed() {
+            badges.push("high-speed".to_owned());
+        }
+        let reasoning_label = match model.model_id().as_str() {
+            "kimi-k3" => Some("reasoning required/max".to_owned()),
+            "kimi-k2.7-code" | "kimi-k2.7-code-highspeed" => Some("reasoning required".to_owned()),
+            "kimi-k2.6" => Some(
+                model
+                    .reasoning()
+                    .map_or("reasoning unknown/off", |available| {
+                        if available {
+                            "reasoning available/off"
+                        } else {
+                            "reasoning unavailable/off"
+                        }
+                    })
+                    .to_owned(),
+            ),
+            _ => model.reasoning().map(|available| {
+                if available {
+                    "reasoning available/off"
+                } else {
+                    "reasoning unavailable/off"
+                }
+                .to_owned()
+            }),
+        };
+        Self {
+            provider: model.provider().as_str().to_owned(),
+            account: model.account().as_str().to_owned(),
+            display_name: model.display_name().to_owned(),
+            model_id: model.model_id().as_str().to_owned(),
+            input_limit: model.input_limit(),
+            output_limit: model.output_limit(),
+            tool_policy: model.entry().map(|_| "local-tools/v1".to_owned()),
+            reasoning: model.reasoning(),
+            reasoning_label,
+            badges,
             enabled: model.is_enabled(),
             disabled_reason,
         }
@@ -155,6 +213,8 @@ struct PickerChoice {
     output_limit: Option<u64>,
     tool_policy: Option<String>,
     reasoning: Option<bool>,
+    reasoning_label: Option<String>,
+    badges: Vec<String>,
     enabled: bool,
     disabled_reason: Option<String>,
 }
@@ -168,6 +228,8 @@ impl From<&ModelPickerItem> for PickerChoice {
             output_limit: model.output_limit,
             tool_policy: model.tool_policy.clone(),
             reasoning: model.reasoning,
+            reasoning_label: model.reasoning_label.clone(),
+            badges: model.badges.clone(),
             enabled: model.enabled,
             disabled_reason: model.disabled_reason.clone(),
         }
@@ -308,14 +370,22 @@ fn render_lines(
                 Some(_) => "tools unsupported",
                 None => "tools ?",
             };
-            let reasoning = match choice.reasoning {
-                Some(true) => "reasoning",
-                Some(false) => "no reasoning",
-                None => "reasoning ?",
+            let reasoning = choice
+                .reasoning_label
+                .as_deref()
+                .unwrap_or(match choice.reasoning {
+                    Some(true) => "reasoning",
+                    Some(false) => "no reasoning",
+                    None => "reasoning ?",
+                });
+            let badges = if choice.badges.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", choice.badges.join(" · "))
             };
             let availability = if choice.enabled { "ready" } else { "disabled" };
             let row = format!(
-                "{marker} {}  {} ctx · {} out · {tools} · {reasoning} · {availability}",
+                "{marker} {}  {} ctx · {} out · {tools} · {reasoning}{badges} · {availability}",
                 escape_remote_text(&choice.display_name),
                 readable_optional_limit(choice.input_limit),
                 readable_optional_limit(choice.output_limit),

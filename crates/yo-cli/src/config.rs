@@ -13,10 +13,10 @@ use jiff::{Timestamp, fmt::strtime, tz::TimeZone};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use yo_core::{
-    AccountId, EffectiveModelBinding, EffectiveModelProfile, ModelCatalog, ModelCatalogEntry,
-    ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters, ModelSelection,
-    NormalizedEndpoint, OpenRouterAuthoredModel, OpenRouterDiscoverySeed, ProviderId,
-    QwenCloudCatalogSeed, StartupTarget, VersionedProfileId,
+    AccountId, EffectiveModelBinding, EffectiveModelProfile, KimiCatalogSeed, ModelCatalog,
+    ModelCatalogEntry, ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters,
+    ModelSelection, NormalizedEndpoint, OpenRouterAuthoredModel, OpenRouterDiscoverySeed,
+    ProviderId, QwenCloudCatalogSeed, StartupTarget, VersionedProfileId,
 };
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
@@ -40,6 +40,7 @@ pub(crate) struct Config {
     model_catalog: ModelCatalog,
     openrouter_discovery_seeds: Vec<OpenRouterDiscoverySeed>,
     qwencloud_catalog_seeds: Vec<QwenCloudCatalogSeed>,
+    kimi_catalog_seeds: Vec<KimiCatalogSeed>,
     startup_target: Option<StartupTarget>,
 }
 
@@ -53,6 +54,7 @@ impl Default for Config {
             model_catalog: ModelCatalog::default(),
             openrouter_discovery_seeds: Vec::new(),
             qwencloud_catalog_seeds: Vec::new(),
+            kimi_catalog_seeds: Vec::new(),
             startup_target: None,
         }
     }
@@ -87,6 +89,16 @@ impl Config {
         account: &AccountId,
     ) -> Option<&QwenCloudCatalogSeed> {
         self.qwencloud_catalog_seeds
+            .iter()
+            .find(|seed| seed.provider() == provider && seed.account() == account)
+    }
+
+    pub(crate) fn kimi_catalog_seed(
+        &self,
+        provider: &ProviderId,
+        account: &AccountId,
+    ) -> Option<&KimiCatalogSeed> {
+        self.kimi_catalog_seeds
             .iter()
             .find(|seed| seed.provider() == provider && seed.account() == account)
     }
@@ -471,12 +483,15 @@ struct ModelProfileConfig {
     tool_capability_policy: Authored<String>,
     #[serde(default)]
     verification_profile: Authored<String>,
+    #[serde(default)]
+    replay_profile: Authored<String>,
 }
 
 type ResolvedModelBindings = (
     Vec<ModelCatalogEntry>,
     Vec<OpenRouterDiscoverySeed>,
     Vec<QwenCloudCatalogSeed>,
+    Vec<KimiCatalogSeed>,
 );
 
 pub(crate) fn load() -> Result<Config, ConfigError> {
@@ -557,18 +572,23 @@ fn parse_snapshot(
             "model.catalog and model.bindings cannot be authored together",
         ));
     }
-    let (entries, openrouter_discovery_seeds, qwencloud_catalog_seeds) = match (catalog, bindings) {
-        (Authored::Missing, Authored::Present(bindings)) => model_binding_entries(path, bindings)?,
-        (Authored::Present(catalog), Authored::Missing) => catalog
-            .into_iter()
-            .map(|entry| model_entry(path, entry))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|entries| (entries, Vec::new(), Vec::new()))?,
-        (Authored::Missing, Authored::Missing) => (Vec::new(), Vec::new(), Vec::new()),
-        (Authored::Present(_), Authored::Present(_)) => {
-            unreachable!("both authored model collections were rejected")
-        },
-    };
+    let (entries, openrouter_discovery_seeds, qwencloud_catalog_seeds, kimi_catalog_seeds) =
+        match (catalog, bindings) {
+            (Authored::Missing, Authored::Present(bindings)) => {
+                model_binding_entries(path, bindings)?
+            },
+            (Authored::Present(catalog), Authored::Missing) => catalog
+                .into_iter()
+                .map(|entry| model_entry(path, entry))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|entries| (entries, Vec::new(), Vec::new(), Vec::new()))?,
+            (Authored::Missing, Authored::Missing) => {
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+            },
+            (Authored::Present(_), Authored::Present(_)) => {
+                unreachable!("both authored model collections were rejected")
+            },
+        };
     let model_catalog = ModelCatalog::new(entries).map_err(|error| ConfigError::InvalidModel {
         path: path.to_owned(),
         message: error.to_string(),
@@ -588,6 +608,7 @@ fn parse_snapshot(
         model_catalog,
         openrouter_discovery_seeds,
         qwencloud_catalog_seeds,
+        kimi_catalog_seeds,
         startup_target,
     };
     config.date_formatter().map_err(|error| match error {
@@ -715,6 +736,7 @@ fn model_binding_entries(
     let mut entries = Vec::new();
     let mut discovery_seeds = Vec::new();
     let mut catalog_seeds = Vec::new();
+    let mut kimi_catalog_seeds = Vec::new();
     for binding in bindings {
         let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
             path: path.to_owned(),
@@ -751,16 +773,29 @@ fn model_binding_entries(
                 ));
             }
             let catalog = VersionedProfileId::new(catalog).map_err(&invalid)?;
-            catalog_seeds.push(
-                QwenCloudCatalogSeed::resolve(
-                    catalog,
-                    provider,
-                    account,
-                    provider_display_name,
-                    account_display_name,
-                )
-                .map_err(&invalid)?,
-            );
+            if catalog.as_str() == "kimi-platform-ai/v1" {
+                kimi_catalog_seeds.push(
+                    KimiCatalogSeed::resolve(
+                        catalog,
+                        provider,
+                        account,
+                        provider_display_name,
+                        account_display_name,
+                    )
+                    .map_err(&invalid)?,
+                );
+            } else {
+                catalog_seeds.push(
+                    QwenCloudCatalogSeed::resolve(
+                        catalog,
+                        provider,
+                        account,
+                        provider_display_name,
+                        account_display_name,
+                    )
+                    .map_err(&invalid)?,
+                );
+            }
             continue;
         }
         let base_url = base_url.into_option().ok_or_else(|| {
@@ -860,7 +895,7 @@ fn model_binding_entries(
             }
         }
     }
-    Ok((entries, discovery_seeds, catalog_seeds))
+    Ok((entries, discovery_seeds, catalog_seeds, kimi_catalog_seeds))
 }
 
 fn model_profile_layer(
@@ -896,6 +931,14 @@ fn model_profile_layer(
             .map_err(&invalid)?,
         profile
             .verification_profile
+            .into_option()
+            .map(VersionedProfileId::new)
+            .transpose()
+            .map_err(&invalid)?,
+    )
+    .with_replay_profile(
+        profile
+            .replay_profile
             .into_option()
             .map(VersionedProfileId::new)
             .transpose()

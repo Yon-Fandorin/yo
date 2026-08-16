@@ -250,5 +250,8 @@ fn complete_binding_differences(
     if manual_profile.verification_profile() != managed_profile.verification_profile() {
         differences.push("verification_profile");
     }
+    if manual_profile.replay_profile() != managed_profile.replay_profile() {
+        differences.push("replay_profile");
+    }
     differences
 }

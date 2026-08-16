@@ -4,6 +4,7 @@ mod chat_request;
 mod chat_sse;
 mod connector;
 mod framing;
+mod kimi_request;
 mod request;
 mod sse;
 mod types;
@@ -14,8 +15,8 @@ pub(super) struct SseDecodeBatch {
 }
 
 pub use connector::{
-    OpenAiChatCompletionsConnector, OpenAiResponsesConnector, ResponsesCancellation,
-    ResponsesStream,
+    KimiChatCompletionsConnector, OpenAiChatCompletionsConnector, OpenAiResponsesConnector,
+    ResponsesCancellation, ResponsesStream,
 };
 pub use request::{
     FunctionTool, ReasoningEffort, RequestToolExposure, ResponsesInputItem, ResponsesInputRole,

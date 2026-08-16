@@ -48,6 +48,7 @@ impl CompleteModelBinding {
             optional_request_parameters,
             tool_capability_policy,
             verification_profile,
+            replay_profile,
         } = durable;
 
         let dialect = api_dialect.parse::<ApiDialect>()?;
@@ -68,7 +69,8 @@ impl CompleteModelBinding {
             Some(optional_request_parameters),
             Some(VersionedProfileId::new(tool_capability_policy)?),
             Some(VersionedProfileId::new(verification_profile)?),
-        );
+        )
+        .with_replay_profile(replay_profile.map(VersionedProfileId::new).transpose()?);
         let profile = EffectiveModelProfile::resolve(None, &layer)?;
         Self::new(binding, profile)
     }
@@ -100,6 +102,25 @@ struct DurableCompleteBinding {
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: String,
     verification_profile: String,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null_string")]
+    replay_profile: Option<String>,
+}
+
+fn deserialize_optional_non_null_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if matches!(
+        value.as_str(),
+        crate::SEMANTIC_REPLAY_PROFILE | crate::KIMI_PRIVATE_REPLAY_PROFILE
+    ) {
+        Ok(Some(value))
+    } else {
+        Err(serde::de::Error::custom(
+            "present replay_profile is outside the closed supported set",
+        ))
+    }
 }
 
 fn validate_json_number_spellings(value: &str) -> Result<(), ModelServiceError> {

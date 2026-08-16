@@ -50,6 +50,17 @@ fn connection_verification_always_disables_current_tool_exposure() {
     assert!(body.get("tool_choice").is_none());
 }
 
+// Kimi connector는 profile의 output cap과 wire cap이 정확히 같아야 하므로 검증 요청도
+// generic 32-token 축약 대신 해당 complete profile의 값을 그대로 사용합니다.
+#[test]
+fn connection_verification_preserves_the_exact_kimi_output_cap() {
+    let request = verification_request(&kimi_complete()).unwrap();
+    assert_eq!(
+        request.tokenization_payload("kimi-k2.6")["max_output_tokens"],
+        32_768
+    );
+}
+
 struct FakeVerificationStream {
     polls: VecDeque<Result<ModelConnectorPoll, ConnectorFailureKind>>,
     cancelled: bool,
@@ -216,6 +227,52 @@ fn unsupported_profile_fails_during_secret_free_preparation() {
     );
 }
 
+// replay profile과 Provider-specific Kimi envelope는 remote verification까지 미루지 않고
+// secret-free preparation에서 닫아 preview나 credential 입력으로 진행하지 않습니다.
+#[test]
+fn complete_binding_admission_precedes_external_verification() {
+    for binding in [cross_dialect_private_complete(), invalid_kimi_complete()] {
+        let fixture = Fixture::new("complete-binding-preflight");
+        let repositories = repositories(&fixture);
+        let mut session = repositories.acquire().unwrap();
+        let connection = fixture
+            .connections
+            .capture()
+            .unwrap()
+            .prepare_preference(Some(StartupTarget::HostCodex))
+            .unwrap()
+            .unwrap();
+
+        let error = session
+            .prepare_external_connection(digest('f'), connection, vec![binding])
+            .err()
+            .expect("invalid complete binding must fail preparation");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not support the resolved profile")
+        );
+        assert!(fixture.journal.capture().unwrap().is_none());
+        assert!(
+            fixture
+                .credentials
+                .capture()
+                .unwrap()
+                .revision()
+                .is_absent()
+        );
+        assert!(
+            fixture
+                .connections
+                .capture()
+                .unwrap()
+                .revision()
+                .is_absent()
+        );
+    }
+}
+
 // 정상 connect는 secret-free intent 뒤 credential을 먼저 저장하고 exact public mutation을
 // 게시한 다음 Complete journal을 지워, 최종 세 저장소가 한 operation으로 수렴합니다.
 #[test]
@@ -363,6 +420,27 @@ fn complete(model: &str) -> CompleteModelBinding {
 fn unsupported_complete() -> CompleteModelBinding {
     CompleteModelBinding::from_durable_json(
         r#"{"provider":"qwencloud","account":"default","model":"unsupported","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{"temperature":1.0},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+    )
+    .unwrap()
+}
+
+fn cross_dialect_private_complete() -> CompleteModelBinding {
+    CompleteModelBinding::from_durable_json(
+        r#"{"provider":"qwencloud","account":"default","model":"private-generic","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
+    )
+    .unwrap()
+}
+
+fn invalid_kimi_complete() -> CompleteModelBinding {
+    CompleteModelBinding::from_durable_json(
+        r#"{"provider":"kimi","account":"default","model":"kimi-k2.6","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":262144,"max_output_tokens":32767,"reasoning_parameters":{},"optional_request_parameters":{"thinking":{"type":"disabled"}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+    )
+    .unwrap()
+}
+
+fn kimi_complete() -> CompleteModelBinding {
+    CompleteModelBinding::from_durable_json(
+        r#"{"provider":"kimi","account":"default","model":"kimi-k2.6","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":262144,"max_output_tokens":32768,"reasoning_parameters":{},"optional_request_parameters":{"thinking":{"type":"disabled"}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
     )
     .unwrap()
 }

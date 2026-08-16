@@ -13,9 +13,11 @@ shapes, profile names, and focused commands in a separate runbook:
   discovery.
 - [QwenCloud](./provider-catalogs/qwencloud.md) uses release-known static
   registries derived from official plan allowlists.
+- [Kimi](./provider-catalogs/kimi.md) uses authenticated runtime discovery plus
+  reviewed execution overlays and an explicit local-private-replay consent.
 - [Add a new Provider](./provider-catalogs/new-provider.md) classifies the
-  source before choosing either design. Kimi and later Providers get their own
-  runbook when their design is accepted.
+  source before choosing either design. Later Providers get their own runbook
+  when their design is accepted.
 
 ## Choose the source model first
 

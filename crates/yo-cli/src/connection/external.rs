@@ -4,7 +4,8 @@ use yo_core::{
     AccountId, CompleteModelBinding, ConnectionSnapshot, ManagedConnectionAccount,
     ManagedConnectionBinding, ModelCatalog, ModelCatalogEntry, ModelSelection,
     PreparedConnectionMutation, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
-    discover_openrouter_models, resolve_startup_target, verify_external_connection,
+    discover_kimi_models, discover_openrouter_models, resolve_startup_target,
+    verify_external_connection,
 };
 
 use super::{
@@ -121,6 +122,63 @@ fn execute_external_connect_with_discovery<I>(
 where
     I: ExternalConnectInput,
 {
+    execute_external_connect_with_catalogs(
+        config_path,
+        command,
+        input,
+        discover_and_select,
+        |seed, candidate, input| {
+            let models = discover_kimi_models(seed, candidate)
+                .map_err(|error| AppError::single("discovering Kimi account models", error))?;
+            if models.is_empty() {
+                return Err(AppError::message("Kimi catalog returned no valid ModelId"));
+            }
+            let choices = models
+                .iter()
+                .map(ModelPickerItem::from_kimi)
+                .collect::<Vec<_>>();
+            let Some(selected) = input.select_model(&choices)? else {
+                return Ok(None);
+            };
+            models
+                .get(selected)
+                .and_then(|model| model.entry().cloned())
+                .map(Some)
+                .ok_or_else(|| {
+                    AppError::message(
+                        "the Kimi picker returned an invalid or disabled model selection",
+                    )
+                })
+        },
+        finalize,
+    )
+}
+
+fn execute_external_connect_with_catalogs<I>(
+    config_path: &Path,
+    command: ConnectCommand,
+    input: &mut I,
+    discover_openrouter_and_select: impl FnOnce(
+        &yo_core::OpenRouterDiscoverySeed,
+        &yo_core::ApiCredential,
+        &mut I,
+    ) -> Result<Option<ModelCatalogEntry>, AppError>,
+    discover_kimi_and_select: impl FnOnce(
+        &yo_core::KimiCatalogSeed,
+        &yo_core::ApiCredential,
+        &mut I,
+    ) -> Result<Option<ModelCatalogEntry>, AppError>,
+    finalize: impl FnOnce(
+        &mut yo_core::LocalConnectionOperationSession<'_>,
+        &config::Config,
+        yo_core::PreparedExternalConnection,
+        yo_core::ApiCredential,
+        bool,
+    ) -> Result<(), AppError>,
+) -> Result<String, AppError>
+where
+    I: ExternalConnectInput,
+{
     let repositories = operation_repositories(config_path)?;
     let mut session = repositories
         .acquire()
@@ -146,7 +204,23 @@ where
                 })?;
             let account_reference = format!("{provider}:{account}");
             let candidate = input.read_credential(&account_reference)?;
-            let Some(entry) = discover_and_select(seed, &candidate, input)? else {
+            let Some(entry) = discover_openrouter_and_select(seed, &candidate, input)? else {
+                return Ok("Connection cancelled; nothing changed.\n".to_owned());
+            };
+            (entry, Some(candidate), true)
+        },
+        Some((provider, account)) if provider.as_str() == "kimi" => {
+            let seed = config
+                .kimi_catalog_seed(&provider, &account)
+                .ok_or_else(|| {
+                    AppError::message(format!(
+                        "Kimi catalog target {} is not an exact configured Provider:Account seed",
+                        command.target
+                    ))
+                })?;
+            let account_reference = format!("{provider}:{account}");
+            let candidate = input.read_credential(&account_reference)?;
+            let Some(entry) = discover_kimi_and_select(seed, &candidate, input)? else {
                 return Ok("Connection cancelled; nothing changed.\n".to_owned());
             };
             (entry, Some(candidate), true)
@@ -487,9 +561,9 @@ fn catalog_pair(reference: &str) -> Result<Option<(ProviderId, AccountId)>, AppE
     if segments.next().is_some() {
         return Ok(None);
     }
-    if !matches!(provider, "openrouter" | "qwencloud") {
+    if !matches!(provider, "openrouter" | "qwencloud" | "kimi") {
         return Err(AppError::message(format!(
-            "two-part external connect target {reference:?} is unsupported; only configured openrouter:Account discovery or qwencloud:Account catalog selection is admitted"
+            "two-part external connect target {reference:?} is unsupported; only configured openrouter:Account or kimi:Account discovery and qwencloud:Account catalog selection are admitted"
         )));
     }
     let provider = ProviderId::new(provider)
@@ -533,6 +607,9 @@ fn selection_for(entry: &ModelCatalogEntry) -> ModelSelection {
 
 #[cfg(test)]
 mod discovery_tests;
+
+#[cfg(test)]
+mod kimi_catalog_tests;
 
 #[cfg(test)]
 mod qwencloud_catalog_tests;

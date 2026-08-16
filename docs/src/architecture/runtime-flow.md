@@ -595,6 +595,26 @@ reason instead of hiding them, and uses a conservative 8,192-token Yo output
 cap for selectable text-agent rows. Updating Yo does not rewrite a previously
 managed complete binding.
 
+Kimi uses the same compact seed shape with its authenticated discovery
+profile:
+
+```yaml
+model:
+  bindings:
+    - provider: kimi
+      provider_display_name: Kimi
+      account: team
+      account_display_name: Team
+      catalog: kimi-platform-ai/v1
+```
+
+This seed fixes `https://api.moonshot.ai/v1/` and creates no startup-routable
+model before discovery. A managed K3 or reviewed K2.7 coding binding records
+the explicit `kimi-private-local-plaintext/v1` replay profile; K2.6 records
+semantic-only replay through the compatible field omission. Manual K3/K2.7
+bindings must author the private replay profile explicitly, so ModelId or
+connector selection cannot manufacture consent.
+
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
 in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
 `120`; live startup reads it once and applies it to retained TUI generations.
@@ -714,6 +734,29 @@ the selected closed catalog fails with guidance to author an explicit manual
 binding. There is no remote model-list request: after one selectable row is
 chosen, the ordinary credential, complete binding-union verification, journal,
 and commit path remains authoritative.
+
+`yo connect kimi:Account` reads one candidate key, fetches one bounded
+authenticated `GET https://api.moonshot.ai/v1/models` snapshot, and passes the
+normalized typed rows to the same picker. The first valid exact ModelId wins;
+more than 4,096 rows reject the whole snapshot. K3, K2.7 Code, K2.7 Code
+Highspeed, and K2.6 become selectable only when their remote context and
+reasoning evidence remain inside the reviewed envelope. Other valid rows stay
+visible with a stable disabled reason rather than being hidden. K3 is marked
+recommended, Highspeed is marked separately, and forced-thinking versus
+reasoning-off behavior remains visible. Before a K3/K2.7 managed binding is
+published, the compact preview states that bounded Kimi assistant state will
+be retained unencrypted in current-user local Session records.
+
+The `kimi-chat-completions` connector then owns the exact request and stream
+grammar for that selected complete binding. Successful K3/K2.7 rounds emit one
+bounded provider-private assistant item containing the complete reasoning,
+content, and tool-call message. It is hidden from frontend and Request-trace
+projection, stored atomically beside its visible assistant/function
+projection, and admitted only under a matching private replay profile and
+binding epoch. The next Kimi request replaces that visible group with the
+private assistant message exactly once. Semantic-only bindings cannot store or
+replay the private item, and an incomplete or failed round creates no private
+Continuation Anchor.
 
 `yo connect openrouter:Account` is an interactive discovery target only when
 that exact configured binding has a normalized endpoint and complete base

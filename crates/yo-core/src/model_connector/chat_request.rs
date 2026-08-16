@@ -47,6 +47,11 @@ pub(super) fn wire_body(request: &ResponsesRequest, model: &str) -> Result<Value
                 }));
                 index += 1;
             },
+            ResponsesInputItem::ProviderPrivateAssistant { .. } => {
+                return Err(configuration_failure(
+                    "provider-private assistant replay requires its provider-specific connector",
+                ));
+            },
         }
     }
 

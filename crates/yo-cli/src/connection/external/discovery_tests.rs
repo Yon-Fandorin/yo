@@ -7,7 +7,7 @@ use crate::{
     connection::{input::ExternalConnectInput, presentation::Confirmation},
 };
 
-// 두 부분 target은 정확히 configured OpenRouter discovery와 QwenCloud catalog에만
+// 두 부분 target은 정확히 configured OpenRouter/Kimi discovery와 QwenCloud catalog에만
 // 예약하고, 다른 Provider나 세 부분 exact ModelTarget과 섞이지 않는지 판별합니다.
 #[test]
 fn recognizes_only_the_closed_two_part_onboarding_shapes() {
@@ -16,6 +16,9 @@ fn recognizes_only_the_closed_two_part_onboarding_shapes() {
     assert_eq!(account.as_str(), "team");
     let (provider, account) = catalog_pair("qwencloud:team").unwrap().unwrap();
     assert_eq!(provider.as_str(), "qwencloud");
+    assert_eq!(account.as_str(), "team");
+    let (provider, account) = catalog_pair("kimi:team").unwrap().unwrap();
+    assert_eq!(provider.as_str(), "kimi");
     assert_eq!(account.as_str(), "team");
     assert!(catalog_pair("openrouter:team:model").unwrap().is_none());
     assert!(
@@ -30,7 +33,7 @@ fn recognizes_only_the_closed_two_part_onboarding_shapes() {
 // credential 파일을 열기 전에 명시적으로 거절합니다.
 #[test]
 fn discovery_rejects_non_interactive_options_before_io() {
-    for target in ["openrouter:team", "qwencloud:team"] {
+    for target in ["openrouter:team", "qwencloud:team", "kimi:team"] {
         for (credential_file, yes) in [
             (Some(std::path::PathBuf::from("/not/read/credential")), true),
             (

@@ -81,6 +81,7 @@ fn binding() -> BackendBindingEvidence {
         BackendIdentity::new("codex.app-server/thread-locator/v1", "thread-a"),
         ContinuationStrategy::ExactReplay {
             executor: ReplayExecutor::LocalClient,
+            replay_profile: crate::ReplayProfile::SemanticOnly,
         },
     )
 }

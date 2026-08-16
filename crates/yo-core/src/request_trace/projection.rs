@@ -191,11 +191,13 @@ pub(crate) const fn continuation_strategy(
     value: ContinuationStrategy,
 ) -> StoredContinuationStrategy {
     match value {
-        ContinuationStrategy::ExactReplay { executor } => StoredContinuationStrategy::ExactReplay {
-            executor: match executor {
-                ReplayExecutor::LocalClient => StoredReplayExecutor::LocalClient,
-                ReplayExecutor::ManagedServer => StoredReplayExecutor::ManagedServer,
-            },
+        ContinuationStrategy::ExactReplay { executor, .. } => {
+            StoredContinuationStrategy::ExactReplay {
+                executor: match executor {
+                    ReplayExecutor::LocalClient => StoredReplayExecutor::LocalClient,
+                    ReplayExecutor::ManagedServer => StoredReplayExecutor::ManagedServer,
+                },
+            }
         },
         ContinuationStrategy::BackendManagedState => {
             StoredContinuationStrategy::BackendManagedState

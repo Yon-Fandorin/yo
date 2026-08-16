@@ -29,9 +29,13 @@ pub use backend::{
     BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
     BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendScriptStep, BackendStopHandle,
     CodexBackend, CodexBackendConfig, CodexSkillReferenceProvider, ContinuationStrategy,
-    ModelReplay, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    ModelReplayTool, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-    ReplayExecutor, ScriptedBackend,
+    KimiAssistantMessage, KimiAssistantToolCall, ModelReplay, ModelReplayContract,
+    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool, NativeModelBackend,
+    NativeModelBackendConfig, NativeModelBackendServices, ReplayExecutor, ReplayProfile,
+    ScriptedBackend,
+};
+pub(crate) use backend::{
+    KimiReplayToolCallSize, ModelReplayBudget, kimi_replay_round_item_lengths,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
@@ -53,13 +57,14 @@ pub use journal::{
     TranscriptSlice,
 };
 pub use model_connector::{
-    ConnectorError, ConnectorFailureKind, FunctionTool, ModelConnectorCancellation,
-    ModelConnectorEvent, ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits,
-    ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStream, ModelConnectorTerminal,
-    ModelConnectorUsage, OpenAiChatCompletionsConnector, OpenAiResponsesConnector,
-    ReasoningChannel, ReasoningEffort, RequestToolExposure, ResponseTerminal,
-    ResponsesCancellation, ResponsesConnectorLimits, ResponsesEvent, ResponsesInputItem,
-    ResponsesInputRole, ResponsesPoll, ResponsesRequest, ResponsesStream, ResponsesUsage,
+    ConnectorError, ConnectorFailureKind, FunctionTool, KimiChatCompletionsConnector,
+    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
+    ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
+    ModelConnectorStream, ModelConnectorTerminal, ModelConnectorUsage,
+    OpenAiChatCompletionsConnector, OpenAiResponsesConnector, ReasoningChannel, ReasoningEffort,
+    RequestToolExposure, ResponseTerminal, ResponsesCancellation, ResponsesConnectorLimits,
+    ResponsesEvent, ResponsesInputItem, ResponsesInputRole, ResponsesPoll, ResponsesRequest,
+    ResponsesStream, ResponsesUsage,
 };
 pub use model_service::{
     AccountId, ApiCredential, ApiDialect, BindingConflict, CompleteModelBinding, ConnectionCommit,
@@ -71,6 +76,8 @@ pub use model_service::{
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
     CredentialSnapshot, CredentialStore, EffectiveModelBinding, EffectiveModelProfile,
     ExternalConnectionError, ExternalDisconnectCredentialAction, ExternalDisconnectError,
+    KIMI_PRIVATE_REPLAY_PROFILE, KimiCatalogAvailability, KimiCatalogDisabledReason,
+    KimiCatalogError, KimiCatalogFailureKind, KimiCatalogModel, KimiCatalogSeed,
     LocalConnectionOperationGuard, LocalConnectionOperationJournal,
     LocalConnectionOperationRepositories, LocalConnectionOperationSession,
     LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStore,
@@ -83,10 +90,10 @@ pub use model_service::{
     OpenRouterModelAvailability, OpenRouterModelCapabilities, PreparedConnectionMutation,
     PreparedCredentialMutation, PreparedExternalConnection, PreparedExternalDisconnect, ProviderId,
     QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogModel,
-    QwenCloudCatalogSeed, StartupPolicy, StartupSelectionSources, StartupTarget,
-    VerifiedExternalConnection, VersionedProfileId, discover_openrouter_models,
-    plan_connection_recovery, resolve_startup_target, validate_profile_yaml_number_spellings,
-    verify_external_connection,
+    QwenCloudCatalogSeed, SEMANTIC_REPLAY_PROFILE, StartupPolicy, StartupSelectionSources,
+    StartupTarget, VerifiedExternalConnection, VersionedProfileId, discover_kimi_models,
+    discover_openrouter_models, parse_kimi_catalog_snapshot, plan_connection_recovery,
+    resolve_startup_target, validate_profile_yaml_number_spellings, verify_external_connection,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

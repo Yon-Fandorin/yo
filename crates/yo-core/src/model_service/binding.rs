@@ -8,17 +8,20 @@ use super::{AccountId, ModelId, ModelServiceError, ProviderId};
 pub enum ApiDialect {
     OpenAiResponses,
     OpenAiChatCompletions,
+    KimiChatCompletions,
 }
 
 impl ApiDialect {
     pub const OPENAI_RESPONSES: &'static str = "openai-responses";
     pub const OPENAI_CHAT_COMPLETIONS: &'static str = "openai-chat-completions";
+    pub const KIMI_CHAT_COMPLETIONS: &'static str = "kimi-chat-completions";
 
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::OpenAiResponses => Self::OPENAI_RESPONSES,
             Self::OpenAiChatCompletions => Self::OPENAI_CHAT_COMPLETIONS,
+            Self::KimiChatCompletions => Self::KIMI_CHAT_COMPLETIONS,
         }
     }
 }
@@ -36,10 +39,12 @@ impl FromStr for ApiDialect {
         match value {
             Self::OPENAI_RESPONSES => Ok(Self::OpenAiResponses),
             Self::OPENAI_CHAT_COMPLETIONS => Ok(Self::OpenAiChatCompletions),
+            Self::KIMI_CHAT_COMPLETIONS => Ok(Self::KimiChatCompletions),
             _ => Err(ModelServiceError::new(format!(
-                "unsupported api_dialect {value:?}; expected {} or {}",
+                "unsupported api_dialect {value:?}; expected {}, {}, or {}",
                 Self::OPENAI_RESPONSES,
                 Self::OPENAI_CHAT_COMPLETIONS,
+                Self::KIMI_CHAT_COMPLETIONS,
             ))),
         }
     }
@@ -51,17 +56,19 @@ pub struct ConnectorId(String);
 impl ConnectorId {
     pub const OPENAI_RESPONSES: &'static str = "openai-responses";
     pub const OPENAI_CHAT_COMPLETIONS: &'static str = "openai-chat-completions";
+    pub const KIMI_CHAT_COMPLETIONS: &'static str = "kimi-chat-completions";
 
     pub fn new(value: impl Into<String>) -> Result<Self, ModelServiceError> {
         let value = value.into();
         if !matches!(
             value.as_str(),
-            Self::OPENAI_RESPONSES | Self::OPENAI_CHAT_COMPLETIONS
+            Self::OPENAI_RESPONSES | Self::OPENAI_CHAT_COMPLETIONS | Self::KIMI_CHAT_COMPLETIONS
         ) {
             return Err(ModelServiceError::new(format!(
-                "unsupported Model Connector {value:?}; expected {} or {}",
+                "unsupported Model Connector {value:?}; expected {}, {}, or {}",
                 Self::OPENAI_RESPONSES,
                 Self::OPENAI_CHAT_COMPLETIONS,
+                Self::KIMI_CHAT_COMPLETIONS,
             )));
         }
         Ok(Self(value))
@@ -72,6 +79,7 @@ impl ConnectorId {
         let value = match dialect {
             ApiDialect::OpenAiResponses => Self::OPENAI_RESPONSES,
             ApiDialect::OpenAiChatCompletions => Self::OPENAI_CHAT_COMPLETIONS,
+            ApiDialect::KimiChatCompletions => Self::KIMI_CHAT_COMPLETIONS,
         };
         Self(value.to_owned())
     }

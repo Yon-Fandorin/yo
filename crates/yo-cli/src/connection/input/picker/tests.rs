@@ -22,6 +22,8 @@ fn choices(count: usize) -> Vec<PickerChoice> {
             output_limit: Some(8_000),
             tool_policy: Some("local-tools/v1".to_owned()),
             reasoning: Some(index.is_multiple_of(2)),
+            reasoning_label: None,
+            badges: Vec::new(),
             enabled: true,
             disabled_reason: None,
         })
@@ -67,6 +69,8 @@ fn query_edits_reset_selection_and_allow_a_recoverable_empty_result() {
             output_limit: Some(1),
             tool_policy: Some("no-tools/v1".to_owned()),
             reasoning: Some(false),
+            reasoning_label: None,
+            badges: Vec::new(),
             enabled: true,
             disabled_reason: None,
         },
@@ -77,6 +81,8 @@ fn query_edits_reset_selection_and_allow_a_recoverable_empty_result() {
             output_limit: Some(1),
             tool_policy: Some("no-tools/v1".to_owned()),
             reasoning: Some(false),
+            reasoning_label: None,
+            badges: Vec::new(),
             enabled: true,
             disabled_reason: None,
         },
@@ -154,6 +160,93 @@ fn panel_identifies_the_provider_and_account_once_without_narrow_width_clipping(
     assert!(unwrapped.contains("Provider  openrouterAccount  team"));
     assert_eq!(unwrapped.matches("openrouter").count(), 1);
     assert_eq!(unwrapped.matches("team").count(), 1);
+}
+
+// Kimi inventory의 실제 typed 행을 picker 입력으로 넘겨 K3/K2.7 badge와 reasoning 상태,
+// 미검토 일반 K2.7의 비활성 사유가 최종 panel까지 손실 없이 전달되는지 판별합니다.
+#[test]
+fn kimi_inventory_fields_reach_the_rendered_picker_panel() {
+    let seed = yo_core::KimiCatalogSeed::resolve(
+        yo_core::VersionedProfileId::new("kimi-platform-ai/v1").unwrap(),
+        yo_core::ProviderId::new("kimi").unwrap(),
+        yo_core::AccountId::new("team").unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    let snapshot = br#"{"object":"list","data":[
+        {"object":"model","id":"kimi-k3","context_length":1048576},
+        {"object":"model","id":"kimi-k2.7-code-highspeed","context_length":262144},
+        {"object":"model","id":"kimi-k2.7","context_length":262144}
+    ]}"#;
+    let items = yo_core::parse_kimi_catalog_snapshot(&seed, snapshot)
+        .unwrap()
+        .iter()
+        .map(ModelPickerItem::from_kimi)
+        .collect::<Vec<_>>();
+    let identity = PickerIdentity::from_models(&items).unwrap();
+    let choices = items.iter().map(PickerChoice::from).collect::<Vec<_>>();
+    let mut state = PickerState::new(&choices);
+    state.query = "kimi-k3".to_owned();
+    state.recompute(&choices);
+    let rendered =
+        render_lines(&identity, &state, &choices, 160, PresentationStyle::Plain).join("\n");
+    assert!(rendered.contains("reasoning required/max · recommended · ready"));
+
+    state.query = "highspeed".to_owned();
+    state.recompute(&choices);
+    let rendered =
+        render_lines(&identity, &state, &choices, 160, PresentationStyle::Plain).join("\n");
+    assert!(rendered.contains("reasoning required · high-speed · ready"));
+
+    state.query = "kimi-k2.7".to_owned();
+    state.recompute(&choices);
+    assert_eq!(state.accept_selected(&choices), None);
+    let rendered =
+        render_lines(&identity, &state, &choices, 160, PresentationStyle::Plain).join("\n");
+    assert!(rendered.contains("Unavailable  profile unavailable"));
+}
+
+// K2.6은 실행 시 thinking off가 고정되므로 remote capability가 없거나 malformed여도
+// generic reasoning-unknown으로 보이지 않고 정확히 unknown/off를 표시합니다.
+#[test]
+fn kimi_k26_missing_or_malformed_reasoning_is_explicitly_unknown_and_off() {
+    let seed = yo_core::KimiCatalogSeed::resolve(
+        yo_core::VersionedProfileId::new("kimi-platform-ai/v1").unwrap(),
+        yo_core::ProviderId::new("kimi").unwrap(),
+        yo_core::AccountId::new("team").unwrap(),
+        None,
+        None,
+    )
+    .unwrap();
+    for row in [
+        r#"{"object":"model","id":"kimi-k2.6","context_length":262144}"#,
+        r#"{"object":"model","id":"kimi-k2.6","context_length":262144,"supports_reasoning":"unknown"}"#,
+    ] {
+        let snapshot = format!(r#"{{"object":"list","data":[{row}]}}"#);
+        let model = yo_core::parse_kimi_catalog_snapshot(&seed, snapshot.as_bytes())
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let choice = PickerChoice::from(&ModelPickerItem::from_kimi(&model));
+        assert_eq!(
+            choice.reasoning_label.as_deref(),
+            Some("reasoning unknown/off")
+        );
+        let rendered = render_lines(
+            &PickerIdentity {
+                provider: "kimi".to_owned(),
+                account: "team".to_owned(),
+            },
+            &PickerState::new(std::slice::from_ref(&choice)),
+            std::slice::from_ref(&choice),
+            160,
+            PresentationStyle::Plain,
+        )
+        .join("\n");
+        assert!(rendered.contains("reasoning unknown/off"), "{rendered}");
+    }
 }
 
 // 실제 PTY에서 picker가 raw mode와 숨긴 cursor를 소유한 채 panic해도 Drop 경계가

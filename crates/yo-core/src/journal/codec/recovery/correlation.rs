@@ -5,8 +5,8 @@ use super::super::{
     JournalRecord, OperationId, TransitionMode,
 };
 use crate::{
-    AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplay, TurnId,
-    TurnOutcome,
+    AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
+    ReplayProfile, TurnId, TurnOutcome,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -127,6 +127,29 @@ impl CorrelationRecovery {
                     return Err(JournalCodecError::new(
                         "model_replay_delta requires an exact-replay open epoch",
                     ));
+                }
+                let has_provider_private =
+                    replay.delta().items().iter().any(|item| {
+                        matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. })
+                    });
+                match self.open_strategy {
+                    Some(ContinuationStrategy::ExactReplay {
+                        replay_profile: ReplayProfile::SemanticOnly,
+                        ..
+                    }) if has_provider_private => {
+                        return Err(JournalCodecError::new(
+                            "semantic-only exact replay cannot contain provider-private items",
+                        ));
+                    },
+                    Some(ContinuationStrategy::ExactReplay {
+                        replay_profile: ReplayProfile::KimiPrivateLocalPlaintext,
+                        ..
+                    }) if !has_provider_private => {
+                        return Err(JournalCodecError::new(
+                            "Kimi private exact replay requires a provider-private assistant item",
+                        ));
+                    },
+                    _ => {},
                 }
                 if self
                     .latest_accepted_request
@@ -464,6 +487,7 @@ impl CorrelationRecovery {
                 let inherited_local_replay_anchor = binding.continuation_strategy()
                     == (ContinuationStrategy::ExactReplay {
                         executor: crate::ReplayExecutor::LocalClient,
+                        replay_profile: crate::ReplayProfile::SemanticOnly,
                     })
                     && binding.transition().mode() == TransitionMode::ExactReplay;
                 if self.replacement_source != Some((source, previous))

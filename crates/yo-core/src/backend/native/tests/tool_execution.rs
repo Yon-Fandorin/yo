@@ -151,7 +151,10 @@ fn native_backend_runs_automatic_tool_once_and_replays_it_before_the_next_round(
         binding_evidence,
         BackendCommandEvidence::BindingOpened(ref evidence)
             if evidence.continuation_strategy()
-                == ContinuationStrategy::ExactReplay { executor: ReplayExecutor::LocalClient }
+                == ContinuationStrategy::ExactReplay {
+                    executor: ReplayExecutor::LocalClient,
+                    replay_profile: crate::ReplayProfile::SemanticOnly,
+                }
     ));
     backend
         .execute_command(AgentCommand::StartTurn {

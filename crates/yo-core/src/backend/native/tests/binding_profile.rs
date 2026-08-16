@@ -204,12 +204,49 @@ fn explicit_profile_rejects_unsupported_runtime_fields() {
             "local-tools/v1",
             "semantic-terminal/v1",
         ),
+        profile(
+            "{}",
+            r#"{"thinking":{"type":"disabled"}}"#,
+            "local-tools/v1",
+            "semantic-terminal/v1",
+        ),
+        profile(
+            r#"{"effort":"max"}"#,
+            "{}",
+            "local-tools/v1",
+            "semantic-terminal/v1",
+        ),
         profile("{}", "{}", "other-tools/v1", "semantic-terminal/v1"),
         profile("{}", "{}", "local-tools/v1", "other-terminal/v1"),
         profile("null", "{}", "local-tools/v1", "semantic-terminal/v1"),
     ] {
         assert!(backend_with_profile(unsupported).is_err());
     }
+}
+
+// generic OpenAI binding은 Kimi private replay profile을 runtime 기본값으로 축약하지 않고
+// complete-binding admission에서 초기화를 실패시켜 만족시킬 수 없는 private epoch를 열지 않습니다.
+#[test]
+fn generic_binding_rejects_cross_dialect_private_replay_profile() {
+    let private = EffectiveModelProfile::resolve(
+        None,
+        &ModelProfileLayer::new(
+            Some(ApiDialect::OpenAiResponses),
+            Some(VersionedProfileId::new("test-tokenizer/v1").unwrap()),
+            Some(1_000_000),
+            Some(4_096),
+            Some(parameters("{}")),
+            Some(parameters("{}")),
+            Some(VersionedProfileId::new("local-tools/v1").unwrap()),
+            Some(VersionedProfileId::new("semantic-terminal/v1").unwrap()),
+        )
+        .with_replay_profile(Some(
+            VersionedProfileId::new("kimi-private-local-plaintext/v1").unwrap(),
+        )),
+    )
+    .unwrap();
+
+    assert!(backend_with_profile(private).is_err());
 }
 
 // no-tools profile은 empty runtime registry만 허용하고 실제 첫 model request에서도 현재

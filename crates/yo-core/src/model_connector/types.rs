@@ -17,6 +17,7 @@ pub struct ResponsesConnectorLimits {
     pub max_refusal_bytes: usize,
     pub max_reasoning_bytes: usize,
     pub max_function_argument_bytes: usize,
+    pub max_provider_private_bytes: usize,
 }
 
 impl Default for ResponsesConnectorLimits {
@@ -37,6 +38,7 @@ impl Default for ResponsesConnectorLimits {
             max_refusal_bytes: 16 * 1024 * 1024,
             max_reasoning_bytes: 16 * 1024 * 1024,
             max_function_argument_bytes: 4 * 1024 * 1024,
+            max_provider_private_bytes: 16 * 1024 * 1024,
         }
     }
 }
@@ -70,6 +72,7 @@ impl ResponsesConnectorLimits {
             self.max_refusal_bytes,
             self.max_reasoning_bytes,
             self.max_function_argument_bytes,
+            self.max_provider_private_bytes,
         ];
         if bounds.into_iter().any(|bound| bound == 0) {
             return Err(ConnectorError::new(
@@ -192,6 +195,11 @@ pub enum ResponsesEvent {
         call_id: String,
         name: String,
         arguments: String,
+    },
+    ProviderPrivateAssistant {
+        output_index: usize,
+        schema: String,
+        message: crate::KimiAssistantMessage,
     },
     Terminal {
         response_id: String,

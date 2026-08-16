@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde_json::{Value, json};
 
 use super::{valid_schema, valid_value};
@@ -7,6 +9,49 @@ const MAX_REPLAY_TEXT_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const MAX_REPLAY_CONTRACT_BYTES: usize = 1024 * 1024;
 pub(super) const MAX_REPLAY_DELTA_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REPLAY_PREFIX_BYTES: usize = 64 * 1024 * 1024;
+const KIMI_ASSISTANT_SCHEMA: &str = "kimi.assistant-message/v1alpha1";
+const MAX_KIMI_TOOL_CALLS: usize = 1_024;
+const MAX_KIMI_CALL_ID_BYTES: usize = 4_096;
+const MAX_KIMI_FUNCTION_NAME_BYTES: usize = 64;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ModelReplayBudget {
+    encoded_prefix_bytes: usize,
+    prefix_items: usize,
+}
+
+impl ModelReplayBudget {
+    pub(crate) fn accepts_item_lengths(&self, item_lengths: &[usize]) -> bool {
+        self.encoded_len_with_item_lengths(item_lengths)
+            .is_some_and(|bytes| bytes <= MAX_REPLAY_DELTA_BYTES)
+    }
+
+    pub(crate) fn encoded_len_with_item_lengths(&self, item_lengths: &[usize]) -> Option<usize> {
+        let total_items = self.prefix_items.checked_add(item_lengths.len())?;
+        if total_items > MAX_REPLAY_ITEMS {
+            return None;
+        }
+        item_lengths
+            .iter()
+            .try_fold(
+                (self.encoded_prefix_bytes, self.prefix_items),
+                |(bytes, items), item_bytes| {
+                    bytes
+                        .checked_add(usize::from(items != 0))?
+                        .checked_add(*item_bytes)
+                        .map(|bytes| (bytes, items + 1))
+                },
+            )
+            .map(|(bytes, _)| bytes)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct KimiReplayToolCallSize {
+    pub(crate) id_json_bytes: usize,
+    pub(crate) name_json_bytes: usize,
+    pub(crate) arguments_json_bytes: usize,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ModelReplayRole {
@@ -111,6 +156,121 @@ pub enum ModelReplayItem {
         call_id: String,
         output: String,
     },
+    ProviderPrivateAssistant {
+        schema: String,
+        message: KimiAssistantMessage,
+    },
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct KimiAssistantToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+impl fmt::Debug for KimiAssistantToolCall {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("KimiAssistantToolCall")
+            .field("id_bytes", &self.id.len())
+            .field("name_bytes", &self.name.len())
+            .field("argument_bytes", &self.arguments.len())
+            .finish()
+    }
+}
+
+impl KimiAssistantToolCall {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            arguments: arguments.into(),
+        }
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn arguments(&self) -> &str {
+        &self.arguments
+    }
+
+    fn is_valid(&self) -> bool {
+        !self.id.is_empty()
+            && self.id.len() <= MAX_KIMI_CALL_ID_BYTES
+            && valid_kimi_function_name(&self.name)
+            && self.arguments.len() <= 4 * 1024 * 1024
+            && serde_json::from_str::<Value>(&self.arguments).is_ok()
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub struct KimiAssistantMessage {
+    reasoning_content: String,
+    content: Option<String>,
+    tool_calls: Vec<KimiAssistantToolCall>,
+}
+
+impl fmt::Debug for KimiAssistantMessage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("KimiAssistantMessage")
+            .field("reasoning_bytes", &self.reasoning_content.len())
+            .field("content_bytes", &self.content.as_ref().map(String::len))
+            .field("tool_call_count", &self.tool_calls.len())
+            .finish()
+    }
+}
+
+impl KimiAssistantMessage {
+    pub fn new(
+        reasoning_content: impl Into<String>,
+        content: Option<String>,
+        tool_calls: Vec<KimiAssistantToolCall>,
+    ) -> Self {
+        Self {
+            reasoning_content: reasoning_content.into(),
+            content,
+            tool_calls,
+        }
+    }
+
+    pub fn reasoning_content(&self) -> &str {
+        &self.reasoning_content
+    }
+
+    pub fn content(&self) -> Option<&str> {
+        self.content.as_deref()
+    }
+
+    pub fn tool_calls(&self) -> &[KimiAssistantToolCall] {
+        &self.tool_calls
+    }
+
+    pub(crate) fn is_valid(&self) -> bool {
+        self.reasoning_content.len() <= MAX_REPLAY_TEXT_BYTES
+            && self
+                .content
+                .as_ref()
+                .is_none_or(|content| content.len() <= MAX_REPLAY_TEXT_BYTES)
+            && self.tool_calls.len() <= MAX_KIMI_TOOL_CALLS
+            && self.tool_calls.iter().all(KimiAssistantToolCall::is_valid)
+            && (!self.tool_calls.is_empty() || self.content.is_some())
+            && {
+                let mut ids = std::collections::HashSet::new();
+                self.tool_calls.iter().all(|call| ids.insert(call.id()))
+            }
+    }
 }
 
 impl ModelReplayItem {
@@ -139,6 +299,9 @@ impl ModelReplayItem {
             Self::FunctionCallOutput { call_id, output } => {
                 valid_value(call_id) && output.len() <= MAX_REPLAY_TEXT_BYTES
             },
+            Self::ProviderPrivateAssistant { schema, message } => {
+                schema == KIMI_ASSISTANT_SCHEMA && message.is_valid()
+            },
         }
     }
 }
@@ -150,6 +313,8 @@ pub struct ModelReplayDelta {
 }
 
 impl ModelReplayDelta {
+    pub(crate) const MAX_ENCODED_BYTES: usize = MAX_REPLAY_DELTA_BYTES;
+
     pub fn new(contract: Option<ModelReplayContract>, items: Vec<ModelReplayItem>) -> Self {
         Self { contract, items }
     }
@@ -167,14 +332,106 @@ impl ModelReplayDelta {
             .as_ref()
             .is_none_or(ModelReplayContract::is_valid)
             && !self.items.is_empty()
-            && self.items.len() <= MAX_REPLAY_ITEMS
+            && self.fits_capacity()
             && self.items.iter().all(ModelReplayItem::is_valid)
-            && encoded_delta_len(self) <= MAX_REPLAY_DELTA_BYTES
+    }
+
+    pub(crate) fn fits_capacity(&self) -> bool {
+        Self::prospective_encoded_len(self.contract.as_ref(), self.items.iter())
+            .is_some_and(|bytes| bytes <= MAX_REPLAY_DELTA_BYTES)
+    }
+
+    pub(crate) fn prospective_encoded_len<'a>(
+        contract: Option<&ModelReplayContract>,
+        items: impl Iterator<Item = &'a ModelReplayItem>,
+    ) -> Option<usize> {
+        let items = items.collect::<Vec<_>>();
+        (items.len() <= MAX_REPLAY_ITEMS).then(|| encoded_prefix_len(contract, items.into_iter()))
+    }
+
+    pub(crate) fn replay_budget<'a>(
+        contract: Option<&ModelReplayContract>,
+        items: impl Iterator<Item = &'a ModelReplayItem>,
+    ) -> Option<ModelReplayBudget> {
+        let items = items.collect::<Vec<_>>();
+        let encoded_prefix_bytes = (items.len() <= MAX_REPLAY_ITEMS)
+            .then(|| encoded_prefix_len(contract, items.iter().copied()))?;
+        (encoded_prefix_bytes <= MAX_REPLAY_DELTA_BYTES).then_some(ModelReplayBudget {
+            encoded_prefix_bytes,
+            prefix_items: items.len(),
+        })
     }
 
     pub(crate) fn validate(&self) -> Result<(), &'static str> {
         validate_replay_delta(self).map(|_| ())
     }
+}
+
+pub(crate) fn kimi_replay_round_item_lengths(
+    private_replay: bool,
+    content_seen: bool,
+    content_json_bytes: usize,
+    reasoning_json_bytes: usize,
+    calls: &[KimiReplayToolCallSize],
+) -> Option<Vec<usize>> {
+    let message = encoded_item_len(&ModelReplayItem::Message {
+        role: ModelReplayRole::Assistant,
+        content: String::new(),
+        refusal: None,
+    })
+    .checked_add(content_json_bytes)?;
+    let empty_call = encoded_item_len(&ModelReplayItem::FunctionCall {
+        call_id: String::new(),
+        name: String::new(),
+        arguments: String::new(),
+    });
+    let mut lengths = Vec::with_capacity(calls.len().checked_add(2)?);
+    lengths.push(message);
+    for call in calls {
+        lengths.push(
+            empty_call
+                .checked_add(call.id_json_bytes)?
+                .checked_add(call.name_json_bytes)?
+                .checked_add(call.arguments_json_bytes)?,
+        );
+    }
+
+    if !private_replay {
+        return Some(lengths);
+    }
+
+    let empty_private_call = KimiAssistantToolCall::new("", "", "");
+    let empty_private_call_bytes = encoded_kimi_private_call_len(&empty_private_call);
+    let private_message = if calls.is_empty() {
+        KimiAssistantMessage::new("", Some(String::new()), Vec::new())
+    } else {
+        KimiAssistantMessage::new("", None, vec![empty_private_call])
+    };
+    let mut private = encoded_item_len(&ModelReplayItem::ProviderPrivateAssistant {
+        schema: KIMI_ASSISTANT_SCHEMA.to_owned(),
+        message: private_message,
+    })
+    .checked_add(reasoning_json_bytes)?;
+    if calls.is_empty() {
+        private = private.checked_add(content_json_bytes)?;
+    } else {
+        if content_seen {
+            private = private.checked_sub(2)?.checked_add(content_json_bytes)?;
+        }
+        for (index, call) in calls.iter().enumerate() {
+            if index != 0 {
+                private = private
+                    .checked_add(1)?
+                    .checked_add(empty_private_call_bytes)?;
+            }
+            private = private
+                .checked_add(call.id_json_bytes)?
+                .checked_add(call.name_json_bytes)?
+                .checked_add(call.arguments_json_bytes)?;
+        }
+    }
+    lengths.push(private);
+    Some(lengths)
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -252,7 +509,7 @@ fn validate_replay_delta(
     }
     let mut known_calls = std::collections::BTreeSet::new();
     let mut answered_calls = std::collections::BTreeSet::new();
-    for item in &delta.items {
+    for (index, item) in delta.items.iter().enumerate() {
         match item {
             ModelReplayItem::FunctionCall {
                 call_id, arguments, ..
@@ -273,6 +530,9 @@ fn validate_replay_delta(
                 }
             },
             ModelReplayItem::Message { .. } => {},
+            ModelReplayItem::ProviderPrivateAssistant { message, .. } => {
+                validate_kimi_private_projection(&delta.items, index, message)?;
+            },
         }
     }
     if known_calls.difference(&answered_calls).next().is_some() {
@@ -281,19 +541,65 @@ fn validate_replay_delta(
     Ok((known_calls, answered_calls))
 }
 
+fn validate_kimi_private_projection(
+    items: &[ModelReplayItem],
+    private_index: usize,
+    private: &KimiAssistantMessage,
+) -> Result<(), &'static str> {
+    let mut group_start = private_index;
+    while group_start > 0 && matches!(items[group_start - 1], ModelReplayItem::FunctionCall { .. })
+    {
+        group_start -= 1;
+    }
+    let Some(ModelReplayItem::Message {
+        role: ModelReplayRole::Assistant,
+        content,
+        refusal: None,
+    }) = group_start
+        .checked_sub(1)
+        .and_then(|index| items.get(index))
+    else {
+        return Err("Kimi private assistant has no immediately preceding assistant projection");
+    };
+    if private.content().unwrap_or_default() != content
+        || (private.content().is_none() && !content.is_empty())
+    {
+        return Err("Kimi private assistant content does not match its visible projection");
+    }
+    let generic_calls = &items[group_start..private_index];
+    if generic_calls.len() != private.tool_calls().len() {
+        return Err("Kimi private assistant tool calls do not match its visible projection");
+    }
+    for (generic, private) in generic_calls.iter().zip(private.tool_calls()) {
+        let ModelReplayItem::FunctionCall {
+            call_id,
+            name,
+            arguments,
+        } = generic
+        else {
+            return Err("Kimi private assistant projection is malformed");
+        };
+        if call_id != private.id() || name != private.name() || arguments != private.arguments() {
+            return Err("Kimi private assistant tool call differs from its visible projection");
+        }
+    }
+    Ok(())
+}
+
+fn valid_kimi_function_name(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    (3..=MAX_KIMI_FUNCTION_NAME_BYTES).contains(&bytes.len())
+        && bytes
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+        && bytes[1..]
+            .iter()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+}
+
 fn encoded_contract_len(contract: &ModelReplayContract) -> usize {
     serde_json::to_vec(&contract_value(contract))
         .expect("a replay contract is always JSON serializable")
-        .len()
-}
-
-fn encoded_delta_len(delta: &ModelReplayDelta) -> usize {
-    let value = json!({
-        "contract": delta.contract.as_ref().map(contract_value),
-        "items": delta.items.iter().map(item_value).collect::<Vec<_>>(),
-    });
-    serde_json::to_vec(&value)
-        .expect("a replay delta is always JSON serializable")
         .len()
 }
 
@@ -311,14 +617,26 @@ fn encoded_prefix_len<'a>(
 }
 
 fn encoded_items_len(items: &[ModelReplayItem]) -> usize {
-    items
-        .iter()
-        .map(|item| {
-            serde_json::to_vec(&item_value(item))
-                .expect("a replay item is always JSON serializable")
-                .len()
-        })
-        .sum()
+    items.iter().map(encoded_item_len).sum()
+}
+
+fn encoded_item_len(item: &ModelReplayItem) -> usize {
+    serde_json::to_vec(&item_value(item))
+        .expect("a replay item is always JSON serializable")
+        .len()
+}
+
+fn encoded_kimi_private_call_len(call: &KimiAssistantToolCall) -> usize {
+    serde_json::to_vec(&json!({
+        "id": call.id(),
+        "type": "function",
+        "function": {
+            "name": call.name(),
+            "arguments": call.arguments(),
+        },
+    }))
+    .expect("a Kimi private call is always JSON serializable")
+    .len()
 }
 
 fn contract_value(contract: &ModelReplayContract) -> Value {
@@ -370,5 +688,35 @@ fn item_value(item: &ModelReplayItem) -> Value {
             "call_id": call_id,
             "output": output,
         }),
+        ModelReplayItem::ProviderPrivateAssistant { schema, message } => {
+            let mut private = json!({
+                "role": "assistant",
+                "reasoning_content": message.reasoning_content(),
+                "content": message.content(),
+            });
+            if !message.tool_calls().is_empty() {
+                private["tool_calls"] = Value::Array(
+                    message
+                        .tool_calls()
+                        .iter()
+                        .map(|call| {
+                            json!({
+                                "id": call.id(),
+                                "type": "function",
+                                "function": {
+                                    "name": call.name(),
+                                    "arguments": call.arguments(),
+                                },
+                            })
+                        })
+                        .collect(),
+                );
+            }
+            json!({
+                "kind": "provider_private_assistant",
+                "schema": schema,
+                "message": private,
+            })
+        },
     }
 }

@@ -11,9 +11,12 @@ pub use contract::{
 };
 pub use evidence::{
     BackendBindingEvidence, BackendCommandEvidence, BackendIdentity, BackendOutcomeEvidence,
-    BackendRequestEvidence, BackendResumeTarget, ContinuationStrategy, ModelReplay,
-    ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool,
-    ReplayExecutor,
+    BackendRequestEvidence, BackendResumeTarget, ContinuationStrategy, KimiAssistantMessage,
+    KimiAssistantToolCall, ModelReplay, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+    ModelReplayRole, ModelReplayTool, ReplayExecutor, ReplayProfile,
+};
+pub(crate) use evidence::{
+    KimiReplayToolCallSize, ModelReplayBudget, kimi_replay_round_item_lengths,
 };
 pub use native::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 pub use scripted::{BackendScriptStep, ScriptedBackend};

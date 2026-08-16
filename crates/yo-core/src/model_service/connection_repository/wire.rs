@@ -12,8 +12,8 @@ use super::{
 };
 use crate::{
     CompleteModelBinding, ConnectorId, EffectiveModelBinding, EffectiveModelProfile,
-    ModelProfileLayer, ModelProfileParameters, NormalizedEndpoint, VersionedProfileId,
-    validate_profile_yaml_number_spellings,
+    ModelProfileLayer, ModelProfileParameters, NormalizedEndpoint, SEMANTIC_REPLAY_PROFILE,
+    VersionedProfileId, validate_profile_yaml_number_spellings,
 };
 
 pub(super) struct DecodedSnapshot {
@@ -161,6 +161,8 @@ impl From<&ManagedConnectionBinding> for WireBinding {
                 optional_request_parameters: profile.optional_request_parameters().clone(),
                 tool_capability_policy: profile.tool_capability_policy().as_str().to_owned(),
                 verification_profile: profile.verification_profile().as_str().to_owned(),
+                replay_profile: (profile.replay_profile().as_str() != SEMANTIC_REPLAY_PROFILE)
+                    .then(|| profile.replay_profile().as_str().to_owned()),
             },
         }
     }
@@ -177,6 +179,29 @@ struct WireProfile {
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: String,
     verification_profile: String,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null_string",
+        skip_serializing_if = "Option::is_none"
+    )]
+    replay_profile: Option<String>,
+}
+
+fn deserialize_optional_non_null_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if matches!(
+        value.as_str(),
+        crate::SEMANTIC_REPLAY_PROFILE | crate::KIMI_PRIVATE_REPLAY_PROFILE
+    ) {
+        Ok(Some(value))
+    } else {
+        Err(serde::de::Error::custom(
+            "present replay_profile is outside the closed supported set",
+        ))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -288,6 +313,12 @@ fn parse_binding(
         Some(profile.optional_request_parameters),
         Some(VersionedProfileId::new(profile.tool_capability_policy)?),
         Some(VersionedProfileId::new(profile.verification_profile)?),
+    )
+    .with_replay_profile(
+        profile
+            .replay_profile
+            .map(VersionedProfileId::new)
+            .transpose()?,
     );
     let profile = EffectiveModelProfile::resolve(None, &layer)?;
     ManagedConnectionBinding::from_durable(

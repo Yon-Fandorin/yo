@@ -18,7 +18,7 @@ use crate::{
     ModelConnectorRequest, ModelConnectorStream, ModelConnectorTerminal,
     OpenAiChatCompletionsConnector, OpenAiResponsesConnector, PreparedConnectionMutation,
     PreparedCredentialMutation, RequestToolExposure,
-    model_profile_admission::admit_explicit_model_profile,
+    model_profile_admission::{admit_explicit_model_profile, admit_new_complete_binding},
     model_service::LocalCredentialStoreError,
 };
 
@@ -117,7 +117,7 @@ impl PreparedExternalConnection {
         }
         if let Some(unsupported) = bindings
             .iter()
-            .find(|complete| admit_explicit_model_profile(complete.profile()).is_err())
+            .find(|complete| admit_new_complete_binding(complete).is_err())
         {
             return Err(ExternalConnectionError::UnsupportedProfile {
                 target: unsupported.binding().selection_reference(),
@@ -306,7 +306,7 @@ fn verify_external_connection_with(
 ) -> Result<VerifiedExternalConnection, ExternalConnectionError> {
     for complete in &prepared.bindings {
         let target = complete.binding().selection_reference();
-        if admit_explicit_model_profile(complete.profile()).is_err() {
+        if admit_new_complete_binding(complete).is_err() {
             return Err(ExternalConnectionError::UnsupportedProfile { target });
         }
         verify(complete, &candidate)
@@ -334,6 +334,10 @@ fn verify_complete_binding(
             OpenAiChatCompletionsConnector::new(complete.binding(), candidate.clone(), limits)
                 .and_then(|connector| connector.start(request, cancellation.clone()))
         },
+        ApiDialect::KimiChatCompletions => {
+            crate::KimiChatCompletionsConnector::new(complete, candidate.clone(), limits)
+                .and_then(|connector| connector.start(request, cancellation.clone()))
+        },
     }
     .map_err(|error| error.kind())?;
 
@@ -356,7 +360,12 @@ pub(super) fn verification_request(
             refusal: None,
         }],
         RequestToolExposure::disabled(),
-        complete.profile().context().max_output_tokens().min(32),
+        match complete.binding().api_dialect() {
+            ApiDialect::KimiChatCompletions => complete.profile().context().max_output_tokens(),
+            ApiDialect::OpenAiResponses | ApiDialect::OpenAiChatCompletions => {
+                complete.profile().context().max_output_tokens().min(32)
+            },
+        },
         reasoning,
     )
     .map_err(|error| error.kind())

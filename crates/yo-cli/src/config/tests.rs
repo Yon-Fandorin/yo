@@ -759,6 +759,76 @@ model:
     );
 }
 
+// Kimi dynamic adapter는 endpoint/profile/model 반복 없이 exact catalog seed만 보관하고,
+// startup catalog에는 원격 snapshot 선택 전 어떤 routable ModelTarget도 미리 넣지 않습니다.
+#[test]
+fn kimi_catalog_profile_resolves_one_dynamic_account_seed() {
+    let config = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: kimi
+      account: team
+      catalog: kimi-platform-ai/v1
+"#,
+    )
+    .unwrap();
+
+    let provider = ProviderId::new("kimi").unwrap();
+    let account = AccountId::new("team").unwrap();
+    let seed = config.kimi_catalog_seed(&provider, &account).unwrap();
+    assert_eq!(seed.profile().as_str(), "kimi-platform-ai/v1");
+    assert!(config.model_catalog().entries().is_empty());
+}
+
+// manual K3/K2.7 사용자는 plaintext private replay 승인을 replay_profile로 명시해야 하며,
+// 그 값이 model override 없이 base에서 complete binding까지 그대로 상속됩니다.
+#[test]
+fn manual_kimi_binding_preserves_explicit_private_replay_profile() {
+    let config = parse(
+        Path::new("/tmp/yo/config.yaml"),
+        r#"version: 1
+model:
+  bindings:
+    - provider: kimi
+      account: team
+      base_url: https://api.moonshot.ai/v1/
+      profile:
+        api_dialect: kimi-chat-completions
+        tokenizer_profile: utf8-bytes/v1
+        input_token_limit: 262144
+        max_output_tokens: 32768
+        reasoning_parameters: {}
+        optional_request_parameters:
+          thinking: {type: enabled, keep: all}
+        tool_capability_policy: local-tools/v1
+        verification_profile: semantic-terminal/v1
+        replay_profile: kimi-private-local-plaintext/v1
+      models:
+        - model: kimi-k2.7-code
+"#,
+    )
+    .unwrap();
+    let entry = config
+        .model_catalog()
+        .resolve_model(
+            &ProviderId::new("kimi").unwrap(),
+            &AccountId::new("team").unwrap(),
+            &ModelId::new("kimi-k2.7-code").unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        entry
+            .complete_binding()
+            .unwrap()
+            .profile()
+            .replay_profile()
+            .as_str(),
+        "kimi-private-local-plaintext/v1"
+    );
+}
+
 // operator startup은 model 좌표뿐 아니라 exact HostTarget도 표현해야 Local Codex를
 // implicit fallback이 아닌 명시적인 선택으로 유지할 수 있다.
 #[test]

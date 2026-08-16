@@ -142,6 +142,7 @@ pub struct NativeModelBackend {
     model_context: ModelContextProfile,
     token_counter: Box<dyn ModelTokenCounter>,
     contract: ModelReplayContract,
+    replay_profile: crate::ReplayProfile,
     session: Option<SessionId>,
     replay: ModelReplay,
     turn: Option<TurnState>,
@@ -156,6 +157,129 @@ pub struct NativeModelBackend {
 }
 
 impl NativeModelBackend {
+    fn prospective_replay_delta_encoded_len(
+        &self,
+        state: &TurnState,
+        extra: Option<(usize, &ModelReplayItem)>,
+    ) -> Result<usize, BackendFailure> {
+        if extra
+            .as_ref()
+            .is_some_and(|(output_index, _)| state.round_replay.contains_key(output_index))
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "model output index was completed more than once",
+            ));
+        }
+
+        let mut messages = BTreeMap::<usize, String>::new();
+        for ((output_index, _), content) in &state.round_messages {
+            messages.entry(*output_index).or_default().push_str(content);
+        }
+        let mut refusals = BTreeMap::<usize, String>::new();
+        for ((output_index, _), refusal) in &state.round_refusals {
+            refusals.entry(*output_index).or_default().push_str(refusal);
+        }
+        let message_outputs = state
+            .round_message_items
+            .iter()
+            .copied()
+            .chain(messages.keys().copied())
+            .chain(refusals.keys().copied())
+            .collect::<BTreeSet<_>>();
+        let mut completed_messages = BTreeMap::new();
+        for output_index in message_outputs {
+            let message = ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: messages.remove(&output_index).unwrap_or_default(),
+                refusal: refusals.remove(&output_index),
+            };
+            if state.round_replay.contains_key(&output_index)
+                || extra
+                    .as_ref()
+                    .is_some_and(|(extra_index, _)| *extra_index == output_index)
+            {
+                return Err(failure(
+                    BackendFailureKind::Protocol,
+                    "model output index changed semantic item kind",
+                ));
+            }
+            completed_messages.insert(output_index, message);
+        }
+
+        let output_indices = state
+            .round_replay
+            .keys()
+            .copied()
+            .chain(extra.as_ref().map(|(output_index, _)| *output_index))
+            .chain(completed_messages.keys().copied())
+            .collect::<BTreeSet<_>>();
+        let round_items = output_indices.into_iter().map(|output_index| {
+            state
+                .round_replay
+                .get(&output_index)
+                .or_else(|| {
+                    extra.as_ref().and_then(|(extra_index, item)| {
+                        (*extra_index == output_index).then_some(*item)
+                    })
+                })
+                .or_else(|| completed_messages.get(&output_index))
+                .expect("every prospective output index has one replay item")
+        });
+        ModelReplayDelta::prospective_encoded_len(
+            self.replay.contract().is_none().then_some(&self.contract),
+            state.delta.iter().chain(round_items),
+        )
+        .ok_or_else(|| {
+            failure(
+                BackendFailureKind::ContextExhausted,
+                "model replay item capacity exceeded before durable retention",
+            )
+        })
+    }
+
+    fn ensure_replay_capacity_with_round_item(
+        &self,
+        state: &TurnState,
+        extra: Option<(usize, &ModelReplayItem)>,
+    ) -> Result<(), BackendFailure> {
+        if self.prospective_replay_delta_encoded_len(state, extra)?
+            <= ModelReplayDelta::MAX_ENCODED_BYTES
+        {
+            Ok(())
+        } else {
+            Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "model replay delta capacity exceeded before durable retention",
+            ))
+        }
+    }
+
+    fn ensure_accumulated_replay_capacity(
+        &self,
+        state: &TurnState,
+        extra: Option<&ModelReplayItem>,
+    ) -> Result<(), BackendFailure> {
+        let encoded_bytes = ModelReplayDelta::prospective_encoded_len(
+            self.replay.contract().is_none().then_some(&self.contract),
+            state.delta.iter().chain(extra),
+        )
+        .ok_or_else(|| {
+            failure(
+                BackendFailureKind::ContextExhausted,
+                "model replay item capacity exceeded before durable retention",
+            )
+        })?;
+        if encoded_bytes <= ModelReplayDelta::MAX_ENCODED_BYTES {
+            Ok(())
+        } else {
+            Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "model replay delta capacity exceeded before durable retention",
+            ))
+        }
+    }
+
     pub fn new(
         catalog_entry: &ModelCatalogEntry,
         credential: ApiCredential,
@@ -165,6 +289,7 @@ impl NativeModelBackend {
         config: NativeModelBackendConfig,
     ) -> Result<Self, BackendFailure> {
         let binding = catalog_entry.binding().clone();
+        let complete = catalog_entry.complete_binding().cloned();
         let connector: Box<dyn ModelConnector> = match binding.api_dialect() {
             ApiDialect::OpenAiResponses => Box::new(
                 OpenAiResponsesConnector::new(&binding, credential, connector_limits)
@@ -173,6 +298,19 @@ impl NativeModelBackend {
             ApiDialect::OpenAiChatCompletions => Box::new(
                 OpenAiChatCompletionsConnector::new(&binding, credential, connector_limits)
                     .map_err(map_connector_initialization)?,
+            ),
+            ApiDialect::KimiChatCompletions => Box::new(
+                crate::KimiChatCompletionsConnector::new(
+                    complete.as_ref().ok_or_else(|| {
+                        failure(
+                            BackendFailureKind::Initialization,
+                            "Kimi connector requires a complete explicit profile",
+                        )
+                    })?,
+                    credential,
+                    connector_limits,
+                )
+                .map_err(map_connector_initialization)?,
             ),
         };
         Self::with_connector_and_profile(
@@ -216,11 +354,15 @@ impl NativeModelBackend {
         explicit_profile: Option<EffectiveModelProfile>,
         mut config: NativeModelBackendConfig,
     ) -> Result<Self, BackendFailure> {
-        let tool_exposure_enabled = if let Some(profile) = explicit_profile.as_ref() {
-            let admitted = crate::model_profile_admission::admit_explicit_model_profile(profile)
+        let (tool_exposure_enabled, replay_profile) = if let Some(profile) =
+            explicit_profile.as_ref()
+        {
+            let complete = crate::CompleteModelBinding::new(binding.clone(), profile.clone())
+                .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
+            let admitted = crate::model_profile_admission::admit_new_complete_binding(&complete)
                 .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
-            config.reasoning_effort = admitted.reasoning_effort();
-            match admitted.tool_policy() {
+            config.reasoning_effort = admitted.profile().reasoning_effort();
+            let tools = match admitted.profile().tool_policy() {
                 crate::model_profile_admission::AdmittedToolPolicy::LocalTools => {
                     if registry.is_empty() {
                         return Err(failure(
@@ -239,9 +381,18 @@ impl NativeModelBackend {
                     }
                     false
                 },
-            }
+            };
+            let replay = match admitted.replay_profile() {
+                crate::model_profile_admission::AdmittedReplayProfile::SemanticOnly => {
+                    crate::ReplayProfile::SemanticOnly
+                },
+                crate::model_profile_admission::AdmittedReplayProfile::KimiPrivateLocalPlaintext => {
+                    crate::ReplayProfile::KimiPrivateLocalPlaintext
+                },
+            };
+            (tools, replay)
         } else {
-            !registry.is_empty()
+            (!registry.is_empty(), crate::ReplayProfile::SemanticOnly)
         };
         if config.system_prompt.is_empty()
             || config.maximum_model_rounds == 0
@@ -283,6 +434,7 @@ impl NativeModelBackend {
             model_context,
             token_counter: services.token_counter,
             contract,
+            replay_profile,
             session: None,
             replay: ModelReplay::default(),
             turn: None,
@@ -306,6 +458,7 @@ impl NativeModelBackend {
             BackendIdentity::new("yo.session-id/v1", session_id.to_string()),
             ContinuationStrategy::ExactReplay {
                 executor: ReplayExecutor::LocalClient,
+                replay_profile: self.replay_profile,
             },
         )
     }
@@ -385,6 +538,10 @@ impl NativeModelBackend {
                 "openai.chat-completions/yo-managed-turn/v1",
                 "chat-completions.endpoint/v1",
             ),
+            ApiDialect::KimiChatCompletions => (
+                "kimi.chat-completions/yo-managed-turn/v1",
+                "kimi-chat-completions.endpoint/v1",
+            ),
         };
         Ok(BackendCommandEvidence::RequestAccepted(
             BackendRequestEvidence::new(
@@ -421,13 +578,24 @@ impl NativeModelBackend {
             } else {
                 RequestToolExposure::disabled()
             };
+        let replay_budget = ModelReplayDelta::replay_budget(
+            self.replay.contract().is_none().then_some(&self.contract),
+            state.delta.iter(),
+        )
+        .ok_or_else(|| {
+            failure(
+                BackendFailureKind::ContextExhausted,
+                "model replay delta capacity was exhausted before request dispatch",
+            )
+        })?;
         let request = ModelConnectorRequest::new(
             items,
             tool_exposure,
             self.model_context.max_output_tokens(),
             self.config.reasoning_effort,
         )
-        .map_err(map_connector_turn)?;
+        .map_err(map_connector_turn)?
+        .with_replay_budget(replay_budget);
         let input_tokens = self
             .token_counter
             .count_input_tokens(
@@ -848,6 +1016,21 @@ impl NativeModelBackend {
                     },
                 }
             },
+            ModelConnectorEvent::ProviderPrivateAssistant {
+                output_index,
+                schema,
+                message,
+            } => {
+                if state.round_replay.contains_key(&output_index) {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "provider-private assistant reused a model output index",
+                    ));
+                }
+                let item = ModelReplayItem::ProviderPrivateAssistant { schema, message };
+                self.ensure_replay_capacity_with_round_item(state, Some((output_index, &item)))?;
+                state.round_replay.insert(output_index, item);
+            },
             ModelConnectorEvent::Terminal {
                 response_id,
                 status,
@@ -871,6 +1054,7 @@ impl NativeModelBackend {
                 *self.shared_stop.response.lock().map_err(|_| {
                     failure(BackendFailureKind::Cleanup, "native stop state is poisoned")
                 })? = None;
+                self.ensure_replay_capacity_with_round_item(state, None)?;
                 let attribution = self.next_activity(state.turn)?;
                 self.queue_activity_text(
                     attribution,
@@ -939,20 +1123,21 @@ impl NativeModelBackend {
                         "model message text completed without its message output item",
                     ));
                 }
+                let completed_round_has_assistant = state.round_replay.values().any(|item| {
+                    matches!(
+                        item,
+                        ModelReplayItem::Message {
+                            role: ModelReplayRole::Assistant,
+                            ..
+                        }
+                    )
+                });
                 state
                     .delta
                     .extend(std::mem::take(&mut state.round_replay).into_values());
                 match status {
                     ModelConnectorTerminal::Completed if state.pending_calls.is_empty() => {
-                        if state.delta.last().is_some_and(|item| {
-                            matches!(
-                                item,
-                                ModelReplayItem::Message {
-                                    role: ModelReplayRole::Assistant,
-                                    ..
-                                }
-                            )
-                        }) {
+                        if completed_round_has_assistant {
                             self.complete_turn(state)?;
                         } else {
                             self.fail_turn(
@@ -1202,6 +1387,14 @@ impl NativeModelBackend {
             },
             ToolExecutionOutcome::Interrupted => ActivityOutcome::Interrupted,
         };
+        let replay_output = ModelReplayItem::FunctionCallOutput {
+            call_id: call.call_id().to_owned(),
+            output,
+        };
+        self.ensure_accumulated_replay_capacity(state, Some(&replay_output))?;
+        let ModelReplayItem::FunctionCallOutput { output, .. } = &replay_output else {
+            unreachable!("the replay output was constructed as a function result")
+        };
         self.events.push_back(BackendEvent::ActivityUpdated {
             activity,
             update: crate::ActivityUpdate::TextSnapshot(
@@ -1212,10 +1405,7 @@ impl NativeModelBackend {
             activity,
             outcome: activity_outcome,
         });
-        state.delta.push(ModelReplayItem::FunctionCallOutput {
-            call_id: call.call_id().to_owned(),
-            output,
-        });
+        state.delta.push(replay_output);
         if state.pending_calls.is_empty() {
             state.start_next_round = true;
         } else {
@@ -1246,6 +1436,7 @@ impl NativeModelBackend {
                 match self.binding.api_dialect() {
                     ApiDialect::OpenAiResponses => "responses.response-id/v1",
                     ApiDialect::OpenAiChatCompletions => "chat-completions.response-id/v1",
+                    ApiDialect::KimiChatCompletions => "kimi-chat-completions.response-id/v1",
                 },
                 state
                     .response_id
@@ -1753,9 +1944,8 @@ fn native_binding_identity(
     profile: Option<&EffectiveModelProfile>,
 ) -> Result<BackendIdentity, BackendFailure> {
     let (schema, value) = match profile {
-        Some(profile) => (
-            "yo.complete-model-binding/v1",
-            json!({
+        Some(profile) => {
+            let mut value = json!({
                 "provider": binding.provider_id().as_str(),
                 "account": binding.account_id().as_str(),
                 "model": binding.model_id().as_str(),
@@ -1769,9 +1959,12 @@ fn native_binding_identity(
                 "optional_request_parameters": profile.optional_request_parameters(),
                 "tool_capability_policy": profile.tool_capability_policy().as_str(),
                 "verification_profile": profile.verification_profile().as_str(),
-            })
-            .to_string(),
-        ),
+            });
+            if profile.replay_profile().as_str() != crate::SEMANTIC_REPLAY_PROFILE {
+                value["replay_profile"] = json!(profile.replay_profile().as_str());
+            }
+            ("yo.complete-model-binding/v1", value.to_string())
+        },
         None => (
             "yo.model-binding/v1",
             json!({
@@ -1874,6 +2067,12 @@ fn replay_input(item: &ModelReplayItem) -> ModelConnectorInputItem {
             ModelConnectorInputItem::FunctionCallOutput {
                 call_id: call_id.clone(),
                 output: output.clone(),
+            }
+        },
+        ModelReplayItem::ProviderPrivateAssistant { schema, message } => {
+            ModelConnectorInputItem::ProviderPrivateAssistant {
+                schema: schema.clone(),
+                message: message.clone(),
             }
         },
     }

@@ -15,8 +15,8 @@ use super::{
     message::{WireMessageEnded, WireMessageReset, WireMessageSegment},
 };
 use crate::{
-    AgentEvent, JournalSequence, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
-    ModelReplayRole, ModelReplayTool, SessionDescriptor,
+    AgentEvent, JournalSequence, KimiAssistantMessage, KimiAssistantToolCall, ModelReplayContract,
+    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool, SessionDescriptor,
     journal::codec::{
         BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved,
         BackendRequestAccepted, BackendResumableOutcome, BindingTransition, ContinuationAnchor,
@@ -161,6 +161,54 @@ enum WireModelReplayItem {
         call_id: String,
         output: String,
     },
+    ProviderPrivateAssistant {
+        schema: String,
+        binding_epoch: u64,
+        message: WireKimiAssistantMessage,
+    },
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WireKimiAssistantMessage {
+    role: String,
+    reasoning_content: String,
+    content: WireRequiredNullableString,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_tool_calls",
+        skip_serializing_if = "Option::is_none"
+    )]
+    tool_calls: Option<Vec<WireKimiAssistantToolCall>>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(transparent)]
+struct WireRequiredNullableString(Option<String>);
+
+fn deserialize_optional_tool_calls<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<WireKimiAssistantToolCall>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Vec::<WireKimiAssistantToolCall>::deserialize(deserializer).map(Some)
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WireKimiAssistantToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    function: WireKimiAssistantFunction,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WireKimiAssistantFunction {
+    name: String,
+    arguments: String,
 }
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
@@ -255,7 +303,7 @@ impl TryFrom<&SequencedJournalRecord> for WireRecord {
                 epoch: replay.epoch(),
                 turn_id: replay.turn_id().get().get(),
                 accepted_request_sequence: replay.accepted_request_sequence().get(),
-                replay: encode_model_replay(replay.delta()),
+                replay: encode_model_replay(replay.delta(), replay.epoch()),
             },
             JournalRecord::BackendResumableOutcome(outcome) => Self::BackendResumableOutcome {
                 journal_sequence: required_journal_sequence(entry)?.get(),
@@ -375,7 +423,7 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                                 .map(|value| correlation::sequence(value, "source_anchor_sequence"))
                                 .transpose()?,
                         ),
-                        continuation_strategy.into(),
+                        continuation_strategy.try_into()?,
                     )),
                 ))
             },
@@ -430,7 +478,7 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
                             accepted_request_sequence,
                             "accepted_request_sequence",
                         )?,
-                        decode_model_replay(replay)?,
+                        decode_model_replay(replay, epoch)?,
                     )),
                 ))
             },
@@ -508,7 +556,7 @@ impl TryFrom<WireRecord> for (Option<JournalSequence>, JournalRecord) {
     }
 }
 
-fn encode_model_replay(replay: &ModelReplayDelta) -> WireModelReplayDelta {
+fn encode_model_replay(replay: &ModelReplayDelta, epoch: u64) -> WireModelReplayDelta {
     WireModelReplayDelta {
         contract: replay.contract().map(|contract| WireModelReplayContract {
             system_prompt: contract.system_prompt().to_owned(),
@@ -551,12 +599,42 @@ fn encode_model_replay(replay: &ModelReplayDelta) -> WireModelReplayDelta {
                         output: output.clone(),
                     }
                 },
+                ModelReplayItem::ProviderPrivateAssistant { schema, message } => {
+                    WireModelReplayItem::ProviderPrivateAssistant {
+                        schema: schema.clone(),
+                        binding_epoch: epoch,
+                        message: WireKimiAssistantMessage {
+                            role: "assistant".to_owned(),
+                            reasoning_content: message.reasoning_content().to_owned(),
+                            content: WireRequiredNullableString(
+                                message.content().map(str::to_owned),
+                            ),
+                            tool_calls: (!message.tool_calls().is_empty()).then(|| {
+                                message
+                                    .tool_calls()
+                                    .iter()
+                                    .map(|call| WireKimiAssistantToolCall {
+                                        id: call.id().to_owned(),
+                                        kind: "function".to_owned(),
+                                        function: WireKimiAssistantFunction {
+                                            name: call.name().to_owned(),
+                                            arguments: call.arguments().to_owned(),
+                                        },
+                                    })
+                                    .collect()
+                            }),
+                        },
+                    }
+                },
             })
             .collect(),
     }
 }
 
-fn decode_model_replay(wire: WireModelReplayDelta) -> Result<ModelReplayDelta, JournalCodecError> {
+fn decode_model_replay(
+    wire: WireModelReplayDelta,
+    epoch: u64,
+) -> Result<ModelReplayDelta, JournalCodecError> {
     let contract = wire.contract.map(|contract| {
         ModelReplayContract::new(
             contract.system_prompt,
@@ -577,7 +655,7 @@ fn decode_model_replay(wire: WireModelReplayDelta) -> Result<ModelReplayDelta, J
     let items = wire
         .items
         .into_iter()
-        .map(|item| match item {
+        .map(|item| Ok(match item {
             WireModelReplayItem::Message {
                 role,
                 content,
@@ -599,8 +677,48 @@ fn decode_model_replay(wire: WireModelReplayDelta) -> Result<ModelReplayDelta, J
             WireModelReplayItem::FunctionCallOutput { call_id, output } => {
                 ModelReplayItem::FunctionCallOutput { call_id, output }
             },
-        })
-        .collect();
+            WireModelReplayItem::ProviderPrivateAssistant {
+                schema,
+                binding_epoch,
+                message,
+            } => {
+                let tool_calls = match message.tool_calls {
+                    Some(tool_calls) if tool_calls.is_empty() => {
+                        return Err(JournalCodecError::new(
+                            "present Kimi private assistant tool_calls must be nonempty",
+                        ));
+                    },
+                    Some(tool_calls) => tool_calls,
+                    None => Vec::new(),
+                };
+                if binding_epoch != epoch
+                    || message.role != "assistant"
+                    || tool_calls.iter().any(|call| call.kind != "function")
+                {
+                    return Err(JournalCodecError::new(
+                        "Kimi private assistant does not match its replay epoch or closed shape",
+                    ));
+                }
+                ModelReplayItem::ProviderPrivateAssistant {
+                    schema,
+                    message: KimiAssistantMessage::new(
+                        message.reasoning_content,
+                        message.content.0,
+                        tool_calls
+                            .into_iter()
+                            .map(|call| {
+                                KimiAssistantToolCall::new(
+                                    call.id,
+                                    call.function.name,
+                                    call.function.arguments,
+                                )
+                            })
+                            .collect(),
+                    ),
+                }
+            },
+        }))
+        .collect::<Result<Vec<_>, JournalCodecError>>()?;
     let delta = ModelReplayDelta::new(contract, items);
     delta.validate().map_err(JournalCodecError::new)?;
     Ok(delta)

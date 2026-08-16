@@ -1,5 +1,79 @@
 use super::*;
 
+// Kimi decoder의 증분 byte 공식은 stop/tool-call과 escaped UTF-8 값 모두에서 최종
+// canonical ModelReplayDelta encoder와 정확히 같은 길이를 계산해야 조기 거절이 안전합니다.
+#[test]
+fn kimi_incremental_round_sizes_match_the_canonical_replay_encoder() {
+    for (content, reasoning, calls) in [
+        (Some("line\n한글"), "hidden\\reason", Vec::new()),
+        (
+            None,
+            "tool reasoning",
+            vec![KimiAssistantToolCall::new(
+                "call-1",
+                "read_file",
+                r#"{"path":"a\nb"}"#,
+            )],
+        ),
+        (
+            Some("partial"),
+            "",
+            vec![
+                KimiAssistantToolCall::new("call-1", "read_file", "{}"),
+                KimiAssistantToolCall::new("call-2", "write_file", r#"{"text":"\""}"#),
+            ],
+        ),
+    ] {
+        let json_bytes = |value: &str| serde_json::to_string(value).unwrap().len() - 2;
+        let sizes = calls
+            .iter()
+            .map(|call| KimiReplayToolCallSize {
+                id_json_bytes: json_bytes(call.id()),
+                name_json_bytes: json_bytes(call.name()),
+                arguments_json_bytes: json_bytes(call.arguments()),
+            })
+            .collect::<Vec<_>>();
+        let lengths = kimi_replay_round_item_lengths(
+            true,
+            content.is_some(),
+            content.map_or(0, json_bytes),
+            json_bytes(reasoning),
+            &sizes,
+        )
+        .unwrap();
+        let mut items = vec![ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: content.unwrap_or_default().to_owned(),
+            refusal: None,
+        }];
+        items.extend(calls.iter().map(|call| ModelReplayItem::FunctionCall {
+            call_id: call.id().to_owned(),
+            name: call.name().to_owned(),
+            arguments: call.arguments().to_owned(),
+        }));
+        items.push(ModelReplayItem::ProviderPrivateAssistant {
+            schema: "kimi.assistant-message/v1alpha1".to_owned(),
+            message: KimiAssistantMessage::new(reasoning, content.map(str::to_owned), calls),
+        });
+        let contract = ModelReplayContract::new("system", Vec::new());
+        let prefix = ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "prefix".to_owned(),
+            refusal: None,
+        };
+        let budget =
+            ModelReplayDelta::replay_budget(Some(&contract), std::iter::once(&prefix)).unwrap();
+
+        assert_eq!(
+            budget.encoded_len_with_item_lengths(&lengths),
+            ModelReplayDelta::prospective_encoded_len(
+                Some(&contract),
+                std::iter::once(&prefix).chain(items.iter()),
+            )
+        );
+    }
+}
+
 // 리플레이 함수 결과는 앞선 정확한 호출과 한 번만 짝지어져야 한다.
 #[test]
 fn model_replay_rejects_missing_and_duplicate_function_relationships() {
@@ -166,4 +240,60 @@ fn model_replay_contract_is_required_on_the_first_delta_only() {
             .unwrap_err()
             .contains("more than once")
     );
+}
+
+// Kimi provider-private reasoning과 model-visible 인자는 public Debug 경계를 거쳐도
+// 길이와 개수만 남고 원문은 진단 문자열에 노출되지 않습니다.
+#[test]
+fn kimi_private_debug_is_redacted_through_public_enclosing_types() {
+    let reasoning = "private-reasoning-sentinel";
+    let arguments = r#"{"private":"argument-sentinel"}"#;
+    let message = KimiAssistantMessage::new(
+        reasoning,
+        None,
+        vec![KimiAssistantToolCall::new("call-1", "read_file", arguments)],
+    );
+    let event = crate::ResponsesEvent::ProviderPrivateAssistant {
+        output_index: 1,
+        schema: "kimi.assistant-message/v1alpha1".to_owned(),
+        message: message.clone(),
+    };
+    let replay = ModelReplayItem::ProviderPrivateAssistant {
+        schema: "kimi.assistant-message/v1alpha1".to_owned(),
+        message: message.clone(),
+    };
+
+    for rendered in [
+        format!("{message:?}"),
+        format!("{:?}", message.tool_calls()[0]),
+        format!("{event:?}"),
+        format!("{replay:?}"),
+    ] {
+        assert!(!rendered.contains(reasoning), "{rendered}");
+        assert!(!rendered.contains("argument-sentinel"), "{rendered}");
+        assert!(rendered.contains("reasoning_bytes") || rendered.contains("argument_bytes"));
+    }
+}
+
+// tool call이 없는 stop형 private assistant는 content 문자열을 반드시 보존해야 하므로
+// null content를 빈 visible message와 같은 것으로 축약하지 않습니다.
+#[test]
+fn kimi_private_stop_requires_present_string_content() {
+    let delta = ModelReplayDelta::new(
+        Some(ModelReplayContract::new("system", Vec::new())),
+        vec![
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: String::new(),
+                refusal: None,
+            },
+            ModelReplayItem::ProviderPrivateAssistant {
+                schema: "kimi.assistant-message/v1alpha1".to_owned(),
+                message: KimiAssistantMessage::new("", None, Vec::new()),
+            },
+        ],
+    );
+
+    assert!(!delta.is_valid());
+    assert!(delta.validate().is_err());
 }

@@ -562,6 +562,25 @@ seed는 connect candidate로만 펼쳐지고 startup에서 바로 route하는 ma
 text-agent row에는 보수적인 Yo output 상한 8,192 token을 적용한다. Yo를 갱신해도 이미
 managed 상태로 저장한 complete binding을 다시 쓰지 않는다.
 
+Kimi는 인증 discovery profile과 함께 같은 간결한 seed 형태를 사용한다.
+
+```yaml
+model:
+  bindings:
+    - provider: kimi
+      provider_display_name: Kimi
+      account: team
+      account_display_name: Team
+      catalog: kimi-platform-ai/v1
+```
+
+이 seed는 `https://api.moonshot.ai/v1/`을 고정하며 discovery 전에 startup에서
+route할 model을 만들지 않는다. Managed K3나 검토된 K2.7 coding binding은 명시적인
+`kimi-private-local-plaintext/v1` replay profile을 기록하고, K2.6은 호환되는 field
+생략으로 semantic-only replay를 기록한다. Manual K3/K2.7 binding은 private replay
+profile을 명시적으로 작성해야 하므로 ModelId나 connector 선택이 동의를 만들어 낼 수
+없다.
+
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
 한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. operator
@@ -668,6 +687,25 @@ disabled row를 고르면 credential을 읽지 않고 intent나 repository mutat
 명시적인 manual binding을 작성하라는 안내와 함께 실패한다. 원격 model-list 요청은 없다.
 선택 가능한 row 하나를 고른 뒤에는 기존 credential, complete binding-union 검증, journal,
 commit 경로가 그대로 권위 경계다.
+
+`yo connect kimi:Account`는 candidate key 하나를 읽고 bounded 인증
+`GET https://api.moonshot.ai/v1/models` snapshot 하나를 가져와 normalize한 typed row를
+같은 picker로 넘긴다. 첫 valid exact ModelId가 이기며 4,096개보다 많은 행은 snapshot
+전체를 거부한다. K3, K2.7 Code, K2.7 Code Highspeed, K2.6은 remote context와
+reasoning 근거가 검토된 envelope 안에 있을 때만 선택할 수 있다. 다른 valid row는
+숨기지 않고 안정적인 disabled 이유와 함께 표시한다. K3는 recommended, Highspeed는
+별도 badge로 표시하고 forced-thinking과 reasoning-off 동작도 계속 보인다. K3/K2.7
+managed binding을 게시하기 전에 compact preview는 bounded Kimi assistant state를 현재
+사용자 로컬 Session record에 암호화하지 않고 보관한다고 알린다.
+
+그 뒤 `kimi-chat-completions` connector가 선택된 complete binding의 exact request와
+stream 문법을 소유한다. 성공한 K3/K2.7 round는 완전한 reasoning, content, tool-call
+message를 담은 bounded provider-private assistant item 하나를 낸다. 이 항목은 frontend와
+Request-trace projection에서 숨기고 visible assistant/function projection 옆에 atomically
+저장하며, 일치하는 private replay profile과 binding epoch에서만 허용한다. 다음 Kimi
+request는 그 visible group을 private assistant message 하나로 정확히 한 번 교체한다.
+Semantic-only binding은 private item을 저장하거나 replay할 수 없고 incomplete 또는 failed
+round는 private Continuation Anchor를 만들지 않는다.
 
 `yo connect openrouter:Account`는 정확히 설정한 binding에 normalized endpoint와 complete base
 profile이 있을 때만 대화형 discovery target이다. Recovery와 snapshot capture 뒤 Yo는 no-echo

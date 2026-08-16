@@ -142,6 +142,7 @@ struct ProfileDetails {
     request_options: String,
     tools: String,
     verification: String,
+    replay: String,
 }
 
 impl BindingDetails {
@@ -186,6 +187,7 @@ impl ProfileDetails {
         push_detail_field(output, "Tokenizer", &self.tokenizer, width, style)?;
         push_detail_field(output, "Tools", &self.tools, width, style)?;
         push_detail_field(output, "Verification", &self.verification, width, style)?;
+        push_detail_field(output, "Replay", &self.replay, width, style)?;
         push_detail_field(output, "Reasoning", &self.reasoning, width, style)?;
         push_detail_field(
             output,
@@ -240,6 +242,7 @@ impl From<&CompleteModelBinding> for BindingDetails {
                     .to_string(),
                 tools: profile.tool_capability_policy().to_string(),
                 verification: profile.verification_profile().to_string(),
+                replay: profile.replay_profile().to_string(),
             },
         }
     }
@@ -431,6 +434,21 @@ impl ConnectPreview {
         )?;
         push_model_list_field(&mut output, "Models", &verified_models, width, style)?;
         counts.record(credential_action);
+        if self
+            .bindings
+            .iter()
+            .any(|binding| binding.profile.replay == yo_core::KIMI_PRIVATE_REPLAY_PROFILE)
+        {
+            push_change(
+                &mut output,
+                PlanAction::Add,
+                "Private replay",
+                "Retain bounded Kimi assistant state unencrypted in local current-user Session records",
+                width,
+                style,
+            )?;
+            counts.record(PlanAction::Add);
+        }
         let default_action = if self.default_changed {
             PlanAction::Change
         } else {
