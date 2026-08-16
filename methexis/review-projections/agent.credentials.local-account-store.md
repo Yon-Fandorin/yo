@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.credentials.local-account-store
-revision: sha256:0ae0d11b00139c2b931f496e1c4e3033b9d4ada3def8312c738dc0acf1ece40f
+revision: sha256:2700464ca660b7c541532a3e5c6565802818874aedfcfa3c3861cac331d0e3ce
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:e223c3470618d5265af3bdac4987a1f8ada5f2715435b51a60f4f11bff052266
+request_hash: sha256:f6420dd4d863c5add342716d5623328482293a9130d56352b024b4044664a7e7
 ---
 # Korean Review Projection
 
@@ -14,15 +14,15 @@ request_hash: sha256:e223c3470618d5265af3bdac4987a1f8ada5f2715435b51a60f4f11bff0
 
 ## 규칙
 
-API 자격증명은 공개 설정과 분리합니다. 첫 로컬 저장소는 선택된 Yo `config.yaml` 옆의 버전이 있는 `credentials.yaml`이며, 안정적인 ProviderId와 AccountId 순서로 이름공간을 나눕니다. 이 좌표는 비밀값만 선택합니다. 서로 다른 Provider 아래의 같은 AccountId는 서로 독립적이고, 완전히 같은 좌표가 중복되면 실패하며, 기존 ID는 계속 유효합니다.
+API 자격증명은 공개 설정과 분리합니다. 첫 로컬 저장소는 선택된 Yo `config.yaml` 옆의 pre-version `credentials.yaml`이며, 안정적인 ProviderId와 AccountId 순서로 이름공간을 나눕니다. 이 파일은 공통 bounded safe-Rust YAML parser를 사용하고 top-level format-version field를 두지 않습니다. 폐기한 `version` field는 unknown field로 취급하여 secret을 사용하거나 mutation하기 전에 실패합니다. Yo는 이전 local byte에 대해 legacy decoder, 자동 migration, dual write, downgrade shim, 자동 삭제를 제공하지 않습니다. Diagnostic은 stale local state를 backup하거나 제거한 뒤 connection을 다시 등록하라고 안내합니다. 이 좌표는 비밀값만 선택합니다. 서로 다른 Provider 아래의 같은 AccountId는 서로 독립적이고, 완전히 같은 좌표가 중복되면 실패합니다.
 
 자격증명 캡처는 유효 바인딩이 외부 자격증명을 요구할 때만 수행합니다. 파일은 no-follow 방식으로 한 번 열고 불변의 정확한 좌표를 검증하며, 자격증명이 없으면 요청 전에 실패합니다. Local Codex처럼 외부 자격증명이 필요 없는 바인딩에는 자격증명 경로가 필요하지 않습니다. 다른 계정으로 fallback하지 않습니다. 열린 handle은 현재 사용자가 소유하고 group 또는 world 권한 비트가 없는 일반 파일이어야 합니다. 읽기는 크기가 제한되고 그 handle만 사용하며, identity나 관련 metadata가 바뀌면 거절합니다.
 
 경로가 없으면 예약된 opaque revision token `absent`와 pair가 없는 표준 빈 snapshot으로 봅니다. 저장소 lock 아래에서 `prepare`는 snapshot을 다시 읽고, pair 하나에 대한 동작을 예상 CredentialRevision과 새로 예약한 non-absent 예정 CredentialRevision에 결합합니다. 준비만으로 저장소 byte는 바뀌지 않습니다. 예정 revision은 비밀값이나 파일 byte에서 만들지 않고 독립적으로 생성하며, commit 전에 연결 orchestrator가 durable하게 기록할 수 있습니다. 준비된 mutation은 정확한 expected revision, planned revision, pair, 그리고 `add`·`replace`·`remove` 중 하나에 결합되어 다른 대상으로 바꿀 수 없습니다.
 
-`commit`은 그 준비된 mutation만 받고, `add`나 `replace`인 경우에는 메모리에 남아 있는 secret도 받습니다. 현재 상태가 expected revision 또는 정확한 planned revision이 아니면 거절합니다. planned revision과 의도한 pair 동작이 이미 적용되어 있으면 idempotent success이고, 그 밖의 winner는 conflict입니다. 최초 생성은 경로 부재를 다시 확인하고, 같은 directory에 현재 사용자 소유의 mode `0600` 일반 임시 파일을 배타적으로 만든 뒤 완전한 버전 byte를 durable하게 기록하고, expected revision이 여전히 `absent`일 때만 atomically 게시합니다. 기존 mutation도 정확한 expected revision을 기준으로 같은 bounded complete replacement와 atomic publication을 수행합니다. 확인하지 않은 winner를 덮어쓰지 않으며, 실패 시 이 operation의 임시 파일만 제거합니다.
+`commit`은 그 준비된 mutation만 받고, `add`나 `replace`인 경우에는 메모리에 남아 있는 secret도 받습니다. 현재 상태가 expected revision 또는 정확한 planned revision이 아니면 거절합니다. planned revision과 의도한 pair 동작이 이미 적용되어 있으면 idempotent success이고, 그 밖의 winner는 conflict입니다. 최초 생성은 경로 부재를 다시 확인하고, 같은 directory에 현재 사용자 소유의 mode `0600` 일반 임시 파일을 배타적으로 만든 뒤 완전한 current-shape byte를 durable하게 기록하고, expected revision이 여전히 `absent`일 때만 atomically 게시합니다. 기존 mutation도 정확한 expected revision을 기준으로 같은 bounded complete replacement와 atomic publication을 수행합니다. 확인하지 않은 winner를 덮어쓰지 않으며, 실패 시 이 operation의 임시 파일만 제거합니다.
 
-성공 후에는 완전한 이전 snapshot 또는 새 snapshot 하나만 남습니다. 정확히 한 pair만 바뀌고 관련 없는 pair는 byte-equivalent하게 유지되며, 이미 정확히 적용된 교체나 삭제는 idempotent합니다. 마지막 pair를 삭제하면 새 non-absent planned revision을 가진 표준 버전 빈 파일을 게시할 수 있지만, 경로가 생성된 적 없거나 현재 없는 경우를 뜻하는 예약값 `absent`로 되돌아가면 안 됩니다.
+성공 후에는 완전한 이전 snapshot 또는 새 snapshot 하나만 남습니다. 정확히 한 pair만 바뀌고 관련 없는 pair는 byte-equivalent하게 유지되며, 이미 정확히 적용된 교체나 삭제는 idempotent합니다. 마지막 pair를 삭제하면 새 non-absent planned revision을 가진 표준 빈 current-shape file을 게시할 수 있지만, 경로가 생성된 적 없거나 현재 없는 경우를 뜻하는 예약값 `absent`로 되돌아가면 안 됩니다.
 
 CredentialRevision은 private opaque CAS이자 복구 receipt입니다. 권한이 제한된 로컬 자격증명 snapshot, secret-safe store API, 그리고 모델 서비스 계약이 소유하는 권한 제한·redacted 연결 operation journal에만 나타날 수 있습니다. 사용자에게 보이는 partial outcome, 일반 diagnostics와 logs, Session Journal, Request Audit, binding evidence, 공개 설정에서는 제외합니다. 저장소 API는 내부적으로 prepare 또는 commit status와 정확한 expected/planned opaque revision만 노출하고 secret byte는 반환하지 않습니다. 바인딩 검증, operation locking, 공개 저장소 순서, command-local config 조합, 저장소 간 복구는 모델 서비스 계약의 책임입니다.
 
