@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.backend.yo-managed-model-loop
-revision: sha256:8434275646067ec2b806cad4cc7be4e51adbd4bcbad132575e397f73e76aadb2
+revision: sha256:b0a6608a64eaad121ff8bc89040c0871075ad21b217b45b26cd112f827a6e190
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:b8a5ff668863844e016e9d780435890b000c8b5327add7321a65d5df343e3b46
+request_hash: sha256:e8b97d2830360454ccce0c73c681c0df959881c7786a907c697d091259efe200
 ---
 # Korean Review Projection
 
@@ -23,6 +23,8 @@ Backend는 다음 모델 request에서 선택된 dialect로 대응하는 functio
 루프는 모델이 최종 assistant message를 내거나, cancellation이 수락되거나, 제한된 model round 한도에 도달하거나, typed failure가 발생할 때까지 model response, local tool execution, tool-result submission을 반복합니다. Session당 active Turn 하나 제한을 유지합니다. Cancellation은 진행 중인 connector 작업을 신속히 중단하고 새 tool 실행을 막고 active Activity를 interrupted로 seal한 다음 connector와 tool cleanup을 실행해야 합니다.
 
 Absolute model-request work deadline이 있다면 루프가 이를 소유해야 합니다. 이 deadline은 선택 사항이며 기본값은 없음이어야 합니다. Agent가 설정하면 logical model request 하나에 대해 한 번 시작하고 해당 request의 모든 제한된 connector-internal retry를 포함하며, transport byte, model output, decoded event, retry로 reset되면 안 됩니다. Tool result 뒤의 다음 model request 또는 이전 failure 뒤 별도로 admit된 request는 새 deadline을 받아야 합니다. Whole-Turn wall-clock budget은 별도의 선택적 cancellation policy이며 per-request deadline에서 추론하면 안 됩니다. 두 absolute budget이 모두 없어도 connector의 유한한 transport-progress, event-delivery, data, round-count, cancellation, cleanup bound가 비활성화되면 안 됩니다. Runtime deadline policy는 effective binding 밖에 있어야 하며 binding epoch를 열면 안 됩니다.
+
+Backend는 일반 Session model request마다 provider-neutral typed cache-affinity hint 하나도 제공해야 합니다. Exact value는 해당 Yo `SessionId`의 canonical lowercase hyphenated UUIDv7 string이므로 exit와 exact resume를 지나도 안정적이고 Session마다 다르며 36 ASCII byte이고 Provider, Account, Model, credential, prompt content, response state와 독립적입니다. Session이 없는 connection verification은 별도의 model-service verification coordinator가 소유합니다. Hint는 request context일 뿐 complete binding equality, binding epoch, replay identity, Session semantics, user-visible output, Transcript, Request trace, log, error, diagnostic에 들어가면 안 됩니다. Backend는 Provider에 따라 분기하지 않고 typed value를 전달하며, 선택된 각 Connector가 reviewed dialect에서 이를 직렬화할지와 위치를 소유합니다. Contract가 허용하지 않은 endpoint로 Connector가 이를 전달하면 안 됩니다.
 
 Provider response ID, cache handle, conversation ID는 diagnostic correlation으로 보존할 수 있지만 유일한 continuation locator가 될 수 없습니다. Yo-managed binding은 provider-native resume 대신 현재 executor가 `local_client`인 `exact_replay`를 명시해야 하며, complete effective profile은 정확한 `replay_profile`을 포함해야 합니다. 실행 가능한 continuation은 Session Journal의 최신 durable Continuation Anchor가 가리키는 replay boundary를 재구성하고 endpoint, API dialect, Provider, Account, Model, connector identity 또는 replay profile이 바뀌면 새 binding epoch를 열어야 합니다. Anchor 뒤의 commit된 mid-Turn function call, tool result, partial stream, private assistant fragment 또는 다른 suffix는 diagnostic으로만 남고 자동 continuation input이 되면 안 됩니다. Durable Anchor가 없으면 replay input을 만들지 않고 continuation 계약의 read-only fallback을 따라야 합니다. Exact replay는 message role과 order, 정확히 보이는 text, function-call과 tool-result 관계, 기록된 system 및 tool contract를 보존해야 합니다. `semantic-only/v1`은 provider-private item을 금지합니다. `kimi-private-local-plaintext/v1`은 `kimi.assistant-message/v1alpha1` schema를 선언하고 Connector의 lossless validation, visibility exclusion, byte bound, binding scope, durable encoding, exact request projection을 모두 지킬 때만 그 item을 보존할 수 있습니다. 이 item은 같은 정확한 binding identity와 replay profile에서만 Session replay authority이며, generic visible history, provider-native state, frontend observation이 될 수 없습니다. Provider cache state와 계약되지 않은 모든 private field는 제외합니다.
 

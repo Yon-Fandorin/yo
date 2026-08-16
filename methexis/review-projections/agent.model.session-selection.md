@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.model.session-selection
-revision: sha256:1c93924abb78bfcc612a9fa82dcd2c49f9f52f6eb89ccf06f3ca31659edefe79
+revision: sha256:04a4da7b4bf00a27fc7e091e6b84801bead70f656af20f08e67b1d9c3133218e
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:d7a9bca768ac971bb6ab608e2a1ee4a10d446af90046ed203162c605b2653963
+request_hash: sha256:808fecfa69054b197773e2133c8773c8a237e45ba69a1e745fc6a26583eb6066
 ---
 # Korean Review Projection
 
@@ -24,7 +24,7 @@ Startup은 선택 가능한 source 네 개를 한 번씩 캡처합니다. Invoca
 
 필요한 source의 캡처나 구조 decode 실패, stale repository revision, 같은 좌표의 unequal manual/managed identity, malformed policy는 fatal입니다. 상위 target이 있어도 숨기지 않습니다. Enforced 형태는 enforced target을 선택합니다. 다른 invocation target은 fatal policy conflict이고 stored/operator target은 선택되지 않은 provenance로만 남습니다. Overridable 형태는 invocation, stored preference, policy default, operator `model.startup` 순서로 처음 존재하는 값을 고릅니다. Implicit target은 없으며 `host:codex`를 조용히 넣지 않습니다. 선택 가능한 source가 모두 없으면 interactive startup은 Yo Session이나 backend epoch를 만들기 전에 setup으로 들어가고, non-interactive startup은 `StartupTargetRequired`로 실패하면서 정확한 `yo connect`와 `--model host:codex` 안내를 보여줍니다. Target을 선택한 뒤에는 missing, stale, unavailable, unsupported, policy-denied 상태가 fallback 없이 fatal입니다.
 
-Selection은 Session이나 backend epoch를 만들기 전에 complete binding의 replay profile을 검증해야 합니다. K3, `kimi-k2.7-code` 또는 `kimi-k2.7-code-highspeed` binding은 명시적으로 작성한 manual profile에서 왔거나, 암호화하지 않는 current-user-only 저장 안내를 확인한 뒤 commit된 managed Kimi plan에서 온 정확한 `kimi-private-local-plaintext/v1` evidence가 있을 때만 routable합니다. Release overlay, ModelId, credential, stored preference, policy target, 이전 managed coordinate는 동의가 아닙니다. 이전 durable shape에서 field가 빠졌으면 오직 `semantic-only/v1`로 decode하므로 오래된 private-replay Kimi coordinate는 quarantined 상태로 남습니다. 모든 invocation, default, policy, operator, picker, startup, resume, live-switch 경로는 `PrivateReplayConsentRequired`로 실패하고 Kimi connect preview 또는 explicit manual profile 안내를 제공해야 합니다. Private state를 몰래 upgrade, select, persist하면 안 됩니다. K2.6과 모든 semantic-only binding은 정확한 `semantic-only/v1`을 요구하고 private-retention 안내를 표시하지 않습니다.
+Selection은 Session이나 backend epoch를 만들기 전에 complete binding의 replay profile을 검증해야 합니다. 허용된 모든 private-replay Kimi binding, 즉 Platform의 exact `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.7-code-highspeed`와 Code membership의 exact `k3`, `k3-256k`, `kimi-for-coding`, `kimi-for-coding-highspeed`는 명시적으로 작성한 manual profile에서 왔거나, 암호화하지 않는 current-user-only 저장 안내를 확인한 뒤 commit된 managed Kimi plan에서 온 exact `kimi-private-local-plaintext/v1` evidence가 있을 때만 routable합니다. Release overlay, catalog profile, ModelId, credential, stored preference, policy target, 이전 managed coordinate는 동의가 아닙니다. 이전 durable shape에서 field가 빠졌으면 오직 `semantic-only/v1`로 decode하므로 오래된 private-replay Kimi coordinate는 quarantined 상태로 남습니다. 모든 invocation, default, policy, operator, picker, startup, resume, live-switch 경로는 `PrivateReplayConsentRequired`로 실패하고 Kimi connect preview 또는 explicit manual profile 안내를 제공해야 합니다. Private state를 몰래 upgrade, select, persist하면 안 됩니다. K2.6과 모든 semantic-only binding은 exact `semantic-only/v1`을 요구하고 private-retention 안내를 표시하지 않습니다.
 
 Stored user preference는 이 unit만 소유하며 unset, HostTarget, ModelTarget 중 하나입니다. `yo default TARGET`은 허용된 선택을 저장하고 `yo default --unset`은 지웁니다. Service-binding 계약이 이 preference-only publication 경계를 소유합니다. Shared operation lock과 pending-journal recovery 뒤에 필요한 fresh admission 또는 verification, 마지막 ConfigSnapshot guard, 정확히 하나의 ConnectionRepository CAS가 이어집니다. Operation journal을 게시하거나 credential revision 또는 action을 명명하지 않습니다. Caller가 outcome을 확인하지 못한 경우 current preference를 먼저 확인해야 합니다. Explicit default command를 반복하는 것은 새로운 authorization입니다. 이미 같은 outcome이면 no-op이고 current preference가 다르면 새 CAS로 바꿀 수 있습니다. 반면 Local Codex connect는 fresh invocation이 관찰한 non-unset preference를 모두 보존합니다. Policy 또는 operator target도 없다면 삭제 후 다음 startup이 setup으로 들어갈 수 있습니다. Interactive picker는 inherited, Local Codex, complete configured model을 보여주고 non-interactive value-less command는 실패합니다.
 
