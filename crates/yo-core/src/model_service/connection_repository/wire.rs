@@ -45,13 +45,8 @@ pub(super) fn decode(
 ) -> Result<DecodedSnapshot, ConnectionRepositoryError> {
     let contents = std::str::from_utf8(encoded)
         .map_err(|_| ConnectionRepositoryError::InvalidContents(path.to_owned()))?;
-    let wire: WireSnapshot = yo_yaml::from_str(contents).map_err(|_| {
-        if yo_yaml::has_any_top_level_mapping_key(encoded, &["version"]).unwrap_or(false) {
-            ConnectionRepositoryError::RetiredYamlFormat(path.to_owned())
-        } else {
-            ConnectionRepositoryError::InvalidContents(path.to_owned())
-        }
-    })?;
+    let wire: WireSnapshot = yo_yaml::from_str(contents)
+        .map_err(|_| ConnectionRepositoryError::InvalidContents(path.to_owned()))?;
     let invalid = |_| ConnectionRepositoryError::InvalidContents(path.to_owned());
     let accounts = wire
         .accounts
@@ -155,7 +150,6 @@ impl From<&ManagedConnectionBinding> for WireBinding {
                 reasoning_parameters: profile.reasoning_parameters().clone(),
                 optional_request_parameters: profile.optional_request_parameters().clone(),
                 tool_capability_policy: profile.tool_capability_policy().as_str().to_owned(),
-                verification_profile: profile.verification_profile().as_str().to_owned(),
                 replay_profile: (profile.replay_profile().as_str() != SEMANTIC_REPLAY_PROFILE)
                     .then(|| profile.replay_profile().as_str().to_owned()),
             },
@@ -175,7 +169,6 @@ struct WireProfile {
     #[serde(deserialize_with = "deserialize_non_null_profile_parameters")]
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: String,
-    verification_profile: String,
     #[serde(
         default,
         deserialize_with = "deserialize_optional_non_null_string",
@@ -320,7 +313,6 @@ fn parse_binding(
         Some(profile.reasoning_parameters),
         Some(profile.optional_request_parameters),
         Some(VersionedProfileId::new(profile.tool_capability_policy)?),
-        Some(VersionedProfileId::new(profile.verification_profile)?),
     )
     .with_replay_profile(
         profile

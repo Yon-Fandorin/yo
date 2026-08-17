@@ -91,9 +91,8 @@ pub use model_service::{
     PreparedCredentialMutation, PreparedExternalConnection, PreparedExternalDisconnect, ProviderId,
     QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogModel,
     QwenCloudCatalogSeed, SEMANTIC_REPLAY_PROFILE, StartupPolicy, StartupSelectionSources,
-    StartupTarget, VerifiedExternalConnection, VersionedProfileId, discover_kimi_models,
-    discover_openrouter_models, parse_kimi_catalog_snapshot, plan_connection_recovery,
-    resolve_startup_target, verify_external_connection,
+    StartupTarget, VersionedProfileId, discover_kimi_models, discover_openrouter_models,
+    parse_kimi_catalog_snapshot, plan_connection_recovery, resolve_startup_target,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

@@ -83,8 +83,7 @@ at 30 seconds, each redirect attempt's response headers at 5 minutes,
 successful-stream inactivity at 5 minutes, non-success error-body inactivity at
 30 seconds, and each internal event handoff at 5 minutes. Only a non-empty raw HTTP body chunk resets a body
 inactivity clock, before SSE decoding or error-body retention; each observation
-starts a fresh event-handoff wait. External connection verification supplies a
-separate 10-minute absolute request deadline. `yo-core::backend::native` owns semantic Activities and the bounded
+starts a fresh event-handoff wait. `yo-core::backend::native` owns semantic Activities and the bounded
 model/tool loop. Before each dispatch it counts the exact request with the
 catalog-selected tokenizer profile. If the input budget or admitted replay
 prefix is exhausted, it completes the current Turn without resumable evidence,
@@ -578,7 +577,6 @@ model:
           effort: medium
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: qwen3.8-max
           model_display_name: Qwen 3.8 Max
@@ -708,15 +706,14 @@ rather than returning to `absent`. These writes are a core storage boundary.
 journal share `yo-yaml`: exactly one document, finite structural and replay
 budgets, bounded small aliases, and rejection of duplicate keys, merge keys,
 unknown aliases, cycles, and additional documents. None carries a top-level
-format-version field. A retired `version` field or journal `profile_digests`
-field fails before mutation with guidance to back up or remove the stale local
-state and register affected connections again. Yo does not decode, migrate,
-dual-write, downgrade, or automatically delete the retired pre-release shapes.
+format-version field. An unknown `version` field or journal `profile_digests`
+field is an ordinary unknown field and fails typed decoding before mutation.
+Yo does not classify, decode, migrate, dual-write, downgrade, or automatically
+delete an older pre-release shape.
 
 The sibling `connection-operation.yaml` owns the secret-free durable intent
 for a credential-and-public operation. The current pre-version record carries
-an opaque operation ID, the config snapshot digest, exact
-expected and planned public revisions plus the complete bounded prospective
+an opaque operation ID, exact expected and planned public revisions plus the complete bounded prospective
 public snapshot, one add, replace, remove, or preserve credential receipt, and
 one legal phase.
 It cannot accept an `ApiCredential`, candidate identity, or
@@ -768,8 +765,9 @@ no credential read and creates no intent or repository mutation. An exact
 `yo connect qwencloud:Account:Model` bypasses the picker, while a Model outside
 the selected closed catalog fails with guidance to author an explicit manual
 binding. There is no remote model-list request: after one selectable row is
-chosen, the ordinary credential, complete binding-union verification, journal,
-and commit path remains authoritative.
+chosen, structural binding admission, preview, credential capture, journal,
+and commit path remains authoritative. Registration itself sends no model
+request and does not claim that the account can use the selected row.
 
 `yo connect kimi:Account` reads one candidate key and fetches one bounded
 authenticated `GET models` snapshot from the configured Kimi product endpoint,
@@ -792,8 +790,7 @@ preserved-thinking `keep: all`; Code K2.7 sends forced preserved thinking.
 Both Code families also send one opaque `prompt_cache_key`. The backend creates
 that hint once from the Session identity and reuses it across ordinary and
 resumed requests without branching on Provider; the Connector alone decides
-whether to serialize it. Connection verification instead reuses a separate
-ephemeral `verification-<UUIDv7>` hint for its verification task. Hints are
+whether to serialize it. Hints are
 redacted and never become binding identity, replay evidence, logs, diagnostics,
 transcripts, or traces. Successful K3/K2.7 rounds emit one
 bounded provider-private assistant item containing the complete reasoning,
@@ -826,13 +823,18 @@ selection, cancellation, input/render failure, or unwind. Remote strings cross
 a printable reversible byte-escape boundary before terminal output. Selection
 then enters the existing concise connection preview; `--verbose` expands only
 that preview. Cancellation creates no new intent or repository mutation, and
-the same in-memory key used for discovery performs the final binding-union
-verification. Two-part discovery rejects `--credential-file` and `--yes`.
+the same in-memory key used for discovery is retained for publication after
+final structural admission. Two-part discovery rejects `--credential-file`
+and `--yes`.
 
 `yo connect Provider:Account:Model` accepts one exact configured reference. It
-forms the union of every complete manual and currently managed binding for that
-Provider and Account, plus the prospective selected binding. A retained legacy
-binding fails before prompting because its full behavior cannot be verified.
+forms the prospective post-mutation set from every complete manual binding,
+each unaffected managed sibling for that Provider and Account, and the
+prospective selected binding. The managed binding displaced at the selected
+coordinate is excluded from admission and registration accounting; verbose
+preview may retain it only to compare the old and new profiles. A retained
+incomplete binding fails before prompting because its full behavior cannot be
+admitted.
 The prospective managed upsert must also compose with the complete manual
 catalog and pass startup-policy admission before any secret is read. Yo
 requires confirmation, then reads one bounded API key only from the controlling
@@ -846,7 +848,7 @@ path suppresses confirmation and opens the final credential path once with
 no-follow semantics. It accepts only a current-user-owned regular file whose
 mode is exactly `0400` or `0600`, reads through EOF under a 16,386-byte stable
 metadata bound, removes at most one final LF or CRLF, and then applies the
-16,384-byte UTF-8 `ApiCredential` rules. Capture or verification failure creates
+16,384-byte UTF-8 `ApiCredential` rules. Capture failure creates
 no new intent or repository mutation, does not fall back to the TTY, and never
 changes or exposes the source file. Recovery may already have completed an
 older operation before the new plan. Environment variables, secret argument
@@ -856,10 +858,8 @@ The confirmation presents the selected target, then uses stable semantic plan
 markers (`+`, `~`, `−`, and `=`) to distinguish create, change, remove, and keep
 effects. The default view keeps that decision-facing change set, names the
 Provider and Account once on the credential action, lists each exact Model ID
-verified with the key once inside that account context, and ends with a concise
-plan count. When one Model ID has more than one old or prospective binding to
-verify, the action also states the distinct configuration count instead of
-duplicating the Model ID. `-v` or `--verbose` groups models whose non-model connection and resolved
+registered for that account once, and ends with a concise plan count. `-v` or
+`--verbose` groups models whose non-model connection and resolved
 profile fields are exactly equal, then prints their shared non-secret endpoint,
 dialect, and profile fields once. Any field difference creates a separate
 profile group, so compaction never hides a distinct binding behavior. The
@@ -877,19 +877,13 @@ TTY width and wraps terminal-safe nonzero-width graphemes itself, preserving
 exact non-secret value bytes rather than relying on the shell's incidental line
 wrapping; an unavailable width uses an 80-column fallback.
 
-The candidate key is used—without fallback to a stored key—to issue one bounded,
-no-tool semantic request for every captured binding profile. Request-local tool
-exposure is omitted from both supported wire dialects, while historical tool
-calls and results remain replayable. Each verification
-requires a completed message and completed terminal status. A completed visible
-refusal is a valid semantic result; tool-call, incomplete, failed, closed-early,
-or timeout outcomes fail verification. Diagnostics
-retain only the non-secret target and connector failure class. After every
-binding succeeds, the command revalidates the captured config, publishes a
+The command does not use the candidate key for a model request. After
+confirmation it revalidates the captured config, publishes a
 secret-free intent, commits the exact add or replacement credential, advances
 the journal, publishes the exact managed public snapshot, advances to complete,
-and clears the journal. A crash after credential commit resumes only the stored
-public bytes and never reconstructs or re-verifies a secret.
+and clears the journal. Authentication, entitlement, and request acceptance are
+learned only from ordinary model use. A crash after credential commit resumes
+only the stored public bytes and never reconstructs or exercises a secret.
 
 `yo disconnect` interactively infers a unique managed target or asks for one
 exact captured `Provider:Account:Model` reference. Automatic execution requires
@@ -932,8 +926,7 @@ whose tokenizer is actually o200k-compatible. Unknown profiles fail startup.
 configured input limit during local context admission. The first explicit
 runtime supports an empty reasoning mapping or an `effort` of `none`,
 `minimal`, `medium`, or `high`; it requires empty
-`optional_request_parameters`, `local-tools/v1`, and
-`semantic-terminal/v1`. Other validated profile identifiers remain readable
+`optional_request_parameters` and `local-tools/v1`. Other validated profile identifiers remain readable
 configuration but fail startup until their runtime behavior exists.
 
 The public sibling `connections.yaml` is separate from operator-owned
@@ -963,7 +956,6 @@ bindings:
       reasoning_parameters: { effort: medium }
       optional_request_parameters: {}
       tool_capability_policy: local-tools/v1
-      verification_profile: semantic-terminal/v1
 accounts:
   - provider: qwencloud
     provider_display_name: QwenCloud

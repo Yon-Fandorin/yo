@@ -567,13 +567,13 @@ mod tests {
         assert_eq!(binding_with_unknown_field, binding);
     }
 
-    // 새 complete binding은 endpoint·connector와 여덟 profile 필드를 모두 복원하고,
+    // 새 complete binding은 endpoint·connector와 현재 profile 필드를 모두 복원하고,
     // structured integer/float 구분을 포함한 exact profile이 같을 때만 같은 epoch입니다.
     #[test]
     fn complete_durable_binding_preserves_every_resolved_profile_field() {
         let durable = parse_durable_binding(
             "yo.complete-model-binding/v1",
-            r#"{"provider":"qwencloud","account":"token-plan","model":"qwen3.8max","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000000,"max_output_tokens":65536,"reasoning_parameters":{"effort":"medium","integer":1,"float":1.0},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+            r#"{"provider":"qwencloud","account":"token-plan","model":"qwen3.8max","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000000,"max_output_tokens":65536,"reasoning_parameters":{"effort":"medium","integer":1,"float":1.0},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
         )
         .unwrap();
         let DurableNativeBinding::Complete(complete) = durable else {
@@ -594,10 +594,6 @@ mod tests {
             .unwrap()
         );
         assert_eq!(profile.tool_capability_policy().as_str(), "local-tools/v1");
-        assert_eq!(
-            profile.verification_profile().as_str(),
-            "semantic-terminal/v1"
-        );
     }
 
     // resume은 좌표와 endpoint가 같아도 현재 resolved profile이 달라지면 replacement를
@@ -606,7 +602,7 @@ mod tests {
     fn native_resume_compares_the_complete_explicit_profile() {
         let durable = parse_durable_binding(
             "yo.complete-model-binding/v1",
-            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"effort":"medium"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"effort":"medium"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
         )
         .unwrap();
         let DurableNativeBinding::Complete(complete) = &durable else {
@@ -644,7 +640,6 @@ mod tests {
             Some(serde_json::from_str(r#"{"effort":"medium"}"#).unwrap()),
             Some(serde_json::from_str("{}").unwrap()),
             Some(VersionedProfileId::new("local-tools/v1").unwrap()),
-            Some(VersionedProfileId::new("semantic-terminal/v1").unwrap()),
         );
         let changed_profile = EffectiveModelProfile::resolve(None, &changed_layer).unwrap();
         let changed_catalog = yo_core::ModelCatalog::new(vec![
@@ -676,7 +671,7 @@ mod tests {
     fn complete_durable_binding_rejects_unknown_fields() {
         let error = parse_durable_binding(
             "yo.complete-model-binding/v1",
-            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","unknown":true}"#,
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","unknown":true}"#,
         )
         .unwrap_err();
 
@@ -688,7 +683,7 @@ mod tests {
     #[test]
     fn new_no_tools_session_freezes_the_empty_registry_revision() {
         let complete = CompleteModelBinding::from_durable_json(
-            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"no-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"no-tools/v1"}"#,
         )
         .unwrap();
         let catalog = yo_core::ModelCatalog::new(vec![
@@ -715,7 +710,8 @@ mod tests {
     #[test]
     fn complete_durable_binding_rejects_out_of_range_number_spellings() {
         let prefix = r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"value":"#;
-        let suffix = r#"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#;
+        let suffix =
+            r#"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#;
         for invalid in [
             "18446744073709551616",
             "340282366920938463463374607431768211456",

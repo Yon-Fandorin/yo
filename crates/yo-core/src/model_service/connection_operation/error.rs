@@ -19,7 +19,6 @@ pub enum ConnectionOperationError {
     TooLarge(PathBuf),
     Changed(PathBuf),
     InvalidContents(PathBuf),
-    RetiredYamlFormat(PathBuf),
     Conflict(PathBuf),
     OperationGuardMismatch(PathBuf),
     InvalidEntry,
@@ -87,11 +86,6 @@ impl fmt::Display for ConnectionOperationError {
                 "{} contains an invalid connection operation",
                 path.display()
             ),
-            Self::RetiredYamlFormat(path) => write!(
-                formatter,
-                "{} uses a retired pre-release connection-operation shape; back up or remove the stale local state, then register affected connections again",
-                path.display()
-            ),
             Self::Conflict(path) => write!(
                 formatter,
                 "{} changed outside the current serialized connection operation",
@@ -103,7 +97,7 @@ impl fmt::Display for ConnectionOperationError {
                 path.display()
             ),
             Self::InvalidEntry => formatter.write_str(
-                "the connection operation has invalid identity, digest, action, or phase fields",
+                "the connection operation has invalid identity, action, or phase fields",
             ),
             Self::PreparedTooLarge => {
                 formatter.write_str("the prepared connection operation exceeds its bounded size")

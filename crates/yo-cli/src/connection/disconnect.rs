@@ -55,12 +55,7 @@ fn execute_external_disconnect_with(
         command.verbose,
     )?;
     let prepared = session
-        .prepare_external_disconnect(
-            config.snapshot_digest(),
-            snapshot.revision(),
-            &selection,
-            plan.credential_action,
-        )
+        .prepare_external_disconnect(snapshot.revision(), &selection, plan.credential_action)
         .map_err(|error| AppError::single("preparing the external disconnect", error))?;
 
     if !command.yes && !input.confirm(&plan.preview)? {

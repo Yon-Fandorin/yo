@@ -2,7 +2,7 @@
 
 Kimi와 이후 모든 Provider에 이 페이지를 사용한다. 새 Provider는 단순히 모델
 목록 하나를 추가하는 일이 아니다. Source authority, endpoint·protocol 의미,
-credential verification, profile resolution, durable-state compatibility가 함께
+credential 사용, profile resolution, durable-state compatibility가 함께
 생긴다.
 
 ## 출처 감사 완료하기
@@ -15,7 +15,7 @@ credential verification, profile resolution, durable-state compatibility가 함�
    모델 중 무엇을 설명하는가?
 3. Stable ModelId와 endpoint, dialect, modality, tool, reasoning behavior,
    limit을 제공하는가, 아니면 marketing description만 제공하는가?
-4. 모델을 나열하고 검증할 때 어떤 authentication material이 필요한가?
+4. 모델을 나열하고 사용할 때 어떤 authentication material이 필요한가?
 5. Region, plan, protocol variant는 별도 catalog profile인가?
 6. Removal, deprecation, 같은 ModelId의 field 변경을 어떻게 알리는가?
 
@@ -42,7 +42,7 @@ Slice와 activation을 완료한다.
 
 `yo-core/src/model_service` 아래에 하나의 응집된 Provider module을 만든다.
 Transport와 normalization의 책임이 실제로 다를 때만 submodule로 나눈다.
-Provider-neutral catalog entry, complete binding, picker, verification, journal,
+Provider-neutral catalog entry, complete binding, picker, 구조적 admission, journal,
 connection transaction을 재사용한다. Typed adapter가 같은 handoff를 만들 수
 있다면 shared layer에 Provider branch를 추가하지 않는다.
 
@@ -65,7 +65,7 @@ path와 counterexample을 함께 증명해야 한다.
 
 - Exact configured Provider와 Account가 의도한 catalog owner를 선택한다.
 - Cancellation은 secret 입력과 repository mutation보다 먼저 일어난다.
-- 선택된 complete binding이 기존 verified connection transaction에 들어간다.
+- 선택된 complete binding이 기존 recoverable connection transaction에 들어간다.
 - Unsupported row는 표시되지만 선택할 수 없다.
 - Malformed, duplicate, oversized, redirected, stale, incomplete input이 자기 소유
   boundary에서 실패한다.

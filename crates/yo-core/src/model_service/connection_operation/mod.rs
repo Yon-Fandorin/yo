@@ -10,10 +10,7 @@ mod repository;
 mod storage;
 mod wire;
 
-pub use connect::{
-    ExternalConnectionError, PreparedExternalConnection, VerifiedExternalConnection,
-    verify_external_connection,
-};
+pub use connect::{ExternalConnectionError, PreparedExternalConnection};
 pub use disconnect::{
     ExternalDisconnectCredentialAction, ExternalDisconnectError, PreparedExternalDisconnect,
 };

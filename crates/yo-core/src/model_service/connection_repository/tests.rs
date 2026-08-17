@@ -57,7 +57,7 @@ fn managed_account() -> ManagedConnectionAccount {
 
 fn managed_binding(model: &str, effort: &str) -> ManagedConnectionBinding {
     let durable = format!(
-        r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}}"#
+        r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
     );
     ManagedConnectionBinding::new(
         crate::CompleteModelBinding::from_durable_json(&durable).unwrap(),
@@ -69,7 +69,7 @@ fn managed_binding(model: &str, effort: &str) -> ManagedConnectionBinding {
 fn managed_kimi_binding() -> ManagedConnectionBinding {
     ManagedConnectionBinding::new(
         crate::CompleteModelBinding::from_durable_json(
-            r#"{"provider":"kimi","account":"team","model":"kimi-k3","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
+            r#"{"provider":"kimi","account":"team","model":"kimi-k3","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
         )
         .unwrap(),
         Some("Kimi K3".to_owned()),
@@ -262,35 +262,27 @@ fn malformed_managed_bindings_and_accounts_fail_closed() {
     assert_eq!(fs::read(repository.path()).unwrap(), before);
 }
 
-// retired top-level version을 가진 공개 snapshot은 현재 shape로 재해석하거나 고치지 않고
-// 원문을 보존한 채 백업·제거·재연결 안내를 반환합니다.
+// 별도 format classifier가 없으므로 top-level version은 일반 unknown field로 닫히고
+// 원문은 자동 migration이나 삭제 없이 보존됩니다.
 #[test]
-fn retired_connection_shape_reports_reset_and_reconnect_guidance() {
-    let (_directory, repository) = repository("retired-shape");
+fn unknown_top_level_version_is_invalid_connection_state() {
+    let (_directory, repository) = repository("unknown-version");
     fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
     let stale = "version: 1\nrevision: rev-00000000000000000000000000000000\n";
     fs::write(repository.path(), stale).unwrap();
     fs::set_permissions(repository.path(), fs::Permissions::from_mode(0o600)).unwrap();
 
     let error = repository.capture().unwrap_err();
-    let diagnostic = error.to_string();
-
     assert!(matches!(
         error,
-        ConnectionRepositoryError::RetiredYamlFormat(_)
+        ConnectionRepositoryError::InvalidContents(_)
     ));
-    assert!(diagnostic.contains("back up or remove"), "{diagnostic}");
-    assert!(
-        diagnostic.contains("register affected connections again"),
-        "{diagnostic}"
-    );
     assert_eq!(fs::read_to_string(repository.path()).unwrap(), stale);
 }
 
-// binding 내부의 version 오타는 퇴역 root snapshot으로 오인하지 않고 원문을 보존한
-// 일반 invalid-content 오류로 닫힙니다.
+// binding 내부의 version 오타도 원문을 보존한 일반 invalid-content 오류로 닫힙니다.
 #[test]
-fn nested_version_field_is_not_classified_as_a_retired_connection_shape() {
+fn nested_version_field_is_invalid_connection_state() {
     let (_directory, repository) = repository("nested-version");
     let mutation = repository
         .capture()
@@ -309,7 +301,6 @@ fn nested_version_field_is_not_classified_as_a_retired_connection_shape() {
         &error,
         ConnectionRepositoryError::InvalidContents(_)
     ));
-    assert!(!error.to_string().contains("back up or remove"));
     assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
 }
 
@@ -345,7 +336,35 @@ fn managed_upsert_round_trips_complete_state_and_first_preference() {
     assert!(!encoded.contains("version:"));
     assert!(encoded.contains("reasoning_parameters:"));
     assert!(encoded.contains("effort: medium"));
+    assert!(!encoded.contains("verification_profile"));
     assert!(!encoded.contains("secret"));
+}
+
+// connections.yaml의 profile은 실행 동작만 저장하므로 폐기된 연결 검증 필드를
+// unknown field로 닫고 원문을 자동 변환하지 않습니다.
+#[test]
+fn durable_profile_rejects_connection_verification_field() {
+    let (_directory, repository) = repository("verification-field");
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    let original = fs::read_to_string(repository.path()).unwrap();
+    let malformed = original.replace(
+        "tool_capability_policy: local-tools/v1",
+        "tool_capability_policy: local-tools/v1\n      verification_profile: semantic-terminal/v1",
+    );
+    assert_ne!(malformed, original, "fixture must add the retired field");
+    fs::write(repository.path(), &malformed).unwrap();
+
+    assert!(matches!(
+        repository.capture(),
+        Err(ConnectionRepositoryError::InvalidContents(_))
+    ));
+    assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
 }
 
 // durable structured profile 전체의 null은 recursive 내부 null과 구분되어 capture에서

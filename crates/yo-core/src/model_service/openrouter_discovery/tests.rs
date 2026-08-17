@@ -24,7 +24,6 @@ fn profile_with_tool_policy(policy: &str) -> EffectiveModelProfile {
             Some(serde_json::from_value(Value::Null).unwrap()),
             Some(serde_json::from_value(Value::Null).unwrap()),
             Some(VersionedProfileId::new(policy).unwrap()),
-            Some(VersionedProfileId::new("semantic-terminal/v1").unwrap()),
         ),
     )
     .unwrap()

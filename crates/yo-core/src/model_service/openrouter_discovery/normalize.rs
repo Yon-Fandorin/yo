@@ -318,7 +318,6 @@ fn profile_with_remote_values(
         Some(base.reasoning_parameters().clone()),
         Some(base.optional_request_parameters().clone()),
         Some(VersionedProfileId::new(tool_policy)?),
-        Some(base.verification_profile().clone()),
     );
     EffectiveModelProfile::resolve(None, &layer)
 }

@@ -33,7 +33,6 @@ pub enum ConnectionOperationPhase {
 pub struct ConnectionOperationJournalEntry {
     operation_id: String,
     kind: ConnectionOperationKind,
-    config_snapshot_digest: String,
     phase: ConnectionOperationPhase,
     connection: PreparedConnectionMutation,
     credential: JournalCredential,
@@ -47,7 +46,6 @@ pub(super) enum JournalCredential {
 
 impl ConnectionOperationJournalEntry {
     pub fn connect_credential_change(
-        config_snapshot_digest: impl Into<String>,
         connection: PreparedConnectionMutation,
         credential: PreparedCredentialMutation,
     ) -> Result<Self, ConnectionOperationError> {
@@ -59,14 +57,12 @@ impl ConnectionOperationJournalEntry {
         }
         Self::new(
             ConnectionOperationKind::ConnectCredentialChange,
-            config_snapshot_digest.into(),
             connection,
             JournalCredential::Mutation(credential),
         )
     }
 
     pub fn disconnect_remove(
-        config_snapshot_digest: impl Into<String>,
         connection: PreparedConnectionMutation,
         credential: PreparedCredentialMutation,
     ) -> Result<Self, ConnectionOperationError> {
@@ -75,20 +71,17 @@ impl ConnectionOperationJournalEntry {
         }
         Self::new(
             ConnectionOperationKind::Disconnect,
-            config_snapshot_digest.into(),
             connection,
             JournalCredential::Mutation(credential),
         )
     }
 
     pub fn disconnect_preserve(
-        config_snapshot_digest: impl Into<String>,
         connection: PreparedConnectionMutation,
         expected_credential_revision: CredentialRevision,
     ) -> Result<Self, ConnectionOperationError> {
         Self::new(
             ConnectionOperationKind::Disconnect,
-            config_snapshot_digest.into(),
             connection,
             JournalCredential::Preserve(expected_credential_revision),
         )
@@ -96,7 +89,6 @@ impl ConnectionOperationJournalEntry {
 
     fn new(
         kind: ConnectionOperationKind,
-        config_snapshot_digest: String,
         connection: PreparedConnectionMutation,
         credential: JournalCredential,
     ) -> Result<Self, ConnectionOperationError> {
@@ -104,7 +96,6 @@ impl ConnectionOperationJournalEntry {
         Self::from_stored_parts(
             operation_id,
             kind,
-            config_snapshot_digest,
             ConnectionOperationPhase::Intent,
             connection,
             credential,
@@ -114,18 +105,16 @@ impl ConnectionOperationJournalEntry {
     pub(super) fn from_stored_parts(
         operation_id: String,
         kind: ConnectionOperationKind,
-        config_snapshot_digest: String,
         phase: ConnectionOperationPhase,
         connection: PreparedConnectionMutation,
         credential: JournalCredential,
     ) -> Result<Self, ConnectionOperationError> {
-        if !valid_operation_id(&operation_id) || !valid_digest(&config_snapshot_digest) {
+        if !valid_operation_id(&operation_id) {
             return Err(ConnectionOperationError::InvalidEntry);
         }
         let entry = Self {
             operation_id,
             kind,
-            config_snapshot_digest,
             phase,
             connection,
             credential,
@@ -154,11 +143,6 @@ impl ConnectionOperationJournalEntry {
     #[must_use]
     pub const fn kind(&self) -> ConnectionOperationKind {
         self.kind
-    }
-
-    #[must_use]
-    pub fn config_snapshot_digest(&self) -> &str {
-        &self.config_snapshot_digest
     }
 
     #[must_use]
@@ -295,7 +279,6 @@ impl fmt::Debug for ConnectionOperationJournalEntry {
             .debug_struct("ConnectionOperationJournalEntry")
             .field("operation_id", &self.operation_id)
             .field("kind", &self.kind)
-            .field("config_snapshot_digest", &self.config_snapshot_digest)
             .field("phase", &self.phase)
             .field("credential_action", &self.credential_action())
             .finish_non_exhaustive()
@@ -319,14 +302,6 @@ pub(super) fn valid_operation_id(value: &str) -> bool {
     value.len() == 35
         && value.starts_with("op-")
         && value[3..]
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-
-pub(super) fn valid_digest(value: &str) -> bool {
-    value.len() == 71
-        && value.starts_with("sha256:")
-        && value[7..]
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }

@@ -81,8 +81,7 @@ header·stream·queue wait를 중단한다. 기본 agent 경로에는 absolute m
 successful-stream inactivity는 5분, non-success error-body inactivity는 30초, 각 내부 event
 handoff는 5분으로 제한한다.
 비어 있지 않은 raw HTTP body chunk만 SSE decode 또는 error-body retention 전에 body
-inactivity clock을 reset하며, observation마다 새로운 event-handoff wait를 시작한다. External
-connection verification은 별도의 10분 absolute request deadline을 제공한다.
+inactivity clock을 reset하며, observation마다 새로운 event-handoff wait를 시작한다.
 `yo-core::backend::native`가 semantic
 Activity와 제한된 model/tool loop를 소유한다. 매 dispatch 전에 catalog가 선택한
 tokenizer profile로 실제 request를 계산한다. 예약 출력량을 제외한 input budget이나
@@ -545,7 +544,6 @@ model:
           effort: medium
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: qwen3.8-max
           model_display_name: Qwen 3.8 Max
@@ -665,14 +663,14 @@ boundary다.
 `config.yaml`, `credentials.yaml`, `connections.yaml`, operation journal은 `yo-yaml`을
 공유한다. 문서 하나만 허용하고 구조·replay 예산을 유한하게 제한하며, 제한 안의 작은 alias만
 허용하고 duplicate key·merge key·unknown alias·cycle·추가 문서를 거절한다. 네 문서에는
-top-level format-version field가 없다. Retired `version` field나 journal의
-`profile_digests` field가 있으면 mutation 전에 실패하고 stale local state를 백업 또는 제거한
-뒤 영향을 받은 connection을 다시 등록하라고 안내한다. Yo는 폐기된 pre-release shape를
-decode·migration·dual write·downgrade하거나 자동 삭제하지 않는다.
+top-level format-version field가 없다. 알 수 없는 `version` field나 journal의
+`profile_digests` field는 일반 unknown field이며 mutation 전에 typed decoding에서 실패한다.
+Yo는 과거 pre-release shape를 별도로 분류하거나 decode·migration·dual write·downgrade하거나
+자동 삭제하지 않는다.
 
 Sibling `connection-operation.yaml`은 credential과 public repository를 함께 바꾸는
 operation의 secret-free durable intent를 소유한다. 현재 pre-version record는 불투명 operation
-ID, config snapshot digest, 정확한 expected·planned public revision과 크기가
+ID, 정확한 expected·planned public revision과 크기가
 제한된 완전한 prospective public snapshot, add·replace·remove·preserve 중 하나인 credential
 receipt, legal phase 하나를 담는다.
 `ApiCredential`, candidate identity, verification payload는
@@ -716,8 +714,9 @@ row는 모두 보이며 Yo가 지원하지 않는 row는 사유와 함께 disabl
 disabled row를 고르면 credential을 읽지 않고 intent나 repository mutation도 만들지 않는다.
 정확한 `yo connect qwencloud:Account:Model`은 picker를 건너뛰며, 닫힌 catalog 밖의 Model은
 명시적인 manual binding을 작성하라는 안내와 함께 실패한다. 원격 model-list 요청은 없다.
-선택 가능한 row 하나를 고른 뒤에는 기존 credential, complete binding-union 검증, journal,
-commit 경로가 그대로 권위 경계다.
+선택 가능한 row 하나를 고른 뒤에는 구조적 binding admission, preview, credential capture,
+journal, commit 경로가 그대로 권위 경계다. 등록 자체는 모델 요청을 보내지 않으며 해당
+account가 선택한 row를 사용할 수 있다고 주장하지 않는다.
 
 `yo connect kimi:Account`는 candidate key 하나를 읽고 설정한 Kimi 제품 endpoint에서
 bounded 인증 `GET models` snapshot 하나를 가져와 normalize한 typed row를 같은 picker로
@@ -736,8 +735,7 @@ stream 문법을 소유한다. Platform은 기존 request shape를 유지한다.
 reasoning effort와 preserved-thinking `keep: all`을 보내고 Code K2.7은 forced
 preserved thinking을 보낸다. 두 Code 계열은 opaque `prompt_cache_key` 하나도 보낸다.
 Backend는 Session identity에서 hint를 한 번 만들고 Provider 분기 없이 일반 요청과 재개
-요청에서 재사용하며, 직렬화 여부는 Connector만 결정한다. 연결 검증은 별도의 ephemeral
-`verification-<UUIDv7>` hint 하나를 검증 task 동안 재사용한다. Hint는 redacted되고
+요청에서 재사용하며, 직렬화 여부는 Connector만 결정한다. Hint는 redacted되고
 binding identity, replay evidence, log, diagnostic, Transcript, trace가 되지 않는다.
 성공한 K3/K2.7 round는 완전한 reasoning, content, tool-call message를 담은 bounded
 provider-private assistant item 하나를 낸다. 이 항목은 frontend와
@@ -763,13 +761,15 @@ input·render 실패, unwind에서 terminal mode, cursor,
 dynamic panel을 한 cleanup owner가 복원한다. Remote string은 terminal 출력 전에 printable하고
 되돌릴 수 있는 byte escape 경계를 지난다. 선택 뒤에는 기존 concise connection preview로 들어가고
 `--verbose`는 그 preview만 확장한다. 취소는 새 intent나 repository mutation을 만들지 않으며,
-discovery에 쓴 같은 in-memory key가 마지막 binding-union 검증을 수행한다. 두 부분 discovery는
-`--credential-file`과 `--yes`를 거절한다.
+discovery에 쓴 같은 in-memory key는 마지막 구조적 admission 뒤 게시할 때까지 유지된다. 두 부분
+discovery는 `--credential-file`과 `--yes`를 거절한다.
 
-`yo connect Provider:Account:Model`은 설정에 있는 exact reference 하나를 받는다. 해당
-Provider와 Account에 속한 완전한 manual binding, 현재 managed binding, prospective selected
-binding을 모두 합집합으로 만든다. 남는 legacy binding은 전체 동작을 검증할 수 없으므로
-prompt 전에 실패한다. Prospective managed upsert도 secret을 읽기 전에 전체 manual catalog와
+`yo connect Provider:Account:Model`은 설정에 있는 exact reference 하나를 받는다. 교체 뒤의
+prospective 집합은 완전한 모든 manual binding, 해당 Provider·Account에서 영향받지 않는 managed
+sibling, prospective selected binding으로 만든다. 선택한 coordinate에서 교체되는 managed binding은
+admission과 등록 개수에서 제외하고, verbose preview에서 이전 profile과 새 profile을 비교할 때만
+남길 수 있다. 남는 불완전한 binding은 전체 동작을 admission할 수 없으므로 prompt 전에 실패한다.
+Prospective managed upsert도 secret을 읽기 전에 전체 manual catalog와
 합성되고 startup-policy admission을 통과해야 한다. Yo는 확인을 받은 뒤 controlling TTY에서만
 크기가 제한된 API key 하나를 읽는다. 이때 echo를 끄고 정확한 terminal
 설정을 복구한다. 명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
@@ -778,17 +778,15 @@ External exact target은 대신 `--credential-file PATH --yes`를 사용할 수 
 열기 전에 이 조합을 거절한다. Recovery와 exact plan 준비 뒤 이 경로는 확인을 생략하고 final
 credential path를 no-follow로 한 번만 연다. 현재 사용자 소유 regular file이면서 mode가 정확히
 `0400` 또는 `0600`인 경우만 받고, 16,386-byte 안정 metadata 경계 안에서 EOF까지 읽은 뒤 마지막
-LF 또는 CRLF 하나만 제거하고 16,384-byte UTF-8 `ApiCredential` 규칙을 적용한다. Capture 또는
-검증 실패는 새 intent나 repository mutation을 만들지 않고 TTY로 fallback하지 않으며 source
+LF 또는 CRLF 하나만 제거하고 16,384-byte UTF-8 `ApiCredential` 규칙을 적용한다. Capture 실패는
+새 intent나 repository mutation을 만들지 않고 TTY로 fallback하지 않으며 source
 file을 바꾸거나 노출하지 않는다. 새 plan 전에 recovery가 이전 operation을 이미 완료했을 수는
 있다. 환경 변수, secret argument 값, standard input, child process, config file은 credential
 channel이 아니다.
 확인 화면은 선택 target을 먼저 보여주고, 안정적인 의미 plan marker(`+`, `~`, `−`, `=`)로
 생성, 변경, 제거, 유지 효과를 구분한다. 기본 화면은 판단에 필요한 이 변경 집합을 유지하고,
-credential action에 Provider와 Account를 한 번만 표시한 뒤 그 account 문맥에서 key로 검증할
-각각의 정확한 Model ID를 한 번씩 나열하며, 간결한 plan 개수로 끝난다. Model ID 하나에서
-검증할 기존 또는 prospective binding이 둘 이상이면 Model ID를 반복하지 않고 별도 configuration
-개수도 action에 표시한다. `-v` 또는 `--verbose`는 model을
+credential action에 Provider와 Account를 한 번만 표시한 뒤 그 account에 등록할 각각의 정확한
+Model ID를 한 번씩 나열하며, 간결한 plan 개수로 끝난다. `-v` 또는 `--verbose`는 model을
 제외한 connection field와 resolved profile field가 정확히 같은 model을 한 그룹으로 묶고,
 공유하는 secret-free endpoint, dialect, profile field를 한 번만 표시한다. 어느 field든 다르면
 별도 profile group을 만들므로 압축 때문에 서로 다른 binding 동작이 가려지지 않는다. 일반적인
@@ -802,16 +800,12 @@ terminal에서만 의미 marker를 보조하며 `NO_COLOR`와 redirect된 standa
 shell의 우연한 줄바꿈에 의존하지 않으면서 secret이 아닌 값의 exact bytes를 보존한다. 폭을
 읽을 수 없으면 80열 fallback을 사용한다.
 
-Candidate key는 저장 key로 fallback하지 않고 capture한 각 binding profile에 크기가 제한된
-no-tool semantic request 하나를 보낼 때만 쓴다. 두 supported wire dialect 모두 request-local tool
-노출을 생략하지만 historical tool call과 result replay는 유지한다. 각 검증은 completed message와 completed
-terminal status를 요구한다. 완료된 visible refusal은 유효한 semantic 결과이며 tool call,
-incomplete, failed, 조기 close, timeout은 검증 실패다. 진단에는 secret이 아닌 target과
-connector failure class만 남는다. 모든 binding이
-성공하면 capture한 config를 다시 검사하고 secret-free intent를 게시한 뒤 exact add 또는
+Command는 candidate key로 모델 요청을 보내지 않는다. 확인 뒤 capture한 config를 다시
+검사하고 secret-free intent를 게시한 뒤 exact add 또는
 replace credential을 commit한다. 이어 journal을 전진시키고 exact managed public snapshot을
-게시하며 complete까지 전진한 뒤 journal을 지운다. Credential commit 뒤 crash가 나면 저장된
-public byte만 재개하고 secret을 재구성하거나 다시 검증하지 않는다.
+게시하며 complete까지 전진한 뒤 journal을 지운다. Authentication, entitlement, request
+acceptance는 일반 모델 사용에서만 확인한다. Credential commit 뒤 crash가 나면 저장된 public
+byte만 재개하고 secret을 재구성하거나 사용하지 않는다.
 
 `yo disconnect`는 대화형으로 유일한 managed target을 추론하거나 capture한 정확한
 `Provider:Account:Model` reference 하나를 입력받는다. 자동 실행은
@@ -845,8 +839,7 @@ profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 bind
 있고 모르는 profile은 startup에서 실패한다. `max_output_tokens`는 wire output cap인
 동시에 local context admission에서 입력 한도로부터 제외하는 값이다. 첫 explicit runtime은
 빈 reasoning mapping 또는 `none`, `minimal`, `medium`, `high` 중 하나인 `effort`를
-지원하며, 빈 `optional_request_parameters`, `local-tools/v1`,
-`semantic-terminal/v1`을 요구한다. 다른 검증된 profile identifier는 설정으로 읽을 수
+지원하며, 빈 `optional_request_parameters`와 `local-tools/v1`을 요구한다. 다른 검증된 profile identifier는 설정으로 읽을 수
 있지만 그 runtime 동작이 구현될 때까지 startup에서 실패한다.
 
 공개 sibling `connections.yaml`은 operator가 소유하는 `config.yaml`, secret인
@@ -876,7 +869,6 @@ bindings:
       reasoning_parameters: { effort: medium }
       optional_request_parameters: {}
       tool_capability_policy: local-tools/v1
-      verification_profile: semantic-terminal/v1
 accounts:
   - provider: qwencloud
     provider_display_name: QwenCloud

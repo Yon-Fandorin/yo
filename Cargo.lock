@@ -2258,7 +2258,6 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
- "sha2",
  "signal-hook",
  "tiktoken-rs",
  "unicode-segmentation",

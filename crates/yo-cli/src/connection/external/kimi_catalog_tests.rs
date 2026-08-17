@@ -32,7 +32,7 @@ impl ExternalConnectInput for KimiInput {
 // 인증 inventory에서 선택된 Kimi K3 complete binding이 candidate 하나와 함께 기존
 // transaction으로 전달되고, commit 승인 전에 plaintext private replay 경고가 보입니다.
 #[test]
-fn kimi_discovery_selection_reaches_preview_and_final_verification_unchanged() {
+fn kimi_discovery_selection_reaches_preview_and_publication_unchanged() {
     let root = test_root("success");
     let config_path = root.join("config.yaml");
     std::fs::write(&config_path, kimi_config()).unwrap();
@@ -60,10 +60,10 @@ fn kimi_discovery_selection_reaches_preview_and_final_verification_unchanged() {
             assert!(remote_selected);
             assert_eq!(candidate.expose_secret(), "one-kimi-candidate");
             assert_eq!(
-                prepared.verification_bindings(),
+                prepared.bindings(),
                 std::slice::from_ref(selected.complete_binding().unwrap())
             );
-            let profile = prepared.verification_bindings()[0].profile();
+            let profile = prepared.bindings()[0].profile();
             assert_eq!(
                 profile.replay_profile().as_str(),
                 yo_core::KIMI_PRIVATE_REPLAY_PROFILE
@@ -84,7 +84,7 @@ fn kimi_discovery_selection_reaches_preview_and_final_verification_unchanged() {
 }
 
 // 같은 kimi:Account 진입점에서 Code catalog seed를 선택하면 별도 .com endpoint와
-// k3-256k complete binding이 preview/verification까지 바뀌지 않고 전달됩니다.
+// k3-256k complete binding이 preview/publication까지 바뀌지 않고 전달됩니다.
 #[test]
 fn kimi_code_selection_preserves_product_endpoint_and_private_consent() {
     let root = test_root("code-success");
@@ -110,7 +110,7 @@ fn kimi_code_selection_preserves_product_endpoint_and_private_consent() {
         |_, config, prepared, candidate, remote_selected| {
             assert!(remote_selected);
             assert_eq!(candidate.expose_secret(), "one-kimi-candidate");
-            let complete = &prepared.verification_bindings()[0];
+            let complete = &prepared.bindings()[0];
             assert_eq!(complete.binding().model_id().as_str(), "k3-256k");
             assert_eq!(
                 complete.binding().endpoint().as_str(),
@@ -139,7 +139,7 @@ fn command() -> ConnectCommand {
 
 fn kimi_k3_entry() -> ModelCatalogEntry {
     let complete = CompleteModelBinding::from_durable_json(
-        r#"{"provider":"kimi","account":"team","model":"kimi-k3","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
+        r#"{"provider":"kimi","account":"team","model":"kimi-k3","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
     )
     .unwrap();
     ModelCatalogEntry::with_explicit_profile(
@@ -154,7 +154,7 @@ fn kimi_k3_entry() -> ModelCatalogEntry {
 
 fn kimi_code_entry() -> ModelCatalogEntry {
     let complete = CompleteModelBinding::from_durable_json(
-        r#"{"provider":"kimi","account":"team","model":"k3-256k","connector":"kimi-chat-completions","base_url":"https://api.kimi.com/coding/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":262144,"max_output_tokens":131072,"reasoning_parameters":{"effort":"high"},"optional_request_parameters":{"thinking":{"type":"enabled","keep":"all"}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
+        r#"{"provider":"kimi","account":"team","model":"k3-256k","connector":"kimi-chat-completions","base_url":"https://api.kimi.com/coding/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":262144,"max_output_tokens":131072,"reasoning_parameters":{"effort":"high"},"optional_request_parameters":{"thinking":{"type":"enabled","keep":"all"}},"tool_capability_policy":"local-tools/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
     )
     .unwrap();
     ModelCatalogEntry::with_explicit_profile(

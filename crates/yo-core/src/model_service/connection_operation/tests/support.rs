@@ -50,12 +50,8 @@ impl Fixture {
             .credentials
             .prepare_set(&provider(), &account())
             .expect("the credential mutation must be preparable");
-        ConnectionOperationJournalEntry::connect_credential_change(
-            digest('a'),
-            connection,
-            credential,
-        )
-        .expect("the connect intent must be valid")
+        ConnectionOperationJournalEntry::connect_credential_change(connection, credential)
+            .expect("the connect intent must be valid")
     }
 
     pub(super) fn operation_guard(&self) -> LocalConnectionOperationGuard {
@@ -101,7 +97,7 @@ impl Fixture {
             .prepare_remove(&provider(), &account())
             .expect("the credential removal must be preparable")
             .expect("the existing credential must produce a removal");
-        ConnectionOperationJournalEntry::disconnect_remove(digest('c'), connection, credential)
+        ConnectionOperationJournalEntry::disconnect_remove(connection, credential)
             .expect("the disconnect intent must be valid")
     }
 
@@ -143,7 +139,6 @@ impl Fixture {
             .revision()
             .clone();
         ConnectionOperationJournalEntry::disconnect_preserve(
-            digest('e'),
             connection,
             expected_credential_revision,
         )
@@ -167,8 +162,4 @@ pub(super) fn account() -> AccountId {
 
 pub(super) fn candidate() -> ApiCredential {
     ApiCredential::new(CANDIDATE_SECRET).expect("the fixture credential must be valid")
-}
-
-pub(super) fn digest(character: char) -> String {
-    format!("sha256:{}", character.to_string().repeat(64))
 }

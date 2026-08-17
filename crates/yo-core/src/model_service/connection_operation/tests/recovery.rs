@@ -9,7 +9,7 @@ use super::{
 };
 
 // connect intent의 두 repository가 모두 expected이면 아직 secret commit이 없으므로 intent를
-// abandon하고 다음 invocation이 candidate secret 검증부터 다시 시작해야 함을 검증합니다.
+// abandon하고 다음 invocation이 candidate credential capture부터 다시 시작해야 함을 검증합니다.
 #[test]
 fn connect_expected_expected_abandons_uncommitted_intent() {
     let fixture = Fixture::new("connect-abandon");

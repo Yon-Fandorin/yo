@@ -42,7 +42,7 @@ struct Cli {
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
 enum CliCommand {
-    /// Verify and connect one service target.
+    /// Connect one service target.
     Connect(ConnectArguments),
 
     /// Remove one Yo-managed external model connection.
@@ -57,7 +57,7 @@ enum CliCommand {
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 struct ConnectArguments {
-    /// Exact target to verify and connect.
+    /// Exact target to connect.
     #[arg(value_name = "TARGET", allow_hyphen_values = true)]
     target: String,
 

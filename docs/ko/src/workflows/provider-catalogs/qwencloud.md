@@ -1,8 +1,8 @@
 # QwenCloud 카탈로그 관리
 
 QwenCloud는 release-known static-registry 사례다. Alibaba Cloud가 정확한 plan
-allowlist와 plan별 endpoint를 공개하고, connection verification이 제공된
-credential로 선택한 행을 실제 사용할 수 있는지 증명한다.
+allowlist와 plan별 endpoint를 공개한다. 등록은 구조적 admission만 수행하며, 일반 모델 사용이
+나중에 제공된 credential로 선택한 행을 실제 사용할 수 있는지 확인한다.
 
 ## 공식 출처
 
@@ -26,7 +26,7 @@ ordering은
 [`qwencloud_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/qwencloud_catalog.rs)가
 소유한다. Configuration은
 [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs)에서
-profile을 non-routable seed로 해석한다. Shared selection과 verified connection
+profile을 non-routable seed로 해석한다. Shared selection과 recoverable connection
 transaction은
 [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs)와
 [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs)에

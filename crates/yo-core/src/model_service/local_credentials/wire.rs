@@ -23,13 +23,8 @@ pub(super) fn decode(
     encoded: &[u8],
     revisionless_snapshot_revision: CredentialRevision,
 ) -> Result<DecodedCredentials, LocalCredentialStoreError> {
-    let decoded: CredentialFile = yo_yaml::from_slice(encoded).map_err(|_| {
-        if yo_yaml::has_any_top_level_mapping_key(encoded, &["version"]).unwrap_or(false) {
-            LocalCredentialStoreError::RetiredYamlFormat(path.to_owned())
-        } else {
-            LocalCredentialStoreError::InvalidContents(path.to_owned())
-        }
-    })?;
+    let decoded: CredentialFile = yo_yaml::from_slice(encoded)
+        .map_err(|_| LocalCredentialStoreError::InvalidContents(path.to_owned()))?;
     let revision = decoded
         .revision
         .map(|revision| parse_revision(path, &revision))

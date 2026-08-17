@@ -60,7 +60,6 @@ fn kimi_profile() -> crate::EffectiveModelProfile {
         Some(serde_json::from_str::<ModelProfileParameters>(r#"{"effort":"max"}"#).unwrap()),
         Some(serde_json::from_str::<ModelProfileParameters>("{}").unwrap()),
         Some(VersionedProfileId::new("local-tools/v1").unwrap()),
-        Some(VersionedProfileId::new("semantic-terminal/v1").unwrap()),
     )
     .with_replay_profile(Some(
         VersionedProfileId::new("kimi-private-local-plaintext/v1").unwrap(),
@@ -82,7 +81,6 @@ fn kimi_k27_profile() -> crate::EffectiveModelProfile {
             .unwrap(),
         ),
         Some(VersionedProfileId::new("local-tools/v1").unwrap()),
-        Some(VersionedProfileId::new("semantic-terminal/v1").unwrap()),
     )
     .with_replay_profile(Some(
         VersionedProfileId::new("kimi-private-local-plaintext/v1").unwrap(),

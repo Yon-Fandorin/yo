@@ -1,6 +1,6 @@
 use super::super::CompleteModelBinding;
 
-const COMPLETE_BINDING: &str = r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"effort":"medium"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#;
+const COMPLETE_BINDING: &str = r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"effort":"medium"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#;
 
 // complete binding equality는 좌표뿐 아니라 resolved profile 전부를 포함하므로 profile만
 // 달라져도 새 binding epoch로 판정합니다.
@@ -16,14 +16,26 @@ fn complete_binding_equality_includes_the_resolved_profile() {
     assert_ne!(medium, high);
 }
 
+// 연결 시 model 요청은 profile 의미가 아니므로 complete binding decoder가 이전
+// verification_profile 필드를 무시하거나 identity에 되살리지 않습니다.
+#[test]
+fn complete_binding_rejects_connection_verification_profile() {
+    let value = COMPLETE_BINDING.replace(
+        r#""tool_capability_policy":"local-tools/v1""#,
+        r#""tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1""#,
+    );
+
+    assert!(CompleteModelBinding::from_durable_json(&value).is_err());
+}
+
 // 기존 durable complete binding의 replay_profile 부재는 semantic-only로만 해석되며,
 // 같은 연결 좌표라도 Kimi private profile을 명시하면 완전한 binding identity가 달라집니다.
 #[test]
 fn replay_profile_omission_is_semantic_and_private_profile_changes_identity() {
     let semantic = CompleteModelBinding::from_durable_json(COMPLETE_BINDING).unwrap();
     let private = CompleteModelBinding::from_durable_json(&COMPLETE_BINDING.replace(
-        r#""verification_profile":"semantic-terminal/v1""#,
-        r#""verification_profile":"semantic-terminal/v1","replay_profile":"kimi-private-local-plaintext/v1""#,
+        r#""tool_capability_policy":"local-tools/v1""#,
+        r#""tool_capability_policy":"local-tools/v1","replay_profile":"kimi-private-local-plaintext/v1""#,
     ))
     .unwrap();
 
@@ -40,8 +52,8 @@ fn replay_profile_omission_is_semantic_and_private_profile_changes_identity() {
 #[test]
 fn complete_binding_replay_profile_is_presence_aware_and_closed() {
     let explicit_semantic = CompleteModelBinding::from_durable_json(&COMPLETE_BINDING.replace(
-        r#""verification_profile":"semantic-terminal/v1""#,
-        r#""verification_profile":"semantic-terminal/v1","replay_profile":"semantic-only/v1""#,
+        r#""tool_capability_policy":"local-tools/v1""#,
+        r#""tool_capability_policy":"local-tools/v1","replay_profile":"semantic-only/v1""#,
     ))
     .unwrap();
     assert_eq!(
@@ -55,8 +67,8 @@ fn complete_binding_replay_profile_is_presence_aware_and_closed() {
         r#","replay_profile":"kimi-private-local-plaintext/v1","replay_profile":"kimi-private-local-plaintext/v1""#,
     ] {
         let value = COMPLETE_BINDING.replace(
-            r#""verification_profile":"semantic-terminal/v1""#,
-            &format!(r#""verification_profile":"semantic-terminal/v1"{field}"#),
+            r#""tool_capability_policy":"local-tools/v1""#,
+            &format!(r#""tool_capability_policy":"local-tools/v1"{field}"#),
         );
         assert!(
             CompleteModelBinding::from_durable_json(&value).is_err(),

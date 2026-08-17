@@ -44,7 +44,7 @@ fn complete_at(
     replay: &str,
 ) -> CompleteModelBinding {
     CompleteModelBinding::from_durable_json(&format!(
-        r#"{{"provider":"kimi","account":"default","model":"{model}","connector":"kimi-chat-completions","base_url":"{endpoint}","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":{input},"max_output_tokens":{output},"reasoning_parameters":{reasoning},"optional_request_parameters":{optional},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1","replay_profile":"{replay}"}}"#
+        r#"{{"provider":"kimi","account":"default","model":"{model}","connector":"kimi-chat-completions","base_url":"{endpoint}","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":{input},"max_output_tokens":{output},"reasoning_parameters":{reasoning},"optional_request_parameters":{optional},"tool_capability_policy":"local-tools/v1","replay_profile":"{replay}"}}"#
     ))
     .unwrap()
 }

@@ -111,7 +111,7 @@ fn discovery_cancellation_discards_the_candidate_before_mutation() {
             assert_eq!(candidate.expose_secret(), "one-candidate-secret");
             Ok(None)
         },
-        |_, _, _, _, _| panic!("cancellation must not reach final verification"),
+        |_, _, _, _, _| panic!("cancellation must not reach final publication"),
     )
     .unwrap();
 
@@ -148,9 +148,9 @@ impl ExternalConnectInput for DiscoverySuccessInput {
 }
 
 // discovery가 반환한 exact row와 그 catalog를 읽은 candidate 하나가 그대로 final
-// verification boundary에 도달해, 선택 뒤 credential 재입력이나 다른 model 검증을 막습니다.
+// publication boundary에 도달해, 선택 뒤 credential 재입력이나 다른 model 선택을 막습니다.
 #[test]
-fn successful_discovery_binds_one_candidate_and_selected_row_to_final_verification() {
+fn successful_discovery_binds_one_candidate_and_selected_row_to_publication() {
     let root = super::super::canonical_test_temp_dir().join(format!(
         "yo-external-discovery-success-{}-{}",
         std::process::id(),
@@ -190,7 +190,7 @@ fn successful_discovery_binds_one_candidate_and_selected_row_to_final_verificati
             assert!(discovered);
             assert_eq!(candidate.expose_secret(), "one-candidate-secret");
             assert_eq!(
-                prepared.verification_bindings(),
+                prepared.bindings(),
                 std::slice::from_ref(selected.complete_binding().unwrap())
             );
             config.verify_unchanged().unwrap();
@@ -208,7 +208,7 @@ fn successful_discovery_binds_one_candidate_and_selected_row_to_final_verificati
 
 fn discovered_entry(model: &str) -> yo_core::ModelCatalogEntry {
     let complete = yo_core::CompleteModelBinding::from_durable_json(&format!(
-        r#"{{"provider":"openrouter","account":"team","model":"{model}","connector":"openai-responses","base_url":"https://openrouter.ai/api/v1","api_dialect":"openai-responses","tokenizer_profile":"o200k_base/v1","input_token_limit":120000,"max_output_tokens":12000,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}}"#
+        r#"{{"provider":"openrouter","account":"team","model":"{model}","connector":"openai-responses","base_url":"https://openrouter.ai/api/v1","api_dialect":"openai-responses","tokenizer_profile":"o200k_base/v1","input_token_limit":120000,"max_output_tokens":12000,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
     ))
     .unwrap();
     yo_core::ModelCatalogEntry::with_explicit_profile(
@@ -238,7 +238,6 @@ model:
         reasoning_parameters: {}
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models: []
 "#
 }

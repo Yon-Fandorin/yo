@@ -97,9 +97,9 @@ impl ExternalConnectInput for CatalogSuccessInput {
 }
 
 // local catalog에서 고른 exact 행 다음에 credential을 한 번 읽고 confirmation을 거쳐,
-// 같은 complete binding과 candidate만 기존 verification 경계에 전달하는 순서를 검증합니다.
+// 같은 complete binding과 candidate만 복구 가능한 publication 경계에 전달하는 순서를 검증합니다.
 #[test]
-fn qwencloud_catalog_selection_reuses_the_verified_external_connect_transaction() {
+fn qwencloud_catalog_selection_reuses_the_external_connect_transaction() {
     let root = test_root("success");
     let config_path = root.join("config.yaml");
     std::fs::write(&config_path, token_plan_config()).unwrap();
@@ -115,7 +115,7 @@ fn qwencloud_catalog_selection_reuses_the_verified_external_connect_transaction(
             finalized = true;
             assert!(!remote_selected);
             assert_eq!(candidate.expose_secret(), "one-qwencloud-candidate");
-            let binding = &prepared.verification_bindings()[0];
+            let binding = &prepared.bindings()[0];
             assert_eq!(binding.binding().model_id().as_str(), "qwen3.7-plus");
             assert_eq!(
                 binding.binding().endpoint().as_str(),
@@ -174,10 +174,7 @@ fn exact_qwencloud_catalog_row_bypasses_the_picker() {
         |_, _, _| panic!("an exact QwenCloud row must not discover remotely"),
         |_, _, prepared, _, _| {
             assert_eq!(
-                prepared.verification_bindings()[0]
-                    .binding()
-                    .model_id()
-                    .as_str(),
+                prepared.bindings()[0].binding().model_id().as_str(),
                 "deepseek-v3.2"
             );
             Ok(())
@@ -240,7 +237,7 @@ fn managed_qwencloud_row_outside_the_current_catalog_cannot_bypass_admission() {
     )
     .unwrap();
     let complete = CompleteModelBinding::from_durable_json(
-        r#"{"provider":"qwencloud","account":"team","model":"removed-model","connector":"openai-chat-completions","base_url":"https://example.test/v1","api_dialect":"openai-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+        r#"{"provider":"qwencloud","account":"team","model":"removed-model","connector":"openai-chat-completions","base_url":"https://example.test/v1","api_dialect":"openai-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
     )
     .unwrap();
     let binding =

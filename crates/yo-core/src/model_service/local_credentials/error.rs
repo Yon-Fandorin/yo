@@ -19,7 +19,6 @@ pub enum LocalCredentialStoreError {
     TooLarge(PathBuf),
     Changed(PathBuf),
     InvalidContents(PathBuf),
-    RetiredYamlFormat(PathBuf),
     PreparedTooLarge,
     InvalidMutation,
     Conflict(PathBuf),
@@ -75,11 +74,6 @@ impl fmt::Display for LocalCredentialStoreError {
             Self::InvalidContents(path) => {
                 write!(formatter, "{} contains invalid credentials", path.display())
             },
-            Self::RetiredYamlFormat(path) => write!(
-                formatter,
-                "{} uses a retired pre-release credential shape; back up or remove the stale local state, then register affected connections again",
-                path.display()
-            ),
             Self::PreparedTooLarge => {
                 formatter.write_str("the prepared credential snapshot exceeds its bounded size")
             },

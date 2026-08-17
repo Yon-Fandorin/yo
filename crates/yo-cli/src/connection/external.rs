@@ -5,7 +5,6 @@ use yo_core::{
     ManagedConnectionBinding, ModelCatalog, ModelCatalogEntry, ModelSelection,
     PreparedConnectionMutation, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
     discover_kimi_models, discover_openrouter_models, resolve_startup_target,
-    verify_external_connection,
 };
 
 use super::{
@@ -85,16 +84,11 @@ fn execute_external_connect_with(
                 })
         },
         |session, config, prepared, candidate, discovered| {
-            let verified = verify_external_connection(prepared, candidate).map_err(|error| {
-                safe_discovery_error(AppError::message(format!(
-                    "verifying the candidate API key failed: {error}; remove or edit the rejected binding before retrying"
-                )), discovered)
-            })?;
             config
                 .verify_unchanged()
                 .map_err(|error| AppError::single("guarding Yo configuration", error))?;
             session
-                .commit_verified_external_connection(verified)
+                .commit_external_connection(prepared, candidate)
                 .map_err(|error| {
                     safe_discovery_source("publishing the external connection", error, discovered)
                 })
@@ -276,7 +270,7 @@ where
     }
     let ExternalConnectPlan {
         connection,
-        verification_bindings,
+        bindings,
         binding_count,
         preference,
         target,
@@ -287,7 +281,7 @@ where
         binding_details,
     } = plan;
     let prepared = session
-        .prepare_external_connection(config.snapshot_digest(), connection, verification_bindings)
+        .prepare_external_connection(connection, bindings)
         .map_err(|error| {
             safe_discovery_source("preparing the external connection", error, remote_selected)
         })?;
@@ -325,7 +319,7 @@ where
 
 struct ExternalConnectPlan {
     connection: PreparedConnectionMutation,
-    verification_bindings: Vec<CompleteModelBinding>,
+    bindings: Vec<CompleteModelBinding>,
     binding_count: usize,
     preference: Option<StartupTarget>,
     target: String,
@@ -355,7 +349,7 @@ impl ExternalConnectPlan {
                 "external connect requires an explicit Provider/Account profile and model binding; migrate this legacy catalog entry to model.bindings",
             )
         })?;
-        let mut verification_bindings = Vec::new();
+        let mut prospective_bindings = Vec::new();
         for entry in manual
             .entries()
             .iter()
@@ -368,22 +362,23 @@ impl ExternalConnectPlan {
                     selection.account()
                 ))
             })?;
-            if !verification_bindings.contains(&retained) {
-                verification_bindings.push(retained);
+            if !prospective_bindings.contains(&retained) {
+                prospective_bindings.push(retained);
             }
         }
         for retained in snapshot.managed_bindings().iter().filter(|retained| {
             let binding = retained.complete().binding();
             binding.provider_id() == selection.provider()
                 && binding.account_id() == selection.account()
+                && retained.selection() != *selection
         }) {
             let complete = retained.complete().clone();
-            if !verification_bindings.contains(&complete) {
-                verification_bindings.push(complete);
+            if !prospective_bindings.contains(&complete) {
+                prospective_bindings.push(complete);
             }
         }
-        if !verification_bindings.contains(&complete) {
-            verification_bindings.push(complete.clone());
+        if !prospective_bindings.contains(&complete) {
+            prospective_bindings.push(complete.clone());
         }
 
         let account = ManagedConnectionAccount::new(
@@ -423,8 +418,18 @@ impl ExternalConnectPlan {
             .prepare_managed_connect(account, binding)
             .map_err(|error| AppError::single("preparing managed connection state", error))?;
         let preference = connection.preference().cloned();
-        let binding_count = verification_bindings.len();
-        let mut binding_details = verification_bindings
+        let binding_count = prospective_bindings.len();
+        let mut presentation_bindings = prospective_bindings.clone();
+        if let Some(displaced) = snapshot
+            .managed_bindings()
+            .iter()
+            .find(|current| current.selection() == *selection)
+            .map(|current| current.complete().clone())
+            .filter(|displaced| !presentation_bindings.contains(displaced))
+        {
+            presentation_bindings.push(displaced);
+        }
+        let mut binding_details = presentation_bindings
             .iter()
             .map(complete_binding_details)
             .collect::<Vec<_>>();
@@ -441,7 +446,7 @@ impl ExternalConnectPlan {
         };
         Ok(Self {
             connection,
-            verification_bindings,
+            bindings: prospective_bindings,
             binding_count,
             preference,
             target: display_target(Some(&StartupTarget::Model(selection.clone()))),
@@ -870,7 +875,7 @@ mod tests {
             .next()
             .unwrap();
         assert!(
-            credential_row.contains("verify 2 models"),
+            credential_row.contains("register 2 models"),
             "credential row: {credential_row:?}"
         );
         assert!(
@@ -891,8 +896,8 @@ mod tests {
         assert_eq!(plan.preference, Some(StartupTarget::Model(selection)));
     }
 
-    // 같은 Account에 legacy binding이 하나라도 남으면 정확한 profile로 검증할 수 없으므로
-    // credential/public mutation 실행 전 planning이 migration 안내로 실패합니다.
+    // 같은 Account에 불완전한 binding이 하나라도 남으면 정확한 실행 profile을 admission할 수
+    // 없으므로 credential/public mutation 실행 전 planning이 교체 안내로 실패합니다.
     #[test]
     fn plan_rejects_a_retained_legacy_binding() {
         let mut entries = fixture_catalog().entries().to_vec();
@@ -937,9 +942,9 @@ mod tests {
     }
 
     // config의 새 complete profile과 기존 managed profile이 같은 coordinate에서 달라도
-    // connect planning은 둘 다 검증하고 새 profile로 교체한 prospective catalog를 승인합니다.
+    // preview는 둘 다 비교하되 게시·admission 집합은 교체 뒤 새 profile 하나만 셉니다.
     #[test]
-    fn plan_verifies_old_and_new_profiles_during_managed_replacement() {
+    fn plan_discloses_old_and_new_profiles_during_managed_replacement() {
         let catalog = ModelCatalog::new(vec![fixture_entry("alpha")]).unwrap();
         let snapshot = fixture_snapshot_with_managed(fixture_complete_at(
             "alpha",
@@ -965,7 +970,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(plan.binding_count, 2);
+        assert_eq!(plan.binding_count, 1);
+        assert_eq!(
+            plan.bindings,
+            vec![selected.complete_binding().unwrap().clone()]
+        );
         let preview = plan
             .preview(yo_core::CredentialMutationAction::Replace, true)
             .render(super::super::presentation::default_width())
@@ -984,9 +993,67 @@ mod tests {
             .preview(yo_core::CredentialMutationAction::Replace, false)
             .render(std::num::NonZeroU16::new(80).unwrap())
             .unwrap();
-        assert!(compact.contains("Replace vendor:team · verify 1 model · 2 configurations"));
+        assert!(compact.contains("Replace vendor:team · register 1 model"));
         assert!(compact.contains("Models          alpha"));
         assert_eq!(compact.matches("Models          alpha").count(), 1);
+    }
+
+    // 더는 runtime이 지원하지 않는 이전 managed profile도 교체 뒤 집합에서는 사라지므로,
+    // 새 profile의 구조적 admission을 막거나 성공 모델 수를 부풀리지 않습니다.
+    #[test]
+    fn replacement_excludes_a_displaced_unsupported_profile_from_admission() {
+        let catalog = ModelCatalog::new(vec![fixture_entry("alpha")]).unwrap();
+        let snapshot = fixture_snapshot_with_managed(fixture_complete_with_options(
+            "alpha",
+            "https://old.example.test/v1",
+            r#"{"retired":true}"#,
+        ));
+        let selection = ModelSelection::new(
+            yo_core::ProviderId::new("vendor").unwrap(),
+            yo_core::AccountId::new("team").unwrap(),
+            yo_core::ModelId::new("alpha").unwrap(),
+        );
+        let selected = catalog
+            .resolve_model(selection.provider(), selection.account(), selection.model())
+            .unwrap();
+        let expected = selected.complete_binding().unwrap().clone();
+        let plan = ExternalConnectPlan::prepare(
+            &snapshot,
+            &catalog,
+            &selection,
+            selected,
+            &StartupPolicy::initial(),
+        )
+        .unwrap();
+
+        assert_eq!(plan.binding_count, 1);
+        assert_eq!(plan.bindings, vec![expected]);
+        let preview = plan
+            .preview(yo_core::CredentialMutationAction::Replace, true)
+            .render(super::super::presentation::default_width())
+            .unwrap();
+        assert!(preview.contains("Connection profile 1 of 2"));
+        assert!(preview.contains("Connection profile 2 of 2"));
+        assert!(preview.contains(r#"{"retired":true}"#));
+
+        let root = super::super::canonical_test_temp_dir().join(format!(
+            "yo-external-displaced-profile-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let repositories =
+            yo_core::LocalConnectionOperationRepositories::in_directory(&root).unwrap();
+        let mut session = repositories.acquire().unwrap();
+        let prepared = session
+            .prepare_external_connection(plan.connection, plan.bindings)
+            .unwrap();
+        assert_eq!(prepared.binding_count(), 1);
+        drop(session);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // external connect도 startup target policy를 통과해야 하므로 Host 강제 policy에서는
@@ -1041,7 +1108,6 @@ model:
         reasoning_parameters: {}
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: alpha
 "#
@@ -1079,7 +1145,18 @@ model:
         reasoning: &str,
     ) -> CompleteModelBinding {
         CompleteModelBinding::from_durable_json(&format!(
-            r#"{{"provider":"vendor","account":"team","model":"{model}","connector":"{dialect}","base_url":"{endpoint}","api_dialect":"{dialect}","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{reasoning},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}}"#
+            r#"{{"provider":"vendor","account":"team","model":"{model}","connector":"{dialect}","base_url":"{endpoint}","api_dialect":"{dialect}","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{reasoning},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
+        ))
+        .unwrap()
+    }
+
+    fn fixture_complete_with_options(
+        model: &str,
+        endpoint: &str,
+        options: &str,
+    ) -> CompleteModelBinding {
+        CompleteModelBinding::from_durable_json(&format!(
+            r#"{{"provider":"vendor","account":"team","model":"{model}","connector":"openai-responses","base_url":"{endpoint}","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{}},"optional_request_parameters":{options},"tool_capability_policy":"local-tools/v1"}}"#
         ))
         .unwrap()
     }

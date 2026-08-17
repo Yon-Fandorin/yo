@@ -19,22 +19,6 @@ fn missing_configuration_uses_defaults_without_creating_a_file() {
     assert!(config.date_formatter().is_ok());
     assert_eq!(config.frame_rate_limit(), yo_tui::FrameRateLimit::Fps120);
     assert!(!path.exists());
-    assert_eq!(
-        config.snapshot_digest(),
-        "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-    );
-}
-
-// ConfigSnapshot digest는 exact bytes의 lowercase SHA-256 domain으로 안정적이어야 향후
-// recovery journal이 같은 invocation의 공개 계획을 비밀 없이 식별할 수 있습니다.
-#[test]
-fn config_snapshot_digest_is_lowercase_sha256_of_exact_bytes() {
-    let config = parse(Path::new("config.yaml"), "session: {}\n").unwrap();
-
-    assert_eq!(
-        config.snapshot_digest(),
-        "sha256:0f0d498f2cd7577f4c783027cbf69f6a061767b8324616fea229ee8880dfbd54"
-    );
 }
 
 // 사용자가 60fps를 선택하면 설정을 시작 시의 typed frame 정책으로 해석합니다.
@@ -112,7 +96,6 @@ model:
           effort: medium
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: qwen-max
           model_display_name: Qwen Max
@@ -180,7 +163,6 @@ model:
         reasoning_parameters: {}
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models: []
 "#,
     )
@@ -346,7 +328,6 @@ model:
         reasoning_parameters: {effort: medium}
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: null-reasoning
           profile:
@@ -383,7 +364,6 @@ model:
         reasoning_parameters: {}
         optional_request_parameters: {stop: null}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: nested-null
 "#,
@@ -420,7 +400,6 @@ model:
         reasoning_parameters: {}
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: null-limit
 "#,
@@ -447,7 +426,6 @@ model:
         max_output_tokens: 100
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
         reasoning_parameters:
           value: "#;
     let suffix = "\n      models:\n        - model: numeric\n";
@@ -526,7 +504,6 @@ model:
         max_output_tokens: 100
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
         reasoning_parameters: {yes_value: yes, no_value: no, on_value: ON, off_value: Off}
       models:
         - model: booleans
@@ -562,7 +539,6 @@ model:
     let suffix = r#"
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: numeric-key
 "#;
@@ -621,7 +597,6 @@ model:
         reasoning_parameters: {{}}
         optional_request_parameters: {{}}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: {model}
 "#
@@ -686,7 +661,6 @@ model:
         reasoning_parameters: {}
         optional_request_parameters: {}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
       models:
         - model: one
     - provider: qwencloud
@@ -772,7 +746,6 @@ model:
         optional_request_parameters:
           thinking: {type: enabled, keep: all}
         tool_capability_policy: local-tools/v1
-        verification_profile: semantic-terminal/v1
         replay_profile: kimi-private-local-plaintext/v1
       models:
         - model: kimi-k2.7-code
@@ -954,41 +927,31 @@ fn final_config_guard_detects_same_byte_replacement() {
     assert!(matches!(error, ConfigError::Changed(_)));
 }
 
-// retired top-level version field는 일반 unknown-field 오류로 뭉개지 않고 사용자가 기존
-// 로컬 파일을 백업 또는 제거한 뒤 연결을 다시 등록해야 한다는 reset 안내를 제공합니다.
+// 별도 format classifier가 없으므로 알 수 없는 top-level version도 일반 typed YAML
+// 오류로 거절하고 자동 migration이나 삭제 의미를 부여하지 않습니다.
 #[test]
-fn retired_config_shape_reports_reset_and_reconnect_guidance() {
+fn unknown_top_level_version_is_invalid_yaml() {
     let path = Path::new("/tmp/yo-config.yaml");
     let error = parse(path, "version: 1\nsession: {}\n").unwrap_err();
-    let diagnostic = error.to_string();
-
-    assert!(
-        matches!(error, ConfigError::RetiredYamlFormat(ref found) if found == path),
-        "{error:?}"
-    );
-    assert!(diagnostic.contains("back up or remove"), "{diagnostic}");
-    assert!(
-        diagnostic.contains("register affected connections again"),
-        "{diagnostic}"
-    );
-}
-
-// 현재 shape 내부의 version 오타는 퇴역 루트 marker가 아니므로 파일 삭제·재연결 안내로
-// 과잉 분류하지 않고 일반적인 typed YAML 오류로 남깁니다.
-#[test]
-fn nested_version_field_is_not_classified_as_a_retired_config() {
-    let error = parse(
-        Path::new("/tmp/yo-config.yaml"),
-        "session:\n  list:\n    version: 1\n",
-    )
-    .unwrap_err();
-    let diagnostic = error.to_string();
 
     assert!(
         matches!(error, ConfigError::InvalidYaml { .. }),
         "{error:?}"
     );
-    assert!(!diagnostic.contains("back up or remove"), "{diagnostic}");
+}
+
+// 현재 shape 내부의 version 오타도 같은 일반 typed YAML 오류로 남깁니다.
+#[test]
+fn nested_version_field_is_invalid_yaml() {
+    let error = parse(
+        Path::new("/tmp/yo-config.yaml"),
+        "session:\n  list:\n    version: 1\n",
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, ConfigError::InvalidYaml { .. }),
+        "{error:?}"
+    );
 }
 
 // 오타 난 설정 키를 무시하면 사용자는 형식이 적용됐다고 오해하므로, 정확한 파일
@@ -1016,6 +979,20 @@ fn obsolete_api_protocol_key_is_rejected() {
     .unwrap_err();
 
     assert!(error.to_string().contains("api_protocol"));
+    assert!(error.to_string().contains("unknown field"));
+}
+
+// 연결 시 probe 요청은 모델 profile이 아니므로 operator YAML도 verification_profile을
+// 지원 필드처럼 받아들이지 않습니다.
+#[test]
+fn connection_verification_profile_is_rejected() {
+    let error = parse(
+        Path::new("/tmp/yo-config.yaml"),
+        "model:\n  bindings:\n    - provider: vendor\n      account: default\n      base_url: https://example.test/v1\n      profile:\n        verification_profile: semantic-terminal/v1\n      models:\n        - model: alpha\n",
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("verification_profile"));
     assert!(error.to_string().contains("unknown field"));
 }
 

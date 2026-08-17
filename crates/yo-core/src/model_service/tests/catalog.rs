@@ -19,7 +19,7 @@ fn qwen_binding(account: &str, model: &str) -> EffectiveModelBinding {
 
 fn complete_binding(account: &str, model: &str, effort: &str) -> CompleteModelBinding {
     CompleteModelBinding::from_durable_json(&format!(
-        r#"{{"provider":"qwencloud","account":"{account}","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}}"#
+        r#"{{"provider":"qwencloud","account":"{account}","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
     ))
     .unwrap()
 }

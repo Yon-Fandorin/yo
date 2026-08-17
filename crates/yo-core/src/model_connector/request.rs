@@ -164,10 +164,6 @@ impl ModelCacheAffinityHint {
         Self(session_id.to_string())
     }
 
-    pub(crate) fn for_verification(task_id: SessionId) -> Self {
-        Self(format!("verification-{task_id}"))
-    }
-
     pub(super) fn as_str(&self) -> &str {
         &self.0
     }

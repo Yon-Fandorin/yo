@@ -141,7 +141,6 @@ struct ProfileDetails {
     reasoning: String,
     request_options: String,
     tools: String,
-    verification: String,
     replay: String,
 }
 
@@ -186,7 +185,6 @@ impl ProfileDetails {
         )?;
         push_detail_field(output, "Tokenizer", &self.tokenizer, width, style)?;
         push_detail_field(output, "Tools", &self.tools, width, style)?;
-        push_detail_field(output, "Verification", &self.verification, width, style)?;
         push_detail_field(output, "Replay", &self.replay, width, style)?;
         push_detail_field(output, "Reasoning", &self.reasoning, width, style)?;
         push_detail_field(
@@ -241,7 +239,6 @@ impl From<&CompleteModelBinding> for BindingDetails {
                     .to_json_value()
                     .to_string(),
                 tools: profile.tool_capability_policy().to_string(),
-                verification: profile.verification_profile().to_string(),
                 replay: profile.replay_profile().to_string(),
             },
         }
@@ -388,35 +385,26 @@ impl ConnectPreview {
             style,
         )?;
         counts.record(managed_action);
-        let verified_models = self
+        let registered_models = self
             .bindings
             .iter()
             .map(|binding| binding.model.as_str())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let verification_detail = if verified_models.len() == self.bindings.len() {
-            format!(
-                "verify {} {}",
-                verified_models.len(),
-                plural(verified_models.len(), "model", "models")
-            )
-        } else {
-            format!(
-                "verify {} {} · {} configurations",
-                verified_models.len(),
-                plural(verified_models.len(), "model", "models"),
-                self.bindings.len()
-            )
-        };
+        let registration_detail = format!(
+            "register {} {}",
+            registered_models.len(),
+            plural(registered_models.len(), "model", "models")
+        );
         let (credential_action, credential_detail) = match self.credential_action {
             CredentialMutationAction::Add => (
                 PlanAction::Add,
-                format!("Save {} · {verification_detail}", self.account),
+                format!("Save {} · {registration_detail}", self.account),
             ),
             CredentialMutationAction::Replace => (
                 PlanAction::Change,
-                format!("Replace {} · {verification_detail}", self.account),
+                format!("Replace {} · {registration_detail}", self.account),
             ),
             CredentialMutationAction::Remove => {
                 return Err(PresentationError::InvalidPlan(
@@ -432,7 +420,7 @@ impl ConnectPreview {
             width,
             style,
         )?;
-        push_model_list_field(&mut output, "Models", &verified_models, width, style)?;
+        push_model_list_field(&mut output, "Models", &registered_models, width, style)?;
         counts.record(credential_action);
         if self
             .bindings
@@ -715,7 +703,7 @@ pub(super) fn default_width() -> NonZeroU16 {
     NonZeroU16::new(DEFAULT_WIDTH).expect("the default terminal width is nonzero")
 }
 
-pub(super) fn connect_success(target: &str, verified: usize, default: &str) -> String {
+pub(super) fn connect_success(target: &str, registered: usize, default: &str) -> String {
     let style = PresentationStyle::for_stdout();
     let mut output = String::new();
     style.push(&mut output, ANSI_GREEN, "✓");
@@ -723,8 +711,8 @@ pub(super) fn connect_success(target: &str, verified: usize, default: &str) -> S
     style.push(&mut output, ANSI_BOLD, "Connected");
     write!(
         output,
-        "\n\n  Model     {target}\n  Verified  {verified} model {}\n  Default   {default}\n",
-        plural(verified, "profile", "profiles")
+        "\n\n  Model       {target}\n  Registered  {registered} model {}\n  Default     {default}\n",
+        plural(registered, "profile", "profiles")
     )
     .expect("writing to String cannot fail");
     output
@@ -1083,7 +1071,7 @@ mod tests {
 
     fn fixture_binding_for_model(model: &str) -> BindingDetails {
         let mut durable = serde_json::from_str::<serde_json::Value>(
-            r#"{"provider":"vendor","account":"team","model":"alpha","connector":"openai-responses","base_url":"https://long-provider.example.test/compatible-mode/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":4096,"max_output_tokens":128,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+            r#"{"provider":"vendor","account":"team","model":"alpha","connector":"openai-responses","base_url":"https://long-provider.example.test/compatible-mode/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":4096,"max_output_tokens":128,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
         )
         .unwrap();
         durable["model"] = serde_json::Value::String(model.to_owned());
@@ -1109,12 +1097,21 @@ mod tests {
         let output = preview.render(width(80)).unwrap();
 
         assert!(output.contains("Yo will make these changes:\n+ Managed connection"));
-        assert!(output.contains("+ API key\n  Save vendor:team · verify 1 model"));
+        assert!(output.contains("+ API key\n  Save vendor:team · register 1 model"));
         assert!(output.contains("  Models          alpha"));
         assert!(output.contains("~ Default model\n  unset  →  vendor:team:alpha"));
         assert!(!output.contains("Connection profile"));
         assert!(!output.contains("long-provider.example.test"));
         assert!(output.ends_with("Plan: 2 to add, 1 to change."));
+    }
+
+    // 등록 성공 요약은 model profile 검증을 주장하지 않고 게시된 모델 하나를 정확히 셉니다.
+    #[test]
+    fn connect_success_reports_one_registered_model() {
+        assert_eq!(
+            connect_success("vendor:team:alpha", 1, "vendor:team:alpha"),
+            "✓ Connected\n\n  Model       vendor:team:alpha\n  Registered  1 model profile\n  Default     vendor:team:alpha\n"
+        );
     }
 
     // 80열 connect 확인 화면은 먼저 사람이 결정할 대상·API key·default를 보여 주고,
@@ -1249,7 +1246,7 @@ mod tests {
         let compact = output.split_whitespace().collect::<String>();
         assert!(compact.contains("https://long-provider.example.test/compatible-mode/v1"));
         assert!(compact.contains("utf8-bytes/v1"));
-        assert!(compact.contains("semantic-terminal/v1"));
+        assert!(compact.contains("semantic-only/v1"));
     }
 
     // disconnect 화면은 실제 변화와 Session 영향이 제거 상세보다 먼저 나오고, 남는 모델은

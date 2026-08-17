@@ -100,7 +100,7 @@ fn serializes_only_the_declared_responses_request_capabilities() {
 }
 
 // disabled exposure는 historical function-call replay를 보존하면서 현재 registry의 tools와
-// tool_choice만 wire에서 완전히 생략해 no-tools/verification 요청을 구분합니다.
+// tool_choice만 wire에서 완전히 생략해 현재 도구를 노출하지 않는 요청을 구분합니다.
 #[test]
 fn disabled_exposure_omits_current_tools_without_dropping_historical_replay() {
     let request = ResponsesRequest::new(

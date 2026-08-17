@@ -67,7 +67,6 @@ enum PreparedDisconnectCredential {
 /// One secret-free public-first disconnect plan prepared under the retained operation lane.
 #[derive(Debug)]
 pub struct PreparedExternalDisconnect {
-    config_snapshot_digest: String,
     connection: PreparedConnectionMutation,
     credential: PreparedDisconnectCredential,
 }
@@ -89,7 +88,6 @@ impl LocalConnectionOperationSession<'_> {
     /// prospective catalog. No repository bytes change during preparation.
     pub fn prepare_external_disconnect(
         &mut self,
-        config_snapshot_digest: impl Into<String>,
         expected_connection_revision: &ConnectionRevision,
         selection: &ModelSelection,
         action: ExternalDisconnectCredentialAction,
@@ -149,7 +147,6 @@ impl LocalConnectionOperationSession<'_> {
             },
         };
         Ok(PreparedExternalDisconnect {
-            config_snapshot_digest: config_snapshot_digest.into(),
             connection,
             credential,
         })
@@ -170,18 +167,10 @@ impl LocalConnectionOperationSession<'_> {
     ) -> Result<(), ConnectionOperationExecutionError> {
         let entry = match prepared.credential {
             PreparedDisconnectCredential::Preserve(revision) => {
-                ConnectionOperationJournalEntry::disconnect_preserve(
-                    prepared.config_snapshot_digest,
-                    prepared.connection,
-                    revision,
-                )
+                ConnectionOperationJournalEntry::disconnect_preserve(prepared.connection, revision)
             },
             PreparedDisconnectCredential::Remove(mutation) => {
-                ConnectionOperationJournalEntry::disconnect_remove(
-                    prepared.config_snapshot_digest,
-                    prepared.connection,
-                    mutation,
-                )
+                ConnectionOperationJournalEntry::disconnect_remove(prepared.connection, mutation)
             },
         }
         .map_err(|source| {

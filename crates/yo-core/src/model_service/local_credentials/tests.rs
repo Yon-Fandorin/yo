@@ -195,11 +195,11 @@ fn replacing_one_pair_materializes_a_revision_for_the_current_snapshot() {
     drop(directory);
 }
 
-// retired top-level version을 가진 credential snapshot은 secret을 진단에 노출하지 않고
-// 원문을 그대로 둔 채 백업·제거·재연결 안내로 실패합니다.
+// 별도 format classifier가 없으므로 top-level version은 일반 invalid-content이며
+// secret을 진단에 노출하거나 원문을 자동 변환하지 않습니다.
 #[test]
-fn retired_credential_shape_reports_reset_and_reconnect_guidance() {
-    let (_directory, repository) = repository("retired-shape");
+fn unknown_top_level_version_is_invalid_credential_state() {
+    let (_directory, repository) = repository("unknown-version");
     fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
     let stale = concat!(
         "version: 1\n",
@@ -216,21 +216,15 @@ fn retired_credential_shape_reports_reset_and_reconnect_guidance() {
 
     assert!(matches!(
         error,
-        LocalCredentialStoreError::RetiredYamlFormat(_)
+        LocalCredentialStoreError::InvalidContents(_)
     ));
-    assert!(diagnostic.contains("back up or remove"), "{diagnostic}");
-    assert!(
-        diagnostic.contains("register affected connections again"),
-        "{diagnostic}"
-    );
     assert!(!diagnostic.contains("sk-stale-secret"));
     assert_eq!(fs::read_to_string(repository.path()).unwrap(), stale);
 }
 
-// account 내부의 version 오타는 퇴역 root credential 형상으로 오인하거나 secret을
-// 진단에 노출하지 않고 일반 invalid-content 오류로 남깁니다.
+// account 내부의 version 오타도 secret을 진단에 노출하지 않고 일반 invalid-content로 남깁니다.
 #[test]
-fn nested_version_field_is_not_classified_as_a_retired_credential_shape() {
+fn nested_version_field_is_invalid_credential_state() {
     let (_directory, repository) = repository("nested-version");
     fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
     let malformed = concat!(
@@ -249,7 +243,6 @@ fn nested_version_field_is_not_classified_as_a_retired_credential_shape() {
         error,
         LocalCredentialStoreError::InvalidContents(_)
     ));
-    assert!(!diagnostic.contains("back up or remove"), "{diagnostic}");
     assert!(!diagnostic.contains("sk-nested-secret"), "{diagnostic}");
     assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
 }

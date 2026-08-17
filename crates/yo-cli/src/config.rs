@@ -11,7 +11,6 @@ use std::{
 
 use jiff::{Timestamp, fmt::strtime, tz::TimeZone};
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 use yo_core::{
     AccountId, EffectiveModelBinding, EffectiveModelProfile, KimiCatalogSeed, ModelCatalog,
     ModelCatalogEntry, ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters,
@@ -142,10 +141,6 @@ impl Config {
             .join("connections.yaml")
     }
 
-    pub(crate) fn snapshot_digest(&self) -> &str {
-        &self.snapshot.digest
-    }
-
     pub(crate) fn verify_unchanged(&self) -> Result<(), ConfigError> {
         let current = capture_snapshot(&self.source_path)?;
         if current == self.snapshot {
@@ -160,7 +155,6 @@ impl Config {
 struct ConfigSnapshot {
     metadata: Option<ConfigMetadata>,
     bytes: Vec<u8>,
-    digest: String,
 }
 
 impl ConfigSnapshot {
@@ -168,7 +162,6 @@ impl ConfigSnapshot {
         Self {
             metadata: None,
             bytes: Vec::new(),
-            digest: config_digest(&[]),
         }
     }
 }
@@ -245,7 +238,6 @@ pub(crate) enum ConfigError {
         path: PathBuf,
         source: Box<yo_yaml::Error>,
     },
-    RetiredYamlFormat(PathBuf),
     InvalidDateFormat(String),
     InvalidMaxFps {
         path: PathBuf,
@@ -283,11 +275,6 @@ impl fmt::Display for ConfigError {
                     path.display()
                 )
             },
-            Self::RetiredYamlFormat(path) => write!(
-                formatter,
-                "{} uses a retired pre-release YAML shape; back up or remove the stale local file, then register affected connections again",
-                path.display()
-            ),
             Self::InvalidDateFormat(message) => formatter.write_str(message),
             Self::InvalidMaxFps { path, value } => write!(
                 formatter,
@@ -321,7 +308,6 @@ impl Error for ConfigError {
             Self::Environment(_)
             | Self::UnsupportedFileType(_)
             | Self::TooLarge(_)
-            | Self::RetiredYamlFormat(_)
             | Self::Changed(_)
             | Self::InvalidDateFormat(_)
             | Self::InvalidMaxFps { .. }
@@ -510,8 +496,6 @@ struct ModelProfileConfig {
     #[serde(default)]
     tool_capability_policy: Authored<String>,
     #[serde(default)]
-    verification_profile: Authored<String>,
-    #[serde(default)]
     replay_profile: Authored<String>,
 }
 
@@ -564,7 +548,6 @@ fn parse(path: &Path, contents: &str) -> Result<Config, ConfigError> {
         ConfigSnapshot {
             metadata: None,
             bytes: contents.as_bytes().to_vec(),
-            digest: config_digest(contents.as_bytes()),
         },
     )
 }
@@ -578,17 +561,9 @@ fn parse_snapshot(
         contents,
         yo_yaml::ParseLimits::with_max_total_scalar_bytes(MAX_CONFIG_BYTES as usize),
     )
-    .map_err(|source| {
-        if yo_yaml::has_any_top_level_mapping_key(contents.as_bytes(), &["version"])
-            .unwrap_or(false)
-        {
-            ConfigError::RetiredYamlFormat(path.to_owned())
-        } else {
-            ConfigError::InvalidYaml {
-                path: path.to_owned(),
-                source: Box::new(source),
-            }
-        }
+    .map_err(|source| ConfigError::InvalidYaml {
+        path: path.to_owned(),
+        source: Box::new(source),
     })?;
     let frame_rate_limit = match decoded.tui.max_fps.unwrap_or(120) {
         60 => yo_tui::FrameRateLimit::Fps60,
@@ -700,23 +675,10 @@ fn capture_snapshot(path: &Path) -> Result<ConfigSnapshot, ConfigError> {
     if before != after {
         return Err(ConfigError::Changed(path.to_owned()));
     }
-    let digest = config_digest(&bytes);
     Ok(ConfigSnapshot {
         metadata: Some(before),
         bytes,
-        digest,
     })
-}
-
-fn config_digest(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut encoded = String::with_capacity(71);
-    encoded.push_str("sha256:");
-    for byte in digest {
-        use fmt::Write as _;
-        write!(encoded, "{byte:02x}").expect("formatting into a String cannot fail");
-    }
-    encoded
 }
 
 fn config_metadata(path: &Path, file: &fs::File) -> Result<ConfigMetadata, ConfigError> {
@@ -967,12 +929,6 @@ fn model_profile_layer(
         profile.optional_request_parameters.into_option(),
         profile
             .tool_capability_policy
-            .into_option()
-            .map(VersionedProfileId::new)
-            .transpose()
-            .map_err(&invalid)?,
-        profile
-            .verification_profile
             .into_option()
             .map(VersionedProfileId::new)
             .transpose()

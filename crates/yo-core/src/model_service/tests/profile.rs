@@ -20,7 +20,6 @@ fn complete_layer() -> ModelProfileLayer {
         Some(parameters("{effort: medium}")),
         Some(parameters("{parallel_tool_calls: true}")),
         Some(id("local-tools/v1")),
-        Some(id("semantic-terminal/v1")),
     )
 }
 
@@ -35,7 +34,6 @@ fn model_layer_replaces_only_explicit_fields_without_recursive_merge() {
         None,
         Some(4_096),
         Some(parameters("{effort: high}")),
-        None,
         None,
         None,
     );
@@ -74,7 +72,6 @@ fn resolution_rejects_missing_fields_and_invalid_capability_limits() {
         Some(parameters("{}")),
         Some(parameters("{}")),
         Some(id("local-tools/v1")),
-        Some(id("semantic-terminal/v1")),
     );
     assert!(
         EffectiveModelProfile::resolve(None, &invalid)

@@ -294,7 +294,6 @@ pub struct ModelProfileLayer {
     reasoning_parameters: Option<ModelProfileParameters>,
     optional_request_parameters: Option<ModelProfileParameters>,
     tool_capability_policy: Option<VersionedProfileId>,
-    verification_profile: Option<VersionedProfileId>,
     replay_profile: Option<VersionedProfileId>,
 }
 
@@ -312,7 +311,6 @@ impl ModelProfileLayer {
         reasoning_parameters: Option<ModelProfileParameters>,
         optional_request_parameters: Option<ModelProfileParameters>,
         tool_capability_policy: Option<VersionedProfileId>,
-        verification_profile: Option<VersionedProfileId>,
     ) -> Self {
         Self {
             api_dialect,
@@ -322,7 +320,6 @@ impl ModelProfileLayer {
             reasoning_parameters,
             optional_request_parameters,
             tool_capability_policy,
-            verification_profile,
             replay_profile: None,
         }
     }
@@ -341,7 +338,6 @@ pub struct EffectiveModelProfile {
     reasoning_parameters: ModelProfileParameters,
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: VersionedProfileId,
-    verification_profile: VersionedProfileId,
     replay_profile: VersionedProfileId,
 }
 
@@ -385,13 +381,6 @@ impl EffectiveModelProfile {
                 .clone()
                 .or(base.tool_capability_policy),
         )?;
-        let verification_profile = required(
-            "verification_profile",
-            model
-                .verification_profile
-                .clone()
-                .or(base.verification_profile),
-        )?;
         let replay_profile = model
             .replay_profile
             .clone()
@@ -408,7 +397,6 @@ impl EffectiveModelProfile {
             reasoning_parameters,
             optional_request_parameters,
             tool_capability_policy,
-            verification_profile,
             replay_profile,
         })
     }
@@ -436,11 +424,6 @@ impl EffectiveModelProfile {
     #[must_use]
     pub const fn tool_capability_policy(&self) -> &VersionedProfileId {
         &self.tool_capability_policy
-    }
-
-    #[must_use]
-    pub const fn verification_profile(&self) -> &VersionedProfileId {
-        &self.verification_profile
     }
 
     #[must_use]

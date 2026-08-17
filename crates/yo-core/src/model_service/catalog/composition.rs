@@ -247,9 +247,6 @@ fn complete_binding_differences(
     if manual_profile.tool_capability_policy() != managed_profile.tool_capability_policy() {
         differences.push("tool_capability_policy");
     }
-    if manual_profile.verification_profile() != managed_profile.verification_profile() {
-        differences.push("verification_profile");
-    }
     if manual_profile.replay_profile() != managed_profile.replay_profile() {
         differences.push("replay_profile");
     }

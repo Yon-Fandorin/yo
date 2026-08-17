@@ -19,7 +19,6 @@ pub(super) fn encode(
     yo_yaml::to_string(&WireEntry {
         operation_id: entry.operation_id(),
         kind: entry.kind().into(),
-        config_snapshot_digest: entry.config_snapshot_digest(),
         phase: entry.phase().into(),
         connection: WireConnection {
             expected_revision: entry.connection_mutation().expected_revision().to_string(),
@@ -36,15 +35,8 @@ pub(super) fn decode(
     path: &Path,
     encoded: &[u8],
 ) -> Result<ConnectionOperationJournalEntry, ConnectionOperationError> {
-    let wire: WireEntryOwned = yo_yaml::from_slice(encoded).map_err(|_| {
-        if yo_yaml::has_any_top_level_mapping_key(encoded, &["version", "profile_digests"])
-            .unwrap_or(false)
-        {
-            ConnectionOperationError::RetiredYamlFormat(path.to_owned())
-        } else {
-            ConnectionOperationError::InvalidContents(path.to_owned())
-        }
-    })?;
+    let wire: WireEntryOwned = yo_yaml::from_slice(encoded)
+        .map_err(|_| ConnectionOperationError::InvalidContents(path.to_owned()))?;
     let invalid = || ConnectionOperationError::InvalidContents(path.to_owned());
     let expected_connection =
         ConnectionRevision::from_operation_journal(&wire.connection.expected_revision)
@@ -62,7 +54,6 @@ pub(super) fn decode(
     ConnectionOperationJournalEntry::from_stored_parts(
         wire.operation_id,
         wire.kind.into(),
-        wire.config_snapshot_digest,
         wire.phase.into(),
         connection,
         credential,
@@ -126,7 +117,6 @@ fn parse_credential(
 struct WireEntry<'a> {
     operation_id: &'a str,
     kind: WireKind,
-    config_snapshot_digest: &'a str,
     phase: WirePhase,
     connection: WireConnection<'a>,
     credential: WireCredentialRef<'a>,
@@ -137,7 +127,6 @@ struct WireEntry<'a> {
 struct WireEntryOwned {
     operation_id: String,
     kind: WireKind,
-    config_snapshot_digest: String,
     phase: WirePhase,
     connection: WireConnectionOwned,
     credential: WireCredential,

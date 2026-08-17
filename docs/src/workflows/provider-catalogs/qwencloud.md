@@ -1,9 +1,9 @@
 # Maintain the QwenCloud catalogs
 
 QwenCloud is the release-known static-registry case. Alibaba Cloud publishes
-exact plan allowlists and plan-specific endpoints, while connection
-verification proves whether the supplied credential can actually use the
-selected row.
+exact plan allowlists and plan-specific endpoints. Registration performs
+structural admission only; ordinary model use later determines whether the
+supplied credential can actually use the selected row.
 
 ## Official sources
 
@@ -27,7 +27,7 @@ deterministic ordering live in
 [`qwencloud_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/qwencloud_catalog.rs).
 Configuration resolves a profile into a non-routable seed in
 [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs).
-The shared selection and verified connection transaction live in
+The shared selection and recoverable connection transaction live in
 [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs)
 and
 [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs).

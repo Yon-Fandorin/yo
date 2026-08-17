@@ -5,7 +5,6 @@ use crate::{
 
 const LOCAL_TOOLS_PROFILE: &str = "local-tools/v1";
 const NO_TOOLS_PROFILE: &str = "no-tools/v1";
-const SEMANTIC_TERMINAL_PROFILE: &str = "semantic-terminal/v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AdmittedToolPolicy {
@@ -53,13 +52,6 @@ impl AdmittedCompleteBinding {
     pub(crate) const fn kimi_profile(self) -> Option<AdmittedKimiProfile> {
         self.kimi_profile
     }
-
-    pub(crate) const fn requires_cache_affinity_hint(self) -> bool {
-        matches!(
-            self.kimi_profile,
-            Some(AdmittedKimiProfile::CodeK3 { .. } | AdmittedKimiProfile::CodeK27)
-        )
-    }
 }
 
 impl AdmittedModelProfile {
@@ -98,13 +90,6 @@ pub(crate) fn admit_explicit_model_profile(
             ));
         },
     };
-    if profile.verification_profile().as_str() != SEMANTIC_TERMINAL_PROFILE {
-        return Err(format!(
-            "unsupported verification_profile {:?}; expected {SEMANTIC_TERMINAL_PROFILE}",
-            profile.verification_profile().as_str()
-        ));
-    }
-
     let value = profile.reasoning_parameters().to_json_value();
     let serde_json::Value::Object(parameters) = value else {
         return Err(
@@ -173,7 +158,6 @@ pub(crate) fn admit_new_complete_binding(
             profile.tool_capability_policy().as_str(),
             LOCAL_TOOLS_PROFILE | NO_TOOLS_PROFILE
         )
-        || profile.verification_profile().as_str() != SEMANTIC_TERMINAL_PROFILE
     {
         return Err("complete binding is outside the closed Kimi connector envelope".to_owned());
     }

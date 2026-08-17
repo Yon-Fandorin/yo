@@ -257,7 +257,6 @@ impl QwenCloudCatalogModel {
                     None,
                     None,
                     tool_policy.clone(),
-                    None,
                 );
                 let profile =
                     EffectiveModelProfile::resolve(Some(base_profile), &override_profile)?;
@@ -380,7 +379,6 @@ fn profile_layer(input_limit: u64) -> ModelProfileLayer {
         Some(empty_parameters()),
         Some(empty_parameters()),
         Some(valid_profile("local-tools/v1")),
-        Some(valid_profile("semantic-terminal/v1")),
     )
 }
 

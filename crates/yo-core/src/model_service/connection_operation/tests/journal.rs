@@ -45,47 +45,45 @@ fn connect_intent_round_trips_without_secret_or_private_debug_receipts() {
     assert!(raw.contains(&private_credential_revision));
     assert!(!raw.contains("version:"));
     assert!(!raw.contains("profile_digests:"));
+    assert!(!raw.contains("config_snapshot_digest:"));
     let debug = format!("{entry:?}");
     assert!(!debug.contains(&private_credential_revision));
     assert!(!debug.contains(&public_revision));
     assert!(!debug.contains("planned_snapshot"));
 }
 
-// retired version 또는 profile_digests를 가진 저널은 현재 recovery authority로 해석하지
-// 않고 백업·제거·재연결 안내와 함께 mutation 전에 거절합니다.
+// version 또는 profile_digests는 current journal의 unknown field이므로 별도 format
+// classifier 없이 mutation 전에 일반 invalid-content로 거절합니다.
 #[test]
-fn retired_journal_fields_report_reset_and_reconnect_guidance() {
-    let fixture = Fixture::new("retired-fields");
+fn unknown_journal_fields_are_invalid_contents() {
+    let fixture = Fixture::new("unknown-fields");
     let entry = fixture.connect_entry();
     let mut guard = fixture.operation_guard();
     fixture.journal.publish_intent(&mut guard, &entry).unwrap();
     let current = fs::read_to_string(fixture.journal.path()).unwrap();
 
-    for retired_field in ["version: 1", "profile_digests: []"] {
+    for unknown_field in [
+        "version: 1",
+        "profile_digests: []",
+        "config_snapshot_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ] {
         fs::write(
             fixture.journal.path(),
-            format!("{retired_field}\n{current}"),
+            format!("{unknown_field}\n{current}"),
         )
         .unwrap();
         let error = fixture.journal.capture().unwrap_err();
-        let diagnostic = error.to_string();
         assert!(
-            matches!(error, ConnectionOperationError::RetiredYamlFormat(_)),
-            "{retired_field}: {diagnostic}"
-        );
-        assert!(diagnostic.contains("back up or remove"), "{diagnostic}");
-        assert!(
-            diagnostic.contains("register affected connections again"),
-            "{diagnostic}"
+            matches!(&error, ConnectionOperationError::InvalidContents(_)),
+            "{unknown_field}: {error}"
         );
     }
 }
 
-// connection 내부의 version/profile_digests 오타는 퇴역 root journal marker로 오인하지
-// 않고 mutation 전 일반 invalid-content 오류로 거절합니다.
+// connection 내부의 같은 오타도 mutation 전 일반 invalid-content 오류로 거절합니다.
 #[test]
-fn nested_retired_names_are_not_classified_as_a_retired_journal() {
-    let fixture = Fixture::new("nested-retired-names");
+fn nested_unknown_names_are_invalid_journal_contents() {
+    let fixture = Fixture::new("nested-unknown-names");
     let entry = fixture.connect_entry();
     let mut guard = fixture.operation_guard();
     fixture.journal.publish_intent(&mut guard, &entry).unwrap();
@@ -104,7 +102,6 @@ fn nested_retired_names_are_not_classified_as_a_retired_journal() {
             matches!(&error, ConnectionOperationError::InvalidContents(_)),
             "{nested_field}: {error}"
         );
-        assert!(!error.to_string().contains("back up or remove"));
         assert_eq!(
             fs::read_to_string(fixture.journal.path()).unwrap(),
             malformed
@@ -134,7 +131,7 @@ fn connect_phases_advance_in_closed_order_before_exact_clear() {
 }
 
 // expected/expected 복구가 선택한 uncommitted intent는 complete phase를 위조하지 않고 exact
-// intent 그대로 durable remove되어 다음 invocation이 secret 검증부터 새로 시작합니다.
+// intent 그대로 durable remove되어 다음 invocation이 credential capture부터 새로 시작합니다.
 #[test]
 fn exact_uncommitted_intent_can_be_abandoned() {
     let fixture = Fixture::new("abandon-intent");

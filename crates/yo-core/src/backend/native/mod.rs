@@ -1961,7 +1961,6 @@ fn native_binding_identity(
                 "reasoning_parameters": profile.reasoning_parameters(),
                 "optional_request_parameters": profile.optional_request_parameters(),
                 "tool_capability_policy": profile.tool_capability_policy().as_str(),
-                "verification_profile": profile.verification_profile().as_str(),
             });
             if profile.replay_profile().as_str() != crate::SEMANTIC_REPLAY_PROFILE {
                 value["replay_profile"] = json!(profile.replay_profile().as_str());

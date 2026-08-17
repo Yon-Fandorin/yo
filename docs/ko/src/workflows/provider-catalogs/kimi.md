@@ -38,7 +38,7 @@ bounded 입력으로 취급한다.
 | 제품별 Account seed, bounded discovery transport, normalization, 검토된 overlay, typed disabled reason | [`kimi_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog.rs)와 `kimi_catalog/` 하위 모듈 |
 | 정확한 Kimi request와 streamed assistant-message 문법 | [`kimi_request.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/kimi_request.rs), [`connector.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/connector.rs), [`chat_sse.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/chat_sse.rs) |
 | Provider-private replay 검증, 저장, 상관관계, native 재사용과 Provider-neutral Session별 cache-affinity hint 생성 | [`backend/evidence/replay.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence/replay.rs), [`journal/codec`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/codec), [`backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) |
-| Config seed, picker, disclosure, 검증된 연결 transaction | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs), [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs), [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs) |
+| Config seed, picker, disclosure, 복구 가능한 연결 transaction | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs), [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs), [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs) |
 
 ## 현재 갱신 절차
 
@@ -70,8 +70,7 @@ bounded 입력으로 취급한다.
    재구성해야 한다.
 7. Code에서는 Session 하나가 일반 요청과 재개 요청에서 opaque cache-affinity
    hint 하나를 재사용하는지 확인한다. Connector만 이를 `prompt_cache_key`로
-   직렬화한다. Platform과 다른 connector는 무시하고, 검증은 별도
-   `verification-<UUIDv7>` task hint를 사용하며, hint는 binding identity, replay
+   직렬화한다. Platform과 다른 connector는 무시하고, hint는 binding identity, replay
    evidence, log, diagnostic, Transcript, trace에 들어가지 않는다.
 
 집중 검사:

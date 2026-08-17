@@ -430,7 +430,7 @@ mod tests {
         assert_ne!(after.revision(), &before_revision);
     }
 
-    // 같은 coordinate의 manual legacy binding과 managed explicit binding이 다르면 default
+    // 같은 coordinate의 불완전한 manual binding과 managed explicit binding이 다르면 default
     // admission 전에 BindingConflict로 중단하고 기존 connections.yaml bytes를 건드리지 않습니다.
     #[test]
     fn default_binding_conflict_preserves_the_captured_repository() {
@@ -611,7 +611,7 @@ mod tests {
         yo_core::ManagedConnectionBinding,
     ) {
         let durable = format!(
-            r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}}"#,
+            r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#,
         );
         let complete = yo_core::CompleteModelBinding::from_durable_json(&durable).unwrap();
         let account = yo_core::ManagedConnectionAccount::new(

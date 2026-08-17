@@ -47,7 +47,6 @@ impl CompleteModelBinding {
             reasoning_parameters,
             optional_request_parameters,
             tool_capability_policy,
-            verification_profile,
             replay_profile,
         } = durable;
 
@@ -68,7 +67,6 @@ impl CompleteModelBinding {
             Some(reasoning_parameters),
             Some(optional_request_parameters),
             Some(VersionedProfileId::new(tool_capability_policy)?),
-            Some(VersionedProfileId::new(verification_profile)?),
         )
         .with_replay_profile(replay_profile.map(VersionedProfileId::new).transpose()?);
         let profile = EffectiveModelProfile::resolve(None, &layer)?;
@@ -101,7 +99,6 @@ struct DurableCompleteBinding {
     reasoning_parameters: ModelProfileParameters,
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: String,
-    verification_profile: String,
     #[serde(default, deserialize_with = "deserialize_optional_non_null_string")]
     replay_profile: Option<String>,
 }

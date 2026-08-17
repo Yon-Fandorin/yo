@@ -27,12 +27,7 @@ fn parameters(value: &str) -> ModelProfileParameters {
     serde_json::from_str(value).unwrap()
 }
 
-fn profile(
-    reasoning: &str,
-    optional: &str,
-    policy: &str,
-    verification: &str,
-) -> EffectiveModelProfile {
+fn profile(reasoning: &str, optional: &str, policy: &str) -> EffectiveModelProfile {
     EffectiveModelProfile::resolve(
         None,
         &ModelProfileLayer::new(
@@ -43,7 +38,6 @@ fn profile(
             Some(parameters(reasoning)),
             Some(parameters(optional)),
             Some(VersionedProfileId::new(policy).unwrap()),
-            Some(VersionedProfileId::new(verification).unwrap()),
         ),
     )
     .unwrap()
@@ -170,13 +164,8 @@ fn resume_runtime(backend: NativeModelBackend) -> AgentRuntime<NativeModelBacken
 // 설정에 적용하고, durable identity에 endpoint와 여덟 resolved 필드를 모두 기록합니다.
 #[test]
 fn explicit_profile_controls_reasoning_and_complete_binding_identity() {
-    let backend = backend_with_profile(profile(
-        r#"{"effort":"high"}"#,
-        "{}",
-        "local-tools/v1",
-        "semantic-terminal/v1",
-    ))
-    .unwrap();
+    let backend =
+        backend_with_profile(profile(r#"{"effort":"high"}"#, "{}", "local-tools/v1")).unwrap();
 
     assert_eq!(backend.config.reasoning_effort, Some(ReasoningEffort::High));
     let evidence = backend.binding_evidence(fixture_session(7));
@@ -190,7 +179,6 @@ fn explicit_profile_controls_reasoning_and_complete_binding_identity() {
     assert_eq!(value["reasoning_parameters"]["effort"], "high");
     assert_eq!(value["optional_request_parameters"], serde_json::json!({}));
     assert_eq!(value["tool_capability_policy"], "local-tools/v1");
-    assert_eq!(value["verification_profile"], "semantic-terminal/v1");
 }
 
 // runtime이 아직 보내지 못하는 optional parameter나 알 수 없는 policy/profile은 설정
@@ -198,27 +186,15 @@ fn explicit_profile_controls_reasoning_and_complete_binding_identity() {
 #[test]
 fn explicit_profile_rejects_unsupported_runtime_fields() {
     for unsupported in [
-        profile(
-            "{}",
-            r#"{"temperature":1.0}"#,
-            "local-tools/v1",
-            "semantic-terminal/v1",
-        ),
+        profile("{}", r#"{"temperature":1.0}"#, "local-tools/v1"),
         profile(
             "{}",
             r#"{"thinking":{"type":"disabled"}}"#,
             "local-tools/v1",
-            "semantic-terminal/v1",
         ),
-        profile(
-            r#"{"effort":"max"}"#,
-            "{}",
-            "local-tools/v1",
-            "semantic-terminal/v1",
-        ),
-        profile("{}", "{}", "other-tools/v1", "semantic-terminal/v1"),
-        profile("{}", "{}", "local-tools/v1", "other-terminal/v1"),
-        profile("null", "{}", "local-tools/v1", "semantic-terminal/v1"),
+        profile(r#"{"effort":"max"}"#, "{}", "local-tools/v1"),
+        profile("{}", "{}", "other-tools/v1"),
+        profile("null", "{}", "local-tools/v1"),
     ] {
         assert!(backend_with_profile(unsupported).is_err());
     }
@@ -238,7 +214,6 @@ fn generic_binding_rejects_cross_dialect_private_replay_profile() {
             Some(parameters("{}")),
             Some(parameters("{}")),
             Some(VersionedProfileId::new("local-tools/v1").unwrap()),
-            Some(VersionedProfileId::new("semantic-terminal/v1").unwrap()),
         )
         .with_replay_profile(Some(
             VersionedProfileId::new("kimi-private-local-plaintext/v1").unwrap(),
@@ -254,7 +229,7 @@ fn generic_binding_rejects_cross_dialect_private_replay_profile() {
 // 하여 policy와 request-local exposure가 어긋나지 않습니다.
 #[test]
 fn no_tools_profile_requires_an_empty_registry_and_disables_request_exposure() {
-    let no_tools = profile("{}", "{}", "no-tools/v1", "semantic-terminal/v1");
+    let no_tools = profile("{}", "{}", "no-tools/v1");
     assert!(backend_with_profile(no_tools.clone()).is_err());
 
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -311,16 +286,11 @@ fn legacy_backend_keeps_the_existing_binding_identity() {
 // 다시 raw-byte 비교로 거절하지 않고 durable identity 그대로 runtime에 반환합니다.
 #[test]
 fn complete_resume_preserves_semantically_equal_durable_identity_bytes() {
-    let backend = backend_with_profile(profile(
-        r#"{"effort":"high"}"#,
-        "{}",
-        "local-tools/v1",
-        "semantic-terminal/v1",
-    ))
-    .unwrap();
+    let backend =
+        backend_with_profile(profile(r#"{"effort":"high"}"#, "{}", "local-tools/v1")).unwrap();
     let durable = BackendIdentity::new(
         "yo.complete-model-binding/v1",
-        r#"{"verification_profile":"semantic-terminal/v1","tool_capability_policy":"local-tools/v1","optional_request_parameters":{},"reasoning_parameters":{"effort":"high"},"max_output_tokens":4096,"input_token_limit":1000000,"tokenizer_profile":"test-tokenizer/v1","api_dialect":"openai-responses","base_url":"https://example.invalid/v1","connector":"openai-responses","model":"qwen3.8max","account":"default","provider":"qwencloud"}"#,
+        r#"{"tool_capability_policy":"local-tools/v1","optional_request_parameters":{},"reasoning_parameters":{"effort":"high"},"max_output_tokens":4096,"input_token_limit":1000000,"tokenizer_profile":"test-tokenizer/v1","api_dialect":"openai-responses","base_url":"https://example.invalid/v1","connector":"openai-responses","model":"qwen3.8max","account":"default","provider":"qwencloud"}"#,
     );
     let target = resume_target(&backend, durable);
     let mut runtime = resume_runtime(backend);
@@ -332,13 +302,8 @@ fn complete_resume_preserves_semantically_equal_durable_identity_bytes() {
 // 않은 float spelling을 거절해, 두 malformed identity를 같은 값으로 인정하지 않습니다.
 #[test]
 fn complete_resume_identity_rejects_closed_number_admission_failures() {
-    let backend = backend_with_profile(profile(
-        r#"{"effort":"high"}"#,
-        "{}",
-        "local-tools/v1",
-        "semantic-terminal/v1",
-    ))
-    .unwrap();
+    let backend =
+        backend_with_profile(profile(r#"{"effort":"high"}"#, "{}", "local-tools/v1")).unwrap();
     let evidence = backend.binding_evidence(fixture_session(7));
     let canonical = evidence.binding_identity().value();
 

@@ -93,7 +93,7 @@ mod tests {
 
     fn explicit_entry(policy: &str) -> yo_core::ModelCatalogEntry {
         let complete = yo_core::CompleteModelBinding::from_durable_json(&format!(
-            r#"{{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"{policy}","verification_profile":"semantic-terminal/v1"}}"#
+            r#"{{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"{policy}"}}"#
         ))
         .unwrap();
         yo_core::ModelCatalogEntry::with_explicit_profile(

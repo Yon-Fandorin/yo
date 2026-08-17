@@ -2,7 +2,7 @@
 
 Use this page for Kimi and every later Provider. A new Provider is not just a
 new model list: it introduces source authority, endpoint and protocol
-semantics, credential verification, profile resolution, and durable-state
+semantics, credential use, profile resolution, and durable-state
 compatibility.
 
 ## Complete the source audit
@@ -15,7 +15,7 @@ Answer these questions with official sources before choosing an implementation:
    models usable by this credential?
 3. Does it provide stable ModelIds plus endpoint, dialect, modalities, tools,
    reasoning behavior, and limits, or only marketing descriptions?
-4. What authentication material is required to list and to verify a model?
+4. What authentication material is required to list and to use a model?
 5. Are region, plan, or protocol variants separate catalog profiles?
 6. How are removal, deprecation, and a changed field at the same ModelId
    reported?
@@ -45,7 +45,7 @@ SOT-first contract Slice and activation before implementation.
 Create one cohesive Provider module under `yo-core/src/model_service`, with
 transport and normalization submodules only when each has a distinct
 responsibility. Reuse the provider-neutral catalog entry, complete binding,
-picker, verification, journal, and connection transaction. Do not add a
+picker, structural admission, journal, and connection transaction. Do not add a
 Provider branch to those shared layers when a typed adapter can supply the
 same handoff.
 
@@ -69,7 +69,7 @@ not merely parse one sample response:
 
 - exact configured Provider and Account select the intended catalog owner;
 - cancellation occurs before secret input and repository mutation;
-- a selected complete binding enters the existing verified connection
+- a selected complete binding enters the existing recoverable connection
   transaction;
 - unsupported rows remain visible but cannot be selected;
 - malformed, duplicate, oversized, redirected, stale, or incomplete input

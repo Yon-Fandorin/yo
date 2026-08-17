@@ -20,7 +20,6 @@ pub enum ConnectionRepositoryError {
     TooLarge(PathBuf),
     Changed(PathBuf),
     InvalidContents(PathBuf),
-    RetiredYamlFormat(PathBuf),
     ManagedCoordinateMismatch,
     ManagedBindingNotFound {
         provider: String,
@@ -86,11 +85,6 @@ impl fmt::Display for ConnectionRepositoryError {
             Self::InvalidContents(path) => write!(
                 formatter,
                 "{} contains an invalid connection snapshot",
-                path.display()
-            ),
-            Self::RetiredYamlFormat(path) => write!(
-                formatter,
-                "{} uses a retired pre-release connection shape; back up or remove the stale local state, then register affected connections again",
                 path.display()
             ),
             Self::ManagedCoordinateMismatch => formatter.write_str(

@@ -318,7 +318,7 @@ mod tests {
         )
         .unwrap();
         let complete = CompleteModelBinding::from_durable_json(
-            r#"{"provider":"vendor","account":"team","model":"alpha","connector":"openai-responses","base_url":"https://long-provider.example.test/compatible-mode/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":4096,"max_output_tokens":128,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+            r#"{"provider":"vendor","account":"team","model":"alpha","connector":"openai-responses","base_url":"https://long-provider.example.test/compatible-mode/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":4096,"max_output_tokens":128,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
         )
         .unwrap();
         let preview = Confirmation::Connect(Box::new(
@@ -373,7 +373,7 @@ mod tests {
             .unwrap();
         assert!(preview_output.contains("CONNECT"));
         assert!(preview_output.contains("vendor:team:alpha"));
-        assert!(preview_output.contains("semantic-terminal/v1"));
+        assert!(preview_output.contains("semantic-only/v1"));
         for line in preview_output.lines() {
             assert!(
                 cell_width(line).unwrap() <= 48,

@@ -84,10 +84,6 @@ fn qwencloud_catalog_resolves_complete_model_specific_profiles() {
         complete.profile().tool_capability_policy().as_str(),
         "local-tools/v1"
     );
-    assert_eq!(
-        complete.profile().verification_profile().as_str(),
-        "semantic-terminal/v1"
-    );
     assert_eq!(coder.reasoning(), Some(true));
 }
 

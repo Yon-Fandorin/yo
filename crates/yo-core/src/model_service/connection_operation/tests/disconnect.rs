@@ -1,6 +1,6 @@
 use super::{
     super::disconnect::{DisconnectStep, ExternalDisconnectCredentialAction},
-    support::{Fixture, account, candidate, digest, provider},
+    support::{Fixture, account, candidate, provider},
 };
 use crate::model_service::{
     ApiCredential, ConnectionOperationExecutionError, ConnectionOperationExecutionOutcome,
@@ -287,7 +287,6 @@ fn required_removal_rejects_an_absent_credential_before_intent() {
 
     let error = session
         .prepare_external_disconnect(
-            digest('d'),
             fixture.connections.capture().unwrap().revision(),
             &selection(),
             ExternalDisconnectCredentialAction::Remove,
@@ -322,7 +321,6 @@ fn public_change_after_preview_is_rejected_before_disconnect_preparation() {
 
     let error = session
         .prepare_external_disconnect(
-            digest('d'),
             &expected,
             &selection(),
             ExternalDisconnectCredentialAction::Remove,
@@ -353,7 +351,6 @@ fn prepared(
 ) -> crate::model_service::PreparedExternalDisconnect {
     session
         .prepare_external_disconnect(
-            digest('d'),
             fixture.connections.capture().unwrap().revision(),
             &selection(),
             action,
@@ -375,7 +372,7 @@ fn seed_pair(fixture: &Fixture) {
 
 fn seed_managed(fixture: &Fixture) {
     let complete = crate::model_service::CompleteModelBinding::from_durable_json(
-        r#"{"provider":"qwencloud","account":"default","model":"alpha","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+        r#"{"provider":"qwencloud","account":"default","model":"alpha","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
     )
     .unwrap();
     let account = ManagedConnectionAccount::new(provider(), account(), None, None).unwrap();

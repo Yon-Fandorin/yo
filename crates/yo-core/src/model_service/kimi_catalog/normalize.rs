@@ -238,7 +238,6 @@ fn build_entry(
         Some(parameters(reasoning)),
         Some(parameters(optional)),
         Some(profile_id("local-tools/v1")),
-        Some(profile_id("semantic-terminal/v1")),
     )
     .with_replay_profile(Some(profile_id(replay)));
     let profile = EffectiveModelProfile::resolve(None, &layer)?;

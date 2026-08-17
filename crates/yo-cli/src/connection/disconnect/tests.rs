@@ -587,13 +587,13 @@ fn account() -> AccountId {
 
 fn complete(model: &str) -> CompleteModelBinding {
     CompleteModelBinding::from_durable_json(&format!(
-        r#"{{"provider":"vendor","account":"team","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1","verification_profile":"semantic-terminal/v1"}}"#
+        r#"{{"provider":"vendor","account":"team","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
     ))
     .unwrap()
 }
 
 fn explicit_config(model: &str) -> String {
     format!(
-        "model:\n  bindings:\n    - provider: vendor\n      account: team\n      base_url: https://example.test/v1\n      profile:\n        api_dialect: openai-responses\n        tokenizer_profile: utf8-bytes/v1\n        input_token_limit: 1000\n        max_output_tokens: 100\n        reasoning_parameters: {{}}\n        optional_request_parameters: {{}}\n        tool_capability_policy: local-tools/v1\n        verification_profile: semantic-terminal/v1\n      models:\n        - model: {model}\n"
+        "model:\n  bindings:\n    - provider: vendor\n      account: team\n      base_url: https://example.test/v1\n      profile:\n        api_dialect: openai-responses\n        tokenizer_profile: utf8-bytes/v1\n        input_token_limit: 1000\n        max_output_tokens: 100\n        reasoning_parameters: {{}}\n        optional_request_parameters: {{}}\n        tool_capability_policy: local-tools/v1\n      models:\n        - model: {model}\n"
     )
 }

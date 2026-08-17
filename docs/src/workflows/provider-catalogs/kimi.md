@@ -36,7 +36,7 @@ product. Treat every response byte as untrusted and bounded.
 | Product-specific Account seed, bounded discovery transport, normalization, reviewed overlays, and typed disabled reasons | [`kimi_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog.rs) and its `kimi_catalog/` children |
 | Exact Kimi request and streamed assistant-message grammar | [`kimi_request.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/kimi_request.rs), [`connector.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/connector.rs), and [`chat_sse.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/chat_sse.rs) |
 | Provider-private replay validation, persistence, correlation, native reuse, and Provider-neutral per-Session cache-affinity hint creation | [`backend/evidence/replay.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence/replay.rs), [`journal/codec`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/codec), and [`backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) |
-| Config seed, picker, disclosure, and verified connection transaction | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs), [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs), and [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs) |
+| Config seed, picker, disclosure, and recoverable connection transaction | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs), [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs), and [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs) |
 
 ## Current update procedure
 
@@ -68,8 +68,7 @@ product. Treat every response byte as untrusted and bounded.
    duplicating visible content or tool calls.
 7. For Code, verify one Session reuses one opaque cache-affinity hint across
    ordinary and resumed requests. The Connector alone serializes it as
-   `prompt_cache_key`; Platform and other connectors ignore it, verification
-   uses a separate `verification-<UUIDv7>` task hint, and no hint enters binding
+   `prompt_cache_key`; Platform and other connectors ignore it, and no hint enters binding
    identity, replay evidence, logs, diagnostics, transcripts, or traces.
 
 Focused checks:
