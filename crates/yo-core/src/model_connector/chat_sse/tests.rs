@@ -156,6 +156,87 @@ fn decodes_mixed_content_and_tool_calls_without_losing_the_message() {
     assert!(decoder.finish().is_ok());
 }
 
+// 첫 조각의 비어 있지 않은 call ID가 identity를 고정한 뒤 호환 API가 후속 조각에
+// 명시적인 빈 ID를 보내도 omission처럼 취급하고 exact argument bytes를 이어 붙입니다.
+#[test]
+fn treats_an_empty_repeated_tool_call_id_as_omission() {
+    let stream = [
+        event(json!({
+            "id":"chat-empty-repeat",
+            "choices":[{"index":0,"delta":{"tool_calls":[{
+                "index":0,"id":"call-stable","type":"function",
+                "function":{"name":"read_files","arguments":"{\"files\":"}
+            }]} ,"finish_reason":null}]
+        })),
+        event(json!({
+            "id":"chat-empty-repeat",
+            "choices":[{"index":0,"delta":{"tool_calls":[{
+                "index":0,"id":"","type":"function",
+                "function":{"arguments":"[]}\n"}
+            }]},"finish_reason":"tool_calls"}]
+        })),
+        final_usage("chat-empty-repeat"),
+        "data: [DONE]\n\n".to_owned(),
+    ]
+    .concat();
+    let mut decoder = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+
+    let events = decoder.push(stream.as_bytes()).unwrap();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ResponsesEvent::FunctionCallDone { call_id, arguments, .. }
+            if call_id == "call-stable" && arguments == "{\"files\":[]}\n"
+    )));
+    assert!(decoder.finish().is_ok());
+}
+
+// 빈 최초 ID는 call identity를 만들 수 없고, 이미 고정된 뒤의 다른 비어 있지 않은
+// ID도 새 call로 조용히 바꾸지 않으므로 둘 다 protocol failure입니다.
+#[test]
+fn rejects_empty_initial_and_changed_repeated_tool_call_ids() {
+    let mut empty_initial = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let empty_error = empty_initial
+        .push(
+            event(json!({
+                "id":"chat-empty-initial",
+                "choices":[{"index":0,"delta":{"tool_calls":[{
+                    "index":0,"id":"","type":"function",
+                    "function":{"name":"read_files","arguments":"{}"}
+                }]},"finish_reason":null}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap_err();
+    assert_eq!(empty_error.kind(), ConnectorFailureKind::Protocol);
+
+    let mut changed = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    changed
+        .push(
+            event(json!({
+                "id":"chat-changed-repeat",
+                "choices":[{"index":0,"delta":{"tool_calls":[{
+                    "index":0,"id":"call-one","type":"function",
+                    "function":{"name":"read_files","arguments":"{"}
+                }]},"finish_reason":null}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap();
+    let changed_error = changed
+        .push(
+            event(json!({
+                "id":"chat-changed-repeat",
+                "choices":[{"index":0,"delta":{"tool_calls":[{
+                    "index":0,"id":"call-two","function":{"arguments":"}"}
+                }]},"finish_reason":null}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap_err();
+    assert_eq!(changed_error.kind(), ConnectorFailureKind::Protocol);
+}
+
 // response identity 변경, final usage 누락, stream 절단은 정상 종료로 승격되지 않는다.
 #[test]
 fn rejects_missing_usage_changed_ids_and_truncated_streams() {

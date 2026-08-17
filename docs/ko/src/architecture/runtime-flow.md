@@ -74,7 +74,10 @@ Responses는 `responses` segment를 정확히 하나 붙이고 Chat Completions�
 `chat/completions`를 붙인다. 어느 경로도 `v1`을 하나 더 붙이거나 fallback을 probe하거나
 provider conversation authority 또는 built-in tool을 켜지 않는다. Chat decoder는 index 0인
 choice 하나, finish 뒤 final usage와 `[DONE]` 순서를 요구하고 content와 refusal을 독립적으로
-보존하며 index가 있는 tool-call fragment를 correlate한다. 두 dialect 모두 SSE event와 누적
+보존하며 index가 있는 tool-call fragment를 correlate한다. tool call의 첫 fragment는 비어
+있지 않은 ID와 function name을 하나 고정한다. 후속 fragment는 이를 생략할 수 있고,
+호환 API가 반복 ID를 명시적인 빈 문자열로 보내면 omission으로 정규화하지만 다른 비어
+있지 않은 ID나 function name은 여전히 stream을 실패시킨다. 두 dialect 모두 SSE event와 누적
 payload를 읽는 동안 제한하며 cancellation은
 header·stream·queue wait를 중단한다. 기본 agent 경로에는 absolute model-request deadline이
 없다. 그래도 connection setup은 30초, 각 redirect attempt의 response header는 5분,

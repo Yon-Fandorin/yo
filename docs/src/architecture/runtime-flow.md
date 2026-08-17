@@ -76,6 +76,10 @@ exactly `chat/completions`. Neither route adds another `v1`, probes a fallback,
 or enables provider conversation authority or built-in tools. The Chat decoder
 requires one index-zero choice, finish then final usage then `[DONE]`, preserves
 content and refusal independently, and correlates indexed tool-call fragments.
+A tool call's first fragment fixes one non-empty ID and function name. Later
+fragments may omit them; an explicit empty repeated ID from a compatible API is
+normalized as omission, while a different non-empty ID or function name still
+fails the stream.
 Both dialects bound SSE events and cumulative payloads while reading, and
 cancellation interrupts header, stream, and queue waits. The default agent
 route has no absolute model-request deadline. It still bounds connection setup

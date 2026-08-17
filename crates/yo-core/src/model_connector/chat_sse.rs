@@ -638,6 +638,11 @@ impl ChatCompletionsSseDecoder {
                 ));
             }
             let id = string_at(fragment, "id", "tool-call id")?.to_owned();
+            if id.is_empty() {
+                return Err(protocol_failure(
+                    "Chat Completions initial tool-call id is empty",
+                ));
+            }
             if self.is_kimi() && !(1..=4 * 1024).contains(&id.len()) {
                 return Err(protocol_failure(
                     "Kimi tool-call id is outside its exact byte bounds",
@@ -724,7 +729,7 @@ impl ChatCompletionsSseDecoder {
             .calls
             .get(&index)
             .expect("an admitted tool-call index exists");
-        if repeated_id.is_some_and(|id| id != call.id)
+        if repeated_id.is_some_and(|id| !id.is_empty() && id != call.id)
             || repeated_name.is_some_and(|name| name != call.name)
         {
             return Err(protocol_failure(
