@@ -36,11 +36,10 @@ pub(super) fn resolve(
     if let Some(target) = resume {
         return resolve_resume(config, override_model, target);
     }
-    let startup = config.startup_target().cloned();
     resolve_new_session(
         config.model_catalog(),
         stored_preference,
-        startup,
+        None,
         override_model,
     )
 }
@@ -147,7 +146,7 @@ fn resolve_native_resume(
             {
                 StartupTarget::HostCodex => {
                     return Err(AppError::many([
-                    "Local Codex cannot replace a Yo-managed Session; cross-backend handoff is not supported"
+                    "Local Codex cannot replace a native model Session; cross-backend handoff is not supported"
                         .to_owned(),
                 ]));
                 },
@@ -516,6 +515,17 @@ mod tests {
             same.model_selection().unwrap().provider().as_str(),
             "qwencloud"
         );
+
+        let handoff = resolve_native_resume(
+            &catalog,
+            DurableNativeBinding::Legacy(durable.clone()),
+            Some("host:codex"),
+            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(handoff.contains("cannot replace a native model Session"));
+        assert!(handoff.contains("cross-backend handoff is not supported"));
 
         let replacement = resolve_native_resume(
             &catalog,

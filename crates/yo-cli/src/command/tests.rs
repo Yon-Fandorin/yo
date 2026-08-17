@@ -79,6 +79,7 @@ fn connect_command_requires_one_exact_target() {
     assert_eq!(
         parse(["connect".into(), "host:codex".into()]).unwrap(),
         Command::Connect(ConnectCommand {
+            from: None,
             target: "host:codex".to_owned(),
             verbose: false,
             credential_file: None,
@@ -88,6 +89,7 @@ fn connect_command_requires_one_exact_target() {
     assert_eq!(
         parse(["connect".into(), "host:codex".into(), "-v".into()]).unwrap(),
         Command::Connect(ConnectCommand {
+            from: None,
             target: "host:codex".to_owned(),
             verbose: true,
             credential_file: None,
@@ -96,6 +98,35 @@ fn connect_command_requires_one_exact_target() {
     );
     assert!(parse(["connect".into()]).is_err());
     assert!(parse(["connect".into(), "host:codex".into(), "second".into(),]).is_err());
+    assert_eq!(
+        parse(["connect".into(), "--from".into(), "/tmp/models.yaml".into(),]).unwrap(),
+        Command::Connect(ConnectCommand {
+            target: String::new(),
+            from: Some("/tmp/models.yaml".into()),
+            verbose: false,
+            credential_file: None,
+            yes: false,
+        })
+    );
+    assert_eq!(
+        parse(["connect".into(), "--from".into(), "-".into(),]).unwrap(),
+        Command::Connect(ConnectCommand {
+            target: String::new(),
+            from: Some("-".into()),
+            verbose: false,
+            credential_file: None,
+            yes: false,
+        })
+    );
+    assert!(
+        parse([
+            "connect".into(),
+            "host:codex".into(),
+            "--from".into(),
+            "/tmp/models.yaml".into(),
+        ])
+        .is_err()
+    );
 }
 
 // 비대화형 external connect는 credential path와 exact-plan 승인 둘을 함께 요구하고,
@@ -112,6 +143,7 @@ fn non_interactive_connect_requires_the_closed_file_and_yes_pair() {
         ])
         .unwrap(),
         Command::Connect(ConnectCommand {
+            from: None,
             target: "vendor:team:model".to_owned(),
             verbose: false,
             credential_file: Some("/run/secrets/vendor".into()),

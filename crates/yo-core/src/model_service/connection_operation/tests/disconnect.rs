@@ -3,9 +3,10 @@ use super::{
     support::{Fixture, account, candidate, provider},
 };
 use crate::model_service::{
-    ApiCredential, ConnectionOperationExecutionError, ConnectionOperationExecutionOutcome,
-    ConnectionOperationPhase, LocalConnectionOperationRepositories, ManagedConnectionAccount,
-    ManagedConnectionBinding, ModelId, ModelSelection, StartupTarget,
+    ApiCredential, ConnectionAccount, ConnectionOperationExecutionError,
+    ConnectionOperationExecutionOutcome, ConnectionOperationPhase,
+    LocalConnectionOperationRepositories, ModelId, ModelSelection, StartupTarget,
+    StoredModelBinding,
 };
 
 // remove disconnect는 secret-free intent 뒤 public state를 먼저 게시하고 credential을 지운 뒤
@@ -45,7 +46,7 @@ fn remove_commits_public_before_credential_and_clears_journal() {
 }
 
 // preserve disconnect는 같은 public-first 순서를 사용하지만 credential CAS를 만들지 않아
-// 남은 manual/managed binding이 사용하는 exact Provider/Account secret을 그대로 보존합니다.
+// 남은 stored model이 사용하는 exact Provider/Account secret을 그대로 보존합니다.
 #[test]
 fn preserve_commits_public_without_mutating_credential() {
     let fixture = Fixture::new("disconnect-preserve");
@@ -107,7 +108,7 @@ fn every_remove_effect_cut_has_exact_durable_state_and_retry_convergence() {
         let intent_only = step == DisconnectStep::JournalPublished;
         assert_eq!(
             fixture.connections.capture().unwrap().preference().cloned(),
-            intent_only.then(managed_target)
+            intent_only.then(stored_target)
         );
         let credential_present = fixture
             .credentials
@@ -139,7 +140,7 @@ fn every_remove_effect_cut_has_exact_durable_state_and_retry_convergence() {
             ));
             assert_eq!(
                 fixture.connections.capture().unwrap().preference(),
-                Some(&managed_target())
+                Some(&stored_target())
             );
             assert!(
                 fixture
@@ -281,7 +282,7 @@ fn credential_removal_conflict_preserves_winner_and_recoverable_journal() {
 #[test]
 fn required_removal_rejects_an_absent_credential_before_intent() {
     let fixture = Fixture::new("disconnect-absent-credential");
-    seed_managed(&fixture);
+    seed_stored(&fixture);
     let repositories = repositories(&fixture);
     let mut session = repositories.acquire().unwrap();
 
@@ -297,7 +298,7 @@ fn required_removal_rejects_an_absent_credential_before_intent() {
     assert!(fixture.journal.capture().unwrap().is_none());
     assert_eq!(
         fixture.connections.capture().unwrap().preference(),
-        Some(&managed_target())
+        Some(&stored_target())
     );
 }
 
@@ -367,21 +368,21 @@ fn seed_pair(fixture: &Fixture) {
         .credentials
         .commit(&mutation, Some(&candidate()))
         .unwrap();
-    seed_managed(fixture);
+    seed_stored(fixture);
 }
 
-fn seed_managed(fixture: &Fixture) {
+fn seed_stored(fixture: &Fixture) {
     let complete = crate::model_service::CompleteModelBinding::from_durable_json(
         r#"{"provider":"qwencloud","account":"default","model":"alpha","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
     )
     .unwrap();
-    let account = ManagedConnectionAccount::new(provider(), account(), None, None).unwrap();
-    let binding = ManagedConnectionBinding::new(complete, None).unwrap();
+    let account = ConnectionAccount::new(provider(), account(), None, None).unwrap();
+    let binding = StoredModelBinding::new(complete, None).unwrap();
     let mutation = fixture
         .connections
         .capture()
         .unwrap()
-        .prepare_managed_upsert(account, binding)
+        .prepare_model_upsert(account, binding)
         .unwrap()
         .unwrap();
     fixture.connections.commit(&mutation).unwrap();
@@ -391,6 +392,6 @@ fn selection() -> ModelSelection {
     ModelSelection::new(provider(), account(), ModelId::new("alpha").unwrap())
 }
 
-fn managed_target() -> StartupTarget {
+fn stored_target() -> StartupTarget {
     StartupTarget::Model(selection())
 }

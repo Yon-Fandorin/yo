@@ -138,7 +138,7 @@ impl ExternalDisconnectInput for TtyConnectionInput {
         let terminal = self.terminal()?;
         write!(
             terminal,
-            "Select one managed target by entering its exact reference:\n  - {}\nTarget: ",
+            "Select one stored target by entering its exact reference:\n  - {}\nTarget: ",
             choices.join("\n  - ")
         )
         .and_then(|()| terminal.flush())
@@ -326,7 +326,7 @@ mod tests {
                 "vendor:team:alpha".to_owned(),
                 "vendor:team".to_owned(),
                 "unset  →  vendor:team:alpha".to_owned(),
-                super::super::presentation::ManagedConnectionChange::Create,
+                super::super::presentation::StoredConnectionChange::Create,
                 yo_core::CredentialMutationAction::Add,
                 true,
                 vec![BindingDetails::from(&complete)],

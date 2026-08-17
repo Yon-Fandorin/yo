@@ -8,9 +8,9 @@ use super::{
     },
 };
 use crate::{
-    ApiCredential, CompleteModelBinding, CredentialMutationAction, PreparedConnectionMutation,
-    PreparedCredentialMutation, model_profile_admission::admit_new_complete_binding,
-    model_service::LocalCredentialStoreError,
+    AccountId, ApiCredential, CompleteModelBinding, CredentialMutationAction,
+    PreparedConnectionMutation, PreparedCredentialMutation, ProviderId,
+    model_profile_admission::admit_new_complete_binding, model_service::LocalCredentialStoreError,
 };
 
 /// A safe external-connect failure. It never retains or formats candidate credential bytes.
@@ -26,7 +26,7 @@ impl fmt::Display for ExternalConnectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidBindingSet => formatter.write_str(
-                "external connect requires a non-empty, unique complete binding set for one Provider and Account",
+                "external connect requires one exact stored Provider-and-Account definition with unique complete bindings or a catalog seed",
             ),
             Self::CredentialPreparation(source) => {
                 write!(formatter, "preparing the account credential change failed: {source}")
@@ -71,21 +71,20 @@ impl PreparedExternalConnection {
         bindings: Vec<CompleteModelBinding>,
     ) -> Result<Self, ExternalConnectionError> {
         let mut identities = Vec::new();
-        let valid = bindings.first().is_some_and(|first| {
-            let first = first.binding();
-            credential.provider() == first.provider_id()
-                && credential.account() == first.account_id()
-                && bindings.iter().all(|complete| {
-                    let binding = complete.binding();
-                    binding.provider_id() == first.provider_id()
-                        && binding.account_id() == first.account_id()
-                        && if identities.contains(complete) {
-                            false
-                        } else {
-                            identities.push(complete.clone());
-                            true
-                        }
-                })
+        let valid = connection.defines_model_connect(
+            credential.provider(),
+            credential.account(),
+            &bindings,
+        ) && bindings.iter().all(|complete| {
+            let binding = complete.binding();
+            credential.provider() == binding.provider_id()
+                && credential.account() == binding.account_id()
+                && if identities.contains(complete) {
+                    false
+                } else {
+                    identities.push(complete.clone());
+                    true
+                }
         });
         if !valid {
             return Err(ExternalConnectionError::InvalidBindingSet);
@@ -98,6 +97,35 @@ impl PreparedExternalConnection {
                 target: unsupported.binding().selection_reference(),
             });
         }
+        let connection = connection.into_journal_mutation();
+        Ok(Self {
+            connection,
+            credential,
+            bindings,
+        })
+    }
+
+    fn new_group_replacement(
+        connection: PreparedConnectionMutation,
+        credential: PreparedCredentialMutation,
+        bindings: Vec<CompleteModelBinding>,
+    ) -> Result<Self, ExternalConnectionError> {
+        if !connection.defines_group_replacement(
+            credential.provider(),
+            credential.account(),
+            &bindings,
+        ) {
+            return Err(ExternalConnectionError::InvalidBindingSet);
+        }
+        if let Some(unsupported) = bindings
+            .iter()
+            .find(|complete| admit_new_complete_binding(complete).is_err())
+        {
+            return Err(ExternalConnectionError::UnsupportedProfile {
+                target: unsupported.binding().selection_reference(),
+            });
+        }
+        let connection = connection.into_journal_mutation();
         Ok(Self {
             connection,
             credential,
@@ -140,6 +168,29 @@ impl LocalConnectionOperationSession<'_> {
                 )
             })?;
         PreparedExternalConnection::new(connection, credential, bindings)
+            .map_err(ConnectionOperationExecutionError::ExternalPreparation)
+    }
+
+    /// Prepares one grouped definition import. Catalog and discovery seeds may contain no
+    /// immediately routable model, but still publish one pair credential and public revision.
+    pub fn prepare_external_definition(
+        &mut self,
+        connection: PreparedConnectionMutation,
+        provider: &ProviderId,
+        account: &AccountId,
+        bindings: Vec<CompleteModelBinding>,
+    ) -> Result<PreparedExternalConnection, ConnectionOperationExecutionError> {
+        self.directory_identity.revalidate()?;
+        let credential = self
+            .repositories
+            .credentials
+            .prepare_set(provider, account)
+            .map_err(|source| {
+                ConnectionOperationExecutionError::ExternalPreparation(
+                    ExternalConnectionError::CredentialPreparation(source),
+                )
+            })?;
+        PreparedExternalConnection::new_group_replacement(connection, credential, bindings)
             .map_err(ConnectionOperationExecutionError::ExternalPreparation)
     }
 

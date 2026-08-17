@@ -5,14 +5,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::{ModelCatalog, ModelSelection, StartupTarget, catalog::BindingConflict};
+use super::{ModelCatalog, ModelCatalogEntry, ModelSelection, StartupTarget};
 
+mod catalog_seed;
 mod error;
-mod managed;
+mod stored;
 mod wire;
 
+pub use catalog_seed::ConnectionCatalogSeed;
 pub use error::ConnectionRepositoryError;
-pub use managed::{ManagedConnectionAccount, ManagedConnectionBinding};
+pub use stored::{ConnectionAccount, StoredModelBinding};
 
 pub(crate) const MAX_CONNECTION_BYTES: u64 = 1024 * 1024;
 const FILE_MODE: u32 = 0o600;
@@ -29,10 +31,11 @@ const REPOSITORY_LOCK_FILE: &str = ".connections.lock";
 const OPERATION_LOCK_FILE: &str = ".connection-operation.lock";
 const PENDING_OPERATION_FILE: &str = "connection-operation.yaml";
 
-type ManagedSnapshotState = (
+type StoredSnapshotState = (
     Option<StartupTarget>,
-    Vec<ManagedConnectionAccount>,
-    Vec<ManagedConnectionBinding>,
+    Vec<ConnectionAccount>,
+    Vec<StoredModelBinding>,
+    Vec<ConnectionCatalogSeed>,
 );
 
 /// Opaque compare-and-swap token for one complete public connection snapshot.
@@ -70,8 +73,9 @@ impl fmt::Display for ConnectionRevision {
 pub struct ConnectionSnapshot {
     revision: ConnectionRevision,
     preference: Option<StartupTarget>,
-    accounts: Vec<ManagedConnectionAccount>,
-    bindings: Vec<ManagedConnectionBinding>,
+    accounts: Vec<ConnectionAccount>,
+    bindings: Vec<StoredModelBinding>,
+    catalog_seeds: Vec<ConnectionCatalogSeed>,
     encoded: Vec<u8>,
 }
 
@@ -87,42 +91,119 @@ impl ConnectionSnapshot {
     }
 
     #[must_use]
-    pub fn managed_accounts(&self) -> &[ManagedConnectionAccount] {
+    pub fn accounts(&self) -> &[ConnectionAccount] {
         &self.accounts
     }
 
     #[must_use]
-    pub fn managed_bindings(&self) -> &[ManagedConnectionBinding] {
+    pub fn models(&self) -> &[StoredModelBinding] {
         &self.bindings
     }
 
-    pub fn compose_catalog(&self, manual: &ModelCatalog) -> Result<ModelCatalog, BindingConflict> {
-        manual.compose_managed(&self.accounts, &self.bindings)
+    #[must_use]
+    pub fn catalog_seeds(&self) -> &[ConnectionCatalogSeed] {
+        &self.catalog_seeds
     }
 
-    /// Composes the exact prospective managed upsert with manual configuration before mutation.
-    pub fn compose_catalog_after_managed_upsert(
+    pub fn openrouter_discovery_seed(
         &self,
-        manual: &ModelCatalog,
-        account: ManagedConnectionAccount,
-        binding: ManagedConnectionBinding,
+        provider: &super::ProviderId,
+        account: &super::AccountId,
+    ) -> Result<Option<super::OpenRouterDiscoverySeed>, ConnectionRepositoryError> {
+        self.catalog_seeds
+            .iter()
+            .find(|seed| seed.provider() == provider && seed.account() == account)
+            .map(ConnectionCatalogSeed::openrouter_seed)
+            .transpose()
+            .map_err(|_| ConnectionRepositoryError::InvalidMutation)
+            .map(Option::flatten)
+    }
+
+    pub fn qwencloud_catalog_seed(
+        &self,
+        provider: &super::ProviderId,
+        account: &super::AccountId,
+    ) -> Result<Option<super::QwenCloudCatalogSeed>, ConnectionRepositoryError> {
+        self.catalog_seeds
+            .iter()
+            .find(|seed| seed.provider() == provider && seed.account() == account)
+            .map(ConnectionCatalogSeed::qwencloud_seed)
+            .transpose()
+            .map_err(|_| ConnectionRepositoryError::InvalidMutation)
+            .map(Option::flatten)
+    }
+
+    pub fn kimi_catalog_seed(
+        &self,
+        provider: &super::ProviderId,
+        account: &super::AccountId,
+    ) -> Result<Option<super::KimiCatalogSeed>, ConnectionRepositoryError> {
+        self.catalog_seeds
+            .iter()
+            .find(|seed| seed.provider() == provider && seed.account() == account)
+            .map(ConnectionCatalogSeed::kimi_seed)
+            .transpose()
+            .map_err(|_| ConnectionRepositoryError::InvalidMutation)
+            .map(Option::flatten)
+    }
+
+    pub fn model_catalog(&self) -> Result<ModelCatalog, ConnectionRepositoryError> {
+        let entries = self
+            .bindings
+            .iter()
+            .map(|binding| {
+                let complete = binding.complete().binding();
+                let account = self.accounts.iter().find(|account| {
+                    account.provider_id() == complete.provider_id()
+                        && account.account_id() == complete.account_id()
+                });
+                let account = account.ok_or(ConnectionRepositoryError::InvalidMutation)?;
+                ModelCatalogEntry::from_stored(
+                    binding.complete().clone(),
+                    account.provider_display_name().map(str::to_owned),
+                    account.account_display_name().map(str::to_owned),
+                    binding.model_display_name().map(str::to_owned),
+                )
+                .map_err(|_| ConnectionRepositoryError::InvalidMutation)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        ModelCatalog::new(entries).map_err(|_| ConnectionRepositoryError::InvalidMutation)
+    }
+
+    /// Builds the exact prospective catalog after one stored upsert.
+    pub fn catalog_after_model_upsert(
+        &self,
+        account: ConnectionAccount,
+        binding: StoredModelBinding,
     ) -> Result<ModelCatalog, ConnectionRepositoryError> {
-        let (_, accounts, bindings) = self.managed_upsert_state(account, binding)?;
-        manual
-            .compose_managed(&accounts, &bindings)
-            .map_err(ConnectionRepositoryError::ManagedCatalogConflict)
+        let (preference, accounts, bindings, catalog_seeds) =
+            self.model_upsert_state(account, binding)?;
+        Self {
+            revision: self.revision.clone(),
+            preference,
+            accounts,
+            bindings,
+            catalog_seeds,
+            encoded: Vec::new(),
+        }
+        .model_catalog()
     }
 
-    /// Composes the exact prospective managed removal with manual configuration before mutation.
-    pub fn compose_catalog_after_managed_remove(
+    /// Builds the exact prospective catalog after one stored removal.
+    pub fn catalog_after_model_remove(
         &self,
-        manual: &ModelCatalog,
         selection: &ModelSelection,
     ) -> Result<ModelCatalog, ConnectionRepositoryError> {
-        let (_, accounts, bindings) = self.managed_remove_state(selection)?;
-        manual
-            .compose_managed(&accounts, &bindings)
-            .map_err(ConnectionRepositoryError::ManagedCatalogConflict)
+        let (preference, accounts, bindings, catalog_seeds) = self.model_remove_state(selection)?;
+        Self {
+            revision: self.revision.clone(),
+            preference,
+            accounts,
+            bindings,
+            catalog_seeds,
+            encoded: Vec::new(),
+        }
+        .model_catalog()
     }
 
     pub(crate) fn matches_planned(&self, mutation: &PreparedConnectionMutation) -> bool {
@@ -137,40 +218,54 @@ impl ConnectionSnapshot {
         if self.preference == preference {
             return Ok(None);
         }
-        self.prepare_snapshot(preference, self.accounts.clone(), self.bindings.clone())
+        self.prepare_snapshot(
+            preference,
+            self.accounts.clone(),
+            self.bindings.clone(),
+            self.catalog_seeds.clone(),
+        )
     }
 
-    /// Adds or replaces one managed binding while preserving unrelated public state.
-    pub fn prepare_managed_upsert(
+    /// Adds or replaces one stored model while preserving unrelated public state.
+    pub fn prepare_model_upsert(
         &self,
-        account: ManagedConnectionAccount,
-        binding: ManagedConnectionBinding,
+        account: ConnectionAccount,
+        binding: StoredModelBinding,
     ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
-        let (preference, accounts, bindings) = self.managed_upsert_state(account, binding)?;
-        self.prepare_snapshot(preference, accounts, bindings)
+        let (preference, accounts, bindings, catalog_seeds) =
+            self.model_upsert_state(account, binding)?;
+        self.prepare_snapshot(preference, accounts, bindings, catalog_seeds)
     }
 
     /// Prepares an external connect epoch even when its public binding is unchanged.
     ///
     /// Credential replacement recovery needs an exact prospective public revision. Rotating a
     /// key therefore receives a new public revision while preserving semantically equal state.
-    pub fn prepare_managed_connect(
+    pub fn prepare_model_connect(
         &self,
-        account: ManagedConnectionAccount,
-        binding: ManagedConnectionBinding,
+        account: ConnectionAccount,
+        binding: StoredModelBinding,
     ) -> Result<PreparedConnectionMutation, ConnectionRepositoryError> {
-        let (preference, accounts, bindings) = self.managed_upsert_state(account, binding)?;
-        self.prepare_snapshot_with_mode(preference, accounts, bindings, true)?
-            .ok_or(ConnectionRepositoryError::InvalidManagedMutation)
+        let direct_connect = DirectConnectIntent {
+            account: account.clone(),
+            binding: binding.clone(),
+        };
+        let (preference, accounts, bindings, catalog_seeds) =
+            self.model_upsert_state(account, binding)?;
+        let mut mutation = self
+            .prepare_snapshot_with_mode(preference, accounts, bindings, catalog_seeds, true)?
+            .ok_or(ConnectionRepositoryError::InvalidMutation)?;
+        mutation.direct_connect = Some(direct_connect);
+        Ok(mutation)
     }
 
-    fn managed_upsert_state(
+    fn model_upsert_state(
         &self,
-        account: ManagedConnectionAccount,
-        binding: ManagedConnectionBinding,
-    ) -> Result<ManagedSnapshotState, ConnectionRepositoryError> {
-        if !managed::account_matches_binding(&account, &binding) {
-            return Err(ConnectionRepositoryError::ManagedCoordinateMismatch);
+        account: ConnectionAccount,
+        binding: StoredModelBinding,
+    ) -> Result<StoredSnapshotState, ConnectionRepositoryError> {
+        if !stored::account_matches_binding(&account, &binding) {
+            return Err(ConnectionRepositoryError::CoordinateMismatch);
         }
         let mut accounts = self.accounts.clone();
         let account_position = accounts.iter().position(|current| {
@@ -186,40 +281,104 @@ impl ConnectionSnapshot {
         let selection = binding.selection();
         let binding_position = bindings
             .iter()
-            .position(|current| managed::binding_matches_selection(current, &selection));
+            .position(|current| stored::binding_matches_selection(current, &selection));
         match binding_position {
             Some(index) => bindings[index] = binding,
             None => bindings.push(binding),
         }
-        managed::validate_state(&accounts, &bindings)
-            .map_err(|_| ConnectionRepositoryError::InvalidManagedMutation)?;
+        stored::validate_state(&accounts, &bindings)
+            .map_err(|_| ConnectionRepositoryError::InvalidMutation)?;
         let preference = self
             .preference
             .clone()
             .or(Some(StartupTarget::Model(selection)));
-        Ok((preference, accounts, bindings))
+        Ok((preference, accounts, bindings, self.catalog_seeds.clone()))
     }
 
-    /// Removes one managed binding, its unused account, and an exact matching preference.
-    pub fn prepare_managed_remove(
+    /// Replaces one complete Provider-and-Account definition as one public revision.
+    pub fn prepare_group_replace(
+        &self,
+        account: ConnectionAccount,
+        replacement_bindings: Vec<StoredModelBinding>,
+        replacement_seed: Option<ConnectionCatalogSeed>,
+    ) -> Result<PreparedConnectionMutation, ConnectionRepositoryError> {
+        if replacement_bindings
+            .iter()
+            .any(|binding| !stored::account_matches_binding(&account, binding))
+            || replacement_seed.as_ref().is_some_and(|seed| {
+                seed.provider() != account.provider_id() || seed.account() != account.account_id()
+            })
+        {
+            return Err(ConnectionRepositoryError::CoordinateMismatch);
+        }
+        if replacement_bindings.is_empty() && replacement_seed.is_none() {
+            return Err(ConnectionRepositoryError::InvalidMutation);
+        }
+
+        let group_replacement = GroupReplacementIntent {
+            account: account.clone(),
+            bindings: replacement_bindings.clone(),
+            catalog_seed: replacement_seed.clone(),
+        };
+
+        let provider = account.provider_id().clone();
+        let account_id = account.account_id().clone();
+        let mut accounts = self.accounts.clone();
+        accounts.retain(|current| {
+            current.provider_id() != &provider || current.account_id() != &account_id
+        });
+        accounts.push(account);
+        let mut bindings = self.bindings.clone();
+        bindings.retain(|current| {
+            let binding = current.complete().binding();
+            binding.provider_id() != &provider || binding.account_id() != &account_id
+        });
+        bindings.extend(replacement_bindings);
+        let mut catalog_seeds = self.catalog_seeds.clone();
+        catalog_seeds.retain(|seed| seed.provider() != &provider || seed.account() != &account_id);
+        catalog_seeds.extend(replacement_seed);
+        stored::validate_state(&accounts, &bindings)
+            .map_err(|_| ConnectionRepositoryError::InvalidMutation)?;
+        validate_catalog_seeds(&accounts, &catalog_seeds)?;
+
+        let preference = match self.preference.as_ref() {
+            Some(StartupTarget::Model(selection))
+                if selection.provider() == &provider && selection.account() == &account_id =>
+            {
+                bindings
+                    .iter()
+                    .any(|binding| binding.selection() == *selection)
+                    .then(|| StartupTarget::Model(selection.clone()))
+            },
+            _ => self.preference.clone(),
+        };
+        let mut mutation = self
+            .prepare_snapshot_with_mode(preference, accounts, bindings, catalog_seeds, true)?
+            .ok_or(ConnectionRepositoryError::InvalidMutation)?;
+        mutation.group_replacement = Some(group_replacement);
+        Ok(mutation)
+    }
+
+    /// Removes one stored model, its unused account, and an exact matching preference.
+    pub fn prepare_model_remove(
         &self,
         selection: &ModelSelection,
     ) -> Result<PreparedConnectionMutation, ConnectionRepositoryError> {
-        let (preference, accounts, bindings) = self.managed_remove_state(selection)?;
-        self.prepare_snapshot(preference, accounts, bindings)?
-            .ok_or(ConnectionRepositoryError::InvalidManagedMutation)
+        let (preference, accounts, bindings, catalog_seeds) = self.model_remove_state(selection)?;
+        self.prepare_snapshot(preference, accounts, bindings, catalog_seeds)?
+            .ok_or(ConnectionRepositoryError::InvalidMutation)
     }
 
-    fn managed_remove_state(
+    fn model_remove_state(
         &self,
         selection: &ModelSelection,
-    ) -> Result<ManagedSnapshotState, ConnectionRepositoryError> {
+    ) -> Result<StoredSnapshotState, ConnectionRepositoryError> {
         let mut bindings = self.bindings.clone();
         let Some(index) = bindings
             .iter()
-            .position(|binding| managed::binding_matches_selection(binding, selection))
+            .position(|binding| stored::binding_matches_selection(binding, selection))
         else {
-            return Err(ConnectionRepositoryError::ManagedBindingNotFound {
+            return Err(ConnectionRepositoryError::ModelNotFound {
                 provider: selection.provider().to_string(),
                 account: selection.account().to_string(),
                 model: selection.model().to_string(),
@@ -230,6 +389,8 @@ impl ConnectionSnapshot {
             let complete = binding.complete().binding();
             complete.provider_id() == selection.provider()
                 && complete.account_id() == selection.account()
+        }) || self.catalog_seeds.iter().any(|seed| {
+            seed.provider() == selection.provider() && seed.account() == selection.account()
         });
         let mut accounts = self.accounts.clone();
         if !account_is_still_used {
@@ -238,43 +399,51 @@ impl ConnectionSnapshot {
                     || account.account_id() != selection.account()
             });
         }
-        managed::validate_state(&accounts, &bindings)
-            .map_err(|_| ConnectionRepositoryError::InvalidManagedMutation)?;
+        stored::validate_state(&accounts, &bindings)
+            .map_err(|_| ConnectionRepositoryError::InvalidMutation)?;
         let removed_target = StartupTarget::Model(selection.clone());
         let preference = if self.preference.as_ref() == Some(&removed_target) {
             None
         } else {
             self.preference.clone()
         };
-        Ok((preference, accounts, bindings))
+        Ok((preference, accounts, bindings, self.catalog_seeds.clone()))
     }
 
     fn prepare_snapshot(
         &self,
         preference: Option<StartupTarget>,
-        accounts: Vec<ManagedConnectionAccount>,
-        bindings: Vec<ManagedConnectionBinding>,
+        accounts: Vec<ConnectionAccount>,
+        bindings: Vec<StoredModelBinding>,
+        catalog_seeds: Vec<ConnectionCatalogSeed>,
     ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
-        self.prepare_snapshot_with_mode(preference, accounts, bindings, false)
+        self.prepare_snapshot_with_mode(preference, accounts, bindings, catalog_seeds, false)
     }
 
     fn prepare_snapshot_with_mode(
         &self,
         preference: Option<StartupTarget>,
-        accounts: Vec<ManagedConnectionAccount>,
-        bindings: Vec<ManagedConnectionBinding>,
+        accounts: Vec<ConnectionAccount>,
+        bindings: Vec<StoredModelBinding>,
+        catalog_seeds: Vec<ConnectionCatalogSeed>,
         force_new_revision: bool,
     ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
         if !force_new_revision
             && self.preference == preference
             && self.accounts == accounts
             && self.bindings == bindings
+            && self.catalog_seeds == catalog_seeds
         {
             return Ok(None);
         }
         let planned_revision = wire::new_revision()?;
-        let planned_bytes =
-            wire::encode(&planned_revision, preference.as_ref(), &accounts, &bindings)?;
+        let planned_bytes = wire::encode(
+            &planned_revision,
+            preference.as_ref(),
+            &accounts,
+            &bindings,
+            &catalog_seeds,
+        )?;
         if planned_bytes.len() as u64 > MAX_CONNECTION_BYTES {
             return Err(ConnectionRepositoryError::PreparedTooLarge);
         }
@@ -283,8 +452,27 @@ impl ConnectionSnapshot {
             planned_revision,
             planned_bytes,
             preference,
+            direct_connect: None,
+            group_replacement: None,
         }))
     }
+}
+
+pub(super) fn validate_catalog_seeds(
+    accounts: &[ConnectionAccount],
+    seeds: &[ConnectionCatalogSeed],
+) -> Result<(), ConnectionRepositoryError> {
+    let mut coordinates = std::collections::HashSet::new();
+    for seed in seeds {
+        if !coordinates.insert((seed.provider().clone(), seed.account().clone()))
+            || !accounts.iter().any(|account| {
+                account.provider_id() == seed.provider() && account.account_id() == seed.account()
+            })
+        {
+            return Err(ConnectionRepositoryError::InvalidMutation);
+        }
+    }
+    Ok(())
 }
 
 /// One immutable exact public mutation prepared from a captured revision.
@@ -294,6 +482,21 @@ pub struct PreparedConnectionMutation {
     planned_revision: ConnectionRevision,
     planned_bytes: Vec<u8>,
     preference: Option<StartupTarget>,
+    direct_connect: Option<DirectConnectIntent>,
+    group_replacement: Option<GroupReplacementIntent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DirectConnectIntent {
+    account: ConnectionAccount,
+    binding: StoredModelBinding,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GroupReplacementIntent {
+    account: ConnectionAccount,
+    bindings: Vec<StoredModelBinding>,
+    catalog_seed: Option<ConnectionCatalogSeed>,
 }
 
 impl PreparedConnectionMutation {
@@ -316,6 +519,115 @@ impl PreparedConnectionMutation {
         &self.planned_bytes
     }
 
+    pub(crate) fn into_journal_mutation(mut self) -> Self {
+        self.direct_connect = None;
+        self.group_replacement = None;
+        self
+    }
+
+    pub(crate) fn defines_model_connect(
+        &self,
+        provider: &super::ProviderId,
+        account: &super::AccountId,
+        complete_bindings: &[super::CompleteModelBinding],
+    ) -> bool {
+        let Some(intent) = self.direct_connect.as_ref() else {
+            return false;
+        };
+        if intent.account.provider_id() != provider
+            || intent.account.account_id() != account
+            || !complete_bindings.contains(intent.binding.complete())
+        {
+            return false;
+        }
+        let Ok(decoded) = wire::decode(Path::new(""), &self.planned_bytes) else {
+            return false;
+        };
+        let stored = decoded
+            .bindings
+            .iter()
+            .filter(|binding| {
+                let coordinate = binding.complete().binding();
+                coordinate.provider_id() == provider && coordinate.account_id() == account
+            })
+            .map(StoredModelBinding::complete)
+            .collect::<Vec<_>>();
+        let same_bindings = stored.len() == complete_bindings.len()
+            && stored
+                .iter()
+                .all(|binding| complete_bindings.contains(binding));
+        let pair_exists = decoded
+            .accounts
+            .iter()
+            .find(|stored| stored.provider_id() == provider && stored.account_id() == account)
+            == Some(&intent.account);
+        let exact_target = decoded
+            .bindings
+            .iter()
+            .find(|stored| stored.selection() == intent.binding.selection())
+            == Some(&intent.binding);
+        pair_exists && exact_target && same_bindings && !complete_bindings.is_empty()
+    }
+
+    pub(crate) fn defines_group_replacement(
+        &self,
+        provider: &super::ProviderId,
+        account: &super::AccountId,
+        complete_bindings: &[super::CompleteModelBinding],
+    ) -> bool {
+        let Some(intent) = self.group_replacement.as_ref() else {
+            return false;
+        };
+        let intended_complete = intent
+            .bindings
+            .iter()
+            .map(StoredModelBinding::complete)
+            .collect::<Vec<_>>();
+        if intent.account.provider_id() != provider
+            || intent.account.account_id() != account
+            || intended_complete.len() != complete_bindings.len()
+            || !intended_complete
+                .iter()
+                .all(|binding| complete_bindings.contains(binding))
+        {
+            return false;
+        }
+        let Ok(decoded) = wire::decode(Path::new(""), &self.planned_bytes) else {
+            return false;
+        };
+        let stored = decoded
+            .bindings
+            .iter()
+            .filter(|binding| {
+                let coordinate = binding.complete().binding();
+                coordinate.provider_id() == provider && coordinate.account_id() == account
+            })
+            .map(StoredModelBinding::complete)
+            .collect::<Vec<_>>();
+        let same_bindings = stored.len() == complete_bindings.len()
+            && stored
+                .iter()
+                .all(|binding| complete_bindings.contains(binding));
+        let exact_account = decoded
+            .accounts
+            .iter()
+            .find(|stored| stored.provider_id() == provider && stored.account_id() == account)
+            == Some(&intent.account);
+        let exact_stored_bindings = stored.len() == intent.bindings.len()
+            && intent.bindings.iter().all(|binding| {
+                stored
+                    .iter()
+                    .any(|complete| *complete == binding.complete())
+            });
+        let decoded_seed = decoded
+            .catalog_seeds
+            .iter()
+            .find(|seed| seed.provider() == provider && seed.account() == account);
+        let exact_seed = decoded_seed == intent.catalog_seed.as_ref();
+        let non_empty_group = !complete_bindings.is_empty() || intent.catalog_seed.is_some();
+        exact_account && same_bindings && exact_stored_bindings && exact_seed && non_empty_group
+    }
+
     pub(crate) fn from_operation_journal(
         expected_revision: ConnectionRevision,
         planned_revision: ConnectionRevision,
@@ -336,6 +648,8 @@ impl PreparedConnectionMutation {
             planned_revision,
             planned_bytes,
             preference: decoded.preference,
+            direct_connect: None,
+            group_replacement: None,
         })
     }
 }
@@ -533,6 +847,7 @@ fn read_snapshot(path: &Path) -> Result<ConnectionSnapshot, ConnectionRepository
                 preference: None,
                 accounts: Vec::new(),
                 bindings: Vec::new(),
+                catalog_seeds: Vec::new(),
                 encoded: Vec::new(),
             });
         },
@@ -561,6 +876,7 @@ fn read_snapshot(path: &Path) -> Result<ConnectionSnapshot, ConnectionRepository
         preference: decoded.preference,
         accounts: decoded.accounts,
         bindings: decoded.bindings,
+        catalog_seeds: decoded.catalog_seeds,
         encoded,
     })
 }

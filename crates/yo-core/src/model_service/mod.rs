@@ -18,8 +18,7 @@ mod startup;
 pub use binding::{ApiDialect, ConnectorId, EffectiveModelBinding, NormalizedEndpoint};
 pub use binding_profile::CompleteModelBinding;
 pub use catalog::{
-    BindingConflict, ModelCatalog, ModelCatalogEntry, ModelCatalogProvenance, ModelContextProfile,
-    ModelTokenCounter, ModelTokenCounterError,
+    ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelTokenCounter, ModelTokenCounterError,
 };
 pub use connection_operation::{
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationExecutionError,
@@ -31,9 +30,10 @@ pub use connection_operation::{
     PreparedExternalConnection, PreparedExternalDisconnect, plan_connection_recovery,
 };
 pub use connection_repository::{
-    ConnectionCommit, ConnectionRepository, ConnectionRepositoryError, ConnectionRevision,
-    ConnectionSnapshot, LocalConnectionOperationGuard, LocalConnectionRepository,
-    ManagedConnectionAccount, ManagedConnectionBinding, PreparedConnectionMutation,
+    ConnectionAccount, ConnectionCatalogSeed, ConnectionCommit, ConnectionRepository,
+    ConnectionRepositoryError, ConnectionRevision, ConnectionSnapshot,
+    LocalConnectionOperationGuard, LocalConnectionRepository, PreparedConnectionMutation,
+    StoredModelBinding,
 };
 pub use credential::{ApiCredential, CredentialStore};
 pub use identity::{AccountId, ModelId, ModelServiceError, ProviderId};

@@ -40,7 +40,7 @@ ModelContextProfile
   ↓ 주입한 tokenizer profile로 직렬화된 실제 request를 계산
 출력 예산을 예약한 input admission
 
-config.yaml과 같은 디렉터리의 credentials.yaml
+선택한 config 경로와 같은 디렉터리의 credentials.yaml
   ↓ no-follow handle 하나, regular file, 현재 owner, 0600에 해당하는 권한,
     제한된 크기, 안정적인 metadata
 변경 불가능한 CredentialStore
@@ -142,9 +142,9 @@ Account 안에 머물고, namespace가 없으면 catalog 전체에서 정확히 
 정확한 완전 좌표 하나여야 한다. 없거나 모호하면 안정적으로 정렬한 canonical 완전
 좌표와 함께 명시적으로 실패한다.
 
-새 Session에서는 명시적인 invocation target이 저장된 `connections.yaml` preference보다
-우선하고, 저장 preference는 operator `model.startup`보다 우선한다. 한 계층을 생략하면
-그다음 존재하는 계층을 보존한다. 세 계층이 모두 없으면 Codex를 조용히 선택하지 않고
+새 Session에서는 명시적인 invocation target, 저장된 `connections.yaml` preference,
+policy default 순으로 우선한다. `config.yaml`은 모델 target을 제공하지 않는다. 선택 가능한
+모든 계층이 없으면 Codex를 조용히 선택하지 않고
 Session 생성 전에 정확한 `yo connect`와 `yo --model host:codex` 안내로 실패한다.
 `yo default TARGET`은 정확한 HostTarget 또는 설정된 ModelTarget 하나를 admission하고
 저장하며, `yo default --unset`은 이 저장 계층만 지운다. 재개하는 Yo-managed Session은
@@ -173,13 +173,13 @@ binding epoch를 닫고 replacement epoch 하나를 연 뒤 backend를 제자리
 ```text
 yo-cli
   표시 mode, glyph profile, optional 모델 좌표 해석, cwd 확보
-  새 Session을 위해 config.yaml과 생성하지 않는 저장 preference capture
-  invocation > 저장 preference > operator startup 순서로 resolve
-  managed model을 선택하면 해당 Provider/Account의 정확한 credential 읽기
+  새 Session을 위해 config.yaml과 생성하지 않는 connections.yaml snapshot 하나 capture
+  invocation > 저장 preference > policy default 순서로 resolve
+  저장 모델을 선택하면 해당 Provider/Account의 정확한 credential 읽기
   TerminationCoordinator 설치
   Host identity와 Session repository 열기
   workspace 정규화와 SessionDescriptor 생성
-  CodexBackend transport 시작 또는 dialect에서 파생된 Yo-managed model backend 조립
+  CodexBackend transport 시작 또는 dialect에서 파생된 native model backend 조립
       ↓
 yo-core AgentSession
   worker 시작
@@ -524,110 +524,85 @@ session:
     date_format: "%Y-%m-%d %H:%M %:z"
 tui:
   max_fps: 120
-model:
-  startup:
-    provider: qwencloud
-    account: default
-    model: qwen3.8-max
-  bindings:
-    - provider: qwencloud
-      provider_display_name: QwenCloud
-      account: default
-      account_display_name: Default
-      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-      profile:
-        api_dialect: openai-responses
-        tokenizer_profile: utf8-bytes/v1
-        input_token_limit: 1000000
-        max_output_tokens: 65536
-        reasoning_parameters:
-          effort: medium
-        optional_request_parameters: {}
-        tool_capability_policy: local-tools/v1
-      models:
-        - model: qwen3.8-max
-          model_display_name: Qwen 3.8 Max
-        - model: deepseek-v4-flash-0731
-          model_display_name: DeepSeek V4 Flash
-          profile:
-            api_dialect: openai-chat-completions
-            max_output_tokens: 8192
 ```
 
-Release 시점에 알려진 QwenCloud plan은 운영자가 endpoint, profile, model 목록을 직접
-작성하는 대신 같은 경계에 local catalog seed를 둘 수도 있다.
+`config.yaml`은 일반 Session·TUI 설정만 소유한다. 최상위 `model` field는 알 수 없는
+field다. 모델 정의, catalog seed, startup preference의 durable owner는
+`connections.yaml` 하나다.
+
+`yo connect --from /absolute/definition.yaml`은 임시 grouped definition 하나를 읽는다.
+정확한 `--from -`은 같은 shape를 표준 입력에서 읽는다. 문서는 Provider·Account 하나,
+endpoint 하나, 필수 base-profile mapping 하나, 모델 1~4,096개를 선언한다. 이 mapping은
+일부 field만 갖거나 비어 있어도 된다. 모델은 닫힌 profile field를 전체 단위로 교체할 수
+있고 생략한 field는 base 값을 상속한다. 구조화 mapping은 재귀 merge하지 않으며, 이렇게
+해석한 각 model profile은 완전해야 한다.
 
 ```yaml
-model:
-  bindings:
-    - provider: qwencloud
-      provider_display_name: QwenCloud
-      account: team
-      account_display_name: Coding Team
-      catalog: qwencloud-coding-plan-intl/v1
+provider: example
+provider_display_name: Example
+account: team
+account_display_name: Team
+base_url: https://api.example.test/v1
+profile:
+  api_dialect: openai-responses
+  tokenizer_profile: utf8-bytes/v1
+  input_token_limit: 1000000
+  max_output_tokens: 65536
+  reasoning_parameters:
+    effort: medium
+  optional_request_parameters: {}
+  tool_capability_policy: local-tools/v1
+models:
+  - model: model-a
+    model_display_name: Model A
+  - model: model-b
+    profile:
+      api_dialect: openai-chat-completions
+      max_output_tokens: 8192
 ```
 
-`catalog`는 `base_url`, `profile`, `models`와 함께 쓸 수 없다. 최초의 닫힌 catalog ID는
-`qwencloud-coding-plan-cn/v1`, `qwencloud-coding-plan-intl/v1`,
-`qwencloud-token-plan-team-intl/v1`이며 각각 공식 plan endpoint 하나를 고정한다. 이
-seed는 connect candidate로만 펼쳐지고 startup에서 바로 route하는 manual binding이 되지
-않는다. 이 표는 release 시점의 capability snapshot이지 해당 Account의 구독이나 entitlement
-증명이 아니다. 지원하지 않는 row도 숨기지 않고 안정적인 사유와 함께 보존하며, 선택 가능한
-text-agent row에는 보수적인 Yo output 상한 8,192 token을 적용한다. Yo를 갱신해도 이미
-managed 상태로 저장한 complete binding을 다시 쓰지 않는다.
+Import는 해당 Provider·Account group 전체를 원자적으로 교체하며 빠진 기존 모델을
+제거한다. 임의 default를 선택하지 않는다. 기존 preference가 교체에서 제거된 모델을
+가리킬 때만 함께 clear한다. Preview·확인·credential capture는 group 전체에 각각 한 번만
+수행한다. Preview는 account metadata 전체와 정확한 catalog 또는 discovery seed를
+비교하고 추가·변경·제거되는 모델을 명시하며, 변경되거나 제거되는 complete binding을
+사용하는 저장 Session은 그 정확한 binding이 복원될 때까지 재개되지 않을 수 있음을
+경고한다. Non-interactive 형식은 absolute `PATH`를 쓰는 `--from PATH` 또는 정확한
+`--from -` 중 하나와 absolute `--credential-file PATH`, `--yes`를 요구하며 어느
+YAML에도 secret을 넣지 않는다.
 
-Kimi는 제품별 인증 discovery profile 하나를 명시하는 같은 간결한 seed 형태를
-사용한다.
+Release 시점에 알려진 QwenCloud 또는 Kimi catalog는 `base_url`, `profile`, `models`
+대신 `catalog`를 사용한다.
 
 ```yaml
-model:
-  bindings:
-    - provider: kimi
-      provider_display_name: Kimi
-      account: team
-      account_display_name: Team
-      catalog: kimi-platform-ai/v1
-    - provider: kimi
-      provider_display_name: Kimi Code
-      account: coding
-      account_display_name: Coding Membership
-      catalog: kimi-code-membership/v1
+provider: qwencloud
+provider_display_name: QwenCloud
+account: team
+account_display_name: Coding Team
+catalog: qwencloud-coding-plan-intl/v1
 ```
 
-Platform profile은 `https://api.moonshot.ai/v1/`, Code Membership profile은
-`https://api.kimi.com/coding/v1/`를 고정한다. 둘 다 discovery 전에 startup에서
-route할 model을 만들지 않으며 한 제품의 inventory는 다른 제품의 endpoint나 request
-envelope를 허용하지 않는다. Managed K3나 검토된 K2.7 coding binding은 명시적인
-`kimi-private-local-plaintext/v1` replay profile을 기록하고, Platform K2.6은
-호환되는 field 생략으로 semantic-only replay를 기록한다. Manual K3/K2.7 binding은
-private replay profile을 명시적으로 작성해야 하므로 ModelId나 connector 선택이 동의를
-만들어 낼 수 없다.
+닫힌 QwenCloud ID는 `qwencloud-coding-plan-cn/v1`,
+`qwencloud-coding-plan-intl/v1`, `qwencloud-token-plan-team-intl/v1`이다. Kimi는
+`kimi-platform-ai/v1`, `kimi-code-membership/v1`을 받는다. 저장 seed는 connect
+candidate를 만들지만 startup에서 route할 binding을 직접 만들지 않는다. Candidate를
+선택하면 필요한 explicit private-replay 동의를 포함한 complete profile을 저장한다.
+Catalog identity나 ModelId만으로 그 동의를 만들 수 없다.
+
+OpenRouter discovery는 explicit shape에서 `models`만 생략하며 이를 허용하는 유일한
+Provider다. 저장 seed가 bounded authenticated picker에 endpoint와 base profile을 제공한다.
 
 날짜 문법은 strftime과 호환되고 UPDATED와 STARTED 모두 보는 머신의 local
 timezone으로 표시한다. `tui.max_fps`는 숫자 `60` 또는 `120`만 받으며 live startup에서
-한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. operator
-`model.startup`은 정확한 scalar `host:codex` 또는 catalog entry 하나를 가리키는
-`provider`, `account`, `model` mapping을 받는다. 각 `model.bindings` 항목은
-Provider·Account endpoint 하나와 optional base profile을 소유한다. Model은 base의
-모든 필드를 상속하고 자신의 `profile`에 있는 필드만 교체한다. 구조화 필드는 재귀
-merge하지 않고 전체를 교체한다. 합친 결과에는 profile 필드 여덟 개가 모두 있어야
-한다. 모델 profile field 생략은 base 값을 상속하고, `{}`는 구조화 field를 빈 mapping으로
-명시적으로 교체한다. Whole-field YAML null은 실패하지만 이미 존재하는 구조화 mapping 아래의
-null은 구조화 null 값으로 유지된다. Provider·Account block 중복, 알 수 없는 field,
-구조화 mapping key 중복, 불완전한 결과는 실패한다. Plain YAML 1.1
+한 번 읽어 보존되는 TUI 세대에 적용한다. 실행 중 reload는 지원하지 않는다. Whole-field
+YAML null, 알 수 없거나 중복된 field, 중복 ModelId, 불완전한 profile, relative `--from`
+경로는 credential capture나 mutation 전에 실패한다. `{}`는 구조화 field를 빈 mapping으로
+교체하고 그 아래의 null은 구조화 값으로 유지한다. Plain YAML 1.1
 `y`/`yes`/`true`/`on`과 `n`/`no`/`false`/`off`는 대소문자와 무관한 boolean이고,
 `1_000`은 정수 `1000`이다. Quoted 형식은 string으로 남는다. startup과 native resume은
-같은 닫힌 durable complete-binding decoder를 사용하므로 뒤 경계에서 scalar variant가
-바뀌지 않는다.
-
-이전 flat `model.catalog` 목록은 현재 shape에서 계속 읽으며 기존
-`yo.model-binding/v1` durable identity를 유지한다. 같은 문서에 `model.bindings`와 함께
-쓸 수 없다. 새 explicit profile은 `yo.complete-model-binding/v1`으로 귀속하며 endpoint,
-파생 connector 또는 resolved profile 필드 하나라도 바뀌면 resume에서 기존 값을 조용히
-재사용하지 않고 새 binding epoch를 요구한다. 설정 파일이 없으면 built-in
-Session/TUI 설정은 유지하지만 startup target은 제공하지 않으므로, live startup은
-Codex를 조용히 선택하지 않고 setup 안내를 표시한다. 위 YAML은 암묵적 모델 기본값이
-아니라 운영자가 소유하는 native 모델 예시다. 파일을 읽을 수
+producer가 complete profile을 저장하므로 startup과 native resume은 authored inheritance를
+다시 수행하지 않는다. 설정 파일이 없으면 built-in Session/TUI 설정은 유지하지만 startup
+target은 제공하지 않으므로 live startup은 setup 안내를 표시한다. 파일을 읽을 수
 없거나 retired field/알 수 없는 field/크기/date
 format/frame rate가 잘못되면 조용히 기본값으로 대체하지 않고
 명시적으로 실패한다. reader는 no-follow nonblocking descriptor 하나를 열어 regular file인지
@@ -635,7 +610,7 @@ format/frame rate가 잘못되면 조용히 기본값으로 대체하지 않고
 FIFO가 command를 멈추거나 동시에 커지는 파일이 상한을 우회하지 못한다. Preference mutation은
 이 파일을 다시 capture하고 public commit 전에 정확한 command-local snapshot이 바뀌지 않았음을
 요구한다. 모델 API key는 환경 변수에서 읽지 않는다.
-설정한 모델을 선택하면 Yo는 선택된 `config.yaml` 옆의 별도
+저장한 모델을 선택하면 Yo는 선택된 `config.yaml` 옆의 별도
 `credentials.yaml`을 다음 Provider-Account 순서의 현재 pre-version 구조로 읽는다.
 
 ```yaml
@@ -705,20 +680,20 @@ table이 정한 결정만 실행한다. Commit되지 않은 intent는 abandon하
 Disconnect remove는 candidate 없이 commit하고 preserve는 credential mutation boundary를
 호출하지 않는다. Repository와 journal 오류는 private credential revision을 투영하지 않고
 안전한 operation kind, action, phase만 유지한다. External connect는 이제 준비와 commit에 같은
-held session을 사용한다. External disconnect도 선택한 managed target 하나에서 같은
+held session을 사용한다. External disconnect도 선택한 저장 target 하나에서 같은
 Provider·Account credential action을 묶고 어떤 credential 제거보다 public 제거를 먼저 commit한다.
 
-`yo connect qwencloud:Account`는 그 Account에 설정한 QwenCloud catalog를 로컬에서
+`yo connect qwencloud:Account`는 그 Account의 `connections.yaml` 저장 QwenCloud catalog seed를
 해석하고 credential을 읽기 전에 같은 controlling-TTY picker를 연다. Release 시점에 알려진
 row는 모두 보이며 Yo가 지원하지 않는 row는 사유와 함께 disabled 상태가 된다. 취소하거나
 disabled row를 고르면 credential을 읽지 않고 intent나 repository mutation도 만들지 않는다.
 정확한 `yo connect qwencloud:Account:Model`은 picker를 건너뛰며, 닫힌 catalog 밖의 Model은
-명시적인 manual binding을 작성하라는 안내와 함께 실패한다. 원격 model-list 요청은 없다.
+`yo connect --from`으로 저장 definition을 교체하라는 안내와 함께 실패한다. 원격 model-list 요청은 없다.
 선택 가능한 row 하나를 고른 뒤에는 구조적 binding admission, preview, credential capture,
 journal, commit 경로가 그대로 권위 경계다. 등록 자체는 모델 요청을 보내지 않으며 해당
 account가 선택한 row를 사용할 수 있다고 주장하지 않는다.
 
-`yo connect kimi:Account`는 candidate key 하나를 읽고 설정한 Kimi 제품 endpoint에서
+`yo connect kimi:Account`는 candidate key 하나를 읽고 저장 Kimi 제품 seed의 endpoint에서
 bounded 인증 `GET models` snapshot 하나를 가져와 normalize한 typed row를 같은 picker로
 넘긴다. 첫 valid exact ModelId가 이기며 4,096개보다 많은 행은 snapshot 전체를
 거부한다. Platform은 검토된 K3, K2.7 Code, K2.7 Code Highspeed, K2.6 envelope만
@@ -726,7 +701,7 @@ bounded 인증 `GET models` snapshot 하나를 가져와 normalize한 typed row�
 `kimi-for-coding-highspeed` envelope를 허용하며 `k3-256k`를 recommended로 표시한다.
 Cross-product와 future row는 숨기지 않고 안정적인 disabled 이유와 함께 표시한다. 각
 행은 remote context와 reasoning 근거가 그 제품의 검토된 envelope 안에 있을 때만
-선택할 수 있다. K3/K2.7 managed binding을 게시하기 전에 compact preview는 bounded
+선택할 수 있다. K3/K2.7 저장 binding을 게시하기 전에 compact preview는 bounded
 Kimi assistant state를 현재 사용자 로컬 Session record에 암호화하지 않고 보관한다고
 알린다.
 
@@ -745,7 +720,7 @@ request는 그 visible group을 private assistant message 하나로 정확히 �
 Semantic-only binding은 private item을 저장하거나 replay할 수 없고 incomplete 또는 failed
 round는 private Continuation Anchor를 만들지 않는다.
 
-`yo connect openrouter:Account`는 정확히 설정한 binding에 normalized endpoint와 complete base
+`yo connect openrouter:Account`는 정확한 저장 seed에 normalized endpoint와 complete base
 profile이 있을 때만 대화형 discovery target이다. Recovery와 snapshot capture 뒤 Yo는 no-echo
 candidate key 하나를 읽고 endpoint prefix에 `/models/user`를 더한 주소로 인증 `GET`을 보낸다.
 요청은 same-origin redirect 수와 connect, attempt별 response-header, body inactivity, absolute
@@ -764,13 +739,11 @@ dynamic panel을 한 cleanup owner가 복원한다. Remote string은 terminal �
 discovery에 쓴 같은 in-memory key는 마지막 구조적 admission 뒤 게시할 때까지 유지된다. 두 부분
 discovery는 `--credential-file`과 `--yes`를 거절한다.
 
-`yo connect Provider:Account:Model`은 설정에 있는 exact reference 하나를 받는다. 교체 뒤의
-prospective 집합은 완전한 모든 manual binding, 해당 Provider·Account에서 영향받지 않는 managed
-sibling, prospective selected binding으로 만든다. 선택한 coordinate에서 교체되는 managed binding은
-admission과 등록 개수에서 제외하고, verbose preview에서 이전 profile과 새 profile을 비교할 때만
-남길 수 있다. 남는 불완전한 binding은 전체 동작을 admission할 수 없으므로 prompt 전에 실패한다.
-Prospective managed upsert도 secret을 읽기 전에 전체 manual catalog와
-합성되고 startup-policy admission을 통과해야 한다. Yo는 확인을 받은 뒤 controlling TTY에서만
+`yo connect Provider:Account:Model`은 capture한 저장 definition이나 검토된 저장 catalog
+seed의 exact reference 하나를 받는다. Prospective 집합은 해당 Provider·Account의 저장 sibling과
+선택한 complete binding으로 만든다. 선택한 coordinate의 이전 binding은 등록 개수에서 제외하고
+verbose preview에서 이전 profile과 새 profile을 비교할 때만 남길 수 있다. Prospective 저장
+upsert는 secret을 읽기 전에 startup-policy admission을 통과해야 한다. Yo는 확인을 받은 뒤 controlling TTY에서만
 크기가 제한된 API key 하나를 읽는다. 이때 echo를 끄고 정확한 terminal
 설정을 복구한다. 명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
 External exact target은 대신 `--credential-file PATH --yes`를 사용할 수 있다. 두 option은
@@ -802,32 +775,31 @@ shell의 우연한 줄바꿈에 의존하지 않으면서 secret이 아닌 값�
 
 Command는 candidate key로 모델 요청을 보내지 않는다. 확인 뒤 capture한 config를 다시
 검사하고 secret-free intent를 게시한 뒤 exact add 또는
-replace credential을 commit한다. 이어 journal을 전진시키고 exact managed public snapshot을
+replace credential을 commit한다. 이어 journal을 전진시키고 exact 저장 public snapshot을
 게시하며 complete까지 전진한 뒤 journal을 지운다. Authentication, entitlement, request
 acceptance는 일반 모델 사용에서만 확인한다. Credential commit 뒤 crash가 나면 저장된 public
 byte만 재개하고 secret을 재구성하거나 사용하지 않는다.
 
-`yo disconnect`는 대화형으로 유일한 managed target을 추론하거나 capture한 정확한
+`yo disconnect`는 대화형으로 유일한 저장 target을 추론하거나 capture한 정확한
 `Provider:Account:Model` reference 하나를 입력받는다. 자동 실행은
-`yo disconnect PROVIDER --account ACCOUNT --yes`를 요구하며 해당 pair에 managed target이
-정확히 하나일 때만 진행한다. `--yes`는 여러 model 중 하나를 추측하지 않는다. Manual-only
-일치는 command가 managed provenance만 지울 수 있으므로 운영자에게 `config.yaml` 편집을
-안내한다. 확인 전에 Yo는 prospective managed removal과 capture한 manual catalog를 합성한다.
-간결한 기본 preview는 같은 의미 plan marker로 managed removal, default와 API-key 변경, 새
+`yo disconnect PROVIDER --account ACCOUNT --yes`를 요구하며 해당 pair에 저장 model이
+정확히 하나일 때만 진행한다. `--yes`는 여러 model 중 하나를 추측하지 않는다. 확인 전에
+Yo는 같은 capture snapshot에서 prospective 저장 removal을 만든다. 간결한 기본 preview는
+같은 의미 plan marker로 저장 removal, default와 API-key 변경, 새
 Session과 저장된 Session에 미치는 영향을 보여 주며, API-key 행은 이미 표시한 Provider·Account
 문맥에서 그 key를 계속 사용하는 모든 정확한 Model ID를 표시하고 모호한 ID에는 같은 방식의
 되돌릴 수 있는 따옴표를 쓴다. `-v` 또는 `--verbose`는 정확히 제거할 complete binding,
-provenance 전이, 같은 pair에 남는 binding을 추가로 보여 준다. Prospective startup layer를 실제로
+source, 같은 pair에 남는 binding을 추가로 보여 준다. Prospective startup layer를 실제로
 해석해 새 Session이 사용할 정확한 낮은 우선순위 target을 이름으로 보여주거나 남는 target이
 없다고 알리며, preference 제거만 보고 동작을 추측하지 않는다. 남은 account model은 명시된
-account 문맥 안의 정확한 Model ID로 표시하므로 같은 manual binding이 남는다는 사실을 제거 profile 전체를 반복하지
-않고 보여준다. 같은 controlling-TTY 폭 경계가 모든 preview row를 관찰한 폭 안에 둔다. 같은 manual binding이 있으면
-manual provenance가 남으므로 credential을 보존한다. 제거 뒤 dependent set이 비었을 때만
+account 문맥 안의 정확한 Model ID로 표시해 제거 profile 전체를 반복하지 않는다. 같은
+controlling-TTY 폭 경계가 모든 preview row를 관찰한 폭 안에 둔다. 같은 pair의 model이나
+catalog seed가 하나라도 남으면 credential을 보존한다. 제거 뒤 dependent set이 비었을 때만
 credential 제거를 준비하며, credential이 이미 없으면 상태를 꾸며내지 않고 intent 전에
 실패한다. 확인과 마지막 config guard 뒤에는 secret-free intent를 게시하고 public 제거를
 commit하며 `public_committed`로 전진한다. 필요한 경우에만 credential을 제거하고
-`complete`까지 전진한 뒤 journal을 지운다. 기존 Session history는 삭제하지 않지만, 같은
-manual binding이 남거나 exact binding을 다시 연결하지 않으면 제거한 complete binding에
+`complete`까지 전진한 뒤 journal을 지운다. 기존 Session history는 삭제하지 않지만, exact
+binding을 복원하지 않으면 제거한 complete binding에
 귀속된 Session이 native resume되지 않을 수 있다. Preview는 이 continuation 결과를 저장
 history 보존과 구분해 보여 준다.
 
@@ -842,9 +814,9 @@ profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 bind
 지원하며, 빈 `optional_request_parameters`와 `local-tools/v1`을 요구한다. 다른 검증된 profile identifier는 설정으로 읽을 수
 있지만 그 runtime 동작이 구현될 때까지 startup에서 실패한다.
 
-공개 sibling `connections.yaml`은 operator가 소유하는 `config.yaml`, secret인
-`credentials.yaml`과 분리된다. Typed managed account 목록 하나, flat complete-binding 목록
-하나, selection이 소유하는 preference를 저장한다. 다음은 대표 snapshot이다(불투명 revision
+공개 sibling `connections.yaml`은 일반 `config.yaml`, secret인 `credentials.yaml`과
+분리된다. 저장 account, complete model profile, catalog·discovery seed, selection이 소유하는
+preference의 유일한 owner다. 다음은 대표 snapshot이다(불투명 revision
 값은 예시다).
 
 ```yaml
@@ -874,39 +846,39 @@ accounts:
     provider_display_name: QwenCloud
     account: default
     account_display_name: Default
+catalogs:
+  - kind: built_in
+    provider: qwencloud
+    account: default
+    catalog: qwencloud-token-plan-team-intl/v1
 ```
 
 파일이 없으면 canonical unset snapshot이며 디렉터리를 만들지 않고 읽는다. Capture는 모르는
 field, 중복 account나 binding coordinate, 대응 account가 없는 binding, 모순된 Provider 표시
 metadata, 올바르지 않은 complete binding, 범위를 벗어난 quote 없는 structured-profile 숫자를
-거절한다. 같은 shared scalar inference가 manual YAML과 managed YAML을 보호한다. 두 경계 모두
-whole-field 구조화 null은 거절하지만 nested null과 quote한 숫자 모양 string은 정확한 variant로
-유지한다.
+거절한다. Optional field도 whole-field null을 거절하며 nested null과 quote한 숫자 모양 string은
+정확한 구조화 variant로 유지한다.
 
-Managed upsert는 exact complete coordinate 하나를 추가하거나 교체하고 unrelated entry를 모두
-보존하며 unset capture에서만 첫 ModelTarget preference를 함께 게시한다. Managed remove는 exact
-binding 하나를 지우고 같은 pair를 쓰는 managed sibling이 없을 때만 account를 제거하며, exact
-matching ModelTarget preference만 clear한다. Preference-only 준비는 managed array 둘의 의미를
-그대로 보존한다. 모든 mutation은 새 불투명 revision 하나를 예약하고 기존 old-or-exact-new CAS를
-사용한다. 파일이 없을 때 첫 write는 같은 디렉터리 exclusive publication, 이후 write는 durable
-atomic replacement를 사용한다. 계획한 revision과 byte가 정확히 같으면 idempotent success이고
-다른 revision은 conflict다.
-Credential을 바꾸는 managed connect는 표시되는 binding byte가 같아도 새 public revision을
-예약한다. 따라서 key rotation은 unrelated state나 기존 preference를 바꾸지 않으면서도
-복구가 구별할 exact public epoch를 갖는다.
+Exact-target connect는 complete model 하나를 추가하거나 교체하고 저장 sibling을 보존한다.
+Grouped import는 catalog seed를 포함한 Provider·Account definition 전체를 revision 하나로
+교체한다. 저장 removal은 exact model 하나를 지우고 같은 pair의 sibling이나 seed가 남아 있으면
+account와 credential을 유지하며 exact matching ModelTarget preference만 clear한다.
+Preference-only 준비는 모든 저장 definition을 보존한다. 모든 mutation은 새 불투명 revision
+하나를 예약하고 기존 old-or-exact-new CAS를 사용한다. 파일이 없을 때 첫 write는 같은 디렉터리
+exclusive publication, 이후 write는 durable atomic replacement를 사용한다. 계획한 revision과
+byte가 정확히 같으면 idempotent success이고 다른 revision은 conflict다. Credential을 바꾸는
+connect나 import는 표시되는 definition이 같아도 복구가 구별할 새 public revision을 예약한다.
 
-모든 live startup은 `config.yaml`과 `connections.yaml`을 capture한 뒤 complete-binding equality로
-manual과 managed entry를 합성한다. 같은 entry는 `manual-and-managed` provenance를 유지한 채
-하나로 합치고, manual 표시 metadata가 우선하며 빠진 값은 managed 표시가 채운다. 같은 Provider,
-Account, Model에서 field가 다르면 어느 source도 선택하지 않고 non-secret 차이 field 이름을 담은
-`BindingConflict`를 반환한다. 합성 catalog는 초기 선택, resume matching, live model picker가 쓴다.
+모든 live startup은 `config.yaml`과 `connections.yaml` snapshot 하나를 capture한다. Snapshot이
+model catalog와 preference를 직접 제공하며 manual/stored composition이나 provenance conflict
+경로는 없다. 초기 선택, resume matching, live model picker는 같은 complete 저장 profile을 쓴다.
 
 `yo default TARGET`, `yo default --unset`, 명시적 `yo connect host:codex`, external model
 connect, external model disconnect는 nonblocking process operation lock 하나를 사용하고 새
 command configuration을 읽기 전에 pending multi-repository work를 해결한다. Preference-only command는 target admission 또는
 Local Codex 검증과 마지막 configuration guard 뒤 public CAS 하나를 게시하고, 새 operation
-journal을 만들거나 credential revision을 확인하지 않으며 managed entry를 보존한다. External
-connect와 disconnect는 위의 operation별 journal 순서를 사용한다. 자유 형식 Provider
+journal을 만들거나 credential revision을 확인하지 않으며 저장 definition을 보존한다. External
+connect, import, disconnect는 위의 operation별 journal 순서를 사용한다. 자유 형식 Provider
 onboarding은 더 약한 경로를 빌리지 않고 아직 구현하지 않은 상태로 남는다.
 
 repository가

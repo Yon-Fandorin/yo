@@ -1,5 +1,6 @@
 use std::path::Path;
 
+mod definition;
 mod disconnect;
 mod external;
 mod input;
@@ -23,19 +24,19 @@ pub(crate) fn load_startup_connections(
 ) -> Result<Option<StartupTarget>, AppError> {
     let snapshot = repository(config)
         .capture()
-        .map_err(|error| AppError::single("reading managed connections", error))?;
+        .map_err(|error| AppError::single("reading stored connections", error))?;
     let preference = snapshot.preference().cloned();
-    compose_managed_catalog(config, &snapshot)?;
+    load_snapshot_catalog(config, &snapshot)?;
     Ok(preference)
 }
 
-fn compose_managed_catalog(
+fn load_snapshot_catalog(
     config: &mut Config,
     snapshot: &ConnectionSnapshot,
 ) -> Result<(), AppError> {
     let catalog = snapshot
-        .compose_catalog(config.model_catalog())
-        .map_err(|error| AppError::single("composing manual and managed model bindings", error))?;
+        .model_catalog()
+        .map_err(|error| AppError::single("building the stored model catalog", error))?;
     config.replace_model_catalog(catalog);
     Ok(())
 }
@@ -45,10 +46,17 @@ pub(crate) fn run_default(command: DefaultCommand) -> Result<String, AppError> {
         config::selected_path()
             .map_err(|error| AppError::single("locating Yo configuration", error))?,
     )?;
-    execute_default_managed(&config_path, command)
+    execute_default(&config_path, command)
 }
 
 pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
+    if command.from.is_some() {
+        let config_path = absolute_config_path(
+            config::selected_path()
+                .map_err(|error| AppError::single("locating Yo configuration", error))?,
+        )?;
+        return external::run_definition_import(&config_path, command);
+    }
     if command.target == StartupTarget::HOST_CODEX_REFERENCE {
         validate_local_connect_options(&command)?;
     }
@@ -59,11 +67,11 @@ pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
     if command.target != StartupTarget::HOST_CODEX_REFERENCE {
         return external::run_external_connect(&config_path, command);
     }
-    execute_local_connect_managed(&config_path, command)
+    execute_local_connect(&config_path, command)
 }
 
 fn validate_local_connect_options(command: &ConnectCommand) -> Result<(), AppError> {
-    if command.credential_file.is_some() || command.yes {
+    if command.from.is_some() || command.credential_file.is_some() || command.yes {
         Err(AppError::message(
             "--credential-file and --yes are supported only for an external model connection; Local Codex uses no API credential",
         ))
@@ -99,14 +107,11 @@ fn operation_repositories(
         .map_err(|error| AppError::single("opening connection repositories", error))
 }
 
-fn execute_default_managed(
-    config_path: &Path,
-    command: DefaultCommand,
-) -> Result<String, AppError> {
-    execute_default_managed_with(config_path, command, || Ok(()))
+fn execute_default(config_path: &Path, command: DefaultCommand) -> Result<String, AppError> {
+    execute_default_with_lane(config_path, command, || Ok(()))
 }
 
-fn execute_default_managed_with(
+fn execute_default_with_lane(
     config_path: &Path,
     command: DefaultCommand,
     before_guard: impl FnOnce() -> Result<(), AppError>,
@@ -122,8 +127,8 @@ fn execute_default_managed_with(
         .map_err(|error| AppError::single("reading Yo configuration", error))?;
     let snapshot = session
         .capture_connections()
-        .map_err(|error| AppError::single("capturing managed connections", error))?;
-    compose_managed_catalog(&mut config, &snapshot)?;
+        .map_err(|error| AppError::single("capturing stored connections", error))?;
+    load_snapshot_catalog(&mut config, &snapshot)?;
     let preference = command
         .target
         .as_deref()
@@ -147,14 +152,11 @@ fn execute_default_managed_with(
     ))
 }
 
-fn execute_local_connect_managed(
-    config_path: &Path,
-    command: ConnectCommand,
-) -> Result<String, AppError> {
-    execute_local_connect_managed_with(config_path, command, verify_local_codex)
+fn execute_local_connect(config_path: &Path, command: ConnectCommand) -> Result<String, AppError> {
+    execute_local_connect_with_lane(config_path, command, verify_local_codex)
 }
 
-fn execute_local_connect_managed_with(
+fn execute_local_connect_with_lane(
     config_path: &Path,
     command: ConnectCommand,
     verify: impl FnOnce() -> Result<(), AppError>,
@@ -176,7 +178,7 @@ fn execute_local_connect_managed_with(
     }
     let snapshot = session
         .capture_connections()
-        .map_err(|error| AppError::single("capturing managed connections", error))?;
+        .map_err(|error| AppError::single("capturing stored connections", error))?;
     let mutation = snapshot
         .preference()
         .is_none()
@@ -349,12 +351,12 @@ mod tests {
             target: Some("host:codex".to_owned()),
         };
 
-        execute_default_managed_with(&config_path, command.clone(), || Ok(())).unwrap();
+        execute_default_with_lane(&config_path, command.clone(), || Ok(())).unwrap();
         let first = repository.capture().unwrap();
-        execute_default_managed_with(&config_path, command, || Ok(())).unwrap();
+        execute_default_with_lane(&config_path, command, || Ok(())).unwrap();
         assert_eq!(repository.capture().unwrap().revision(), first.revision());
 
-        execute_default_managed_with(&config_path, DefaultCommand { target: None }, || Ok(()))
+        execute_default_with_lane(&config_path, DefaultCommand { target: None }, || Ok(()))
             .unwrap();
         assert!(repository.capture().unwrap().preference().is_none());
         assert!(!directory.0.join("connection-operation.yaml").exists());
@@ -368,7 +370,7 @@ mod tests {
         let config_path = empty_config(&directory);
         let repository = repository_at(&config_path);
 
-        let error = execute_default_managed_with(
+        let error = execute_default_with_lane(
             &config_path,
             DefaultCommand {
                 target: Some("host:codex".to_owned()),
@@ -388,18 +390,18 @@ mod tests {
         assert!(!repository.path().exists());
     }
 
-    // explicit default도 live startup과 같은 captured managed catalog를 사용해야 manual
-    // config에 없는 managed-only ModelTarget을 admit하고 그대로 preference로 게시합니다.
+    // explicit default도 live startup과 같은 captured stored catalog를 사용해 config가
+    // 소유하지 않는 stored ModelTarget을 admit하고 그대로 preference로 게시합니다.
     #[test]
-    fn default_admits_a_managed_only_model_from_the_captured_snapshot() {
-        let directory = TestDirectory::new("default-managed-only");
+    fn default_admits_a_stored_model_from_the_captured_snapshot() {
+        let directory = TestDirectory::new("default-stored-only");
         let config_path = empty_config(&directory);
         let repository = repository_at(&config_path);
-        let (account, binding) = managed_fixture("managed", "medium");
+        let (account, binding) = stored_fixture("stored", "medium");
         let mutation = repository
             .capture()
             .unwrap()
-            .prepare_managed_upsert(account, binding)
+            .prepare_model_upsert(account, binding)
             .unwrap()
             .unwrap();
         repository.commit(&mutation).unwrap();
@@ -412,58 +414,22 @@ mod tests {
         repository.commit(&host_default).unwrap();
         let before_revision = repository.capture().unwrap().revision().clone();
 
-        let output = execute_default_managed_with(
+        let output = execute_default_with_lane(
             &config_path,
             DefaultCommand {
-                target: Some("qwencloud:default:managed".to_owned()),
+                target: Some("qwencloud:default:stored".to_owned()),
             },
             || Ok(()),
         )
         .unwrap();
 
-        assert_eq!(output, "default: qwencloud:default:managed\n");
+        assert_eq!(output, "default: qwencloud:default:stored\n");
         let after = repository.capture().unwrap();
         assert_eq!(
             display_target(after.preference()),
-            "qwencloud:default:managed"
+            "qwencloud:default:stored"
         );
         assert_ne!(after.revision(), &before_revision);
-    }
-
-    // 같은 coordinate의 불완전한 manual binding과 managed explicit binding이 다르면 default
-    // admission 전에 BindingConflict로 중단하고 기존 connections.yaml bytes를 건드리지 않습니다.
-    #[test]
-    fn default_binding_conflict_preserves_the_captured_repository() {
-        let directory = TestDirectory::new("default-binding-conflict");
-        let config_path = directory.config_path(
-            "model:\n  catalog:\n    - provider: qwencloud\n      account: default\n      model: managed\n      api_dialect: openai-responses\n      base_url: https://example.test/v1\n      input_token_limit: 1000\n      max_output_tokens: 100\n      tokenizer_profile: utf8-bytes/v1\n",
-        );
-        let repository = repository_at(&config_path);
-        let (account, binding) = managed_fixture("managed", "medium");
-        let mutation = repository
-            .capture()
-            .unwrap()
-            .prepare_managed_upsert(account, binding)
-            .unwrap()
-            .unwrap();
-        repository.commit(&mutation).unwrap();
-        let before = fs::read(repository.path()).unwrap();
-
-        let error = execute_default_managed_with(
-            &config_path,
-            DefaultCommand {
-                target: Some("qwencloud:default:managed".to_owned()),
-            },
-            || Ok(()),
-        )
-        .unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("composing manual and managed model bindings")
-        );
-        assert_eq!(fs::read(repository.path()).unwrap(), before);
     }
 
     // Local Codex 검증이 실패하면 준비된 preference bytes가 있어도 CAS를 호출하지 않고
@@ -474,9 +440,10 @@ mod tests {
         let config_path = empty_config(&directory);
         let repository = repository_at(&config_path);
 
-        let error = execute_local_connect_managed_with(
+        let error = execute_local_connect_with_lane(
             &config_path,
             ConnectCommand {
+                from: None,
                 target: "host:codex".to_owned(),
                 verbose: false,
                 credential_file: None,
@@ -495,6 +462,7 @@ mod tests {
     #[test]
     fn local_codex_rejects_non_interactive_credential_options() {
         let command = ConnectCommand {
+            from: None,
             target: "host:codex".to_owned(),
             verbose: false,
             credential_file: Some("/definitely/not/read".into()),
@@ -517,7 +485,7 @@ mod tests {
         let config_path = directory.config_path("not valid: [");
         fs::write(directory.0.join("connection-operation.yaml"), "pending\n").unwrap();
 
-        let error = execute_default_managed_with(
+        let error = execute_default_with_lane(
             &config_path,
             DefaultCommand {
                 target: Some("host:codex".to_owned()),
@@ -535,17 +503,26 @@ mod tests {
     #[test]
     fn local_codex_conflict_preserves_a_concurrent_preference_winner() {
         let directory = TestDirectory::new("concurrent-winner");
-        let config_path = directory.config_path(
-            "model:\n  catalog:\n    - provider: qwencloud\n      account: default\n      model: winner\n      api_dialect: openai-responses\n      base_url: https://example.test/v1\n      input_token_limit: 1000\n      max_output_tokens: 100\n      tokenizer_profile: utf8-bytes/v1\n",
-        );
-        let config = config::load_from(&config_path).unwrap();
+        let config_path = empty_config(&directory);
         let repository = repository_at(&config_path);
+        let (account, binding) = stored_fixture("winner", "medium");
+        let definition = repository
+            .capture()
+            .unwrap()
+            .prepare_group_replace(account, vec![binding], None)
+            .unwrap();
+        repository.commit(&definition).unwrap();
         let racing_repository = repository.clone();
-        let winner = admit_target(&config, "qwencloud:default:winner").unwrap();
+        let winner = StartupTarget::Model(yo_core::ModelSelection::new(
+            yo_core::ProviderId::new("qwencloud").unwrap(),
+            yo_core::AccountId::new("default").unwrap(),
+            yo_core::ModelId::new("winner").unwrap(),
+        ));
 
-        let output = execute_local_connect_managed_with(
+        let output = execute_local_connect_with_lane(
             &config_path,
             ConnectCommand {
+                from: None,
                 target: "host:codex".to_owned(),
                 verbose: false,
                 credential_file: None,
@@ -571,18 +548,18 @@ mod tests {
         ));
     }
 
-    // live startup은 connections.yaml의 typed managed binding을 manual catalog와 합친 뒤
-    // preference와 같은 snapshot에서 읽어 managed-only target도 즉시 선택할 수 있습니다.
+    // live startup은 connections.yaml의 typed stored model을 stored catalog와 합친 뒤
+    // preference와 같은 snapshot에서 읽어 stored-only target도 즉시 선택할 수 있습니다.
     #[test]
-    fn startup_load_composes_managed_catalog_and_preference_from_one_snapshot() {
-        let directory = TestDirectory::new("startup-managed-catalog");
+    fn startup_load_uses_stored_catalog_and_preference_from_one_snapshot() {
+        let directory = TestDirectory::new("startup-stored-catalog");
         let config_path = empty_config(&directory);
         let repository = repository_at(&config_path);
-        let (account, binding) = managed_fixture("managed", "medium");
+        let (account, binding) = stored_fixture("stored", "medium");
         let mutation = repository
             .capture()
             .unwrap()
-            .prepare_managed_upsert(account, binding)
+            .prepare_model_upsert(account, binding)
             .unwrap()
             .unwrap();
         repository.commit(&mutation).unwrap();
@@ -596,25 +573,21 @@ mod tests {
             .resolve_model(
                 &yo_core::ProviderId::new("qwencloud").unwrap(),
                 &yo_core::AccountId::new("default").unwrap(),
-                &yo_core::ModelId::new("managed").unwrap(),
+                &yo_core::ModelId::new("stored").unwrap(),
             )
             .unwrap();
-        assert_eq!(entry.provenance(), yo_core::ModelCatalogProvenance::Managed);
-        assert_eq!(entry.model_display_name(), Some("Model managed"));
+        assert_eq!(entry.model_display_name(), Some("Model stored"));
     }
 
-    fn managed_fixture(
+    fn stored_fixture(
         model: &str,
         effort: &str,
-    ) -> (
-        yo_core::ManagedConnectionAccount,
-        yo_core::ManagedConnectionBinding,
-    ) {
+    ) -> (yo_core::ConnectionAccount, yo_core::StoredModelBinding) {
         let durable = format!(
             r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#,
         );
         let complete = yo_core::CompleteModelBinding::from_durable_json(&durable).unwrap();
-        let account = yo_core::ManagedConnectionAccount::new(
+        let account = yo_core::ConnectionAccount::new(
             yo_core::ProviderId::new("qwencloud").unwrap(),
             yo_core::AccountId::new("default").unwrap(),
             Some("QwenCloud".to_owned()),
@@ -622,8 +595,7 @@ mod tests {
         )
         .unwrap();
         let binding =
-            yo_core::ManagedConnectionBinding::new(complete, Some(format!("Model {model}")))
-                .unwrap();
+            yo_core::StoredModelBinding::new(complete, Some(format!("Model {model}"))).unwrap();
         (account, binding)
     }
 

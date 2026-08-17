@@ -112,7 +112,7 @@ fn disconnect_credential_first_state_is_conflict() {
 }
 
 // preserve disconnect는 credential revision을 바꾸지 않고 public만 exact planned가 되면
-// complete하므로 남은 manual/managed binding이 사용하는 secret을 삭제하지 않음을 검증합니다.
+// complete하므로 남은 stored model이 사용하는 secret을 삭제하지 않음을 검증합니다.
 #[test]
 fn disconnect_preserve_completes_after_public_without_credential_mutation() {
     let fixture = Fixture::new("disconnect-preserve");

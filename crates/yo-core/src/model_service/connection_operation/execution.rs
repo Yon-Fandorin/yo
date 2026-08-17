@@ -335,7 +335,7 @@ impl LocalConnectionOperationSession<'_> {
             .map_err(ConnectionOperationExecutionError::PublicCapture)
     }
 
-    /// Publishes a preference-only or managed public mutation under the held lane.
+    /// Publishes a preference-only or stored public mutation under the held lane.
     pub fn commit_connection_mutation(
         &mut self,
         mutation: &PreparedConnectionMutation,

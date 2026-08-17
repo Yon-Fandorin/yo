@@ -1,19 +1,24 @@
 use std::path::Path;
 
 use yo_core::{
-    AccountId, CompleteModelBinding, ConnectionSnapshot, ManagedConnectionAccount,
-    ManagedConnectionBinding, ModelCatalog, ModelCatalogEntry, ModelSelection,
-    PreparedConnectionMutation, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
+    AccountId, CompleteModelBinding, ConnectionAccount, ConnectionCatalogSeed, ConnectionSnapshot,
+    ModelCatalog, ModelCatalogEntry, ModelSelection, PreparedConnectionMutation, ProviderId,
+    StartupPolicy, StartupSelectionSources, StartupTarget, StoredModelBinding,
     discover_kimi_models, discover_openrouter_models, resolve_startup_target,
 };
 
 use super::{
-    complete_binding_details, display_target,
+    complete_binding_details,
+    definition::{self, ImportedDefinition},
+    display_target,
     input::{
         AuthorizedCredentialFileInput, ExternalConnectInput, ModelPickerItem, TtyConnectionInput,
     },
     operation_repositories,
-    presentation::{Confirmation, ConnectPreview, ManagedConnectionChange, connect_success},
+    presentation::{
+        Confirmation, ConnectPreview, ImportPreview, StoredConnectionChange, connect_success,
+        import_success,
+    },
     selection_for_binding,
 };
 use crate::{AppError, command::ConnectCommand, config};
@@ -22,7 +27,7 @@ pub(super) fn run_external_connect(
     config_path: &Path,
     command: ConnectCommand,
 ) -> Result<String, AppError> {
-    if catalog_pair(&command.target)?.is_some()
+    if looks_like_two_part_target(&command.target)
         && (command.credential_file.is_some() || command.yes)
     {
         return Err(AppError::message(
@@ -46,6 +51,347 @@ pub(super) fn run_external_connect(
             "non-interactive external connect requires --credential-file and --yes together, without --verbose",
         )),
     }
+}
+
+pub(super) fn run_definition_import(
+    config_path: &Path,
+    command: ConnectCommand,
+) -> Result<String, AppError> {
+    if !command.target.is_empty() {
+        return Err(AppError::message(
+            "--from cannot be combined with an exact connection target",
+        ));
+    }
+    let source = command
+        .from
+        .as_deref()
+        .ok_or_else(|| AppError::message("definition import requires --from"))?;
+    if let Some(path) = command.credential_file.as_deref()
+        && !path.is_absolute()
+    {
+        return Err(AppError::message(
+            "definition import requires an absolute --credential-file path",
+        ));
+    }
+    let input_mode = match (
+        command.credential_file.clone(),
+        command.yes,
+        command.verbose,
+    ) {
+        (Some(path), true, false) => Some(path),
+        (None, false, _) => None,
+        _ => {
+            return Err(AppError::message(
+                "non-interactive definition import requires absolute --credential-file and --yes together, without --verbose",
+            ));
+        },
+    };
+    let definition = definition::read(source)?;
+    match input_mode {
+        Some(path) => {
+            let mut input = AuthorizedCredentialFileInput::new(path);
+            execute_definition_import_with(config_path, command, definition, &mut input)
+        },
+        None => {
+            let mut input = TtyConnectionInput::new();
+            execute_definition_import_with(config_path, command, definition, &mut input)
+        },
+    }
+}
+
+fn execute_definition_import_with(
+    config_path: &Path,
+    command: ConnectCommand,
+    definition: ImportedDefinition,
+    input: &mut impl ExternalConnectInput,
+) -> Result<String, AppError> {
+    let repositories = operation_repositories(config_path)?;
+    let mut session = repositories
+        .acquire()
+        .map_err(|error| AppError::single("acquiring the connection operation lane", error))?;
+    session
+        .recover_pending_operation()
+        .map_err(|error| AppError::single("recovering a pending connection operation", error))?;
+    let config = config::load_from(config_path)
+        .map_err(|error| AppError::single("reading Yo configuration", error))?;
+    let snapshot = session
+        .capture_connections()
+        .map_err(|error| AppError::single("capturing stored connections", error))?;
+
+    let provider = definition.provider().clone();
+    let account_id = definition.account_id().clone();
+    let account_reference = definition.account.canonical_reference();
+    let definition_kind = if definition.catalog_seed.is_some() {
+        "Replace the complete catalog or discovery seed for this account".to_owned()
+    } else {
+        format!(
+            "Replace the complete explicit set with {} {}",
+            definition.bindings.len(),
+            if definition.bindings.len() == 1 {
+                "model"
+            } else {
+                "models"
+            }
+        )
+    };
+    let changes = definition_changes(
+        &snapshot,
+        &definition.account,
+        &definition.bindings,
+        definition.catalog_seed.as_ref(),
+    );
+    let details = definition
+        .bindings
+        .iter()
+        .map(|binding| complete_binding_details(binding.complete()))
+        .collect::<Vec<_>>();
+    let complete_bindings = definition
+        .bindings
+        .iter()
+        .map(|binding| binding.complete().clone())
+        .collect::<Vec<_>>();
+    let mutation = snapshot
+        .prepare_group_replace(
+            definition.account,
+            definition.bindings,
+            definition.catalog_seed,
+        )
+        .map_err(|error| AppError::single("preparing the grouped definition replacement", error))?;
+    let preference_after = mutation.preference().cloned();
+    let default_changed = snapshot.preference() != preference_after.as_ref();
+    let default_after = if default_changed {
+        format!(
+            "{}  →  {}",
+            display_target(snapshot.preference()),
+            display_target(preference_after.as_ref())
+        )
+    } else {
+        format!("Keep {}", display_target(preference_after.as_ref()))
+    };
+    let prepared = session
+        .prepare_external_definition(mutation, &provider, &account_id, complete_bindings)
+        .map_err(|error| {
+            AppError::single("structurally admitting the grouped definition", error)
+        })?;
+    let preview = Confirmation::Import(Box::new(ImportPreview::new(
+        account_reference.clone(),
+        changes.added,
+        changes.changed,
+        changes.removed,
+        changes.definition_changed,
+        changes.account_transition,
+        changes.account_changed,
+        changes.seed_transition,
+        changes.seed_changed,
+        changes.resume_risk,
+        definition_kind,
+        prepared.credential_action(),
+        default_after,
+        default_changed,
+        details,
+        command.verbose,
+    )));
+    if !input.confirm(&preview)? {
+        return Ok("Connection import cancelled; nothing changed.\n".to_owned());
+    }
+    let credential = input.read_credential(&account_reference)?;
+    config
+        .verify_unchanged()
+        .map_err(|error| AppError::single("guarding Yo configuration", error))?;
+    let registered = prepared.binding_count();
+    session
+        .commit_external_connection(prepared, credential)
+        .map_err(|error| AppError::single("publishing the grouped definition", error))?;
+    Ok(import_success(
+        &account_reference,
+        registered,
+        &display_target(preference_after.as_ref()),
+    ))
+}
+
+struct DefinitionChanges {
+    added: Vec<String>,
+    changed: Vec<String>,
+    removed: Vec<String>,
+    definition_changed: bool,
+    account_transition: String,
+    account_changed: bool,
+    seed_transition: String,
+    seed_changed: bool,
+    resume_risk: Vec<String>,
+}
+
+fn definition_changes(
+    snapshot: &ConnectionSnapshot,
+    replacement_account: &ConnectionAccount,
+    replacements: &[StoredModelBinding],
+    replacement_seed: Option<&ConnectionCatalogSeed>,
+) -> DefinitionChanges {
+    let provider = replacement_account.provider_id();
+    let account = replacement_account.account_id();
+    let current_account = snapshot
+        .accounts()
+        .iter()
+        .find(|stored| stored.provider_id() == provider && stored.account_id() == account);
+    let current_seed = snapshot
+        .catalog_seeds()
+        .iter()
+        .find(|seed| seed.provider() == provider && seed.account() == account);
+    let current = snapshot
+        .models()
+        .iter()
+        .filter(|binding| {
+            let stored = binding.complete().binding();
+            stored.provider_id() == provider && stored.account_id() == account
+        })
+        .collect::<Vec<_>>();
+    let mut added = replacements
+        .iter()
+        .filter(|replacement| {
+            !current
+                .iter()
+                .any(|stored| stored.selection() == replacement.selection())
+        })
+        .map(|binding| binding.selection().model().to_string())
+        .collect::<Vec<_>>();
+    let mut changed = replacements
+        .iter()
+        .filter(|replacement| {
+            current.iter().any(|stored| {
+                stored.selection() == replacement.selection() && **stored != **replacement
+            })
+        })
+        .map(|binding| binding.selection().model().to_string())
+        .collect::<Vec<_>>();
+    let mut removed = current
+        .iter()
+        .filter(|stored| {
+            !replacements
+                .iter()
+                .any(|replacement| replacement.selection() == stored.selection())
+        })
+        .map(|binding| binding.selection().model().to_string())
+        .collect::<Vec<_>>();
+    added.sort();
+    changed.sort();
+    removed.sort();
+    let complete_binding_changes = replacements
+        .iter()
+        .filter(|replacement| {
+            current.iter().any(|stored| {
+                stored.selection() == replacement.selection()
+                    && stored.complete() != replacement.complete()
+            })
+        })
+        .map(|binding| binding.selection().model().to_string())
+        .collect::<Vec<_>>();
+    let mut resume_risk = complete_binding_changes
+        .iter()
+        .chain(&removed)
+        .map(|model| {
+            ModelSelection::new(
+                provider.clone(),
+                account.clone(),
+                yo_core::ModelId::new(model).expect("stored ModelId remains valid"),
+            )
+            .canonical_reference()
+        })
+        .collect::<Vec<_>>();
+    resume_risk.sort();
+    let account_changed = current_account != Some(replacement_account);
+    let seed_changed = !same_catalog_seed_definition(current_seed, replacement_seed);
+    let account_transition = transition(
+        &account_metadata_summary(current_account),
+        &account_metadata_summary(Some(replacement_account)),
+        account_changed,
+    );
+    let seed_transition = transition(
+        &catalog_seed_summary(current_seed),
+        &catalog_seed_summary(replacement_seed),
+        seed_changed,
+    );
+    let definition_changed = account_changed
+        || seed_changed
+        || !added.is_empty()
+        || !changed.is_empty()
+        || !removed.is_empty();
+    DefinitionChanges {
+        added,
+        changed,
+        removed,
+        definition_changed,
+        account_transition,
+        account_changed,
+        seed_transition,
+        seed_changed,
+        resume_risk,
+    }
+}
+
+fn same_catalog_seed_definition(
+    current: Option<&ConnectionCatalogSeed>,
+    replacement: Option<&ConnectionCatalogSeed>,
+) -> bool {
+    match (current, replacement) {
+        (None, None) => true,
+        (Some(current), Some(replacement)) => {
+            match (current.built_in_profile(), replacement.built_in_profile()) {
+                (Some(current), Some(replacement)) => current == replacement,
+                (None, None) => {
+                    current.openrouter_definition() == replacement.openrouter_definition()
+                },
+                _ => false,
+            }
+        },
+        _ => false,
+    }
+}
+
+fn transition(before: &str, after: &str, changed: bool) -> String {
+    if changed {
+        format!("{before}  →  {after}")
+    } else {
+        format!("Keep {after}")
+    }
+}
+
+fn account_metadata_summary(account: Option<&ConnectionAccount>) -> String {
+    let Some(account) = account else {
+        return "no stored account metadata".to_owned();
+    };
+    let provider = account
+        .provider_display_name()
+        .map(super::presentation::escape_remote_text)
+        .unwrap_or_else(|| "unset".to_owned());
+    let account = account
+        .account_display_name()
+        .map(super::presentation::escape_remote_text)
+        .unwrap_or_else(|| "unset".to_owned());
+    format!("provider_display_name={provider}; account_display_name={account}")
+}
+
+fn catalog_seed_summary(seed: Option<&ConnectionCatalogSeed>) -> String {
+    let Some(seed) = seed else {
+        return "none".to_owned();
+    };
+    if let Some(catalog) = seed.built_in_profile() {
+        return format!("built-in catalog {catalog}");
+    }
+    let Some((endpoint, profile)) = seed.openrouter_definition() else {
+        return "invalid catalog seed".to_owned();
+    };
+    format!(
+        "OpenRouter discovery endpoint={}; api_dialect={}; tokenizer_profile={}; input_token_limit={}; max_output_tokens={}; reasoning_parameters={}; optional_request_parameters={}; tool_capability_policy={}; replay_profile={}",
+        endpoint,
+        profile.api_dialect(),
+        profile.context().tokenizer_profile(),
+        profile.context().input_token_limit(),
+        profile.context().max_output_tokens(),
+        profile.reasoning_parameters().to_json_value(),
+        profile.optional_request_parameters().to_json_value(),
+        profile.tool_capability_policy(),
+        profile.replay_profile(),
+    )
 }
 
 fn execute_external_connect_with(
@@ -185,46 +531,52 @@ where
         .map_err(|error| AppError::single("reading Yo configuration", error))?;
     let snapshot = session
         .capture_connections()
-        .map_err(|error| AppError::single("capturing managed connections", error))?;
-    let (selected, preselected_candidate, remote_selected) = match catalog_pair(&command.target)? {
+        .map_err(|error| AppError::single("capturing stored connections", error))?;
+    let (selected, preselected_candidate, remote_selected) = match catalog_pair(
+        &snapshot,
+        &command.target,
+    )? {
         Some((provider, account)) if provider.as_str() == "openrouter" => {
-            let seed = config
+            let seed = snapshot
                 .openrouter_discovery_seed(&provider, &account)
+                .map_err(|error| AppError::single("reading the stored OpenRouter seed", error))?
                 .ok_or_else(|| {
                     AppError::message(format!(
-                        "OpenRouter discovery target {} is not an exact configured Provider:Account seed with a complete base profile",
+                        "OpenRouter discovery target {} is not an exact stored Provider:Account seed with a complete base profile",
                         command.target
                     ))
                 })?;
-            let account_reference = format!("{provider}:{account}");
+            let account_reference = stored_account_reference(&snapshot, &provider, &account)?;
             let candidate = input.read_credential(&account_reference)?;
-            let Some(entry) = discover_openrouter_and_select(seed, &candidate, input)? else {
+            let Some(entry) = discover_openrouter_and_select(&seed, &candidate, input)? else {
                 return Ok("Connection cancelled; nothing changed.\n".to_owned());
             };
             (entry, Some(candidate), true)
         },
         Some((provider, account)) if provider.as_str() == "kimi" => {
-            let seed = config
+            let seed = snapshot
                 .kimi_catalog_seed(&provider, &account)
+                .map_err(|error| AppError::single("reading the stored Kimi seed", error))?
                 .ok_or_else(|| {
                     AppError::message(format!(
-                        "Kimi catalog target {} is not an exact configured Provider:Account seed",
+                        "Kimi catalog target {} is not an exact stored Provider:Account seed",
                         command.target
                     ))
                 })?;
-            let account_reference = format!("{provider}:{account}");
+            let account_reference = stored_account_reference(&snapshot, &provider, &account)?;
             let candidate = input.read_credential(&account_reference)?;
-            let Some(entry) = discover_kimi_and_select(seed, &candidate, input)? else {
+            let Some(entry) = discover_kimi_and_select(&seed, &candidate, input)? else {
                 return Ok("Connection cancelled; nothing changed.\n".to_owned());
             };
             (entry, Some(candidate), true)
         },
         Some((provider, account)) => {
-            let seed = config
+            let seed = snapshot
                 .qwencloud_catalog_seed(&provider, &account)
+                .map_err(|error| AppError::single("reading the stored QwenCloud seed", error))?
                 .ok_or_else(|| {
                     AppError::message(format!(
-                        "QwenCloud catalog target {} is not an exact configured Provider:Account seed",
+                        "QwenCloud catalog target {} is not an exact stored Provider:Account seed",
                         command.target
                     ))
                 })?;
@@ -245,26 +597,16 @@ where
                         "the QwenCloud picker returned an invalid or disabled model selection",
                     )
                 })?;
-            let account_reference = format!("{provider}:{account}");
+            let account_reference = stored_account_reference(&snapshot, &provider, &account)?;
             let candidate = input.read_credential(&account_reference)?;
             (entry, Some(candidate), false)
         },
-        None => (
-            selected_entry(&snapshot, &config, &command.target)?,
-            None,
-            false,
-        ),
+        None => (selected_entry(&snapshot, &command.target)?, None, false),
     };
     let selection = selection_for(&selected);
     let startup_policy = StartupPolicy::initial();
-    let mut plan = ExternalConnectPlan::prepare(
-        &snapshot,
-        config.model_catalog(),
-        &selection,
-        &selected,
-        &startup_policy,
-    )
-    .map_err(|error| safe_discovery_error(error, remote_selected))?;
+    let mut plan = ExternalConnectPlan::prepare(&snapshot, &selection, &selected, &startup_policy)
+        .map_err(|error| safe_discovery_error(error, remote_selected))?;
     if remote_selected {
         plan.escape_remote_model(selection.model().as_str());
     }
@@ -276,7 +618,7 @@ where
         target,
         account,
         default_after,
-        managed_change,
+        stored_change,
         default_changed,
         binding_details,
     } = plan;
@@ -291,7 +633,7 @@ where
             target,
             account,
             default_after,
-            managed_change,
+            stored_change,
             prepared.credential_action(),
             default_changed,
             binding_details,
@@ -304,7 +646,8 @@ where
     let candidate = match preselected_candidate {
         Some(candidate) => candidate,
         None => {
-            let account_reference = format!("{}:{}", selection.provider(), selection.account());
+            let account_reference =
+                stored_account_reference(&snapshot, selection.provider(), selection.account())?;
             input.read_credential(&account_reference)?
         },
     };
@@ -325,7 +668,7 @@ struct ExternalConnectPlan {
     target: String,
     account: String,
     default_after: String,
-    managed_change: ManagedConnectionChange,
+    stored_change: StoredConnectionChange,
     default_changed: bool,
     binding_details: Vec<super::presentation::BindingDetails>,
 }
@@ -339,34 +682,17 @@ impl ExternalConnectPlan {
 
     fn prepare(
         snapshot: &ConnectionSnapshot,
-        manual: &ModelCatalog,
         selection: &ModelSelection,
         selected: &ModelCatalogEntry,
         startup_policy: &StartupPolicy,
     ) -> Result<Self, AppError> {
         let complete = selected.complete_binding().cloned().ok_or_else(|| {
             AppError::message(
-                "external connect requires an explicit Provider/Account profile and model binding; migrate this legacy catalog entry to model.bindings",
+                "the selected external model is missing its complete stored connection profile",
             )
         })?;
         let mut prospective_bindings = Vec::new();
-        for entry in manual
-            .entries()
-            .iter()
-            .filter(|entry| same_account(entry, selection))
-        {
-            let retained = entry.complete_binding().cloned().ok_or_else(|| {
-                AppError::message(format!(
-                    "Provider {} Account {} still has a legacy model entry; migrate every retained model to model.bindings before rotating this account key",
-                    selection.provider(),
-                    selection.account()
-                ))
-            })?;
-            if !prospective_bindings.contains(&retained) {
-                prospective_bindings.push(retained);
-            }
-        }
-        for retained in snapshot.managed_bindings().iter().filter(|retained| {
+        for retained in snapshot.models().iter().filter(|retained| {
             let binding = retained.complete().binding();
             binding.provider_id() == selection.provider()
                 && binding.account_id() == selection.account()
@@ -381,47 +707,45 @@ impl ExternalConnectPlan {
             prospective_bindings.push(complete.clone());
         }
 
-        let account = ManagedConnectionAccount::new(
+        let account = ConnectionAccount::new(
             selection.provider().clone(),
             selection.account().clone(),
             selected.provider_display_name().map(str::to_owned),
             selected.account_display_name().map(str::to_owned),
         )
-        .map_err(|error| AppError::single("preparing the managed account", error))?;
-        let binding = ManagedConnectionBinding::new(
-            complete,
-            selected.model_display_name().map(str::to_owned),
-        )
-        .map_err(|error| AppError::single("preparing the managed model binding", error))?;
+        .map_err(|error| AppError::single("preparing the stored account", error))?;
+        let binding =
+            StoredModelBinding::new(complete, selected.model_display_name().map(str::to_owned))
+                .map_err(|error| AppError::single("preparing the stored model binding", error))?;
         let account_unchanged = snapshot
-            .managed_accounts()
+            .accounts()
             .iter()
             .any(|current| current == &account);
-        let managed_change = match snapshot
-            .managed_bindings()
+        let stored_change = match snapshot
+            .models()
             .iter()
             .find(|current| current.selection() == *selection)
         {
-            None => ManagedConnectionChange::Create,
+            None => StoredConnectionChange::Create,
             Some(current) if account_unchanged && current == &binding => {
-                ManagedConnectionChange::Keep
+                StoredConnectionChange::Keep
             },
-            Some(_) => ManagedConnectionChange::Update,
+            Some(_) => StoredConnectionChange::Update,
         };
         let prospective_catalog = snapshot
-            .compose_catalog_after_managed_upsert(manual, account.clone(), binding.clone())
+            .catalog_after_model_upsert(account.clone(), binding.clone())
             .map_err(|error| {
-                AppError::single("composing the prospective managed connection", error)
+                AppError::single("composing the prospective stored connection", error)
             })?;
         admit_external_target(&prospective_catalog, selection, startup_policy)?;
         let connection = snapshot
-            .prepare_managed_connect(account, binding)
-            .map_err(|error| AppError::single("preparing managed connection state", error))?;
+            .prepare_model_connect(account, binding)
+            .map_err(|error| AppError::single("preparing stored connection state", error))?;
         let preference = connection.preference().cloned();
         let binding_count = prospective_bindings.len();
         let mut presentation_bindings = prospective_bindings.clone();
         if let Some(displaced) = snapshot
-            .managed_bindings()
+            .models()
             .iter()
             .find(|current| current.selection() == *selection)
             .map(|current| current.complete().clone())
@@ -456,7 +780,7 @@ impl ExternalConnectPlan {
                 selection.account()
             )),
             default_after,
-            managed_change,
+            stored_change,
             default_changed,
             binding_details,
         })
@@ -473,7 +797,7 @@ impl ExternalConnectPlan {
                 self.target.clone(),
                 self.account.clone(),
                 self.default_after.clone(),
-                self.managed_change,
+                self.stored_change,
                 credential_action,
                 self.default_changed,
                 self.binding_details.clone(),
@@ -510,57 +834,74 @@ fn admit_external_target(
 
 fn selected_entry(
     snapshot: &ConnectionSnapshot,
-    config: &config::Config,
     reference: &str,
 ) -> Result<ModelCatalogEntry, AppError> {
-    let manual = config.model_catalog();
-    if let Some(selected) = manual
+    let catalog = snapshot
+        .model_catalog()
+        .map_err(|error| AppError::single("reading the stored model catalog", error))?;
+    if let Some(entry) = catalog
         .entries()
         .iter()
         .find(|entry| selection_for(entry).canonical_reference() == reference)
         .cloned()
     {
-        return Ok(selected);
+        return Ok(entry);
     }
-    if let Some(model) = config.qwencloud_catalog_model_for_reference(reference) {
-        return model.entry().cloned().ok_or_else(|| {
-            let reason = match model.availability() {
-                yo_core::QwenCloudCatalogAvailability::Enabled => "invalid catalog row",
-                yo_core::QwenCloudCatalogAvailability::Disabled(reason) => reason.as_str(),
-            };
-            AppError::message(format!(
-                "QwenCloud catalog model {reference:?} is disabled: {reason}; use an explicit manual binding only when its runtime interface is supported"
-            ))
-        });
+    for stored_seed in snapshot.catalog_seeds() {
+        let Some(seed) = stored_seed
+            .qwencloud_seed()
+            .map_err(|error| AppError::single("reading the stored QwenCloud seed", error))?
+        else {
+            continue;
+        };
+        if let Some(row) = seed.models().iter().find(|row| {
+            ModelSelection::new(
+                row.provider().clone(),
+                row.account().clone(),
+                row.model_id().clone(),
+            )
+            .canonical_reference()
+                == reference
+        }) {
+            return row.entry().cloned().ok_or_else(|| {
+                let reason = match row.availability() {
+                    yo_core::QwenCloudCatalogAvailability::Enabled => "invalid catalog row",
+                    yo_core::QwenCloudCatalogAvailability::Disabled(reason) => reason.as_str(),
+                };
+                AppError::message(format!(
+                    "QwenCloud catalog model {reference:?} is disabled: {reason}"
+                ))
+            });
+        }
     }
-    if reference
-        .split_once(':')
-        .is_some_and(|(provider, _)| provider == "qwencloud")
-    {
-        return Err(AppError::message(format!(
-            "QwenCloud catalog model {reference:?} is outside the configured catalog; use an explicit manual binding"
-        )));
-    }
-    snapshot
-        .compose_catalog(&ModelCatalog::default())
-        .map_err(|error| AppError::single("reading the managed model catalog", error))?
-        .entries()
-        .iter()
-        .find(|entry| selection_for(entry).canonical_reference() == reference)
-        .cloned()
-        .ok_or_else(|| {
-            AppError::message(format!(
-                "external connect target {reference:?} is not an exact configured or QwenCloud catalog Provider:Account:Model reference; use an explicit manual binding for models outside the selected catalog"
-            ))
-        })
+    Err(AppError::message(format!(
+        "external connect target {reference:?} is not an exact stored Provider:Account:Model reference; import its definition with yo connect --from"
+    )))
 }
 
-fn catalog_pair(reference: &str) -> Result<Option<(ProviderId, AccountId)>, AppError> {
+fn catalog_pair(
+    snapshot: &ConnectionSnapshot,
+    reference: &str,
+) -> Result<Option<(ProviderId, AccountId)>, AppError> {
+    if let Some(account) = snapshot.accounts().iter().find(|account| {
+        matches!(
+            account.provider_id().as_str(),
+            "openrouter" | "qwencloud" | "kimi"
+        ) && account.canonical_reference() == reference
+            && snapshot.catalog_seeds().iter().any(|seed| {
+                seed.provider() == account.provider_id() && seed.account() == account.account_id()
+            })
+    }) {
+        return Ok(Some((
+            account.provider_id().clone(),
+            account.account_id().clone(),
+        )));
+    }
     let mut segments = reference.split(':');
     let Some(provider) = segments.next() else {
         return Ok(None);
     };
-    let Some(account) = segments.next() else {
+    let Some(_account) = segments.next() else {
         return Ok(None);
     };
     if segments.next().is_some() {
@@ -571,11 +912,31 @@ fn catalog_pair(reference: &str) -> Result<Option<(ProviderId, AccountId)>, AppE
             "two-part external connect target {reference:?} is unsupported; only configured openrouter:Account or kimi:Account discovery and qwencloud:Account catalog selection are admitted"
         )));
     }
-    let provider = ProviderId::new(provider)
-        .map_err(|error| AppError::single("reading the discovery ProviderId", error))?;
-    let account = AccountId::new(account)
-        .map_err(|error| AppError::single("reading the discovery AccountId", error))?;
-    Ok(Some((provider, account)))
+    Err(AppError::message(format!(
+        "catalog target {reference:?} is not an exact stored Provider:Account seed"
+    )))
+}
+
+fn looks_like_two_part_target(reference: &str) -> bool {
+    let mut segments = reference.split(':');
+    segments.next().is_some() && segments.next().is_some() && segments.next().is_none()
+}
+
+fn stored_account_reference(
+    snapshot: &ConnectionSnapshot,
+    provider: &ProviderId,
+    account: &AccountId,
+) -> Result<String, AppError> {
+    snapshot
+        .accounts()
+        .iter()
+        .find(|stored| stored.provider_id() == provider && stored.account_id() == account)
+        .map(ConnectionAccount::canonical_reference)
+        .ok_or_else(|| {
+            AppError::message(format!(
+                "stored Provider {provider} and Account {account} has no account definition"
+            ))
+        })
 }
 
 fn safe_discovery_error(error: AppError, discovered: bool) -> AppError {
@@ -601,13 +962,24 @@ fn safe_discovery_source(
     }
 }
 
-fn same_account(entry: &ModelCatalogEntry, selection: &ModelSelection) -> bool {
-    let binding = entry.binding();
-    binding.provider_id() == selection.provider() && binding.account_id() == selection.account()
-}
-
 fn selection_for(entry: &ModelCatalogEntry) -> ModelSelection {
     selection_for_binding(entry.binding())
+}
+
+#[cfg(test)]
+fn seed_stored_definition(root: &Path, contents: &str) {
+    let definition = definition::parse(contents).unwrap();
+    let repository = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"));
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_group_replace(
+            definition.account,
+            definition.bindings,
+            definition.catalog_seed,
+        )
+        .unwrap();
+    repository.commit(&mutation).unwrap();
 }
 
 #[cfg(test)]
@@ -622,6 +994,333 @@ mod qwencloud_catalog_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct ImportInput {
+        expected_account: &'static str,
+        preview: Option<String>,
+        confirmations: usize,
+        credential_reads: usize,
+    }
+
+    impl ExternalConnectInput for ImportInput {
+        fn confirm(&mut self, preview: &Confirmation) -> Result<bool, AppError> {
+            self.confirmations += 1;
+            self.preview = Some(
+                preview
+                    .render(super::super::presentation::default_width())
+                    .unwrap(),
+            );
+            Ok(true)
+        }
+
+        fn read_credential(&mut self, account: &str) -> Result<yo_core::ApiCredential, AppError> {
+            assert_eq!(account, self.expected_account);
+            self.credential_reads += 1;
+            yo_core::ApiCredential::new("group-secret")
+                .map_err(|error| AppError::single("constructing import test credential", error))
+        }
+    }
+
+    // 한 grouped document의 모든 모델은 한 번의 preview와 credential capture 뒤 동일 public
+    // revision에 게시되고, definition-only import는 임의 default를 만들지 않습니다.
+    #[test]
+    fn grouped_import_publishes_multiple_models_without_selecting_a_default() {
+        let root = super::super::canonical_test_temp_dir().join(format!(
+            "yo-grouped-import-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.yaml");
+        std::fs::write(&config_path, "session: {}\n").unwrap();
+        let definition = definition::parse(explicit_multi_definition()).unwrap();
+        let mut input = ImportInput {
+            expected_account: "vendor:team",
+            preview: None,
+            confirmations: 0,
+            credential_reads: 0,
+        };
+
+        let output = execute_definition_import_with(
+            &config_path,
+            ConnectCommand {
+                target: String::new(),
+                from: Some(root.join("definition.yaml")),
+                verbose: true,
+                credential_file: None,
+                yes: false,
+            },
+            definition,
+            &mut input,
+        )
+        .unwrap();
+
+        assert!(output.contains("Account     vendor:team"));
+        assert!(output.contains("Registered  2 model profiles"));
+        assert!(output.contains("Default     unset"));
+        assert_eq!(input.confirmations, 1);
+        assert_eq!(input.credential_reads, 1);
+        let preview = input.preview.unwrap();
+        assert!(preview.contains("Add models"));
+        assert!(preview.contains("alpha, beta"));
+        assert!(preview.contains("No stored complete binding is changed or removed"));
+        let snapshot = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"))
+            .capture()
+            .unwrap();
+        assert_eq!(snapshot.models().len(), 2);
+        assert!(snapshot.preference().is_none());
+        let credential = yo_core::CredentialRepository::capture(
+            &yo_core::LocalCredentialRepository::new(root.join("credentials.yaml")),
+        )
+        .unwrap();
+        assert_eq!(
+            credential
+                .resolve(
+                    &yo_core::ProviderId::new("vendor").unwrap(),
+                    &yo_core::AccountId::new("team").unwrap(),
+                )
+                .unwrap()
+                .expose_secret(),
+            "group-secret"
+        );
+        assert!(!root.join("connection-operation.yaml").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Catalog-only definitions still bind one account credential and one public seed, but they
+    // do not invent a routable model or preference during import.
+    #[test]
+    fn grouped_catalog_import_publishes_a_seed_without_inventing_a_model() {
+        let root = super::super::canonical_test_temp_dir().join(format!(
+            "yo-grouped-catalog-import-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.yaml");
+        std::fs::write(&config_path, "session: {}\n").unwrap();
+        let definition = definition::parse(
+            "provider: qwencloud\naccount: default\ncatalog: qwencloud-token-plan-team-intl/v1\n",
+        )
+        .unwrap();
+        let mut input = ImportInput {
+            expected_account: "qwencloud:default",
+            preview: None,
+            confirmations: 0,
+            credential_reads: 0,
+        };
+
+        let output = execute_definition_import_with(
+            &config_path,
+            ConnectCommand {
+                target: String::new(),
+                from: Some(root.join("definition.yaml")),
+                verbose: false,
+                credential_file: None,
+                yes: false,
+            },
+            definition,
+            &mut input,
+        )
+        .unwrap();
+
+        assert!(output.contains("Account     qwencloud:default"));
+        assert!(output.contains("Registered  0 model profiles"));
+        assert_eq!(input.confirmations, 1);
+        assert_eq!(input.credential_reads, 1);
+        let snapshot = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"))
+            .capture()
+            .unwrap();
+        assert!(snapshot.models().is_empty());
+        assert_eq!(snapshot.catalog_seeds().len(), 1);
+        assert!(snapshot.preference().is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Preview는 모델 목록 외에도 account label과 exact catalog seed 전이를 보여 주고,
+    // 변경·삭제되는 complete binding을 사용하는 저장 Session의 resume 위험을 숨기지 않습니다.
+    #[test]
+    fn grouped_import_previews_seed_metadata_and_resume_transitions() {
+        let root = super::super::canonical_test_temp_dir().join(format!(
+            "yo-grouped-transition-preview-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.yaml");
+        std::fs::write(&config_path, "session: {}\n").unwrap();
+        let repository = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"));
+        let old = definition::parse(
+            "provider: qwencloud\nprovider_display_name: Old Qwen\naccount: team\naccount_display_name: Old Team\ncatalog: qwencloud-coding-plan-intl/v1\n",
+        )
+        .unwrap();
+        let retained_then_removed = StoredModelBinding::new(
+            CompleteModelBinding::from_durable_json(
+                r#"{"provider":"qwencloud","account":"team","model":"qwen3-coder-plus","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
+            )
+            .unwrap(),
+            Some("Qwen3 Coder Plus".to_owned()),
+        )
+        .unwrap();
+        let initial = repository
+            .capture()
+            .unwrap()
+            .prepare_group_replace(old.account, vec![retained_then_removed], old.catalog_seed)
+            .unwrap();
+        repository.commit(&initial).unwrap();
+        let replacement = definition::parse(
+            "provider: qwencloud\nprovider_display_name: New Qwen\naccount: team\naccount_display_name: New Team\ncatalog: qwencloud-token-plan-team-intl/v1\n",
+        )
+        .unwrap();
+        let mut input = CancelInput {
+            summary: None,
+            credential_reads: 0,
+        };
+
+        let output = execute_definition_import_with(
+            &config_path,
+            ConnectCommand {
+                target: String::new(),
+                from: Some(root.join("definition.yaml")),
+                verbose: false,
+                credential_file: None,
+                yes: false,
+            },
+            replacement,
+            &mut input,
+        )
+        .unwrap();
+
+        assert_eq!(output, "Connection import cancelled; nothing changed.\n");
+        assert_eq!(input.credential_reads, 0);
+        let preview = input.summary.unwrap();
+        assert!(preview.contains("Old Qwen"));
+        assert!(preview.contains("New Qwen"));
+        let compact = preview.split_whitespace().collect::<String>();
+        assert!(compact.contains("qwencloud-coding-plan-intl/v1"));
+        assert!(
+            compact.contains("qwencloud-token-plan-team-intl/v1"),
+            "preview: {preview}"
+        );
+        assert!(compact.contains("qwencloud:team:qwen3-coder-plus"));
+        assert!(preview.contains("May not resume"));
+        assert!(preview.contains("Remove models"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Account display metadata and the catalog source are separate preview fields, so changing
+    // only labels must not report a duplicate `same catalog -> same catalog` transition.
+    #[test]
+    fn grouped_import_keeps_an_unchanged_seed_when_only_account_metadata_changes() {
+        let root = super::super::canonical_test_temp_dir().join(format!(
+            "yo-grouped-metadata-only-preview-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.yaml");
+        std::fs::write(&config_path, "session: {}\n").unwrap();
+        seed_stored_definition(
+            &root,
+            "provider: qwencloud\nprovider_display_name: Old Qwen\naccount: team\naccount_display_name: Old Team\ncatalog: qwencloud-coding-plan-intl/v1\n",
+        );
+        let replacement = definition::parse(
+            "provider: qwencloud\nprovider_display_name: New Qwen\naccount: team\naccount_display_name: New Team\ncatalog: qwencloud-coding-plan-intl/v1\n",
+        )
+        .unwrap();
+        let mut input = CancelInput {
+            summary: None,
+            credential_reads: 0,
+        };
+
+        let output = execute_definition_import_with(
+            &config_path,
+            ConnectCommand {
+                target: String::new(),
+                from: Some(root.join("definition.yaml")),
+                verbose: false,
+                credential_file: None,
+                yes: false,
+            },
+            replacement,
+            &mut input,
+        )
+        .unwrap();
+
+        assert_eq!(output, "Connection import cancelled; nothing changed.\n");
+        let preview = input.summary.unwrap();
+        assert!(preview.contains("Old Qwen"));
+        assert!(preview.contains("New Qwen"));
+        assert!(preview.contains("Keep built-in catalog"));
+        assert_eq!(
+            preview.matches("qwencloud-coding-plan-intl/v1").count(),
+            1,
+            "unchanged seed must appear once as a kept value: {preview}"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Exact target resolution compares canonical spellings made by stored typed coordinates;
+    // encoded Account separators and vendor-owned ModelId colons are never split heuristically.
+    #[test]
+    fn selected_entry_uses_canonical_coordinates_with_encoded_accounts_and_colon_models() {
+        let root = super::super::canonical_test_temp_dir().join(format!(
+            "yo-canonical-selected-entry-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        seed_stored_definition(
+            &root,
+            "provider: qwencloud\naccount: 'team:west'\ncatalog: qwencloud-coding-plan-intl/v1\n",
+        );
+        seed_stored_definition(
+            &root,
+            r#"
+provider: qwencloud
+account: other
+base_url: https://example.test/v1
+profile:
+  api_dialect: openai-responses
+  tokenizer_profile: utf8-bytes/v1
+  input_token_limit: 1000
+  max_output_tokens: 100
+  reasoning_parameters: {}
+  optional_request_parameters: {}
+  tool_capability_policy: local-tools/v1
+models:
+  - model: 'vendor:model'
+"#,
+        );
+        let snapshot = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"))
+            .capture()
+            .unwrap();
+
+        let (_, catalog_account) = catalog_pair(&snapshot, "qwencloud:team%3Awest")
+            .unwrap()
+            .unwrap();
+        assert_eq!(catalog_account.as_str(), "team:west");
+        let catalog = selected_entry(&snapshot, "qwencloud:team%3Awest:qwen3-coder-plus").unwrap();
+        assert_eq!(selection_for(&catalog).account().as_str(), "team:west");
+        let stored = selected_entry(&snapshot, "qwencloud:other:vendor:model").unwrap();
+        assert_eq!(selection_for(&stored).model().as_str(), "vendor:model");
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     struct CancelInput {
         summary: Option<String>,
@@ -660,7 +1359,9 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let config_path = root.join("config.yaml");
-        std::fs::write(&config_path, explicit_config()).unwrap();
+        std::fs::write(&config_path, "session: {}\n").unwrap();
+        seed_stored_definition(&root, explicit_definition());
+        let before = std::fs::read(root.join("connections.yaml")).unwrap();
         let mut input = CancelInput {
             summary: None,
             credential_reads: 0,
@@ -669,6 +1370,7 @@ mod tests {
         let output = execute_external_connect_with(
             &config_path,
             ConnectCommand {
+                from: None,
                 target: "vendor:team:alpha".to_owned(),
                 verbose: false,
                 credential_file: None,
@@ -684,11 +1386,11 @@ mod tests {
         assert!(summary.contains("+ API key\n  Save vendor:team"));
         assert!(!summary.contains("Connection profile"));
         assert_eq!(input.credential_reads, 0);
-        for name in [
-            "connections.yaml",
-            "credentials.yaml",
-            "connection-operation.yaml",
-        ] {
+        assert_eq!(
+            std::fs::read(root.join("connections.yaml")).unwrap(),
+            before
+        );
+        for name in ["credentials.yaml", "connection-operation.yaml"] {
             assert!(!root.join(name).exists(), "{name} must remain absent");
         }
         std::fs::remove_dir_all(root).unwrap();
@@ -708,7 +1410,9 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let config_path = root.join("config.yaml");
-        std::fs::write(&config_path, explicit_config()).unwrap();
+        std::fs::write(&config_path, "session: {}\n").unwrap();
+        seed_stored_definition(&root, explicit_definition());
+        let before = std::fs::read(root.join("connections.yaml")).unwrap();
         let credential_path = root.join("credential");
         std::fs::write(&credential_path, b"diagnostic-sentinel-secret").unwrap();
         use std::os::unix::fs::PermissionsExt as _;
@@ -717,6 +1421,7 @@ mod tests {
         let error = run_external_connect(
             &config_path,
             ConnectCommand {
+                from: None,
                 target: "vendor:team:alpha".to_owned(),
                 verbose: false,
                 credential_file: Some(credential_path.clone()),
@@ -732,11 +1437,11 @@ mod tests {
             std::fs::read(&credential_path).unwrap(),
             b"diagnostic-sentinel-secret"
         );
-        for name in [
-            "connections.yaml",
-            "credentials.yaml",
-            "connection-operation.yaml",
-        ] {
+        assert_eq!(
+            std::fs::read(root.join("connections.yaml")).unwrap(),
+            before
+        );
+        for name in ["credentials.yaml", "connection-operation.yaml"] {
             assert!(!root.join(name).exists(), "{name} must remain absent");
         }
         std::fs::remove_dir_all(root).unwrap();
@@ -749,18 +1454,21 @@ mod tests {
         let config_path = std::path::Path::new("/not/read/config.yaml");
         for command in [
             ConnectCommand {
+                from: None,
                 target: "vendor:team:alpha".to_owned(),
                 verbose: false,
                 credential_file: Some("/not/read/credential".into()),
                 yes: false,
             },
             ConnectCommand {
+                from: None,
                 target: "vendor:team:alpha".to_owned(),
                 verbose: false,
                 credential_file: None,
                 yes: true,
             },
             ConnectCommand {
+                from: None,
                 target: "vendor:team:alpha".to_owned(),
                 verbose: true,
                 credential_file: Some("/not/read/credential".into()),
@@ -788,7 +1496,8 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let config_path = root.join("config.yaml");
-        std::fs::write(&config_path, explicit_config()).unwrap();
+        std::fs::write(&config_path, "session: {}\n").unwrap();
+        seed_stored_definition(&root, explicit_definition());
         let credentials = yo_core::LocalCredentialRepository::new(root.join("credentials.yaml"));
         let provider = yo_core::ProviderId::new("vendor").unwrap();
         let account = yo_core::AccountId::new("team").unwrap();
@@ -804,6 +1513,7 @@ mod tests {
         execute_external_connect_with(
             &config_path,
             ConnectCommand {
+                from: None,
                 target: "vendor:team:alpha".to_owned(),
                 verbose: false,
                 credential_file: None,
@@ -835,7 +1545,7 @@ mod tests {
     #[test]
     fn plan_includes_every_retained_binding_for_the_account() {
         let catalog = fixture_catalog();
-        let snapshot = fixture_snapshot();
+        let snapshot = fixture_snapshot_with_stored(fixture_complete("beta"));
         let selection = ModelSelection::new(
             yo_core::ProviderId::new("vendor").unwrap(),
             yo_core::AccountId::new("team").unwrap(),
@@ -847,7 +1557,6 @@ mod tests {
             .unwrap();
         let plan = ExternalConnectPlan::prepare(
             &snapshot,
-            &catalog,
             &selection,
             selected,
             &StartupPolicy::initial(),
@@ -893,60 +1602,22 @@ mod tests {
         assert_eq!(models_row.trim(), "Models          alpha, beta");
         assert!(!models_row.contains("vendor:team"));
         assert!(!compact.contains("Connection profile"));
-        assert_eq!(plan.preference, Some(StartupTarget::Model(selection)));
+        assert_eq!(
+            plan.preference,
+            Some(StartupTarget::Model(ModelSelection::new(
+                yo_core::ProviderId::new("vendor").unwrap(),
+                yo_core::AccountId::new("team").unwrap(),
+                yo_core::ModelId::new("beta").unwrap(),
+            )))
+        );
     }
 
-    // 같은 Account에 불완전한 binding이 하나라도 남으면 정확한 실행 profile을 admission할 수
-    // 없으므로 credential/public mutation 실행 전 planning이 교체 안내로 실패합니다.
-    #[test]
-    fn plan_rejects_a_retained_legacy_binding() {
-        let mut entries = fixture_catalog().entries().to_vec();
-        let binding = yo_core::EffectiveModelBinding::new(
-            yo_core::ProviderId::new("vendor").unwrap(),
-            yo_core::AccountId::new("team").unwrap(),
-            yo_core::ModelId::new("legacy").unwrap(),
-            yo_core::ApiDialect::OpenAiResponses,
-            yo_core::NormalizedEndpoint::parse("https://example.test/v1").unwrap(),
-        );
-        entries.push(
-            yo_core::ModelCatalogEntry::new(
-                binding,
-                Some("Vendor".to_owned()),
-                Some("Team".to_owned()),
-                None,
-                yo_core::ModelContextProfile::new(1000, 100, "utf8-bytes/v1").unwrap(),
-            )
-            .unwrap(),
-        );
-        let catalog = ModelCatalog::new(entries).unwrap();
-        let selection = ModelSelection::new(
-            yo_core::ProviderId::new("vendor").unwrap(),
-            yo_core::AccountId::new("team").unwrap(),
-            yo_core::ModelId::new("alpha").unwrap(),
-        );
-
-        let selected = catalog
-            .resolve_model(selection.provider(), selection.account(), selection.model())
-            .unwrap();
-        let error = ExternalConnectPlan::prepare(
-            &fixture_snapshot(),
-            &catalog,
-            &selection,
-            selected,
-            &StartupPolicy::initial(),
-        )
-        .err()
-        .expect("legacy retained binding must fail planning");
-
-        assert!(error.to_string().contains("migrate every retained model"));
-    }
-
-    // config의 새 complete profile과 기존 managed profile이 같은 coordinate에서 달라도
+    // 새 complete profile과 기존 stored profile이 같은 coordinate에서 달라도
     // preview는 둘 다 비교하되 게시·admission 집합은 교체 뒤 새 profile 하나만 셉니다.
     #[test]
-    fn plan_discloses_old_and_new_profiles_during_managed_replacement() {
+    fn plan_discloses_old_and_new_profiles_during_stored_replacement() {
         let catalog = ModelCatalog::new(vec![fixture_entry("alpha")]).unwrap();
-        let snapshot = fixture_snapshot_with_managed(fixture_complete_at(
+        let snapshot = fixture_snapshot_with_stored(fixture_complete_at(
             "alpha",
             "https://old.example.test/v1",
             "openai-chat-completions",
@@ -963,7 +1634,6 @@ mod tests {
 
         let plan = ExternalConnectPlan::prepare(
             &snapshot,
-            &catalog,
             &selection,
             selected,
             &StartupPolicy::initial(),
@@ -986,7 +1656,7 @@ mod tests {
         assert!(preview.contains("https://old.example.test/v1"));
         assert!(preview.contains("openai-responses"));
         assert!(preview.contains("openai-chat-completions"));
-        assert!(preview.contains("~ Managed connection\n  Update vendor:team:alpha"));
+        assert!(preview.contains("~ Stored connection\n  Update vendor:team:alpha"));
         assert!(preview.matches("{}").count() >= 3);
         assert!(preview.contains(r#"{"effort":"medium"}"#));
         let compact = plan
@@ -998,12 +1668,12 @@ mod tests {
         assert_eq!(compact.matches("Models          alpha").count(), 1);
     }
 
-    // 더는 runtime이 지원하지 않는 이전 managed profile도 교체 뒤 집합에서는 사라지므로,
+    // 더는 runtime이 지원하지 않는 이전 stored profile도 교체 뒤 집합에서는 사라지므로,
     // 새 profile의 구조적 admission을 막거나 성공 모델 수를 부풀리지 않습니다.
     #[test]
     fn replacement_excludes_a_displaced_unsupported_profile_from_admission() {
         let catalog = ModelCatalog::new(vec![fixture_entry("alpha")]).unwrap();
-        let snapshot = fixture_snapshot_with_managed(fixture_complete_with_options(
+        let snapshot = fixture_snapshot_with_stored(fixture_complete_with_options(
             "alpha",
             "https://old.example.test/v1",
             r#"{"retired":true}"#,
@@ -1019,7 +1689,6 @@ mod tests {
         let expected = selected.complete_binding().unwrap().clone();
         let plan = ExternalConnectPlan::prepare(
             &snapshot,
-            &catalog,
             &selection,
             selected,
             &StartupPolicy::initial(),
@@ -1072,15 +1741,10 @@ mod tests {
         let enforced_host =
             StartupPolicy::new(false, Some(StartupTarget::HostCodex), None).unwrap();
 
-        let error = ExternalConnectPlan::prepare(
-            &fixture_snapshot(),
-            &catalog,
-            &selection,
-            selected,
-            &enforced_host,
-        )
-        .err()
-        .expect("the enforced Host policy must reject an external target");
+        let error =
+            ExternalConnectPlan::prepare(&fixture_snapshot(), &selection, selected, &enforced_host)
+                .err()
+                .expect("the enforced Host policy must reject an external target");
 
         assert!(
             error
@@ -1093,23 +1757,42 @@ mod tests {
         ModelCatalog::new(vec![fixture_entry("alpha"), fixture_entry("beta")]).unwrap()
     }
 
-    fn explicit_config() -> &'static str {
+    fn explicit_definition() -> &'static str {
         r#"
-model:
-  bindings:
-    - provider: vendor
-      account: team
-      base_url: https://example.test/v1
-      profile:
-        api_dialect: openai-responses
-        tokenizer_profile: utf8-bytes/v1
-        input_token_limit: 1000
-        max_output_tokens: 100
-        reasoning_parameters: {}
-        optional_request_parameters: {}
-        tool_capability_policy: local-tools/v1
-      models:
-        - model: alpha
+provider: vendor
+account: team
+base_url: https://example.test/v1
+profile:
+  api_dialect: openai-responses
+  tokenizer_profile: utf8-bytes/v1
+  input_token_limit: 1000
+  max_output_tokens: 100
+  reasoning_parameters: {}
+  optional_request_parameters: {}
+  tool_capability_policy: local-tools/v1
+models:
+  - model: alpha
+"#
+    }
+
+    fn explicit_multi_definition() -> &'static str {
+        r#"
+provider: vendor
+provider_display_name: Vendor
+account: team
+account_display_name: Team
+base_url: https://example.test/v1
+profile:
+  api_dialect: openai-responses
+  tokenizer_profile: utf8-bytes/v1
+  input_token_limit: 1000
+  max_output_tokens: 100
+  reasoning_parameters: {}
+  optional_request_parameters: {}
+  tool_capability_policy: local-tools/v1
+models:
+  - model: alpha
+  - model: beta
 "#
     }
 
@@ -1161,9 +1844,9 @@ model:
         .unwrap()
     }
 
-    fn fixture_snapshot_with_managed(complete: CompleteModelBinding) -> ConnectionSnapshot {
+    fn fixture_snapshot_with_stored(complete: CompleteModelBinding) -> ConnectionSnapshot {
         let root = std::env::temp_dir().join(format!(
-            "yo-external-plan-managed-{}-{}",
+            "yo-external-plan-stored-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1171,18 +1854,18 @@ model:
                 .as_nanos()
         ));
         let repository = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"));
-        let account = ManagedConnectionAccount::new(
+        let account = ConnectionAccount::new(
             yo_core::ProviderId::new("vendor").unwrap(),
             yo_core::AccountId::new("team").unwrap(),
             Some("Vendor".to_owned()),
             Some("Team".to_owned()),
         )
         .unwrap();
-        let binding = ManagedConnectionBinding::new(complete, Some("alpha".to_owned())).unwrap();
+        let binding = StoredModelBinding::new(complete, Some("alpha".to_owned())).unwrap();
         let mutation = repository
             .capture()
             .unwrap()
-            .prepare_managed_connect(account, binding)
+            .prepare_model_connect(account, binding)
             .unwrap();
         repository.commit(&mutation).unwrap();
         let snapshot = repository.capture().unwrap();

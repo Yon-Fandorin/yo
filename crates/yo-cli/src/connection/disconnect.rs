@@ -1,9 +1,8 @@
 use std::path::Path;
 
 use yo_core::{
-    ConnectionSnapshot, ExternalDisconnectCredentialAction, ManagedConnectionBinding, ModelCatalog,
-    ModelCatalogEntry, ModelSelection, StartupPolicy, StartupSelectionSources, StartupTarget,
-    resolve_startup_target,
+    ConnectionSnapshot, ExternalDisconnectCredentialAction, ModelSelection, StartupPolicy,
+    StartupSelectionSources, StartupTarget, StoredModelBinding, resolve_startup_target,
 };
 
 use super::{
@@ -43,17 +42,11 @@ fn execute_external_disconnect_with(
         .map_err(|error| AppError::single("reading Yo configuration", error))?;
     let snapshot = session
         .capture_connections()
-        .map_err(|error| AppError::single("capturing managed connections", error))?;
-    let selection = select_managed_target(&snapshot, config.model_catalog(), &command, input)?;
+        .map_err(|error| AppError::single("capturing stored connections", error))?;
+    let selection = select_stored_target(&snapshot, &command, input)?;
     let startup_policy = StartupPolicy::initial();
-    let plan = ExternalDisconnectPlan::prepare(
-        &snapshot,
-        config.model_catalog(),
-        &selection,
-        &startup_policy,
-        config.startup_target().cloned(),
-        command.verbose,
-    )?;
+    let plan =
+        ExternalDisconnectPlan::prepare(&snapshot, &selection, &startup_policy, command.verbose)?;
     let prepared = session
         .prepare_external_disconnect(snapshot.revision(), &selection, plan.credential_action)
         .map_err(|error| AppError::single("preparing the external disconnect", error))?;
@@ -75,16 +68,15 @@ fn execute_external_disconnect_with(
     ))
 }
 
-fn select_managed_target(
+fn select_stored_target(
     snapshot: &ConnectionSnapshot,
-    manual: &ModelCatalog,
     command: &DisconnectCommand,
     input: &mut impl ExternalDisconnectInput,
 ) -> Result<ModelSelection, AppError> {
     let mut candidates = snapshot
-        .managed_bindings()
+        .models()
         .iter()
-        .map(ManagedConnectionBinding::selection)
+        .map(StoredModelBinding::selection)
         .filter(|selection| {
             command
                 .provider
@@ -100,9 +92,11 @@ fn select_managed_target(
 
     match candidates.len() {
         1 => Ok(candidates.remove(0)),
-        0 => Err(no_managed_target_error(manual, command)),
+        0 => Err(AppError::message(
+            "no stored model target matches the captured disconnect selection",
+        )),
         _ if command.yes => Err(AppError::message(format!(
-            "Provider {} Account {} has {} managed model targets; --yes never guesses which one to remove, so rerun interactively",
+            "Provider {} Account {} has {} stored model targets; --yes never guesses which one to remove, so rerun interactively",
             command.provider.as_deref().unwrap_or("<missing>"),
             command.account.as_deref().unwrap_or("<missing>"),
             candidates.len()
@@ -118,32 +112,11 @@ fn select_managed_target(
                 .find(|candidate| candidate.canonical_reference() == selected.trim())
                 .ok_or_else(|| {
                     AppError::message(format!(
-                        "disconnect target {:?} is not one of the captured managed targets",
+                        "disconnect target {:?} is not one of the captured stored targets",
                         selected.trim()
                     ))
                 })
         },
-    }
-}
-
-fn no_managed_target_error(manual: &ModelCatalog, command: &DisconnectCommand) -> AppError {
-    let manual_matches = manual.entries().iter().any(|entry| {
-        let binding = entry.binding();
-        command
-            .provider
-            .as_deref()
-            .is_none_or(|provider| binding.provider_id().as_str() == provider)
-            && command
-                .account
-                .as_deref()
-                .is_none_or(|account| binding.account_id().as_str() == account)
-    });
-    if manual_matches {
-        AppError::message(
-            "the selected Provider and Account has only manual config.yaml bindings; edit config.yaml because yo disconnect removes only managed provenance",
-        )
-    } else {
-        AppError::message("no Yo-managed model target matches the captured disconnect selection")
     }
 }
 
@@ -156,30 +129,31 @@ struct ExternalDisconnectPlan {
 impl ExternalDisconnectPlan {
     fn prepare(
         snapshot: &ConnectionSnapshot,
-        manual: &ModelCatalog,
         selection: &ModelSelection,
         startup_policy: &StartupPolicy,
-        operator_target: Option<StartupTarget>,
         verbose: bool,
     ) -> Result<Self, AppError> {
         let removed = snapshot
-            .managed_bindings()
+            .models()
             .iter()
             .find(|binding| binding.selection() == *selection)
-            .ok_or_else(|| AppError::message("the selected managed binding no longer exists"))?;
+            .ok_or_else(|| AppError::message("the selected stored model no longer exists"))?;
         let prospective = snapshot
-            .compose_catalog_after_managed_remove(manual, selection)
+            .catalog_after_model_remove(selection)
             .map_err(|error| {
                 AppError::single("composing the post-disconnect model catalog", error)
             })?;
-        let mut remaining = prospective
-            .entries()
+        let mut remaining = snapshot
+            .models()
             .iter()
-            .filter(|entry| same_account(entry, selection))
+            .filter(|binding| binding.selection() != *selection && same_account(binding, selection))
             .map(binding_summary)
             .collect::<Vec<_>>();
         remaining.sort();
-        let credential_action = if remaining.is_empty() {
+        let catalog_seed_remains = snapshot.catalog_seeds().iter().any(|seed| {
+            seed.provider() == selection.provider() && seed.account() == selection.account()
+        });
+        let credential_action = if remaining.is_empty() && !catalog_seed_remains {
             ExternalDisconnectCredentialAction::Remove
         } else {
             ExternalDisconnectCredentialAction::Preserve
@@ -190,7 +164,6 @@ impl ExternalDisconnectPlan {
             } else {
                 snapshot.preference().cloned()
             };
-        let provenance = removed_provenance(manual, removed);
         let preference_before = display_target(snapshot.preference());
         let preference_after_label = display_target(preference_after.as_ref());
         let default_changed = preference_before != preference_after_label;
@@ -205,7 +178,7 @@ impl ExternalDisconnectPlan {
             StartupSelectionSources {
                 invocation: None,
                 stored_preference: preference_after.clone(),
-                operator_target,
+                operator_target: None,
             },
         )
         .map_err(|error| AppError::single("resolving startup behavior after disconnect", error))?;
@@ -216,26 +189,22 @@ impl ExternalDisconnectPlan {
             Some(target) => (format!("Use {}", display_target(Some(target))), true),
             None => ("No startup target remains".to_owned(), false),
         };
-        let exact_binding_remains = prospective
-            .resolve_model(selection.provider(), selection.account(), selection.model())
-            .ok()
-            .and_then(ModelCatalogEntry::complete_binding)
-            == Some(removed.complete());
-        let saved_sessions = if exact_binding_remains {
-            "Resume through equal manual configuration; history stays"
-        } else {
-            "Unavailable until this exact model is restored; history stays"
-        };
+        let saved_sessions = "Unavailable until this exact model is restored; history stays";
         let api_key = match credential_action {
-            ExternalDisconnectCredentialAction::Preserve => format!(
-                "Keep — still used by {}",
-                remaining
-                    .iter()
-                    .map(RemainingBinding::model)
-                    .map(display_model_item)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            ExternalDisconnectCredentialAction::Preserve if catalog_seed_remains => {
+                "Keep — still used by the stored catalog definition".to_owned()
+            },
+            ExternalDisconnectCredentialAction::Preserve => {
+                format!(
+                    "Keep — still used by {}",
+                    remaining
+                        .iter()
+                        .map(RemainingBinding::model)
+                        .map(display_model_item)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            },
             ExternalDisconnectCredentialAction::Remove => format!(
                 "Remove — no configured model uses {}:{}",
                 selection.provider(),
@@ -244,7 +213,7 @@ impl ExternalDisconnectPlan {
         };
         let preview = Confirmation::Disconnect(Box::new(DisconnectPreview::new(
             selection.canonical_reference(),
-            provenance.to_owned(),
+            "Stored connection".to_owned(),
             complete_binding_details(removed.complete()),
             DisconnectImpact::new(
                 if default_changed {
@@ -262,11 +231,7 @@ impl ExternalDisconnectPlan {
                 } else {
                     DisconnectEffect::attention(new_sessions)
                 },
-                if exact_binding_remains {
-                    DisconnectEffect::ready(saved_sessions.to_owned())
-                } else {
-                    DisconnectEffect::attention(saved_sessions.to_owned())
-                },
+                DisconnectEffect::attention(saved_sessions.to_owned()),
             ),
             remaining,
             verbose,
@@ -279,33 +244,13 @@ impl ExternalDisconnectPlan {
     }
 }
 
-fn removed_provenance(manual: &ModelCatalog, removed: &ManagedConnectionBinding) -> &'static str {
-    manual
-        .entries()
-        .iter()
-        .find(|entry| selection_for_binding(entry.binding()) == removed.selection())
-        .map_or(
-            "Managed connection only; no manual configuration remains for this model",
-            |entry| {
-                if entry.complete_binding() == Some(removed.complete()) {
-                    "Managed copy removed; equal manual configuration remains"
-                } else {
-                    "Managed connection removed; different manual configuration remains"
-                }
-            },
-        )
+fn same_account(binding: &StoredModelBinding, selection: &ModelSelection) -> bool {
+    let stored = binding.complete().binding();
+    stored.provider_id() == selection.provider() && stored.account_id() == selection.account()
 }
 
-fn same_account(entry: &ModelCatalogEntry, selection: &ModelSelection) -> bool {
-    let binding = entry.binding();
-    binding.provider_id() == selection.provider() && binding.account_id() == selection.account()
-}
-
-fn binding_summary(entry: &ModelCatalogEntry) -> RemainingBinding {
-    entry.complete_binding().map_or_else(
-        || RemainingBinding::legacy(selection_for_binding(entry.binding())),
-        |complete| RemainingBinding::complete(selection_for_binding(complete.binding())),
-    )
+fn binding_summary(binding: &StoredModelBinding) -> RemainingBinding {
+    RemainingBinding::new(selection_for_binding(binding.complete().binding()))
 }
 
 const fn action_label(action: ExternalDisconnectCredentialAction) -> &'static str {

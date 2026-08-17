@@ -1,8 +1,8 @@
 use std::{fs, path::PathBuf, time::SystemTime};
 
 use yo_core::{
-    AccountId, ApiCredential, CompleteModelBinding, LocalConnectionRepository,
-    LocalCredentialRepository, ManagedConnectionAccount, ModelId, ProviderId,
+    AccountId, ApiCredential, CompleteModelBinding, ConnectionAccount, ConnectionCatalogSeed,
+    LocalConnectionRepository, LocalCredentialRepository, ModelId, ProviderId, VersionedProfileId,
 };
 
 use super::*;
@@ -32,13 +32,13 @@ impl ExternalDisconnectInput for FakeInput {
     }
 }
 
-// --yes는 exact Provider/Account 아래 managed target이 하나일 때만 TTY 없이 실행하고,
+// --yes는 exact Provider/Account 아래 stored target이 하나일 때만 TTY 없이 실행하고,
 // public binding과 matching preference를 지운 뒤 마지막 dependent credential도 제거합니다.
 #[test]
 fn automatic_unique_disconnect_removes_public_then_credential_without_prompt() {
     let fixture = Fixture::new("automatic");
     let config_path = fixture.config_path("session: {}\n");
-    fixture.seed_managed(&["alpha"], Some("alpha"));
+    fixture.seed_stored(&["alpha"], Some("alpha"));
     fixture.seed_credential();
     let mut input = FakeInput {
         selected: None,
@@ -65,14 +65,7 @@ fn automatic_unique_disconnect_removes_public_then_credential_without_prompt() {
     );
     assert!(input.selections.is_empty());
     assert!(input.summaries.is_empty());
-    assert!(
-        fixture
-            .connections()
-            .capture()
-            .unwrap()
-            .managed_bindings()
-            .is_empty()
-    );
+    assert!(fixture.connections().capture().unwrap().models().is_empty());
     assert!(
         fixture
             .credentials()
@@ -84,13 +77,13 @@ fn automatic_unique_disconnect_removes_public_then_credential_without_prompt() {
     assert!(!fixture.root.join("connection-operation.yaml").exists());
 }
 
-// 여러 managed target 중 하나를 대화형으로 고르면 preview가 exact removed profile,
+// 여러 stored target 중 하나를 대화형으로 고르면 preview가 exact removed profile,
 // preference 전이, 남는 distinct binding, credential preserve와 resume risk를 모두 표시합니다.
 #[test]
 fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
     let fixture = Fixture::new("interactive");
     let config_path = fixture.config_path("session: {}\n");
-    fixture.seed_managed(&["alpha", "beta"], Some("alpha"));
+    fixture.seed_stored(&["alpha", "beta"], Some("alpha"));
     fixture.seed_credential();
     let mut input = FakeInput {
         selected: Some("vendor:team:beta".to_owned()),
@@ -126,15 +119,7 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
     assert!(summary.contains("Keep — still used by alpha"));
     assert!(summary.contains("vendor:team:alpha"));
     assert!(summary.contains("Unavailable until this exact model is restored"));
-    assert_eq!(
-        fixture
-            .connections()
-            .capture()
-            .unwrap()
-            .managed_bindings()
-            .len(),
-        2
-    );
+    assert_eq!(fixture.connections().capture().unwrap().models().len(), 2);
     assert!(
         fixture
             .credentials()
@@ -173,7 +158,7 @@ fn interactive_preview_selects_one_and_discloses_the_complete_preserve_plan() {
 fn compact_preview_quotes_a_delimiter_bearing_remaining_model() {
     let fixture = Fixture::new("quoted-model-list");
     let config_path = fixture.config_path("session: {}\n");
-    fixture.seed_managed(&["alpha, beta", "gamma"], None);
+    fixture.seed_stored(&["alpha, beta", "gamma"], None);
     fixture.seed_credential();
     let mut input = FakeInput {
         selected: Some("vendor:team:gamma".to_owned()),
@@ -198,78 +183,21 @@ fn compact_preview_quotes_a_delimiter_bearing_remaining_model() {
     assert!(!input.summaries[0].contains("Keep — still used by alpha, beta"));
 }
 
-// 같은 complete binding의 manual provenance가 남으면 managed provenance만 제거하고
-// post-public catalog의 manual dependency 때문에 credential은 preserve로 계획됩니다.
-#[test]
-fn equal_manual_binding_preserves_credential_and_preview_names_provenance_transition() {
-    let fixture = Fixture::new("manual-equal");
-    let config_path = fixture.config_path(&explicit_config("alpha"));
-    fixture.seed_managed(&["alpha"], Some("alpha"));
-    fixture.seed_credential();
-    let mut input = FakeInput {
-        selected: None,
-        confirmed: true,
-        selections: Vec::new(),
-        summaries: Vec::new(),
-    };
-
-    let output = execute_external_disconnect_with(
-        &config_path,
-        DisconnectCommand {
-            provider: Some("vendor".to_owned()),
-            account: Some("team".to_owned()),
-            yes: false,
-            verbose: true,
-        },
-        &mut input,
-    )
-    .unwrap();
-
-    assert!(output.contains("API key  Kept"));
-    assert!(
-        input.summaries[0].contains("Managed copy removed; equal manual configuration remains")
-    );
-    assert!(input.summaries[0].contains("Resume through equal manual configuration"));
-    assert!(
-        fixture
-            .credentials()
-            .capture()
-            .unwrap()
-            .resolve(&provider(), &account())
-            .is_some()
-    );
-}
-
 // 저장 preference를 제거해도 더 낮은 startup source가 있으면 preview는 막연한 재설정
 // 경고 대신 실제 prospective resolver가 선택할 exact target을 보여 줍니다.
 #[test]
 fn preview_resolves_the_exact_lower_priority_startup_target() {
     let fixture = Fixture::new("startup-fallback");
-    fixture.seed_managed(&["alpha"], Some("alpha"));
+    fixture.seed_stored(&["alpha"], Some("alpha"));
     let snapshot = fixture.connections().capture().unwrap();
     let selection = ModelSelection::new(provider(), account(), ModelId::new("alpha").unwrap());
     let policies = [
-        (
-            StartupPolicy::new(true, None, Some(StartupTarget::HostCodex)).unwrap(),
-            None,
-        ),
-        (
-            StartupPolicy::new(false, Some(StartupTarget::HostCodex), None).unwrap(),
-            None,
-        ),
-        (StartupPolicy::initial(), Some(StartupTarget::HostCodex)),
+        StartupPolicy::new(true, None, Some(StartupTarget::HostCodex)).unwrap(),
+        StartupPolicy::new(false, Some(StartupTarget::HostCodex), None).unwrap(),
     ];
 
-    for (policy, operator_target) in policies {
-        let plan = ExternalDisconnectPlan::prepare(
-            &snapshot,
-            &ModelCatalog::default(),
-            &selection,
-            &policy,
-            operator_target,
-            false,
-        )
-        .unwrap();
+    for policy in policies {
+        let plan = ExternalDisconnectPlan::prepare(&snapshot, &selection, &policy, false).unwrap();
         let preview = plan
             .preview
             .render(super::super::presentation::default_width())
@@ -280,53 +208,12 @@ fn preview_resolves_the_exact_lower_priority_startup_target() {
     }
 }
 
-// 실제 disconnect command는 command-local config.yaml의 operator model.startup을 capture해
-// preference 제거 뒤 새 Session이 사용할 exact fallback으로 preview에 전달합니다.
+// --yes 범위가 둘 이상의 target이면 모델을 추측하지 않고 실패합니다.
 #[test]
-fn command_preview_uses_the_captured_operator_startup_target() {
-    let fixture = Fixture::new("operator-startup");
-    let config_path = fixture.config_path("model:\n  startup: host:codex\n");
-    fixture.seed_managed(&["alpha"], Some("alpha"));
-    fixture.seed_credential();
-    let mut input = FakeInput {
-        selected: None,
-        confirmed: false,
-        selections: Vec::new(),
-        summaries: Vec::new(),
-    };
-
-    let output = execute_external_disconnect_with(
-        &config_path,
-        DisconnectCommand {
-            provider: Some("vendor".to_owned()),
-            account: Some("team".to_owned()),
-            yes: false,
-            verbose: false,
-        },
-        &mut input,
-    )
-    .unwrap();
-
-    assert_eq!(output, "Disconnect cancelled; nothing changed.\n");
-    assert!(input.summaries[0].contains("✓ New sessions\n  Use host:codex"));
-    assert!(!input.summaries[0].contains("No startup target remains"));
-    assert_eq!(
-        fixture.connections().capture().unwrap().preference(),
-        Some(&StartupTarget::Model(ModelSelection::new(
-            provider(),
-            account(),
-            ModelId::new("alpha").unwrap(),
-        )))
-    );
-}
-
-// --yes 범위가 둘 이상의 target이면 모델을 추측하지 않고 실패하며, manual-only 범위도
-// managed state를 만들지 않고 config.yaml을 편집하라는 정확한 소유권 안내를 반환합니다.
-#[test]
-fn automatic_ambiguity_and_manual_only_targets_fail_before_mutation() {
+fn automatic_ambiguity_fails_before_mutation() {
     let fixture = Fixture::new("selection-errors");
-    let config_path = fixture.config_path(&explicit_config("manual"));
-    fixture.seed_managed(&["alpha", "beta"], None);
+    let config_path = fixture.config_path("session: {}\n");
+    fixture.seed_stored(&["alpha", "beta"], None);
     let mut input = FakeInput {
         selected: None,
         confirmed: true,
@@ -345,31 +232,15 @@ fn automatic_ambiguity_and_manual_only_targets_fail_before_mutation() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("--yes never guesses"));
-
-    let manual_only = Fixture::new("manual-only");
-    let manual_config = manual_only.config_path(&explicit_config("manual"));
-    let error = execute_external_disconnect_with(
-        &manual_config,
-        DisconnectCommand {
-            provider: Some("vendor".to_owned()),
-            account: Some("team".to_owned()),
-            yes: true,
-            verbose: false,
-        },
-        &mut input,
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("edit config.yaml"));
-    assert!(!manual_only.root.join("connections.yaml").exists());
 }
 
-// 마지막 managed binding을 대화형으로 제거하는 preview는 credential remove뿐 아니라
+// 마지막 stored model을 대화형으로 제거하는 preview는 credential remove뿐 아니라
 // 해당 complete binding에 귀속된 기존 Session이 native resume되지 않을 위험도 명시합니다.
 #[test]
 fn last_binding_preview_warns_about_remove_continuation_risk() {
     let fixture = Fixture::new("remove-resume-risk");
     let config_path = fixture.config_path("session: {}\n");
-    fixture.seed_managed(&["alpha"], Some("alpha"));
+    fixture.seed_stored(&["alpha"], Some("alpha"));
     fixture.seed_credential();
     let mut input = FakeInput {
         selected: None,
@@ -397,6 +268,68 @@ fn last_binding_preview_warns_about_remove_continuation_risk() {
     assert!(!input.summaries[0].contains("Still available for this account"));
 }
 
+// Catalog seed가 같은 account에 남는다면 explicit model의 마지막 행을 지워도 이후 catalog
+// 선택과 discovery에 credential이 필요하므로 key를 함께 지우지 않습니다.
+#[test]
+fn last_explicit_binding_preserves_credential_for_a_stored_catalog_seed() {
+    let fixture = Fixture::new("catalog-seed-preserves-credential");
+    let repository = fixture.connections();
+    let provider = ProviderId::new("qwencloud").unwrap();
+    let account_id = AccountId::new("default").unwrap();
+    let account = ConnectionAccount::new(
+        provider.clone(),
+        account_id.clone(),
+        Some("QwenCloud".to_owned()),
+        Some("Default".to_owned()),
+    )
+    .unwrap();
+    let binding = StoredModelBinding::new(
+        CompleteModelBinding::from_durable_json(
+            r#"{"provider":"qwencloud","account":"default","model":"qwen3-coder-plus","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
+        )
+        .unwrap(),
+        Some("Qwen3 Coder Plus".to_owned()),
+    )
+    .unwrap();
+    let seed = ConnectionCatalogSeed::built_in(
+        VersionedProfileId::new("qwencloud-token-plan-team-intl/v1").unwrap(),
+        provider.clone(),
+        account_id.clone(),
+        Some("QwenCloud".to_owned()),
+        Some("Default".to_owned()),
+    )
+    .unwrap();
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_group_replace(account, vec![binding], Some(seed))
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+    let selection = ModelSelection::new(
+        provider,
+        account_id,
+        ModelId::new("qwen3-coder-plus").unwrap(),
+    );
+
+    let plan = ExternalDisconnectPlan::prepare(
+        &repository.capture().unwrap(),
+        &selection,
+        &StartupPolicy::initial(),
+        false,
+    )
+    .unwrap();
+    let preview = plan
+        .preview
+        .render(super::super::presentation::default_width())
+        .unwrap();
+
+    assert_eq!(
+        plan.credential_action,
+        ExternalDisconnectCredentialAction::Preserve
+    );
+    assert!(preview.contains("Keep — still used by the stored catalog definition"));
+}
+
 struct ConfigChangingInput {
     config_path: PathBuf,
     confirmation_reads: usize,
@@ -420,7 +353,7 @@ impl ExternalDisconnectInput for ConfigChangingInput {
 fn changed_config_after_confirmation_aborts_before_disconnect_intent() {
     let fixture = Fixture::new("config-change");
     let config_path = fixture.config_path("session: {}\n");
-    fixture.seed_managed(&["alpha"], Some("alpha"));
+    fixture.seed_stored(&["alpha"], Some("alpha"));
     fixture.seed_credential();
     let before_public = fs::read(fixture.connections().path()).unwrap();
     let before_credential = fs::read(fixture.credentials().path()).unwrap();
@@ -522,10 +455,10 @@ impl Fixture {
         LocalCredentialRepository::new(self.root.join("credentials.yaml"))
     }
 
-    fn seed_managed(&self, models: &[&str], preference: Option<&str>) {
+    fn seed_stored(&self, models: &[&str], preference: Option<&str>) {
         let repository = self.connections();
         for model in models {
-            let account = ManagedConnectionAccount::new(
+            let account = ConnectionAccount::new(
                 provider(),
                 account(),
                 Some("Vendor".to_owned()),
@@ -533,11 +466,11 @@ impl Fixture {
             )
             .unwrap();
             let binding =
-                ManagedConnectionBinding::new(complete(model), Some((*model).to_owned())).unwrap();
+                StoredModelBinding::new(complete(model), Some((*model).to_owned())).unwrap();
             let mutation = repository
                 .capture()
                 .unwrap()
-                .prepare_managed_upsert(account, binding)
+                .prepare_model_upsert(account, binding)
                 .unwrap()
                 .unwrap();
             repository.commit(&mutation).unwrap();
@@ -590,10 +523,4 @@ fn complete(model: &str) -> CompleteModelBinding {
         r#"{{"provider":"vendor","account":"team","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
     ))
     .unwrap()
-}
-
-fn explicit_config(model: &str) -> String {
-    format!(
-        "model:\n  bindings:\n    - provider: vendor\n      account: team\n      base_url: https://example.test/v1\n      profile:\n        api_dialect: openai-responses\n        tokenizer_profile: utf8-bytes/v1\n        input_token_limit: 1000\n        max_output_tokens: 100\n        reasoning_parameters: {{}}\n        optional_request_parameters: {{}}\n        tool_capability_policy: local-tools/v1\n      models:\n        - model: {model}\n"
-    )
 }

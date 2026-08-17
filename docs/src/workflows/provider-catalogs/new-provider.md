@@ -33,7 +33,7 @@ OpenRouter's dynamic design or QwenCloud's static design.
   complete binding.
 - Choose a static registry when an official exact allowlist and stable profile
   meaning exist but account-scoped discovery does not.
-- Keep explicit manual bindings when neither source is complete enough. A
+- Keep explicit grouped definitions imported through `yo connect --from` when neither source is complete enough. A
   convenient list is not a reason to invent capabilities or entitlement.
 
 If the active model-service binding contract does not already cover the
@@ -67,7 +67,7 @@ translation review.
 The first Provider Slice must prove the happy path and the counterexamples,
 not merely parse one sample response:
 
-- exact configured Provider and Account select the intended catalog owner;
+- exact stored Provider and Account select the intended catalog owner;
 - cancellation occurs before secret input and repository mutation;
 - a selected complete binding enters the existing recoverable connection
   transaction;

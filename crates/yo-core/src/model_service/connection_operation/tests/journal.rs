@@ -275,7 +275,7 @@ fn oversized_journal_is_rejected_before_decode() {
 }
 
 // revision 없는 current-shape credentials.yaml에서 준비한 replace의 derived metadata
-// receipt도 private journal token으로 왕복되어 첫 managed credential commit 전 중단을
+// receipt도 private journal token으로 왕복되어 첫 stored credential commit 전 중단을
 // 정확히 판별합니다.
 #[test]
 fn derived_revision_for_revisionless_credentials_round_trips_privately() {

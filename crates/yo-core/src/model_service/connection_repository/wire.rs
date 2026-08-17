@@ -7,8 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     super::{AccountId, ModelId, ModelSelection, ProviderId, StartupTarget},
-    ConnectionRepositoryError, ConnectionRevision, ManagedConnectionAccount,
-    ManagedConnectionBinding, managed,
+    ConnectionAccount, ConnectionCatalogSeed, ConnectionRepositoryError, ConnectionRevision,
+    StoredModelBinding,
+    catalog_seed::CatalogSource,
+    stored,
 };
 use crate::{
     CompleteModelBinding, ConnectorId, EffectiveModelBinding, EffectiveModelProfile,
@@ -19,21 +21,24 @@ use crate::{
 pub(super) struct DecodedSnapshot {
     pub(super) revision: ConnectionRevision,
     pub(super) preference: Option<StartupTarget>,
-    pub(super) accounts: Vec<ManagedConnectionAccount>,
-    pub(super) bindings: Vec<ManagedConnectionBinding>,
+    pub(super) accounts: Vec<ConnectionAccount>,
+    pub(super) bindings: Vec<StoredModelBinding>,
+    pub(super) catalog_seeds: Vec<ConnectionCatalogSeed>,
 }
 
 pub(super) fn encode(
     revision: &ConnectionRevision,
     preference: Option<&StartupTarget>,
-    accounts: &[ManagedConnectionAccount],
-    bindings: &[ManagedConnectionBinding],
+    accounts: &[ConnectionAccount],
+    bindings: &[StoredModelBinding],
+    catalog_seeds: &[ConnectionCatalogSeed],
 ) -> Result<Vec<u8>, ConnectionRepositoryError> {
     yo_yaml::to_string(&WireSnapshot {
         revision: revision.to_string(),
         preference: preference.map(WireTarget::from),
         bindings: bindings.iter().map(WireBinding::from).collect(),
         accounts: accounts.iter().map(WireAccount::from).collect(),
+        catalogs: catalog_seeds.iter().map(WireCatalog::from).collect(),
     })
     .map(String::into_bytes)
     .map_err(|_| ConnectionRepositoryError::InvalidContents(PathBuf::new()))
@@ -58,7 +63,13 @@ pub(super) fn decode(
         .into_iter()
         .map(|binding| parse_binding(binding).map_err(invalid))
         .collect::<Result<Vec<_>, _>>()?;
-    managed::validate_state(&accounts, &bindings).map_err(invalid)?;
+    let catalog_seeds = wire
+        .catalogs
+        .into_iter()
+        .map(|seed| parse_catalog(seed, &accounts).map_err(invalid))
+        .collect::<Result<Vec<_>, _>>()?;
+    stored::validate_state(&accounts, &bindings).map_err(invalid)?;
+    super::validate_catalog_seeds(&accounts, &catalog_seeds)?;
     Ok(DecodedSnapshot {
         revision: parse_revision(path, &wire.revision)?,
         preference: wire
@@ -67,6 +78,7 @@ pub(super) fn decode(
             .transpose()?,
         accounts,
         bindings,
+        catalog_seeds,
     })
 }
 
@@ -87,27 +99,75 @@ pub(super) fn new_revision() -> Result<ConnectionRevision, ConnectionRepositoryE
 #[serde(deny_unknown_fields)]
 struct WireSnapshot {
     revision: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     preference: Option<WireTarget>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     bindings: Vec<WireBinding>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     accounts: Vec<WireAccount>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    catalogs: Vec<WireCatalog>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum WireCatalog {
+    OpenrouterDiscovery {
+        provider: String,
+        account: String,
+        base_url: String,
+        profile: WireProfile,
+    },
+    BuiltIn {
+        provider: String,
+        account: String,
+        catalog: String,
+    },
+}
+
+impl From<&ConnectionCatalogSeed> for WireCatalog {
+    fn from(seed: &ConnectionCatalogSeed) -> Self {
+        match seed.source() {
+            CatalogSource::OpenRouter { endpoint, profile } => Self::OpenrouterDiscovery {
+                provider: seed.provider().as_str().to_owned(),
+                account: seed.account().as_str().to_owned(),
+                base_url: endpoint.as_str().to_owned(),
+                profile: WireProfile::from(profile.as_ref()),
+            },
+            CatalogSource::BuiltIn { catalog } => Self::BuiltIn {
+                provider: seed.provider().as_str().to_owned(),
+                account: seed.account().as_str().to_owned(),
+                catalog: catalog.as_str().to_owned(),
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct WireAccount {
     provider: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     provider_display_name: Option<String>,
     account: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     account_display_name: Option<String>,
 }
 
-impl From<&ManagedConnectionAccount> for WireAccount {
-    fn from(account: &ManagedConnectionAccount) -> Self {
+impl From<&ConnectionAccount> for WireAccount {
+    fn from(account: &ConnectionAccount) -> Self {
         Self {
             provider: account.provider_id().as_str().to_owned(),
             provider_display_name: account.provider_display_name().map(str::to_owned),
@@ -123,36 +183,30 @@ struct WireBinding {
     provider: String,
     account: String,
     model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
     model_display_name: Option<String>,
     connector: String,
     base_url: String,
     profile: WireProfile,
 }
 
-impl From<&ManagedConnectionBinding> for WireBinding {
-    fn from(managed: &ManagedConnectionBinding) -> Self {
-        let complete = managed.complete();
+impl From<&StoredModelBinding> for WireBinding {
+    fn from(stored: &StoredModelBinding) -> Self {
+        let complete = stored.complete();
         let binding = complete.binding();
         let profile = complete.profile();
         Self {
             provider: binding.provider_id().as_str().to_owned(),
             account: binding.account_id().as_str().to_owned(),
             model: binding.model_id().as_str().to_owned(),
-            model_display_name: managed.model_display_name().map(str::to_owned),
+            model_display_name: stored.model_display_name().map(str::to_owned),
             connector: binding.connector_id().as_str().to_owned(),
             base_url: binding.endpoint().as_str().to_owned(),
-            profile: WireProfile {
-                api_dialect: profile.api_dialect().as_str().to_owned(),
-                tokenizer_profile: profile.context().tokenizer_profile().to_owned(),
-                input_token_limit: profile.context().input_token_limit(),
-                max_output_tokens: profile.context().max_output_tokens(),
-                reasoning_parameters: profile.reasoning_parameters().clone(),
-                optional_request_parameters: profile.optional_request_parameters().clone(),
-                tool_capability_policy: profile.tool_capability_policy().as_str().to_owned(),
-                replay_profile: (profile.replay_profile().as_str() != SEMANTIC_REPLAY_PROFILE)
-                    .then(|| profile.replay_profile().as_str().to_owned()),
-            },
+            profile: WireProfile::from(profile),
         }
     }
 }
@@ -171,10 +225,26 @@ struct WireProfile {
     tool_capability_policy: String,
     #[serde(
         default,
-        deserialize_with = "deserialize_optional_non_null_string",
+        deserialize_with = "deserialize_optional_replay_profile",
         skip_serializing_if = "Option::is_none"
     )]
     replay_profile: Option<String>,
+}
+
+impl From<&EffectiveModelProfile> for WireProfile {
+    fn from(profile: &EffectiveModelProfile) -> Self {
+        Self {
+            api_dialect: profile.api_dialect().as_str().to_owned(),
+            tokenizer_profile: profile.context().tokenizer_profile().to_owned(),
+            input_token_limit: profile.context().input_token_limit(),
+            max_output_tokens: profile.context().max_output_tokens(),
+            reasoning_parameters: profile.reasoning_parameters().clone(),
+            optional_request_parameters: profile.optional_request_parameters().clone(),
+            tool_capability_policy: profile.tool_capability_policy().as_str().to_owned(),
+            replay_profile: (profile.replay_profile().as_str() != SEMANTIC_REPLAY_PROFILE)
+                .then(|| profile.replay_profile().as_str().to_owned()),
+        }
+    }
 }
 
 fn deserialize_non_null_profile_parameters<'de, D>(
@@ -188,7 +258,15 @@ where
     })
 }
 
-fn deserialize_optional_non_null_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
+
+fn deserialize_optional_replay_profile<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -273,10 +351,8 @@ fn parse_target(
     }
 }
 
-fn parse_account(
-    account: WireAccount,
-) -> Result<ManagedConnectionAccount, crate::ModelServiceError> {
-    ManagedConnectionAccount::from_durable(
+fn parse_account(account: WireAccount) -> Result<ConnectionAccount, crate::ModelServiceError> {
+    ConnectionAccount::from_durable(
         ProviderId::new(account.provider)?,
         AccountId::new(account.account)?,
         account.provider_display_name,
@@ -284,9 +360,7 @@ fn parse_account(
     )
 }
 
-fn parse_binding(
-    binding: WireBinding,
-) -> Result<ManagedConnectionBinding, crate::ModelServiceError> {
+fn parse_binding(binding: WireBinding) -> Result<StoredModelBinding, crate::ModelServiceError> {
     let WireBinding {
         provider,
         account,
@@ -305,6 +379,15 @@ fn parse_binding(
         dialect,
         NormalizedEndpoint::parse(&base_url)?,
     )?;
+    let profile = parse_profile(profile)?;
+    StoredModelBinding::from_durable(
+        CompleteModelBinding::new(effective, profile)?,
+        model_display_name,
+    )
+}
+
+fn parse_profile(profile: WireProfile) -> Result<EffectiveModelProfile, crate::ModelServiceError> {
+    let dialect = profile.api_dialect.parse()?;
     let layer = ModelProfileLayer::new(
         Some(dialect),
         Some(VersionedProfileId::new(profile.tokenizer_profile)?),
@@ -320,9 +403,58 @@ fn parse_binding(
             .map(VersionedProfileId::new)
             .transpose()?,
     );
-    let profile = EffectiveModelProfile::resolve(None, &layer)?;
-    ManagedConnectionBinding::from_durable(
-        CompleteModelBinding::new(effective, profile)?,
-        model_display_name,
-    )
+    EffectiveModelProfile::resolve(None, &layer)
+}
+
+fn parse_catalog(
+    seed: WireCatalog,
+    accounts: &[ConnectionAccount],
+) -> Result<ConnectionCatalogSeed, crate::ModelServiceError> {
+    match seed {
+        WireCatalog::OpenrouterDiscovery {
+            provider,
+            account,
+            base_url,
+            profile,
+        } => {
+            let provider = ProviderId::new(provider)?;
+            let account = AccountId::new(account)?;
+            let metadata = catalog_account(accounts, &provider, &account)?;
+            ConnectionCatalogSeed::openrouter(
+                provider,
+                account,
+                metadata.provider_display_name().map(str::to_owned),
+                metadata.account_display_name().map(str::to_owned),
+                NormalizedEndpoint::parse(&base_url)?,
+                parse_profile(profile)?,
+            )
+        },
+        WireCatalog::BuiltIn {
+            provider,
+            account,
+            catalog,
+        } => {
+            let provider = ProviderId::new(provider)?;
+            let account = AccountId::new(account)?;
+            let metadata = catalog_account(accounts, &provider, &account)?;
+            ConnectionCatalogSeed::built_in(
+                VersionedProfileId::new(catalog)?,
+                provider,
+                account,
+                metadata.provider_display_name().map(str::to_owned),
+                metadata.account_display_name().map(str::to_owned),
+            )
+        },
+    }
+}
+
+fn catalog_account<'a>(
+    accounts: &'a [ConnectionAccount],
+    provider: &ProviderId,
+    account: &AccountId,
+) -> Result<&'a ConnectionAccount, crate::ModelServiceError> {
+    accounts
+        .iter()
+        .find(|candidate| candidate.provider_id() == provider && candidate.account_id() == account)
+        .ok_or_else(|| crate::ModelServiceError::new("catalog seed has no stored account"))
 }

@@ -5,8 +5,6 @@ use std::{
 };
 
 use super::{ConnectionRevision, MAX_CONNECTION_BYTES};
-use crate::model_service::BindingConflict;
-
 #[derive(Debug)]
 pub enum ConnectionRepositoryError {
     Io {
@@ -20,14 +18,13 @@ pub enum ConnectionRepositoryError {
     TooLarge(PathBuf),
     Changed(PathBuf),
     InvalidContents(PathBuf),
-    ManagedCoordinateMismatch,
-    ManagedBindingNotFound {
+    CoordinateMismatch,
+    ModelNotFound {
         provider: String,
         account: String,
         model: String,
     },
-    InvalidManagedMutation,
-    ManagedCatalogConflict(BindingConflict),
+    InvalidMutation,
     PreparedTooLarge,
     OperationBusy(PathBuf),
     PendingOperation(PathBuf),
@@ -87,25 +84,19 @@ impl fmt::Display for ConnectionRepositoryError {
                 "{} contains an invalid connection snapshot",
                 path.display()
             ),
-            Self::ManagedCoordinateMismatch => formatter.write_str(
-                "the managed account and binding must name the same Provider and Account",
+            Self::CoordinateMismatch => formatter.write_str(
+                "the stored account and binding must name the same Provider and Account",
             ),
-            Self::ManagedBindingNotFound {
+            Self::ModelNotFound {
                 provider,
                 account,
                 model,
             } => write!(
                 formatter,
-                "managed binding not found for Provider {provider}, Account {account}, Model {model}",
+                "stored model not found for Provider {provider}, Account {account}, Model {model}",
             ),
-            Self::InvalidManagedMutation => {
-                formatter.write_str("the prepared managed connection mutation is invalid")
-            },
-            Self::ManagedCatalogConflict(source) => {
-                write!(
-                    formatter,
-                    "prospective managed catalog conflicts with configuration: {source}"
-                )
+            Self::InvalidMutation => {
+                formatter.write_str("the prepared stored connection mutation is invalid")
             },
             Self::PreparedTooLarge => {
                 formatter.write_str("the prepared connection snapshot exceeds its bounded size")
@@ -136,7 +127,6 @@ impl Error for ConnectionRepositoryError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Io { source, .. } => Some(source),
-            Self::ManagedCatalogConflict(source) => Some(source),
             _ => None,
         }
     }

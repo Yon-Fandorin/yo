@@ -11,10 +11,10 @@ use super::{
 #[test]
 fn startup_target_reserves_exact_host_codex_without_hiding_a_qualified_model() {
     let catalog = ModelCatalog::new(vec![selection_entry(
-        "manual",
+        "vendor",
         "default",
         "host:codex",
-        "Manual",
+        "Vendor",
         "Default",
     )])
     .unwrap();
@@ -25,7 +25,7 @@ fn startup_target_reserves_exact_host_codex_without_hiding_a_qualified_model() {
         StartupTarget::HostCodex
     );
     let model = controller
-        .resolve_target_reference("manual::host:codex")
+        .resolve_target_reference("vendor::host:codex")
         .unwrap();
     assert_eq!(model.model().unwrap().model().as_str(), "host:codex");
 }

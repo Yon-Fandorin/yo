@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::*;
-use crate::{AccountId, ModelId, ModelSelection, ProviderId};
+use crate::{AccountId, ModelId, ModelSelection, ProviderId, VersionedProfileId};
 
 struct TestDirectory(PathBuf);
 
@@ -45,8 +45,8 @@ fn model_target(model: &str) -> StartupTarget {
     ))
 }
 
-fn managed_account() -> ManagedConnectionAccount {
-    ManagedConnectionAccount::new(
+fn stored_account() -> ConnectionAccount {
+    ConnectionAccount::new(
         ProviderId::new("qwencloud").unwrap(),
         AccountId::new("default").unwrap(),
         Some("QwenCloud".to_owned()),
@@ -55,19 +55,19 @@ fn managed_account() -> ManagedConnectionAccount {
     .unwrap()
 }
 
-fn managed_binding(model: &str, effort: &str) -> ManagedConnectionBinding {
+fn stored_binding(model: &str, effort: &str) -> StoredModelBinding {
     let durable = format!(
         r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
     );
-    ManagedConnectionBinding::new(
+    StoredModelBinding::new(
         crate::CompleteModelBinding::from_durable_json(&durable).unwrap(),
         Some(format!("Model {model}")),
     )
     .unwrap()
 }
 
-fn managed_kimi_binding() -> ManagedConnectionBinding {
-    ManagedConnectionBinding::new(
+fn stored_kimi_binding() -> StoredModelBinding {
+    StoredModelBinding::new(
         crate::CompleteModelBinding::from_durable_json(
             r#"{"provider":"kimi","account":"team","model":"kimi-k3","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
         )
@@ -77,8 +77,8 @@ fn managed_kimi_binding() -> ManagedConnectionBinding {
     .unwrap()
 }
 
-fn managed_kimi_account() -> ManagedConnectionAccount {
-    ManagedConnectionAccount::new(
+fn stored_kimi_account() -> ConnectionAccount {
+    ConnectionAccount::new(
         ProviderId::new("kimi").unwrap(),
         AccountId::new("team").unwrap(),
         Some("Kimi".to_owned()),
@@ -234,11 +234,11 @@ fn insecure_existing_snapshot_is_rejected() {
     ));
 }
 
-// 닫힌 managed schema와 맞지 않는 opaque binding/account는 typed state로 오인하지 않고
+// 닫힌 stored schema와 맞지 않는 opaque binding/account는 typed state로 오인하지 않고
 // capture 단계에서 실패해 기존 상태를 바꾸지 않습니다.
 #[test]
-fn malformed_managed_bindings_and_accounts_fail_closed() {
-    let (_directory, repository) = repository("unsupported-managed-state");
+fn malformed_models_and_accounts_fail_closed() {
+    let (_directory, repository) = repository("unsupported-stored-state");
     fs::create_dir_all(repository.path().parent().unwrap()).unwrap();
     fs::write(
         repository.path(),
@@ -287,7 +287,7 @@ fn nested_version_field_is_invalid_connection_state() {
     let mutation = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
         .unwrap()
         .unwrap();
     repository.commit(&mutation).unwrap();
@@ -304,15 +304,15 @@ fn nested_version_field_is_invalid_connection_state() {
     assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
 }
 
-// 첫 managed upsert는 account와 complete binding을 readable typed YAML로 함께 게시하고,
+// 첫 stored upsert는 account와 complete binding을 readable typed YAML로 함께 게시하고,
 // 첫 성공 preference를 같은 CAS에 포함하며 exact retry 뒤에도 typed 값이 보존됩니다.
 #[test]
-fn managed_upsert_round_trips_complete_state_and_first_preference() {
-    let (_directory, repository) = repository("managed-upsert");
+fn stored_upsert_round_trips_complete_state_and_first_preference() {
+    let (_directory, repository) = repository("stored-upsert");
     let mutation = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
         .unwrap()
         .unwrap();
 
@@ -326,11 +326,8 @@ fn managed_upsert_round_trips_complete_state_and_first_preference() {
     );
     let captured = repository.capture().unwrap();
 
-    assert_eq!(captured.managed_accounts(), &[managed_account()]);
-    assert_eq!(
-        captured.managed_bindings(),
-        &[managed_binding("model-a", "medium")]
-    );
+    assert_eq!(captured.accounts(), &[stored_account()]);
+    assert_eq!(captured.models(), &[stored_binding("model-a", "medium")]);
     assert_eq!(captured.preference(), Some(&model_target("model-a")));
     let encoded = fs::read_to_string(repository.path()).unwrap();
     assert!(!encoded.contains("version:"));
@@ -348,7 +345,7 @@ fn durable_profile_rejects_connection_verification_field() {
     let mutation = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
         .unwrap()
         .unwrap();
     repository.commit(&mutation).unwrap();
@@ -375,7 +372,7 @@ fn durable_profile_whole_field_null_is_rejected() {
     let mutation = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
         .unwrap()
         .unwrap();
     repository.commit(&mutation).unwrap();
@@ -397,15 +394,59 @@ fn durable_profile_whole_field_null_is_rejected() {
     assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
 }
 
+// Optional durable fields distinguish omission from an explicitly authored null. Null is never
+// accepted as an alias for "not present" at the connections.yaml boundary.
+#[test]
+fn durable_optional_whole_field_nulls_are_rejected() {
+    let replacements = [
+        (
+            "provider_display_name: QwenCloud",
+            "provider_display_name: null",
+        ),
+        (
+            "account_display_name: Default",
+            "account_display_name: null",
+        ),
+        (
+            "model_display_name: Model model-a",
+            "model_display_name: null",
+        ),
+        (
+            "preference:\n  kind: model\n  provider: qwencloud\n  account: default\n  model: model-a",
+            "preference: null",
+        ),
+    ];
+    for (index, (needle, replacement)) in replacements.into_iter().enumerate() {
+        let (_directory, repository) = repository(&format!("optional-null-{index}"));
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        let encoded = fs::read_to_string(repository.path()).unwrap();
+        let malformed = encoded.replace(needle, replacement);
+        assert_ne!(malformed, encoded, "fixture must replace {needle}");
+        fs::write(repository.path(), &malformed).unwrap();
+
+        assert!(matches!(
+            repository.capture(),
+            Err(ConnectionRepositoryError::InvalidContents(_))
+        ));
+        assert_eq!(fs::read_to_string(repository.path()).unwrap(), malformed);
+    }
+}
+
 // connections.yaml reader는 명시적 semantic-only도 호환 입력으로 읽지만 producer는 계속
 // 생략하고, null·unknown·duplicate는 private profile이나 omission으로 축약하지 않습니다.
 #[test]
-fn managed_replay_profile_is_presence_aware_and_closed() {
-    let (_directory, semantic_repository) = repository("managed-explicit-semantic-replay-profile");
+fn stored_replay_profile_is_presence_aware_and_closed() {
+    let (_directory, semantic_repository) = repository("stored-explicit-semantic-replay-profile");
     let mutation = semantic_repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_kimi_account(), managed_kimi_binding())
+        .prepare_model_upsert(stored_kimi_account(), stored_kimi_binding())
         .unwrap()
         .unwrap();
     semantic_repository.commit(&mutation).unwrap();
@@ -420,7 +461,7 @@ fn managed_replay_profile_is_presence_aware_and_closed() {
     .unwrap();
     let explicit_semantic = semantic_repository.capture().unwrap();
     assert_eq!(
-        explicit_semantic.managed_bindings()[0]
+        explicit_semantic.models()[0]
             .complete()
             .profile()
             .replay_profile()
@@ -436,11 +477,11 @@ fn managed_replay_profile_is_presence_aware_and_closed() {
             "      replay_profile: kimi-private-local-plaintext/v1"
         ),
     ] {
-        let (_directory, repository) = repository("managed-replay-profile");
+        let (_directory, repository) = repository("stored-replay-profile");
         let mutation = repository
             .capture()
             .unwrap()
-            .prepare_managed_upsert(managed_kimi_account(), managed_kimi_binding())
+            .prepare_model_upsert(stored_kimi_account(), stored_kimi_binding())
             .unwrap()
             .unwrap();
         repository.commit(&mutation).unwrap();
@@ -464,9 +505,9 @@ fn managed_replay_profile_is_presence_aware_and_closed() {
 // connections.yaml은 Kimi private replay 동의를 readable profile field로 보존하지만
 // 비밀이나 provider-private Session payload 자체는 섞지 않고 capture에서 같은 타입을 복원합니다.
 #[test]
-fn managed_kimi_binding_round_trips_the_private_replay_authorization_only() {
-    let (_directory, repository) = repository("managed-kimi-private-replay");
-    let account = ManagedConnectionAccount::new(
+fn stored_kimi_binding_round_trips_the_private_replay_authorization_only() {
+    let (_directory, repository) = repository("stored-kimi-private-replay");
+    let account = ConnectionAccount::new(
         ProviderId::new("kimi").unwrap(),
         AccountId::new("team").unwrap(),
         Some("Kimi".to_owned()),
@@ -476,7 +517,7 @@ fn managed_kimi_binding_round_trips_the_private_replay_authorization_only() {
     let mutation = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(account, managed_kimi_binding())
+        .prepare_model_upsert(account, stored_kimi_binding())
         .unwrap()
         .unwrap();
     repository.commit(&mutation).unwrap();
@@ -486,50 +527,119 @@ fn managed_kimi_binding_round_trips_the_private_replay_authorization_only() {
     assert!(!encoded.contains("reasoning_content"));
     assert!(!encoded.contains("candidate"));
     assert_eq!(
-        repository.capture().unwrap().managed_bindings(),
-        &[managed_kimi_binding()]
+        repository.capture().unwrap().models(),
+        &[stored_kimi_binding()]
     );
 }
 
 // credential rotation은 public binding이 byte-for-byte 같아도 새 planned revision을 만들어
 // journal recovery가 credential-first 절단점 뒤 exact public winner를 식별할 수 있습니다.
 #[test]
-fn managed_connect_forces_a_new_public_revision_for_equal_state() {
-    let (_directory, repository) = repository("managed-connect-epoch");
+fn stored_connect_forces_a_new_public_revision_for_equal_state() {
+    let (_directory, repository) = repository("stored-connect-epoch");
     let first = repository
         .capture()
         .unwrap()
-        .prepare_managed_connect(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_connect(stored_account(), stored_binding("model-a", "medium"))
         .unwrap();
     repository.commit(&first).unwrap();
     let captured = repository.capture().unwrap();
 
     let rotation = captured
-        .prepare_managed_connect(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_connect(stored_account(), stored_binding("model-a", "medium"))
         .unwrap();
 
     assert_ne!(rotation.expected_revision(), rotation.planned_revision());
     assert_eq!(rotation.expected_revision(), captured.revision());
     repository.commit(&rotation).unwrap();
+    assert_eq!(repository.capture().unwrap().models(), captured.models());
+}
+
+// Catalog seed도 model definition과 같은 repository revision에 저장되며, producer는 account
+// 표시 이름을 catalog row에 중복 쓰지 않고 durable account 한 곳에서만 복원합니다.
+#[test]
+fn catalog_only_group_round_trips_as_one_stored_definition() {
+    let (_directory, repository) = repository("catalog-group");
+    let account = stored_account();
+    let seed = ConnectionCatalogSeed::built_in(
+        VersionedProfileId::new("qwencloud-token-plan-team-intl/v1").unwrap(),
+        account.provider_id().clone(),
+        account.account_id().clone(),
+        account.provider_display_name().map(str::to_owned),
+        account.account_display_name().map(str::to_owned),
+    )
+    .unwrap();
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_group_replace(account, Vec::new(), Some(seed.clone()))
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+
+    let snapshot = repository.capture().unwrap();
+    assert_eq!(snapshot.catalog_seeds(), &[seed]);
+    assert!(snapshot.models().is_empty());
+    assert!(snapshot.preference().is_none());
     assert_eq!(
-        repository.capture().unwrap().managed_bindings(),
-        captured.managed_bindings()
+        snapshot
+            .qwencloud_catalog_seed(
+                &ProviderId::new("qwencloud").unwrap(),
+                &AccountId::new("default").unwrap(),
+            )
+            .unwrap()
+            .unwrap()
+            .models()
+            .len(),
+        18
     );
+    let raw = std::fs::read_to_string(repository.path()).unwrap();
+    assert!(raw.contains("kind: built_in"));
+    assert_eq!(raw.matches("provider_display_name:").count(), 1);
+    assert_eq!(raw.matches("account_display_name:").count(), 1);
+}
+
+// Group replacement은 같은 pair의 목록을 merge하지 않고 통째로 바꾸며, 제거된 exact
+// ModelTarget preference도 같은 public CAS에서 함께 지웁니다.
+#[test]
+fn group_replace_removes_omitted_models_and_their_preference() {
+    let (_directory, repository) = repository("whole-group-replace");
+    let first = repository
+        .capture()
+        .unwrap()
+        .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
+        .unwrap()
+        .unwrap();
+    repository.commit(&first).unwrap();
+    let replacement = repository
+        .capture()
+        .unwrap()
+        .prepare_group_replace(
+            stored_account(),
+            vec![stored_binding("model-b", "medium")],
+            None,
+        )
+        .unwrap();
+    repository.commit(&replacement).unwrap();
+
+    let snapshot = repository.capture().unwrap();
+    assert!(snapshot.preference().is_none());
+    assert_eq!(snapshot.models().len(), 1);
+    assert_eq!(snapshot.models()[0].selection().model().as_str(), "model-b");
 }
 
 // 같은 account에 model을 추가하거나 기존 model profile을 교체할 때 unrelated binding과
 // 이미 정해진 preference는 그대로 남고 exact coordinate 하나만 바뀝니다.
 #[test]
-fn managed_upsert_preserves_unrelated_binding_and_existing_preference() {
-    let (_directory, repository) = repository("managed-replace");
+fn stored_upsert_preserves_unrelated_binding_and_existing_preference() {
+    let (_directory, repository) = repository("stored-replace");
     for binding in [
-        managed_binding("model-a", "medium"),
-        managed_binding("model-b", "medium"),
+        stored_binding("model-a", "medium"),
+        stored_binding("model-b", "medium"),
     ] {
         let mutation = repository
             .capture()
             .unwrap()
-            .prepare_managed_upsert(managed_account(), binding)
+            .prepare_model_upsert(stored_account(), binding)
             .unwrap()
             .unwrap();
         repository.commit(&mutation).unwrap();
@@ -537,35 +647,35 @@ fn managed_upsert_preserves_unrelated_binding_and_existing_preference() {
     let replacement = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_account(), managed_binding("model-b", "high"))
+        .prepare_model_upsert(stored_account(), stored_binding("model-b", "high"))
         .unwrap()
         .unwrap();
     repository.commit(&replacement).unwrap();
 
     let captured = repository.capture().unwrap();
     assert_eq!(
-        captured.managed_bindings(),
+        captured.models(),
         &[
-            managed_binding("model-a", "medium"),
-            managed_binding("model-b", "high"),
+            stored_binding("model-a", "medium"),
+            stored_binding("model-b", "high"),
         ]
     );
     assert_eq!(captured.preference(), Some(&model_target("model-a")));
 }
 
-// managed remove는 선택한 binding만 지우고 같은 account의 다른 model이 있으면 account를
+// stored remove는 선택한 binding만 지우고 같은 account의 다른 model이 있으면 account를
 // 보존하며, 마지막 model과 exact matching preference가 사라질 때 둘을 함께 clear합니다.
 #[test]
-fn managed_remove_preserves_shared_account_then_clears_last_account_and_preference() {
-    let (_directory, repository) = repository("managed-remove");
+fn stored_remove_preserves_shared_account_then_clears_last_account_and_preference() {
+    let (_directory, repository) = repository("stored-remove");
     for binding in [
-        managed_binding("model-a", "medium"),
-        managed_binding("model-b", "medium"),
+        stored_binding("model-a", "medium"),
+        stored_binding("model-b", "medium"),
     ] {
         let mutation = repository
             .capture()
             .unwrap()
-            .prepare_managed_upsert(managed_account(), binding)
+            .prepare_model_upsert(stored_account(), binding)
             .unwrap()
             .unwrap();
         repository.commit(&mutation).unwrap();
@@ -574,7 +684,7 @@ fn managed_remove_preserves_shared_account_then_clears_last_account_and_preferen
     let remove_a = repository
         .capture()
         .unwrap()
-        .prepare_managed_remove(match model_target("model-a") {
+        .prepare_model_remove(match model_target("model-a") {
             StartupTarget::Model(ref selection) => selection,
             StartupTarget::HostCodex => unreachable!(),
         })
@@ -582,36 +692,33 @@ fn managed_remove_preserves_shared_account_then_clears_last_account_and_preferen
     repository.commit(&remove_a).unwrap();
     let after_a = repository.capture().unwrap();
     assert!(after_a.preference().is_none());
-    assert_eq!(after_a.managed_accounts(), &[managed_account()]);
-    assert_eq!(
-        after_a.managed_bindings(),
-        &[managed_binding("model-b", "medium")]
-    );
+    assert_eq!(after_a.accounts(), &[stored_account()]);
+    assert_eq!(after_a.models(), &[stored_binding("model-b", "medium")]);
 
     let remove_b = after_a
-        .prepare_managed_remove(match model_target("model-b") {
+        .prepare_model_remove(match model_target("model-b") {
             StartupTarget::Model(ref selection) => selection,
             StartupTarget::HostCodex => unreachable!(),
         })
         .unwrap();
     repository.commit(&remove_b).unwrap();
     let empty = repository.capture().unwrap();
-    assert!(empty.managed_accounts().is_empty());
-    assert!(empty.managed_bindings().is_empty());
+    assert!(empty.accounts().is_empty());
+    assert!(empty.models().is_empty());
 }
 
-// preference-only CAS는 typed managed arrays를 다시 encode할 때도 의미를 바꾸거나 버리지
+// preference-only CAS는 typed stored arrays를 다시 encode할 때도 의미를 바꾸거나 버리지
 // 않아 default 변경이 connection catalog를 손상하지 않습니다.
 #[test]
-fn preference_mutation_preserves_managed_state() {
-    let (_directory, repository) = repository("preference-preserves-managed");
-    let managed = repository
+fn preference_mutation_preserves_stored_state() {
+    let (_directory, repository) = repository("preference-preserves-stored");
+    let stored = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
         .unwrap()
         .unwrap();
-    repository.commit(&managed).unwrap();
+    repository.commit(&stored).unwrap();
     let before = repository.capture().unwrap();
     let preference = before
         .prepare_preference(Some(StartupTarget::HostCodex))
@@ -620,17 +727,17 @@ fn preference_mutation_preserves_managed_state() {
     repository.commit(&preference).unwrap();
 
     let after = repository.capture().unwrap();
-    assert_eq!(after.managed_accounts(), before.managed_accounts());
-    assert_eq!(after.managed_bindings(), before.managed_bindings());
+    assert_eq!(after.accounts(), before.accounts());
+    assert_eq!(after.models(), before.models());
     assert_eq!(after.preference(), Some(&StartupTarget::HostCodex));
 }
 
 // 새 API는 reserved host Provider를 만들 수 없지만 이미 존재하는 durable host coordinate는
 // decoder가 읽어 보존해 이전 공개 상태를 새 binary가 임의로 소실하지 않습니다.
 #[test]
-fn new_host_managed_state_is_forbidden_while_existing_durable_state_remains_readable() {
+fn new_host_stored_state_is_forbidden_while_existing_durable_state_remains_readable() {
     assert!(
-        ManagedConnectionAccount::new(
+        ConnectionAccount::new(
             ProviderId::new("host").unwrap(),
             AccountId::new("default").unwrap(),
             None,
@@ -643,7 +750,7 @@ fn new_host_managed_state_is_forbidden_while_existing_durable_state_remains_read
     let mutation = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
         .unwrap()
         .unwrap();
     repository.commit(&mutation).unwrap();
@@ -653,12 +760,9 @@ fn new_host_managed_state_is_forbidden_while_existing_durable_state_remains_read
     fs::write(repository.path(), encoded).unwrap();
 
     let captured = repository.capture().unwrap();
+    assert_eq!(captured.accounts()[0].provider_id().as_str(), "host");
     assert_eq!(
-        captured.managed_accounts()[0].provider_id().as_str(),
-        "host"
-    );
-    assert_eq!(
-        captured.managed_bindings()[0]
+        captured.models()[0]
             .complete()
             .binding()
             .provider_id()
@@ -667,15 +771,15 @@ fn new_host_managed_state_is_forbidden_while_existing_durable_state_remains_read
     );
 }
 
-// managed YAML도 64-bit 경계의 exact integer/float/String variant를 보존하고, non-finite
+// stored YAML도 64-bit 경계의 exact integer/float/String variant를 보존하고, non-finite
 // overflow는 거절하며 사용자가 명시적으로 quote한 같은 spelling만 String으로 보존합니다.
 #[test]
-fn managed_profile_numbers_pin_range_fallback_and_reject_nonfinite_values() {
-    let (_directory, repository) = repository("managed-profile-number");
+fn stored_profile_numbers_pin_range_fallback_and_reject_nonfinite_values() {
+    let (_directory, repository) = repository("stored-profile-number");
     let mutation = repository
         .capture()
         .unwrap()
-        .prepare_managed_upsert(managed_account(), managed_binding("model-a", "medium"))
+        .prepare_model_upsert(stored_account(), stored_binding("model-a", "medium"))
         .unwrap()
         .unwrap();
     repository.commit(&mutation).unwrap();
@@ -708,7 +812,7 @@ fn managed_profile_numbers_pin_range_fallback_and_reject_nonfinite_values() {
             .capture()
             .unwrap_or_else(|error| panic!("{authored}: {error}"));
         assert_eq!(
-            captured.managed_bindings()[0]
+            captured.models()[0]
                 .complete()
                 .profile()
                 .reasoning_parameters()
@@ -729,7 +833,7 @@ fn managed_profile_numbers_pin_range_fallback_and_reject_nonfinite_values() {
     fs::write(repository.path(), quoted).unwrap();
     let captured = repository.capture().unwrap();
     assert_eq!(
-        captured.managed_bindings()[0]
+        captured.models()[0]
             .complete()
             .profile()
             .reasoning_parameters()

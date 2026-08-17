@@ -41,7 +41,7 @@ ModelContextProfile
   ↓ injected tokenizer profile counts the exact serialized request
 input admission with a reserved output budget
 
-config.yaml sibling credentials.yaml
+credentials.yaml beside the selected config path
   ↓ one no-follow handle; regular file, current owner, 0600-equivalent,
     bounded size, stable metadata
 immutable CredentialStore
@@ -150,8 +150,8 @@ one exact Provider-and-Model account match or one exact complete coordinate.
 Absence and ambiguity fail with stable, sorted canonical complete coordinates.
 
 For a new Session, an explicit invocation target overrides the stored
-`connections.yaml` preference, which overrides operator `model.startup`.
-Omitting one layer preserves the next present layer. When all three are absent,
+`connections.yaml` preference and the policy default, in that order.
+`config.yaml` contributes no model target. When all selectable layers are absent,
 startup fails before Session creation with exact `yo connect` and `yo --model
 host:codex` guidance instead of silently choosing Codex. `yo default TARGET`
 admits and stores one exact HostTarget or configured ModelTarget, while `yo
@@ -187,13 +187,13 @@ ready:
 ```text
 yo-cli
   parse presentation mode, glyph profile, and optional model coordinates; capture cwd
-  capture config.yaml and the non-creating stored preference for a new Session
-  resolve invocation > stored preference > operator startup
-  load the exact Provider/Account credential when a managed model is selected
+  capture config.yaml and one non-creating connections.yaml snapshot for a new Session
+  resolve invocation > stored preference > policy default
+  load the exact Provider/Account credential when a stored model is selected
   install TerminationCoordinator
   open Host identity and Session repository
   normalize workspace and create SessionDescriptor
-  spawn CodexBackend transport or assemble the dialect-derived Yo-managed model backend
+  spawn CodexBackend transport or assemble the dialect-derived native model backend
       ↓
 yo-core AgentSession
   start worker
@@ -557,117 +557,89 @@ session:
     date_format: "%Y-%m-%d %H:%M %:z"
 tui:
   max_fps: 120
-model:
-  startup:
-    provider: qwencloud
-    account: default
-    model: qwen3.8-max
-  bindings:
-    - provider: qwencloud
-      provider_display_name: QwenCloud
-      account: default
-      account_display_name: Default
-      base_url: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-      profile:
-        api_dialect: openai-responses
-        tokenizer_profile: utf8-bytes/v1
-        input_token_limit: 1000000
-        max_output_tokens: 65536
-        reasoning_parameters:
-          effort: medium
-        optional_request_parameters: {}
-        tool_capability_policy: local-tools/v1
-      models:
-        - model: qwen3.8-max
-          model_display_name: Qwen 3.8 Max
-        - model: deepseek-v4-flash-0731
-          model_display_name: DeepSeek V4 Flash
-          profile:
-            api_dialect: openai-chat-completions
-            max_output_tokens: 8192
 ```
 
-For a release-known QwenCloud plan, the same boundary also accepts a local
-catalog seed instead of an operator-authored endpoint, profile, and model
-list:
+`config.yaml` owns only general Session and TUI settings. A top-level `model`
+field is unknown. Model definitions, catalog seeds, and the startup preference
+have one durable owner: `connections.yaml`.
+
+`yo connect --from /absolute/definition.yaml` reads one transient grouped
+definition. Exact `--from -` reads the same shape from standard input. The
+document names one Provider and Account, one endpoint, a required base-profile
+mapping, and 1 to 4,096 models. The mapping may be partial or empty. A model may
+replace any closed profile field as a whole; omitted fields inherit the base
+value, structured mappings are not recursively merged, and every resolved
+model profile must be complete. For example:
 
 ```yaml
-model:
-  bindings:
-    - provider: qwencloud
-      provider_display_name: QwenCloud
-      account: team
-      account_display_name: Coding Team
-      catalog: qwencloud-coding-plan-intl/v1
+provider: example
+provider_display_name: Example
+account: team
+account_display_name: Team
+base_url: https://api.example.test/v1
+profile:
+  api_dialect: openai-responses
+  tokenizer_profile: utf8-bytes/v1
+  input_token_limit: 1000000
+  max_output_tokens: 65536
+  reasoning_parameters:
+    effort: medium
+  optional_request_parameters: {}
+  tool_capability_policy: local-tools/v1
+models:
+  - model: model-a
+    model_display_name: Model A
+  - model: model-b
+    profile:
+      api_dialect: openai-chat-completions
+      max_output_tokens: 8192
 ```
 
-`catalog` is mutually exclusive with `base_url`, `profile`, and `models`.
-The closed initial catalog identifiers are
-`qwencloud-coding-plan-cn/v1`, `qwencloud-coding-plan-intl/v1`, and
-`qwencloud-token-plan-team-intl/v1`; each fixes its official plan endpoint.
-They expand only into connect candidates, not startup-routable manual
-bindings. The table is a release-known capability snapshot, not proof that an
-Account is subscribed or entitled. It retains unsupported rows with a stable
-reason instead of hiding them, and uses a conservative 8,192-token Yo output
-cap for selectable text-agent rows. Updating Yo does not rewrite a previously
-managed complete binding.
+The import replaces that Provider-and-Account group atomically; omitted old
+models are removed. It never chooses a default. An existing preference is
+preserved unless it names a model removed by the replacement. One preview, one
+confirmation, and one credential capture cover the whole group. The preview
+compares the complete account metadata and exact catalog or discovery seed,
+names added, changed, and removed models, and warns that saved Sessions using a
+changed or removed complete binding may not resume until that exact binding is
+restored. The non-interactive form requires either `--from PATH` with an
+absolute `PATH` or exact `--from -`, plus an absolute `--credential-file PATH`
+and `--yes`; neither YAML document may contain the secret.
 
-Kimi uses the same compact seed shape with one explicit product-specific
-authenticated discovery profile:
+A release-known QwenCloud or Kimi catalog uses `catalog` instead of
+`base_url`, `profile`, and `models`:
 
 ```yaml
-model:
-  bindings:
-    - provider: kimi
-      provider_display_name: Kimi
-      account: team
-      account_display_name: Team
-      catalog: kimi-platform-ai/v1
-    - provider: kimi
-      provider_display_name: Kimi Code
-      account: coding
-      account_display_name: Coding Membership
-      catalog: kimi-code-membership/v1
+provider: qwencloud
+provider_display_name: QwenCloud
+account: team
+account_display_name: Coding Team
+catalog: qwencloud-coding-plan-intl/v1
 ```
 
-The Platform profile fixes `https://api.moonshot.ai/v1/`; the Code Membership
-profile fixes `https://api.kimi.com/coding/v1/`. Neither creates a
-startup-routable model before discovery, and one product's inventory never
-authorizes the other's endpoint or request envelope. A managed K3 or reviewed
-K2.7 coding binding records the explicit
-`kimi-private-local-plaintext/v1` replay profile; Platform K2.6 records
-semantic-only replay through the compatible field omission. Manual K3/K2.7
-bindings must author the private replay profile explicitly, so ModelId or
-connector selection cannot manufacture consent.
+The closed QwenCloud identifiers are `qwencloud-coding-plan-cn/v1`,
+`qwencloud-coding-plan-intl/v1`, and
+`qwencloud-token-plan-team-intl/v1`. Kimi accepts
+`kimi-platform-ai/v1` and `kimi-code-membership/v1`. A stored seed creates
+connect candidates, not a startup-routable binding. Selecting one candidate
+stores its complete profile, including explicit private-replay consent where
+required; catalog identity or ModelId alone cannot manufacture that consent.
+
+OpenRouter discovery uses the explicit shape but omits `models`; it is the only
+Provider allowed to do so. Its stored seed supplies the endpoint and base
+profile for the bounded authenticated picker.
 
 The date syntax is strftime-compatible and both UPDATED and STARTED are shown
 in the viewing machine's local timezone. `tui.max_fps` accepts numeric `60` or
 `120`; live startup reads it once and applies it to retained TUI generations.
-Runtime reload is not supported. Operator `model.startup` accepts either exact
-scalar `host:codex` or a `provider`, `account`, and `model` mapping that names
-one catalog entry. Each `model.bindings` item owns one Provider-and-Account
-endpoint and an optional base profile. A model inherits every base field and
-replaces only fields present in its own `profile`; a structured field is one
-whole replacement rather than a recursive merge. The resolved result must
-contain all eight profile fields. Omitting a model profile field inherits the
-base value; `{}` explicitly replaces a structured field with an empty mapping;
-a whole-field YAML null fails, while null below a present structured mapping
-remains a structured null value. Duplicate Provider-and-Account blocks,
-unknown fields, duplicate structured keys, and incomplete results fail. Plain
-YAML 1.1 `y`/`yes`/`true`/`on` and `n`/`no`/`false`/`off` spellings are
+Runtime reload is not supported. Whole-field YAML null, unknown or duplicate
+fields, duplicate ModelIds, incomplete profiles, and a relative `--from` path
+fail before credential capture or mutation. `{}` is an explicit empty
+structured replacement; nested null remains a structured value. Plain YAML 1.1
+`y`/`yes`/`true`/`on` and `n`/`no`/`false`/`off` spellings are
 case-insensitive booleans, and `1_000` is integer `1000`; quoted forms remain
-strings. Startup and native resume use the same closed durable complete-binding
-decoder, so scalar variants cannot change at a later boundary.
-
-The earlier flat `model.catalog` list remains readable in the current shape and
-keeps its existing `yo.model-binding/v1` durable identity. It cannot appear in
-the same document as `model.bindings`. A new explicit profile is attributed as
-`yo.complete-model-binding/v1`; changing the endpoint, derived connector, or
-any resolved profile field requires a new binding epoch on resume instead of
-silently reusing the old one. Missing configuration retains built-in Session/TUI settings
-but supplies no startup target, so live startup gives setup guidance instead of
-silently selecting Codex. The YAML above is an operator-owned native model
-example rather than an implicit model default.
+strings. The producer persists complete profiles so startup and native resume
+do not repeat authored inheritance.
 Unreadable files, retired fields, unknown fields, oversized files,
 invalid date formats, and unsupported frame rates are explicit failures rather than silent
 fallbacks. The reader opens one no-follow nonblocking descriptor, requires it to be a
@@ -754,23 +726,23 @@ removal passes no candidate, while preserve never calls the credential mutation 
 Repository and journal failures retain the safe operation kind, action, and
 phase without projecting a private credential revision. External connect now
 uses this same held session for preparation and commit. External disconnect
-uses it to bind one selected managed target to the same Provider-and-Account
+uses it to bind one selected stored target to the same Provider-and-Account
 credential action and commits the public removal before any credential removal.
 
-`yo connect qwencloud:Account` resolves that Account's configured QwenCloud
-catalog locally and opens the same controlling-TTY picker before reading a
+`yo connect qwencloud:Account` resolves that Account's stored QwenCloud
+catalog seed from `connections.yaml` and opens the same controlling-TTY picker before reading a
 credential. Every release-known row remains visible; a row unsupported by
 Yo is disabled with its reason. Cancellation or disabled selection performs
 no credential read and creates no intent or repository mutation. An exact
 `yo connect qwencloud:Account:Model` bypasses the picker, while a Model outside
-the selected closed catalog fails with guidance to author an explicit manual
-binding. There is no remote model-list request: after one selectable row is
+the selected closed catalog fails with guidance to replace the stored definition
+through `yo connect --from`. There is no remote model-list request: after one selectable row is
 chosen, structural binding admission, preview, credential capture, journal,
 and commit path remains authoritative. Registration itself sends no model
 request and does not claim that the account can use the selected row.
 
 `yo connect kimi:Account` reads one candidate key and fetches one bounded
-authenticated `GET models` snapshot from the configured Kimi product endpoint,
+authenticated `GET models` snapshot from the stored Kimi product seed,
 then passes the normalized typed rows to the same picker. The first valid exact
 ModelId wins; more than 4,096 rows reject the whole snapshot. Platform admits
 only its reviewed K3, K2.7 Code, K2.7 Code Highspeed, and K2.6 envelopes. Code
@@ -779,7 +751,7 @@ Membership admits exact `k3`, `k3-256k`, `kimi-for-coding`, and
 and future rows stay visible with a stable disabled reason instead of being
 hidden. Each row becomes selectable only when its remote context and reasoning
 evidence stay inside that product's reviewed envelope. Before a K3/K2.7
-managed binding is published, the compact preview states that bounded Kimi
+stored binding is published, the compact preview states that bounded Kimi
 assistant state will be retained unencrypted in current-user local Session
 records.
 
@@ -803,8 +775,8 @@ replay the private item, and an incomplete or failed round creates no private
 Continuation Anchor.
 
 `yo connect openrouter:Account` is an interactive discovery target only when
-that exact configured binding has a normalized endpoint and complete base
-profile. After recovery and snapshot capture, Yo reads one no-echo candidate
+that exact stored seed has a normalized endpoint and complete base profile.
+After recovery and snapshot capture, Yo reads one no-echo candidate
 key and issues an authenticated `GET` to the endpoint prefix plus
 `/models/user`. The request has bounded same-origin redirects and separate
 connect, per-attempt response-header, body-inactivity, and absolute deadlines;
@@ -827,16 +799,13 @@ the same in-memory key used for discovery is retained for publication after
 final structural admission. Two-part discovery rejects `--credential-file`
 and `--yes`.
 
-`yo connect Provider:Account:Model` accepts one exact configured reference. It
-forms the prospective post-mutation set from every complete manual binding,
-each unaffected managed sibling for that Provider and Account, and the
-prospective selected binding. The managed binding displaced at the selected
-coordinate is excluded from admission and registration accounting; verbose
-preview may retain it only to compare the old and new profiles. A retained
-incomplete binding fails before prompting because its full behavior cannot be
-admitted.
-The prospective managed upsert must also compose with the complete manual
-catalog and pass startup-policy admission before any secret is read. Yo
+`yo connect Provider:Account:Model` accepts one exact reference from the
+captured stored definitions or a reviewed stored catalog seed. It forms the
+prospective post-mutation set from every stored sibling for that Provider and
+Account plus the selected complete binding. The old binding at the selected
+coordinate is excluded from registration accounting; verbose preview may retain
+it only to compare old and new profiles. The prospective stored upsert must pass
+startup-policy admission before any secret is read. Yo
 requires confirmation, then reads one bounded API key only from the controlling
 TTY with echo disabled and exact terminal settings
 restored. If explicit restoration reports an error, the retained guard retries
@@ -880,40 +849,38 @@ wrapping; an unavailable width uses an 80-column fallback.
 The command does not use the candidate key for a model request. After
 confirmation it revalidates the captured config, publishes a
 secret-free intent, commits the exact add or replacement credential, advances
-the journal, publishes the exact managed public snapshot, advances to complete,
+the journal, publishes the exact stored public snapshot, advances to complete,
 and clears the journal. Authentication, entitlement, and request acceptance are
 learned only from ordinary model use. A crash after credential commit resumes
 only the stored public bytes and never reconstructs or exercises a secret.
 
-`yo disconnect` interactively infers a unique managed target or asks for one
+`yo disconnect` interactively infers a unique stored target or asks for one
 exact captured `Provider:Account:Model` reference. Automatic execution requires
 `yo disconnect PROVIDER --account ACCOUNT --yes` and proceeds only when that
-pair has exactly one managed target; `--yes` never guesses among multiple
-models. A manual-only match directs the operator to edit `config.yaml` because
-the command removes only managed provenance. Before confirmation, Yo composes
-the prospective managed removal with the captured manual catalog. The compact
-default preview uses the same semantic plan markers for the managed removal,
+pair has exactly one stored model; `--yes` never guesses among multiple
+models. Before confirmation, Yo derives the prospective stored removal from
+the same captured snapshot. The compact default preview uses the same semantic
+plan markers for the stored removal,
 default and API-key changes, and new- versus saved-Session effects. Its API-key
 row names every remaining Model ID that still depends on that key within the
 already named Provider-and-Account context, using the same reversible quoting
 for an ambiguous ID. `-v` or
-`--verbose` also shows the exact removed complete binding, provenance
-transition, and remaining bindings for the pair. The preview resolves the prospective
+`--verbose` also shows the exact removed complete binding, source, and remaining
+bindings for the pair. The preview resolves the prospective
 startup layers and names the exact lower-priority target for new Sessions, or
 states that no target remains; it does not infer that behavior from preference
 removal alone. Remaining account models are exact Model IDs in that explicit
-account context, so an equal
-manual binding is visible without repeating the removed profile. The same
+account context without repeating the removed profile. The same
 controlling-TTY width boundary keeps every preview row within the observed width.
-An equal manual binding remains manual and therefore preserves the
-credential. Only an empty post-removal dependent set prepares credential
-removal; an absent credential fails before intent rather than inventing state.
+Any remaining model or catalog seed for the same pair preserves the credential.
+Only an empty post-removal dependent set prepares credential removal; an absent
+credential fails before intent rather than inventing state.
 After confirmation and the final config guard, the command publishes the
 secret-free intent, commits the public removal, advances `public_committed`,
 optionally removes the credential, advances to `complete`, and clears the
 journal. Existing Session history is not deleted, but a Session attributed to
-the removed complete binding may no longer resume natively unless an equal
-manual binding remains or the exact binding is reconnected; the preview states
+the removed complete binding may no longer resume natively unless the exact
+binding is restored; the preview states
 that continuation result separately from stored-history preservation.
 
 Endpoint, model, API dialect, derived connector identity, the resolved profile, and display
@@ -929,10 +896,10 @@ runtime supports an empty reasoning mapping or an `effort` of `none`,
 `optional_request_parameters` and `local-tools/v1`. Other validated profile identifiers remain readable
 configuration but fail startup until their runtime behavior exists.
 
-The public sibling `connections.yaml` is separate from operator-owned
-`config.yaml` and secret `credentials.yaml`. It stores one typed managed account
-list, one flat complete-binding list, and the selection-owned preference. A
-representative snapshot is below (the opaque revision value is illustrative):
+The public sibling `connections.yaml` is separate from general `config.yaml`
+and secret `credentials.yaml`. It is the sole owner of stored accounts, complete
+model profiles, catalog or discovery seeds, and the selection-owned preference.
+A representative snapshot is below (the opaque revision value is illustrative):
 
 ```yaml
 revision: rev-0123456789abcdef0123456789abcdef
@@ -961,38 +928,37 @@ accounts:
     provider_display_name: QwenCloud
     account: default
     account_display_name: Default
+catalogs:
+  - kind: built_in
+    provider: qwencloud
+    account: default
+    catalog: qwencloud-token-plan-team-intl/v1
 ```
 
 An absent file is the canonical unset snapshot and is read without creating a
 directory. Capture rejects unknown fields, duplicate account or binding
 coordinates, bindings without their account, inconsistent Provider display
 metadata, invalid complete bindings, and out-of-range unquoted structured-profile
-numbers. The same shared scalar inference protects manual and managed YAML;
-whole-field structured null fails in both, while nested null and quoted
-numeric-looking strings retain their exact variants.
+numbers. Whole-field null is rejected even for optional fields; nested null and
+quoted numeric-looking strings retain their exact structured variants.
 
-Managed upsert adds or replaces one exact complete coordinate, preserves every
-unrelated entry, and publishes the first ModelTarget preference only from an
-unset capture. Managed removal removes one exact binding, drops its account only
-when no managed sibling still uses that pair, and clears only an exact matching
-ModelTarget preference. Preference-only preparation preserves both managed
-arrays byte-semantically. All mutations reserve one new opaque revision and use
-the existing old-or-exact-new CAS. An absent first write uses same-directory
-exclusive publication; later writes use durable atomic replacement. Exact
-planned revision and bytes are idempotent success, while another revision is a
-conflict.
-Credential-changing managed connect reserves a new public revision even when
-the visible binding bytes are otherwise equal, giving recovery an exact public
-epoch for a key rotation without changing unrelated state or an existing
-preference.
+An exact-target connect adds or replaces one complete model and preserves its
+stored siblings. A grouped import replaces one entire Provider-and-Account
+definition, including its catalog seed, in one revision. Stored removal removes
+one exact model, retains the account and credential while a sibling or seed
+still uses the pair, and clears only an exact matching ModelTarget preference.
+Preference-only preparation preserves every stored definition. All mutations
+reserve one new opaque revision and use the existing old-or-exact-new CAS. An
+absent first write uses same-directory exclusive publication; later writes use
+durable atomic replacement. Exact planned revision and bytes are idempotent
+success, while another revision is a conflict. Credential-changing connect or
+import reserves a new public revision even when the visible definition is
+otherwise equal, giving recovery an exact public epoch for key rotation.
 
-Every live startup captures `config.yaml` and `connections.yaml`, then composes
-manual and managed entries by complete-binding equality. Equal entries coalesce
-while retaining `manual-and-managed` provenance; manual display metadata wins
-and managed display fills omissions. A field difference at the same Provider,
-Account, and Model returns `BindingConflict` with the non-secret differing field
-names instead of selecting a source. The composed catalog supplies initial
-selection, resume matching, and the live model picker.
+Every live startup captures `config.yaml` and one `connections.yaml` snapshot.
+The snapshot directly supplies the model catalog and preference; there is no
+manual/stored composition or provenance conflict path. Startup, resume matching,
+and the live model picker use the same complete stored profiles.
 
 `yo default TARGET`, `yo default --unset`, explicit `yo connect host:codex`,
 external model connect, and external model disconnect use one nonblocking
@@ -1001,7 +967,7 @@ new command configuration. The
 preference-only commands publish one public CAS after target admission or Local
 Codex verification plus the final configuration guard; they do not create a new
 operation journal or inspect credential revisions, and re-encoding preserves
-managed entries. External connect and disconnect use their operation-specific
+stored definitions. External connect, import, and disconnect use their operation-specific
 journaled sequences above. Free-form Provider onboarding remains unimplemented
 rather than borrowing a weaker path.
 

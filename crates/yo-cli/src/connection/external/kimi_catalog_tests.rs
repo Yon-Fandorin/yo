@@ -35,7 +35,8 @@ impl ExternalConnectInput for KimiInput {
 fn kimi_discovery_selection_reaches_preview_and_publication_unchanged() {
     let root = test_root("success");
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, kimi_config()).unwrap();
+    std::fs::write(&config_path, "session: {}\n").unwrap();
+    seed_stored_definition(&root, kimi_definition());
     let selected = kimi_k3_entry();
     let selected_for_discovery = selected.clone();
     let mut input = KimiInput {
@@ -89,7 +90,8 @@ fn kimi_discovery_selection_reaches_preview_and_publication_unchanged() {
 fn kimi_code_selection_preserves_product_endpoint_and_private_consent() {
     let root = test_root("code-success");
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, kimi_code_config()).unwrap();
+    std::fs::write(&config_path, "session: {}\n").unwrap();
+    seed_stored_definition(&root, kimi_code_definition());
     let selected = kimi_code_entry();
     let selected_for_discovery = selected.clone();
     let mut input = KimiInput {
@@ -130,6 +132,7 @@ fn kimi_code_selection_preserves_product_endpoint_and_private_consent() {
 
 fn command() -> ConnectCommand {
     ConnectCommand {
+        from: None,
         target: "kimi:team".to_owned(),
         verbose: false,
         credential_file: None,
@@ -167,27 +170,23 @@ fn kimi_code_entry() -> ModelCatalogEntry {
     .unwrap()
 }
 
-fn kimi_config() -> &'static str {
+fn kimi_definition() -> &'static str {
     r#"
-model:
-  bindings:
-    - provider: kimi
-      provider_display_name: Kimi
-      account: team
-      account_display_name: Team
-      catalog: kimi-platform-ai/v1
+provider: kimi
+provider_display_name: Kimi
+account: team
+account_display_name: Team
+catalog: kimi-platform-ai/v1
 "#
 }
 
-fn kimi_code_config() -> &'static str {
+fn kimi_code_definition() -> &'static str {
     r#"
-model:
-  bindings:
-    - provider: kimi
-      provider_display_name: Kimi
-      account: team
-      account_display_name: Team
-      catalog: kimi-code-membership/v1
+provider: kimi
+provider_display_name: Kimi
+account: team
+account_display_name: Team
+catalog: kimi-code-membership/v1
 "#
 }
 

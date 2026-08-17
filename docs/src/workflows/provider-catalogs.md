@@ -28,7 +28,7 @@ source can prove.
 |---|---|---|
 | An authenticated API returns the account's usable inventory and enough typed metadata | Runtime discovery | The response still needs bounded parsing, normalization, and fail-closed availability decisions |
 | Official plan documentation publishes an exact allowlist, but no reliable account-scoped inventory API exists | Release-known static registry | Membership describes the plan, not whether this credential is currently entitled |
-| Neither source can establish a safe complete binding | Explicit manual binding only | Do not infer endpoint, limits, tools, or entitlement from a marketing name |
+| Neither source can establish a safe complete binding | Explicit grouped definition imported through `yo connect --from` | Do not infer endpoint, limits, tools, or entitlement from a marketing name |
 
 If the source category, authentication point, or entitlement meaning changes,
 that is a behavioral design change. Update and activate the owning Methexis
@@ -49,7 +49,7 @@ profile can remain an ordinary implementation Slice.
    endpoint and connector plus the resolved model profile; a display label is
    not evidence for runtime behavior.
 5. Preserve durable state. Removing a row from the current catalog must not
-   rewrite or delete a previously stored managed binding. It only stops that
+   rewrite or delete a previously stored binding. It only stops that
    row from being offered for a new catalog connection.
 6. Keep unavailable but valid inventory visible with a reason when the
    accepted UX requires it. Do not silently hide rows with a Provider-specific
@@ -70,7 +70,7 @@ documentation row as one trusted blob:
 | Modalities | Explicit input and output modalities |
 | Agent use | Tool-call support and reasoning presentation |
 | Capacity | Positive context and output limits with their exact meaning |
-| Runtime policy | Tokenizer, structured parameters, tool policy, and verification profile |
+| Runtime policy | Tokenizer, structured parameters, tool policy, and replay profile |
 | Availability | A typed enabled or disabled result with a user-readable reason |
 
 Reject duplicate or invalid identifiers, incomplete required metadata, unsafe

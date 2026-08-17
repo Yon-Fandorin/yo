@@ -145,7 +145,7 @@ fn stale_add_preserves_the_concurrent_winner() {
 }
 
 // revision 없는 현재 pre-version 파일의 exact pair를 replace하면 기존 account는 보존되고
-// 새 private revision이 추가되어 다음 재시작부터 managed CAS snapshot이 되는지 검증합니다.
+// 새 private revision이 추가되어 다음 재시작부터 stored CAS snapshot이 되는지 검증합니다.
 #[test]
 fn replacing_one_pair_materializes_a_revision_for_the_current_snapshot() {
     let (directory, repository) = repository("revisionless-replace");

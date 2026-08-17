@@ -1,6 +1,6 @@
 use std::{ffi::OsString, path::PathBuf};
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use yo_tui::{GlyphProfile, PresentationMode};
 
 #[derive(Clone, Debug, Eq, Parser, PartialEq)]
@@ -45,7 +45,7 @@ enum CliCommand {
     /// Connect one service target.
     Connect(ConnectArguments),
 
-    /// Remove one Yo-managed external model connection.
+    /// Remove one stored external model connection.
     Disconnect(DisconnectArguments),
 
     /// Show or change the stored startup default.
@@ -56,10 +56,20 @@ enum CliCommand {
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
+#[command(group(
+    ArgGroup::new("connection_source")
+        .required(true)
+        .multiple(false)
+        .args(["target", "from"])
+))]
 struct ConnectArguments {
     /// Exact target to connect.
     #[arg(value_name = "TARGET", allow_hyphen_values = true)]
-    target: String,
+    target: Option<String>,
+
+    /// Import one grouped YAML definition from an absolute path, or from stdin with '-'.
+    #[arg(long, value_name = "PATH", allow_hyphen_values = true)]
+    from: Option<PathBuf>,
 
     /// Show the exact connection profile in the confirmation.
     #[arg(short, long)]
@@ -76,7 +86,7 @@ struct ConnectArguments {
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 struct DisconnectArguments {
-    /// Provider whose managed model connection should be removed.
+    /// Provider whose stored model connection should be removed.
     #[arg(value_name = "PROVIDER", allow_hyphen_values = true)]
     provider: Option<String>,
 
@@ -156,6 +166,7 @@ pub(crate) enum Command {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ConnectCommand {
     pub(crate) target: String,
+    pub(crate) from: Option<PathBuf>,
     pub(crate) verbose: bool,
     pub(crate) credential_file: Option<PathBuf>,
     pub(crate) yes: bool,
@@ -195,7 +206,8 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
 
     match cli.command {
         Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {
-            target: arguments.target,
+            target: arguments.target.unwrap_or_default(),
+            from: arguments.from,
             verbose: arguments.verbose,
             credential_file: arguments.credential_file,
             yes: arguments.yes,

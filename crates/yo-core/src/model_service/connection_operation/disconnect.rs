@@ -32,7 +32,7 @@ impl fmt::Display for ExternalDisconnectError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::PublicPreparation(source) => {
-                write!(formatter, "preparing the managed public removal failed: {source}")
+                write!(formatter, "preparing the stored public removal failed: {source}")
             },
             Self::CredentialPreparation(source) => {
                 write!(formatter, "preparing the account credential action failed: {source}")
@@ -106,11 +106,9 @@ impl LocalConnectionOperationSession<'_> {
                 }),
             ));
         }
-        let connection = snapshot
-            .prepare_managed_remove(selection)
-            .map_err(|source| {
-                disconnect_preparation_error(ExternalDisconnectError::PublicPreparation(source))
-            })?;
+        let connection = snapshot.prepare_model_remove(selection).map_err(|source| {
+            disconnect_preparation_error(ExternalDisconnectError::PublicPreparation(source))
+        })?;
         let credential = match action {
             ExternalDisconnectCredentialAction::Preserve => {
                 let snapshot = self.repositories.credentials.capture().map_err(|source| {

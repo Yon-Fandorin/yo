@@ -51,7 +51,7 @@ impl PresentationStyle {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ManagedConnectionChange {
+pub(super) enum StoredConnectionChange {
     Create,
     Update,
     Keep,
@@ -246,28 +246,19 @@ impl From<&CompleteModelBinding> for BindingDetails {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum RemainingBinding {
-    Complete { model: String },
-    Legacy { model: String },
+pub(super) struct RemainingBinding {
+    model: String,
 }
 
 impl RemainingBinding {
-    pub(super) fn complete(selection: ModelSelection) -> Self {
-        Self::Complete {
-            model: selection.model().to_string(),
-        }
-    }
-
-    pub(super) fn legacy(selection: ModelSelection) -> Self {
-        Self::Legacy {
+    pub(super) fn new(selection: ModelSelection) -> Self {
+        Self {
             model: selection.model().to_string(),
         }
     }
 
     pub(super) fn model(&self) -> &str {
-        match self {
-            Self::Complete { model } | Self::Legacy { model } => model,
-        }
+        &self.model
     }
 
     fn render(
@@ -276,21 +267,14 @@ impl RemainingBinding {
         width: usize,
         style: PresentationStyle,
     ) -> Result<(), PresentationError> {
-        match self {
-            Self::Complete { model } => push_bullet(output, model, width, style),
-            Self::Legacy { model } => push_bullet(
-                output,
-                &format!("{model}  ·  manual legacy profile"),
-                width,
-                style,
-            ),
-        }
+        push_bullet(output, &self.model, width, style)
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum Confirmation {
     Connect(Box<ConnectPreview>),
+    Import(Box<ImportPreview>),
     Disconnect(Box<DisconnectPreview>),
 }
 
@@ -307,6 +291,7 @@ impl Confirmation {
     ) -> Result<String, PresentationError> {
         match self {
             Self::Connect(preview) => preview.render(width, style),
+            Self::Import(preview) => preview.render(width, style),
             Self::Disconnect(preview) => preview.render(width, style),
         }
     }
@@ -314,8 +299,239 @@ impl Confirmation {
     pub(super) const fn prompt(&self) -> &'static str {
         match self {
             Self::Connect(_) => "Apply this connection plan? [y/N] ",
+            Self::Import(_) => "Import this connection definition? [y/N] ",
             Self::Disconnect(_) => "Apply this disconnect plan? [y/N] ",
         }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ImportPreview {
+    account: String,
+    added: Vec<String>,
+    changed: Vec<String>,
+    removed: Vec<String>,
+    definition_changed: bool,
+    account_transition: String,
+    account_changed: bool,
+    seed_transition: String,
+    seed_changed: bool,
+    resume_risk: Vec<String>,
+    definition: String,
+    credential_action: CredentialMutationAction,
+    default_after: String,
+    default_changed: bool,
+    bindings: Vec<BindingDetails>,
+    verbose: bool,
+}
+
+impl ImportPreview {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn new(
+        account: String,
+        added: Vec<String>,
+        changed: Vec<String>,
+        removed: Vec<String>,
+        definition_changed: bool,
+        account_transition: String,
+        account_changed: bool,
+        seed_transition: String,
+        seed_changed: bool,
+        resume_risk: Vec<String>,
+        definition: String,
+        credential_action: CredentialMutationAction,
+        default_after: String,
+        default_changed: bool,
+        bindings: Vec<BindingDetails>,
+        verbose: bool,
+    ) -> Self {
+        Self {
+            account,
+            added,
+            changed,
+            removed,
+            definition_changed,
+            account_transition,
+            account_changed,
+            seed_transition,
+            seed_changed,
+            resume_risk,
+            definition,
+            credential_action,
+            default_after,
+            default_changed,
+            bindings,
+            verbose,
+        }
+    }
+
+    fn render(
+        &self,
+        width: NonZeroU16,
+        style: PresentationStyle,
+    ) -> Result<String, PresentationError> {
+        let width = usize::from(width.get());
+        let mut output = String::new();
+        push_title(&mut output, "IMPORT", &self.account, width, style)?;
+        output.push('\n');
+        push_section_heading(
+            &mut output,
+            "Yo will replace this account definition:",
+            width,
+            style,
+        )?;
+        let mut counts = PlanCounts::default();
+        let definition_action = if self.definition_changed {
+            PlanAction::Change
+        } else {
+            PlanAction::Keep
+        };
+        push_change(
+            &mut output,
+            definition_action,
+            "Definition",
+            &self.definition,
+            width,
+            style,
+        )?;
+        counts.record(definition_action);
+        let account_action = if self.account_changed {
+            PlanAction::Change
+        } else {
+            PlanAction::Keep
+        };
+        push_change(
+            &mut output,
+            account_action,
+            "Account metadata",
+            &self.account_transition,
+            width,
+            style,
+        )?;
+        counts.record(account_action);
+        let seed_action = if self.seed_changed {
+            PlanAction::Change
+        } else {
+            PlanAction::Keep
+        };
+        push_change(
+            &mut output,
+            seed_action,
+            "Catalog seed",
+            &self.seed_transition,
+            width,
+            style,
+        )?;
+        counts.record(seed_action);
+        for (action, label, models) in [
+            (PlanAction::Add, "Add models", &self.added),
+            (PlanAction::Change, "Change models", &self.changed),
+            (PlanAction::Remove, "Remove models", &self.removed),
+        ] {
+            if !models.is_empty() {
+                let values = models.iter().map(String::as_str).collect::<Vec<_>>();
+                push_model_list_field(&mut output, label, &values, width, style)?;
+                counts.record(action);
+            }
+        }
+        if self.resume_risk.is_empty() {
+            push_change(
+                &mut output,
+                PlanAction::Keep,
+                "Saved Sessions",
+                "No stored complete binding is changed or removed",
+                width,
+                style,
+            )?;
+            counts.record(PlanAction::Keep);
+        } else {
+            push_change(
+                &mut output,
+                PlanAction::Attention,
+                "Saved Sessions",
+                &format!(
+                    "May not resume until each changed or removed exact binding is restored; history is kept: {}",
+                    self.resume_risk.join(", ")
+                ),
+                width,
+                style,
+            )?;
+        }
+        let (credential_action, credential_detail) = match self.credential_action {
+            CredentialMutationAction::Add => (PlanAction::Add, format!("Save {}", self.account)),
+            CredentialMutationAction::Replace => {
+                (PlanAction::Change, format!("Replace {}", self.account))
+            },
+            CredentialMutationAction::Remove => {
+                return Err(PresentationError::InvalidPlan(
+                    "definition import cannot remove a credential",
+                ));
+            },
+        };
+        push_change(
+            &mut output,
+            credential_action,
+            "API key",
+            &credential_detail,
+            width,
+            style,
+        )?;
+        counts.record(credential_action);
+        let default_action = if self.default_changed {
+            PlanAction::Change
+        } else {
+            PlanAction::Keep
+        };
+        push_change(
+            &mut output,
+            default_action,
+            "Default model",
+            &self.default_after,
+            width,
+            style,
+        )?;
+        counts.record(default_action);
+        if self
+            .bindings
+            .iter()
+            .any(|binding| binding.profile.replay == yo_core::KIMI_PRIVATE_REPLAY_PROFILE)
+        {
+            push_change(
+                &mut output,
+                PlanAction::Add,
+                "Private replay",
+                "Retain bounded Kimi assistant state unencrypted in local current-user Session records",
+                width,
+                style,
+            )?;
+            counts.record(PlanAction::Add);
+        }
+        if self.verbose && !self.bindings.is_empty() {
+            output.push('\n');
+            for (index, group) in group_profiles(&self.bindings).iter().enumerate() {
+                if index > 0 {
+                    output.push('\n');
+                }
+                push_section_heading(
+                    &mut output,
+                    &format!("Imported profile {}", index + 1),
+                    width,
+                    style,
+                )?;
+                push_model_list_field(
+                    &mut output,
+                    &format!("Models ({})", group.models.len()),
+                    &group.models,
+                    width,
+                    style,
+                )?;
+                group.profile.render(&mut output, width, style)?;
+            }
+        }
+        output.push('\n');
+        push_plan_summary(&mut output, &counts, width, style)?;
+        trim_trailing_newline(&mut output);
+        Ok(output)
     }
 }
 
@@ -324,7 +540,7 @@ pub(super) struct ConnectPreview {
     target: String,
     account: String,
     default_after: String,
-    managed_change: ManagedConnectionChange,
+    stored_change: StoredConnectionChange,
     credential_action: CredentialMutationAction,
     default_changed: bool,
     verbose: bool,
@@ -336,7 +552,7 @@ impl ConnectPreview {
         target: String,
         account: String,
         default_after: String,
-        managed_change: ManagedConnectionChange,
+        stored_change: StoredConnectionChange,
         credential_action: CredentialMutationAction,
         default_changed: bool,
         bindings: Vec<BindingDetails>,
@@ -345,7 +561,7 @@ impl ConnectPreview {
             target,
             account,
             default_after,
-            managed_change,
+            stored_change,
             credential_action,
             default_changed,
             verbose: false,
@@ -369,22 +585,22 @@ impl ConnectPreview {
         output.push('\n');
         push_section_heading(&mut output, "Yo will make these changes:", width, style)?;
         let mut counts = PlanCounts::default();
-        let (managed_action, managed_detail) = match self.managed_change {
-            ManagedConnectionChange::Create => (PlanAction::Add, format!("Create {}", self.target)),
-            ManagedConnectionChange::Update => {
+        let (stored_action, stored_detail) = match self.stored_change {
+            StoredConnectionChange::Create => (PlanAction::Add, format!("Create {}", self.target)),
+            StoredConnectionChange::Update => {
                 (PlanAction::Change, format!("Update {}", self.target))
             },
-            ManagedConnectionChange::Keep => (PlanAction::Keep, format!("Keep {}", self.target)),
+            StoredConnectionChange::Keep => (PlanAction::Keep, format!("Keep {}", self.target)),
         };
         push_change(
             &mut output,
-            managed_action,
-            "Managed connection",
-            &managed_detail,
+            stored_action,
+            "Stored connection",
+            &stored_detail,
             width,
             style,
         )?;
-        counts.record(managed_action);
+        counts.record(stored_action);
         let registered_models = self
             .bindings
             .iter()
@@ -485,7 +701,7 @@ impl ConnectPreview {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct DisconnectPreview {
     target: String,
-    managed_source: String,
+    stored_source: String,
     removed: BindingDetails,
     impact: DisconnectImpact,
     remaining: Vec<RemainingBinding>,
@@ -495,7 +711,7 @@ pub(super) struct DisconnectPreview {
 impl DisconnectPreview {
     pub(super) fn new(
         target: String,
-        managed_source: String,
+        stored_source: String,
         removed: BindingDetails,
         impact: DisconnectImpact,
         remaining: Vec<RemainingBinding>,
@@ -503,7 +719,7 @@ impl DisconnectPreview {
     ) -> Self {
         Self {
             target,
-            managed_source,
+            stored_source,
             removed,
             impact,
             remaining,
@@ -525,7 +741,7 @@ impl DisconnectPreview {
         push_change(
             &mut output,
             PlanAction::Remove,
-            "Managed connection",
+            "Stored connection",
             &format!("Remove {}", self.target),
             width,
             style,
@@ -568,7 +784,7 @@ impl DisconnectPreview {
         if self.verbose {
             output.push('\n');
             push_section_heading(&mut output, "Connection being removed", width, style)?;
-            push_detail_field(&mut output, "Source", &self.managed_source, width, style)?;
+            push_detail_field(&mut output, "Source", &self.stored_source, width, style)?;
             self.removed.render(&mut output, width, style)?;
             output.push('\n');
             push_section_heading(
@@ -712,6 +928,21 @@ pub(super) fn connect_success(target: &str, registered: usize, default: &str) ->
     write!(
         output,
         "\n\n  Model       {target}\n  Registered  {registered} model {}\n  Default     {default}\n",
+        plural(registered, "profile", "profiles")
+    )
+    .expect("writing to String cannot fail");
+    output
+}
+
+pub(super) fn import_success(account: &str, registered: usize, default: &str) -> String {
+    let style = PresentationStyle::for_stdout();
+    let mut output = String::new();
+    style.push(&mut output, ANSI_GREEN, "✓");
+    output.push(' ');
+    style.push(&mut output, ANSI_BOLD, "Imported");
+    write!(
+        output,
+        "\n\n  Account     {account}\n  Registered  {registered} model {}\n  Default     {default}\n",
         plural(registered, "profile", "profiles")
     )
     .expect("writing to String cannot fail");
@@ -1088,7 +1319,7 @@ mod tests {
             "vendor:team:alpha".to_owned(),
             "vendor:team".to_owned(),
             "unset  →  vendor:team:alpha".to_owned(),
-            ManagedConnectionChange::Create,
+            StoredConnectionChange::Create,
             CredentialMutationAction::Add,
             true,
             vec![fixture_binding()],
@@ -1096,7 +1327,7 @@ mod tests {
 
         let output = preview.render(width(80)).unwrap();
 
-        assert!(output.contains("Yo will make these changes:\n+ Managed connection"));
+        assert!(output.contains("Yo will make these changes:\n+ Stored connection"));
         assert!(output.contains("+ API key\n  Save vendor:team · register 1 model"));
         assert!(output.contains("  Models          alpha"));
         assert!(output.contains("~ Default model\n  unset  →  vendor:team:alpha"));
@@ -1123,7 +1354,7 @@ mod tests {
                 "vendor:team:alpha".to_owned(),
                 "vendor:team".to_owned(),
                 "unset  →  vendor:team:alpha".to_owned(),
-                ManagedConnectionChange::Create,
+                StoredConnectionChange::Create,
                 CredentialMutationAction::Add,
                 true,
                 vec![fixture_binding()],
@@ -1134,7 +1365,7 @@ mod tests {
         let output = preview.render(width(80)).unwrap();
 
         assert!(output.starts_with("CONNECT  vendor:team:alpha"));
-        assert!(output.contains("Yo will make these changes:\n+ Managed connection"));
+        assert!(output.contains("Yo will make these changes:\n+ Stored connection"));
         assert!(output.contains("+ API key\n  Save vendor:team"));
         assert!(output.contains("Connection profile"));
         assert!(output.contains("  Models (1)      alpha"));
@@ -1178,7 +1409,7 @@ mod tests {
                     "vendor:team:a".to_owned(),
                     "vendor:team".to_owned(),
                     "unset  →  vendor:team:a".to_owned(),
-                    ManagedConnectionChange::Create,
+                    StoredConnectionChange::Create,
                     CredentialMutationAction::Add,
                     true,
                     vec![
@@ -1227,7 +1458,7 @@ mod tests {
                 "vendor:team:alpha".to_owned(),
                 "vendor:team".to_owned(),
                 "unset  →  vendor:team:alpha".to_owned(),
-                ManagedConnectionChange::Create,
+                StoredConnectionChange::Create,
                 CredentialMutationAction::Add,
                 true,
                 vec![binding],
@@ -1256,7 +1487,7 @@ mod tests {
         let removed = fixture_binding();
         let preview = Confirmation::Disconnect(Box::new(DisconnectPreview::new(
             "vendor:team:alpha".to_owned(),
-            "Managed copy removed; equal manual configuration remains".to_owned(),
+            "Stored model removed".to_owned(),
             removed,
             DisconnectImpact::new(
                 DisconnectEffect::change("Clear vendor:team:alpha".to_owned()),
@@ -1267,10 +1498,11 @@ mod tests {
                     "Need another available model because the default will be cleared".to_owned(),
                 ),
                 DisconnectEffect::ready(
-                    "Can resume through the equal manual configuration; history is kept".to_owned(),
+                    "Can resume after this exact stored model is restored; history is kept"
+                        .to_owned(),
                 ),
             ),
-            vec![RemainingBinding::Complete {
+            vec![RemainingBinding {
                 model: "alpha".to_owned(),
             }],
             true,
@@ -1295,7 +1527,7 @@ mod tests {
     fn narrow_disconnect_preview_keeps_every_line_within_width() {
         let preview = Confirmation::Disconnect(Box::new(DisconnectPreview::new(
             "vendor:team:alpha".to_owned(),
-            "Managed connection only; no manual configuration remains for this model".to_owned(),
+            "Stored model removed".to_owned(),
             fixture_binding(),
             DisconnectImpact::new(
                 DisconnectEffect::change("Clear vendor:team:alpha".to_owned()),
@@ -1343,7 +1575,7 @@ mod tests {
             "vendor:team:alpha".to_owned(),
             "vendor:team".to_owned(),
             "unset  →  vendor:team:alpha".to_owned(),
-            ManagedConnectionChange::Create,
+            StoredConnectionChange::Create,
             CredentialMutationAction::Replace,
             true,
             vec![fixture_binding()],
@@ -1369,7 +1601,7 @@ mod tests {
                 "vendor:team:alpha".to_owned(),
                 "vendor:team".to_owned(),
                 "unset  →  vendor:team:alpha".to_owned(),
-                ManagedConnectionChange::Create,
+                StoredConnectionChange::Create,
                 CredentialMutationAction::Add,
                 true,
                 vec![fixture_binding()],

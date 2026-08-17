@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     env,
     error::Error,
     ffi::OsString,
@@ -11,12 +10,7 @@ use std::{
 
 use jiff::{Timestamp, fmt::strtime, tz::TimeZone};
 use serde::Deserialize;
-use yo_core::{
-    AccountId, EffectiveModelBinding, EffectiveModelProfile, KimiCatalogSeed, ModelCatalog,
-    ModelCatalogEntry, ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters,
-    ModelSelection, NormalizedEndpoint, OpenRouterAuthoredModel, OpenRouterDiscoverySeed,
-    ProviderId, QwenCloudCatalogSeed, StartupTarget, VersionedProfileId,
-};
+use yo_core::ModelCatalog;
 
 const DEFAULT_DATE_FORMAT: &str = "%Y-%m-%d %H:%M %:z";
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
@@ -36,11 +30,9 @@ pub(crate) struct Config {
     frame_rate_limit: yo_tui::FrameRateLimit,
     source_path: PathBuf,
     snapshot: ConfigSnapshot,
+    // Runtime model state is injected from one ConnectionRepository snapshot. It is never
+    // decoded from config.yaml.
     model_catalog: ModelCatalog,
-    openrouter_discovery_seeds: Vec<OpenRouterDiscoverySeed>,
-    qwencloud_catalog_seeds: Vec<QwenCloudCatalogSeed>,
-    kimi_catalog_seeds: Vec<KimiCatalogSeed>,
-    startup_target: Option<StartupTarget>,
 }
 
 impl Default for Config {
@@ -51,10 +43,6 @@ impl Default for Config {
             source_path: PathBuf::new(),
             snapshot: ConfigSnapshot::absent(),
             model_catalog: ModelCatalog::default(),
-            openrouter_discovery_seeds: Vec::new(),
-            qwencloud_catalog_seeds: Vec::new(),
-            kimi_catalog_seeds: Vec::new(),
-            startup_target: None,
         }
     }
 }
@@ -72,59 +60,8 @@ impl Config {
         &self.model_catalog
     }
 
-    pub(crate) fn openrouter_discovery_seed(
-        &self,
-        provider: &ProviderId,
-        account: &AccountId,
-    ) -> Option<&OpenRouterDiscoverySeed> {
-        self.openrouter_discovery_seeds
-            .iter()
-            .find(|seed| seed.provider() == provider && seed.account() == account)
-    }
-
-    pub(crate) fn qwencloud_catalog_seed(
-        &self,
-        provider: &ProviderId,
-        account: &AccountId,
-    ) -> Option<&QwenCloudCatalogSeed> {
-        self.qwencloud_catalog_seeds
-            .iter()
-            .find(|seed| seed.provider() == provider && seed.account() == account)
-    }
-
-    pub(crate) fn kimi_catalog_seed(
-        &self,
-        provider: &ProviderId,
-        account: &AccountId,
-    ) -> Option<&KimiCatalogSeed> {
-        self.kimi_catalog_seeds
-            .iter()
-            .find(|seed| seed.provider() == provider && seed.account() == account)
-    }
-
-    pub(crate) fn qwencloud_catalog_model_for_reference(
-        &self,
-        reference: &str,
-    ) -> Option<&yo_core::QwenCloudCatalogModel> {
-        self.qwencloud_catalog_seeds.iter().find_map(|seed| {
-            seed.models().iter().find(|model| {
-                ModelSelection::new(
-                    model.provider().clone(),
-                    model.account().clone(),
-                    model.model_id().clone(),
-                )
-                .canonical_reference()
-                    == reference
-            })
-        })
-    }
-
     pub(crate) fn replace_model_catalog(&mut self, model_catalog: ModelCatalog) {
         self.model_catalog = model_catalog;
-    }
-
-    pub(crate) fn startup_target(&self) -> Option<&StartupTarget> {
-        self.startup_target.as_ref()
     }
 
     pub(crate) fn credential_path(&self) -> PathBuf {
@@ -243,10 +180,6 @@ pub(crate) enum ConfigError {
         path: PathBuf,
         value: u16,
     },
-    InvalidModel {
-        path: PathBuf,
-        message: String,
-    },
     TimestampOutOfRange(u64),
 }
 
@@ -268,28 +201,21 @@ impl fmt::Display for ConfigError {
             Self::InvalidUtf8 { path, .. } => {
                 write!(formatter, "{} is not valid UTF-8", path.display())
             },
-            Self::InvalidYaml { path, source } => {
-                write!(
-                    formatter,
-                    "{} contains invalid configuration: {source}",
-                    path.display()
-                )
-            },
+            Self::InvalidYaml { path, source } => write!(
+                formatter,
+                "{} contains invalid configuration: {source}",
+                path.display()
+            ),
             Self::InvalidDateFormat(message) => formatter.write_str(message),
             Self::InvalidMaxFps { path, value } => write!(
                 formatter,
                 "{}: tui.max_fps must be 60 or 120, not {value}",
                 path.display()
             ),
-            Self::InvalidModel { path, message } => {
-                write!(formatter, "{}: {message}", path.display())
-            },
-            Self::TimestampOutOfRange(millis) => {
-                write!(
-                    formatter,
-                    "timestamp {millis}ms is outside the supported date range"
-                )
-            },
+            Self::TimestampOutOfRange(millis) => write!(
+                formatter,
+                "timestamp {millis}ms is outside the supported date range"
+            ),
             Self::Changed(path) => write!(
                 formatter,
                 "{} changed while this command was preparing; retry with the current configuration",
@@ -305,14 +231,7 @@ impl Error for ConfigError {
             Self::Io { source, .. } => Some(source),
             Self::InvalidUtf8 { source, .. } => Some(source),
             Self::InvalidYaml { source, .. } => Some(source.as_ref()),
-            Self::Environment(_)
-            | Self::UnsupportedFileType(_)
-            | Self::TooLarge(_)
-            | Self::Changed(_)
-            | Self::InvalidDateFormat(_)
-            | Self::InvalidMaxFps { .. }
-            | Self::InvalidModel { .. }
-            | Self::TimestampOutOfRange(_) => None,
+            _ => None,
         }
     }
 }
@@ -324,8 +243,6 @@ struct FileConfig {
     session: SessionConfig,
     #[serde(default)]
     tui: TuiConfig,
-    #[serde(default)]
-    model: ModelConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -347,176 +264,8 @@ struct TuiConfig {
     max_fps: Option<u16>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModelConfig {
-    startup: Option<StartupTargetConfig>,
-    #[serde(default)]
-    catalog: Authored<Vec<ModelEntryConfig>>,
-    #[serde(default)]
-    bindings: Authored<Vec<ModelBindingConfig>>,
-}
-
-#[derive(Debug, Default)]
-enum Authored<T> {
-    #[default]
-    Missing,
-    Present(T),
-}
-
-impl<T> Authored<T> {
-    fn as_ref(&self) -> Option<&T> {
-        match self {
-            Self::Missing => None,
-            Self::Present(value) => Some(value),
-        }
-    }
-
-    fn into_option(self) -> Option<T> {
-        match self {
-            Self::Missing => None,
-            Self::Present(value) => Some(value),
-        }
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Authored<T>
-where
-    T: Deserialize<'de> + NonNullAuthoredValue,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Option::<T>::deserialize(deserializer)?.map_or_else(
-            || {
-                Err(serde::de::Error::invalid_type(
-                    serde::de::Unexpected::Unit,
-                    &AuthoredExpected::<T>(std::marker::PhantomData),
-                ))
-            },
-            |value| Ok(Self::Present(value)),
-        )
-    }
-}
-
-struct AuthoredExpected<T>(std::marker::PhantomData<T>);
-
-impl<T: NonNullAuthoredValue> serde::de::Expected for AuthoredExpected<T> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(T::EXPECTED)
-    }
-}
-
-trait NonNullAuthoredValue {
-    const EXPECTED: &'static str;
-}
-
-impl NonNullAuthoredValue for String {
-    const EXPECTED: &'static str = "a string";
-}
-
-impl NonNullAuthoredValue for u64 {
-    const EXPECTED: &'static str = "u64";
-}
-
-impl<T> NonNullAuthoredValue for Vec<T> {
-    const EXPECTED: &'static str = "a sequence";
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[serde(untagged)]
-enum StartupTargetConfig {
-    Host(String),
-    Model {
-        provider: String,
-        account: String,
-        model: String,
-    },
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModelEntryConfig {
-    provider: String,
-    provider_display_name: Option<String>,
-    account: String,
-    account_display_name: Option<String>,
-    model: String,
-    model_display_name: Option<String>,
-    api_dialect: String,
-    base_url: String,
-    input_token_limit: u64,
-    max_output_tokens: u64,
-    tokenizer_profile: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModelBindingConfig {
-    provider: String,
-    provider_display_name: Option<String>,
-    account: String,
-    account_display_name: Option<String>,
-    #[serde(default)]
-    catalog: Authored<String>,
-    #[serde(default)]
-    base_url: Authored<String>,
-    #[serde(default)]
-    profile: Authored<ModelProfileConfig>,
-    #[serde(default)]
-    models: Authored<Vec<ModelBindingEntryConfig>>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModelBindingEntryConfig {
-    model: String,
-    model_display_name: Option<String>,
-    #[serde(default)]
-    profile: Authored<ModelProfileConfig>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ModelProfileConfig {
-    #[serde(default)]
-    api_dialect: Authored<String>,
-    #[serde(default)]
-    tokenizer_profile: Authored<String>,
-    #[serde(default)]
-    input_token_limit: Authored<u64>,
-    #[serde(default)]
-    max_output_tokens: Authored<u64>,
-    #[serde(default)]
-    reasoning_parameters: Authored<ModelProfileParameters>,
-    #[serde(default)]
-    optional_request_parameters: Authored<ModelProfileParameters>,
-    #[serde(default)]
-    tool_capability_policy: Authored<String>,
-    #[serde(default)]
-    replay_profile: Authored<String>,
-}
-
-impl NonNullAuthoredValue for ModelProfileConfig {
-    const EXPECTED: &'static str = "a mapping";
-}
-
-impl NonNullAuthoredValue for ModelProfileParameters {
-    const EXPECTED: &'static str = "a structured profile value";
-}
-
-type ResolvedModelBindings = (
-    Vec<ModelCatalogEntry>,
-    Vec<OpenRouterDiscoverySeed>,
-    Vec<QwenCloudCatalogSeed>,
-    Vec<KimiCatalogSeed>,
-);
-
 pub(crate) fn load() -> Result<Config, ConfigError> {
-    let path = config_path()?;
-    load_from(&path)
+    load_from(&config_path()?)
 }
 
 pub(crate) fn selected_path() -> Result<PathBuf, ConfigError> {
@@ -575,41 +324,6 @@ fn parse_snapshot(
             });
         },
     };
-    let ModelConfig {
-        startup,
-        catalog,
-        bindings,
-    } = decoded.model;
-    if matches!(&catalog, Authored::Present(_)) && matches!(&bindings, Authored::Present(_)) {
-        return Err(invalid_model(
-            path,
-            "model.catalog and model.bindings cannot be authored together",
-        ));
-    }
-    let (entries, openrouter_discovery_seeds, qwencloud_catalog_seeds, kimi_catalog_seeds) =
-        match (catalog, bindings) {
-            (Authored::Missing, Authored::Present(bindings)) => {
-                model_binding_entries(path, bindings)?
-            },
-            (Authored::Present(catalog), Authored::Missing) => catalog
-                .into_iter()
-                .map(|entry| model_entry(path, entry))
-                .collect::<Result<Vec<_>, _>>()
-                .map(|entries| (entries, Vec::new(), Vec::new(), Vec::new()))?,
-            (Authored::Missing, Authored::Missing) => {
-                (Vec::new(), Vec::new(), Vec::new(), Vec::new())
-            },
-            (Authored::Present(_), Authored::Present(_)) => {
-                unreachable!("both authored model collections were rejected")
-            },
-        };
-    let model_catalog = ModelCatalog::new(entries).map_err(|error| ConfigError::InvalidModel {
-        path: path.to_owned(),
-        message: error.to_string(),
-    })?;
-    let startup_target = startup
-        .map(|startup| startup_target(path, startup, &model_catalog))
-        .transpose()?;
     let config = Config {
         date_format: decoded
             .session
@@ -619,11 +333,7 @@ fn parse_snapshot(
         frame_rate_limit,
         source_path: path.to_owned(),
         snapshot,
-        model_catalog,
-        openrouter_discovery_seeds,
-        qwencloud_catalog_seeds,
-        kimi_catalog_seeds,
-        startup_target,
+        model_catalog: ModelCatalog::default(),
     };
     config.date_formatter().map_err(|error| match error {
         ConfigError::InvalidDateFormat(message) => {
@@ -698,305 +408,6 @@ fn config_metadata(path: &Path, file: &fs::File) -> Result<ConfigMetadata, Confi
         changed_seconds: metadata.ctime(),
         changed_nanoseconds: metadata.ctime_nsec(),
     })
-}
-
-fn model_entry(path: &Path, entry: ModelEntryConfig) -> Result<ModelCatalogEntry, ConfigError> {
-    let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
-        path: path.to_owned(),
-        message: error.to_string(),
-    };
-    let api_dialect = entry.api_dialect.parse().map_err(&invalid)?;
-    let binding = EffectiveModelBinding::new(
-        ProviderId::new(entry.provider).map_err(&invalid)?,
-        AccountId::new(entry.account).map_err(&invalid)?,
-        ModelId::new(entry.model).map_err(&invalid)?,
-        api_dialect,
-        NormalizedEndpoint::parse(&entry.base_url).map_err(&invalid)?,
-    );
-    let context = ModelContextProfile::new(
-        entry.input_token_limit,
-        entry.max_output_tokens,
-        entry.tokenizer_profile,
-    )
-    .map_err(&invalid)?;
-    ModelCatalogEntry::new(
-        binding,
-        entry.provider_display_name,
-        entry.account_display_name,
-        entry.model_display_name,
-        context,
-    )
-    .map_err(invalid)
-}
-
-fn model_binding_entries(
-    path: &Path,
-    bindings: Vec<ModelBindingConfig>,
-) -> Result<ResolvedModelBindings, ConfigError> {
-    let mut pairs = HashSet::new();
-    let mut entries = Vec::new();
-    let mut discovery_seeds = Vec::new();
-    let mut catalog_seeds = Vec::new();
-    let mut kimi_catalog_seeds = Vec::new();
-    for binding in bindings {
-        let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
-            path: path.to_owned(),
-            message: error.to_string(),
-        };
-        let ModelBindingConfig {
-            provider,
-            provider_display_name,
-            account,
-            account_display_name,
-            catalog,
-            base_url,
-            profile,
-            models,
-        } = binding;
-        let provider = ProviderId::new(provider).map_err(&invalid)?;
-        let account = AccountId::new(account).map_err(&invalid)?;
-        if !pairs.insert((provider.clone(), account.clone())) {
-            return Err(invalid_model(
-                path,
-                format!("model.bindings repeats Provider {provider} and Account {account}"),
-            ));
-        }
-        if let Authored::Present(catalog) = catalog {
-            if matches!(base_url, Authored::Present(_))
-                || matches!(profile, Authored::Present(_))
-                || matches!(models, Authored::Present(_))
-            {
-                return Err(invalid_model(
-                    path,
-                    format!(
-                        "catalog binding for Provider {provider} and Account {account} cannot author base_url, profile, or models"
-                    ),
-                ));
-            }
-            let catalog = VersionedProfileId::new(catalog).map_err(&invalid)?;
-            if matches!(
-                catalog.as_str(),
-                "kimi-platform-ai/v1" | "kimi-code-membership/v1"
-            ) {
-                kimi_catalog_seeds.push(
-                    KimiCatalogSeed::resolve(
-                        catalog,
-                        provider,
-                        account,
-                        provider_display_name,
-                        account_display_name,
-                    )
-                    .map_err(&invalid)?,
-                );
-            } else {
-                catalog_seeds.push(
-                    QwenCloudCatalogSeed::resolve(
-                        catalog,
-                        provider,
-                        account,
-                        provider_display_name,
-                        account_display_name,
-                    )
-                    .map_err(&invalid)?,
-                );
-            }
-            continue;
-        }
-        let base_url = base_url.into_option().ok_or_else(|| {
-            invalid_model(
-                path,
-                format!(
-                    "manual binding for Provider {provider} and Account {account} requires base_url"
-                ),
-            )
-        })?;
-        let models = models.into_option().ok_or_else(|| {
-            invalid_model(
-                path,
-                format!(
-                    "manual binding for Provider {provider} and Account {account} requires models"
-                ),
-            )
-        })?;
-        if models.is_empty() && provider.as_str() != "openrouter" {
-            return Err(invalid_model(
-                path,
-                format!(
-                    "model.bindings entry for Provider {provider} and Account {account} requires at least one model"
-                ),
-            ));
-        }
-        let endpoint = NormalizedEndpoint::parse(&base_url).map_err(&invalid)?;
-        let base_profile = profile
-            .into_option()
-            .map(|profile| model_profile_layer(path, profile))
-            .transpose()?;
-        let mut authored_models = Vec::new();
-        for model in models {
-            let model_id = ModelId::new(model.model).map_err(&invalid)?;
-            let (authored_input_token_limit, authored_max_output_tokens) = model
-                .profile
-                .as_ref()
-                .map(|profile| {
-                    (
-                        profile.input_token_limit.as_ref().copied(),
-                        profile.max_output_tokens.as_ref().copied(),
-                    )
-                })
-                .unwrap_or((None, None));
-            let model_profile = model
-                .profile
-                .into_option()
-                .map(|profile| model_profile_layer(path, profile))
-                .transpose()?
-                .unwrap_or_default();
-            let profile = EffectiveModelProfile::resolve(base_profile.as_ref(), &model_profile)
-                .map_err(&invalid)?;
-            let effective_binding = EffectiveModelBinding::new(
-                provider.clone(),
-                account.clone(),
-                model_id,
-                profile.api_dialect(),
-                endpoint.clone(),
-            );
-            let entry = ModelCatalogEntry::with_explicit_profile(
-                effective_binding,
-                provider_display_name.clone(),
-                account_display_name.clone(),
-                model.model_display_name,
-                profile,
-            )
-            .map_err(&invalid)?;
-            authored_models.push(
-                OpenRouterAuthoredModel::new(
-                    entry.clone(),
-                    authored_input_token_limit,
-                    authored_max_output_tokens,
-                )
-                .map_err(&invalid)?,
-            );
-            entries.push(entry);
-        }
-        if provider.as_str() == "openrouter" {
-            match EffectiveModelProfile::resolve(
-                base_profile.as_ref(),
-                &ModelProfileLayer::default(),
-            ) {
-                Ok(profile) => discovery_seeds.push(
-                    OpenRouterDiscoverySeed::new(
-                        provider,
-                        account,
-                        provider_display_name,
-                        account_display_name,
-                        endpoint,
-                        profile,
-                        authored_models,
-                    )
-                    .map_err(&invalid)?,
-                ),
-                Err(error) if authored_models.is_empty() => return Err(invalid(error)),
-                Err(_) => {},
-            }
-        }
-    }
-    Ok((entries, discovery_seeds, catalog_seeds, kimi_catalog_seeds))
-}
-
-fn model_profile_layer(
-    path: &Path,
-    profile: ModelProfileConfig,
-) -> Result<ModelProfileLayer, ConfigError> {
-    let invalid = |error: yo_core::ModelServiceError| ConfigError::InvalidModel {
-        path: path.to_owned(),
-        message: error.to_string(),
-    };
-    Ok(ModelProfileLayer::new(
-        profile
-            .api_dialect
-            .into_option()
-            .map(|value| value.parse())
-            .transpose()
-            .map_err(&invalid)?,
-        profile
-            .tokenizer_profile
-            .into_option()
-            .map(VersionedProfileId::new)
-            .transpose()
-            .map_err(&invalid)?,
-        profile.input_token_limit.into_option(),
-        profile.max_output_tokens.into_option(),
-        profile.reasoning_parameters.into_option(),
-        profile.optional_request_parameters.into_option(),
-        profile
-            .tool_capability_policy
-            .into_option()
-            .map(VersionedProfileId::new)
-            .transpose()
-            .map_err(&invalid)?,
-    )
-    .with_replay_profile(
-        profile
-            .replay_profile
-            .into_option()
-            .map(VersionedProfileId::new)
-            .transpose()
-            .map_err(invalid)?,
-    ))
-}
-
-fn invalid_model(path: &Path, message: impl Into<String>) -> ConfigError {
-    ConfigError::InvalidModel {
-        path: path.to_owned(),
-        message: message.into(),
-    }
-}
-
-fn startup_target(
-    path: &Path,
-    startup: StartupTargetConfig,
-    catalog: &ModelCatalog,
-) -> Result<StartupTarget, ConfigError> {
-    let (provider, account, model) = match startup {
-        StartupTargetConfig::Host(reference) => {
-            return if reference == StartupTarget::HOST_CODEX_REFERENCE {
-                Ok(StartupTarget::HostCodex)
-            } else {
-                Err(ConfigError::InvalidModel {
-                    path: path.to_owned(),
-                    message: format!(
-                        "model.startup host target must be exactly {}",
-                        StartupTarget::HOST_CODEX_REFERENCE
-                    ),
-                })
-            };
-        },
-        StartupTargetConfig::Model {
-            provider,
-            account,
-            model,
-        } => (provider, account, model),
-    };
-    let startup = ModelSelection::new(
-        ProviderId::new(provider).map_err(|error| ConfigError::InvalidModel {
-            path: path.to_owned(),
-            message: error.to_string(),
-        })?,
-        AccountId::new(account).map_err(|error| ConfigError::InvalidModel {
-            path: path.to_owned(),
-            message: error.to_string(),
-        })?,
-        ModelId::new(model).map_err(|error| ConfigError::InvalidModel {
-            path: path.to_owned(),
-            message: error.to_string(),
-        })?,
-    );
-    catalog
-        .resolve_model(startup.provider(), startup.account(), startup.model())
-        .map_err(|error| ConfigError::InvalidModel {
-            path: path.to_owned(),
-            message: format!("model.startup does not name one configured entry: {error}"),
-        })?;
-    Ok(StartupTarget::Model(startup))
 }
 
 fn config_path() -> Result<PathBuf, ConfigError> {

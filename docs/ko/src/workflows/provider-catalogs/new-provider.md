@@ -31,7 +31,7 @@ QwenCloud의 static 설계를 그대로 따라야 한다고 미리 가정하지 
   필요한 필드를 안전하게 증명할 때만 runtime discovery를 선택한다.
 - 공식 exact allowlist와 stable profile 의미가 있지만 account-scoped
   discovery가 없을 때 static registry를 선택한다.
-- 어느 출처도 충분하지 않으면 explicit manual binding을 유지한다. 편리한
+- 어느 출처도 충분하지 않으면 `yo connect --from`으로 explicit grouped definition을 가져온다. 편리한
   목록이 capability나 entitlement를 지어낼 이유는 아니다.
 
 활성 model-service binding 계약이 선택한 source, profile, availability,
@@ -63,7 +63,7 @@ Projection을 추가하고 의미 검토 뒤 canonical source hash를 승인한�
 첫 Provider Slice는 sample response 하나를 parse하는 데 그치지 않고 happy
 path와 counterexample을 함께 증명해야 한다.
 
-- Exact configured Provider와 Account가 의도한 catalog owner를 선택한다.
+- Exact stored Provider와 Account가 의도한 catalog owner를 선택한다.
 - Cancellation은 secret 입력과 repository mutation보다 먼저 일어난다.
 - 선택된 complete binding이 기존 recoverable connection transaction에 들어간다.
 - Unsupported row는 표시되지만 선택할 수 없다.
@@ -72,5 +72,5 @@ path와 counterexample을 함께 증명해야 한다.
 - Diagnostic과 evidence에 secret이나 private credential revision이 들어가지
   않는다.
 - Startup과 recovery가 exact durable binding을 계속 사용한다.
-- 이후 discovery에서 제거돼도 기존 managed state를 삭제하거나 조용히
+- 이후 discovery에서 제거돼도 기존 저장 state를 삭제하거나 조용히
   교체하지 않는다.

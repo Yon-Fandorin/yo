@@ -5,16 +5,16 @@ use super::super::{
     catalog::validate_display_name,
 };
 
-/// One durable managed account and its optional presentation metadata.
+/// One durable stored account and its optional presentation metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ManagedConnectionAccount {
+pub struct ConnectionAccount {
     provider_id: ProviderId,
     account_id: AccountId,
     provider_display_name: Option<String>,
     account_display_name: Option<String>,
 }
 
-impl ManagedConnectionAccount {
+impl ConnectionAccount {
     pub fn new(
         provider_id: ProviderId,
         account_id: AccountId,
@@ -65,16 +65,26 @@ impl ManagedConnectionAccount {
     pub fn account_display_name(&self) -> Option<&str> {
         self.account_display_name.as_deref()
     }
+
+    /// Stable Provider-and-Account reference using the same canonical escaping as ModelTarget.
+    #[must_use]
+    pub fn canonical_reference(&self) -> String {
+        format!(
+            "{}:{}",
+            super::super::selection::encode_coordinate_segment(self.provider_id.as_str()),
+            super::super::selection::encode_coordinate_segment(self.account_id.as_str()),
+        )
+    }
 }
 
-/// One durable managed model binding and its model presentation metadata.
+/// One durable stored model binding and its model presentation metadata.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ManagedConnectionBinding {
+pub struct StoredModelBinding {
     complete: CompleteModelBinding,
     model_display_name: Option<String>,
 }
 
-impl ManagedConnectionBinding {
+impl StoredModelBinding {
     pub fn new(
         complete: CompleteModelBinding,
         model_display_name: Option<String>,
@@ -116,8 +126,8 @@ impl ManagedConnectionBinding {
 }
 
 pub(super) fn validate_state(
-    accounts: &[ManagedConnectionAccount],
-    bindings: &[ManagedConnectionBinding],
+    accounts: &[ConnectionAccount],
+    bindings: &[StoredModelBinding],
 ) -> Result<(), ModelServiceError> {
     let mut account_coordinates = HashSet::new();
     let mut provider_display_names = HashMap::new();
@@ -125,7 +135,7 @@ pub(super) fn validate_state(
         let coordinate = (account.provider_id().clone(), account.account_id().clone());
         if !account_coordinates.insert(coordinate.clone()) {
             return Err(ModelServiceError::new(format!(
-                "duplicate managed account for Provider {} and Account {}",
+                "duplicate stored account for Provider {} and Account {}",
                 account.provider_id(),
                 account.account_id()
             )));
@@ -146,7 +156,7 @@ pub(super) fn validate_state(
         );
         if !account_coordinates.contains(&account_coordinate) {
             return Err(ModelServiceError::new(format!(
-                "managed binding for Provider {}, Account {}, Model {} has no managed account",
+                "stored model for Provider {}, Account {}, Model {} has no stored account",
                 complete.provider_id(),
                 complete.account_id(),
                 complete.model_id()
@@ -159,7 +169,7 @@ pub(super) fn validate_state(
         );
         if !binding_coordinates.insert(coordinate) {
             return Err(ModelServiceError::new(format!(
-                "duplicate managed binding for Provider {}, Account {}, Model {}",
+                "duplicate stored model for Provider {}, Account {}, Model {}",
                 complete.provider_id(),
                 complete.account_id(),
                 complete.model_id()
@@ -170,15 +180,15 @@ pub(super) fn validate_state(
 }
 
 pub(super) fn account_matches_binding(
-    account: &ManagedConnectionAccount,
-    binding: &ManagedConnectionBinding,
+    account: &ConnectionAccount,
+    binding: &StoredModelBinding,
 ) -> bool {
     let complete = binding.complete().binding();
     account.provider_id() == complete.provider_id() && account.account_id() == complete.account_id()
 }
 
 pub(super) fn binding_matches_selection(
-    binding: &ManagedConnectionBinding,
+    binding: &StoredModelBinding,
     selection: &ModelSelection,
 ) -> bool {
     let complete = binding.complete().binding();
@@ -190,7 +200,7 @@ pub(super) fn binding_matches_selection(
 fn reject_new_host_provider(provider_id: &ProviderId) -> Result<(), ModelServiceError> {
     if provider_id.as_str() == "host" {
         return Err(ModelServiceError::new(
-            "new managed connections cannot use the reserved ProviderId host",
+            "new stored connections cannot use the reserved ProviderId host",
         ));
     }
     Ok(())
@@ -209,7 +219,7 @@ fn require_consistent_provider_display(
         },
         Entry::Occupied(entry) if entry.get() == &value => Ok(()),
         Entry::Occupied(_) => Err(ModelServiceError::new(format!(
-            "inconsistent managed display name for Provider {provider_id}"
+            "inconsistent stored display name for Provider {provider_id}"
         ))),
     }
 }

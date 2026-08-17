@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use super::{AccountId, ModelCatalog, ModelId, ModelServiceError, ProviderId, StartupTarget};
 
-/// One exact Provider/Account/Model coordinate selected for a Yo-managed binding.
+/// One exact Provider/Account/Model coordinate selected for a native model binding.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ModelSelection {
     provider: ProviderId,
@@ -224,7 +224,7 @@ impl ModelSelectionController {
     }
 }
 
-fn encode_coordinate_segment(value: &str) -> String {
+pub(super) fn encode_coordinate_segment(value: &str) -> String {
     let mut encoded = String::with_capacity(value.len());
     for character in value.chars() {
         match character {

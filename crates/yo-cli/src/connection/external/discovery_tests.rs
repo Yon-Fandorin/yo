@@ -11,22 +11,47 @@ use crate::{
 // 예약하고, 다른 Provider나 세 부분 exact ModelTarget과 섞이지 않는지 판별합니다.
 #[test]
 fn recognizes_only_the_closed_two_part_onboarding_shapes() {
-    let (provider, account) = catalog_pair("openrouter:team").unwrap().unwrap();
+    let root = super::super::canonical_test_temp_dir().join(format!(
+        "yo-catalog-pairs-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    for definition in [
+        discovery_definition(),
+        "provider: qwencloud\naccount: team\ncatalog: qwencloud-coding-plan-intl/v1\n",
+        "provider: kimi\naccount: team\ncatalog: kimi-platform-ai/v1\n",
+    ] {
+        seed_stored_definition(&root, definition);
+    }
+    let snapshot = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"))
+        .capture()
+        .unwrap();
+
+    let (provider, account) = catalog_pair(&snapshot, "openrouter:team").unwrap().unwrap();
     assert_eq!(provider.as_str(), "openrouter");
     assert_eq!(account.as_str(), "team");
-    let (provider, account) = catalog_pair("qwencloud:team").unwrap().unwrap();
+    let (provider, account) = catalog_pair(&snapshot, "qwencloud:team").unwrap().unwrap();
     assert_eq!(provider.as_str(), "qwencloud");
     assert_eq!(account.as_str(), "team");
-    let (provider, account) = catalog_pair("kimi:team").unwrap().unwrap();
+    let (provider, account) = catalog_pair(&snapshot, "kimi:team").unwrap().unwrap();
     assert_eq!(provider.as_str(), "kimi");
     assert_eq!(account.as_str(), "team");
-    assert!(catalog_pair("openrouter:team:model").unwrap().is_none());
     assert!(
-        catalog_pair("vendor:team")
+        catalog_pair(&snapshot, "openrouter:team:model")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        catalog_pair(&snapshot, "vendor:team")
             .unwrap_err()
             .to_string()
             .contains("unsupported")
     );
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 // discovery는 모델을 추측할 수 없는 interactive-only 흐름이므로 file/yes 조합도 config나
@@ -45,6 +70,7 @@ fn discovery_rejects_non_interactive_options_before_io() {
             let error = run_external_connect(
                 Path::new("/not/read/config.yaml"),
                 ConnectCommand {
+                    from: None,
                     target: target.to_owned(),
                     verbose: false,
                     credential_file,
@@ -89,7 +115,9 @@ fn discovery_cancellation_discards_the_candidate_before_mutation() {
     ));
     std::fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, discovery_config()).unwrap();
+    std::fs::write(&config_path, "session: {}\n").unwrap();
+    seed_stored_definition(&root, discovery_definition());
+    let before = std::fs::read(root.join("connections.yaml")).unwrap();
     let mut input = DiscoveryCancelInput {
         credential_reads: 0,
     };
@@ -98,6 +126,7 @@ fn discovery_cancellation_discards_the_candidate_before_mutation() {
     let output = execute_external_connect_with_discovery(
         &config_path,
         ConnectCommand {
+            from: None,
             target: "openrouter:team".to_owned(),
             verbose: false,
             credential_file: None,
@@ -118,11 +147,11 @@ fn discovery_cancellation_discards_the_candidate_before_mutation() {
     assert_eq!(output, "Connection cancelled; nothing changed.\n");
     assert_eq!(input.credential_reads, 1);
     assert_eq!(discovery_calls, 1);
-    for name in [
-        "connections.yaml",
-        "credentials.yaml",
-        "connection-operation.yaml",
-    ] {
+    assert_eq!(
+        std::fs::read(root.join("connections.yaml")).unwrap(),
+        before
+    );
+    for name in ["credentials.yaml", "connection-operation.yaml"] {
         assert!(!root.join(name).exists(), "{name} must remain absent");
     }
     std::fs::remove_dir_all(root).unwrap();
@@ -161,7 +190,8 @@ fn successful_discovery_binds_one_candidate_and_selected_row_to_publication() {
     ));
     std::fs::create_dir_all(&root).unwrap();
     let config_path = root.join("config.yaml");
-    std::fs::write(&config_path, discovery_config()).unwrap();
+    std::fs::write(&config_path, "session: {}\n").unwrap();
+    seed_stored_definition(&root, discovery_definition());
     let mut input = DiscoverySuccessInput {
         credential_reads: 0,
         confirmations: 0,
@@ -173,6 +203,7 @@ fn successful_discovery_binds_one_candidate_and_selected_row_to_publication() {
     let output = execute_external_connect_with_discovery(
         &config_path,
         ConnectCommand {
+            from: None,
             target: "openrouter:team".to_owned(),
             verbose: false,
             credential_file: None,
@@ -221,23 +252,20 @@ fn discovered_entry(model: &str) -> yo_core::ModelCatalogEntry {
     .unwrap()
 }
 
-fn discovery_config() -> &'static str {
+fn discovery_definition() -> &'static str {
     r#"
-model:
-  bindings:
-    - provider: openrouter
-      provider_display_name: OpenRouter
-      account: team
-      account_display_name: Team
-      base_url: https://openrouter.ai/api/v1
-      profile:
-        api_dialect: openai-responses
-        tokenizer_profile: o200k_base/v1
-        input_token_limit: 200000
-        max_output_tokens: 16000
-        reasoning_parameters: {}
-        optional_request_parameters: {}
-        tool_capability_policy: local-tools/v1
-      models: []
+provider: openrouter
+provider_display_name: OpenRouter
+account: team
+account_display_name: Team
+base_url: https://openrouter.ai/api/v1
+profile:
+  api_dialect: openai-responses
+  tokenizer_profile: o200k_base/v1
+  input_token_limit: 200000
+  max_output_tokens: 16000
+  reasoning_parameters: {}
+  optional_request_parameters: {}
+  tool_capability_policy: local-tools/v1
 "#
 }

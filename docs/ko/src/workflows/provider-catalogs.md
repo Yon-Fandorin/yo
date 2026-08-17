@@ -28,7 +28,7 @@ profile 이름, 집중 검사 명령은 별도 런북에 둔다.
 |---|---|---|
 | 인증된 API가 계정에서 사용할 수 있는 목록과 충분한 typed metadata를 반환한다 | Runtime discovery | 공식 출처라도 응답에는 bounded parsing, normalization, fail-closed availability 판단이 필요하다 |
 | 공식 plan 문서가 exact allowlist를 공개하지만 신뢰할 수 있는 account-scoped inventory API는 없다 | Release-known static registry | 목록 포함은 plan을 설명할 뿐 이 credential의 현재 entitlement를 증명하지 않는다 |
-| 어느 출처도 안전한 complete binding을 만들 수 없다 | Explicit manual binding만 허용 | 마케팅 이름만 보고 endpoint, limit, tool, entitlement를 추론하지 않는다 |
+| 어느 출처도 안전한 complete binding을 만들 수 없다 | `yo connect --from`으로 가져오는 explicit grouped definition | 마케팅 이름만 보고 endpoint, limit, tool, entitlement를 추론하지 않는다 |
 
 출처 종류, 인증 지점, entitlement 의미가 달라지면 동작 설계가 바뀐 것이다.
 코드를 바꾸기 전에 소유 Methexis 계약을 갱신하고 활성화한다. 이미 승인된
@@ -49,7 +49,7 @@ profile 안에서 행만 갱신하는 작업은 일반 implementation Slice로 �
    connector, resolved model profile이 포함된다. 표시 이름은 runtime 동작의
    근거가 아니다.
 5. durable state를 보존한다. 현재 카탈로그에서 행을 제거해도 이전에 저장한
-   managed binding을 다시 쓰거나 삭제하면 안 된다. 새 catalog connection에서
+   저장 binding을 다시 쓰거나 삭제하면 안 된다. 새 catalog connection에서
    그 행을 더 이상 제안하지 않을 뿐이다.
 6. 승인된 UX가 요구하면 유효하지만 사용할 수 없는 inventory도 이유와 함께
    표시한다. yo가 아직 실행할 수 없다는 이유로 Provider 전용 allowlist를
@@ -70,7 +70,7 @@ Provider response나 문서의 한 행 전체를 신뢰하는 blob으로 취급�
 | Modalities | 명시적인 input·output modality |
 | Agent use | Tool-call 지원과 reasoning presentation |
 | Capacity | 정확한 의미가 확인된 양의 context·output limit |
-| Runtime policy | Tokenizer, structured parameter, tool policy, verification profile |
+| Runtime policy | Tokenizer, structured parameter, tool policy, replay profile |
 | Availability | 사용자가 이해할 수 있는 이유를 가진 typed enabled 또는 disabled 결과 |
 
 중복되거나 잘못된 identifier, 필수 metadata가 빠진 행, 안전하지 않은 endpoint,
@@ -86,7 +86,7 @@ Provider response나 문서의 한 행 전체를 신뢰하는 blob으로 취급�
 - picker 취소가 secret을 읽거나 repository를 변경한다.
 - dynamic response가 byte, row, redirect, time bound를 넘는다.
 - static catalog가 예상하지 않은 network discovery를 수행한다.
-- 현재 표에서 제거된 행 때문에 기존 managed binding을 읽지 못하거나 그 예전
+- 현재 표에서 제거된 행 때문에 기존 저장 binding을 읽지 못하거나 그 예전
   행이 새 connect admission을 우회한다.
 - 같은 coordinate의 complete-binding 필드가 달라졌는데 unchanged로 처리한다.
 - upstream response나 문서 순서에 따라 표시 순서가 바뀐다.
