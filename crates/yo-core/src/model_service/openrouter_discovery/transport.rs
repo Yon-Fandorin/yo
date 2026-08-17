@@ -254,7 +254,5 @@ impl Origin {
             && url.port_or_known_default() == Some(self.port)
             && url.username().is_empty()
             && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none()
     }
 }

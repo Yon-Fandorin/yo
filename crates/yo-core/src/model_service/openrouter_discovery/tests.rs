@@ -469,20 +469,20 @@ fn appends_catalog_path_and_accepts_only_json_media_types() {
     assert!(!is_json_media_type("text/json"));
 }
 
-// same-origin 판정에 scheme, host, effective port와 credential-safe URL shape를 모두
-// 포함하여 다른 origin 또는 userinfo/query/fragment로 Bearer가 전달되지 않게 합니다.
+// same-origin 판정은 credential이 넘어가는 scheme, host, effective port, userinfo만
+// 비교하고 origin과 무관한 query/fragment는 허용하는지 확인합니다.
 #[test]
-fn origin_rejects_every_credential_crossing_boundary() {
+fn origin_accepts_same_origin_query_and_fragment() {
     let source = Url::parse("https://example.com/api/v1/models/user").unwrap();
     let origin = Origin::new(&source).unwrap();
     assert!(origin.matches(&Url::parse("https://example.com/next").unwrap()));
+    assert!(origin.matches(&Url::parse("https://example.com/next?q=1").unwrap()));
+    assert!(origin.matches(&Url::parse("https://example.com/next#fragment").unwrap()));
     for target in [
         "http://example.com/next",
         "https://other.example/next",
         "https://example.com:444/next",
         "https://user@example.com/next",
-        "https://example.com/next?q=1",
-        "https://example.com/next#fragment",
     ] {
         assert!(!origin.matches(&Url::parse(target).unwrap()), "{target}");
     }
@@ -585,6 +585,31 @@ fn follows_a_same_origin_redirect_with_the_same_candidate() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["path"], "/v1/models/user");
     assert_eq!(requests[1]["path"], "/v1/models/user-next");
+    assert_eq!(
+        requests[0]["authorization_sha256"],
+        requests[1]["authorization_sha256"]
+    );
+}
+
+// query와 fragment가 붙은 same-origin Location도 따라가되 HTTP request-target에는 query만
+// 들어가고 fragment는 전달되지 않으며 credential hash는 그대로 유지되는지 확인합니다.
+#[test]
+fn follows_same_origin_redirect_query_without_forwarding_fragment() {
+    if run_in_tls_child(
+        "model_service::openrouter_discovery::tests::follows_same_origin_redirect_query_without_forwarding_fragment",
+    ) {
+        return;
+    }
+    let server = LocalTlsServer::start(LocalServerMode::Redirect {
+        location: "/v1/models/user-next?cursor=alpha#local-fragment".to_owned(),
+        final_body: json!({"data": []}).to_string().into_bytes(),
+    });
+    let error = fetch_from_local_tls(&server).unwrap_err();
+    assert_eq!(error.kind(), OpenRouterDiscoveryFailureKind::MediaType);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["path"], "/v1/models/user");
+    assert_eq!(requests[1]["path"], "/v1/models/user-next?cursor=alpha");
     assert_eq!(
         requests[0]["authorization_sha256"],
         requests[1]["authorization_sha256"]
