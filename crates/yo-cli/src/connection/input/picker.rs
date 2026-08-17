@@ -1,5 +1,8 @@
 use std::fs::File;
 
+use unicode_segmentation::UnicodeSegmentation;
+use yo_tui::surface::Grapheme;
+
 use super::super::presentation::{PresentationStyle, default_width, escape_remote_text};
 use crate::AppError;
 
@@ -8,7 +11,7 @@ const MAX_QUERY_BYTES: usize = 1024;
 
 mod terminal;
 
-use self::terminal::{PickerKey, PickerTerminalScope, read_key};
+use self::terminal::{PickerInput, PickerKey, PickerTerminalScope};
 
 pub(super) fn select_model(
     terminal: &mut File,
@@ -24,9 +27,10 @@ pub(super) fn select_model(
     let choices = models.iter().map(PickerChoice::from).collect::<Vec<_>>();
     let mut state = PickerState::new(&choices);
     let mut scope = PickerTerminalScope::enter(terminal)?;
+    let mut input = PickerInput::new(terminal);
     loop {
         scope.render(&identity, &state, &choices, style)?;
-        match read_key(terminal)? {
+        match input.read_key()? {
             PickerKey::Up => state.move_up(),
             PickerKey::Down => state.move_down(),
             PickerKey::Backspace => state.pop_query(&choices),
@@ -295,7 +299,8 @@ impl PickerState {
     }
 
     fn pop_query(&mut self, choices: &[PickerChoice]) {
-        if self.query.pop().is_some() {
+        if let Some((start, _)) = self.query.grapheme_indices(true).next_back() {
+            self.query.truncate(start);
             self.recompute(choices);
         }
     }
@@ -348,11 +353,11 @@ fn render_lines(
 ) -> Vec<String> {
     let width = width.saturating_sub(1).max(1);
     let mut lines = vec![styled("Model catalog", "\x1b[1;36m", style)];
-    lines.extend(wrap_ascii(
+    lines.extend(wrap_text(
         &format!("Provider  {}", escape_remote_text(&identity.provider)),
         width,
     ));
-    lines.extend(wrap_ascii(
+    lines.extend(wrap_text(
         &format!("Account  {}", escape_remote_text(&identity.account)),
         width,
     ));
@@ -412,7 +417,7 @@ fn render_lines(
     lines.push(String::new());
     if let Some(index) = state.selected_model_index() {
         let id = format!("Model  {}", escape_remote_text(&choices[index].model_id));
-        lines.extend(wrap_ascii(&id, width));
+        lines.extend(wrap_text(&id, width));
         let availability = state.disabled_notice.as_deref().map_or_else(
             || {
                 if choices[index].enabled {
@@ -423,7 +428,7 @@ fn render_lines(
             },
             |reason| format!("Unavailable  {reason}"),
         );
-        lines.extend(wrap_ascii(&availability, width));
+        lines.extend(wrap_text(&availability, width));
     }
     lines.push(styled(
         "↑↓ navigate · type to filter · Enter select · Esc cancel",
@@ -456,13 +461,25 @@ fn styled(value: &str, ansi: &str, style: PresentationStyle) -> String {
 }
 
 fn clip_line(value: &str, width: usize) -> String {
-    if value.len() <= width {
+    if text_width(value) <= width {
         return value.to_owned();
     }
     if width <= 3 {
         return ".".repeat(width);
     }
-    format!("{}...", value.chars().take(width - 3).collect::<String>())
+    let content_width = width - 3;
+    let mut clipped = String::new();
+    let mut used = 0;
+    for grapheme in value.graphemes(true) {
+        let grapheme_width = terminal_grapheme_width(grapheme);
+        if used + grapheme_width > content_width {
+            break;
+        }
+        clipped.push_str(grapheme);
+        used += grapheme_width;
+    }
+    clipped.push_str("...");
+    clipped
 }
 
 fn clip_styled_line(value: &str, width: usize) -> String {
@@ -479,12 +496,41 @@ fn clip_styled_line(value: &str, width: usize) -> String {
     format!("{prefix}{}\x1b[0m", clip_line(content, width))
 }
 
-fn wrap_ascii(value: &str, width: usize) -> Vec<String> {
-    value
-        .as_bytes()
-        .chunks(width.max(1))
-        .map(|chunk| String::from_utf8(chunk.to_vec()).expect("escaped picker text is ASCII"))
-        .collect()
+fn wrap_text(value: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut used = 0;
+    for grapheme in value.graphemes(true) {
+        let grapheme_width = terminal_grapheme_width(grapheme);
+        if !line.is_empty() && used + grapheme_width > width {
+            lines.push(line);
+            line = String::new();
+            used = 0;
+        }
+        if grapheme_width > width {
+            continue;
+        }
+        line.push_str(grapheme);
+        used += grapheme_width;
+    }
+    if !line.is_empty() || value.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
+fn text_width(value: &str) -> usize {
+    value.graphemes(true).map(terminal_grapheme_width).sum()
+}
+
+fn terminal_grapheme_width(value: &str) -> usize {
+    usize::from(
+        Grapheme::try_from(value)
+            .expect("picker text must contain terminal-safe graphemes")
+            .width()
+            .get(),
+    )
 }
 
 #[cfg(test)]

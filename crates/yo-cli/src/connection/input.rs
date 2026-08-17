@@ -4,6 +4,7 @@ use std::{
 };
 
 use nix::sys::termios::{self, LocalFlags, SetArg, Termios};
+use rustix::termios::{QueueSelector, tcflush};
 use yo_core::ApiCredential;
 
 mod file;
@@ -76,9 +77,15 @@ impl TtyConnectionInput {
             }
         }
         if bytes.len() > MAX_INPUT_BYTES {
-            return Err(AppError::message(format!(
-                "terminal input exceeds the {MAX_INPUT_BYTES}-byte limit"
-            )));
+            return match tcflush(terminal, QueueSelector::IFlush) {
+                Ok(()) => Err(AppError::message(format!(
+                    "terminal input exceeds the {MAX_INPUT_BYTES}-byte limit"
+                ))),
+                Err(error) => Err(AppError::single(
+                    "discarding oversized terminal input",
+                    error,
+                )),
+            };
         }
         String::from_utf8(bytes)
             .map_err(|_| AppError::message("terminal input must be valid UTF-8"))
@@ -189,16 +196,17 @@ impl Drop for EchoRestore<'_> {
 #[cfg(test)]
 mod tests {
     use std::{
-        fs::File,
-        io::Read,
+        fs::{self, File},
+        io::{Read, Write},
+        path::PathBuf,
         thread,
-        time::{Duration, Instant},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use nix::{
         fcntl::{FcntlArg, OFlag, fcntl},
         pty::openpty,
-        sys::termios::{LocalFlags, tcgetattr},
+        sys::termios::{LocalFlags, SetArg, SpecialCharacterIndices, tcgetattr, tcsetattr},
         unistd::write,
     };
     use rustix::termios::{Winsize, tcsetwinsize};
@@ -274,6 +282,105 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("API key for vendor:team:"));
         assert!(!output.contains("sentinel-secret"));
+    }
+
+    fn immediate_input_terminal() -> (File, File, File, Termios) {
+        let pty = openpty(None, None).unwrap();
+        let observed = pty.slave.try_clone().unwrap();
+        let terminal = File::from(pty.slave);
+        let master = File::from(pty.master);
+        let mut mode = tcgetattr(&terminal).unwrap();
+        mode.local_flags
+            .remove(LocalFlags::ICANON | LocalFlags::ECHO);
+        mode.control_chars[SpecialCharacterIndices::VMIN as usize] = 1;
+        mode.control_chars[SpecialCharacterIndices::VTIME as usize] = 0;
+        tcsetattr(&terminal, SetArg::TCSANOW, &mode).unwrap();
+        (terminal, File::from(observed), master, mode)
+    }
+
+    // 한도 직전과 exact 한도 입력은 그대로 읽고, limit+1 뒤 이미 queue에 들어온 tail은
+    // TCIFLUSH로 폐기되어 다음 prompt나 shell reader에 sentinel을 넘기지 않습니다.
+    #[test]
+    fn terminal_line_overflow_flushes_the_complete_pending_input_queue() {
+        for length in [MAX_INPUT_BYTES - 1, MAX_INPUT_BYTES] {
+            let (terminal, _observed, mut master, _mode) = immediate_input_terminal();
+            let reader = thread::spawn(move || TtyConnectionInput::read_line(&terminal).unwrap());
+            let mut input = vec![b'a'; length];
+            input.push(b'\n');
+            master.write_all(&input).unwrap();
+            assert_eq!(reader.join().unwrap().len(), length);
+        }
+
+        let (terminal, mut observed, mut master, _mode) = immediate_input_terminal();
+        let reader = thread::spawn(move || TtyConnectionInput::read_line(&terminal).unwrap_err());
+        let mut input = vec![b'a'; MAX_INPUT_BYTES + 1];
+        input.extend_from_slice(b"shell-sentinel\n");
+        master.write_all(&input).unwrap();
+        let error = reader.join().unwrap();
+
+        assert!(error.to_string().contains("terminal input exceeds"));
+        fcntl(&observed, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).unwrap();
+        let mut residue = [0_u8; 64];
+        let residue = observed.read(&mut residue).unwrap_err();
+        assert_eq!(residue.kind(), std::io::ErrorKind::WouldBlock);
+    }
+
+    // 입력 한도를 넘긴 descriptor가 TTY가 아니어서 TCIFLUSH 자체가 실패하면 size error와
+    // 다른 cleanup diagnostic을 반환해 queue 격리를 보장하지 못한 사실을 숨기지 않습니다.
+    #[test]
+    fn terminal_line_overflow_reports_a_distinct_flush_failure() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = PathBuf::from(format!(
+            "/tmp/yo-terminal-overflow-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::write(&path, vec![b'a'; MAX_INPUT_BYTES + 1]).unwrap();
+        let file = File::open(&path).unwrap();
+
+        let error = TtyConnectionInput::read_line(&file).unwrap_err();
+        let _ = fs::remove_file(path);
+
+        assert!(
+            error
+                .to_string()
+                .contains("discarding oversized terminal input")
+        );
+    }
+
+    // Credential 입력 overflow도 size/flush 오류를 반환하기 전에 no-echo guard가 original
+    // termios를 복구하므로 실패한 oversized secret 뒤에 숨김 mode가 남지 않습니다.
+    #[test]
+    fn oversized_credential_restores_exact_terminal_mode_before_returning() {
+        let (terminal, observed, mut master, mut original) = immediate_input_terminal();
+        original.local_flags.insert(LocalFlags::ECHO);
+        tcsetattr(&terminal, SetArg::TCSANOW, &original).unwrap();
+        let child = thread::spawn(move || {
+            let mut input = TtyConnectionInput {
+                terminal: Some(terminal),
+                style: PresentationStyle::Plain,
+            };
+            input.read_credential("vendor:team").unwrap_err()
+        });
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while tcgetattr(&observed)
+            .unwrap()
+            .local_flags
+            .contains(LocalFlags::ECHO)
+        {
+            assert!(Instant::now() < deadline, "credential echo stayed enabled");
+            thread::yield_now();
+        }
+        let mut secret = vec![b's'; MAX_INPUT_BYTES + 1];
+        secret.push(b'\n');
+        master.write_all(&secret).unwrap();
+
+        let error = child.join().unwrap();
+
+        assert!(error.to_string().contains("terminal input exceeds"));
+        assert_eq!(tcgetattr(&observed).unwrap(), original);
     }
 
     // 명시적 termios 복구가 한 번 실패해도 original 설정을 guard에 남겨 Drop이 즉시

@@ -267,7 +267,7 @@ impl RemainingBinding {
         width: usize,
         style: PresentationStyle,
     ) -> Result<(), PresentationError> {
-        push_bullet(output, &self.model, width, style)
+        push_bullet(output, &display_model_item(&self.model), width, style)
     }
 }
 
@@ -1519,6 +1519,34 @@ mod tests {
             1
         );
         assert!(output.contains("Still available for this account (1)\n  • alpha"));
+    }
+
+    // Verbose remaining-model bullet도 compact credential 영향 목록과 같은 quoting을 써서
+    // 쉼표·공백·따옴표·backslash가 든 ModelId 하나를 여러 항목처럼 보이지 않게 합니다.
+    #[test]
+    fn verbose_disconnect_remaining_models_use_deterministic_quoting() {
+        for model in ["alpha, beta", "alpha beta", "alpha\\beta", "alpha\"beta"] {
+            let preview = Confirmation::Disconnect(Box::new(DisconnectPreview::new(
+                "vendor:team:removed".to_owned(),
+                "Stored model removed".to_owned(),
+                fixture_binding(),
+                DisconnectImpact::new(
+                    DisconnectEffect::keep("Keep default".to_owned()),
+                    DisconnectEffect::keep("Keep API key".to_owned()),
+                    DisconnectEffect::ready("Ready".to_owned()),
+                    DisconnectEffect::ready("Can resume".to_owned()),
+                ),
+                vec![RemainingBinding {
+                    model: model.to_owned(),
+                }],
+                true,
+            )));
+
+            let output = preview.render(width(24)).unwrap();
+            let displayed = display_model_item(model);
+
+            assert!(output.contains(&displayed), "rendered preview:\n{output}");
+        }
     }
 
     // disconnect의 문장형 risk와 exact endpoint도 좁은 폭에서 셸의 임의 개행에 의존하지

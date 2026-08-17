@@ -10,6 +10,7 @@ use nix::{
     pty::openpty,
     sys::termios::tcgetattr,
 };
+use yo_tui::surface::cell_width;
 
 use super::*;
 
@@ -98,6 +99,20 @@ fn query_edits_reset_selection_and_allow_a_recoverable_empty_result() {
     assert_eq!(state.selected_model_index(), None);
 }
 
+// Backspace는 Unicode scalar 하나가 아니라 extended grapheme 하나를 제거해 combining
+// sequence와 emoji를 검색 query에 반쪽 상태로 남기지 않습니다.
+#[test]
+fn query_backspace_removes_one_complete_grapheme() {
+    let choices = choices(1);
+    let mut state = PickerState::new(&choices);
+    state.query = "a\u{301}😀".to_owned();
+
+    state.pop_query(&choices);
+    assert_eq!(state.query, "a\u{301}");
+    state.pop_query(&choices);
+    assert!(state.query.is_empty());
+}
+
 // disabled 행의 Enter는 picker를 닫거나 선택 index를 반환하지 않고 정확한 이유를
 // panel에 노출하며, 다음 enabled 행으로 이동하면 정상 선택할 수 있습니다.
 #[test]
@@ -160,6 +175,39 @@ fn panel_identifies_the_provider_and_account_once_without_narrow_width_clipping(
     assert!(unwrapped.contains("Provider  openrouterAccount  team"));
     assert_eq!(unwrapped.matches("openrouter").count(), 1);
     assert_eq!(unwrapped.matches("team").count(), 1);
+}
+
+// 가운데점·화살표·Kimi badge·disabled notice가 모두 포함된 panel을 1열부터 렌더해도
+// grapheme byte를 자르거나 panic하지 않고 각 plain/ANSI 물리 행이 cell 폭 안에 남습니다.
+#[test]
+fn every_picker_line_uses_grapheme_cell_width_at_narrow_terminals() {
+    let mut choices = choices(1);
+    choices[0].enabled = false;
+    choices[0].disabled_reason = Some("profile unavailable".to_owned());
+    choices[0].badges = vec!["recommended".to_owned(), "high-speed".to_owned()];
+    let mut state = PickerState::new(&choices);
+    assert_eq!(state.accept_selected(&choices), None);
+
+    for width in 1_usize..=48 {
+        let effective_width = width.saturating_sub(1).max(1);
+        for style in [PresentationStyle::Plain, PresentationStyle::Ansi] {
+            for line in render_lines(&identity(), &state, &choices, width, style) {
+                let visible = line
+                    .replace("\x1b[1;36m", "")
+                    .replace("\x1b[30;46m", "")
+                    .replace("\x1b[1m", "")
+                    .replace("\x1b[2m", "")
+                    .replace("\x1b[0m", "");
+                assert!(
+                    cell_width(&visible).unwrap() <= effective_width,
+                    "width {width} received overwide picker line {line:?}"
+                );
+                if line.contains("\x1b[") {
+                    assert!(line.ends_with("\x1b[0m"));
+                }
+            }
+        }
+    }
 }
 
 // Kimi inventory의 실제 typed 행을 picker 입력으로 넘겨 K3/K2.7 badge와 reasoning 상태,

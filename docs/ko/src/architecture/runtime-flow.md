@@ -737,7 +737,13 @@ Controlling-TTY picker는 name과 ID를 검색하고 한 번에 최대 여덟 re
 row와 그 이유를 포함한 모든 match에 scroll로 도달하게 하며 disabled 선택은 막는다. 선택, 취소,
 input·render 실패, unwind에서 terminal mode, cursor,
 dynamic panel을 한 cleanup owner가 복원한다. Remote string은 terminal 출력 전에 printable하고
-되돌릴 수 있는 byte escape 경계를 지난다. 선택 뒤에는 기존 concise connection preview로 들어가고
+되돌릴 수 있는 byte escape 경계를 지난다. 검색 편집은 backspace 한 번에 extended grapheme
+cluster 하나를 지우고, 줄바꿈과 자르기는 byte나 scalar 개수가 아니라 terminal cell 폭을 쓴다.
+Bounded raw-key decoder는 완전한 CSI 또는 SS3 sequence를 소비해 plain·modified Up/Down을
+해석하며, 지원하지 않거나 malformed·overlong인 sequence tail을 검색 text로 남기지 않는다.
+부분 escape와 UTF-8 scalar는 유한한 read deadline을 가지며, 잘못된 UTF-8 continuation이 그
+자체로 독립적인 key라면 그 byte를 다음 decode에 보존한다. 선택 뒤에는 기존 concise connection
+preview로 들어가고
 `--verbose`는 그 preview만 확장한다. 취소는 새 intent나 repository mutation을 만들지 않으며,
 discovery에 쓴 같은 in-memory key는 마지막 구조적 admission 뒤 게시할 때까지 유지된다. 두 부분
 discovery는 `--credential-file`과 `--yes`를 거절한다.
@@ -749,6 +755,9 @@ verbose preview에서 이전 profile과 새 profile을 비교할 때만 남길 �
 upsert는 secret을 읽기 전에 startup-policy admission을 통과해야 한다. Yo는 확인을 받은 뒤 controlling TTY에서만
 크기가 제한된 API key 하나를 읽는다. 이때 echo를 끄고 정확한 terminal
 설정을 복구한다. 명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
+줄 단위 controlling-TTY prompt에는 모두 16,384-byte 입력 한계가 있다. 초과하면 Yo는 한계
+오류를 반환하기 전에 아직 읽지 않은 terminal input queue를 비우고, queue flush 실패는 별도
+오류로 보고하며, credential prompt에서는 어느 오류든 반환하기 전에 echo를 복구한다.
 External exact target은 대신 `--credential-file PATH --yes`를 사용할 수 있다. 두 option은
 반드시 함께 있어야 하고 `--yes`는 interactive `--verbose` view와 충돌하며 Local Codex는 파일을
 열기 전에 이 조합을 거절한다. Recovery와 exact plan 준비 뒤 이 경로는 확인을 생략하고 final
@@ -796,7 +805,9 @@ source, 같은 pair에 남는 binding을 추가로 보여 준다. Prospective st
 해석해 새 Session이 사용할 정확한 낮은 우선순위 target을 이름으로 보여주거나 남는 target이
 없다고 알리며, preference 제거만 보고 동작을 추측하지 않는다. 남은 account model은 명시된
 account 문맥 안의 정확한 Model ID로 표시해 제거 profile 전체를 반복하지 않는다. 같은
-controlling-TTY 폭 경계가 모든 preview row를 관찰한 폭 안에 둔다. 같은 pair의 model이나
+controlling-TTY 폭 경계가 모든 preview row를 관찰한 폭 안에 둔다. Check 표시 success target과 verbose의
+remaining-model bullet은 preview와 같은 reversible remote-text 및 ambiguous-item 표시 경계를
+지난다. 같은 pair의 model이나
 catalog seed가 하나라도 남으면 credential을 보존한다. 제거 뒤 dependent set이 비었을 때만
 credential 제거를 준비하며, credential이 이미 없으면 상태를 꾸며내지 않고 intent 전에
 실패한다. 확인과 마지막 config guard 뒤에는 secret-free intent를 게시하고 public 제거를

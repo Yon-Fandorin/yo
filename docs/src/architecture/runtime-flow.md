@@ -796,8 +796,15 @@ exposes at most eight scrolling rows while keeping every match—including
 disabled rows with their reason—reachable, blocks disabled selection, and
 restores terminal mode, cursor, and dynamic panel on
 selection, cancellation, input/render failure, or unwind. Remote strings cross
-a printable reversible byte-escape boundary before terminal output. Selection
-then enters the existing concise connection preview; `--verbose` expands only
+a printable reversible byte-escape boundary before terminal output. Search
+editing removes one extended grapheme cluster per backspace, and wrapping and
+clipping use terminal-cell width rather than byte or scalar counts. The bounded
+raw-key decoder consumes complete CSI or SS3 sequences, maps plain and modified
+Up/Down keys, and leaves no unsupported, malformed, or overlong sequence tail
+as search text. A partial escape or UTF-8 scalar has a finite read deadline;
+when an invalid UTF-8 continuation is itself an independent key, that byte is
+preserved for the next decode. Selection then enters the existing concise
+connection preview; `--verbose` expands only
 that preview. Cancellation creates no new intent or repository mutation, and
 the same in-memory key used for discovery is retained for publication after
 final structural admission. Two-part discovery rejects `--credential-file`
@@ -813,7 +820,11 @@ startup-policy admission before any secret is read. Yo
 requires confirmation, then reads one bounded API key only from the controlling
 TTY with echo disabled and exact terminal settings
 restored. If explicit restoration reports an error, the retained guard retries
-restoration while unwinding. An external exact target may instead use
+restoration while unwinding. Every line-oriented controlling-TTY prompt has a
+16,384-byte input limit. On overflow Yo flushes the unread terminal input queue
+before returning the limit error, reports a flush failure separately, and for a
+credential prompt restores echo before returning either error. An external exact
+target may instead use
 `--credential-file PATH --yes`; both options are required together, `--yes`
 conflicts with the interactive `--verbose` view, and Local Codex rejects the
 pair before opening the file. After recovery and exact-plan preparation, this
@@ -876,6 +887,8 @@ states that no target remains; it does not infer that behavior from preference
 removal alone. Remaining account models are exact Model IDs in that explicit
 account context without repeating the removed profile. The same
 controlling-TTY width boundary keeps every preview row within the observed width.
+The checked success target and verbose remaining-model bullets pass through the
+same reversible remote-text and ambiguous-item display boundaries as the preview.
 Any remaining model or catalog seed for the same pair preserves the credential.
 Only an empty post-removal dependent set prepares credential removal; an absent
 credential fails before intent rather than inventing state.

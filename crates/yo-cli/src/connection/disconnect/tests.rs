@@ -77,6 +77,41 @@ fn automatic_unique_disconnect_removes_public_then_credential_without_prompt() {
     assert!(!fixture.root.join("connection-operation.yaml").exists());
 }
 
+// 성공 요약은 내부 exact ModelId를 바꾸지 않으면서 bidi·zero-width·일반 Unicode를
+// reversible printable-ASCII byte escape로 표시해 terminal 방향과 가시성을 보호합니다.
+#[test]
+fn disconnect_success_escapes_non_ascii_model_identity() {
+    let fixture = Fixture::new("escaped-success");
+    let config_path = fixture.config_path("session: {}\n");
+    fixture.seed_stored(&["alpha\u{202e}\u{200b}한"], None);
+    fixture.seed_credential();
+    let mut input = FakeInput {
+        selected: None,
+        confirmed: false,
+        selections: Vec::new(),
+        summaries: Vec::new(),
+    };
+
+    let output = execute_external_disconnect_with(
+        &config_path,
+        DisconnectCommand {
+            provider: Some("vendor".to_owned()),
+            account: Some("team".to_owned()),
+            yes: true,
+            verbose: false,
+        },
+        &mut input,
+    )
+    .unwrap();
+
+    assert!(
+        output.contains("Model    vendor:team:alpha\\xE2\\x80\\xAE\\xE2\\x80\\x8B\\xED\\x95\\x9C")
+    );
+    assert!(!output.contains('\u{202e}'));
+    assert!(!output.contains('\u{200b}'));
+    assert!(!output.contains('한'));
+}
+
 // 여러 stored target 중 하나를 대화형으로 고르면 preview가 exact removed profile,
 // preference 전이, 남는 distinct binding, credential preserve와 resume risk를 모두 표시합니다.
 #[test]
