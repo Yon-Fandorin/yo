@@ -663,8 +663,8 @@ fn stored_upsert_preserves_unrelated_binding_and_existing_preference() {
     assert_eq!(captured.preference(), Some(&model_target("model-a")));
 }
 
-// stored remove는 선택한 binding만 지우고 같은 account의 다른 model이 있으면 account를
-// 보존하며, 마지막 model과 exact matching preference가 사라질 때 둘을 함께 clear합니다.
+// stored remove는 선택한 binding과 exact matching preference를 함께 지우되 같은 account의
+// 다른 model이 있으면 account를 보존하고, 마지막 binding을 지운 뒤에만 account를 제거합니다.
 #[test]
 fn stored_remove_preserves_shared_account_then_clears_last_account_and_preference() {
     let (_directory, repository) = repository("stored-remove");

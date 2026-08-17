@@ -1,6 +1,6 @@
 use std::{
     fs,
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::fs::{MetadataExt, PermissionsExt, symlink},
 };
 
 use super::{
@@ -53,7 +53,7 @@ fn connect_intent_round_trips_without_secret_or_private_debug_receipts() {
 }
 
 // version 또는 profile_digests는 current journal의 unknown field이므로 별도 format
-// classifier 없이 mutation 전에 일반 invalid-content로 거절합니다.
+// classifier 없이 invalid-content로 거절하고, 실패 뒤에도 입력 bytes를 그대로 보존합니다.
 #[test]
 fn unknown_journal_fields_are_invalid_contents() {
     let fixture = Fixture::new("unknown-fields");
@@ -67,15 +67,16 @@ fn unknown_journal_fields_are_invalid_contents() {
         "profile_digests: []",
         "config_snapshot_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     ] {
-        fs::write(
-            fixture.journal.path(),
-            format!("{unknown_field}\n{current}"),
-        )
-        .unwrap();
+        let malformed = format!("{unknown_field}\n{current}");
+        fs::write(fixture.journal.path(), &malformed).unwrap();
         let error = fixture.journal.capture().unwrap_err();
         assert!(
             matches!(&error, ConnectionOperationError::InvalidContents(_)),
             "{unknown_field}: {error}"
+        );
+        assert_eq!(
+            fs::read(fixture.journal.path()).unwrap(),
+            malformed.as_bytes()
         );
     }
 }
@@ -109,8 +110,8 @@ fn nested_unknown_names_are_invalid_journal_contents() {
     }
 }
 
-// connect 저널은 intent부터 credential_committed, public_committed, complete 순서로만
-// 원자 교체되고 complete의 정확한 현재 entry만 durable remove할 수 있음을 검증합니다.
+// connect 저널은 닫힌 phase 순서로만 교체되며 complete를 clear하면 pathname이 사라지고
+// 같은 operation guard로 새 intent를 즉시 게시할 수 있음을 검증합니다.
 #[test]
 fn connect_phases_advance_in_closed_order_before_exact_clear() {
     let fixture = Fixture::new("phases");
@@ -128,10 +129,18 @@ fn connect_phases_advance_in_closed_order_before_exact_clear() {
     }
     fixture.journal.clear_complete(&mut guard, &entry).unwrap();
     assert!(fixture.journal.capture().unwrap().is_none());
+    assert!(matches!(
+        fs::symlink_metadata(fixture.journal.path()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ));
+
+    let next = fixture.connect_entry();
+    fixture.journal.publish_intent(&mut guard, &next).unwrap();
+    assert_eq!(fixture.journal.capture().unwrap(), Some(next));
 }
 
-// expected/expected 복구가 선택한 uncommitted intent는 complete phase를 위조하지 않고 exact
-// intent 그대로 durable remove되어 다음 invocation이 credential capture부터 새로 시작합니다.
+// expected/expected 복구가 선택한 uncommitted intent는 exact remove 후 pathname을 남기지
+// 않으며, 같은 operation guard가 새 intent를 즉시 게시할 수 있음을 검증합니다.
 #[test]
 fn exact_uncommitted_intent_can_be_abandoned() {
     let fixture = Fixture::new("abandon-intent");
@@ -142,6 +151,14 @@ fn exact_uncommitted_intent_can_be_abandoned() {
     fixture.journal.abandon_intent(&mut guard, &entry).unwrap();
 
     assert!(fixture.journal.capture().unwrap().is_none());
+    assert!(matches!(
+        fs::symlink_metadata(fixture.journal.path()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ));
+
+    let next = fixture.connect_entry();
+    fixture.journal.publish_intent(&mut guard, &next).unwrap();
+    assert_eq!(fixture.journal.capture().unwrap(), Some(next));
 }
 
 // 순서를 건너뛴 phase 교체는 게시 전에 거절되고 기존 intent bytes가 그대로 남아 phase가
@@ -328,17 +345,31 @@ fn invalid_operation_and_credential_action_combination_is_rejected() {
     ));
 }
 
-// journal 경로가 symlink이면 O_NOFOLLOW capture가 target bytes를 읽지 않고 실패해 외부
-// permission-restricted 파일을 operation intent로 가져오거나 수정하지 않음을 검증합니다.
+// journal 경로가 유효한 다른 intent를 가리키는 symlink여도 capture가 그 entry를 가져오지
+// 않고 실패하며, 외부 target의 inode와 bytes를 수정하지 않음을 검증합니다.
 #[test]
 fn symbolic_journal_path_is_never_followed() {
     let fixture = Fixture::new("symlink");
+    let foreign = Fixture::new("symlink-foreign");
+    let foreign_entry = foreign.connect_entry();
+    let mut foreign_guard = foreign.operation_guard();
+    foreign
+        .journal
+        .publish_intent(&mut foreign_guard, &foreign_entry)
+        .unwrap();
+    let target = foreign.journal.path();
+    let target_before = fs::read(target).unwrap();
+    let metadata_before = fs::metadata(target).unwrap();
     fs::create_dir_all(fixture.journal.path().parent().unwrap()).unwrap();
-    let target = fixture.journal.path().parent().unwrap().join("target.yaml");
-    fs::write(&target, "private-target\n").unwrap();
-    fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
-    symlink(&target, fixture.journal.path()).unwrap();
+    symlink(target, fixture.journal.path()).unwrap();
 
-    assert!(fixture.journal.capture().is_err());
-    assert_eq!(fs::read_to_string(target).unwrap(), "private-target\n");
+    assert!(matches!(
+        fixture.journal.capture(),
+        Err(ConnectionOperationError::Io { ref path, .. }) if path == fixture.journal.path()
+    ));
+    assert_eq!(fs::read(target).unwrap(), target_before);
+    let metadata_after = fs::metadata(target).unwrap();
+    assert_eq!(metadata_after.dev(), metadata_before.dev());
+    assert_eq!(metadata_after.ino(), metadata_before.ino());
+    assert_eq!(foreign.journal.capture().unwrap(), Some(foreign_entry));
 }
