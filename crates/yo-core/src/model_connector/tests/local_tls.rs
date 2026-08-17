@@ -515,11 +515,7 @@ fn safe_python_argument(value: &OsStr) -> Option<String> {
 }
 
 fn safe_python_text(value: &str) -> Option<String> {
-    if value.is_empty()
-        || value.chars().any(|character| {
-            !character.is_ascii_graphic() || matches!(character, '\\' | '\'' | '"')
-        })
-    {
+    if value.is_empty() || value.chars().any(char::is_control) {
         return None;
     }
     Some(value.to_owned())
@@ -606,6 +602,14 @@ fn diagnostic_test_child(
     location: &str,
 ) -> (ChildGuard, TempDirectory, PathBuf, PathBuf) {
     let root = TempDirectory::new("yo-model-connector-diagnostic");
+    diagnostic_test_child_in(root, script, location)
+}
+
+fn diagnostic_test_child_in(
+    root: TempDirectory,
+    script: &str,
+    location: &str,
+) -> (ChildGuard, TempDirectory, PathBuf, PathBuf) {
     let certificate = root.path().join("certificate-private-path-sentinel");
     let key = root.path().join("key-private-path-sentinel");
     let ready = root.path().join("ready-private-path-sentinel");
@@ -693,6 +697,61 @@ fn reports_bounded_sanitized_stderr_for_an_early_child_exit() {
     assert!(!diagnostic.contains("private-path-sentinel"));
     assert!(!diagnostic.contains(location));
     assert!(!diagnostic.contains("private-key-bytes-must-not-escape"));
+}
+
+#[cfg(unix)]
+// Command::arg는 shell을 통하지 않으므로 공백·quote·backslash가 있는 지원 Unix 경로도
+// 정확한 argv입니다. 그런 경로에서도 stderr 원인은 보존하고 모든 민감한 literal은 지웁니다.
+#[test]
+fn reports_sanitized_stderr_from_direct_arguments_with_shell_metacharacters() {
+    let parent = TempDirectory::new("yo-model-connector-special-parent");
+    let special_root = parent.path().join("space 'single' \"double\" \\ path");
+    fs::create_dir(&special_root).unwrap();
+    set_directory_permissions(&special_root);
+    let location = "location with space 'single' \"double\" \\ path";
+    let (child, _root, ready, _started) = diagnostic_test_child_in(
+        TempDirectory(special_root),
+        "import sys\nsys.stderr.write('direct argv diagnostic sentinel: ' + ' '.join(sys.argv[1:]))\nsys.stderr.flush()\nsys.exit(31)",
+        location,
+    );
+
+    let failure = catch_unwind(AssertUnwindSafe(|| {
+        let _ = wait_for_local_tls_ready(child, &ready, Duration::from_secs(2));
+    }))
+    .expect_err("the direct-argument listener must fail readiness");
+    let diagnostic = panic_message(failure);
+
+    assert!(diagnostic.contains("direct argv diagnostic sentinel"));
+    assert!(diagnostic.contains("child exited with 31"));
+    assert!(!diagnostic.contains("space 'single' \"double\" \\ path"));
+    assert!(!diagnostic.contains(location));
+    assert!(!diagnostic.contains("private-path-sentinel"));
+    assert!(!diagnostic.contains("private-key-bytes-must-not-escape"));
+}
+
+// 직접 argv와 literal redaction이 허용할 printable UTF-8 및 거부할 빈 값·제어문자의
+// 경계를 고정하여 shell 문자 정책이 되돌아오거나 진단 구분자가 주입되지 않게 합니다.
+#[test]
+fn direct_python_argument_safety_rejects_only_unrepresentable_or_control_text() {
+    for value in [
+        "ordinary",
+        "contains space",
+        "contains'single-quote",
+        "contains\"double-quote",
+        "contains\\backslash",
+        "unicode-경로",
+    ] {
+        assert_eq!(safe_python_text(value).as_deref(), Some(value), "{value:?}");
+    }
+    for value in [
+        "",
+        "line\nbreak",
+        "carriage\rreturn",
+        "tab\tvalue",
+        "nul\0value",
+    ] {
+        assert!(safe_python_text(value).is_none(), "{value:?}");
+    }
 }
 
 // 실제 Python fixture가 readiness marker를 쓰지 않고 살아 있는 동안 timeout 경로가 child를
@@ -1123,15 +1182,43 @@ impl Drop for TempDirectory {
 }
 
 fn unique_temp_dir(prefix: &str) -> PathBuf {
-    let stamp = SystemTime::now()
+    unique_temp_dir_candidate(prefix, SystemTime::now()).unwrap_or_else(|error| {
+        panic!("cannot allocate a local TLS fixture on this validation host: {error}")
+    })
+}
+
+fn unique_temp_dir_candidate(prefix: &str, now: SystemTime) -> io::Result<PathBuf> {
+    let stamp = now
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the validation-host clock is earlier than the Unix epoch",
+            )
+        })?
         .as_nanos();
     let sequence = TEMP_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    env::temp_dir().join(format!(
+    Ok(env::temp_dir().join(format!(
         "{prefix}-{}-{stamp}-{sequence}",
         std::process::id()
-    ))
+    )))
+}
+
+// TLS material에 필요한 정상 wall clock 전제를 pre-epoch 오류로 명시하고, 같은 정상 시각의
+// 두 allocation은 process-local sequence로 서로 다른 경로를 얻는지 함께 고정합니다.
+#[test]
+fn temp_directory_candidates_report_invalid_clock_and_disambiguate_repeated_time() {
+    let before_epoch = UNIX_EPOCH.checked_sub(Duration::from_nanos(1)).unwrap();
+    let error = unique_temp_dir_candidate("clock-boundary", before_epoch).unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    assert!(error.to_string().contains("earlier than the Unix epoch"));
+
+    let repeated = UNIX_EPOCH + Duration::from_secs(1);
+    let first = unique_temp_dir_candidate("clock-boundary", repeated).unwrap();
+    let second = unique_temp_dir_candidate("clock-boundary", repeated).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(first.parent(), Some(env::temp_dir().as_path()));
+    assert_eq!(second.parent(), Some(env::temp_dir().as_path()));
 }
 
 // 첫 후보가 이미 존재해도 그 디렉터리를 건드리지 않고 다음 process-local 후보를 만들어,
