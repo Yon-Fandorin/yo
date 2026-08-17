@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::{
@@ -43,10 +43,10 @@ impl ExternalConnectInput for CatalogCancelInput {
 #[test]
 fn qwencloud_catalog_cancellation_happens_before_secret_or_mutation() {
     let root = test_root("cancel");
-    let config_path = root.join("config.yaml");
+    let config_path = root.path().join("config.yaml");
     std::fs::write(&config_path, "session: {}\n").unwrap();
-    seed_stored_definition(&root, token_plan_definition());
-    let before = std::fs::read(root.join("connections.yaml")).unwrap();
+    seed_stored_definition(root.path(), token_plan_definition());
+    let before = std::fs::read(root.path().join("connections.yaml")).unwrap();
     let mut input = CatalogCancelInput {
         selections: 0,
         credential_reads: 0,
@@ -65,11 +65,10 @@ fn qwencloud_catalog_cancellation_happens_before_secret_or_mutation() {
     assert_eq!(input.selections, 1);
     assert_eq!(input.credential_reads, 0);
     assert_eq!(
-        std::fs::read(root.join("connections.yaml")).unwrap(),
+        std::fs::read(root.path().join("connections.yaml")).unwrap(),
         before
     );
-    assert_secret_repositories_absent(&root);
-    std::fs::remove_dir_all(root).unwrap();
+    assert_secret_repositories_absent(root.path());
 }
 
 struct CatalogSuccessInput {
@@ -102,9 +101,9 @@ impl ExternalConnectInput for CatalogSuccessInput {
 #[test]
 fn qwencloud_catalog_selection_reuses_the_external_connect_transaction() {
     let root = test_root("success");
-    let config_path = root.join("config.yaml");
+    let config_path = root.path().join("config.yaml");
     std::fs::write(&config_path, "session: {}\n").unwrap();
-    seed_stored_definition(&root, token_plan_definition());
+    seed_stored_definition(root.path(), token_plan_definition());
     let mut input = CatalogSuccessInput { events: Vec::new() };
     let mut finalized = false;
 
@@ -132,7 +131,6 @@ fn qwencloud_catalog_selection_reuses_the_external_connect_transaction() {
     assert!(output.contains("qwencloud:team:qwen3.7-plus"));
     assert_eq!(input.events, ["select", "credential", "confirm"]);
     assert!(finalized);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 struct ExactInput {
@@ -162,9 +160,9 @@ impl ExternalConnectInput for ExactInput {
 #[test]
 fn exact_qwencloud_catalog_row_bypasses_the_picker() {
     let root = test_root("exact");
-    let config_path = root.join("config.yaml");
+    let config_path = root.path().join("config.yaml");
     std::fs::write(&config_path, "session: {}\n").unwrap();
-    seed_stored_definition(&root, token_plan_definition());
+    seed_stored_definition(root.path(), token_plan_definition());
     let mut input = ExactInput {
         selections: 0,
         credential_reads: 0,
@@ -188,7 +186,6 @@ fn exact_qwencloud_catalog_row_bypasses_the_picker() {
     assert!(output.contains("qwencloud:team:deepseek-v3.2"));
     assert_eq!(input.selections, 0);
     assert_eq!(input.credential_reads, 1);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 // exact disabled 행과 catalog 밖 행은 credential이나 repository를 열기 전에 각각 안정적인
@@ -203,10 +200,10 @@ fn exact_qwencloud_catalog_rejects_disabled_or_unknown_rows_before_secret() {
         ),
     ] {
         let root = test_root("reject");
-        let config_path = root.join("config.yaml");
+        let config_path = root.path().join("config.yaml");
         std::fs::write(&config_path, "session: {}\n").unwrap();
-        seed_stored_definition(&root, token_plan_definition());
-        let before = std::fs::read(root.join("connections.yaml")).unwrap();
+        seed_stored_definition(root.path(), token_plan_definition());
+        let before = std::fs::read(root.path().join("connections.yaml")).unwrap();
         let mut input = ExactInput {
             selections: 0,
             credential_reads: 0,
@@ -222,11 +219,10 @@ fn exact_qwencloud_catalog_rejects_disabled_or_unknown_rows_before_secret() {
         assert!(error.to_string().contains(expected), "{error}");
         assert_eq!(input.credential_reads, 0);
         assert_eq!(
-            std::fs::read(root.join("connections.yaml")).unwrap(),
+            std::fs::read(root.path().join("connections.yaml")).unwrap(),
             before
         );
-        assert_secret_repositories_absent(&root);
-        std::fs::remove_dir_all(root).unwrap();
+        assert_secret_repositories_absent(root.path());
     }
 }
 
@@ -249,7 +245,21 @@ catalog: qwencloud-token-plan-team-intl/v1
 "#
 }
 
-fn test_root(label: &str) -> std::path::PathBuf {
+struct TestRoot(PathBuf);
+
+impl TestRoot {
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestRoot {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn test_root(label: &str) -> TestRoot {
     let root = super::super::canonical_test_temp_dir().join(format!(
         "yo-qwencloud-catalog-{label}-{}-{}",
         std::process::id(),
@@ -258,12 +268,31 @@ fn test_root(label: &str) -> std::path::PathBuf {
             .unwrap()
             .as_nanos()
     ));
-    std::fs::create_dir_all(&root).unwrap();
-    root
+    std::fs::create_dir(&root).unwrap();
+    TestRoot(root)
 }
 
 fn assert_secret_repositories_absent(root: &Path) {
     for name in ["credentials.yaml", "connection-operation.yaml"] {
         assert!(!root.join(name).exists(), "{name} must remain absent");
     }
+}
+
+// QwenCloud catalog fixture가 repository 파일을 만든 뒤 panic해도 그 root만 제거하고,
+// 동시에 살아 있는 다른 test root는 건드리지 않아 병렬 테스트 격리를 보존합니다.
+#[test]
+fn qwencloud_catalog_fixture_cleanup_is_scoped_during_unwind() {
+    let sibling = test_root("cleanup-sibling");
+    let doomed = test_root("cleanup-panic");
+    let doomed_path = doomed.path().to_owned();
+
+    let outcome = std::panic::catch_unwind(move || {
+        std::fs::write(doomed.path().join("config.yaml"), "session: {}\n").unwrap();
+        seed_stored_definition(doomed.path(), token_plan_definition());
+        panic!("injected catalog assertion failure");
+    });
+
+    assert!(outcome.is_err());
+    assert!(!doomed_path.exists());
+    assert!(sibling.path().is_dir());
 }

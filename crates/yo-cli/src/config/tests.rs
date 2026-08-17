@@ -1,5 +1,34 @@
 use super::*;
 
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new(label: &str) -> Self {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the system clock is after the Unix epoch")
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("yo-config-{label}-{}-{nonce}", std::process::id()));
+        fs::create_dir(&path).unwrap();
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn expect_config_error(result: Result<(), ConfigError>) {
+    let _ = result.expect_err("the injected operation must fail");
+}
+
 // config.yaml에서 계속 소유하는 Session·TUI 일반 설정은 모델 정의 제거와 무관하게 읽힙니다.
 #[test]
 fn general_configuration_remains_supported() {
@@ -118,7 +147,8 @@ fn oversized_configuration_is_bounded_during_the_read() {
 // FIFO는 nonblocking open 뒤 regular-file 검사를 받아 writer를 기다리지 않고 실패합니다.
 #[test]
 fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {
-    let path = std::env::temp_dir().join(format!("yo-config-fifo-{}", std::process::id()));
+    let directory = TestDirectory::new("fifo");
+    let path = directory.path().join("config.yaml");
     nix::unistd::mkfifo(
         &path,
         nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
@@ -127,41 +157,64 @@ fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {
 
     let error = load_from(&path).unwrap_err();
 
-    fs::remove_file(&path).unwrap();
     assert!(matches!(error, ConfigError::UnsupportedFileType(found) if found == path));
 }
 
 // 최종 설정 경로가 symlink이면 대상 내용이 정상이어도 no-follow open에서 실패합니다.
 #[test]
 fn symlink_configuration_is_rejected_without_following_its_target() {
-    let root = std::env::temp_dir().join(format!("yo-config-symlink-{}", std::process::id()));
-    fs::create_dir_all(&root).unwrap();
-    let target = root.join("target.yaml");
-    let alias = root.join("config.yaml");
+    let directory = TestDirectory::new("symlink");
+    let target = directory.path().join("target.yaml");
+    let alias = directory.path().join("config.yaml");
     fs::write(&target, "").unwrap();
     std::os::unix::fs::symlink(&target, &alias).unwrap();
 
     let error = load_from(&alias).unwrap_err();
 
-    fs::remove_dir_all(root).unwrap();
     assert!(matches!(error, ConfigError::Io { .. }));
 }
 
 // 같은 bytes로 파일을 교체해도 identity metadata가 달라지면 stale 계획을 막습니다.
 #[test]
 fn final_config_guard_detects_same_byte_replacement() {
-    let path = std::env::temp_dir().join(format!("yo-config-guard-{}", std::process::id()));
+    let directory = TestDirectory::new("guard");
+    let path = directory.path().join("config.yaml");
     fs::write(&path, "session: {}\n").unwrap();
     let config = load_from(&path).unwrap();
     assert!(config.verify_unchanged().is_ok());
 
-    let replacement = path.with_extension("replacement");
+    let replacement = directory.path().join("replacement.yaml");
     fs::write(&replacement, "session: {}\n").unwrap();
     fs::rename(&replacement, &path).unwrap();
     let error = config.verify_unchanged().unwrap_err();
 
-    fs::remove_file(path).unwrap();
     assert!(matches!(error, ConfigError::Changed(_)));
+}
+
+// config fixture 안에 FIFO·symlink·교체 파일이 함께 있어도 unexpected Ok의 unwrap panic은
+// guard를 unwind하며 전체 전용 root를 제거하므로 다음 테스트에 잔여물을 남기지 않습니다.
+#[test]
+fn config_fixture_cleanup_survives_unexpected_success_panics() {
+    let directory = TestDirectory::new("panic-cleanup");
+    let root = directory.path().to_owned();
+
+    let outcome = std::panic::catch_unwind(move || {
+        let fifo = directory.path().join("config.fifo");
+        nix::unistd::mkfifo(
+            &fifo,
+            nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+        )
+        .unwrap();
+        let target = directory.path().join("target.yaml");
+        fs::write(&target, "session: {}\n").unwrap();
+        std::os::unix::fs::symlink(&target, directory.path().join("config.link")).unwrap();
+        fs::write(directory.path().join("replacement.yaml"), "session: {}\n").unwrap();
+
+        expect_config_error(Ok(()));
+    });
+
+    assert!(outcome.is_err());
+    assert!(!root.exists());
 }
 
 // version은 migration 신호가 아니라 다른 알 수 없는 설정 키와 같은 typed YAML 오류입니다.
