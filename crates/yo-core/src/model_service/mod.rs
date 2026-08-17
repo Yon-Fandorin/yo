@@ -3,6 +3,7 @@
 mod binding;
 mod binding_profile;
 mod catalog;
+mod connection_observation;
 mod connection_operation;
 mod connection_repository;
 mod credential;
@@ -20,6 +21,9 @@ pub use binding_profile::CompleteModelBinding;
 pub use catalog::{
     ModelCatalog, ModelCatalogEntry, ModelContextProfile, ModelTokenCounter, ModelTokenCounterError,
 };
+pub use connection_observation::{
+    LocalModelRequestObservation, ModelObservationWriteOutcome, ModelRequestOutcome,
+};
 pub use connection_operation::{
     ConnectionCredentialAction, ConnectionOperationError, ConnectionOperationExecutionError,
     ConnectionOperationExecutionOutcome, ConnectionOperationJournalEntry,
@@ -32,8 +36,8 @@ pub use connection_operation::{
 pub use connection_repository::{
     ConnectionAccount, ConnectionCatalogSeed, ConnectionCommit, ConnectionRepository,
     ConnectionRepositoryError, ConnectionRevision, ConnectionSnapshot,
-    LocalConnectionOperationGuard, LocalConnectionRepository, PreparedConnectionMutation,
-    StoredModelBinding,
+    LocalConnectionOperationGuard, LocalConnectionRepository, ModelLastFailure,
+    ModelRequestFailureKind, PreparedConnectionMutation, StoredModelBinding,
 };
 pub use credential::{ApiCredential, CredentialStore};
 pub use identity::{AccountId, ModelId, ModelServiceError, ProviderId};

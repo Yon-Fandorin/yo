@@ -927,6 +927,9 @@ bindings:
       reasoning_parameters: { effort: medium }
       optional_request_parameters: {}
       tool_capability_policy: local-tools/v1
+    last_failure:
+      kind: rate_limited
+      observed_at: 2026-08-17T09:10:11Z
 accounts:
   - provider: qwencloud
     provider_display_name: QwenCloud
@@ -938,6 +941,27 @@ catalogs:
     account: default
     catalog: qwencloud-token-plan-team-intl/v1
 ```
+
+`last_failure` is optional warning-only observation state, not part of complete
+binding identity and not a routing prohibition. Actual native model use reports
+one closed typed outcome without retaining a secret, request body, response
+body, or raw Provider error. The stored failure contains only `kind` and a
+canonical UTC whole-second `observed_at`; the next successful model request
+removes it. Authentication, authorization, exact-model availability,
+rate-limit, other request rejection, Provider availability, transport,
+timeout, protocol, configured response-limit, and local binding or credential
+prerequisite failures have distinct kinds. User cancellation, local-tool
+failure, and cleanup failure do not create an observation.
+
+The request retains the exact complete binding and private credential revision
+it used. After the request finishes, the connection owner briefly enters the
+same operation lane, recovers a pending connection operation, and re-reads both
+repositories. It publishes one `connections.yaml` CAS only if that binding and
+credential revision are still current. A removed or replaced binding or a key
+rotation therefore discards the stale outcome. Observation persistence failure
+is reported separately and never changes the underlying request outcome. A
+captured failure is shown as a warning in a later model-picker snapshot but
+does not disable, hide, or deprioritize the row.
 
 An absent file is the canonical unset snapshot and is read without creating a
 directory. Capture rejects unknown fields, duplicate account or binding

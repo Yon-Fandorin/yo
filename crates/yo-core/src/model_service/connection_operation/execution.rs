@@ -55,7 +55,9 @@ pub enum ConnectionOperationExecutionError {
     ExternalPreparation(ExternalConnectionError),
     ExternalDisconnectPreparation(super::ExternalDisconnectError),
     PublicCapture(ConnectionRepositoryError),
+    PublicPreparation(ConnectionRepositoryError),
     PublicCommit(ConnectionRepositoryError),
+    CredentialCapture(LocalCredentialStoreError),
     PublicRepository {
         kind: ConnectionOperationKind,
         action: ConnectionCredentialAction,
@@ -106,10 +108,22 @@ impl fmt::Display for ConnectionOperationExecutionError {
                     "capturing public connection state failed: {source}"
                 )
             },
+            Self::PublicPreparation(source) => {
+                write!(
+                    formatter,
+                    "preparing public connection state failed: {source}"
+                )
+            },
             Self::PublicCommit(source) => {
                 write!(
                     formatter,
                     "committing public connection state failed: {source}"
+                )
+            },
+            Self::CredentialCapture(source) => {
+                write!(
+                    formatter,
+                    "capturing private credential state failed: {source}"
                 )
             },
             Self::PublicRepository {
@@ -155,7 +169,10 @@ impl Error for ConnectionOperationExecutionError {
             Self::JournalCapture(source) | Self::Journal { source, .. } => Some(source),
             Self::ExternalPreparation(source) => Some(source),
             Self::ExternalDisconnectPreparation(source) => Some(source),
-            Self::PublicCapture(source) | Self::PublicCommit(source) => Some(source),
+            Self::PublicCapture(source)
+            | Self::PublicPreparation(source)
+            | Self::PublicCommit(source) => Some(source),
+            Self::CredentialCapture(source) => Some(source),
             Self::CredentialRepository { source, .. } => Some(source),
             #[cfg(test)]
             Self::InjectedInterruption => None,
@@ -333,6 +350,17 @@ impl LocalConnectionOperationSession<'_> {
             .connections
             .capture()
             .map_err(ConnectionOperationExecutionError::PublicCapture)
+    }
+
+    /// Captures private credential state while retaining the same serialized operation lane.
+    pub fn capture_credentials(
+        &self,
+    ) -> Result<crate::model_service::CredentialSnapshot, ConnectionOperationExecutionError> {
+        self.directory_identity.revalidate()?;
+        self.repositories
+            .credentials
+            .capture()
+            .map_err(ConnectionOperationExecutionError::CredentialCapture)
     }
 
     /// Publishes a preference-only or stored public mutation under the held lane.

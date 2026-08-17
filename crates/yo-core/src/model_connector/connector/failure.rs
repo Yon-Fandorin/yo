@@ -34,8 +34,18 @@ pub(super) fn cancelled_failure() -> ConnectorError {
 }
 
 pub(super) fn http_status_failure(status: StatusCode) -> ConnectorError {
-    ConnectorError::new(
+    let request_failure = match status.as_u16() {
+        401 => crate::ModelRequestFailureKind::Authentication,
+        403 => crate::ModelRequestFailureKind::AccessDenied,
+        408 => crate::ModelRequestFailureKind::Timeout,
+        429 => crate::ModelRequestFailureKind::RateLimited,
+        400..=499 => crate::ModelRequestFailureKind::RequestRejected,
+        500..=599 => crate::ModelRequestFailureKind::ProviderUnavailable,
+        _ => crate::ModelRequestFailureKind::Protocol,
+    };
+    ConnectorError::with_request_failure(
         ConnectorFailureKind::HttpStatus,
+        request_failure,
         format!(
             "model-connector HTTP request returned status {}",
             status.as_u16()

@@ -4,7 +4,9 @@ use std::path::Path;
 
 #[cfg(test)]
 use yo_core::ModelSelection;
-use yo_core::{AccountId, AgentBackend, BackendResumeTarget, CredentialStore, ModelId, ProviderId};
+use yo_core::{
+    AccountId, AgentBackend, BackendResumeTarget, CredentialSnapshot, ModelId, ProviderId,
+};
 
 use crate::{AppError, config::Config};
 
@@ -88,22 +90,22 @@ pub(crate) fn resolve(
 
 pub(crate) fn start_native(
     config: &Config,
-    credentials: &CredentialStore,
+    credentials: &CredentialSnapshot,
     selection: &StartupBackend,
     workspace: &Path,
 ) -> Result<Box<dyn AgentBackend + Send>, AppError> {
     native::start_native(config, credentials, selection, workspace)
 }
 
-pub(crate) fn open_credentials(path: &Path) -> Result<CredentialStore, AppError> {
+pub(crate) fn open_credentials(path: &Path) -> Result<CredentialSnapshot, AppError> {
     native::open_credentials(path)
 }
 
 pub(crate) fn credentials_for_startup<'a>(
     config: &Config,
-    retained: &'a mut Option<CredentialStore>,
+    retained: &'a mut Option<CredentialSnapshot>,
     selection: &StartupBackend,
-) -> Result<Option<&'a CredentialStore>, AppError> {
+) -> Result<Option<&'a CredentialSnapshot>, AppError> {
     if matches!(selection, StartupBackend::Codex) {
         return Ok(None);
     }

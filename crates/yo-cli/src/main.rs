@@ -192,7 +192,7 @@ enum SessionStep {
 #[cfg(unix)]
 struct StartupSnapshots<'a> {
     config: &'a config::Config,
-    credentials: &'a mut Option<yo_core::CredentialStore>,
+    credentials: &'a mut Option<yo_core::CredentialSnapshot>,
     stored_preference: Option<&'a yo_core::StartupTarget>,
 }
 

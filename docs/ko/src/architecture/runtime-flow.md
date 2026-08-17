@@ -844,6 +844,9 @@ bindings:
       reasoning_parameters: { effort: medium }
       optional_request_parameters: {}
       tool_capability_policy: local-tools/v1
+    last_failure:
+      kind: rate_limited
+      observed_at: 2026-08-17T09:10:11Z
 accounts:
   - provider: qwencloud
     provider_display_name: QwenCloud
@@ -855,6 +858,23 @@ catalogs:
     account: default
     catalog: qwencloud-token-plan-team-intl/v1
 ```
+
+`last_failure`는 complete binding identity에 포함되지 않고 routing을 금지하지 않는 optional
+warning-only observation state다. 실제 native model 사용은 secret, request body, response body,
+Provider 원문 오류를 보존하지 않고 닫힌 typed outcome 하나를 보고한다. 저장 failure에는
+`kind`와 UTC whole-second canonical `observed_at`만 있으며 다음 성공한 model request가 이를
+제거한다. 인증, 권한, exact-model availability, rate limit, 그 밖의 request 거부, Provider
+availability, transport, timeout, protocol, 설정한 response limit, local binding·credential
+전제조건 failure를 서로 다른 kind로 둔다. 사용자 취소, local-tool failure, cleanup failure는
+observation을 만들지 않는다.
+
+Request는 자신이 사용한 exact complete binding과 private credential revision을 유지한다.
+Request가 끝나면 connection owner가 같은 operation lane에 잠깐 들어가 pending connection
+operation을 복구하고 두 repository를 다시 읽는다. 그 binding과 credential revision이 여전히
+현재 값일 때만 `connections.yaml` CAS 하나를 게시한다. 따라서 binding 제거·교체나 key
+rotation 뒤의 오래된 outcome은 버린다. Observation 저장 failure는 별도로 보고하며 원래
+request outcome을 바꾸지 않는다. Capture한 failure는 이후 model-picker snapshot에서
+warning으로 표시하지만 해당 행을 disable·숨김·후순위 처리하지 않는다.
 
 파일이 없으면 canonical unset snapshot이며 디렉터리를 만들지 않고 읽는다. Capture는 모르는
 field, 중복 account나 binding coordinate, 대응 account가 없는 binding, 모순된 Provider 표시

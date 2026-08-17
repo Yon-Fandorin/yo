@@ -98,6 +98,73 @@ fn decodes_chunked_text_and_terminal_usage() {
     )));
 }
 
+// Responses terminal의 structured reason/code만 closed failure kind로 해석하고, 알 수 없는
+// 값은 body text를 추측하지 않은 채 protocol로 축소합니다.
+#[test]
+fn classifies_terminal_failure_only_from_typed_responses_fields() {
+    for (event_type, response, expected) in [
+        (
+            "response.incomplete",
+            json!({
+                "id": "resp-terminal",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"}
+            }),
+            crate::ModelRequestFailureKind::ResponseLimit,
+        ),
+        (
+            "response.failed",
+            json!({
+                "id": "resp-terminal",
+                "status": "failed",
+                "error": {"code": "server_error", "message": "private-sentinel"}
+            }),
+            crate::ModelRequestFailureKind::ProviderUnavailable,
+        ),
+        (
+            "response.failed",
+            json!({
+                "id": "resp-terminal",
+                "status": "failed",
+                "error": {"code": "model_not_found", "message": "private-sentinel"}
+            }),
+            crate::ModelRequestFailureKind::ModelUnavailable,
+        ),
+        (
+            "response.failed",
+            json!({
+                "id": "resp-terminal",
+                "status": "failed",
+                "error": {"code": "future_error", "message": "model_not_found"}
+            }),
+            crate::ModelRequestFailureKind::Protocol,
+        ),
+    ] {
+        let stream = [
+            event(json!({
+                "type": "response.created",
+                "sequence_number": 1,
+                "response": {"id": "resp-terminal"}
+            })),
+            event(json!({
+                "type": event_type,
+                "sequence_number": 2,
+                "response": response
+            })),
+        ]
+        .concat();
+        let mut decoder = ResponsesSseDecoder::new(ResponsesConnectorLimits::default());
+        let mut events = decoder.push(stream.as_bytes()).unwrap();
+        events.extend(decoder.finish().unwrap());
+
+        assert!(matches!(
+            events.last(),
+            Some(ResponsesEvent::Terminal { status, .. })
+                if status.request_failure_kind() == Some(expected)
+        ));
+    }
+}
+
 // function call의 item id, call_id, 이름, argument delta는 한 output index에 묶여
 // 최종 arguments와 일치할 때만 완료 event가 나오도록 correlation을 검증합니다.
 #[test]

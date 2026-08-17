@@ -468,6 +468,7 @@ impl ChatCompletionsSseDecoder {
                     }
                     ResponseTerminal::Incomplete {
                         reason: Some("length".to_owned()),
+                        request_failure: crate::ModelRequestFailureKind::ResponseLimit,
                     }
                 },
                 "content_filter" => {
@@ -479,6 +480,7 @@ impl ChatCompletionsSseDecoder {
                     }
                     ResponseTerminal::Failed {
                         code: Some("content_filter".to_owned()),
+                        request_failure: crate::ModelRequestFailureKind::RequestRejected,
                     }
                 },
                 _ => {

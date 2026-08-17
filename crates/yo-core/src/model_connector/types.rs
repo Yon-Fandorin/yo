@@ -99,13 +99,40 @@ pub enum ConnectorFailureKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConnectorError {
     kind: ConnectorFailureKind,
+    request_failure: Option<crate::ModelRequestFailureKind>,
     message: String,
 }
 
 impl ConnectorError {
     pub(super) fn new(kind: ConnectorFailureKind, message: impl Into<String>) -> Self {
+        let request_failure = match kind {
+            ConnectorFailureKind::Configuration => {
+                Some(crate::ModelRequestFailureKind::LocalConfiguration)
+            },
+            ConnectorFailureKind::Transport => Some(crate::ModelRequestFailureKind::Transport),
+            ConnectorFailureKind::HttpStatus => {
+                Some(crate::ModelRequestFailureKind::RequestRejected)
+            },
+            ConnectorFailureKind::Protocol => Some(crate::ModelRequestFailureKind::Protocol),
+            ConnectorFailureKind::Limit => Some(crate::ModelRequestFailureKind::ResponseLimit),
+            ConnectorFailureKind::Timeout => Some(crate::ModelRequestFailureKind::Timeout),
+            ConnectorFailureKind::Cancelled | ConnectorFailureKind::Cleanup => None,
+        };
         Self {
             kind,
+            request_failure,
+            message: message.into(),
+        }
+    }
+
+    pub(super) fn with_request_failure(
+        kind: ConnectorFailureKind,
+        request_failure: crate::ModelRequestFailureKind,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind,
+            request_failure: Some(request_failure),
             message: message.into(),
         }
     }
@@ -118,6 +145,11 @@ impl ConnectorError {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    #[must_use]
+    pub const fn request_failure_kind(&self) -> Option<crate::ModelRequestFailureKind> {
+        self.request_failure
     }
 }
 
@@ -140,8 +172,30 @@ pub struct ResponsesUsage {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResponseTerminal {
     Completed,
-    Incomplete { reason: Option<String> },
-    Failed { code: Option<String> },
+    Incomplete {
+        reason: Option<String>,
+        request_failure: crate::ModelRequestFailureKind,
+    },
+    Failed {
+        code: Option<String>,
+        request_failure: crate::ModelRequestFailureKind,
+    },
+}
+
+impl ResponseTerminal {
+    /// Returns the connector-classified failure for a non-completed terminal.
+    #[must_use]
+    pub const fn request_failure_kind(&self) -> Option<crate::ModelRequestFailureKind> {
+        match self {
+            Self::Completed => None,
+            Self::Incomplete {
+                request_failure, ..
+            }
+            | Self::Failed {
+                request_failure, ..
+            } => Some(*request_failure),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

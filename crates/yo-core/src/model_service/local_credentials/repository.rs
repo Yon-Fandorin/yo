@@ -98,6 +98,11 @@ impl CredentialSnapshot {
         self.credentials.is_empty()
     }
 
+    #[must_use]
+    pub const fn credentials(&self) -> &CredentialStore {
+        &self.credentials
+    }
+
     pub(crate) fn matches_expected(&self, mutation: &PreparedCredentialMutation) -> bool {
         self.revision == mutation.expected_revision
             && mutation.action.matches_presence(

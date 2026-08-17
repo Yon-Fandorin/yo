@@ -284,12 +284,14 @@ fn preserves_incomplete_and_failed_terminal_kinds() {
             "length",
             ResponseTerminal::Incomplete {
                 reason: Some("length".to_owned()),
+                request_failure: crate::ModelRequestFailureKind::ResponseLimit,
             },
         ),
         (
             "content_filter",
             ResponseTerminal::Failed {
                 code: Some("content_filter".to_owned()),
+                request_failure: crate::ModelRequestFailureKind::RequestRejected,
             },
         ),
     ] {

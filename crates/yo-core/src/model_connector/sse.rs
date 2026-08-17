@@ -224,11 +224,25 @@ impl ResponsesSseDecoder {
             "response.incomplete" => {
                 let reason =
                     optional_string_at(event, &["response", "incomplete_details", "reason"])?;
-                self.terminal(event, ResponseTerminal::Incomplete { reason })
+                let request_failure = responses_incomplete_failure(reason.as_deref());
+                self.terminal(
+                    event,
+                    ResponseTerminal::Incomplete {
+                        reason,
+                        request_failure,
+                    },
+                )
             },
             "response.failed" => {
                 let code = optional_string_at(event, &["response", "error", "code"])?;
-                self.terminal(event, ResponseTerminal::Failed { code })
+                let request_failure = responses_failed_failure(code.as_deref());
+                self.terminal(
+                    event,
+                    ResponseTerminal::Failed {
+                        code,
+                        request_failure,
+                    },
+                )
             },
             "response.queued" | "response.in_progress" => Ok(Vec::new()),
             _ => Ok(Vec::new()),
@@ -942,6 +956,26 @@ impl ResponsesSseDecoder {
             return Err(limit_failure("cumulative function argument limit exceeded"));
         }
         Ok(())
+    }
+}
+
+fn responses_incomplete_failure(reason: Option<&str>) -> crate::ModelRequestFailureKind {
+    match reason {
+        Some("max_output_tokens") => crate::ModelRequestFailureKind::ResponseLimit,
+        Some("content_filter") => crate::ModelRequestFailureKind::RequestRejected,
+        _ => crate::ModelRequestFailureKind::Protocol,
+    }
+}
+
+fn responses_failed_failure(code: Option<&str>) -> crate::ModelRequestFailureKind {
+    match code {
+        Some("invalid_api_key") => crate::ModelRequestFailureKind::Authentication,
+        Some("insufficient_permissions") => crate::ModelRequestFailureKind::AccessDenied,
+        Some("model_not_found") => crate::ModelRequestFailureKind::ModelUnavailable,
+        Some("rate_limit_exceeded") => crate::ModelRequestFailureKind::RateLimited,
+        Some("server_error") => crate::ModelRequestFailureKind::ProviderUnavailable,
+        Some("request_timeout") => crate::ModelRequestFailureKind::Timeout,
+        _ => crate::ModelRequestFailureKind::Protocol,
     }
 }
 

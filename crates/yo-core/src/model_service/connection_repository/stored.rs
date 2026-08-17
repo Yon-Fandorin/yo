@@ -82,6 +82,7 @@ impl ConnectionAccount {
 pub struct StoredModelBinding {
     complete: CompleteModelBinding,
     model_display_name: Option<String>,
+    last_failure: Option<ModelLastFailure>,
 }
 
 impl StoredModelBinding {
@@ -101,7 +102,18 @@ impl StoredModelBinding {
         Ok(Self {
             complete,
             model_display_name,
+            last_failure: None,
         })
+    }
+
+    pub(super) fn from_durable_with_failure(
+        complete: CompleteModelBinding,
+        model_display_name: Option<String>,
+        last_failure: Option<ModelLastFailure>,
+    ) -> Result<Self, ModelServiceError> {
+        let mut stored = Self::from_durable(complete, model_display_name)?;
+        stored.last_failure = last_failure;
+        Ok(stored)
     }
 
     #[must_use]
@@ -115,6 +127,16 @@ impl StoredModelBinding {
     }
 
     #[must_use]
+    pub const fn last_failure(&self) -> Option<&ModelLastFailure> {
+        self.last_failure.as_ref()
+    }
+
+    pub(super) fn with_last_failure(mut self, last_failure: Option<ModelLastFailure>) -> Self {
+        self.last_failure = last_failure;
+        self
+    }
+
+    #[must_use]
     pub fn selection(&self) -> ModelSelection {
         let binding = self.complete.binding();
         ModelSelection::new(
@@ -122,6 +144,99 @@ impl StoredModelBinding {
             binding.account_id().clone(),
             binding.model_id().clone(),
         )
+    }
+}
+
+/// Closed, secret-free classification for one actual model request failure.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ModelRequestFailureKind {
+    Authentication,
+    AccessDenied,
+    ModelUnavailable,
+    RateLimited,
+    RequestRejected,
+    ProviderUnavailable,
+    Transport,
+    Timeout,
+    Protocol,
+    ResponseLimit,
+    LocalConfiguration,
+}
+
+impl ModelRequestFailureKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Authentication => "authentication",
+            Self::AccessDenied => "access_denied",
+            Self::ModelUnavailable => "model_unavailable",
+            Self::RateLimited => "rate_limited",
+            Self::RequestRejected => "request_rejected",
+            Self::ProviderUnavailable => "provider_unavailable",
+            Self::Transport => "transport",
+            Self::Timeout => "timeout",
+            Self::Protocol => "protocol",
+            Self::ResponseLimit => "response_limit",
+            Self::LocalConfiguration => "local_configuration",
+        }
+    }
+
+    pub(super) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "authentication" => Some(Self::Authentication),
+            "access_denied" => Some(Self::AccessDenied),
+            "model_unavailable" => Some(Self::ModelUnavailable),
+            "rate_limited" => Some(Self::RateLimited),
+            "request_rejected" => Some(Self::RequestRejected),
+            "provider_unavailable" => Some(Self::ProviderUnavailable),
+            "transport" => Some(Self::Transport),
+            "timeout" => Some(Self::Timeout),
+            "protocol" => Some(Self::Protocol),
+            "response_limit" => Some(Self::ResponseLimit),
+            "local_configuration" => Some(Self::LocalConfiguration),
+            _ => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ModelRequestFailureKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// One warning-only per-model observation retained outside complete-binding identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ModelLastFailure {
+    kind: ModelRequestFailureKind,
+    observed_at: String,
+}
+
+impl ModelLastFailure {
+    pub fn new(
+        kind: ModelRequestFailureKind,
+        observed_at: impl Into<String>,
+    ) -> Result<Self, ModelServiceError> {
+        let observed_at = observed_at.into();
+        let timestamp = observed_at.parse::<jiff::Timestamp>().map_err(|_| {
+            ModelServiceError::new("model last_failure observed_at must be canonical UTC RFC 3339")
+        })?;
+        if timestamp.subsec_nanosecond() != 0 || timestamp.to_string() != observed_at {
+            return Err(ModelServiceError::new(
+                "model last_failure observed_at must be canonical UTC RFC 3339 at whole-second precision",
+            ));
+        }
+        Ok(Self { kind, observed_at })
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> ModelRequestFailureKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn observed_at(&self) -> &str {
+        &self.observed_at
     }
 }
 

@@ -443,6 +443,7 @@ fn incomplete_chat_round_fails_without_a_resumable_replay_delta() {
                 response_id: "chat-length".to_owned(),
                 status: ModelConnectorTerminal::Incomplete {
                     reason: Some("length".to_owned()),
+                    request_failure: crate::ModelRequestFailureKind::ResponseLimit,
                 },
                 usage: crate::ModelConnectorUsage::default(),
             },

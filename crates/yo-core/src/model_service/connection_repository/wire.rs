@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     super::{AccountId, ModelId, ModelSelection, ProviderId, StartupTarget},
     ConnectionAccount, ConnectionCatalogSeed, ConnectionRepositoryError, ConnectionRevision,
-    StoredModelBinding,
+    ModelLastFailure, ModelRequestFailureKind, StoredModelBinding,
     catalog_seed::CatalogSource,
     stored,
 };
@@ -192,6 +192,12 @@ struct WireBinding {
     connector: String,
     base_url: String,
     profile: WireProfile,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    last_failure: Option<WireLastFailure>,
 }
 
 impl From<&StoredModelBinding> for WireBinding {
@@ -207,6 +213,23 @@ impl From<&StoredModelBinding> for WireBinding {
             connector: binding.connector_id().as_str().to_owned(),
             base_url: binding.endpoint().as_str().to_owned(),
             profile: WireProfile::from(profile),
+            last_failure: stored.last_failure().map(WireLastFailure::from),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WireLastFailure {
+    kind: String,
+    observed_at: String,
+}
+
+impl From<&ModelLastFailure> for WireLastFailure {
+    fn from(failure: &ModelLastFailure) -> Self {
+        Self {
+            kind: failure.kind().as_str().to_owned(),
+            observed_at: failure.observed_at().to_owned(),
         }
     }
 }
@@ -369,6 +392,7 @@ fn parse_binding(binding: WireBinding) -> Result<StoredModelBinding, crate::Mode
         connector,
         base_url,
         profile,
+        last_failure,
     } = binding;
     let dialect = profile.api_dialect.parse()?;
     let effective = EffectiveModelBinding::from_durable(
@@ -380,9 +404,18 @@ fn parse_binding(binding: WireBinding) -> Result<StoredModelBinding, crate::Mode
         NormalizedEndpoint::parse(&base_url)?,
     )?;
     let profile = parse_profile(profile)?;
-    StoredModelBinding::from_durable(
+    let last_failure = last_failure
+        .map(|failure| {
+            let kind = ModelRequestFailureKind::parse(&failure.kind).ok_or_else(|| {
+                crate::ModelServiceError::new("stored model last_failure kind is unsupported")
+            })?;
+            ModelLastFailure::new(kind, failure.observed_at)
+        })
+        .transpose()?;
+    StoredModelBinding::from_durable_with_failure(
         CompleteModelBinding::new(effective, profile)?,
         model_display_name,
+        last_failure,
     )
 }
 

@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
 
-use super::{AccountId, ModelCatalog, ModelId, ModelServiceError, ProviderId, StartupTarget};
+use super::{
+    AccountId, ModelCatalog, ModelId, ModelLastFailure, ModelServiceError, ProviderId,
+    StartupTarget,
+};
 
 /// One exact Provider/Account/Model coordinate selected for a native model binding.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -68,6 +71,7 @@ pub struct ModelSelectionChoice {
     provider_label: String,
     account_label: String,
     model_label: String,
+    last_failure: Option<ModelLastFailure>,
 }
 
 impl ModelSelectionChoice {
@@ -89,6 +93,11 @@ impl ModelSelectionChoice {
     #[must_use]
     pub fn model_label(&self) -> &str {
         &self.model_label
+    }
+
+    #[must_use]
+    pub const fn last_failure(&self) -> Option<&ModelLastFailure> {
+        self.last_failure.as_ref()
     }
 }
 
@@ -126,6 +135,7 @@ impl ModelSelectionController {
                         .model_display_name()
                         .unwrap_or(binding.model_id().as_str())
                         .to_owned(),
+                    last_failure: entry.last_failure().cloned(),
                 }
             })
             .collect::<Vec<_>>();

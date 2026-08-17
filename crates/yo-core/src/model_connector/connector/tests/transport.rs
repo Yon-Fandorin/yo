@@ -1,7 +1,9 @@
 use reqwest::{StatusCode, Url};
 
 use super::super::{
-    failure::http_status_failure,
+    failure::{
+        cancelled_failure, http_status_failure, limit_failure, protocol_failure, transport_failure,
+    },
     transport::{Origin, http_client_with_test_root, validate_redirect},
 };
 use crate::model_connector::{ConnectorFailureKind, ResponsesConnectorLimits};
@@ -26,13 +28,39 @@ fn rejects_an_invalid_local_tls_fixture_root_before_network_work() {
 // 인증·rate-limit·server 오류는 상태 코드만 보존하고 민감한 body는 진단에 싣지 않는다.
 #[test]
 fn http_failures_preserve_only_the_status_code() {
-    for status in [
-        StatusCode::UNAUTHORIZED,
-        StatusCode::TOO_MANY_REQUESTS,
-        StatusCode::INTERNAL_SERVER_ERROR,
+    for (status, expected) in [
+        (
+            StatusCode::UNAUTHORIZED,
+            crate::ModelRequestFailureKind::Authentication,
+        ),
+        (
+            StatusCode::FORBIDDEN,
+            crate::ModelRequestFailureKind::AccessDenied,
+        ),
+        (
+            StatusCode::NOT_FOUND,
+            crate::ModelRequestFailureKind::RequestRejected,
+        ),
+        (
+            StatusCode::REQUEST_TIMEOUT,
+            crate::ModelRequestFailureKind::Timeout,
+        ),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            crate::ModelRequestFailureKind::RateLimited,
+        ),
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            crate::ModelRequestFailureKind::RequestRejected,
+        ),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            crate::ModelRequestFailureKind::ProviderUnavailable,
+        ),
     ] {
         let error = http_status_failure(status);
         assert_eq!(error.kind(), ConnectorFailureKind::HttpStatus);
+        assert_eq!(error.request_failure_kind(), Some(expected));
         assert_eq!(
             error.to_string(),
             format!(
@@ -43,6 +71,29 @@ fn http_failures_preserve_only_the_status_code() {
         assert!(!error.to_string().contains("prompt"));
         assert!(!error.to_string().contains("credential"));
     }
+}
+
+// request outcome 분류는 typed connector 경계에서만 정해지고 cancellation·cleanup은
+// 관찰 대상이 아니며 body text나 진단 문자열로 더 구체적인 kind를 추론하지 않습니다.
+#[test]
+fn connector_failure_kinds_have_closed_request_observation_mapping() {
+    assert_eq!(
+        transport_failure("private-body-sentinel").request_failure_kind(),
+        Some(crate::ModelRequestFailureKind::Transport)
+    );
+    assert_eq!(
+        protocol_failure("private-body-sentinel").request_failure_kind(),
+        Some(crate::ModelRequestFailureKind::Protocol)
+    );
+    assert_eq!(
+        limit_failure("private-body-sentinel").request_failure_kind(),
+        Some(crate::ModelRequestFailureKind::ResponseLimit)
+    );
+    assert_eq!(cancelled_failure().request_failure_kind(), None);
+    assert_eq!(
+        http_status_failure(StatusCode::EARLY_HINTS).request_failure_kind(),
+        Some(crate::ModelRequestFailureKind::Protocol)
+    );
 }
 
 // redirect는 scheme·host·effective port가 모두 같은 origin이고 profile 횟수 안일 때만

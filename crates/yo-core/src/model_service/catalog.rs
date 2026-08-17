@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::{
     AccountId, CompleteModelBinding, EffectiveModelBinding, EffectiveModelProfile, ModelId,
-    ModelServiceError, ProviderId, VersionedProfileId,
+    ModelLastFailure, ModelServiceError, ProviderId, VersionedProfileId,
 };
 
 const MAX_DISPLAY_NAME_BYTES: usize = 256;
@@ -15,6 +15,7 @@ pub struct ModelCatalogEntry {
     provider_display_name: Option<String>,
     account_display_name: Option<String>,
     model_display_name: Option<String>,
+    last_failure: Option<ModelLastFailure>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,6 +43,7 @@ impl ModelCatalogEntry {
             provider_display_name,
             account_display_name,
             model_display_name,
+            last_failure: None,
         })
     }
 
@@ -60,6 +62,7 @@ impl ModelCatalogEntry {
             provider_display_name,
             account_display_name,
             model_display_name,
+            last_failure: None,
             binding: CatalogBinding::Complete(binding),
         })
     }
@@ -69,6 +72,7 @@ impl ModelCatalogEntry {
         provider_display_name: Option<String>,
         account_display_name: Option<String>,
         model_display_name: Option<String>,
+        last_failure: Option<ModelLastFailure>,
     ) -> Result<Self, ModelServiceError> {
         validate_display_name("Provider", provider_display_name.as_deref())?;
         validate_display_name("Account", account_display_name.as_deref())?;
@@ -78,6 +82,7 @@ impl ModelCatalogEntry {
             provider_display_name,
             account_display_name,
             model_display_name,
+            last_failure,
         })
     }
 
@@ -102,6 +107,11 @@ impl ModelCatalogEntry {
     #[must_use]
     pub fn model_display_name(&self) -> Option<&str> {
         self.model_display_name.as_deref()
+    }
+
+    #[must_use]
+    pub const fn last_failure(&self) -> Option<&ModelLastFailure> {
+        self.last_failure.as_ref()
     }
 
     pub const fn context(&self) -> &ModelContextProfile {

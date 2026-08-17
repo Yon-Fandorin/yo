@@ -68,6 +68,21 @@ pub struct NativeModelBackendServices {
     semantic_admission: Option<Box<dyn ToolSemanticAdmission>>,
     tool_host: Box<dyn ToolExecutionHost>,
     token_counter: Box<dyn ModelTokenCounter>,
+    request_observer: Option<Box<dyn ModelRequestObserver>>,
+}
+
+/// Host-owned sink for one typed actual model-request outcome.
+pub trait ModelRequestObserver: Send {
+    fn observe(&mut self, outcome: crate::ModelRequestOutcome) -> Result<(), String>;
+}
+
+impl<F> ModelRequestObserver for F
+where
+    F: FnMut(crate::ModelRequestOutcome) -> Result<(), String> + Send,
+{
+    fn observe(&mut self, outcome: crate::ModelRequestOutcome) -> Result<(), String> {
+        self(outcome)
+    }
 }
 
 impl NativeModelBackendServices {
@@ -80,7 +95,17 @@ impl NativeModelBackendServices {
             semantic_admission,
             tool_host,
             token_counter,
+            request_observer: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_model_request_observer(
+        mut self,
+        observer: impl ModelRequestObserver + 'static,
+    ) -> Self {
+        self.request_observer = Some(Box::new(observer));
+        self
     }
 }
 
@@ -141,6 +166,7 @@ pub struct NativeModelBackend {
     config: NativeModelBackendConfig,
     model_context: ModelContextProfile,
     token_counter: Box<dyn ModelTokenCounter>,
+    request_observer: Option<Box<dyn ModelRequestObserver>>,
     contract: ModelReplayContract,
     replay_profile: crate::ReplayProfile,
     session: Option<SessionId>,
@@ -433,6 +459,7 @@ impl NativeModelBackend {
             config,
             model_context,
             token_counter: services.token_counter,
+            request_observer: services.request_observer,
             contract,
             replay_profile,
             session: None,
@@ -588,25 +615,34 @@ impl NativeModelBackend {
                 "model replay delta capacity was exhausted before request dispatch",
             )
         })?;
-        let request = ModelConnectorRequest::new(
+        let request = match ModelConnectorRequest::new(
             items,
             tool_exposure,
             self.model_context.max_output_tokens(),
             self.config.reasoning_effort,
-        )
-        .map_err(map_connector_turn)?
+        ) {
+            Ok(request) => request,
+            Err(error) => {
+                self.observe_connector_failure(state.turn, &error);
+                return Err(map_connector_turn(error));
+            },
+        }
         .with_replay_budget(replay_budget)
         .with_cache_affinity_hint(
             crate::model_connector::ModelCacheAffinityHint::for_session(state.turn.session_id()),
         );
+        let tokenization_payload = match self.connector.tokenization_payload(&request) {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.observe_connector_failure(state.turn, &error);
+                return Err(map_connector_turn(error));
+            },
+        };
         let input_tokens = self
             .token_counter
             .count_input_tokens(
                 self.model_context.tokenizer_profile(),
-                &self
-                    .connector
-                    .tokenization_payload(&request)
-                    .map_err(map_connector_turn)?,
+                &tokenization_payload,
             )
             .map_err(|_| {
                 failure(
@@ -639,6 +675,7 @@ impl NativeModelBackend {
                 *self.shared_stop.response.lock().map_err(|_| {
                     failure(BackendFailureKind::Cleanup, "native stop state is poisoned")
                 })? = None;
+                self.observe_connector_failure(state.turn, &error);
                 return Err(map_connector_turn(error));
             },
         };
@@ -708,6 +745,36 @@ impl NativeModelBackend {
         }
     }
 
+    fn observe_connector_failure(&mut self, turn: TurnRef, error: &crate::ConnectorError) {
+        if let Some(kind) = error.request_failure_kind() {
+            self.observe_model_request(turn, crate::ModelRequestOutcome::Failed(kind));
+        }
+    }
+
+    fn observe_model_request(&mut self, turn: TurnRef, outcome: crate::ModelRequestOutcome) {
+        let Some(observer) = self.request_observer.as_mut() else {
+            return;
+        };
+        let Err(detail) = observer.observe(outcome) else {
+            return;
+        };
+        let Ok(activity) = self.next_activity(turn) else {
+            return;
+        };
+        self.queue_activity_text(
+            activity,
+            ActivityKind::ModelWork,
+            json!({
+                "warning": "model request status was not saved",
+                "detail": detail,
+            })
+            .to_string(),
+            Some(ActivityOutcome::Failed(Failure::new(
+                "recording model request status failed",
+            ))),
+        );
+    }
+
     fn handle_response_event(&mut self, event: ModelConnectorEvent) -> Result<(), BackendFailure> {
         let mut state = self.turn.take().ok_or_else(|| {
             failure(
@@ -717,9 +784,23 @@ impl NativeModelBackend {
         })?;
         if let Err(error) = self.apply_response_event(&mut state, event) {
             if error.kind() == BackendFailureKind::ContextExhausted {
+                self.observe_model_request(
+                    state.turn,
+                    crate::ModelRequestOutcome::Failed(
+                        crate::ModelRequestFailureKind::ResponseLimit,
+                    ),
+                );
                 self.context_exhausted = true;
                 self.exhaust_turn(&mut state);
             } else {
+                if error.kind() == BackendFailureKind::Protocol {
+                    self.observe_model_request(
+                        state.turn,
+                        crate::ModelRequestOutcome::Failed(
+                            crate::ModelRequestFailureKind::Protocol,
+                        ),
+                    );
+                }
                 self.fail_turn(&mut state, error.to_string());
             }
         }
@@ -1141,8 +1222,18 @@ impl NativeModelBackend {
                 match status {
                     ModelConnectorTerminal::Completed if state.pending_calls.is_empty() => {
                         if completed_round_has_assistant {
+                            self.observe_model_request(
+                                state.turn,
+                                crate::ModelRequestOutcome::Succeeded,
+                            );
                             self.complete_turn(state)?;
                         } else {
+                            self.observe_model_request(
+                                state.turn,
+                                crate::ModelRequestOutcome::Failed(
+                                    crate::ModelRequestFailureKind::Protocol,
+                                ),
+                            );
                             self.fail_turn(
                                 state,
                                 "completed model response did not contain a final assistant message"
@@ -1150,21 +1241,45 @@ impl NativeModelBackend {
                             );
                         }
                     },
-                    ModelConnectorTerminal::Completed => self.advance_tool_queue(state)?,
-                    ModelConnectorTerminal::Incomplete { reason } => self.fail_turn(
-                        state,
-                        format!(
-                            "model response was incomplete: {}",
-                            reason.unwrap_or_else(|| "unknown reason".to_owned())
-                        ),
-                    ),
-                    ModelConnectorTerminal::Failed { code } => self.fail_turn(
-                        state,
-                        format!(
-                            "model response failed: {}",
-                            code.unwrap_or_else(|| "unknown code".to_owned())
-                        ),
-                    ),
+                    ModelConnectorTerminal::Completed => {
+                        self.observe_model_request(
+                            state.turn,
+                            crate::ModelRequestOutcome::Succeeded,
+                        );
+                        self.advance_tool_queue(state)?;
+                    },
+                    ModelConnectorTerminal::Incomplete {
+                        reason,
+                        request_failure,
+                    } => {
+                        self.observe_model_request(
+                            state.turn,
+                            crate::ModelRequestOutcome::Failed(request_failure),
+                        );
+                        self.fail_turn(
+                            state,
+                            format!(
+                                "model response was incomplete: {}",
+                                reason.unwrap_or_else(|| "unknown reason".to_owned())
+                            ),
+                        );
+                    },
+                    ModelConnectorTerminal::Failed {
+                        code,
+                        request_failure,
+                    } => {
+                        self.observe_model_request(
+                            state.turn,
+                            crate::ModelRequestOutcome::Failed(request_failure),
+                        );
+                        self.fail_turn(
+                            state,
+                            format!(
+                                "model response failed: {}",
+                                code.unwrap_or_else(|| "unknown code".to_owned())
+                            ),
+                        );
+                    },
                 }
             },
         }
@@ -1890,11 +2005,18 @@ impl AgentBackend for NativeModelBackend {
             match poll {
                 Err(error) => {
                     let mut state = self.turn.take().expect("active Turn was checked");
+                    self.observe_connector_failure(state.turn, &error);
                     self.fail_turn(&mut state, map_connector_turn(error).to_string());
                 },
                 Ok(ModelConnectorPoll::Event(event)) => self.handle_response_event(event)?,
                 Ok(ModelConnectorPoll::Closed) => {
                     let mut state = self.turn.take().expect("active Turn was checked");
+                    self.observe_model_request(
+                        state.turn,
+                        crate::ModelRequestOutcome::Failed(
+                            crate::ModelRequestFailureKind::Protocol,
+                        ),
+                    );
                     self.fail_turn(
                         &mut state,
                         "model connector stream closed without a terminal event".to_owned(),

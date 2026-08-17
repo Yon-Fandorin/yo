@@ -14,7 +14,9 @@ mod wire;
 
 pub use catalog_seed::ConnectionCatalogSeed;
 pub use error::ConnectionRepositoryError;
-pub use stored::{ConnectionAccount, StoredModelBinding};
+pub use stored::{
+    ConnectionAccount, ModelLastFailure, ModelRequestFailureKind, StoredModelBinding,
+};
 
 pub(crate) const MAX_CONNECTION_BYTES: u64 = 1024 * 1024;
 const FILE_MODE: u32 = 0o600;
@@ -163,6 +165,7 @@ impl ConnectionSnapshot {
                     account.provider_display_name().map(str::to_owned),
                     account.account_display_name().map(str::to_owned),
                     binding.model_display_name().map(str::to_owned),
+                    binding.last_failure().cloned(),
                 )
                 .map_err(|_| ConnectionRepositoryError::InvalidMutation)
             })
@@ -299,7 +302,7 @@ impl ConnectionSnapshot {
     pub fn prepare_group_replace(
         &self,
         account: ConnectionAccount,
-        replacement_bindings: Vec<StoredModelBinding>,
+        mut replacement_bindings: Vec<StoredModelBinding>,
         replacement_seed: Option<ConnectionCatalogSeed>,
     ) -> Result<PreparedConnectionMutation, ConnectionRepositoryError> {
         if replacement_bindings
@@ -323,6 +326,16 @@ impl ConnectionSnapshot {
 
         let provider = account.provider_id().clone();
         let account_id = account.account_id().clone();
+        for replacement in &mut replacement_bindings {
+            if let Some(retained) = self.bindings.iter().find(|current| {
+                current.selection() == replacement.selection()
+                    && current.complete() == replacement.complete()
+            }) {
+                *replacement = replacement
+                    .clone()
+                    .with_last_failure(retained.last_failure().cloned());
+            }
+        }
         let mut accounts = self.accounts.clone();
         accounts.retain(|current| {
             current.provider_id() != &provider || current.account_id() != &account_id
@@ -357,6 +370,35 @@ impl ConnectionSnapshot {
             .ok_or(ConnectionRepositoryError::InvalidMutation)?;
         mutation.group_replacement = Some(group_replacement);
         Ok(mutation)
+    }
+
+    /// Prepares one warning-only observation update for an exact current complete binding.
+    pub fn prepare_model_observation(
+        &self,
+        selection: &ModelSelection,
+        expected_binding: &super::CompleteModelBinding,
+        last_failure: Option<ModelLastFailure>,
+    ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
+        let Some(index) = self
+            .bindings
+            .iter()
+            .position(|binding| stored::binding_matches_selection(binding, selection))
+        else {
+            return Ok(None);
+        };
+        let current = &self.bindings[index];
+        if current.complete() != expected_binding || current.last_failure() == last_failure.as_ref()
+        {
+            return Ok(None);
+        }
+        let mut bindings = self.bindings.clone();
+        bindings[index] = current.clone().with_last_failure(last_failure);
+        self.prepare_snapshot(
+            self.preference.clone(),
+            self.accounts.clone(),
+            bindings,
+            self.catalog_seeds.clone(),
+        )
     }
 
     /// Removes one stored model, its unused account, and an exact matching preference.

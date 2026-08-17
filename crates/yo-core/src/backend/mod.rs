@@ -18,5 +18,7 @@ pub use evidence::{
 pub(crate) use evidence::{
     KimiReplayToolCallSize, ModelReplayBudget, kimi_replay_round_item_lengths,
 };
-pub use native::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
+pub use native::{
+    ModelRequestObserver, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+};
 pub use scripted::{BackendScriptStep, ScriptedBackend};

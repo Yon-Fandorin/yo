@@ -1,8 +1,10 @@
 use std::path::Path;
 
 use yo_core::{
-    AgentBackend, CredentialStore, LocalCredentialStore, ModelConnectorLimits, NativeModelBackend,
-    NativeModelBackendConfig, NativeModelBackendServices, ToolRegistry,
+    AgentBackend, CredentialSnapshot, LocalConnectionOperationRepositories,
+    LocalCredentialRepository, LocalModelRequestObservation, ModelConnectorLimits,
+    ModelRequestFailureKind, ModelRequestOutcome, NativeModelBackend, NativeModelBackendConfig,
+    NativeModelBackendServices, ToolRegistry,
 };
 
 use super::{
@@ -13,7 +15,7 @@ use crate::{AppError, config::Config, local_tools};
 
 pub(super) fn start_native(
     config: &Config,
-    credentials: &CredentialStore,
+    credentials: &CredentialSnapshot,
     selection: &StartupBackend,
     workspace: &Path,
 ) -> Result<Box<dyn AgentBackend + Send>, AppError> {
@@ -33,27 +35,63 @@ pub(super) fn start_native(
         .model_catalog()
         .resolve_model(provider, account, model)
         .map_err(|error| AppError::single("resolving native model binding", error))?;
-    require_supported_tokenizer(entry)?;
+    let observation = entry.complete_binding().cloned().map(|complete| {
+        let directory = config
+            .connection_path()
+            .parent()
+            .expect("the connection path always has a parent")
+            .to_owned();
+        LocalConnectionOperationRepositories::in_directory(directory)
+            .map(|repositories| {
+                LocalModelRequestObservation::new(
+                    repositories,
+                    complete,
+                    credentials.revision().clone(),
+                )
+            })
+            .map_err(|error| error.to_string())
+    });
+    require_supported_tokenizer(entry)
+        .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))?;
     let credential_path = config.credential_path();
-    let credential = credentials.resolve(provider, account).cloned().ok_or_else(|| {
-        AppError::many([format!(
-            "credentials.yaml has no API credential for Provider {provider} and Account {account}"
-        )])
-    })?;
-    let registry = runtime_registry(entry, *registry_revision)?;
-    let semantic_admission = local_tools::LocalSemanticAdmission::new(credentials.clone());
+    let credential = match credentials.resolve(provider, account).cloned() {
+        Some(credential) => credential,
+        None => {
+            let error = AppError::many([format!(
+                "credentials.yaml has no API credential for Provider {provider} and Account {account}"
+            )]);
+            return Err(with_local_configuration_observation(
+                error,
+                observation.as_ref(),
+            ));
+        },
+    };
+    let registry = runtime_registry(entry, *registry_revision)
+        .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))?;
+    let semantic_admission =
+        local_tools::LocalSemanticAdmission::new(credentials.credentials().clone());
     let tool_host = local_tools::LocalToolHost::new(workspace, &credential_path)
         .map_err(|error| AppError::single("starting local workspace tools", error))?;
-    let services = NativeModelBackendServices::new(
+    let mut services = NativeModelBackendServices::new(
         Some(Box::new(semantic_admission)),
         Box::new(tool_host),
         Box::new(TokenizerRegistry),
     );
+    if let Some(request_observation) = observation.clone() {
+        services = services.with_model_request_observer(move |outcome| {
+            request_observation
+                .as_ref()
+                .map_err(Clone::clone)?
+                .record(outcome)
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        });
+    }
     let backend_config = NativeModelBackendConfig {
         maximum_tool_argument_bytes: registry_revision.maximum_argument_bytes(),
         ..NativeModelBackendConfig::default()
     };
-    NativeModelBackend::new(
+    let backend = NativeModelBackend::new(
         entry,
         credential,
         ModelConnectorLimits::default(),
@@ -61,8 +99,33 @@ pub(super) fn start_native(
         services,
         backend_config,
     )
-    .map(|backend| Box::new(backend) as Box<dyn AgentBackend + Send>)
-    .map_err(|error| AppError::single("starting native model backend", error))
+    .map_err(|error| AppError::single("starting native model backend", error));
+    backend
+        .map(|backend| Box::new(backend) as Box<dyn AgentBackend + Send>)
+        .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))
+}
+
+fn with_local_configuration_observation(
+    primary: AppError,
+    observation: Option<&Result<LocalModelRequestObservation, String>>,
+) -> AppError {
+    let persistence_error = match observation {
+        Some(Ok(observation)) => observation
+            .record(ModelRequestOutcome::Failed(
+                ModelRequestFailureKind::LocalConfiguration,
+            ))
+            .err()
+            .map(|error| error.to_string()),
+        Some(Err(error)) => Some(error.clone()),
+        None => None,
+    };
+    match persistence_error {
+        Some(error) => AppError::combine([
+            primary,
+            AppError::single("recording the local model configuration failure", error),
+        ]),
+        None => primary,
+    }
 }
 
 fn runtime_registry(
@@ -82,14 +145,22 @@ fn runtime_registry(
     }
 }
 
-pub(super) fn open_credentials(path: &Path) -> Result<CredentialStore, AppError> {
-    LocalCredentialStore::open(path)
+pub(super) fn open_credentials(path: &Path) -> Result<CredentialSnapshot, AppError> {
+    LocalCredentialRepository::new(path.to_owned())
+        .capture()
         .map_err(|error| AppError::single("reading model credentials", error))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture_complete() -> yo_core::CompleteModelBinding {
+        yo_core::CompleteModelBinding::from_durable_json(
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
+        )
+        .unwrap()
+    }
 
     fn explicit_entry(policy: &str) -> yo_core::ModelCatalogEntry {
         let complete = yo_core::CompleteModelBinding::from_durable_json(&format!(
@@ -140,9 +211,15 @@ mod tests {
     // backend 종류가 잘못된 호출이라는 고정 진단으로 즉시 거절한다.
     #[test]
     fn native_startup_rejects_host_backend_before_catalog_resolution() {
+        let credentials = LocalCredentialRepository::new(std::env::temp_dir().join(format!(
+            "yo-native-wrong-backend-{}-missing.yaml",
+            std::process::id()
+        )))
+        .capture()
+        .unwrap();
         let error = match start_native(
             &Config::default(),
-            &yo_core::CredentialStore::default(),
+            &credentials,
             &StartupBackend::Codex,
             std::path::Path::new("."),
         ) {
@@ -154,5 +231,62 @@ mod tests {
             error.to_string(),
             "native backend startup requires a native model selection"
         );
+    }
+
+    // 실제 native startup에서 credential이 없으면 remote connector를 만들기 전에 원래
+    // startup 오류를 유지하면서 exact stored model에 local_configuration warning을 남깁니다.
+    #[test]
+    fn missing_startup_credential_records_local_configuration_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "yo-native-missing-credential-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_path = root.join("config.yaml");
+        let mut config = crate::config::load_from(&config_path).unwrap();
+        let complete = fixture_complete();
+        let account = yo_core::ConnectionAccount::new(
+            complete.binding().provider_id().clone(),
+            complete.binding().account_id().clone(),
+            None,
+            None,
+        )
+        .unwrap();
+        let stored = yo_core::StoredModelBinding::new(complete.clone(), None).unwrap();
+        let repository = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"));
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_model_upsert(account, stored)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        config.replace_model_catalog(repository.capture().unwrap().model_catalog().unwrap());
+        let credentials = LocalCredentialRepository::new(root.join("credentials.yaml"))
+            .capture()
+            .unwrap();
+        let selection = StartupBackend::Native {
+            provider: complete.binding().provider_id().clone(),
+            account: complete.binding().account_id().clone(),
+            model: complete.binding().model_id().clone(),
+            replace_binding: false,
+            registry_revision: local_tools::LocalToolRegistryRevision::BasicFiles,
+        };
+
+        let error = match start_native(&config, &credentials, &selection, &root) {
+            Ok(_) => panic!("a missing credential must stop native startup"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("has no API credential"));
+        let captured = repository.capture().unwrap();
+        assert_eq!(
+            captured.models()[0].last_failure().unwrap().kind(),
+            ModelRequestFailureKind::LocalConfiguration
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 }
