@@ -32,6 +32,7 @@ mod storage;
 #[cfg(unix)]
 #[cfg(unix)]
 fn main() -> ExitCode {
+    local_tools::initialize_process_file_mode();
     let command = match command::parse(std::env::args_os().skip(1)) {
         Ok(command) => command,
         Err(error) => {
@@ -178,6 +179,7 @@ struct LiveSession {
     agent: agent::TuiAgentConnection,
     tui: yo_tui::TuiSession,
     workspace: std::path::PathBuf,
+    local_tool_registry: Option<local_tools::LocalToolRegistryRevision>,
 }
 
 #[cfg(unix)]
@@ -455,6 +457,7 @@ fn run_agent_generation(
             agent,
             tui,
             workspace: session_cwd,
+            local_tool_registry: selection.registry_revision(),
         });
     }
     let session = live
@@ -471,7 +474,12 @@ fn run_agent_generation(
     match terminal {
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
         Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(selection)) => {
-            let replacement = model::replacement(&selection);
+            let replacement = model::replacement(
+                &selection,
+                session
+                    .local_tool_registry
+                    .expect("only a live native Session exposes model selection"),
+            );
             match model::start_native(
                 config,
                 credentials

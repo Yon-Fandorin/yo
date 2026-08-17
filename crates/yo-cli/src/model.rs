@@ -20,6 +20,7 @@ pub(crate) enum StartupBackend {
         account: AccountId,
         model: ModelId,
         replace_binding: bool,
+        registry_revision: crate::local_tools::LocalToolRegistryRevision,
     },
 }
 
@@ -56,10 +57,24 @@ impl StartupBackend {
             )),
         }
     }
+
+    pub(crate) const fn registry_revision(
+        &self,
+    ) -> Option<crate::local_tools::LocalToolRegistryRevision> {
+        match self {
+            Self::Codex => None,
+            Self::Native {
+                registry_revision, ..
+            } => Some(*registry_revision),
+        }
+    }
 }
 
-pub(crate) fn replacement(selection: &yo_core::ModelSelection) -> StartupBackend {
-    startup::replacement(selection)
+pub(crate) fn replacement(
+    selection: &yo_core::ModelSelection,
+    registry_revision: crate::local_tools::LocalToolRegistryRevision,
+) -> StartupBackend {
+    startup::replacement(selection, registry_revision)
 }
 
 pub(crate) fn resolve(
@@ -127,12 +142,16 @@ mod tests {
             account: selection.account().clone(),
             model: selection.model().clone(),
             replace_binding: false,
+            registry_revision: crate::local_tools::LocalToolRegistryRevision::BasicFiles,
         };
         assert_eq!(native.label(), "qwen3.8max");
         assert!(!native.replaces_binding());
         assert_eq!(native.model_selection(), Some(selection.clone()));
 
-        let replacement = replacement(&selection);
+        let replacement = replacement(
+            &selection,
+            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+        );
         assert_eq!(replacement.label(), "qwen3.8max");
         assert!(replacement.replaces_binding());
         assert_eq!(replacement.model_selection(), Some(selection));
@@ -169,6 +188,7 @@ mod tests {
             account: AccountId::new("account").unwrap(),
             model: ModelId::new("model").unwrap(),
             replace_binding: false,
+            registry_revision: crate::local_tools::LocalToolRegistryRevision::BasicFiles,
         };
         let error = credentials_for_startup(&config, &mut retained, &native).unwrap_err();
 

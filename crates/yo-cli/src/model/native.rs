@@ -21,6 +21,7 @@ pub(super) fn start_native(
         provider,
         account,
         model,
+        registry_revision,
         ..
     } = selection
     else {
@@ -39,7 +40,7 @@ pub(super) fn start_native(
             "credentials.yaml has no API credential for Provider {provider} and Account {account}"
         )])
     })?;
-    let registry = runtime_registry(entry)?;
+    let registry = runtime_registry(entry, *registry_revision)?;
     let semantic_admission = local_tools::LocalSemanticAdmission::new(credentials.clone());
     let tool_host = local_tools::LocalToolHost::new(workspace, &credential_path)
         .map_err(|error| AppError::single("starting local workspace tools", error))?;
@@ -48,13 +49,17 @@ pub(super) fn start_native(
         Box::new(tool_host),
         Box::new(TokenizerRegistry),
     );
+    let backend_config = NativeModelBackendConfig {
+        maximum_tool_argument_bytes: registry_revision.maximum_argument_bytes(),
+        ..NativeModelBackendConfig::default()
+    };
     NativeModelBackend::new(
         entry,
         credential,
         ModelConnectorLimits::default(),
         registry,
         services,
-        NativeModelBackendConfig::default(),
+        backend_config,
     )
     .map(|backend| Box::new(backend) as Box<dyn AgentBackend + Send>)
     .map_err(|error| AppError::single("starting native model backend", error))
@@ -62,6 +67,7 @@ pub(super) fn start_native(
 
 fn runtime_registry(
     entry: &yo_core::ModelCatalogEntry,
+    revision: local_tools::LocalToolRegistryRevision,
 ) -> Result<yo_core::FrozenToolRegistry, AppError> {
     if entry
         .explicit_profile()
@@ -69,7 +75,7 @@ fn runtime_registry(
     {
         Ok(ToolRegistry::default().freeze())
     } else {
-        let registry = local_tools::registry()
+        let registry = local_tools::registry(revision)
             .map_err(|error| AppError::single("building the local tool registry", error))?
             .freeze();
         Ok(registry)
@@ -105,14 +111,28 @@ mod tests {
     #[test]
     fn startup_registry_matches_the_resolved_tool_policy() {
         assert!(
-            runtime_registry(&explicit_entry("no-tools/v1"))
-                .unwrap()
-                .is_empty()
+            runtime_registry(
+                &explicit_entry("no-tools/v1"),
+                local_tools::LocalToolRegistryRevision::BasicFiles,
+            )
+            .unwrap()
+            .is_empty()
         );
         assert!(
-            !runtime_registry(&explicit_entry("local-tools/v1"))
-                .unwrap()
-                .is_empty()
+            runtime_registry(
+                &explicit_entry("local-tools/v1"),
+                local_tools::LocalToolRegistryRevision::NoTools,
+            )
+            .unwrap()
+            .is_empty()
+        );
+        assert!(
+            !runtime_registry(
+                &explicit_entry("local-tools/v1"),
+                local_tools::LocalToolRegistryRevision::BasicFiles,
+            )
+            .unwrap()
+            .is_empty()
         );
     }
 

@@ -23,10 +23,16 @@ impl LocalSemanticAdmission {
 impl ToolSemanticAdmission for LocalSemanticAdmission {
     fn admit_arguments(
         &self,
-        _definition: &ToolDefinition,
+        definition: &ToolDefinition,
         validated_argument_bytes: &str,
     ) -> Result<String, ToolSemanticAdmissionError> {
-        self.admit(validated_argument_bytes)
+        let admitted = self.admit(validated_argument_bytes)?;
+        let arguments = serde_json::from_str(&admitted).map_err(|_| {
+            ToolSemanticAdmissionError::new("validated tool arguments are not JSON")
+        })?;
+        super::filesystem::validate_arguments(definition, &arguments)
+            .map_err(|error| ToolSemanticAdmissionError::new(error.to_string()))?;
+        Ok(admitted)
     }
 
     fn admit_output(

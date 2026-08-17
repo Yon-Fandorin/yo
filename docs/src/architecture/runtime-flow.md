@@ -98,6 +98,26 @@ attributes each terminal response's usage to its exact Provider, Account,
 Model, connector, endpoint, and complete resolved profile. The process host owns startup
 selection and assembly of these inputs and concrete local tools.
 
+For a new local-tools Session, startup freezes the five-tool basic registry in
+the order `list_files`, `read_files`, `edit_file`, `write_file`, and
+`run_command`. Resume compares the durable replay projection with the exact
+basic, preceding three-tool legacy, and empty manifests; an unknown or mixed
+projection goes to the existing read-only failure path. A later model-binding
+replacement carries the already selected registry revision instead of silently
+upgrading the Session's tool history.
+
+The file host validates concrete item, numeric, path, and content bounds in the
+semantic-admission path before an execution attempt and repeats defensive
+parsing before opening a path. `read_files` captures each regular UTF-8 file
+independently through the retained workspace directory descriptor and returns
+ordered compact-JSON windows or one bounded error per item. `edit_file`
+computes every unique non-overlapping match against one captured original;
+`write_file` supplies one complete file image. Both mutation tools serialize
+inside one host instance, write a same-parent owner-only scratch file, verify
+its retained identity, and publish with one rename. Failures close and remove
+only still-owned scratch state; other processes and editors remain explicit
+last-publisher-wins actors rather than participants in that in-memory lock.
+
 The local `run_command` host treats every non-empty stdout or stderr chunk as
 one shared progress signal. Its default attempt has a 5-minute output-inactivity
 window and no absolute execution deadline. A runtime policy may add one

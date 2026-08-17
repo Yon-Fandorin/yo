@@ -14,12 +14,16 @@ enum DurableBackendKind {
     Native,
 }
 
-pub(super) fn replacement(selection: &yo_core::ModelSelection) -> StartupBackend {
+pub(super) fn replacement(
+    selection: &yo_core::ModelSelection,
+    registry_revision: crate::local_tools::LocalToolRegistryRevision,
+) -> StartupBackend {
     StartupBackend::Native {
         provider: selection.provider().clone(),
         account: selection.account().clone(),
         model: selection.model().clone(),
         replace_binding: true,
+        registry_revision,
     }
 }
 
@@ -63,7 +67,20 @@ fn resolve_new_session(
     };
     match target {
         StartupTarget::HostCodex => Ok(StartupBackend::Codex),
-        StartupTarget::Model(selection) => Ok(native_selection(selection, false)),
+        StartupTarget::Model(selection) => {
+            let entry = catalog
+                .resolve_model(selection.provider(), selection.account(), selection.model())
+                .map_err(|error| AppError::single("resolving the initial tool policy", error))?;
+            let registry_revision = if entry
+                .explicit_profile()
+                .is_some_and(|profile| profile.tool_capability_policy().as_str() == "no-tools/v1")
+            {
+                crate::local_tools::LocalToolRegistryRevision::NoTools
+            } else {
+                crate::local_tools::LocalToolRegistryRevision::BasicFiles
+            };
+            Ok(native_selection(selection, false, registry_revision))
+        },
     }
 }
 
@@ -79,7 +96,15 @@ fn resolve_resume(
     let binding_identity = target.binding().binding_identity();
     let durable_binding =
         parse_durable_binding(binding_identity.schema(), binding_identity.value())?;
-    resolve_native_resume(config.model_catalog(), durable_binding, override_model)
+    let registry_revision =
+        crate::local_tools::revision_for_replay_contract(target.model_replay().contract())
+            .map_err(|error| AppError::single("selecting the saved local tool registry", error))?;
+    resolve_native_resume(
+        config.model_catalog(),
+        durable_binding,
+        override_model,
+        registry_revision,
+    )
 }
 
 fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> {
@@ -106,6 +131,7 @@ fn resolve_native_resume(
     catalog: &yo_core::ModelCatalog,
     durable_binding: DurableNativeBinding,
     reference: Option<&str>,
+    registry_revision: crate::local_tools::LocalToolRegistryRevision,
 ) -> Result<StartupBackend, AppError> {
     let binding = durable_binding.binding();
     let durable_selection = ModelSelection::new(
@@ -134,15 +160,24 @@ fn resolve_native_resume(
         .resolve_model(selection.provider(), selection.account(), selection.model())
         .map_err(|error| AppError::single("resolving resumed model", error))?;
     let replace_binding = !durable_binding.matches(entry);
-    Ok(native_selection(selection, replace_binding))
+    Ok(native_selection(
+        selection,
+        replace_binding,
+        registry_revision,
+    ))
 }
 
-fn native_selection(selection: ModelSelection, replace_binding: bool) -> StartupBackend {
+fn native_selection(
+    selection: ModelSelection,
+    replace_binding: bool,
+    registry_revision: crate::local_tools::LocalToolRegistryRevision,
+) -> StartupBackend {
     StartupBackend::Native {
         provider: selection.provider().clone(),
         account: selection.account().clone(),
         model: selection.model().clone(),
         replace_binding,
+        registry_revision,
     }
 }
 
@@ -473,6 +508,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Legacy(durable.clone()),
             Some("same"),
+            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap();
         assert!(!same.replaces_binding());
@@ -485,6 +521,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Legacy(durable),
             Some("openrouter::same"),
+            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap();
         assert!(replacement.replaces_binding());
@@ -589,9 +626,14 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            !resolve_native_resume(&exact_catalog, durable.clone(), None)
-                .unwrap()
-                .replaces_binding()
+            !resolve_native_resume(
+                &exact_catalog,
+                durable.clone(),
+                None,
+                crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            )
+            .unwrap()
+            .replaces_binding()
         );
 
         let changed_layer = yo_core::ModelProfileLayer::new(
@@ -617,9 +659,14 @@ mod tests {
         ])
         .unwrap();
         assert!(
-            resolve_native_resume(&changed_catalog, durable, None)
-                .unwrap()
-                .replaces_binding()
+            resolve_native_resume(
+                &changed_catalog,
+                durable,
+                None,
+                crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            )
+            .unwrap()
+            .replaces_binding()
         );
     }
 
@@ -634,6 +681,33 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("malformed"));
+    }
+
+    // 새 no-tools binding은 empty registry revision을 startup state에 남겨 이후 model
+    // replacement가 그 Session을 basic tools로 조용히 upgrade하지 않습니다.
+    #[test]
+    fn new_no_tools_session_freezes_the_empty_registry_revision() {
+        let complete = CompleteModelBinding::from_durable_json(
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"no-tools/v1","verification_profile":"semantic-terminal/v1"}"#,
+        )
+        .unwrap();
+        let catalog = yo_core::ModelCatalog::new(vec![
+            yo_core::ModelCatalogEntry::with_explicit_profile(
+                complete.binding().clone(),
+                None,
+                None,
+                None,
+                complete.profile().clone(),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let startup = resolve_new_session(&catalog, None, None, Some("model")).unwrap();
+
+        assert_eq!(
+            startup.registry_revision(),
+            Some(crate::local_tools::LocalToolRegistryRevision::NoTools)
+        );
     }
 
     // durable JSON 숫자는 serde가 큰 정수를 float로 바꾸기 전에 spelling대로 범위를

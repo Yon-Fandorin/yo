@@ -96,6 +96,23 @@ admission된 call/result replay만 기록하고, 승인과 실행 시도 Activit
 Provider·Account·Model·connector·endpoint·완전한 resolved profile에 귀속한다. process host가 startup
 선택, 이 입력들의 조립, 구체적인 local tool을 소유한다.
 
+새 local-tools Session의 startup은 `list_files`, `read_files`, `edit_file`,
+`write_file`, `run_command` 순서인 5개 basic registry를 고정한다. Resume은 durable
+replay Projection을 exact basic manifest, 직전 3개 legacy manifest, empty manifest와
+비교하고 unknown 또는 mixed Projection은 기존 read-only 실패 경로로 보낸다. 이후 model
+binding replacement도 이미 선택한 registry revision을 전달하므로 Session의 tool history를
+조용히 upgrade하지 않는다.
+
+File host는 execution attempt 전에 semantic-admission 경로에서 구체적인 item·number·path·
+content bound를 검증하고 path를 열기 전에 방어적으로 다시 parse한다. `read_files`는 유지한
+workspace directory descriptor 아래의 일반 UTF-8 file을 각각 독립적으로 capture하고,
+순서가 보존된 compact-JSON window 또는 item별 bounded error를 반환한다. `edit_file`은
+capture한 original 하나에서 unique하고 겹치지 않는 match를 모두 계산하며 `write_file`은
+complete file image 하나를 제공한다. 두 mutation tool은 host instance 하나 안에서
+직렬화하고 같은 parent에 owner-only scratch file을 쓴 뒤 유지한 identity를 검증하여 rename
+한 번으로 공개한다. 실패하면 여전히 소유한 scratch state만 닫고 제거한다. 다른 process와
+editor는 이 in-memory lock 참여자가 아니라 명시적인 last-publisher-wins actor로 남는다.
+
 Local `run_command` host는 비어 있지 않은 stdout 또는 stderr chunk를 하나의 공유 progress
 signal로 취급한다. 기본 attempt에는 5분 output-inactivity window가 있고 absolute execution
 deadline은 없다. Runtime policy는 execution request에 absolute deadline 하나를 추가할 수

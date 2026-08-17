@@ -22,7 +22,9 @@ yo-tui = { path = "../yo-tui" }
 yo-yaml = { path = "../../shared/yo-yaml" }
 
 [target.'cfg(unix)'.dependencies]
+getrandom = "=0.4.3"
 libc = "=0.2.189"
+memchr = "=2.8.3"
 nix = { version = "=0.31.3", default-features = false, features = ["dir", "fs", "process", "signal", "term"] }
 rustix = { version = "=1.1.4", default-features = false, features = ["std", "termios"] }
 signal-hook = { version = "=0.3.18", default-features = false }

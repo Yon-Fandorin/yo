@@ -10,7 +10,10 @@ use std::{
         },
     },
     path::{Component, Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use nix::{
@@ -20,7 +23,7 @@ use nix::{
 };
 use serde_json::Value;
 use yo_core::{
-    ToolExecution, ToolExecutionError, ToolExecutionHost, ToolExecutionRequest,
+    ToolDefinition, ToolExecution, ToolExecutionError, ToolExecutionHost, ToolExecutionRequest,
     ToolExecutionResult, ToolId,
 };
 
@@ -29,19 +32,52 @@ use super::{
     execution::{ThreadExecution, completed, failed, interrupted},
 };
 
+mod mutation;
+mod output;
+mod read;
+
 const HOST_IDENTITY: &str = "yo.local-workspace-tools/v1";
 const MAX_LIST_ENTRIES: usize = 100_000;
+static NEW_FILE_MODE: OnceLock<u32> = OnceLock::new();
+
+pub(crate) fn initialize_process_file_mode() {
+    NEW_FILE_MODE.get_or_init(capture_new_file_mode);
+}
+
+pub(super) fn validate_arguments(
+    definition: &ToolDefinition,
+    arguments: &Value,
+) -> Result<(), ToolExecutionError> {
+    match definition.id().as_str() {
+        "read-files" => read::parse_requests(arguments, LocalToolHost::basic_path).map(drop),
+        "edit-file" => mutation::parse_edit(arguments, LocalToolHost::basic_path).map(drop),
+        "write-file" => mutation::parse_write(arguments, LocalToolHost::basic_path).map(drop),
+        _ => Ok(()),
+    }
+}
 
 pub(crate) struct LocalToolHost {
     workspace: PathBuf,
     workspace_directory: File,
     denied_credential: Option<FileIdentity>,
+    mutation_lock: Arc<Mutex<()>>,
+    new_file_mode: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct FileIdentity {
+pub(super) struct FileIdentity {
     device: u64,
     inode: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum OpenRegularError {
+    Unavailable,
+    NotRegular,
+}
+
+fn permission_mode_u32(mode: impl Into<u32>) -> u32 {
+    mode.into()
 }
 
 #[cfg(target_vendor = "apple")]
@@ -81,6 +117,8 @@ impl LocalToolHost {
             workspace,
             workspace_directory,
             denied_credential,
+            mutation_lock: Arc::new(Mutex::new(())),
+            new_file_mode: *NEW_FILE_MODE.get_or_init(capture_new_file_mode),
         })
     }
 
@@ -110,30 +148,19 @@ impl LocalToolHost {
             .collect())
     }
 
-    fn open_file(&self, value: &str) -> Result<File, ToolExecutionError> {
-        let components = Self::path_components(value)?;
-        let descriptor = open_beneath(
-            &self.workspace_directory,
-            &components,
-            OFlag::O_RDONLY | OFlag::O_NONBLOCK,
-        )?;
-        let metadata =
-            fstat(&descriptor).map_err(|_| ToolExecutionError::new("tool path is unavailable"))?;
-        if !SFlag::from_bits_truncate(metadata.st_mode).contains(SFlag::S_IFREG) {
-            return Err(ToolExecutionError::new("read_file requires a regular file"));
-        }
-        let device = normalize_device_id(metadata.st_dev);
-        if self.denied_credential
-            == Some(FileIdentity {
-                device,
-                inode: metadata.st_ino,
-            })
-        {
+    fn basic_path(value: &str) -> Result<read::AdmittedPath, ToolExecutionError> {
+        if value.len() > 1_024 || value.chars().any(char::is_control) {
             return Err(ToolExecutionError::new(
-                "the model credential file is not readable through local tools",
+                "tool path exceeds its byte bound or contains a control character",
             ));
         }
-        Ok(File::from(descriptor))
+        let components = Self::path_components(value)?;
+        if components.is_empty() {
+            return Err(ToolExecutionError::new(
+                "tool file path must not name the workspace root",
+            ));
+        }
+        Ok(read::AdmittedPath::new(value.to_owned(), components))
     }
 
     fn open_directory(&self, value: &str) -> Result<(Dir, PathBuf), ToolExecutionError> {
@@ -180,7 +207,10 @@ impl ToolExecutionHost for LocalToolHost {
     }
 
     fn is_available(&self, tool: &ToolId) -> bool {
-        matches!(tool.as_str(), "read-file" | "list-files" | "run-command")
+        matches!(
+            tool.as_str(),
+            "read-file" | "list-files" | "read-files" | "edit-file" | "write-file" | "run-command"
+        )
     }
 
     fn start(
@@ -191,8 +221,21 @@ impl ToolExecutionHost for LocalToolHost {
         match request.call.definition().id().as_str() {
             "read-file" => {
                 let path = string_argument(request.call.arguments(), "path")?;
-                let file = self.open_file(path)?;
+                let components = Self::path_components(path)?;
+                if components.is_empty() {
+                    return Err(ToolExecutionError::new(
+                        "read_file path must not name the workspace root",
+                    ));
+                }
+                let workspace = self
+                    .workspace_directory
+                    .try_clone()
+                    .map_err(|_| ToolExecutionError::new("workspace handle is unavailable"))?;
+                let denied = self.denied_credential;
                 Ok(Box::new(ThreadExecution::spawn(move |cancelled| {
+                    let Ok(file) = open_regular_file(&workspace, &components, denied) else {
+                        return failed("tool execution failed");
+                    };
                     read_file(file, maximum_output_bytes, &cancelled)
                 })))
             },
@@ -212,6 +255,65 @@ impl ToolExecutionHost for LocalToolHost {
                     request.absolute_execution_timeout,
                 )?))
             },
+            "read-files" => {
+                let files = read::parse_requests(request.call.arguments(), Self::basic_path)?;
+                let workspace = self
+                    .workspace_directory
+                    .try_clone()
+                    .map_err(|_| ToolExecutionError::new("workspace handle is unavailable"))?;
+                let denied = self.denied_credential;
+                Ok(Box::new(ThreadExecution::spawn(move |cancelled| {
+                    read::execute(workspace, denied, files, &cancelled)
+                })))
+            },
+            "edit-file" => {
+                let edit = mutation::parse_edit(request.call.arguments(), Self::basic_path)?;
+                let result_path = edit.path().to_owned();
+                let workspace = self
+                    .workspace_directory
+                    .try_clone()
+                    .map_err(|_| ToolExecutionError::new("workspace handle is unavailable"))?;
+                let denied = self.denied_credential;
+                let lock = Arc::clone(&self.mutation_lock);
+                Ok(Box::new(ThreadExecution::spawn(move |cancelled| {
+                    let cleanup = mutation::UnwindCleanup::default();
+                    mutation::catch_failure(&result_path, &cleanup, || {
+                        mutation::execute_edit(
+                            workspace,
+                            denied,
+                            lock,
+                            edit,
+                            &cancelled,
+                            cleanup.clone(),
+                        )
+                    })
+                })))
+            },
+            "write-file" => {
+                let write = mutation::parse_write(request.call.arguments(), Self::basic_path)?;
+                let result_path = write.path().to_owned();
+                let workspace = self
+                    .workspace_directory
+                    .try_clone()
+                    .map_err(|_| ToolExecutionError::new("workspace handle is unavailable"))?;
+                let denied = self.denied_credential;
+                let lock = Arc::clone(&self.mutation_lock);
+                let mode = self.new_file_mode;
+                Ok(Box::new(ThreadExecution::spawn(move |cancelled| {
+                    let cleanup = mutation::UnwindCleanup::default();
+                    mutation::catch_failure(&result_path, &cleanup, || {
+                        mutation::execute_write(
+                            workspace,
+                            denied,
+                            lock,
+                            write,
+                            mode,
+                            &cancelled,
+                            cleanup.clone(),
+                        )
+                    })
+                })))
+            },
             _ => Err(ToolExecutionError::new("unknown local tool")),
         }
     }
@@ -221,6 +323,38 @@ impl ToolExecutionHost for LocalToolHost {
     }
 }
 
+fn open_regular_file(
+    workspace: &File,
+    components: &[OsString],
+    denied_credential: Option<FileIdentity>,
+) -> Result<File, OpenRegularError> {
+    let descriptor = open_beneath(workspace, components, OFlag::O_RDONLY | OFlag::O_NONBLOCK)
+        .map_err(|_| OpenRegularError::Unavailable)?;
+    let metadata = fstat(&descriptor).map_err(|_| OpenRegularError::Unavailable)?;
+    if !SFlag::from_bits_truncate(metadata.st_mode).contains(SFlag::S_IFREG) {
+        return Err(OpenRegularError::NotRegular);
+    }
+    if denied_credential
+        == Some(FileIdentity {
+            device: normalize_device_id(metadata.st_dev),
+            inode: metadata.st_ino,
+        })
+    {
+        return Err(OpenRegularError::Unavailable);
+    }
+    Ok(File::from(descriptor))
+}
+
+fn capture_new_file_mode() -> u32 {
+    static UMASK_LOCK: Mutex<()> = Mutex::new(());
+    let _guard = UMASK_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let current = nix::sys::stat::umask(Mode::empty());
+    nix::sys::stat::umask(current);
+    permission_mode_u32(0o666 & !current.bits())
+}
+
 fn string_argument<'a>(value: &'a Value, name: &str) -> Result<&'a str, ToolExecutionError> {
     value
         .get(name)
@@ -228,7 +362,7 @@ fn string_argument<'a>(value: &'a Value, name: &str) -> Result<&'a str, ToolExec
         .ok_or_else(|| ToolExecutionError::new("validated local tool argument is unavailable"))
 }
 
-fn read_file(file: File, limit: usize, cancelled: &AtomicBool) -> ToolExecutionResult {
+fn read_file(file: impl Read, limit: usize, cancelled: &AtomicBool) -> ToolExecutionResult {
     if cancelled.load(Ordering::Acquire) {
         return interrupted();
     }
@@ -237,8 +371,18 @@ fn read_file(file: File, limit: usize, cancelled: &AtomicBool) -> ToolExecutionR
         return interrupted();
     }
     match result {
-        Ok((bytes, truncated)) => match String::from_utf8(bytes) {
-            Ok(output) => completed(output, truncated),
+        Ok((mut bytes, truncated)) => match std::str::from_utf8(&bytes) {
+            Ok(_) => completed(
+                String::from_utf8(bytes).expect("validated UTF-8 remains valid"),
+                truncated,
+            ),
+            Err(error) if truncated && error.error_len().is_none() => {
+                bytes.truncate(error.valid_up_to());
+                completed(
+                    String::from_utf8(bytes).expect("valid UTF-8 prefix remains valid"),
+                    true,
+                )
+            },
             Err(_) => failed("read_file supports UTF-8 text files only"),
         },
         Err(_) => failed("read_file failed"),
@@ -372,9 +516,9 @@ mod tests {
     use super::normalize_device_id;
     use super::{
         super::tests::{TestDirectory, finish, request},
-        LocalToolHost, list_files, read_bounded, read_file,
+        LocalToolHost, list_files, open_regular_file, read_bounded, read_file,
     };
-    use crate::local_tools::registry::registry;
+    use crate::local_tools::registry::{LocalToolRegistryRevision, registry};
 
     #[cfg(target_vendor = "apple")]
     // Apple의 signed dev_t가 high bit를 가진 경우에도 MetadataExt::dev와 같은 u64
@@ -415,7 +559,22 @@ mod tests {
         assert_eq!(reads.load(Ordering::Relaxed), 1);
     }
 
-    // 자동 file tool은 workspace 안의 일반 파일만 읽고 credential과 상위 경로는 거부한다.
+    // legacy 4 MiB probe가 multi-byte scalar 한가운데서 끝나도 완전한 UTF-8 prefix를
+    // Completed+truncated로 넘겨 common truncation marker가 붙을 수 있게 합니다.
+    #[test]
+    fn legacy_reader_truncates_only_an_incomplete_final_scalar() {
+        let bytes = [b'a', 0xE2, 0x82, 0xAC];
+        let result = read_file(&bytes[..], 3, &AtomicBool::new(false));
+        assert_eq!(result.outcome(), yo_core::ToolExecutionOutcome::Completed);
+        assert_eq!(result.output(), "a");
+        assert!(result.truncated());
+
+        let malformed = read_file(&[b'a', 0xFF, b'b'][..], 3, &AtomicBool::new(false));
+        assert_eq!(malformed.outcome(), yo_core::ToolExecutionOutcome::Failed);
+    }
+
+    // legacy read_file은 workspace 안의 일반 파일을 읽되 credential path 실패를 고정된
+    // execution result로 닫고, 잘못된 상위 경로는 worker 시작 전 거절합니다.
     #[test]
     fn reads_workspace_files_but_denies_the_credential_file() {
         let directory = TestDirectory::new();
@@ -425,21 +584,23 @@ mod tests {
         let mut file = fs::File::create(&credential).unwrap();
         file.write_all(b"secret").unwrap();
         fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
-        let registry = registry().unwrap();
+        let registry = registry(LocalToolRegistryRevision::LegacyReadFile).unwrap();
         let mut host = LocalToolHost::new(&directory.0, &credential).unwrap();
 
         let mut execution = host
             .start(request(&registry, "read_file", r#"{"path":"source.txt"}"#))
             .unwrap();
         assert_eq!(finish(execution.as_mut()).output(), "hello");
-        assert!(
-            host.start(request(
+        let mut denied = host
+            .start(request(
                 &registry,
                 "read_file",
-                r#"{"path":"credentials.yaml"}"#
+                r#"{"path":"credentials.yaml"}"#,
             ))
-            .is_err()
-        );
+            .unwrap();
+        let denied = finish(denied.as_mut());
+        assert_eq!(denied.outcome(), yo_core::ToolExecutionOutcome::Failed);
+        assert_eq!(denied.output(), "tool execution failed");
         assert!(
             host.start(request(&registry, "read_file", r#"{"path":"../outside"}"#))
                 .is_err()
@@ -466,7 +627,13 @@ mod tests {
         fs::write(outside_listed.join("outside.txt"), "outside").unwrap();
         let host = LocalToolHost::new(&workspace.0, &workspace.0.join("credentials.yaml")).unwrap();
 
-        let file = host.open_file("source.txt").unwrap();
+        let components = LocalToolHost::path_components("source.txt").unwrap();
+        let file = open_regular_file(
+            &host.workspace_directory,
+            &components,
+            host.denied_credential,
+        )
+        .unwrap();
         let (directory, relative) = host.open_directory("listed").unwrap();
         fs::rename(&source, &original_source).unwrap();
         symlink(&outside_source, &source).unwrap();
