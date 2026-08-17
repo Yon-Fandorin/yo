@@ -1,9 +1,14 @@
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs,
-    io::{self, Write},
+    io::{self, ErrorKind, Write},
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -64,6 +69,33 @@ pub(crate) fn methexis() -> Command {
 
 pub(crate) struct CorpusRepository {
     pub(crate) path: PathBuf,
+    git: PathBuf,
+}
+
+const TEMPORARY_CORPUS_ATTEMPTS: usize = 1_024;
+static TEMPORARY_CORPUS_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+static TEMPORARY_CORPUS_NONCE: OnceLock<u128> = OnceLock::new();
+
+struct TemporaryCorpusRoot {
+    path: Option<PathBuf>,
+}
+
+impl TemporaryCorpusRoot {
+    fn path(&self) -> &Path {
+        self.path.as_deref().expect("temporary root is armed")
+    }
+
+    fn into_path(mut self) -> PathBuf {
+        self.path.take().expect("temporary root is armed")
+    }
+}
+
+impl Drop for TemporaryCorpusRoot {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = fs::remove_dir_all(path);
+        }
+    }
 }
 
 impl CorpusRepository {
@@ -72,19 +104,27 @@ impl CorpusRepository {
             .parent()
             .and_then(Path::parent)
             .expect("crate is under <repository>/tools/methexis");
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "methexis-cli-corpus-{}-{unique}",
-            std::process::id()
-        ));
-        fs::create_dir(&path).unwrap();
-        copy_directory(&source.join("methexis"), &path.join("methexis"));
-        fs::remove_file(path.join("methexis/active-checkpoint.yaml")).unwrap();
-        fs::remove_dir_all(path.join("methexis/checkpoints")).unwrap();
-        let repository = Self { path };
+        Self::try_without_active_checkpoint(source, None, allocate_temporary_corpus)
+            .unwrap_or_else(|error| panic!("prepare Methexis CLI corpus: {error}"))
+    }
+
+    fn try_without_active_checkpoint(
+        source: &Path,
+        git_override: Option<&Path>,
+        allocate: impl FnOnce() -> io::Result<TemporaryCorpusRoot>,
+    ) -> Result<Self, String> {
+        let git = resolve_git_executable(git_override)?;
+        let root = allocate().map_err(|error| format!("allocate temporary corpus: {error}"))?;
+        copy_directory(&source.join("methexis"), &root.path().join("methexis"))
+            .map_err(|error| format!("copy Methexis corpus: {error}"))?;
+        fs::remove_file(root.path().join("methexis/active-checkpoint.yaml"))
+            .map_err(|error| format!("remove active Checkpoint: {error}"))?;
+        fs::remove_dir_all(root.path().join("methexis/checkpoints"))
+            .map_err(|error| format!("remove Checkpoint directory: {error}"))?;
+        let repository = Self {
+            path: root.into_path(),
+            git,
+        };
         repository.git(&[
             "init",
             "--initial-branch=develop",
@@ -95,11 +135,11 @@ impl CorpusRepository {
         repository.git(&["config", "user.name", "Methexis Fixture"]);
         repository.git(&["add", "methexis"]);
         repository.git(&["commit", "-m", "repository corpus without activation"]);
-        repository
+        Ok(repository)
     }
 
     fn git(&self, args: &[&str]) {
-        let output = Command::new("/usr/bin/git")
+        let output = Command::new(&self.git)
             .env_clear()
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -127,18 +167,215 @@ impl Drop for CorpusRepository {
     }
 }
 
-fn copy_directory(source: &Path, target: &Path) {
-    fs::create_dir(target).unwrap();
-    for entry in fs::read_dir(source).unwrap() {
-        let entry = entry.unwrap();
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-        if entry.file_type().unwrap().is_dir() {
-            copy_directory(&source_path, &target_path);
-        } else {
-            fs::copy(source_path, target_path).unwrap();
+fn allocate_temporary_corpus() -> io::Result<TemporaryCorpusRoot> {
+    let nonce = TEMPORARY_CORPUS_NONCE.get_or_init(|| {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos()
+    });
+    allocate_temporary_corpus_with(|sequence| {
+        std::env::temp_dir().join(format!(
+            "methexis-cli-corpus-{}-{nonce}-{sequence}",
+            std::process::id()
+        ))
+    })
+}
+
+fn allocate_temporary_corpus_with(
+    mut candidate: impl FnMut(u64) -> PathBuf,
+) -> io::Result<TemporaryCorpusRoot> {
+    for _ in 0..TEMPORARY_CORPUS_ATTEMPTS {
+        let sequence = TEMPORARY_CORPUS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path = candidate(sequence);
+        match fs::create_dir(&path) {
+            Ok(()) => return Ok(TemporaryCorpusRoot { path: Some(path) }),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {},
+            Err(error) => return Err(error),
         }
     }
+    Err(io::Error::new(
+        ErrorKind::AlreadyExists,
+        format!("exhausted {TEMPORARY_CORPUS_ATTEMPTS} exclusive-create attempts"),
+    ))
+}
+
+fn resolve_git_executable(git_override: Option<&Path>) -> Result<PathBuf, String> {
+    if let Some(path) = git_override {
+        return canonical_executable(path).map_err(|error| {
+            format!(
+                "METHEXIS test Git override `{}` is unusable: {error}",
+                path.display()
+            )
+        });
+    }
+    let path = std::env::var_os("PATH")
+        .ok_or_else(|| "PATH is unavailable while resolving the Methexis test Git".to_owned())?;
+    resolve_git_in_path(&path)
+}
+
+fn resolve_git_in_path(path: &OsStr) -> Result<PathBuf, String> {
+    for directory in std::env::split_paths(path) {
+        let candidate = directory.join("git");
+        if let Ok(executable) = canonical_executable(&candidate) {
+            return Ok(executable);
+        }
+    }
+    Err("no executable `git` was found in PATH for the Methexis test corpus".to_owned())
+}
+
+fn canonical_executable(path: &Path) -> io::Result<PathBuf> {
+    let metadata = fs::metadata(path)?;
+    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+        return Err(io::Error::new(
+            ErrorKind::PermissionDenied,
+            format!("`{}` is not an executable regular file", path.display()),
+        ));
+    }
+    fs::canonicalize(path)
+}
+
+fn copy_directory(source: &Path, target: &Path) -> io::Result<()> {
+    fs::create_dir(target)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&source_path, &target_path)?;
+        } else {
+            fs::copy(source_path, target_path)?;
+        }
+    }
+    Ok(())
+}
+
+// 첫 exclusive-create 후보가 이미 존재하면 해당 디렉터리를 소유했다고 오인하지 않고
+// 다음 전역 sequence 후보를 할당합니다.
+#[test]
+fn corpus_allocator_retries_an_exclusive_name_collision() {
+    let collision = allocate_temporary_corpus().unwrap();
+    let retry = collision.path().with_file_name(format!(
+        "{}-retry",
+        collision.path().file_name().unwrap().to_string_lossy()
+    ));
+    let mut attempts = 0;
+
+    let allocated = allocate_temporary_corpus_with(|_| {
+        attempts += 1;
+        if attempts == 1 {
+            collision.path().to_owned()
+        } else {
+            retry.clone()
+        }
+    })
+    .unwrap();
+
+    assert_eq!(attempts, 2);
+    assert_eq!(allocated.path(), retry);
+    assert!(collision.path().is_dir());
+}
+
+// 같은 process의 동시 fixture 할당은 clock tick 공유 여부와 무관하게 서로 다른
+// exclusive directory를 반환합니다.
+#[test]
+fn concurrent_corpus_allocations_have_distinct_roots() {
+    let handles = (0..16)
+        .map(|_| std::thread::spawn(allocate_temporary_corpus))
+        .collect::<Vec<_>>();
+    let roots = handles
+        .into_iter()
+        .map(|handle| handle.join().unwrap().unwrap())
+        .collect::<Vec<_>>();
+    let distinct = roots
+        .iter()
+        .map(|root| root.path().to_owned())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(distinct.len(), roots.len());
+}
+
+#[cfg(unix)]
+// Git이 /usr/bin에 없다는 가정 없이 PATH 또는 명시적 좁은 override에서 executable을
+// 먼저 resolve·canonicalize하고 env_clear 뒤에도 그 exact 경로로 corpus를 생성합니다.
+#[test]
+fn corpus_repository_uses_a_resolved_git_executable() {
+    use std::os::unix::fs::symlink;
+
+    let actual_git = resolve_git_executable(None).unwrap();
+    let scratch = allocate_temporary_corpus().unwrap();
+    let bin = scratch.path().join("alternate-bin");
+    fs::create_dir(&bin).unwrap();
+    let alternate_git = bin.join("git");
+    symlink(&actual_git, &alternate_git).unwrap();
+    let path_only = std::env::join_paths([&bin]).unwrap();
+
+    assert_eq!(resolve_git_in_path(&path_only).unwrap(), actual_git);
+
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .unwrap();
+    let repository = CorpusRepository::try_without_active_checkpoint(
+        source,
+        Some(&alternate_git),
+        allocate_temporary_corpus,
+    )
+    .unwrap();
+
+    assert_eq!(repository.git, actual_git);
+}
+
+// PATH와 override 어느 쪽에도 Git이 없으면 Command spawn panic까지 진행하지 않고
+// 누락된 prerequisite와 override 경로를 직접 지목합니다.
+#[test]
+fn missing_git_has_a_focused_prerequisite_error() {
+    let scratch = allocate_temporary_corpus().unwrap();
+    let missing = scratch.path().join("missing-git");
+    let empty_path = std::env::join_paths([scratch.path()]).unwrap();
+
+    let path_error = resolve_git_in_path(&empty_path).unwrap_err();
+    let override_error = resolve_git_executable(Some(&missing)).unwrap_err();
+
+    assert!(path_error.contains("no executable `git`"));
+    assert!(override_error.contains("Git override"));
+    assert!(override_error.contains(missing.to_str().unwrap()));
+}
+
+// copy 또는 active-record 제거가 실패해 CorpusRepository가 완성되지 않아도 생성 직후
+// 설치된 root guard가 exact setup root만 지우고 sibling 입력은 보존합니다.
+#[test]
+fn failed_corpus_setup_removes_only_its_armed_root() {
+    let scratch = allocate_temporary_corpus().unwrap();
+    let missing_source = scratch.path().join("missing-source");
+    let copy_target = scratch.path().join("copy-failure");
+    let copy_error = CorpusRepository::try_without_active_checkpoint(&missing_source, None, || {
+        fs::create_dir(&copy_target)?;
+        Ok(TemporaryCorpusRoot {
+            path: Some(copy_target.clone()),
+        })
+    })
+    .err()
+    .expect("missing source must fail corpus setup");
+    assert!(copy_error.contains("copy Methexis corpus"));
+    assert!(!copy_target.exists());
+
+    let incomplete_source = scratch.path().join("incomplete-source");
+    fs::create_dir_all(incomplete_source.join("methexis")).unwrap();
+    let removal_target = scratch.path().join("remove-failure");
+    let removal_error =
+        CorpusRepository::try_without_active_checkpoint(&incomplete_source, None, || {
+            fs::create_dir(&removal_target)?;
+            Ok(TemporaryCorpusRoot {
+                path: Some(removal_target.clone()),
+            })
+        })
+        .err()
+        .expect("missing active record must fail corpus setup");
+    assert!(removal_error.contains("remove active Checkpoint"));
+    assert!(!removal_target.exists());
+    assert!(incomplete_source.is_dir());
+    assert!(scratch.path().is_dir());
 }
 
 // --help가 성공 상태로 Source-aware check를 포함한 전체 명령 표면을 정확히 출력하는지 확인한다.

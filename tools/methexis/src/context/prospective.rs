@@ -79,6 +79,7 @@ pub(super) fn resolve(
 }
 
 fn checkpoint_failure(failure: checkpoint::OperationFailure) -> ResolveFailure {
+    let next_action = failure.next_action().to_owned();
     let (trusted_commit, code, message, affected_ids) = failure.parts();
     ResolveFailure::new(
         trusted_commit,
@@ -87,7 +88,7 @@ fn checkpoint_failure(failure: checkpoint::OperationFailure) -> ResolveFailure {
         false,
         affected_ids,
         Vec::new(),
-        "repair the exact activation proposal and retry",
+        next_action,
     )
     .into_activation_review()
 }

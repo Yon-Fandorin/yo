@@ -24,6 +24,37 @@ pub(crate) struct ProspectiveContext {
     _active_lock: TargetLock,
 }
 
+#[derive(Clone, Copy)]
+enum ActivationArtifact {
+    Request,
+    Checkpoint,
+    ActiveRecord,
+}
+
+impl ActivationArtifact {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Request => "activation request",
+            Self::Checkpoint => "prospective Checkpoint",
+            Self::ActiveRecord => "active record",
+        }
+    }
+
+    fn repair_action(self) -> &'static str {
+        match self {
+            Self::Request => {
+                "repair the activation request path or retry after the active writer finishes"
+            },
+            Self::Checkpoint => {
+                "repair the prospective Checkpoint path or retry after the active writer finishes"
+            },
+            Self::ActiveRecord => {
+                "repair the active record path or retry after the active writer finishes"
+            },
+        }
+    }
+}
+
 pub(crate) fn prepare_context_refresh(
     repository_root: &Path,
     request_path: &Path,
@@ -87,6 +118,7 @@ pub(crate) fn prepare_prospective_context(
                 operation,
                 Some(snapshot.commit.clone()),
                 &request.checkpoint_id,
+                ActivationArtifact::Checkpoint,
                 error,
             )
         })?;
@@ -124,6 +156,7 @@ pub(crate) fn prepare_prospective_context(
             operation,
             Some(snapshot.commit.clone()),
             &checkpoint.checkpoint_id,
+            ActivationArtifact::ActiveRecord,
             error,
         )
     })?;
@@ -282,7 +315,15 @@ fn read_request(
         repository_root.join(path)
     };
     let capture = publication::capture_file(repository_root, &absolute, MAX_REQUEST_BYTES)
-        .map_err(|error| publication_failure(operation, None, "activation-request", error))?;
+        .map_err(|error| {
+            publication_failure(
+                operation,
+                None,
+                "activation-request",
+                ActivationArtifact::Request,
+                error,
+            )
+        })?;
     let request = serde_json::from_slice(capture.bytes()).map_err(|error| {
         failure_for(
             operation,
@@ -311,28 +352,31 @@ fn publication_failure(
     operation: &'static str,
     commit: Option<String>,
     id: &str,
+    artifact: ActivationArtifact,
     error: PublicationError,
 ) -> OperationFailure {
+    let label = artifact.label();
     let (code, message) = match error {
         PublicationError::OutsideRepository => (
             "path_outside_repository",
-            "activation proposal path escapes the repository".to_owned(),
+            format!("{label} path escapes the repository"),
         ),
         PublicationError::Symlink(path) => (
             "symlink_forbidden",
-            format!("activation proposal path `{}` is a symlink", path.display()),
+            format!("{label} path `{}` is a symlink", path.display()),
         ),
         PublicationError::NotDirectory(path) => (
             "publication_failed",
-            format!(
-                "activation proposal parent `{}` is not a directory",
-                path.display()
-            ),
+            format!("{label} parent `{}` is not a directory", path.display()),
         ),
-        PublicationError::Locked(error) => ("publication_locked", error.to_string()),
-        PublicationError::Io(error) | PublicationError::DurabilityUnknown(error) => {
-            ("publication_failed", error.to_string())
-        },
+        PublicationError::Locked(error) => (
+            "publication_locked",
+            format!("{label} publication is locked: {error}"),
+        ),
+        PublicationError::Io(error) | PublicationError::DurabilityUnknown(error) => (
+            "publication_failed",
+            format!("{label} publication failed: {error}"),
+        ),
     };
     failure_for(
         operation,
@@ -340,6 +384,73 @@ fn publication_failure(
         code,
         message,
         vec![id.to_owned()],
-        "repair the activation proposal path or retry after the active writer finishes",
+        artifact.repair_action(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use serde_json::json;
+
+    use super::{ActivationArtifact, OPERATION, publication_failure};
+    use crate::publication::PublicationError;
+
+    // request, prospective Checkpoint, active record 각각에 대해 repository escape,
+    // symlink, nondirectory-parent 분류가 code를 유지하면서 실제 subject를 message와
+    // next_action 끝까지 보존합니다.
+    #[test]
+    fn publication_path_failures_name_the_exact_activation_artifact() {
+        for (artifact, subject, id) in [
+            (
+                ActivationArtifact::Request,
+                "activation request",
+                "activation-request",
+            ),
+            (
+                ActivationArtifact::Checkpoint,
+                "prospective Checkpoint",
+                "sha256:checkpoint",
+            ),
+            (
+                ActivationArtifact::ActiveRecord,
+                "active record",
+                "sha256:checkpoint",
+            ),
+        ] {
+            for (error, expected_code) in [
+                (
+                    PublicationError::OutsideRepository,
+                    "path_outside_repository",
+                ),
+                (
+                    PublicationError::Symlink(PathBuf::from("artifact")),
+                    "symlink_forbidden",
+                ),
+                (
+                    PublicationError::NotDirectory(PathBuf::from("parent")),
+                    "publication_failed",
+                ),
+            ] {
+                let failure = publication_failure(OPERATION, None, id, artifact, error);
+                let value = serde_json::to_value(failure).unwrap();
+
+                assert_eq!(value["error"]["code"], expected_code);
+                assert!(
+                    value["error"]["message"]
+                        .as_str()
+                        .unwrap()
+                        .contains(subject)
+                );
+                assert_eq!(value["error"]["affected_ids"], json!([id]));
+                assert!(
+                    value["error"]["next_actions"][0]
+                        .as_str()
+                        .unwrap()
+                        .contains(subject)
+                );
+            }
+        }
+    }
 }

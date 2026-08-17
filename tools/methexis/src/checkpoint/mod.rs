@@ -206,6 +206,13 @@ impl OperationFailure {
             self.error.affected_ids.clone(),
         )
     }
+
+    pub(crate) fn next_action(&self) -> &str {
+        self.error
+            .next_actions
+            .first()
+            .expect("checkpoint failures always have one next action")
+    }
 }
 
 pub(crate) use evaluation::evaluate;

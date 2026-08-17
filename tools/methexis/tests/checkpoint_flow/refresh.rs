@@ -268,6 +268,79 @@ fn refresh_rejects_a_symlinked_activation_request() {
     );
 
     assert_eq!(failure["error"]["code"], "symlink_forbidden");
+    assert_artifact_diagnostic(&failure, "activation request", "activation-request");
+}
+
+#[cfg(unix)]
+// prospective Checkpoint path가 symlink이면 activation request를 고치라는 잘못된 안내 대신
+// 실제 Checkpoint subject와 checkpoint id를 보존한 구조화 오류를 냅니다.
+#[test]
+fn refresh_names_a_symlinked_prospective_checkpoint() {
+    use std::os::unix::fs::symlink;
+
+    let candidate = refresh_candidate();
+    let checkpoint_path = candidate
+        .repository
+        .path
+        .join(candidate.checkpoint["path"].as_str().unwrap());
+    fs::remove_file(&checkpoint_path).unwrap();
+    symlink(&candidate.activation_request, &checkpoint_path).unwrap();
+
+    let failure = failure_json(candidate.repository.run(&[
+        "refresh-context-manifests",
+        candidate.activation_request.to_str().unwrap(),
+    ]));
+
+    assert_eq!(failure["error"]["code"], "symlink_forbidden");
+    assert_artifact_diagnostic(
+        &failure,
+        "prospective Checkpoint",
+        candidate.checkpoint["checkpoint_id"].as_str().unwrap(),
+    );
+}
+
+#[cfg(unix)]
+// active record path가 symlink이면 request나 Checkpoint가 아니라 active record를 실제
+// 수리 대상으로 지목하고 동일 checkpoint id에 실패를 결속합니다.
+#[test]
+fn refresh_names_a_symlinked_active_record() {
+    use std::os::unix::fs::symlink;
+
+    let candidate = refresh_candidate();
+    let active_path = candidate
+        .repository
+        .path
+        .join("methexis/active-checkpoint.yaml");
+    fs::remove_file(&active_path).unwrap();
+    symlink(&candidate.activation_request, &active_path).unwrap();
+
+    let failure = failure_json(candidate.repository.run(&[
+        "refresh-context-manifests",
+        candidate.activation_request.to_str().unwrap(),
+    ]));
+
+    assert_eq!(failure["error"]["code"], "symlink_forbidden");
+    assert_artifact_diagnostic(
+        &failure,
+        "active record",
+        candidate.checkpoint["checkpoint_id"].as_str().unwrap(),
+    );
+}
+
+fn assert_artifact_diagnostic(failure: &Value, subject: &str, affected_id: &str) {
+    assert!(
+        failure["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(subject)
+    );
+    assert_eq!(failure["error"]["affected_ids"], json!([affected_id]));
+    assert!(
+        failure["error"]["next_actions"][0]
+            .as_str()
+            .unwrap()
+            .contains(subject)
+    );
 }
 
 fn refresh_candidate() -> RefreshCandidate {

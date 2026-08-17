@@ -201,15 +201,9 @@ pub(crate) fn transaction_reader_guard(
 }
 
 fn checkpoint_failure(error: checkpoint::OperationFailure) -> RefreshFailure {
+    let next_action = error.next_action().to_owned();
     let (commit, code, message, ids) = error.parts();
-    failure(
-        commit,
-        code,
-        message,
-        ids,
-        Vec::new(),
-        "repair the activation proposal and retry",
-    )
+    failure(commit, code, message, ids, Vec::new(), next_action)
 }
 
 fn resolve_failure(error: super::ResolveFailure) -> RefreshFailure {
