@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io::Write, panic::AssertUnwindSafe};
 
 use nix::{
     sys::{
@@ -11,7 +11,7 @@ use yo_tui::PresentationMode;
 
 use super::support::{
     CHILD_MARKER, ENTER_ALTERNATE_SCREEN, LEAVE_ALTERNATE_SCREEN, PendingAgent, PtyChild,
-    RetainedChatAgent, ScreenEvent,
+    RetainedChatAgent, ScreenEvent, assert_child_is_gone,
 };
 use crate::process::termination::TerminationCoordinator;
 
@@ -27,25 +27,21 @@ fn fullscreen_repeated_suspend_resume_restores_each_terminal_generation() {
     child.wait_for_screen(ScreenEvent::Entered);
 
     for _ in 0..2 {
-        child.input.write_all(&[0x1a]).unwrap();
-        child.input.flush().unwrap();
+        child.input().write_all(&[0x1a]).unwrap();
+        child.input().flush().unwrap();
         child.wait_for_screen(ScreenEvent::Left);
         child.wait_until_stopped();
         assert_eq!(
-            tcgetattr(&child.slave).unwrap(),
+            tcgetattr(child.slave()).unwrap(),
             child.original_termios,
             "each stopped interval must expose the original PTY termios"
         );
-        kill(
-            Pid::from_raw(i32::try_from(child.child.id()).unwrap()),
-            Signal::SIGCONT,
-        )
-        .unwrap();
+        kill(child.pid(), Signal::SIGCONT).unwrap();
         child.wait_for_screen(ScreenEvent::Entered);
     }
 
-    child.input.write_all(&[0x04]).unwrap();
-    child.input.flush().unwrap();
+    child.input().write_all(&[0x04]).unwrap();
+    child.input().flush().unwrap();
     let (status, output) = child.finish();
 
     assert!(
@@ -83,24 +79,20 @@ fn inline_repeated_suspend_resume_reacquires_a_fresh_viewport() {
     child.wait_until_ready();
 
     for _ in 0..2 {
-        child.input.write_all(&[0x1a]).unwrap();
-        child.input.flush().unwrap();
+        child.input().write_all(&[0x1a]).unwrap();
+        child.input().flush().unwrap();
         child.wait_until_stopped();
         assert_eq!(
-            tcgetattr(&child.slave).unwrap(),
+            tcgetattr(child.slave()).unwrap(),
             child.original_termios,
             "each stopped interval must expose the original PTY termios"
         );
-        kill(
-            Pid::from_raw(i32::try_from(child.child.id()).unwrap()),
-            Signal::SIGCONT,
-        )
-        .unwrap();
+        kill(child.pid(), Signal::SIGCONT).unwrap();
         child.wait_until_ready();
     }
 
-    child.input.write_all(&[0x04]).unwrap();
-    child.input.flush().unwrap();
+    child.input().write_all(&[0x04]).unwrap();
+    child.input().flush().unwrap();
     let (status, output) = child.finish();
 
     assert!(
@@ -116,6 +108,28 @@ fn inline_repeated_suspend_resume_reacquires_a_fresh_viewport() {
         1,
         "suspend/resume and final exit must not replay acknowledged native history"
     );
+}
+
+// SIGTSTP-stopped child도 parent assertion unwind에서 Drop owner가 SIGKILL 뒤 exact wait를
+// 수행하므로 stopped process나 zombie를 test harness에 남기지 않습니다.
+#[test]
+fn panic_unwind_reaps_a_stopped_pty_child() {
+    let mut pid = None;
+    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut child = PtyChild::spawn(
+            "pty_tests::suspend_resume::child_inline_repeated_suspend_resume",
+            b"\x1b[?25l",
+        );
+        child.wait_until_ready();
+        child.input().write_all(&[0x1a]).unwrap();
+        child.input().flush().unwrap();
+        child.wait_until_stopped();
+        pid = Some(child.pid());
+        panic!("injected parent assertion failure while child is stopped");
+    }));
+
+    assert!(panic.is_err());
+    assert_child_is_gone(pid.unwrap());
 }
 
 // 부모가 제공한 실제 PTY에서 하나의 TUI session과 agent를 유지한 채 terminal 소유권만

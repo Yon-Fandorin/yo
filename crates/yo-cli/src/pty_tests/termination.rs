@@ -1,7 +1,4 @@
-use nix::{
-    sys::signal::{Signal, kill},
-    unistd::Pid,
-};
+use nix::sys::signal::{Signal, kill};
 
 use super::support::{
     CHILD_MARKER, ENTER_ALTERNATE_SCREEN, PtyChild, assert_fullscreen_pair, run_fullscreen,
@@ -13,16 +10,12 @@ use crate::process::termination::TerminationCoordinator;
 fn fullscreen_termination_restores_real_pty_before_signal_replay() {
     use std::os::unix::process::ExitStatusExt;
 
-    let child = PtyChild::spawn(
+    let mut child = PtyChild::spawn(
         "pty_tests::termination::child_fullscreen_termination",
         ENTER_ALTERNATE_SCREEN,
     );
     child.wait_until_ready();
-    kill(
-        Pid::from_raw(i32::try_from(child.child.id()).unwrap()),
-        Signal::SIGTERM,
-    )
-    .unwrap();
+    kill(child.pid(), Signal::SIGTERM).unwrap();
 
     let (status, output) = child.finish();
     assert_eq!(status.signal(), Some(Signal::SIGTERM as i32));

@@ -2,7 +2,7 @@ use std::{
     num::NonZeroU64,
     sync::{Arc, Mutex, mpsc},
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use yo_core::{
@@ -21,6 +21,50 @@ use super::support::{
     NeverTerminated, TEST_DEADLOCK_GUARD, collect_until, dispatch_until_queued, session_id, turn,
 };
 use crate::agent::TuiAgentConnection;
+
+fn drain_frontend_until_turn_finished<E: std::fmt::Display>(
+    timeout: Duration,
+    mut poll: impl FnMut() -> Result<AgentPoll, E>,
+) -> Result<Vec<AgentPoll>, String> {
+    let deadline = Instant::now() + timeout;
+    let mut observations = Vec::new();
+    loop {
+        let observation = poll().map_err(|error| error.to_string())?;
+        let last_poll = match &observation {
+            AgentPoll::Pending => "pending",
+            AgentPoll::Submission(_) => "submission",
+            AgentPoll::Record(_) => "record",
+            AgentPoll::RequestTrace(_) => "request-trace",
+            AgentPoll::Durability(_) => "durability",
+            AgentPoll::Closed => "closed",
+        };
+        match observation {
+            AgentPoll::Pending | AgentPoll::Submission(_) => thread::yield_now(),
+            AgentPoll::Closed => {
+                return Err(format!(
+                    "connection closed before draining observations; collected={observations:?}"
+                ));
+            },
+            observation => {
+                let finished = matches!(
+                    observation,
+                    AgentPoll::Record(TranscriptRecord::EventCommitted(
+                        AgentEvent::TurnFinished { .. }
+                    ))
+                );
+                observations.push(observation);
+                if finished {
+                    return Ok(observations);
+                }
+            },
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "timed out draining frontend observations; last_poll={last_poll}; collected={observations:?}"
+            ));
+        }
+    }
+}
 
 struct CapacityPressureRepository;
 
@@ -343,21 +387,8 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
         "backend completion must make the complete Journal prefix observable"
     );
 
-    let mut observations = Vec::new();
-    while !observations.iter().any(|observation| {
-        matches!(
-            observation,
-            AgentPoll::Record(TranscriptRecord::EventCommitted(
-                AgentEvent::TurnFinished { .. }
-            ))
-        )
-    }) {
-        match connection.poll().unwrap() {
-            AgentPoll::Pending | AgentPoll::Submission(_) => thread::yield_now(),
-            AgentPoll::Closed => panic!("connection closed before draining observations"),
-            observation => observations.push(observation),
-        }
-    }
+    let observations =
+        drain_frontend_until_turn_finished(TEST_DEADLOCK_GUARD, || connection.poll()).unwrap();
 
     let gap = observations
         .iter()
@@ -406,6 +437,21 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
     assert!(volatile_start < recovered);
     assert!(recovered < finished);
     connection.shutdown().unwrap();
+}
+
+// Backend completion 뒤 frontend가 영구 Pending이면 observation ordering assertion 전에
+// 독립 deadline과 마지막 poll class를 가진 focused failure로 끝납니다.
+#[test]
+fn completed_backend_with_stuck_frontend_poll_fails_within_the_guard() {
+    let started = Instant::now();
+    let error = drain_frontend_until_turn_finished(Duration::from_millis(5), || {
+        Ok::<_, std::convert::Infallible>(AgentPoll::Pending)
+    })
+    .unwrap_err();
+
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(error.contains("last_poll=pending"));
+    assert!(error.contains("collected=[]"));
 }
 
 // frontend가 읽기 전에 한 알림으로 합쳐진 레코드가 한 번의 저널 읽기 상한인 256개를

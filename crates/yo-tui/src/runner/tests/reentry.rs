@@ -6,6 +6,7 @@ use std::{
     rc::Rc,
     sync::mpsc,
     task::{Context, Poll},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -128,6 +129,83 @@ impl EventSource for Events {
     }
 }
 
+struct EventAt {
+    event: Option<Event>,
+    ready_at: Instant,
+    polls: Rc<Cell<usize>>,
+    reads: Rc<Cell<usize>>,
+}
+
+impl EventAt {
+    fn new(
+        event: Event,
+        ready_at: Instant,
+        polls: Rc<Cell<usize>>,
+        reads: Rc<Cell<usize>>,
+    ) -> Self {
+        Self {
+            event: Some(event),
+            ready_at,
+            polls,
+            reads,
+        }
+    }
+}
+
+impl EventSource for EventAt {
+    type Error = io::Error;
+
+    fn poll_event(&mut self, _context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
+        self.polls.set(self.polls.get() + 1);
+        let Some(event) = self.event.take() else {
+            return Poll::Pending;
+        };
+        thread::sleep(self.ready_at.saturating_duration_since(Instant::now()));
+        self.reads.set(self.reads.get() + 1);
+        Poll::Ready(Ok(event))
+    }
+}
+
+struct WakingEventAt {
+    event: Option<Event>,
+    ready_at: Instant,
+    armed: bool,
+}
+
+impl WakingEventAt {
+    fn new(event: Event, ready_at: Instant) -> Self {
+        Self {
+            event: Some(event),
+            ready_at,
+            armed: false,
+        }
+    }
+}
+
+impl EventSource for WakingEventAt {
+    type Error = io::Error;
+
+    fn poll_event(&mut self, context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
+        let Some(_) = self.event.as_ref() else {
+            return Poll::Pending;
+        };
+        let now = Instant::now();
+        if now >= self.ready_at {
+            return Poll::Ready(Ok(self.event.take().unwrap()));
+        }
+        if !self.armed {
+            self.armed = true;
+            let delay = self.ready_at.saturating_duration_since(now);
+            let wake = context.waker().clone();
+            thread::spawn(move || {
+                thread::sleep(delay);
+                wake.wake();
+            });
+        }
+        Poll::Pending
+    }
+}
+
 struct ResizeOnce {
     resized: Rc<Cell<bool>>,
     emitted: bool,
@@ -178,6 +256,37 @@ impl TerminationSource for StopAfter {
         } else {
             Poll::Pending
         }
+    }
+}
+
+struct StopAfterOrWatchdog {
+    counter: Rc<Cell<usize>>,
+    threshold: usize,
+    deadline: Instant,
+    armed: bool,
+    watchdog_fired: Rc<Cell<bool>>,
+}
+
+impl TerminationSource for StopAfterOrWatchdog {
+    fn poll_termination(&mut self, context: &mut Context<'_>) -> Poll<TerminationEvent> {
+        if self.counter.get() >= self.threshold {
+            return Poll::Ready(TerminationEvent::Requested);
+        }
+        let now = Instant::now();
+        if now >= self.deadline {
+            self.watchdog_fired.set(true);
+            return Poll::Ready(TerminationEvent::Requested);
+        }
+        if !self.armed {
+            self.armed = true;
+            let delay = self.deadline.saturating_duration_since(now);
+            let wake = context.waker().clone();
+            thread::spawn(move || {
+                thread::sleep(delay);
+                wake.wake();
+            });
+        }
+        Poll::Pending
     }
 }
 
@@ -385,16 +494,31 @@ fn run_generation_at(
     stop_after_frames: usize,
     started: Instant,
 ) -> Presenter {
+    let render_count = Rc::new(Cell::new(0));
+    let termination = StopAfter {
+        counter: Rc::clone(&render_count),
+        threshold: stop_after_frames,
+    };
+    run_generation_with_termination_at(retained, agent, events, termination, render_count, started)
+}
+
+fn run_generation_with_termination_at<E, T>(
+    retained: &mut TuiSession,
+    agent: &mut impl AgentConnection,
+    events: E,
+    termination: T,
+    render_count: Rc<Cell<usize>>,
+    started: Instant,
+) -> Presenter
+where
+    E: EventSource<Error = io::Error>,
+    T: TerminationSource,
+{
     let mut backend = Backend::default();
     let mut terminal = enter_screen(&mut backend, ScreenMode::Inline).unwrap();
-    let render_count = Rc::new(Cell::new(0));
     let mut presenter = Presenter {
-        render_count: Rc::clone(&render_count),
+        render_count,
         ..Presenter::default()
-    };
-    let termination = StopAfter {
-        counter: render_count,
-        threshold: stop_after_frames,
     };
     let mut reader = UnixEventReader::new(events, termination);
 
@@ -415,6 +539,31 @@ fn run_generation_at(
     presenter
 }
 
+fn retry_representable_past<T>(
+    timeout: Duration,
+    mut sample: impl FnMut() -> Option<T>,
+) -> Result<T, String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(value) = sample() {
+            return Ok(value);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "the monotonic clock cannot represent the requested test history within {timeout:?}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+fn representable_past(offset: Duration) -> Instant {
+    retry_representable_past(offset + Duration::from_millis(100), || {
+        Instant::now().checked_sub(offset)
+    })
+    .unwrap_or_else(|error| panic!("motion test clock prerequisite failed: {error}"))
+}
+
 fn turn() -> TurnRef {
     TurnRef::new(
         "01890f00-0000-7000-8000-000000000001"
@@ -432,6 +581,8 @@ fn active_motion_session(period: Duration) -> TuiSession {
     );
     let candidate = AppearanceCandidate::for_profile(GlyphProfile::Ascii)
         .with_activity_motion_for_test(period, period, &["*"])
+        .unwrap()
+        .with_activity_sweep_period_for_test(period.saturating_mul(2))
         .unwrap();
     retained.commit_appearance(candidate).unwrap();
     retained
@@ -636,18 +787,84 @@ fn normal_wait_coalesces_input_and_due_motion_into_one_redraw() {
     let mut retained = active_motion_session(period);
     let mut agent = SimpleAgent::default();
     let polls = Rc::new(Cell::new(0));
-    let presenter = run_generation(
+    let reads = Rc::new(Cell::new(0));
+    let started = Instant::now();
+    let render_count = Rc::new(Cell::new(0));
+    let presenter = run_generation_with_termination_at(
         &mut retained,
         &mut agent,
-        Events::new(
-            [Event::Paste("x".to_owned())],
+        EventAt::new(
+            Event::Paste("x".to_owned()),
+            started + period,
             Rc::clone(&polls),
-            Rc::new(Cell::new(0)),
+            Rc::clone(&reads),
         ),
-        2,
+        StopAfter {
+            counter: Rc::clone(&render_count),
+            threshold: 2,
+        },
+        render_count,
+        started,
     );
 
     assert_eq!(presenter.frames.len(), 2);
+    assert_eq!(reads.get(), 1);
+    assert!(!surface_text(&presenter.frames[0]).contains('x'));
+    assert!(surface_text(&presenter.frames[1]).contains('x'));
+    assert_eq!(
+        styles_for_ascii_text(&presenter.frames[0], "* Working")[0].attributes,
+        crate::surface::Attributes::DIM
+    );
+    assert_eq!(
+        styles_for_ascii_text(&presenter.frames[1], "* Working")[0].attributes,
+        crate::surface::Attributes::BOLD
+    );
+}
+
+fn run_scheduled_motion_input(
+    period: Duration,
+    input_after: Duration,
+    stop_after_frames: usize,
+) -> Presenter {
+    let mut retained = active_motion_session(period);
+    let mut agent = SimpleAgent::default();
+    let started = Instant::now();
+    let render_count = Rc::new(Cell::new(0));
+    run_generation_with_termination_at(
+        &mut retained,
+        &mut agent,
+        WakingEventAt::new(Event::Paste("x".to_owned()), started + input_after),
+        StopAfter {
+            counter: Rc::clone(&render_count),
+            threshold: stop_after_frames,
+        },
+        render_count,
+        started,
+    )
+}
+
+// Motion deadline보다 충분히 먼저 준비된 input은 그 자체의 두 번째 frame을 만들고,
+// 아직 due가 아닌 motion frame을 앞당기지 않습니다.
+#[test]
+fn input_before_motion_deadline_is_one_input_redraw() {
+    let presenter =
+        run_scheduled_motion_input(Duration::from_millis(200), Duration::from_millis(100), 2);
+
+    assert_eq!(presenter.frames.len(), 2);
+    assert!(!surface_text(&presenter.frames[0]).contains('x'));
+    assert!(surface_text(&presenter.frames[1]).contains('x'));
+}
+
+// Motion deadline 뒤에 준비된 input은 먼저 due-motion frame을 관찰한 다음 별도의 input
+// frame을 만들어 coincident case의 두-frame assertion과 구별됩니다.
+#[test]
+fn input_after_motion_deadline_follows_the_motion_redraw() {
+    let presenter =
+        run_scheduled_motion_input(Duration::from_millis(200), Duration::from_millis(300), 3);
+
+    assert_eq!(presenter.frames.len(), 3);
+    assert!(!surface_text(&presenter.frames[1]).contains('x'));
+    assert!(surface_text(&presenter.frames[2]).contains('x'));
 }
 
 // 첫 frame 직후 ordinary coalescing 간격 안에 resize가 들어오면 viewport를 무효화하고
@@ -727,11 +944,22 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
     *retained.parts_mut().pending_dispatch = Some(pending);
     let mut agent = RetainingAgent::default();
     let polls = Rc::new(Cell::new(0));
-    let presenter = run_generation(
+    let render_count = Rc::new(Cell::new(0));
+    let watchdog_fired = Rc::new(Cell::new(false));
+    let started = Instant::now();
+    let presenter = run_generation_with_termination_at(
         &mut retained,
         &mut agent,
         Events::new([], Rc::clone(&polls), Rc::new(Cell::new(0))),
-        2,
+        StopAfterOrWatchdog {
+            counter: Rc::clone(&render_count),
+            threshold: 2,
+            deadline: started + Duration::from_secs(1),
+            armed: false,
+            watchdog_fired: Rc::clone(&watchdog_fired),
+        },
+        render_count,
+        started,
     );
 
     release_tx.send(()).unwrap();
@@ -740,6 +968,7 @@ fn backpressure_wait_keeps_visible_motion_deadline() {
 
     assert!(agent.retries >= 2);
     assert!(presenter.frames.len() >= 2);
+    assert!(!watchdog_fired.get());
     assert!(surface_text(&presenter.frames[0]).contains("* Working"));
 }
 
@@ -768,9 +997,7 @@ fn zero_size_resize_preserves_the_generation_motion_epoch() {
         ..Presenter::default()
     };
     let mut reader = UnixEventReader::new(events, termination);
-    let started = Instant::now()
-        .checked_sub(period + Duration::from_millis(100))
-        .unwrap();
+    let started = representable_past(period + Duration::from_millis(100));
 
     assert!(matches!(
         drive(
@@ -803,9 +1030,7 @@ fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
     let period = Duration::from_millis(100);
     let mut retained = active_motion_session(period);
     let mut agent = SimpleAgent::default();
-    let old_epoch = Instant::now()
-        .checked_sub(Duration::from_millis(1_100))
-        .unwrap();
+    let old_epoch = representable_past(Duration::from_millis(1_100));
 
     let first_polls = Rc::new(Cell::new(0));
     let first = run_generation_at(
@@ -828,4 +1053,24 @@ fn each_terminal_generation_starts_with_a_fresh_motion_epoch() {
 
     assert_eq!(first_styles[0].attributes, crate::surface::Attributes::BOLD);
     assert_eq!(second_styles[0].attributes, crate::surface::Attributes::DIM);
+}
+
+// Monotonic epoch가 아직 offset을 표현하지 못하면 helper는 raw unwrap panic 대신
+// bounded retry를 수행하고, representable sample 또는 명명된 prerequisite error를 냅니다.
+#[test]
+fn motion_history_helper_retries_unrepresentable_instants_with_a_bound() {
+    let expected = Instant::now();
+    let mut attempts = 0;
+    let resolved = retry_representable_past(Duration::from_millis(20), || {
+        attempts += 1;
+        (attempts == 3).then_some(expected)
+    })
+    .unwrap();
+    assert_eq!(resolved, expected);
+    assert_eq!(attempts, 3);
+
+    let started = Instant::now();
+    let error = retry_representable_past::<Instant>(Duration::from_millis(2), || None).unwrap_err();
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(error.contains("monotonic clock"));
 }

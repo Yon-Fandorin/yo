@@ -5,7 +5,11 @@ use std::{
     io::{self, Read},
     num::NonZeroU64,
     process::{Command, Stdio},
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     task::{Context, Poll},
     thread,
     time::Duration,
@@ -110,16 +114,47 @@ impl AgentConnection for RetainedChatAgent {
 }
 
 pub(super) struct PtyChild {
-    pub(super) child: std::process::Child,
-    pub(super) input: File,
-    output: thread::JoinHandle<Vec<u8>>,
+    child: Option<std::process::Child>,
+    input: Option<File>,
+    output: Option<thread::JoinHandle<Vec<u8>>>,
     captured_output: Arc<Mutex<Vec<u8>>>,
     capture_release: Option<mpsc::Sender<()>>,
     ready_events: Vec<mpsc::Receiver<usize>>,
     output_events: mpsc::Receiver<usize>,
     screen_events: mpsc::Receiver<ScreenEvent>,
-    pub(super) slave: std::os::fd::OwnedFd,
+    slave: Option<std::os::fd::OwnedFd>,
     pub(super) original_termios: nix::sys::termios::Termios,
+}
+
+struct SpawnedChildGuard {
+    child: Option<std::process::Child>,
+}
+
+impl SpawnedChildGuard {
+    fn new(child: std::process::Child) -> Self {
+        Self { child: Some(child) }
+    }
+
+    fn pid(&self) -> Pid {
+        child_pid(
+            self.child
+                .as_ref()
+                .expect("the setup guard must still own the PTY child"),
+        )
+        .expect("the PTY child process ID must fit pid_t")
+    }
+
+    fn transfer(mut self) -> std::process::Child {
+        self.child
+            .take()
+            .expect("the setup guard must transfer its exact PTY child")
+    }
+}
+
+impl Drop for SpawnedChildGuard {
+    fn drop(&mut self) {
+        let _ = terminate_owned_child(&mut self.child);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -179,10 +214,40 @@ impl PtyChild {
         Self::spawn_configured(test_name, ready_markers, Some(pause_after_marker))
     }
 
+    pub(super) fn spawn_with_injected_post_spawn_failure(
+        test_name: &str,
+        ready_marker: &'static [u8],
+        child_spawned: mpsc::Sender<Pid>,
+        capture_started: Arc<AtomicBool>,
+    ) -> Self {
+        Self::spawn_configured_inner(
+            test_name,
+            &[ready_marker],
+            None,
+            move |pid| {
+                child_spawned
+                    .send(pid)
+                    .expect("the setup-failure test must retain its PID receiver");
+                panic!("injected PTY setup failure after child spawn");
+            },
+            Some(capture_started),
+        )
+    }
+
     fn spawn_configured(
         test_name: &str,
         ready_markers: &[&'static [u8]],
         pause_after_marker: Option<usize>,
+    ) -> Self {
+        Self::spawn_configured_inner(test_name, ready_markers, pause_after_marker, |_| {}, None)
+    }
+
+    fn spawn_configured_inner(
+        test_name: &str,
+        ready_markers: &[&'static [u8]],
+        pause_after_marker: Option<usize>,
+        after_spawn: impl FnOnce(Pid),
+        capture_started: Option<Arc<AtomicBool>>,
     ) -> Self {
         if let Some(marker) = pause_after_marker {
             assert!(
@@ -212,6 +277,8 @@ impl PtyChild {
             .stderr(Stdio::from(stderr))
             .spawn()
             .unwrap();
+        let child = SpawnedChildGuard::new(child);
+        after_spawn(child.pid());
 
         let master = File::from(pty.master);
         let input = master.try_clone().unwrap();
@@ -233,41 +300,68 @@ impl PtyChild {
         );
         let captured_output = Arc::new(Mutex::new(Vec::new()));
         let capture_snapshot = Arc::clone(&captured_output);
-        let output = thread::spawn(move || {
-            capture_pty(
-                master,
-                ready_senders,
-                output_tx,
-                screen_tx,
-                capture_snapshot,
-                capture_pause,
-            )
-        });
+        let output = thread::Builder::new()
+            .name("yo-pty-test-capture".to_owned())
+            .spawn(move || {
+                if let Some(capture_started) = capture_started {
+                    capture_started.store(true, Ordering::Release);
+                }
+                capture_pty(
+                    master,
+                    ready_senders,
+                    output_tx,
+                    screen_tx,
+                    capture_snapshot,
+                    capture_pause,
+                )
+            })
+            .unwrap();
 
         Self {
-            child,
-            input,
-            output,
+            child: Some(child.transfer()),
+            input: Some(input),
+            output: Some(output),
             captured_output,
             capture_release,
             ready_events,
             output_events,
             screen_events,
-            slave: pty.slave,
+            slave: Some(pty.slave),
             original_termios,
         }
     }
 
-    pub(super) fn wait_until_ready(&self) {
+    pub(super) fn pid(&self) -> Pid {
+        child_pid(
+            self.child
+                .as_ref()
+                .expect("the PTY child must still be owned"),
+        )
+        .expect("the PTY child process ID must fit pid_t")
+    }
+
+    pub(super) fn input(&mut self) -> &mut File {
+        self.input
+            .as_mut()
+            .expect("the PTY input must still be owned")
+    }
+
+    pub(super) fn slave(&self) -> &std::os::fd::OwnedFd {
+        self.slave
+            .as_ref()
+            .expect("the PTY slave must still be owned")
+    }
+
+    pub(super) fn wait_until_ready(&mut self) {
         self.wait_until_ready_marker(0);
     }
 
-    pub(super) fn wait_until_ready_marker(&self, marker: usize) -> usize {
+    pub(super) fn wait_until_ready_marker(&mut self, marker: usize) -> usize {
         self.wait_until_ready_marker_after_with_timeout(marker, 0, Duration::from_secs(5))
             .unwrap_or_else(|error| panic!("the child must emit ready marker {marker}: {error}"))
     }
 
-    pub(super) fn wait_until_ready_marker_after(&self, marker: usize, offset: usize) -> usize {
+    pub(super) fn wait_until_ready_marker_after(&mut self, marker: usize, offset: usize) -> usize {
         self.wait_until_ready_marker_after_with_timeout(marker, offset, Duration::from_secs(5))
             .unwrap_or_else(|error| {
                 panic!(
@@ -277,7 +371,7 @@ impl PtyChild {
     }
 
     pub(super) fn wait_until_ready_marker_with_timeout(
-        &self,
+        &mut self,
         marker: usize,
         timeout: Duration,
     ) -> Result<usize, ReadinessWaitFailure> {
@@ -285,7 +379,7 @@ impl PtyChild {
     }
 
     fn wait_until_ready_marker_after_with_timeout(
-        &self,
+        &mut self,
         marker: usize,
         offset: usize,
         timeout: Duration,
@@ -307,7 +401,7 @@ impl PtyChild {
         }
     }
 
-    pub(super) fn wait_until_output_reaches(&self, offset: usize) -> usize {
+    pub(super) fn wait_until_output_reaches(&mut self, offset: usize) -> usize {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -326,7 +420,7 @@ impl PtyChild {
         }
     }
 
-    pub(super) fn wait_for_screen(&self, expected: ScreenEvent) {
+    pub(super) fn wait_for_screen(&mut self, expected: ScreenEvent) {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -347,8 +441,8 @@ impl PtyChild {
         }
     }
 
-    pub(super) fn wait_until_stopped(&self) {
-        let pid = Pid::from_raw(i32::try_from(self.child.id()).unwrap());
+    pub(super) fn wait_until_stopped(&mut self) {
+        let pid = self.pid();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
             match waitpid(pid, Some(WaitPidFlag::WUNTRACED | WaitPidFlag::WNOHANG)) {
@@ -381,49 +475,8 @@ impl PtyChild {
         }
     }
 
-    fn terminate_child(&self) -> Result<ChildReapReceipt, String> {
-        let pid = Pid::from_raw(i32::try_from(self.child.id()).unwrap());
-        match kill(pid, Signal::SIGKILL) {
-            Ok(()) | Err(nix::errno::Errno::ESRCH) => {},
-            Err(error) => return Err(format!("sending SIGKILL failed: {error}")),
-        }
-
-        let (result_tx, result_rx) = mpsc::channel();
-        let reaper = thread::spawn(move || {
-            let result = loop {
-                match waitpid(pid, None) {
-                    Err(nix::errno::Errno::EINTR) => continue,
-                    result => break result,
-                }
-            };
-            let _ = result_tx.send(result);
-        });
-        match result_rx.recv_timeout(Duration::from_secs(1)) {
-            Ok(Ok(status @ WaitStatus::Exited(reaped, _)))
-            | Ok(Ok(status @ WaitStatus::Signaled(reaped, _, _)))
-                if reaped == pid =>
-            {
-                reaper
-                    .join()
-                    .map_err(|_| "child reaper thread panicked".to_owned())?;
-                Ok(ChildReapReceipt::Waitpid(status))
-            },
-            Ok(Err(nix::errno::Errno::ECHILD)) => {
-                reaper
-                    .join()
-                    .map_err(|_| "child reaper thread panicked".to_owned())?;
-                Ok(ChildReapReceipt::AlreadyReaped)
-            },
-            Ok(result) => {
-                let _ = reaper.join();
-                Err(format!(
-                    "waiting for SIGKILL termination returned {result:?}"
-                ))
-            },
-            Err(error) => Err(format!(
-                "waiting for SIGKILL termination exceeded the one-second reap deadline: {error}"
-            )),
-        }
+    fn terminate_child(&mut self) -> Result<ChildReapReceipt, String> {
+        terminate_owned_child(&mut self.child)
     }
 
     fn captured_output(&self) -> Vec<u8> {
@@ -448,10 +501,10 @@ impl PtyChild {
             ws_xpixel: 0,
             ws_ypixel: 0,
         };
-        rustix::termios::tcsetwinsize(&self.slave, size)
+        rustix::termios::tcsetwinsize(self.slave(), size)
             .expect("updating the PTY window size must succeed");
         assert_eq!(
-            rustix::termios::tcgetwinsize(&self.slave)
+            rustix::termios::tcgetwinsize(self.slave())
                 .expect("reading back the PTY window size must succeed"),
             size,
             "the PTY kernel state must expose the requested resize before capture resumes"
@@ -461,7 +514,14 @@ impl PtyChild {
     pub(super) fn finish(mut self) -> (std::process::ExitStatus, Vec<u8>) {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         let (status, timeout_cleanup) = loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
+            if let Some(status) = self
+                .child
+                .as_mut()
+                .expect("finish requires a live PTY child owner")
+                .try_wait()
+                .unwrap()
+            {
+                self.child.take();
                 break (Some(status), None);
             }
             if std::time::Instant::now() >= deadline {
@@ -475,13 +535,18 @@ impl PtyChild {
                 String::from_utf8_lossy(&self.captured_output())
             );
         }
-        let restored_termios = tcgetattr(&self.slave).unwrap();
+        let restored_termios = tcgetattr(self.slave()).unwrap();
         if let Some(release) = self.capture_release.take() {
             let _ = release.send(());
         }
-        drop(self.input);
-        drop(self.slave);
-        let output = self.output.join().unwrap();
+        self.input.take();
+        self.slave.take();
+        let output = self
+            .output
+            .take()
+            .expect("finish must still own the PTY capture thread")
+            .join()
+            .expect("the PTY capture thread must not panic");
         if let Some(Ok(receipt)) = timeout_cleanup {
             panic!(
                 "the PTY child exceeded its cleanup deadline; child cleanup completed with {receipt:?}:\n{}",
@@ -497,12 +562,109 @@ impl PtyChild {
             output,
         )
     }
+
+    fn join_output(&mut self, timeout: Duration) -> Result<Vec<u8>, String> {
+        let Some(output) = self.output.take() else {
+            return Ok(self.captured_output());
+        };
+        let (result_tx, result_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = result_tx.send(output.join());
+        });
+        match result_rx.recv_timeout(timeout) {
+            Ok(Ok(output)) => Ok(output),
+            Ok(Err(_)) => Err("PTY capture thread panicked".to_owned()),
+            Err(error) => Err(format!(
+                "PTY capture join exceeded the bounded deadline: {error}"
+            )),
+        }
+    }
+}
+
+impl Drop for PtyChild {
+    fn drop(&mut self) {
+        if self.child.is_some() {
+            let _ = self.terminate_child();
+        }
+        if let Some(release) = self.capture_release.take() {
+            let _ = release.send(());
+        }
+        self.input.take();
+        self.slave.take();
+        let _ = self.join_output(Duration::from_secs(1));
+    }
+}
+
+fn child_pid(child: &std::process::Child) -> Result<Pid, String> {
+    i32::try_from(child.id())
+        .map(Pid::from_raw)
+        .map_err(|_| format!("PTY child process ID {} does not fit pid_t", child.id()))
+}
+
+fn terminate_owned_child(
+    child: &mut Option<std::process::Child>,
+) -> Result<ChildReapReceipt, String> {
+    let Some(owned_child) = child.as_ref() else {
+        return Ok(ChildReapReceipt::AlreadyReaped);
+    };
+    let pid = child_pid(owned_child)?;
+    let signal_error = match kill(pid, Signal::SIGKILL) {
+        Ok(()) | Err(nix::errno::Errno::ESRCH) => None,
+        Err(error) => Some(error),
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+
+    loop {
+        match waitpid(pid, Some(WaitPidFlag::WNOHANG)) {
+            Ok(status @ WaitStatus::Exited(reaped, _))
+            | Ok(status @ WaitStatus::Signaled(reaped, _, _))
+                if reaped == pid =>
+            {
+                child.take();
+                if let Some(error) = signal_error {
+                    return Err(format!(
+                        "sending SIGKILL failed before the child exited: {error}"
+                    ));
+                }
+                return Ok(ChildReapReceipt::Waitpid(status));
+            },
+            Err(nix::errno::Errno::ECHILD) => {
+                child.take();
+                if let Some(error) = signal_error {
+                    return Err(format!(
+                        "sending SIGKILL failed before another owner reaped the child: {error}"
+                    ));
+                }
+                return Ok(ChildReapReceipt::AlreadyReaped);
+            },
+            Ok(WaitStatus::StillAlive) | Err(nix::errno::Errno::EINTR) => {},
+            result => {
+                return Err(format!(
+                    "waiting for SIGKILL termination returned {result:?}"
+                ));
+            },
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(
+                "waiting for SIGKILL termination exceeded the one-second reap deadline".to_owned(),
+            );
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn cleanup_diagnostic(cleanup: &Result<ChildReapReceipt, String>) -> String {
     cleanup
         .as_ref()
         .map_or_else(|failure| failure.clone(), |receipt| format!("{receipt:?}"))
+}
+
+pub(super) fn assert_child_is_gone(pid: Pid) {
+    assert_eq!(kill(pid, None), Err(nix::errno::Errno::ESRCH));
+    assert_eq!(
+        waitpid(pid, Some(WaitPidFlag::WNOHANG)),
+        Err(nix::errno::Errno::ECHILD)
+    );
 }
 
 fn capture_pty(

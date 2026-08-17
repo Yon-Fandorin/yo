@@ -1,16 +1,22 @@
 use std::{
     error::Error,
     io::Write,
+    panic::AssertUnwindSafe,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
 
-use nix::{sys::signal::Signal, unistd::Pid};
+use nix::sys::signal::Signal;
 use yo_tui::{PresentationMode, TerminationEvent, TerminationSource};
 
 use super::support::{
     CHILD_MARKER, ChildReapReceipt, ENTER_ALTERNATE_SCREEN, PendingAgent, PtyChild,
-    RetainedChatAgent, assert_fullscreen_pair, run_fullscreen,
+    RetainedChatAgent, assert_child_is_gone, assert_fullscreen_pair, run_fullscreen,
 };
 
 struct PendingTermination;
@@ -63,8 +69,8 @@ fn inline_normal_exit_retains_chat_after_viewport_restoration() {
         b"YO_INLINE_RETAINED",
     );
     child.wait_until_ready();
-    child.input.write_all(&[0x04]).unwrap();
-    child.input.flush().unwrap();
+    child.input().write_all(&[0x04]).unwrap();
+    child.input().flush().unwrap();
 
     let (status, output) = child.finish();
     assert!(
@@ -96,8 +102,8 @@ fn inline_empty_prompt_uses_a_compact_live_region() {
         b"\x1b[?25l",
     );
     child.wait_until_ready();
-    child.input.write_all(&[0x04]).unwrap();
-    child.input.flush().unwrap();
+    child.input().write_all(&[0x04]).unwrap();
+    child.input().flush().unwrap();
 
     let (status, output) = child.finish();
     assert!(
@@ -155,12 +161,12 @@ fn inline_resize_does_not_replay_published_history() {
     child.release_capture();
     let resized_rule_end = child.wait_until_ready_marker_after(2, retained_end);
     let resized_generation_end = child.wait_until_ready_marker_after(3, resized_rule_end);
-    child.input.write_all(POST_RESIZE_INPUT_READY).unwrap();
-    child.input.flush().unwrap();
+    child.input().write_all(POST_RESIZE_INPUT_READY).unwrap();
+    child.input().flush().unwrap();
     let resized_input_end = child.wait_until_ready_marker_after(1, resized_generation_end);
     child.wait_until_output_reaches(resized_input_end);
-    child.input.write_all(&[0x7f, 0x04]).unwrap();
-    child.input.flush().unwrap();
+    child.input().write_all(&[0x7f, 0x04]).unwrap();
+    child.input().flush().unwrap();
 
     let (status, output) = child.finish();
     assert!(
@@ -182,11 +188,11 @@ fn inline_resize_does_not_replay_published_history() {
 // PTY 테스트와 훅 실행을 가로막는 고아 프로세스를 남기지 않는다.
 #[test]
 fn readiness_timeout_reaps_the_nested_pty_child() {
-    let child = PtyChild::spawn(
+    let mut child = PtyChild::spawn(
         "pty_tests::normal_exit::child_inline_empty_prompt",
         b"YO_MARKER_THAT_NEVER_APPEARS",
     );
-    let pid = Pid::from_raw(i32::try_from(child.child.id()).unwrap());
+    let pid = child.pid();
 
     let started = std::time::Instant::now();
     let error = child
@@ -209,6 +215,73 @@ fn readiness_timeout_reaps_the_nested_pty_child() {
     );
 }
 
+// Parent assertion unwind는 finish 호출 여부와 무관하게 Drop owner가 실행 중인 nested
+// child를 kill·reap하고 capture thread를 닫아 다음 PTY test에 남기지 않습니다.
+#[test]
+fn panic_unwind_reaps_a_running_pty_child() {
+    let mut pid = None;
+    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut child = PtyChild::spawn(
+            "pty_tests::normal_exit::child_inline_empty_prompt",
+            b"\x1b[?25l",
+        );
+        child.wait_until_ready();
+        pid = Some(child.pid());
+        panic!("injected parent assertion failure");
+    }));
+
+    assert!(panic.is_err());
+    assert_child_is_gone(pid.unwrap());
+}
+
+// Child spawn 직후 주입한 setup panic은 임시 owner가 1초 안에 exact child를 kill·reap하고,
+// 최종 fallible 단계인 capture spawn 전이므로 capture thread를 시작하거나 detach하지 않습니다.
+#[test]
+fn post_spawn_setup_panic_reaps_before_capture_starts() {
+    let (pid_tx, pid_rx) = mpsc::channel();
+    let capture_started = Arc::new(AtomicBool::new(false));
+    let started = std::time::Instant::now();
+    let panic = std::panic::catch_unwind(AssertUnwindSafe({
+        let capture_started = Arc::clone(&capture_started);
+        move || {
+            let _child = PtyChild::spawn_with_injected_post_spawn_failure(
+                "pty_tests::normal_exit::child_inline_empty_prompt",
+                b"\x1b[?25l",
+                pid_tx,
+                capture_started,
+            );
+        }
+    }));
+
+    assert!(panic.is_err());
+    assert!(started.elapsed() < Duration::from_secs(2));
+    let pid = pid_rx
+        .recv_timeout(Duration::from_millis(100))
+        .expect("the failure checkpoint must publish the exact child PID");
+    assert_child_is_gone(pid);
+    assert!(!capture_started.load(Ordering::Acquire));
+}
+
+// Capture가 marker 뒤 명시적 release를 기다리는 중에 unwind하면 Drop이 child를 먼저
+// kill·reap하고 pause를 release한 뒤 PTY를 닫고 bounded join해 두 owner를 모두 회수합니다.
+#[test]
+fn panic_unwind_releases_a_paused_pty_capture() {
+    let mut pid = None;
+    let panic = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let mut child = PtyChild::spawn_with_capture_pause(
+            "pty_tests::normal_exit::child_inline_retains_large_chat",
+            &[b"YO_INLINE_RETAINED"],
+            0,
+        );
+        child.wait_until_ready();
+        pid = Some(child.pid());
+        panic!("injected parent assertion failure while capture is paused");
+    }));
+
+    assert!(panic.is_err());
+    assert_child_is_gone(pid.unwrap());
+}
+
 // 실제 Linux PTY에서 Ctrl+D 정상 종료가 대체 화면과 termios를 모두 원래 상태로 복구한다.
 #[test]
 fn fullscreen_normal_exit_restores_real_pty() {
@@ -217,8 +290,8 @@ fn fullscreen_normal_exit_restores_real_pty() {
         ENTER_ALTERNATE_SCREEN,
     );
     child.wait_until_ready();
-    child.input.write_all(&[0x04]).unwrap();
-    child.input.flush().unwrap();
+    child.input().write_all(&[0x04]).unwrap();
+    child.input().flush().unwrap();
 
     let (status, output) = child.finish();
     assert!(
