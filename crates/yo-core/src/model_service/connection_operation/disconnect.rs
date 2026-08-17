@@ -24,7 +24,7 @@ pub enum ExternalDisconnectCredentialAction {
 pub enum ExternalDisconnectError {
     PublicPreparation(ConnectionRepositoryError),
     CredentialPreparation(LocalCredentialStoreError),
-    CredentialAlreadyAbsent,
+    RequiredCredentialAbsent,
     JournalPreparation(ConnectionOperationError),
 }
 
@@ -37,8 +37,8 @@ impl fmt::Display for ExternalDisconnectError {
             Self::CredentialPreparation(source) => {
                 write!(formatter, "preparing the account credential action failed: {source}")
             },
-            Self::CredentialAlreadyAbsent => formatter.write_str(
-                "the disconnected Provider and Account has no stored credential to remove; inspect the current connection state before retrying",
+            Self::RequiredCredentialAbsent => formatter.write_str(
+                "the selected Provider and Account have no stored credential required by the disconnect plan; inspect the current connection state before retrying",
             ),
             Self::JournalPreparation(source) => {
                 write!(formatter, "preparing the secret-free disconnect intent failed: {source}")
@@ -53,7 +53,7 @@ impl Error for ExternalDisconnectError {
             Self::PublicPreparation(source) => Some(source),
             Self::CredentialPreparation(source) => Some(source),
             Self::JournalPreparation(source) => Some(source),
-            Self::CredentialAlreadyAbsent => None,
+            Self::RequiredCredentialAbsent => None,
         }
     }
 }
@@ -121,7 +121,7 @@ impl LocalConnectionOperationSession<'_> {
                     .is_none()
                 {
                     return Err(disconnect_preparation_error(
-                        ExternalDisconnectError::CredentialAlreadyAbsent,
+                        ExternalDisconnectError::RequiredCredentialAbsent,
                     ));
                 }
                 PreparedDisconnectCredential::Preserve(snapshot.revision().clone())
@@ -138,7 +138,7 @@ impl LocalConnectionOperationSession<'_> {
                     })?
                     .ok_or_else(|| {
                         disconnect_preparation_error(
-                            ExternalDisconnectError::CredentialAlreadyAbsent,
+                            ExternalDisconnectError::RequiredCredentialAbsent,
                         )
                     })?;
                 PreparedDisconnectCredential::Remove(mutation)

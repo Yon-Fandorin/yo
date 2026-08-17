@@ -294,11 +294,52 @@ fn required_removal_rejects_an_absent_credential_before_intent() {
         )
         .expect_err("an absent credential cannot become a remove mutation");
 
-    assert!(error.to_string().contains("no stored credential to remove"));
+    assert!(
+        error
+            .to_string()
+            .contains("no stored credential required by the disconnect plan")
+    );
     assert!(fixture.journal.capture().unwrap().is_none());
     assert_eq!(
         fixture.connections.capture().unwrap().preference(),
         Some(&stored_target())
+    );
+}
+
+// 다른 dependent binding 때문에 preserve가 필요해도 required credential 자체가 없으면
+// remove 전용 문구를 내지 않고 같은 action-neutral 진단으로 mutation 전에 중단합니다.
+#[test]
+fn required_preservation_rejects_an_absent_credential_before_intent() {
+    let fixture = Fixture::new("disconnect-absent-preserved-credential");
+    seed_stored(&fixture);
+    let repositories = repositories(&fixture);
+    let mut session = repositories.acquire().unwrap();
+
+    let error = session
+        .prepare_external_disconnect(
+            fixture.connections.capture().unwrap().revision(),
+            &selection(),
+            ExternalDisconnectCredentialAction::Preserve,
+        )
+        .expect_err("an absent credential cannot satisfy a preserve plan");
+
+    assert!(
+        error
+            .to_string()
+            .contains("no stored credential required by the disconnect plan")
+    );
+    assert!(fixture.journal.capture().unwrap().is_none());
+    assert_eq!(
+        fixture.connections.capture().unwrap().preference(),
+        Some(&stored_target())
+    );
+    assert!(
+        fixture
+            .credentials
+            .capture()
+            .unwrap()
+            .resolve(&provider(), &account())
+            .is_none()
     );
 }
 
