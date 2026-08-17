@@ -86,6 +86,13 @@ fn final_revalidate(prepared: &PreparedReadiness) -> Result<(), String> {
     )?;
 
     let bound = slice_contract::trusted_bound_slice(repository)?;
+    let canonical_contract =
+        std::fs::canonicalize(&prepared.slice_contract_request_path).map_err(|error| {
+            format!("cannot re-resolve Slice contract during readiness check: {error}")
+        })?;
+    if canonical_contract != Path::new(&prepared.slice_contract.path) {
+        return Err("bound Slice contract identity changed during readiness check".to_owned());
+    }
     require_current_file(
         Path::new(&prepared.slice_contract.path),
         &prepared.slice_contract,

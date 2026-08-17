@@ -203,6 +203,7 @@ struct PreparedReadiness {
     base_commit: String,
     trusted_commit: String,
     candidate_commit: String,
+    slice_contract_request_path: PathBuf,
     slice_contract: Captured,
     context_request: Captured,
     activation_request: Option<Captured>,
@@ -359,7 +360,7 @@ fn prepare_readiness(
     let validation =
         capture_validation(&repository, &candidate_commit, &request.validation_evidence)?;
     let slice_contract = Captured {
-        path: contract_path.to_string_lossy().into_owned(),
+        path: canonical_contract.to_string_lossy().into_owned(),
         hash: digest(&contract_bytes),
         bytes: contract_bytes,
     };
@@ -372,6 +373,7 @@ fn prepare_readiness(
         base_commit,
         trusted_commit,
         candidate_commit,
+        slice_contract_request_path: contract_path,
         slice_contract,
         context_request,
         activation_request,

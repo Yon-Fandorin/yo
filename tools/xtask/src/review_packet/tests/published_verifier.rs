@@ -13,6 +13,23 @@ use super::{
 };
 use crate::review_protocol::{digest, domain_digest};
 
+struct ScratchDirectory {
+    path: std::path::PathBuf,
+}
+
+impl ScratchDirectory {
+    fn create(path: std::path::PathBuf) -> Self {
+        std::fs::create_dir(&path).unwrap();
+        Self { path }
+    }
+}
+
+impl Drop for ScratchDirectory {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
 fn repository_head(repository: &std::path::Path) -> String {
     crate::git::output_in(repository, &["rev-parse", "HEAD"], false)
         .unwrap()
@@ -152,7 +169,7 @@ fn published_verifier_rejects_manifest_hash_drift_before_replay() {
 #[test]
 fn published_verifier_validates_every_manifest_revision_before_git() {
     let root = crate::test_support::unique_path("review-published-revisions");
-    std::fs::create_dir_all(&root).unwrap();
+    let _root_owner = ScratchDirectory::create(root.clone());
     let inputs = sample_inputs("/tmp/validation.json");
     let (valid, _, _) = produced_artifacts(&inputs);
 
@@ -187,8 +204,34 @@ fn published_verifier_validates_every_manifest_revision_before_git() {
             format!("{expected_label} must be a full lowercase SHA-1 commit ID")
         );
     }
+}
 
-    std::fs::remove_dir_all(root).unwrap();
+// revision case assertion이 panic해도 root owner가 unwind 중 exact fixture만 제거하고
+// sibling scratch를 건드리지 않음을 별도 test-process 실패로 증명합니다.
+#[test]
+fn published_revision_fixture_root_is_removed_after_panic() {
+    const INJECT_ROOT: &str = "YO_XTASK_TEST_PUBLISHED_REVISION_PANIC_ROOT";
+    const TEST_NAME: &str = "review_packet::tests::published_verifier::published_revision_fixture_root_is_removed_after_panic";
+
+    if let Some(root) = std::env::var_os(INJECT_ROOT) {
+        let _root_owner = ScratchDirectory::create(root.into());
+        panic!("injected published-verifier assertion failure");
+    }
+
+    let root = crate::test_support::unique_path("review-published-panic-root");
+    let sibling = crate::test_support::unique_path("review-published-panic-sibling");
+    let _sibling_owner = ScratchDirectory::create(sibling.clone());
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg(TEST_NAME)
+        .arg("--nocapture")
+        .env(INJECT_ROOT, &root)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(!root.exists());
+    assert!(sibling.is_dir());
 }
 
 // 40자리 annotated-tag object ID는 commit으로 peel될 수 있어도 manifest가 그 exact

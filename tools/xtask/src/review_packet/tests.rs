@@ -1,3 +1,4 @@
+mod capture;
 mod identity_rendering;
 mod preflight;
 mod prospective;

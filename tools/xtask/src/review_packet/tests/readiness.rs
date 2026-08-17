@@ -117,6 +117,60 @@ fn readiness_rejects_duplicate_validation_paths() {
     assert!(!fixture.artifact_root.exists());
 }
 
+// 준비 단계가 승인한 dot과 parent-normalized 계약 spelling은 canonical source를
+// capture하므로 변화가 없을 때 final guard에서도 동일 identity로 통과합니다.
+#[test]
+fn readiness_revalidates_stable_dot_and_parent_contract_spellings() {
+    let fixture = ReadinessFixture::new();
+    let spellings = [
+        fixture
+            .repository
+            .path
+            .join(".git/./readiness-contract.json"),
+        fixture
+            .repository
+            .path
+            .join(".git/../.git/readiness-contract.json"),
+    ];
+
+    for contract_path in spellings {
+        fixture.write_review_request_with_contract(&contract_path);
+        let mut output = Vec::new();
+
+        check_readiness(&fixture.repository.path, &fixture.request_path, &mut output).unwrap();
+
+        let result: serde_json::Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(result["status"], "input_boundaries_ready");
+        assert_eq!(
+            result["slice_contract"]["path"],
+            fixture.contract_path.to_string_lossy().as_ref()
+        );
+    }
+}
+
+#[cfg(unix)]
+// 계약 부모의 symlink component는 canonical equivalence 대상으로 확장하지 않고 기존
+// no-follow file capture가 준비 단계에서 거부해 retarget 가능성 자체를 만들지 않습니다.
+#[test]
+fn readiness_rejects_a_contract_symlink_component_before_capture() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = ReadinessFixture::new();
+    let alias = fixture
+        .repository
+        .path
+        .join(".local-exclude/readiness/contract-parent");
+    symlink(fixture.repository.path.join(".git"), &alias).unwrap();
+    fixture.write_review_request_with_contract(&alias.join("readiness-contract.json"));
+    let mut output = Vec::new();
+
+    let error =
+        check_readiness(&fixture.repository.path, &fixture.request_path, &mut output).unwrap_err();
+
+    assert!(error.contains("without symlinks"), "{error}");
+    assert!(output.is_empty());
+}
+
 // 실제 argv와 exit, HEAD 전후 관계를 기록한 구조화 evidence가 정확한 candidate를
 // 가리키면 readiness가 별도 실행 없이 그 경계를 고정하고 개수를 보고한다.
 #[test]
@@ -317,13 +371,37 @@ impl ReadinessFixture {
         context_path: &Path,
         validation: Vec<serde_json::Value>,
     ) {
+        self.write_review_request_with_contract_and_context(
+            &self.contract_path,
+            context_path,
+            validation,
+        );
+    }
+
+    fn write_review_request_with_contract(&self, contract_path: &Path) {
+        self.write_review_request_with_contract_and_context(
+            contract_path,
+            &self.context_path,
+            vec![json!({
+                "name": "validation",
+                "path": relative(&self.repository.path, &self.validation_path)
+            })],
+        );
+    }
+
+    fn write_review_request_with_contract_and_context(
+        &self,
+        contract_path: &Path,
+        context_path: &Path,
+        validation: Vec<serde_json::Value>,
+    ) {
         self.repository.write(
             ".local-exclude/readiness/review-request.json",
             &json_text(&json!({
                 "schema": "yo.slice-review-packet-request/v1",
                 "context_request_path": path_value(&self.repository.path, context_path),
                 "required_knowledge_ids": ["methexis.review.bounded-packet"],
-                "slice_contract_path": self.contract_path,
+                "slice_contract_path": contract_path,
                 "repository_authority_paths": ["CONTRIBUTING.md"],
                 "validation_evidence": validation,
                 "review_lenses": ["fresh-context", "code-quality"],

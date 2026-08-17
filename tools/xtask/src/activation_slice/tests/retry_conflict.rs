@@ -147,6 +147,41 @@ fn failure_observes_a_contractless_worktree_as_conflicting() {
     assert_eq!(failure["effects"]["branch"]["state"], "conflicting");
     assert_eq!(failure["effects"]["worktree"]["state"], "conflicting");
     assert_eq!(failure["effects"]["binding"]["state"], "unknown");
+    assert_eq!(
+        failure["effects"]["worktree"]["detail"],
+        "registered worktree coordinates match, but its owning contract is not prepared"
+    );
+}
+
+// exact path/ref/base worktree의 contract가 invalid bytes이거나 regular file이 아니면
+// contract 원인을 보존하고 worktree coordinate drift라는 잘못된 진단을 만들지 않습니다.
+#[test]
+fn failure_distinguishes_an_unprepared_contract_from_worktree_coordinate_drift() {
+    for invalid_kind in ["invalid-json", "not-a-file"] {
+        let fixture = Fixture::new(&format!("activation-unprepared-contract-{invalid_kind}"));
+        let first = fixture.prepare();
+        if invalid_kind == "invalid-json" {
+            std::fs::write(&first.contract_path, b"{}\n").unwrap();
+        } else {
+            std::fs::remove_file(&first.contract_path).unwrap();
+            std::fs::create_dir(&first.contract_path).unwrap();
+        }
+
+        let encoded = run(&fixture.repository.path, &fixture.request).unwrap_err();
+        let failure: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+        let contract_detail = failure["effects"]["contract"]["detail"].as_str().unwrap();
+        let worktree_detail = failure["effects"]["worktree"]["detail"].as_str().unwrap();
+
+        assert_eq!(failure["effects"]["contract"]["state"], "conflicting");
+        assert!(!contract_detail.is_empty());
+        assert_eq!(failure["effects"]["worktree"]["state"], "conflicting");
+        assert_eq!(
+            worktree_detail,
+            "registered worktree coordinates match, but its owning contract is not prepared"
+        );
+        assert!(!worktree_detail.contains("path, branch, or base differs"));
+        assert_eq!(failure["effects"]["binding"]["state"], "unknown");
+    }
 }
 
 // failure 관찰은 오류 뒤 mutable request path나 움직인 HEAD를 다시 읽지 않고

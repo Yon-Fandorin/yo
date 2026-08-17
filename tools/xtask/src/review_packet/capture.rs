@@ -225,6 +225,12 @@ fn capture_context_artifacts(
     request: Captured,
     result: ContextResult,
 ) -> Result<ContextCapture, String> {
+    require_repository_path(&result.context.path).map_err(|_| {
+        "ContextBuild result context path must be a safe relative repository path".to_owned()
+    })?;
+    require_repository_path(&result.manifest.path).map_err(|_| {
+        "ContextBuild result manifest path must be a safe relative repository path".to_owned()
+    })?;
     let context_path = repository.join(&result.context.path);
     let manifest_path = repository.join(&result.manifest.path);
     let context_bytes = bounded_file::read_regular(
@@ -245,10 +251,15 @@ fn capture_context_artifacts(
     )?;
     let manifest: ContextManifest = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("invalid ContextBuild manifest: {error}"))?;
+    let manifest_context_path = Path::new(&result.manifest.path)
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(&manifest.context.path);
     if manifest.schema != "methexis.context-manifest/v1alpha1"
         || manifest.build_id != result.build_id
         || manifest.context.hash != result.context.hash
         || manifest.context.path != "context.md"
+        || manifest_context_path != Path::new(&result.context.path)
         || manifest.plan.tokenizer_profile != TOKENIZER_PROFILE
     {
         return Err("ContextBuild result and manifest identities differ".to_owned());
@@ -266,6 +277,15 @@ fn capture_context_artifacts(
             .map(|unit| unit.id)
             .collect(),
     })
+}
+
+#[cfg(test)]
+pub(super) fn capture_context_from_result(
+    repository: &Path,
+    request: Captured,
+    result: ContextResult,
+) -> Result<ContextCapture, String> {
+    capture_context_artifacts(repository, request, result)
 }
 
 #[derive(Deserialize)]

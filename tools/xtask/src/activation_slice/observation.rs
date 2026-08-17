@@ -65,8 +65,9 @@ pub(super) fn failure(
     record.worktree_path = Some(worktree_path.clone());
     record.branch_ref = Some(branch_ref.clone());
 
-    let base = observe_contract(&mut record, &request, &contract_path, initial_base);
+    let base = observe_contract(&mut record, &request, &contract_path, initial_base.clone());
     record.base = base.clone();
+    let coordinate_base = base.clone().or(initial_base);
     let contract_prepared = matches!(record.effects.contract.state, ObservedState::Prepared);
     record.effects.branch = match existing_ref(&repository, &branch_ref) {
         Ok(Some(ExistingRef::Direct(actual)))
@@ -85,7 +86,7 @@ pub(super) fn failure(
         &repository,
         &worktree_path,
         &branch_ref,
-        &base,
+        &coordinate_base,
         contract_prepared,
     );
     observe_binding(&mut record, &worktree_path, &contract_path);
@@ -139,12 +140,17 @@ fn observe_worktree(
             worktree.path == expected_path || worktree.branch.as_deref() == Some(expected_branch)
         }) {
             Some(worktree)
-                if contract_prepared
-                    && worktree.path == expected_path
+                if worktree.path == expected_path
                     && worktree.branch.as_deref() == Some(expected_branch)
                     && expected_base.as_deref() == Some(worktree.head.as_str()) =>
             {
-                prepared()
+                if contract_prepared {
+                    prepared()
+                } else {
+                    conflicting(
+                        "registered worktree coordinates match, but its owning contract is not prepared",
+                    )
+                }
             },
             Some(_) => conflicting("registered worktree path, branch, or base differs"),
             None => match storage::path_entry_exists(expected_path) {
