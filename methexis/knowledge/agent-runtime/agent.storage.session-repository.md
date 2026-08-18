@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.storage-001
-    revision: sha256:62a8bf8c45912826c33350d3fb8f0b6f71b238b8efc84d98b0d5ea07ca695392
+    revision: sha256:b381799eeaea092ab8708e70ab0ea4c53aafed3c76605dd126958514a2ef9630
 relations:
   depends_on:
     - agent.persistence.format-compatibility
@@ -174,9 +174,15 @@ implementation; this retention fact is disclosed before selecting such a
 binding. Repository and frontend APIs MUST NOT expose the contents through a
 generic record projection.
 Repository capacity and model-context limits are independent: storage capacity
-MUST count replay bytes normally, while replay-prefix or model-context exhaustion
-MUST complete the Turn as non-resumable without silently truncating, summarizing,
-or appending a partial replay chain.
+MUST count replay bytes normally. Replay-prefix or model-context capacity
+exhaustion discovered before a final assistant answer is accepted MUST produce a
+typed failed non-resumable Turn with no model replay delta, resumable outcome,
+or Continuation Anchor. Only when a complete final assistant answer and every
+required semantic and provider-private item have passed their individual
+validation and bounds MAY cumulative replay-application exhaustion against the
+retained prefix preserve the visible Turn as completed but non-resumable without
+those continuation records. Neither path may silently truncate, summarize, or
+append a partial replay chain.
 
 The repository MUST interpret replay presence through the binding's explicit
 continuation strategy. A local `exact_replay(local_client)` binding reconstructs

@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: agent.connector.openai-responses
-revision: sha256:642a69729a7d8424dff7ab115bde8348bcb5a554cf9af6e4947d5c4b30acf80d
+revision: sha256:864ad59d661e3fcb3dbf393fbb669ba439a9372dfa24fac3f361c4866ec28019
 reviewer: agent-runtime
-reviewed_at: 2026-08-15T05:01:26Z
+reviewed_at: 2026-08-18T02:57:09Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:ba6bcbd7324a621a3d94bf4b31ae81a1d65ca1fb12b252f2c6164911f1b8d5c2
-request_hash: sha256:147d5e382432e218df890e2ba78ba50c0de55e4c4349f8ef3a18313adbcc3f36
+projection_hash: sha256:5ba421bd9179836d8191913011161a8f1c58e259ce9d51ce607e8cae9e739ef4
+request_hash: sha256:9468ac9918a3a1e6b752d236307882c8389fb1c1bcbc2ca0c256845db44bd3a3

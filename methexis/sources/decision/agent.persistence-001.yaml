@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:185f43dededbbe2ed3445f8f868d252d3af36ff45e7657003710c5d93c8b0143
+revision: sha256:740d4c4760010690e7151a2486127bdea50eb450a7b6b4aed8429bcc82bb0367
 payload:
   kind: decision
   content: |-
@@ -16,3 +16,6 @@ payload:
 
 
     Before public release, the same anchored-session semantic Journal /v1 is additively extended again with replay-profile evidence and one closed provider_private_assistant item. Absent replay_profile remains the preceding semantic-only/v1 form; exact kimi-private-local-plaintext/v1 declares kimi.assistant-message/v1alpha1. That item carries the matching epoch and a closed assistant object with exact assistant role, required reasoning string, required string-or-null content, and optional non-empty ordered function-tool calls. It immediately follows and must project exactly to one generic assistant/function-call group, then replaces that group only in the exact Kimi private-replay wire projection used by admitted K3 and K2.7 Code bindings. The complete encoded item counts inside the existing 16 MiB delta and 64 MiB prefix limits. A source Anchor containing private replay cannot open a different exact-replay binding unless a reviewed lossless converter preserves it; otherwise the transition is lossy_handoff. The physical yo.session-record/v1 envelope, fields, discovery, checksum domain, and checksum preimage remain unchanged because they already bind the exact semantic payload bytes. Current readers accept preceding and extended records in one Session and snapshots preserve both; preceding semantic readers reject the new item or replay-profile field. This asymmetric pre-release downgrade impact is accepted without migration, dual write, omission, or shim.
+
+
+    Replay-prefix or model-context capacity exhaustion discovered before a final assistant answer is accepted is encoded as a typed failed Turn with no model replay delta, resumable outcome, or Continuation Anchor. Only cumulative replay-application capacity discovered after one complete valid final answer, including its valid declared provider-private extension, may preserve a completed but non-resumable Turn without those continuation records.

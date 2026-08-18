@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:b88e480611be02a7522ca6d93abe10589bb30e75cbff5b796e8c6fc5ecbf5209
+revision: sha256:4fbd6a78919c17bf0b355590646b674e56a874d3aa2e48f06c72f9c404ae465b
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:5e166307e385a9e3eefb3562e0dac243a0470afce0deb6616b70c12dda770249
+request_hash: sha256:6009dfe0087bdb02169307ae866d0799f08922451ab091848b919f3fa8304202
 ---
 # Korean Review Projection
 
@@ -156,7 +156,7 @@ fail closed 합니다. 현재 checksummed physical envelope 자체는 정확한 
 호환성·migration 계약을 제공해야 합니다.
 
 
-이번 revision은 public release 전 anchored-session semantic Journal /v1을 두 번째로 명시적으로 교체합니다. 기존 backend correlation record는 payload-free 상태를 유지하고, exact provider-neutral replay는 별도 model_replay_delta record가 소유합니다. model_replay_delta는 TurnFinished(completed) 뒤, backend_resumable_outcome과 continuation_anchor 앞에 같은 semantic commit으로 기록되며 outcome은 replay delta의 JournalSequence를 참조합니다. Replay contract는 system prompt와 ordered tool name, description, schema version, closed schema를 보존하고 replay item은 message, function call, function result의 정확한 순서와 관계를 보존합니다. Contract는 1 MiB, delta는 16 MiB, Anchor가 선택한 prefix는 64 MiB 및 4096 item으로 제한하며 초과하면 completed지만 non-resumable인 Turn과 explicit context exhaustion이 됩니다. Silent truncation이나 implicit compaction은 허용하지 않습니다. Persisted failed outcome은 required nullable code와 message를 모두 가지며 tool validation은 stable yo.tool.validation.*/v1 code를 사용합니다. Argument와 output은 Activity, 후속 model input, replay persistence 전에 semantic redaction admission을 통과해야 합니다. 이 교체 전 development shape는 같은 schema tag라도 fail closed합니다.
+이번 revision은 public release 전 anchored-session semantic Journal /v1을 두 번째로 명시적으로 교체합니다. 기존 backend correlation record는 payload-free 상태를 유지하고, exact provider-neutral replay는 별도 model_replay_delta record가 소유합니다. model_replay_delta는 TurnFinished(completed) 뒤, backend_resumable_outcome과 continuation_anchor 앞에 같은 semantic commit으로 기록되며 outcome은 replay delta의 JournalSequence를 참조합니다. Replay contract는 system prompt와 ordered tool name, description, schema version, closed schema를 보존하고 replay item은 message, function call, function result의 정확한 순서와 관계를 보존합니다. Contract는 1 MiB, delta는 16 MiB, Anchor가 선택한 prefix는 64 MiB 및 4096 item으로 제한합니다. Final assistant answer를 수락하기 전에 replay-prefix 또는 model-context capacity exhaustion을 발견하면 delta, outcome, Anchor가 없는 typed failed non-resumable Turn이 됩니다. 완전한 final assistant answer와 필요한 semantic·provider-private item이 모두 각자의 검증과 한도를 통과한 뒤, retained prefix에 적용하는 단계에서 누적 replay capacity만 넘은 경우에만 continuation record가 없는 completed non-resumable Turn을 보존할 수 있습니다. 해당 binding의 이후 Turn은 independently approved compaction 또는 새 binding 전까지 explicit context exhaustion으로 실패합니다. Silent truncation이나 implicit compaction은 허용하지 않습니다. Persisted failed outcome은 required nullable code와 message를 모두 가지며 tool validation은 stable yo.tool.validation.*/v1 code를 사용합니다. Argument와 output은 Activity, 후속 model input, replay persistence 전에 semantic redaction admission을 통과해야 합니다. 이 교체 전 development shape는 같은 schema tag라도 fail closed합니다.
 
 
 이번 세 번째 reviewed pre-release revision은 바로 앞 replay-delta development shape를 교체합니다. backend_binding_opened는 continuation_strategy를 명시하며 exact_replay는 local_client 또는 managed_server executor를 갖고 backend_managed_state는 executor를 금지합니다. 이는 새 epoch의 seed 방법을 뜻하는 transition.mode와 별개입니다. exact replay binding에서만 model_replay_delta와 outcome의 replay_delta_sequence가 필수이며 delta가 outcome 바로 앞에 있어야 합니다. backend-managed binding에서는 둘 다 금지되고 TurnFinished(completed), payload-free outcome, Anchor가 같은 commit에 연속해서 기록됩니다. 두 exact replay executor의 replay contract, bounds, digest, ordering, Anchor validation은 동일하며 request를 조립하는 위치만 다릅니다. managed_server는 reviewed remote repository 구현 전에는 현재 implementation이 기록할 수 없는 예약 값입니다. 같은 `/v1` tag를 사용한 직전 development shape는 fail closed합니다.

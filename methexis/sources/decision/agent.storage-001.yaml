@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.storage-001
-revision: sha256:62a8bf8c45912826c33350d3fb8f0b6f71b238b8efc84d98b0d5ea07ca695392
+revision: sha256:b381799eeaea092ab8708e70ab0ea4c53aafed3c76605dd126958514a2ef9630
 payload:
   kind: decision
   content: |-
@@ -10,3 +10,6 @@ payload:
 
 
     The local Session Repository executes local-client exact replay, while a future managed Session Repository may execute the identical semantic replay contract after its remote identity, boundary, digests, availability, and retention are verified. Backend-managed continuation persists correlation and locator evidence without a replay delta.
+
+
+    Replay-prefix or model-context capacity exhaustion discovered before a final assistant answer is accepted produces a typed failed non-resumable Turn and no replay delta, resumable outcome, or Continuation Anchor. Only cumulative replay-application capacity discovered after one complete valid final answer, including its valid declared provider-private extension, may preserve the visible Turn as completed but non-resumable without those continuation records.

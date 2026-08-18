@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.backend.yo-managed-model-loop
-revision: sha256:b0a6608a64eaad121ff8bc89040c0871075ad21b217b45b26cd112f827a6e190
+revision: sha256:5638ec84d81cc6fa1e9faebf6c697f843ca62bd73461ca87ed2a6cb3bec7b94c
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:e8b97d2830360454ccce0c73c681c0df959881c7786a907c697d091259efe200
+request_hash: sha256:38f81bb54fc4d0951ed722cf83f3cc786fb8f7627e82d384f0d9d9a1faf63200
 ---
 # Korean Review Projection
 
@@ -30,7 +30,9 @@ Provider response ID, cache handle, conversation ID는 diagnostic correlation으
 
 Partial model stream, commit되지 않은 tool result, 불확실한 request, 실패한 final response 또는 필수 private assistant item이 semantic replay delta와 함께 durable commit되지 않은 Kimi private-replay round는 Continuation Anchor에 포함할 수 없습니다. 한 Yo Session 안에서 모델이 바뀌는 경우를 포함해 usage와 정확한 effective binding은 이를 생성한 model response에 귀속해야 합니다.
 
-선택된 model catalog entry는 input-token limit, output reserve, 주입된 token counter가 사용하는 정확한 tokenizer profile을 제공해야 합니다. Profile의 `max_output_tokens`는 exact wire output cap인 동시에 local input admission에서 제외하는 reserve입니다. Provider-private assistant replacement와 request-local tool projection을 마친 뒤 backend는 Connector가 만든 정확하고 완전한 tokenization payload를 dispatch 전에 그 counter에 전달해야 합니다. 반환된 count는 exact `input_token_limit - max_output_tokens` 이하일 때만 허용되며 equality도 유효하고, 더 크면 dispatch 전에 typed `context_exhausted`로 실패합니다. Provider 측 implicit caching은 비용을 줄일 수 있지만 exact replay나 context admission을 바꾸면 안 됩니다. Exact replay 또는 그 private extension이 model-context bound나 replay byte bound에 더 이상 맞지 않으면 backend는 typed `context_exhausted`를 반환하고 현재 Turn을 non-resumable로 완료하며 해당 binding의 이후 Turn을 거절해야 합니다. 필수 private state를 몰래 버리거나 자르거나 redact하거나 요약하면 안 됩니다. Lossy compaction은 새 binding epoch를 여는 별도 검토된 user-visible handoff로 유지합니다.
+선택된 model catalog entry는 input-token limit와 주입된 token counter가 사용하는 정확한 tokenizer profile을 제공해야 합니다. 선택적인 양수 `max_output_tokens`가 있으면 Yo가 아는 hard maximum이고, 필드가 없으면 Yo가 신뢰할 수 있는 숫자 한도를 모른다는 뜻입니다. 이 생략은 선택된 Connector가 output-limit field 생략을 허용할 때만 유효합니다. 필드의 존재 여부는 complete-binding 및 epoch identity입니다. 알려진 maximum이 있으면 binding identity를 바꾸지 않고 그 이하의 양수 request-local output cap을 선택할 수 있습니다. 알려진 maximum이 없으면 output-limit field를 생략하고 숫자를 추측하면 안 됩니다. Backend는 provider-private assistant replacement와 request-local tool projection 뒤, 도구 결과 다음 request를 포함한 모든 dispatch 전에 Connector가 만든 완전한 tokenization payload를 정확히 세어야 합니다. 알려진 maximum이 있으면 최종 선택 cap을 직렬화한 request를 다시 세고 input count와 cap의 합이 `input_token_limit` 안이며 cap이 maximum 이하일 때만 보냅니다. 알려진 maximum이 없으면 output-limit field가 빠진 정확한 payload를 세고 input count가 `input_token_limit`보다 작을 때만 보냅니다. Provider-neutral minimum-output budget은 없습니다. Dispatch 전에는 retained replay prefix와 현재 Turn의 pending delta를 합친 누적 replay item·byte 한도도 증명해야 합니다. Provider 측 implicit caching은 비용을 줄일 수 있지만 exact replay나 context admission을 바꾸면 안 됩니다.
+
+최종 assistant answer 전의 local input 또는 replay-capacity exhaustion은 tool result나 approval decline 뒤에 발생한 경우도 포함해 현재 Turn을 typed capacity evidence가 있는 failed non-resumable 상태로 끝내고 해당 binding의 이후 Turn을 거절해야 합니다. Final answer가 없는 Turn을 성공으로 완료하거나 terminal Turn record를 잃으면 안 됩니다. Connector가 보고한 incomplete response는 별도로 계약된 request-failure 의미를 유지하며 그 사실만으로 local context admission을 latch하지 않습니다. Final assistant answer와 필요한 semantic·provider-private item이 모두 각자의 검증과 한도를 통과했지만 그 완전한 final replay delta를 retained prefix에 적용하는 단계에서 누적 replay capacity를 넘은 경우에만, backend는 visible Turn을 Continuation Anchor가 없는 completed non-resumable 상태로 보존할 수 있습니다. Provider-private item이 missing·malformed·mismatched이거나 그 item 자체의 한도를 넘으면 수락 전 실패이며 이 예외를 사용할 수 없습니다. 어느 경로도 필요한 semantic 또는 private state를 몰래 버리거나 자르거나 redact하거나 요약하면 안 됩니다. Lossy compaction은 새 binding epoch를 여는 별도 검토된 user-visible handoff로 유지합니다.
 
 Tool argument와 output은 Activity, 이후 model input, replay delta가 되기 전에 local tool boundary의 semantic admission gate를 통과해야 합니다. Provider-private assistant item은 선택된 Connector가 성공적으로 완료하고 correlation을 확인한 response에서만 나와야 합니다. Backend는 reasoning byte를 해석하거나 표시하지 않고 schema, epoch, bound, 정확한 visible projection을 검증합니다. Backend는 visible replay와 private replay를 하나의 semantic replay record로 함께 저장해야 하며 어느 payload도 payload가 없는 resumable-outcome correlation record에 붙이면 안 됩니다. Private byte는 user-only local Session Repository에 남고 최초 구현에서는 암호화하지 않으며 Transcript, Request trace, debug formatting, log, error, diagnostic에서 제외해야 합니다.
 

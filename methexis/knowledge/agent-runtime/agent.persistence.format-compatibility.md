@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:185f43dededbbe2ed3445f8f868d252d3af36ff45e7657003710c5d93c8b0143
+    revision: sha256:740d4c4760010690e7151a2486127bdea50eb450a7b6b4aed8429bcc82bb0367
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -322,8 +322,13 @@ request for that Turn and epoch. Its message, function-call, and function-result
 order and relationships MUST validate independently of presentation records or
 old connector payloads. The encoded replay contract is limited to 1 MiB, one
 delta to 16 MiB, and the replay prefix selected by an Anchor to 64 MiB and 4096
-items. A bound violation produces a completed but non-resumable Turn and no
-delta, outcome, or Anchor; later Turns on that binding fail with explicit
+items. Replay-prefix or model-context capacity exhaustion discovered before a
+final assistant answer is accepted produces a typed failed non-resumable Turn
+and no delta, outcome, or Anchor. Only when one complete final assistant answer
+and every required semantic and provider-private item have passed their
+individual validation and bounds may cumulative replay-application exhaustion
+against the retained prefix preserve a completed but non-resumable Turn without
+those continuation records. Later Turns on that binding fail with explicit
 context exhaustion until an independently approved compaction or new binding.
 Message content and refusal are each limited to 16 MiB of decoded UTF-8 octets.
 The existing delta and replay-prefix limits measure the complete canonical
