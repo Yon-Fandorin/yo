@@ -138,17 +138,7 @@ fn run_command(
     let Ok(mut waiter) = ChildWaiter::spawn(waiter_hooks) else {
         return failed("run_command waiter is unavailable");
     };
-    let spawned = Command::new("/bin/sh")
-        .arg("-lc")
-        .arg(command)
-        .current_dir(workspace)
-        .process_group(0)
-        .env_clear()
-        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+    let spawned = shell_command(workspace, command).spawn();
     let Ok(mut child) = spawned else {
         return failed("run_command could not start");
     };
@@ -371,6 +361,21 @@ fn run_command(
         return failed("run_command cleanup failed after normal process exit");
     };
     render_command_result(status, stdout, stderr, truncated)
+}
+
+fn shell_command(workspace: &Path, command: &str) -> Command {
+    let mut shell = Command::new("/bin/sh");
+    shell
+        .arg("-c")
+        .arg(command)
+        .current_dir(workspace)
+        .process_group(0)
+        .env_clear()
+        .env("PATH", "/usr/local/bin:/usr/bin:/bin")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    shell
 }
 
 fn render_command_result(

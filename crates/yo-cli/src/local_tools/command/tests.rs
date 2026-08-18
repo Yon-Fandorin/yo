@@ -23,7 +23,24 @@ use super::{
     CommandExecution, ProcessGroupLease,
     limits::{CommandExecutionLimits, OUTPUT_INACTIVITY_TIMEOUT},
     process::WaiterTestHooks,
+    shell_command,
 };
+
+// local command가 사용자 로그인 profile을 읽어 PATH·stderr·부작용을 바꾸지 않도록
+// 비로그인 `/bin/sh -c` argv만 구성하는지 고정합니다.
+#[test]
+fn command_shell_does_not_load_a_login_profile() {
+    let command = shell_command(std::path::Path::new("/tmp"), "printf exact");
+    let arguments: Vec<_> = command.get_args().collect();
+
+    assert_eq!(
+        arguments,
+        [
+            std::ffi::OsStr::new("-c"),
+            std::ffi::OsStr::new("printf exact")
+        ]
+    );
+}
 
 // reap이 WNOWAIT identity pin을 해제한 뒤에는 같은 숫자 process-group ID가 재사용될 수
 // 있으므로, clear된 lease가 이후 signal을 보내지 않는지 검증합니다.
@@ -123,20 +140,26 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
-fn read_published_pids(path: &PathBuf) -> Vec<i32> {
+fn read_published_pids(path: &PathBuf, expected_count: usize) -> Vec<i32> {
     let deadline = Instant::now() + Duration::from_secs(1);
-    while !path.exists() {
+    loop {
+        if let Ok(contents) = fs::read_to_string(path) {
+            let parsed = contents
+                .split_whitespace()
+                .map(str::parse::<i32>)
+                .collect::<Result<Vec<_>, _>>();
+            if let Ok(pids) = parsed
+                && pids.len() == expected_count
+            {
+                return pids;
+            }
+        }
         assert!(
             Instant::now() < deadline,
-            "command did not publish its PIDs"
+            "command did not publish {expected_count} complete PIDs"
         );
         thread::sleep(Duration::from_millis(5));
     }
-    fs::read_to_string(path)
-        .unwrap()
-        .split_whitespace()
-        .map(|pid| pid.parse().unwrap())
-        .collect()
 }
 
 fn assert_process_disappears(pid: i32) {
@@ -230,7 +253,7 @@ fn inactivity_timeout_reaps_the_exact_process_group_leader() {
     let pid_path = unique_pid_path("timeout");
     let command = format!("printf '%s' $$ > {}; sleep 5", pid_path.display());
     let mut execution = spawn(&command, limits(Duration::from_millis(300), None));
-    let pid = read_published_pids(&pid_path)[0];
+    let pid = read_published_pids(&pid_path, 1)[0];
 
     let result = finish(&mut execution);
     let probe = waitpid(Pid::from_raw(pid), Some(WaitPidFlag::WNOHANG));
@@ -251,7 +274,7 @@ fn leader_exit_terminates_a_descendant_that_holds_the_output_pipe() {
     );
     let started = Instant::now();
     let mut execution = spawn(&command, limits(Duration::from_secs(3), None));
-    let pids = read_published_pids(&pid_path);
+    let pids = read_published_pids(&pid_path, 2);
 
     let result = finish(&mut execution);
     let leader_probe = waitpid(Pid::from_raw(pids[0]), Some(WaitPidFlag::WNOHANG));
@@ -284,7 +307,7 @@ fn cleanup_releases_pipe_readers_held_by_an_escaped_writer() {
             cleanup_grace: Duration::from_millis(100),
         },
     );
-    let escaped_pid = read_published_pids(&pid_path)[0];
+    let escaped_pid = read_published_pids(&pid_path, 1)[0];
     let started = Instant::now();
 
     let result = finish(&mut execution);
@@ -323,7 +346,7 @@ fn leader_exit_terminates_a_descendant_that_keeps_writing_output() {
     );
     let started = Instant::now();
     let mut execution = spawn(&command, limits(Duration::from_secs(3), None));
-    let pids = read_published_pids(&pid_path);
+    let pids = read_published_pids(&pid_path, 2);
 
     let result = finish(&mut execution);
     let leader_probe = waitpid(Pid::from_raw(pids[0]), Some(WaitPidFlag::WNOHANG));
@@ -437,7 +460,11 @@ fn mixed_large_streams_retain_two_head_tail_views() {
     assert!(result.truncated());
     assert_eq!(result.output().matches(" bytes omitted]").count(), 2);
     assert!(result.output().contains("stdout:\noooo"));
-    assert!(result.output().contains("stderr:\neeee"));
+    assert!(
+        result.output().contains("stderr:\neeee"),
+        "mixed stream output did not retain the stderr head: {:?}",
+        result.output()
+    );
 }
 
 // EPIPE-aware writer가 관찰 cap 때문에 인위적인 pipe failure를 보지 않고 전체 write 뒤
@@ -519,7 +546,7 @@ fn delayed_exit_observation_returns_on_time_and_eventually_reaps_once() {
             reap_count: Some(Arc::clone(&reap_count)),
         },
     );
-    let pid = read_published_pids(&pid_path)[0];
+    let pid = read_published_pids(&pid_path, 1)[0];
     let started = Instant::now();
     execution.cancel();
 
