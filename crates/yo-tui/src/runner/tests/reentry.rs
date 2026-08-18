@@ -172,6 +172,62 @@ struct WakingEventAt {
     armed: bool,
 }
 
+struct DelayedEventSequence {
+    immediate: VecDeque<Event>,
+    delayed: Option<(Instant, Event)>,
+    armed: bool,
+    polls: Rc<Cell<usize>>,
+    reads: Rc<Cell<usize>>,
+}
+
+impl DelayedEventSequence {
+    fn new(
+        immediate: impl IntoIterator<Item = Event>,
+        delayed: (Instant, Event),
+        polls: Rc<Cell<usize>>,
+        reads: Rc<Cell<usize>>,
+    ) -> Self {
+        Self {
+            immediate: immediate.into_iter().collect(),
+            delayed: Some(delayed),
+            armed: false,
+            polls,
+            reads,
+        }
+    }
+}
+
+impl EventSource for DelayedEventSequence {
+    type Error = io::Error;
+
+    fn poll_event(&mut self, context: &mut Context<'_>) -> Poll<Result<Event, Self::Error>> {
+        self.polls.set(self.polls.get() + 1);
+        if let Some(event) = self.immediate.pop_front() {
+            self.reads.set(self.reads.get() + 1);
+            return Poll::Ready(Ok(event));
+        }
+        let Some((ready_at, _)) = self.delayed.as_ref() else {
+            return Poll::Pending;
+        };
+        let now = Instant::now();
+        if now >= *ready_at {
+            let (_, event) = self.delayed.take().unwrap();
+            self.reads.set(self.reads.get() + 1);
+            return Poll::Ready(Ok(event));
+        }
+        if !self.armed {
+            self.armed = true;
+            let delay = ready_at.saturating_duration_since(now);
+            let wake = context.waker().clone();
+            thread::spawn(move || {
+                thread::sleep(delay);
+                wake.wake();
+            });
+        }
+        Poll::Pending
+    }
+}
+
 impl WakingEventAt {
     fn new(event: Event, ready_at: Instant) -> Self {
         Self {
@@ -1021,6 +1077,76 @@ fn zero_size_resize_preserves_the_generation_motion_epoch() {
         styles_for_ascii_text(&presenter.frames[0], "* Working")[0].attributes,
         crate::surface::Attributes::BOLD
     );
+}
+
+fn run_zero_geometry_interval(first: Size, repeated: Size) {
+    let period = Duration::from_secs(1);
+    let mut retained = active_motion_session(period);
+    let mut agent = SimpleAgent::default();
+    let polls = Rc::new(Cell::new(0));
+    let reads = Rc::new(Cell::new(0));
+    let visible_at = Instant::now() + Duration::from_millis(40);
+    let events = DelayedEventSequence::new(
+        [
+            Event::Resize(first.width, first.height),
+            Event::Resize(repeated.width, repeated.height),
+            Event::Paste("hidden-update".to_owned()),
+        ],
+        (visible_at, Event::Resize(16, 6)),
+        Rc::clone(&polls),
+        Rc::clone(&reads),
+    );
+    let render_count = Rc::new(Cell::new(0));
+    let watchdog_fired = Rc::new(Cell::new(false));
+    let started = representable_past(period + Duration::from_millis(100));
+    let presenter = run_generation_with_termination_at(
+        &mut retained,
+        &mut agent,
+        events,
+        StopAfterOrWatchdog {
+            counter: Rc::clone(&render_count),
+            threshold: 2,
+            deadline: Instant::now() + Duration::from_secs(1),
+            armed: false,
+            watchdog_fired: Rc::clone(&watchdog_fired),
+        },
+        render_count,
+        started,
+    );
+
+    assert!(!watchdog_fired.get());
+    assert_eq!(reads.get(), 4);
+    assert!(
+        polls.get() > reads.get(),
+        "zero geometry never entered the pending waker path"
+    );
+    assert!(
+        polls.get() <= 8,
+        "zero geometry polled {} times",
+        polls.get()
+    );
+    assert_eq!(presenter.frames.len(), 2);
+    assert_eq!(presenter.invalidations, 3);
+    assert!(!surface_text(&presenter.frames[0]).contains("hidden-update"));
+    assert!(surface_text(&presenter.frames[1]).contains("hidden-update"));
+    assert_eq!(
+        styles_for_ascii_text(&presenter.frames[1], "* Working")[0].attributes,
+        crate::surface::Attributes::BOLD
+    );
+}
+
+// width가 0인 interval에서 반복 resize와 semantic 갱신이 와도 frame deadline을
+// 남기지 않으며, 다시 보이면 최신 상태와 기존 generation epoch로 frame 하나만 그립니다.
+#[test]
+fn zero_width_interval_suppresses_busy_frames_until_one_visible_recovery() {
+    run_zero_geometry_interval(Size::new(0, 7), Size::new(0, 8));
+}
+
+// height가 0인 interval도 width=0과 같은 억제 경계를 사용해 terminal poll을 폭주시킬 수
+// 없고, 복구 resize가 숨은 동안의 요청을 잃지 않은 최신 frame 하나를 즉시 만듭니다.
+#[test]
+fn zero_height_interval_suppresses_busy_frames_until_one_visible_recovery() {
+    run_zero_geometry_interval(Size::new(15, 0), Size::new(16, 0));
 }
 
 // 같은 semantic turn을 재진입해도 terminal ownership generation마다 motion epoch는

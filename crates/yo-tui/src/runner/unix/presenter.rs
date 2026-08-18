@@ -288,7 +288,11 @@ where
     P: LivePresenter<B>,
 {
     let now = std::time::Instant::now();
-    if presentation.size.width == 0 || presentation.size.height == 0 || !frames.is_due(now) {
+    if presentation.size.width == 0 || presentation.size.height == 0 {
+        frames.suppress_pending();
+        return Ok(());
+    }
+    if !frames.is_due(now) {
         return Ok(());
     }
     let outcome = redraw(

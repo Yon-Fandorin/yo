@@ -67,6 +67,11 @@ impl FrameScheduler {
         self.deadline(now).is_some_and(|deadline| deadline <= now)
     }
 
+    pub(super) fn suppress_pending(&mut self) {
+        self.requested = false;
+        self.immediate = false;
+    }
+
     pub(super) fn rendered(&mut self, now: Instant) {
         self.last_frame = Some(now);
         self.requested = false;
@@ -122,5 +127,33 @@ mod tests {
         scheduler.request(FrameRequest::Immediate);
 
         assert_eq!(scheduler.deadline(now), Some(now));
+    }
+
+    // 보이지 않는 geometry에서 immediate와 coalesced 요청을 버려도 마지막으로 완료한
+    // frame 시각은 유지되며, 이후 ordinary 요청과 즉시 요청은 각자의 원래 경계로 재개됩니다.
+    #[test]
+    fn suppression_retires_pending_requests_without_advancing_the_last_frame() {
+        let completed = Instant::now();
+        let now = completed + Duration::from_millis(1);
+        let mut scheduler = FrameScheduler::new(FrameRateLimit::Fps60);
+        scheduler.request(FrameRequest::Immediate);
+        scheduler.rendered(completed);
+
+        scheduler.request(FrameRequest::Immediate);
+        scheduler.suppress_pending();
+        assert_eq!(scheduler.deadline(now), None);
+
+        scheduler.request(FrameRequest::Coalesced);
+        assert_eq!(
+            scheduler.deadline(now),
+            completed.checked_add(Duration::from_nanos(16_666_666))
+        );
+        scheduler.suppress_pending();
+        assert_eq!(scheduler.deadline(now), None);
+
+        scheduler.request(FrameRequest::Immediate);
+        assert!(scheduler.is_due(now));
+        scheduler.rendered(now);
+        assert_eq!(scheduler.deadline(now), None);
     }
 }
