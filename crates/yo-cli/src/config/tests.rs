@@ -1,17 +1,35 @@
+use std::{
+    os::unix::fs::{FileTypeExt, MetadataExt},
+    sync::atomic::{AtomicU64, Ordering},
+};
+
 use super::*;
+
+static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TestDirectory(PathBuf);
 
 impl TestDirectory {
     fn new(label: &str) -> Self {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("the system clock is after the Unix epoch")
-            .as_nanos();
-        let path =
-            std::env::temp_dir().join(format!("yo-config-{label}-{}-{nonce}", std::process::id()));
-        fs::create_dir(&path).unwrap();
-        Self(path)
+        Self::new_in(&std::env::temp_dir(), label)
+    }
+
+    fn new_in(parent: &Path, label: &str) -> Self {
+        loop {
+            let fixture_id = NEXT_TEST_DIRECTORY_ID.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!(
+                "yo-config-{label}-{}-{fixture_id}",
+                std::process::id()
+            ));
+            match fs::create_dir(&path) {
+                Ok(()) => return Self(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                Err(error) => panic!(
+                    "creating exclusive config test directory {} failed: {error}",
+                    path.display()
+                ),
+            }
+        }
     }
 
     fn path(&self) -> &Path {
@@ -27,6 +45,110 @@ impl Drop for TestDirectory {
 
 fn expect_config_error(result: Result<(), ConfigError>) {
     let _ = result.expect_err("the injected operation must fail");
+}
+
+fn assert_fifo_rejection(directory: &TestDirectory) {
+    let path = directory.path().join("config.yaml");
+    nix::unistd::mkfifo(
+        &path,
+        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+    )
+    .unwrap();
+
+    let error = load_from(&path).unwrap_err();
+
+    assert!(matches!(error, ConfigError::UnsupportedFileType(found) if found == path));
+}
+
+fn assert_symlink_rejection(directory: &TestDirectory) {
+    let target = directory.path().join("target.yaml");
+    let alias = directory.path().join("config.yaml");
+    fs::write(&target, "").unwrap();
+    std::os::unix::fs::symlink(&target, &alias).unwrap();
+
+    let error = load_from(&alias).unwrap_err();
+
+    assert!(matches!(error, ConfigError::Io { .. }));
+}
+
+#[derive(Clone, Copy)]
+enum LegacyEntryShape {
+    Symlink,
+    Fifo,
+    Regular,
+    Directory,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum LegacyEntryPayload {
+    Symlink(PathBuf),
+    Fifo,
+    Regular(Vec<u8>),
+    Directory(Vec<u8>),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct LegacyEntrySnapshot {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    length: u64,
+    payload: LegacyEntryPayload,
+}
+
+fn create_legacy_entry(path: &Path, shape: LegacyEntryShape) {
+    match shape {
+        LegacyEntryShape::Symlink => {
+            std::os::unix::fs::symlink("retired-config-target.yaml", path).unwrap();
+        },
+        LegacyEntryShape::Fifo => {
+            nix::unistd::mkfifo(
+                path,
+                nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
+            )
+            .unwrap();
+        },
+        LegacyEntryShape::Regular => fs::write(path, b"retired config fixture\n").unwrap(),
+        LegacyEntryShape::Directory => {
+            fs::create_dir(path).unwrap();
+            fs::write(path.join("sentinel"), b"retired directory fixture\n").unwrap();
+        },
+    }
+}
+
+fn snapshot_legacy_entry(path: &Path) -> LegacyEntrySnapshot {
+    let metadata = fs::symlink_metadata(path).unwrap();
+    let file_type = metadata.file_type();
+    let payload = if file_type.is_symlink() {
+        LegacyEntryPayload::Symlink(fs::read_link(path).unwrap())
+    } else if file_type.is_file() {
+        LegacyEntryPayload::Regular(fs::read(path).unwrap())
+    } else if file_type.is_dir() {
+        LegacyEntryPayload::Directory(fs::read(path.join("sentinel")).unwrap())
+    } else if file_type.is_fifo() {
+        LegacyEntryPayload::Fifo
+    } else {
+        panic!(
+            "legacy fixture {} has an unexpected file type",
+            path.display()
+        );
+    };
+    LegacyEntrySnapshot {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode: metadata.mode(),
+        length: metadata.len(),
+        payload,
+    }
+}
+
+fn remove_legacy_entry(path: &Path, shape: LegacyEntryShape) {
+    match shape {
+        LegacyEntryShape::Directory => fs::remove_dir_all(path).unwrap(),
+        LegacyEntryShape::Symlink | LegacyEntryShape::Fifo | LegacyEntryShape::Regular => {
+            fs::remove_file(path).unwrap();
+        },
+    }
 }
 
 // config.yaml에서 계속 소유하는 Session·TUI 일반 설정은 모델 정의 제거와 무관하게 읽힙니다.
@@ -148,30 +270,95 @@ fn oversized_configuration_is_bounded_during_the_read() {
 #[test]
 fn fifo_configuration_is_rejected_without_waiting_for_a_writer() {
     let directory = TestDirectory::new("fifo");
-    let path = directory.path().join("config.yaml");
-    nix::unistd::mkfifo(
-        &path,
-        nix::sys::stat::Mode::S_IRUSR | nix::sys::stat::Mode::S_IWUSR,
-    )
-    .unwrap();
-
-    let error = load_from(&path).unwrap_err();
-
-    assert!(matches!(error, ConfigError::UnsupportedFileType(found) if found == path));
+    assert_fifo_rejection(&directory);
 }
 
 // 최종 설정 경로가 symlink이면 대상 내용이 정상이어도 no-follow open에서 실패합니다.
 #[test]
 fn symlink_configuration_is_rejected_without_following_its_target() {
     let directory = TestDirectory::new("symlink");
-    let target = directory.path().join("target.yaml");
-    let alias = directory.path().join("config.yaml");
-    fs::write(&target, "").unwrap();
-    std::os::unix::fs::symlink(&target, &alias).unwrap();
+    assert_symlink_rejection(&directory);
+}
 
-    let error = load_from(&alias).unwrap_err();
+// 격리 parent의 이전 PID-only FIFO·symlink basename에 symlink, FIFO, regular file,
+// directory가 남아 있어도 새 전용 root에서 본래 거절 동작까지 도달하고 기존 entry는 바꾸지
+// 않습니다.
+#[test]
+fn stale_legacy_entries_do_not_block_owned_config_fixtures() {
+    let sandbox = TestDirectory::new("legacy-sandbox");
+    for label in ["fifo", "symlink"] {
+        let legacy_path = sandbox
+            .path()
+            .join(format!("yo-config-{label}-{}", std::process::id()));
+        for shape in [
+            LegacyEntryShape::Symlink,
+            LegacyEntryShape::Fifo,
+            LegacyEntryShape::Regular,
+            LegacyEntryShape::Directory,
+        ] {
+            create_legacy_entry(&legacy_path, shape);
+            let before = snapshot_legacy_entry(&legacy_path);
 
-    assert!(matches!(error, ConfigError::Io { .. }));
+            let directory = TestDirectory::new_in(sandbox.path(), label);
+            let owned_root = directory.path().to_owned();
+            if label == "fifo" {
+                assert_fifo_rejection(&directory);
+            } else {
+                assert_symlink_rejection(&directory);
+            }
+            drop(directory);
+
+            assert!(!owned_root.exists());
+            assert_eq!(snapshot_legacy_entry(&legacy_path), before);
+            remove_legacy_entry(&legacy_path, shape);
+        }
+    }
+}
+
+// 같은 parent에서 FIFO·symlink fixture를 병렬 생성해도 atomic ID와 exclusive create가
+// root를 공유하지 않고, 각 Drop은 자기 root만 제거하며 parent sentinel은 보존합니다.
+#[test]
+fn parallel_config_fixtures_keep_unique_scoped_roots() {
+    let sandbox = TestDirectory::new("parallel-sandbox");
+    let sentinel = sandbox.path().join("sentinel");
+    fs::write(&sentinel, b"outside every child fixture\n").unwrap();
+    let parent = sandbox.path();
+
+    let mut roots = std::thread::scope(|scope| {
+        let handles = (0..8)
+            .map(|index| {
+                scope.spawn(move || {
+                    let label = if index % 2 == 0 {
+                        "parallel-fifo"
+                    } else {
+                        "parallel-symlink"
+                    };
+                    let directory = TestDirectory::new_in(parent, label);
+                    let root = directory.path().to_owned();
+                    if index % 2 == 0 {
+                        assert_fifo_rejection(&directory);
+                    } else {
+                        assert_symlink_rejection(&directory);
+                    }
+                    drop(directory);
+                    assert!(!root.exists());
+                    root
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    roots.sort();
+    roots.dedup();
+
+    assert_eq!(roots.len(), 8);
+    assert_eq!(
+        fs::read(sentinel).unwrap(),
+        b"outside every child fixture\n"
+    );
 }
 
 // 같은 bytes로 파일을 교체해도 identity metadata가 달라지면 stale 계획을 막습니다.
