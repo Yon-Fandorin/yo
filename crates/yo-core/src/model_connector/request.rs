@@ -179,7 +179,7 @@ impl fmt::Debug for ModelCacheAffinityHint {
 pub struct ResponsesRequest {
     input: Vec<ResponsesInputItem>,
     tool_exposure: RequestToolExposure,
-    max_output_tokens: u64,
+    max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
     replay_budget: Option<crate::ModelReplayBudget>,
     cache_affinity_hint: Option<ModelCacheAffinityHint>,
@@ -189,16 +189,17 @@ impl ResponsesRequest {
     pub fn new(
         input: Vec<ResponsesInputItem>,
         tool_exposure: RequestToolExposure,
-        max_output_tokens: u64,
+        max_output_tokens: impl Into<Option<u64>>,
         reasoning_effort: Option<ReasoningEffort>,
     ) -> Result<Self, ConnectorError> {
+        let max_output_tokens = max_output_tokens.into();
         if input.is_empty() {
             return Err(ConnectorError::new(
                 ConnectorFailureKind::Configuration,
                 "Responses input must contain at least one item",
             ));
         }
-        if max_output_tokens == 0 {
+        if max_output_tokens == Some(0) {
             return Err(ConnectorError::new(
                 ConnectorFailureKind::Configuration,
                 "Responses max_output_tokens must be positive",
@@ -283,7 +284,7 @@ impl ResponsesRequest {
         self.tool_exposure.tools()
     }
 
-    pub(super) const fn max_output_tokens(&self) -> u64 {
+    pub(super) const fn max_output_tokens(&self) -> Option<u64> {
         self.max_output_tokens
     }
 
@@ -349,8 +350,10 @@ impl ResponsesRequest {
             "model": model,
             "input": input,
             "stream": true,
-            "max_output_tokens": self.max_output_tokens,
         });
+        if let Some(max_output_tokens) = self.max_output_tokens {
+            body["max_output_tokens"] = Value::from(max_output_tokens);
+        }
         if let Some(tools) = self.tools() {
             body["tools"] = Value::Array(
                 tools

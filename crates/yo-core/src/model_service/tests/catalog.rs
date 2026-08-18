@@ -48,7 +48,7 @@ fn resolves_models_only_inside_the_selected_provider_and_account() {
         .unwrap();
     assert_eq!(selected.binding().account_id().as_str(), "token-b");
     assert_eq!(selected.context().input_token_limit(), 262_144);
-    assert_eq!(selected.context().max_output_tokens(), 8_192);
+    assert_eq!(selected.context().max_output_tokens(), Some(8_192));
     assert_eq!(selected.context().tokenizer_profile(), "utf8-bytes/v1");
     assert!(
         catalog

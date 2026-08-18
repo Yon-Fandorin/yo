@@ -37,8 +37,12 @@ EffectiveModelBinding
   ├── 명시적인 ApiDialect → 정확히 하나의 built-in ConnectorId
   └── 정규화한 HTTPS base endpoint
 ModelContextProfile
-  ↓ 주입한 tokenizer profile로 직렬화된 실제 request를 계산
-출력 예산을 예약한 input admission
+  ↓ optional known hard output cap + 주입한 tokenizer profile
+NativeModelBackend가 retained replay + 현재 Turn delta를 검사
+  ↓ 이번 round의 exact final connector payload를 다시 만들고 계산
+known hard max 이하의 양수 request-local cap 또는 unknown cap 생략
+  ↓ known: exact input + cap <= input limit; unknown: exact input < input limit
+admission된 connector dispatch
 
 선택한 config 경로와 같은 디렉터리의 credentials.yaml
   ↓ no-follow handle 하나, regular file, 현재 owner, 0600에 해당하는 권한,
@@ -87,9 +91,15 @@ handoff는 5분으로 제한한다.
 inactivity clock을 reset하며, observation마다 새로운 event-handoff wait를 시작한다.
 `yo-core::backend::native`가 semantic
 Activity와 제한된 model/tool loop를 소유한다. 매 dispatch 전에 catalog가 선택한
-tokenizer profile로 실제 request를 계산한다. 예약 출력량을 제외한 input budget이나
-admission된 replay prefix가 소진되면 현재 Turn을 재개 evidence 없이 완료하고, 한도를
-넘는 remote request를 보내지 않으며, 이후 Turn이 같은 binding을 쓰지 못하게 latch한다.
+tokenizer profile로 실제 request를 계산하기 전에 retained replay prefix와 현재 Turn delta를
+함께 검사한다. known hard output maximum이면 그 이하의 양수 request-local cap을 유한하고
+엄격히 감소하는 방식으로 선택하며 candidate payload마다 다시 만들고 다시 계산한다. maximum이
+unknown이면 connector payload에서 cap을 생략하고 exact input count가 input limit보다 작아야 한다.
+Final assistant semantic/private delta를 적용하기 전의 capacity failure는
+`code=context_exhausted`인 Failed Turn을 기록하고 continuation anchor를 만들지 않으며, 한도를
+넘는 remote request를 보내지 않고 이후 Turn이 같은 binding을 쓰지 못하게 latch한다. 이미
+유효한 final assistant delta를 적용하는 동안 발생한 capacity exhaustion만 현재 Turn을 resumable
+evidence나 anchor 없이 완료한다.
 원시 tool
 argument는 schema 검증을 거치고 tool output은 제한된 뒤, 주입한 host gate가 Activity,
 replay, 이후 request에 들어갈 수 있는 semantic 형태를 결정한다. backend는 이렇게
@@ -822,8 +832,13 @@ secret-file content가 아닌 binding data로 둔다. 위 catalog의 limit과
 Model ID는 운영자가 관리하는 예시이며 현재 Provider의 정확한 제공 목록과 대조해야 한다.
 `utf8-bytes/v1`은 직렬화한 전체 request의 UTF-8 byte마다 token 하나를 세는 보수적인
 profile이다. `o200k_base/v1`은 실제 tokenizer가 o200k와 호환되는 binding에만 쓸 수
-있고 모르는 profile은 startup에서 실패한다. `max_output_tokens`는 wire output cap인
-동시에 local context admission에서 입력 한도로부터 제외하는 값이다. 첫 explicit runtime은
+있고 모르는 profile은 startup에서 실패한다. `max_output_tokens`는 optional known profile hard
+maximum이다. unknown이면 producer가 생략하고 whole-field `null`은 잘못된 값이며, absence는
+base/model resolution과 durable complete-binding identity에 그대로 남는다. known-cap round는
+hard maximum 이하의 양수 request-local 값을 선택하고, 정확히 다시 계산한 connector payload의
+input과 cap 합이 input limit에 맞을 때만 admission한다. unknown-cap round는 dialect output field를
+생략하고 exact input count가 input limit보다 작아야 하며, 닫힌 Kimi profile처럼 wire 계약이
+known cap을 요구하는 connector는 unknown을 거절한다. 첫 explicit runtime은
 빈 reasoning mapping 또는 `none`, `minimal`, `medium`, `high` 중 하나인 `effort`를
 지원하며, 빈 `optional_request_parameters`와 `local-tools/v1`을 요구한다. 다른 검증된 profile identifier는 설정으로 읽을 수
 있지만 그 runtime 동작이 구현될 때까지 startup에서 실패한다.

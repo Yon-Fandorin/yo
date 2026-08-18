@@ -401,6 +401,7 @@ mod tests {
             "models: null\n",
             "provider_display_name: null\nmodels:\n  - model: alpha\n",
             "models:\n  - model: alpha\n    model_display_name: null\n",
+            "models:\n  - model: alpha\n    profile:\n      max_output_tokens: null\n",
         ] {
             let error = parse(&format!(
                 "provider: vendor\naccount: team\nbase_url: https://example.test/v1\nprofile:\n  {}\n{suffix}",
@@ -410,6 +411,35 @@ mod tests {
             .to_string();
             assert!(error.contains("repeats ModelId") || error.contains("cannot be null"));
         }
+    }
+
+    // base에서 max_output_tokens를 생략하고 alpha에만 100을 쓰면 alpha는 known,
+    // beta는 unknown으로 해석되어 명시적 clear marker 없이 mixed definition을 만듭니다.
+    #[test]
+    fn resolves_mixed_known_and_unknown_output_limits_from_omission() {
+        let profile = PROFILE.replace("\nmax_output_tokens: 100", "");
+        let definition = parse(&format!(
+            "provider: vendor\naccount: team\nbase_url: https://example.test/v1\nprofile:\n  {}\nmodels:\n  - model: alpha\n    profile:\n      max_output_tokens: 100\n  - model: beta\n",
+            profile.replace('\n', "\n  ")
+        ))
+        .unwrap();
+
+        assert_eq!(
+            definition.bindings[0]
+                .complete()
+                .profile()
+                .context()
+                .max_output_tokens(),
+            Some(100)
+        );
+        assert_eq!(
+            definition.bindings[1]
+                .complete()
+                .profile()
+                .context()
+                .max_output_tokens(),
+            None
+        );
     }
 
     // Model 목록 생략은 bounded discovery seed를 소유한 OpenRouter에만 허용합니다.

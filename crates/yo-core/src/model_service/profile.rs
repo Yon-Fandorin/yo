@@ -356,10 +356,7 @@ impl EffectiveModelProfile {
             "input_token_limit",
             model.input_token_limit.or(base.input_token_limit),
         )?;
-        let max_output_tokens = required(
-            "max_output_tokens",
-            model.max_output_tokens.or(base.max_output_tokens),
-        )?;
+        let max_output_tokens = model.max_output_tokens.or(base.max_output_tokens);
         let reasoning_parameters = required(
             "reasoning_parameters",
             model

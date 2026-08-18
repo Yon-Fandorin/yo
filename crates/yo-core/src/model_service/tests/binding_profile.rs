@@ -16,6 +16,25 @@ fn complete_binding_equality_includes_the_resolved_profile() {
     assert_ne!(medium, high);
 }
 
+// complete binding JSON에서 max_output_tokens가 빠지면 unknown으로 복원되고, 같은 좌표의
+// 알려진 100-token 상한과는 다른 binding identity이며 null은 omission으로 축약되지 않습니다.
+#[test]
+fn complete_binding_preserves_unknown_output_presence_and_rejects_null() {
+    let known = CompleteModelBinding::from_durable_json(COMPLETE_BINDING).unwrap();
+    let absent = COMPLETE_BINDING.replace(r#","max_output_tokens":100"#, "");
+    let unknown = CompleteModelBinding::from_durable_json(&absent).unwrap();
+
+    assert_eq!(unknown.profile().context().max_output_tokens(), None);
+    assert_ne!(known, unknown);
+    assert!(
+        CompleteModelBinding::from_durable_json(&absent.replace(
+            r#""input_token_limit":1000"#,
+            r#""input_token_limit":1000,"max_output_tokens":null"#,
+        ))
+        .is_err()
+    );
+}
+
 // 연결 시 model 요청은 profile 의미가 아니므로 complete binding decoder가 이전
 // verification_profile 필드를 무시하거나 identity에 되살리지 않습니다.
 #[test]

@@ -240,7 +240,12 @@ struct WireProfile {
     api_dialect: String,
     tokenizer_profile: String,
     input_token_limit: u64,
-    max_output_tokens: u64,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    max_output_tokens: Option<u64>,
     #[serde(deserialize_with = "deserialize_non_null_profile_parameters")]
     reasoning_parameters: ModelProfileParameters,
     #[serde(deserialize_with = "deserialize_non_null_profile_parameters")]
@@ -425,7 +430,7 @@ fn parse_profile(profile: WireProfile) -> Result<EffectiveModelProfile, crate::M
         Some(dialect),
         Some(VersionedProfileId::new(profile.tokenizer_profile)?),
         Some(profile.input_token_limit),
-        Some(profile.max_output_tokens),
+        profile.max_output_tokens,
         Some(profile.reasoning_parameters),
         Some(profile.optional_request_parameters),
         Some(VersionedProfileId::new(profile.tool_capability_policy)?),

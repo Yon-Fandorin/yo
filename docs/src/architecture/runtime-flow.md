@@ -38,8 +38,12 @@ EffectiveModelBinding
   ├── explicit ApiDialect → exactly one built-in ConnectorId
   └── normalized HTTPS base endpoint
 ModelContextProfile
-  ↓ injected tokenizer profile counts the exact serialized request
-input admission with a reserved output budget
+  ↓ optional known hard output cap + injected tokenizer profile
+NativeModelBackend checks retained replay + the current Turn delta
+  ↓ rebuild and count the exact final connector payload for this round
+positive request-local cap within a known hard max, or omitted unknown cap
+  ↓ known: exact input + cap <= input limit; unknown: exact input < input limit
+admitted connector dispatch
 
 credentials.yaml beside the selected config path
   ↓ one no-follow handle; regular file, current owner, 0600-equivalent,
@@ -89,10 +93,17 @@ successful-stream inactivity at 5 minutes, non-success error-body inactivity at
 inactivity clock, before SSE decoding or error-body retention; each observation
 starts a fresh event-handoff wait. `yo-core::backend::native` owns semantic Activities and the bounded
 model/tool loop. Before each dispatch it counts the exact request with the
-catalog-selected tokenizer profile. If the input budget or admitted replay
-prefix is exhausted, it completes the current Turn without resumable evidence,
-makes no over-budget remote request, and latches the binding against later
-Turns. Raw tool
+catalog-selected tokenizer profile after checking the retained replay prefix
+plus the current Turn delta. For a known hard output maximum, it makes a finite,
+strictly decreasing selection of a positive request-local cap at or below that
+maximum and rebuilds and recounts every candidate payload. For an unknown
+maximum, the connector payload omits the cap and its exact input count must stay
+strictly below the input limit. Any capacity failure before a final assistant
+semantic/private delta is applied records a Failed Turn with
+`code=context_exhausted`, creates no continuation anchor, makes no over-budget
+remote request, and latches the binding against later Turns. Only capacity
+exhaustion while applying an otherwise valid final assistant delta completes
+that current Turn without resumable evidence or an anchor. Raw tool
 arguments are schema-validated and tool output is bounded before the injected
 host gate decides the semantic form allowed into Activities, replay, and later
 requests. The backend records only that admitted call/result replay, defers an
@@ -906,8 +917,15 @@ IDs are operator-owned examples and must be checked against the exact current
 Provider offering. `utf8-bytes/v1` conservatively counts the complete serialized
 request one token per UTF-8 byte; `o200k_base/v1` is available only for bindings
 whose tokenizer is actually o200k-compatible. Unknown profiles fail startup.
-`max_output_tokens` is both the wire output cap and the amount excluded from the
-configured input limit during local context admission. The first explicit
+`max_output_tokens` is an optional known profile hard maximum. Producers omit it
+when unknown, whole-field `null` is invalid, and absence survives base/model
+resolution and durable complete-binding identity. Each known-cap round chooses
+a positive request-local value no greater than that hard maximum and admits only
+an exactly recounted connector payload whose input plus cap fits the input
+limit. An unknown-cap round omits the dialect output field and requires its
+exact input count to remain strictly below the input limit; connectors whose
+wire contract requires a known cap, including the closed Kimi profiles, reject
+unknown. The first explicit
 runtime supports an empty reasoning mapping or an `effort` of `none`,
 `minimal`, `medium`, or `high`; it requires empty
 `optional_request_parameters` and `local-tools/v1`. Other validated profile identifiers remain readable

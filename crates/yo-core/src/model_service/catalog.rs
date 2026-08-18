@@ -141,7 +141,7 @@ impl ModelCatalogEntry {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelContextProfile {
     input_token_limit: u64,
-    max_output_tokens: u64,
+    max_output_tokens: Option<u64>,
     tokenizer_profile: VersionedProfileId,
 }
 
@@ -152,20 +152,32 @@ impl ModelContextProfile {
         tokenizer_profile: impl Into<String>,
     ) -> Result<Self, ModelServiceError> {
         let tokenizer_profile = VersionedProfileId::new(tokenizer_profile)?;
+        Self::from_versioned(
+            input_token_limit,
+            Some(max_output_tokens),
+            tokenizer_profile,
+        )
+    }
+
+    pub fn with_optional_output_limit(
+        input_token_limit: u64,
+        max_output_tokens: Option<u64>,
+        tokenizer_profile: impl Into<String>,
+    ) -> Result<Self, ModelServiceError> {
+        let tokenizer_profile = VersionedProfileId::new(tokenizer_profile)?;
         Self::from_versioned(input_token_limit, max_output_tokens, tokenizer_profile)
     }
 
     pub(super) fn from_versioned(
         input_token_limit: u64,
-        max_output_tokens: u64,
+        max_output_tokens: Option<u64>,
         tokenizer_profile: VersionedProfileId,
     ) -> Result<Self, ModelServiceError> {
         if input_token_limit == 0
-            || max_output_tokens == 0
-            || max_output_tokens >= input_token_limit
+            || max_output_tokens.is_some_and(|value| value == 0 || value >= input_token_limit)
         {
             return Err(ModelServiceError::new(
-                "model context profile requires positive limits and max_output_tokens smaller than input_token_limit",
+                "model context profile requires a positive input limit and any known max_output_tokens to be positive and smaller than input_token_limit",
             ));
         }
         Ok(Self {
@@ -179,7 +191,7 @@ impl ModelContextProfile {
         self.input_token_limit
     }
 
-    pub const fn max_output_tokens(&self) -> u64 {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         self.max_output_tokens
     }
 

@@ -68,7 +68,10 @@ fn qwencloud_catalog_resolves_complete_model_specific_profiles() {
         "openai-chat-completions"
     );
     assert_eq!(complete.profile().context().input_token_limit(), 262_144);
-    assert_eq!(complete.profile().context().max_output_tokens(), 8_192);
+    assert_eq!(
+        complete.profile().context().max_output_tokens(),
+        Some(8_192)
+    );
     assert_eq!(
         complete.profile().context().tokenizer_profile(),
         "utf8-bytes/v1"

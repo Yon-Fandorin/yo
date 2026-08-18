@@ -172,7 +172,7 @@ pub(crate) fn admit_new_complete_binding(
     let kimi_profile = match (endpoint, model) {
         ("https://api.moonshot.ai/v1", "kimi-k3")
             if (131_073..=1_048_576).contains(&input)
-                && output == 131_072
+                && output == Some(131_072)
                 && optional == serde_json::json!({})
                 && replay == KIMI_PRIVATE_REPLAY_PROFILE =>
         {
@@ -192,7 +192,7 @@ pub(crate) fn admit_new_complete_binding(
         },
         ("https://api.moonshot.ai/v1", "kimi-k2.7-code" | "kimi-k2.7-code-highspeed")
             if (32_769..=262_144).contains(&input)
-                && output == 32_768
+                && output == Some(32_768)
                 && reasoning == serde_json::json!({})
                 && optional
                     == serde_json::json!({"thinking": {"type": "enabled", "keep": "all"}})
@@ -202,7 +202,7 @@ pub(crate) fn admit_new_complete_binding(
         },
         ("https://api.moonshot.ai/v1", "kimi-k2.6")
             if (32_769..=262_144).contains(&input)
-                && output == 32_768
+                && output == Some(32_768)
                 && reasoning == serde_json::json!({})
                 && optional == serde_json::json!({"thinking": {"type": "disabled"}})
                 && replay == SEMANTIC_REPLAY_PROFILE =>
@@ -211,7 +211,7 @@ pub(crate) fn admit_new_complete_binding(
         },
         ("https://api.kimi.com/coding/v1", "k3")
             if (262_144..=1_048_576).contains(&input)
-                && output == 131_072
+                && output == Some(131_072)
                 && optional
                     == serde_json::json!({"thinking": {"type": "enabled", "keep": "all"}})
                 && replay == KIMI_PRIVATE_REPLAY_PROFILE =>
@@ -222,7 +222,7 @@ pub(crate) fn admit_new_complete_binding(
         },
         ("https://api.kimi.com/coding/v1", "k3-256k")
             if input == 262_144
-                && output == 131_072
+                && output == Some(131_072)
                 && optional
                     == serde_json::json!({"thinking": {"type": "enabled", "keep": "all"}})
                 && replay == KIMI_PRIVATE_REPLAY_PROFILE =>
@@ -233,7 +233,7 @@ pub(crate) fn admit_new_complete_binding(
         },
         ("https://api.kimi.com/coding/v1", "kimi-for-coding" | "kimi-for-coding-highspeed")
             if input == 262_144
-                && output == 32_768
+                && output == Some(32_768)
                 && reasoning == serde_json::json!({})
                 && optional
                     == serde_json::json!({"thinking": {"type": "enabled", "keep": "all"}})

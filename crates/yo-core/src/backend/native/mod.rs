@@ -39,6 +39,7 @@ use crate::{
 const BACKEND_KIND: &str = "yo-managed-model";
 const BACKEND_VERSION: &str = "1";
 const TOOL_TRUNCATION_MARKER: &str = "\n[yo: tool output truncated]";
+const CONTEXT_EXHAUSTED_CODE: &str = "context_exhausted";
 
 #[derive(Clone, Debug)]
 pub struct NativeModelBackendConfig {
@@ -306,6 +307,25 @@ impl NativeModelBackend {
         }
     }
 
+    fn ensure_pending_replay_capacity(&self, state: &TurnState) -> Result<(), BackendFailure> {
+        let delta = ModelReplayDelta::new(
+            self.replay
+                .contract()
+                .is_none()
+                .then(|| self.contract.clone()),
+            state.delta.clone(),
+        );
+        let mut replay = self.replay.clone();
+        replay.apply(&delta).map_err(|message| {
+            let kind = if is_replay_capacity_error(message) {
+                BackendFailureKind::ContextExhausted
+            } else {
+                BackendFailureKind::Turn
+            };
+            failure(kind, message)
+        })
+    }
+
     pub fn new(
         catalog_entry: &ModelCatalogEntry,
         credential: ApiCredential,
@@ -548,7 +568,7 @@ impl NativeModelBackend {
             },
             Err(error) if error.kind() == BackendFailureKind::ContextExhausted => {
                 self.context_exhausted = true;
-                self.exhaust_turn(&mut state);
+                self.exhaust_turn(&mut state, error.to_string());
                 false
             },
             Err(error) => return Err(error),
@@ -589,6 +609,7 @@ impl NativeModelBackend {
                 "native model loop exceeded its model-round limit",
             ));
         }
+        self.ensure_pending_replay_capacity(state)?;
         let mut items = Vec::new();
         items.push(ModelConnectorInputItem::Message {
             role: ModelConnectorInputRole::System,
@@ -615,53 +636,85 @@ impl NativeModelBackend {
                 "model replay delta capacity was exhausted before request dispatch",
             )
         })?;
-        let request = match ModelConnectorRequest::new(
-            items,
-            tool_exposure,
-            self.model_context.max_output_tokens(),
-            self.config.reasoning_effort,
-        ) {
-            Ok(request) => request,
-            Err(error) => {
-                self.observe_connector_failure(state.turn, &error);
-                return Err(map_connector_turn(error));
-            },
-        }
-        .with_replay_budget(replay_budget)
-        .with_cache_affinity_hint(
-            crate::model_connector::ModelCacheAffinityHint::for_session(state.turn.session_id()),
-        );
-        let tokenization_payload = match self.connector.tokenization_payload(&request) {
-            Ok(payload) => payload,
-            Err(error) => {
-                self.observe_connector_failure(state.turn, &error);
-                return Err(map_connector_turn(error));
-            },
-        };
-        let input_tokens = self
-            .token_counter
-            .count_input_tokens(
-                self.model_context.tokenizer_profile(),
-                &tokenization_payload,
-            )
-            .map_err(|_| {
-                failure(
-                    BackendFailureKind::Turn,
-                    "model token counting failed before remote request dispatch",
-                )
-            })?;
-        let admitted_input = self
-            .model_context
-            .input_token_limit()
-            .saturating_sub(self.model_context.max_output_tokens());
-        if input_tokens > admitted_input {
-            return Err(failure(
-                BackendFailureKind::ContextExhausted,
-                format!(
-                    "context_exhausted: {input_tokens} input tokens exceed the admitted {admitted_input} after the configured output cap"
+        let input_limit = self.model_context.input_token_limit();
+        let mut request_cap = self.model_context.max_output_tokens();
+        let mut cap_adjustments = 0_u8;
+        let request = loop {
+            let request = match ModelConnectorRequest::new(
+                items.clone(),
+                tool_exposure.clone(),
+                request_cap,
+                self.config.reasoning_effort,
+            ) {
+                Ok(request) => request,
+                Err(error) => {
+                    self.observe_connector_failure(state.turn, &error);
+                    return Err(map_connector_turn(error));
+                },
+            }
+            .with_replay_budget(replay_budget)
+            .with_cache_affinity_hint(
+                crate::model_connector::ModelCacheAffinityHint::for_session(
+                    state.turn.session_id(),
                 ),
-            ));
-        }
+            );
+            let tokenization_payload = match self.connector.tokenization_payload(&request) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    self.observe_connector_failure(state.turn, &error);
+                    return Err(map_connector_turn(error));
+                },
+            };
+            let input_tokens = self
+                .token_counter
+                .count_input_tokens(
+                    self.model_context.tokenizer_profile(),
+                    &tokenization_payload,
+                )
+                .map_err(|_| {
+                    failure(
+                        BackendFailureKind::Turn,
+                        "model token counting failed before remote request dispatch",
+                    )
+                })?;
+            match request_cap {
+                Some(cap)
+                    if input_tokens
+                        .checked_add(cap)
+                        .is_some_and(|sum| sum <= input_limit) =>
+                {
+                    break request;
+                },
+                Some(cap) => {
+                    let next_cap = match cap_adjustments {
+                        0 => cap
+                            .saturating_sub(1)
+                            .min(input_limit.saturating_sub(input_tokens)),
+                        1 if cap > 1 => 1,
+                        _ => 0,
+                    };
+                    if next_cap == 0 {
+                        return Err(failure(
+                            BackendFailureKind::ContextExhausted,
+                            format!(
+                                "context_exhausted: {input_tokens} input tokens leave no positive request output cap within the {input_limit}-token input limit"
+                            ),
+                        ));
+                    }
+                    request_cap = Some(next_cap);
+                    cap_adjustments += 1;
+                },
+                None if input_tokens < input_limit => break request,
+                None => {
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        format!(
+                            "context_exhausted: {input_tokens} input tokens do not fit strictly below the {input_limit}-token input limit"
+                        ),
+                    ));
+                },
+            }
+        };
         let cancellation = ModelConnectorCancellation::new();
         *self
             .shared_stop
@@ -791,7 +844,7 @@ impl NativeModelBackend {
                     ),
                 );
                 self.context_exhausted = true;
-                self.exhaust_turn(&mut state);
+                self.exhaust_turn(&mut state, error.to_string());
             } else {
                 if error.kind() == BackendFailureKind::Protocol {
                     self.observe_model_request(
@@ -1389,7 +1442,7 @@ impl NativeModelBackend {
             )
         })?;
         if let Err(error) = self.poll_tool_state(&mut state) {
-            self.fail_turn(&mut state, error.to_string());
+            self.fail_or_exhaust_turn(&mut state, error);
         } else if self.turn.is_none()
             && !self.events.iter().any(|event| {
                 matches!(
@@ -1540,14 +1593,18 @@ impl NativeModelBackend {
                 .then(|| self.contract.clone()),
             std::mem::take(&mut state.delta),
         );
-        self.replay.apply(&delta).map_err(|message| {
-            let kind = if is_replay_capacity_error(message) {
-                BackendFailureKind::ContextExhausted
-            } else {
-                BackendFailureKind::Turn
-            };
-            failure(kind, message)
-        })?;
+        if let Err(message) = self.replay.apply(&delta) {
+            if is_replay_capacity_error(message) {
+                self.context_exhausted = true;
+                self.events.push_back(BackendEvent::TurnFinished {
+                    turn: state.turn,
+                    outcome: TurnOutcome::Completed,
+                });
+                self.turn = None;
+                return Ok(());
+            }
+            return Err(failure(BackendFailureKind::Turn, message));
+        }
         self.events.push_back(BackendEvent::ResumableTurnFinished {
             turn: state.turn,
             evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
@@ -1648,23 +1705,33 @@ impl NativeModelBackend {
         self.turn = None;
     }
 
-    fn exhaust_turn(&mut self, state: &mut TurnState) {
-        let diagnostics = self.cleanup_turn_resources(state);
-        if diagnostics.is_empty() {
-            for activity in self.projected_open_activities() {
-                self.events.push_back(BackendEvent::ActivityFinished {
-                    activity,
-                    outcome: ActivityOutcome::Completed,
-                });
-            }
-            self.events.push_back(BackendEvent::TurnFinished {
-                turn: state.turn,
-                outcome: TurnOutcome::Completed,
-            });
-            self.turn = None;
+    fn fail_or_exhaust_turn(&mut self, state: &mut TurnState, error: BackendFailure) {
+        if error.kind() == BackendFailureKind::ContextExhausted {
+            self.context_exhausted = true;
+            self.exhaust_turn(state, error.to_string());
         } else {
-            self.fail_turn(state, diagnostics.join("; "));
+            self.fail_turn(state, error.to_string());
         }
+    }
+
+    fn exhaust_turn(&mut self, state: &mut TurnState, mut message: String) {
+        let diagnostics = self.cleanup_turn_resources(state);
+        if !diagnostics.is_empty() {
+            message.push_str("; ");
+            message.push_str(&diagnostics.join("; "));
+        }
+        let failure = context_exhausted_failure(message);
+        for activity in self.projected_open_activities() {
+            self.events.push_back(BackendEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Failed(failure.clone()),
+            });
+        }
+        self.events.push_back(BackendEvent::TurnFinished {
+            turn: state.turn,
+            outcome: TurnOutcome::Failed(failure),
+        });
+        self.turn = None;
     }
 
     fn interrupt(&mut self, turn: TurnRef) -> Result<BackendCommandEvidence, BackendFailure> {
@@ -1770,12 +1837,21 @@ impl NativeModelBackend {
         );
         match decision {
             ApprovalDecision::Approved => state.ready_tool = Some(pending.call),
-            ApprovalDecision::Declined => self.finish_tool_without_execution(
-                &mut state,
-                pending.call,
-                ToolExecutionOutcome::Failed,
-                r#"{"error":"tool approval declined"}"#.to_owned(),
-            )?,
+            ApprovalDecision::Declined => {
+                if let Err(error) = self.finish_tool_without_execution(
+                    &mut state,
+                    pending.call,
+                    ToolExecutionOutcome::Failed,
+                    r#"{"error":"tool approval declined"}"#.to_owned(),
+                ) {
+                    if error.kind() == BackendFailureKind::ContextExhausted {
+                        self.fail_or_exhaust_turn(&mut state, error);
+                        return Ok(BackendCommandEvidence::None);
+                    }
+                    self.turn = Some(state);
+                    return Err(error);
+                }
+            },
         }
         self.turn = Some(state);
         Ok(BackendCommandEvidence::None)
@@ -1942,7 +2018,7 @@ impl AgentBackend for NativeModelBackend {
                 .take()
                 .expect("dispatch-ready tool was checked");
             if let Err(error) = self.start_tool_execution(&mut state, call, activity) {
-                self.fail_turn(&mut state, error.to_string());
+                self.fail_or_exhaust_turn(&mut state, error);
             } else {
                 self.turn = Some(state);
             }
@@ -1980,12 +2056,7 @@ impl AgentBackend for NativeModelBackend {
             let mut state = self.turn.take().expect("active Turn was checked");
             state.start_next_round = false;
             if let Err(error) = self.start_model_round(&mut state) {
-                if error.kind() == BackendFailureKind::ContextExhausted {
-                    self.context_exhausted = true;
-                    self.exhaust_turn(&mut state);
-                } else {
-                    self.fail_turn(&mut state, error.to_string());
-                }
+                self.fail_or_exhaust_turn(&mut state, error);
             } else {
                 self.turn = Some(state);
             }
@@ -2079,11 +2150,13 @@ fn native_binding_identity(
                 "api_dialect": profile.api_dialect().as_str(),
                 "tokenizer_profile": profile.context().tokenizer_profile(),
                 "input_token_limit": profile.context().input_token_limit(),
-                "max_output_tokens": profile.context().max_output_tokens(),
                 "reasoning_parameters": profile.reasoning_parameters(),
                 "optional_request_parameters": profile.optional_request_parameters(),
                 "tool_capability_policy": profile.tool_capability_policy().as_str(),
             });
+            if let Some(max_output_tokens) = profile.context().max_output_tokens() {
+                value["max_output_tokens"] = json!(max_output_tokens);
+            }
             if profile.replay_profile().as_str() != crate::SEMANTIC_REPLAY_PROFILE {
                 value["replay_profile"] = json!(profile.replay_profile().as_str());
             }
@@ -2253,6 +2326,12 @@ fn tool_validation_failure(kind: ToolValidationFailure, message: &str) -> Failur
     Failure::new(message)
         .with_code(kind.code())
         .expect("tool validation codes are stable ASCII identifiers")
+}
+
+fn context_exhausted_failure(message: impl Into<String>) -> Failure {
+    Failure::new(message)
+        .with_code(CONTEXT_EXHAUSTED_CODE)
+        .expect("the context exhaustion code is stable ASCII")
 }
 
 fn durable_tool_validation_message(kind: ToolValidationFailure) -> &'static str {

@@ -103,11 +103,11 @@ pub(super) fn normalize_catalog(
             .map(|entry| {
                 (
                     Some(entry.context().input_token_limit()),
-                    Some(entry.context().max_output_tokens()),
+                    entry.context().max_output_tokens(),
                 )
             })
             .unwrap_or_else(|| match limits {
-                Ok((input, output)) => (Some(input), Some(output)),
+                Ok((input, output)) => (Some(input), output),
                 Err(()) => (None, None),
             });
         models.push(OpenRouterDiscoveredModel {
@@ -217,14 +217,14 @@ fn resolved_limits(
     authored: Option<&super::OpenRouterAuthoredModel>,
     input_limit: RemoteLimit,
     output_limit: RemoteLimit,
-) -> Result<(u64, u64), ()> {
+) -> Result<(u64, Option<u64>), ()> {
     Ok((
         resolve_limit(
             authored.and_then(|authored| authored.input_token_limit),
             input_limit,
             profile.context().input_token_limit(),
         )?,
-        resolve_limit(
+        resolve_optional_limit(
             authored.and_then(|authored| authored.max_output_tokens),
             output_limit,
             profile.context().max_output_tokens(),
@@ -240,12 +240,24 @@ fn resolve_limit(authored: Option<u64>, remote: RemoteLimit, base: u64) -> Resul
     }
 }
 
+fn resolve_optional_limit(
+    authored: Option<u64>,
+    remote: RemoteLimit,
+    base: Option<u64>,
+) -> Result<Option<u64>, ()> {
+    match remote {
+        RemoteLimit::Invalid => Err(()),
+        RemoteLimit::Missing => Ok(authored.or(base)),
+        RemoteLimit::Value(value) => Ok(Some(authored.unwrap_or(value))),
+    }
+}
+
 fn build_entry(
     seed: &OpenRouterDiscoverySeed,
     model_id: &ModelId,
     remote_display_name: &str,
     input_limit: u64,
-    output_limit: u64,
+    output_limit: Option<u64>,
     tool_policy: &VersionedProfileId,
 ) -> Result<ModelCatalogEntry, ModelServiceError> {
     if let Some(authored) = seed.authored_models.get(model_id) {
@@ -299,7 +311,7 @@ pub(super) fn profile_with_remote_limits(
     profile_with_remote_values(
         base,
         input_limit.unwrap_or(base.context().input_token_limit()),
-        output_limit.unwrap_or(base.context().max_output_tokens()),
+        output_limit.or(base.context().max_output_tokens()),
         base.tool_capability_policy().as_str(),
     )
 }
@@ -307,14 +319,14 @@ pub(super) fn profile_with_remote_limits(
 fn profile_with_remote_values(
     base: &EffectiveModelProfile,
     input_limit: u64,
-    output_limit: u64,
+    output_limit: Option<u64>,
     tool_policy: &str,
 ) -> Result<EffectiveModelProfile, ModelServiceError> {
     let layer = ModelProfileLayer::new(
         Some(base.api_dialect()),
         Some(VersionedProfileId::new(base.context().tokenizer_profile())?),
         Some(input_limit),
-        Some(output_limit),
+        output_limit,
         Some(base.reasoning_parameters().clone()),
         Some(base.optional_request_parameters().clone()),
         Some(VersionedProfileId::new(tool_policy)?),

@@ -380,13 +380,17 @@ fn catalog_seed_summary(seed: Option<&ConnectionCatalogSeed>) -> String {
     let Some((endpoint, profile)) = seed.openrouter_definition() else {
         return "invalid catalog seed".to_owned();
     };
+    let max_output_tokens = profile
+        .context()
+        .max_output_tokens()
+        .map_or_else(|| "unknown".to_owned(), |value| value.to_string());
     format!(
         "OpenRouter discovery endpoint={}; api_dialect={}; tokenizer_profile={}; input_token_limit={}; max_output_tokens={}; reasoning_parameters={}; optional_request_parameters={}; tool_capability_policy={}; replay_profile={}",
         endpoint,
         profile.api_dialect(),
         profile.context().tokenizer_profile(),
         profile.context().input_token_limit(),
-        profile.context().max_output_tokens(),
+        max_output_tokens,
         profile.reasoning_parameters().to_json_value(),
         profile.optional_request_parameters().to_json_value(),
         profile.tool_capability_policy(),

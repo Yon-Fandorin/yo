@@ -594,7 +594,7 @@ mod tests {
 
         assert_eq!(binding.endpoint().as_str(), "https://example.test/v1");
         assert_eq!(profile.context().input_token_limit(), 1_000_000);
-        assert_eq!(profile.context().max_output_tokens(), 65_536);
+        assert_eq!(profile.context().max_output_tokens(), Some(65_536));
         assert_eq!(profile.context().tokenizer_profile(), "utf8-bytes/v1");
         assert_eq!(
             profile.reasoning_parameters(),

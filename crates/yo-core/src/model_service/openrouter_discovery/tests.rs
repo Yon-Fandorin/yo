@@ -75,7 +75,10 @@ fn normalizes_selectable_rows_into_complete_bindings() {
     assert_eq!(model.display_name(), "vendor/alpha");
     let complete = model.entry().unwrap().complete_binding().unwrap();
     assert_eq!(complete.profile().context().input_token_limit(), 120_000);
-    assert_eq!(complete.profile().context().max_output_tokens(), 12_000);
+    assert_eq!(
+        complete.profile().context().max_output_tokens(),
+        Some(12_000)
+    );
     assert_eq!(
         complete.profile().context().tokenizer_profile(),
         "o200k_base/v1"
@@ -348,7 +351,7 @@ fn preserves_authored_overrides_and_base_values_for_absent_remote_limits() {
     );
     assert_eq!(
         authored.entry().unwrap().context().max_output_tokens(),
-        4_000
+        Some(4_000)
     );
     assert_eq!(
         authored.entry().unwrap().model_display_name(),
@@ -364,7 +367,7 @@ fn preserves_authored_overrides_and_base_values_for_absent_remote_limits() {
     );
     assert_eq!(
         inherited.entry().unwrap().context().max_output_tokens(),
-        8_192
+        Some(8_192)
     );
 }
 
@@ -427,8 +430,8 @@ fn applies_remote_limits_per_field_without_losing_authored_provenance() {
             .context();
         (context.input_token_limit(), context.max_output_tokens())
     };
-    assert_eq!(limits("vendor/inherited"), (120_000, 12_000));
-    assert_eq!(limits("vendor/input-override"), (80_000, 12_000));
+    assert_eq!(limits("vendor/inherited"), (120_000, Some(12_000)));
+    assert_eq!(limits("vendor/input-override"), (80_000, Some(12_000)));
 }
 
 // accepted name은 trim 뒤 96-byte 경계를 지키고 초과하면 ID로 되돌아가며, normalized

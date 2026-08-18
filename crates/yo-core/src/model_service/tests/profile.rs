@@ -42,7 +42,7 @@ fn model_layer_replaces_only_explicit_fields_without_recursive_merge() {
 
     assert_eq!(profile.api_dialect(), ApiDialect::OpenAiResponses);
     assert_eq!(profile.context().input_token_limit(), 100_000);
-    assert_eq!(profile.context().max_output_tokens(), 4_096);
+    assert_eq!(profile.context().max_output_tokens(), Some(4_096));
     assert_eq!(profile.context().tokenizer_profile(), "utf8-bytes/v1");
     assert_eq!(
         profile.reasoning_parameters(),
@@ -54,14 +54,31 @@ fn model_layer_replaces_only_explicit_fields_without_recursive_merge() {
     );
 }
 
-// base와 model을 합친 뒤에도 필수 필드가 하나라도 없거나 출력 한도가 입력 한도보다
-// 작지 않으면 완전한 실행 profile을 만들지 않아 암묵적 기본값을 차단합니다.
+// 필수 입력 필드는 빠지면 거절하지만 출력 상한은 알 수 없는 상태로 생략할 수 있고,
+// 알려진 출력 상한이 입력 한도 이상이면 거절해 두 상태를 숫자 기본값 없이 구분합니다.
 #[test]
 fn resolution_rejects_missing_fields_and_invalid_capability_limits() {
     let missing = EffectiveModelProfile::resolve(None, &ModelProfileLayer::default()).unwrap_err();
     assert_eq!(
         missing.to_string(),
         "resolved model profile is missing api_dialect"
+    );
+
+    let unknown_output = ModelProfileLayer::new(
+        Some(ApiDialect::OpenAiResponses),
+        Some(id("utf8-bytes/v1")),
+        Some(100),
+        None,
+        Some(parameters("{}")),
+        Some(parameters("{}")),
+        Some(id("local-tools/v1")),
+    );
+    assert_eq!(
+        EffectiveModelProfile::resolve(None, &unknown_output)
+            .unwrap()
+            .context()
+            .max_output_tokens(),
+        None
     );
 
     let invalid = ModelProfileLayer::new(
@@ -77,7 +94,7 @@ fn resolution_rejects_missing_fields_and_invalid_capability_limits() {
         EffectiveModelProfile::resolve(None, &invalid)
             .unwrap_err()
             .to_string()
-            .contains("max_output_tokens smaller")
+            .contains("max_output_tokens to be positive and smaller")
     );
 }
 

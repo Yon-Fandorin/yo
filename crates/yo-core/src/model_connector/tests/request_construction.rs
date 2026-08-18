@@ -133,6 +133,30 @@ fn disabled_exposure_omits_current_tools_without_dropping_historical_replay() {
     assert_eq!(body["input"][2]["type"], "function_call_output");
 }
 
+// 출력 상한을 알 수 없는 Responses 요청은 숫자를 대신 만들지 않고 wire body에서
+// max_output_tokens 전체 필드를 생략해 connector가 provider 기본 동작을 보존합니다.
+#[test]
+fn responses_omits_the_output_field_when_the_cap_is_unknown() {
+    let request = ResponsesRequest::new(
+        vec![ResponsesInputItem::Message {
+            role: ResponsesInputRole::User,
+            content: "hello".to_owned(),
+            refusal: None,
+        }],
+        RequestToolExposure::disabled(),
+        None,
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        request
+            .wire_body("model")
+            .get("max_output_tokens")
+            .is_none()
+    );
+}
+
 // enabled는 현재 registry projection을 뜻하므로 빈 목록을 disabled와 같은 의미로
 // 축약하지 않고 생성 단계에서 거절합니다.
 #[test]

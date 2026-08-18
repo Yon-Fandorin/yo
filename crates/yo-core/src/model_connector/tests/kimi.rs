@@ -95,14 +95,51 @@ fn k3_request_uses_only_the_closed_kimi_wire_fields() {
     }
 }
 
-// Code K3는 Platform K3와 달리 preserved-thinking과 caller의 typed cache hint를 함께
-// 보내며, hint가 없거나 endpoint/ModelId가 교차되면 transport 전에 실패합니다.
+// Kimi K3의 complete profile은 131072 hard max를 유지하지만 각 요청은 그 이하의
+// 양수 4096을 보낼 수 있고, hard max 초과와 unknown은 transport 전에 거절됩니다.
+#[test]
+fn kimi_accepts_a_smaller_positive_cap_and_rejects_overflow_or_unknown() {
+    let profile = admit_binding(&k3()).unwrap();
+    let input = || {
+        vec![ResponsesInputItem::Message {
+            role: ResponsesInputRole::User,
+            content: "hello".to_owned(),
+            refusal: None,
+        }]
+    };
+    let smaller = ResponsesRequest::new(
+        input(),
+        RequestToolExposure::disabled(),
+        4_096,
+        Some(ReasoningEffort::Max),
+    )
+    .unwrap();
+    assert_eq!(
+        wire_body(&smaller, "kimi-k3", profile).unwrap()["max_completion_tokens"],
+        4_096
+    );
+
+    for cap in [Some(131_073), None] {
+        let request = ResponsesRequest::new(
+            input(),
+            RequestToolExposure::disabled(),
+            cap,
+            Some(ReasoningEffort::Max),
+        )
+        .unwrap();
+        assert!(wire_body(&request, "kimi-k3", profile).is_err());
+    }
+}
+
+// 1M Code k3는 hard max 131072 이하의 request cap 4096, preserved-thinking, caller의 typed
+// cache hint를 함께 보냅니다. hint가 없거나 endpoint/ModelId가 교차되면 transport 전에
+// 실패합니다.
 #[test]
 fn code_k3_requires_preserved_thinking_and_typed_cache_affinity() {
     let complete = complete_at(
         "https://api.kimi.com/coding/v1",
-        "k3-256k",
-        262_144,
+        "k3",
+        1_048_576,
         131_072,
         r#"{"effort":"high"}"#,
         r#"{"thinking":{"type":"enabled","keep":"all"}}"#,
@@ -116,15 +153,16 @@ fn code_k3_requires_preserved_thinking_and_typed_cache_affinity() {
             refusal: None,
         }],
         RequestToolExposure::disabled(),
-        131_072,
+        4_096,
         Some(ReasoningEffort::High),
     )
     .unwrap();
-    assert!(wire_body(&request, "k3-256k", profile).is_err());
+    assert!(wire_body(&request, "k3", profile).is_err());
 
     let session = crate::fixture_session(31);
     let request = request.with_cache_affinity_hint(ModelCacheAffinityHint::for_session(session));
-    let body = wire_body(&request, "k3-256k", profile).unwrap();
+    let body = wire_body(&request, "k3", profile).unwrap();
+    assert_eq!(body["max_completion_tokens"], 4_096);
     assert_eq!(body["reasoning_effort"], "high");
     assert_eq!(body["thinking"], json!({"type": "enabled", "keep": "all"}));
     assert_eq!(body["prompt_cache_key"], session.to_string());

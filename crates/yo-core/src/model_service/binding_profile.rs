@@ -63,7 +63,7 @@ impl CompleteModelBinding {
             Some(dialect),
             Some(VersionedProfileId::new(tokenizer_profile)?),
             Some(input_token_limit),
-            Some(max_output_tokens),
+            max_output_tokens,
             Some(reasoning_parameters),
             Some(optional_request_parameters),
             Some(VersionedProfileId::new(tool_capability_policy)?),
@@ -95,7 +95,8 @@ struct DurableCompleteBinding {
     api_dialect: String,
     tokenizer_profile: String,
     input_token_limit: u64,
-    max_output_tokens: u64,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null_u64")]
+    max_output_tokens: Option<u64>,
     reasoning_parameters: ModelProfileParameters,
     optional_request_parameters: ModelProfileParameters,
     tool_capability_policy: String,
@@ -118,6 +119,13 @@ where
             "present replay_profile is outside the closed supported set",
         ))
     }
+}
+
+fn deserialize_optional_non_null_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    u64::deserialize(deserializer).map(Some)
 }
 
 fn validate_json_number_spellings(value: &str) -> Result<(), ModelServiceError> {

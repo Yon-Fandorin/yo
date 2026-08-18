@@ -60,8 +60,10 @@ pub(super) fn wire_body(request: &ResponsesRequest, model: &str) -> Result<Value
         "messages": messages,
         "stream": true,
         "stream_options": {"include_usage": true},
-        "max_tokens": request.max_output_tokens(),
     });
+    if let Some(max_output_tokens) = request.max_output_tokens() {
+        body["max_tokens"] = Value::from(max_output_tokens);
+    }
     if let Some(tools) = request.tools() {
         body["tools"] = Value::Array(
             tools
@@ -205,5 +207,29 @@ mod tests {
         assert!(body.get("tool_choice").is_none());
         assert_eq!(body["messages"][0]["tool_calls"][0]["id"], "call-1");
         assert_eq!(body["messages"][1]["role"], "tool");
+    }
+
+    // 출력 상한을 알 수 없는 Chat 요청은 0이나 임의의 숫자를 보내지 않고 max_tokens를
+    // 완전히 생략하므로 durable profile의 unknown 상태가 wire까지 그대로 전달됩니다.
+    #[test]
+    fn unknown_output_cap_omits_chat_max_tokens() {
+        let request = ResponsesRequest::new(
+            vec![ResponsesInputItem::Message {
+                role: ResponsesInputRole::User,
+                content: "hello".to_owned(),
+                refusal: None,
+            }],
+            RequestToolExposure::disabled(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(
+            wire_body(&request, "model")
+                .unwrap()
+                .get("max_tokens")
+                .is_none()
+        );
     }
 }

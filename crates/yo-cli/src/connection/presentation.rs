@@ -137,7 +137,7 @@ struct ProfileDetails {
     connector: String,
     tokenizer: String,
     input_limit: u64,
-    output_limit: u64,
+    output_limit: Option<u64>,
     reasoning: String,
     request_options: String,
     tools: String,
@@ -178,7 +178,9 @@ impl ProfileDetails {
             &format!(
                 "{} input · {} max output tokens",
                 readable_number(self.input_limit),
-                readable_number(self.output_limit)
+                self.output_limit
+                    .map(readable_number)
+                    .unwrap_or_else(|| "unknown".to_owned())
             ),
             width,
             style,

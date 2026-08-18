@@ -54,16 +54,20 @@ pub(super) fn wire_body(
     model: &str,
     profile: KimiWireProfile,
 ) -> Result<Value, ConnectorError> {
-    if request.max_output_tokens()
-        != match profile {
-            KimiWireProfile::PlatformK3 { .. } | KimiWireProfile::CodeK3 { .. } => 131_072,
-            KimiWireProfile::PlatformK27Code
-            | KimiWireProfile::PlatformK26
-            | KimiWireProfile::CodeK27 => 32_768,
-        }
-    {
+    let hard_max = match profile {
+        KimiWireProfile::PlatformK3 { .. } | KimiWireProfile::CodeK3 { .. } => 131_072,
+        KimiWireProfile::PlatformK27Code
+        | KimiWireProfile::PlatformK26
+        | KimiWireProfile::CodeK27 => 32_768,
+    };
+    let Some(request_cap) = request.max_output_tokens() else {
         return Err(configuration_failure(
-            "Kimi request output cap does not match its complete profile",
+            "Kimi requests require a known positive output cap",
+        ));
+    };
+    if request_cap > hard_max {
+        return Err(configuration_failure(
+            "Kimi request output cap exceeds its complete profile hard maximum",
         ));
     }
     let messages = replay::messages(request, profile)?;
@@ -71,7 +75,7 @@ pub(super) fn wire_body(
         "model": model,
         "messages": messages,
         "stream": true,
-        "max_completion_tokens": request.max_output_tokens(),
+        "max_completion_tokens": request_cap,
     });
     match profile {
         KimiWireProfile::PlatformK3 { effort } => {

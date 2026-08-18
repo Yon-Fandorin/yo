@@ -114,26 +114,28 @@ fn code_membership_rows_resolve_the_separate_endpoint_and_profiles() {
     assert!(fast.high_speed());
 }
 
-// exact k3의 256K 하위 membership은 지원하지만 k3-256k의 다른 context와 Platform
-// ModelId 교차 입력은 inventory에 남겨도 선택 불가능하게 해 제품 경계를 추론하지 않습니다.
+// Code k3의 1,048,576 context는 hard max 131,072인 complete binding으로 활성화하지만,
+// k3-256k에 같은 1M context를 붙이거나 Platform ModelId를 교차하면 inventory에만 남기고
+// 선택 불가능하게 해 reviewed product 경계를 추론하지 않습니다.
 #[test]
 fn code_membership_keeps_membership_range_and_cross_product_fail_closed() {
     let rows = json!({
         "object": "list",
         "data": [
-            {"object":"model","id":"k3","context_length":262144},
+            {"object":"model","id":"k3","context_length":1048576},
             {"object":"model","id":"k3-256k","context_length":1048576},
             {"object":"model","id":"kimi-k3","context_length":1048576}
         ]
     });
     let models = normalize_catalog(&code_seed(), &serde_json::to_vec(&rows).unwrap()).unwrap();
-    assert!(
-        models
-            .iter()
-            .find(|model| model.model_id().as_str() == "k3")
-            .unwrap()
-            .is_enabled()
-    );
+    let k3 = models
+        .iter()
+        .find(|model| model.model_id().as_str() == "k3")
+        .unwrap();
+    assert!(k3.is_enabled());
+    let profile = k3.entry().unwrap().complete_binding().unwrap().profile();
+    assert_eq!(profile.context().input_token_limit(), 1_048_576);
+    assert_eq!(profile.context().max_output_tokens(), Some(131_072));
     for id in ["k3-256k", "kimi-k3"] {
         assert_eq!(
             models

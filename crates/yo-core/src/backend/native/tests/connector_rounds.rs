@@ -308,15 +308,15 @@ fn native_backend_bounds_complete_semantic_and_private_replay_before_retention()
     assert!(state.round_replay.contains_key(&1));
 }
 
-// K2.7의 262,144 context에서 32,768 output을 예약한 뒤, message만이 아니라 connector가
-// 만든 tool 포함 전체 payload가 229,377이면 equality 경계 229,376을 넘어 전송 전에 닫힙니다.
+// K2.7의 tool 포함 payload가 229377 tokens이면 hard max 32768은 넘치므로 최종 payload를
+// cap 32767로 다시 세어 정확히 262144에 맞춘 요청 한 건만 전송합니다.
 #[test]
-fn kimi_context_admission_counts_the_complete_tool_projected_payload() {
+fn kimi_context_admission_selects_a_smaller_cap_from_the_complete_tool_payload() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let saw_tools = Arc::new(Mutex::new(false));
     let mut backend = NativeModelBackend::with_connector_and_profile(
         Box::new(MockConnector {
-            rounds: event_rounds(Vec::new()),
+            rounds: event_rounds(vec![Vec::new()]),
             requests: Arc::clone(&requests),
         }),
         kimi_k27_binding(),
@@ -345,15 +345,13 @@ fn kimi_context_admission_counts_the_complete_tool_projected_payload() {
         })
         .unwrap();
 
-    assert!(matches!(
-        drain_until_turn(&mut backend),
-        BackendEvent::TurnFinished {
-            outcome: TurnOutcome::Completed,
-            ..
-        }
-    ));
     assert!(*saw_tools.lock().unwrap());
-    assert!(requests.lock().unwrap().is_empty());
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].tokenization_payload("kimi-k2.7-code")["max_output_tokens"],
+        32_767
+    );
 }
 
 // visible refusal은 실패로 바꾸지 않고 Chat 전용 response identity와 assistant replay를 함께

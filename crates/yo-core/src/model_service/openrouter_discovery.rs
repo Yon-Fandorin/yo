@@ -43,8 +43,9 @@ impl OpenRouterAuthoredModel {
         })?;
         if input_token_limit
             .is_some_and(|value| value != complete.profile().context().input_token_limit())
-            || max_output_tokens
-                .is_some_and(|value| value != complete.profile().context().max_output_tokens())
+            || max_output_tokens.is_some_and(|value| {
+                Some(value) != complete.profile().context().max_output_tokens()
+            })
         {
             return Err(ModelServiceError::new(
                 "OpenRouter authored limit provenance does not match its complete profile",

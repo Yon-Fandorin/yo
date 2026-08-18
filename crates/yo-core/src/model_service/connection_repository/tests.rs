@@ -66,6 +66,17 @@ fn stored_binding(model: &str, effort: &str) -> StoredModelBinding {
     .unwrap()
 }
 
+fn stored_binding_with_unknown_output(model: &str) -> StoredModelBinding {
+    let durable = format!(
+        r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
+    );
+    StoredModelBinding::new(
+        crate::CompleteModelBinding::from_durable_json(&durable).unwrap(),
+        Some(format!("Model {model}")),
+    )
+    .unwrap()
+}
+
 fn stored_kimi_binding() -> StoredModelBinding {
     StoredModelBinding::new(
         crate::CompleteModelBinding::from_durable_json(
@@ -337,6 +348,25 @@ fn stored_upsert_round_trips_complete_state_and_first_preference() {
     assert!(!encoded.contains("secret"));
 }
 
+// unknown output binding을 저장하면 connections.yaml producer가 max_output_tokens를
+// 생략하고 capture가 None을 그대로 복원해 0이나 임의의 숫자로 바꾸지 않습니다.
+#[test]
+fn stored_unknown_output_limit_round_trips_by_omission() {
+    let (_directory, repository) = repository("unknown-output");
+    let binding = stored_binding_with_unknown_output("model-a");
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_model_upsert(stored_account(), binding.clone())
+        .unwrap()
+        .unwrap();
+    repository.commit(&mutation).unwrap();
+
+    let encoded = fs::read_to_string(repository.path()).unwrap();
+    assert!(!encoded.contains("max_output_tokens"));
+    assert_eq!(repository.capture().unwrap().models(), &[binding]);
+}
+
 // connections.yaml의 profile은 실행 동작만 저장하므로 폐기된 연결 검증 필드를
 // unknown field로 닫고 원문을 자동 변환하지 않습니다.
 #[test]
@@ -415,6 +445,7 @@ fn durable_optional_whole_field_nulls_are_rejected() {
             "preference:\n  kind: model\n  provider: qwencloud\n  account: default\n  model: model-a",
             "preference: null",
         ),
+        ("max_output_tokens: 100", "max_output_tokens: null"),
     ];
     for (index, (needle, replacement)) in replacements.into_iter().enumerate() {
         let (_directory, repository) = repository(&format!("optional-null-{index}"));

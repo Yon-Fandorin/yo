@@ -28,13 +28,22 @@ fn parameters(value: &str) -> ModelProfileParameters {
 }
 
 fn profile(reasoning: &str, optional: &str, policy: &str) -> EffectiveModelProfile {
+    profile_with_output(reasoning, optional, policy, Some(4_096))
+}
+
+fn profile_with_output(
+    reasoning: &str,
+    optional: &str,
+    policy: &str,
+    max_output_tokens: Option<u64>,
+) -> EffectiveModelProfile {
     EffectiveModelProfile::resolve(
         None,
         &ModelProfileLayer::new(
             Some(ApiDialect::OpenAiResponses),
             Some(VersionedProfileId::new("test-tokenizer/v1").unwrap()),
             Some(1_000_000),
-            Some(4_096),
+            max_output_tokens,
             Some(parameters(reasoning)),
             Some(parameters(optional)),
             Some(VersionedProfileId::new(policy).unwrap()),
@@ -58,6 +67,7 @@ fn backend_with_profile_and_registry(
     registry: crate::FrozenToolRegistry,
     requests: Arc<Mutex<Vec<crate::ModelConnectorRequest>>>,
 ) -> Result<NativeModelBackend, crate::BackendFailure> {
+    let model_context = profile.context().clone();
     NativeModelBackend::with_connector_and_profile(
         Box::new(MockConnector {
             rounds: event_rounds(vec![Vec::new()]),
@@ -70,7 +80,7 @@ fn backend_with_profile_and_registry(
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
         ),
-        context_profile(),
+        model_context,
         Some(profile),
         NativeModelBackendConfig::default(),
     )
@@ -179,6 +189,30 @@ fn explicit_profile_controls_reasoning_and_complete_binding_identity() {
     assert_eq!(value["reasoning_parameters"]["effort"], "high");
     assert_eq!(value["optional_request_parameters"], serde_json::json!({}));
     assert_eq!(value["tool_capability_policy"], "local-tools/v1");
+}
+
+// output hard maximum이 unknown인 complete profile은 durable native identity에
+// `max_output_tokens:null`을 만들지 않고 key 자체를 생략해 absence를 그대로 보존합니다.
+#[test]
+fn unknown_output_maximum_is_omitted_from_complete_binding_identity() {
+    let backend = backend_with_profile(profile_with_output(
+        r#"{"effort":"high"}"#,
+        "{}",
+        "local-tools/v1",
+        None,
+    ))
+    .unwrap();
+    let evidence = backend.binding_evidence(fixture_session(7));
+    let value: serde_json::Value =
+        serde_json::from_str(evidence.binding_identity().value()).unwrap();
+
+    assert!(value.get("max_output_tokens").is_none());
+    assert!(
+        !evidence
+            .binding_identity()
+            .value()
+            .contains("max_output_tokens")
+    );
 }
 
 // runtime이 아직 보내지 못하는 optional parameter나 알 수 없는 policy/profile은 설정
