@@ -121,6 +121,7 @@ pub(super) struct PtyChild {
     capture_release: Option<mpsc::Sender<()>>,
     ready_events: Vec<mpsc::Receiver<usize>>,
     output_events: mpsc::Receiver<usize>,
+    #[cfg(target_os = "linux")]
     screen_events: mpsc::Receiver<ScreenEvent>,
     slave: Option<std::os::fd::OwnedFd>,
     pub(super) original_termios: nix::sys::termios::Termios,
@@ -179,6 +180,10 @@ pub(super) struct ReadinessWaitFailure {
 impl ReadinessWaitFailure {
     pub(super) fn cleanup(&self) -> Result<&ChildReapReceipt, &str> {
         self.cleanup.as_ref().map_err(String::as_str)
+    }
+
+    pub(super) fn output(&self) -> &[u8] {
+        &self.output
     }
 }
 
@@ -290,6 +295,8 @@ impl PtyChild {
             })
             .unzip();
         let (screen_tx, screen_events) = mpsc::channel();
+        #[cfg(not(target_os = "linux"))]
+        drop(screen_events);
         let (output_tx, output_events) = mpsc::channel();
         let (capture_release, capture_pause) = pause_after_marker.map_or_else(
             || (None, None),
@@ -325,6 +332,7 @@ impl PtyChild {
             capture_release,
             ready_events,
             output_events,
+            #[cfg(target_os = "linux")]
             screen_events,
             slave: Some(pty.slave),
             original_termios,
@@ -371,11 +379,12 @@ impl PtyChild {
     }
 
     pub(super) fn wait_until_ready_marker_with_timeout(
-        &mut self,
+        mut self,
         marker: usize,
         timeout: Duration,
-    ) -> Result<usize, ReadinessWaitFailure> {
-        self.wait_until_ready_marker_after_with_timeout(marker, 0, timeout)
+    ) -> Result<(Self, usize), ReadinessWaitFailure> {
+        let end_offset = self.wait_until_ready_marker_after_with_timeout(marker, 0, timeout)?;
+        Ok((self, end_offset))
     }
 
     fn wait_until_ready_marker_after_with_timeout(
@@ -420,6 +429,7 @@ impl PtyChild {
         }
     }
 
+    #[cfg(target_os = "linux")]
     pub(super) fn wait_for_screen(&mut self, expected: ScreenEvent) {
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -441,6 +451,7 @@ impl PtyChild {
         }
     }
 
+    #[cfg(target_os = "linux")]
     pub(super) fn wait_until_stopped(&mut self) {
         let pid = self.pid();
         let deadline = std::time::Instant::now() + Duration::from_secs(5);

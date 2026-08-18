@@ -16,8 +16,12 @@ use yo_tui::{PresentationMode, TerminationEvent, TerminationSource};
 
 use super::support::{
     CHILD_MARKER, ChildReapReceipt, ENTER_ALTERNATE_SCREEN, PendingAgent, PtyChild,
-    RetainedChatAgent, assert_child_is_gone, assert_fullscreen_pair, run_fullscreen,
+    ReadinessWaitFailure, RetainedChatAgent, assert_child_is_gone, assert_fullscreen_pair,
+    run_fullscreen,
 };
+
+type ConsumingReadinessWait =
+    fn(PtyChild, usize, Duration) -> Result<(PtyChild, usize), ReadinessWaitFailure>;
 
 struct PendingTermination;
 
@@ -59,7 +63,7 @@ fn run_inline_with_retained_chat(
     Ok(())
 }
 
-// 실제 Linux PTY에서 Final Chat 항목은 active viewport 복구 전에 persistent output으로 한
+// 실제 Unix PTY에서 Final Chat 항목은 active viewport 복구 전에 persistent output으로 한
 // 번만 기록되고, 정상 종료 뒤 unpublished suffix가 없어 다시 출력되지 않는다.
 #[test]
 fn inline_normal_exit_retains_chat_after_viewport_restoration() {
@@ -93,7 +97,7 @@ fn inline_normal_exit_retains_chat_after_viewport_restoration() {
     );
 }
 
-// 80x24 실제 Linux PTY에서 비어 있는 Inline Chat은 terminal 전체 24행을 확보하지 않고
+// 80x24 실제 Unix PTY에서 비어 있는 Inline Chat은 terminal 전체 24행을 확보하지 않고
 // transcript floor, framed prompt와 chrome에 필요한 9행만 live region으로 할당한다.
 #[test]
 fn inline_empty_prompt_uses_a_compact_live_region() {
@@ -184,20 +188,60 @@ fn inline_resize_does_not_replay_published_history() {
     );
 }
 
-// PTY 준비 표식을 기다리다 시간 초과가 발생해도 중첩 테스트 자식을 즉시 회수해 후속
-// PTY 테스트와 훅 실행을 가로막는 고아 프로세스를 남기지 않는다.
+// 준비 표식이 제한 시간 안에 나타나면 consuming wait는 같은 PID의 live owner와 실제
+// 표식 끝 offset을 돌려주며, 반환 owner로 입력·정상 종료·termios 복구·단일 reap을 마친다.
 #[test]
-fn readiness_timeout_reaps_the_nested_pty_child() {
-    let mut child = PtyChild::spawn(
-        "pty_tests::normal_exit::child_inline_empty_prompt",
-        b"YO_MARKER_THAT_NEVER_APPEARS",
+fn consuming_readiness_wait_returns_the_live_owner_on_success() {
+    const RETAINED: &[u8] = b"YO_INLINE_RETAINED";
+    let _: ConsumingReadinessWait = PtyChild::wait_until_ready_marker_with_timeout;
+    let child = PtyChild::spawn(
+        "pty_tests::normal_exit::child_inline_retains_chat",
+        RETAINED,
     );
+    let pid = child.pid();
+
+    let (mut child, marker_offset) = child
+        .wait_until_ready_marker_with_timeout(0, Duration::from_secs(5))
+        .unwrap_or_else(|error| panic!("the fixture marker must appear: {error}"));
+    assert_eq!(
+        child.pid(),
+        pid,
+        "the successful wait must return its owner"
+    );
+    child.input().write_all(&[0x04]).unwrap();
+    child.input().flush().unwrap();
+
+    let (status, output) = child.finish();
+    assert!(
+        status.success(),
+        "child failed:\n{}",
+        String::from_utf8_lossy(&output)
+    );
+    assert_eq!(
+        marker_offset,
+        position(&output, RETAINED) + RETAINED.len(),
+        "the successful wait must return the observed marker's end offset"
+    );
+    assert_child_is_gone(pid);
+}
+
+// 이미 한 표식을 관측한 PTY에서 다음 표식이 사라져도 consuming timeout은 8KiB 이하
+// 출력을 보존하고 exact SIGKILL receipt를 돌려준 뒤 owner 없이 반환해 child를 남기지 않는다.
+#[test]
+fn readiness_timeout_consumes_and_reaps_the_exact_child() {
+    const RETAINED: &[u8] = b"YO_INLINE_RETAINED";
+    let mut child = PtyChild::spawn_with_ready_markers(
+        "pty_tests::normal_exit::child_inline_retains_chat",
+        &[RETAINED, b"YO_MARKER_THAT_NEVER_APPEARS"],
+    );
+    child.wait_until_ready_marker(0);
     let pid = child.pid();
 
     let started = std::time::Instant::now();
     let error = child
-        .wait_until_ready_marker_with_timeout(0, Duration::from_millis(100))
-        .expect_err("the fixture marker must remain absent");
+        .wait_until_ready_marker_with_timeout(1, Duration::from_millis(100))
+        .err()
+        .expect("the fixture marker must remain absent");
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "readiness cleanup must remain bounded: {error}"
@@ -213,6 +257,18 @@ fn readiness_timeout_reaps_the_nested_pty_child() {
         ),
         "a readiness timeout must retain the exact-child waitpid receipt: {error}"
     );
+    assert!(
+        error
+            .output()
+            .windows(RETAINED.len())
+            .any(|candidate| candidate == RETAINED),
+        "the failure must retain output observed before the timeout: {error}"
+    );
+    assert!(
+        error.output().len() <= 8 * 1024,
+        "the readiness diagnostic must retain only the bounded output window"
+    );
+    assert_child_is_gone(pid);
 }
 
 // Parent assertion unwind는 finish 호출 여부와 무관하게 Drop owner가 실행 중인 nested
@@ -282,7 +338,7 @@ fn panic_unwind_releases_a_paused_pty_capture() {
     assert_child_is_gone(pid.unwrap());
 }
 
-// 실제 Linux PTY에서 Ctrl+D 정상 종료가 대체 화면과 termios를 모두 원래 상태로 복구한다.
+// 실제 Unix PTY에서 Ctrl+D 정상 종료가 대체 화면과 termios를 모두 원래 상태로 복구한다.
 #[test]
 fn fullscreen_normal_exit_restores_real_pty() {
     let mut child = PtyChild::spawn(
