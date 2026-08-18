@@ -255,12 +255,16 @@ fn preview_resolves_the_exact_lower_priority_startup_target() {
     }
 }
 
-// --yes 범위가 둘 이상의 target이면 모델을 추측하지 않고 실패합니다.
+// --yes 범위가 둘 이상의 stored target이면 선택 오류가 나며, 기존 binding·preference·
+// account/catalog·credential의 값과 revision 및 operation journal 부재를 모두 보존합니다.
 #[test]
-fn automatic_ambiguity_fails_before_mutation() {
+fn automatic_ambiguity_preserves_every_repository_state_before_disconnect_intent() {
     let fixture = Fixture::new("selection-errors");
     let config_path = fixture.config_path("session: {}\n");
-    fixture.seed_stored(&["alpha", "beta"], None);
+    fixture.seed_stored(&["alpha", "beta"], Some("alpha"));
+    fixture.seed_credential();
+    let before_connections = fixture.connections().capture().unwrap();
+    let before_credentials = fixture.credentials().capture().unwrap();
     let mut input = FakeInput {
         selected: None,
         confirmed: true,
@@ -278,7 +282,70 @@ fn automatic_ambiguity_fails_before_mutation() {
         &mut input,
     )
     .unwrap_err();
+
     assert!(error.to_string().contains("--yes never guesses"));
+    assert!(input.selections.is_empty());
+    assert!(input.summaries.is_empty());
+
+    let after_connections = fixture.connections().capture().unwrap();
+    assert_eq!(after_connections.revision(), before_connections.revision());
+    assert_eq!(after_connections.models(), before_connections.models());
+    assert_eq!(
+        after_connections.preference(),
+        before_connections.preference()
+    );
+    assert_eq!(after_connections.accounts(), before_connections.accounts());
+    assert_eq!(
+        after_connections.catalog_seeds(),
+        before_connections.catalog_seeds()
+    );
+
+    let after_credentials = fixture.credentials().capture().unwrap();
+    assert_eq!(after_credentials.revision(), before_credentials.revision());
+    assert_eq!(
+        after_credentials.resolve(&provider(), &account()),
+        before_credentials.resolve(&provider(), &account())
+    );
+    assert!(!fixture.root.join("connection-operation.yaml").exists());
+}
+
+// stored target이 하나도 없으면 선택 오류가 나고, 비어 있던 connection·credential·
+// operation journal 경로를 만들지 않아 pre-intent 실패가 저장소를 생성하지 않음을 보입니다.
+#[test]
+fn zero_candidate_selection_error_leaves_repository_paths_absent() {
+    let fixture = Fixture::new("zero-candidate-selection-error");
+    let config_path = fixture.config_path("session: {}\n");
+    let connection_path = fixture.root.join("connections.yaml");
+    let credential_path = fixture.root.join("credentials.yaml");
+    let operation_path = fixture.root.join("connection-operation.yaml");
+    assert!(!connection_path.exists());
+    assert!(!credential_path.exists());
+    assert!(!operation_path.exists());
+    let mut input = FakeInput {
+        selected: None,
+        confirmed: true,
+        selections: Vec::new(),
+        summaries: Vec::new(),
+    };
+
+    let error = execute_external_disconnect_with(
+        &config_path,
+        DisconnectCommand {
+            provider: Some("vendor".to_owned()),
+            account: Some("team".to_owned()),
+            yes: true,
+            verbose: false,
+        },
+        &mut input,
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("no stored model target matches"));
+    assert!(input.selections.is_empty());
+    assert!(input.summaries.is_empty());
+    assert!(!connection_path.exists());
+    assert!(!credential_path.exists());
+    assert!(!operation_path.exists());
 }
 
 // 마지막 stored model을 대화형으로 제거하는 preview는 credential remove뿐 아니라
