@@ -31,14 +31,6 @@ impl PresentationStyle {
         }
     }
 
-    fn for_stdout() -> Self {
-        if std::io::stdout().is_terminal() && env::var_os("NO_COLOR").is_none() {
-            Self::Ansi
-        } else {
-            Self::Plain
-        }
-    }
-
     fn push(self, output: &mut String, ansi: &str, value: &str) {
         if self == Self::Ansi {
             output.push_str(ansi);
@@ -921,48 +913,214 @@ pub(super) fn default_width() -> NonZeroU16 {
     NonZeroU16::new(DEFAULT_WIDTH).expect("the default terminal width is nonzero")
 }
 
-pub(super) fn connect_success(target: &str, registered: usize, default: &str) -> String {
-    let style = PresentationStyle::for_stdout();
-    let mut output = String::new();
-    style.push(&mut output, ANSI_GREEN, "✓");
-    output.push(' ');
-    style.push(&mut output, ANSI_BOLD, "Connected");
-    write!(
-        output,
-        "\n\n  Model       {target}\n  Registered  {registered} model {}\n  Default     {default}\n",
-        plural(registered, "profile", "profiles")
-    )
-    .expect("writing to String cannot fail");
-    output
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct SuccessPresentation {
+    width: NonZeroU16,
+    style: PresentationStyle,
 }
 
-pub(super) fn import_success(account: &str, registered: usize, default: &str) -> String {
-    let style = PresentationStyle::for_stdout();
-    let mut output = String::new();
-    style.push(&mut output, ANSI_GREEN, "✓");
-    output.push(' ');
-    style.push(&mut output, ANSI_BOLD, "Imported");
-    write!(
-        output,
-        "\n\n  Account     {account}\n  Registered  {registered} model {}\n  Default     {default}\n",
-        plural(registered, "profile", "profiles")
-    )
-    .expect("writing to String cannot fail");
-    output
+impl SuccessPresentation {
+    fn for_stdout() -> Self {
+        let stdout = std::io::stdout();
+        let terminal = stdout.is_terminal();
+        Self::for_output(&stdout, terminal, env::var_os("NO_COLOR").is_some())
+    }
+
+    fn for_output(output: &impl std::os::fd::AsFd, terminal: bool, no_color: bool) -> Self {
+        let width = terminal
+            .then(|| rustix::termios::tcgetwinsize(output).ok())
+            .flatten()
+            .and_then(|size| NonZeroU16::new(size.ws_col))
+            .unwrap_or_else(default_width);
+        let style = if terminal && !no_color {
+            PresentationStyle::Ansi
+        } else {
+            PresentationStyle::Plain
+        };
+        Self { width, style }
+    }
+
+    #[cfg(test)]
+    pub(super) const fn plain(width: NonZeroU16) -> Self {
+        Self {
+            width,
+            style: PresentationStyle::Plain,
+        }
+    }
 }
 
-pub(super) fn disconnect_success(target: &str, api_key: &str, default: &str) -> String {
-    let style = PresentationStyle::for_stdout();
-    let mut output = String::new();
-    style.push(&mut output, ANSI_GREEN, "✓");
-    output.push(' ');
-    style.push(&mut output, ANSI_BOLD, "Disconnected");
-    write!(
-        output,
-        "\n\n  Model    {target}\n  API key  {api_key}\n  Default  {default}\n"
+pub(super) fn connect_success(
+    target: &str,
+    registered: usize,
+    default: &str,
+) -> Result<String, PresentationError> {
+    connect_success_with(
+        SuccessPresentation::for_stdout(),
+        target,
+        registered,
+        default,
     )
-    .expect("writing to String cannot fail");
-    output
+}
+
+fn connect_success_with(
+    presentation: SuccessPresentation,
+    target: &str,
+    registered: usize,
+    default: &str,
+) -> Result<String, PresentationError> {
+    render_success(
+        presentation,
+        "Connected",
+        12,
+        &[
+            ("Model", target.to_owned()),
+            (
+                "Registered",
+                format!(
+                    "{registered} model {}",
+                    plural(registered, "profile", "profiles")
+                ),
+            ),
+            ("Default", default.to_owned()),
+        ],
+    )
+}
+
+pub(super) fn import_success(
+    account: &str,
+    registered: usize,
+    default: &str,
+) -> Result<String, PresentationError> {
+    import_success_with(
+        SuccessPresentation::for_stdout(),
+        account,
+        registered,
+        default,
+    )
+}
+
+fn import_success_with(
+    presentation: SuccessPresentation,
+    account: &str,
+    registered: usize,
+    default: &str,
+) -> Result<String, PresentationError> {
+    render_success(
+        presentation,
+        "Imported",
+        12,
+        &[
+            ("Account", account.to_owned()),
+            (
+                "Registered",
+                format!(
+                    "{registered} model {}",
+                    plural(registered, "profile", "profiles")
+                ),
+            ),
+            ("Default", default.to_owned()),
+        ],
+    )
+}
+
+pub(super) fn disconnect_success(
+    target: &str,
+    api_key: &str,
+    default: &str,
+) -> Result<String, PresentationError> {
+    disconnect_success_with(SuccessPresentation::for_stdout(), target, api_key, default)
+}
+
+pub(super) fn disconnect_success_with(
+    presentation: SuccessPresentation,
+    target: &str,
+    api_key: &str,
+    default: &str,
+) -> Result<String, PresentationError> {
+    render_success(
+        presentation,
+        "Disconnected",
+        9,
+        &[
+            ("Model", target.to_owned()),
+            ("API key", api_key.to_owned()),
+            ("Default", default.to_owned()),
+        ],
+    )
+}
+
+fn render_success(
+    presentation: SuccessPresentation,
+    heading: &str,
+    label_width: usize,
+    fields: &[(&str, String)],
+) -> Result<String, PresentationError> {
+    let width = usize::from(presentation.width.get());
+    let style = presentation.style;
+    let mut output = String::new();
+    push_success_heading(&mut output, heading, width, style)?;
+    output.push('\n');
+    for (label, value) in fields {
+        push_success_field(&mut output, label, value, label_width, width)?;
+    }
+    Ok(output)
+}
+
+fn push_success_heading(
+    output: &mut String,
+    heading: &str,
+    width: usize,
+    style: PresentationStyle,
+) -> Result<(), PresentationError> {
+    let inline = format!("✓ {heading}");
+    if safe_width(&inline)? <= width {
+        style.push(output, ANSI_GREEN, "✓");
+        output.push(' ');
+        style.push(output, ANSI_BOLD, heading);
+        output.push('\n');
+        return Ok(());
+    }
+    style.push(output, ANSI_GREEN, "✓");
+    output.push('\n');
+    for line in wrap(heading, width)? {
+        style.push(output, ANSI_BOLD, &line);
+        output.push('\n');
+    }
+    Ok(())
+}
+
+fn push_success_field(
+    output: &mut String,
+    label: &str,
+    value: &str,
+    label_width: usize,
+    width: usize,
+) -> Result<(), PresentationError> {
+    let inline_prefix = FIELD_INDENT + label_width;
+    let inline_width = width.saturating_sub(inline_prefix);
+    if safe_width(label)? <= label_width
+        && width > inline_prefix
+        && widest_grapheme(value)? <= inline_width
+    {
+        let prefix = format!("  {label:<label_width$}");
+        let continuation = " ".repeat(inline_prefix);
+        for (index, line) in wrap(value, inline_width)?.iter().enumerate() {
+            output.push_str(if index == 0 { &prefix } else { &continuation });
+            output.push_str(line);
+            output.push('\n');
+        }
+    } else {
+        let content_width = width;
+        for line in wrap(label, content_width)? {
+            output.push_str(&line);
+            output.push('\n');
+        }
+        for line in wrap(value, content_width)? {
+            output.push_str(&line);
+            output.push('\n');
+        }
+    }
+    Ok(())
 }
 
 fn push_title(
@@ -1266,6 +1424,13 @@ fn safe_width(value: &str) -> Result<usize, PresentationError> {
     })
 }
 
+fn widest_grapheme(value: &str) -> Result<usize, PresentationError> {
+    value.graphemes(true).try_fold(0_usize, |width, text| {
+        let grapheme = Grapheme::try_from(text)?;
+        Ok(width.max(usize::from(grapheme.width().get())))
+    })
+}
+
 fn plural<'a>(count: usize, one: &'a str, many: &'a str) -> &'a str {
     if count == 1 { one } else { many }
 }
@@ -1342,7 +1507,7 @@ mod tests {
     #[test]
     fn connect_success_reports_one_registered_model() {
         assert_eq!(
-            connect_success("vendor:team:alpha", 1, "vendor:team:alpha"),
+            connect_success("vendor:team:alpha", 1, "vendor:team:alpha").unwrap(),
             "✓ Connected\n\n  Model       vendor:team:alpha\n  Registered  1 model profile\n  Default     vendor:team:alpha\n"
         );
     }
@@ -1658,6 +1823,149 @@ mod tests {
             wrap("\u{200b}", 80),
             Err(PresentationError::UnsafeText(GraphemeError::ZeroWidth))
         ));
+    }
+
+    // stdout success presenter는 1~80열의 모든 ASCII identity를 손실 없이 자체 줄바꿈하고,
+    // ANSI는 장식만 더하므로 제거하면 같은 plain 의미와 정확한 값을 복원할 수 있습니다.
+    #[test]
+    fn success_presentations_fit_every_width_and_preserve_ascii_values() {
+        let target = format!(
+            "{}:{}:{}",
+            "p".repeat(256),
+            "a".repeat(256),
+            "m".repeat(256)
+        );
+        for columns in 1..=80 {
+            let width = width(columns);
+            let plain_presentation = SuccessPresentation::plain(width);
+            let ansi_presentation = SuccessPresentation {
+                width,
+                style: PresentationStyle::Ansi,
+            };
+            let outputs = [
+                (
+                    connect_success_with(plain_presentation, &target, 2, &target).unwrap(),
+                    connect_success_with(ansi_presentation, &target, 2, &target).unwrap(),
+                ),
+                (
+                    import_success_with(plain_presentation, &target, 2, &target).unwrap(),
+                    import_success_with(ansi_presentation, &target, 2, &target).unwrap(),
+                ),
+                (
+                    disconnect_success_with(plain_presentation, &target, "Kept", &target).unwrap(),
+                    disconnect_success_with(ansi_presentation, &target, "Kept", &target).unwrap(),
+                ),
+            ];
+
+            for (plain, styled) in outputs {
+                let stripped = strip_ansi(&styled);
+                assert_eq!(stripped, plain);
+                let compact = plain
+                    .chars()
+                    .filter(|character| !character.is_whitespace())
+                    .collect::<String>();
+                assert!(compact.matches(&target).count() >= 2);
+                for line in stripped.lines() {
+                    assert!(
+                        cell_width(line).unwrap() <= usize::from(columns),
+                        "{columns}-cell success output received overwide line {line:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // 두 셀 atomic grapheme는 2~80열에서 분할·대체 없이 보존되지만 1열에서는 보존과
+    // 폭 준수를 동시에 만족할 수 없어 기존 typed GraphemeExceedsWidth로 명시적으로 실패합니다.
+    #[test]
+    fn success_presentation_rejects_a_two_cell_grapheme_only_at_width_one() {
+        for columns in 2..=80 {
+            let output = disconnect_success_with(
+                SuccessPresentation::plain(width(columns)),
+                "vendor:team:한",
+                "Kept",
+                "vendor:team:한",
+            )
+            .unwrap();
+            let compact = output
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect::<String>();
+            assert!(compact.matches("vendor:team:한").count() >= 2);
+            assert!(
+                output
+                    .lines()
+                    .all(|line| cell_width(line).unwrap() <= usize::from(columns))
+            );
+        }
+
+        assert!(matches!(
+            disconnect_success_with(
+                SuccessPresentation::plain(width(1)),
+                "vendor:team:한",
+                "Kept",
+                "unset",
+            ),
+            Err(PresentationError::GraphemeExceedsWidth {
+                grapheme_width: 2,
+                width: 1
+            })
+        ));
+    }
+
+    // terminal stdout snapshot은 nonzero winsize를 사용하고 zero 또는 non-terminal이면 80열로
+    // 돌아가며, ANSI 선택은 같은 snapshot의 terminal 여부와 NO_COLOR 입력에만 따릅니다.
+    #[test]
+    fn success_snapshot_uses_terminal_width_with_zero_and_redirected_fallbacks() {
+        use nix::pty::openpty;
+        use rustix::termios::{Winsize, tcsetwinsize};
+
+        let pty = openpty(None, None).unwrap();
+        tcsetwinsize(
+            &pty.slave,
+            Winsize {
+                ws_row: 24,
+                ws_col: 37,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            SuccessPresentation::for_output(&pty.slave, true, false),
+            SuccessPresentation {
+                width: width(37),
+                style: PresentationStyle::Ansi,
+            }
+        );
+        assert_eq!(
+            SuccessPresentation::for_output(&pty.slave, true, true).style,
+            PresentationStyle::Plain
+        );
+
+        tcsetwinsize(
+            &pty.slave,
+            Winsize {
+                ws_row: 0,
+                ws_col: 0,
+                ws_xpixel: 0,
+                ws_ypixel: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            SuccessPresentation::for_output(&pty.slave, true, false).width,
+            default_width()
+        );
+
+        let redirected = std::fs::File::open("/dev/null").unwrap();
+        assert_eq!(
+            SuccessPresentation::for_output(&redirected, false, false),
+            SuccessPresentation {
+                width: default_width(),
+                style: PresentationStyle::Plain,
+            }
+        );
     }
 
     fn strip_ansi(value: &str) -> String {

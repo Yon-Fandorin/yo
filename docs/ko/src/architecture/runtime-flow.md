@@ -770,8 +770,9 @@ seed의 exact reference 하나를 받는다. Prospective 집합은 해당 Provid
 선택한 complete binding으로 만든다. 선택한 coordinate의 이전 binding은 등록 개수에서 제외하고
 verbose preview에서 이전 profile과 새 profile을 비교할 때만 남길 수 있다. Prospective 저장
 upsert는 secret을 읽기 전에 startup-policy admission을 통과해야 한다. Yo는 확인을 받은 뒤 controlling TTY에서만
-크기가 제한된 API key 하나를 읽는다. 이때 echo를 끄고 정확한 terminal
-설정을 복구한다. 명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
+크기가 제한된 API key 하나를 읽는다. Credential capture는 `ISIG`를 유지하고 `ECHO`와
+`ICANON`을 끄며 `VMIN=1`, `VTIME=0`으로 설정한 뒤 정확한 원래 terminal 설정을 복구한다.
+명시적 복구가 오류를 반환하면 보존된 guard가 unwind 중 복구를 재시도한다.
 줄 단위 controlling-TTY prompt에는 모두 16,384-byte 입력 한계가 있다. 초과하면 Yo는 한계
 오류를 반환하기 전에 아직 읽지 않은 terminal input queue를 비우고, queue flush 실패는 별도
 오류로 보고하며, credential prompt에서는 어느 오류든 반환하기 전에 echo를 복구한다.
@@ -785,7 +786,11 @@ LF 또는 CRLF 하나만 제거하고 16,384-byte UTF-8 `ApiCredential` 규칙�
 file을 바꾸거나 노출하지 않는다. 새 plan 전에 recovery가 이전 operation을 이미 완료했을 수는
 있다. 환경 변수, secret argument 값, standard input, child process, config file은 credential
 channel이 아니다.
-확인 화면은 선택 target을 먼저 보여주고, 안정적인 의미 plan marker(`+`, `~`, `−`, `=`)로
+확인은 먼저 complete preview를 memory에 만든다. 그 preview와 prompt를 게시하기 직전에
+controlling-TTY의 대기 입력을 비워 그 뒤 새로 들어온 line만 plan을 승인할 수 있게 한다.
+Flush 실패는 prompt 게시나 repository mutation 전의 별도 치명적 input-boundary 오류다.
+Noninteractive `--yes`는 별도의 captured-plan 승인 경로로 유지된다. 확인 화면은 선택 target을
+먼저 보여주고, 안정적인 의미 plan marker(`+`, `~`, `−`, `=`)로
 생성, 변경, 제거, 유지 효과를 구분한다. 기본 화면은 판단에 필요한 이 변경 집합을 유지하고,
 credential action에 Provider와 Account를 한 번만 표시한 뒤 그 account에 등록할 각각의 정확한
 Model ID를 한 번씩 나열하며, 간결한 plan 개수로 끝난다. `-v` 또는 `--verbose`는 model을
@@ -796,11 +801,14 @@ Model ID는 그대로 표시하고, 목록 구분자나 모호한 공백·따옴
 JSON string 따옴표로 표시한다. 항목과 구분자가 inline 목록 폭에 함께 맞지 않으면 맞는 ID를
 자르거나 구분자만 다음 줄에 두지 않고 별도 bullet 행으로 전환한다. Credential 행은
 repository가 준비한 action에서 파생하므로 새 key 추가와 기존 key 교체가 오해를 부르는 같은
-문구를 쓰지 않는다. Check 표시가 있는 성공 요약으로 command를 끝낸다. 색과 강조는
-terminal에서만 의미 marker를 보조하며 `NO_COLOR`와 redirect된 standard output은 평문을
-유지한다. Controlling TTY 폭을 읽어 terminal-safe한 폭 0이 아닌 grapheme을 직접 줄바꿈하고,
-shell의 우연한 줄바꿈에 의존하지 않으면서 secret이 아닌 값의 exact bytes를 보존한다. 폭을
-읽을 수 없으면 80열 fallback을 사용한다.
+문구를 쓰지 않는다. Check 표시가 있는 성공 요약으로 command를 끝낸다. Preview는 controlling-TTY
+폭을 쓴다. Success rendering은 standard output을 한 번 snapshot하여 terminal이면 0이 아닌
+열 수를 쓰고, 폭을 읽을 수 없거나 0이면 80열로 fallback한다. Redirect된 output은 결정적인
+평문이며 `NO_COLOR`도 terminal output을 평문으로 유지한다. 두 경로 모두 terminal-safe한 폭
+0이 아닌 grapheme을 자르거나 분리하지 않고 직접 줄바꿈하여, shell의 우연한 줄바꿈에 의존하지
+않으면서 secret이 아닌 값의 exact bytes를 보존한다. 두 셀 atomic grapheme을 1열에 표시하려면
+typed width 오류로 실패한다. Complete success output은 첫 operation commit 전에 준비하므로
+표시 실패가 이미 commit된 상태를 command 실패처럼 보이게 만들지 않는다.
 
 Command는 candidate key로 모델 요청을 보내지 않는다. 확인 뒤 capture한 config를 다시
 검사하고 secret-free intent를 게시한 뒤 exact add 또는

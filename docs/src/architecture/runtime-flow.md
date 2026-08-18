@@ -838,9 +838,10 @@ coordinate is excluded from registration accounting; verbose preview may retain
 it only to compare old and new profiles. The prospective stored upsert must pass
 startup-policy admission before any secret is read. Yo
 requires confirmation, then reads one bounded API key only from the controlling
-TTY with echo disabled and exact terminal settings
-restored. If explicit restoration reports an error, the retained guard retries
-restoration while unwinding. Every line-oriented controlling-TTY prompt has a
+TTY. Credential capture retains `ISIG`, clears `ECHO` and `ICANON`, sets
+`VMIN=1` and `VTIME=0`, and restores the exact original terminal settings. If
+explicit restoration reports an error, the retained guard retries restoration
+while unwinding. Every line-oriented controlling-TTY prompt has a
 16,384-byte input limit. On overflow Yo flushes the unread terminal input queue
 before returning the limit error, reports a flush failure separately, and for a
 credential prompt restores echo before returning either error. An external exact
@@ -858,7 +859,12 @@ changes or exposes the source file. Recovery may already have completed an
 older operation before the new plan. Environment variables, secret argument
 values, standard input, child processes, and config files are not credential
 channels.
-The confirmation presents the selected target, then uses stable semantic plan
+The confirmation first renders the complete preview in memory. Immediately
+before publishing that preview and its prompt, Yo flushes queued controlling-TTY
+input so only a fresh following line can authorize the plan; flush failure is a
+distinct fatal input-boundary error before prompt publication or repository
+mutation. Noninteractive `--yes` remains a separate captured-plan authorization
+path. The confirmation presents the selected target, then uses stable semantic plan
 markers (`+`, `~`, `−`, and `=`) to distinguish create, change, remove, and keep
 effects. The default view keeps that decision-facing change set, names the
 Provider and Account once on the credential action, lists each exact Model ID
@@ -875,11 +881,16 @@ separator. The
 credential row is derived
 from the prepared repository action, so adding a new key and replacing an
 existing key cannot share misleading copy. A checked success summary closes the
-command. Color and emphasis augment those markers only on a terminal; `NO_COLOR`
-and redirected standard output stay plain. The presenter reads the controlling
-TTY width and wraps terminal-safe nonzero-width graphemes itself, preserving
-exact non-secret value bytes rather than relying on the shell's incidental line
-wrapping; an unavailable width uses an 80-column fallback.
+command. Preview rendering uses the controlling-TTY width. Success rendering
+samples standard output once: terminal output uses its nonzero column count,
+while unavailable or zero width falls back to 80; redirected output is plain and
+deterministic, and `NO_COLOR` keeps terminal output plain. Both paths wrap
+terminal-safe nonzero-width graphemes without truncation or splitting and
+preserve exact non-secret value bytes rather than relying on the shell's
+incidental line wrapping. A two-cell atomic grapheme at width one fails with the
+typed width error. The complete success output is prepared before the first
+operation commit, so presentation failure cannot turn committed state into an
+apparent command failure.
 
 The command does not use the candidate key for a model request. After
 confirmation it revalidates the captured config, publishes a

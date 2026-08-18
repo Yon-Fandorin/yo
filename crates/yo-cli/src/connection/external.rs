@@ -199,14 +199,16 @@ fn execute_definition_import_with(
         .verify_unchanged()
         .map_err(|error| AppError::single("guarding Yo configuration", error))?;
     let registered = prepared.binding_count();
-    session
-        .commit_external_connection(prepared, credential)
-        .map_err(|error| AppError::single("publishing the grouped definition", error))?;
-    Ok(import_success(
+    let success = import_success(
         &account_reference,
         registered,
         &display_target(preference_after.as_ref()),
-    ))
+    )
+    .map_err(|error| AppError::single("formatting the connection import success", error))?;
+    session
+        .commit_external_connection(prepared, credential)
+        .map_err(|error| AppError::single("publishing the grouped definition", error))?;
+    Ok(success)
 }
 
 struct DefinitionChanges {
@@ -655,13 +657,15 @@ where
             input.read_credential(&account_reference)?
         },
     };
-    finalize(&mut session, &config, prepared, candidate, remote_selected)?;
-
-    Ok(connect_success(
+    let success = connect_success(
         &display_target(Some(&StartupTarget::Model(selection.clone()))),
         binding_count,
         &display_target(preference.as_ref()),
-    ))
+    )
+    .map_err(|error| AppError::single("formatting the connection success", error))?;
+    finalize(&mut session, &config, prepared, candidate, remote_selected)?;
+
+    Ok(success)
 }
 
 struct ExternalConnectPlan {

@@ -10,8 +10,8 @@ use super::{
     input::{ExternalDisconnectInput, TtyConnectionInput},
     operation_repositories,
     presentation::{
-        Confirmation, DisconnectEffect, DisconnectImpact, DisconnectPreview, RemainingBinding,
-        disconnect_success, display_model_item, escape_remote_text,
+        Confirmation, DisconnectEffect, DisconnectImpact, DisconnectPreview, PresentationError,
+        RemainingBinding, disconnect_success, display_model_item, escape_remote_text,
     },
     selection_for_binding,
 };
@@ -29,6 +29,15 @@ fn execute_external_disconnect_with(
     config_path: &Path,
     command: DisconnectCommand,
     input: &mut impl ExternalDisconnectInput,
+) -> Result<String, AppError> {
+    execute_external_disconnect_with_success(config_path, command, input, disconnect_success)
+}
+
+fn execute_external_disconnect_with_success(
+    config_path: &Path,
+    command: DisconnectCommand,
+    input: &mut impl ExternalDisconnectInput,
+    render_success: impl FnOnce(&str, &str, &str) -> Result<String, PresentationError>,
 ) -> Result<String, AppError> {
     let repositories = operation_repositories(config_path)?;
     let mut session = repositories
@@ -57,16 +66,18 @@ fn execute_external_disconnect_with(
     config
         .verify_unchanged()
         .map_err(|error| AppError::single("guarding Yo configuration", error))?;
+    let target = escape_remote_text(&selection.canonical_reference());
+    let success = render_success(
+        &target,
+        action_label(plan.credential_action),
+        &display_target(plan.preference_after.as_ref()),
+    )
+    .map_err(|error| AppError::single("formatting the disconnect success", error))?;
     session
         .commit_external_disconnect(prepared)
         .map_err(|error| AppError::single("publishing the external disconnect", error))?;
 
-    let target = escape_remote_text(&selection.canonical_reference());
-    Ok(disconnect_success(
-        &target,
-        action_label(plan.credential_action),
-        &display_target(plan.preference_after.as_ref()),
-    ))
+    Ok(success)
 }
 
 fn select_stored_target(

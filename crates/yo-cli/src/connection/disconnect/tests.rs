@@ -1,5 +1,17 @@
-use std::{fs, path::PathBuf, time::SystemTime};
+use std::{
+    fs,
+    io::{ErrorKind, Read, Write},
+    num::NonZeroU16,
+    path::PathBuf,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant, SystemTime},
+};
 
+use nix::{
+    fcntl::{FcntlArg, OFlag, fcntl},
+    pty::openpty,
+};
 use yo_core::{
     AccountId, ApiCredential, CompleteModelBinding, ConnectionAccount, ConnectionCatalogSeed,
     LocalConnectionRepository, LocalCredentialRepository, ModelId, ProviderId, VersionedProfileId,
@@ -426,6 +438,152 @@ fn changed_config_after_confirmation_aborts_before_disconnect_intent() {
     assert!(!fixture.root.join("connection-operation.yaml").exists());
 }
 
+// width=1에서는 exact target의 두 셀 grapheme를 보존하며 표시할 수 없으므로 success를
+// commit 전에 완성하는 경계가 typed formatting error를 돌려주고 세 저장소를 그대로 둡니다.
+#[test]
+fn width_one_success_failure_precedes_disconnect_commit() {
+    let fixture = Fixture::new("width-one-success");
+    let config_path = fixture.config_path("session: {}\n");
+    fixture.seed_stored(&["alpha", "한"], Some("한"));
+    fixture.seed_credential();
+    let before_public = fs::read(fixture.connections().path()).unwrap();
+    let before_credential = fs::read(fixture.credentials().path()).unwrap();
+    let mut input = FakeInput {
+        selected: Some("vendor:team:alpha".to_owned()),
+        confirmed: true,
+        selections: Vec::new(),
+        summaries: Vec::new(),
+    };
+
+    let error = execute_external_disconnect_with_success(
+        &config_path,
+        DisconnectCommand {
+            provider: None,
+            account: None,
+            yes: false,
+            verbose: false,
+        },
+        &mut input,
+        |_, api_key, default| {
+            super::super::presentation::disconnect_success_with(
+                super::super::presentation::SuccessPresentation::plain(NonZeroU16::new(1).unwrap()),
+                "한",
+                api_key,
+                default,
+            )
+        },
+    )
+    .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("formatting the disconnect success")
+    );
+    assert!(error.to_string().contains("2-cell"));
+    assert_eq!(
+        fs::read(fixture.connections().path()).unwrap(),
+        before_public
+    );
+    assert_eq!(
+        fs::read(fixture.credentials().path()).unwrap(),
+        before_credential
+    );
+    assert!(!fixture.root.join("connection-operation.yaml").exists());
+}
+
+// target과 y/n을 한 canonical PTY write로 미리 보내도 preview 직전 TCIFLUSH가 두 번째
+// line을 버립니다. 새 답 전에는 종료·mutation이 없고 새 y만 commit하며 새 n은 취소합니다.
+#[test]
+fn queued_confirmation_line_cannot_authorize_disconnect() {
+    for (queued, fresh, commits) in [(b'y', b'y', true), (b'n', b'n', false)] {
+        let fixture = Fixture::new(if commits { "queued-y" } else { "queued-n" });
+        let config_path = fixture.config_path("session: {}\n");
+        fixture.seed_stored(&["alpha", "beta"], None);
+        fixture.seed_credential();
+        let before_public = fs::read(fixture.connections().path()).unwrap();
+        let before_credential = fs::read(fixture.credentials().path()).unwrap();
+        let pty = openpty(None, None).unwrap();
+        let mut master = fs::File::from(pty.master);
+        fcntl(&master, FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).unwrap();
+        let (result_tx, result_rx) = mpsc::channel();
+        let worker_config = config_path.clone();
+        let worker = thread::spawn(move || {
+            let mut input = TtyConnectionInput::with_terminal(fs::File::from(pty.slave));
+            let result = execute_external_disconnect_with(
+                &worker_config,
+                DisconnectCommand {
+                    provider: None,
+                    account: None,
+                    yes: false,
+                    verbose: false,
+                },
+                &mut input,
+            )
+            .map_err(|error| error.to_string());
+            result_tx.send(result).unwrap();
+        });
+
+        read_until(
+            &mut master,
+            b"Target: ",
+            Instant::now() + Duration::from_secs(2),
+        );
+        let queued_input = format!("vendor:team:beta\n{}\n", char::from(queued));
+        write_until(
+            &mut master,
+            queued_input.as_bytes(),
+            Instant::now() + Duration::from_secs(2),
+        );
+        read_until(
+            &mut master,
+            b"Apply this disconnect plan? [y/N] ",
+            Instant::now() + Duration::from_secs(2),
+        );
+
+        assert!(matches!(
+            result_rx.recv_timeout(Duration::from_millis(250)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        assert_eq!(
+            fs::read(fixture.connections().path()).unwrap(),
+            before_public
+        );
+        assert_eq!(
+            fs::read(fixture.credentials().path()).unwrap(),
+            before_credential
+        );
+        assert!(!fixture.root.join("connection-operation.yaml").exists());
+
+        write_until(
+            &mut master,
+            &[fresh, b'\n'],
+            Instant::now() + Duration::from_secs(2),
+        );
+        let result = result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("disconnect did not finish after the fresh answer")
+            .expect("disconnect returned an unexpected error");
+        worker.join().unwrap();
+
+        if commits {
+            assert!(result.starts_with("✓ Disconnected"));
+            assert_eq!(fixture.connections().capture().unwrap().models().len(), 1);
+        } else {
+            assert_eq!(result, "Disconnect cancelled; nothing changed.\n");
+            assert_eq!(
+                fs::read(fixture.connections().path()).unwrap(),
+                before_public
+            );
+        }
+        assert_eq!(
+            fs::read(fixture.credentials().path()).unwrap(),
+            before_credential
+        );
+        assert!(!fixture.root.join("connection-operation.yaml").exists());
+    }
+}
+
 // 이전 operation journal이 손상돼 있으면 새 config/selection/TTY보다 recovery가 먼저
 // 실패하여, 사용자가 새 disconnect를 승인해 기존 복구 문제를 덮는 일이 없습니다.
 #[test]
@@ -456,6 +614,37 @@ fn pending_recovery_failure_precedes_new_disconnect_input() {
     assert!(!error.to_string().contains("invalid configuration"));
     assert!(input.selections.is_empty());
     assert!(input.summaries.is_empty());
+}
+
+fn read_until(file: &mut fs::File, needle: &[u8], deadline: Instant) -> Vec<u8> {
+    let mut output = Vec::new();
+    while !output.windows(needle.len()).any(|window| window == needle) {
+        let mut buffer = [0_u8; 1024];
+        match file.read(&mut buffer) {
+            Ok(0) => panic!("PTY closed before expected output appeared"),
+            Ok(count) => output.extend_from_slice(&buffer[..count]),
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline, "PTY output deadline expired");
+                thread::yield_now();
+            },
+            Err(error) => panic!("reading PTY output failed: {error}"),
+        }
+    }
+    output
+}
+
+fn write_until(file: &mut fs::File, mut bytes: &[u8], deadline: Instant) {
+    while !bytes.is_empty() {
+        match file.write(bytes) {
+            Ok(0) => panic!("PTY stopped accepting input"),
+            Ok(count) => bytes = &bytes[count..],
+            Err(error) if error.kind() == ErrorKind::WouldBlock => {
+                assert!(Instant::now() < deadline, "PTY input deadline expired");
+                thread::yield_now();
+            },
+            Err(error) => panic!("writing PTY input failed: {error}"),
+        }
+    }
 }
 
 struct Fixture {
