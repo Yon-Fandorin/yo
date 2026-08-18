@@ -125,7 +125,9 @@ mod tests {
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let root = std::env::temp_dir().join(format!(
+            let temp_dir = fs::canonicalize(std::env::temp_dir())
+                .expect("the observation fixture temp directory must resolve physically");
+            let root = temp_dir.join(format!(
                 "yo-model-observation-{}-{name}-{nonce}",
                 std::process::id()
             ));
