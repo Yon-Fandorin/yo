@@ -1,5 +1,5 @@
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs::{File, OpenOptions},
     io::Read,
     os::{
@@ -18,6 +18,7 @@ use std::{
 
 use nix::{
     dir::Dir,
+    errno::Errno,
     fcntl::{AtFlags, OFlag, openat},
     sys::stat::{Mode, SFlag, fstat, fstatat},
 };
@@ -38,6 +39,8 @@ mod read;
 
 const HOST_IDENTITY: &str = "yo.local-workspace-tools/v1";
 const MAX_LIST_ENTRIES: usize = 100_000;
+// list_files는 private common-output owner와 이 exact marker의 공간만 공유합니다.
+const LIST_TRUNCATION_MARKER: &str = "\n[yo: tool output truncated]";
 static NEW_FILE_MODE: OnceLock<u32> = OnceLock::new();
 
 pub(crate) fn initialize_process_file_mode() {
@@ -49,6 +52,7 @@ pub(super) fn validate_arguments(
     arguments: &Value,
 ) -> Result<(), ToolExecutionError> {
     match definition.id().as_str() {
+        "list-files" => LocalToolHost::list_path(arguments, "path").map(drop),
         "read-files" => read::parse_requests(arguments, LocalToolHost::basic_path).map(drop),
         "edit-file" => mutation::parse_edit(arguments, LocalToolHost::basic_path).map(drop),
         "write-file" => mutation::parse_write(arguments, LocalToolHost::basic_path).map(drop),
@@ -148,13 +152,21 @@ impl LocalToolHost {
             .collect())
     }
 
-    fn basic_path(value: &str) -> Result<read::AdmittedPath, ToolExecutionError> {
+    fn admitted_path_components(value: &str) -> Result<Vec<OsString>, ToolExecutionError> {
         if value.len() > 1_024 || value.chars().any(char::is_control) {
             return Err(ToolExecutionError::new(
                 "tool path exceeds its byte bound or contains a control character",
             ));
         }
-        let components = Self::path_components(value)?;
+        Self::path_components(value)
+    }
+
+    fn list_path(arguments: &Value, name: &str) -> Result<Vec<OsString>, ToolExecutionError> {
+        Self::admitted_path_components(string_argument(arguments, name)?)
+    }
+
+    fn basic_path(value: &str) -> Result<read::AdmittedPath, ToolExecutionError> {
+        let components = Self::admitted_path_components(value)?;
         if components.is_empty() {
             return Err(ToolExecutionError::new(
                 "tool file path must not name the workspace root",
@@ -164,7 +176,7 @@ impl LocalToolHost {
     }
 
     fn open_directory(&self, value: &str) -> Result<(Dir, PathBuf), ToolExecutionError> {
-        let components = Self::path_components(value)?;
+        let components = Self::admitted_path_components(value)?;
         let relative = components.iter().collect();
         let descriptor = open_beneath(
             &self.workspace_directory,
@@ -390,94 +402,170 @@ fn read_file(file: impl Read, limit: usize, cancelled: &AtomicBool) -> ToolExecu
 }
 
 fn list_files(
-    root: Dir,
-    root_relative: PathBuf,
+    mut directory: Dir,
+    relative_directory: PathBuf,
     limit: usize,
     cancelled: &AtomicBool,
 ) -> ToolExecutionResult {
-    let mut pending = vec![(root, root_relative)];
-    let mut output = String::new();
-    let mut truncated = false;
-    let mut visited_entries = 0_usize;
-    'walk: while let Some((mut directory, relative_directory)) = pending.pop() {
+    let retained = retain_list_names(
+        directory.iter().map(|entry| {
+            entry.map(|entry| OsString::from(OsStr::from_bytes(entry.file_name().to_bytes())))
+        }),
+        MAX_LIST_ENTRIES,
+        cancelled,
+    );
+    let RetainedListNames { names, truncated } = match retained {
+        Ok(retained) => retained,
+        Err(ListObservationError::Interrupted) => return interrupted(),
+        Err(ListObservationError::Failed) => return failed("list_files failed"),
+    };
+    render_list_names(
+        names,
+        &relative_directory,
+        limit,
+        truncated,
+        cancelled,
+        |name| classify_list_entry(&directory, name),
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ListObservationError {
+    Interrupted,
+    Failed,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RetainedListNames {
+    names: Vec<OsString>,
+    truncated: bool,
+}
+
+fn retain_list_names(
+    mut entries: impl Iterator<Item = Result<OsString, Errno>>,
+    maximum: usize,
+    cancelled: &AtomicBool,
+) -> Result<RetainedListNames, ListObservationError> {
+    let mut names = Vec::with_capacity(maximum.min(4_096));
+    let truncated = loop {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(ListObservationError::Interrupted);
+        }
+        let entry = entries.next();
+        if cancelled.load(Ordering::Acquire) {
+            return Err(ListObservationError::Interrupted);
+        }
+        let Some(entry) = entry else {
+            break false;
+        };
+        let name = entry.map_err(|_| ListObservationError::Failed)?;
+        if name.as_bytes() == b"." || name.as_bytes() == b".." {
+            continue;
+        }
+        if names.len() == maximum {
+            break true;
+        }
+        names.push(name);
+    };
+    names.sort_unstable_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+    Ok(RetainedListNames { names, truncated })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ListedEntryKind {
+    Directory,
+    Regular,
+    Excluded,
+}
+
+fn classify_list_entry(directory: &Dir, name: &OsStr) -> Result<ListedEntryKind, Errno> {
+    let metadata = fstatat(directory, name, AtFlags::AT_SYMLINK_NOFOLLOW)?;
+    let file_type = SFlag::from_bits_truncate(metadata.st_mode) & SFlag::S_IFMT;
+    Ok(if file_type == SFlag::S_IFDIR {
+        ListedEntryKind::Directory
+    } else if file_type == SFlag::S_IFREG {
+        ListedEntryKind::Regular
+    } else {
+        ListedEntryKind::Excluded
+    })
+}
+
+fn render_list_names(
+    names: Vec<OsString>,
+    relative_directory: &Path,
+    limit: usize,
+    mut truncated: bool,
+    cancelled: &AtomicBool,
+    mut classify: impl FnMut(&OsStr) -> Result<ListedEntryKind, Errno>,
+) -> ToolExecutionResult {
+    let reserved_limit = limit.saturating_sub(LIST_TRUNCATION_MARKER.len());
+    let mut complete_output = String::new();
+    let mut reserved_output = String::new();
+    let mut reserved_open = limit > LIST_TRUNCATION_MARKER.len();
+
+    for name in names {
         if cancelled.load(Ordering::Acquire) {
             return interrupted();
         }
-        let mut names = Vec::new();
-        for entry in directory.iter() {
+        if name.as_bytes() == b".git" {
+            continue;
+        }
+        let Some(name) = name
+            .to_str()
+            .filter(|name| !name.chars().any(char::is_control))
+        else {
+            truncated = true;
+            continue;
+        };
+        let kind = match classify(OsStr::new(name)) {
+            Ok(kind) => kind,
+            Err(Errno::ENOENT) => continue,
+            Err(_) => return failed("list_files failed"),
+        };
+        if cancelled.load(Ordering::Acquire) {
+            return interrupted();
+        }
+        let directory = matches!(kind, ListedEntryKind::Directory);
+        if matches!(kind, ListedEntryKind::Excluded) {
+            continue;
+        }
+        let relative = relative_directory.join(name);
+        let token = relative
+            .to_str()
+            .expect("an admitted path joined with exact UTF-8 remains UTF-8");
+        let token_len = token.len().saturating_add(usize::from(directory));
+        if token_len > 1_024 || token.chars().any(char::is_control) {
+            truncated = true;
+            continue;
+        }
+        let line = if directory {
+            format!("{token}/\n")
+        } else {
+            format!("{token}\n")
+        };
+        if reserved_open {
+            if reserved_output.len().saturating_add(line.len()) <= reserved_limit {
+                reserved_output.push_str(&line);
+            } else {
+                reserved_open = false;
+            }
+        }
+        if complete_output.len().saturating_add(line.len()) > limit {
             if cancelled.load(Ordering::Acquire) {
                 return interrupted();
             }
-            let Ok(entry) = entry else {
-                return failed("list_files failed");
-            };
-            let name = entry.file_name().to_bytes();
-            if name == b"." || name == b".." {
-                continue;
-            }
-            visited_entries = visited_entries.saturating_add(1);
-            if visited_entries > MAX_LIST_ENTRIES {
-                truncated = true;
-                break 'walk;
-            }
-            names.push(OsString::from(std::ffi::OsStr::from_bytes(name)));
+            return completed(reserved_output, true);
         }
-        names.sort();
-        let mut child_directories = Vec::new();
-        for name in names {
-            let Ok(metadata) = fstatat(&directory, name.as_os_str(), AtFlags::AT_SYMLINK_NOFOLLOW)
-            else {
-                return failed("list_files failed");
-            };
-            let file_type = SFlag::from_bits_truncate(metadata.st_mode);
-            if file_type.contains(SFlag::S_IFLNK) {
-                continue;
-            }
-            let relative = relative_directory.join(&name);
-            if file_type.contains(SFlag::S_IFDIR) {
-                if name != ".git" {
-                    let Ok(child) = Dir::openat(
-                        &directory,
-                        name.as_os_str(),
-                        OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_DIRECTORY | OFlag::O_NOFOLLOW,
-                        Mode::empty(),
-                    ) else {
-                        return failed("list_files failed");
-                    };
-                    child_directories.push((child, relative));
-                }
-                continue;
-            }
-            if !file_type.contains(SFlag::S_IFREG) {
-                continue;
-            }
-            let Ok(file) = openat(
-                &directory,
-                name.as_os_str(),
-                OFlag::O_RDONLY | OFlag::O_CLOEXEC | OFlag::O_NOFOLLOW | OFlag::O_NONBLOCK,
-                Mode::empty(),
-            ) else {
-                return failed("list_files failed");
-            };
-            let Ok(opened_metadata) = fstat(&file) else {
-                return failed("list_files failed");
-            };
-            if !SFlag::from_bits_truncate(opened_metadata.st_mode).contains(SFlag::S_IFREG) {
-                return failed("list_files path changed during traversal");
-            }
-            let line = format!("{}\n", relative.display());
-            if output.len().saturating_add(line.len()) > limit {
-                truncated = true;
-                break;
-            }
-            output.push_str(&line);
-        }
-        pending.extend(child_directories.into_iter().rev());
-        if truncated {
-            break;
-        }
+        complete_output.push_str(&line);
     }
-    completed(output, truncated)
+    if cancelled.load(Ordering::Acquire) {
+        return interrupted();
+    }
+    if truncated {
+        completed(reserved_output, true)
+    } else {
+        completed(complete_output, false)
+    }
 }
 
 fn read_bounded(mut reader: impl Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
@@ -501,22 +589,31 @@ fn read_bounded(mut reader: impl Read, limit: usize) -> std::io::Result<(Vec<u8>
 #[cfg(test)]
 mod tests {
     use std::{
+        cell::Cell,
+        ffi::{OsStr, OsString},
         fs,
         io::{Read, Write},
-        os::unix::fs::{PermissionsExt, symlink},
+        os::unix::{
+            ffi::OsStringExt,
+            fs::{PermissionsExt, symlink},
+        },
+        path::Path,
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize, Ordering},
         },
     };
 
+    use nix::errno::Errno;
     use yo_core::ToolExecutionHost;
 
     #[cfg(target_vendor = "apple")]
     use super::normalize_device_id;
     use super::{
         super::tests::{TestDirectory, finish, request},
-        LocalToolHost, list_files, open_regular_file, read_bounded, read_file,
+        LIST_TRUNCATION_MARKER, ListObservationError, ListedEntryKind, LocalToolHost,
+        MAX_LIST_ENTRIES, list_files, open_regular_file, read_bounded, read_file,
+        render_list_names, retain_list_names,
     };
     use crate::local_tools::registry::{LocalToolRegistryRevision, registry};
 
@@ -647,5 +744,343 @@ mod tests {
         let listing = list_files(directory, relative, 1024, &AtomicBool::new(false));
         assert!(listing.output().contains("listed/inside.txt"));
         assert!(!listing.output().contains("outside.txt"));
+    }
+
+    // list_files 경로는 file 경로와 같은 byte/control/traversal 경계를 사용하지만 `.`의
+    // 정규화 결과인 workspace root는 허용해, root의 immediate child를 안전하게 나열합니다.
+    #[test]
+    fn list_path_admission_allows_root_and_rejects_ambiguous_inputs_before_open() {
+        let workspace = TestDirectory::new();
+        fs::write(workspace.0.join("root.txt"), "root").unwrap();
+        fs::create_dir(workspace.0.join("nested")).unwrap();
+        fs::write(workspace.0.join("nested/child.txt"), "child").unwrap();
+        let host = LocalToolHost::new(&workspace.0, &workspace.0.join("credentials.yaml")).unwrap();
+        let (directory, relative) = host.open_directory("./.").unwrap();
+        let result = list_files(directory, relative, 1024, &AtomicBool::new(false));
+        assert_eq!(result.output(), "nested/\nroot.txt\n");
+        let (directory, relative) = host.open_directory("./nested/./").unwrap();
+        let nested = list_files(directory, relative, 1024, &AtomicBool::new(false));
+        assert_eq!(nested.output(), "nested/child.txt\n");
+        assert!(LocalToolHost::basic_path(".").is_err());
+
+        for rejected in ["", "../outside", "/absolute", "bad\nname"] {
+            assert!(
+                host.open_directory(rejected).is_err(),
+                "accepted {rejected:?}"
+            );
+        }
+        assert!(host.open_directory(&"a".repeat(1_025)).is_err());
+    }
+
+    // raw entry 한도는 정렬 전에 iteration 순서로 자르고 100001번째만 probe하므로,
+    // 전역 정렬로 더 작은 뒤쪽 이름을 선택하거나 probe 뒤를 읽는 구현을 막습니다.
+    #[test]
+    fn raw_entry_budget_uses_one_probe_before_unsigned_sorting() {
+        let cancelled = AtomicBool::new(false);
+        let pulled = Cell::new(0_usize);
+        let entries = [b".".as_slice(), b"z", b"a", b"b", b"unread"]
+            .into_iter()
+            .map(|name| {
+                pulled.set(pulled.get() + 1);
+                Ok(OsString::from_vec(name.to_vec()))
+            });
+        let retained = retain_list_names(entries, 2, &cancelled).unwrap();
+        assert_eq!(retained.names, [OsString::from("a"), OsString::from("z")]);
+        assert!(retained.truncated);
+        assert_eq!(pulled.get(), 4);
+
+        let exact = retain_list_names(
+            (0..MAX_LIST_ENTRIES).map(|index| Ok(OsString::from(index.to_string()))),
+            MAX_LIST_ENTRIES,
+            &cancelled,
+        )
+        .unwrap();
+        assert_eq!(exact.names.len(), MAX_LIST_ENTRIES);
+        assert!(!exact.truncated);
+
+        let probed = Cell::new(0_usize);
+        let over = retain_list_names(
+            (0..MAX_LIST_ENTRIES + 2).map(|index| {
+                probed.set(probed.get() + 1);
+                Ok(OsString::from(index.to_string()))
+            }),
+            MAX_LIST_ENTRIES,
+            &cancelled,
+        )
+        .unwrap();
+        assert_eq!(over.names.len(), MAX_LIST_ENTRIES);
+        assert!(over.truncated);
+        assert_eq!(probed.get(), MAX_LIST_ENTRIES + 1);
+    }
+
+    // `.`과 `..`만 budget 밖이며 `.git`은 retained slot을 소비한 뒤 분류 없이 빠져,
+    // `.git`을 공짜 이름으로 취급해 다음 entry까지 노출하는 변형을 구분합니다.
+    #[test]
+    fn dot_git_consumes_the_raw_budget_without_classification() {
+        let retained = retain_list_names(
+            [".", "..", ".git", "visible"]
+                .into_iter()
+                .map(|name| Ok(OsString::from(name))),
+            1,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(retained.names, [OsString::from(".git")]);
+        assert!(retained.truncated);
+
+        let calls = Cell::new(0_usize);
+        let result = render_list_names(
+            retained.names,
+            Path::new(""),
+            4096,
+            retained.truncated,
+            &AtomicBool::new(false),
+            |_| {
+                calls.set(calls.get() + 1);
+                Ok(ListedEntryKind::Regular)
+            },
+        );
+        assert_eq!(calls.get(), 0);
+        assert!(result.output().is_empty());
+        assert!(result.truncated());
+    }
+
+    // UTF-8로 표현할 수 없거나 control scalar가 든 raw name은 fstatat 전에 빠지고,
+    // 정상 이름만 한 번 분류되어 lossy/escape 경로가 model output에 생기지 않습니다.
+    #[test]
+    fn unrepresentable_names_are_truncated_before_classification() {
+        let classified = Cell::new(0_usize);
+        let result = render_list_names(
+            vec![
+                OsString::from_vec(vec![0xff]),
+                OsString::from("control\nname"),
+                OsString::from("valid"),
+            ],
+            Path::new("selected"),
+            4096,
+            false,
+            &AtomicBool::new(false),
+            |name| {
+                assert_eq!(name, OsStr::new("valid"));
+                classified.set(classified.get() + 1);
+                Ok(ListedEntryKind::Regular)
+            },
+        );
+        assert_eq!(classified.get(), 1);
+        assert_eq!(result.output(), "selected/valid\n");
+        assert!(result.truncated());
+    }
+
+    // directory의 `/`까지 포함한 model-visible token은 1024 bytes를 허용하고 1025
+    // bytes부터 생략+truncated로 바뀌어, LF만 제외한다는 경계를 고정합니다.
+    #[test]
+    fn rendered_directory_token_enforces_the_complete_byte_limit() {
+        let at_limit = render_list_names(
+            vec![OsString::from("b")],
+            Path::new(&"a".repeat(1_021)),
+            4096,
+            false,
+            &AtomicBool::new(false),
+            |_| Ok(ListedEntryKind::Directory),
+        );
+        assert_eq!(at_limit.output().len(), 1_025);
+        assert!(!at_limit.truncated());
+
+        let over = render_list_names(
+            vec![OsString::from("b")],
+            Path::new(&"a".repeat(1_022)),
+            4096,
+            false,
+            &AtomicBool::new(false),
+            |_| Ok(ListedEntryKind::Directory),
+        );
+        assert!(over.output().is_empty());
+        assert!(over.truncated());
+
+        let regular = render_list_names(
+            vec![OsString::from("é")],
+            Path::new(&"a".repeat(1_021)),
+            4096,
+            false,
+            &AtomicBool::new(false),
+            |_| Ok(ListedEntryKind::Regular),
+        );
+        assert_eq!(regular.output().len(), 1_025);
+        assert!(!regular.truncated());
+
+        let regular_over = render_list_names(
+            vec![OsString::from("é")],
+            Path::new(&"a".repeat(1_022)),
+            4096,
+            false,
+            &AtomicBool::new(false),
+            |_| Ok(ListedEntryKind::Regular),
+        );
+        assert!(regular_over.output().is_empty());
+        assert!(regular_over.truncated());
+    }
+
+    // ENOENT는 사라진 child 하나만 건너뛰지만, 이미 만든 줄 뒤의 EIO도 전체 결과를
+    // exact Failed로 바꿔 partial output과 truncated 상태가 새지 않게 합니다.
+    #[test]
+    fn metadata_failure_discards_partial_output_but_enoent_skips_one_child() {
+        let names = vec![OsString::from("a"), OsString::from("b")];
+        let skipped = render_list_names(
+            names.clone(),
+            Path::new(""),
+            4096,
+            false,
+            &AtomicBool::new(false),
+            |name| {
+                if name == "a" {
+                    Err(Errno::ENOENT)
+                } else {
+                    Ok(ListedEntryKind::Regular)
+                }
+            },
+        );
+        assert_eq!(skipped.output(), "b\n");
+        assert!(!skipped.truncated());
+
+        let failed = render_list_names(
+            names,
+            Path::new(""),
+            4096,
+            false,
+            &AtomicBool::new(false),
+            |name| {
+                if name == "b" {
+                    Err(Errno::EIO)
+                } else {
+                    Ok(ListedEntryKind::Regular)
+                }
+            },
+        );
+        assert_eq!(failed.outcome(), yo_core::ToolExecutionOutcome::Failed);
+        assert_eq!(failed.output(), "list_files failed");
+        assert!(!failed.truncated());
+
+        assert_eq!(
+            retain_list_names(
+                [Ok(OsString::from("a")), Err(Errno::EIO)].into_iter(),
+                10,
+                &AtomicBool::new(false),
+            ),
+            Err(ListObservationError::Failed)
+        );
+    }
+
+    // 마지막 fstatat 동안 취소가 도착해도 publication 전 check가 이를 관찰하여,
+    // 직전에 만든 정상 줄까지 버리고 exact Interrupted만 반환합니다.
+    #[test]
+    fn cancellation_after_the_last_classification_discards_output() {
+        let cancelled = AtomicBool::new(false);
+        let result = render_list_names(
+            vec![OsString::from("first"), OsString::from("last")],
+            Path::new(""),
+            4096,
+            false,
+            &cancelled,
+            |name| {
+                if name == "last" {
+                    cancelled.store(true, Ordering::Release);
+                }
+                Ok(ListedEntryKind::Regular)
+            },
+        );
+        assert_eq!(result.outcome(), yo_core::ToolExecutionOutcome::Interrupted);
+        assert_eq!(result.output(), "interrupted");
+        assert!(!result.truncated());
+    }
+
+    // 불완전 결과는 common marker 전체를 먼저 예약하고 완전한 LF 줄만 넘기며,
+    // tiny bound는 빈 worker prefix로 남겨 상위 bounded_output이 marker prefix만 만듭니다.
+    #[test]
+    fn incomplete_listing_reserves_the_exact_marker_without_cutting_lines() {
+        assert_eq!(LIST_TRUNCATION_MARKER, "\n[yo: tool output truncated]");
+        for limit in [0, 1, 27, 28, 29] {
+            let result = render_list_names(
+                vec![OsString::from("a")],
+                Path::new(""),
+                limit,
+                true,
+                &AtomicBool::new(false),
+                |_| Ok(ListedEntryKind::Regular),
+            );
+            assert!(result.output().is_empty(), "limit {limit}");
+            assert!(result.truncated());
+        }
+        for (limit, expected) in [
+            (LIST_TRUNCATION_MARKER.len() + 1, ""),
+            (LIST_TRUNCATION_MARKER.len() + 2, "a\n"),
+            (LIST_TRUNCATION_MARKER.len() + 3, "a\n"),
+        ] {
+            let result = render_list_names(
+                vec![OsString::from("a")],
+                Path::new(""),
+                limit,
+                true,
+                &AtomicBool::new(false),
+                |_| Ok(ListedEntryKind::Regular),
+            );
+            assert_eq!(result.output(), expected, "limit {limit}");
+            assert!(result.truncated());
+        }
+
+        let long = "x".repeat(20);
+        let result = render_list_names(
+            vec![
+                OsString::from(format!("a{long}")),
+                OsString::from(format!("b{long}")),
+                OsString::from(format!("c{long}")),
+            ],
+            Path::new(""),
+            LIST_TRUNCATION_MARKER.len() + 22,
+            false,
+            &AtomicBool::new(false),
+            |_| Ok(ListedEntryKind::Regular),
+        );
+        assert_eq!(result.output(), format!("a{long}\n"));
+        assert!(result.truncated());
+
+        let exact = render_list_names(
+            vec![OsString::from("a"), OsString::from("b")],
+            Path::new(""),
+            4,
+            false,
+            &AtomicBool::new(false),
+            |_| Ok(ListedEntryKind::Regular),
+        );
+        assert_eq!(exact.output(), "a\nb\n");
+        assert!(!exact.truncated());
+    }
+
+    // 선택 directory의 child는 fstatat만 한 번 호출해 regular와 directory를 표시하고,
+    // nested content, symlink, FIFO, `.git`은 열거나 재귀 방문하지 않습니다.
+    #[test]
+    fn lists_only_immediate_children_without_opening_them() {
+        let workspace = TestDirectory::new();
+        let listed = workspace.0.join("listed");
+        let nested = listed.join("nested");
+        let visible = listed.join("visible.txt");
+        fs::create_dir(&listed).unwrap();
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("hidden.txt"), "hidden").unwrap();
+        fs::write(&visible, "visible").unwrap();
+        fs::create_dir(listed.join(".git")).unwrap();
+        symlink("visible.txt", listed.join("link")).unwrap();
+        nix::unistd::mkfifo(&listed.join("pipe"), nix::sys::stat::Mode::S_IRUSR).unwrap();
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o000)).unwrap();
+        fs::set_permissions(&visible, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let host = LocalToolHost::new(&workspace.0, &workspace.0.join("credentials.yaml")).unwrap();
+        let (directory, relative) = host.open_directory("listed").unwrap();
+        let result = list_files(directory, relative, 1024, &AtomicBool::new(false));
+
+        fs::set_permissions(&nested, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&visible, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(result.outcome(), yo_core::ToolExecutionOutcome::Completed);
+        assert_eq!(result.output(), "listed/nested/\nlisted/visible.txt\n");
+        assert!(!result.truncated());
     }
 }

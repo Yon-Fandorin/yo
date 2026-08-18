@@ -56,7 +56,7 @@ fn basic_registry() -> Result<ToolRegistry, ToolExecutionError> {
         definition(
             "list-files",
             "list_files",
-            "List files recursively below one directory inside the current workspace.",
+            "List immediate children of one directory inside the current workspace.",
             path_schema("Workspace-relative directory path."),
             ToolEffect::ReadOnly,
             ToolApprovalRequirement::Automatic,
@@ -103,7 +103,7 @@ fn legacy_registry() -> Result<ToolRegistry, ToolExecutionError> {
         definition(
             "list-files",
             "list_files",
-            "List files recursively below one directory inside the current workspace.",
+            "List immediate children of one directory inside the current workspace.",
             legacy_path_schema(),
             ToolEffect::ReadOnly,
             ToolApprovalRequirement::Automatic,
@@ -259,7 +259,7 @@ fn write_file_schema() -> Value {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use yo_core::{ModelReplayContract, ToolApprovalRequirement, ToolEffect};
+    use yo_core::{ModelReplayContract, ModelReplayTool, ToolApprovalRequirement, ToolEffect};
 
     use super::{LocalToolRegistryRevision, registry, revision_for_replay_contract};
 
@@ -295,6 +295,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["read_file", "list_files", "run_command"]
         );
+        let shallow_description =
+            "List immediate children of one directory inside the current workspace.";
+        assert_eq!(basic.definitions()[0].description(), shallow_description);
+        assert_eq!(legacy.definitions()[1].description(), shallow_description);
         let empty = registry(LocalToolRegistryRevision::NoTools)
             .unwrap()
             .freeze();
@@ -326,6 +330,29 @@ mod tests {
             )],
         );
         assert!(revision_for_replay_contract(Some(&unknown)).is_err());
+
+        let retired = registry(LocalToolRegistryRevision::LegacyReadFile)
+            .unwrap()
+            .freeze()
+            .replay_tools()
+            .into_iter()
+            .map(|tool| {
+                ModelReplayTool::new(
+                    tool.name(),
+                    if tool.name() == "list_files" {
+                        "List files recursively below one directory inside the current workspace."
+                    } else {
+                        tool.description()
+                    },
+                    tool.schema_version(),
+                    tool.parameters().clone(),
+                )
+            })
+            .collect();
+        assert!(
+            revision_for_replay_contract(Some(&ModelReplayContract::new("system", retired)))
+                .is_err()
+        );
     }
 
     // basic manifest의 description/schema/effect/approval을 각각 직접 관찰해 이름만 맞는
