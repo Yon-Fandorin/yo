@@ -131,7 +131,14 @@ deadline은 없다. Runtime policy는 execution request에 absolute deadline 하
 있으며, 이 clock은 한 번 시작되고 output으로 reset되지 않는다. Inactivity, 선택적인
 absolute deadline, cancellation은 모두 유한한 process-group termination, child reap, output
 drain 경로로 들어가며 diagnostic은 그 원인들과 cleanup failure를 구분한다. Host는 command를
-자동으로 재시도하지 않는다.
+자동으로 재시도하지 않는다. 전용 waiter가 spawn부터 단 한 번의 최종 wait까지 child를
+소유하므로, 제한된 result 경로가 cleanup failure를 보고한 뒤 더 늦게 waitable이 된 child도
+버리지 않는다. 서로 독립적인 stdout과 stderr reader는 보존 한도를 넘은 뒤에도 계속
+drain하고, 메모리에는 생략 byte 표식과 제한된 head·tail view만 남긴다. 따라서 output
+truncation이 `EPIPE`나 command effect 변경을 일으키지 않는다. command process group 밖의
+writer가 cleanup grace 뒤에도 pipe를 열어 두면 명시적인 shutdown wake 하나가 두 local read
+end를 닫고 reader thread 둘을 join한다. 이 attempt는 thread나 descriptor 소유권을 무기한
+남기는 대신 cleanup failure를 보고한다.
 
 열린 모든 backend binding은 continuation strategy를 선언한다. 현재 Yo-managed
 경로는 local client의 exact replay를 선언하고 Codex는 backend-managed state를

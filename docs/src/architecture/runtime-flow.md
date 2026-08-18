@@ -139,7 +139,16 @@ absolute deadline to the execution request; that clock starts once and output
 does not reset it. Inactivity, the optional absolute deadline, and cancellation
 all enter the same finite process-group termination, child reap, and output
 drain path, while diagnostics keep those causes and cleanup failure distinct.
-The host never retries the command automatically.
+A dedicated waiter owns the child from spawn through its one eventual wait, so
+the bounded result path may report cleanup failure without abandoning a child
+that becomes waitable later. Independent stdout and stderr readers continue
+draining after their retention caps, keep only bounded head and tail views with
+an omitted-byte marker, and therefore do not turn output truncation into
+`EPIPE` or a changed command effect. If a writer outside the command process
+group keeps a pipe open past the cleanup grace, one explicit shutdown wake
+closes both local read ends and joins both reader threads; that attempt reports
+cleanup failure instead of retaining thread or descriptor ownership
+indefinitely. The host never retries the command automatically.
 
 Every opened backend binding declares its continuation strategy. The current
 Yo-managed route declares exact replay by the local client; Codex declares

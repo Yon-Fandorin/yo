@@ -1,6 +1,10 @@
 use std::{
     fs,
     path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -8,17 +12,40 @@ use std::{
 use nix::{
     errno::Errno,
     sys::{
-        signal::kill,
+        signal::{Signal, kill},
         wait::{WaitPidFlag, waitpid},
     },
-    unistd::Pid,
+    unistd::{Pid, setsid},
 };
 use yo_core::{ToolExecution, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionResult};
 
 use super::{
-    CommandExecution,
+    CommandExecution, ProcessGroupLease,
     limits::{CommandExecutionLimits, OUTPUT_INACTIVITY_TIMEOUT},
+    process::WaiterTestHooks,
 };
+
+// reap이 WNOWAIT identity pin을 해제한 뒤에는 같은 숫자 process-group ID가 재사용될 수
+// 있으므로, clear된 lease가 이후 signal을 보내지 않는지 검증합니다.
+#[test]
+fn cleared_process_group_lease_cannot_signal_a_reused_identity() {
+    let shared = std::sync::Mutex::new(None);
+    let process_group = Pid::from_raw(42);
+    let signals = AtomicUsize::new(0);
+    let mut lease = ProcessGroupLease::publish(&shared, process_group).unwrap();
+
+    lease.terminate_with(|observed| {
+        assert_eq!(observed, process_group);
+        signals.fetch_add(1, Ordering::Relaxed);
+    });
+    lease.clear().unwrap();
+    lease.terminate_with(|_| {
+        signals.fetch_add(1, Ordering::Relaxed);
+    });
+
+    assert_eq!(signals.load(Ordering::Relaxed), 1);
+    assert_eq!(*shared.lock().unwrap(), None);
+}
 
 fn limits(
     output_inactivity_timeout: Duration,
@@ -32,11 +59,35 @@ fn limits(
 }
 
 fn spawn(command: &str, limits: CommandExecutionLimits) -> CommandExecution {
+    spawn_with_output_limit(command, 64 * 1024, limits)
+}
+
+fn spawn_with_output_limit(
+    command: &str,
+    maximum_output_bytes: usize,
+    limits: CommandExecutionLimits,
+) -> CommandExecution {
     CommandExecution::spawn_with_limits(
         PathBuf::from("/tmp"),
         command.to_owned(),
-        64 * 1024,
+        maximum_output_bytes,
         limits,
+    )
+    .unwrap()
+}
+
+fn spawn_with_waiter_hooks(
+    command: &str,
+    maximum_output_bytes: usize,
+    limits: CommandExecutionLimits,
+    waiter_hooks: WaiterTestHooks,
+) -> CommandExecution {
+    CommandExecution::spawn_with_limits_and_hooks(
+        PathBuf::from("/tmp"),
+        command.to_owned(),
+        maximum_output_bytes,
+        limits,
+        waiter_hooks,
     )
     .unwrap()
 }
@@ -68,6 +119,10 @@ fn unique_pid_path(label: &str) -> PathBuf {
     ))
 }
 
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 fn read_published_pids(path: &PathBuf) -> Vec<i32> {
     let deadline = Instant::now() + Duration::from_secs(1);
     while !path.exists() {
@@ -93,6 +148,31 @@ fn assert_process_disappears(pid: i32) {
             result => panic!("process {pid} remained after cleanup: {result:?}"),
         }
     }
+}
+
+// 별도 test process가 새 Session/process group으로 이동한 뒤 stdout pipe를 계속 쓰며,
+// run_command cleanup이 local read end를 닫았을 때만 marker를 게시합니다.
+#[test]
+fn detached_pipe_holder_helper() {
+    let Some(pid_path) = std::env::var_os("YO_COMMAND_DETACHED_PIPE_PID") else {
+        return;
+    };
+    let closed_path = std::env::var_os("YO_COMMAND_DETACHED_PIPE_CLOSED").unwrap();
+    setsid().unwrap();
+    fs::write(&pid_path, std::process::id().to_string()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut stdout = std::io::stdout().lock();
+    while Instant::now() < deadline {
+        if std::io::Write::write_all(&mut stdout, b"x")
+            .and_then(|()| std::io::Write::flush(&mut stdout))
+            .is_err()
+        {
+            fs::write(closed_path, "closed").unwrap();
+            return;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    fs::write(closed_path, "open").unwrap();
 }
 
 // 기본 local command policy는 stdout/stderr progress inactivity만 5분으로 제한하고,
@@ -183,6 +263,55 @@ fn leader_exit_terminates_a_descendant_that_holds_the_output_pipe() {
     assert_eq!(leader_probe, Err(Errno::ECHILD));
 }
 
+// command process group을 벗어난 writer가 pipe를 계속 잡아도 cleanup grace 뒤 reader와
+// local descriptor가 닫혀 writer가 EPIPE를 보고, Yo result와 thread 정리가 유한한지 검증합니다.
+#[test]
+fn cleanup_releases_pipe_readers_held_by_an_escaped_writer() {
+    let pid_path = unique_pid_path("escaped-writer");
+    let closed_path = unique_pid_path("escaped-writer-closed");
+    let executable = std::env::current_exe().unwrap();
+    let executable = shell_quote(executable.to_str().unwrap());
+    let pid_argument = shell_quote(pid_path.to_str().unwrap());
+    let closed_argument = shell_quote(closed_path.to_str().unwrap());
+    let command = format!(
+        "YO_COMMAND_DETACHED_PIPE_PID={pid_argument} YO_COMMAND_DETACHED_PIPE_CLOSED={closed_argument} {executable} --exact local_tools::command::tests::detached_pipe_holder_helper --nocapture --test-threads=1 & while [ ! -s {pid_argument} ]; do sleep 0.01; done; exit 0"
+    );
+    let mut execution = spawn(
+        &command,
+        CommandExecutionLimits {
+            output_inactivity_timeout: Duration::from_secs(2),
+            absolute_execution_timeout: None,
+            cleanup_grace: Duration::from_millis(100),
+        },
+    );
+    let escaped_pid = read_published_pids(&pid_path)[0];
+    let started = Instant::now();
+
+    let result = finish(&mut execution);
+    let close_deadline = Instant::now() + Duration::from_secs(1);
+    while !closed_path.exists() {
+        if Instant::now() >= close_deadline {
+            let _ = kill(Pid::from_raw(escaped_pid), Signal::SIGKILL);
+            let _ = fs::remove_file(&pid_path);
+            panic!("escaped writer did not observe bounded pipe-reader shutdown");
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let close_observation = fs::read_to_string(&closed_path).unwrap();
+    assert_process_disappears(escaped_pid);
+    let _ = fs::remove_file(pid_path);
+    let _ = fs::remove_file(closed_path);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Failed);
+    assert_eq!(
+        result.output(),
+        "run_command cleanup failed after normal process exit"
+    );
+    assert!(result.truncated());
+    assert_eq!(close_observation, "closed");
+    assert!(started.elapsed() < Duration::from_secs(1));
+}
+
 // background descendant가 계속 stdout progress를 만들어 inactivity를 reset하려 해도
 // leader exit가 우선 cleanup을 열어 descendant effect와 pipe drain을 유한하게 끝냅니다.
 #[test]
@@ -268,4 +397,148 @@ fn rejects_zero_command_deadlines_before_spawning() {
         .expect("invalid limits must fail before returning an execution");
         assert!(error.to_string().contains("deadlines must be non-zero"));
     }
+}
+
+// output 관찰 한도에 도달해도 child stdout pipe를 닫지 않아, retained cap을 넘게 쓴
+// shell이 모든 write 뒤의 effect까지 실행하는지 검증합니다.
+#[test]
+fn output_cap_does_not_change_a_later_command_effect() {
+    let effect_path = unique_pid_path("output-cap-effect");
+    let command = format!(
+        "i=0; while [ \"$i\" -lt 20000 ]; do printf x; i=$((i + 1)); done; printf done > {}",
+        effect_path.display()
+    );
+    let mut execution =
+        spawn_with_output_limit(&command, 512, limits(Duration::from_secs(2), None));
+
+    let result = finish(&mut execution);
+    let effect = fs::read_to_string(&effect_path).unwrap();
+    let _ = fs::remove_file(effect_path);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
+    assert_eq!(effect, "done");
+    assert!(result.truncated());
+    assert!(result.output().contains(" bytes omitted]"));
+}
+
+// stdout과 stderr reader가 독립적으로 drain하고 bounded head/tail을 유지하여 한 stream의
+// flood가 다른 stream을 굶기지 않으며 각 생략 영역이 명시되는지 검증합니다.
+#[test]
+fn mixed_large_streams_retain_two_head_tail_views() {
+    let mut execution = spawn_with_output_limit(
+        "i=0; while [ \"$i\" -lt 5000 ]; do printf o; printf e >&2; i=$((i + 1)); done",
+        2048,
+        limits(Duration::from_secs(2), None),
+    );
+
+    let result = finish(&mut execution);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
+    assert!(result.truncated());
+    assert_eq!(result.output().matches(" bytes omitted]").count(), 2);
+    assert!(result.output().contains("stdout:\noooo"));
+    assert!(result.output().contains("stderr:\neeee"));
+}
+
+// EPIPE-aware writer가 관찰 cap 때문에 인위적인 pipe failure를 보지 않고 전체 write 뒤
+// `ok`를 기록하는지 검증합니다. 과거 close-at-cap 경로에서는 epipe를 기록했습니다.
+#[test]
+fn output_cap_is_not_reported_to_an_epipe_aware_writer() {
+    let effect_path = unique_pid_path("epipe-aware");
+    let command = format!(
+        "trap '' PIPE; i=0; while [ \"$i\" -lt 20000 ]; do if ! printf x; then printf epipe > {path}; exit 7; fi; i=$((i + 1)); done; printf ok > {path}",
+        path = effect_path.display()
+    );
+    let mut execution =
+        spawn_with_output_limit(&command, 512, limits(Duration::from_secs(2), None));
+
+    let result = finish(&mut execution);
+    let effect = fs::read_to_string(&effect_path).unwrap();
+    let _ = fs::remove_file(effect_path);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
+    assert_eq!(effect, "ok");
+    assert!(result.truncated());
+}
+
+// retained byte cap 뒤에 관찰된 chunk도 progress로 계산되어, command가 한 test inactivity
+// window보다 오래 실행되어도 pipe drain이 계속되면 완료되는지 검증합니다.
+#[test]
+fn output_after_the_cap_keeps_resetting_inactivity() {
+    let mut execution = spawn_with_output_limit(
+        "i=0; while [ \"$i\" -lt 12 ]; do printf 012345678901234567890123456789; sleep 0.03; i=$((i + 1)); done",
+        192,
+        limits(Duration::from_millis(80), None),
+    );
+
+    let result = finish(&mut execution);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Completed);
+    assert!(result.truncated());
+}
+
+// drain된 각 chunk가 inactivity를 reset하더라도 continuous writer는 독립 absolute
+// deadline으로 제한되고 termination, drain, result publication이 유한한지 검증합니다.
+#[test]
+fn continuous_writer_stops_at_the_absolute_deadline_with_bounded_output() {
+    let started = Instant::now();
+    let mut execution = spawn_with_output_limit(
+        "while :; do printf 012345678901234567890123456789; done",
+        512,
+        limits(Duration::from_millis(100), Some(Duration::from_millis(160))),
+    );
+
+    let result = finish(&mut execution);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Interrupted);
+    assert_eq!(
+        result.output(),
+        "run_command absolute execution deadline expired"
+    );
+    assert!(result.truncated());
+    assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+// bounded result가 exit observation 전에 cleanup failure를 보고하더라도 detached waiter가
+// ownership을 유지해 이후 exact child를 한 번만 reap하는지 검증합니다.
+#[test]
+fn delayed_exit_observation_returns_on_time_and_eventually_reaps_once() {
+    let pid_path = unique_pid_path("delayed-waiter");
+    let command = format!("printf '%s' $$ > {}; sleep 5", pid_path.display());
+    let reap_count = Arc::new(AtomicUsize::new(0));
+    let mut execution = spawn_with_waiter_hooks(
+        &command,
+        1024,
+        CommandExecutionLimits {
+            output_inactivity_timeout: Duration::from_secs(1),
+            absolute_execution_timeout: None,
+            cleanup_grace: Duration::from_millis(50),
+        },
+        WaiterTestHooks {
+            observation_delay: Duration::from_millis(200),
+            reap_count: Some(Arc::clone(&reap_count)),
+        },
+    );
+    let pid = read_published_pids(&pid_path)[0];
+    let started = Instant::now();
+    execution.cancel();
+
+    let result = finish(&mut execution);
+
+    assert_eq!(result.outcome(), ToolExecutionOutcome::Failed);
+    assert_eq!(
+        result.output(),
+        "run_command cleanup failed after run_command cancelled"
+    );
+    assert!(started.elapsed() < Duration::from_millis(180));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while reap_count.load(Ordering::Acquire) == 0 {
+        assert!(Instant::now() < deadline, "waiter did not eventually reap");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let probe = waitpid(Pid::from_raw(pid), Some(WaitPidFlag::WNOHANG));
+    let _ = fs::remove_file(pid_path);
+
+    assert_eq!(reap_count.load(Ordering::Acquire), 1);
+    assert_eq!(probe, Err(Errno::ECHILD));
 }
