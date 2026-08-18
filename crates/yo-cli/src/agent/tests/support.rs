@@ -17,6 +17,15 @@ use crate::agent::TuiAgentConnection;
 /// slow full-suite scheduling.
 pub(super) const TEST_DEADLOCK_GUARD: Duration = Duration::from_secs(30);
 
+const COMMITTED_RECORDS_TIMEOUT: &str = "timed out waiting for committed records";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WaitingPoll {
+    Pending,
+    Submission,
+    RequestTrace,
+}
+
 pub(super) struct NeverTerminated;
 
 impl TerminationSource for NeverTerminated {
@@ -73,20 +82,72 @@ pub(super) fn collect_until(
                     return Ok(records);
                 }
             },
-            Ok(AgentPoll::Pending | AgentPoll::Submission(_) | AgentPoll::RequestTrace(_))
-                if Instant::now() < deadline =>
-            {
-                thread::yield_now();
-            },
+            Ok(AgentPoll::Pending) => wait_for_more(WaitingPoll::Pending, deadline)?,
+            Ok(AgentPoll::Submission(_)) => wait_for_more(WaitingPoll::Submission, deadline)?,
+            Ok(AgentPoll::RequestTrace(_)) => wait_for_more(WaitingPoll::RequestTrace, deadline)?,
             Ok(other) => {
-                return Err(format!(
-                    "connection ended before the expected records: {other:?}"
-                ));
+                return Err(unexpected_poll_message(&other));
             },
             Err(error) => return Err(error.to_string()),
         }
         if Instant::now() >= deadline {
-            return Err("timed out waiting for committed records".to_owned());
+            return Err(COMMITTED_RECORDS_TIMEOUT.to_owned());
         }
+    }
+}
+
+fn wait_for_more(waiting: WaitingPoll, deadline: Instant) -> Result<(), String> {
+    wait_for_more_at(waiting, Instant::now(), deadline)
+}
+
+fn wait_for_more_at(
+    waiting: WaitingPoll,
+    observed_at: Instant,
+    deadline: Instant,
+) -> Result<(), String> {
+    match (waiting, observed_at < deadline) {
+        (WaitingPoll::Pending | WaitingPoll::Submission | WaitingPoll::RequestTrace, true) => {
+            thread::yield_now();
+            Ok(())
+        },
+        (WaitingPoll::Pending | WaitingPoll::Submission | WaitingPoll::RequestTrace, false) => {
+            Err(COMMITTED_RECORDS_TIMEOUT.to_owned())
+        },
+    }
+}
+
+fn unexpected_poll_message(poll: &AgentPoll) -> String {
+    format!("connection ended before the expected records: {poll:?}")
+}
+
+#[cfg(test)]
+mod diagnostic_tests {
+    use super::*;
+
+    // 세 waiting variant가 deadline을 넘으면 연결 종료로 오분류되지 않고 같은
+    // bounded timeout 진단을 반환하는지 검증합니다.
+    #[test]
+    fn every_waiting_poll_uses_the_committed_records_timeout_after_deadline() {
+        let deadline = Instant::now();
+        for waiting in [
+            WaitingPoll::Pending,
+            WaitingPoll::Submission,
+            WaitingPoll::RequestTrace,
+        ] {
+            assert_eq!(
+                wait_for_more_at(waiting, deadline, deadline),
+                Err(COMMITTED_RECORDS_TIMEOUT.to_owned())
+            );
+        }
+    }
+
+    // 실제 Closed 관찰은 waiting timeout과 섞이지 않고 기존 premature-end 진단을
+    // 유지하는지 검증합니다.
+    #[test]
+    fn closed_poll_keeps_the_premature_connection_end_diagnostic() {
+        assert_eq!(
+            unexpected_poll_message(&AgentPoll::Closed),
+            "connection ended before the expected records: Closed"
+        );
     }
 }
