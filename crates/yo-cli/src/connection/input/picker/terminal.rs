@@ -2,14 +2,11 @@ use std::{
     fs::File,
     io::{Read, Write},
     num::NonZeroU16,
-    thread,
+    os::fd::{AsRawFd, RawFd},
     time::{Duration, Instant},
 };
 
-use nix::{
-    fcntl::{FcntlArg, OFlag, fcntl},
-    sys::termios::{self, InputFlags, LocalFlags, SetArg, SpecialCharacterIndices, Termios},
-};
+use nix::sys::termios::{self, InputFlags, LocalFlags, SetArg, SpecialCharacterIndices, Termios};
 
 use super::{PickerChoice, PickerIdentity, PickerState, render_lines};
 use crate::{AppError, connection::presentation::PresentationStyle};
@@ -252,52 +249,85 @@ impl<'a> PickerInput<'a> {
 }
 
 fn read_optional_byte(mut terminal: &File, deadline: Instant) -> Result<Option<u8>, AppError> {
-    let original = OFlag::from_bits_truncate(
-        fcntl(terminal, FcntlArg::F_GETFL)
-            .map_err(|error| AppError::single("reading terminal picker flags", error))?,
-    );
-    fcntl(terminal, FcntlArg::F_SETFL(original | OFlag::O_NONBLOCK))
-        .map_err(|error| AppError::single("setting terminal picker flags", error))?;
-    let result = read_optional_byte_until(deadline, |byte| terminal.read(byte), Instant::now);
-    let restore = fcntl(terminal, FcntlArg::F_SETFL(original))
-        .map(|_| ())
-        .map_err(|error| AppError::single("restoring terminal picker flags", error));
-    restore?;
-    result
+    read_optional_byte_until(
+        deadline,
+        |remaining| wait_for_terminal_input(terminal.as_raw_fd(), remaining),
+        |byte| terminal.read(byte),
+        Instant::now,
+    )
 }
 
 fn read_optional_byte_until(
     deadline: Instant,
+    mut wait: impl FnMut(Duration) -> std::io::Result<bool>,
     mut read: impl FnMut(&mut [u8; 1]) -> std::io::Result<usize>,
     mut now: impl FnMut() -> Instant,
 ) -> Result<Option<u8>, AppError> {
     loop {
+        let observed = now();
+        if observed >= deadline {
+            return Ok(None);
+        }
+        match wait(deadline.saturating_duration_since(observed)) {
+            Ok(true) => {},
+            Ok(false) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => {
+                return Err(AppError::single("waiting for a terminal escape key", error));
+            },
+        }
+        if now() >= deadline {
+            return Ok(None);
+        }
         let mut byte = [0_u8; 1];
         match read(&mut byte) {
             Ok(1) => return Ok(Some(byte[0])),
-            Ok(0) => {
-                if now() >= deadline {
-                    return Ok(None);
-                }
-                thread::sleep(Duration::from_millis(1));
-            },
+            Ok(0) => return Ok(None),
             Ok(_) => unreachable!("one-byte terminal read cannot return more than one byte"),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if now() >= deadline {
-                    return Ok(None);
-                }
-                thread::sleep(Duration::from_millis(1));
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
-                if now() >= deadline {
-                    return Ok(None);
-                }
-            },
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {},
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
             Err(error) => {
                 return Err(AppError::single("reading a terminal escape key", error));
             },
         }
     }
+}
+
+// A readiness deadline is portable across Linux and Darwin PTYs, while toggling
+// `O_NONBLOCK` on a terminal with `VMIN = 1` does not provide the same guarantee.
+// The crate does not enable nix's poll feature, so this keeps the raw boundary
+// local instead of widening the dependency feature surface for one descriptor.
+#[allow(unsafe_code)]
+fn wait_for_terminal_input(terminal: RawFd, timeout: Duration) -> std::io::Result<bool> {
+    let timeout_millis = timeout.as_millis().clamp(1, i32::MAX as u128) as i32;
+    let mut descriptor = libc::pollfd {
+        fd: terminal,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: `terminal` remains borrowed by the caller for this poll, and the
+    // pointer names exactly one initialized pollfd for the duration of the call.
+    let result = unsafe { libc::poll(&mut descriptor, 1, timeout_millis) };
+    if result < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if result == 0 {
+        return Ok(false);
+    }
+    if descriptor.revents & libc::POLLNVAL != 0 {
+        return Err(std::io::Error::other(
+            "terminal descriptor became invalid while waiting for input",
+        ));
+    }
+    if descriptor.revents & (libc::POLLIN | libc::POLLHUP) != 0 {
+        return Ok(true);
+    }
+    if descriptor.revents & libc::POLLERR != 0 {
+        return Err(std::io::Error::other(
+            "terminal reported an input readiness error",
+        ));
+    }
+    Ok(false)
 }
 
 fn valid_utf8_continuation(first: u8, index: usize, byte: u8) -> bool {
@@ -331,12 +361,100 @@ mod tests {
 
     use super::*;
 
-    fn raw_terminal() -> (File, File, PickerTerminalScope) {
+    const TEST_TERMINAL_OUTPUT_WAIT: Duration = Duration::from_secs(1);
+
+    struct RawTerminalScope {
+        scope: Option<PickerTerminalScope>,
+        output: Option<File>,
+        output_wait: Duration,
+    }
+
+    impl Drop for RawTerminalScope {
+        fn drop(&mut self) {
+            let mut output = self
+                .output
+                .take()
+                .expect("test terminal output descriptor must remain owned");
+            let output_wait = self.output_wait;
+            // Start the finite drain immediately before restoration so time
+            // spent in the test body cannot consume the cleanup deadline.
+            let output_drainer =
+                thread::spawn(move || read_terminal_lifecycle_output(&mut output, output_wait));
+            drop(self.scope.take());
+            let output = output_drainer.join();
+            if thread::panicking() {
+                return;
+            }
+            assert_eq!(
+                output
+                    .expect("test terminal output drainer must not panic")
+                    .expect("test terminal must publish lifecycle output"),
+                *b"\x1b[?25l\x1b[?25h"
+            );
+        }
+    }
+
+    fn raw_terminal() -> (File, File, RawTerminalScope) {
         let pty = openpty(None, None).unwrap();
         let terminal = File::from(pty.slave);
         let master = File::from(pty.master);
         let scope = PickerTerminalScope::enter(&terminal).unwrap();
-        (terminal, master, scope)
+        let output = master.try_clone().unwrap();
+        (
+            terminal,
+            master,
+            RawTerminalScope {
+                scope: Some(scope),
+                output: Some(output),
+                output_wait: TEST_TERMINAL_OUTPUT_WAIT,
+            },
+        )
+    }
+
+    fn read_terminal_lifecycle_output(
+        output: &mut File,
+        timeout: Duration,
+    ) -> std::io::Result<[u8; 12]> {
+        let deadline = Instant::now() + timeout;
+        let mut lifecycle_output = [0_u8; 12];
+        let mut filled = 0;
+        while filled < lifecycle_output.len() {
+            let observed = Instant::now();
+            if observed >= deadline {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!(
+                        "test terminal published {filled} of {} lifecycle bytes before its deadline",
+                        lifecycle_output.len()
+                    ),
+                ));
+            }
+            match wait_for_terminal_input(
+                output.as_raw_fd(),
+                deadline.saturating_duration_since(observed),
+            ) {
+                Ok(true) => {},
+                Ok(false) => continue,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+            match output.read(&mut lifecycle_output[filled..]) {
+                Ok(0) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        format!(
+                            "test terminal closed after {filled} of {} lifecycle bytes",
+                            lifecycle_output.len()
+                        ),
+                    ));
+                },
+                Ok(read) => filled += read,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {},
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {},
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(lifecycle_output)
     }
 
     fn decode_once(bytes: &[u8]) -> PickerKey {
@@ -345,25 +463,58 @@ mod tests {
         PickerInput::new(&terminal).read_key().unwrap()
     }
 
-    // 연속 EINTR가 발생해도 기존 sequence deadline을 세 번째 재시도에서 관찰해
-    // 추가 read로 넘어가지 않고 partial key를 유한하게 종료합니다.
+    // PTY lifecycle output이 부족하면 test drainer가 무기한 join되지 않고 byte 수를
+    // 포함한 timeout으로 끝나 회귀 테스트 자체의 finite 경계를 보존합니다.
+    #[test]
+    fn terminal_lifecycle_output_drain_has_a_finite_deadline() {
+        let pty = openpty(None, None).unwrap();
+        let _terminal = File::from(pty.slave);
+        let mut master = File::from(pty.master);
+        let started = Instant::now();
+
+        let error = read_terminal_lifecycle_output(&mut master, ESCAPE_SEQUENCE_WAIT).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(error.to_string().contains("0 of 12 lifecycle bytes"));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    // test 본문이 cleanup budget보다 오래 실행돼도 output deadline은 scope Drop 직전에
+    // 시작되어 cursor hide/show를 모두 drain하고 Darwin restoration을 막지 않습니다.
+    #[test]
+    fn terminal_lifecycle_output_deadline_starts_with_cleanup() {
+        let (terminal, master, mut scope) = raw_terminal();
+        scope.output_wait = ESCAPE_SEQUENCE_WAIT;
+        thread::sleep(ESCAPE_SEQUENCE_WAIT + ESCAPE_SEQUENCE_WAIT);
+
+        drop(scope);
+        drop((terminal, master));
+    }
+
+    // readiness poll에 연속 EINTR가 발생해도 기존 sequence deadline을 세 번째
+    // 재시도에서 관찰해 실제 read 없이 partial key를 유한하게 종료합니다.
     #[test]
     fn repeated_interrupted_reads_stop_at_the_existing_deadline() {
         let started = Instant::now();
         let deadline = started + ESCAPE_SEQUENCE_WAIT;
-        let attempts = Cell::new(0);
+        let waits = Cell::new(0);
+        let reads = Cell::new(0);
         let observations = Cell::new(0);
 
         let byte = read_optional_byte_until(
             deadline,
             |_| {
-                let attempt = attempts.get() + 1;
-                attempts.set(attempt);
-                if attempt <= 3 {
+                let wait = waits.get() + 1;
+                waits.set(wait);
+                if wait <= 2 {
                     Err(std::io::ErrorKind::Interrupted.into())
                 } else {
-                    Err(std::io::Error::other("read retried after its deadline"))
+                    Err(std::io::Error::other("poll retried after its deadline"))
                 }
+            },
+            |_| {
+                reads.set(reads.get() + 1);
+                Err(std::io::Error::other("read occurred without readiness"))
             },
             || {
                 let observation = observations.get() + 1;
@@ -374,8 +525,38 @@ mod tests {
         .unwrap();
 
         assert_eq!(byte, None);
-        assert_eq!(attempts.get(), 3);
+        assert_eq!(waits.get(), 2);
+        assert_eq!(reads.get(), 0);
         assert_eq!(observations.get(), 3);
+    }
+
+    // poll이 readiness를 반환하더라도 deadline 관찰이 이미 만료라면 뒤늦은 byte를
+    // 읽지 않아 escape sequence의 finite 경계를 넘지 않는지 검증합니다.
+    #[test]
+    fn readiness_observed_after_the_deadline_does_not_start_a_read() {
+        let started = Instant::now();
+        let deadline = started + ESCAPE_SEQUENCE_WAIT;
+        let observations = Cell::new(0);
+        let reads = Cell::new(0);
+
+        let byte = read_optional_byte_until(
+            deadline,
+            |_| Ok(true),
+            |_| {
+                reads.set(reads.get() + 1);
+                Ok(1)
+            },
+            || {
+                let observation = observations.get() + 1;
+                observations.set(observation);
+                if observation == 1 { started } else { deadline }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(byte, None);
+        assert_eq!(reads.get(), 0);
+        assert_eq!(observations.get(), 2);
     }
 
     // CSI·SS3의 plain/modified arrow만 동작하고 Delete, PageDown, F1 같은 완성된
