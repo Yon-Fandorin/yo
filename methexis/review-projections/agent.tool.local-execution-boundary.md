@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.tool.local-execution-boundary
-revision: sha256:fe8e3f495a8e7f026f88d1073c271599fc1ccdbbd1ed1504e8af4f50db17d82b
+revision: sha256:e3d32de4c120173ce9085f11a8d4c26bfa5a74c1950e92b93131552f70dd5cf9
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:347f4e71c615951835639528c6e5aba59ca26ed7b98864134028092a4d2232c6
+request_hash: sha256:f9d72fa4e8706c3d03b1395674d10ecdcbb440dc65ced87caf7d7c45ca5b2c2d
 ---
 # Korean Review Projection
 
@@ -38,7 +38,7 @@ effective `local-tools/v1` 아래의 첫 concrete workspace-file surface는 별�
 직전의 세 tool registry는 `yo.local-tool-registry/legacy-read-file/v1`이며 `read_file`, `list_files`, `run_command`만 계속 노출합니다. Durable projection은 다음 exact ordered manifest와 같다고 확인되기 전까지 신뢰하지 않는 candidate data입니다.
 
 1. ToolId `read-file`, wire name `read_file`, exact description `Read one UTF-8 file inside the current workspace.`, schema version `yo.tool-schema/v1`, `ReadOnly`, automatic
-2. ToolId `list-files`, wire name `list_files`, exact description `List files recursively below one directory inside the current workspace.`, schema version `yo.tool-schema/v1`, `ReadOnly`, automatic
+2. ToolId `list-files`, wire name `list_files`, exact description `List immediate children of one directory inside the current workspace.`, schema version `yo.tool-schema/v1`, `ReadOnly`, automatic
 3. ToolId `run-command`, wire name `run_command`, exact description `Run one shell command in the current workspace after explicit user approval.`, schema version `yo.tool-schema/v1`, `Process`, approval-required
 
 첫 두 legacy tool의 exact structural parameter schema는 `{"type":"object","properties":{"path":{"type":"string","description":"Workspace-relative path"}},"required":["path"],"additionalProperties":false}`입니다. 세 번째 schema는 `{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run from the workspace root"}},"required":["command"],"additionalProperties":false}`입니다. Manifest equality는 tool 순서와 나열된 모든 scalar byte를 정확히 비교하고 parameter-schema JSON은 recursive하게 비교합니다. Object member 순서는 semantic하지 않지만 array 순서, member name, JSON value kind, scalar value는 정확해야 합니다. ToolId, effect, approval은 선택된 trusted manifest에서 재구성하며 durable `ModelReplayContract`가 이를 authenticate하거나 override하지 않습니다. 별도로 저장한 registry digest는 사용하지 않습니다. 실행 중인 backend는 lifetime 동안 frozen registry를 유지합니다. 재시작 뒤 resume은 Session의 durable `ModelReplayContract`에 있는 complete ordered tool name, description, schema version, parameter schema와 정확히 같은 known registry 하나를 선택해 재구성해야 하며 contract를 replace하거나 merge하면 안 됩니다. 따라서 legacy Session은 legacy `read_file`과 함께 resume하며 새 write tool은 받지 않습니다. Unknown 또는 mixed projection은 추측하거나 조용히 upgrade하지 않고 저장된 Session을 read-only로 엽니다.
@@ -51,7 +51,7 @@ Open 성공 뒤 worker는 cancellation을 확인하고 byte zero부터 EOF 또�
 
 Basic registry의 exact model-visible tool description은 다음과 같습니다.
 
-- `list_files`: `List files recursively below one directory inside the current workspace.`
+- `list_files`: `List immediate children of one directory inside the current workspace.`
 - `read_files`: `Read 1–8 ordered UTF-8 file windows from the workspace; batch related files in one call. Each result is content or a per-file error. Continue unread lines from next_offset.`
 - `edit_file`: `Atomically replace 1–256 unique, non-overlapping exact text matches in one UTF-8 workspace file.`
 - `write_file`: `Atomically create or replace one complete UTF-8 file under an existing workspace directory.`
@@ -68,6 +68,20 @@ Basic tool 다섯 개는 모두 schema version `yo.tool-schema/v1`을 사용합�
 - `run_command`: `{"type":"object","properties":{"command":{"type":"string","description":"Shell command to run from the workspace root"}},"required":["command"],"additionalProperties":false}`
 
 Legacy registry와 같은 manifest equality algorithm을 이 다섯 schema에도 적용합니다. 아래 host-enforced numeric, item-count, byte, semantic bound는 추가 JSON-schema keyword가 아니며 frozen projection에 삽입하면 안 됩니다.
+
+`list_files`는 선택한 디렉터리의 바로 아래 자식만 검사해야 합니다. Worker는 시작 디렉터리 하나를 no-follow handle로 고정하고 어떤 자식 디렉터리나 일반 파일도 열면 안 됩니다. 시작 디렉터리를 열기 전에 완전한 `list_files.path` 문자열은 UTF-8 최대 1,024바이트이고 Unicode 제어 문자가 없으며 비어 있지 않은 workspace 상대 no-parent-traversal 경계를 통과해야 합니다. 절대 경로와 platform-prefix 경로는 거부하고 현재 디렉터리 component는 무시하여 workspace root를 선택할 수 있습니다. 정확한 raw 이름 `.`과 `..`는 무시하며 entry budget을 쓰지 않습니다. 다른 dot-prefixed 이름은 일반 이름이지만 정확한 basename `.git`은 제외합니다.
+
+Worker는 디렉터리 순회 순서에서 그 밖의 raw 이름을 처음 최대 100,000개까지 보존하고, 초과 여부만 확인하기 위해 다음 이름 하나를 추가로 관찰할 수 있습니다. 이 probe를 보면 `truncated = true`로 만들고 열거를 끝내며 probe는 분류하지 않습니다. 정확히 100,000개를 보존한 뒤 EOF에 도달하면 entry-bound truncation이 아닙니다. `.git`, 표현 불가능한 이름, 나중에 제외될 종류를 포함한 모든 보존 raw 이름이 budget을 사용합니다. 보존한 이름은 unsigned lexicographic `OsStr` byte 순서로 정렬합니다. 따라서 bound를 넘을 때 선택되는 부분집합은 filesystem 순회 순서에 의존하며, 전역 정렬된 부분집합이나 완전한 point-in-time snapshot을 약속하지 않습니다.
+
+정렬 뒤 정확한 `.git`은 분류하지 않고 제외합니다. 나머지 보존 이름은 모델에 보이거나 분류되기 전에 정확한 UTF-8로 decode되고 Unicode 제어 scalar를 포함하지 않아야 합니다. 이 조건을 통과하지 못한 이름은 제외하고 `truncated = true`로 만들며, lossy replacement나 byte-escape wire는 없습니다. 각 남은 이름은 `fstatat(..., AT_SYMLINK_NOFOLLOW)` 분류를 최대 한 번만 받습니다. 일반 파일은 workspace 상대 경로와 LF로, 디렉터리는 workspace 상대 경로·정확한 `/`·LF로 표현합니다. 게시 전에는 디렉터리 `/` suffix를 포함하고 LF separator는 제외한 완전한 rendered path token도 UTF-8 최대 1,024바이트이고 제어 문자가 없어야 합니다. Bound를 넘는 token은 제외하고 `truncated = true`로 만듭니다. Symlink와 다른 모든 special type은 제외합니다. 선택 경로와 출력 component가 공유 admission을 통과하므로 게시된 경로 줄은 모호하지 않고 control-free UTF-8 기본 파일 경계에 그대로 다시 전달할 수 있습니다.
+
+열거와 분류 사이에 자식이 사라져 정확한 `ENOENT`가 나면 해당 자식만 제외합니다. 관찰한 디렉터리 읽기 실패나 그 밖의 metadata 실패는 부분 출력을 버리고 `ToolExecutionOutcome::Failed`, 정확한 출력 `list_files failed`, `truncated = false`를 반환합니다. 필수 확인 지점에서 취소를 관찰하면 마찬가지로 부분 출력을 버리고 `ToolExecutionOutcome::Interrupted`, 정확한 출력 `interrupted`, `truncated = false`를 반환합니다.
+
+그 밖의 성공 관찰은 `ToolExecutionOutcome::Completed`입니다. 표현 불가능해서 제외한 이름, bound를 넘겨 제외한 rendered path token, 초과 probe가 없고 모든 rendered line이 호출자의 byte bound에 들어갈 때에만 완전한 정렬 경로 줄과 `truncated = false`를 반환합니다. 그 밖에는 `truncated = true`입니다.
+
+경로 줄 경계는 generic scalar-prefix truncator가 아니라 list worker가 소유합니다. Worker는 완전한 경로 줄의 최대 선두 sequence만 보존하며, 그 줄의 bytes와 정확한 공통 marker `\n[yo: tool output truncated]`가 함께 호출자 bound에 들어가야 합니다. 공통 bounded-output 소유자는 예약된 경로 prefix를 자르지 않고 marker를 붙입니다. 호출자 bound가 marker byte 길이 이하이면 경로 prefix는 비고 최종 model-visible 값은 ASCII marker의 처음 bound bytes입니다. 그보다 크면 model-visible 경로 부분은 완전한 LF 종료 줄만으로 이루어지고 그 뒤에 완전한 marker가 옵니다. 호출자 bound 때문에 들어가지 못한 줄, 표현 불가능한 보존 이름, bound를 넘은 rendered path token, 초과 probe는 각각 하나의 명시적인 incomplete 결과가 되며 부분 또는 모호한 경로를 만들지 않습니다.
+
+Basic manifest와 직전의 세-tool manifest는 위의 동일한 shallow 동작과 정확한 설명을 사용합니다. retired recursive 설명을 담은 저장 Session은 unknown projection으로 읽기 전용으로 열며, recursive compatibility registry나 migration branch를 남기지 않습니다.
 
 `read_files`는 request order의 item 1~8개가 든 exact `files` array 하나를 받아야 합니다. 각 item에는 required `path`, optional integer `offset`, `limit`만 허용합니다. Path는 최대 1,024 UTF-8 byte이고 control character가 없으며 host의 workspace-relative no-parent-traversal policy를 만족해야 합니다. Offset은 1-based logical line이고 기본 1입니다. Limit은 양수, 기본 400, 최대 400입니다. Schema는 closed `yo.tool-schema/v1` subset이므로 host가 complete argument validation 뒤, path를 열기 전에 이 numeric, byte, item-count bound를 강제해야 합니다. Malformed item 하나는 read 전 complete call을 거부합니다. Duplicate path는 독립 window로 유효하며 input position을 보존합니다.
 

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.tool-001
-    revision: sha256:a3cc254dc0f0b48fb688dacb963db6c7ec551c49ac357db67396ad009cc2840d
+    revision: sha256:a22fc52fbe8d214879796ea19c477c53390d011aa0669940a3a891a21d8528ef
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -105,7 +105,7 @@ ordered sequence below; a durable projection is untrusted candidate data until
 it equals this manifest.
 
 1. ToolId `read-file`, wire name `read_file`, exact description `Read one UTF-8 file inside the current workspace.`, schema version `yo.tool-schema/v1`, `ReadOnly`, automatic;
-2. ToolId `list-files`, wire name `list_files`, exact description `List files recursively below one directory inside the current workspace.`, schema version `yo.tool-schema/v1`, `ReadOnly`, automatic; and
+2. ToolId `list-files`, wire name `list_files`, exact description `List immediate children of one directory inside the current workspace.`, schema version `yo.tool-schema/v1`, `ReadOnly`, automatic; and
 3. ToolId `run-command`, wire name `run_command`, exact description `Run one shell command in the current workspace after explicit user approval.`, schema version `yo.tool-schema/v1`, `Process`, approval-required.
 
 The first two legacy tools have the exact structural parameter schema
@@ -163,7 +163,7 @@ deferred and MUST NOT be inferred from these tools.
 
 The basic registry's exact model-visible tool descriptions are:
 
-- `list_files`: `List files recursively below one directory inside the current workspace.`;
+- `list_files`: `List immediate children of one directory inside the current workspace.`;
 - `read_files`: `Read 1–8 ordered UTF-8 file windows from the workspace; batch related files in one call. Each result is content or a per-file error. Continue unread lines from next_offset.`;
 - `edit_file`: `Atomically replace 1–256 unique, non-overlapping exact text matches in one UTF-8 workspace file.`;
 - `write_file`: `Atomically create or replace one complete UTF-8 file under an existing workspace directory.`; and
@@ -183,6 +183,71 @@ The same manifest equality algorithm used for the legacy registry applies to
 these five schemas. The host-enforced numeric, item-count, byte, and semantic
 bounds below are not extra JSON-schema keywords and MUST NOT be inserted into
 the frozen projection.
+
+`list_files` MUST inspect only the immediate children of the selected directory.
+The worker fixes that starting directory with one no-follow handle and MUST NOT
+open any child directory or regular file. Before that open, the complete
+`list_files.path` string MUST pass the shared at-most-1,024-UTF-8-byte,
+Unicode-control-free, non-empty workspace-relative no-parent-traversal
+admission. Absolute and platform-prefix paths are rejected; current-directory
+components are ignored and may select the workspace root. Exact raw names `.`
+and `..` are ignored and do not consume the entry budget; every other
+dot-prefixed name is ordinary except that exact basename `.git` is excluded.
+In directory-iteration order, the worker retains the first at most 100,000
+other raw names and may
+observe at most one further such name solely as an over-bound probe. Observing
+that probe sets `truncated = true`, ends enumeration, and never classifies the
+probe. Reaching EOF after exactly 100,000 retained names is not entry-bound
+truncation. Every retained raw name, including `.git`, an unrepresentable name,
+or an eventually excluded type, consumes this budget. The retained raw names
+are then ordered by unsigned lexicographic `OsStr` byte order. The selected
+over-bound subset therefore depends on filesystem iteration order; neither a
+globally sorted subset nor a complete point-in-time snapshot is promised.
+
+After ordering, exact `.git` is omitted without classification. Every other
+retained name must decode as exact UTF-8 and contain no Unicode control scalar
+before it is model-visible or classified. A name that fails either condition
+is omitted and sets `truncated = true`; no lossy replacement or byte-escape wire
+exists. Each remaining name receives at most one
+`fstatat(..., AT_SYMLINK_NOFOLLOW)` classification. A regular file is rendered
+as its workspace-relative path plus LF; a directory is rendered as its
+workspace-relative path, exact `/`, and LF. Before publication, the complete
+rendered path token, including a directory's `/` suffix but excluding the LF
+separator, MUST itself remain at most 1,024 UTF-8 bytes and control-free. An
+over-bound token is omitted and sets `truncated = true`. Symlinks and every
+other special type are omitted. Because both the selected path and emitted
+component pass the shared admission, every published path line is unambiguous
+and can be supplied unchanged to the
+control-free UTF-8 basic-file path boundary. If a child disappears between
+enumeration and classification, exact `ENOENT` omits only that child. Any
+observed directory-read failure or any other metadata failure returns
+`ToolExecutionOutcome::Failed`, exact output `list_files failed`, and
+`truncated = false`, discarding partial output. Cancellation observed at a
+required check similarly discards partial output and returns
+`ToolExecutionOutcome::Interrupted`, exact output `interrupted`, and
+`truncated = false`.
+
+An otherwise successful observation returns `ToolExecutionOutcome::Completed`.
+With no omitted unrepresentable name, no omitted over-bound rendered path token,
+no over-bound probe, and every rendered line admitted by the caller's byte
+bound, its output is the complete ordered path lines and `truncated = false`.
+Otherwise it returns `truncated = true`.
+The list worker, not the generic scalar-prefix truncator, owns the path-line
+boundary: it retains only the maximal leading sequence of complete path lines
+whose bytes plus exact common marker `\n[yo: tool output truncated]` fit the
+caller bound. The common bounded-output owner then appends that marker without
+cutting the reserved path prefix. When the caller bound is at most the marker's
+byte length, the path prefix is empty and the final model-visible value is the
+first caller-bound bytes of the ASCII marker; otherwise every model-visible
+path portion consists only of complete LF-terminated lines followed by the
+complete marker. A caller-bound line that cannot be admitted, an
+unrepresentable retained name, an over-bound rendered path token, or the
+over-bound probe therefore has one explicit incomplete result and never
+produces a partial or ambiguous path. Both the basic and preceding
+three-tool manifests use this one shallow behavior and the exact description
+above. A saved Session carrying the retired recursive description is an unknown
+projection and opens read-only; no recursive compatibility registry or
+migration branch is retained.
 
 `read_files` MUST accept one exact `files` array containing 1 to 8 items in
 request order. Each item contains required `path` and optional integer `offset`
