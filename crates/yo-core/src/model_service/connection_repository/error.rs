@@ -33,6 +33,10 @@ pub enum ConnectionRepositoryError {
         observed: ConnectionRevision,
     },
     Randomness(String),
+    TemporaryNameRandomness(String),
+    TemporaryNameCollisionExhaustion {
+        attempts: usize,
+    },
 }
 
 impl ConnectionRepositoryError {
@@ -118,6 +122,14 @@ impl fmt::Display for ConnectionRepositoryError {
             Self::Randomness(message) => write!(
                 formatter,
                 "generating a connection revision failed: {message}"
+            ),
+            Self::TemporaryNameRandomness(message) => write!(
+                formatter,
+                "generating a connection publication temporary name failed: {message}"
+            ),
+            Self::TemporaryNameCollisionExhaustion { attempts } => write!(
+                formatter,
+                "all {attempts} generated connection publication temporary names already exist"
             ),
         }
     }

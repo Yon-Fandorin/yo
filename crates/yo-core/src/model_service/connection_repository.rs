@@ -32,6 +32,8 @@ const FILE_TYPE_MASK: u32 = libc::S_IFMT;
 const REPOSITORY_LOCK_FILE: &str = ".connections.lock";
 const OPERATION_LOCK_FILE: &str = ".connection-operation.lock";
 const PENDING_OPERATION_FILE: &str = "connection-operation.yaml";
+// One retry distinguishes an occupied candidate from a persistently abnormal name source.
+const CONNECTION_TEMPORARY_ATTEMPTS: usize = 2;
 
 type StoredSnapshotState = (
     Option<StartupTarget>,
@@ -792,22 +794,7 @@ impl LocalConnectionRepository {
             });
         }
 
-        let temporary = parent.join(format!(
-            ".connections.{}.pending",
-            mutation
-                .planned_revision
-                .to_string()
-                .strip_prefix("rev-")
-                .unwrap_or("unknown")
-        ));
-        reject_symlink(&temporary)?;
-        let mut file = fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .mode(FILE_MODE)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
-            .open(&temporary)
-            .map_err(|source| ConnectionRepositoryError::io(&temporary, source))?;
+        let (temporary, mut file) = create_connection_temporary(&parent)?;
         let publication = (|| {
             file.write_all(&mutation.planned_bytes)
                 .map_err(|source| ConnectionRepositoryError::io(&temporary, source))?;
@@ -834,6 +821,70 @@ impl LocalConnectionRepository {
         Ok(ConnectionCommit::Committed)
     }
 }
+
+fn create_connection_temporary(
+    parent: &Path,
+) -> Result<(PathBuf, fs::File), ConnectionRepositoryError> {
+    create_connection_temporary_with(parent, CONNECTION_TEMPORARY_ATTEMPTS, || {
+        let mut random = [0_u8; 16];
+        getrandom::fill(&mut random).map_err(|error| error.to_string())?;
+        Ok(random)
+    })
+}
+
+fn create_connection_temporary_with(
+    parent: &Path,
+    attempt_limit: usize,
+    mut next_candidate: impl FnMut() -> Result<[u8; 16], String>,
+) -> Result<(PathBuf, fs::File), ConnectionRepositoryError> {
+    for _ in 0..attempt_limit {
+        let random =
+            next_candidate().map_err(ConnectionRepositoryError::TemporaryNameRandomness)?;
+        let temporary = connection_temporary_path(parent, random);
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(FILE_MODE)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .open(&temporary)
+        {
+            Ok(file) => return Ok((temporary, file)),
+            Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {},
+            Err(source) => return Err(ConnectionRepositoryError::io(&temporary, source)),
+        }
+    }
+    Err(
+        ConnectionRepositoryError::TemporaryNameCollisionExhaustion {
+            attempts: attempt_limit,
+        },
+    )
+}
+
+fn connection_temporary_path(parent: &Path, random: [u8; 16]) -> PathBuf {
+    let mut suffix = String::with_capacity(32);
+    for byte in random {
+        use fmt::Write as _;
+        write!(suffix, "{byte:02x}").expect("formatting into a String cannot fail");
+    }
+    parent.join(format!(".connections.{suffix}.pending"))
+}
+
+#[cfg(test)]
+pub(super) fn create_connection_temporary_for_test(
+    parent: &Path,
+    attempt_limit: usize,
+    next_candidate: impl FnMut() -> Result<[u8; 16], String>,
+) -> Result<(PathBuf, fs::File), ConnectionRepositoryError> {
+    create_connection_temporary_with(parent, attempt_limit, next_candidate)
+}
+
+#[cfg(test)]
+pub(super) fn connection_temporary_path_for_test(parent: &Path, random: [u8; 16]) -> PathBuf {
+    connection_temporary_path(parent, random)
+}
+
+#[cfg(test)]
+pub(super) const CONNECTION_TEMPORARY_ATTEMPTS_FOR_TEST: usize = CONNECTION_TEMPORARY_ATTEMPTS;
 
 impl ConnectionRepository for LocalConnectionRepository {
     type OperationGuard = LocalConnectionOperationGuard;
