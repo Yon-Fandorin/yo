@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.persistence-001
-revision: sha256:740d4c4760010690e7151a2486127bdea50eb450a7b6b4aed8429bcc82bb0367
+revision: sha256:2b30e95c91540ce3cdda40087841196e60d8fe2f4679c10270c5cbba4b2369a9
 payload:
   kind: decision
   content: |-
@@ -19,3 +19,5 @@ payload:
 
 
     Replay-prefix or model-context capacity exhaustion discovered before a final assistant answer is accepted is encoded as a typed failed Turn with no model replay delta, resumable outcome, or Continuation Anchor. Only cumulative replay-application capacity discovered after one complete valid final answer, including its valid declared provider-private extension, may preserve a completed but non-resumable Turn without those continuation records.
+
+    Before public release, anchored-session semantic Journal /v1 is additively extended with one bounded `context_compaction_handoff` record. It identifies the source epoch and Anchor boundary, exact versioned context strategy, input limit and pre/post exact token counts, exact visible summary, retained semantic boundary, dropped provider-private schema/presence/byte count without hidden bytes, and successor epoch. A successful transition atomically commits the old binding close, handoff, and successor lossy-handoff binding open before any successor request; summary failure or another Compact decision commits none of them. Existing history remains immutable. The physical envelope and checksum remain unchanged; the current reader accepts preceding records, while a preceding reader rejects the new record. No migration, dual write, or compatibility shim is provided.

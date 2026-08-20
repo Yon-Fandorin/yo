@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.persistence.format-compatibility
-revision: sha256:4fbd6a78919c17bf0b355590646b674e56a874d3aa2e48f06c72f9c404ae465b
+revision: sha256:0984d08af628f5dd1348615e8331836f1612cc837924ad9fd670f878993d9f22
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:6009dfe0087bdb02169307ae866d0799f08922451ab091848b919f3fa8304202
+request_hash: sha256:ff63ffb7b9f697c2f99015ba9a8d03caa87c102049ba7287441cae1bb86d9f2d
 ---
 # Korean Review Projection
 
@@ -177,6 +177,8 @@ Provider-private item 하나의 complete canonical JSON encoding은 16 MiB로 �
 Refusal이 없는 직전 revision의 모든 유효 record는 확장된 현재 shape에서도 current-generation record입니다. 따라서 refusal이 없는 message와 있는 message가 섞이는 것은 top-level format generation 혼합이 아니며, 서로 다른 `format` discriminator가 섞이는 경우만 계속 fail closed합니다. 새 reader는 직전 record를 그대로 읽지만, 직전 closed-shape reader는 refusal이 실제로 기록된 새 record를 unknown field로 거부합니다. 따라서 기존 Session은 refusal-bearing replay delta가 처음 저장되기 전까지만 이전 binary로 downgrade하여 읽을 수 있고, 그 이후에는 해당 Session이 fail closed합니다. 이 revision은 migration, dual write, downgrade shim 없이 이 비대칭적인 공개 전 data impact를 명시적으로 수용합니다. `format: anchored-session`, checksummed physical envelope, 다른 semantic record는 바뀌지 않습니다.
 
 이번 다섯 번째로 명시적으로 검토된 공개 전 semantic `/v1` 변경은 같은 `format: anchored-session` generation의 additive extension입니다. 물리 `yo.session-record/v1` schema, top-level field, record-kind grammar, discovery object, `crc32c/v1` 표현, checksum domain·preimage는 byte-for-byte 그대로이고 이미 bind된 payload string이 위 private item과 replay-profile evidence를 포함할 수 있게 됩니다. 이전의 모든 유효 semantic record는 계속 유효하고 current reader는 이전 delta와 이후 private-bearing delta가 섞인 Session log를 다시 쓰지 않고 받아들입니다. 이전 semantic reader는 새 item variant나 replay-profile field를 unknown으로 거절하므로 둘 중 하나가 저장되기 전까지만 downgrade-readable합니다. 이 공개 전 비대칭 영향에는 migration, dual write, item omission, downgrade shim이 없습니다. Exact fixture는 이전 byte 불변, current mixed-history recovery와 snapshot, 두 새 shape에 대한 preceding-reader failure, canonical bound 계산, 확장 payload의 CRC coverage, 위에 정의한 null·omission·unknown-field·order·projection·schema·profile·epoch·duplicate case의 거절을 증명해야 합니다.
+
+제한된 `context_compaction_handoff` record는 양수인 source/successor binding epoch, source Continuation Anchor와 commit된 boundary, 정확한 versioned context-strategy identity, 양수 `input_token_limit`, 정확한 compaction 전 및 rebuild 후 input-token count, 정확한 visible UTF-8 summary, 처음 retained semantic sequence, provider-private state가 삭제되었는지를 식별해야 합니다. Private state가 삭제되었다면 record에는 제한된 schema identity, presence, encoded byte count, loss classification만 포함하며 hidden byte는 포함하면 안 됩니다. Strategy identity는 기존의 제한된 versioned-profile grammar를 사용하고 summary는 새 output-size policy 대신 기존 per-message decoded UTF-8 및 canonical replay-prefix limit을 사용합니다. Sole semantic writer는 successor epoch에서 request를 수락하기 전에 `backend_binding_closed(reason: replaced)`, handoff, `backend_binding_opened(reason: lossy_handoff)`를 그 순서로 atomically append해야 합니다. Failure, 이 commit 전 cancellation, rebuild된 strategy가 `Admit`이 아닌 경우에는 이 transition record를 하나도 append하지 않으며 모든 original record를 authoritative하고 byte-unchanged 상태로 둡니다. Recovery와 snapshot은 완전한 source-Anchor, boundary, retained-sequence, epoch graph를 검증하고 summary 처리된 prefix를 몰래 재사용하지 않고 정확한 summary 뒤에 retained semantic suffix를 이어 successor model context를 복원해야 합니다. 이는 같은 `format: anchored-session` semantic generation의 additive pre-release extension입니다. Physical envelope, discovery object, checksum 표현과 preimage는 바뀌지 않고 current reader는 prior record를 수락하지만 prior closed-shape reader는 새 record를 거절하며 migration, dual write, omission, compatibility shim은 제공하지 않습니다.
 
 ## 이유
 

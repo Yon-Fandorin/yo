@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-001
-    revision: sha256:69c3802dbaa47b00199bfdeca949a476429e93272e38e89a70ee7650a67c1091
+    revision: sha256:304b4e64d8bb64499cf6bf09ff2b4e08025852ffeaa6dd57a785744888353092
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -111,6 +111,8 @@ handoff, resend an uncertain request, or describe a replacement binding as
 native resume. Provider-private replay contents MUST remain hidden during that
 disclosure; the operator sees only its schema, presence, byte count, and whether
 the target can preserve it.
+
+Persisting `summarize-older-semantic-history/v1` as the Session's versioned context strategy selects the standing automatic policy for the backend's separately bounded compaction handoff in that Session. Yo MUST show the resulting lossy boundary and measurements but MUST NOT interrupt every pressure event for another confirmation. This is the sole exception to the preceding per-handoff approval rule and covers only the exact source Anchor and boundary, visible summary, retained semantic suffix, dropped-private disclosure, and successor epoch durably committed by that compaction contract. `exact-replay-only/v1` permits no automatic loss. Provider, Model, connector, endpoint, replay-profile, schema, or any other replacement-driven lossy handoff MUST still open read-only, describe the loss, and obtain one explicit confirmation; it MUST NOT reuse the automatic-compaction policy.
 
 ## Rationale
 

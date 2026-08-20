@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.session.continuation-lineage
-revision: sha256:d6dfeab7515fe4bd9e99dcd3bff00dec90205d040f265bcdc819cfe437f1ad9a
+revision: sha256:8652acfa1c8afbddccb87c185101dfc1bf483ad1b333accf2fa7aab093748e2b
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:eebb0528bc886b9c689fd978a73543b2fd7e3c7fdbc9726c8ff4fb29f62e4e97
+request_hash: sha256:aaf47504beccc13711b2843bde620ca2425ce2351274dc34deb5bd29919e37d8
 ---
 # Korean Review Projection
 
@@ -28,6 +28,8 @@ Lossy handoff만 가능하면 Yo는 먼저 저장된 Session을 read-only로 열
 
 
 각 backend binding은 versioned continuation strategy 하나를 명시합니다. exact_replay는 local_client 또는 managed_server executor를 가지며 backend_managed_state는 replay executor를 가지지 않습니다. Strategy는 backend kind, Provider, API dialect, model name에서 추론하지 않고 binding transition mode와도 구분합니다. 예를 들어 새로 열린 binding은 `exact_replay` transition으로 seed된 뒤 두 선언된 strategy 중 하나를 사용할 수 있습니다. Exact-replay binding은 complete effective binding의 `replay_profile`을 binding evidence에 포함해야 합니다. `semantic-only/v1`은 private replay를 금지하고 `kimi-private-local-plaintext/v1`은 `kimi.assistant-message/v1alpha1`을 선언합니다. Profile은 binding identity와 epoch freshness의 일부이며 ModelId에서 추론하면 안 됩니다. Format-compatibility 계약이 정한 정확한 legacy omission은 오직 `semantic-only/v1`로 decode합니다. 두 exact replay executor는 같은 semantic replay contract, validation, Anchor boundary를 사용하며 validated prefix를 읽고 다음 request를 조립하는 위치만 다릅니다. local_client는 local Session Repository에서 복원합니다. managed_server는 향후 Yo-managed Session service를 위한 예약 capability이며 remote repository identity, replay boundary, content 및 contract digest, binding epoch, availability, retention을 검증하는 reviewed implementation 전에는 광고하지 않습니다. backend_managed_state에서는 Yo가 transcript, semantic event, correlation, locator를 보관하고 backend가 model-visible conversation state를 소유합니다. 이 Anchor는 Yo replay delta를 참조하거나 보유한다고 주장하지 않습니다.
+
+`summarize-older-semantic-history/v1`을 Session의 versioned context strategy로 영속화하면 그 Session에서 backend가 별도로 제한한 compaction handoff의 standing automatic policy를 선택합니다. Yo는 결과로 생기는 lossy boundary와 measurement를 보여야 하지만 pressure event마다 다시 확인받기 위해 중단하면 안 됩니다. 이는 앞선 per-handoff approval rule의 유일한 예외이며, 승인된 compaction contract가 durable하게 commit한 정확한 source Anchor와 boundary, visible summary, retained semantic suffix, dropped-private disclosure, successor epoch에만 적용됩니다. `exact-replay-only/v1`은 automatic loss를 허용하지 않습니다. Provider, Model, connector, endpoint, replay-profile, schema 또는 그 밖의 replacement-driven lossy handoff는 계속 read-only로 열고 loss를 설명한 뒤 명시적 확인을 한 번 받아야 하며 automatic-compaction policy를 재사용하면 안 됩니다.
 
 ## 이유
 

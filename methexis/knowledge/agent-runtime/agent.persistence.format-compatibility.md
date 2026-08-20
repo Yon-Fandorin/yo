@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:740d4c4760010690e7151a2486127bdea50eb450a7b6b4aed8429bcc82bb0367
+    revision: sha256:2b30e95c91540ce3cdda40087841196e60d8fe2f4679c10270c5cbba4b2369a9
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -467,6 +467,8 @@ before becoming Activities, later model input, or durable replay. Prohibited raw
 credentials, complete environment values, execution-host diagnostics, and
 configured prohibited literals MUST NOT enter the semantic record. The admitted
 exact value, including an explicit bounded replacement, is the sole replay value.
+
+A bounded `context_compaction_handoff` record MUST identify the positive source and successor binding epochs, source Continuation Anchor and committed boundary, exact versioned context-strategy identity, positive `input_token_limit`, exact pre-compaction and post-rebuild input-token counts, exact visible UTF-8 summary, first retained semantic sequence, and whether provider-private state was dropped. When private state is dropped, the record contains only its bounded schema identity, presence, encoded byte count, and loss classification and MUST NOT contain its hidden bytes. The strategy identity uses the existing bounded versioned-profile grammar; the summary uses the existing per-message decoded UTF-8 and canonical replay-prefix limits rather than a new output-size policy. The sole semantic writer MUST atomically append `backend_binding_closed(reason: replaced)`, the handoff, and `backend_binding_opened(reason: lossy_handoff)` in that order before any request is accepted in the successor epoch. Failure, cancellation before that commit, or a rebuilt strategy result other than `Admit` MUST append none of those transition records and leaves every original record authoritative and byte-unchanged. Recovery and snapshots MUST validate the complete source-Anchor, boundary, retained-sequence, and epoch graph and reconstruct successor model context from the exact summary followed by the retained semantic suffix, never by silently reusing the summarized prefix. This is an additive pre-release extension of the same `format: anchored-session` semantic generation: the physical envelope, discovery object, checksum representation, and checksum preimage remain unchanged; the current reader accepts prior records, a prior closed-shape reader rejects the new record, and no migration, dual write, omission, or compatibility shim is provided.
 
 ## Rationale
 
