@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: agent.storage-001
-revision: sha256:b381799eeaea092ab8708e70ab0ea4c53aafed3c76605dd126958514a2ef9630
+revision: sha256:e9230fb25b63dac0f33ef04ad5a9508644c6f732bad3cbcde30a0920656bd57d
 payload:
   kind: decision
   content: |-
@@ -12,4 +12,4 @@ payload:
     The local Session Repository executes local-client exact replay, while a future managed Session Repository may execute the identical semantic replay contract after its remote identity, boundary, digests, availability, and retention are verified. Backend-managed continuation persists correlation and locator evidence without a replay delta.
 
 
-    Replay-prefix or model-context capacity exhaustion discovered before a final assistant answer is accepted produces a typed failed non-resumable Turn and no replay delta, resumable outcome, or Continuation Anchor. Only cumulative replay-application capacity discovered after one complete valid final answer, including its valid declared provider-private extension, may preserve the visible Turn as completed but non-resumable without those continuation records.
+    Replay-prefix or model-context capacity exhaustion discovered before a final assistant answer is accepted produces a typed failed non-resumable Turn and no replay delta, resumable outcome, or Continuation Anchor. Only cumulative replay-application capacity discovered after one complete valid final answer, including its valid declared provider-private extension, may preserve the visible Turn as completed but non-resumable without those continuation records. Every caller-selected local Session repository root is admitted only as a non-empty absolute path before filesystem access; relative or empty paths are rejected instead of being interpreted through the current working directory, while platform defaults remain derived from separately validated absolute roots.

@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.storage.session-repository
-revision: sha256:e1f17af9863a3b2d2ca7c7e6d4298181699a24be289164df5512a6ad6cfb4f01
+revision: sha256:388b6d042230dec79a8040ef071abde50d4ae5451714dd6869186af85841b2d8
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:62f617d8048ca48f43e746b251c35fc3d7221b96f2eb77499adf1851a871bd52
+request_hash: sha256:40c8feeb069a16ad281b81e1c2f3964cadb855c1c87004e2d68b779fa55dc3d4
 ---
 # Korean Review Projection
 
@@ -23,6 +23,8 @@ Local 구현은 Session마다 하나의 append-only versioned JSON Lines log를 
 물리 `yo.session-record/v1` envelope, field grammar, CRC32C preimage, failure behavior는 바뀌지 않습니다. Payload string은 현재 pre-release `yo.semantic-journal-commit/v1` shape 안에서 format-compatibility 계약의 additive provider-private replay item을 encode할 수 있고 schema field와 checksum은 그대로 그 정확한 payload byte를 bind합니다. 현재 semantic reader는 한 Session log에서 이전 replay delta와 확장된 private-item union을 모두 받아들이지만, 이전 reader는 private item을 알 수 없는 variant로 거절합니다. 이후 Kimi private-replay Turn이 extension을 사용했다는 이유만으로 기존 physical 또는 semantic record를 다시 쓰지 않습니다. Compatibility test는 판별 가능한 이전 replay artifact를 byte-for-byte 보존하고, 뒤의 physical-v1 payload에 private item이 있는 log를 받아들이며, 이전 semantic decoder가 이를 조용히 빼지 않고 실패함을 증명해야 합니다.
 
 같은 repository boundary는 각 Session의 마지막 완전한 envelope를 bounded tail read로 찾아 검증하고 storage-neutral discovery summary를 반환하는 read-only port를 제공합니다. 이 port는 writer lease를 얻거나 storage를 만들거나 record를 repair하거나 JSONL path를 노출하지 않습니다. Active writer와 abandoned pending marker를 구분하기 위한 independent read lock은 사용할 수 있지만 writer lease가 아닙니다.
+
+호출자가 선택하는 모든 로컬 repository root에는 `YO_SESSION_REPOSITORY`와 direct local reader 또는 writer open이 포함되며, filesystem access 전에 비어 있지 않은 absolute path여야 합니다. 빈 path와 relative spelling은 typed configuration 또는 repository-path error로 실패해야 하고, current working directory에 결합하거나 canonicalization으로 허용해서는 안 됩니다. Read-only open과 writer open은 같은 input rule을 적용해야 합니다. Platform-derived default는 별도로 검증한 absolute platform state root에 repository name을 붙이는 경우에만 허용합니다. 현재 pre-release product는 relative-path fallback, migration, compatibility branch를 제공하지 않습니다.
 
 여러 process가 같은 안정적인 absolute repository root를 동시에 열 수 있고 서로 다른 Session의 writer가 함께 실행될 수 있습니다. 잠금 방식 전환 중에는 모든 신버전 writer-capable repository instance가 기존 root-exclusive writer-lock 파일에 대한 shared compatibility guard를 lifetime 동안 유지합니다. 신버전 writer-capable instance끼리는 이 guard를 공유하지만 live 구버전의 exclusive guard와는 서로 배타적입니다. 따라서 구버전 writer가 살아 있으면 신버전 writer-capable open은 실패하고, 신버전 writer-capable instance가 열려 있으면 구버전 open이 실패합니다. 이 compatibility guard는 root append coordinator가 아니며 신버전 writer들을 직렬화하지 않고 read-only discovery port는 획득하지 않습니다. 각 Session에는 writer owner가 하나뿐이며 그 lease는 Session state를 load하거나 repair하기 전에 얻어 writer lifetime 동안 유지합니다. 특정 Session lease 획득 실패가 다른 Session open이나 write를 막으면 안 됩니다.
 

@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.credentials-001
-    revision: sha256:38f14d10813091792438cc0754a6b245f3523a816ad7adad9b9691ade5edcdf1
+    revision: sha256:1bc1943995420d541c83f9d88379cbaf1134332da4a44a32eb105d3ff0c9e5a2
 relations:
   depends_on:
     - agent.model.service-binding
@@ -17,6 +17,8 @@ relations:
 ## Statement
 
 API credentials are separate from public settings. The first local store is a pre-version `credentials.yaml` beside the selected Yo `config.yaml`, namespaced first by stable ProviderId and then AccountId. It uses the shared bounded safe-Rust YAML parser and carries no top-level format-version field; a retired `version` field is unknown and fails before secret use or mutation. Yo provides no legacy decoder, automatic migration, dual write, downgrade shim, or automatic deletion for preceding local bytes; the diagnostic requires the operator to back up or remove stale local state and register the connection again. Coordinates select only secret material; the same AccountId under different Providers remains independent and duplicate exact pairs fail.
+
+A local credential repository MUST be constructed only from a non-empty absolute path. Construction MUST return a typed path error before filesystem access for an empty or relative path and MUST NOT interpret it against the current working directory or canonicalize it into acceptance. Readers, mutation preparation, and commit therefore share one exact path identity. A production path MAY be derived only from the separately validated absolute Yo configuration root. The current pre-release product provides no relative-path fallback, migration, or compatibility branch.
 
 Capture occurs only when the effective binding declares an external credential requirement. It opens once with no-follow semantics, validates the immutable exact pair, and fails before a request when absent. A binding without that requirement, including Local Codex, needs no credential path. There is no fallback. The opened handle must be a regular file owned by the current user with no group or world permission bits; reads are bounded, use only that handle, and reject identity or relevant-metadata change.
 

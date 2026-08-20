@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.storage-001
-    revision: sha256:b381799eeaea092ab8708e70ab0ea4c53aafed3c76605dd126958514a2ef9630
+    revision: sha256:e9230fb25b63dac0f33ef04ad5a9508644c6f732bad3cbcde30a0920656bd57d
 relations:
   depends_on:
     - agent.persistence.format-compatibility
@@ -70,6 +70,8 @@ read and returns storage-neutral discovery summaries. Opening or using this port
 MUST NOT acquire the writer lease, create repository storage, repair records, or
 expose JSONL paths. It MAY use an independent read lock only to distinguish an
 active writer from an abandoned pending marker; that lock is not a writer lease.
+
+Every caller-selected local repository root, including `YO_SESSION_REPOSITORY` and every direct local reader or writer open, MUST be a non-empty absolute path before filesystem access. Empty and relative spellings MUST fail with a typed configuration or repository-path error; they MUST NOT be joined to the current working directory or canonicalized into acceptance. Read-only and writer opens MUST enforce the same input rule. A platform-derived default MAY append the repository name only to a separately validated absolute platform state root. The current pre-release product provides no relative-path fallback, migration, or compatibility branch.
 
 The two logical record domains therefore share one physical availability
 boundary and one capacity ceiling in this implementation. It is the initial durable home for bounded, payload-free Request correlation

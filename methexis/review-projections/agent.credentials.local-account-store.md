@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.credentials.local-account-store
-revision: sha256:2700464ca660b7c541532a3e5c6565802818874aedfcfa3c3861cac331d0e3ce
+revision: sha256:aee37c7ed75b8afea62ca15be86ba8ecee2f71eb40de757cd0d5152d9c5be3be
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:f6420dd4d863c5add342716d5623328482293a9130d56352b024b4044664a7e7
+request_hash: sha256:31a3c0d9ad7376f1b22bb0096d9fd007522c3e47ad8f7aaa1fcba8a8db512d1e
 ---
 # Korean Review Projection
 
@@ -15,6 +15,8 @@ request_hash: sha256:f6420dd4d863c5add342716d5623328482293a9130d56352b024b404466
 ## 규칙
 
 API 자격증명은 공개 설정과 분리합니다. 첫 로컬 저장소는 선택된 Yo `config.yaml` 옆의 pre-version `credentials.yaml`이며, 안정적인 ProviderId와 AccountId 순서로 이름공간을 나눕니다. 이 파일은 공통 bounded safe-Rust YAML parser를 사용하고 top-level format-version field를 두지 않습니다. 폐기한 `version` field는 unknown field로 취급하여 secret을 사용하거나 mutation하기 전에 실패합니다. Yo는 이전 local byte에 대해 legacy decoder, 자동 migration, dual write, downgrade shim, 자동 삭제를 제공하지 않습니다. Diagnostic은 stale local state를 backup하거나 제거한 뒤 connection을 다시 등록하라고 안내합니다. 이 좌표는 비밀값만 선택합니다. 서로 다른 Provider 아래의 같은 AccountId는 서로 독립적이고, 완전히 같은 좌표가 중복되면 실패합니다.
+
+로컬 자격증명 repository는 비어 있지 않은 absolute path로만 생성해야 합니다. 빈 path 또는 relative path는 filesystem access 전에 typed path error로 실패해야 하며, current working directory를 기준으로 해석하거나 canonicalization으로 허용해서는 안 됩니다. 따라서 reader, mutation preparation, commit은 하나의 정확한 path identity를 공유합니다. Production path는 별도로 검증한 absolute Yo configuration root에서만 파생할 수 있습니다. 현재 pre-release product는 relative-path fallback, migration, compatibility branch를 제공하지 않습니다.
 
 자격증명 캡처는 유효 바인딩이 외부 자격증명을 요구할 때만 수행합니다. 파일은 no-follow 방식으로 한 번 열고 불변의 정확한 좌표를 검증하며, 자격증명이 없으면 요청 전에 실패합니다. Local Codex처럼 외부 자격증명이 필요 없는 바인딩에는 자격증명 경로가 필요하지 않습니다. 다른 계정으로 fallback하지 않습니다. 열린 handle은 현재 사용자가 소유하고 group 또는 world 권한 비트가 없는 일반 파일이어야 합니다. 읽기는 크기가 제한되고 그 handle만 사용하며, identity나 관련 metadata가 바뀌면 거절합니다.
 
