@@ -54,6 +54,18 @@ impl LocalConnectionOperationJournal {
         storage::capture(&self.path)
     }
 
+    pub(super) fn cleanup_pending_residues(
+        &self,
+        guard: &mut LocalConnectionOperationGuard,
+    ) -> Result<(), ConnectionOperationError> {
+        self.require_guard(guard)?;
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| ConnectionOperationError::InvalidPath(self.path.clone()))?;
+        storage::cleanup_pending_residues(parent)
+    }
+
     pub fn publish_intent(
         &self,
         guard: &mut LocalConnectionOperationGuard,

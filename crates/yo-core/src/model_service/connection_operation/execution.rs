@@ -380,6 +380,11 @@ impl LocalConnectionOperationSession<'_> {
         mut observe: impl FnMut(RecoveryStep) -> Result<(), ConnectionOperationExecutionError>,
     ) -> Result<ConnectionOperationExecutionOutcome, ConnectionOperationExecutionError> {
         self.directory_identity.revalidate()?;
+        self.repositories
+            .journal
+            .cleanup_pending_residues(&mut self.guard)
+            .map_err(ConnectionOperationExecutionError::JournalCapture)?;
+        self.directory_identity.revalidate()?;
         let Some(entry) = self
             .repositories
             .journal
