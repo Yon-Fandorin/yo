@@ -79,7 +79,7 @@ fn platform_state_root_from(
 
     #[cfg(not(target_os = "macos"))]
     {
-        if let Some(state) = xdg_state_home {
+        if let Some(state) = xdg_state_home.filter(|state| !state.is_empty()) {
             return Ok(absolute_path("XDG_STATE_HOME", state)?.join("yo"));
         }
         Ok(required_absolute_path_value("HOME", home)?.join(".local/state/yo"))
