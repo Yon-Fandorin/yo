@@ -1,77 +1,60 @@
 use super::*;
 
-// Kimi decoder의 증분 byte 공식은 stop/tool-call과 escaped UTF-8 값 모두에서 최종
-// canonical ModelReplayDelta encoder와 정확히 같은 길이를 계산해야 조기 거절이 안전합니다.
-#[test]
-fn kimi_incremental_round_sizes_match_the_canonical_replay_encoder() {
-    for (content, reasoning, calls) in [
-        (Some("line\n한글"), "hidden\\reason", Vec::new()),
-        (
-            None,
-            "tool reasoning",
-            vec![KimiAssistantToolCall::new(
-                "call-1",
-                "read_file",
-                r#"{"path":"a\nb"}"#,
-            )],
-        ),
-        (
-            Some("partial"),
-            "",
-            vec![
-                KimiAssistantToolCall::new("call-1", "read_file", "{}"),
-                KimiAssistantToolCall::new("call-2", "write_file", r#"{"text":"\""}"#),
-            ],
-        ),
-    ] {
-        let json_bytes = |value: &str| serde_json::to_string(value).unwrap().len() - 2;
-        let sizes = calls
-            .iter()
-            .map(|call| KimiReplayToolCallSize {
-                id_json_bytes: json_bytes(call.id()),
-                name_json_bytes: json_bytes(call.name()),
-                arguments_json_bytes: json_bytes(call.arguments()),
-            })
-            .collect::<Vec<_>>();
-        let lengths = kimi_replay_round_item_lengths(
-            true,
-            content.is_some(),
-            content.map_or(0, json_bytes),
-            json_bytes(reasoning),
-            &sizes,
-        )
-        .unwrap();
-        let mut items = vec![ModelReplayItem::Message {
-            role: ModelReplayRole::Assistant,
-            content: content.unwrap_or_default().to_owned(),
-            refusal: None,
-        }];
-        items.extend(calls.iter().map(|call| ModelReplayItem::FunctionCall {
-            call_id: call.id().to_owned(),
-            name: call.name().to_owned(),
-            arguments: call.arguments().to_owned(),
-        }));
-        items.push(ModelReplayItem::ProviderPrivateAssistant {
-            schema: "kimi.assistant-message/v1alpha1".to_owned(),
-            message: KimiAssistantMessage::new(reasoning, content.map(str::to_owned), calls),
-        });
-        let contract = ModelReplayContract::new("system", Vec::new());
-        let prefix = ModelReplayItem::Message {
-            role: ModelReplayRole::User,
-            content: "prefix".to_owned(),
-            refusal: None,
-        };
-        let budget =
-            ModelReplayDelta::replay_budget(Some(&contract), std::iter::once(&prefix)).unwrap();
+fn private_envelope(payload: &[u8]) -> ProviderPrivateReplayEnvelope {
+    ProviderPrivateReplayEnvelope::new("provider.private/v1", payload.to_vec()).unwrap()
+}
 
-        assert_eq!(
-            budget.encoded_len_with_item_lengths(&lengths),
-            ModelReplayDelta::prospective_encoded_len(
-                Some(&contract),
-                std::iter::once(&prefix).chain(items.iter()),
-            )
-        );
+// 중립 envelope가 versioned schema와 canonical bounded object만 허용하는지 검증합니다.
+#[test]
+fn provider_private_envelope_closes_schema_and_payload_grammar() {
+    for schema in [
+        "",
+        "x",
+        "provider.private/v",
+        "provider/private/v1",
+        "비공개/v1",
+    ] {
+        assert!(ProviderPrivateReplayEnvelope::new(schema, b"{}".to_vec()).is_err());
     }
+    let oversized_schema = format!("{}/v1", "x".repeat(126));
+    assert_eq!(oversized_schema.len(), 129);
+    assert!(ProviderPrivateReplayEnvelope::new(oversized_schema, b"{}".to_vec()).is_err());
+
+    for payload in [
+        Vec::new(),
+        b"[]".to_vec(),
+        b"not-json".to_vec(),
+        vec![0xff],
+        br#"{ "member":1}"#.to_vec(),
+        br#"{"outer":{"secret-sentinel":1,"secret-sentinel":2}}"#.to_vec(),
+    ] {
+        let error = ProviderPrivateReplayEnvelope::new("provider.private/v1", payload).unwrap_err();
+        let rendered = format!("{error:?} {error}");
+        assert!(!rendered.contains("secret-sentinel"), "{rendered}");
+    }
+}
+
+// opaque payload의 generic exact ceiling은 받고 첫 초과 byte는 거부하는지 검증합니다.
+#[test]
+fn provider_private_envelope_accepts_the_exact_payload_ceiling_only() {
+    let payload = |bytes: usize| {
+        let mut payload = br#"{"x":""}"#.to_vec();
+        payload.splice(6..6, std::iter::repeat_n(b'x', bytes - 8));
+        assert_eq!(payload.len(), bytes);
+        payload
+    };
+
+    assert!(
+        ProviderPrivateReplayEnvelope::new("provider.private/v1", payload(MAX_REPLAY_TEXT_BYTES),)
+            .is_ok()
+    );
+    assert!(
+        ProviderPrivateReplayEnvelope::new(
+            "provider.private/v1",
+            payload(MAX_REPLAY_TEXT_BYTES + 1),
+        )
+        .is_err()
+    );
 }
 
 // 리플레이 함수 결과는 앞선 정확한 호출과 한 번만 짝지어져야 한다.
@@ -242,43 +225,22 @@ fn model_replay_contract_is_required_on_the_first_delta_only() {
     );
 }
 
-// Kimi provider-private reasoning과 model-visible 인자는 public Debug 경계를 거쳐도
-// 길이와 개수만 남고 원문은 진단 문자열에 노출되지 않습니다.
+// provider-private payload는 public Debug 경계를 거쳐도 길이만 남고 원문은 노출되지 않습니다.
 #[test]
-fn kimi_private_debug_is_redacted_through_public_enclosing_types() {
-    let reasoning = "private-reasoning-sentinel";
-    let arguments = r#"{"private":"argument-sentinel"}"#;
-    let message = KimiAssistantMessage::new(
-        reasoning,
-        None,
-        vec![KimiAssistantToolCall::new("call-1", "read_file", arguments)],
-    );
+fn provider_private_debug_is_redacted_through_public_enclosing_types() {
+    let private = "private-reasoning-sentinel";
+    let envelope = private_envelope(br#"{"private":"private-reasoning-sentinel"}"#);
     let event = crate::ResponsesEvent::ProviderPrivateAssistant {
         output_index: 1,
-        schema: "kimi.assistant-message/v1alpha1".to_owned(),
-        message: message.clone(),
+        envelope: envelope.clone(),
+        visible_projection: Vec::new(),
     };
     let replay = ModelReplayItem::ProviderPrivateAssistant {
-        schema: "kimi.assistant-message/v1alpha1".to_owned(),
-        message: message.clone(),
+        envelope: envelope.clone(),
     };
-
-    for rendered in [
-        format!("{message:?}"),
-        format!("{:?}", message.tool_calls()[0]),
-        format!("{event:?}"),
-        format!("{replay:?}"),
-    ] {
-        assert!(!rendered.contains(reasoning), "{rendered}");
-        assert!(!rendered.contains("argument-sentinel"), "{rendered}");
-        assert!(rendered.contains("reasoning_bytes") || rendered.contains("argument_bytes"));
-    }
-}
-
-// tool call이 없는 stop형 private assistant는 content 문자열을 반드시 보존해야 하므로
-// null content를 빈 visible message와 같은 것으로 축약하지 않습니다.
-#[test]
-fn kimi_private_stop_requires_present_string_content() {
+    let input = crate::ModelConnectorInputItem::ProviderPrivateAssistant {
+        envelope: envelope.clone(),
+    };
     let delta = ModelReplayDelta::new(
         Some(ModelReplayContract::new("system", Vec::new())),
         vec![
@@ -287,13 +249,71 @@ fn kimi_private_stop_requires_present_string_content() {
                 content: String::new(),
                 refusal: None,
             },
-            ModelReplayItem::ProviderPrivateAssistant {
-                schema: "kimi.assistant-message/v1alpha1".to_owned(),
-                message: KimiAssistantMessage::new("", None, Vec::new()),
-            },
+            replay.clone(),
         ],
     );
 
-    assert!(!delta.is_valid());
-    assert!(delta.validate().is_err());
+    for rendered in [
+        format!("{envelope:?}"),
+        format!("{event:?}"),
+        format!("{replay:?}"),
+        format!("{input:?}"),
+        format!("{delta:?}"),
+    ] {
+        assert!(!rendered.contains(private), "{rendered}");
+        assert!(rendered.contains("payload_bytes"));
+    }
+}
+
+// opaque private item도 core가 확인할 수 있는 assistant/call 인접성은 지켜야 합니다.
+#[test]
+fn provider_private_item_requires_one_preceding_visible_assistant_group() {
+    let private = || ModelReplayItem::ProviderPrivateAssistant {
+        envelope: private_envelope(br#"{"opaque":true}"#),
+    };
+    let assistant = || ModelReplayItem::Message {
+        role: ModelReplayRole::Assistant,
+        content: String::new(),
+        refusal: None,
+    };
+    let user = || ModelReplayItem::Message {
+        role: ModelReplayRole::User,
+        content: "input".to_owned(),
+        refusal: None,
+    };
+    let contract = || Some(ModelReplayContract::new("system", Vec::new()));
+
+    for items in [
+        vec![private()],
+        vec![user(), private()],
+        vec![assistant(), private(), private()],
+        vec![
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: String::new(),
+                refusal: Some("declined".to_owned()),
+            },
+            private(),
+        ],
+    ] {
+        assert!(ModelReplayDelta::new(contract(), items).validate().is_err());
+    }
+
+    let valid = ModelReplayDelta::new(
+        contract(),
+        vec![
+            assistant(),
+            ModelReplayItem::FunctionCall {
+                call_id: "call-1".to_owned(),
+                name: "read_file".to_owned(),
+                arguments: "{}".to_owned(),
+            },
+            private(),
+            ModelReplayItem::FunctionCallOutput {
+                call_id: "call-1".to_owned(),
+                output: "contents".to_owned(),
+            },
+        ],
+    );
+    assert!(valid.validate().is_ok());
 }

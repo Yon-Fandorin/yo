@@ -137,7 +137,7 @@ impl TryFrom<WireContinuationStrategy> for ContinuationStrategy {
                 replay_profile: match replay_profile.as_deref() {
                     None => crate::ReplayProfile::SemanticOnly,
                     Some(crate::KIMI_PRIVATE_REPLAY_PROFILE) => {
-                        crate::ReplayProfile::KimiPrivateLocalPlaintext
+                        crate::ReplayProfile::ProviderPrivateLocalPlaintext
                     },
                     Some(_) => {
                         return Err(JournalCodecError::new(

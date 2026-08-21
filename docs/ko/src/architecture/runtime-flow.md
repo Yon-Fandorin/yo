@@ -51,7 +51,7 @@ admission된 connector dispatch
   ↓ 정확한 ProviderId + AccountId lookup
 원문을 감춘 ApiCredential
   ↓ yo-cli의 exact identity+dialect 조립
-외부 OpenAiResponsesConnector 또는 OpenAiChatCompletionsConnector
+외부 OpenAiResponsesConnector, OpenAiChatCompletionsConnector 또는 KimiChatCompletionsConnector
 POST <정규화한 base>/responses
   또는 <정규화한 base>/chat/completions
   ↓ bearer auth + 같은 origin의 bounded redirect + finite deadline
@@ -76,8 +76,8 @@ fallback이 없고 diagnostic formatting은 내용을 노출하지 않는다. �
 optional metadata일 뿐 identity나 routing에 참여하지 않는다.
 `yo-core::model_connector`는 중립 port를 소유하며 `api_dialect`에서 built-in connector
 identity 하나를 파생한다. `yo-cli`는 Provider probing이나 fallback 없이 그 exact identity와
-dialect를 독립 Responses 또는 Chat Completions crate에 연결한다. Responses는 `responses`
-segment를 정확히 하나 붙이고 Chat Completions는 정확히 `chat/completions`를 붙인다. 어느
+dialect를 독립 Responses, Chat Completions 또는 Kimi crate에 연결한다. Responses는 `responses`
+segment를 정확히 하나 붙이고 Chat Completions와 Kimi는 정확히 `chat/completions`를 붙인다. 어느
 경로도 `v1`을 하나 더 붙이거나 provider conversation authority 또는 built-in tool을 켜지
 않는다. Chat decoder는 index 0인
 choice 하나, finish 뒤 final usage와 `[DONE]` 순서를 요구하고 content와 refusal을 독립적으로
@@ -728,17 +728,27 @@ Cross-product와 future row는 숨기지 않고 안정적인 disabled 이유와 
 Kimi assistant state를 현재 사용자 로컬 Session record에 암호화하지 않고 보관한다고
 알린다.
 
-그 뒤 `kimi-chat-completions` connector가 선택된 complete binding의 exact request와
-stream 문법을 소유한다. Platform은 기존 request shape를 유지한다. Code K3는 허용된
+Secret-free connection preparation은 닫힌 Kimi catalog/profile compatibility
+검사를 유지해 잘못된 cross-product나 limit 행을 credential 또는 public-state 변경 전에
+거절한다. 이 검사는 Kimi wire 값을 만들지 않으며 Connector의 독립적인 client 생성 전
+검증을 대신하지 않는다.
+
+그 뒤 flat `yo-connector-kimi` crate가 선택된 complete binding의 exact request, stream,
+provider-private assistant codec, visible projection, encoded-size 문법을 소유한다.
+Platform은 기존 request shape를 유지한다. Code K3는 허용된
 reasoning effort와 preserved-thinking `keep: all`을 보내고 Code K2.7은 forced
 preserved thinking을 보낸다. 두 Code 계열은 opaque `prompt_cache_key` 하나도 보낸다.
 Backend는 Session identity에서 hint를 한 번 만들고 Provider 분기 없이 일반 요청과 재개
 요청에서 재사용하며, 직렬화 여부는 Connector만 결정한다. Hint는 redacted되고
 binding identity, replay evidence, log, diagnostic, Transcript, trace가 되지 않는다.
-성공한 K3/K2.7 round는 완전한 reasoning, content, tool-call message를 담은 bounded
-provider-private assistant item 하나를 낸다. 이 항목은 frontend와
+성공한 K3/K2.7 round는 Kimi payload 안에 완전한 reasoning, content, tool-call message를
+담은 bounded opaque provider-private envelope 하나를 낸다. Core는 그 payload를 해석하지
+않는다. 이 항목은 frontend와
 Request-trace projection에서 숨기고 visible assistant/function projection 옆에 atomically
-저장하며, 일치하는 private replay profile과 binding epoch에서만 허용한다. 다음 Kimi
+저장하며, completed neutral projection, exact private replay profile schema, binding epoch가
+일치한 뒤에만 허용한다. Physical Journal member 순서와 profile string은 바뀌지 않는다.
+Managed loop는 완료된 private-profile assistant-and-calls group마다 envelope 하나를 정확히
+요구하고 recovery도 Continuation Anchor를 재구성하기 전에 같은 순서를 검증한다. 다음 Kimi
 request는 그 visible group을 private assistant message 하나로 정확히 한 번 교체한다.
 Semantic-only binding은 private item을 저장하거나 replay할 수 없고 incomplete 또는 failed
 round는 private Continuation Anchor를 만들지 않는다.

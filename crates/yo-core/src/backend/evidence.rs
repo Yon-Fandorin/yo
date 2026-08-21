@@ -1,14 +1,12 @@
 mod replay;
 
-pub use replay::{
-    KimiAssistantMessage, KimiAssistantToolCall, ModelReplay, ModelReplayContract,
-    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool,
-};
-pub(crate) use replay::{
-    KimiReplayToolCallSize, ModelReplayBudget, kimi_replay_round_item_lengths,
-};
 #[cfg(test)]
-use replay::{MAX_REPLAY_CONTRACT_BYTES, MAX_REPLAY_DELTA_BYTES};
+use replay::{MAX_REPLAY_CONTRACT_BYTES, MAX_REPLAY_DELTA_BYTES, MAX_REPLAY_TEXT_BYTES};
+pub use replay::{
+    ModelReplay, ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+    ModelReplayRole, ModelReplayTool, ProviderPrivateReplayEnvelope,
+};
+pub(crate) use replay::{ProviderPrivateReplayPayload, validate_provider_private_replay_sequence};
 
 /// Opaque provider-owned identity with an adapter-versioned interpretation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -58,14 +56,21 @@ pub enum ReplayExecutor {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReplayProfile {
     SemanticOnly,
-    KimiPrivateLocalPlaintext,
+    ProviderPrivateLocalPlaintext,
 }
 
 impl ReplayProfile {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::SemanticOnly => crate::SEMANTIC_REPLAY_PROFILE,
-            Self::KimiPrivateLocalPlaintext => crate::KIMI_PRIVATE_REPLAY_PROFILE,
+            Self::ProviderPrivateLocalPlaintext => crate::KIMI_PRIVATE_REPLAY_PROFILE,
+        }
+    }
+
+    pub(crate) const fn provider_private_schema(self) -> Option<&'static str> {
+        match self {
+            Self::SemanticOnly => None,
+            Self::ProviderPrivateLocalPlaintext => Some("kimi.assistant-message/v1alpha1"),
         }
     }
 }

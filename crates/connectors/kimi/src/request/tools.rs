@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
+use yo_core::{TOOL_SCHEMA_DIALECT, ToolApprovalRequirement, ToolDefinition, ToolEffect, ToolId};
 
 use super::{ConnectorError, FunctionTool, configuration_failure};
-use crate::{TOOL_SCHEMA_DIALECT, ToolApprovalRequirement, ToolDefinition, ToolEffect, ToolId};
 
 pub(super) fn strict_tool(tool: &FunctionTool) -> Result<Value, ConnectorError> {
     if !valid_function_name(tool.name())

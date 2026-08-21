@@ -59,7 +59,8 @@ frontend changes.
 
 For model-connector request and stream validation, run the concrete Connector
 crate that owns the changed dialect, such as
-`cargo test --locked -p yo-connector-openai-chat-completions`, together with
+`cargo test --locked -p yo-connector-openai-chat-completions` or
+`cargo test --locked -p yo-connector-kimi`, together with
 `cargo test --locked -p yo-connector-transport` when shared byte lifecycle
 mechanics are affected. Run `cargo test --locked -p yo-core` at close for the
 neutral vocabulary and managed-loop consumer. Environment-integrated Connector checks use only local

@@ -6,7 +6,7 @@ use super::super::{
 };
 use crate::{
     AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
-    ReplayProfile, TurnId, TurnOutcome,
+    ReplayProfile, TurnId, TurnOutcome, backend::validate_provider_private_replay_sequence,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -142,12 +142,16 @@ impl CorrelationRecovery {
                         ));
                     },
                     Some(ContinuationStrategy::ExactReplay {
-                        replay_profile: ReplayProfile::KimiPrivateLocalPlaintext,
+                        replay_profile: ReplayProfile::ProviderPrivateLocalPlaintext,
                         ..
-                    }) if !has_provider_private => {
-                        return Err(JournalCodecError::new(
-                            "Kimi private exact replay requires a provider-private assistant item",
-                        ));
+                    }) => {
+                        validate_provider_private_replay_sequence(
+                            replay.delta().items(),
+                            ReplayProfile::ProviderPrivateLocalPlaintext
+                                .provider_private_schema()
+                                .expect("the provider-private profile has an exact schema"),
+                        )
+                        .map_err(JournalCodecError::new)?;
                     },
                     _ => {},
                 }

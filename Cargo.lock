@@ -2261,11 +2261,23 @@ dependencies = [
  "signal-hook",
  "tiktoken-rs",
  "unicode-segmentation",
+ "yo-connector-kimi",
  "yo-connector-openai-chat-completions",
  "yo-connector-openai-responses",
  "yo-core",
  "yo-tui",
  "yo-yaml",
+]
+
+[[package]]
+name = "yo-connector-kimi"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "yo-connector-transport",
+ "yo-core",
 ]
 
 [[package]]

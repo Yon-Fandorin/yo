@@ -1,9 +1,9 @@
 use yo_core::{
     AccountId, ApiCredential, ApiDialect, ConnectorError, ConnectorFailureKind,
-    EffectiveModelBinding, KimiAssistantMessage, ModelConnectorCancellation, ModelConnectorEvent,
+    EffectiveModelBinding, ModelConnectorCancellation, ModelConnectorEvent,
     ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll,
     ModelConnectorRequest, ModelConnectorStreamPort, ModelId, NormalizedEndpoint, ProviderId,
-    RequestToolExposure,
+    ProviderPrivateReplayEnvelope, RequestToolExposure,
 };
 
 use super::*;
@@ -118,8 +118,12 @@ fn rejects_provider_private_assistant_replay_before_dispatch() {
     .unwrap();
     let request = ModelConnectorRequest::new(
         vec![ModelConnectorInputItem::ProviderPrivateAssistant {
-            schema: "kimi.assistant-message/v1alpha1".to_owned(),
-            message: KimiAssistantMessage::new("private", Some("visible".to_owned()), Vec::new()),
+            envelope: ProviderPrivateReplayEnvelope::new(
+                "kimi.assistant-message/v1alpha1",
+                br#"{"role":"assistant","reasoning_content":"private","content":"visible"}"#
+                    .to_vec(),
+            )
+            .unwrap(),
         }],
         RequestToolExposure::disabled(),
         128,

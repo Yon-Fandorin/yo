@@ -252,8 +252,8 @@ pub enum ResponsesEvent {
     },
     ProviderPrivateAssistant {
         output_index: usize,
-        schema: String,
-        message: crate::KimiAssistantMessage,
+        envelope: crate::ProviderPrivateReplayEnvelope,
+        visible_projection: Vec<crate::ModelReplayItem>,
     },
     Terminal {
         response_id: String,

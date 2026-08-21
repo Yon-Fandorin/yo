@@ -3,7 +3,7 @@ use std::{collections::HashSet, fmt};
 use serde_json::Value;
 
 use super::{ConnectorError, ConnectorFailureKind};
-use crate::{KimiAssistantMessage, SessionId};
+use crate::{ProviderPrivateReplayEnvelope, SessionId};
 
 const MAX_WIRE_ID_BYTES: usize = 256;
 const MAX_TOOL_DESCRIPTION_BYTES: usize = 4 * 1024;
@@ -44,8 +44,7 @@ pub enum ResponsesInputItem {
         output: String,
     },
     ProviderPrivateAssistant {
-        schema: String,
-        message: KimiAssistantMessage,
+        envelope: ProviderPrivateReplayEnvelope,
     },
 }
 
@@ -157,14 +156,14 @@ impl ReasoningEffort {
 
 /// Provider-neutral request context used only by reviewed Connector wire variants.
 #[derive(Clone, Eq, PartialEq)]
-pub(crate) struct ModelCacheAffinityHint(String);
+pub struct ModelCacheAffinityHint(String);
 
 impl ModelCacheAffinityHint {
-    pub(crate) fn for_session(session_id: SessionId) -> Self {
+    pub fn for_session(session_id: SessionId) -> Self {
         Self(session_id.to_string())
     }
 
-    pub(super) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -239,14 +238,6 @@ impl ResponsesRequest {
                 ResponsesInputItem::FunctionCallOutput { call_id, .. } => {
                     validate_wire_id("function call_id", call_id)?;
                 },
-                ResponsesInputItem::ProviderPrivateAssistant { schema, .. }
-                    if schema != "kimi.assistant-message/v1alpha1" =>
-                {
-                    return Err(ConnectorError::new(
-                        ConnectorFailureKind::Configuration,
-                        "provider-private assistant replay schema is unsupported",
-                    ));
-                },
                 ResponsesInputItem::ProviderPrivateAssistant { .. } => {},
             }
         }
@@ -260,12 +251,12 @@ impl ResponsesRequest {
         })
     }
 
-    pub(crate) fn with_replay_budget(mut self, replay_budget: crate::ModelReplayBudget) -> Self {
+    pub fn with_replay_budget(mut self, replay_budget: crate::ModelReplayBudget) -> Self {
         self.replay_budget = Some(replay_budget);
         self
     }
 
-    pub(crate) fn with_cache_affinity_hint(mut self, hint: ModelCacheAffinityHint) -> Self {
+    pub fn with_cache_affinity_hint(mut self, hint: ModelCacheAffinityHint) -> Self {
         self.cache_affinity_hint = Some(hint);
         self
     }
@@ -292,11 +283,11 @@ impl ResponsesRequest {
         self.reasoning_effort
     }
 
-    pub(super) const fn replay_budget(&self) -> Option<crate::ModelReplayBudget> {
+    pub const fn replay_budget(&self) -> Option<crate::ModelReplayBudget> {
         self.replay_budget
     }
 
-    pub(crate) fn cache_affinity_hint(&self) -> Option<&str> {
+    pub fn cache_affinity_hint(&self) -> Option<&str> {
         self.cache_affinity_hint
             .as_ref()
             .map(ModelCacheAffinityHint::as_str)

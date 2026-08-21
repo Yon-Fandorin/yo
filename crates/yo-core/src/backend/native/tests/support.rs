@@ -82,8 +82,8 @@ pub(super) fn mock_tokenization_payload(
             ModelConnectorInputItem::FunctionCallOutput { call_id, output } => json!({
                 "type": "function_call_output", "call_id": call_id, "output": output,
             }),
-            ModelConnectorInputItem::ProviderPrivateAssistant { schema, .. } => json!({
-                "type": "provider_private_assistant", "schema": schema,
+            ModelConnectorInputItem::ProviderPrivateAssistant { envelope } => json!({
+                "type": "provider_private_assistant", "schema": envelope.schema(),
             }),
         })
         .collect::<Vec<_>>();

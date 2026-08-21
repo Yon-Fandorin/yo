@@ -36,8 +36,8 @@ bounded 입력으로 취급한다.
 | 책임 | 소유자 |
 |---|---|
 | 제품별 Account seed, bounded discovery transport, normalization, 검토된 overlay, typed disabled reason | [`kimi_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog.rs)와 `kimi_catalog/` 하위 모듈 |
-| 정확한 Kimi request와 streamed assistant-message 문법 | [`kimi_request.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/kimi_request.rs), [`connector.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/connector.rs), [`chat_sse.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/chat_sse.rs) |
-| Provider-private replay 검증, 저장, 상관관계, native 재사용과 Provider-neutral Session별 cache-affinity hint 생성 | [`backend/evidence/replay.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence/replay.rs), [`journal/codec`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/codec), [`backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) |
+| exact Platform/Code profile admission, Kimi request·stream 문법, typed private payload codec·projection, encoded-size 계산 | [`connectors/kimi`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/kimi/src/lib.rs) |
+| opaque provider-private envelope 제한, physical 저장, replay-profile/schema 상관관계, neutral projection 비교, Provider-neutral Session별 cache-affinity hint 생성 | [`backend/evidence/replay.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence/replay.rs), [`journal/codec`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/codec), [`backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) |
 | Config seed, picker, disclosure, 복구 가능한 연결 transaction | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs), [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs), [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs) |
 
 ## 현재 갱신 절차
@@ -76,6 +76,7 @@ bounded 입력으로 취급한다.
 집중 검사:
 
 ```bash
+cargo test --locked -p yo-connector-kimi
 cargo test --locked -p yo-core kimi
 cargo test --locked -p yo-core journal::codec::tests::correlation::continuation
 cargo test --locked -p yo-core backend::native

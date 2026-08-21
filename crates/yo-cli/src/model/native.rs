@@ -1,13 +1,13 @@
 use std::path::Path;
 
+use yo_connector_kimi::KimiChatCompletionsConnector;
 use yo_connector_openai_chat_completions::OpenAiChatCompletionsConnector;
 use yo_connector_openai_responses::OpenAiResponsesConnector;
 use yo_core::{
     AgentBackend, ApiCredential, ApiDialect, ConnectorId, CredentialSnapshot,
-    KimiChatCompletionsConnector, LocalConnectionOperationRepositories, LocalCredentialRepository,
-    LocalModelRequestObservation, ModelConnector, ModelConnectorLimits, ModelRequestFailureKind,
-    ModelRequestOutcome, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-    ToolRegistry,
+    LocalConnectionOperationRepositories, LocalCredentialRepository, LocalModelRequestObservation,
+    ModelConnector, ModelConnectorLimits, ModelRequestFailureKind, ModelRequestOutcome,
+    NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices, ToolRegistry,
 };
 
 use super::{
@@ -223,6 +223,21 @@ mod tests {
         .unwrap()
     }
 
+    fn kimi_entry() -> yo_core::ModelCatalogEntry {
+        let complete = yo_core::CompleteModelBinding::from_durable_json(
+            r#"{"provider":"kimi","account":"default","model":"kimi-k3","connector":"kimi-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
+        )
+        .unwrap();
+        yo_core::ModelCatalogEntry::with_explicit_profile(
+            complete.binding().clone(),
+            None,
+            None,
+            None,
+            complete.profile().clone(),
+        )
+        .unwrap()
+    }
+
     // CLI composition root는 이미 확정된 Responses identity와 dialect만 외부 Connector
     // crate에 연결하고 base URL에 정확한 responses endpoint를 구성합니다.
     #[test]
@@ -252,6 +267,35 @@ mod tests {
             connector.request_url(),
             "https://example.test/v1/chat/completions"
         );
+    }
+
+    // Kimi는 exact Connector identity+dialect와 complete profile이 모두 일치할 때만
+    // 전용 crate로 조립하며 endpoint 뒤에 chat/completions를 정확히 한 번 붙입니다.
+    #[test]
+    fn composes_the_kimi_connector_for_the_exact_complete_binding() {
+        let connector = native_connector(
+            &kimi_entry(),
+            ApiCredential::new("secret").unwrap(),
+            ModelConnectorLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            connector.request_url(),
+            "https://api.moonshot.ai/v1/chat/completions"
+        );
+    }
+
+    // durable binding 경계는 Kimi dialect를 다른 Connector identity와 조합한 입력을
+    // composition 전에 거절하므로 Provider 이름 추론이나 fallback이 실행되지 않습니다.
+    #[test]
+    fn rejects_a_non_exact_kimi_connector_dialect_tuple_without_fallback() {
+        let error = yo_core::CompleteModelBinding::from_durable_json(
+            r#"{"provider":"kimi","account":"default","model":"kimi-k3","connector":"openai-chat-completions","base_url":"https://api.moonshot.ai/v1","api_dialect":"kimi-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1048576,"max_output_tokens":131072,"reasoning_parameters":{"effort":"max"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1","replay_profile":"kimi-private-local-plaintext/v1"}"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("does not match api_dialect"));
     }
 
     // CLI startup의 authoritative registry handoff가 durable no-tools policy를 실제 empty

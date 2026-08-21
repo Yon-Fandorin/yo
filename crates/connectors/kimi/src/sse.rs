@@ -1,20 +1,23 @@
 use std::collections::{BTreeMap, HashSet};
 
 use serde_json::{Value, json};
-
-use super::{
-    ConnectorError, ConnectorFailureKind, ResponseTerminal, ResponsesConnectorLimits,
-    ResponsesEvent, ResponsesUsage, SseDecodeBatch,
-    framing::{SseFrame, SseFramer},
+use yo_connector_transport::{DecodeBatch, SseFrame, SseFramer};
+use yo_core::{
+    ConnectorError, ConnectorFailureKind, ModelConnectorEvent, ModelConnectorLimits,
+    ModelConnectorTerminal, ModelConnectorUsage, ModelReplayBudget, ModelRequestFailureKind,
 };
-use crate::{KimiAssistantMessage, KimiAssistantToolCall};
+
+use crate::private_replay::{
+    KimiAssistantMessage, KimiAssistantToolCall, KimiReplayToolCallSize,
+    kimi_replay_round_item_lengths,
+};
 
 const KIMI_PRIVATE_MESSAGE_FIXED_BYTES: usize =
     br#"{"content":,"reasoning_content":"","role":"assistant"}"#.len();
 const KIMI_TOOL_CALLS_FIELD_BYTES: usize = 16;
 
 pub(super) struct ChatCompletionsSseDecoder {
-    limits: ResponsesConnectorLimits,
+    limits: ModelConnectorLimits,
     framer: SseFramer,
     response_id: Option<String>,
     message_seen: bool,
@@ -24,8 +27,8 @@ pub(super) struct ChatCompletionsSseDecoder {
     argument_bytes: usize,
     calls: BTreeMap<usize, ToolCall>,
     call_ids: HashSet<String>,
-    finish: Option<ResponseTerminal>,
-    usage: Option<ResponsesUsage>,
+    finish: Option<ModelConnectorTerminal>,
+    usage: Option<ModelConnectorUsage>,
     done_seen: bool,
     model: String,
     private_replay: bool,
@@ -36,7 +39,7 @@ pub(super) struct ChatCompletionsSseDecoder {
     private_content_encoded_bytes: usize,
     private_reasoning_encoded_bytes: usize,
     private_tool_calls_encoded_bytes: usize,
-    replay_budget: crate::ModelReplayBudget,
+    replay_budget: ModelReplayBudget,
 }
 
 #[derive(Clone)]
@@ -44,27 +47,28 @@ struct ToolCall {
     id: String,
     name: String,
     arguments: String,
-    encoded_size: crate::KimiReplayToolCallSize,
+    encoded_size: KimiReplayToolCallSize,
 }
 
 impl ChatCompletionsSseDecoder {
     #[cfg(test)]
     pub(super) fn new_kimi(
-        limits: ResponsesConnectorLimits,
+        limits: ModelConnectorLimits,
         model: String,
         private_replay: bool,
     ) -> Self {
-        let replay_budget = crate::ModelReplayDelta::replay_budget(None, std::iter::empty())
+        let replay_budget = yo_core::ModelReplayDelta::replay_budget(None, std::iter::empty())
             .expect("an empty replay delta prefix fits its canonical bound");
         Self::new_kimi_with_replay_budget(limits, model, private_replay, replay_budget)
     }
 
     pub(super) fn new_kimi_with_replay_budget(
-        limits: ResponsesConnectorLimits,
+        limits: ModelConnectorLimits,
         model: String,
         private_replay: bool,
-        replay_budget: crate::ModelReplayBudget,
+        replay_budget: ModelReplayBudget,
     ) -> Self {
+        let limits = crate::bounded_kimi_limits(limits);
         let framer = SseFramer::new(
             limits.max_sse_event_bytes,
             limits.max_sse_events,
@@ -98,7 +102,10 @@ impl ChatCompletionsSseDecoder {
     }
 
     #[cfg(test)]
-    pub(super) fn push(&mut self, bytes: &[u8]) -> Result<Vec<ResponsesEvent>, ConnectorError> {
+    pub(super) fn push(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
         let batch = self.push_batch(bytes);
         match batch.failure {
             Some(failure) => Err(failure),
@@ -115,27 +122,32 @@ impl ChatCompletionsSseDecoder {
         )
     }
 
-    pub(super) fn push_batch(&mut self, bytes: &[u8]) -> SseDecodeBatch {
+    #[cfg(test)]
+    pub(super) const fn kimi_retained_argument_bytes(&self) -> usize {
+        self.argument_bytes
+    }
+
+    pub(super) fn push_batch(&mut self, bytes: &[u8]) -> DecodeBatch {
         let mut decoded = Vec::new();
         let frames = self.framer.push(bytes);
         for frame in frames.frames {
             match self.decode_event(frame) {
                 Ok(events) => decoded.extend(events),
                 Err(failure) => {
-                    return SseDecodeBatch {
+                    return DecodeBatch {
                         events: decoded,
                         failure: Some(failure),
                     };
                 },
             }
         }
-        SseDecodeBatch {
+        DecodeBatch {
             events: decoded,
             failure: frames.failure,
         }
     }
 
-    pub(super) fn finish(&mut self) -> Result<Vec<ResponsesEvent>, ConnectorError> {
+    pub(super) fn finish(&mut self) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
         if let Some(frame) = self.framer.finish()? {
             let emitted = self.decode_event(frame)?;
             if !emitted.is_empty() {
@@ -160,14 +172,17 @@ impl ChatCompletionsSseDecoder {
             .usage
             .clone()
             .ok_or_else(|| protocol_failure("Chat Completions stream has no final usage record"))?;
-        Ok(vec![ResponsesEvent::Terminal {
+        Ok(vec![ModelConnectorEvent::Terminal {
             response_id,
             status,
             usage,
         }])
     }
 
-    fn decode_event(&mut self, frame: SseFrame) -> Result<Vec<ResponsesEvent>, ConnectorError> {
+    fn decode_event(
+        &mut self,
+        frame: SseFrame,
+    ) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
         let Some(data) = frame.data else {
             return Ok(Vec::new());
         };
@@ -196,14 +211,14 @@ impl ChatCompletionsSseDecoder {
         self.decode_chunk(&chunk)
     }
 
-    fn decode_chunk(&mut self, chunk: &Value) -> Result<Vec<ResponsesEvent>, ConnectorError> {
+    fn decode_chunk(&mut self, chunk: &Value) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
         self.validate_kimi_chunk_identity(chunk)?;
         let id = string_at(chunk, "id", "response id")?;
         let mut emitted = Vec::new();
         match &self.response_id {
             None => {
                 self.response_id = Some(id.to_owned());
-                emitted.push(ResponsesEvent::ResponseCreated {
+                emitted.push(ModelConnectorEvent::ResponseCreated {
                     response_id: id.to_owned(),
                 });
             },
@@ -281,7 +296,7 @@ impl ChatCompletionsSseDecoder {
             self.message_seen = true;
             self.content_seen = true;
             self.content.push_str(content);
-            emitted.push(ResponsesEvent::TextDelta {
+            emitted.push(ModelConnectorEvent::TextDelta {
                 output_index: 0,
                 item_id: self.message_item_id(),
                 content_index: 0,
@@ -291,7 +306,7 @@ impl ChatCompletionsSseDecoder {
         if let Some(refusal) = optional_string(delta.get("refusal"), "delta.refusal")? {
             self.add_refusal_bytes(refusal.len())?;
             self.message_seen = true;
-            emitted.push(ResponsesEvent::RefusalDelta {
+            emitted.push(ModelConnectorEvent::RefusalDelta {
                 output_index: 0,
                 item_id: self.message_item_id(),
                 content_index: 1,
@@ -363,11 +378,11 @@ impl ChatCompletionsSseDecoder {
                         self.private_reasoning_encoded_bytes,
                         None,
                     )?;
-                    emitted.push(ResponsesEvent::MessageDone {
+                    emitted.push(ModelConnectorEvent::MessageDone {
                         output_index: 0,
                         item_id: self.message_item_id(),
                     });
-                    ResponseTerminal::Completed
+                    ModelConnectorTerminal::Completed
                 },
                 "tool_calls" => {
                     if self.calls.is_empty() {
@@ -381,20 +396,20 @@ impl ChatCompletionsSseDecoder {
                         self.private_reasoning_encoded_bytes,
                         None,
                     )?;
-                    emitted.push(ResponsesEvent::MessageDone {
+                    emitted.push(ModelConnectorEvent::MessageDone {
                         output_index: 0,
                         item_id: self.message_item_id(),
                     });
                     for (index, call) in &self.calls {
                         let output_index = index + 1;
                         let item_id = self.call_item_id(*index);
-                        emitted.push(ResponsesEvent::FunctionCallStarted {
+                        emitted.push(ModelConnectorEvent::FunctionCallStarted {
                             output_index,
                             item_id: item_id.clone(),
                             call_id: call.id.clone(),
                             name: call.name.clone(),
                         });
-                        emitted.push(ResponsesEvent::FunctionCallDone {
+                        emitted.push(ModelConnectorEvent::FunctionCallDone {
                             output_index,
                             item_id,
                             call_id: call.id.clone(),
@@ -403,30 +418,30 @@ impl ChatCompletionsSseDecoder {
                         });
                     }
                     self.emit_kimi_private(&mut emitted)?;
-                    ResponseTerminal::Completed
+                    ModelConnectorTerminal::Completed
                 },
                 "length" => {
                     if self.message_seen {
-                        emitted.push(ResponsesEvent::MessageDone {
+                        emitted.push(ModelConnectorEvent::MessageDone {
                             output_index: 0,
                             item_id: self.message_item_id(),
                         });
                     }
-                    ResponseTerminal::Incomplete {
+                    ModelConnectorTerminal::Incomplete {
                         reason: Some("length".to_owned()),
-                        request_failure: crate::ModelRequestFailureKind::ResponseLimit,
+                        request_failure: ModelRequestFailureKind::ResponseLimit,
                     }
                 },
                 "content_filter" => {
                     if self.message_seen {
-                        emitted.push(ResponsesEvent::MessageDone {
+                        emitted.push(ModelConnectorEvent::MessageDone {
                             output_index: 0,
                             item_id: self.message_item_id(),
                         });
                     }
-                    ResponseTerminal::Failed {
+                    ModelConnectorTerminal::Failed {
                         code: Some("content_filter".to_owned()),
-                        request_failure: crate::ModelRequestFailureKind::RequestRejected,
+                        request_failure: ModelRequestFailureKind::RequestRejected,
                     }
                 },
                 _ => {
@@ -495,7 +510,7 @@ impl ChatCompletionsSseDecoder {
 
     fn emit_kimi_private(
         &mut self,
-        emitted: &mut Vec<ResponsesEvent>,
+        emitted: &mut Vec<ModelConnectorEvent>,
     ) -> Result<(), ConnectorError> {
         if !self.kimi_private_replay() {
             return Ok(());
@@ -511,19 +526,20 @@ impl ChatCompletionsSseDecoder {
             .into_values()
             .map(|call| KimiAssistantToolCall::new(call.id, call.name, call.arguments))
             .collect::<Vec<_>>();
-        emitted.push(ResponsesEvent::ProviderPrivateAssistant {
+        let message = KimiAssistantMessage::new(
+            std::mem::take(&mut self.reasoning_content),
+            self.content_seen.then(|| std::mem::take(&mut self.content)),
+            tool_calls,
+        );
+        emitted.push(ModelConnectorEvent::ProviderPrivateAssistant {
             output_index,
-            schema: "kimi.assistant-message/v1alpha1".to_owned(),
-            message: KimiAssistantMessage::new(
-                std::mem::take(&mut self.reasoning_content),
-                self.content_seen.then(|| std::mem::take(&mut self.content)),
-                tool_calls,
-            ),
+            envelope: crate::private_replay::encode_envelope(&message)?,
+            visible_projection: crate::private_replay::visible_projection(&message),
         });
         Ok(())
     }
 
-    fn accept_usage(&mut self, usage: ResponsesUsage) -> Result<(), ConnectorError> {
+    fn accept_usage(&mut self, usage: ModelConnectorUsage) -> Result<(), ConnectorError> {
         if let Some(existing) = &self.usage {
             if existing == &usage {
                 return Ok(());
@@ -591,7 +607,7 @@ impl ChatCompletionsSseDecoder {
             let arguments = optional_string(function.get("arguments"), "tool-call arguments")?
                 .unwrap_or_default()
                 .to_owned();
-            let encoded_size = crate::KimiReplayToolCallSize {
+            let encoded_size = KimiReplayToolCallSize {
                 id_json_bytes: encoded_json_string_payload_bytes(&id)?,
                 name_json_bytes: encoded_json_string_payload_bytes(&name)?,
                 arguments_json_bytes: encoded_json_string_payload_bytes(&arguments)?,
@@ -659,7 +675,7 @@ impl ChatCompletionsSseDecoder {
             ));
         }
         let encoded = encoded_json_string_payload_bytes(arguments)?;
-        let prospective_size = crate::KimiReplayToolCallSize {
+        let prospective_size = KimiReplayToolCallSize {
             arguments_json_bytes: call
                 .encoded_size
                 .arguments_json_bytes
@@ -775,7 +791,7 @@ impl ChatCompletionsSseDecoder {
         content_seen: bool,
         content_encoded_bytes: usize,
         reasoning_encoded_bytes: usize,
-        updated_call: Option<(usize, crate::KimiReplayToolCallSize)>,
+        updated_call: Option<(usize, KimiReplayToolCallSize)>,
     ) -> Result<(), ConnectorError> {
         let replay_budget = self.replay_budget;
         let call_indices = self
@@ -794,7 +810,7 @@ impl ChatCompletionsSseDecoder {
                     .expect("every retained Kimi call has an encoded size")
             })
             .collect::<Vec<_>>();
-        let item_lengths = crate::kimi_replay_round_item_lengths(
+        let item_lengths = kimi_replay_round_item_lengths(
             self.kimi_private_replay(),
             content_seen,
             content_encoded_bytes,
@@ -824,7 +840,7 @@ impl ChatCompletionsSseDecoder {
     }
 }
 
-fn decode_usage(value: &Value) -> Result<ResponsesUsage, ConnectorError> {
+fn decode_usage(value: &Value) -> Result<ModelConnectorUsage, ConnectorError> {
     let prompt = non_negative_at(value, "prompt_tokens")?;
     let completion = non_negative_at(value, "completion_tokens")?;
     let total = non_negative_at(value, "total_tokens")?;
@@ -844,7 +860,7 @@ fn decode_usage(value: &Value) -> Result<ResponsesUsage, ConnectorError> {
             })
         })
         .transpose()?;
-    Ok(ResponsesUsage {
+    Ok(ModelConnectorUsage {
         input_tokens: Some(prompt),
         output_tokens: Some(completion),
         total_tokens: Some(total),

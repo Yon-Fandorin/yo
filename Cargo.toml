@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/connectors/transport",
+    "crates/connectors/kimi",
     "crates/connectors/openai-responses",
     "crates/connectors/openai-chat-completions",
     "crates/yo-cli",

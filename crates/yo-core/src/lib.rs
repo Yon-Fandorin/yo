@@ -24,18 +24,16 @@ pub use agent_session::{
     AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, BackendReplacementOutcome,
     CommandAdmission, PendingCommand,
 };
+pub(crate) use backend::ProviderPrivateReplayPayload;
 pub use backend::{
     AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
     BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
     BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendScriptStep, BackendStopHandle,
     CodexBackend, CodexBackendConfig, CodexSkillReferenceProvider, ContinuationStrategy,
-    KimiAssistantMessage, KimiAssistantToolCall, ModelReplay, ModelReplayContract,
-    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool, ModelRequestObserver,
-    NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices, ReplayExecutor,
-    ReplayProfile, ScriptedBackend,
-};
-pub(crate) use backend::{
-    KimiReplayToolCallSize, ModelReplayBudget, kimi_replay_round_item_lengths,
+    ModelReplay, ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+    ModelReplayRole, ModelReplayTool, ModelRequestObserver, NativeModelBackend,
+    NativeModelBackendConfig, NativeModelBackendServices, ProviderPrivateReplayEnvelope,
+    ReplayExecutor, ReplayProfile, ScriptedBackend,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
@@ -57,13 +55,13 @@ pub use journal::{
     TranscriptSlice,
 };
 pub use model_connector::{
-    ConnectorError, ConnectorFailureKind, FunctionTool, KimiChatCompletionsConnector,
-    ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
+    ConnectorError, ConnectorFailureKind, FunctionTool, ModelCacheAffinityHint, ModelConnector,
+    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
-    ModelConnectorStream, ModelConnectorStreamPort, ModelConnectorTerminal, ModelConnectorUsage,
-    ReasoningChannel, ReasoningEffort, RequestToolExposure, ResponseTerminal,
-    ResponsesCancellation, ResponsesConnectorLimits, ResponsesEvent, ResponsesInputItem,
-    ResponsesInputRole, ResponsesPoll, ResponsesRequest, ResponsesStream, ResponsesUsage,
+    ModelConnectorStreamPort, ModelConnectorTerminal, ModelConnectorUsage, ReasoningChannel,
+    ReasoningEffort, RequestToolExposure, ResponseTerminal, ResponsesCancellation,
+    ResponsesConnectorLimits, ResponsesEvent, ResponsesInputItem, ResponsesInputRole,
+    ResponsesPoll, ResponsesRequest, ResponsesUsage,
 };
 pub use model_service::{
     AccountId, ApiCredential, ApiDialect, CompleteModelBinding, ConnectionAccount,

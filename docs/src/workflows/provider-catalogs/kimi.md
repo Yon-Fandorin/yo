@@ -34,8 +34,8 @@ product. Treat every response byte as untrusted and bounded.
 | Responsibility | Owner |
 |---|---|
 | Product-specific Account seed, bounded discovery transport, normalization, reviewed overlays, and typed disabled reasons | [`kimi_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog.rs) and its `kimi_catalog/` children |
-| Exact Kimi request and streamed assistant-message grammar | [`kimi_request.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/kimi_request.rs), [`connector.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/connector.rs), and [`chat_sse.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/chat_sse.rs) |
-| Provider-private replay validation, persistence, correlation, native reuse, and Provider-neutral per-Session cache-affinity hint creation | [`backend/evidence/replay.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence/replay.rs), [`journal/codec`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/codec), and [`backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) |
+| Exact Platform/Code profile admission, Kimi request and stream grammar, typed private payload codec/projection, and encoded-size accounting | [`connectors/kimi`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/kimi/src/lib.rs) |
+| Opaque provider-private envelope bounds, physical persistence, replay-profile/schema correlation, neutral projection comparison, and Provider-neutral per-Session cache-affinity hint creation | [`backend/evidence/replay.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence/replay.rs), [`journal/codec`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/journal/codec), and [`backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) |
 | Config seed, picker, disclosure, and recoverable connection transaction | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs), [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs), and [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs) |
 
 ## Current update procedure
@@ -74,6 +74,7 @@ product. Treat every response byte as untrusted and bounded.
 Focused checks:
 
 ```bash
+cargo test --locked -p yo-connector-kimi
 cargo test --locked -p yo-core kimi
 cargo test --locked -p yo-core journal::codec::tests::correlation::continuation
 cargo test --locked -p yo-core backend::native

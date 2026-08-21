@@ -180,6 +180,120 @@ pub struct NativeModelBackend {
 }
 
 impl NativeModelBackend {
+    fn current_visible_round_projection(
+        &self,
+        state: &TurnState,
+    ) -> Result<Vec<ModelReplayItem>, BackendFailure> {
+        let mut messages = BTreeMap::<usize, String>::new();
+        for ((output_index, _), content) in &state.round_messages {
+            messages.entry(*output_index).or_default().push_str(content);
+        }
+        let mut refusals = BTreeMap::<usize, String>::new();
+        for ((output_index, _), refusal) in &state.round_refusals {
+            refusals.entry(*output_index).or_default().push_str(refusal);
+        }
+        if messages
+            .keys()
+            .chain(refusals.keys())
+            .any(|output_index| !state.round_message_items.contains(output_index))
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "provider-private assistant preceded completion of its visible message",
+            ));
+        }
+        let message_outputs = state
+            .round_message_items
+            .iter()
+            .copied()
+            .chain(messages.keys().copied())
+            .chain(refusals.keys().copied())
+            .collect::<BTreeSet<_>>();
+        if message_outputs
+            .iter()
+            .any(|output_index| state.round_replay.contains_key(output_index))
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "model output index changed semantic item kind",
+            ));
+        }
+        let output_indices = state
+            .round_replay
+            .keys()
+            .copied()
+            .chain(message_outputs.iter().copied())
+            .collect::<BTreeSet<_>>();
+        output_indices
+            .into_iter()
+            .map(|output_index| {
+                if let Some(item) = state.round_replay.get(&output_index) {
+                    if matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }) {
+                        return Err(failure(
+                            BackendFailureKind::Protocol,
+                            "provider-private replay appeared inside its visible projection",
+                        ));
+                    }
+                    return Ok(item.clone());
+                }
+                Ok(ModelReplayItem::Message {
+                    role: ModelReplayRole::Assistant,
+                    content: messages.remove(&output_index).unwrap_or_default(),
+                    refusal: refusals.remove(&output_index),
+                })
+            })
+            .collect()
+    }
+
+    fn validate_provider_private_visible_projection(
+        projection: &[ModelReplayItem],
+    ) -> Result<(), BackendFailure> {
+        let Some((first, rest)) = projection.split_first() else {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "provider-private assistant has no completed visible assistant group",
+            ));
+        };
+        if !matches!(
+            first,
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                refusal: None,
+                ..
+            }
+        ) || rest
+            .iter()
+            .any(|item| !matches!(item, ModelReplayItem::FunctionCall { .. }))
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "provider-private assistant projection must be one assistant message followed by its calls",
+            ));
+        }
+        Ok(())
+    }
+
+    fn last_visible_round_output_index(state: &TurnState) -> Option<usize> {
+        state
+            .round_replay
+            .keys()
+            .copied()
+            .chain(state.round_message_items.iter().copied())
+            .chain(
+                state
+                    .round_messages
+                    .keys()
+                    .map(|(output_index, _)| *output_index),
+            )
+            .chain(
+                state
+                    .round_refusals
+                    .keys()
+                    .map(|(output_index, _)| *output_index),
+            )
+            .max()
+    }
+
     fn prospective_replay_delta_encoded_len(
         &self,
         state: &TurnState,
@@ -403,8 +517,8 @@ impl NativeModelBackend {
                 crate::model_profile_admission::AdmittedReplayProfile::SemanticOnly => {
                     crate::ReplayProfile::SemanticOnly
                 },
-                crate::model_profile_admission::AdmittedReplayProfile::KimiPrivateLocalPlaintext => {
-                    crate::ReplayProfile::KimiPrivateLocalPlaintext
+                crate::model_profile_admission::AdmittedReplayProfile::ProviderPrivateLocalPlaintext => {
+                    crate::ReplayProfile::ProviderPrivateLocalPlaintext
                 },
             };
             (tools, replay)
@@ -885,6 +999,17 @@ impl NativeModelBackend {
         state: &mut TurnState,
         event: ModelConnectorEvent,
     ) -> Result<(), BackendFailure> {
+        if state
+            .round_replay
+            .values()
+            .any(|item| matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }))
+            && !matches!(&event, ModelConnectorEvent::Terminal { .. })
+        {
+            return Err(failure(
+                BackendFailureKind::Protocol,
+                "semantic model output arrived after provider-private replay was sealed",
+            ));
+        }
         match event {
             ModelConnectorEvent::ResponseCreated { response_id } => {
                 state.response_id = Some(response_id);
@@ -1126,8 +1251,8 @@ impl NativeModelBackend {
             },
             ModelConnectorEvent::ProviderPrivateAssistant {
                 output_index,
-                schema,
-                message,
+                envelope,
+                visible_projection,
             } => {
                 if state.round_replay.contains_key(&output_index) {
                     return Err(failure(
@@ -1135,7 +1260,35 @@ impl NativeModelBackend {
                         "provider-private assistant reused a model output index",
                     ));
                 }
-                let item = ModelReplayItem::ProviderPrivateAssistant { schema, message };
+                if !state.call_activities.is_empty() {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "provider-private assistant preceded completion of its function calls",
+                    ));
+                }
+                if Self::last_visible_round_output_index(state)
+                    .is_some_and(|last| output_index <= last)
+                {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "provider-private assistant must follow every visible output in its group",
+                    ));
+                }
+                if self.replay_profile.provider_private_schema() != Some(envelope.schema()) {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "provider-private assistant schema differs from its replay profile",
+                    ));
+                }
+                let current_projection = self.current_visible_round_projection(state)?;
+                Self::validate_provider_private_visible_projection(&current_projection)?;
+                if current_projection != visible_projection {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "provider-private assistant projection differs from semantic replay",
+                    ));
+                }
+                let item = ModelReplayItem::ProviderPrivateAssistant { envelope };
                 self.ensure_replay_capacity_with_round_item(state, Some((output_index, &item)))?;
                 state.round_replay.insert(output_index, item);
             },
@@ -1230,6 +1383,17 @@ impl NativeModelBackend {
                         BackendFailureKind::Protocol,
                         "model message text completed without its message output item",
                     ));
+                }
+                if matches!(&status, ModelConnectorTerminal::Completed)
+                    && self.replay_profile == crate::ReplayProfile::ProviderPrivateLocalPlaintext
+                {
+                    super::validate_provider_private_replay_sequence(
+                        &state.round_replay.values().cloned().collect::<Vec<_>>(),
+                        self.replay_profile
+                            .provider_private_schema()
+                            .expect("the provider-private profile has an exact schema"),
+                    )
+                    .map_err(|detail| failure(BackendFailureKind::Protocol, detail))?;
                 }
                 let completed_round_has_assistant = state.round_replay.values().any(|item| {
                     matches!(
@@ -2237,10 +2401,9 @@ fn replay_input(item: &ModelReplayItem) -> ModelConnectorInputItem {
                 output: output.clone(),
             }
         },
-        ModelReplayItem::ProviderPrivateAssistant { schema, message } => {
+        ModelReplayItem::ProviderPrivateAssistant { envelope } => {
             ModelConnectorInputItem::ProviderPrivateAssistant {
-                schema: schema.clone(),
-                message: message.clone(),
+                envelope: envelope.clone(),
             }
         },
     }

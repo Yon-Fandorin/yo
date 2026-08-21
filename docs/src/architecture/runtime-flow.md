@@ -52,7 +52,7 @@ immutable CredentialStore
   ↓ exact ProviderId + AccountId lookup
 redacted ApiCredential
   ↓ yo-cli exact identity+dialect composition
-external OpenAiResponsesConnector or OpenAiChatCompletionsConnector
+external OpenAiResponsesConnector, OpenAiChatCompletionsConnector, or KimiChatCompletionsConnector
 POST <normalized base>/responses
   or <normalized base>/chat/completions
   ↓ bearer auth + same-origin bounded redirects + finite deadlines
@@ -77,9 +77,9 @@ fallback and diagnostic formatting never exposes their contents. Display names
 remain optional metadata and never participate in identity or routing.
 `yo-core::model_connector` owns the neutral port and derives one built-in
 connector identity from `api_dialect`; `yo-cli` maps that exact identity and
-dialect to the independent Responses or Chat Completions crate without
+dialect to the independent Responses, Chat Completions, or Kimi crate without
 Provider probing or fallback. Responses appends exactly one `responses`
-segment; Chat Completions appends exactly `chat/completions`. Neither route adds
+segment; Chat Completions and Kimi append exactly `chat/completions`. No route adds
 another `v1` or enables provider conversation authority or built-in tools. The Chat decoder
 requires one index-zero choice, finish then final usage then `[DONE]`, preserves
 content and refusal independently, and correlates indexed tool-call fragments.
@@ -782,8 +782,14 @@ stored binding is published, the compact preview states that bounded Kimi
 assistant state will be retained unencrypted in current-user local Session
 records.
 
-The `kimi-chat-completions` connector then owns the exact request and stream
-grammar for that selected complete binding. Platform keeps its established
+Secret-free connection preparation retains a closed Kimi catalog/profile
+compatibility check so invalid cross-product or limit rows fail before credential
+or public-state mutation. This check neither builds Kimi wire values nor replaces
+the Connector's independent pre-client validation.
+
+The flat `yo-connector-kimi` crate then owns the exact request, stream,
+provider-private assistant codec, visible projection, and encoded-size grammar
+for that selected complete binding. Platform keeps its established
 request shape. Code K3 sends its admitted reasoning effort with
 preserved-thinking `keep: all`; Code K2.7 sends forced preserved thinking.
 Both Code families also send one opaque `prompt_cache_key`. The backend creates
@@ -792,11 +798,14 @@ resumed requests without branching on Provider; the Connector alone decides
 whether to serialize it. Hints are
 redacted and never become binding identity, replay evidence, logs, diagnostics,
 transcripts, or traces. Successful K3/K2.7 rounds emit one
-bounded provider-private assistant item containing the complete reasoning,
-content, and tool-call message. It is hidden from frontend and Request-trace
+bounded opaque provider-private envelope whose Kimi payload contains the complete
+reasoning, content, and tool-call message. Core never interprets that payload. It is hidden from frontend and Request-trace
 projection, stored atomically beside its visible assistant/function
-projection, and admitted only under a matching private replay profile and
-binding epoch. The next Kimi request replaces that visible group with the
+projection, and admitted only after the completed neutral projection, exact private replay
+profile schema, and binding epoch match. Its physical Journal member order and profile string
+remain unchanged. The managed loop requires exactly one envelope after every completed
+private-profile assistant-and-calls group, and recovery verifies the same ordering before
+reconstructing a Continuation Anchor. The next Kimi request replaces that visible group with the
 private assistant message exactly once. Semantic-only bindings cannot store or
 replay the private item, and an incomplete or failed round creates no private
 Continuation Anchor.

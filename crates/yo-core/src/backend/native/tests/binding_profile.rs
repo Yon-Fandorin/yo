@@ -226,6 +226,7 @@ fn explicit_profile_rejects_unsupported_runtime_fields() {
             r#"{"thinking":{"type":"disabled"}}"#,
             "local-tools/v1",
         ),
+        profile(r#"{"effort":"low"}"#, "{}", "local-tools/v1"),
         profile(r#"{"effort":"max"}"#, "{}", "local-tools/v1"),
         profile("{}", "{}", "other-tools/v1"),
         profile("null", "{}", "local-tools/v1"),
