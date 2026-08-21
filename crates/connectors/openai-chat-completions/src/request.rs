@@ -1,16 +1,19 @@
 use serde_json::{Map, Value, json};
-
-use super::{
-    ConnectorError, ConnectorFailureKind, ResponsesInputItem, ResponsesInputRole, ResponsesRequest,
+use yo_core::{
+    ConnectorError, ConnectorFailureKind, ModelConnectorInputItem, ModelConnectorInputRole,
+    ModelConnectorRequest,
 };
 
-pub(super) fn wire_body(request: &ResponsesRequest, model: &str) -> Result<Value, ConnectorError> {
+pub(super) fn wire_body(
+    request: &ModelConnectorRequest,
+    model: &str,
+) -> Result<Value, ConnectorError> {
     let mut messages = Vec::new();
     let mut index = 0;
     while index < request.input().len() {
         match &request.input()[index] {
-            ResponsesInputItem::Message {
-                role: ResponsesInputRole::Assistant,
+            ModelConnectorInputItem::Message {
+                role: ModelConnectorInputRole::Assistant,
                 content,
                 refusal,
             } => {
@@ -18,7 +21,7 @@ pub(super) fn wire_body(request: &ResponsesRequest, model: &str) -> Result<Value
                 messages.push(assistant_message(content, refusal.as_deref(), tool_calls));
                 index = next;
             },
-            ResponsesInputItem::Message {
+            ModelConnectorInputItem::Message {
                 role,
                 content,
                 refusal,
@@ -34,12 +37,12 @@ pub(super) fn wire_body(request: &ResponsesRequest, model: &str) -> Result<Value
                 }));
                 index += 1;
             },
-            ResponsesInputItem::FunctionCall { .. } => {
+            ModelConnectorInputItem::FunctionCall { .. } => {
                 let (tool_calls, next) = collect_tool_calls(request.input(), index);
                 messages.push(assistant_message("", None, tool_calls));
                 index = next;
             },
-            ResponsesInputItem::FunctionCallOutput { call_id, output } => {
+            ModelConnectorInputItem::FunctionCallOutput { call_id, output } => {
                 messages.push(json!({
                     "role": "tool",
                     "tool_call_id": call_id,
@@ -47,7 +50,7 @@ pub(super) fn wire_body(request: &ResponsesRequest, model: &str) -> Result<Value
                 }));
                 index += 1;
             },
-            ResponsesInputItem::ProviderPrivateAssistant { .. } => {
+            ModelConnectorInputItem::ProviderPrivateAssistant { .. } => {
                 return Err(configuration_failure(
                     "provider-private assistant replay requires its provider-specific connector",
                 ));
@@ -85,10 +88,10 @@ pub(super) fn wire_body(request: &ResponsesRequest, model: &str) -> Result<Value
     Ok(body)
 }
 
-fn collect_tool_calls(input: &[ResponsesInputItem], start: usize) -> (Vec<Value>, usize) {
+fn collect_tool_calls(input: &[ModelConnectorInputItem], start: usize) -> (Vec<Value>, usize) {
     let mut index = start;
     let mut tool_calls = Vec::new();
-    while let Some(ResponsesInputItem::FunctionCall {
+    while let Some(ModelConnectorInputItem::FunctionCall {
         call_id,
         name,
         arguments,
@@ -133,30 +136,31 @@ fn configuration_failure(message: impl Into<String>) -> ConnectorError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{FunctionTool, ReasoningEffort, RequestToolExposure};
+    use yo_core::{FunctionTool, ReasoningEffort, RequestToolExposure};
 
-    // 한 assistant round의 content·refusal·tool calls가 서로 덮어쓰지 않고 한 message로 직렬화된다.
+    use super::*;
+
+    // assistant content·refusal·tool calls를 한 message로 직렬화하고 Chat 전용 field만 보냅니다.
     #[test]
     fn serializes_mixed_assistant_content_refusal_and_tool_calls_as_one_message() {
-        let request = ResponsesRequest::new(
+        let request = ModelConnectorRequest::new(
             vec![
-                ResponsesInputItem::Message {
-                    role: ResponsesInputRole::System,
+                ModelConnectorInputItem::Message {
+                    role: ModelConnectorInputRole::System,
                     content: "system".to_owned(),
                     refusal: None,
                 },
-                ResponsesInputItem::Message {
-                    role: ResponsesInputRole::Assistant,
+                ModelConnectorInputItem::Message {
+                    role: ModelConnectorInputRole::Assistant,
                     content: "visible".to_owned(),
                     refusal: Some("declined".to_owned()),
                 },
-                ResponsesInputItem::FunctionCall {
+                ModelConnectorInputItem::FunctionCall {
                     call_id: "call-1".to_owned(),
                     name: "read_file".to_owned(),
                     arguments: r#"{"path":"README.md"}"#.to_owned(),
                 },
-                ResponsesInputItem::FunctionCallOutput {
+                ModelConnectorInputItem::FunctionCallOutput {
                     call_id: "call-1".to_owned(),
                     output: "contents".to_owned(),
                 },
@@ -178,20 +182,20 @@ mod tests {
         assert_eq!(body["max_tokens"], 512);
         assert!(body.get("reasoning").is_none());
         assert!(body.get("enable_thinking").is_none());
+        assert!(body.get("prompt_cache_key").is_none());
     }
 
-    // Chat Completions도 disabled exposure에서 현재 tool fields만 생략하고 historical
-    // assistant tool_calls와 tool 결과 message는 그대로 replay합니다.
+    // disabled exposure는 현재 tools만 생략하고 historical call/result replay는 보존합니다.
     #[test]
     fn disabled_exposure_omits_current_chat_tools_but_preserves_replay() {
-        let request = ResponsesRequest::new(
+        let request = ModelConnectorRequest::new(
             vec![
-                ResponsesInputItem::FunctionCall {
+                ModelConnectorInputItem::FunctionCall {
                     call_id: "call-1".to_owned(),
                     name: "old_tool".to_owned(),
                     arguments: "{}".to_owned(),
                 },
-                ResponsesInputItem::FunctionCallOutput {
+                ModelConnectorInputItem::FunctionCallOutput {
                     call_id: "call-1".to_owned(),
                     output: "done".to_owned(),
                 },
@@ -209,13 +213,12 @@ mod tests {
         assert_eq!(body["messages"][1]["role"], "tool");
     }
 
-    // 출력 상한을 알 수 없는 Chat 요청은 0이나 임의의 숫자를 보내지 않고 max_tokens를
-    // 완전히 생략하므로 durable profile의 unknown 상태가 wire까지 그대로 전달됩니다.
+    // unknown output cap은 임의 값으로 치환하지 않고 max_tokens를 완전히 생략합니다.
     #[test]
     fn unknown_output_cap_omits_chat_max_tokens() {
-        let request = ResponsesRequest::new(
-            vec![ResponsesInputItem::Message {
-                role: ResponsesInputRole::User,
+        let request = ModelConnectorRequest::new(
+            vec![ModelConnectorInputItem::Message {
+                role: ModelConnectorInputRole::User,
                 content: "hello".to_owned(),
                 refusal: None,
             }],

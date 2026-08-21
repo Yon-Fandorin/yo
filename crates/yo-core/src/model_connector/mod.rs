@@ -1,6 +1,5 @@
-//! Provider-neutral OpenAI-compatible request transports and bounded SSE decoders.
+//! Provider-neutral Model Connector contract plus the transitional in-core Kimi implementation.
 
-mod chat_request;
 mod chat_sse;
 mod connector;
 mod framing;
@@ -14,10 +13,7 @@ pub(super) struct SseDecodeBatch {
     pub(super) failure: Option<ConnectorError>,
 }
 
-pub use connector::{
-    KimiChatCompletionsConnector, OpenAiChatCompletionsConnector, ResponsesCancellation,
-    ResponsesStream,
-};
+pub use connector::{KimiChatCompletionsConnector, ResponsesCancellation, ResponsesStream};
 pub use port::{ModelConnector, ModelConnectorStreamPort};
 pub(crate) use request::ModelCacheAffinityHint;
 pub use request::{

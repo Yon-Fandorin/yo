@@ -1,40 +1,7 @@
 use super::super::{
-    ConnectorFailureKind, ResponsesConnectorLimits,
-    connector::OpenAiChatCompletionsConnector,
+    ConnectorFailureKind,
     request::{RequestToolExposure, ResponsesInputItem, ResponsesInputRole, ResponsesRequest},
 };
-use crate::{
-    AccountId, ApiCredential, ApiDialect, EffectiveModelBinding, ModelId, NormalizedEndpoint,
-    ProviderId,
-};
-
-fn deepseek_chat_binding() -> EffectiveModelBinding {
-    EffectiveModelBinding::new(
-        ProviderId::new("qwencloud").unwrap(),
-        AccountId::new("token-plan").unwrap(),
-        ModelId::new("deepseek-v4-flash-0731").unwrap(),
-        ApiDialect::OpenAiChatCompletions,
-        NormalizedEndpoint::parse("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
-            .unwrap(),
-    )
-}
-
-// Chat connector는 base URL에 정확한 두 segment만 붙이고 Debug에서 credential을 숨긴다.
-#[test]
-fn chat_connector_appends_exactly_chat_completions_and_redacts_credentials() {
-    let connector = OpenAiChatCompletionsConnector::new(
-        &deepseek_chat_binding(),
-        ApiCredential::new("secret-token").unwrap(),
-        ResponsesConnectorLimits::default(),
-    )
-    .unwrap();
-    assert_eq!(
-        connector.request_url(),
-        "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
-    );
-    let debug = format!("{connector:?}");
-    assert!(!debug.contains("secret-token"));
-}
 
 // enabled는 현재 registry projection을 뜻하므로 빈 목록을 disabled와 같은 의미로
 // 축약하지 않고 생성 단계에서 거절합니다.

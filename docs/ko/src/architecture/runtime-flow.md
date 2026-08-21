@@ -50,7 +50,8 @@ admission된 connector dispatch
 변경 불가능한 CredentialStore
   ↓ 정확한 ProviderId + AccountId lookup
 원문을 감춘 ApiCredential
-  ↓ dialect에서 파생된 OpenAiResponsesConnector 또는 OpenAiChatCompletionsConnector
+  ↓ yo-cli의 exact identity+dialect 조립
+외부 OpenAiResponsesConnector 또는 OpenAiChatCompletionsConnector
 POST <정규화한 base>/responses
   또는 <정규화한 base>/chat/completions
   ↓ bearer auth + 같은 origin의 bounded redirect + finite deadline
@@ -73,10 +74,12 @@ semantic ModelWork와 ToolCall Activity
 안전하지 않거나 형식이 잘못되면 실패-폐쇄한다. API key에는 environment
 fallback이 없고 diagnostic formatting은 내용을 노출하지 않는다. 표시 이름은
 optional metadata일 뿐 identity나 routing에 참여하지 않는다.
-`yo-core::model_connector`는 `api_dialect`에서 built-in connector 하나를 파생한다.
-Responses는 `responses` segment를 정확히 하나 붙이고 Chat Completions는 정확히
-`chat/completions`를 붙인다. 어느 경로도 `v1`을 하나 더 붙이거나 fallback을 probe하거나
-provider conversation authority 또는 built-in tool을 켜지 않는다. Chat decoder는 index 0인
+`yo-core::model_connector`는 중립 port를 소유하며 `api_dialect`에서 built-in connector
+identity 하나를 파생한다. `yo-cli`는 Provider probing이나 fallback 없이 그 exact identity와
+dialect를 독립 Responses 또는 Chat Completions crate에 연결한다. Responses는 `responses`
+segment를 정확히 하나 붙이고 Chat Completions는 정확히 `chat/completions`를 붙인다. 어느
+경로도 `v1`을 하나 더 붙이거나 provider conversation authority 또는 built-in tool을 켜지
+않는다. Chat decoder는 index 0인
 choice 하나, finish 뒤 final usage와 `[DONE]` 순서를 요구하고 content와 refusal을 독립적으로
 보존하며 index가 있는 tool-call fragment를 correlate한다. tool call의 첫 fragment는 비어
 있지 않은 ID와 function name을 하나 고정한다. 후속 fragment는 이를 생략할 수 있고,

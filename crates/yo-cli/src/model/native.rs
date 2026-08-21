@@ -1,12 +1,13 @@
 use std::path::Path;
 
+use yo_connector_openai_chat_completions::OpenAiChatCompletionsConnector;
 use yo_connector_openai_responses::OpenAiResponsesConnector;
 use yo_core::{
     AgentBackend, ApiCredential, ApiDialect, ConnectorId, CredentialSnapshot,
     KimiChatCompletionsConnector, LocalConnectionOperationRepositories, LocalCredentialRepository,
     LocalModelRequestObservation, ModelConnector, ModelConnectorLimits, ModelRequestFailureKind,
     ModelRequestOutcome, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-    OpenAiChatCompletionsConnector, ToolRegistry,
+    ToolRegistry,
 };
 
 use super::{
@@ -207,6 +208,21 @@ mod tests {
         .unwrap()
     }
 
+    fn chat_entry() -> yo_core::ModelCatalogEntry {
+        let complete = yo_core::CompleteModelBinding::from_durable_json(
+            r#"{"provider":"qwencloud","account":"default","model":"model","connector":"openai-chat-completions","base_url":"https://example.test/v1","api_dialect":"openai-chat-completions","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{},"optional_request_parameters":{},"tool_capability_policy":"no-tools/v1"}"#,
+        )
+        .unwrap();
+        yo_core::ModelCatalogEntry::with_explicit_profile(
+            complete.binding().clone(),
+            None,
+            None,
+            None,
+            complete.profile().clone(),
+        )
+        .unwrap()
+    }
+
     // CLI composition root는 이미 확정된 Responses identity와 dialect만 외부 Connector
     // crate에 연결하고 base URL에 정확한 responses endpoint를 구성합니다.
     #[test]
@@ -219,6 +235,23 @@ mod tests {
         .unwrap();
 
         assert_eq!(connector.request_url(), "https://example.test/v1/responses");
+    }
+
+    // CLI composition root는 exact Chat identity+dialect tuple만 외부 Chat crate에 연결하고
+    // trait object를 통해 base URL 뒤에 정확한 chat/completions 경로를 관찰합니다.
+    #[test]
+    fn composes_the_external_chat_connector_for_the_exact_binding() {
+        let connector = native_connector(
+            &chat_entry(),
+            ApiCredential::new("secret").unwrap(),
+            ModelConnectorLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            connector.request_url(),
+            "https://example.test/v1/chat/completions"
+        );
     }
 
     // CLI startup의 authoritative registry handoff가 durable no-tools policy를 실제 empty

@@ -51,7 +51,8 @@ credentials.yaml beside the selected config path
 immutable CredentialStore
   ↓ exact ProviderId + AccountId lookup
 redacted ApiCredential
-  ↓ dialect-derived OpenAiResponsesConnector or OpenAiChatCompletionsConnector
+  ↓ yo-cli exact identity+dialect composition
+external OpenAiResponsesConnector or OpenAiChatCompletionsConnector
 POST <normalized base>/responses
   or <normalized base>/chat/completions
   ↓ bearer auth + same-origin bounded redirects + finite deadlines
@@ -74,10 +75,12 @@ credential file produces an empty snapshot without creating anything; an
 existing unsafe or malformed file fails closed. API keys have no environment
 fallback and diagnostic formatting never exposes their contents. Display names
 remain optional metadata and never participate in identity or routing.
-`yo-core::model_connector` derives one built-in connector from `api_dialect`.
-Responses appends exactly one `responses` segment; Chat Completions appends
-exactly `chat/completions`. Neither route adds another `v1`, probes a fallback,
-or enables provider conversation authority or built-in tools. The Chat decoder
+`yo-core::model_connector` owns the neutral port and derives one built-in
+connector identity from `api_dialect`; `yo-cli` maps that exact identity and
+dialect to the independent Responses or Chat Completions crate without
+Provider probing or fallback. Responses appends exactly one `responses`
+segment; Chat Completions appends exactly `chat/completions`. Neither route adds
+another `v1` or enables provider conversation authority or built-in tools. The Chat decoder
 requires one index-zero choice, finish then final usage then `[DONE]`, preserves
 content and refusal independently, and correlates indexed tool-call fragments.
 A tool call's first fragment fixes one non-empty ID and function name. Later

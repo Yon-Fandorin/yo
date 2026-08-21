@@ -57,9 +57,12 @@ boundaries. For example, an edit to `AgentSession` can require both its focused
 tests and the TUI runner tests when the admission result observed by the
 frontend changes.
 
-For model-connector HTTP transport, worker, and stream lifecycle validation, run
-`cargo test --locked -p yo-core model_connector::tests`, then
-`cargo test --locked -p yo-core` at close. These checks use only local
+For model-connector request and stream validation, run the concrete Connector
+crate that owns the changed dialect, such as
+`cargo test --locked -p yo-connector-openai-chat-completions`, together with
+`cargo test --locked -p yo-connector-transport` when shared byte lifecycle
+mechanics are affected. Run `cargo test --locked -p yo-core` at close for the
+neutral vocabulary and managed-loop consumer. Environment-integrated Connector checks use only local
 `127.0.0.1` HTTPS listeners and require the external `python3` and `openssl`
 commands to create and serve their ephemeral test certificates. Missing
 prerequisites fail the command rather than skip its assertions; record the

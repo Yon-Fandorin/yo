@@ -2,6 +2,7 @@
 members = [
     "crates/connectors/transport",
     "crates/connectors/openai-responses",
+    "crates/connectors/openai-chat-completions",
     "crates/yo-cli",
     "crates/yo-core",
     "crates/yo-tui",

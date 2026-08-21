@@ -56,9 +56,11 @@ command, host, credential, platform을 기록한다.
 아니다. 예를 들어 `AgentSession` 수정으로 frontend가 보는 admission
 결과가 달라진다면 집중 test와 TUI runner test가 모두 필요할 수 있다.
 
-model-connector HTTP transport, worker, stream lifecycle validation은
-`cargo test --locked -p yo-core model_connector::tests`를 실행한 뒤, 종료할 때
-`cargo test --locked -p yo-core`를 실행한다. 이 검사는 로컬
+model-connector request와 stream 검증은 변경한 dialect를 소유하는 concrete Connector
+crate(예: `cargo test --locked -p yo-connector-openai-chat-completions`)를 실행하고, 공용 byte
+lifecycle mechanics가 영향받으면 `cargo test --locked -p yo-connector-transport`도 함께
+실행한다. 종료할 때는 중립 어휘와 managed-loop consumer를 위해
+`cargo test --locked -p yo-core`를 실행한다. 환경 통합 Connector 검사는 로컬
 `127.0.0.1` HTTPS listener만 사용하며 ephemeral test certificate를 만들고
 serve하기 위해 외부 `python3`와 `openssl` 명령을 요구한다. 필수 조건이
 없으면 assertion을 skip하지 않고 명령이 실패한다. 각 validation 실행마다

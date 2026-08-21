@@ -19,7 +19,7 @@ fn final_usage(id: &str) -> String {
     }))
 }
 
-// refusal delta와 finish·usage·DONE 순서를 모두 만족한 stream만 resumable terminal을 낸다.
+// refusal delta와 finish·usage·DONE 순서를 모두 만족한 stream만 resumable terminal을 냅니다.
 #[test]
 fn decodes_visible_refusal_and_exact_terminal_sequence() {
     let stream = [
@@ -40,24 +40,24 @@ fn decodes_visible_refusal_and_exact_terminal_sequence() {
         "data: [DONE]\n\n".to_owned(),
     ]
     .concat();
-    let mut decoder = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     let mut events = decoder.push(stream.as_bytes()).unwrap();
     events.extend(decoder.finish().unwrap());
     assert!(events.iter().any(|event| matches!(
         event,
-        ResponsesEvent::RefusalDelta { delta, .. } if delta == "declined"
+        ModelConnectorEvent::RefusalDelta { delta, .. } if delta == "declined"
     )));
     assert!(matches!(
         events.last(),
-        Some(ResponsesEvent::Terminal {
-            status: ResponseTerminal::Completed,
+        Some(ModelConnectorEvent::Terminal {
+            status: ModelConnectorTerminal::Completed,
             ..
         })
     ));
 }
 
-// role-only delta 뒤 곧바로 stop이 와도 도구 호출이 없다면 빈 assistant 응답으로
-// 완료하며, usage와 DONE까지 갖춘 정확한 terminal sequence를 허용한다.
+// role-only delta 뒤 바로 stop이 와도 빈 assistant 응답으로 완료하고 정확한 terminal 순서를
+// 허용합니다.
 #[test]
 fn accepts_a_role_only_empty_stop_completion() {
     let stream = [
@@ -73,29 +73,28 @@ fn accepts_a_role_only_empty_stop_completion() {
         "data: [DONE]\n\n".to_owned(),
     ]
     .concat();
-    let mut decoder = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
 
     let mut events = decoder.push(stream.as_bytes()).unwrap();
     events.extend(decoder.finish().unwrap());
 
     assert!(events.iter().any(|event| matches!(
         event,
-        ResponsesEvent::MessageDone {
+        ModelConnectorEvent::MessageDone {
             output_index: 0,
             ..
         }
     )));
     assert!(matches!(
         events.last(),
-        Some(ResponsesEvent::Terminal {
-            status: ResponseTerminal::Completed,
+        Some(ModelConnectorEvent::Terminal {
+            status: ModelConnectorTerminal::Completed,
             ..
         })
     ));
 }
 
-// 하나의 network chunk에서 완전한 delta 뒤 event가 깨져도 먼저 해석된 관찰은
-// failure와 함께 반환하여 transport가 Live Projection에 보낸 뒤 Turn을 실패시킨다.
+// 한 chunk의 뒤 event가 깨져도 앞의 완전한 관찰은 failure와 함께 반환되어 먼저 전달됩니다.
 #[test]
 fn preserves_completed_events_before_a_later_same_chunk_failure() {
     let stream = [
@@ -106,7 +105,7 @@ fn preserves_completed_events_before_a_later_same_chunk_failure() {
         "data: {not-json}\n\n".to_owned(),
     ]
     .concat();
-    let mut decoder = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
 
     let batch = decoder.push_batch(stream.as_bytes());
 
@@ -116,11 +115,11 @@ fn preserves_completed_events_before_a_later_same_chunk_failure() {
     ));
     assert!(batch.events.iter().any(|event| matches!(
         event,
-        ResponsesEvent::TextDelta { delta, .. } if delta == "visible"
+        ModelConnectorEvent::TextDelta { delta, .. } if delta == "visible"
     )));
 }
 
-// 같은 assistant round의 visible content와 fragmented tool call을 각각 손실 없이 복원한다.
+// visible content와 여러 fragment의 tool call을 한 round에서 각각 손실 없이 복원합니다.
 #[test]
 fn decodes_mixed_content_and_tool_calls_without_losing_the_message() {
     let stream = [
@@ -141,23 +140,22 @@ fn decodes_mixed_content_and_tool_calls_without_losing_the_message() {
         "data: [DONE]\n\n".to_owned(),
     ]
     .concat();
-    let mut decoder = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     let events = decoder.push(stream.as_bytes()).unwrap();
     assert!(
         events
             .iter()
-            .any(|event| matches!(event, ResponsesEvent::MessageDone { .. }))
+            .any(|event| matches!(event, ModelConnectorEvent::MessageDone { .. }))
     );
     assert!(events.iter().any(|event| matches!(
         event,
-        ResponsesEvent::FunctionCallDone { arguments, .. }
+        ModelConnectorEvent::FunctionCallDone { arguments, .. }
             if arguments == r#"{"path":"README.md"}"#
     )));
     assert!(decoder.finish().is_ok());
 }
 
-// 첫 조각의 비어 있지 않은 call ID가 identity를 고정한 뒤 호환 API가 후속 조각에
-// 명시적인 빈 ID를 보내도 omission처럼 취급하고 exact argument bytes를 이어 붙입니다.
+// 고정된 call ID 뒤의 명시적 빈 ID는 omission처럼 허용하고 argument bytes를 그대로 잇습니다.
 #[test]
 fn treats_an_empty_repeated_tool_call_id_as_omission() {
     let stream = [
@@ -166,7 +164,7 @@ fn treats_an_empty_repeated_tool_call_id_as_omission() {
             "choices":[{"index":0,"delta":{"tool_calls":[{
                 "index":0,"id":"call-stable","type":"function",
                 "function":{"name":"read_files","arguments":"{\"files\":"}
-            }]} ,"finish_reason":null}]
+            }]},"finish_reason":null}]
         })),
         event(json!({
             "id":"chat-empty-repeat",
@@ -179,23 +177,22 @@ fn treats_an_empty_repeated_tool_call_id_as_omission() {
         "data: [DONE]\n\n".to_owned(),
     ]
     .concat();
-    let mut decoder = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
 
     let events = decoder.push(stream.as_bytes()).unwrap();
 
     assert!(events.iter().any(|event| matches!(
         event,
-        ResponsesEvent::FunctionCallDone { call_id, arguments, .. }
+        ModelConnectorEvent::FunctionCallDone { call_id, arguments, .. }
             if call_id == "call-stable" && arguments == "{\"files\":[]}\n"
     )));
     assert!(decoder.finish().is_ok());
 }
 
-// 빈 최초 ID는 call identity를 만들 수 없고, 이미 고정된 뒤의 다른 비어 있지 않은
-// ID도 새 call로 조용히 바꾸지 않으므로 둘 다 protocol failure입니다.
+// 빈 최초 ID와 고정 뒤 변경된 비어 있지 않은 ID는 모두 call identity를 만들거나 바꿀 수 없습니다.
 #[test]
 fn rejects_empty_initial_and_changed_repeated_tool_call_ids() {
-    let mut empty_initial = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut empty_initial = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     let empty_error = empty_initial
         .push(
             event(json!({
@@ -210,7 +207,7 @@ fn rejects_empty_initial_and_changed_repeated_tool_call_ids() {
         .unwrap_err();
     assert_eq!(empty_error.kind(), ConnectorFailureKind::Protocol);
 
-    let mut changed = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut changed = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     changed
         .push(
             event(json!({
@@ -237,10 +234,10 @@ fn rejects_empty_initial_and_changed_repeated_tool_call_ids() {
     assert_eq!(changed_error.kind(), ConnectorFailureKind::Protocol);
 }
 
-// response identity 변경, final usage 누락, stream 절단은 정상 종료로 승격되지 않는다.
+// response ID 변경, final usage 누락, stream 절단은 정상 종료로 승격하지 않습니다.
 #[test]
 fn rejects_missing_usage_changed_ids_and_truncated_streams() {
-    let mut changed = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut changed = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     changed
         .push(
             event(json!({
@@ -262,7 +259,7 @@ fn rejects_missing_usage_changed_ids_and_truncated_streams() {
             .is_err()
     );
 
-    let mut truncated = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut truncated = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     truncated
         .push(
             event(json!({
@@ -275,23 +272,22 @@ fn rejects_missing_usage_changed_ids_and_truncated_streams() {
     assert!(truncated.finish().is_err());
 }
 
-// length와 content_filter는 partial message를 닫아 backend 상관관계를 완성하되,
-// completed와 구분되는 terminal 종류를 유지해 partial replay를 커밋하지 않게 한다.
+// length와 content_filter는 partial message를 닫되 completed와 다른 terminal 종류를 유지합니다.
 #[test]
 fn preserves_incomplete_and_failed_terminal_kinds() {
     for (finish_reason, expected) in [
         (
             "length",
-            ResponseTerminal::Incomplete {
+            ModelConnectorTerminal::Incomplete {
                 reason: Some("length".to_owned()),
-                request_failure: crate::ModelRequestFailureKind::ResponseLimit,
+                request_failure: yo_core::ModelRequestFailureKind::ResponseLimit,
             },
         ),
         (
             "content_filter",
-            ResponseTerminal::Failed {
+            ModelConnectorTerminal::Failed {
                 code: Some("content_filter".to_owned()),
-                request_failure: crate::ModelRequestFailureKind::RequestRejected,
+                request_failure: yo_core::ModelRequestFailureKind::RequestRejected,
             },
         ),
     ] {
@@ -304,27 +300,27 @@ fn preserves_incomplete_and_failed_terminal_kinds() {
             "data: [DONE]\n\n".to_owned(),
         ]
         .concat();
-        let mut decoder = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+        let mut decoder = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
         let mut events = decoder.push(stream.as_bytes()).unwrap();
         events.extend(decoder.finish().unwrap());
         assert!(events.iter().any(|event| matches!(
             event,
-            ResponsesEvent::MessageDone {
+            ModelConnectorEvent::MessageDone {
                 output_index: 0,
                 ..
             }
         )));
         assert!(matches!(
             events.last(),
-            Some(ResponsesEvent::Terminal { status, .. }) if status == &expected
+            Some(ModelConnectorEvent::Terminal { status, .. }) if status == &expected
         ));
     }
 }
 
-// finish reason 중복과 prompt+completion 합계가 맞지 않는 usage는 protocol failure다.
+// 중복 finish와 prompt+completion 합계가 맞지 않는 usage는 protocol failure입니다.
 #[test]
 fn rejects_duplicate_finish_and_invalid_usage() {
-    let mut duplicate_finish = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut duplicate_finish = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     duplicate_finish
         .push(
             event(json!({
@@ -346,8 +342,7 @@ fn rejects_duplicate_finish_and_invalid_usage() {
             .is_err()
     );
 
-    let mut inconsistent_usage =
-        ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut inconsistent_usage = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     inconsistent_usage
         .push(
             event(json!({
@@ -371,10 +366,10 @@ fn rejects_duplicate_finish_and_invalid_usage() {
     );
 }
 
-// usage 전 DONE이나 DONE 뒤 추가 data는 완전한 terminal sequence가 아니므로 거부한다.
+// usage 전 DONE이나 DONE 뒤 추가 data는 완전한 terminal sequence가 아니므로 거절합니다.
 #[test]
 fn rejects_done_before_usage_and_data_after_done() {
-    let mut early_done = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut early_done = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     early_done
         .push(
             event(json!({
@@ -395,7 +390,7 @@ fn rejects_done_before_usage_and_data_after_done() {
         "data: [DONE]\n\n".to_owned(),
     ]
     .concat();
-    let mut tail_data = ChatCompletionsSseDecoder::new(ResponsesConnectorLimits::default());
+    let mut tail_data = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
     tail_data.push(complete.as_bytes()).unwrap();
     assert!(
         tail_data
@@ -409,4 +404,116 @@ fn rejects_done_before_usage_and_data_after_done() {
             )
             .is_err()
     );
+}
+
+// UTF-8이 아닌 SSE data와 event byte/count 한도 초과는 dialect 해석 전에 typed failure가 됩니다.
+#[test]
+fn rejects_invalid_utf8_and_enforces_sse_frame_bounds() {
+    let mut invalid = ChatCompletionsSseDecoder::new(ModelConnectorLimits::default());
+    assert_eq!(
+        invalid.push(b"data: \xff\n\n").unwrap_err().kind(),
+        ConnectorFailureKind::Protocol
+    );
+
+    let mut oversized = ChatCompletionsSseDecoder::new(ModelConnectorLimits {
+        max_sse_event_bytes: 8,
+        ..ModelConnectorLimits::default()
+    });
+    assert_eq!(
+        oversized.push(b"data: 123").unwrap_err().kind(),
+        ConnectorFailureKind::Limit
+    );
+
+    let mut too_many = ChatCompletionsSseDecoder::new(ModelConnectorLimits {
+        max_sse_events: 1,
+        ..ModelConnectorLimits::default()
+    });
+    assert_eq!(
+        too_many.push(b": one\n\n: two\n\n").unwrap_err().kind(),
+        ConnectorFailureKind::Limit
+    );
+}
+
+// content·refusal·reasoning은 각각의 누적 byte 한도를 추가 bytes 보존 전에 검사합니다.
+#[test]
+fn enforces_each_cumulative_text_channel_limit() {
+    for (field, limits) in [
+        (
+            "content",
+            ModelConnectorLimits {
+                max_response_text_bytes: 1,
+                ..ModelConnectorLimits::default()
+            },
+        ),
+        (
+            "refusal",
+            ModelConnectorLimits {
+                max_refusal_bytes: 1,
+                ..ModelConnectorLimits::default()
+            },
+        ),
+        (
+            "reasoning_content",
+            ModelConnectorLimits {
+                max_reasoning_bytes: 1,
+                ..ModelConnectorLimits::default()
+            },
+        ),
+    ] {
+        let mut decoder = ChatCompletionsSseDecoder::new(limits);
+        let mut delta = serde_json::Map::new();
+        delta.insert(field.to_owned(), Value::String("ab".to_owned()));
+        let error = decoder
+            .push(
+                event(json!({
+                    "id":"bounded-text",
+                    "choices":[{"index":0,"delta":delta,"finish_reason":null}]
+                }))
+                .as_bytes(),
+            )
+            .unwrap_err();
+
+        assert_eq!(error.kind(), ConnectorFailureKind::Limit);
+    }
+}
+
+// tool-call argument bytes와 output-item count는 fragment가 retained call state에 들어가기 전에
+// 제한됩니다.
+#[test]
+fn enforces_function_argument_and_output_item_limits() {
+    let mut arguments = ChatCompletionsSseDecoder::new(ModelConnectorLimits {
+        max_function_argument_bytes: 1,
+        ..ModelConnectorLimits::default()
+    });
+    let argument_error = arguments
+        .push(
+            event(json!({
+                "id":"bounded-arguments",
+                "choices":[{"index":0,"delta":{"tool_calls":[{
+                    "index":0,"id":"call-1","type":"function",
+                    "function":{"name":"tool","arguments":"ab"}
+                }]},"finish_reason":null}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap_err();
+    assert_eq!(argument_error.kind(), ConnectorFailureKind::Limit);
+
+    let mut items = ChatCompletionsSseDecoder::new(ModelConnectorLimits {
+        max_output_items: 1,
+        ..ModelConnectorLimits::default()
+    });
+    let item_error = items
+        .push(
+            event(json!({
+                "id":"bounded-items",
+                "choices":[{"index":0,"delta":{"tool_calls":[
+                    {"index":0,"id":"call-1","type":"function","function":{"name":"one","arguments":""}},
+                    {"index":1,"id":"call-2","type":"function","function":{"name":"two","arguments":""}}
+                ]},"finish_reason":null}]
+            }))
+            .as_bytes(),
+        )
+        .unwrap_err();
+    assert_eq!(item_error.kind(), ConnectorFailureKind::Limit);
 }

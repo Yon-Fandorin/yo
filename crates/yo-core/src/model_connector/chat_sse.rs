@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, HashSet};
 use serde_json::{Value, json};
 
 use super::{
-    ConnectorError, ConnectorFailureKind, ReasoningChannel, ResponseTerminal,
-    ResponsesConnectorLimits, ResponsesEvent, ResponsesUsage, SseDecodeBatch,
+    ConnectorError, ConnectorFailureKind, ResponseTerminal, ResponsesConnectorLimits,
+    ResponsesEvent, ResponsesUsage, SseDecodeBatch,
     framing::{SseFrame, SseFramer},
 };
 use crate::{KimiAssistantMessage, KimiAssistantToolCall};
@@ -27,7 +27,8 @@ pub(super) struct ChatCompletionsSseDecoder {
     finish: Option<ResponseTerminal>,
     usage: Option<ResponsesUsage>,
     done_seen: bool,
-    mode: ChatMode,
+    model: String,
+    private_replay: bool,
     role_seen: bool,
     content_seen: bool,
     content: String,
@@ -35,7 +36,7 @@ pub(super) struct ChatCompletionsSseDecoder {
     private_content_encoded_bytes: usize,
     private_reasoning_encoded_bytes: usize,
     private_tool_calls_encoded_bytes: usize,
-    replay_budget: Option<crate::ModelReplayBudget>,
+    replay_budget: crate::ModelReplayBudget,
 }
 
 #[derive(Clone)]
@@ -46,13 +47,24 @@ struct ToolCall {
     encoded_size: crate::KimiReplayToolCallSize,
 }
 
-enum ChatMode {
-    Generic,
-    Kimi { model: String, private_replay: bool },
-}
-
 impl ChatCompletionsSseDecoder {
-    pub(super) fn new(limits: ResponsesConnectorLimits) -> Self {
+    #[cfg(test)]
+    pub(super) fn new_kimi(
+        limits: ResponsesConnectorLimits,
+        model: String,
+        private_replay: bool,
+    ) -> Self {
+        let replay_budget = crate::ModelReplayDelta::replay_budget(None, std::iter::empty())
+            .expect("an empty replay delta prefix fits its canonical bound");
+        Self::new_kimi_with_replay_budget(limits, model, private_replay, replay_budget)
+    }
+
+    pub(super) fn new_kimi_with_replay_budget(
+        limits: ResponsesConnectorLimits,
+        model: String,
+        private_replay: bool,
+        replay_budget: crate::ModelReplayBudget,
+    ) -> Self {
         let framer = SseFramer::new(
             limits.max_sse_event_bytes,
             limits.max_sse_events,
@@ -72,7 +84,8 @@ impl ChatCompletionsSseDecoder {
             finish: None,
             usage: None,
             done_seen: false,
-            mode: ChatMode::Generic,
+            model,
+            private_replay,
             role_seen: false,
             content_seen: false,
             content: String::new(),
@@ -80,34 +93,7 @@ impl ChatCompletionsSseDecoder {
             private_content_encoded_bytes: 0,
             private_reasoning_encoded_bytes: 0,
             private_tool_calls_encoded_bytes: 0,
-            replay_budget: None,
-        }
-    }
-
-    #[cfg(test)]
-    pub(super) fn new_kimi(
-        limits: ResponsesConnectorLimits,
-        model: String,
-        private_replay: bool,
-    ) -> Self {
-        let replay_budget = crate::ModelReplayDelta::replay_budget(None, std::iter::empty())
-            .expect("an empty replay delta prefix fits its canonical bound");
-        Self::new_kimi_with_replay_budget(limits, model, private_replay, replay_budget)
-    }
-
-    pub(super) fn new_kimi_with_replay_budget(
-        limits: ResponsesConnectorLimits,
-        model: String,
-        private_replay: bool,
-        replay_budget: crate::ModelReplayBudget,
-    ) -> Self {
-        Self {
-            mode: ChatMode::Kimi {
-                model,
-                private_replay,
-            },
-            replay_budget: Some(replay_budget),
-            ..Self::new(limits)
+            replay_budget,
         }
     }
 
@@ -243,22 +229,12 @@ impl ChatCompletionsSseDecoder {
                     "Chat Completions usage arrived before the finish reason",
                 ));
             }
-            if self.usage.is_some() && !self.is_kimi() {
-                return Err(protocol_failure(
-                    "duplicate Chat Completions final usage record",
-                ));
-            }
             self.accept_usage(decode_usage(usage)?)?;
             return Ok(emitted);
         }
         if choices.len() != 1 {
             return Err(protocol_failure(
                 "Chat Completions stream must contain exactly one choice",
-            ));
-        }
-        if usage.is_some() && !self.is_kimi() {
-            return Err(protocol_failure(
-                "non-null Chat Completions usage appeared on a choice chunk",
             ));
         }
         if self.finish.is_some() {
@@ -281,39 +257,30 @@ impl ChatCompletionsSseDecoder {
         let role = optional_string(delta.get("role"), "delta.role")?;
         self.validate_role(role)?;
         if let Some(content) = optional_string(delta.get("content"), "delta.content")? {
-            let kimi_content_bytes = if self.is_kimi() {
-                let encoded = encoded_json_string_payload_bytes(content)?;
-                let prospective = self
-                    .private_content_encoded_bytes
-                    .checked_add(encoded)
-                    .ok_or_else(|| limit_failure("Kimi private assistant byte limit exceeded"))?;
-                if self.kimi_private_replay() {
-                    self.ensure_kimi_private_budget(
-                        true,
-                        prospective,
-                        self.private_reasoning_encoded_bytes,
-                        self.private_tool_calls_encoded_bytes,
-                    )?;
-                }
-                self.ensure_kimi_complete_replay_budget(
+            let encoded = encoded_json_string_payload_bytes(content)?;
+            let prospective = self
+                .private_content_encoded_bytes
+                .checked_add(encoded)
+                .ok_or_else(|| limit_failure("Kimi private assistant byte limit exceeded"))?;
+            if self.private_replay {
+                self.ensure_kimi_private_budget(
                     true,
                     prospective,
                     self.private_reasoning_encoded_bytes,
-                    None,
+                    self.private_tool_calls_encoded_bytes,
                 )?;
-                Some(prospective)
-            } else {
-                None
-            };
+            }
+            self.ensure_kimi_complete_replay_budget(
+                true,
+                prospective,
+                self.private_reasoning_encoded_bytes,
+                None,
+            )?;
             self.add_content_bytes(content.len())?;
-            if let Some(prospective) = kimi_content_bytes {
-                self.private_content_encoded_bytes = prospective;
-            }
+            self.private_content_encoded_bytes = prospective;
             self.message_seen = true;
-            if self.is_kimi() {
-                self.content_seen = true;
-                self.content.push_str(content);
-            }
+            self.content_seen = true;
+            self.content.push_str(content);
             emitted.push(ResponsesEvent::TextDelta {
                 output_index: 0,
                 item_id: self.message_item_id(),
@@ -334,45 +301,31 @@ impl ChatCompletionsSseDecoder {
         if let Some(reasoning) =
             optional_string(delta.get("reasoning_content"), "delta.reasoning_content")?
         {
-            let kimi_reasoning_bytes = if self.is_kimi() {
-                if !self.kimi_private_replay() {
-                    return Err(protocol_failure(
-                        "Kimi K2.6 response carried reasoning_content",
-                    ));
-                }
-                let encoded = encoded_json_string_payload_bytes(reasoning)?;
-                let prospective = self
-                    .private_reasoning_encoded_bytes
-                    .checked_add(encoded)
-                    .ok_or_else(|| limit_failure("Kimi private assistant byte limit exceeded"))?;
-                self.ensure_kimi_private_budget(
-                    self.content_seen,
-                    self.private_content_encoded_bytes,
-                    prospective,
-                    self.private_tool_calls_encoded_bytes,
-                )?;
-                self.ensure_kimi_complete_replay_budget(
-                    self.content_seen,
-                    self.private_content_encoded_bytes,
-                    prospective,
-                    None,
-                )?;
-                Some(prospective)
-            } else {
-                emitted.push(ResponsesEvent::ReasoningDelta {
-                    output_index: 0,
-                    item_id: self.reasoning_item_id(),
-                    channel: ReasoningChannel::Summary,
-                    part_index: 0,
-                    delta: reasoning.to_owned(),
-                });
-                None
-            };
-            self.add_reasoning_bytes(reasoning.len())?;
-            if let Some(prospective) = kimi_reasoning_bytes {
-                self.private_reasoning_encoded_bytes = prospective;
-                self.reasoning_content.push_str(reasoning);
+            if !self.private_replay {
+                return Err(protocol_failure(
+                    "Kimi K2.6 response carried reasoning_content",
+                ));
             }
+            let encoded = encoded_json_string_payload_bytes(reasoning)?;
+            let prospective = self
+                .private_reasoning_encoded_bytes
+                .checked_add(encoded)
+                .ok_or_else(|| limit_failure("Kimi private assistant byte limit exceeded"))?;
+            self.ensure_kimi_private_budget(
+                self.content_seen,
+                self.private_content_encoded_bytes,
+                prospective,
+                self.private_tool_calls_encoded_bytes,
+            )?;
+            self.ensure_kimi_complete_replay_budget(
+                self.content_seen,
+                self.private_content_encoded_bytes,
+                prospective,
+                None,
+            )?;
+            self.add_reasoning_bytes(reasoning.len())?;
+            self.private_reasoning_encoded_bytes = prospective;
+            self.reasoning_content.push_str(reasoning);
         }
         if let Some(tool_calls) = delta.get("tool_calls") {
             let tool_calls = tool_calls.as_array().ok_or_else(|| {
@@ -384,8 +337,7 @@ impl ChatCompletionsSseDecoder {
         }
 
         let finish_reason = optional_string(choice.get("finish_reason"), "finish_reason")?;
-        if self.is_kimi()
-            && finish_reason.is_none()
+        if finish_reason.is_none()
             && (usage.is_some() || choice.get("usage").is_some_and(|usage| !usage.is_null()))
         {
             return Err(protocol_failure(
@@ -400,19 +352,17 @@ impl ChatCompletionsSseDecoder {
                             "Chat Completions stop finish contradicts the accumulated round",
                         ));
                     }
-                    if self.is_kimi() && !self.content_seen {
+                    if !self.content_seen {
                         return Err(protocol_failure(
                             "Kimi stop response requires string assistant content",
                         ));
                     }
-                    if self.is_kimi() {
-                        self.ensure_kimi_complete_replay_budget(
-                            self.content_seen,
-                            self.private_content_encoded_bytes,
-                            self.private_reasoning_encoded_bytes,
-                            None,
-                        )?;
-                    }
+                    self.ensure_kimi_complete_replay_budget(
+                        self.content_seen,
+                        self.private_content_encoded_bytes,
+                        self.private_reasoning_encoded_bytes,
+                        None,
+                    )?;
                     emitted.push(ResponsesEvent::MessageDone {
                         output_index: 0,
                         item_id: self.message_item_id(),
@@ -425,20 +375,16 @@ impl ChatCompletionsSseDecoder {
                             "Chat Completions tool_calls finish has no accumulated tool call",
                         ));
                     }
-                    if self.is_kimi() {
-                        self.ensure_kimi_complete_replay_budget(
-                            self.content_seen,
-                            self.private_content_encoded_bytes,
-                            self.private_reasoning_encoded_bytes,
-                            None,
-                        )?;
-                    }
-                    if self.message_seen || self.is_kimi() {
-                        emitted.push(ResponsesEvent::MessageDone {
-                            output_index: 0,
-                            item_id: self.message_item_id(),
-                        });
-                    }
+                    self.ensure_kimi_complete_replay_budget(
+                        self.content_seen,
+                        self.private_content_encoded_bytes,
+                        self.private_reasoning_encoded_bytes,
+                        None,
+                    )?;
+                    emitted.push(ResponsesEvent::MessageDone {
+                        output_index: 0,
+                        item_id: self.message_item_id(),
+                    });
                     for (index, call) in &self.calls {
                         let output_index = index + 1;
                         let item_id = self.call_item_id(*index);
@@ -503,26 +449,13 @@ impl ChatCompletionsSseDecoder {
         Ok(emitted)
     }
 
-    fn is_kimi(&self) -> bool {
-        matches!(self.mode, ChatMode::Kimi { .. })
-    }
-
     fn kimi_private_replay(&self) -> bool {
-        matches!(
-            self.mode,
-            ChatMode::Kimi {
-                private_replay: true,
-                ..
-            }
-        )
+        self.private_replay
     }
 
     fn validate_kimi_chunk_identity(&self, chunk: &Value) -> Result<(), ConnectorError> {
-        let ChatMode::Kimi { model, .. } = &self.mode else {
-            return Ok(());
-        };
         if chunk.get("object").and_then(Value::as_str) != Some("chat.completion.chunk")
-            || chunk.get("model").and_then(Value::as_str) != Some(model)
+            || chunk.get("model").and_then(Value::as_str) != Some(self.model.as_str())
         {
             return Err(protocol_failure(
                 "Kimi stream object or model does not match the request",
@@ -535,9 +468,6 @@ impl ChatCompletionsSseDecoder {
         &self,
         delta: &serde_json::Map<String, Value>,
     ) -> Result<(), ConnectorError> {
-        if !self.is_kimi() {
-            return Ok(());
-        }
         const ALLOWED: [&str; 4] = ["role", "content", "reasoning_content", "tool_calls"];
         if delta.keys().any(|field| !ALLOWED.contains(&field.as_str())) {
             return Err(protocol_failure("Kimi delta contains an undeclared field"));
@@ -546,14 +476,6 @@ impl ChatCompletionsSseDecoder {
     }
 
     fn validate_role(&mut self, role: Option<&str>) -> Result<(), ConnectorError> {
-        if !self.is_kimi() {
-            if role.is_some_and(|role| role != "assistant") {
-                return Err(protocol_failure(
-                    "Chat Completions delta role is not assistant",
-                ));
-            }
-            return Ok(());
-        }
         match (self.role_seen, role) {
             (false, Some("assistant")) => self.role_seen = true,
             (false, _) => {
@@ -603,7 +525,7 @@ impl ChatCompletionsSseDecoder {
 
     fn accept_usage(&mut self, usage: ResponsesUsage) -> Result<(), ConnectorError> {
         if let Some(existing) = &self.usage {
-            if self.is_kimi() && existing == &usage {
+            if existing == &usage {
                 return Ok(());
             }
             return Err(protocol_failure(
@@ -645,7 +567,7 @@ impl ChatCompletionsSseDecoder {
                     "Chat Completions initial tool-call id is empty",
                 ));
             }
-            if self.is_kimi() && !(1..=4 * 1024).contains(&id.len()) {
+            if !(1..=4 * 1024).contains(&id.len()) {
                 return Err(protocol_failure(
                     "Kimi tool-call id is outside its exact byte bounds",
                 ));
@@ -661,7 +583,7 @@ impl ChatCompletionsSseDecoder {
                     protocol_failure("Chat Completions tool-call function name is missing")
                 })?
                 .to_owned();
-            if self.is_kimi() && !valid_kimi_function_name(&name) {
+            if !valid_kimi_function_name(&name) {
                 return Err(protocol_failure(
                     "Kimi tool-call function name is outside its closed grammar",
                 ));
@@ -698,14 +620,12 @@ impl ChatCompletionsSseDecoder {
             } else {
                 None
             };
-            if self.is_kimi() {
-                self.ensure_kimi_complete_replay_budget(
-                    self.content_seen,
-                    self.private_content_encoded_bytes,
-                    self.private_reasoning_encoded_bytes,
-                    Some((index, encoded_size)),
-                )?;
-            }
+            self.ensure_kimi_complete_replay_budget(
+                self.content_seen,
+                self.private_content_encoded_bytes,
+                self.private_reasoning_encoded_bytes,
+                Some((index, encoded_size)),
+            )?;
             self.add_argument_bytes(arguments.len())?;
             if let Some(prospective) = prospective_private_tool_bytes {
                 self.private_tool_calls_encoded_bytes = prospective;
@@ -762,14 +682,12 @@ impl ChatCompletionsSseDecoder {
         } else {
             None
         };
-        if self.is_kimi() {
-            self.ensure_kimi_complete_replay_budget(
-                self.content_seen,
-                self.private_content_encoded_bytes,
-                self.private_reasoning_encoded_bytes,
-                Some((index, prospective_size)),
-            )?;
-        }
+        self.ensure_kimi_complete_replay_budget(
+            self.content_seen,
+            self.private_content_encoded_bytes,
+            self.private_reasoning_encoded_bytes,
+            Some((index, prospective_size)),
+        )?;
         self.add_argument_bytes(arguments.len())?;
         if let Some(prospective) = prospective_private_tool_bytes {
             self.private_tool_calls_encoded_bytes = prospective;
@@ -859,9 +777,7 @@ impl ChatCompletionsSseDecoder {
         reasoning_encoded_bytes: usize,
         updated_call: Option<(usize, crate::KimiReplayToolCallSize)>,
     ) -> Result<(), ConnectorError> {
-        let Some(replay_budget) = self.replay_budget else {
-            return Ok(());
-        };
+        let replay_budget = self.replay_budget;
         let call_indices = self
             .calls
             .keys()
@@ -896,13 +812,6 @@ impl ChatCompletionsSseDecoder {
     fn message_item_id(&self) -> String {
         format!(
             "{}:message",
-            self.response_id.as_deref().unwrap_or("chat-completion")
-        )
-    }
-
-    fn reasoning_item_id(&self) -> String {
-        format!(
-            "{}:reasoning",
             self.response_id.as_deref().unwrap_or("chat-completion")
         )
     }
@@ -1026,6 +935,3 @@ fn protocol_failure(message: impl Into<String>) -> ConnectorError {
 fn limit_failure(message: impl Into<String>) -> ConnectorError {
     ConnectorError::new(ConnectorFailureKind::Limit, message)
 }
-
-#[cfg(test)]
-mod tests;

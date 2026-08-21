@@ -61,10 +61,9 @@ pub use model_connector::{
     ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
     ModelConnectorStream, ModelConnectorStreamPort, ModelConnectorTerminal, ModelConnectorUsage,
-    OpenAiChatCompletionsConnector, ReasoningChannel, ReasoningEffort, RequestToolExposure,
-    ResponseTerminal, ResponsesCancellation, ResponsesConnectorLimits, ResponsesEvent,
-    ResponsesInputItem, ResponsesInputRole, ResponsesPoll, ResponsesRequest, ResponsesStream,
-    ResponsesUsage,
+    ReasoningChannel, ReasoningEffort, RequestToolExposure, ResponseTerminal,
+    ResponsesCancellation, ResponsesConnectorLimits, ResponsesEvent, ResponsesInputItem,
+    ResponsesInputRole, ResponsesPoll, ResponsesRequest, ResponsesStream, ResponsesUsage,
 };
 pub use model_service::{
     AccountId, ApiCredential, ApiDialect, CompleteModelBinding, ConnectionAccount,
