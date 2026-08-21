@@ -8,7 +8,7 @@ use super::{
     },
     support::{
         ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, context_profile,
-        event_rounds, registry, turn,
+        event_rounds, mock_tokenization_payload, registry, turn,
     },
 };
 use crate::{
@@ -292,7 +292,7 @@ fn no_tools_profile_requires_an_empty_registry_and_disables_request_exposure() {
         BackendCommandEvidence::RequestAccepted(_)
     ));
     let requests = requests.lock().unwrap();
-    let body = requests[0].tokenization_payload("qwen3.8max");
+    let body = mock_tokenization_payload(&requests[0], "qwen3.8max");
     assert!(body.get("tools").is_none());
     assert!(body.get("tool_choice").is_none());
 }

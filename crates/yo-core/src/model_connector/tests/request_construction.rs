@@ -1,15 +1,7 @@
-use serde_json::json;
-
-use super::{
-    super::{
-        ConnectorFailureKind, ResponsesConnectorLimits,
-        connector::{OpenAiChatCompletionsConnector, OpenAiResponsesConnector},
-        request::{
-            FunctionTool, ReasoningEffort, RequestToolExposure, ResponsesInputItem,
-            ResponsesInputRole, ResponsesRequest,
-        },
-    },
-    support::qwen_binding,
+use super::super::{
+    ConnectorFailureKind, ResponsesConnectorLimits,
+    connector::OpenAiChatCompletionsConnector,
+    request::{RequestToolExposure, ResponsesInputItem, ResponsesInputRole, ResponsesRequest},
 };
 use crate::{
     AccountId, ApiCredential, ApiDialect, EffectiveModelBinding, ModelId, NormalizedEndpoint,
@@ -42,119 +34,6 @@ fn chat_connector_appends_exactly_chat_completions_and_redacts_credentials() {
     );
     let debug = format!("{connector:?}");
     assert!(!debug.contains("secret-token"));
-}
-
-// QwenCloud Token Plan의 normalized base URL에는 `responses` segment를 정확히 한 번만
-// 붙이고 model·credential은 Debug에서 구분하되 API key 원문은 감추는지 검증합니다.
-#[test]
-fn constructs_the_exact_qwencloud_responses_endpoint_without_exposing_the_key() {
-    let connector = OpenAiResponsesConnector::new(
-        &qwen_binding(),
-        ApiCredential::new("sk-sensitive-value").unwrap(),
-        ResponsesConnectorLimits::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        connector.request_url(),
-        "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1/responses"
-    );
-    let debug = format!("{connector:?}");
-    assert!(debug.contains("qwen3.8max"));
-    assert!(!debug.contains("sk-sensitive-value"));
-}
-
-// request wire body는 선택 binding의 model, 명시적 input·function tool·reasoning effort와
-// stream만 포함하고 provider cache나 previous response authority를 암묵적으로 켜지 않습니다.
-#[test]
-fn serializes_only_the_declared_responses_request_capabilities() {
-    let tool = FunctionTool::new(
-        "read_file",
-        "Read one workspace file",
-        json!({"type": "object", "properties": {"path": {"type": "string"}}}),
-    )
-    .unwrap();
-    let request = ResponsesRequest::new(
-        vec![ResponsesInputItem::Message {
-            role: ResponsesInputRole::User,
-            content: "hello".to_owned(),
-            refusal: None,
-        }],
-        RequestToolExposure::enabled(vec![tool]),
-        8_192,
-        Some(ReasoningEffort::High),
-    )
-    .unwrap();
-
-    let body = request.wire_body("qwen3.8max");
-
-    assert_eq!(body["model"], "qwen3.8max");
-    assert_eq!(body["stream"], true);
-    assert_eq!(body["tool_choice"], "auto");
-    assert_eq!(body["max_output_tokens"], 8_192);
-    assert_eq!(body["tools"][0]["name"], "read_file");
-    assert_eq!(body["reasoning"]["effort"], "high");
-    assert!(body.get("previous_response_id").is_none());
-    assert!(body.get("conversation").is_none());
-    assert!(body.get("x-dashscope-session-cache").is_none());
-}
-
-// disabled exposure는 historical function-call replay를 보존하면서 현재 registry의 tools와
-// tool_choice만 wire에서 완전히 생략해 현재 도구를 노출하지 않는 요청을 구분합니다.
-#[test]
-fn disabled_exposure_omits_current_tools_without_dropping_historical_replay() {
-    let request = ResponsesRequest::new(
-        vec![
-            ResponsesInputItem::Message {
-                role: ResponsesInputRole::Assistant,
-                content: String::new(),
-                refusal: None,
-            },
-            ResponsesInputItem::FunctionCall {
-                call_id: "historical-call".to_owned(),
-                name: "old_tool".to_owned(),
-                arguments: "{}".to_owned(),
-            },
-            ResponsesInputItem::FunctionCallOutput {
-                call_id: "historical-call".to_owned(),
-                output: "done".to_owned(),
-            },
-        ],
-        RequestToolExposure::disabled(),
-        128,
-        None,
-    )
-    .unwrap();
-
-    let body = request.wire_body("model");
-    assert!(body.get("tools").is_none());
-    assert!(body.get("tool_choice").is_none());
-    assert_eq!(body["input"][1]["type"], "function_call");
-    assert_eq!(body["input"][2]["type"], "function_call_output");
-}
-
-// 출력 상한을 알 수 없는 Responses 요청은 숫자를 대신 만들지 않고 wire body에서
-// max_output_tokens 전체 필드를 생략해 connector가 provider 기본 동작을 보존합니다.
-#[test]
-fn responses_omits_the_output_field_when_the_cap_is_unknown() {
-    let request = ResponsesRequest::new(
-        vec![ResponsesInputItem::Message {
-            role: ResponsesInputRole::User,
-            content: "hello".to_owned(),
-            refusal: None,
-        }],
-        RequestToolExposure::disabled(),
-        None,
-        None,
-    )
-    .unwrap();
-
-    assert!(
-        request
-            .wire_body("model")
-            .get("max_output_tokens")
-            .is_none()
-    );
 }
 
 // enabled는 현재 registry projection을 뜻하므로 빈 목록을 disabled와 같은 의미로

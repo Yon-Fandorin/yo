@@ -8,11 +8,11 @@ use serde_json::json;
 
 use super::super::{
     AgentBackend, BackendEvent, BackendPoll, EffectiveModelBinding, FrozenToolRegistry,
-    ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorPoll,
-    ModelConnectorRequest, ModelConnectorStreamPort, ModelConnectorTerminal, NativeModelBackend,
-    NativeModelBackendConfig, NativeModelBackendServices, ToolApprovalRequirement, ToolExecution,
-    ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest,
-    ToolSemanticAdmission, TurnRef,
+    ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
+    ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort, ModelConnectorTerminal,
+    NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+    ToolApprovalRequirement, ToolExecution, ToolExecutionHost, ToolExecutionOutcome,
+    ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission, TurnRef,
 };
 use crate::{
     AccountId, ApiDialect, ModelId, NormalizedEndpoint, ProviderId, ToolDefinition, ToolEffect,
@@ -33,7 +33,7 @@ impl ModelConnector for MockConnector {
         &self,
         request: &ModelConnectorRequest,
     ) -> Result<serde_json::Value, crate::ConnectorError> {
-        Ok(request.tokenization_payload("mock-model"))
+        Ok(mock_tokenization_payload(request, "mock-model"))
     }
 
     fn start(
@@ -50,6 +50,65 @@ impl ModelConnector for MockConnector {
             .expect("the test declared every model round");
         Ok(Box::new(MockStream { events }))
     }
+}
+
+pub(super) fn mock_tokenization_payload(
+    request: &ModelConnectorRequest,
+    model: &str,
+) -> serde_json::Value {
+    let input = request
+        .input()
+        .iter()
+        .map(|item| match item {
+            ModelConnectorInputItem::Message {
+                role,
+                content,
+                refusal,
+            } => {
+                let mut visible = content.clone();
+                if let Some(refusal) = refusal {
+                    visible.push_str(refusal);
+                }
+                json!({"role": role.as_str(), "content": visible})
+            },
+            ModelConnectorInputItem::FunctionCall {
+                call_id,
+                name,
+                arguments,
+            } => json!({
+                "type": "function_call", "call_id": call_id,
+                "name": name, "arguments": arguments,
+            }),
+            ModelConnectorInputItem::FunctionCallOutput { call_id, output } => json!({
+                "type": "function_call_output", "call_id": call_id, "output": output,
+            }),
+            ModelConnectorInputItem::ProviderPrivateAssistant { schema, .. } => json!({
+                "type": "provider_private_assistant", "schema": schema,
+            }),
+        })
+        .collect::<Vec<_>>();
+    let mut body = json!({"model": model, "input": input, "stream": true});
+    if let Some(maximum) = request.max_output_tokens() {
+        body["max_output_tokens"] = serde_json::Value::from(maximum);
+    }
+    if let Some(tools) = request.tools() {
+        body["tools"] = serde_json::Value::Array(
+            tools
+                .iter()
+                .map(|tool| {
+                    json!({
+                        "type": "function", "name": tool.name(),
+                        "description": tool.description(), "parameters": tool.parameters(),
+                    })
+                })
+                .collect(),
+        );
+        body["tool_choice"] = serde_json::Value::String("auto".to_owned());
+    }
+    if let Some(effort) = request.reasoning_effort() {
+        body["reasoning"] = json!({"effort": effort.as_str()});
+    }
+    body
 }
 
 struct MockStream {

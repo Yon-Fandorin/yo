@@ -32,7 +32,7 @@ fn response_body(request: &ModelConnectorRequest, model: &str) -> serde_json::Va
         ModelConnectorLimits::default(),
     )
     .unwrap()
-    .wire_body(request)
+    .tokenization_payload(request)
     .unwrap()
 }
 
@@ -91,10 +91,10 @@ fn serializes_only_the_declared_responses_request_capabilities() {
     assert!(body.get("x-dashscope-session-cache").is_none());
 }
 
-// assistant refusal이 있는 replay도 기존 in-core Responses serializer와 새 Connector가
-// 동일한 JSON을 만들어 나중의 routing 교체가 provider-visible request를 바꾸지 않는다.
+// assistant refusal replay는 visible content 뒤에 refusal을 정확히 한 번 결합해
+// composition 전환 뒤에도 기존 provider-visible Responses 요청 형태를 보존합니다.
 #[test]
-fn refusal_replay_matches_the_in_core_responses_serializer() {
+fn refusal_replay_preserves_the_existing_provider_visible_request() {
     let request = ModelConnectorRequest::new(
         vec![ModelConnectorInputItem::Message {
             role: ModelConnectorInputRole::Assistant,
@@ -106,17 +106,10 @@ fn refusal_replay_matches_the_in_core_responses_serializer() {
         None,
     )
     .unwrap();
-    let binding = responses_binding("qwen3.8max");
-    let existing = yo_core::OpenAiResponsesConnector::new(
-        &binding,
-        ApiCredential::new("test-secret").unwrap(),
-        ModelConnectorLimits::default(),
-    )
-    .unwrap()
-    .tokenization_payload(&request);
+    let body = response_body(&request, "qwen3.8max");
 
-    assert_eq!(response_body(&request, "qwen3.8max"), existing);
-    assert_eq!(existing["input"][0]["content"], "visibledeclined");
+    assert_eq!(body["input"][0]["role"], "assistant");
+    assert_eq!(body["input"][0]["content"], "visibledeclined");
 }
 
 // disabled exposure는 historical function-call replay를 보존하면서 현재 registry의 tools와

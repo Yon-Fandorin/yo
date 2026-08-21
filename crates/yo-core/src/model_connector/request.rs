@@ -1,6 +1,6 @@
 use std::{collections::HashSet, fmt};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::{ConnectorError, ConnectorFailureKind};
 use crate::{KimiAssistantMessage, SessionId};
@@ -300,80 +300,6 @@ impl ResponsesRequest {
         self.cache_affinity_hint
             .as_ref()
             .map(ModelCacheAffinityHint::as_str)
-    }
-
-    pub(crate) fn tokenization_payload(&self, model: &str) -> Value {
-        self.wire_body(model)
-    }
-
-    pub(super) fn wire_body(&self, model: &str) -> Value {
-        let input = self
-            .input
-            .iter()
-            .map(|item| match item {
-                ResponsesInputItem::Message {
-                    role,
-                    content,
-                    refusal,
-                } => {
-                    let mut visible = content.clone();
-                    if let Some(refusal) = refusal {
-                        visible.push_str(refusal);
-                    }
-                    json!({
-                        "role": role.as_str(),
-                        "content": visible,
-                    })
-                },
-                ResponsesInputItem::FunctionCall {
-                    call_id,
-                    name,
-                    arguments,
-                } => json!({
-                    "type": "function_call",
-                    "call_id": call_id,
-                    "name": name,
-                    "arguments": arguments,
-                }),
-                ResponsesInputItem::FunctionCallOutput { call_id, output } => json!({
-                    "type": "function_call_output",
-                    "call_id": call_id,
-                    "output": output,
-                }),
-                ResponsesInputItem::ProviderPrivateAssistant { schema, .. } => json!({
-                    "type": "provider_private_assistant",
-                    "schema": schema,
-                }),
-            })
-            .collect::<Vec<_>>();
-        let mut body = json!({
-            "model": model,
-            "input": input,
-            "stream": true,
-        });
-        if let Some(max_output_tokens) = self.max_output_tokens {
-            body["max_output_tokens"] = Value::from(max_output_tokens);
-        }
-        if let Some(tools) = self.tools() {
-            body["tools"] = Value::Array(
-                tools
-                    .iter()
-                    .map(|tool| {
-                        json!({
-                            "type": "function",
-                            "name": tool.name,
-                            "description": tool.description,
-                            "parameters": tool.parameters,
-                        })
-                    })
-                    .collect(),
-            );
-            body["tool_choice"] = Value::String("auto".to_owned());
-        }
-        if let Some(effort) = self.reasoning_effort {
-            body["reasoning"] = json!({ "effort": effort.as_str() });
-        }
-        body
     }
 }
 

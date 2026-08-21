@@ -15,7 +15,7 @@ use super::{
     },
     support::{
         ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, binding, completed,
-        drain_until_turn, event_rounds, registry, turn,
+        drain_until_turn, event_rounds, mock_tokenization_payload, registry, turn,
     },
 };
 use crate::{ToolExecutionError, ToolId, UserInput};
@@ -246,7 +246,7 @@ fn recounts_and_dispatches_the_exact_smaller_output_cap() {
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(
-        requests[0].tokenization_payload("qwen3.8max")["max_output_tokens"],
+        mock_tokenization_payload(&requests[0], "qwen3.8max")["max_output_tokens"],
         5
     );
     let payloads = payloads.lock().unwrap();
@@ -303,7 +303,7 @@ fn bounded_selector_uses_at_most_three_strictly_decreasing_exact_counts() {
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(
-        requests[0].tokenization_payload("qwen3.8max")["max_output_tokens"],
+        mock_tokenization_payload(&requests[0], "qwen3.8max")["max_output_tokens"],
         1
     );
 }
@@ -616,8 +616,7 @@ fn unknown_output_cap_uses_strict_input_boundary_and_omits_the_field() {
         assert_eq!(requests.len(), usize::from(admitted));
         if let Some(request) = requests.first() {
             assert!(
-                request
-                    .tokenization_payload("qwen3.8max")
+                mock_tokenization_payload(request, "qwen3.8max")
                     .get("max_output_tokens")
                     .is_none()
             );

@@ -12,7 +12,7 @@ use super::{
     },
     support::{
         ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, completed,
-        context_profile, drain_until_turn, event_rounds, registry, turn,
+        context_profile, drain_until_turn, event_rounds, mock_tokenization_payload, registry, turn,
     },
 };
 use crate::{
@@ -349,7 +349,7 @@ fn kimi_context_admission_selects_a_smaller_cap_from_the_complete_tool_payload()
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(
-        requests[0].tokenization_payload("kimi-k2.7-code")["max_output_tokens"],
+        mock_tokenization_payload(&requests[0], "kimi-k2.7-code")["max_output_tokens"],
         32_767
     );
 }

@@ -1,10 +1,12 @@
 use std::path::Path;
 
+use yo_connector_openai_responses::OpenAiResponsesConnector;
 use yo_core::{
-    AgentBackend, CredentialSnapshot, LocalConnectionOperationRepositories,
-    LocalCredentialRepository, LocalModelRequestObservation, ModelConnectorLimits,
-    ModelRequestFailureKind, ModelRequestOutcome, NativeModelBackend, NativeModelBackendConfig,
-    NativeModelBackendServices, ToolRegistry,
+    AgentBackend, ApiCredential, ApiDialect, ConnectorId, CredentialSnapshot,
+    KimiChatCompletionsConnector, LocalConnectionOperationRepositories, LocalCredentialRepository,
+    LocalModelRequestObservation, ModelConnector, ModelConnectorLimits, ModelRequestFailureKind,
+    ModelRequestOutcome, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+    OpenAiChatCompletionsConnector, ToolRegistry,
 };
 
 use super::{
@@ -91,18 +93,46 @@ pub(super) fn start_native(
         maximum_tool_argument_bytes: registry_revision.maximum_argument_bytes(),
         ..NativeModelBackendConfig::default()
     };
-    let backend = NativeModelBackend::new(
-        entry,
-        credential,
-        ModelConnectorLimits::default(),
-        registry,
-        services,
-        backend_config,
-    )
-    .map_err(|error| AppError::single("starting native model backend", error));
+    let connector = native_connector(entry, credential, ModelConnectorLimits::default())
+        .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))?;
+    let backend = NativeModelBackend::new(entry, connector, registry, services, backend_config)
+        .map_err(|error| AppError::single("starting native model backend", error));
     backend
         .map(|backend| Box::new(backend) as Box<dyn AgentBackend + Send>)
         .map_err(|error| with_local_configuration_observation(error, observation.as_ref()))
+}
+
+fn native_connector(
+    entry: &yo_core::ModelCatalogEntry,
+    credential: ApiCredential,
+    limits: ModelConnectorLimits,
+) -> Result<Box<dyn ModelConnector>, AppError> {
+    let binding = entry.binding();
+    let connector = match (binding.connector_id().as_str(), binding.api_dialect()) {
+        (ConnectorId::OPENAI_RESPONSES, ApiDialect::OpenAiResponses) => {
+            OpenAiResponsesConnector::new(binding, credential, limits)
+                .map(|connector| Box::new(connector) as Box<dyn ModelConnector>)
+        },
+        (ConnectorId::OPENAI_CHAT_COMPLETIONS, ApiDialect::OpenAiChatCompletions) => {
+            OpenAiChatCompletionsConnector::new(binding, credential, limits)
+                .map(|connector| Box::new(connector) as Box<dyn ModelConnector>)
+        },
+        (ConnectorId::KIMI_CHAT_COMPLETIONS, ApiDialect::KimiChatCompletions) => {
+            let complete = entry.complete_binding().ok_or_else(|| {
+                AppError::many(["Kimi connector requires a complete explicit profile".to_owned()])
+            })?;
+            KimiChatCompletionsConnector::new(complete, credential, limits)
+                .map(|connector| Box::new(connector) as Box<dyn ModelConnector>)
+        },
+        _ => {
+            return Err(AppError::many([format!(
+                "unsupported Connector identity {} for API dialect {}",
+                binding.connector_id(),
+                binding.api_dialect().as_str()
+            )]));
+        },
+    };
+    connector.map_err(|error| AppError::single("constructing the selected model connector", error))
 }
 
 fn with_local_configuration_observation(
@@ -175,6 +205,20 @@ mod tests {
             complete.profile().clone(),
         )
         .unwrap()
+    }
+
+    // CLI composition root는 이미 확정된 Responses identity와 dialect만 외부 Connector
+    // crate에 연결하고 base URL에 정확한 responses endpoint를 구성합니다.
+    #[test]
+    fn composes_the_external_responses_connector_for_the_exact_binding() {
+        let connector = native_connector(
+            &explicit_entry("no-tools/v1"),
+            ApiCredential::new("secret").unwrap(),
+            ModelConnectorLimits::default(),
+        )
+        .unwrap();
+
+        assert_eq!(connector.request_url(), "https://example.test/v1/responses");
     }
 
     // CLI startup의 authoritative registry handoff가 durable no-tools policy를 실제 empty

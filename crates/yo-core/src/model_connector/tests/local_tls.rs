@@ -29,10 +29,6 @@ pub(crate) enum LocalServerMode {
         body: Vec<u8>,
         content_type: String,
     },
-    Status {
-        status: u16,
-        body: Vec<u8>,
-    },
     Redirect {
         location: String,
         final_body: Vec<u8>,
@@ -50,16 +46,7 @@ pub(crate) enum LocalServerMode {
     HeadersThenStall {
         content_type: String,
     },
-    EventThenStall {
-        body: Vec<u8>,
-    },
-    ErrorBodyThenStall {
-        status: u16,
-        body: Vec<u8>,
-    },
-    HeartbeatsThenStall,
     ResponseHeaderStall,
-    TlsHandshakeStall,
 }
 
 pub(crate) struct LocalTlsServer {
@@ -68,7 +55,6 @@ pub(crate) struct LocalTlsServer {
     requests: PathBuf,
     accepted: PathBuf,
     sent: PathBuf,
-    closed: PathBuf,
     endpoint: String,
 }
 
@@ -92,14 +78,6 @@ impl LocalTlsServer {
             LocalServerMode::Success { body, content_type } => {
                 ("success", content_type, 200, String::new(), 1, body)
             },
-            LocalServerMode::Status { status, body } => (
-                "status",
-                "text/plain; charset=utf-8".to_owned(),
-                status,
-                String::new(),
-                1,
-                body,
-            ),
             LocalServerMode::Redirect {
                 location,
                 final_body,
@@ -154,30 +132,6 @@ impl LocalTlsServer {
                 1,
                 Vec::new(),
             ),
-            LocalServerMode::EventThenStall { body } => (
-                "event-stall",
-                "text/event-stream".to_owned(),
-                200,
-                String::new(),
-                1,
-                body,
-            ),
-            LocalServerMode::ErrorBodyThenStall { status, body } => (
-                "error-body-stall",
-                "text/plain; charset=utf-8".to_owned(),
-                status,
-                String::new(),
-                1,
-                body,
-            ),
-            LocalServerMode::HeartbeatsThenStall => (
-                "heartbeat-stall",
-                "text/event-stream".to_owned(),
-                200,
-                String::new(),
-                1,
-                Vec::new(),
-            ),
             LocalServerMode::ResponseHeaderStall => (
                 "header-stall",
                 String::new(),
@@ -186,9 +140,6 @@ impl LocalTlsServer {
                 1,
                 Vec::new(),
             ),
-            LocalServerMode::TlsHandshakeStall => {
-                ("tls-stall", String::new(), 0, String::new(), 1, Vec::new())
-            },
         };
         fs::write(&payload, payload_bytes).unwrap();
         let child = spawn_local_tls_child(LocalTlsChildSpec {
@@ -214,7 +165,6 @@ impl LocalTlsServer {
             requests,
             accepted,
             sent,
-            closed,
             endpoint: format!("https://127.0.0.1:{port}/v1"),
         }
     }
@@ -227,13 +177,6 @@ impl LocalTlsServer {
         self.wait_for_marker(
             &self.sent,
             "local TLS listener did not report its response boundary",
-        );
-    }
-
-    pub(crate) fn wait_for_peer_closed(&self) {
-        self.wait_for_marker(
-            &self.closed,
-            "local TLS listener did not observe the connector closing its peer",
         );
     }
 

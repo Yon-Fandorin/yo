@@ -1,7 +1,5 @@
 //! Provider-neutral Yo-managed model/tool loop over an admitted API-dialect connector.
 
-mod connector;
-
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     num::NonZeroU64,
@@ -12,7 +10,6 @@ use std::{
     time::Duration,
 };
 
-use connector::{ModelConnector, ModelConnectorStreamPort};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -23,17 +20,16 @@ use super::{
 };
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentCommand, ApiCredential, ApiDialect, ApprovalDecision, CompleteModelBinding,
-    ContinuationStrategy, EffectiveModelBinding, EffectiveModelProfile, Failure,
-    FrozenToolRegistry, ModelCatalogEntry, ModelConnectorCancellation, ModelConnectorEvent,
-    ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll,
-    ModelConnectorRequest, ModelConnectorTerminal, ModelContextProfile, ModelReplay,
-    ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelTokenCounter,
-    OpenAiChatCompletionsConnector, OpenAiResponsesConnector, ReasoningChannel, ReasoningEffort,
-    ReplayExecutor, RequestId, RequestToolExposure, SessionId, ToolApprovalBinding,
-    ToolApprovalRequirement, ToolExecution, ToolExecutionHost, ToolExecutionOutcome,
-    ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission, ToolValidationFailure,
-    TurnOutcome, TurnRef, ValidatedToolCall,
+    AgentCommand, ApiDialect, ApprovalDecision, CompleteModelBinding, ContinuationStrategy,
+    EffectiveModelBinding, EffectiveModelProfile, Failure, FrozenToolRegistry, ModelCatalogEntry,
+    ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
+    ModelConnectorInputRole, ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort,
+    ModelConnectorTerminal, ModelContextProfile, ModelReplay, ModelReplayContract,
+    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelTokenCounter, ReasoningChannel,
+    ReasoningEffort, ReplayExecutor, RequestId, RequestToolExposure, SessionId,
+    ToolApprovalBinding, ToolApprovalRequirement, ToolExecution, ToolExecutionHost,
+    ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission,
+    ToolValidationFailure, TurnOutcome, TurnRef, ValidatedToolCall,
 };
 
 const BACKEND_KIND: &str = "yo-managed-model";
@@ -328,37 +324,12 @@ impl NativeModelBackend {
 
     pub fn new(
         catalog_entry: &ModelCatalogEntry,
-        credential: ApiCredential,
-        connector_limits: ModelConnectorLimits,
+        connector: Box<dyn ModelConnector>,
         registry: FrozenToolRegistry,
         services: NativeModelBackendServices,
         config: NativeModelBackendConfig,
     ) -> Result<Self, BackendFailure> {
         let binding = catalog_entry.binding().clone();
-        let complete = catalog_entry.complete_binding().cloned();
-        let connector: Box<dyn ModelConnector> = match binding.api_dialect() {
-            ApiDialect::OpenAiResponses => Box::new(
-                OpenAiResponsesConnector::new(&binding, credential, connector_limits)
-                    .map_err(map_connector_initialization)?,
-            ),
-            ApiDialect::OpenAiChatCompletions => Box::new(
-                OpenAiChatCompletionsConnector::new(&binding, credential, connector_limits)
-                    .map_err(map_connector_initialization)?,
-            ),
-            ApiDialect::KimiChatCompletions => Box::new(
-                crate::KimiChatCompletionsConnector::new(
-                    complete.as_ref().ok_or_else(|| {
-                        failure(
-                            BackendFailureKind::Initialization,
-                            "Kimi connector requires a complete explicit profile",
-                        )
-                    })?,
-                    credential,
-                    connector_limits,
-                )
-                .map_err(map_connector_initialization)?,
-            ),
-        };
         Self::with_connector_and_profile(
             connector,
             binding,
@@ -2300,10 +2271,6 @@ fn bounded_output(output: &str, limit: usize, already_truncated: bool) -> String
         end -= 1;
     }
     format!("{}{TOOL_TRUNCATION_MARKER}", &output[..end])
-}
-
-fn map_connector_initialization(error: crate::ConnectorError) -> BackendFailure {
-    failure(BackendFailureKind::Initialization, error.to_string())
 }
 
 fn map_connector_turn(error: crate::ConnectorError) -> BackendFailure {

@@ -5,12 +5,12 @@ use std::fmt;
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
 use yo_connector_transport::{
-    DecodeBatch, SseDecoder, configuration_failure, http_client, start_stream,
+    ConnectorStream, DecodeBatch, SseDecoder, configuration_failure, http_client, start_stream,
 };
 use yo_core::{
-    ApiCredential, ApiDialect, ConnectorError, ConnectorId, EffectiveModelBinding,
-    ModelConnectorCancellation, ModelConnectorInputItem, ModelConnectorLimits,
-    ModelConnectorRequest,
+    ApiCredential, ApiDialect, ConnectorError, ConnectorId, EffectiveModelBinding, ModelConnector,
+    ModelConnectorCancellation, ModelConnectorInputItem, ModelConnectorLimits, ModelConnectorPoll,
+    ModelConnectorRequest, ModelConnectorStreamPort,
 };
 
 mod sse;
@@ -152,6 +152,13 @@ impl OpenAiResponsesConnector {
         Ok(body)
     }
 
+    pub fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<Value, ConnectorError> {
+        self.wire_body(request)
+    }
+
     pub fn start(
         &self,
         request: ModelConnectorRequest,
@@ -168,6 +175,45 @@ impl OpenAiResponsesConnector {
             cancellation,
             "yo-openai-responses",
         )
+    }
+}
+
+struct OpenAiResponsesStream(ConnectorStream);
+
+impl ModelConnectorStreamPort for OpenAiResponsesStream {
+    fn poll(&mut self) -> Result<ModelConnectorPoll, ConnectorError> {
+        self.0.poll()
+    }
+
+    fn cancel(&self) {
+        self.0.cancel();
+    }
+
+    fn shutdown(&mut self) -> Result<(), ConnectorError> {
+        self.0.shutdown()
+    }
+}
+
+impl ModelConnector for OpenAiResponsesConnector {
+    fn request_url(&self) -> &str {
+        self.request_url()
+    }
+
+    fn tokenization_payload(
+        &self,
+        request: &ModelConnectorRequest,
+    ) -> Result<Value, ConnectorError> {
+        self.tokenization_payload(request)
+    }
+
+    fn start(
+        &self,
+        request: ModelConnectorRequest,
+        cancellation: ModelConnectorCancellation,
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, ConnectorError> {
+        OpenAiResponsesConnector::start(self, request, cancellation).map(|stream| {
+            Box::new(OpenAiResponsesStream(stream)) as Box<dyn ModelConnectorStreamPort>
+        })
     }
 }
 

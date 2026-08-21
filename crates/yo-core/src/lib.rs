@@ -58,13 +58,13 @@ pub use journal::{
 };
 pub use model_connector::{
     ConnectorError, ConnectorFailureKind, FunctionTool, KimiChatCompletionsConnector,
-    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
+    ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
-    ModelConnectorStream, ModelConnectorTerminal, ModelConnectorUsage,
-    OpenAiChatCompletionsConnector, OpenAiResponsesConnector, ReasoningChannel, ReasoningEffort,
-    RequestToolExposure, ResponseTerminal, ResponsesCancellation, ResponsesConnectorLimits,
-    ResponsesEvent, ResponsesInputItem, ResponsesInputRole, ResponsesPoll, ResponsesRequest,
-    ResponsesStream, ResponsesUsage,
+    ModelConnectorStream, ModelConnectorStreamPort, ModelConnectorTerminal, ModelConnectorUsage,
+    OpenAiChatCompletionsConnector, ReasoningChannel, ReasoningEffort, RequestToolExposure,
+    ResponseTerminal, ResponsesCancellation, ResponsesConnectorLimits, ResponsesEvent,
+    ResponsesInputItem, ResponsesInputRole, ResponsesPoll, ResponsesRequest, ResponsesStream,
+    ResponsesUsage,
 };
 pub use model_service::{
     AccountId, ApiCredential, ApiDialect, CompleteModelBinding, ConnectionAccount,

@@ -5,8 +5,8 @@ mod chat_sse;
 mod connector;
 mod framing;
 mod kimi_request;
+mod port;
 mod request;
-mod sse;
 mod types;
 
 pub(super) struct SseDecodeBatch {
@@ -15,9 +15,10 @@ pub(super) struct SseDecodeBatch {
 }
 
 pub use connector::{
-    KimiChatCompletionsConnector, OpenAiChatCompletionsConnector, OpenAiResponsesConnector,
-    ResponsesCancellation, ResponsesStream,
+    KimiChatCompletionsConnector, OpenAiChatCompletionsConnector, ResponsesCancellation,
+    ResponsesStream,
 };
+pub use port::{ModelConnector, ModelConnectorStreamPort};
 pub(crate) use request::ModelCacheAffinityHint;
 pub use request::{
     FunctionTool, ReasoningEffort, RequestToolExposure, ResponsesInputItem, ResponsesInputRole,
