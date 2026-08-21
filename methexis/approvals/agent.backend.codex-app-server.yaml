@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: agent.backend.codex-app-server
-revision: sha256:dc2f48f5d235ed6234387abf8558022548437f6a42d81372a6a659a21bd3fcb2
+revision: sha256:877f93fea5151dd601be3d8cddb18405c9244c4f0939f564249d858ef1728eaa
 reviewer: agent-runtime
-reviewed_at: 2026-08-08T03:28:31Z
+reviewed_at: 2026-08-21T00:37:50Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:af0c92245bda6e2ff21e76a772cf8cb7039e53c03dea795a640ab69fa41158bd
-request_hash: sha256:ce634e223f5e4c4ad24601331a8c45b24f366dcc1420c54b151d7b8c96cf8f7f
+projection_hash: sha256:a96aa445c601459a140131d1962f15346fea807194bb10cb599ddd46e29fdcaa
+request_hash: sha256:4a0aba8bf19582710c1cf3647e8b33e99b7c529f5ede6f8c48afc9b9c3615516

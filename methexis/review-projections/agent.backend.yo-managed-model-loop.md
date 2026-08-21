@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.backend.yo-managed-model-loop
-revision: sha256:528b907b0b8d12bbd37d61d87f5d32d98d8e68492afa915dc7208f24c8d076fb
+revision: sha256:79812dac2451cdcaaf67969067960c64d8ca3c925f9c21d55cdf63e903cd859a
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:a887e81ad952903e1eb5fdbc0a0470744895ca6d2dfae7c597cc81c45b1c6520
+request_hash: sha256:16c1d6066a5ad2fba12d2c64719f3ffc083332df29a2dc384e3373f2d2fe0924
 ---
 # Korean Review Projection
 
@@ -14,7 +14,7 @@ request_hash: sha256:a887e81ad952903e1eb5fdbc0a0470744895ca6d2dfae7c597cc81c45b1
 
 ## Statement
 
-Yo-managed Agent Backend는 기존 `AgentBackend` semantic port를 구현하면서 `yo-core` 안에서 모델 루프, 도구 실행 조정, 모델에 보이는 context를 소유해야 합니다. Effective binding은 Turn 시작 전에 허용된 Model Connector 하나와 정확한 API dialect를 선택해야 합니다. Model Connector는 원격 request와 stream protocol만 소유하고 dialect를 루프가 소비하는 connector-neutral round observation으로 변환해야 합니다. `yo-cli`, frontend, connector는 agent loop owner가 될 수 없습니다. 같은 루프는 dialect에서 파생된 identity를 통해 별도로 계약된 OpenAI Responses, provider-neutral OpenAI Chat Completions, Kimi Chat Completions Connector를 허용합니다. 루프는 다른 dialect를 probe하거나 다른 connector로 fallback하거나 Provider identity에 따라 분기하면 안 됩니다.
+Yo-managed Agent Backend는 독립 `yo-backend-managed` crate에 있어야 하고 기존 `AgentBackend` semantic port를 구현하며 model loop, tool execution 조율, model-visible context를 소유해야 합니다. `yo-core`는 concrete loop를 소유하거나 의존하지 않고 공통 semantic, model-service, Connector, tool type과 port를 소유해야 합니다. Effective binding은 Turn 시작 전에 허용된 Model Connector 하나와 정확한 API dialect를 선택해야 합니다. Model Connector는 원격 request와 stream protocol만 소유하고 dialect를 루프가 소비하는 connector-neutral round observation으로 변환해야 합니다. `yo-cli`, frontend, connector는 agent loop owner가 될 수 없습니다. 같은 루프는 dialect에서 파생된 identity를 통해 별도로 계약된 OpenAI Responses, provider-neutral OpenAI Chat Completions, Kimi Chat Completions Connector를 허용합니다. 루프는 다른 dialect를 probe하거나 다른 connector로 fallback하거나 Provider identity에 따라 분기하면 안 됩니다.
 
 각 허용된 Turn에서 backend는 commit된 semantic Session history와 새 user input을 선택된 API dialect로 projection해야 합니다. Text delta는 기존 message segmentation과 terminal seal 경로를 통해 `ModelWork` Activity가 되어야 합니다. 모델 function call은 wire call identity, function name, 정확히 누적된 argument byte를 보존해야 합니다. Validation이 거절한 경우에도 correlated Tool Activity가 되어야 하며 invalid JSON, schema mismatch, 알 수 없거나 중복된 identity, 사용할 수 없는 tool, argument bound 실패는 effect 없이 typed validation failure로 Activity를 끝내야 합니다. Approval, admission, dispatch 전에 validation이 성공해야 합니다. Approval과 실행은 frozen registry, admission policy, execution host 경계를 사용해야 하며 모델 서비스가 로컬 workspace tool을 직접 실행하면 안 됩니다.
 
@@ -42,4 +42,4 @@ Tool argument와 output은 Activity, 이후 model input, replay delta가 되기 
 
 ## Rationale
 
-`yo-core`가 루프를 소유하면 기존 frontend-independent Session contract를 유지하면서 진정한 native backend를 제공할 수 있습니다. 명시적인 connector 경계는 Provider별 wire 동작이 실질적으로 다를 때의 전용 dialect까지 Provider 분기를 추가하지 않고 서로 다른 grammar를 약화하지 않으면서 semantic loop를 공유하게 합니다. Agent가 선택적 work budget을 소유하면 transport stall detection이나 binding identity를 약화하지 않고 의도적으로 오래 걸리는 model work를 허용할 수 있습니다. Exact semantic replay는 durable continuation을 Provider의 임시 response 보관에 결합하지 않으며 tool side effect를 Yo 자체 authority와 연계된 상태로 유지합니다. 허용된 Kimi private reasoning을 별도의 typed non-observable replay attachment로 취급하면 이 경계를 지키면서 continuation grammar가 더 풍부하다는 이유만으로 현재 모델을 비활성화하지 않고 Yo를 적응시킬 수 있습니다.
+`yo-backend-managed`가 loop를 소유하면 `yo-core`를 frontend-independent semantic contract owner로 유지하면서 distinct managed backend를 제공할 수 있습니다. 명시적인 connector 경계는 Provider별 wire 동작이 실질적으로 다를 때의 전용 dialect까지 Provider 분기를 추가하지 않고 서로 다른 grammar를 약화하지 않으면서 semantic loop를 공유하게 합니다. Agent가 선택적 work budget을 소유하면 transport stall detection이나 binding identity를 약화하지 않고 의도적으로 오래 걸리는 model work를 허용할 수 있습니다. Exact semantic replay는 durable continuation을 Provider의 임시 response 보관에 결합하지 않으며 tool side effect를 Yo 자체 authority와 연계된 상태로 유지합니다. 허용된 Kimi private reasoning을 별도의 typed non-observable replay attachment로 취급하면 이 경계를 지키면서 continuation grammar가 더 풍부하다는 이유만으로 현재 모델을 비활성화하지 않고 Yo를 적응시킬 수 있습니다.

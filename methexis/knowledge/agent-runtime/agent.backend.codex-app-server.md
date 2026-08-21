@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.runtime-005
-    revision: sha256:55e86343fb7ead85e4764c7fa6c86976d6577359c130c6d970605299c4dd7a3b
+    revision: sha256:a82c2597c56bd64a2c827f22dc1c29bfcc3366787205448234ac6f83badaac12
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -24,14 +24,19 @@ negotiate additional capabilities, MUST fail explicitly on incompatibility,
 map Codex Thread/Turn/Item messages into yo Session/Turn/Activity semantics,
 and keep all Codex-specific wire types private to the backend boundary.
 
-`yo-cli` selects and wires the backend. The private backend module owns its
-child process and deterministic cleanup in coordination with the product
-process host. The same core contract MUST have a deterministic fake Agent
-Backend for contract and failure tests that do not require Codex installation,
-credentials, network access, or nondeterministic model output.
+`yo-cli` selects and wires the backend. The independent
+`yo-backend-delegated-codex` crate MUST depend on `yo-backend` for bounded
+child-process JSONL and deferred-message mailbox mechanisms and on the provider-neutral
+`AgentBackend` specialization in yo-core. It MUST own Codex-specific launch policy, wire
+correlation, semantic translation, and deterministic cleanup in coordination
+with the product process host, and MUST NOT make yo-core depend on Codex wire
+behavior. The same core
+contract MUST have a deterministic fake Agent Backend for contract and failure
+tests that do not require Codex installation, credentials, network access, or
+nondeterministic model output.
 
-WebSocket transport, remote app-server use, and another delegated Agent
-Backend are deferred until their own executable evidence exists.
+WebSocket transport and remote app-server use are deferred until their own
+executable evidence exists.
 
 The Codex binding MUST explicitly declare `backend_managed_state` continuation.
 Yo owns the durable transcript, semantic events, correlation records, and
@@ -47,4 +52,6 @@ misrepresented as Yo exact replay.
 
 App-server supplies an existing coding-agent engine, authentication, tools,
 approvals, and streamed events, allowing yo to validate its interface without
-reimplementing an agent or coupling its domain contract to Codex.
+reimplementing an agent or coupling its domain contract to Codex. Keeping the
+adapter in its own crate also prevents the semantic core from becoming the
+ownership boundary for one host's process and protocol.
