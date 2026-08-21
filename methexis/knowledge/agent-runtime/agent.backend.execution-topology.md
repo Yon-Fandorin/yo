@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-007
-    revision: sha256:e8a41776fd9854d6651c837d1a2e24683a1b12606ac0f9bdcf0757631c9e73e0
+    revision: sha256:3263653b2cae2683b0c0a7181f58e0d8124bd6b059db41deeebafa3123b0d270
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -14,40 +14,24 @@ relations:
 
 ## Statement
 
-An Agent Backend MUST be classified independently along orchestration
-ownership, connector, execution target, transport, workspace-host, and
-tool-execution-host axes.
-A Delegated Agent Backend connects to a coding-agent host such as Codex
-app-server, Grok Build ACP, or Kimi Code; that host owns its agent loop, tool
-execution, and backend Session. A Yo-managed Backend keeps those
-responsibilities in yo and uses a Model Connector to reach a service such as
-OpenAI or Kimi.
+An Agent Backend MUST be classified independently along orchestration ownership, connector, execution target, transport, workspace-host, and tool-execution-host axes. A Delegated Agent Backend connects to a coding-agent host such as Codex app-server, Grok Build ACP, or Kimi Code; that host owns its agent loop, tool execution, and backend Session. A Yo-managed Backend keeps those responsibilities in yo and uses a Model Connector to reach a service such as OpenAI or Kimi.
 
-`Provider` MUST name a model service rather than a delegated coding-agent
-process. `Local` and `Remote` MUST describe execution placement, and stdio,
-SSH, WebSocket, HTTP, and SSE MUST describe transport; neither dimension
-creates another semantic backend kind. Every Agent Backend MUST report the
-exact boundary that it can observe for Request diagnostics, through its
-Connector where one exists, and MUST NOT claim visibility into a downstream
-request owned by another process or service.
+`Provider` MUST name a model service rather than a delegated coding-agent process. `Local` and `Remote` MUST describe execution placement, and stdio, SSH, WebSocket, HTTP, and SSE MUST describe transport; neither dimension creates another semantic backend kind. Every Agent Backend MUST report the exact boundary that it can observe for Request diagnostics, through its Connector where one exists, and MUST NOT claim visibility into a downstream request owned by another process or service.
 
-Generic backend lifecycle, capability, failure, evidence, and replay types MUST
-live in the independent `yo-backend` foundation crate. Bounded child-process
-JSONL, stderr retention, request-ID allocation, and deferred-message mechanisms
-MAY be shared there, but host wire interpretation and Yo semantic state MUST
-NOT enter that foundation. yo-core MUST specialize `BackendAdapter` as its
-provider-neutral `AgentBackend` port and MUST NOT depend on a concrete backend.
+Generic backend lifecycle, capability, failure, evidence, and replay types MUST live in the independent `yo-backend` foundation crate. Its generic replay contract MAY include the smallest bounded versioned opaque provider-private envelope needed for exact durable replay, but MUST NOT interpret a Provider schema or payload. Bounded child-process JSONL, stderr retention, request-ID allocation, and deferred-message mechanisms MAY also be shared there, but host wire interpretation and Yo semantic state MUST NOT enter that foundation. `yo-core` MUST specialize `BackendAdapter` as its provider-neutral `AgentBackend` port and MUST NOT depend on a concrete backend.
 
-Concrete backends MUST remain flat independent crates: `yo-backend-managed`,
-`yo-backend-delegated-codex`, and `yo-backend-delegated-grok`. Each depends on
-the foundation and yo-core specialization. The process host selects and
-constructs an admitted adapter. The current local delegated adapters are Codex
-app-server and Grok Build ACP.
+Concrete backends MUST remain flat independent crates: `yo-backend-managed`, `yo-backend-delegated-codex`, and `yo-backend-delegated-grok`. Each depends on the foundation and `yo-core` specialization. The process host selects and constructs an admitted adapter. The current local delegated adapters are Codex app-server and Grok Build ACP.
+
+The Model Connector boundary MUST remain independent of the Agent Backend boundary. `yo-core` MUST own only the provider-neutral Connector port and shared Connector semantic request, observation, failure, cancellation, and complete-binding types, including the closed registry that derives the exact Connector identity from an admitted `api_dialect` and complete binding. Exact HTTP request construction, dialect stream decoding, endpoint policy, retry grammar, and provider-private payload interpretation MUST NOT enter `yo-core`, `yo-backend`, or `yo-backend-managed`.
+
+Concrete Model Connectors MUST remain flat independent crates under `crates/connectors/`: `yo-connector-openai-responses`, `yo-connector-openai-chat-completions`, and `yo-connector-kimi`. Each MUST depend on `yo-core`, MAY depend on `yo-backend` only for its connector-neutral replay contract and opaque provider-private envelope, MUST implement exactly its admitted Connector identity and dialect, and MUST NOT depend on another concrete Connector. `yo-core`, `yo-backend`, and `yo-backend-managed` MUST NOT depend on a concrete Connector. Kimi request and response grammar, private-assistant schema decoding and codec, lossless validation, extraction of the connector-neutral visible replay projection, and exact encoded-size calculation belong only to `yo-connector-kimi`. It MUST return that validated projection together with the bounded opaque provider-private envelope. `yo-backend` may retain and bound the envelope but MUST NOT interpret its Kimi fields; `yo-backend-managed` may validate only the envelope's declared schema identity, binding epoch, and bounds and compare the Connector-supplied projection with semantic replay.
+
+A flat internal `yo-connector-transport` crate under `crates/connectors/transport` MAY be shared by at least two concrete Connectors only for bounded HTTPS and SSE byte transport, framing, cancellation, cleanup, and delivery mechanics. It MUST NOT own an API dialect, Provider or Model policy, complete binding, semantic replay meaning, retry decision, or provider-private payload interpretation. A concrete Connector MUST remain the sole owner of its request grammar, response terminal, retry admission, and semantic projection.
+
+`yo-core` MUST derive one exact Connector identity through its closed `api_dialect` registry without Provider probing or fallback. `yo-cli`, as the process-wide composition owner, MUST map that already derived exact Connector identity and dialect to one concrete factory and inject it into `yo-backend-managed` and the model-service verification path. That composition MUST NOT probe a Provider, infer a dialect from a Model name, fall back to another Connector, or make the managed loop branch on Provider. The split MUST preserve existing Journal bytes and ordering, binding epochs, replay profiles, visibility exclusions, plaintext-retention consent, request behavior, and terminal behavior without a migration.
 
 ## Rationale
 
-Keeping ownership, vendor, placement, and wire protocol orthogonal avoids
-local-only backend types and lets the same Session semantics cover local Codex
-and Grok processes, a remote agent host, and a yo-owned model loop. Independent
-adapter crates keep host protocol churn out of the semantic core and allow a
-new host without adding another concrete backend dependency to yo-core.
+Keeping ownership, vendor, placement, and wire protocol orthogonal avoids local-only backend types and lets the same Session semantics cover local Codex and Grok processes, a remote agent host, and a yo-owned model loop. Independent adapter crates keep host protocol churn out of the semantic core and allow a new host without adding another concrete backend dependency to `yo-core`.
+
+The three admitted model dialects already change independently and Kimi additionally owns private replay and provider-specific request rules. Flat Connector crates keep that churn out of `yo-core` and the managed loop, while the existing neutral replay foundation retains only correlation, bounds, and opaque durable payload. One narrow transport helper avoids copying byte-lifecycle mechanics without becoming a second semantic owner. Process-root injection preserves exact binding selection and lets terminal or future GUI frontends reuse the same semantic engine without importing every concrete Provider implementation.
