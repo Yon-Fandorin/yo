@@ -44,7 +44,7 @@ impl Default for ResponsesConnectorLimits {
 }
 
 impl ResponsesConnectorLimits {
-    pub(super) fn validate(&self) -> Result<(), ConnectorError> {
+    pub fn validate(&self) -> Result<(), ConnectorError> {
         let durations = [
             self.connect_timeout,
             self.response_header_timeout,
@@ -104,7 +104,7 @@ pub struct ConnectorError {
 }
 
 impl ConnectorError {
-    pub(super) fn new(kind: ConnectorFailureKind, message: impl Into<String>) -> Self {
+    pub fn new(kind: ConnectorFailureKind, message: impl Into<String>) -> Self {
         let request_failure = match kind {
             ConnectorFailureKind::Configuration => {
                 Some(crate::ModelRequestFailureKind::LocalConfiguration)
@@ -125,7 +125,7 @@ impl ConnectorError {
         }
     }
 
-    pub(super) fn with_request_failure(
+    pub fn with_request_failure(
         kind: ConnectorFailureKind,
         request_failure: crate::ModelRequestFailureKind,
         message: impl Into<String>,

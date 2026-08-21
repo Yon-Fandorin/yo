@@ -68,6 +68,10 @@ impl ResponsesCancellation {
     pub fn is_cancelled(&self) -> bool {
         self.0.is_cancelled()
     }
+
+    pub async fn cancelled(&self) {
+        self.0.cancelled().await;
+    }
 }
 
 impl fmt::Debug for ResponsesCancellation {

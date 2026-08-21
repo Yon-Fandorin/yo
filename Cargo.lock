@@ -2267,6 +2267,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "yo-connector-openai-responses"
+version = "0.0.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "yo-connector-transport",
+ "yo-core",
+]
+
+[[package]]
+name = "yo-connector-transport"
+version = "0.0.0"
+dependencies = [
+ "futures-util",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "yo-core",
+]
+
+[[package]]
 name = "yo-core"
 version = "0.0.0"
 dependencies = [

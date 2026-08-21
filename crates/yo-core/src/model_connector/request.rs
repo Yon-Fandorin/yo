@@ -17,7 +17,7 @@ pub enum ResponsesInputRole {
 }
 
 impl ResponsesInputRole {
-    pub(super) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::System => "system",
             Self::Developer => "developer",
@@ -94,11 +94,11 @@ impl FunctionTool {
         &self.name
     }
 
-    pub(super) fn description(&self) -> &str {
+    pub fn description(&self) -> &str {
         &self.description
     }
 
-    pub(super) const fn parameters(&self) -> &Value {
+    pub const fn parameters(&self) -> &Value {
         &self.parameters
     }
 }
@@ -143,7 +143,7 @@ pub enum ReasoningEffort {
 }
 
 impl ReasoningEffort {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
             Self::Low => "low",
@@ -270,25 +270,25 @@ impl ResponsesRequest {
         self
     }
 
-    pub(crate) fn input(&self) -> &[ResponsesInputItem] {
+    pub fn input(&self) -> &[ResponsesInputItem] {
         &self.input
     }
 
-    pub(super) fn contains_provider_private_input(&self) -> bool {
+    pub fn contains_provider_private_input(&self) -> bool {
         self.input
             .iter()
             .any(|item| matches!(item, ResponsesInputItem::ProviderPrivateAssistant { .. }))
     }
 
-    pub(super) fn tools(&self) -> Option<&[FunctionTool]> {
+    pub fn tools(&self) -> Option<&[FunctionTool]> {
         self.tool_exposure.tools()
     }
 
-    pub(super) const fn max_output_tokens(&self) -> Option<u64> {
+    pub const fn max_output_tokens(&self) -> Option<u64> {
         self.max_output_tokens
     }
 
-    pub(super) const fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+    pub const fn reasoning_effort(&self) -> Option<ReasoningEffort> {
         self.reasoning_effort
     }
 

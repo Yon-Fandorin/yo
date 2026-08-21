@@ -137,7 +137,7 @@ impl NormalizedEndpoint {
         self.0.as_str()
     }
 
-    pub(crate) fn append_path_segment(&self, segment: &str) -> Result<Url, ModelServiceError> {
+    pub fn append_path_segment(&self, segment: &str) -> Result<Url, ModelServiceError> {
         if segment.is_empty() || segment.contains('/') || segment.chars().any(char::is_control) {
             return Err(ModelServiceError::new(
                 "model-service endpoint path segment must be non-empty and contain no slash or control character",
