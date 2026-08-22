@@ -106,7 +106,7 @@ fn connect_credential_first_cut_points_complete_public_without_secret_reuse() {
         );
         assert_eq!(
             fixture.connections.capture().unwrap().preference(),
-            Some(&StartupTarget::HostCodex)
+            Some(&StartupTarget::host_codex())
         );
         assert!(fixture.journal.capture().unwrap().is_none());
     }
@@ -234,7 +234,7 @@ fn disconnect_before_public_commit_abandons_both_credential_actions() {
     );
     assert_eq!(
         remove_fixture.connections.capture().unwrap().preference(),
-        Some(&StartupTarget::HostCodex)
+        Some(&StartupTarget::host_codex())
     );
 
     let preserve_fixture = Fixture::new("execution-preserve-abandon");
@@ -262,7 +262,7 @@ fn disconnect_before_public_commit_abandons_both_credential_actions() {
     );
     assert_eq!(
         preserve_fixture.connections.capture().unwrap().preference(),
-        Some(&StartupTarget::HostCodex)
+        Some(&StartupTarget::host_codex())
     );
 }
 

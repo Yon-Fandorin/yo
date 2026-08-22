@@ -144,7 +144,7 @@ end를 닫고 reader thread 둘을 join한다. 이 attempt는 thread나 descript
 남기는 대신 cleanup failure를 보고한다.
 
 열린 모든 backend binding은 continuation strategy를 선언한다. 현재 Yo-managed
-경로는 local client의 exact replay를 선언하고 Codex는 backend-managed state를
+경로는 local client의 exact replay를 선언하고 Codex와 Grok은 backend-managed state를
 선언한다. Exact replay는 별도의 제한된 `ModelReplayDelta`, 그 delta를 가리키는
 payload-free resumable outcome, Continuation Anchor 순서로 commit한다.
 Backend-managed state는 replay-delta 참조가 없는 outcome을 Anchor보다 먼저
@@ -154,8 +154,8 @@ contract 값이며 현재 이를 선택하는 backend는 없다.
 
 ### 모델 선택과 교체
 
-startup은 optional `--model TARGET_REFERENCE` 하나를 받는다. 정확한 `host:codex`는
-Local Codex HostTarget을 선택한다. ModelTarget 표기는 `Model`, `Provider::Model`,
+startup은 optional `--model TARGET_REFERENCE` 하나를 받는다. 정확한 `host:codex`와
+`host:grok`은 각각의 local delegated HostTarget을 선택한다. ModelTarget 표기는 `Model`, `Provider::Model`,
 `Provider:Account:Model`이다. Provider와 Account는 `%`를 `%25`로, `:`를 `%3A`로
 encode하고 vendor가 소유하는 Model suffix는 바꾸지 않는다. separator 우선순위로
 파싱하지 않고 설정된 완전한 좌표에서 가능한 표기를 만들어 대조하므로 vendor
@@ -167,19 +167,19 @@ Account 안에 머물고, namespace가 없으면 catalog 전체에서 정확히 
 
 새 Session에서는 명시적인 invocation target, 저장된 `connections.yaml` preference,
 policy default 순으로 우선한다. `config.yaml`은 모델 target을 제공하지 않는다. 선택 가능한
-모든 계층이 없으면 Codex를 조용히 선택하지 않고
-Session 생성 전에 정확한 `yo connect`와 `yo --model host:codex` 안내로 실패한다.
+모든 계층이 없으면 host를 조용히 선택하지 않고
+Session 생성 전에 정확한 `yo connect`, `yo --model host:codex`, `yo --model host:grok` 안내로 실패한다.
 `yo default TARGET`은 정확한 HostTarget 또는 설정된 ModelTarget 하나를 admission하고
 저장하며, `yo default --unset`은 이 저장 계층만 지운다. 재개하는 Yo-managed Session은
 저장 preference를 읽지 않고 최신 durable binding을 bare namespace로 쓰며 startup 기본값은 그
-namespace를 바꾸지 않는다. 정확한 `host:codex`는 Codex resume을 확인하며, 서로 다른
+namespace를 바꾸지 않는다. 정확한 `host:codex` 또는 `host:grok`은 일치하는 delegated-host resume을 확인하며, 서로 다른
 cross-backend target은 handoff가 아직 미뤄져 있으므로 명시적으로 실패한다.
 
 Yo-managed TUI가 idle일 때 `/model`은 Provider, Account, Model 순서로 정렬한 항목을
 범용 selection panel에 연다. label에는 optional display name을 쓰지만 각 행의
 identity는 완전한 안정 좌표다. `/model MODEL_REFERENCE`는 startup과 같은 resolver를
 사용하므로 bare 형식은 현재 namespace에 머물고 qualified 형식은 설정된 다른 Provider나
-Account를 선택할 수 있다. Codex로 시작한 live Session은 이 picker를 노출하지 않는다.
+Account를 선택할 수 있다. delegated host로 시작한 live Session은 이 picker를 노출하지 않는다.
 
 frontend 중립 `ModelSelectionController`가 이 resolution 규칙을 소유한다. 선택을
 accept하면 process host는 현재 binding을 유지한 채 startup credential snapshot,
@@ -202,13 +202,14 @@ yo-cli
   TerminationCoordinator 설치
   Host identity와 Session repository 열기
   workspace 정규화와 SessionDescriptor 생성
-  CodexBackend transport 시작 또는 dialect에서 파생된 managed model backend 조립
+  선택한 Codex/Grok delegated transport 시작 또는 dialect에서 파생된 managed model backend 조립
       ↓
 yo-core AgentSession
   worker 시작
   descriptor envelope 시도
   CreateSession
       ├── CodexBackend → app-server initialize + thread/start
+      ├── GrokBackend → ACP initialize + cached-token 인증 + session/new
       └── NativeModelBackend → local exact-replay Session state 연결
       ↓
 yo-core
@@ -221,10 +222,10 @@ yo-tui
 | 단계 | 현재 소유자 | 확인할 내용 |
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/connection.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection.rs) | `run`이 표시 옵션·작업 디렉터리·command-local 설정을 확보하고 새 Session의 저장 preference를 상태 생성 없이 읽는다. 종료 coordinator를 설치하고 Host identity와 Session storage를 열며 workspace를 canonicalize한 뒤 시각이 일치하는 UUIDv7 `SessionDescriptor`를 만든다. Resume은 저장 preference를 읽지 않는다. |
-| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | process host가 invocation·저장·operator 계층을 resolve한 다음 Codex stdio transport를 시작하거나 startup snapshot과 주입된 tool로 선택한 managed binding을 조립한다. 두 경로 모두 worker가 backend를 소유할 때까지 remote model 작업을 미룬다. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | process host가 invocation·저장·operator 계층을 resolve한 다음 선택한 delegated stdio transport를 시작하거나 startup snapshot과 주입된 tool로 managed binding을 조립한다. 모든 경로는 worker가 backend를 소유할 때까지 model 작업을 미룬다. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 descriptor-only Journal envelope를 먼저 시도한 뒤 `AgentRuntime`을 통해 `CreateSession`을 보낸다. storage pressure가 있으면 descriptor와 이후 activity를 복구 가능한 volatile prefix로 함께 유지한다. |
-| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex에서는 `CreateSession`이 `initialize`와 `thread/start`를 수행한다. managed backend는 provider 요청 없이 local exact-replay Session state를 연결한다. 두 경로 모두 semantic engine이 `SessionCreated`를 만들게 한다. |
+| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex는 `initialize`와 `thread/start`, Grok은 ACP 초기화·cached-token 인증·`session/new`를 수행한다. managed backend는 provider 요청 없이 local exact-replay state를 연결한다. 각 경로는 semantic engine이 `SessionCreated`를 만들게 한다. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode`가 첫 터미널 소유 세대의 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
 
 handshake 중에 종료 요청이 오면 `AgentSession::start_inner`가 취소
@@ -495,7 +496,7 @@ change lane은 command나 event 내용을 싣지 않으며 용량은 하나다. 
 계속 읽기 때문이다. backend가 최종 실패해도 adapter는 Journal에 이미
 확정된 실패 record를 먼저 모두 공개한 뒤 연결 오류를 보고한다.
 
-Codex JSON과 provider identifier는 backend adapter 밖으로 나오지 않는다.
+Codex와 Grok wire JSON 및 provider identifier는 각 backend adapter 밖으로 나오지 않는다.
 터미널 input event와 rendering type은 `yo-tui` 밖으로 나오지 않는다.
 그 사이를 지나는 command와 event type은 `yo-core`가 소유한다.
 
@@ -957,10 +958,10 @@ connect나 import는 표시되는 definition이 같아도 복구가 구별할 �
 model catalog와 preference를 직접 제공하며 manual/stored composition이나 provenance conflict
 경로는 없다. 초기 선택, resume matching, live model picker는 같은 complete 저장 profile을 쓴다.
 
-`yo default TARGET`, `yo default --unset`, 명시적 `yo connect host:codex`, external model
+`yo default TARGET`, `yo default --unset`, 명시적 `yo connect host:codex` 또는 `host:grok`, external model
 connect, external model disconnect는 nonblocking process operation lock 하나를 사용하고 새
 command configuration을 읽기 전에 pending multi-repository work를 해결한다. Preference-only command는 target admission 또는
-Local Codex 검증과 마지막 configuration guard 뒤 public CAS 하나를 게시하고, 새 operation
+local delegated-host 검증과 마지막 configuration guard 뒤 public CAS 하나를 게시하고, 새 operation
 journal을 만들거나 credential revision을 확인하지 않으며 저장 definition을 보존한다. External
 connect, import, disconnect는 위의 operation별 journal 순서를 사용한다. 자유 형식 Provider
 onboarding은 더 약한 경로를 빌리지 않고 아직 구현하지 않은 상태로 남는다.

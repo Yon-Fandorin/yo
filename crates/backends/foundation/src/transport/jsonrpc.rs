@@ -57,6 +57,11 @@ impl<M> JsonRpcMailbox<M> {
     pub fn pop(&mut self) -> Option<M> {
         self.pending.pop_front()
     }
+
+    /// Removes deferred messages that are no longer relevant to an adapter's active Session.
+    pub fn retain(&mut self, mut keep: impl FnMut(&M) -> bool) {
+        self.pending.retain(|message| keep(message));
+    }
 }
 
 #[cfg(test)]
@@ -98,5 +103,21 @@ mod tests {
 
         assert_eq!(mailbox.pop(), Some(1));
         assert_eq!(mailbox.pop(), Some(2));
+    }
+
+    // Session을 다시 연결한 어댑터는 이전 Session의 지연 메시지만 제거하고 새 Session의
+    // FIFO 순서는 보존해야 하므로 공용 mailbox의 선택적 정리를 검증합니다.
+    #[test]
+    fn deferred_messages_can_discard_one_session_without_reordering_the_rest() {
+        let mut mailbox = JsonRpcMailbox::new("fixture");
+        mailbox.push(("old", 1)).unwrap();
+        mailbox.push(("current", 2)).unwrap();
+        mailbox.push(("current", 3)).unwrap();
+
+        mailbox.retain(|(session, _)| *session == "current");
+
+        assert_eq!(mailbox.pop(), Some(("current", 2)));
+        assert_eq!(mailbox.pop(), Some(("current", 3)));
+        assert_eq!(mailbox.pop(), None);
     }
 }

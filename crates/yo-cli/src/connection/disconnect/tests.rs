@@ -239,8 +239,8 @@ fn preview_resolves_the_exact_lower_priority_startup_target() {
     let snapshot = fixture.connections().capture().unwrap();
     let selection = ModelSelection::new(provider(), account(), ModelId::new("alpha").unwrap());
     let policies = [
-        StartupPolicy::new(true, None, Some(StartupTarget::HostCodex)).unwrap(),
-        StartupPolicy::new(false, Some(StartupTarget::HostCodex), None).unwrap(),
+        StartupPolicy::new(true, None, Some(StartupTarget::host_codex())).unwrap(),
+        StartupPolicy::new(false, Some(StartupTarget::host_codex()), None).unwrap(),
     ];
 
     for policy in policies {

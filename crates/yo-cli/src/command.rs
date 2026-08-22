@@ -35,7 +35,7 @@ struct Cli {
     #[arg(long = "continue", conflicts_with = "resume")]
     continue_session: bool,
 
-    /// Select a startup model, such as host:codex or provider:account:model.
+    /// Select a startup target, such as host:grok or provider:account:model.
     #[arg(long, value_name = "MODEL_REFERENCE", allow_hyphen_values = true)]
     model: Option<String>,
 }

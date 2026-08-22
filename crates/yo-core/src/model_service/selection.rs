@@ -160,9 +160,10 @@ impl ModelSelectionController {
     pub fn resolve_reference(&self, reference: &str) -> Result<ModelSelection, ModelServiceError> {
         match self.resolve_target_reference(reference)? {
             StartupTarget::Model(selection) => Ok(selection),
-            StartupTarget::HostCodex => Err(ModelServiceError::new(
-                "host:codex is a HostTarget and is unavailable in a model-only selector",
-            )),
+            StartupTarget::Host(host) => Err(ModelServiceError::new(format!(
+                "{} is a HostTarget and is unavailable in a model-only selector",
+                host.reference()
+            ))),
         }
     }
 
@@ -170,8 +171,8 @@ impl ModelSelectionController {
         &self,
         reference: &str,
     ) -> Result<StartupTarget, ModelServiceError> {
-        if reference == StartupTarget::HOST_CODEX_REFERENCE {
-            return Ok(StartupTarget::HostCodex);
+        if let Some(host) = super::HostId::from_reference(reference)? {
+            return Ok(StartupTarget::Host(host));
         }
         let mut matches = BTreeSet::new();
         for choice in &self.choices {

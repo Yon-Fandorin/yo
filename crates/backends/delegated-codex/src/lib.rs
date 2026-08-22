@@ -27,6 +27,7 @@ use yo_core::{
     ContinuationStrategy, RequestId, SessionId, TurnRef,
 };
 
+pub const HOST_ID: &str = "codex";
 pub const BACKEND_KIND: &str = "codex-app-server";
 
 /// Local stdio adapter for a compatible `codex app-server` process.

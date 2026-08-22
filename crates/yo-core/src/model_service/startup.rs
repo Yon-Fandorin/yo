@@ -1,19 +1,100 @@
 use super::{ModelCatalog, ModelSelection, ModelSelectionController, ModelServiceError};
 
+/// Stable identity of one delegated agent host, independent from model Provider coordinates.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct HostId(String);
+
 /// One startup target. Host targets and remote model coordinates never share an identity space.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StartupTarget {
-    HostCodex,
+    Host(HostId),
     Model(ModelSelection),
+}
+
+impl HostId {
+    pub const CODEX: &'static str = "codex";
+    pub const GROK: &'static str = "grok";
+
+    pub fn new(value: impl Into<String>) -> Result<Self, ModelServiceError> {
+        let value = value.into();
+        let valid = !value.is_empty()
+            && value.len() <= 64
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            && value
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            && value
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric);
+        if !valid {
+            return Err(ModelServiceError::new(
+                "Host ID must be 1-64 lowercase ASCII letters, digits, or interior hyphens",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn codex() -> Self {
+        Self(Self::CODEX.to_owned())
+    }
+
+    #[must_use]
+    pub fn grok() -> Self {
+        Self(Self::GROK.to_owned())
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn reference(&self) -> String {
+        format!("host:{}", self.0)
+    }
+
+    pub fn from_reference(reference: &str) -> Result<Option<Self>, ModelServiceError> {
+        let Some(value) = reference.strip_prefix("host:") else {
+            return Ok(None);
+        };
+        if value.contains(':') {
+            return Ok(None);
+        }
+        Self::new(value).map(Some)
+    }
 }
 
 impl StartupTarget {
     pub const HOST_CODEX_REFERENCE: &'static str = "host:codex";
+    pub const HOST_GROK_REFERENCE: &'static str = "host:grok";
+
+    #[must_use]
+    pub fn host_codex() -> Self {
+        Self::Host(HostId::codex())
+    }
+
+    #[must_use]
+    pub fn host_grok() -> Self {
+        Self::Host(HostId::grok())
+    }
+
+    #[must_use]
+    pub fn host(&self) -> Option<&HostId> {
+        match self {
+            Self::Host(host) => Some(host),
+            Self::Model(_) => None,
+        }
+    }
 
     #[must_use]
     pub const fn model(&self) -> Option<&ModelSelection> {
         match self {
-            Self::HostCodex => None,
+            Self::Host(_) => None,
             Self::Model(selection) => Some(selection),
         }
     }

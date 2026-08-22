@@ -64,7 +64,9 @@ pub use qwencloud_catalog::{
     QwenCloudCatalogSeed,
 };
 pub use selection::{ModelSelection, ModelSelectionChoice, ModelSelectionController};
-pub use startup::{StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target};
+pub use startup::{
+    HostId, StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
+};
 
 #[cfg(test)]
 mod tests;

@@ -11,7 +11,7 @@ widen before closing the
 |---|---|---|
 | In-process | Deterministic state, protocol, layout, rendering, and injected failure behavior | `yo-core` engine/runtime tests; `yo-tui` component tests; rendering parity goldens |
 | Host-integrated | Behavior of real host facilities without optional installed services | Linux PTY, termios, process signal, and terminal-restoration tests in `yo-cli` |
-| External environment | Compatibility with installed programs, authentication, and nested terminal environments | Codex, tmux, local `sshd`, SSH, and tmux inside SSH |
+| External environment | Compatibility with installed programs, authentication, and nested terminal environments | Codex, Grok, tmux, local `sshd`, SSH, and tmux inside SSH |
 
 The first layer gives fast diagnosis but cannot prove an OS terminal lifecycle.
 The host-integrated layer exercises real Unix boundaries but cannot prove every
@@ -31,6 +31,7 @@ the assertion or silently skipping it.
 | Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
 | Backend lifecycle, evidence, or bounded child-process transport extraction | `cargo test --locked -p yo-backend` followed by `cargo test --locked -p yo-core backend::evidence` and `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, the `yo-core` specialization, and Journal wire/recovery compatibility tests |
 | Codex protocol translation or provider-ID correlation | `cargo test --locked -p yo-backend-delegated-codex` | `crates/backends/delegated-codex/src/tests.rs` |
+| Grok ACP translation, permissions, authentication, or Session correlation | `cargo test --locked -p yo-backend-delegated-grok` | `crates/backends/delegated-grok/src/tests.rs` and `protocol.rs` |
 | Decoded input, editing, paste, bindings, or exit gestures | `cargo test -p yo-tui input::` | Tests beside `yo-tui/src/input` |
 | Prompt wrapping, cursor visibility, or viewport behavior | `cargo test -p yo-tui prompt::` | Tests beside `yo-tui/src/prompt` |
 | `@` trigger, stale result, selection replacement, local ranking, or Git-ignore discovery | `cargo test -p yo-tui workspace_reference` and `cargo test -p yo-core workspace_reference` | `yo-tui/src/prompt/workspace_reference.rs` and `yo-core/src/workspace_reference` |

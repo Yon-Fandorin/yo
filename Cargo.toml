@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/backends/delegated-codex",
+    "crates/backends/delegated-grok",
     "crates/backends/foundation",
     "crates/backends/managed",
     "crates/connectors/transport",

@@ -154,8 +154,8 @@ cleanup failure instead of retaining thread or descriptor ownership
 indefinitely. The host never retries the command automatically.
 
 Every opened backend binding declares its continuation strategy. The current
-Yo-managed route declares exact replay by the local client; Codex declares
-backend-managed state. Exact replay commits a separate bounded
+Yo-managed route declares exact replay by the local client; Codex and Grok
+declare backend-managed state. Exact replay commits a separate bounded
 `ModelReplayDelta`, a payload-free resumable outcome that points to that delta,
 and then the Continuation Anchor. Backend-managed state commits an outcome with
 no replay-delta reference before its Anchor. Recovery validates this ordering
@@ -166,7 +166,7 @@ and no current backend selects it.
 ### Model selection and replacement
 
 Startup accepts one optional `--model TARGET_REFERENCE`. Exact `host:codex`
-selects the Local Codex HostTarget. ModelTargets use `Model`, `Provider::Model`,
+and `host:grok` select the corresponding local delegated HostTarget. ModelTargets use `Model`, `Provider::Model`,
 or `Provider:Account:Model`; Provider and Account encode `%` as `%25` and `:` as
 `%3A`, while the vendor-owned Model suffix remains unchanged. Matching is
 derived from configured complete coordinates rather than separator precedence,
@@ -179,13 +179,14 @@ Absence and ambiguity fail with stable, sorted canonical complete coordinates.
 For a new Session, an explicit invocation target overrides the stored
 `connections.yaml` preference and the policy default, in that order.
 `config.yaml` contributes no model target. When all selectable layers are absent,
-startup fails before Session creation with exact `yo connect` and `yo --model
-host:codex` guidance instead of silently choosing Codex. `yo default TARGET`
+startup fails before Session creation with exact `yo connect`, `yo --model
+host:codex`, and `yo --model host:grok` guidance instead of silently choosing a
+host. `yo default TARGET`
 admits and stores one exact HostTarget or configured ModelTarget, while `yo
 default --unset` clears only this stored layer. A resumed Yo-managed Session
 does not read the stored preference and uses its newest durable binding as the bare
-namespace; startup defaults never replace it. Exact `host:codex` confirms a
-Codex resume, while a different cross-backend target fails explicitly because
+namespace; startup defaults never replace it. Exact `host:codex` or `host:grok`
+confirms the matching delegated-host resume, while a different cross-backend target fails explicitly because
 cross-backend handoff remains deferred.
 
 While a Yo-managed TUI is idle, `/model` opens the generic selection panel with
@@ -193,7 +194,7 @@ entries ordered as Provider, Account, then Model. Labels use the optional
 display names, but each row carries the complete stable coordinate. `/model
 MODEL_REFERENCE` uses the same resolver as startup, so its bare form remains in
 the current namespace while a qualified form can select another configured
-Provider or Account. A Codex-started live Session does not expose this picker.
+Provider or Account. A delegated-host live Session does not expose this picker.
 
 The frontend-neutral `ModelSelectionController` owns those resolution rules.
 After acceptance, the process host constructs and validates the candidate
@@ -220,13 +221,14 @@ yo-cli
   install TerminationCoordinator
   open Host identity and Session repository
   normalize workspace and create SessionDescriptor
-  spawn CodexBackend transport or assemble the dialect-derived managed model backend
+  spawn the selected Codex/Grok delegated transport or assemble the dialect-derived managed model backend
       ↓
 yo-core AgentSession
   start worker
   attempt descriptor envelope
   CreateSession
       ├── CodexBackend → app-server initialize + thread/start
+      ├── GrokBackend → ACP initialize + cached-token authentication + session/new
       └── NativeModelBackend → bind local exact-replay Session state
       ↓
 yo-core
@@ -239,10 +241,10 @@ yo-tui
 | Step | Current owner | What to follow |
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/connection.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection.rs) | `run` selects presentation options, captures the working directory and command-local configuration, reads a new Session's stored preference without creating state, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`. Resume omits the stored-preference read. |
-| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | The process host resolves invocation, stored, and operator layers, then either starts the Codex stdio transport or assembles the selected managed binding from the startup snapshots and injected tools. Both defer remote model work until the worker owns the backend. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | The process host resolves invocation, stored, and operator layers, then either starts the selected delegated stdio transport or assembles the managed binding from the startup snapshots and injected tools. Every path defers model work until the worker owns the backend. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` first attempts the descriptor-only Journal envelope, then sends `CreateSession` through `AgentRuntime`; storage pressure keeps both the descriptor and later activity in the recoverable volatile prefix. |
-| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | For Codex, `CreateSession` performs `initialize` and `thread/start`. The managed backend binds local exact-replay Session state without a provider request. Both let the semantic engine produce `SessionCreated`. |
+| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex performs `initialize` and `thread/start`; Grok performs ACP initialization, cached-token authentication, and `session/new`; the managed backend binds local exact-replay state without a provider request. Each path lets the semantic engine produce `SessionCreated`. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode` acquires input and terminal state for the first terminal ownership generation, then enters the already selected presentation mode. |
 
 If termination arrives during the handshake, `AgentSession::start_inner`

@@ -119,7 +119,7 @@ fn first_publication_is_secure_and_exact_retry_is_idempotent() {
     let mutation = repository
         .capture()
         .unwrap()
-        .prepare_preference(Some(StartupTarget::HostCodex))
+        .prepare_preference(Some(StartupTarget::host_codex()))
         .unwrap()
         .unwrap();
 
@@ -136,7 +136,27 @@ fn first_publication_is_secure_and_exact_retry_is_idempotent() {
     assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     let current = repository.capture().unwrap();
     assert_eq!(current.revision(), mutation.planned_revision());
-    assert_eq!(current.preference(), Some(&StartupTarget::HostCodex));
+    assert_eq!(current.preference(), Some(&StartupTarget::host_codex()));
+}
+
+// 연결 저장소는 core에 구체 어댑터 enum을 되살리지 않고 HostId의 canonical reference를
+// 저장·복원해 새 Grok 기본값도 Codex와 동일한 CAS 의미를 갖습니다.
+#[test]
+fn grok_host_preference_round_trips_as_a_generic_host_id() {
+    let (_directory, repository) = repository("grok-host");
+    let mutation = repository
+        .capture()
+        .unwrap()
+        .prepare_preference(Some(StartupTarget::host_grok()))
+        .unwrap()
+        .unwrap();
+
+    repository.commit(&mutation).unwrap();
+
+    assert_eq!(
+        repository.capture().unwrap().preference(),
+        Some(&StartupTarget::host_grok())
+    );
 }
 
 // 같은 expected revision에서 준비한 두 기본값 중 먼저 commit한 승자 뒤에는 loser가
@@ -172,7 +192,7 @@ fn interruption_before_cas_leaves_old_state_for_a_fresh_retry() {
     let set = repository
         .capture()
         .unwrap()
-        .prepare_preference(Some(StartupTarget::HostCodex))
+        .prepare_preference(Some(StartupTarget::host_codex()))
         .unwrap()
         .unwrap();
     repository.commit(&set).unwrap();
@@ -717,7 +737,7 @@ fn stored_remove_preserves_shared_account_then_clears_last_account_and_preferenc
         .unwrap()
         .prepare_model_remove(match model_target("model-a") {
             StartupTarget::Model(ref selection) => selection,
-            StartupTarget::HostCodex => unreachable!(),
+            StartupTarget::Host(_) => unreachable!(),
         })
         .unwrap();
     repository.commit(&remove_a).unwrap();
@@ -729,7 +749,7 @@ fn stored_remove_preserves_shared_account_then_clears_last_account_and_preferenc
     let remove_b = after_a
         .prepare_model_remove(match model_target("model-b") {
             StartupTarget::Model(ref selection) => selection,
-            StartupTarget::HostCodex => unreachable!(),
+            StartupTarget::Host(_) => unreachable!(),
         })
         .unwrap();
     repository.commit(&remove_b).unwrap();
@@ -752,7 +772,7 @@ fn preference_mutation_preserves_stored_state() {
     repository.commit(&stored).unwrap();
     let before = repository.capture().unwrap();
     let preference = before
-        .prepare_preference(Some(StartupTarget::HostCodex))
+        .prepare_preference(Some(StartupTarget::host_codex()))
         .unwrap()
         .unwrap();
     repository.commit(&preference).unwrap();
@@ -760,7 +780,7 @@ fn preference_mutation_preserves_stored_state() {
     let after = repository.capture().unwrap();
     assert_eq!(after.accounts(), before.accounts());
     assert_eq!(after.models(), before.models());
-    assert_eq!(after.preference(), Some(&StartupTarget::HostCodex));
+    assert_eq!(after.preference(), Some(&StartupTarget::host_codex()));
 }
 
 // 새 API는 reserved host Provider를 만들 수 없지만 이미 존재하는 durable host coordinate는

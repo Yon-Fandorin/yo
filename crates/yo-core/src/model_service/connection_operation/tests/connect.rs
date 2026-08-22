@@ -259,7 +259,7 @@ fn definition_preparation_rejects_a_public_mutation_without_the_exact_pair() {
         .connections
         .capture()
         .unwrap()
-        .prepare_preference(Some(StartupTarget::HostCodex))
+        .prepare_preference(Some(StartupTarget::host_codex()))
         .unwrap()
         .unwrap();
 

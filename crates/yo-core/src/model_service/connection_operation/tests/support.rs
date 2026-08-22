@@ -51,7 +51,7 @@ impl Fixture {
             .connections
             .capture()
             .expect("the connection snapshot must be capturable")
-            .prepare_preference(Some(StartupTarget::HostCodex))
+            .prepare_preference(Some(StartupTarget::host_codex()))
             .expect("the public mutation must be preparable")
             .expect("the unset preference must produce a mutation");
         let credential = self
@@ -86,7 +86,7 @@ impl Fixture {
             .connections
             .capture()
             .expect("the initial public snapshot must be capturable")
-            .prepare_preference(Some(StartupTarget::HostCodex))
+            .prepare_preference(Some(StartupTarget::host_codex()))
             .expect("the initial public mutation must be preparable")
             .expect("the unset preference must produce a mutation");
         self.connections
@@ -127,7 +127,7 @@ impl Fixture {
             .connections
             .capture()
             .expect("the initial public snapshot must be capturable")
-            .prepare_preference(Some(StartupTarget::HostCodex))
+            .prepare_preference(Some(StartupTarget::host_codex()))
             .expect("the initial public mutation must be preparable")
             .expect("the unset preference must produce a mutation");
         self.connections

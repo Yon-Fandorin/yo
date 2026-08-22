@@ -11,5 +11,6 @@
   - [Kimi](./workflows/provider-catalogs/kimi.md)
   - [새 Provider 추가](./workflows/provider-catalogs/new-provider.md)
 - [Codex app-server upstream 따라가기](./workflows/codex-upstream.md)
+- [Grok ACP upstream 따라가기](./workflows/grok-acp.md)
 - [검증](./validation/README.md)
   - [터미널 환경 매트릭스](./validation/terminal-matrix.md)

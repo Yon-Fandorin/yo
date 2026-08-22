@@ -22,12 +22,60 @@ fn startup_target_reserves_exact_host_codex_without_hiding_a_qualified_model() {
 
     assert_eq!(
         controller.resolve_target_reference("host:codex").unwrap(),
-        StartupTarget::HostCodex
+        StartupTarget::host_codex()
     );
     let model = controller
         .resolve_target_reference("vendor::host:codex")
         .unwrap();
     assert_eq!(model.model().unwrap().model().as_str(), "host:codex");
+}
+
+// HostTarget namespace는 특정 어댑터 enum에 닫히지 않고 canonical ID를 보존하되,
+// 빈 ID나 대문자·경계 hyphen처럼 durable reference가 될 수 없는 값은 거절합니다.
+#[test]
+fn host_id_parses_canonical_references_without_embedding_adapter_types() {
+    let grok = super::super::HostId::from_reference("host:grok")
+        .unwrap()
+        .unwrap();
+    let future = super::super::HostId::from_reference("host:future-agent")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(grok, super::super::HostId::grok());
+    assert_eq!(future.reference(), "host:future-agent");
+    assert!(
+        super::super::HostId::from_reference("model:grok")
+            .unwrap()
+            .is_none()
+    );
+    assert!(super::super::HostId::from_reference("host:").is_err());
+    assert!(super::super::HostId::from_reference("host:Grok").is_err());
+    assert!(super::super::HostId::from_reference("host:-grok").is_err());
+    assert!(
+        super::super::HostId::from_reference("host:legacy:model")
+            .unwrap()
+            .is_none()
+    );
+}
+
+// 예약 전에 저장된 host Provider의 완전한 세 부분 좌표는 HostTarget으로 가로채지 않고
+// catalog ModelTarget으로 계속 해석해 durable 선택 identity를 보존합니다.
+#[test]
+fn qualified_legacy_host_provider_coordinate_remains_a_model_target() {
+    let catalog = ModelCatalog::new(vec![selection_entry(
+        "host", "legacy", "model", "Legacy", "Legacy",
+    )])
+    .unwrap();
+    let controller = ModelSelectionController::new(catalog, None);
+
+    let target = controller
+        .resolve_target_reference("host:legacy:model")
+        .unwrap();
+
+    let selection = target.model().unwrap();
+    assert_eq!(selection.provider().as_str(), "host");
+    assert_eq!(selection.account().as_str(), "legacy");
+    assert_eq!(selection.model().as_str(), "model");
 }
 
 // Provider와 Account의 예약 문자는 canonical uppercase escape로만 좌표에 참여하고 Model
@@ -166,8 +214,8 @@ fn enforced_startup_policy_rejects_conflicts_and_malformed_forms() {
     assert!(
         StartupPolicy::new(
             false,
-            Some(StartupTarget::HostCodex),
-            Some(StartupTarget::HostCodex),
+            Some(StartupTarget::host_codex()),
+            Some(StartupTarget::host_codex()),
         )
         .is_err()
     );

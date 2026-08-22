@@ -354,7 +354,7 @@ fn public_change_after_preview_is_rejected_before_disconnect_preparation() {
         .connections
         .capture()
         .unwrap()
-        .prepare_preference(Some(StartupTarget::HostCodex))
+        .prepare_preference(Some(StartupTarget::host_codex()))
         .unwrap()
         .unwrap();
     fixture.connections.commit(&winner).unwrap();
@@ -372,7 +372,7 @@ fn public_change_after_preview_is_rejected_before_disconnect_preparation() {
     assert!(error.to_string().contains("connection revision conflict"));
     assert_eq!(
         fixture.connections.capture().unwrap().preference(),
-        Some(&StartupTarget::HostCodex)
+        Some(&StartupTarget::host_codex())
     );
     assert!(fixture.journal.capture().unwrap().is_none());
 }

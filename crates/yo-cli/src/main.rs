@@ -18,6 +18,8 @@ mod connection;
 #[cfg(unix)]
 mod diagnostic;
 #[cfg(unix)]
+mod host;
+#[cfg(unix)]
 mod live;
 #[cfg(unix)]
 mod local_tools;
@@ -332,7 +334,7 @@ fn run_agent_generation(
             Box<dyn yo_core::AgentBackend + Send>,
             Option<yo_backend_delegated_codex::CodexSkillReferenceProvider>,
         ) = match &selection {
-            model::StartupBackend::Codex => {
+            model::StartupBackend::Host(host) if host.as_str() == yo_core::HostId::CODEX => {
                 let codex_config =
                     yo_backend_delegated_codex::CodexBackendConfig::new(&session_cwd);
                 let skills = match yo_backend_delegated_codex::CodexSkillReferenceProvider::start(
@@ -367,6 +369,29 @@ fn run_agent_generation(
                     Err(error) => return Err(AppError::single("starting Codex", error)),
                 };
                 (Box::new(backend), Some(skills))
+            },
+            model::StartupBackend::Host(host) if host.as_str() == yo_core::HostId::GROK => {
+                let grok_config = yo_backend_delegated_grok::GrokBackendConfig::new(&session_cwd);
+                let backend = match yo_backend_delegated_grok::GrokBackend::spawn(grok_config) {
+                    Ok(backend) => backend,
+                    Err(error) if launch.resume_id().is_some() => {
+                        drop(repository);
+                        return handle_launch_failure(
+                            launch_failure_selection,
+                            options.glyph_profile,
+                            live::ResumeFailureStage::BackendSpawn,
+                            error,
+                        );
+                    },
+                    Err(error) => return Err(AppError::single("starting Grok", error)),
+                };
+                (Box::new(backend), None)
+            },
+            model::StartupBackend::Host(host) => {
+                return Err(AppError::message(format!(
+                    "unsupported agent host {:?}",
+                    host.as_str()
+                )));
             },
             model::StartupBackend::Native { .. } => {
                 let selected_credentials =

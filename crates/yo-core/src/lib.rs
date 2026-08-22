@@ -77,7 +77,7 @@ pub use model_service::{
     ConnectorId, CredentialCommit, CredentialMutationAction, CredentialRepository,
     CredentialRevision, CredentialSnapshot, CredentialStore, EffectiveModelBinding,
     EffectiveModelProfile, ExternalConnectionError, ExternalDisconnectCredentialAction,
-    ExternalDisconnectError, KIMI_PRIVATE_REPLAY_PROFILE, KimiCatalogAvailability,
+    ExternalDisconnectError, HostId, KIMI_PRIVATE_REPLAY_PROFILE, KimiCatalogAvailability,
     KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind, KimiCatalogModel,
     KimiCatalogSeed, LocalConnectionOperationGuard, LocalConnectionOperationJournal,
     LocalConnectionOperationRepositories, LocalConnectionOperationSession,

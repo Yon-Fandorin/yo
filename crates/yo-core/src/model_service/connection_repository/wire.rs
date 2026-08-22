@@ -6,7 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::{
-    super::{AccountId, ModelId, ModelSelection, ProviderId, StartupTarget},
+    super::{AccountId, HostId, ModelId, ModelSelection, ProviderId, StartupTarget},
     ConnectionAccount, ConnectionCatalogSeed, ConnectionRepositoryError, ConnectionRevision,
     ModelLastFailure, ModelRequestFailureKind, StoredModelBinding,
     catalog_seed::CatalogSource,
@@ -327,8 +327,8 @@ enum WireTarget {
 impl From<&StartupTarget> for WireTarget {
     fn from(target: &StartupTarget) -> Self {
         match target {
-            StartupTarget::HostCodex => Self::Host {
-                target: StartupTarget::HOST_CODEX_REFERENCE.to_owned(),
+            StartupTarget::Host(host) => Self::Host {
+                target: host.reference(),
             },
             StartupTarget::Model(selection) => Self::Model {
                 provider: selection.provider().as_str().to_owned(),
@@ -363,10 +363,10 @@ fn parse_target(
 ) -> Result<StartupTarget, ConnectionRepositoryError> {
     let invalid = |_| ConnectionRepositoryError::InvalidContents(path.to_owned());
     match target {
-        WireTarget::Host { target } if target == StartupTarget::HOST_CODEX_REFERENCE => {
-            Ok(StartupTarget::HostCodex)
-        },
-        WireTarget::Host { .. } => Err(ConnectionRepositoryError::InvalidContents(path.to_owned())),
+        WireTarget::Host { target } => HostId::from_reference(&target)
+            .map_err(invalid)?
+            .map(StartupTarget::Host)
+            .ok_or_else(|| ConnectionRepositoryError::InvalidContents(path.to_owned())),
         WireTarget::Model {
             provider,
             account,

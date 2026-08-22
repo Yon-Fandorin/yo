@@ -11,7 +11,7 @@
 |---|---|---|
 | 프로세스 내부 | 결정론적 상태, protocol, layout, rendering, 주입된 실패 동작 | `yo-core` engine/runtime test, `yo-tui` component test, rendering parity golden |
 | 호스트 통합 | 선택 설치 프로그램 없이 실제 호스트 기능을 사용한 동작 | `yo-cli`의 Linux PTY, termios, process signal, 터미널 복원 test |
-| 외부 환경 | 설치 프로그램, 인증, 중첩된 터미널 환경과의 호환성 | Codex, tmux, 로컬 `sshd`, SSH, SSH 내부 tmux |
+| 외부 환경 | 설치 프로그램, 인증, 중첩된 터미널 환경과의 호환성 | Codex, Grok, tmux, 로컬 `sshd`, SSH, SSH 내부 tmux |
 
 첫 번째 계층은 빠르게 진단할 수 있지만 OS 터미널 생명주기를 증명하지
 못한다. 호스트 통합 계층은 실제 Unix 경계를 실행하지만 모든 터미널
@@ -31,6 +31,7 @@ command, host, credential, platform을 기록한다.
 | Agent-session admission, concurrency, 시작, 종료 | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
 | backend lifecycle, evidence 또는 bounded child-process transport 추출 | `cargo test --locked -p yo-backend` 뒤 `cargo test --locked -p yo-core backend::evidence`와 `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, `yo-core` specialization, Journal wire·recovery 호환성 test |
 | Codex protocol 변환이나 provider ID 연결 | `cargo test --locked -p yo-backend-delegated-codex` | `crates/backends/delegated-codex/src/tests.rs` |
+| Grok ACP 변환, permission, 인증, Session 연결 | `cargo test --locked -p yo-backend-delegated-grok` | `crates/backends/delegated-grok/src/tests.rs`와 `protocol.rs` |
 | 해석된 input, 편집, paste, binding, 종료 gesture | `cargo test -p yo-tui input::` | `yo-tui/src/input` 곁의 test |
 | prompt 줄 바꿈, cursor 표시, viewport | `cargo test -p yo-tui prompt::` | `yo-tui/src/prompt` 곁의 test |
 | `@` trigger, stale 결과, 선택 치환, local 순위, Git ignore 탐색 | `cargo test -p yo-tui workspace_reference`와 `cargo test -p yo-core workspace_reference` | `yo-tui/src/prompt/workspace_reference.rs`와 `yo-core/src/workspace_reference` |

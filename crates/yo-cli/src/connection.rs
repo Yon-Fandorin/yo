@@ -8,7 +8,7 @@ mod presentation;
 
 use yo_core::{
     CompleteModelBinding, ConnectionOperationExecutionError, ConnectionRepositoryError,
-    ConnectionSnapshot, LocalConnectionOperationRepositories, LocalConnectionRepository,
+    ConnectionSnapshot, HostId, LocalConnectionOperationRepositories, LocalConnectionRepository,
     ModelSelection, StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
@@ -57,23 +57,25 @@ pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
         )?;
         return external::run_definition_import(&config_path, command);
     }
-    if command.target == StartupTarget::HOST_CODEX_REFERENCE {
+    let host = HostId::from_reference(&command.target)
+        .map_err(|error| AppError::single("parsing the agent host target", error))?;
+    if host.is_some() {
         validate_local_connect_options(&command)?;
     }
     let config_path = absolute_config_path(
         config::selected_path()
             .map_err(|error| AppError::single("locating Yo configuration", error))?,
     )?;
-    if command.target != StartupTarget::HOST_CODEX_REFERENCE {
+    let Some(host) = host else {
         return external::run_external_connect(&config_path, command);
-    }
-    execute_local_connect(&config_path, command)
+    };
+    execute_local_connect(&config_path, command, host)
 }
 
 fn validate_local_connect_options(command: &ConnectCommand) -> Result<(), AppError> {
     if command.from.is_some() || command.credential_file.is_some() || command.yes {
         Err(AppError::message(
-            "--credential-file and --yes are supported only for an external model connection; Local Codex uses no API credential",
+            "--credential-file and --yes are supported only for an external model connection; agent hosts use their own CLI login",
         ))
     } else {
         Ok(())
@@ -152,8 +154,15 @@ fn execute_default_with_lane(
     ))
 }
 
-fn execute_local_connect(config_path: &Path, command: ConnectCommand) -> Result<String, AppError> {
-    execute_local_connect_with_lane(config_path, command, verify_local_codex)
+fn execute_local_connect(
+    config_path: &Path,
+    command: ConnectCommand,
+    host: HostId,
+) -> Result<String, AppError> {
+    let verification_host = host.clone();
+    execute_local_connect_with_lane(config_path, command, move || {
+        verify_local_host(&verification_host)
+    })
 }
 
 fn execute_local_connect_with_lane(
@@ -171,20 +180,21 @@ fn execute_local_connect_with_lane(
     let config = config::load_from(config_path)
         .map_err(|error| AppError::single("reading Yo configuration", error))?;
     let admitted = admit_target(&config, &command.target)?;
-    if admitted != StartupTarget::HostCodex {
+    let StartupTarget::Host(host) = &admitted else {
         return Err(AppError::message(
-            "Local Codex connect admission did not preserve the exact HostTarget",
+            "local host connect admission did not preserve a HostTarget",
         ));
-    }
+    };
+    let reference = host.reference();
     let snapshot = session
         .capture_connections()
         .map_err(|error| AppError::single("capturing stored connections", error))?;
     let mutation = snapshot
         .preference()
         .is_none()
-        .then(|| snapshot.prepare_preference(Some(StartupTarget::HostCodex)))
+        .then(|| snapshot.prepare_preference(Some(admitted.clone())))
         .transpose()
-        .map_err(|error| AppError::single("preparing the Local Codex default", error))?
+        .map_err(|error| AppError::single("preparing the local agent host default", error))?
         .flatten();
     verify()?;
     config
@@ -193,15 +203,14 @@ fn execute_local_connect_with_lane(
     let Some(mutation) = mutation else {
         return Ok(format!(
             "connected: {}; default preserved as {}\n",
-            StartupTarget::HOST_CODEX_REFERENCE,
+            reference,
             display_target(snapshot.preference())
         ));
     };
     match session.commit_connection_mutation(&mutation) {
         Ok(_) => Ok(format!(
             "connected: {}; default: {}\n",
-            StartupTarget::HOST_CODEX_REFERENCE,
-            StartupTarget::HOST_CODEX_REFERENCE
+            reference, reference
         )),
         Err(ConnectionOperationExecutionError::PublicCommit(
             ConnectionRepositoryError::Conflict { .. },
@@ -212,17 +221,17 @@ fn execute_local_connect_with_lane(
             if current.preference().is_some() {
                 Ok(format!(
                     "connected: {}; default preserved as {}\n",
-                    StartupTarget::HOST_CODEX_REFERENCE,
+                    reference,
                     display_target(current.preference())
                 ))
             } else {
                 Err(AppError::message(
-                    "the connection repository changed without publishing a default; retry Local Codex connect",
+                    "the connection repository changed without publishing a default; retry the local agent host connection",
                 ))
             }
         },
         Err(error) => Err(AppError::single(
-            "publishing the Local Codex default",
+            "publishing the local agent host default",
             error,
         )),
     }
@@ -243,7 +252,7 @@ fn repository_at(config_path: &Path) -> LocalConnectionRepository {
 }
 
 fn admit_target(config: &Config, reference: &str) -> Result<StartupTarget, AppError> {
-    resolve_startup_target(
+    let target = resolve_startup_target(
         config.model_catalog(),
         &StartupPolicy::initial(),
         StartupSelectionSources {
@@ -253,28 +262,29 @@ fn admit_target(config: &Config, reference: &str) -> Result<StartupTarget, AppEr
         },
     )
     .map_err(|error| AppError::single("admitting the startup target", error))?
-    .ok_or_else(|| AppError::message("target admission returned no startup target"))
+    .ok_or_else(|| AppError::message("target admission returned no startup target"))?;
+    if let StartupTarget::Host(host) = &target {
+        crate::host::require_supported(host)?;
+    }
+    Ok(target)
 }
 
-fn verify_local_codex() -> Result<(), AppError> {
+fn verify_local_host(host: &HostId) -> Result<(), AppError> {
     let workspace = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
-    verify_local_codex_at(&workspace)
+    verify_local_host_at(host, &workspace)
 }
 
-fn verify_local_codex_at(workspace: &Path) -> Result<(), AppError> {
+fn verify_local_host_at(host: &HostId, workspace: &Path) -> Result<(), AppError> {
     let _workspace_host_id = storage::open_default_host_identity()
         .map_err(|error| AppError::single("opening the stable workspace Host identity", error))?;
-    yo_backend_delegated_codex::CodexBackend::verify(
-        yo_backend_delegated_codex::CodexBackendConfig::new(workspace),
-    )
-    .map_err(|error| AppError::single("verifying Local Codex", error))
+    crate::host::verify_at(host, workspace)
 }
 
 fn display_target(target: Option<&StartupTarget>) -> String {
     match target {
         None => "unset".to_owned(),
-        Some(StartupTarget::HostCodex) => StartupTarget::HOST_CODEX_REFERENCE.to_owned(),
+        Some(StartupTarget::Host(host)) => host.reference(),
         Some(StartupTarget::Model(selection)) => {
             presentation::escape_remote_text(&selection.canonical_reference())
         },
@@ -410,7 +420,7 @@ mod tests {
         let host_default = repository
             .capture()
             .unwrap()
-            .prepare_preference(Some(StartupTarget::HostCodex))
+            .prepare_preference(Some(StartupTarget::host_codex()))
             .unwrap()
             .unwrap();
         repository.commit(&host_default).unwrap();
@@ -459,6 +469,34 @@ mod tests {
         assert!(!repository.path().exists());
     }
 
+    // 로그인된 Grok host 연결은 외부 Provider credential 경로를 열지 않고 검증 성공 뒤
+    // generic HostTarget을 첫 기본값으로 원자적으로 게시합니다.
+    #[test]
+    fn local_grok_connect_publishes_the_generic_host_target() {
+        let directory = TestDirectory::new("grok-connect");
+        let config_path = empty_config(&directory);
+        let repository = repository_at(&config_path);
+
+        let output = execute_local_connect_with_lane(
+            &config_path,
+            ConnectCommand {
+                from: None,
+                target: "host:grok".to_owned(),
+                verbose: false,
+                credential_file: None,
+                yes: false,
+            },
+            || Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(output, "connected: host:grok; default: host:grok\n");
+        assert_eq!(
+            repository.capture().unwrap().preference(),
+            Some(&StartupTarget::host_grok())
+        );
+    }
+
     // Local Codex는 credential source가 없는 HostTarget이므로 비대화형 파일 option을
     // config나 파일 경로에 접근하기 전에 거절하고 외부 연결 의미로 재해석하지 않습니다.
     #[test]
@@ -476,7 +514,7 @@ mod tests {
             .to_string();
 
         assert!(error.contains("only for an external model connection"));
-        assert!(error.contains("Local Codex uses no API credential"));
+        assert!(error.contains("agent hosts use their own CLI login"));
     }
 
     // pending journal과 malformed config가 함께 있어도 recovery failure가 먼저 반환되어야

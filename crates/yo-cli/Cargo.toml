@@ -18,6 +18,7 @@ tiktoken-rs = "=0.12.0"
 unicode-segmentation = "=1.13.3"
 yo-core = { path = "../yo-core" }
 yo-backend-delegated-codex = { path = "../backends/delegated-codex" }
+yo-backend-delegated-grok = { path = "../backends/delegated-grok" }
 yo-backend-managed = { path = "../backends/managed" }
 yo-connector-kimi = { path = "../connectors/kimi" }
 yo-connector-openai-chat-completions = { path = "../connectors/openai-chat-completions" }

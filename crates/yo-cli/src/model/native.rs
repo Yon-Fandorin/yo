@@ -344,7 +344,7 @@ mod tests {
         let error = match start_native(
             &Config::default(),
             &credentials,
-            &StartupBackend::Codex,
+            &StartupBackend::Host(yo_core::HostId::codex()),
             std::path::Path::new("."),
         ) {
             Ok(_) => panic!("host backend must be rejected before native startup"),

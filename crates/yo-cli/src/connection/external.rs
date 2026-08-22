@@ -1747,7 +1747,7 @@ models:
             .resolve_model(selection.provider(), selection.account(), selection.model())
             .unwrap();
         let enforced_host =
-            StartupPolicy::new(false, Some(StartupTarget::HostCodex), None).unwrap();
+            StartupPolicy::new(false, Some(StartupTarget::host_codex()), None).unwrap();
 
         let error =
             ExternalConnectPlan::prepare(&fixture_snapshot(), &selection, selected, &enforced_host)

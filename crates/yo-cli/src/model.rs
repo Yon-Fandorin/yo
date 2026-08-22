@@ -5,7 +5,7 @@ use std::path::Path;
 #[cfg(test)]
 use yo_core::ModelSelection;
 use yo_core::{
-    AccountId, AgentBackend, BackendResumeTarget, CredentialSnapshot, ModelId, ProviderId,
+    AccountId, AgentBackend, BackendResumeTarget, CredentialSnapshot, HostId, ModelId, ProviderId,
 };
 
 use crate::{AppError, config::Config};
@@ -16,7 +16,7 @@ mod tokenizer;
 
 #[derive(Clone, Debug)]
 pub(crate) enum StartupBackend {
-    Codex,
+    Host(HostId),
     Native {
         provider: ProviderId,
         account: AccountId,
@@ -29,7 +29,7 @@ pub(crate) enum StartupBackend {
 impl StartupBackend {
     pub(crate) fn label(&self) -> &str {
         match self {
-            Self::Codex => "codex",
+            Self::Host(host) => host.as_str(),
             Self::Native { model, .. } => model.as_str(),
         }
     }
@@ -46,7 +46,7 @@ impl StartupBackend {
 
     pub(crate) fn model_selection(&self) -> Option<yo_core::ModelSelection> {
         match self {
-            Self::Codex => None,
+            Self::Host(_) => None,
             Self::Native {
                 provider,
                 account,
@@ -64,7 +64,7 @@ impl StartupBackend {
         &self,
     ) -> Option<crate::local_tools::LocalToolRegistryRevision> {
         match self {
-            Self::Codex => None,
+            Self::Host(_) => None,
             Self::Native {
                 registry_revision, ..
             } => Some(*registry_revision),
@@ -106,7 +106,7 @@ pub(crate) fn credentials_for_startup<'a>(
     retained: &'a mut Option<CredentialSnapshot>,
     selection: &StartupBackend,
 ) -> Result<Option<&'a CredentialSnapshot>, AppError> {
-    if matches!(selection, StartupBackend::Codex) {
+    if matches!(selection, StartupBackend::Host(_)) {
         return Ok(None);
     }
     if retained.is_none() {
@@ -134,7 +134,7 @@ mod tests {
             ModelId::new("qwen3.8max").unwrap(),
         );
 
-        let codex = StartupBackend::Codex;
+        let codex = StartupBackend::Host(HostId::codex());
         assert_eq!(codex.label(), "codex");
         assert!(!codex.replaces_binding());
         assert!(codex.model_selection().is_none());
@@ -179,9 +179,13 @@ mod tests {
         let mut retained = None;
 
         assert!(
-            credentials_for_startup(&config, &mut retained, &StartupBackend::Codex)
-                .unwrap()
-                .is_none()
+            credentials_for_startup(
+                &config,
+                &mut retained,
+                &StartupBackend::Host(HostId::codex()),
+            )
+            .unwrap()
+            .is_none()
         );
         assert!(retained.is_none());
 

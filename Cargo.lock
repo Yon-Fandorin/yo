@@ -2266,6 +2266,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yo-backend-delegated-grok"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "uuid",
+ "yo-backend",
+ "yo-core",
+]
+
+[[package]]
 name = "yo-backend-managed"
 version = "0.0.0"
 dependencies = [
@@ -2292,6 +2302,7 @@ dependencies = [
  "tiktoken-rs",
  "unicode-segmentation",
  "yo-backend-delegated-codex",
+ "yo-backend-delegated-grok",
  "yo-backend-managed",
  "yo-connector-kimi",
  "yo-connector-openai-chat-completions",

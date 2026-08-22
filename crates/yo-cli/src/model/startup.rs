@@ -1,6 +1,6 @@
 use serde::Deserialize;
 use yo_core::{
-    AccountId, ApiDialect, BackendResumeTarget, CompleteModelBinding, ConnectorId, ModelId,
+    AccountId, ApiDialect, BackendResumeTarget, CompleteModelBinding, ConnectorId, HostId, ModelId,
     ModelSelection, ModelSelectionController, NormalizedEndpoint, ProviderId, StartupPolicy,
     StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
@@ -8,9 +8,9 @@ use yo_core::{
 use super::StartupBackend;
 use crate::{AppError, config::Config};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum DurableBackendKind {
-    Codex,
+    Host(HostId),
     Native,
 }
 
@@ -61,11 +61,16 @@ fn resolve_new_session(
     )
     .map_err(|error| AppError::single("resolving startup target", error))?;
     let Some(target) = target else {
-        return Err(AppError::message("no startup target is selected")
-            .with_help(["yo connect", "yo --model host:codex"]));
+        return Err(
+            AppError::message("no startup target is selected").with_help([
+                "yo connect",
+                "yo --model host:codex",
+                "yo --model host:grok",
+            ]),
+        );
     };
     match target {
-        StartupTarget::HostCodex => Ok(StartupBackend::Codex),
+        StartupTarget::Host(host) => resolve_host(host),
         StartupTarget::Model(selection) => {
             let entry = catalog
                 .resolve_model(selection.provider(), selection.account(), selection.model())
@@ -89,7 +94,7 @@ fn resolve_resume(
     target: &BackendResumeTarget,
 ) -> Result<StartupBackend, AppError> {
     match classify_durable_backend(target.binding().backend_kind())? {
-        DurableBackendKind::Codex => return resolve_codex_resume(override_model),
+        DurableBackendKind::Host(host) => return resolve_host_resume(host, override_model),
         DurableBackendKind::Native => {},
     }
     let binding_identity = target.binding().binding_identity();
@@ -107,22 +112,33 @@ fn resolve_resume(
 }
 
 fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> {
-    match kind {
-        "codex-app-server" => Ok(DurableBackendKind::Codex),
-        "yo-managed-model" => Ok(DurableBackendKind::Native),
-        other => Err(AppError::many([format!(
-            "unsupported durable backend kind {other:?}; the saved Session can only be opened read-only"
-        )])),
+    if let Some(host) = crate::host::from_backend_kind(kind) {
+        return Ok(DurableBackendKind::Host(host));
     }
+    if kind == "yo-managed-model" {
+        return Ok(DurableBackendKind::Native);
+    }
+    Err(AppError::many([format!(
+        "unsupported durable backend kind {kind:?}; the saved Session can only be opened read-only"
+    )]))
 }
 
-fn resolve_codex_resume(override_model: Option<&str>) -> Result<StartupBackend, AppError> {
+fn resolve_host(host: HostId) -> Result<StartupBackend, AppError> {
+    crate::host::require_supported(&host)?;
+    Ok(StartupBackend::Host(host))
+}
+
+fn resolve_host_resume(
+    host: HostId,
+    override_model: Option<&str>,
+) -> Result<StartupBackend, AppError> {
     match override_model {
-        None | Some(StartupTarget::HOST_CODEX_REFERENCE) => Ok(StartupBackend::Codex),
-        Some(_) => Err(AppError::many([
-            "a different model target cannot replace a Codex Session; cross-backend handoff is not supported"
-                .to_owned(),
-        ])),
+        None => Ok(StartupBackend::Host(host)),
+        Some(reference) if reference == host.reference() => Ok(StartupBackend::Host(host)),
+        Some(_) => Err(AppError::many([format!(
+            "a different target cannot replace a {} Session; cross-backend handoff is not supported",
+            host.reference()
+        )])),
     }
 }
 
@@ -144,11 +160,11 @@ fn resolve_native_resume(
                 .resolve_target_reference(reference)
                 .map_err(|error| AppError::single("resolving resumed model", error))?
             {
-                StartupTarget::HostCodex => {
+                StartupTarget::Host(_) => {
                     return Err(AppError::many([
-                    "Local Codex cannot replace a native model Session; cross-backend handoff is not supported"
-                        .to_owned(),
-                ]));
+                        "an agent host cannot replace a native model Session; cross-backend handoff is not supported"
+                            .to_owned(),
+                    ]));
                 },
                 StartupTarget::Model(selection) => selection,
             }
@@ -325,11 +341,22 @@ mod tests {
 
         let missing = resolve_new_session(&catalog, None, None, None).unwrap_err();
         assert_eq!(missing.to_string(), "no startup target is selected");
-        assert_eq!(missing.help(), ["yo connect", "yo --model host:codex"]);
+        assert_eq!(
+            missing.help(),
+            [
+                "yo connect",
+                "yo --model host:codex",
+                "yo --model host:grok"
+            ]
+        );
 
         assert!(matches!(
             resolve_new_session(&catalog, None, None, Some("host:codex")).unwrap(),
-            StartupBackend::Codex
+            StartupBackend::Host(host) if host.as_str() == HostId::CODEX
+        ));
+        assert!(matches!(
+            resolve_new_session(&catalog, None, None, Some("host:grok")).unwrap(),
+            StartupBackend::Host(host) if host.as_str() == HostId::GROK
         ));
         let bare = resolve_new_session(&catalog, None, None, Some("qwen3.8-max")).unwrap();
         let selected = bare.model_selection().unwrap();
@@ -363,16 +390,16 @@ mod tests {
 
         let stored = resolve_new_session(
             &catalog,
-            Some(StartupTarget::HostCodex),
+            Some(StartupTarget::host_codex()),
             Some(operator.clone()),
             None,
         )
         .unwrap();
-        assert!(matches!(stored, StartupBackend::Codex));
+        assert!(matches!(stored, StartupBackend::Host(host) if host == HostId::codex()));
 
         let invoked = resolve_new_session(
             &catalog,
-            Some(StartupTarget::HostCodex),
+            Some(StartupTarget::host_codex()),
             Some(operator),
             Some("qwencloud:default:operator"),
         )
@@ -456,14 +483,15 @@ mod tests {
     #[test]
     fn codex_resume_accepts_only_absent_or_exact_host_override() {
         assert!(matches!(
-            resolve_codex_resume(None).unwrap(),
-            StartupBackend::Codex
+            resolve_host_resume(HostId::codex(), None).unwrap(),
+            StartupBackend::Host(host) if host.as_str() == HostId::CODEX
         ));
         assert!(matches!(
-            resolve_codex_resume(Some("host:codex")).unwrap(),
-            StartupBackend::Codex
+            resolve_host_resume(HostId::codex(), Some("host:codex")).unwrap(),
+            StartupBackend::Host(host) if host.as_str() == HostId::CODEX
         ));
-        assert!(resolve_codex_resume(Some("qwen3.8-max")).is_err());
+        assert!(resolve_host_resume(HostId::codex(), Some("host:grok")).is_err());
+        assert!(resolve_host_resume(HostId::codex(), Some("qwen3.8-max")).is_err());
     }
 
     // 저장된 backend kind를 추측해 Codex로 보내면 locator identity를 바꾸므로 알려진 두
@@ -472,7 +500,11 @@ mod tests {
     fn durable_backend_classification_rejects_unknown_kinds() {
         assert_eq!(
             classify_durable_backend("codex-app-server").unwrap(),
-            DurableBackendKind::Codex
+            DurableBackendKind::Host(HostId::codex())
+        );
+        assert_eq!(
+            classify_durable_backend("grok-build-acp").unwrap(),
+            DurableBackendKind::Host(HostId::grok())
         );
         assert_eq!(
             classify_durable_backend("yo-managed-model").unwrap(),
