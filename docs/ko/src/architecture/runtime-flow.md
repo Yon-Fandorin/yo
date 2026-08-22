@@ -92,8 +92,8 @@ successful-stream inactivity는 5분, non-success error-body inactivity는 30초
 handoff는 5분으로 제한한다.
 비어 있지 않은 raw HTTP body chunk만 SSE decode 또는 error-body retention 전에 body
 inactivity clock을 reset하며, observation마다 새로운 event-handoff wait를 시작한다.
-`yo-core::backend::native`가 semantic
-Activity와 제한된 model/tool loop를 소유한다. 매 dispatch 전에 catalog가 선택한
+`yo-backend-managed`가 `yo-core::AgentBackend` 뒤의 semantic Activity와 제한된
+model/tool loop를 소유한다. 매 dispatch 전에 catalog가 선택한
 tokenizer profile로 실제 request를 계산하기 전에 retained replay prefix와 현재 Turn delta를
 함께 검사한다. known hard output maximum이면 그 이하의 양수 request-local cap을 유한하고
 엄격히 감소하는 방식으로 선택하며 candidate payload마다 다시 만들고 다시 계산한다. maximum이
@@ -202,7 +202,7 @@ yo-cli
   TerminationCoordinator 설치
   Host identity와 Session repository 열기
   workspace 정규화와 SessionDescriptor 생성
-  CodexBackend transport 시작 또는 dialect에서 파생된 native model backend 조립
+  CodexBackend transport 시작 또는 dialect에서 파생된 managed model backend 조립
       ↓
 yo-core AgentSession
   worker 시작
@@ -221,10 +221,10 @@ yo-tui
 | 단계 | 현재 소유자 | 확인할 내용 |
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/connection.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection.rs) | `run`이 표시 옵션·작업 디렉터리·command-local 설정을 확보하고 새 Session의 저장 preference를 상태 생성 없이 읽는다. 종료 coordinator를 설치하고 Host identity와 Session storage를 열며 workspace를 canonicalize한 뒤 시각이 일치하는 UUIDv7 `SessionDescriptor`를 만든다. Resume은 저장 preference를 읽지 않는다. |
-| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | process host가 invocation·저장·operator 계층을 resolve한 다음 Codex stdio transport를 시작하거나 startup snapshot과 주입된 tool로 선택한 native binding을 조립한다. 두 경로 모두 worker가 backend를 소유할 때까지 remote model 작업을 미룬다. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | process host가 invocation·저장·operator 계층을 resolve한 다음 Codex stdio transport를 시작하거나 startup snapshot과 주입된 tool로 선택한 managed binding을 조립한다. 두 경로 모두 worker가 backend를 소유할 때까지 remote model 작업을 미룬다. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 descriptor-only Journal envelope를 먼저 시도한 뒤 `AgentRuntime`을 통해 `CreateSession`을 보낸다. storage pressure가 있으면 descriptor와 이후 activity를 복구 가능한 volatile prefix로 함께 유지한다. |
-| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | Codex에서는 `CreateSession`이 `initialize`와 `thread/start`를 수행한다. native backend는 provider 요청 없이 local exact-replay Session state를 연결한다. 두 경로 모두 semantic engine이 `SessionCreated`를 만들게 한다. |
+| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex에서는 `CreateSession`이 `initialize`와 `thread/start`를 수행한다. managed backend는 provider 요청 없이 local exact-replay Session state를 연결한다. 두 경로 모두 semantic engine이 `SessionCreated`를 만들게 한다. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode`가 첫 터미널 소유 세대의 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
 
 handshake 중에 종료 요청이 오면 `AgentSession::start_inner`가 취소

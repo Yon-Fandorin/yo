@@ -3,6 +3,11 @@ use std::{
     time::Duration,
 };
 
+use yo_core::{
+    AgentEvent, AgentRuntime, RuntimePoll, SubmissionId, ToolExecutionError, ToolExecutionResult,
+    ToolId, UserInput,
+};
+
 use super::{
     super::{
         AgentBackend, AgentCommand, BackendCommandEvidence, BackendEvent, ContinuationStrategy,
@@ -15,10 +20,6 @@ use super::{
         ExactAdmission, FixedTokenCounter, MockConnector, MockExecution, backend, binding,
         completed, context_profile, drain_until_turn, event_rounds, registry, turn,
     },
-};
-use crate::{
-    AgentEvent, AgentRuntime, RuntimePoll, SubmissionId, ToolExecutionError, ToolExecutionResult,
-    ToolId, UserInput,
 };
 
 struct OrderedHost {
@@ -153,7 +154,7 @@ fn native_backend_runs_automatic_tool_once_and_replays_it_before_the_next_round(
             if evidence.continuation_strategy()
                 == ContinuationStrategy::ExactReplay {
                     executor: ReplayExecutor::LocalClient,
-                    replay_profile: crate::ReplayProfile::SemanticOnly,
+                    replay_profile: yo_core::ReplayProfile::SemanticOnly,
                 }
     ));
     backend

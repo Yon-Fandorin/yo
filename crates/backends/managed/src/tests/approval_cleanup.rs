@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use yo_core::{ToolExecutionError, ToolExecutionResult, ToolId, UserInput};
+
 use super::{
     super::{
         ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentBackend,
@@ -13,7 +15,6 @@ use super::{
         context_profile, drain_until_turn, event_rounds, registry, turn,
     },
 };
-use crate::{ToolExecutionError, ToolExecutionResult, ToolId, UserInput};
 
 struct PendingHost {
     cancelled: Arc<Mutex<usize>>,

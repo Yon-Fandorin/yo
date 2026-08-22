@@ -7,45 +7,45 @@ const LOCAL_TOOLS_PROFILE: &str = "local-tools/v1";
 const NO_TOOLS_PROFILE: &str = "no-tools/v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AdmittedToolPolicy {
+pub enum AdmittedToolPolicy {
     LocalTools,
     NoTools,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct AdmittedModelProfile {
+pub struct AdmittedModelProfile {
     reasoning_effort: Option<ReasoningEffort>,
     tool_policy: AdmittedToolPolicy,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AdmittedReplayProfile {
+pub enum AdmittedReplayProfile {
     SemanticOnly,
     ProviderPrivateLocalPlaintext,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct AdmittedCompleteBinding {
+pub struct AdmittedCompleteBinding {
     profile: AdmittedModelProfile,
     replay_profile: AdmittedReplayProfile,
 }
 
 impl AdmittedCompleteBinding {
-    pub(crate) const fn profile(self) -> AdmittedModelProfile {
+    pub const fn profile(self) -> AdmittedModelProfile {
         self.profile
     }
 
-    pub(crate) const fn replay_profile(self) -> AdmittedReplayProfile {
+    pub const fn replay_profile(self) -> AdmittedReplayProfile {
         self.replay_profile
     }
 }
 
 impl AdmittedModelProfile {
-    pub(crate) const fn reasoning_effort(self) -> Option<ReasoningEffort> {
+    pub const fn reasoning_effort(self) -> Option<ReasoningEffort> {
         self.reasoning_effort
     }
 
-    pub(crate) const fn tool_policy(self) -> AdmittedToolPolicy {
+    pub const fn tool_policy(self) -> AdmittedToolPolicy {
         self.tool_policy
     }
 }
@@ -109,7 +109,7 @@ pub(crate) fn admit_explicit_model_profile(
 }
 
 /// Admits one complete binding before preview, verification, persistence, or runtime use.
-pub(crate) fn admit_new_complete_binding(
+pub fn admit_new_complete_binding(
     complete: &CompleteModelBinding,
 ) -> Result<AdmittedCompleteBinding, String> {
     let binding = complete.binding();

@@ -12,6 +12,7 @@
 ```text
 yo-cli main
 ├── yo-core CodexBackend
+├── yo-backend-managed NativeModelBackend
 ├── yo-cli TuiAgentConnection
 └── yo-tui runner
         ↕ AgentConnection
@@ -27,6 +28,7 @@ yo-cli main
 
 - 프로세스 정책과 정리 순서는 `yo-cli`에 있다.
 - transport-free backend lifecycle과 evidence primitive는 `yo-backend`에 있다.
+- Connector 중립 managed model/tool loop는 `yo-backend-managed`에 있다.
 - Session, Turn, Activity, command, event의 의미는 `yo-core`에 있다.
 - 터미널 상호작용과 화면 표시는 `yo-tui`에 있다.
 
@@ -83,7 +85,7 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/input/mod.rs) | 변경 불가능한 제출 text, 화면의 정확한 byte span에 묶인 순서 있는 typed reference occurrence, 안전한 reference token의 canonical Projection, UUIDv4 submission 연결, 제출 전체의 최종 outcome | queue와 worker 수락은 `agent_session`. 구체적인 reference admission은 다음 경계에 남는다 |
 | [`model_service`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/mod.rs), [`model_service/openrouter_discovery.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery.rs), [`model_service/qwencloud_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/qwencloud_catalog.rs) | 안정적인 Provider·Account·Model identity, 명시적인 API dialect 선택과 정확히 하나의 built-in connector 파생, 정규화한 HTTPS endpoint, Provider·Account base profile과 whole-field model override를 완전한 typed profile 하나로 해석하는 경계. 여기에는 presence를 보존하는 optional known output maximum, unknown일 때의 생략, whole-field null 거절이 포함된다. bounded authenticated OpenRouter account catalog transport와 capability admission, 닫힌 release-known QwenCloud·Kimi catalog seed, startup과 native resume이 공유하는 complete-binding 값 하나와 닫힌 durable decoder, `yo-yaml`로 decode하는 현재 pre-version `connections.yaml`·`credentials.yaml`·connection-operation shape, Provider·Account 범위 catalog·context-profile·credential resolution, 주입하는 tokenizer-counting port, 원문을 감춘 resolved credential, 안전하고 크기가 제한된 local `credentials.yaml` private-revision exact-pair CAS, account·complete model·catalog seed·preference·warning-only model별 failure observation의 유일한 owner인 mode `0600`의 bounded `connections.yaml`, 복구한 operation lane에서 exact binding과 private credential revision을 재검증한 뒤 수행하는 조건부 observation CAS, whole-pair replacement와 exact-model mutation, 닫힌 durable phase, connect 시 모델 요청 없이 수행하는 구조적 binding admission, public-first disconnect 실행, 순수 exact-state recovery table을 가진 secret-free bounded `connection-operation.yaml` intent repository, operation lock 하나를 유지하며 journal·credential·public phase를 commit하는 same-directory local executor | 범용 Provider discovery, connector wire 변환, command 수준 target·확인 표시 또는 설정 경로 선택은 process host |
 | [`model_service/kimi_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog.rs), [`model_service/kimi_catalog`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog) | 분리된 Platform AI·Code Membership catalog profile과 endpoint, bounded 인증 Kimi `/models` snapshot 하나, 첫 valid duplicate 처리, 제품 범위의 검토된 exact-model overlay, 완전한 selectable binding, 결정론적 순서, 유지한 unavailable 행마다 표시하는 typed reason | Kimi request/stream 변환, private Session replay 또는 CLI consent 표시 |
-| [`model_profile_admission.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_profile_admission.rs) | native runtime 또는 external connection 게시가 현재 실행할 수 있는 resolved profile field와 local-tools/no-tools policy를 한 곳에서 admission하고, connection 변경 전 필요한 secret-free Kimi catalog/profile compatibility 검사를 유지 | authored profile 해석, Provider wire 직렬화, connector transport 또는 durable binding identity |
+| [`model_profile_admission.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_profile_admission.rs) | managed backend 또는 external connection 게시가 현재 실행할 수 있는 resolved profile field와 local-tools/no-tools policy를 한 곳에서 admission하고, connection 변경 전 필요한 secret-free Kimi catalog/profile compatibility 검사를 유지 | authored profile 해석, Provider wire 직렬화, connector transport 또는 durable binding identity |
 | [`model_connector`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_connector/mod.rs) | 공개 provider 중립 Connector·stream port와 공유 request·observation·취소·failure·limit·opaque provider-private envelope·visible projection 어휘. 구체적인 Provider request, stream, private payload 문법은 core에 두지 않는다 | provider wire grammar 또는 Yo-managed backend의 semantic Activity·tool loop |
 | [`connectors/transport`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/transport/src/lib.rs) | API dialect를 해석하지 않는 재사용 가능한 bounded HTTPS/SSE byte transport, 취소, deadline, redirect, backpressure, worker cleanup | provider request 또는 event grammar |
 | [`connectors/openai-responses`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/connectors/openai-responses/src/lib.rs) | 중립 Connector port의 concrete OpenAI Responses 구현으로 request 직렬화와 bounded response-event decoding을 소유. `yo-cli`가 exact Responses identity에 이 구현을 선택해 현재 managed loop에 주입한다 | model 선택, credential 해석, 공통 transport byte 또는 managed semantic Activity |
@@ -97,11 +99,12 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command lane, backpressure 동안 유지되는 submission identity, worker가 확정하는 수락 outcome, 용량 1의 Journal 변경 알림, 시작 취소, 종료 조율, 검증된 continuation에서 다음 Turn과 승인된 Submission identity를 복원하는 startup hydration | worker가 소유한 의미 처리는 `runtime` |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs), [`backend/evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence.rs) | `yo-backend::BackendAdapter`를 Yo의 `AgentCommand`, `BackendEvent`, durable resume target으로 고정한 `AgentBackend` specialization. Session·Journal 좌표와 exact replay-profile·schema 해석은 core에 유지한다 | generic lifecycle·evidence mechanics, concrete adapter 또는 Provider wire grammar |
 | [`backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `codex app-server` 생명주기, JSON transport와 protocol 분류, provider ID 연결, core event 변환, continuation evidence를 위한 backend/effective-model/thread identity 보존, ephemeral이 아닌 저장 thread, 최신 durable locator에 대한 검증된 `thread/resume` 한 번, worker가 소유하는 `skills/list` metadata catalog | 새 provider 동작을 노출하기 전 `backend/contract.rs`, structured dispatch 전 정확한 skill admission |
-| [`backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | connector-neutral observation을 사용하는 provider 중립 Yo-managed model loop, semantic model/tool Activity, 직렬 validation·admission·approval·execution 순서, dispatch 전 누적 retained+current replay admission, 제한되고 엄격히 감소하는 request-cap 선택과 exact final-payload 재계산, 제한된 model round, visible refusal replay, completed visible projection과 exact replay-profile schema가 맞은 뒤에만 받는 opaque provider-private replay, Provider 분기 없이 붙이는 opaque Session-stable cache-affinity hint 하나, 응답별 정확한 binding·usage 귀속, cancellation 정리, 제한된 replay delta, pre-final context exhaustion의 typed failure와 binding latch, anchor 없는 final-delta 전용 completed non-resumable 예외 | startup model 선택, tokenizer 구현, provider-private payload 해석, semantic-admission policy, 구체적인 local tool 구현 |
+| [`backends/managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | connector-neutral observation을 사용하는 provider 중립 Yo-managed model loop, semantic model/tool Activity, 직렬 validation·admission·approval·execution 순서, dispatch 전 누적 retained+current replay admission, 제한되고 엄격히 감소하는 request-cap 선택과 exact final-payload 재계산, 제한된 model round, visible refusal replay, completed visible projection과 exact replay-profile schema가 맞은 뒤에만 받는 opaque provider-private replay, Provider 분기 없이 붙이는 opaque Session-stable cache-affinity hint 하나, 응답별 정확한 binding·usage 귀속, cancellation 정리, 제한된 replay delta, pre-final context exhaustion의 typed failure와 binding latch, anchor 없는 final-delta 전용 completed non-resumable 예외 | startup model 선택, tokenizer 구현, provider-private payload 해석, semantic-admission policy, 구체적인 local tool 구현 |
 
 `yo-backend::BackendAdapter`가 재사용 가능한 transport-free port다.
 `yo-core::AgentBackend`는 associated type을 Yo 의미로 고정한 현재 provider 교체
-지점이며 Codex wire value는 `backend/codex` 아래에 있다.
+지점이다. Codex wire value는 `backend/codex` 아래에 있고 Connector 중립 loop는
+`yo-backend-managed`에서 이 경계를 구현한다.
 [command와 event 경계](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.command-event-boundary.md)와
 [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)가
 각 동작 제약을 소유한다.
@@ -110,7 +113,7 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 provider 중립 identity와 local secret 경계를 소유한다.
 [OpenAI Responses connector](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.connector.openai-responses.md)와
 [OpenAI Chat Completions connector](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.connector.openai-chat-completions.md)가
-서로 다른 remote grammar를 소유한다. `backend/native`가 dialect에서 파생된 connector를 고정된 tool registry와
+서로 다른 remote grammar를 소유한다. `backends/managed`가 dialect에서 파생된 connector를 고정된 tool registry와
 정확한 semantic replay에 조합하고 process host가 검증된 설정으로 그 backend를 선택해
 조립한다. connector 자체는 semantic Activity를 소유하거나 tool을 실행하지 않는다.
 [Session Journal](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.observability.session-journal.md)과

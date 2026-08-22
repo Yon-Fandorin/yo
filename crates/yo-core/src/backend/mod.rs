@@ -1,7 +1,6 @@
 mod codex;
 mod contract;
 mod evidence;
-mod native;
 mod scripted;
 
 pub use codex::{CodexBackend, CodexBackendConfig, CodexSkillReferenceProvider};
@@ -14,12 +13,9 @@ pub use evidence::{
     BackendRequestEvidence, BackendResumeTarget, ContinuationStrategy, ModelReplay,
     ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
     ModelReplayTool, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile,
+    provider_private_schema,
 };
 pub(crate) use evidence::{
-    ProviderPrivateReplayPayload, provider_private_schema, replay_profile_id,
-    validate_provider_private_replay_sequence,
-};
-pub use native::{
-    ModelRequestObserver, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+    ProviderPrivateReplayPayload, replay_profile_id, validate_provider_private_replay_sequence,
 };
 pub use scripted::{BackendScriptStep, ScriptedBackend};

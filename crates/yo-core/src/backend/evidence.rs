@@ -72,7 +72,9 @@ pub(crate) const fn replay_profile_id(profile: ReplayProfile) -> &'static str {
     }
 }
 
-pub(crate) const fn provider_private_schema(profile: ReplayProfile) -> Option<&'static str> {
+/// Returns the exact opaque replay schema admitted for a shared replay profile.
+#[must_use]
+pub const fn provider_private_schema(profile: ReplayProfile) -> Option<&'static str> {
     match profile {
         ReplayProfile::SemanticOnly => None,
         ReplayProfile::ProviderPrivateLocalPlaintext => Some("kimi.assistant-message/v1alpha1"),

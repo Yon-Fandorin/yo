@@ -5,6 +5,10 @@ use std::{
 };
 
 use serde_json::json;
+use yo_core::{
+    AccountId, ApiDialect, ModelId, NormalizedEndpoint, ProviderId, ToolDefinition, ToolEffect,
+    ToolExecutionError, ToolExecutionResult, ToolId, ToolRegistry,
+};
 
 use super::super::{
     AgentBackend, BackendEvent, BackendPoll, EffectiveModelBinding, FrozenToolRegistry,
@@ -14,10 +18,7 @@ use super::super::{
     ToolApprovalRequirement, ToolExecution, ToolExecutionHost, ToolExecutionOutcome,
     ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission, TurnRef,
 };
-use crate::{
-    AccountId, ApiDialect, ModelId, NormalizedEndpoint, ProviderId, ToolDefinition, ToolEffect,
-    ToolExecutionError, ToolExecutionResult, ToolId, ToolRegistry, fixture_session,
-};
+use crate::fixture_session;
 
 pub(super) struct MockConnector {
     pub(super) rounds: Arc<Mutex<VecDeque<VecDeque<ModelConnectorEvent>>>>,
@@ -32,7 +33,7 @@ impl ModelConnector for MockConnector {
     fn tokenization_payload(
         &self,
         request: &ModelConnectorRequest,
-    ) -> Result<serde_json::Value, crate::ConnectorError> {
+    ) -> Result<serde_json::Value, yo_core::ConnectorError> {
         Ok(mock_tokenization_payload(request, "mock-model"))
     }
 
@@ -40,7 +41,7 @@ impl ModelConnector for MockConnector {
         &self,
         request: ModelConnectorRequest,
         _cancellation: ModelConnectorCancellation,
-    ) -> Result<Box<dyn ModelConnectorStreamPort>, crate::ConnectorError> {
+    ) -> Result<Box<dyn ModelConnectorStreamPort>, yo_core::ConnectorError> {
         self.requests.lock().unwrap().push(request);
         let events = self
             .rounds
@@ -116,7 +117,7 @@ struct MockStream {
 }
 
 impl ModelConnectorStreamPort for MockStream {
-    fn poll(&mut self) -> Result<ModelConnectorPoll, crate::ConnectorError> {
+    fn poll(&mut self) -> Result<ModelConnectorPoll, yo_core::ConnectorError> {
         Ok(self
             .events
             .pop_front()
@@ -125,7 +126,7 @@ impl ModelConnectorStreamPort for MockStream {
 
     fn cancel(&self) {}
 
-    fn shutdown(&mut self) -> Result<(), crate::ConnectorError> {
+    fn shutdown(&mut self) -> Result<(), yo_core::ConnectorError> {
         Ok(())
     }
 }
@@ -198,7 +199,7 @@ pub(super) fn registry(approval: ToolApprovalRequirement) -> FrozenToolRegistry 
         ToolId::new("read-file").unwrap(),
         "read_file",
         "reads a UTF-8 file",
-        crate::TOOL_SCHEMA_DIALECT,
+        yo_core::TOOL_SCHEMA_DIALECT,
         json!({
             "type": "object",
             "properties": {"path": {"type": "string"}},
@@ -218,33 +219,33 @@ pub(super) struct ExactAdmission;
 impl ToolSemanticAdmission for ExactAdmission {
     fn admit_arguments(
         &self,
-        _definition: &crate::ToolDefinition,
+        _definition: &yo_core::ToolDefinition,
         validated_argument_bytes: &str,
-    ) -> Result<String, crate::ToolSemanticAdmissionError> {
+    ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
         Ok(validated_argument_bytes.to_owned())
     }
 
     fn admit_output(
         &self,
-        _definition: &crate::ToolDefinition,
+        _definition: &yo_core::ToolDefinition,
         bounded_output: &str,
-    ) -> Result<String, crate::ToolSemanticAdmissionError> {
+    ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
         Ok(bounded_output.to_owned())
     }
 }
 
-pub(super) fn context_profile() -> crate::ModelContextProfile {
-    crate::ModelContextProfile::new(1_000_000, 4_096, "test-tokenizer/v1").unwrap()
+pub(super) fn context_profile() -> yo_core::ModelContextProfile {
+    yo_core::ModelContextProfile::new(1_000_000, 4_096, "test-tokenizer/v1").unwrap()
 }
 
 pub(super) struct FixedTokenCounter(pub(super) u64);
 
-impl crate::ModelTokenCounter for FixedTokenCounter {
+impl yo_core::ModelTokenCounter for FixedTokenCounter {
     fn count_input_tokens(
         &self,
         _tokenizer_profile: &str,
         _request: &serde_json::Value,
-    ) -> Result<u64, crate::ModelTokenCounterError> {
+    ) -> Result<u64, yo_core::ModelTokenCounterError> {
         Ok(self.0)
     }
 }
@@ -286,7 +287,7 @@ pub(super) fn backend(
 pub(super) fn turn() -> TurnRef {
     TurnRef::new(
         fixture_session(44),
-        crate::TurnId::new(NonZeroU64::new(1).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(1).unwrap()),
     )
 }
 
@@ -294,7 +295,7 @@ pub(super) fn completed(response_id: &str) -> ModelConnectorEvent {
     ModelConnectorEvent::Terminal {
         response_id: response_id.to_owned(),
         status: ModelConnectorTerminal::Completed,
-        usage: crate::ResponsesUsage::default(),
+        usage: yo_core::ResponsesUsage::default(),
     }
 }
 

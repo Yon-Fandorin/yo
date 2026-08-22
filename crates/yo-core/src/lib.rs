@@ -32,8 +32,8 @@ pub use backend::{
     BackendScriptStep, BackendStopHandle, CodexBackend, CodexBackendConfig,
     CodexSkillReferenceProvider, ContinuationStrategy, ModelReplay, ModelReplayBudget,
     ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool,
-    ModelRequestObserver, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
     ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
+    provider_private_schema,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};
@@ -62,6 +62,11 @@ pub use model_connector::{
     ReasoningEffort, RequestToolExposure, ResponseTerminal, ResponsesCancellation,
     ResponsesConnectorLimits, ResponsesEvent, ResponsesInputItem, ResponsesInputRole,
     ResponsesPoll, ResponsesRequest, ResponsesUsage,
+};
+#[doc(hidden)]
+pub use model_profile_admission::{
+    AdmittedCompleteBinding, AdmittedModelProfile, AdmittedReplayProfile, AdmittedToolPolicy,
+    admit_new_complete_binding,
 };
 pub use model_service::{
     AccountId, ApiCredential, ApiDialect, CompleteModelBinding, ConnectionAccount,

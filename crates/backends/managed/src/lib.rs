@@ -12,26 +12,26 @@ use std::{
 
 use serde::Deserialize;
 use serde_json::json;
-
 #[cfg(test)]
-use super::BackendAdapter as AgentBackend;
-use super::{
-    BackendAdapter, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
-    BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
-    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
-};
-use crate::{
+use yo_backend::BackendAdapter as AgentBackend;
+use yo_backend::{BackendAdapter, validate_provider_private_replay_sequence};
+use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentCommand, ApiDialect, ApprovalDecision, CompleteModelBinding, ContinuationStrategy,
-    EffectiveModelBinding, EffectiveModelProfile, Failure, FrozenToolRegistry, ModelCatalogEntry,
-    ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
+    AdmittedReplayProfile, AdmittedToolPolicy, AgentCommand, ApiDialect, ApprovalDecision,
+    BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
+    BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, BackendPoll,
+    BackendRequestEvidence, BackendResumeTarget, BackendStopHandle, CompleteModelBinding,
+    ContinuationStrategy, EffectiveModelBinding, EffectiveModelProfile, Failure,
+    FrozenToolRegistry, ModelCacheAffinityHint, ModelCatalogEntry, ModelConnector,
+    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorInputRole, ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort,
     ModelConnectorTerminal, ModelContextProfile, ModelReplay, ModelReplayContract,
     ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelTokenCounter, ReasoningChannel,
-    ReasoningEffort, ReplayExecutor, RequestId, RequestToolExposure, SessionId,
+    ReasoningEffort, ReplayExecutor, ReplayProfile, RequestId, RequestToolExposure, SessionId,
     ToolApprovalBinding, ToolApprovalRequirement, ToolExecution, ToolExecutionHost,
     ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission,
-    ToolValidationFailure, TurnOutcome, TurnRef, ValidatedToolCall,
+    ToolValidationFailure, TurnOutcome, TurnRef, ValidatedToolCall, admit_new_complete_binding,
+    provider_private_schema,
 };
 
 const BACKEND_KIND: &str = "yo-managed-model";
@@ -72,14 +72,14 @@ pub struct NativeModelBackendServices {
 
 /// Host-owned sink for one typed actual model-request outcome.
 pub trait ModelRequestObserver: Send {
-    fn observe(&mut self, outcome: crate::ModelRequestOutcome) -> Result<(), String>;
+    fn observe(&mut self, outcome: yo_core::ModelRequestOutcome) -> Result<(), String>;
 }
 
 impl<F> ModelRequestObserver for F
 where
-    F: FnMut(crate::ModelRequestOutcome) -> Result<(), String> + Send,
+    F: FnMut(yo_core::ModelRequestOutcome) -> Result<(), String> + Send,
 {
-    fn observe(&mut self, outcome: crate::ModelRequestOutcome) -> Result<(), String> {
+    fn observe(&mut self, outcome: yo_core::ModelRequestOutcome) -> Result<(), String> {
         self(outcome)
     }
 }
@@ -167,7 +167,7 @@ pub struct NativeModelBackend {
     token_counter: Box<dyn ModelTokenCounter>,
     request_observer: Option<Box<dyn ModelRequestObserver>>,
     contract: ModelReplayContract,
-    replay_profile: crate::ReplayProfile,
+    replay_profile: yo_core::ReplayProfile,
     session: Option<SessionId>,
     replay: ModelReplay,
     turn: Option<TurnState>,
@@ -490,13 +490,13 @@ impl NativeModelBackend {
         let (tool_exposure_enabled, replay_profile) = if let Some(profile) =
             explicit_profile.as_ref()
         {
-            let complete = crate::CompleteModelBinding::new(binding.clone(), profile.clone())
+            let complete = yo_core::CompleteModelBinding::new(binding.clone(), profile.clone())
                 .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
-            let admitted = crate::model_profile_admission::admit_new_complete_binding(&complete)
+            let admitted = admit_new_complete_binding(&complete)
                 .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
             config.reasoning_effort = admitted.profile().reasoning_effort();
             let tools = match admitted.profile().tool_policy() {
-                crate::model_profile_admission::AdmittedToolPolicy::LocalTools => {
+                AdmittedToolPolicy::LocalTools => {
                     if registry.is_empty() {
                         return Err(failure(
                             BackendFailureKind::Initialization,
@@ -505,7 +505,7 @@ impl NativeModelBackend {
                     }
                     true
                 },
-                crate::model_profile_admission::AdmittedToolPolicy::NoTools => {
+                AdmittedToolPolicy::NoTools => {
                     if !registry.is_empty() {
                         return Err(failure(
                             BackendFailureKind::Initialization,
@@ -516,16 +516,14 @@ impl NativeModelBackend {
                 },
             };
             let replay = match admitted.replay_profile() {
-                crate::model_profile_admission::AdmittedReplayProfile::SemanticOnly => {
-                    crate::ReplayProfile::SemanticOnly
-                },
-                crate::model_profile_admission::AdmittedReplayProfile::ProviderPrivateLocalPlaintext => {
-                    crate::ReplayProfile::ProviderPrivateLocalPlaintext
+                AdmittedReplayProfile::SemanticOnly => ReplayProfile::SemanticOnly,
+                AdmittedReplayProfile::ProviderPrivateLocalPlaintext => {
+                    ReplayProfile::ProviderPrivateLocalPlaintext
                 },
             };
             (tools, replay)
         } else {
-            (!registry.is_empty(), crate::ReplayProfile::SemanticOnly)
+            (!registry.is_empty(), ReplayProfile::SemanticOnly)
         };
         if config.system_prompt.is_empty()
             || config.maximum_model_rounds == 0
@@ -740,11 +738,7 @@ impl NativeModelBackend {
                 },
             }
             .with_replay_budget(replay_budget)
-            .with_cache_affinity_hint(
-                crate::model_connector::ModelCacheAffinityHint::for_session(
-                    state.turn.session_id(),
-                ),
-            );
+            .with_cache_affinity_hint(ModelCacheAffinityHint::for_session(state.turn.session_id()));
             let tokenization_payload = match self.connector.tokenization_payload(&request) {
                 Ok(payload) => payload,
                 Err(error) => {
@@ -876,7 +870,7 @@ impl NativeModelBackend {
         if !text.is_empty() {
             self.events.push_back(BackendEvent::ActivityUpdated {
                 activity,
-                update: crate::ActivityUpdate::TextSnapshot(text),
+                update: yo_core::ActivityUpdate::TextSnapshot(text),
             });
         }
         if let Some(outcome) = finish {
@@ -885,13 +879,13 @@ impl NativeModelBackend {
         }
     }
 
-    fn observe_connector_failure(&mut self, turn: TurnRef, error: &crate::ConnectorError) {
+    fn observe_connector_failure(&mut self, turn: TurnRef, error: &yo_core::ConnectorError) {
         if let Some(kind) = error.request_failure_kind() {
-            self.observe_model_request(turn, crate::ModelRequestOutcome::Failed(kind));
+            self.observe_model_request(turn, yo_core::ModelRequestOutcome::Failed(kind));
         }
     }
 
-    fn observe_model_request(&mut self, turn: TurnRef, outcome: crate::ModelRequestOutcome) {
+    fn observe_model_request(&mut self, turn: TurnRef, outcome: yo_core::ModelRequestOutcome) {
         let Some(observer) = self.request_observer.as_mut() else {
             return;
         };
@@ -926,8 +920,8 @@ impl NativeModelBackend {
             if error.kind() == BackendFailureKind::ContextExhausted {
                 self.observe_model_request(
                     state.turn,
-                    crate::ModelRequestOutcome::Failed(
-                        crate::ModelRequestFailureKind::ResponseLimit,
+                    yo_core::ModelRequestOutcome::Failed(
+                        yo_core::ModelRequestFailureKind::ResponseLimit,
                     ),
                 );
                 self.context_exhausted = true;
@@ -936,8 +930,8 @@ impl NativeModelBackend {
                 if error.kind() == BackendFailureKind::Protocol {
                     self.observe_model_request(
                         state.turn,
-                        crate::ModelRequestOutcome::Failed(
-                            crate::ModelRequestFailureKind::Protocol,
+                        yo_core::ModelRequestOutcome::Failed(
+                            yo_core::ModelRequestFailureKind::Protocol,
                         ),
                     );
                 }
@@ -991,7 +985,7 @@ impl NativeModelBackend {
         target.entry(key).or_default().push_str(&delta);
         self.events.push_back(BackendEvent::ActivityUpdated {
             activity,
-            update: crate::ActivityUpdate::TextDelta(delta),
+            update: yo_core::ActivityUpdate::TextDelta(delta),
         });
         Ok(())
     }
@@ -1067,7 +1061,7 @@ impl NativeModelBackend {
                     };
                     self.events.push_back(BackendEvent::ActivityUpdated {
                         activity,
-                        update: crate::ActivityUpdate::TextDelta(delta),
+                        update: yo_core::ActivityUpdate::TextDelta(delta),
                     });
                 }
             },
@@ -1165,7 +1159,7 @@ impl NativeModelBackend {
                         };
                         self.events.push_back(BackendEvent::ActivityUpdated {
                             activity,
-                            update: crate::ActivityUpdate::TextSnapshot(
+                            update: yo_core::ActivityUpdate::TextSnapshot(
                                 json!({
                                     "call_id": call_id,
                                     "name": name,
@@ -1229,7 +1223,7 @@ impl NativeModelBackend {
                         let message = durable_tool_validation_message(kind);
                         self.events.push_back(BackendEvent::ActivityUpdated {
                             activity,
-                            update: crate::ActivityUpdate::TextSnapshot(
+                            update: yo_core::ActivityUpdate::TextSnapshot(
                                 json!({
                                     "call_id": call_id,
                                     "name": name,
@@ -1276,7 +1270,7 @@ impl NativeModelBackend {
                         "provider-private assistant must follow every visible output in its group",
                     ));
                 }
-                if super::provider_private_schema(self.replay_profile) != Some(envelope.schema()) {
+                if provider_private_schema(self.replay_profile) != Some(envelope.schema()) {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "provider-private assistant schema differs from its replay profile",
@@ -1387,11 +1381,11 @@ impl NativeModelBackend {
                     ));
                 }
                 if matches!(&status, ModelConnectorTerminal::Completed)
-                    && self.replay_profile == crate::ReplayProfile::ProviderPrivateLocalPlaintext
+                    && self.replay_profile == yo_core::ReplayProfile::ProviderPrivateLocalPlaintext
                 {
-                    super::validate_provider_private_replay_sequence(
+                    validate_provider_private_replay_sequence(
                         &state.round_replay.values().cloned().collect::<Vec<_>>(),
-                        super::provider_private_schema(self.replay_profile)
+                        provider_private_schema(self.replay_profile)
                             .expect("the provider-private profile has an exact schema"),
                     )
                     .map_err(|detail| failure(BackendFailureKind::Protocol, detail))?;
@@ -1413,14 +1407,14 @@ impl NativeModelBackend {
                         if completed_round_has_assistant {
                             self.observe_model_request(
                                 state.turn,
-                                crate::ModelRequestOutcome::Succeeded,
+                                yo_core::ModelRequestOutcome::Succeeded,
                             );
                             self.complete_turn(state)?;
                         } else {
                             self.observe_model_request(
                                 state.turn,
-                                crate::ModelRequestOutcome::Failed(
-                                    crate::ModelRequestFailureKind::Protocol,
+                                yo_core::ModelRequestOutcome::Failed(
+                                    yo_core::ModelRequestFailureKind::Protocol,
                                 ),
                             );
                             self.fail_turn(
@@ -1433,7 +1427,7 @@ impl NativeModelBackend {
                     ModelConnectorTerminal::Completed => {
                         self.observe_model_request(
                             state.turn,
-                            crate::ModelRequestOutcome::Succeeded,
+                            yo_core::ModelRequestOutcome::Succeeded,
                         );
                         self.advance_tool_queue(state)?;
                     },
@@ -1443,7 +1437,7 @@ impl NativeModelBackend {
                     } => {
                         self.observe_model_request(
                             state.turn,
-                            crate::ModelRequestOutcome::Failed(request_failure),
+                            yo_core::ModelRequestOutcome::Failed(request_failure),
                         );
                         self.fail_turn(
                             state,
@@ -1459,7 +1453,7 @@ impl NativeModelBackend {
                     } => {
                         self.observe_model_request(
                             state.turn,
-                            crate::ModelRequestOutcome::Failed(request_failure),
+                            yo_core::ModelRequestOutcome::Failed(request_failure),
                         );
                         self.fail_turn(
                             state,
@@ -1518,7 +1512,7 @@ impl NativeModelBackend {
     ) {
         self.events.push_back(BackendEvent::ActivityUpdated {
             activity,
-            update: crate::ActivityUpdate::TextSnapshot(
+            update: yo_core::ActivityUpdate::TextSnapshot(
                 json!({
                     "call_id": call_id,
                     "name": name,
@@ -1704,7 +1698,7 @@ impl NativeModelBackend {
         };
         self.events.push_back(BackendEvent::ActivityUpdated {
             activity,
-            update: crate::ActivityUpdate::TextSnapshot(
+            update: yo_core::ActivityUpdate::TextSnapshot(
                 json!({ "call_id": call.call_id(), "output": output }).to_string(),
             ),
         });
@@ -1820,7 +1814,7 @@ impl NativeModelBackend {
             {
                 self.events.push_back(BackendEvent::ActivityUpdated {
                     activity,
-                    update: crate::ActivityUpdate::TextSnapshot(
+                    update: yo_core::ActivityUpdate::TextSnapshot(
                         json!({
                             "call_id": call_id,
                             "error": "execution failed or was cancelled; effect may be uncertain",
@@ -1899,7 +1893,7 @@ impl NativeModelBackend {
             {
                 self.events.push_back(BackendEvent::ActivityUpdated {
                     activity,
-                    update: crate::ActivityUpdate::TextSnapshot(
+                    update: yo_core::ActivityUpdate::TextSnapshot(
                         json!({
                             "call_id": call_id,
                             "error": "execution interrupted; effect may be uncertain",
@@ -2224,8 +2218,8 @@ impl BackendAdapter for NativeModelBackend {
                     let mut state = self.turn.take().expect("active Turn was checked");
                     self.observe_model_request(
                         state.turn,
-                        crate::ModelRequestOutcome::Failed(
-                            crate::ModelRequestFailureKind::Protocol,
+                        yo_core::ModelRequestOutcome::Failed(
+                            yo_core::ModelRequestFailureKind::Protocol,
                         ),
                     );
                     self.fail_turn(
@@ -2297,7 +2291,7 @@ fn native_binding_identity(
             if let Some(max_output_tokens) = profile.context().max_output_tokens() {
                 value["max_output_tokens"] = json!(max_output_tokens);
             }
-            if profile.replay_profile().as_str() != crate::SEMANTIC_REPLAY_PROFILE {
+            if profile.replay_profile().as_str() != yo_core::SEMANTIC_REPLAY_PROFILE {
                 value["replay_profile"] = json!(profile.replay_profile().as_str());
             }
             ("yo.complete-model-binding/v1", value.to_string())
@@ -2441,19 +2435,19 @@ fn bounded_output(output: &str, limit: usize, already_truncated: bool) -> String
     format!("{}{TOOL_TRUNCATION_MARKER}", &output[..end])
 }
 
-fn map_connector_turn(error: crate::ConnectorError) -> BackendFailure {
+fn map_connector_turn(error: yo_core::ConnectorError) -> BackendFailure {
     failure(BackendFailureKind::Turn, error.to_string())
 }
 
-fn map_connector_cleanup(error: crate::ConnectorError) -> BackendFailure {
+fn map_connector_cleanup(error: yo_core::ConnectorError) -> BackendFailure {
     failure(BackendFailureKind::Cleanup, error.to_string())
 }
 
-fn map_tool_turn(_error: crate::ToolExecutionError) -> BackendFailure {
+fn map_tool_turn(_error: yo_core::ToolExecutionError) -> BackendFailure {
     failure(BackendFailureKind::Turn, "tool execution failed")
 }
 
-fn map_tool_cleanup(_error: crate::ToolExecutionError) -> BackendFailure {
+fn map_tool_cleanup(_error: yo_core::ToolExecutionError) -> BackendFailure {
     failure(BackendFailureKind::Cleanup, "tool execution cleanup failed")
 }
 
@@ -2485,6 +2479,13 @@ fn durable_tool_validation_message(kind: ToolValidationFailure) -> &'static str 
 
 fn failure(kind: BackendFailureKind, message: impl Into<String>) -> BackendFailure {
     BackendFailure::new(kind, message)
+}
+
+#[cfg(test)]
+fn fixture_session(value: u64) -> SessionId {
+    format!("01890f00-0000-7000-8000-{value:012x}")
+        .parse()
+        .expect("the test Session fixture is a UUIDv7")
 }
 
 #[cfg(test)]

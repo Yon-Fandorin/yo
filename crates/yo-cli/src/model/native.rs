@@ -1,5 +1,8 @@
 use std::path::Path;
 
+use yo_backend_managed::{
+    NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+};
 use yo_connector_kimi::KimiChatCompletionsConnector;
 use yo_connector_openai_chat_completions::OpenAiChatCompletionsConnector;
 use yo_connector_openai_responses::OpenAiResponsesConnector;
@@ -7,7 +10,7 @@ use yo_core::{
     AgentBackend, ApiCredential, ApiDialect, ConnectorId, CredentialSnapshot,
     LocalConnectionOperationRepositories, LocalCredentialRepository, LocalModelRequestObservation,
     ModelConnector, ModelConnectorLimits, ModelRequestFailureKind, ModelRequestOutcome,
-    NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices, ToolRegistry,
+    ToolRegistry,
 };
 
 use super::{

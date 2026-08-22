@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use yo_core::{ModelRequestFailureKind, ModelRequestOutcome, UserInput};
+
 use super::{
     super::{
         AgentBackend, AgentCommand, BackendEvent, BackendPoll, ModelConnectorEvent,
@@ -11,7 +13,6 @@ use super::{
         event_rounds, registry, turn,
     },
 };
-use crate::{ModelRequestFailureKind, ModelRequestOutcome, UserInput};
 
 fn backend(
     rounds: Vec<Vec<ModelConnectorEvent>>,
@@ -59,7 +60,7 @@ fn successful_round() -> Vec<ModelConnectorEvent> {
         ModelConnectorEvent::Terminal {
             response_id: "response".to_owned(),
             status: ModelConnectorTerminal::Completed,
-            usage: crate::ResponsesUsage::default(),
+            usage: yo_core::ResponsesUsage::default(),
         },
     ]
 }
@@ -120,7 +121,7 @@ fn terminal_outcomes_are_reported_once_with_closed_classification() {
                     reason: Some("provider-private-sentinel".to_owned()),
                     request_failure: ModelRequestFailureKind::ProviderUnavailable,
                 },
-                usage: crate::ResponsesUsage::default(),
+                usage: yo_core::ResponsesUsage::default(),
             },
         ]],
         rejected.clone(),
@@ -180,7 +181,7 @@ fn persistence_failure_is_a_separate_warning_activity() {
     assert!(events.iter().any(|event| matches!(
         event,
         BackendEvent::ActivityUpdated {
-            update: crate::ActivityUpdate::TextSnapshot(text),
+            update: yo_core::ActivityUpdate::TextSnapshot(text),
             ..
         } if text.contains("model request status was not saved")
             && text.contains("repository-contention")

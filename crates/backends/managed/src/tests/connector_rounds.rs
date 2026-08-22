@@ -3,6 +3,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use yo_core::{
+    AccountId, ApiDialect, ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters,
+    NormalizedEndpoint, ProviderId, ProviderPrivateReplayEnvelope, ReplayProfile, UserInput,
+    VersionedProfileId,
+};
+
 use super::{
     super::{
         AgentBackend, AgentCommand, BackendCommandEvidence, BackendEvent, BackendFailureKind,
@@ -14,11 +20,6 @@ use super::{
         ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, completed,
         context_profile, drain_until_turn, event_rounds, mock_tokenization_payload, registry, turn,
     },
-};
-use crate::{
-    AccountId, ApiDialect, ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters,
-    NormalizedEndpoint, ProviderId, ProviderPrivateReplayEnvelope, ReplayProfile, UserInput,
-    VersionedProfileId,
 };
 
 fn private_envelope(private: &str, visible: Option<&str>) -> ProviderPrivateReplayEnvelope {
@@ -73,7 +74,7 @@ fn kimi_k27_binding() -> EffectiveModelBinding {
     )
 }
 
-fn kimi_profile() -> crate::EffectiveModelProfile {
+fn kimi_profile() -> yo_core::EffectiveModelProfile {
     let layer = ModelProfileLayer::new(
         Some(ApiDialect::KimiChatCompletions),
         Some(VersionedProfileId::new("utf8-bytes/v1").unwrap()),
@@ -86,10 +87,10 @@ fn kimi_profile() -> crate::EffectiveModelProfile {
     .with_replay_profile(Some(
         VersionedProfileId::new("kimi-private-local-plaintext/v1").unwrap(),
     ));
-    crate::EffectiveModelProfile::resolve(None, &layer).unwrap()
+    yo_core::EffectiveModelProfile::resolve(None, &layer).unwrap()
 }
 
-fn kimi_k27_profile() -> crate::EffectiveModelProfile {
+fn kimi_k27_profile() -> yo_core::EffectiveModelProfile {
     let layer = ModelProfileLayer::new(
         Some(ApiDialect::KimiChatCompletions),
         Some(VersionedProfileId::new("utf8-bytes/v1").unwrap()),
@@ -107,7 +108,7 @@ fn kimi_k27_profile() -> crate::EffectiveModelProfile {
     .with_replay_profile(Some(
         VersionedProfileId::new("kimi-private-local-plaintext/v1").unwrap(),
     ));
-    crate::EffectiveModelProfile::resolve(None, &layer).unwrap()
+    yo_core::EffectiveModelProfile::resolve(None, &layer).unwrap()
 }
 
 fn started_private_backend() -> NativeModelBackend {
@@ -170,12 +171,12 @@ struct ToolAwareBoundaryCounter {
     saw_tools: Arc<Mutex<bool>>,
 }
 
-impl crate::ModelTokenCounter for ToolAwareBoundaryCounter {
+impl yo_core::ModelTokenCounter for ToolAwareBoundaryCounter {
     fn count_input_tokens(
         &self,
         _tokenizer_profile: &str,
         payload: &serde_json::Value,
-    ) -> Result<u64, crate::ModelTokenCounterError> {
+    ) -> Result<u64, yo_core::ModelTokenCounterError> {
         let saw_tools = payload
             .get("tools")
             .and_then(serde_json::Value::as_array)
@@ -220,7 +221,7 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
     };
     assert!(matches!(
         opened.continuation_strategy(),
-        crate::ContinuationStrategy::ExactReplay {
+        yo_core::ContinuationStrategy::ExactReplay {
             replay_profile: ReplayProfile::ProviderPrivateLocalPlaintext,
             ..
         }
@@ -249,9 +250,9 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
             ))
     );
 
-    let second_turn = crate::TurnRef::new(
+    let second_turn = yo_core::TurnRef::new(
         turn().session_id(),
-        crate::TurnId::new(NonZeroU64::new(2).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(2).unwrap()),
     );
     backend
         .execute_command(AgentCommand::StartTurn {
@@ -272,7 +273,7 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
     );
     assert!(requests[1].input().iter().any(|item| matches!(
         item,
-        crate::ModelConnectorInputItem::ProviderPrivateAssistant { envelope }
+        yo_core::ModelConnectorInputItem::ProviderPrivateAssistant { envelope }
             if std::str::from_utf8(envelope.payload()).unwrap().contains("hidden-1")
     )));
 }
@@ -785,9 +786,9 @@ fn incomplete_chat_round_fails_without_a_resumable_replay_delta() {
                 response_id: "chat-length".to_owned(),
                 status: ModelConnectorTerminal::Incomplete {
                     reason: Some("length".to_owned()),
-                    request_failure: crate::ModelRequestFailureKind::ResponseLimit,
+                    request_failure: yo_core::ModelRequestFailureKind::ResponseLimit,
                 },
-                usage: crate::ModelConnectorUsage::default(),
+                usage: yo_core::ModelConnectorUsage::default(),
             },
         ]],
         ToolApprovalRequirement::Automatic,

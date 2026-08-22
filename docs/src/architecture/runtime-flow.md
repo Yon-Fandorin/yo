@@ -94,8 +94,8 @@ at 30 seconds, each redirect attempt's response headers at 5 minutes,
 successful-stream inactivity at 5 minutes, non-success error-body inactivity at
 30 seconds, and each internal event handoff at 5 minutes. Only a non-empty raw HTTP body chunk resets a body
 inactivity clock, before SSE decoding or error-body retention; each observation
-starts a fresh event-handoff wait. `yo-core::backend::native` owns semantic Activities and the bounded
-model/tool loop. Before each dispatch it counts the exact request with the
+starts a fresh event-handoff wait. `yo-backend-managed` owns semantic Activities and the bounded
+model/tool loop behind `yo-core::AgentBackend`. Before each dispatch it counts the exact request with the
 catalog-selected tokenizer profile after checking the retained replay prefix
 plus the current Turn delta. For a known hard output maximum, it makes a finite,
 strictly decreasing selection of a positive request-local cap at or below that
@@ -220,7 +220,7 @@ yo-cli
   install TerminationCoordinator
   open Host identity and Session repository
   normalize workspace and create SessionDescriptor
-  spawn CodexBackend transport or assemble the dialect-derived native model backend
+  spawn CodexBackend transport or assemble the dialect-derived managed model backend
       ↓
 yo-core AgentSession
   start worker
@@ -239,10 +239,10 @@ yo-tui
 | Step | Current owner | What to follow |
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/connection.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection.rs) | `run` selects presentation options, captures the working directory and command-local configuration, reads a new Session's stored preference without creating state, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`. Resume omits the stored-preference read. |
-| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | The process host resolves invocation, stored, and operator layers, then either starts the Codex stdio transport or assembles the selected native binding from the startup snapshots and injected tools. Both defer remote model work until the worker owns the backend. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | The process host resolves invocation, stored, and operator layers, then either starts the Codex stdio transport or assembles the selected managed binding from the startup snapshots and injected tools. Both defer remote model work until the worker owns the backend. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` first attempts the descriptor-only Journal envelope, then sends `CreateSession` through `AgentRuntime`; storage pressure keeps both the descriptor and later activity in the recoverable volatile prefix. |
-| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-core/backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | For Codex, `CreateSession` performs `initialize` and `thread/start`. The native backend binds local exact-replay Session state without a provider request. Both let the semantic engine produce `SessionCreated`. |
+| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | For Codex, `CreateSession` performs `initialize` and `thread/start`. The managed backend binds local exact-replay Session state without a provider request. Both let the semantic engine produce `SessionCreated`. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode` acquires input and terminal state for the first terminal ownership generation, then enters the already selected presentation mode. |
 
 If termination arrives during the handshake, `AgentSession::start_inner`

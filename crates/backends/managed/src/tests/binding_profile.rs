@@ -1,27 +1,33 @@
-use std::sync::{Arc, Mutex};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant, SystemTime},
+};
+
+use yo_core::{
+    AgentEvent, AgentIntent, AgentSession, AgentSessionPoll, ApiDialect, BackendIdentity,
+    CommandAdmission, EffectiveModelProfile, HostWorkspacePath, ModelProfileLayer,
+    ModelProfileParameters, ReasoningEffort, SessionDescriptor, ToolApprovalRequirement,
+    ToolRegistry, TranscriptRecord, TurnOutcome, UserInput, VersionedProfileId, WorkspaceHostId,
+    session_repository::{
+        LocalSessionReader, LocalSessionRepository, read_stored_session_continuation,
+    },
+};
 
 use super::{
     super::{
-        AgentBackend, AgentCommand, BackendCommandEvidence, NativeModelBackend,
-        NativeModelBackendConfig, NativeModelBackendServices,
+        AgentBackend, AgentCommand, BackendCommandEvidence, ModelConnectorEvent,
+        NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
         semantically_equal_native_binding_identity,
     },
     support::{
-        ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, context_profile,
-        event_rounds, mock_tokenization_payload, registry, turn,
+        ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, completed,
+        context_profile, event_rounds, mock_tokenization_payload, registry, turn,
     },
 };
-use crate::{
-    AgentRuntime, ApiDialect, BackendBindingEvidence, BackendIdentity, BackendResumeTarget,
-    EffectiveModelProfile, JournalSequence, ModelProfileLayer, ModelProfileParameters, ModelReplay,
-    ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReasoningEffort, ToolApprovalRequirement,
-    ToolRegistry, UserInput, VersionedProfileId, fixture_descriptor, fixture_session,
-    journal::SessionJournal,
-    session_repository::{
-        AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
-        RepositorySequence, SessionRepository,
-    },
-};
+use crate::fixture_session;
 
 fn parameters(value: &str) -> ModelProfileParameters {
     serde_json::from_str(value).unwrap()
@@ -54,7 +60,7 @@ fn profile_with_output(
 
 fn backend_with_profile(
     profile: EffectiveModelProfile,
-) -> Result<NativeModelBackend, crate::BackendFailure> {
+) -> Result<NativeModelBackend, yo_core::BackendFailure> {
     backend_with_profile_and_registry(
         profile,
         registry(ToolApprovalRequirement::Automatic),
@@ -64,9 +70,9 @@ fn backend_with_profile(
 
 fn backend_with_profile_and_registry(
     profile: EffectiveModelProfile,
-    registry: crate::FrozenToolRegistry,
-    requests: Arc<Mutex<Vec<crate::ModelConnectorRequest>>>,
-) -> Result<NativeModelBackend, crate::BackendFailure> {
+    registry: yo_core::FrozenToolRegistry,
+    requests: Arc<Mutex<Vec<yo_core::ModelConnectorRequest>>>,
+) -> Result<NativeModelBackend, yo_core::BackendFailure> {
     let model_context = profile.context().clone();
     NativeModelBackend::with_connector_and_profile(
         Box::new(MockConnector {
@@ -105,69 +111,116 @@ fn backend_without_profile() -> NativeModelBackend {
     .unwrap()
 }
 
-fn resume_target(
-    backend: &NativeModelBackend,
-    binding_identity: BackendIdentity,
-) -> BackendResumeTarget {
-    let session_id = fixture_session(9);
-    let current = backend.binding_evidence(session_id);
-    let binding = BackendBindingEvidence::new(
-        current.backend_kind(),
-        current.backend_version(),
-        binding_identity,
-        current.model_identity().clone(),
-        current.session_locator().clone(),
-        current.continuation_strategy(),
-    );
-    let mut replay = ModelReplay::default();
-    replay
-        .apply(&ModelReplayDelta::new(
-            Some(backend.contract.clone()),
-            vec![ModelReplayItem::Message {
-                role: ModelReplayRole::User,
-                content: "durable request".to_owned(),
-                refusal: None,
-            }],
-        ))
+struct TestDirectory(PathBuf);
+
+impl TestDirectory {
+    fn new() -> Self {
+        let nonce = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("yo-managed-resume-{}-{nonce}", std::process::id()));
+        fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for TestDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+fn resume_through_durable_agent_session(
+    mut first_backend: NativeModelBackend,
+    resumed_backend: NativeModelBackend,
+) {
+    first_backend.connector = Box::new(MockConnector {
+        rounds: event_rounds(vec![vec![
+            ModelConnectorEvent::ResponseCreated {
+                response_id: "resume-fixture".to_owned(),
+            },
+            ModelConnectorEvent::TextDelta {
+                output_index: 0,
+                item_id: "message".to_owned(),
+                content_index: 0,
+                delta: "durable answer".to_owned(),
+            },
+            ModelConnectorEvent::MessageDone {
+                output_index: 0,
+                item_id: "message".to_owned(),
+            },
+            completed("resume-fixture"),
+        ]]),
+        requests: Arc::new(Mutex::new(Vec::new())),
+    });
+    let directory = TestDirectory::new();
+    let descriptor = SessionDescriptor::new(
+        WorkspaceHostId::new().unwrap(),
+        HostWorkspacePath::normalize_local(std::env::current_dir().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let session_id = descriptor.session_id();
+    let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
+    let mut session = AgentSession::start_cancellable_with_repository(
+        first_backend,
+        descriptor,
+        repository,
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+
+    let mut admission = session
+        .dispatch(AgentIntent::submit("durable request").unwrap())
         .unwrap();
-    BackendResumeTarget::new(session_id, 1, binding, JournalSequence::new(1))
-        .with_model_replay(replay)
-}
-
-#[derive(Default)]
-struct DurableTestRepository {
-    next_sequence: u64,
-}
-
-impl SessionRepository for DurableTestRepository {
-    fn append(
-        &mut self,
-        _session_id: crate::SessionId,
-        _record: DurableRecord,
-    ) -> Result<AppendReceipt, AppendError> {
-        self.next_sequence += 1;
-        Ok(AppendReceipt::new(RepositorySequence::new(
-            self.next_sequence,
-        )))
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while let CommandAdmission::Backpressured(pending) = admission {
+        assert!(
+            Instant::now() < deadline,
+            "resume fixture stayed backpressured"
+        );
+        thread::sleep(Duration::from_millis(1));
+        admission = session.retry(pending).unwrap();
     }
 
-    fn read_after(
-        &self,
-        _session_id: crate::SessionId,
-        _sequence: Option<RepositorySequence>,
-        _limit: usize,
-    ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
-        Ok(Vec::new())
+    let transcript = session.transcript_reader();
+    loop {
+        if transcript.read_after(None).entries().iter().any(|entry| {
+            matches!(
+                entry.record(),
+                TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+                    outcome: TurnOutcome::Completed,
+                    ..
+                })
+            )
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "resume fixture Turn did not finish"
+        );
+        assert_ne!(session.poll().unwrap(), AgentSessionPoll::Closed);
+        thread::sleep(Duration::from_millis(1));
     }
-}
+    session.shutdown().unwrap();
+    drop(session);
 
-fn resume_runtime(backend: NativeModelBackend) -> AgentRuntime<NativeModelBackend> {
-    let session_id = fixture_session(9);
-    let journal = SessionJournal::with_repository_and_descriptor(
-        Box::new(DurableTestRepository::default()),
-        fixture_descriptor(session_id),
-    );
-    AgentRuntime::with_journal(backend, journal)
+    let reader = LocalSessionReader::open(&directory.0).unwrap();
+    let continuation = read_stored_session_continuation(&reader, session_id).unwrap();
+    drop(reader);
+    let repository = LocalSessionRepository::open(&directory.0, 1024 * 1024).unwrap();
+    let mut resumed = AgentSession::start_cancellable_with_continuation(
+        resumed_backend,
+        continuation,
+        repository,
+        || false,
+    )
+    .unwrap()
+    .unwrap();
+    resumed.shutdown().unwrap();
 }
 
 // explicit profile로 시작한 native backend는 profile의 reasoning effort를 실제 request
@@ -321,16 +374,17 @@ fn legacy_backend_keeps_the_existing_binding_identity() {
 // 다시 raw-byte 비교로 거절하지 않고 durable identity 그대로 runtime에 반환합니다.
 #[test]
 fn complete_resume_preserves_semantically_equal_durable_identity_bytes() {
-    let backend =
+    let mut first_backend =
         backend_with_profile(profile(r#"{"effort":"high"}"#, "{}", "local-tools/v1")).unwrap();
     let durable = BackendIdentity::new(
         "yo.complete-model-binding/v1",
         r#"{"tool_capability_policy":"local-tools/v1","optional_request_parameters":{},"reasoning_parameters":{"effort":"high"},"max_output_tokens":4096,"input_token_limit":1000000,"tokenizer_profile":"test-tokenizer/v1","api_dialect":"openai-responses","base_url":"https://example.invalid/v1","connector":"openai-responses","model":"qwen3.8max","account":"default","provider":"qwencloud"}"#,
     );
-    let target = resume_target(&backend, durable);
-    let mut runtime = resume_runtime(backend);
+    first_backend.binding_identity = durable;
+    let resumed_backend =
+        backend_with_profile(profile(r#"{"effort":"high"}"#, "{}", "local-tools/v1")).unwrap();
 
-    runtime.initialize_resume(&target).unwrap();
+    resume_through_durable_agent_session(first_backend, resumed_backend);
 }
 
 // native resume의 core 비교기도 CLI 전처리에 기대지 않고 범위 밖 integer와 유한하지
@@ -359,13 +413,12 @@ fn complete_resume_identity_rejects_closed_number_admission_failures() {
 // resume은 runtime exact check를 위해 원래 durable evidence를 손실 없이 돌려줍니다.
 #[test]
 fn legacy_resume_preserves_valid_unknown_durable_fields() {
-    let backend = backend_without_profile();
+    let mut first_backend = backend_without_profile();
     let durable = BackendIdentity::new(
         "yo.model-binding/v1",
         r#"{"provider":"qwencloud","account":"default","model":"qwen3.8max","connector":"openai-responses","api_dialect":"openai-responses","base_url":"https://example.invalid/v1","historical":"retained"}"#,
     );
-    let target = resume_target(&backend, durable);
-    let mut runtime = resume_runtime(backend);
+    first_backend.binding_identity = durable;
 
-    runtime.initialize_resume(&target).unwrap();
+    resume_through_durable_agent_session(first_backend, backend_without_profile());
 }

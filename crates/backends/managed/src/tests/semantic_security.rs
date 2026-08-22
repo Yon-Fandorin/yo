@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use yo_core::{ToolExecutionError, ToolId, UserInput};
+
 use super::{
     super::{
         AgentBackend, AgentCommand, BackendEvent, BackendPoll, ModelConnectorEvent,
@@ -13,7 +15,6 @@ use super::{
         context_profile, event_rounds, registry, turn,
     },
 };
-use crate::{ToolExecutionError, ToolId, UserInput};
 
 struct FailingStartHost;
 
@@ -43,17 +44,17 @@ struct RedactingAdmission;
 impl ToolSemanticAdmission for RedactingAdmission {
     fn admit_arguments(
         &self,
-        _definition: &crate::ToolDefinition,
+        _definition: &yo_core::ToolDefinition,
         _validated_argument_bytes: &str,
-    ) -> Result<String, crate::ToolSemanticAdmissionError> {
+    ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
         Ok(r#"{"path":"[redacted]"}"#.to_owned())
     }
 
     fn admit_output(
         &self,
-        _definition: &crate::ToolDefinition,
+        _definition: &yo_core::ToolDefinition,
         _bounded_output: &str,
-    ) -> Result<String, crate::ToolSemanticAdmissionError> {
+    ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
         Ok("[redacted-output]".to_owned())
     }
 }
@@ -63,20 +64,20 @@ struct RejectingAdmission;
 impl ToolSemanticAdmission for RejectingAdmission {
     fn admit_arguments(
         &self,
-        _definition: &crate::ToolDefinition,
+        _definition: &yo_core::ToolDefinition,
         _validated_argument_bytes: &str,
-    ) -> Result<String, crate::ToolSemanticAdmissionError> {
-        Err(crate::ToolSemanticAdmissionError::new(
+    ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
+        Err(yo_core::ToolSemanticAdmissionError::new(
             "host diagnostic contains secret.txt",
         ))
     }
 
     fn admit_output(
         &self,
-        _definition: &crate::ToolDefinition,
+        _definition: &yo_core::ToolDefinition,
         _bounded_output: &str,
-    ) -> Result<String, crate::ToolSemanticAdmissionError> {
-        Err(crate::ToolSemanticAdmissionError::new(
+    ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
+        Err(yo_core::ToolSemanticAdmissionError::new(
             "host diagnostic contains output-secret",
         ))
     }
@@ -84,13 +85,13 @@ impl ToolSemanticAdmission for RejectingAdmission {
 
 struct FailingTokenCounter;
 
-impl crate::ModelTokenCounter for FailingTokenCounter {
+impl yo_core::ModelTokenCounter for FailingTokenCounter {
     fn count_input_tokens(
         &self,
         _tokenizer_profile: &str,
         _request: &serde_json::Value,
-    ) -> Result<u64, crate::ModelTokenCounterError> {
-        Err(crate::ModelTokenCounterError::new(
+    ) -> Result<u64, yo_core::ModelTokenCounterError> {
+        Err(yo_core::ModelTokenCounterError::new(
             "counter diagnostic contains request-secret",
         ))
     }
@@ -252,7 +253,7 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
     let evidence = loop {
         match backend.poll_event().unwrap() {
             BackendPoll::Event(BackendEvent::ActivityUpdated {
-                update: crate::ActivityUpdate::TextSnapshot(text),
+                update: yo_core::ActivityUpdate::TextSnapshot(text),
                 ..
             }) => visible_updates.push(text),
             BackendPoll::Event(BackendEvent::ResumableTurnFinished { evidence, .. }) => {

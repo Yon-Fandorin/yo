@@ -4,6 +4,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use yo_core::{ToolExecutionError, ToolId, UserInput};
+
 use super::{
     super::{
         ActivityKind, ActivityRequestRef, ActivityResponse, AgentBackend, AgentCommand,
@@ -18,7 +20,6 @@ use super::{
         drain_until_turn, event_rounds, mock_tokenization_payload, registry, turn,
     },
 };
-use crate::{ToolExecutionError, ToolId, UserInput};
 
 struct RecordingTokenCounter {
     input_tokens: u64,
@@ -65,12 +66,12 @@ impl SequenceTokenCounter {
     }
 }
 
-impl crate::ModelTokenCounter for SequenceTokenCounter {
+impl yo_core::ModelTokenCounter for SequenceTokenCounter {
     fn count_input_tokens(
         &self,
         _tokenizer_profile: &str,
         request: &serde_json::Value,
-    ) -> Result<u64, crate::ModelTokenCounterError> {
+    ) -> Result<u64, yo_core::ModelTokenCounterError> {
         self.payloads.lock().unwrap().push(request.clone());
         Ok(self
             .input_tokens
@@ -134,12 +135,12 @@ fn fill_current_delta_to_item_limit(backend: &mut NativeModelBackend) {
     assert_eq!(delta.len(), 4_095);
 }
 
-impl crate::ModelTokenCounter for RecordingTokenCounter {
+impl yo_core::ModelTokenCounter for RecordingTokenCounter {
     fn count_input_tokens(
         &self,
         _tokenizer_profile: &str,
         request: &serde_json::Value,
-    ) -> Result<u64, crate::ModelTokenCounterError> {
+    ) -> Result<u64, yo_core::ModelTokenCounterError> {
         self.payloads.lock().unwrap().push(request.clone());
         Ok(self.input_tokens)
     }
@@ -162,7 +163,7 @@ fn context_exhaustion_finishes_non_resumably_and_latches_the_binding() {
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(100)),
         ),
-        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
         NativeModelBackendConfig::default(),
     )
     .unwrap();
@@ -192,7 +193,7 @@ fn context_exhaustion_finishes_non_resumably_and_latches_the_binding() {
 
     let next_turn = TurnRef::new(
         turn().session_id(),
-        crate::TurnId::new(NonZeroU64::new(2).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(2).unwrap()),
     );
     let error = backend
         .execute_command(AgentCommand::StartTurn {
@@ -224,7 +225,7 @@ fn recounts_and_dispatches_the_exact_smaller_output_cap() {
                 payloads: Arc::clone(&payloads),
             }),
         ),
-        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
         NativeModelBackendConfig::default(),
     )
     .unwrap();
@@ -276,7 +277,7 @@ fn bounded_selector_uses_at_most_three_strictly_decreasing_exact_counts() {
                 Arc::clone(&payloads),
             )),
         ),
-        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
         NativeModelBackendConfig::default(),
     )
     .unwrap();
@@ -327,7 +328,7 @@ fn post_tool_round_exhaustion_stops_before_a_second_dispatch_and_latches() {
             Box::new(MockHost::default()),
             Box::new(SequenceTokenCounter::new([1, 100], Arc::clone(&payloads))),
         ),
-        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
         NativeModelBackendConfig::default(),
     )
     .unwrap();
@@ -356,7 +357,7 @@ fn post_tool_round_exhaustion_stops_before_a_second_dispatch_and_latches() {
 
     let next_turn = TurnRef::new(
         turn().session_id(),
-        crate::TurnId::new(NonZeroU64::new(2).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(2).unwrap()),
     );
     assert_eq!(
         backend
@@ -388,7 +389,7 @@ fn successful_tool_output_replay_overflow_uses_the_typed_failure_path() {
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
         ),
-        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
         NativeModelBackendConfig::default(),
     )
     .unwrap();
@@ -416,7 +417,7 @@ fn successful_tool_output_replay_overflow_uses_the_typed_failure_path() {
     assert_eq!(requests.lock().unwrap().len(), 1);
     let next_turn = TurnRef::new(
         turn().session_id(),
-        crate::TurnId::new(NonZeroU64::new(2).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(2).unwrap()),
     );
     assert_eq!(
         backend
@@ -448,7 +449,7 @@ fn synchronous_tool_start_failure_replay_overflow_is_typed_and_latched() {
             Box::new(FailingStartHost),
             Box::new(FixedTokenCounter(1)),
         ),
-        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
         NativeModelBackendConfig::default(),
     )
     .unwrap();
@@ -476,7 +477,7 @@ fn synchronous_tool_start_failure_replay_overflow_is_typed_and_latched() {
     assert_eq!(requests.lock().unwrap().len(), 1);
     let next_turn = TurnRef::new(
         turn().session_id(),
-        crate::TurnId::new(NonZeroU64::new(2).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(2).unwrap()),
     );
     assert_eq!(
         backend
@@ -508,7 +509,7 @@ fn approval_decline_replay_overflow_is_typed_and_latched() {
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
         ),
-        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
         NativeModelBackendConfig::default(),
     )
     .unwrap();
@@ -555,7 +556,7 @@ fn approval_decline_replay_overflow_is_typed_and_latched() {
     assert_eq!(requests.lock().unwrap().len(), 1);
     let next_turn = TurnRef::new(
         turn().session_id(),
-        crate::TurnId::new(NonZeroU64::new(2).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(2).unwrap()),
     );
     assert_eq!(
         backend
@@ -591,8 +592,12 @@ fn unknown_output_cap_uses_strict_input_boundary_and_omits_the_field() {
                 Box::new(MockHost::default()),
                 Box::new(FixedTokenCounter(input_tokens)),
             ),
-            crate::ModelContextProfile::with_optional_output_limit(100, None, "test-tokenizer/v1")
-                .unwrap(),
+            yo_core::ModelContextProfile::with_optional_output_limit(
+                100,
+                None,
+                "test-tokenizer/v1",
+            )
+            .unwrap(),
             NativeModelBackendConfig::default(),
         )
         .unwrap();
@@ -641,7 +646,7 @@ fn cumulative_replay_capacity_is_checked_before_dispatch() {
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
         ),
-        crate::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
+        yo_core::ModelContextProfile::new(100, 10, "test-tokenizer/v1").unwrap(),
         NativeModelBackendConfig::default(),
     )
     .unwrap();
@@ -717,7 +722,7 @@ fn replay_exhaustion_finishes_non_resumably_and_latches_the_binding() {
 
     let next_turn = TurnRef::new(
         turn().session_id(),
-        crate::TurnId::new(NonZeroU64::new(2).unwrap()),
+        yo_core::TurnId::new(NonZeroU64::new(2).unwrap()),
     );
     let error = backend
         .execute_command(AgentCommand::StartTurn {
