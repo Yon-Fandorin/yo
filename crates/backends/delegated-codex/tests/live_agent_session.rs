@@ -4,10 +4,10 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use super::super::{AgentIntent, AgentSession};
-use crate::{
-    ActivityKind, ActivityOutcome, ActivityRequestRef, AgentEvent, AgentSessionPoll,
-    ApprovalDecision, CodexBackend, CodexBackendConfig, TranscriptRecord, TurnOutcome,
+use yo_backend_delegated_codex::{CodexBackend, CodexBackendConfig};
+use yo_core::{
+    ActivityKind, ActivityOutcome, ActivityRequestRef, AgentEvent, AgentIntent, AgentSession,
+    AgentSessionPoll, ApprovalDecision, TranscriptRecord, TurnOutcome,
 };
 
 // 호환되는 로컬 Codex와 인증 환경이 있을 때 실제 도구가 disposable workspace에 파일을

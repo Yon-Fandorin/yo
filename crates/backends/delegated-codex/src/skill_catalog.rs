@@ -13,18 +13,19 @@ use std::{
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-
-use super::{AppServerClient, CodexBackendConfig, StdioPeer};
-use crate::{
+use yo_backend::transport::{Readiness, ReadyReceiver};
+use yo_core::{
     SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceProvider,
     SkillReferenceProviderPoll, SkillReferenceScope, SkillReferenceSearchRequest,
     SkillReferenceSearchStatus, SkillReferenceSearchUpdate, WorkspaceHostId,
-    skill_reference::search_candidates,
+    search_skill_reference_candidates,
 };
+
+use super::{AppServerClient, CodexBackendConfig, StdioPeer};
 
 pub struct CodexSkillReferenceProvider {
     requests: Sender<SkillReferenceSearchRequest>,
-    updates: crate::readiness::ReadyReceiver<SkillReferenceSearchUpdate>,
+    updates: ReadyReceiver<SkillReferenceSearchUpdate>,
 }
 
 struct Inventory {
@@ -86,7 +87,7 @@ impl CodexSkillReferenceProvider {
     ) -> Result<Self, std::io::Error> {
         let (request_tx, request_rx) = mpsc::channel();
         let (update_tx, update_rx) = mpsc::channel();
-        let readiness = Arc::new(crate::readiness::Readiness::new());
+        let readiness = Arc::new(Readiness::new());
         let worker_readiness = Arc::clone(&readiness);
         thread::Builder::new()
             .name("yo-codex-skill-catalog".to_owned())
@@ -102,7 +103,7 @@ impl CodexSkillReferenceProvider {
             })?;
         Ok(Self {
             requests: request_tx,
-            updates: crate::readiness::ReadyReceiver::new(update_rx, readiness),
+            updates: ReadyReceiver::new(update_rx, readiness),
         })
     }
 }
@@ -132,7 +133,7 @@ fn worker(
     workspace_host_id: WorkspaceHostId,
     requests: Receiver<SkillReferenceSearchRequest>,
     updates: Sender<SkillReferenceSearchUpdate>,
-    readiness: &crate::readiness::Readiness,
+    readiness: &Readiness,
 ) {
     let mut inventory = None;
     let mut catalog_generation = 0_u64;
@@ -153,7 +154,7 @@ fn worker(
             Ok(inventory) => SkillReferenceSearchUpdate::final_result(
                 &request,
                 inventory.status.clone(),
-                search_candidates(&inventory.candidates, request.query()),
+                search_skill_reference_candidates(&inventory.candidates, request.query()),
             ),
             Err(reason) => SkillReferenceSearchUpdate::final_result(
                 &request,

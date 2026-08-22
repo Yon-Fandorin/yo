@@ -1,4 +1,4 @@
-use crate::BackendFailureKind;
+use yo_core::BackendFailureKind;
 
 // Codex 실행 파일이 없으면 일반 protocol 오류가 아니라 설치 또는 PATH 문제로 대응할 수
 // 있도록 Unavailable 실패를 즉시 반환하는지 확인한다.

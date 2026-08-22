@@ -7,7 +7,10 @@ use std::{
 
 mod search;
 
-pub(crate) use search::search_candidates;
+#[cfg(test)]
+use search::search_skill_reference_candidates as search_candidates;
+/// Ranks one execution environment's admitted skill candidates for a visible query.
+pub use search::search_skill_reference_candidates;
 
 /// Provenance reported by the execution environment that owns the skill catalog.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]

@@ -1,7 +1,8 @@
-//! Transport-free contracts and evidence shared by Yo backend adapters.
+//! Shared contracts and bounded mechanisms for Yo backend adapters.
 
 mod contract;
 mod evidence;
+pub mod transport;
 
 pub use contract::{
     BackendAdapter, BackendCapabilities, BackendFailure, BackendFailureKind, BackendPoll,

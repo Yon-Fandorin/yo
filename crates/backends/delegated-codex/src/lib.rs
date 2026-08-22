@@ -17,15 +17,17 @@ use client::AppServerClient;
 pub use config::CodexBackendConfig;
 use serde_json::{Value, json};
 pub use skill_catalog::CodexSkillReferenceProvider;
-use transport::{JsonPeer, StdioPeer};
-
-use crate::{
+use transport::StdioPeer;
+use yo_backend::{BackendAdapter, transport::JsonMessagePeer};
+use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentCommand, ApprovalDecision, BackendAdapter, BackendBindingEvidence, BackendCapabilities,
+    AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
     BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
     ContinuationStrategy, RequestId, SessionId, TurnRef,
 };
+
+pub const BACKEND_KIND: &str = "codex-app-server";
 
 /// Local stdio adapter for a compatible `codex app-server` process.
 pub struct CodexBackend {
@@ -36,7 +38,7 @@ impl CodexBackend {
     /// Spawns Codex and prepares the cancellable transport.
     ///
     /// The initialize handshake is deferred to `CreateSession` so the runtime owner can cancel it
-    /// through [`AgentBackend::stop_handle`].
+    /// through [`yo_core::AgentBackend::stop_handle`].
     pub fn spawn(config: CodexBackendConfig) -> Result<Self, BackendFailure> {
         if !config.working_directory().is_absolute()
             || !config.working_directory().is_dir()
@@ -158,7 +160,7 @@ struct Backend<P> {
     next_request_id: u64,
 }
 
-impl<P: JsonPeer> Backend<P> {
+impl<P: JsonMessagePeer> Backend<P> {
     fn new_uninitialized(client: AppServerClient<P>, cwd: String) -> Self {
         Self {
             client,
@@ -293,7 +295,7 @@ impl<P: JsonPeer> Backend<P> {
         });
         Ok(BackendCommandEvidence::BindingOpened(
             BackendBindingEvidence::new(
-                "codex-app-server",
+                BACKEND_KIND,
                 backend_version,
                 BackendIdentity::new("codex.app-server/thread-binding/v1", binding_value),
                 BackendIdentity::new("codex.app-server/model-and-provider/v1", model_value),
@@ -320,16 +322,24 @@ impl<P: JsonPeer> Backend<P> {
         &mut self,
         target: &BackendResumeTarget,
     ) -> Result<BackendBindingEvidence, BackendFailure> {
-        if target.binding().backend_kind() != "codex-app-server" {
+        self.resume_binding(target.session_id(), target.binding())
+    }
+
+    fn resume_binding(
+        &mut self,
+        session_id: SessionId,
+        binding: &BackendBindingEvidence,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        if binding.backend_kind() != BACKEND_KIND {
             return Err(BackendFailure::new(
                 BackendFailureKind::Unsupported,
                 format!(
                     "Codex cannot resume backend kind `{}`",
-                    target.binding().backend_kind()
+                    binding.backend_kind()
                 ),
             ));
         }
-        let locator = target.binding().session_locator();
+        let locator = binding.session_locator();
         if locator.schema() != "codex.app-server/thread-locator/v1" {
             return Err(BackendFailure::new(
                 BackendFailureKind::Unsupported,
@@ -359,7 +369,7 @@ impl<P: JsonPeer> Backend<P> {
             json!({ "model": model, "provider": model_provider }).to_string(),
         );
         let evidence = BackendBindingEvidence::new(
-            "codex-app-server",
+            BACKEND_KIND,
             self.backend_version.clone().ok_or_else(|| {
                 protocol::protocol_failure(
                     "Codex backend version was not retained after resume initialize",
@@ -370,14 +380,14 @@ impl<P: JsonPeer> Backend<P> {
             BackendIdentity::new("codex.app-server/thread-locator/v1", resumed_thread),
             ContinuationStrategy::BackendManagedState,
         );
-        if !target.binding().same_resume_identity(&evidence) {
+        if !binding.same_resume_identity(&evidence) {
             return Err(BackendFailure::new(
                 BackendFailureKind::Session,
                 "Codex resumed a binding whose thread, Session, model, or provider identity differs from the durable Continuation Anchor",
             ));
         }
         self.session = Some(SessionBinding {
-            yo: target.session_id(),
+            yo: session_id,
             codex: resumed_thread.to_owned(),
         });
         Ok(evidence)
@@ -469,7 +479,7 @@ impl<P: JsonPeer> Backend<P> {
     }
 }
 
-impl<P: JsonPeer> BackendAdapter for Backend<P> {
+impl<P: JsonMessagePeer> BackendAdapter for Backend<P> {
     type Command = AgentCommand;
     type Event = BackendEvent;
     type ResumeTarget = BackendResumeTarget;

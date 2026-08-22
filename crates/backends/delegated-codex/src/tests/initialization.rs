@@ -1,35 +1,30 @@
 use std::time::Duration;
 
 use serde_json::json;
+use yo_core::{
+    AgentCommand, BackendBindingEvidence, BackendCommandEvidence, BackendFailureKind,
+    BackendIdentity, ContinuationStrategy,
+};
 
 use super::{
     super::client::AppServerClient,
     support::{FakePeer, backend, initialize_response, session, thread_start_response},
 };
-use crate::{
-    AgentCommand, BackendBindingEvidence, BackendCommandEvidence, BackendFailureKind,
-    BackendIdentity, BackendResumeTarget, SessionId,
-};
 
-fn resume_target(session_id: SessionId, thread_id: &str) -> BackendResumeTarget {
-    BackendResumeTarget::new(
-        session_id,
-        1,
-        BackendBindingEvidence::new(
-            "codex-app-server",
-            "codex_cli_rs/0.145.0 (recorded)",
-            BackendIdentity::new(
-                "codex.app-server/thread-binding/v1",
-                json!({ "sessionId": thread_id, "threadId": thread_id }).to_string(),
-            ),
-            BackendIdentity::new(
-                "codex.app-server/model-and-provider/v1",
-                json!({ "model": "gpt-test", "provider": "openai" }).to_string(),
-            ),
-            BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
-            crate::ContinuationStrategy::BackendManagedState,
+fn resume_binding(thread_id: &str) -> BackendBindingEvidence {
+    BackendBindingEvidence::new(
+        "codex-app-server",
+        "codex_cli_rs/0.145.0 (recorded)",
+        BackendIdentity::new(
+            "codex.app-server/thread-binding/v1",
+            json!({ "sessionId": thread_id, "threadId": thread_id }).to_string(),
         ),
-        crate::JournalSequence::new(1),
+        BackendIdentity::new(
+            "codex.app-server/model-and-provider/v1",
+            json!({ "model": "gpt-test", "provider": "openai" }).to_string(),
+        ),
+        BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
+        ContinuationStrategy::BackendManagedState,
     )
 }
 
@@ -53,7 +48,7 @@ fn initializes_before_starting_a_thread() {
     assert!(evidence.model_identity().value().contains("openai"));
     assert_eq!(
         evidence.continuation_strategy(),
-        crate::ContinuationStrategy::BackendManagedState
+        yo_core::ContinuationStrategy::BackendManagedState
     );
 
     let sent = sent.0.borrow();
@@ -84,9 +79,9 @@ fn verifies_the_handshake_without_creating_a_thread() {
 #[test]
 fn resumes_one_verified_thread_without_starting_another() {
     let (mut backend, sent) = backend([thread_start_response(2, "thread-a")]);
-    let target = resume_target(session(1), "thread-a");
-
-    let evidence = backend.resume_session(&target).unwrap();
+    let evidence = backend
+        .resume_binding(session(1), &resume_binding("thread-a"))
+        .unwrap();
 
     assert_eq!(evidence.backend_version(), "codex_cli_rs/0.146.0 (test)");
     let sent = sent.0.borrow();
@@ -113,7 +108,7 @@ fn rejects_a_resumed_thread_with_different_model_identity() {
     let (mut backend, sent) = backend([response]);
 
     let failure = backend
-        .resume_session(&resume_target(session(1), "thread-a"))
+        .resume_binding(session(1), &resume_binding("thread-a"))
         .unwrap_err();
 
     assert_eq!(failure.kind(), BackendFailureKind::Session);

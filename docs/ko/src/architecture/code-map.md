@@ -27,7 +27,8 @@ yo-cli main
 현재 구현 경계는 다음과 같다.
 
 - 프로세스 정책과 정리 순서는 `yo-cli`에 있다.
-- transport-free backend lifecycle과 evidence primitive는 `yo-backend`에 있다.
+- generic backend lifecycle, evidence, bounded child-process transport mechanism은
+  `yo-backend`에 있다.
 - Connector 중립 managed model/tool loop는 `yo-backend-managed`에 있다.
 - Session, Turn, Activity, command, event의 의미는 `yo-core`에 있다.
 - 터미널 상호작용과 화면 표시는 `yo-tui`에 있다.
@@ -44,11 +45,11 @@ yo-cli main
 |---|---|---|
 | [`yo-yaml`](https://github.com/Yon-Fandorin/yo/blob/develop/shared/yo-yaml/src/lib.rs) | 저장소의 safe-Rust YAML 직렬화 경계. 문서 하나만 허용하고 event·node·depth·scalar·anchor·alias·replay 예산을 유한하게 제한하며, 제한 안의 작은 alias를 허용하고 duplicate·merge·unknown alias·cycle을 거절한다. YAML 1.1 boolean과 `1_000` 정수 표기를 포함한 plain scalar inference도 공통으로 소유한다 | 소비자 schema, 모델 profile 상속, 저장 경로, Methexis·Librarian YAML 전환 또는 format-version 호환성 |
 
-## yo-backend: transport-free backend 기반
+## yo-backend: backend 기반
 
 | 경계 | 소유하는 책임 | 소유하지 않는 책임 |
 |---|---|---|
-| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs) | generic `BackendAdapter` lifecycle, typed polling·취소·failure 어휘, provider 중립 binding·request·outcome evidence, 크기가 제한된 semantic 또는 opaque provider-private replay evidence | Yo command·event, Session·Journal 좌표, transport·process protocol, Connector 선택 또는 concrete Provider payload 해석 |
+| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs), [`transport`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/transport/mod.rs) | generic `BackendAdapter` lifecycle, typed polling·취소·failure 어휘, provider 중립 binding·request·outcome evidence, 크기가 제한된 semantic 또는 opaque provider-private replay evidence, bounded child-process JSONL·stderr tail·request ID·deferred-message mechanism | Yo command·event, Session·Journal 좌표, host protocol 해석, Connector 선택 또는 concrete Provider payload 해석 |
 
 ## yo-cli: 프로세스 호스트
 
@@ -98,12 +99,13 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | backend 수락, semantic commit, Journal capture 순서, binding epoch와 SubmissionId 기반 operation identity 소유, provider 중립적인 binding/request/outcome evidence 검증, 완전한 continuation chain의 원자적 공개, codec으로 검증한 durable prefix에서 결정론적 Engine 복원, 재개한 backend identity 검증 뒤 full recovery snapshot 공개, 실패 시 활성 작업 종료 | provider port는 `backend/contract.rs` |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command lane, backpressure 동안 유지되는 submission identity, worker가 확정하는 수락 outcome, 용량 1의 Journal 변경 알림, 시작 취소, 종료 조율, 검증된 continuation에서 다음 Turn과 승인된 Submission identity를 복원하는 startup hydration | worker가 소유한 의미 처리는 `runtime` |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs), [`backend/evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence.rs) | `yo-backend::BackendAdapter`를 Yo의 `AgentCommand`, `BackendEvent`, durable resume target으로 고정한 `AgentBackend` specialization. Session·Journal 좌표와 exact replay-profile·schema 해석은 core에 유지한다 | generic lifecycle·evidence mechanics, concrete adapter 또는 Provider wire grammar |
-| [`backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `codex app-server` 생명주기, JSON transport와 protocol 분류, provider ID 연결, core event 변환, continuation evidence를 위한 backend/effective-model/thread identity 보존, ephemeral이 아닌 저장 thread, 최신 durable locator에 대한 검증된 `thread/resume` 한 번, worker가 소유하는 `skills/list` metadata catalog | 새 provider 동작을 노출하기 전 `backend/contract.rs`, structured dispatch 전 정확한 skill admission |
+| [`backends/delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs) | `codex app-server` 시작과 protocol 분류, provider ID 연결, core event 변환, continuation evidence를 위한 backend/effective-model/thread identity 보존, ephemeral이 아닌 저장 thread, 최신 durable locator에 대한 검증된 `thread/resume` 한 번, foundation transport 위에서 worker가 소유하는 `skills/list` metadata catalog | provider 중립 runtime 의미, 다른 delegated host 또는 structured dispatch 전 정확한 skill admission |
 | [`backends/managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | connector-neutral observation을 사용하는 provider 중립 Yo-managed model loop, semantic model/tool Activity, 직렬 validation·admission·approval·execution 순서, dispatch 전 누적 retained+current replay admission, 제한되고 엄격히 감소하는 request-cap 선택과 exact final-payload 재계산, 제한된 model round, visible refusal replay, completed visible projection과 exact replay-profile schema가 맞은 뒤에만 받는 opaque provider-private replay, Provider 분기 없이 붙이는 opaque Session-stable cache-affinity hint 하나, 응답별 정확한 binding·usage 귀속, cancellation 정리, 제한된 replay delta, pre-final context exhaustion의 typed failure와 binding latch, anchor 없는 final-delta 전용 completed non-resumable 예외 | startup model 선택, tokenizer 구현, provider-private payload 해석, semantic-admission policy, 구체적인 local tool 구현 |
 
-`yo-backend::BackendAdapter`가 재사용 가능한 transport-free port다.
+`yo-backend::BackendAdapter`가 재사용 가능한 transport-neutral port이며 같은 foundation
+crate가 host wire 의미 없이 bounded child-process mechanism을 소유한다.
 `yo-core::AgentBackend`는 associated type을 Yo 의미로 고정한 현재 provider 교체
-지점이다. Codex wire value는 `backend/codex` 아래에 있고 Connector 중립 loop는
+지점이다. Codex wire value는 `backends/delegated-codex` 아래에 있고 Connector 중립 loop는
 `yo-backend-managed`에서 이 경계를 구현한다.
 [command와 event 경계](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.command-event-boundary.md)와
 [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)가

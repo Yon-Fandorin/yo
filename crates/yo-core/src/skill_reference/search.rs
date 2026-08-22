@@ -3,7 +3,7 @@ use crate::normalized_search_key;
 
 const RESULT_CAP: usize = 40;
 
-pub(crate) fn search_candidates(
+pub fn search_skill_reference_candidates(
     inventory: &[SkillReferenceCandidate],
     query: &str,
 ) -> Vec<SkillReferenceCandidate> {

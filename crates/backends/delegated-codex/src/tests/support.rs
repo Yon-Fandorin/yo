@@ -1,13 +1,10 @@
 use std::{cell::RefCell, collections::VecDeque, num::NonZeroU64, rc::Rc, time::Duration};
 
 use serde_json::{Value, json};
+use yo_backend::transport::JsonMessagePeer;
+use yo_core::{ActivityId, ActivityRef, BackendFailure, SessionId, TurnId, TurnRef};
 
-use super::super::{
-    Backend,
-    client::AppServerClient,
-    transport::{JsonPeer, PeerPoll},
-};
-use crate::{ActivityId, ActivityRef, BackendFailure, SessionId, TurnId, TurnRef};
+use super::super::{Backend, client::AppServerClient, transport::PeerPoll};
 
 #[derive(Clone)]
 pub(super) struct Sent(pub(super) Rc<RefCell<Vec<Value>>>);
@@ -33,9 +30,9 @@ impl FakePeer {
     }
 }
 
-impl JsonPeer for FakePeer {
-    fn stop_handle(&self) -> crate::BackendStopHandle {
-        crate::BackendStopHandle::no_op()
+impl JsonMessagePeer for FakePeer {
+    fn stop_handle(&self) -> yo_core::BackendStopHandle {
+        yo_core::BackendStopHandle::no_op()
     }
 
     fn send(&mut self, message: &Value) -> Result<(), BackendFailure> {
@@ -83,13 +80,14 @@ pub(super) fn id(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap()
 }
 
-pub(super) fn submission(value: u8) -> crate::SubmissionId {
-    crate::SubmissionId::from_uuid(uuid::Builder::from_random_bytes([value; 16]).into_uuid())
+pub(super) fn submission(value: u8) -> yo_core::SubmissionId {
+    yo_core::SubmissionId::from_uuid(uuid::Builder::from_random_bytes([value; 16]).into_uuid())
         .expect("the test submission fixture is a UUIDv4")
 }
 
 pub(super) fn session(value: u64) -> SessionId {
-    crate::fixture_session(value)
+    let uuid = uuid::Uuid::from_u128(0x0189_0f00_0000_7000_8000_0000_0000_0000 | u128::from(value));
+    SessionId::from_uuid(uuid).expect("the test Session fixture is a UUIDv7")
 }
 
 pub(super) fn turn(session_id: SessionId, value: u64) -> TurnRef {

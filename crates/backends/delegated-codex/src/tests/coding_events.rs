@@ -1,10 +1,10 @@
 use serde_json::json;
-
-use super::support::{activity, backend, session, submission, thread_start_response, turn};
-use crate::{
+use yo_core::{
     ActivityKind, ActivityOutcome, AgentCommand, AgentEvent, AgentRuntime, BackendFailureKind,
     RuntimePoll, TurnOutcome, UserInput,
 };
+
+use super::support::{activity, backend, session, submission, thread_start_response, turn};
 
 // Codex thread/turn/item 식별자가 yo 식별자로 변환되고 streaming tool Activity와
 // 완료된 Turn이 같은 의미 순서로 runtime에서 관찰되는지 확인한다.
@@ -107,14 +107,16 @@ fn maps_a_coding_turn_into_semantic_events() {
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::ActivityUpdated {
             activity: activity(active_turn, 1),
-            update: crate::ActivityUpdate::TextDelta("cargo test".to_owned()),
+            update: yo_core::ActivityUpdate::TextDelta("cargo test".to_owned()),
         })
     );
     assert_eq!(
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::ActivityUpdated {
             activity: activity(active_turn, 1),
-            update: crate::ActivityUpdate::TextSnapshot("$ cargo test\ncargo test\nok".to_owned()),
+            update: yo_core::ActivityUpdate::TextSnapshot(
+                "$ cargo test\ncargo test\nok".to_owned()
+            ),
         })
     );
     assert_eq!(
@@ -135,7 +137,7 @@ fn maps_a_coding_turn_into_semantic_events() {
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::ActivityUpdated {
             activity: activity(active_turn, 2),
-            update: crate::ActivityUpdate::TextSnapshot("update: src/lib.rs".to_owned()),
+            update: yo_core::ActivityUpdate::TextSnapshot("update: src/lib.rs".to_owned()),
         })
     );
     assert_eq!(
@@ -310,7 +312,7 @@ fn folds_an_error_notification_into_the_failed_turn() {
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::TurnFinished {
             turn: active_turn,
-            outcome: TurnOutcome::Failed(crate::Failure::new("model stream failed")),
+            outcome: TurnOutcome::Failed(yo_core::Failure::new("model stream failed")),
         })
     );
 }

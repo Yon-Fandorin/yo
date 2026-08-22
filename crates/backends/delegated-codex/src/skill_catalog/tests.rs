@@ -1,7 +1,8 @@
 use std::sync::mpsc;
 
+use yo_core::{SkillAvailability, SkillReferenceScope, SkillReferenceSearchRequest};
+
 use super::{SkillInterface, SkillMetadata, WireScope, candidate_from_wire, newest_request};
-use crate::{SkillAvailability, SkillReferenceScope, SkillReferenceSearchRequest};
 
 // Codex wire scope `repo`는 경로 추측 없이 Workspace 출처로 매핑되고,
 // interface의 짧은 이름과 설명이 일반 메타데이터보다 우선한다.

@@ -1,15 +1,13 @@
-use std::{
-    collections::VecDeque,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
+use yo_backend::transport::{JsonMessagePeer, JsonRpcMailbox};
+use yo_core::{BackendFailure, BackendFailureKind, BackendStopHandle};
 
 use super::{
     protocol::{self, Incoming},
-    transport::{JsonPeer, PeerPoll},
+    transport::PeerPoll,
 };
-use crate::{BackendFailure, BackendFailureKind, BackendStopHandle};
 
 pub(super) enum ClientPoll {
     Pending,
@@ -20,8 +18,7 @@ pub(super) enum ClientPoll {
 pub(super) struct AppServerClient<P> {
     peer: P,
     request_timeout: Duration,
-    next_request_id: u64,
-    pending: VecDeque<Incoming>,
+    mailbox: JsonRpcMailbox<Incoming>,
 }
 
 pub(super) struct CallResult {
@@ -29,13 +26,12 @@ pub(super) struct CallResult {
     pub(super) result: Value,
 }
 
-impl<P: JsonPeer> AppServerClient<P> {
+impl<P: JsonMessagePeer> AppServerClient<P> {
     pub(super) fn new(peer: P, request_timeout: Duration) -> Self {
         Self {
             peer,
             request_timeout,
-            next_request_id: 1,
-            pending: VecDeque::new(),
+            mailbox: JsonRpcMailbox::new("Codex app-server"),
         }
     }
 
@@ -66,11 +62,7 @@ impl<P: JsonPeer> AppServerClient<P> {
         method: &str,
         params: Value,
     ) -> Result<CallResult, BackendFailure> {
-        let id = self.next_request_id;
-        self.next_request_id = self
-            .next_request_id
-            .checked_add(1)
-            .ok_or_else(|| protocol::protocol_failure("Codex request id space was exhausted"))?;
+        let id = self.mailbox.next_request_id()?;
         self.peer.send(&protocol::request(id, method, params))?;
         let deadline = Instant::now() + self.request_timeout;
 
@@ -122,16 +114,7 @@ impl<P: JsonPeer> AppServerClient<P> {
                         "unexpected Codex response id {response_id}; awaited {id}"
                     )));
                 },
-                message => {
-                    const MAX_PENDING_MESSAGES: usize = 1024;
-                    if self.pending.len() == MAX_PENDING_MESSAGES {
-                        return Err(BackendFailure::new(
-                            BackendFailureKind::Unavailable,
-                            "Codex event backlog filled while awaiting a response",
-                        ));
-                    }
-                    self.pending.push_back(message);
-                },
+                message => self.mailbox.push(message)?,
             }
         }
     }
@@ -150,7 +133,7 @@ impl<P: JsonPeer> AppServerClient<P> {
     }
 
     pub(super) fn poll(&mut self) -> Result<ClientPoll, BackendFailure> {
-        if let Some(message) = self.pending.pop_front() {
+        if let Some(message) = self.mailbox.pop() {
             return Ok(ClientPoll::Message(message));
         }
         match self.peer.try_receive()? {

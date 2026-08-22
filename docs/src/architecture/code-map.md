@@ -27,7 +27,8 @@ yo-cli main
 The current implementation seams are:
 
 - process policy and cleanup order live in `yo-cli`;
-- transport-free backend lifecycle and evidence primitives live in `yo-backend`;
+- generic backend lifecycle, evidence, and bounded child-process transport mechanisms live in
+  `yo-backend`;
 - the Connector-neutral managed model/tool loop lives in `yo-backend-managed`;
 - Session, Turn, Activity, command, and event meaning live in `yo-core`; and
 - terminal interaction and presentation live in `yo-tui`.
@@ -43,11 +44,11 @@ and [UI-only crate boundary](https://github.com/Yon-Fandorin/yo/blob/develop/met
 |---|---|---|
 | [`yo-yaml`](https://github.com/Yon-Fandorin/yo/blob/develop/shared/yo-yaml/src/lib.rs) | The workspace's safe-Rust YAML serialization boundary: exactly one document, finite event/node/depth/scalar/anchor/alias/replay budgets, bounded small aliases, duplicate/merge/unknown-alias/cycle rejection, and shared plain-scalar inference including YAML 1.1 booleans and `1_000` as an integer | Consumer schemas, model-profile inheritance, storage paths, Methexis or Librarian YAML migration, or format-version compatibility |
 
-## yo-backend: transport-free backend foundation
+## yo-backend: backend foundation
 
 | Boundary | Owns | Does not own |
 |---|---|---|
-| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs) | The generic `BackendAdapter` lifecycle, typed polling/cancellation/failure vocabulary, provider-neutral binding/request/outcome evidence, and bounded semantic or opaque provider-private replay evidence | Yo commands, events, Session or Journal coordinates, transport/process protocols, Connector selection, or concrete Provider payload interpretation |
+| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs), [`transport`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/transport/mod.rs) | The generic `BackendAdapter` lifecycle, typed polling/cancellation/failure vocabulary, provider-neutral binding/request/outcome evidence, bounded semantic or opaque provider-private replay evidence, and bounded child-process JSONL, stderr-tail, request-ID, and deferred-message mechanics | Yo commands, events, Session or Journal coordinates, host protocol interpretation, Connector selection, or concrete Provider payload interpretation |
 
 ## yo-cli: process host
 
@@ -97,12 +98,13 @@ new shared capability.
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | Ordering backend acceptance, semantic commit, and Journal capture; owning binding epochs and SubmissionId-derived operation identities; validating provider-neutral binding/request/outcome evidence; atomically publishing complete continuation chains; reconstructing a deterministic Engine from a codec-validated durable prefix; verifying a resumed backend identity before publishing a full recovery snapshot; closing active work on failure | `backend/contract.rs` for the provider port |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | Nonblocking frontend access, bounded command lanes, stable submission identity across backpressure, worker-owned acceptance outcomes, a capacity-one Journal-change notification, startup cancellation, shutdown coordination, and startup hydration of the next Turn and admitted Submission identities from a validated continuation | `runtime` for worker-owned semantics |
 | [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs), [`backend/evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence.rs) | Specializing `yo-backend::BackendAdapter` as `AgentBackend` with Yo's `AgentCommand`, `BackendEvent`, and durable resume target; retaining Session and Journal coordinates plus exact replay-profile/schema interpretation in core | Generic lifecycle/evidence mechanics, a concrete adapter, or Provider wire grammar |
-| [`backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `codex app-server` lifecycle, JSON transport and protocol classification, provider-ID correlation, translation into core events, retained backend/effective-model/thread identity for continuation evidence, persisted rather than ephemeral threads, one verified `thread/resume` for the newest durable locator, and a worker-owned `skills/list` metadata catalog | `backend/contract.rs` before exposing new provider behavior; exact skill admission before structured dispatch |
+| [`backends/delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs) | `codex app-server` launch and protocol classification, provider-ID correlation, translation into core events, retained backend/effective-model/thread identity for continuation evidence, persisted rather than ephemeral threads, one verified `thread/resume` for the newest durable locator, and a worker-owned `skills/list` metadata catalog over the foundation transport | Provider-neutral runtime meaning, another delegated host, or exact skill admission before structured dispatch |
 | [`backends/managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | The provider-neutral Yo-managed model loop over connector-neutral observations, semantic model/tool Activities, serial validation-admission-approval-execution ordering, cumulative retained-plus-current replay admission before every dispatch, bounded strictly decreasing request-cap selection and exact final-payload recounting, bounded model rounds, visible refusal replay, opaque provider-private replay admitted only after its completed visible projection and exact replay-profile schema match, one opaque Session-stable cache-affinity hint attached without a Provider branch, exact per-response binding and usage attribution, cancellation cleanup, bounded replay deltas, typed pre-final context-exhaustion failure with binding latching, and the final-delta-only completed non-resumable exception without an anchor | Startup model selection, tokenizer implementations, provider-private payload interpretation, semantic-admission policy, or concrete local tool implementations |
 
-`yo-backend::BackendAdapter` is the reusable transport-free port.
+`yo-backend::BackendAdapter` is the reusable transport-neutral port, while the
+same foundation crate owns bounded child-process mechanics without host wire meaning.
 `yo-core::AgentBackend` closes its associated types over Yo semantics and is the
-current provider seam; Codex wire values live under `backend/codex`, while the
+current provider seam; Codex wire values live under `backends/delegated-codex`, while the
 Connector-neutral loop implements that seam from `yo-backend-managed`. The
 [command and event boundary](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.command-event-boundary.md)
 and [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)

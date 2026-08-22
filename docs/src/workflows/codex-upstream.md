@@ -6,7 +6,7 @@ app-server. This is operational validation guidance, not a second owner for the
 adapter contract.
 
 The exact admitted minor lines live beside the compatibility check in
-[`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/protocol.rs).
+[`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/protocol.rs).
 The behavioral boundary remains owned by the
 [Codex app-server KnowledgeUnit](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md).
 Do not copy the current version set into this guide.
@@ -56,7 +56,7 @@ Compare only the wire surface yo consumes:
 
 An additive field is not automatically safe, and a large unrelated schema diff
 is not automatically blocking. Trace each relevant difference through
-`backend/codex`, its deterministic tests, and the provider-neutral event it
+`backends/delegated-codex`, its deterministic tests, and the provider-neutral event it
 produces. Keep generated schemas as disposable evidence unless a separate
 Slice demonstrates that a tracked schema is needed.
 

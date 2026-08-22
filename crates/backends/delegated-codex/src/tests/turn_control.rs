@@ -1,10 +1,10 @@
 use serde_json::json;
-
-use super::support::{activity, backend, session, submission, thread_start_response, turn};
-use crate::{
+use yo_core::{
     ActivityKind, ActivityOutcome, AgentCommand, AgentEvent, AgentRuntime, RuntimePoll,
     TurnOutcome, UserInput,
 };
+
+use super::support::{activity, backend, session, submission, thread_start_response, turn};
 
 // steer와 interrupt는 새 Turn을 만들지 않고 현재 Codex Turn 식별자를 정확히 사용하며,
 // steer 응답도 요청한 동일 Turn을 수락했는지 검증하는지 확인한다.
@@ -336,7 +336,7 @@ fn interrupted_turn_state_isolated_from_a_later_item() {
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::ActivityUpdated {
             activity: activity(second_turn, 2),
-            update: crate::ActivityUpdate::TextSnapshot("done".to_owned()),
+            update: yo_core::ActivityUpdate::TextSnapshot("done".to_owned()),
         })
     );
     assert_eq!(

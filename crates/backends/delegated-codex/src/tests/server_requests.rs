@@ -1,10 +1,10 @@
 use serde_json::json;
-
-use super::support::{activity, backend, id, session, submission, thread_start_response, turn};
-use crate::{
+use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand, AgentEvent,
     AgentRuntime, ApprovalDecision, BackendFailureKind, RequestId, RuntimePoll, UserInput,
 };
+
+use super::support::{activity, backend, id, session, submission, thread_start_response, turn};
 
 // server approval request를 상관관계 Activity로 노출하고 사용자 결정을 원래 JSON-RPC
 // id에 응답한 뒤 request와 response Activity를 각각 완료하는지 확인한다.
@@ -60,7 +60,7 @@ fn correlates_an_approval_round_trip() {
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::ActivityUpdated {
             activity: request.activity(),
-            update: crate::ActivityUpdate::TextSnapshot(
+            update: yo_core::ActivityUpdate::TextSnapshot(
                 "$ cargo test\nReason: requires workspace execution".to_owned()
             ),
         })

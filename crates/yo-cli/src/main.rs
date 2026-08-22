@@ -330,11 +330,12 @@ fn run_agent_generation(
         };
         let (backend, skill_references): (
             Box<dyn yo_core::AgentBackend + Send>,
-            Option<yo_core::CodexSkillReferenceProvider>,
+            Option<yo_backend_delegated_codex::CodexSkillReferenceProvider>,
         ) = match &selection {
             model::StartupBackend::Codex => {
-                let codex_config = yo_core::CodexBackendConfig::new(&session_cwd);
-                let skills = match yo_core::CodexSkillReferenceProvider::start(
+                let codex_config =
+                    yo_backend_delegated_codex::CodexBackendConfig::new(&session_cwd);
+                let skills = match yo_backend_delegated_codex::CodexSkillReferenceProvider::start(
                     codex_config.clone(),
                     workspace_host_id,
                 ) {
@@ -352,7 +353,7 @@ fn run_agent_generation(
                         return Err(AppError::single("starting Codex skill discovery", error));
                     },
                 };
-                let backend = match yo_core::CodexBackend::spawn(codex_config) {
+                let backend = match yo_backend_delegated_codex::CodexBackend::spawn(codex_config) {
                     Ok(backend) => backend,
                     Err(error) if launch.resume_id().is_some() => {
                         drop(repository);

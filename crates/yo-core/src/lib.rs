@@ -29,8 +29,7 @@ pub use backend::{
     AgentBackend, BackendAdapter, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
     BackendOutcomeEvidence, BackendPoll, BackendRequestEvidence, BackendResumeTarget,
-    BackendScriptStep, BackendStopHandle, CodexBackend, CodexBackendConfig,
-    CodexSkillReferenceProvider, ContinuationStrategy, ModelReplay, ModelReplayBudget,
+    BackendScriptStep, BackendStopHandle, ContinuationStrategy, ModelReplay, ModelReplayBudget,
     ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool,
     ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
     provider_private_schema,
@@ -107,7 +106,7 @@ pub use session::{
 pub use skill_reference::{
     SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceProvider,
     SkillReferenceProviderPoll, SkillReferenceScope, SkillReferenceSearchRequest,
-    SkillReferenceSearchStatus, SkillReferenceSearchUpdate,
+    SkillReferenceSearchStatus, SkillReferenceSearchUpdate, search_skill_reference_candidates,
 };
 pub use tool::{
     FrozenToolRegistry, TOOL_SCHEMA_DIALECT, ToolApprovalBinding, ToolApprovalRequirement,

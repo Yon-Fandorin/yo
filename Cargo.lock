@@ -2254,6 +2254,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "yo-backend-delegated-codex"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
+ "yo-backend",
+ "yo-core",
+]
+
+[[package]]
 name = "yo-backend-managed"
 version = "0.0.0"
 dependencies = [
@@ -2279,6 +2291,7 @@ dependencies = [
  "signal-hook",
  "tiktoken-rs",
  "unicode-segmentation",
+ "yo-backend-delegated-codex",
  "yo-backend-managed",
  "yo-connector-kimi",
  "yo-connector-openai-chat-completions",

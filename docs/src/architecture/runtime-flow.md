@@ -239,10 +239,10 @@ yo-tui
 | Step | Current owner | What to follow |
 |---|---|---|
 | 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/connection.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection.rs) | `run` selects presentation options, captures the working directory and command-local configuration, reads a new Session's stored preference without creating state, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`. Resume omits the stored-preference read. |
-| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | The process host resolves invocation, stored, and operator layers, then either starts the Codex stdio transport or assembles the selected managed binding from the startup snapshots and injected tools. Both defer remote model work until the worker owns the backend. |
+| 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | The process host resolves invocation, stored, and operator layers, then either starts the Codex stdio transport or assembles the selected managed binding from the startup snapshots and injected tools. Both defer remote model work until the worker owns the backend. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` first attempts the descriptor-only Journal envelope, then sends `CreateSession` through `AgentRuntime`; storage pressure keeps both the descriptor and later activity in the recoverable volatile prefix. |
-| 5 | [`yo-core/backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | For Codex, `CreateSession` performs `initialize` and `thread/start`. The managed backend binds local exact-replay Session state without a provider request. Both let the semantic engine produce `SessionCreated`. |
+| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | For Codex, `CreateSession` performs `initialize` and `thread/start`. The managed backend binds local exact-replay Session state without a provider request. Both let the semantic engine produce `SessionCreated`. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode` acquires input and terminal state for the first terminal ownership generation, then enters the already selected presentation mode. |
 
 If termination arrives during the handshake, `AgentSession::start_inner`
@@ -386,9 +386,9 @@ completed Surface
 Inline or Fullscreen presenter
 ```
 
-`yo-backend` defines this transport-free lifecycle and its bounded evidence
-values without importing Yo commands, events, Session or Journal coordinates,
-or Provider wire types. `yo-core::AgentBackend` specializes that generic port
+`yo-backend` defines this transport-neutral lifecycle, bounded evidence, and bounded
+child-process JSONL/mailbox mechanics without importing Yo commands, events, Session or
+Journal coordinates, or host wire types. `yo-core::AgentBackend` specializes that generic port
 with `AgentCommand`, `BackendEvent`, and `BackendResumeTarget`; core therefore
 continues to own semantic validation, durable coordinates, and exact
 replay-profile/schema interpretation.

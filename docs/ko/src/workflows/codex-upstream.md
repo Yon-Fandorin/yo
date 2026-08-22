@@ -5,7 +5,7 @@
 이는 운영 검증 가이드이며 adapter 계약의 두 번째 소유자가 아니다.
 
 정확히 허용한 minor line은 compatibility check와 같은 위치인
-[`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/protocol.rs)가
+[`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/protocol.rs)가
 소유한다. 동작 경계는 계속
 [Codex app-server KnowledgeUnit](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)이
 소유한다. 현재 version 목록을 이 가이드에 복사하지 않는다.
@@ -54,7 +54,7 @@ yo가 사용하는 wire surface만 비교한다.
 - process shutdown과 transport closure
 
 field가 추가됐다고 항상 안전한 것은 아니며, 관련 없는 큰 schema diff가
-항상 blocker인 것도 아니다. 관련 있는 각 차이를 `backend/codex`, 결정론적
+항상 blocker인 것도 아니다. 관련 있는 각 차이를 `backends/delegated-codex`, 결정론적
 test, 이 adapter가 만드는 provider 중립 event까지 따라간다. 별도 Slice에서
 tracked schema의 필요성을 입증하지 않았다면 생성된 schema는 일회성 증거로
 유지한다.

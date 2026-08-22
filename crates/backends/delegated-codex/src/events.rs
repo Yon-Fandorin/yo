@@ -1,17 +1,17 @@
 use serde_json::Value;
+use yo_backend::transport::JsonMessagePeer;
+use yo_core::{
+    ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityUpdate, BackendEvent,
+    BackendFailure, BackendFailureKind, BackendOutcomeEvidence, BackendPoll, Failure, TurnOutcome,
+};
 
 use super::{
     ApprovalBinding, Backend, ItemBinding,
     client::ClientPoll,
     protocol::{self, Incoming},
-    transport::JsonPeer,
-};
-use crate::{
-    ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityUpdate, BackendEvent,
-    BackendFailure, BackendFailureKind, BackendOutcomeEvidence, BackendPoll, Failure, TurnOutcome,
 };
 
-impl<P: JsonPeer> Backend<P> {
+impl<P: JsonMessagePeer> Backend<P> {
     pub(super) fn poll_client_message(&mut self) -> Result<BackendPoll, BackendFailure> {
         loop {
             let incoming = match self.client.poll()? {

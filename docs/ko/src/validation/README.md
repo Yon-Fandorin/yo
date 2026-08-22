@@ -29,12 +29,12 @@ command, host, credential, platform을 기록한다.
 | Session, Turn, Activity, engine, runtime 의미 | `cargo test -p yo-core` | `crates/yo-core/src/tests`와 소유 모듈 test |
 | typed input span, submission identity, 고정된 v1의 structured-reference 거절 | `cargo test -p yo-core input::tests`와 `cargo test -p yo-core journal::codec` | `crates/yo-core/src/input/tests.rs`와 Journal wire-compatibility test |
 | Agent-session admission, concurrency, 시작, 종료 | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
-| transport-free backend lifecycle 또는 evidence 추출 | `cargo test --locked -p yo-backend` 뒤 `cargo test --locked -p yo-core backend::evidence`와 `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, `yo-core` specialization, Journal wire·recovery 호환성 test |
-| Codex protocol 변환이나 provider ID 연결 | `cargo test -p yo-core backend::codex::tests` | `crates/yo-core/src/backend/codex/tests.rs` |
+| backend lifecycle, evidence 또는 bounded child-process transport 추출 | `cargo test --locked -p yo-backend` 뒤 `cargo test --locked -p yo-core backend::evidence`와 `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, `yo-core` specialization, Journal wire·recovery 호환성 test |
+| Codex protocol 변환이나 provider ID 연결 | `cargo test --locked -p yo-backend-delegated-codex` | `crates/backends/delegated-codex/src/tests.rs` |
 | 해석된 input, 편집, paste, binding, 종료 gesture | `cargo test -p yo-tui input::` | `yo-tui/src/input` 곁의 test |
 | prompt 줄 바꿈, cursor 표시, viewport | `cargo test -p yo-tui prompt::` | `yo-tui/src/prompt` 곁의 test |
 | `@` trigger, stale 결과, 선택 치환, local 순위, Git ignore 탐색 | `cargo test -p yo-tui workspace_reference`와 `cargo test -p yo-core workspace_reference` | `yo-tui/src/prompt/workspace_reference.rs`와 `yo-core/src/workspace_reference` |
-| `$` trigger, Codex catalog decode, scope filtering, 비활성 행, typed skill 선택 | `cargo test -p yo-tui skill_reference`, `cargo test -p yo-core skill_reference`, `cargo test -p yo-core backend::codex::skill_catalog` | `yo-tui/src/prompt/skill_reference`, `yo-core/src/skill_reference`, `yo-core/src/backend/codex/skill_catalog.rs` |
+| `$` trigger, Codex catalog decode, scope filtering, 비활성 행, typed skill 선택 | `cargo test -p yo-tui skill_reference`, `cargo test -p yo-core skill_reference`, `cargo test -p yo-backend-delegated-codex skill_catalog` | `yo-tui/src/prompt/skill_reference`, `yo-core/src/skill_reference`, `backends/delegated-codex/src/skill_catalog.rs` |
 | 대화 기록 item, streaming revision, scroll | `cargo test -p yo-tui transcript::` | `yo-tui/src/transcript` 곁의 test |
 | shell 조합, layout, Surface, Unicode 너비, text flow | `cargo test -p yo-tui` | 소유 `yo-tui` 모듈 곁의 test |
 | ANSI operation이나 표시 mode 정책 | `cargo test -p yo-tui terminal::` | `yo-tui/src/terminal` 아래 test |

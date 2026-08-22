@@ -1,7 +1,6 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
-
-use crate::{BackendFailure, BackendFailureKind};
+use yo_core::{BackendFailure, BackendFailureKind};
 
 const SUPPORTED_CODEX_MAJOR: u64 = 0;
 const SUPPORTED_CODEX_MINORS: &[u64] = &[145, 146];

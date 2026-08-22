@@ -265,8 +265,10 @@ fn verify_local_codex() -> Result<(), AppError> {
 fn verify_local_codex_at(workspace: &Path) -> Result<(), AppError> {
     let _workspace_host_id = storage::open_default_host_identity()
         .map_err(|error| AppError::single("opening the stable workspace Host identity", error))?;
-    yo_core::CodexBackend::verify(yo_core::CodexBackendConfig::new(workspace))
-        .map_err(|error| AppError::single("verifying Local Codex", error))
+    yo_backend_delegated_codex::CodexBackend::verify(
+        yo_backend_delegated_codex::CodexBackendConfig::new(workspace),
+    )
+    .map_err(|error| AppError::single("verifying Local Codex", error))
 }
 
 fn display_target(target: Option<&StartupTarget>) -> String {
