@@ -21,7 +21,7 @@ use transport::{JsonPeer, StdioPeer};
 
 use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentBackend, AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
+    AgentCommand, ApprovalDecision, BackendAdapter, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
     BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
     ContinuationStrategy, RequestId, SessionId, TurnRef,
@@ -85,7 +85,11 @@ impl CodexBackend {
     }
 }
 
-impl AgentBackend for CodexBackend {
+impl BackendAdapter for CodexBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         self.inner.client.stop_handle()
     }
@@ -465,7 +469,11 @@ impl<P: JsonPeer> Backend<P> {
     }
 }
 
-impl<P: JsonPeer> AgentBackend for Backend<P> {
+impl<P: JsonPeer> BackendAdapter for Backend<P> {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         self.client.stop_handle()
     }

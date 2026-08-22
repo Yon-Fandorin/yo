@@ -6,8 +6,8 @@ mod scripted;
 
 pub use codex::{CodexBackend, CodexBackendConfig, CodexSkillReferenceProvider};
 pub use contract::{
-    AgentBackend, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendPoll, BackendStopHandle,
+    AgentBackend, BackendAdapter, BackendCapabilities, BackendEvent, BackendFailure,
+    BackendFailureKind, BackendPoll, BackendStopHandle,
 };
 pub use evidence::{
     BackendBindingEvidence, BackendCommandEvidence, BackendIdentity, BackendOutcomeEvidence,
@@ -16,7 +16,8 @@ pub use evidence::{
     ModelReplayTool, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile,
 };
 pub(crate) use evidence::{
-    ProviderPrivateReplayPayload, validate_provider_private_replay_sequence,
+    ProviderPrivateReplayPayload, provider_private_schema, replay_profile_id,
+    validate_provider_private_replay_sequence,
 };
 pub use native::{
     ModelRequestObserver, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,

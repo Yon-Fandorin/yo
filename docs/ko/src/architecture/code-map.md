@@ -19,12 +19,14 @@ yo-cli main
         ↕ bounded command lane + 합쳐지는 Journal 변경 lane
     worker-owned AgentRuntime
         ├── AgentEngine
-        └── AgentBackend
+        └── yo-core AgentBackend specialization
+                ↕ yo-backend BackendAdapter + 중립 evidence
 ```
 
 현재 구현 경계는 다음과 같다.
 
 - 프로세스 정책과 정리 순서는 `yo-cli`에 있다.
+- transport-free backend lifecycle과 evidence primitive는 `yo-backend`에 있다.
 - Session, Turn, Activity, command, event의 의미는 `yo-core`에 있다.
 - 터미널 상호작용과 화면 표시는 `yo-tui`에 있다.
 
@@ -39,6 +41,12 @@ yo-cli main
 | 크레이트 | 소유하는 책임 | 소유하지 않는 책임 |
 |---|---|---|
 | [`yo-yaml`](https://github.com/Yon-Fandorin/yo/blob/develop/shared/yo-yaml/src/lib.rs) | 저장소의 safe-Rust YAML 직렬화 경계. 문서 하나만 허용하고 event·node·depth·scalar·anchor·alias·replay 예산을 유한하게 제한하며, 제한 안의 작은 alias를 허용하고 duplicate·merge·unknown alias·cycle을 거절한다. YAML 1.1 boolean과 `1_000` 정수 표기를 포함한 plain scalar inference도 공통으로 소유한다 | 소비자 schema, 모델 profile 상속, 저장 경로, Methexis·Librarian YAML 전환 또는 format-version 호환성 |
+
+## yo-backend: transport-free backend 기반
+
+| 경계 | 소유하는 책임 | 소유하지 않는 책임 |
+|---|---|---|
+| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs) | generic `BackendAdapter` lifecycle, typed polling·취소·failure 어휘, provider 중립 binding·request·outcome evidence, 크기가 제한된 semantic 또는 opaque provider-private replay evidence | Yo command·event, Session·Journal 좌표, transport·process protocol, Connector 선택 또는 concrete Provider payload 해석 |
 
 ## yo-cli: 프로세스 호스트
 
@@ -87,12 +95,13 @@ signal인지 알 필요가 없는 typed `TerminationEvent`만 받는다.
 | [`session_repository`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/session_repository/mod.rs) | 저장 형식에 독립적인 append·replay·저장 Session 탐색/읽기 포트, snapshot 복구 gate, typed storage pressure, 첫 Session-single-writer versioned-JSONL 로컬 구현. 여러 process가 안정적인 root 하나를 함께 열고 서로 다른 Session을 동시에 쓸 수 있다. Writer-capable instance마다 legacy compatibility shared guard를 유지하고, Session 하나를 load하기 전에 exclusive lease를 얻으며, 최종 용량 확인과 physical append 동안에만 짧은 root coordinator를 얻는다. 현재 physical `v1` envelope는 checksummed discovery summary를 가진다. `LocalSessionReader`는 writer lease나 변경 없이 기존 저장소를 열고 Session마다 검증한 tail envelope 하나로 목록을 만들며, 존재 여부를 포함해 한 시점으로 고정된 history를 읽는다. `read_stored_session`은 파일 없음과 파일은 있지만 complete envelope가 없음을 구분하고, physical envelope와 semantic recovery를 검증하고 저장 전용 message segment를 semantic snapshot으로 합치며, message-recovery interruption, physical sequence를 포함한 최초 typed discovery mismatch, `v1`만으로는 종료 뒤 durability continuity를 관찰할 수 없다는 사실을 보존한다. 같은 검증된 recovery는 durable backend correlation fact 전체에서 frontend 독립적인 payload-free Request trace를 Journal 순서로 도출하며, physical envelope나 Request Audit payload는 노출하지 않는다. semantic recovery가 correlation chain을 증명한 뒤에만 binding epoch와 Continuation Anchor가 discovery에 들어간다. 저장 history를 읽을 때도 각 physical commit 지점에서 같은 상태를 다시 도출하여 summary가 빠졌거나 모순되면 거부한다. `read_stored_session_continuation`은 변경 없이 후보를 검증하고, `recover_stored_session_continuation`은 Session writer lease 안에서 같은 recovery를 반복한 뒤 descriptor, 최신 durable Anchor와 binding evidence, 복원할 semantic prefix와 frontend observation, 다음 Turn identity, 이미 승인한 Submission identity를 typed unit 하나로 반환한다. local `reader`와 `file` 모듈은 관찰과 변경 책임을 나눈다. `JournalRepository`는 candidate를 durable semantic prefix와 검증하고 semantic commit 하나를 physical append 하나와 조합 | provider-native resume, remote storage나 transport, Request Audit persistence, database나 compression 대안 |
 | [`runtime`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/runtime/mod.rs) | backend 수락, semantic commit, Journal capture 순서, binding epoch와 SubmissionId 기반 operation identity 소유, provider 중립적인 binding/request/outcome evidence 검증, 완전한 continuation chain의 원자적 공개, codec으로 검증한 durable prefix에서 결정론적 Engine 복원, 재개한 backend identity 검증 뒤 full recovery snapshot 공개, 실패 시 활성 작업 종료 | provider port는 `backend/contract.rs` |
 | [`agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | frontend를 막지 않는 접근, 크기가 제한된 command lane, backpressure 동안 유지되는 submission identity, worker가 확정하는 수락 outcome, 용량 1의 Journal 변경 알림, 시작 취소, 종료 조율, 검증된 continuation에서 다음 Turn과 승인된 Submission identity를 복원하는 startup hydration | worker가 소유한 의미 처리는 `runtime` |
-| [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs) | provider capability, command, semantic event, opaque binding/request/outcome evidence, polling, 취소, failure kind, 명시적 정리. evidence는 adapter fact만 가지며 epoch, operation ID, Journal 좌표를 정하지 않는다 | 구체적인 adapter |
+| [`backend/contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/contract.rs), [`backend/evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/evidence.rs) | `yo-backend::BackendAdapter`를 Yo의 `AgentCommand`, `BackendEvent`, durable resume target으로 고정한 `AgentBackend` specialization. Session·Journal 좌표와 exact replay-profile·schema 해석은 core에 유지한다 | generic lifecycle·evidence mechanics, concrete adapter 또는 Provider wire grammar |
 | [`backend/codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/codex/mod.rs) | `codex app-server` 생명주기, JSON transport와 protocol 분류, provider ID 연결, core event 변환, continuation evidence를 위한 backend/effective-model/thread identity 보존, ephemeral이 아닌 저장 thread, 최신 durable locator에 대한 검증된 `thread/resume` 한 번, worker가 소유하는 `skills/list` metadata catalog | 새 provider 동작을 노출하기 전 `backend/contract.rs`, structured dispatch 전 정확한 skill admission |
 | [`backend/native`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/backend/native/mod.rs) | connector-neutral observation을 사용하는 provider 중립 Yo-managed model loop, semantic model/tool Activity, 직렬 validation·admission·approval·execution 순서, dispatch 전 누적 retained+current replay admission, 제한되고 엄격히 감소하는 request-cap 선택과 exact final-payload 재계산, 제한된 model round, visible refusal replay, completed visible projection과 exact replay-profile schema가 맞은 뒤에만 받는 opaque provider-private replay, Provider 분기 없이 붙이는 opaque Session-stable cache-affinity hint 하나, 응답별 정확한 binding·usage 귀속, cancellation 정리, 제한된 replay delta, pre-final context exhaustion의 typed failure와 binding latch, anchor 없는 final-delta 전용 completed non-resumable 예외 | startup model 선택, tokenizer 구현, provider-private payload 해석, semantic-admission policy, 구체적인 local tool 구현 |
 
-`AgentBackend`가 현재 provider 교체 지점이며 Codex wire value는
-`backend/codex` 아래에 있다.
+`yo-backend::BackendAdapter`가 재사용 가능한 transport-free port다.
+`yo-core::AgentBackend`는 associated type을 Yo 의미로 고정한 현재 provider 교체
+지점이며 Codex wire value는 `backend/codex` 아래에 있다.
 [command와 event 경계](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.runtime.command-event-boundary.md)와
 [Codex app-server adapter](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.backend.codex-app-server.md)가
 각 동작 제약을 소유한다.

@@ -344,7 +344,8 @@ AgentWorker
     ↓ AgentCommand::StartTurn or SteerTurn
 AgentRuntime
     ├── AgentEngine으로 검증
-    ├── AgentBackend를 통해 수락
+    ├── yo-core AgentBackend를 통해 수락
+    │       ↕ yo-backend BackendAdapter + 중립 evidence
     ├── AgentEngine으로 commit
     └── command와 event를 SessionJournal에 추가
           ↓
@@ -365,6 +366,12 @@ completed Surface
     ↓
 Inline 또는 Fullscreen presenter
 ```
+
+`yo-backend`는 Yo command·event, Session·Journal 좌표, Provider wire type을
+가져오지 않고 이 transport-free lifecycle과 bounded evidence 값을 정의한다.
+`yo-core::AgentBackend`가 generic port를 `AgentCommand`, `BackendEvent`,
+`BackendResumeTarget`으로 고정하므로 semantic validation, durable 좌표,
+exact replay-profile·schema 해석은 계속 core가 소유한다.
 
 조사할 때 유용한 지점은 다음과 같다.
 

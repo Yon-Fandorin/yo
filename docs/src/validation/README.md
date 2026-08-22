@@ -29,6 +29,7 @@ the assertion or silently skipping it.
 | Session, Turn, Activity, engine, or runtime semantics | `cargo test -p yo-core` | `crates/yo-core/src/tests` and the owning module tests |
 | Typed input spans, submission identity, or fixed-v1 structured-reference rejection | `cargo test -p yo-core input::tests` and `cargo test -p yo-core journal::codec` | `crates/yo-core/src/input/tests.rs` and Journal wire-compatibility tests |
 | Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
+| Transport-free backend lifecycle or evidence extraction | `cargo test --locked -p yo-backend` followed by `cargo test --locked -p yo-core backend::evidence` and `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, the `yo-core` specialization, and Journal wire/recovery compatibility tests |
 | Codex protocol translation or provider-ID correlation | `cargo test -p yo-core backend::codex::tests` | `crates/yo-core/src/backend/codex/tests.rs` |
 | Decoded input, editing, paste, bindings, or exit gestures | `cargo test -p yo-tui input::` | Tests beside `yo-tui/src/input` |
 | Prompt wrapping, cursor visibility, or viewport behavior | `cargo test -p yo-tui prompt::` | Tests beside `yo-tui/src/prompt` |

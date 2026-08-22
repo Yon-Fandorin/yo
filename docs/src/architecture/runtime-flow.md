@@ -363,7 +363,8 @@ AgentWorker
     ↓ AgentCommand::StartTurn or SteerTurn
 AgentRuntime
     ├── validate with AgentEngine
-    ├── accept through AgentBackend
+    ├── accept through yo-core AgentBackend
+    │       ↕ yo-backend BackendAdapter + neutral evidence
     ├── commit with AgentEngine
     └── append command and events to SessionJournal
           ↓
@@ -384,6 +385,13 @@ completed Surface
     ↓
 Inline or Fullscreen presenter
 ```
+
+`yo-backend` defines this transport-free lifecycle and its bounded evidence
+values without importing Yo commands, events, Session or Journal coordinates,
+or Provider wire types. `yo-core::AgentBackend` specializes that generic port
+with `AgentCommand`, `BackendEvent`, and `BackendResumeTarget`; core therefore
+continues to own semantic validation, durable coordinates, and exact
+replay-profile/schema interpretation.
 
 The useful inspection points are:
 

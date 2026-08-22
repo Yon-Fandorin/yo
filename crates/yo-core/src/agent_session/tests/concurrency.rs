@@ -17,10 +17,10 @@ use super::{
     support::{next_poll, session, start_app, turn},
 };
 use crate::{
-    AgentBackend, AgentCommand, AgentEvent, BackendCapabilities, BackendCommandEvidence,
-    BackendFailure, BackendFailureKind, BackendPoll, BackendScriptStep, BackendStopHandle,
-    RuntimeError, RuntimePoll, ScriptedBackend, SubmissionOutcome, SubmissionRejectionKind,
-    TurnOutcome, UserInput, journal::SessionJournal,
+    AgentCommand, AgentEvent, BackendAdapter, BackendCapabilities, BackendCommandEvidence,
+    BackendEvent, BackendFailure, BackendFailureKind, BackendPoll, BackendResumeTarget,
+    BackendScriptStep, BackendStopHandle, RuntimeError, RuntimePoll, ScriptedBackend,
+    SubmissionOutcome, SubmissionRejectionKind, TurnOutcome, UserInput, journal::SessionJournal,
 };
 
 // urgent interrupt가 normal lane에 이미 queue된 steer보다 먼저 실행되면 worker가 그
@@ -143,7 +143,11 @@ struct BlockingSteerBackend {
     blocked_once: bool,
 }
 
-impl AgentBackend for BlockingSteerBackend {
+impl BackendAdapter for BlockingSteerBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         BackendStopHandle::no_op()
     }
@@ -181,7 +185,11 @@ impl AgentBackend for BlockingSteerBackend {
     }
 }
 
-impl AgentBackend for ClosingCleanupBackend {
+impl BackendAdapter for ClosingCleanupBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         let stop = self.stop.clone();
         BackendStopHandle::new(move || {
@@ -213,7 +221,11 @@ impl AgentBackend for ClosingCleanupBackend {
     }
 }
 
-impl AgentBackend for StartupBlockingBackend {
+impl BackendAdapter for StartupBlockingBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         let stop = self.stop.clone();
         BackendStopHandle::new(move || {
@@ -243,7 +255,11 @@ impl AgentBackend for StartupBlockingBackend {
     }
 }
 
-impl AgentBackend for BlockingBackend {
+impl BackendAdapter for BlockingBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         let stop = self.stop.clone();
         BackendStopHandle::new(move || {

@@ -14,9 +14,10 @@ use crossterm::event::{
     Event, KeyCode as CrosstermKeyCode, KeyEvent as CrosstermKeyEvent, KeyModifiers,
 };
 use yo_core::{
-    AgentBackend, AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionError,
-    AgentSessionPoll, BackendCapabilities, BackendCommandEvidence, BackendFailure, BackendPoll,
-    BackendStopHandle, CommandAdmission, TranscriptRecord, TurnRef, UserInput,
+    AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll,
+    BackendAdapter, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
+    BackendPoll, BackendResumeTarget, BackendStopHandle, CommandAdmission, TranscriptRecord,
+    TurnRef, UserInput,
 };
 
 use crate::{
@@ -656,7 +657,11 @@ struct BlockingAgentBackend {
     blocked: bool,
 }
 
-impl AgentBackend for BlockingAgentBackend {
+impl BackendAdapter for BlockingAgentBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         BackendStopHandle::no_op()
     }

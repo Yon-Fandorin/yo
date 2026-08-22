@@ -6,10 +6,10 @@ use std::{
 };
 
 use yo_core::{
-    ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentBackend, AgentCommand, AgentEvent,
-    AgentIntent, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
-    BackendPoll, BackendScriptStep, BackendStopHandle, DurabilityGapCause, JournalDurability,
-    ScriptedBackend, SessionId, TranscriptRecord, TurnOutcome, UserInput,
+    ActivityId, ActivityKind, ActivityRef, ActivityUpdate, AgentCommand, AgentEvent, AgentIntent,
+    BackendAdapter, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
+    BackendPoll, BackendResumeTarget, BackendScriptStep, BackendStopHandle, DurabilityGapCause,
+    JournalDurability, ScriptedBackend, SessionId, TranscriptRecord, TurnOutcome, UserInput,
     session_repository::{
         AppendError, AppendReceipt, DurableCutoff, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, StoragePressure, StoragePressureCause,
@@ -91,7 +91,11 @@ impl CompletionSignalingBackend {
     }
 }
 
-impl AgentBackend for CompletionSignalingBackend {
+impl BackendAdapter for CompletionSignalingBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         self.inner.stop_handle()
     }

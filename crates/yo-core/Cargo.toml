@@ -6,6 +6,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+yo-backend = { path = "../backends/foundation" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 yo-yaml = { path = "../../shared/yo-yaml" }

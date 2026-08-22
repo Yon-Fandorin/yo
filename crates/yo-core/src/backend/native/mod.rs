@@ -13,8 +13,10 @@ use std::{
 use serde::Deserialize;
 use serde_json::json;
 
+#[cfg(test)]
+use super::BackendAdapter as AgentBackend;
 use super::{
-    AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
+    BackendAdapter, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
     BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
     BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
 };
@@ -1274,7 +1276,7 @@ impl NativeModelBackend {
                         "provider-private assistant must follow every visible output in its group",
                     ));
                 }
-                if self.replay_profile.provider_private_schema() != Some(envelope.schema()) {
+                if super::provider_private_schema(self.replay_profile) != Some(envelope.schema()) {
                     return Err(failure(
                         BackendFailureKind::Protocol,
                         "provider-private assistant schema differs from its replay profile",
@@ -1389,8 +1391,7 @@ impl NativeModelBackend {
                 {
                     super::validate_provider_private_replay_sequence(
                         &state.round_replay.values().cloned().collect::<Vec<_>>(),
-                        self.replay_profile
-                            .provider_private_schema()
+                        super::provider_private_schema(self.replay_profile)
                             .expect("the provider-private profile has an exact schema"),
                     )
                     .map_err(|detail| failure(BackendFailureKind::Protocol, detail))?;
@@ -2019,7 +2020,11 @@ fn is_replay_capacity_error(message: &str) -> bool {
     )
 }
 
-impl AgentBackend for NativeModelBackend {
+impl BackendAdapter for NativeModelBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         let shared = Arc::clone(&self.shared_stop);
         BackendStopHandle::new(move || {

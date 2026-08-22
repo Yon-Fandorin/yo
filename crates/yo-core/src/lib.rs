@@ -26,14 +26,14 @@ pub use agent_session::{
 };
 pub(crate) use backend::ProviderPrivateReplayPayload;
 pub use backend::{
-    AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
-    BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
-    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendScriptStep, BackendStopHandle,
-    CodexBackend, CodexBackendConfig, CodexSkillReferenceProvider, ContinuationStrategy,
-    ModelReplay, ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
-    ModelReplayRole, ModelReplayTool, ModelRequestObserver, NativeModelBackend,
-    NativeModelBackendConfig, NativeModelBackendServices, ProviderPrivateReplayEnvelope,
-    ReplayExecutor, ReplayProfile, ScriptedBackend,
+    AgentBackend, BackendAdapter, BackendBindingEvidence, BackendCapabilities,
+    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
+    BackendOutcomeEvidence, BackendPoll, BackendRequestEvidence, BackendResumeTarget,
+    BackendScriptStep, BackendStopHandle, CodexBackend, CodexBackendConfig,
+    CodexSkillReferenceProvider, ContinuationStrategy, ModelReplay, ModelReplayBudget,
+    ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool,
+    ModelRequestObserver, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+    ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};
 pub use engine::{AgentEngine, AgentRejection, ExpectedResponse, ResponseKind};

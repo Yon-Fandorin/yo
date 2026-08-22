@@ -6,7 +6,8 @@ use super::super::{
 };
 use crate::{
     AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
-    ReplayProfile, TurnId, TurnOutcome, backend::validate_provider_private_replay_sequence,
+    ReplayProfile, TurnId, TurnOutcome,
+    backend::{provider_private_schema, validate_provider_private_replay_sequence},
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -147,8 +148,7 @@ impl CorrelationRecovery {
                     }) => {
                         validate_provider_private_replay_sequence(
                             replay.delta().items(),
-                            ReplayProfile::ProviderPrivateLocalPlaintext
-                                .provider_private_schema()
+                            provider_private_schema(ReplayProfile::ProviderPrivateLocalPlaintext)
                                 .expect("the provider-private profile has an exact schema"),
                         )
                         .map_err(JournalCodecError::new)?;

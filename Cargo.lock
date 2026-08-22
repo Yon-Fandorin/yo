@@ -2246,6 +2246,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "yo-backend"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "yo-cli"
 version = "0.0.0"
 dependencies = [
@@ -2332,6 +2340,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "uuid",
+ "yo-backend",
  "yo-yaml",
 ]
 

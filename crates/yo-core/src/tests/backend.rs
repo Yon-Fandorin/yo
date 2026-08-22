@@ -1,7 +1,7 @@
 use std::num::NonZeroU64;
 
 use crate::{
-    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, AgentBackend, AgentCommand,
+    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, AgentCommand, BackendAdapter,
     BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind, BackendPoll,
     BackendScriptStep, ScriptedBackend, SessionId, TurnId, TurnOutcome, TurnRef, UserInput,
 };

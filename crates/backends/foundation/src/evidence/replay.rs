@@ -124,7 +124,8 @@ impl ModelReplayContract {
         &self.tools
     }
 
-    pub(crate) fn is_valid(&self) -> bool {
+    #[doc(hidden)]
+    pub fn is_valid(&self) -> bool {
         let mut names = std::collections::HashSet::new();
         !self.system_prompt.is_empty()
             && self.tools.len() <= 1_024
@@ -161,8 +162,9 @@ pub struct ProviderPrivateReplayEnvelope {
     payload: Vec<u8>,
 }
 
+#[doc(hidden)]
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum ProviderPrivateReplayPayload {
+pub enum ProviderPrivateReplayPayload {
     Null,
     Bool(bool),
     Number(serde_json::Number),
@@ -201,7 +203,8 @@ impl ProviderPrivateReplayEnvelope {
         &self.payload
     }
 
-    pub(crate) fn ordered_payload(&self) -> ProviderPrivateReplayPayload {
+    #[doc(hidden)]
+    pub fn ordered_payload(&self) -> ProviderPrivateReplayPayload {
         serde_json::from_slice(&self.payload)
             .expect("a validated provider-private payload remains ordered canonical JSON")
     }
@@ -397,7 +400,8 @@ impl ModelReplayDelta {
         &self.items
     }
 
-    pub(crate) fn is_valid(&self) -> bool {
+    #[doc(hidden)]
+    pub fn is_valid(&self) -> bool {
         self.contract
             .as_ref()
             .is_none_or(ModelReplayContract::is_valid)
@@ -406,12 +410,14 @@ impl ModelReplayDelta {
             && self.items.iter().all(ModelReplayItem::is_valid)
     }
 
-    pub(crate) fn fits_capacity(&self) -> bool {
+    #[doc(hidden)]
+    pub fn fits_capacity(&self) -> bool {
         Self::prospective_encoded_len(self.contract.as_ref(), self.items.iter())
             .is_some_and(|bytes| bytes <= MAX_REPLAY_DELTA_BYTES)
     }
 
-    pub(crate) fn prospective_encoded_len<'a>(
+    #[doc(hidden)]
+    pub fn prospective_encoded_len<'a>(
         contract: Option<&ModelReplayContract>,
         items: impl Iterator<Item = &'a ModelReplayItem>,
     ) -> Option<usize> {
@@ -432,7 +438,8 @@ impl ModelReplayDelta {
         })
     }
 
-    pub(crate) fn validate(&self) -> Result<(), &'static str> {
+    #[doc(hidden)]
+    pub fn validate(&self) -> Result<(), &'static str> {
         validate_replay_delta(self).map(|_| ())
     }
 }
@@ -455,7 +462,8 @@ impl ModelReplay {
         &self.items
     }
 
-    pub(crate) fn apply(&mut self, delta: &ModelReplayDelta) -> Result<(), &'static str> {
+    #[doc(hidden)]
+    pub fn apply(&mut self, delta: &ModelReplayDelta) -> Result<(), &'static str> {
         let (delta_calls, delta_answers) = validate_replay_delta(delta)?;
         match (self.contract.is_some(), delta.contract.is_some()) {
             (false, false) => return Err("first model replay delta requires its contract"),
@@ -568,7 +576,8 @@ fn validate_provider_private_adjacency(
     }
 }
 
-pub(crate) fn validate_provider_private_replay_sequence(
+#[doc(hidden)]
+pub fn validate_provider_private_replay_sequence(
     items: &[ModelReplayItem],
     expected_schema: &str,
 ) -> Result<(), &'static str> {
@@ -621,7 +630,7 @@ pub(crate) fn validate_provider_private_replay_sequence(
         }
     }
     if assistant_groups == 0 {
-        return Err("Kimi private exact replay requires a provider-private assistant item");
+        return Err("provider-private exact replay requires a provider-private assistant item");
     }
     Ok(())
 }

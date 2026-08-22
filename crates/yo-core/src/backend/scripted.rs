@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use super::{
-    AgentBackend, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
+    BackendAdapter, BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence,
     BackendEvent, BackendFailure, BackendFailureKind, BackendPoll, BackendResumeTarget,
     BackendStopHandle,
 };
@@ -70,7 +70,11 @@ impl ScriptedBackend {
     }
 }
 
-impl AgentBackend for ScriptedBackend {
+impl BackendAdapter for ScriptedBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
     fn stop_handle(&self) -> BackendStopHandle {
         BackendStopHandle::no_op()
     }

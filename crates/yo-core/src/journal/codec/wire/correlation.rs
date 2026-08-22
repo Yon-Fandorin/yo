@@ -117,7 +117,7 @@ impl From<ContinuationStrategy> for WireContinuationStrategy {
             } => Self::ExactReplay {
                 executor: executor.into(),
                 replay_profile: (replay_profile != crate::ReplayProfile::SemanticOnly)
-                    .then(|| replay_profile.as_str().to_owned()),
+                    .then(|| crate::backend::replay_profile_id(replay_profile).to_owned()),
             },
             ContinuationStrategy::BackendManagedState => Self::BackendManagedState,
         }
