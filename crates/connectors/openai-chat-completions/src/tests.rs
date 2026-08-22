@@ -173,6 +173,7 @@ fn neutral_stream_port_preserves_polling_and_cleanup_order() {
             output_tokens: Some(3),
             total_tokens: Some(7),
             reasoning_tokens: None,
+            cache_read_input_tokens: yo_core::CacheReadInputTokens::Unsupported,
         },
     };
     let mut stream = OpenAiChatCompletionsStream(ScriptedStream {

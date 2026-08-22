@@ -1,6 +1,10 @@
 use std::sync::{Arc, Mutex};
 
-use yo_core::{ModelRequestFailureKind, ModelRequestOutcome, UserInput};
+use serde_json::json;
+use yo_core::{
+    CacheReadInputTokens, ModelRequestFailureKind, ModelRequestOutcome, ResponsesUsage, UserInput,
+    VersionedProfileId,
+};
 
 use super::{
     super::{
@@ -43,6 +47,10 @@ fn backend(
 }
 
 fn successful_round() -> Vec<ModelConnectorEvent> {
+    successful_round_with_usage(ResponsesUsage::default())
+}
+
+fn successful_round_with_usage(usage: ResponsesUsage) -> Vec<ModelConnectorEvent> {
     vec![
         ModelConnectorEvent::ResponseCreated {
             response_id: "response".to_owned(),
@@ -60,7 +68,7 @@ fn successful_round() -> Vec<ModelConnectorEvent> {
         ModelConnectorEvent::Terminal {
             response_id: "response".to_owned(),
             status: ModelConnectorTerminal::Completed,
-            usage: yo_core::ResponsesUsage::default(),
+            usage,
         },
     ]
 }
@@ -133,6 +141,84 @@ fn terminal_outcomes_are_reported_once_with_closed_classification() {
             ModelRequestFailureKind::ProviderUnavailable
         )]
     );
+}
+
+// 완료된 response 하나는 귀속과 token 수를 가진 versioned usage receipt 하나만 만들고,
+// reported 0·absent·unsupported cache-read 상태를 서로 다른 닫힌 JSON shape로 보존합니다.
+#[test]
+fn terminal_usage_receipt_preserves_closed_cache_read_availability() {
+    let profile = || VersionedProfileId::new("kimi.usage.cached-tokens/v1").unwrap();
+    for (cache_read_input_tokens, expected_cache) in [
+        (
+            CacheReadInputTokens::Reported {
+                tokens: 0,
+                source_profile: profile(),
+            },
+            json!({
+                "availability": "reported",
+                "tokens": 0,
+                "source_profile": "kimi.usage.cached-tokens/v1",
+            }),
+        ),
+        (
+            CacheReadInputTokens::Absent {
+                source_profile: profile(),
+            },
+            json!({
+                "availability": "absent",
+                "source_profile": "kimi.usage.cached-tokens/v1",
+            }),
+        ),
+        (
+            CacheReadInputTokens::Unsupported,
+            json!({"availability": "unsupported"}),
+        ),
+    ] {
+        let outcomes = Arc::new(Mutex::new(Vec::new()));
+        let events = run_turn(&mut backend(
+            vec![successful_round_with_usage(ResponsesUsage {
+                input_tokens: Some(12),
+                output_tokens: Some(7),
+                total_tokens: Some(19),
+                reasoning_tokens: Some(3),
+                cache_read_input_tokens,
+            })],
+            outcomes,
+            None,
+        ));
+        let receipts = events
+            .iter()
+            .filter_map(|event| match event {
+                BackendEvent::ActivityUpdated {
+                    update: yo_core::ActivityUpdate::TextSnapshot(text),
+                    ..
+                } => serde_json::from_str::<serde_json::Value>(text).ok(),
+                _ => None,
+            })
+            .filter(|value| value["schema"] == "yo.model-usage-receipt/v1")
+            .collect::<Vec<_>>();
+
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0]["response_id"], "response");
+        assert_eq!(receipts[0]["round"], 1);
+        assert_eq!(receipts[0]["provider"], "qwencloud");
+        assert_eq!(receipts[0]["account"], "default");
+        assert_eq!(receipts[0]["model"], "qwen3.8max");
+        assert_eq!(receipts[0]["connector"], "openai-responses");
+        assert_eq!(receipts[0]["api_dialect"], "openai-responses");
+        assert_eq!(receipts[0]["base_url"], "https://example.invalid/v1");
+        assert_eq!(
+            receipts[0]["usage"],
+            json!({
+                "input_tokens": 12,
+                "output_tokens": 7,
+                "total_tokens": 19,
+                "reasoning_tokens": 3,
+            })
+        );
+        assert_eq!(receipts[0]["cache_read_input_tokens"], expected_cache);
+        assert_eq!(receipts[0].as_object().unwrap().len(), 11);
+    }
 }
 
 // terminal 없이 닫힌 stream은 protocol failure로 기록하지만 사용자 interrupt는 관찰을

@@ -1156,6 +1156,7 @@ fn usage_at(event: &Value) -> Result<ModelConnectorUsage, ConnectorError> {
         output_tokens: optional_u64_at(usage, &["output_tokens"])?,
         total_tokens: optional_u64_at(usage, &["total_tokens"])?,
         reasoning_tokens: optional_u64_at(usage, &["output_tokens_details", "reasoning_tokens"])?,
+        cache_read_input_tokens: yo_core::CacheReadInputTokens::Unsupported,
     })
 }
 

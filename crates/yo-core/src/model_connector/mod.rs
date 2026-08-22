@@ -12,7 +12,7 @@ pub use request::{
     ResponsesRequest,
 };
 pub use types::{
-    ConnectorError, ConnectorFailureKind, ReasoningChannel, ResponseTerminal,
+    CacheReadInputTokens, ConnectorError, ConnectorFailureKind, ReasoningChannel, ResponseTerminal,
     ResponsesConnectorLimits, ResponsesEvent, ResponsesPoll, ResponsesUsage,
 };
 

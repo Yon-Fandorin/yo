@@ -92,6 +92,7 @@ fn decodes_chunked_text_and_terminal_usage() {
                 output_tokens: Some(7),
                 total_tokens: Some(19),
                 reasoning_tokens: Some(3),
+                cache_read_input_tokens: yo_core::CacheReadInputTokens::Unsupported,
             },
         } if response_id == "resp-1"
     )));

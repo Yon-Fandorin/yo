@@ -840,7 +840,9 @@ impl ChatCompletionsSseDecoder {
     }
 }
 
-fn decode_usage(value: &Value) -> Result<ModelConnectorUsage, ConnectorError> {
+pub(crate) fn decode_usage(value: &Value) -> Result<ModelConnectorUsage, ConnectorError> {
+    const CACHE_READ_SOURCE_PROFILE: &str = "kimi.usage.cached-tokens/v1";
+
     let prompt = non_negative_at(value, "prompt_tokens")?;
     let completion = non_negative_at(value, "completion_tokens")?;
     let total = non_negative_at(value, "total_tokens")?;
@@ -860,11 +862,33 @@ fn decode_usage(value: &Value) -> Result<ModelConnectorUsage, ConnectorError> {
             })
         })
         .transpose()?;
+    let cache_read_input_tokens = match value.get("cached_tokens") {
+        Some(cached) => {
+            let tokens = cached.as_u64().ok_or_else(|| {
+                protocol_failure("Chat Completions cached_tokens is not non-negative")
+            })?;
+            if tokens > prompt {
+                return Err(protocol_failure(
+                    "Chat Completions cached_tokens exceeds prompt_tokens",
+                ));
+            }
+            yo_core::CacheReadInputTokens::Reported {
+                tokens,
+                source_profile: yo_core::VersionedProfileId::new(CACHE_READ_SOURCE_PROFILE)
+                    .expect("the closed Kimi usage source profile is valid"),
+            }
+        },
+        None => yo_core::CacheReadInputTokens::Absent {
+            source_profile: yo_core::VersionedProfileId::new(CACHE_READ_SOURCE_PROFILE)
+                .expect("the closed Kimi usage source profile is valid"),
+        },
+    };
     Ok(ModelConnectorUsage {
         input_tokens: Some(prompt),
         output_tokens: Some(completion),
         total_tokens: Some(total),
         reasoning_tokens: reasoning,
+        cache_read_input_tokens,
     })
 }
 

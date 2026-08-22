@@ -521,6 +521,7 @@ fn decode_usage(value: &Value) -> Result<ModelConnectorUsage, ConnectorError> {
         output_tokens: Some(completion),
         total_tokens: Some(total),
         reasoning_tokens: reasoning,
+        cache_read_input_tokens: yo_core::CacheReadInputTokens::Unsupported,
     })
 }
 

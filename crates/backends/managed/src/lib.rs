@@ -20,9 +20,9 @@ use yo_core::{
     AdmittedReplayProfile, AdmittedToolPolicy, AgentCommand, ApiDialect, ApprovalDecision,
     BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
     BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, BackendPoll,
-    BackendRequestEvidence, BackendResumeTarget, BackendStopHandle, CompleteModelBinding,
-    ContinuationStrategy, EffectiveModelBinding, EffectiveModelProfile, Failure,
-    FrozenToolRegistry, ModelCacheAffinityHint, ModelCatalogEntry, ModelConnector,
+    BackendRequestEvidence, BackendResumeTarget, BackendStopHandle, CacheReadInputTokens,
+    CompleteModelBinding, ContinuationStrategy, EffectiveModelBinding, EffectiveModelProfile,
+    Failure, FrozenToolRegistry, ModelCacheAffinityHint, ModelCatalogEntry, ModelConnector,
     ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorInputRole, ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort,
     ModelConnectorTerminal, ModelContextProfile, ModelReplay, ModelReplayContract,
@@ -1313,10 +1313,28 @@ impl NativeModelBackend {
                 })? = None;
                 self.ensure_replay_capacity_with_round_item(state, None)?;
                 let attribution = self.next_activity(state.turn)?;
+                let cache_read_input_tokens = match &usage.cache_read_input_tokens {
+                    CacheReadInputTokens::Reported {
+                        tokens,
+                        source_profile,
+                    } => json!({
+                        "availability": "reported",
+                        "tokens": tokens,
+                        "source_profile": source_profile.as_str(),
+                    }),
+                    CacheReadInputTokens::Absent { source_profile } => json!({
+                        "availability": "absent",
+                        "source_profile": source_profile.as_str(),
+                    }),
+                    CacheReadInputTokens::Unsupported => json!({
+                        "availability": "unsupported",
+                    }),
+                };
                 self.queue_activity_text(
                     attribution,
                     ActivityKind::ModelWork,
                     json!({
+                        "schema": "yo.model-usage-receipt/v1",
                         "response_id": response_id,
                         "round": state.round,
                         "provider": self.binding.provider_id().as_str(),
@@ -1331,6 +1349,7 @@ impl NativeModelBackend {
                             "total_tokens": usage.total_tokens,
                             "reasoning_tokens": usage.reasoning_tokens,
                         },
+                        "cache_read_input_tokens": cache_read_input_tokens,
                     })
                     .to_string(),
                     Some(ActivityOutcome::Completed),

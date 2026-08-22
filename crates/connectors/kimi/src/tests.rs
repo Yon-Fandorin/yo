@@ -891,6 +891,85 @@ fn kimi_tool_round_accepts_every_equivalent_usage_placement_once() {
     );
 }
 
+// Kimi가 cached_tokens를 0으로 보고한 경우에도 absent로 접지 않고 정확한 source
+// profile을 가진 reported 측정값으로 보존합니다.
+#[test]
+fn kimi_usage_preserves_reported_zero_cache_reads() {
+    let stream = [
+        event(json!({
+            "id":"kimi-cache","object":"chat.completion.chunk","model":"kimi-k3",
+            "choices":[{"index":0,"delta":{"role":"assistant","content":"done"},"finish_reason":"stop",
+                "usage":{"prompt_tokens":4,"completion_tokens":3,"total_tokens":7,
+                    "cached_tokens":0}}]
+        })),
+        "data: [DONE]\n\n".to_owned(),
+    ]
+    .concat();
+    let mut decoder = ChatCompletionsSseDecoder::new_kimi(
+        ModelConnectorLimits::default(),
+        "kimi-k3".to_owned(),
+        true,
+    );
+    let mut events = decoder.push(stream.as_bytes()).unwrap();
+    events.extend(decoder.finish().unwrap());
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ModelConnectorEvent::Terminal {
+            usage: yo_core::ModelConnectorUsage {
+                cache_read_input_tokens: yo_core::CacheReadInputTokens::Reported {
+                    tokens: 0,
+                    source_profile,
+                },
+                ..
+            },
+            ..
+        } if source_profile.as_str() == "kimi.usage.cached-tokens/v1"
+    )));
+}
+
+// Kimi의 cached_tokens 부재는 unsupported나 0으로 바꾸지 않고 absent로 남기며,
+// 음수·null·prompt 초과 값은 Provider 보고값을 추측해 고치지 않고 거절합니다.
+#[test]
+fn kimi_usage_distinguishes_absent_cache_reads_and_rejects_invalid_reports() {
+    let usage = json!({"prompt_tokens":4,"completion_tokens":3,"total_tokens":7});
+    let decoded = super::sse::decode_usage(&usage).unwrap();
+    assert!(matches!(
+        decoded.cache_read_input_tokens,
+        yo_core::CacheReadInputTokens::Absent { ref source_profile }
+            if source_profile.as_str() == "kimi.usage.cached-tokens/v1"
+    ));
+
+    for cached_tokens in [json!(-1), serde_json::Value::Null, json!(5)] {
+        let mut invalid = usage.clone();
+        invalid["cached_tokens"] = cached_tokens;
+        assert!(super::sse::decode_usage(&invalid).is_err());
+    }
+}
+
+// 같은 wire chunk에 반복된 usage라도 cached_tokens 부재와 reported 0은 같은 값이
+// 아니므로 하나로 합치지 않고 cache telemetry 불일치로 거절합니다.
+#[test]
+fn kimi_repeated_usage_requires_exact_cache_read_availability() {
+    let absent = json!({"prompt_tokens":4,"completion_tokens":3,"total_tokens":7});
+    let mut reported_zero = absent.clone();
+    reported_zero["cached_tokens"] = json!(0);
+    let chunk = event(json!({
+        "id":"kimi-cache-mismatch","object":"chat.completion.chunk","model":"kimi-k3",
+        "usage": absent,
+        "choices":[{"index":0,"delta":{"role":"assistant","content":"done"},
+            "finish_reason":"stop","usage":reported_zero}]
+    }));
+    let mut decoder = ChatCompletionsSseDecoder::new_kimi(
+        ModelConnectorLimits::default(),
+        "kimi-k3".to_owned(),
+        true,
+    );
+
+    let error = decoder.push(chunk.as_bytes()).unwrap_err();
+    assert!(error.to_string().contains("inconsistent"), "{error}");
+}
+
 // stable model/first role/delta field/private-reasoning 규칙 중 하나라도 어기면 visible
 // 일부가 있더라도 terminal이나 replay로 승격하지 않고 protocol failure로 닫습니다.
 #[test]

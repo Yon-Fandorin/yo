@@ -54,13 +54,13 @@ pub use journal::{
     TranscriptSlice,
 };
 pub use model_connector::{
-    ConnectorError, ConnectorFailureKind, FunctionTool, ModelCacheAffinityHint, ModelConnector,
-    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
-    ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
-    ModelConnectorStreamPort, ModelConnectorTerminal, ModelConnectorUsage, ReasoningChannel,
-    ReasoningEffort, RequestToolExposure, ResponseTerminal, ResponsesCancellation,
-    ResponsesConnectorLimits, ResponsesEvent, ResponsesInputItem, ResponsesInputRole,
-    ResponsesPoll, ResponsesRequest, ResponsesUsage,
+    CacheReadInputTokens, ConnectorError, ConnectorFailureKind, FunctionTool,
+    ModelCacheAffinityHint, ModelConnector, ModelConnectorCancellation, ModelConnectorEvent,
+    ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits, ModelConnectorPoll,
+    ModelConnectorRequest, ModelConnectorStreamPort, ModelConnectorTerminal, ModelConnectorUsage,
+    ReasoningChannel, ReasoningEffort, RequestToolExposure, ResponseTerminal,
+    ResponsesCancellation, ResponsesConnectorLimits, ResponsesEvent, ResponsesInputItem,
+    ResponsesInputRole, ResponsesPoll, ResponsesRequest, ResponsesUsage,
 };
 #[doc(hidden)]
 pub use model_profile_admission::{

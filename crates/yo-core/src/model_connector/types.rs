@@ -162,11 +162,25 @@ impl fmt::Display for ConnectorError {
 impl Error for ConnectorError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum CacheReadInputTokens {
+    Reported {
+        tokens: u64,
+        source_profile: crate::VersionedProfileId,
+    },
+    Absent {
+        source_profile: crate::VersionedProfileId,
+    },
+    #[default]
+    Unsupported,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ResponsesUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
     pub reasoning_tokens: Option<u64>,
+    pub cache_read_input_tokens: CacheReadInputTokens,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
