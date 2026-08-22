@@ -1,10 +1,10 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: agent.connector.kimi-chat-completions
-revision: sha256:6363c9ee193111b0042b70fbdcb3dc93b0e8ab15203cdb5dede86de5d0cdb31f
+revision: sha256:1e10d8e08c71fa7d2467435936b61d6480cc980280b772aec941b49fe9e5553e
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:7c52d27bf6f46c68402fc837286a07d8c3e7deec35cc33160d21e3052392adc1
+request_hash: sha256:8b0640fb2be79a346bd8e4664ce25dce8cc8967fde40d8d65345bac18a15dd50
 ---
 # Korean Review Projection
 
@@ -28,7 +28,7 @@ Choice-bearing SSE data object는 정확한 `object: "chat.completion.chunk"`, r
 
 Choice는 finish reason 하나로 정확히 닫아야 합니다. `stop`은 final assistant round를 완료하며 tool call이 누적된 경우 모순입니다. `tool_calls`는 tool-call round 하나를 완료하며 누적 call이 없으면 모순이고 visible content가 있으면 같은 round의 일부로 남습니다. `length`는 typed incomplete failure, `content_filter`는 typed failed response입니다. 둘 다 partial round를 replay나 Continuation Anchor에 넣지 않습니다. Unknown, repeated, contradictory finish reason은 실패합니다.
 
-Kimi가 문서화한 final usage는 semantic meaning 하나이지만 닫힌 wire 위치가 여러 개입니다. Finishing choice는 top-level `usage`, `choices[0].usage`, 또는 둘 모두에 non-null usage를 가질 수 있으며 둘 다 있으면 decoded value가 정확히 같아야 합니다. 이후 OpenAI-compatible empty-`choices` top-level usage record는 choice-bearing stream과 exact `object`, requested `model`, stable response ID가 같을 때만 올 수 있습니다. Connector는 이 표현들에서 semantic usage value 하나만 도출해야 합니다. 반복된 표현은 모두 같은 value로 decode되어야 하고, 차이, 두 번째 distinct usage, finish 전 usage, non-finishing choice의 usage, finish 뒤 non-empty choice는 실패합니다. Value는 non-negative `prompt_tokens`, `completion_tokens`, `total_tokens`를 요구하며 total은 prompt와 completion의 정확한 합입니다. Kimi-specific `cached_tokens`와 unknown field는 required field를 검증한 뒤 non-authoritative로 무시합니다. Semantic usage가 없으면 typed protocol failure입니다.
+Kimi가 문서화한 final usage는 semantic meaning 하나이지만 닫힌 wire 위치가 여러 개입니다. Finishing choice는 top-level `usage`, `choices[0].usage`, 또는 둘 모두에 non-null usage를 가질 수 있으며 둘 다 있으면 decoded value가 정확히 같아야 합니다. 이후 OpenAI-compatible empty-`choices` top-level usage record는 choice-bearing stream과 exact `object`, requested `model`, stable response ID가 같을 때만 올 수 있습니다. Connector는 이 표현들에서 semantic usage value 하나만 도출해야 합니다. 반복된 표현은 cache-read availability와 token을 포함해 모두 정확히 같은 value로 decode되어야 하며, 차이, 두 번째 distinct usage, finish 전 usage, non-finishing choice의 usage, finish 뒤 non-empty choice는 실패합니다. Value는 non-negative `prompt_tokens`, `completion_tokens`, `total_tokens`를 요구하며 total은 prompt와 completion의 정확한 합입니다. Optional `cached_tokens`가 있으면 non-negative이고 `prompt_tokens`보다 크지 않아야 합니다. 이 값은 이미 `prompt_tokens`에 포함된 Provider 보고 cache-read input count이며, 존재하는 0은 보고된 측정값으로 남습니다. 이 field가 없으면 Connector는 0을 만들어내지 않고 absent availability를 보존해야 합니다. 이 의미는 exact source profile `kimi.usage.cached-tokens/v1`로 노출해야 합니다. Unknown field는 계약된 field를 검증한 뒤 non-authoritative로 무시합니다. Connector는 cache-write token, uncached token, monetary cost 또는 별도 cache-hit flag를 추론하면 안 됩니다. Semantic usage가 없으면 typed protocol failure입니다.
 
 정확한 이름 없는 `data: [DONE]` sentinel은 finish와 semantic usage 뒤의 마지막 data payload여야 합니다. 빠지거나 반복되거나 SSE event name을 가지면 안 됩니다. `[DONE]` 전 comment와 no-data framing은 무시할 수 있고, 뒤에는 no-data framing과 stream end만 유효합니다. `[DONE]` 뒤의 다른 data, invalid UTF-8, finish·usage·sentinel 없이 끝난 stream은 Turn을 완료하지 않고 실패합니다.
 
