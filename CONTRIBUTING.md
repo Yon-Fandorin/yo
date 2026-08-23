@@ -386,6 +386,19 @@ requires the preliminary human authorization described above. The threshold
 is an early-warning gate, not permission to reduce required authority, diff,
 evidence, or review lenses.
 
+Before publishing a full review packet that requires the split assessment
+above, freeze a compact checklist of discriminating invariants in its review
+questions. Each invariant must distinguish the accepted outcome from a
+plausible counterexample and be decidable from the packet's included evidence;
+do not restate the diff or request an open-ended repository audit. End the
+checklist with an identity-bound stop condition: after the reviewer verifies
+the exact packet identity, evaluates every declared lens against every listed
+invariant, and resolves or reports all material findings, it returns the
+verdict without unrelated repository inspection or repeated evidence
+reconstruction. The stop condition never suppresses a new material finding or
+a tool call needed to decide a listed invariant; it bounds only work after the
+packet has already supplied sufficient evidence.
+
 Run the declared complete candidate baseline after the last implementation
 change and before publishing its full review packet. A finding-resolution
 candidate may reuse unaffected evidence and rerun only affected checks for its
