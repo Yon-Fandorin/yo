@@ -3,9 +3,13 @@ use std::collections::{HashMap, HashSet};
 use serde_json::Value;
 use yo_connector_transport::{DecodeBatch as SseDecodeBatch, SseFrame, SseFramer};
 use yo_core::{
-    ConnectorError, ConnectorFailureKind, ModelConnectorEvent, ModelConnectorLimits,
-    ModelConnectorTerminal, ModelConnectorUsage, ReasoningChannel,
+    CacheReadInputTokens, ConnectorError, ConnectorFailureKind, ModelConnectorEvent,
+    ModelConnectorLimits, ModelConnectorTerminal, ModelConnectorUsage, ReasoningChannel,
+    VersionedProfileId,
 };
+
+const CACHE_READ_SOURCE_PROFILE: &str =
+    "openai.responses.usage.input-tokens-details.cached-tokens/v1";
 
 pub(super) struct ResponsesSseDecoder {
     limits: ModelConnectorLimits,
@@ -1145,19 +1149,67 @@ fn usize_at(value: &Value, path: &[&str], label: &'static str) -> Result<usize, 
 }
 
 fn usage_at(event: &Value) -> Result<ModelConnectorUsage, ConnectorError> {
-    let Some(usage) = event
-        .get("response")
-        .and_then(|response| response.get("usage"))
-    else {
-        return Ok(ModelConnectorUsage::default());
+    let response = value_at(event, &["response"], "response")?;
+    let Some(usage) = response.get("usage") else {
+        return Ok(ModelConnectorUsage {
+            cache_read_input_tokens: cache_read_absent(),
+            ..ModelConnectorUsage::default()
+        });
     };
+    if !usage.is_object() {
+        return Err(protocol_failure("Responses usage is not an object"));
+    }
+    let input_tokens = optional_u64_at(usage, &["input_tokens"])?;
     Ok(ModelConnectorUsage {
-        input_tokens: optional_u64_at(usage, &["input_tokens"])?,
+        input_tokens,
         output_tokens: optional_u64_at(usage, &["output_tokens"])?,
         total_tokens: optional_u64_at(usage, &["total_tokens"])?,
         reasoning_tokens: optional_u64_at(usage, &["output_tokens_details", "reasoning_tokens"])?,
-        cache_read_input_tokens: yo_core::CacheReadInputTokens::Unsupported,
+        cache_read_input_tokens: cache_read_input_tokens_at(usage, input_tokens)?,
     })
+}
+
+fn cache_read_input_tokens_at(
+    usage: &Value,
+    input_tokens: Option<u64>,
+) -> Result<CacheReadInputTokens, ConnectorError> {
+    let Some(details) = usage.get("input_tokens_details") else {
+        return Ok(cache_read_absent());
+    };
+    if !details.is_object() {
+        return Err(protocol_failure(
+            "Responses input_tokens_details is not an object",
+        ));
+    }
+    let Some(cached_tokens) = details.get("cached_tokens") else {
+        return Ok(cache_read_absent());
+    };
+    let tokens = cached_tokens
+        .as_u64()
+        .ok_or_else(|| protocol_failure("Responses cached_tokens is not an unsigned integer"))?;
+    let input_tokens = input_tokens.ok_or_else(|| {
+        protocol_failure("Responses cached_tokens requires unsigned input_tokens")
+    })?;
+    if tokens > input_tokens {
+        return Err(protocol_failure(
+            "Responses cached_tokens exceeds input_tokens",
+        ));
+    }
+    Ok(CacheReadInputTokens::Reported {
+        tokens,
+        source_profile: cache_read_source_profile(),
+    })
+}
+
+fn cache_read_absent() -> CacheReadInputTokens {
+    CacheReadInputTokens::Absent {
+        source_profile: cache_read_source_profile(),
+    }
+}
+
+fn cache_read_source_profile() -> VersionedProfileId {
+    VersionedProfileId::new(CACHE_READ_SOURCE_PROFILE)
+        .expect("the closed Responses usage source profile is valid")
 }
 
 fn optional_u64_at(value: &Value, path: &[&str]) -> Result<Option<u64>, ConnectorError> {

@@ -58,6 +58,11 @@ fn text_stream() -> String {
                     "input_tokens": 12,
                     "output_tokens": 7,
                     "total_tokens": 19,
+                    "input_tokens_details": {
+                        "cached_tokens": 5,
+                        "cache_write_tokens": 99,
+                        "x_details": ["non-authoritative"]
+                    },
                     "output_tokens_details": {"reasoning_tokens": 3}
                 }
             }
@@ -67,7 +72,7 @@ fn text_stream() -> String {
 }
 
 // UTF-8 text delta가 HTTP chunk 경계와 무관하게 exact item correlation으로 복원되고,
-// terminal usage와 reasoning token 수까지 손실 없이 보고되는지 검증합니다.
+// terminal usage, reasoning token, 계약된 cache-read 수만 손실 없이 보고되는지 검증합니다.
 #[test]
 fn decodes_chunked_text_and_terminal_usage() {
     let stream = text_stream();
@@ -92,10 +97,81 @@ fn decodes_chunked_text_and_terminal_usage() {
                 output_tokens: Some(7),
                 total_tokens: Some(19),
                 reasoning_tokens: Some(3),
-                cache_read_input_tokens: yo_core::CacheReadInputTokens::Unsupported,
+                cache_read_input_tokens: yo_core::CacheReadInputTokens::Reported {
+                    tokens: 5,
+                    source_profile,
+                },
             },
         } if response_id == "resp-1"
+            && source_profile.as_str()
+                == "openai.responses.usage.input-tokens-details.cached-tokens/v1"
     )));
+}
+
+// usage 계층의 실제 JSON member가 생략된 경우만 같은 source profile의 absent로
+// 보존하고, 보고된 0은 absent와 구별되는 유효한 cache-read 수로 유지합니다.
+#[test]
+fn cache_read_usage_distinguishes_omission_from_reported_zero() {
+    for response in [
+        json!({}),
+        json!({"usage": {}}),
+        json!({"usage": {"input_tokens_details": {}}}),
+    ] {
+        let usage = usage_at(&json!({"response": response})).unwrap();
+        assert!(matches!(
+            usage.cache_read_input_tokens,
+            yo_core::CacheReadInputTokens::Absent { ref source_profile }
+                if source_profile.as_str()
+                    == "openai.responses.usage.input-tokens-details.cached-tokens/v1"
+        ));
+    }
+
+    let usage = usage_at(&json!({
+        "response": {
+            "usage": {
+                "input_tokens": 4,
+                "input_tokens_details": {"cached_tokens": 0}
+            }
+        }
+    }))
+    .unwrap();
+    assert!(matches!(
+        usage.cache_read_input_tokens,
+        yo_core::CacheReadInputTokens::Reported {
+            tokens: 0,
+            ref source_profile,
+        } if source_profile.as_str()
+            == "openai.responses.usage.input-tokens-details.cached-tokens/v1"
+    ));
+}
+
+// null·잘못된 컨테이너·부호 없는 정수가 아닌 값·input_tokens 부재 및 초과 보고를
+// 추측으로 고치지 않고 모두 typed Protocol failure로 닫습니다.
+#[test]
+fn cache_read_usage_rejects_malformed_or_inconsistent_reports() {
+    let invalid_usage = [
+        serde_json::Value::Null,
+        json!([]),
+        json!("invalid"),
+        json!({"input_tokens": 4, "input_tokens_details": null}),
+        json!({"input_tokens": 4, "input_tokens_details": []}),
+        json!({"input_tokens": 4, "input_tokens_details": "invalid"}),
+        json!({"input_tokens": 4, "input_tokens_details": {"cached_tokens": null}}),
+        json!({"input_tokens": 4, "input_tokens_details": {"cached_tokens": -1}}),
+        json!({"input_tokens": 4, "input_tokens_details": {"cached_tokens": 1.5}}),
+        json!({"input_tokens": 4, "input_tokens_details": {"cached_tokens": "1"}}),
+        json!({"input_tokens_details": {"cached_tokens": 0}}),
+        json!({"input_tokens": null, "input_tokens_details": {"cached_tokens": 0}}),
+        json!({"input_tokens": -1, "input_tokens_details": {"cached_tokens": 0}}),
+        json!({"input_tokens": 1.5, "input_tokens_details": {"cached_tokens": 0}}),
+        json!({"input_tokens": "4", "input_tokens_details": {"cached_tokens": 0}}),
+        json!({"input_tokens": 4, "input_tokens_details": {"cached_tokens": 5}}),
+    ];
+
+    for usage in invalid_usage {
+        let error = usage_at(&json!({"response": {"usage": usage}})).unwrap_err();
+        assert_eq!(error.kind(), ConnectorFailureKind::Protocol, "{error}");
+    }
 }
 
 // Responses terminal의 structured reason/code만 closed failure kind로 해석하고, 알 수 없는
@@ -198,7 +274,7 @@ fn preserves_function_call_identity_and_exact_argument_bytes() {
         })),
         event(json!({
             "type": "response.completed", "sequence_number": 7,
-            "response": {"id": "resp-tool", "status": "completed", "usage": null}
+            "response": {"id": "resp-tool", "status": "completed"}
         })),
     ]
     .concat();
@@ -329,7 +405,7 @@ fn accepts_a_declared_empty_output_text_part() {
         })),
         event(json!({
             "type": "response.completed", "sequence_number": 6,
-            "response": {"id": "resp-empty", "status": "completed", "usage": null}
+            "response": {"id": "resp-empty", "status": "completed"}
         })),
     ]
     .concat();
@@ -444,7 +520,7 @@ fn accepts_empty_declared_reasoning_text_and_summary_parts() {
         })),
         event(json!({
             "type": "response.completed", "sequence_number": 9,
-            "response": {"id": "resp-reason", "status": "completed", "usage": null}
+            "response": {"id": "resp-reason", "status": "completed"}
         })),
     ]
     .concat();
@@ -557,7 +633,7 @@ fn rejects_any_sse_data_after_the_terminal_event() {
     let stream = [
         event(json!({
             "type": "response.completed", "sequence_number": 1,
-            "response": {"id": "resp", "status": "completed", "usage": null}
+            "response": {"id": "resp", "status": "completed"}
         })),
         event(json!({
             "type": "response.in_progress", "sequence_number": 2,
@@ -579,7 +655,7 @@ fn accepts_one_done_marker_after_the_terminal_event() {
     let stream = [
         event(json!({
             "type": "response.completed", "sequence_number": 1,
-            "response": {"id": "resp", "status": "completed", "usage": null}
+            "response": {"id": "resp", "status": "completed"}
         })),
         "data: [DONE]\n\n".to_owned(),
     ]
@@ -603,7 +679,7 @@ fn rejects_done_without_a_terminal_or_more_than_once() {
 
     let terminal = event(json!({
         "type": "response.completed", "sequence_number": 1,
-        "response": {"id": "resp", "status": "completed", "usage": null}
+        "response": {"id": "resp", "status": "completed"}
     }));
     let mut duplicate = ResponsesSseDecoder::new(ModelConnectorLimits::default());
     duplicate.push(terminal.as_bytes()).unwrap();
@@ -618,7 +694,7 @@ fn rejects_done_without_a_terminal_or_more_than_once() {
 fn withholds_a_terminal_until_clean_eof_across_push_boundaries() {
     let terminal = event(json!({
         "type": "response.completed", "sequence_number": 1,
-        "response": {"id": "resp", "status": "completed", "usage": null}
+        "response": {"id": "resp", "status": "completed"}
     }));
     let tail = event(json!({
         "type": "response.in_progress", "sequence_number": 2,

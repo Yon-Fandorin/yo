@@ -69,7 +69,7 @@ fn terminal_stream() -> Vec<u8> {
         event(json!({
             "type": "response.completed",
             "sequence_number": 2,
-            "response": {"id": "resp-local", "status": "completed", "usage": null}
+            "response": {"id": "resp-local", "status": "completed"}
         })),
     ]
     .concat()
