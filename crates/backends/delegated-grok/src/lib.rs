@@ -128,8 +128,17 @@ struct MessageBinding {
     activity: ActivityRef,
 }
 
+#[derive(Default)]
+struct ToolIdentity {
+    title: Option<String>,
+    name: Option<String>,
+    raw_input: Option<String>,
+}
+
 struct ToolBinding {
     activity: ActivityRef,
+    result_activity: Option<ActivityRef>,
+    identity: ToolIdentity,
     finished: bool,
 }
 
@@ -503,7 +512,15 @@ impl<P: JsonPeer> Backend<P> {
         let active = self
             .messages
             .len()
-            .checked_add(self.tools.len())
+            .checked_add(
+                self.tools
+                    .values()
+                    .map(|binding| {
+                        usize::from(!binding.finished)
+                            + usize::from(!binding.finished && binding.result_activity.is_some())
+                    })
+                    .sum::<usize>(),
+            )
             .and_then(|count| count.checked_add(self.approvals.len()))
             .ok_or_else(|| protocol::protocol_failure("Grok active activity count overflowed"))?;
         if active >= Self::MAX_ACTIVE_ACTIVITIES {

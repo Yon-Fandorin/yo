@@ -7,6 +7,7 @@ use yo_core::{
 
 use super::{
     ApprovalBinding, Backend, MessageBinding, MessageChannel, MessageKey, ToolBinding,
+    ToolIdentity,
     client::ClientPoll,
     protocol::{self, Incoming},
     transport::JsonPeer,
@@ -139,37 +140,125 @@ impl<P: JsonPeer> Backend<P> {
                 Self::MAX_SESSION_TOOL_IDS
             )));
         }
+        self.finish_anonymous_messages();
         self.seen_tool_ids.insert(tool_id.clone());
         if let Err(failure) = self.ensure_activity_capacity() {
             self.seen_tool_ids.remove(&tool_id);
             return Err(failure);
         }
         let activity = self.next_activity(turn)?;
+        let identity = tool_identity(update);
+        let identity_snapshot = tool_identity_snapshot(&identity, &tool_id);
         self.tools.insert(
-            tool_id,
+            tool_id.clone(),
             ToolBinding {
                 activity,
+                result_activity: None,
+                identity,
                 finished: false,
             },
         );
-        if let Some(title) = update.get("title").and_then(Value::as_str) {
+        self.pending_events
+            .push_back(BackendEvent::ActivityStarted {
+                activity,
+                kind: activity_kind(update.get("kind").and_then(Value::as_str)),
+            });
+        self.pending_events
+            .push_back(BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(identity_snapshot),
+            });
+        self.queue_tool_progress(&tool_id, update)?;
+        Ok(self.pending_events.pop_front())
+    }
+
+    fn finish_anonymous_messages(&mut self) {
+        let keys = self
+            .messages
+            .keys()
+            .filter(|key| key.message_id.is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut activities = keys
+            .into_iter()
+            .filter_map(|key| self.messages.remove(&key))
+            .map(|binding| binding.activity)
+            .collect::<Vec<_>>();
+        activities.sort_unstable();
+        self.pending_events
+            .extend(
+                activities
+                    .into_iter()
+                    .map(|activity| BackendEvent::ActivityFinished {
+                        activity,
+                        outcome: ActivityOutcome::Completed,
+                    }),
+            );
+    }
+
+    fn queue_tool_progress(&mut self, tool_id: &str, update: &Value) -> Result<(), BackendFailure> {
+        let output = tool_content_snapshot(update);
+        let terminal = tool_terminal_outcome(update)?;
+        let (call_activity, existing_result) = self
+            .tools
+            .get(tool_id)
+            .map(|binding| (binding.activity, binding.result_activity))
+            .expect("validated tool binding remains present");
+        let needs_result = output.is_some() || terminal.is_some();
+        let (result_activity, result_started) = match (needs_result, existing_result) {
+            (false, _) => (None, false),
+            (true, Some(activity)) => (Some(activity), false),
+            (true, None) => {
+                self.ensure_activity_capacity()?;
+                let activity = self.next_activity(call_activity.turn())?;
+                self.tools
+                    .get_mut(tool_id)
+                    .expect("validated tool binding remains present")
+                    .result_activity = Some(activity);
+                self.pending_events
+                    .push_back(BackendEvent::ActivityStarted {
+                        activity,
+                        kind: ActivityKind::ToolResult,
+                    });
+                (Some(activity), true)
+            },
+        };
+        if let Some(activity) = result_activity
+            && let Some(output) = output.or_else(|| result_started.then(String::new))
+        {
             self.pending_events
                 .push_back(BackendEvent::ActivityUpdated {
                     activity,
-                    update: ActivityUpdate::TextSnapshot(title.to_owned()),
+                    update: ActivityUpdate::TextSnapshot(
+                        json!({ "call_id": tool_id, "output": output }).to_string(),
+                    ),
                 });
         }
-        self.queue_tool_terminal(update, activity)?;
-        Ok(Some(BackendEvent::ActivityStarted {
-            activity,
-            kind: activity_kind(update.get("kind").and_then(Value::as_str)),
-        }))
+        if let Some(outcome) = terminal {
+            self.tools
+                .get_mut(tool_id)
+                .expect("validated tool binding remains present")
+                .finished = true;
+            if let Some(activity) = result_activity {
+                self.pending_events
+                    .push_back(BackendEvent::ActivityFinished {
+                        activity,
+                        outcome: outcome.clone(),
+                    });
+            }
+            self.pending_events
+                .push_back(BackendEvent::ActivityFinished {
+                    activity: call_activity,
+                    outcome,
+                });
+        }
+        Ok(())
     }
 
     fn tool_call_update(&mut self, update: &Value) -> Result<Option<BackendEvent>, BackendFailure> {
         self.active_turn()?;
-        let tool_id = identifier_at(update, "toolCallId")?;
-        let binding = self.tools.get(tool_id).ok_or_else(|| {
+        let tool_id = identifier_at(update, "toolCallId")?.to_owned();
+        let binding = self.tools.get(&tool_id).ok_or_else(|| {
             protocol::protocol_failure(format!(
                 "Grok ACP update targets unknown tool call `{tool_id}`"
             ))
@@ -180,46 +269,23 @@ impl<P: JsonPeer> Backend<P> {
             )));
         }
         let activity = binding.activity;
-        let mut updates = Vec::new();
-        if let Some(title) = update.get("title").and_then(Value::as_str) {
-            updates.push(BackendEvent::ActivityUpdated {
-                activity,
-                update: ActivityUpdate::TextSnapshot(title.to_owned()),
-            });
+        self.finish_anonymous_messages();
+        let identity_snapshot = {
+            let binding = self
+                .tools
+                .get_mut(&tool_id)
+                .expect("validated tool binding remains present");
+            merge_tool_identity(&mut binding.identity, update, &tool_id)
+        };
+        if let Some(snapshot) = identity_snapshot {
+            self.pending_events
+                .push_back(BackendEvent::ActivityUpdated {
+                    activity,
+                    update: ActivityUpdate::TextSnapshot(snapshot),
+                });
         }
-        if let Some(snapshot) = tool_content_snapshot(update) {
-            updates.push(BackendEvent::ActivityUpdated {
-                activity,
-                update: ActivityUpdate::TextSnapshot(snapshot),
-            });
-        }
-        if let Some(terminal) = tool_terminal(update, activity)? {
-            self.tools
-                .get_mut(tool_id)
-                .expect("validated tool binding remains present")
-                .finished = true;
-            updates.push(terminal);
-        }
-        let mut events = updates.into_iter();
-        let first = events.next();
-        self.pending_events.extend(events);
-        Ok(first)
-    }
-
-    fn queue_tool_terminal(
-        &mut self,
-        update: &Value,
-        activity: yo_core::ActivityRef,
-    ) -> Result<(), BackendFailure> {
-        if let Some(terminal) = tool_terminal(update, activity)? {
-            let tool_id = identifier_at(update, "toolCallId")?;
-            self.tools
-                .get_mut(tool_id)
-                .expect("new tool binding remains present")
-                .finished = true;
-            self.pending_events.push_back(terminal);
-        }
-        Ok(())
+        self.queue_tool_progress(&tool_id, update)?;
+        Ok(self.pending_events.pop_front())
     }
 
     fn map_server_request(
@@ -259,6 +325,18 @@ impl<P: JsonPeer> Backend<P> {
         let reject_option = permission_option(options, "reject_once").ok_or_else(|| {
             protocol::protocol_failure("Grok permission request has no reject_once option")
         })?;
+        let Some(summary) = params.get("toolCall").and_then(permission_summary) else {
+            self.client.respond(
+                wire_id,
+                json!({
+                    "outcome": { "outcome": "selected", "optionId": reject_option }
+                }),
+            )?;
+            return Err(protocol::protocol_failure(
+                "Grok permission request was rejected because it has no actionable tool summary",
+            ));
+        };
+        self.finish_anonymous_messages();
         self.ensure_activity_capacity()?;
         let activity = self.next_activity(turn)?;
         let request_id = self.next_request()?;
@@ -279,17 +357,17 @@ impl<P: JsonPeer> Backend<P> {
             },
         );
         self.wire_approvals.insert(wire_key, request);
-        if let Some(title) = params.pointer("/toolCall/title").and_then(Value::as_str) {
-            self.pending_events
-                .push_back(BackendEvent::ActivityUpdated {
-                    activity,
-                    update: ActivityUpdate::TextSnapshot(title.to_owned()),
-                });
-        }
-        Ok(Some(BackendEvent::ActivityStarted {
-            activity,
-            kind: ActivityKind::ApprovalRequest { request_id },
-        }))
+        self.pending_events
+            .push_back(BackendEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::ApprovalRequest { request_id },
+            });
+        self.pending_events
+            .push_back(BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(summary),
+            });
+        Ok(self.pending_events.pop_front())
     }
 
     fn prompt_completed(
@@ -341,11 +419,16 @@ impl<P: JsonPeer> Backend<P> {
             .messages
             .drain()
             .map(|(_, binding)| binding.activity)
-            .chain(
-                self.tools
-                    .drain()
-                    .filter_map(|(_, binding)| (!binding.finished).then_some(binding.activity)),
-            )
+            .chain(self.tools.drain().flat_map(|(_, binding)| {
+                (!binding.finished)
+                    .then_some(binding.activity)
+                    .into_iter()
+                    .chain(
+                        (!binding.finished)
+                            .then_some(binding.result_activity)
+                            .flatten(),
+                    )
+            }))
             .chain(self.approvals.drain().map(|(_, binding)| binding.activity))
             .collect::<Vec<_>>();
         self.wire_approvals.clear();
@@ -458,10 +541,7 @@ fn activity_kind(kind: Option<&str>) -> ActivityKind {
     }
 }
 
-fn tool_terminal(
-    update: &Value,
-    activity: yo_core::ActivityRef,
-) -> Result<Option<BackendEvent>, BackendFailure> {
+fn tool_terminal_outcome(update: &Value) -> Result<Option<ActivityOutcome>, BackendFailure> {
     let Some(status) = update.get("status").and_then(Value::as_str) else {
         return Ok(None);
     };
@@ -475,14 +555,99 @@ fn tool_terminal(
             )));
         },
     };
-    Ok(Some(BackendEvent::ActivityFinished { activity, outcome }))
+    Ok(Some(outcome))
 }
 
 fn tool_content_snapshot(update: &Value) -> Option<String> {
-    update.get("content")?.as_array()?.iter().find_map(|item| {
-        (item.get("type")?.as_str()? == "content")
-            .then(|| item.pointer("/content/text")?.as_str().map(str::to_owned))?
+    let snapshots = update
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter_map(|item| {
+            (item.get("type")?.as_str()? == "content")
+                .then(|| item.pointer("/content/text")?.as_str().map(str::to_owned))?
+        })
+        .collect::<Vec<_>>();
+    (!snapshots.is_empty()).then(|| snapshots.join("\n"))
+}
+
+fn tool_identity(update: &Value) -> ToolIdentity {
+    ToolIdentity {
+        title: non_empty_text(update, "title").map(str::to_owned),
+        name: non_empty_text(update, "name").map(str::to_owned),
+        raw_input: update.get("rawInput").and_then(raw_input_summary),
+    }
+}
+
+fn merge_tool_identity(
+    identity: &mut ToolIdentity,
+    update: &Value,
+    tool_id: &str,
+) -> Option<String> {
+    let before = tool_identity_snapshot(identity, tool_id);
+    let observed = tool_identity(update);
+    if identity.title.is_none() {
+        identity.title = observed.title;
+    }
+    if identity.name.is_none() {
+        identity.name = observed.name;
+    }
+    if identity.raw_input.is_none() {
+        identity.raw_input = observed.raw_input;
+    }
+    let after = tool_identity_snapshot(identity, tool_id);
+    (after != before).then_some(after)
+}
+
+fn tool_identity_snapshot(identity: &ToolIdentity, tool_id: &str) -> String {
+    identity.title.clone().unwrap_or_else(|| {
+        format_tool_summary(identity.name.as_deref(), identity.raw_input.as_deref())
+            .unwrap_or_else(|| tool_id.to_owned())
     })
+}
+
+fn permission_summary(tool_call: &Value) -> Option<String> {
+    non_empty_text(tool_call, "title")
+        .map(str::to_owned)
+        .or_else(|| {
+            let name = non_empty_text(tool_call, "name")?;
+            let raw_input = tool_call.get("rawInput").and_then(raw_input_summary)?;
+            format_tool_summary(Some(name), Some(&raw_input))
+        })
+}
+
+fn format_tool_summary(name: Option<&str>, raw_input: Option<&str>) -> Option<String> {
+    match (name, raw_input) {
+        (Some(name), Some(input)) => Some(format!("{name}: {input}")),
+        (Some(name), None) => Some(name.to_owned()),
+        (None, Some(input)) => Some(input.to_string()),
+        (None, None) => None,
+    }
+}
+
+fn raw_input_summary(value: &Value) -> Option<String> {
+    meaningful_raw_input(value).then(|| match value {
+        Value::String(input) => input.trim().to_owned(),
+        value => value.to_string(),
+    })
+}
+
+fn non_empty_text<'a>(value: &'a Value, field: &str) -> Option<&'a str> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+}
+
+fn meaningful_raw_input(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(input) => !input.trim().is_empty(),
+        Value::Array(items) => items.iter().any(meaningful_raw_input),
+        Value::Object(fields) => fields.values().any(meaningful_raw_input),
+        Value::Bool(_) | Value::Number(_) => true,
+    }
 }
 
 fn permission_option(options: &[Value], kind: &str) -> Option<String> {
