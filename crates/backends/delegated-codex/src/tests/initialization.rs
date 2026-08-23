@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde_json::json;
 use yo_core::{
     AgentCommand, BackendBindingEvidence, BackendCommandEvidence, BackendFailureKind,
-    BackendIdentity, ContinuationStrategy,
+    BackendIdentity, BackendPoll, ContinuationStrategy,
 };
 
 use super::{
@@ -74,6 +74,21 @@ fn verifies_the_handshake_without_creating_a_thread() {
     assert_eq!(sent[1], json!({ "method": "initialized" }));
 }
 
+// 로컬 최신 Codex 0.149 userAgent도 검증된 app-server line으로 수락하고 initialized
+// 알림까지 완료해, 최신 설치가 호환성 allowlist에서 막히지 않음을 확인합니다.
+#[test]
+fn latest_codex_minor_completes_initialization() {
+    let (peer, sent) = FakePeer::new([initialize_response(1, "0.149.0")]);
+    let mut client = AppServerClient::new(peer, Duration::from_secs(1));
+
+    let initialize = client.initialize().unwrap();
+
+    assert_eq!(initialize.user_agent, "codex_cli_rs/0.149.0 (test)");
+    let sent = sent.0.borrow();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[1], json!({ "method": "initialized" }));
+}
+
 // 저장된 locator로 재개할 때 새 thread를 만들지 않고 `thread/resume` 한 번만 보내며,
 // app-server 버전이 달라도 thread·Session·model·provider 신원이 같으면 같은 binding이다.
 #[test]
@@ -91,6 +106,43 @@ fn resumes_one_verified_thread_without_starting_another() {
         sent.iter()
             .all(|message| message["method"] != "thread/start")
     );
+}
+
+// thread/resume 직후 app-server가 재생하는 과거 누적 사용량은 현재 프로세스의 Yo Turn과
+// 대응시킬 근거가 없으므로 임의 귀속하거나 Session을 깨지 않고 관찰 경계 밖으로 둔다.
+#[test]
+fn ignores_replayed_usage_without_a_current_turn_binding() {
+    let replayed_usage = json!({
+        "method": "thread/tokenUsage/updated",
+        "params": {
+            "threadId": "thread-a",
+            "turnId": "historical-turn",
+            "tokenUsage": {
+                "last": {
+                    "inputTokens": 12,
+                    "cachedInputTokens": 8,
+                    "outputTokens": 3,
+                    "reasoningOutputTokens": 1,
+                    "totalTokens": 15
+                },
+                "total": {
+                    "inputTokens": 120,
+                    "cachedInputTokens": 80,
+                    "outputTokens": 30,
+                    "reasoningOutputTokens": 10,
+                    "totalTokens": 150
+                },
+                "modelContextWindow": 200000
+            }
+        }
+    });
+    let (mut backend, _) = backend([replayed_usage, thread_start_response(2, "thread-a")]);
+
+    backend
+        .resume_binding(session(1), &resume_binding("thread-a"))
+        .unwrap();
+
+    assert_eq!(backend.poll_event().unwrap(), BackendPoll::Pending);
 }
 
 // locator가 가리킨 thread라도 반환된 model 신원이 저장된 binding과 다르면 같은 epoch로
@@ -116,10 +168,10 @@ fn rejects_a_resumed_thread_with_different_model_identity() {
 }
 
 // 검증하지 않은 Codex minor 버전이면 initialized 알림이나 Session 명령을 보내기 전에
-// Initialization 실패로 연결을 중단하고, 검증된 0.146은 이 경로에 들지 않게 한다.
+// Initialization 실패로 연결을 중단하고, 검증된 최신 0.149는 이 경로에 들지 않게 한다.
 #[test]
 fn incompatible_version_fails_during_initialization() {
-    let (peer, sent) = FakePeer::new([initialize_response(1, "0.147.0")]);
+    let (peer, sent) = FakePeer::new([initialize_response(1, "0.150.0")]);
     let mut client = AppServerClient::new(peer, Duration::from_secs(1));
 
     let failure = match client.initialize() {

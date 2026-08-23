@@ -74,6 +74,31 @@ fn maps_a_coding_turn_into_semantic_events() {
             }
         }),
         json!({
+            "method": "thread/tokenUsage/updated",
+            "params": {
+                "threadId": "thread-a",
+                "turnId": "turn-a",
+                "tokenUsage": {
+                    "last": {
+                        "inputTokens": 120,
+                        "cachedInputTokens": 80,
+                        "outputTokens": 30,
+                        "reasoningOutputTokens": 12,
+                        "totalTokens": 150
+                    },
+                    "total": {
+                        "inputTokens": 300,
+                        "cachedInputTokens": 180,
+                        "cacheWriteInputTokens": 9,
+                        "outputTokens": 70,
+                        "reasoningOutputTokens": 22,
+                        "totalTokens": 370
+                    },
+                    "modelContextWindow": 200000
+                }
+            }
+        }),
+        json!({
             "method": "turn/completed",
             "params": {
                 "threadId": "thread-a",
@@ -144,6 +169,53 @@ fn maps_a_coding_turn_into_semantic_events() {
         runtime.poll_event().unwrap(),
         RuntimePoll::Event(AgentEvent::ActivityFinished {
             activity: activity(active_turn, 2),
+            outcome: ActivityOutcome::Completed,
+        })
+    );
+    assert_eq!(
+        runtime.poll_event().unwrap(),
+        RuntimePoll::Event(AgentEvent::ActivityStarted {
+            activity: activity(active_turn, 3),
+            kind: ActivityKind::ModelWork,
+        })
+    );
+    let RuntimePoll::Event(AgentEvent::ActivityUpdated {
+        activity: usage_activity,
+        update: yo_core::ActivityUpdate::TextSnapshot(receipt),
+    }) = runtime.poll_event().unwrap()
+    else {
+        panic!("Codex usage must be emitted as one durable text snapshot");
+    };
+    assert_eq!(usage_activity, activity(active_turn, 3));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&receipt).unwrap(),
+        json!({
+            "schema": "codex.app-server-token-usage-receipt/v1",
+            "source_profile": "codex.app-server.thread-token-usage-updated/v1",
+            "turn_id": "turn-a",
+            "usage": {
+                "input_tokens": 120,
+                "output_tokens": 30,
+                "total_tokens": 150,
+                "reasoning_tokens": 12,
+                "cache_read_input_tokens": 80,
+                "cache_write_input_tokens": 0
+            },
+            "thread_total": {
+                "input_tokens": 300,
+                "output_tokens": 70,
+                "total_tokens": 370,
+                "reasoning_tokens": 22,
+                "cache_read_input_tokens": 180,
+                "cache_write_input_tokens": 9
+            },
+            "model_context_window": 200000
+        })
+    );
+    assert_eq!(
+        runtime.poll_event().unwrap(),
+        RuntimePoll::Event(AgentEvent::ActivityFinished {
+            activity: activity(active_turn, 3),
             outcome: ActivityOutcome::Completed,
         })
     );
@@ -262,6 +334,56 @@ fn rejects_a_supported_item_completion_without_start() {
     let failure = backend.poll_event().unwrap_err();
 
     assert_eq!(failure.kind(), BackendFailureKind::Protocol);
+}
+
+// Codex token usage의 필수 cachedInputTokens가 음수이면 영수증을 생성하지 않고
+// Protocol 실패로 닫아 provider가 보고하지 않은 유효값을 추측하지 않습니다.
+#[test]
+fn rejects_malformed_codex_token_usage() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let messages = [
+        thread_start_response(2, "thread-a"),
+        json!({ "id": 3, "result": { "turn": { "id": "turn-a" } } }),
+        json!({
+            "method": "thread/tokenUsage/updated",
+            "params": {
+                "threadId": "thread-a",
+                "turnId": "turn-a",
+                "tokenUsage": {
+                    "last": {
+                        "inputTokens": 10,
+                        "cachedInputTokens": -1,
+                        "outputTokens": 2,
+                        "reasoningOutputTokens": 1,
+                        "totalTokens": 12
+                    },
+                    "total": {
+                        "inputTokens": 10,
+                        "cachedInputTokens": 0,
+                        "outputTokens": 2,
+                        "reasoningOutputTokens": 1,
+                        "totalTokens": 12
+                    }
+                }
+            }
+        }),
+    ];
+    let (mut backend, _) = backend(messages);
+    backend
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("inspect"),
+        })
+        .unwrap();
+
+    let failure = backend.poll_event().unwrap_err();
+
+    assert_eq!(failure.kind(), BackendFailureKind::Protocol);
+    assert!(failure.message().contains("cached input tokens"));
 }
 
 // Codex의 error 알림은 곧바로 transport 실패로 중복 보고하지 않고 뒤따르는 failed

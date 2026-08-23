@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 use yo_backend::transport::JsonMessagePeer;
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityUpdate, BackendEvent,
@@ -53,6 +53,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             "item/agentMessage/delta" | "item/commandExecution/outputDelta" | "item/plan/delta" => {
                 self.item_delta(&params)
             },
+            "thread/tokenUsage/updated" => self.token_usage_updated(&params),
             "turn/completed" => self.turn_completed(&params),
             "serverRequest/resolved" => self.server_request_resolved(&params),
             "error" => self.record_turn_error(&params),
@@ -271,6 +272,56 @@ impl<P: JsonMessagePeer> Backend<P> {
         Ok(Some(first))
     }
 
+    fn token_usage_updated(
+        &mut self,
+        params: &Value,
+    ) -> Result<Option<BackendEvent>, BackendFailure> {
+        self.validate_thread(params)?;
+        let wire_turn = protocol::string_at(params, &["turnId"])?;
+        let Some(turn) = self.wire_turns.get(wire_turn).map(|binding| binding.turn) else {
+            // thread/resume can replay the persisted usage snapshot for a historical
+            // Codex Turn. That Turn has no trustworthy Yo Turn binding in this process,
+            // so keep the downstream boundary exact instead of inventing attribution.
+            return Ok(None);
+        };
+        let token_usage = value_at(params, &["tokenUsage"], "token usage")?;
+        let last = token_usage_breakdown_at(token_usage, "last")?;
+        let total = token_usage_breakdown_at(token_usage, "total")?;
+        let model_context_window =
+            optional_non_negative_at(token_usage, "modelContextWindow", "model context window")?;
+        let receipt = json!({
+            "schema": "codex.app-server-token-usage-receipt/v1",
+            "source_profile": "codex.app-server.thread-token-usage-updated/v1",
+            "turn_id": wire_turn,
+            "usage": last.to_json(),
+            "thread_total": total.to_json(),
+            "model_context_window": model_context_window,
+        });
+        self.usage_activity(turn, receipt)
+    }
+
+    fn usage_activity(
+        &mut self,
+        turn: yo_core::TurnRef,
+        receipt: Value,
+    ) -> Result<Option<BackendEvent>, BackendFailure> {
+        let activity = self.next_activity(turn)?;
+        self.pending_events
+            .push_back(BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(receipt.to_string()),
+            });
+        self.pending_events
+            .push_back(BackendEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Completed,
+            });
+        Ok(Some(BackendEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::ModelWork,
+        }))
+    }
+
     fn record_turn_error(
         &mut self,
         params: &Value,
@@ -378,6 +429,100 @@ impl<P: JsonMessagePeer> Backend<P> {
             )));
         }
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TokenUsageBreakdown {
+    input_tokens: u64,
+    output_tokens: u64,
+    total_tokens: u64,
+    reasoning_tokens: u64,
+    cache_read_input_tokens: u64,
+    cache_write_input_tokens: u64,
+}
+
+impl TokenUsageBreakdown {
+    fn to_json(self) -> Value {
+        json!({
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
+            "reasoning_tokens": self.reasoning_tokens,
+            "cache_read_input_tokens": self.cache_read_input_tokens,
+            "cache_write_input_tokens": self.cache_write_input_tokens,
+        })
+    }
+}
+
+fn token_usage_breakdown_at(
+    value: &Value,
+    field: &'static str,
+) -> Result<TokenUsageBreakdown, BackendFailure> {
+    let value = value_at(value, &[field], "token usage breakdown")?;
+    Ok(TokenUsageBreakdown {
+        input_tokens: non_negative_at(value, "inputTokens", "input tokens")?,
+        output_tokens: non_negative_at(value, "outputTokens", "output tokens")?,
+        total_tokens: non_negative_at(value, "totalTokens", "total tokens")?,
+        reasoning_tokens: non_negative_at(
+            value,
+            "reasoningOutputTokens",
+            "reasoning output tokens",
+        )?,
+        cache_read_input_tokens: non_negative_at(
+            value,
+            "cachedInputTokens",
+            "cached input tokens",
+        )?,
+        cache_write_input_tokens: optional_non_negative_at(
+            value,
+            "cacheWriteInputTokens",
+            "cache write input tokens",
+        )?
+        .unwrap_or(0),
+    })
+}
+
+fn value_at<'a>(
+    value: &'a Value,
+    path: &[&str],
+    label: &'static str,
+) -> Result<&'a Value, BackendFailure> {
+    let mut current = value;
+    for segment in path {
+        current = current.get(*segment).ok_or_else(|| {
+            protocol::protocol_failure(format!("Codex message is missing {label}"))
+        })?;
+    }
+    if !current.is_object() {
+        return Err(protocol::protocol_failure(format!(
+            "Codex {label} is not an object"
+        )));
+    }
+    Ok(current)
+}
+
+fn non_negative_at(
+    value: &Value,
+    field: &'static str,
+    label: &'static str,
+) -> Result<u64, BackendFailure> {
+    value
+        .get(field)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| protocol::protocol_failure(format!("Codex {label} is not non-negative")))
+}
+
+fn optional_non_negative_at(
+    value: &Value,
+    field: &'static str,
+    label: &'static str,
+) -> Result<Option<u64>, BackendFailure> {
+    match value.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value.as_u64().map(Some).ok_or_else(|| {
+            protocol::protocol_failure(format!("Codex {label} is not non-negative"))
+        }),
     }
 }
 

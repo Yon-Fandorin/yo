@@ -1,7 +1,8 @@
-use serde_json::Value;
+use serde_json::{Value, json};
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityUpdate, BackendEvent,
     BackendFailure, BackendFailureKind, BackendOutcomeEvidence, BackendPoll, Failure, TurnOutcome,
+    TurnRef,
 };
 
 use super::{
@@ -330,6 +331,7 @@ impl<P: JsonPeer> Backend<P> {
                 )));
             },
         };
+        let usage_receipt = prompt_usage_receipt(result, response_id)?;
         let activity_outcome = match &outcome {
             TurnOutcome::Completed => ActivityOutcome::Completed,
             TurnOutcome::Interrupted => ActivityOutcome::Interrupted,
@@ -358,6 +360,9 @@ impl<P: JsonPeer> Backend<P> {
                         outcome: activity_outcome.clone(),
                     }),
             );
+        if let Some(receipt) = usage_receipt {
+            self.queue_usage_activity(prompt.turn, receipt)?;
+        }
         let turn_finished = if outcome == TurnOutcome::Completed && self.load_session {
             BackendEvent::ResumableTurnFinished {
                 turn: prompt.turn,
@@ -371,6 +376,30 @@ impl<P: JsonPeer> Backend<P> {
         };
         self.pending_events.push_back(turn_finished);
         Ok(self.pending_events.pop_front())
+    }
+
+    fn queue_usage_activity(
+        &mut self,
+        turn: TurnRef,
+        receipt: Value,
+    ) -> Result<(), BackendFailure> {
+        let activity = self.next_activity(turn)?;
+        self.pending_events
+            .push_back(BackendEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::ModelWork,
+            });
+        self.pending_events
+            .push_back(BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(receipt.to_string()),
+            });
+        self.pending_events
+            .push_back(BackendEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Completed,
+            });
+        Ok(())
     }
 
     fn validate_session(&self, params: &Value) -> Result<(), BackendFailure> {
@@ -387,6 +416,38 @@ impl<P: JsonPeer> Backend<P> {
         }
         Ok(())
     }
+}
+
+fn prompt_usage_receipt(result: &Value, response_id: u64) -> Result<Option<Value>, BackendFailure> {
+    let Some(usage) = result.get("usage") else {
+        return Ok(None);
+    };
+    if !usage.is_object() {
+        return Err(protocol::protocol_failure(
+            "Grok ACP prompt usage is not an object",
+        ));
+    }
+    Ok(Some(json!({
+        "schema": "grok.acp-prompt-usage-receipt/v1",
+        "source_profile": "grok.acp.prompt-response.usage/v1",
+        "prompt_request_id": response_id,
+        "usage": {
+            "input_tokens": non_negative_usage_at(usage, "inputTokens")?,
+            "output_tokens": non_negative_usage_at(usage, "outputTokens")?,
+            "total_tokens": non_negative_usage_at(usage, "totalTokens")?,
+            "reasoning_tokens": non_negative_usage_at(usage, "thoughtTokens")?,
+            "cache_read_input_tokens": non_negative_usage_at(usage, "cachedReadTokens")?,
+            "cache_write_input_tokens": non_negative_usage_at(usage, "cachedWriteTokens")?,
+        }
+    })))
+}
+
+fn non_negative_usage_at(usage: &Value, field: &'static str) -> Result<u64, BackendFailure> {
+    usage.get(field).and_then(Value::as_u64).ok_or_else(|| {
+        protocol::protocol_failure(format!(
+            "Grok ACP prompt usage `{field}` is not non-negative"
+        ))
+    })
 }
 
 fn activity_kind(kind: Option<&str>) -> ActivityKind {

@@ -236,7 +236,20 @@ fn maps_prompt_stream_and_completion_to_semantic_events() {
                 }
             }
         }),
-        response(4, json!({ "stopReason": "end_turn" })),
+        response(
+            4,
+            json!({
+                "stopReason": "end_turn",
+                "usage": {
+                    "inputTokens": 100,
+                    "outputTokens": 25,
+                    "totalTokens": 125,
+                    "thoughtTokens": 10,
+                    "cachedReadTokens": 60,
+                    "cachedWriteTokens": 5
+                }
+            }),
+        ),
     ];
     let (mut backend, sent) = backend(messages);
     create_session(&mut backend, session_id);
@@ -271,11 +284,87 @@ fn maps_prompt_stream_and_completion_to_semantic_events() {
             ..
         })
     ));
+    let BackendPoll::Event(BackendEvent::ActivityStarted {
+        activity: usage_activity,
+        kind: ActivityKind::ModelWork,
+    }) = backend.poll_event().unwrap()
+    else {
+        panic!("Grok prompt usage must start one ModelWork Activity");
+    };
+    let BackendPoll::Event(BackendEvent::ActivityUpdated {
+        activity,
+        update: yo_core::ActivityUpdate::TextSnapshot(receipt),
+    }) = backend.poll_event().unwrap()
+    else {
+        panic!("Grok prompt usage must be emitted as one durable text snapshot");
+    };
+    assert_eq!(activity, usage_activity);
+    assert_eq!(
+        serde_json::from_str::<Value>(&receipt).unwrap(),
+        json!({
+            "schema": "grok.acp-prompt-usage-receipt/v1",
+            "source_profile": "grok.acp.prompt-response.usage/v1",
+            "prompt_request_id": 4,
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 25,
+                "total_tokens": 125,
+                "reasoning_tokens": 10,
+                "cache_read_input_tokens": 60,
+                "cache_write_input_tokens": 5
+            }
+        })
+    );
+    assert!(matches!(
+        backend.poll_event().unwrap(),
+        BackendPoll::Event(BackendEvent::ActivityFinished {
+            activity,
+            outcome: ActivityOutcome::Completed,
+        }) if activity == usage_activity
+    ));
     assert!(matches!(
         backend.poll_event().unwrap(),
         BackendPoll::Event(BackendEvent::ResumableTurnFinished { turn, .. })
             if turn == active_turn
     ));
+}
+
+// Grok prompt usage의 필수 token 값이 음수이면 영수증을 추측 보정하지 않고 Turn 종료
+// 전에 Protocol 실패로 닫아 잘못된 cache 수치가 durable Activity가 되지 않게 합니다.
+#[test]
+fn rejects_malformed_grok_prompt_usage() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let messages = [
+        response(3, json!({ "sessionId": "grok-session-a" })),
+        response(
+            4,
+            json!({
+                "stopReason": "end_turn",
+                "usage": {
+                    "inputTokens": 100,
+                    "outputTokens": 25,
+                    "totalTokens": 125,
+                    "thoughtTokens": 10,
+                    "cachedReadTokens": -1,
+                    "cachedWriteTokens": 5
+                }
+            }),
+        ),
+    ];
+    let (mut backend, _) = backend(messages);
+    create_session(&mut backend, session_id);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("test"),
+        })
+        .unwrap();
+
+    let failure = backend.poll_event().unwrap_err();
+
+    assert_eq!(failure.kind(), BackendFailureKind::Protocol);
+    assert!(failure.message().contains("cachedReadTokens"));
 }
 
 // permission request는 allow_once와 reject_once를 우선하는 이진 yo 승인으로 변환되고,

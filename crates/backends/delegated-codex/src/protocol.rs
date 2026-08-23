@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use yo_core::{BackendFailure, BackendFailureKind};
 
 const SUPPORTED_CODEX_MAJOR: u64 = 0;
-const SUPPORTED_CODEX_MINORS: &[u64] = &[145, 146];
+const SUPPORTED_CODEX_MINORS: &[u64] = &[145, 146, 149];
 
 #[derive(Debug)]
 pub(super) enum Incoming {
@@ -171,21 +171,22 @@ pub(super) fn protocol_failure(message: impl Into<String>) -> BackendFailure {
 mod tests {
     use super::*;
 
-    // 실제 wire 흐름을 검증한 Codex 0.145와 0.146 minor line은 실행 파일 이름과
+    // 실제 wire 흐름을 검증한 Codex 0.145, 0.146, 0.149 minor line은 실행 파일 이름과
     // userAgent의 부가 문자열이 달라도 허용하고, 각 patch 업데이트는 다시 막지 않는다.
     #[test]
     fn accepts_each_verified_codex_minor_line() {
         assert!(ensure_supported_version("codex_cli_rs/0.145.3 (Linux)").is_ok());
         assert!(ensure_supported_version("yo/0.146.0 (Arch Linux; x86_64)").is_ok());
+        assert!(ensure_supported_version("codex_cli_rs/0.149.0 (Linux)").is_ok());
     }
 
     // 아직 wire 호환성을 검증하지 않은 다음 Codex minor line은 시작 단계에서 명시적으로
-    // 거절하고, 오류에는 현재 허용한 두 line을 모두 표시해 대응 범위를 알 수 있게 한다.
+    // 거절하고, 오류에는 현재 허용한 세 line을 모두 표시해 대응 범위를 알 수 있게 한다.
     #[test]
     fn rejects_an_unverified_codex_minor_line() {
-        let failure = ensure_supported_version("codex_cli_rs/0.147.0").unwrap_err();
+        let failure = ensure_supported_version("codex_cli_rs/0.150.0").unwrap_err();
         assert_eq!(failure.kind(), BackendFailureKind::Initialization);
-        assert!(failure.message().contains("0.145, 0.146"));
+        assert!(failure.message().contains("0.145, 0.146, 0.149"));
     }
 
     // method와 id가 함께 있는 app-server 메시지는 일반 notification이 아니라 클라이언트가
