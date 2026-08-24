@@ -4,22 +4,22 @@ use yo_core::{
     HostWorkspacePath, SessionId,
     session_repository::{
         ContinuationEligibility, StoredDiscoveryMismatch, StoredDiscoveryValidation, StoredSession,
-        StoredSessionContinuity, StoredSessionReadError, StoredSessionReader,
+        StoredSessionContinuity, StoredSessionHistory, StoredSessionReadError, StoredSessionReader,
         StoredSessionUnavailableReason, read_stored_session,
     },
 };
 use yo_tui::{
-    ArchivedSessionView,
+    ArchivedContentPolicy, ArchivedProjectionOptions, ArchivedSessionView,
     plain::{
         Column, ColumnBehavior, ContinuationLayout, HeadingStyle, ListSpec, OutputWidth,
         render_list,
     },
-    project_archived_session,
+    project_archived_session_with_options,
 };
 
 use super::{
     AppError,
-    command::{SessionCommand, SessionView},
+    command::{SessionCommand, SessionContent, SessionView},
 };
 
 pub(crate) fn resume_read_only(
@@ -47,6 +47,8 @@ pub(crate) fn read_only_resume_from(
             details: false,
             view: SessionView::Chat,
             glyph_profile,
+            limit: None,
+            content: None,
         },
     )?;
     output.diagnostics.push(format!(
@@ -76,23 +78,32 @@ fn show(
 ) -> Result<Output, AppError> {
     let reader = storage
         .reader()
-        .ok_or_else(|| AppError::many([format!("stored Session {session_id} was not found")]))?;
-    let history = read_stored_session(reader, session_id).map_err(|error| match &error {
-        StoredSessionReadError::NotFound { .. } | StoredSessionReadError::Incomplete { .. } => {
-            AppError::many([error.to_string()])
-        },
-        StoredSessionReadError::Repository(_) | StoredSessionReadError::Invalid { .. } => {
-            AppError::single("reading stored Session history", error)
-        },
-    })?;
+        .map(|reader| reader as &dyn StoredSessionReader);
+    show_from_reader(reader, session_id, command)
+}
+
+fn show_from_reader(
+    reader: Option<&dyn StoredSessionReader>,
+    session_id: SessionId,
+    command: SessionCommand,
+) -> Result<Output, AppError> {
+    let history = read_history_from_reader(reader, session_id)?;
     let view = match command.view {
         SessionView::Chat => ArchivedSessionView::Chat,
         SessionView::Transcript => ArchivedSessionView::Transcript,
         SessionView::Request => ArchivedSessionView::Request,
-        SessionView::Usage => ArchivedSessionView::Usage,
     };
-    let stdout = project_archived_session(&history, view, command.glyph_profile)
-        .map_err(|error| AppError::single("projecting stored Session history", error))?;
+    let options = ArchivedProjectionOptions::new(
+        command.limit,
+        match command.content {
+            Some(SessionContent::None) => ArchivedContentPolicy::None,
+            Some(SessionContent::Preview) => ArchivedContentPolicy::Preview,
+            Some(SessionContent::Full) | None => ArchivedContentPolicy::Full,
+        },
+    );
+    let stdout =
+        project_archived_session_with_options(&history, view, command.glyph_profile, options)
+            .map_err(|error| AppError::single("projecting stored Session history", error))?;
     let diagnostics = archival_diagnostics(
         session_id,
         command.view,
@@ -102,6 +113,22 @@ fn show(
     Ok(Output {
         stdout: with_final_newline(stdout),
         diagnostics,
+    })
+}
+
+pub(crate) fn read_history_from_reader(
+    reader: Option<&dyn StoredSessionReader>,
+    session_id: SessionId,
+) -> Result<StoredSessionHistory, AppError> {
+    let reader = reader
+        .ok_or_else(|| AppError::many([format!("stored Session {session_id} was not found")]))?;
+    read_stored_session(reader, session_id).map_err(|error| match &error {
+        StoredSessionReadError::NotFound { .. } | StoredSessionReadError::Incomplete { .. } => {
+            AppError::many([error.to_string()])
+        },
+        StoredSessionReadError::Repository(_) | StoredSessionReadError::Invalid { .. } => {
+            AppError::single("reading stored Session history", error)
+        },
     })
 }
 
@@ -117,10 +144,20 @@ fn archival_diagnostics(
             "stored Session {session_id} may omit a volatile suffix; v1 durability continuity is not observable"
         ));
     }
-    if let StoredDiscoveryValidation::Mismatch(mismatch) = discovery_validation {
-        diagnostics.push(discovery_mismatch_diagnostic(session_id, mismatch));
-    }
+    diagnostics.extend(discovery_diagnostics(session_id, discovery_validation));
     diagnostics
+}
+
+pub(crate) fn discovery_diagnostics(
+    session_id: SessionId,
+    discovery_validation: StoredDiscoveryValidation,
+) -> Vec<String> {
+    match discovery_validation {
+        StoredDiscoveryValidation::Consistent => Vec::new(),
+        StoredDiscoveryValidation::Mismatch(mismatch) => {
+            vec![discovery_mismatch_diagnostic(session_id, mismatch)]
+        },
+    }
 }
 
 fn discovery_mismatch_diagnostic(
@@ -402,7 +439,7 @@ fn workspace_label(path: &str) -> String {
         .to_owned()
 }
 
-fn with_final_newline(mut output: String) -> String {
+pub(crate) fn with_final_newline(mut output: String) -> String {
     if !output.ends_with('\n') {
         output.push('\n');
     }

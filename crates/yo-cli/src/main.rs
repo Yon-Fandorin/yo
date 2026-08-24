@@ -32,6 +32,7 @@ mod session;
 #[cfg(unix)]
 mod storage;
 #[cfg(unix)]
+mod usage;
 #[cfg(unix)]
 fn main() -> ExitCode {
     local_tools::initialize_process_file_mode();
@@ -65,6 +66,7 @@ fn run(command: command::Command) -> Result<(), AppError> {
             write_command_output(connection::run_disconnect(command)?)
         },
         command::Command::Session(command) => run_session_command(command),
+        command::Command::Usage(command) => write_session_command_output(usage::run(command)?),
         command::Command::Live(options) => run_live_session(options),
     }
 }

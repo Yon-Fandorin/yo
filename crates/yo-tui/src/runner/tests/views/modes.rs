@@ -31,10 +31,7 @@ fn three_modes_render_distinct_visible_projections_from_one_journal() {
         Ok(StateEffect::Redraw)
     );
     let transcript = render_and_commit(&mut state, Size::new(80, 40));
-    assert!(
-        transcript
-            .contains("Transcript · context 5/5 · F1 Chat · F2 Transcript · F3 Request · F4 Usage")
-    );
+    assert!(transcript.contains("Transcript · context 5/5 · F1 Chat · F2 Transcript · F3 Request"));
     assert!(transcript.contains("command.start_turn"));
     assert!(transcript.contains("event.activity_started"));
     assert!(transcript.contains("kind=tool_call"));
@@ -49,16 +46,14 @@ fn three_modes_render_distinct_visible_projections_from_one_journal() {
         Ok(StateEffect::Redraw)
     );
     let request = render_and_commit(&mut state, Size::new(80, 12));
-    assert!(
-        request.contains("Request · context 5/5 · F1 Chat · F2 Transcript · F3 Request · F4 Usage")
-    );
+    assert!(request.contains("Request · context 5/5 · F1 Chat · F2 Transcript · F3 Request"));
     assert!(request.contains("Live Session Request diagnostic"));
     assert!(request.contains("context_highlight=none(reason=no-direct-request)"));
     assert!(request.contains("no correlation records have been committed"));
 }
 
-// 기본 binding은 press에서만 정확한 mode로 전환하고 이미 활성인 mode의 같은 키나 release는
-// 상태를 바꾸지 않아 중복 transition을 만들지 않는다.
+// 기본 binding은 F1/F2/F3 press에서만 정확한 mode로 전환하고, 이미 활성인 mode의 같은
+// 키·release와 더는 할당하지 않은 F4는 상태를 바꾸지 않는다.
 #[test]
 fn function_keys_switch_exactly_and_idempotently() {
     let mut state = TuiState::new();
@@ -84,9 +79,9 @@ fn function_keys_switch_exactly_and_idempotently() {
     assert_eq!(state.views().active(), ObservabilityView::Request);
     assert_eq!(
         state.handle(function(4, KeyAction::Press), Duration::ZERO),
-        Ok(StateEffect::Redraw)
+        Ok(StateEffect::Unchanged)
     );
-    assert_eq!(state.views().active(), ObservabilityView::Usage);
+    assert_eq!(state.views().active(), ObservabilityView::Request);
     assert_eq!(
         state.handle(function(1, KeyAction::Press), Duration::ZERO),
         Ok(StateEffect::Redraw)

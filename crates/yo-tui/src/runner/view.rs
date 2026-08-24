@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, num::NonZeroU16, time::Duration};
 
-use yo_core::{AgentEvent, RequestTraceEntry, TranscriptRecord};
+use yo_core::{RequestTraceEntry, TranscriptRecord};
 
 use crate::{
     appearance::AppearanceSnapshot,
@@ -25,7 +25,6 @@ use crate::{
 };
 
 mod projection;
-mod usage;
 pub(super) use projection::format_archival_record;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -34,7 +33,6 @@ pub(super) enum ObservabilityView {
     Chat,
     Transcript,
     Request,
-    Usage,
 }
 
 impl ObservabilityView {
@@ -43,7 +41,6 @@ impl ObservabilityView {
             Self::Chat => "Chat",
             Self::Transcript => "Transcript",
             Self::Request => "Request",
-            Self::Usage => "Usage",
         }
     }
 
@@ -52,7 +49,6 @@ impl ObservabilityView {
             Self::Chat => "C",
             Self::Transcript => "T",
             Self::Request => "R",
-            Self::Usage => "U",
         }
     }
 }
@@ -63,7 +59,6 @@ impl From<ViewSwitchTarget> for ObservabilityView {
             ViewSwitchTarget::Chat => Self::Chat,
             ViewSwitchTarget::Transcript => Self::Transcript,
             ViewSwitchTarget::Request => Self::Request,
-            ViewSwitchTarget::Usage => Self::Usage,
         }
     }
 }
@@ -90,7 +85,6 @@ pub(super) struct ObservabilityViewState {
     transcript: LocalTranscriptView,
     request: LocalTranscriptView,
     request_anchor: Option<usize>,
-    usage: usage::UsageViewState,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -101,7 +95,6 @@ pub(super) struct ObservabilityViews {
     transcript: TranscriptState,
     chat_contexts: HashMap<TranscriptItemId, usize>,
     bindings: ViewSwitchBindings,
-    usage: usage::UsageView,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -119,7 +112,6 @@ pub(super) enum ObservabilityRenderError {
     BodyHeightUnavailable,
     Chat(AgentShellRenderError),
     Transcript(TranscriptRenderError),
-    Usage(usage::UsageRenderError),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -165,10 +157,6 @@ impl ObservabilityViews {
         record: &TranscriptRecord,
         changed_chat_item: Option<TranscriptItemId>,
     ) -> Result<(), TranscriptStateError> {
-        let usage_may_change = matches!(
-            record,
-            TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished { .. })
-        );
         let index = self.records.len();
         let id = TranscriptItemId::new(
             u64::try_from(index)
@@ -181,9 +169,6 @@ impl ObservabilityViews {
             .append_text(id, &projection::format_record(index, record))?;
         self.transcript.finalize(id)?;
         self.records.push(record.clone());
-        if self.state.active == ObservabilityView::Usage && usage_may_change {
-            self.usage.observe_records(&self.records);
-        }
         if let Some(item) = changed_chat_item {
             self.chat_contexts.insert(item, index);
         }
@@ -220,14 +205,6 @@ impl ObservabilityViews {
             } else {
                 ViewInputEffect::Consumed
             };
-        }
-
-        if self.state.active == ObservabilityView::Usage {
-            let Some(navigation) = usage::navigation(key.code) else {
-                return ViewInputEffect::Consumed;
-            };
-            self.state.usage.queue(navigation);
-            return ViewInputEffect::Redraw;
         }
 
         let Some(scroll) = navigation(key.code) else {
@@ -299,7 +276,6 @@ impl ObservabilityViews {
         }
         let context = match self.state.active {
             ObservabilityView::Request => self.state.request_anchor,
-            ObservabilityView::Usage => None,
             _ => self.active_local().and_then(|local| local.context),
         };
         if size.height == 1 {
@@ -353,19 +329,11 @@ impl ObservabilityViews {
                 next.request.pending_scroll = None;
                 Point::new(0, 0)
             },
-            ObservabilityView::Usage => {
-                after_measure();
-                self.usage
-                    .render(&mut body, appearance, &mut next.usage)
-                    .map_err(ObservabilityRenderError::Usage)?;
-                Point::new(0, 0)
-            },
         };
         let context = match next.active {
             ObservabilityView::Request => next.request_anchor,
             ObservabilityView::Chat => next.chat.context,
             ObservabilityView::Transcript => next.transcript.context,
-            ObservabilityView::Usage => None,
         };
         let status = status_line(next.active, context, self.records.len(), width)?;
         paint_header(view, status, width, appearance.styles().prompt.rule)?;
@@ -385,9 +353,6 @@ impl ObservabilityViews {
         if self.state.active == target {
             return false;
         }
-        if target == ObservabilityView::Usage {
-            self.usage.observe_records(&self.records);
-        }
         if target == ObservabilityView::Request && self.state.active != ObservabilityView::Request {
             let next_anchor = self.active_local().and_then(|local| local.context);
             if self.state.request_anchor != next_anchor {
@@ -406,7 +371,6 @@ impl ObservabilityViews {
             ObservabilityView::Chat => Some(&self.state.chat),
             ObservabilityView::Transcript => Some(&self.state.transcript),
             ObservabilityView::Request => Some(&self.state.request),
-            ObservabilityView::Usage => None,
         }
     }
 
@@ -415,7 +379,6 @@ impl ObservabilityViews {
             ObservabilityView::Chat => Some(&mut self.state.chat),
             ObservabilityView::Transcript => Some(&mut self.state.transcript),
             ObservabilityView::Request => Some(&mut self.state.request),
-            ObservabilityView::Usage => None,
         }
     }
 
@@ -471,11 +434,6 @@ impl ObservabilityViews {
     #[cfg(test)]
     pub(super) fn request_reason(&self) -> RequestUnavailableReason {
         projection::request_reason(&self.records, self.state.request_anchor)
-    }
-
-    #[cfg(test)]
-    pub(super) const fn usage_position(&self) -> (usize, usize) {
-        self.state.usage.position()
     }
 }
 
@@ -556,22 +514,18 @@ fn status_line(
     let compact = active.short();
     let candidates = [
         format!(
-            "{} · context {} · F1 Chat · F2 Transcript · F3 Request · F4 Usage",
+            "{} · context {} · F1 Chat · F2 Transcript · F3 Request",
             active.title(),
             context
         ),
-        format!(
-            "{} · F1 Chat · F2 Transcript · F3 Request · F4 Usage",
-            active.title()
-        ),
-        format!("{} · F1/F2/F3/F4", active.title()),
+        format!("{} · F1 Chat · F2 Transcript · F3 Request", active.title()),
+        format!("{} · F1/F2/F3", active.title()),
         match active {
-            ObservabilityView::Chat => "[C]1234".to_owned(),
-            ObservabilityView::Transcript => "[T]1234".to_owned(),
-            ObservabilityView::Request => "[R]1234".to_owned(),
-            ObservabilityView::Usage => "[U]1234".to_owned(),
+            ObservabilityView::Chat => "[C]123".to_owned(),
+            ObservabilityView::Transcript => "[T]123".to_owned(),
+            ObservabilityView::Request => "[R]123".to_owned(),
         },
-        format!("{compact}1234"),
+        format!("{compact}123"),
         format!("[{compact}]"),
         compact.to_owned(),
     ];

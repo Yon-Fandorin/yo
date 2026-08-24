@@ -1,12 +1,16 @@
 //! Pure text projections of frontend-independent Journal records.
 
+use unicode_segmentation::UnicodeSegmentation;
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, ActivityUpdate,
     AgentCommand, AgentEvent, ApprovalDecision, RequestTraceEntry, TranscriptRecord, TurnOutcome,
 };
 
+use super::super::archival::ArchivedContentPolicy;
 #[cfg(test)]
 use super::RequestUnavailableReason;
+
+const ARCHIVED_CONTENT_PREVIEW_BYTES: usize = 256;
 
 pub(super) fn request_text(
     records: &[TranscriptRecord],
@@ -107,11 +111,98 @@ pub(super) fn format_record(index: usize, record: &TranscriptRecord) -> String {
     format_record_body(prefix, record)
 }
 
-pub(in crate::runner) fn format_archival_record(index: usize, record: &TranscriptRecord) -> String {
-    format_record_body(
-        format!("[#{:03}] {}", index + 1, record_name(record)),
-        record,
-    )
+pub(in crate::runner) fn format_archival_record(
+    index: usize,
+    record: &TranscriptRecord,
+    content: ArchivedContentPolicy,
+) -> String {
+    let prefix = format!("[#{:03}] {}", index + 1, record_name(record));
+    if content == ArchivedContentPolicy::Full {
+        return format_record_body(prefix, record);
+    }
+    format_bounded_archival_record(prefix, record, content)
+}
+
+fn format_bounded_archival_record(
+    prefix: String,
+    record: &TranscriptRecord,
+    content: ArchivedContentPolicy,
+) -> String {
+    match record {
+        TranscriptRecord::CommandCommitted(
+            AgentCommand::StartTurn { turn, input } | AgentCommand::SteerTurn { turn, input },
+        ) => format!(
+            "{prefix}\nsession={} turn={}\n{}",
+            turn.session_id(),
+            turn.turn_id().get().get(),
+            bounded_content("user_input", input.as_str(), content)
+        ),
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated { activity, update }) => {
+            let (content_type, text) = match update {
+                ActivityUpdate::TextDelta(text) => ("activity_text_delta", text.as_str()),
+                ActivityUpdate::TextSnapshot(text) => ("activity_text_snapshot", text.as_str()),
+            };
+            format!(
+                "{prefix}\nsession={} turn={} activity={}\n{}",
+                activity.session_id(),
+                activity.turn_id().get().get(),
+                activity.activity_id().get().get(),
+                bounded_content(content_type, text, content)
+            )
+        },
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
+            activity,
+            outcome: ActivityOutcome::Failed(failure),
+        }) => format!(
+            "{prefix}\nsession={} turn={} activity={}\noutcome=failed\n{}",
+            activity.session_id(),
+            activity.turn_id().get().get(),
+            activity.activity_id().get().get(),
+            bounded_content("activity_failure_message", failure.message(), content)
+        ),
+        TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+            turn,
+            outcome: TurnOutcome::Failed(failure),
+        }) => format!(
+            "{prefix}\nsession={} turn={}\noutcome=failed\n{}",
+            turn.session_id(),
+            turn.turn_id().get().get(),
+            bounded_content("turn_failure_message", failure.message(), content)
+        ),
+        _ => format_record_body(prefix, record),
+    }
+}
+
+fn bounded_content(content_type: &str, value: &str, policy: ArchivedContentPolicy) -> String {
+    let metadata = format!(
+        "content.type={content_type}\ncontent.utf8_bytes={}",
+        value.len()
+    );
+    match policy {
+        ArchivedContentPolicy::None => metadata,
+        ArchivedContentPolicy::Preview => {
+            let (preview, truncated) = utf8_bounded_preview(value);
+            format!(
+                "{metadata}\ncontent.preview={preview:?}\ncontent.preview_truncated={truncated}"
+            )
+        },
+        ArchivedContentPolicy::Full => {
+            unreachable!("full archived content uses the byte-compatible legacy formatter")
+        },
+    }
+}
+
+fn utf8_bounded_preview(value: &str) -> (&str, bool) {
+    if value.len() <= ARCHIVED_CONTENT_PREVIEW_BYTES {
+        return (value, false);
+    }
+    let end = value
+        .grapheme_indices(true)
+        .map(|(start, grapheme)| start + grapheme.len())
+        .take_while(|end| *end <= ARCHIVED_CONTENT_PREVIEW_BYTES)
+        .last()
+        .unwrap_or(0);
+    (&value[..end], true)
 }
 
 fn format_record_body(prefix: String, record: &TranscriptRecord) -> String {

@@ -254,6 +254,8 @@ fn session_list_accepts_all_and_details_in_any_order() {
             details: true,
             view: SessionView::Chat,
             glyph_profile: GlyphProfile::Rich,
+            limit: None,
+            content: None,
         })
     );
 }
@@ -278,6 +280,8 @@ fn direct_session_selects_a_read_only_projection() {
     assert_eq!(command.session_id.unwrap().to_string(), id);
     assert_eq!(command.view, SessionView::Transcript);
     assert_eq!(command.glyph_profile, GlyphProfile::Ascii);
+    assert_eq!(command.limit, None);
+    assert_eq!(command.content, None);
 }
 
 // `request`는 같은 UUID의 전체 저장 상관 흐름을 읽는 세 번째 view로 파싱되고,
@@ -308,25 +312,82 @@ fn direct_session_accepts_request_without_an_anchor_selector() {
     assert!(error.to_string().contains("unexpected argument '--at'"));
 }
 
-// `usage`는 같은 UUID의 보관된 Session Usage projection으로만 라우팅되고, ASCII 선택도
-// 다른 live presentation 설정으로 번지지 않는다.
+// Transcript의 limit와 content는 최신 semantic record 수와 payload 노출량만 정하며,
+// 0 limit은 파싱 단계에서 거부되어 저장소를 읽기 전에 실패한다.
 #[test]
-fn direct_session_accepts_usage_view() {
+fn transcript_accepts_bounded_content_selectors() {
     let id = "01890f00-0000-7000-8000-000000000001";
     let Command::Session(command) = parse([
         "session".into(),
         id.into(),
         "--view".into(),
-        "usage".into(),
-        "--ascii".into(),
+        "transcript".into(),
+        "--limit".into(),
+        "2".into(),
+        "--content".into(),
+        "preview".into(),
     ])
     .unwrap() else {
-        panic!("the session command remains distinct from live startup");
+        panic!("bounded Transcript remains a stored Session projection");
     };
 
-    assert_eq!(command.session_id.unwrap().to_string(), id);
-    assert_eq!(command.view, SessionView::Usage);
-    assert_eq!(command.glyph_profile, GlyphProfile::Ascii);
+    assert_eq!(command.limit.unwrap().get(), 2);
+    assert_eq!(command.content, Some(SessionContent::Preview));
+    assert!(
+        parse([
+            "session".into(),
+            id.into(),
+            "--view".into(),
+            "transcript".into(),
+            "--limit".into(),
+            "0".into(),
+        ])
+        .is_err()
+    );
+}
+
+// 명시한 selector는 `full`도 Transcript 전용이므로 Chat·Request·목록에서는 저장소 접근
+// 전에 일관된 사용법 오류가 되고, selector를 생략한 기존 경로만 완전 출력으로 남는다.
+#[test]
+fn transcript_selectors_are_rejected_for_other_session_surfaces() {
+    let id = "01890f00-0000-7000-8000-000000000001";
+    for arguments in [
+        vec!["session", id, "--content", "full"],
+        vec!["session", id, "--view", "request", "--limit", "1"],
+    ] {
+        let error = parse(arguments.into_iter().map(Into::into)).unwrap_err();
+        assert!(error.to_string().contains("only with --view transcript"));
+    }
+    assert!(parse(["session".into(), "--content".into(), "none".into()]).is_err());
+}
+
+// 최상위 `usage`는 정확한 Session UUID와 glyph profile만 보존하며, live startup이나
+// provider 선택 option을 만들지 않고 보관된 Usage 조회 command로 분리됩니다.
+#[test]
+fn top_level_usage_selects_one_archived_session() {
+    let id = "01890f00-0000-7000-8000-000000000001";
+    let command = parse(["usage".into(), id.into(), "--ascii".into()]).unwrap();
+
+    assert_eq!(
+        command,
+        Command::Usage(UsageCommand {
+            session_id: id.parse().unwrap(),
+            glyph_profile: GlyphProfile::Ascii,
+        })
+    );
+    assert!(parse(["usage".into()]).is_err());
+    assert!(parse(["usage".into(), "not-a-session-id".into()]).is_err());
+    assert!(parse(["usage".into(), id.into(), "second".into()]).is_err());
+}
+
+// Usage는 Session view 값이 아니므로 이전 별칭은 허용하지 않고, 최상위 읽기 전용 명령만
+// 한 개의 공개 문법으로 남긴다.
+#[test]
+fn usage_is_not_a_session_view_alias() {
+    let id = "01890f00-0000-7000-8000-000000000001";
+    let error = parse(["session".into(), id.into(), "--view".into(), "usage".into()]).unwrap_err();
+
+    assert!(error.to_string().contains("invalid value 'usage'"));
 }
 
 // list 전용 `--all`과 direct read UUID를 함께 쓰면 어느 쪽 의미도 임의로 우선하지 않고
@@ -356,6 +417,7 @@ fn help_is_successful_generated_command_documentation() {
     assert!(rendered.contains("Usage: yo [OPTIONS]"));
     assert!(rendered.contains("yo <COMMAND>"));
     assert!(rendered.contains("session"));
+    assert!(rendered.contains("usage"));
     assert!(rendered.contains("disconnect"));
     assert!(rendered.contains("--model <MODEL_REFERENCE>"));
 }

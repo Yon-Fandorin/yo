@@ -17,7 +17,10 @@ mod view;
 mod workspace;
 
 pub use agent::{AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch};
-pub use archival::{ArchivedProjectionError, ArchivedSessionView, project_archived_session};
+pub use archival::{
+    ArchivedContentPolicy, ArchivedProjectionError, ArchivedProjectionOptions, ArchivedSessionView,
+    project_archived_session, project_archived_session_with_options, project_archived_usage,
+};
 pub use error::RunError;
 pub use frame::FrameRateLimit;
 pub use session::{

@@ -3,7 +3,7 @@
 pub(in crate::runner) mod request;
 pub(in crate::runner) mod usage;
 
-use std::fmt;
+use std::{fmt, num::NonZeroUsize};
 
 use yo_core::session_repository::{
     StoredSessionContinuity, StoredSessionHistory, StoredSessionRecovery,
@@ -18,7 +18,45 @@ pub enum ArchivedSessionView {
     Chat,
     Transcript,
     Request,
-    Usage,
+}
+
+/// How much record payload an archived Transcript exposes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ArchivedContentPolicy {
+    /// Exposes only the payload type and its UTF-8 byte length.
+    None,
+    /// Exposes deterministic, UTF-8-safe bounded payload previews.
+    Preview,
+    /// Preserves the complete legacy Transcript rendering.
+    #[default]
+    Full,
+}
+
+/// Selection and content bounds for an archived Transcript projection.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ArchivedProjectionOptions {
+    limit: Option<NonZeroUsize>,
+    content: ArchivedContentPolicy,
+}
+
+impl ArchivedProjectionOptions {
+    /// Creates archived Transcript projection options.
+    #[must_use]
+    pub const fn new(limit: Option<NonZeroUsize>, content: ArchivedContentPolicy) -> Self {
+        Self { limit, content }
+    }
+
+    /// Returns the maximum number of newest semantic Transcript records to render.
+    #[must_use]
+    pub const fn limit(self) -> Option<NonZeroUsize> {
+        self.limit
+    }
+
+    /// Returns the selected record content exposure policy.
+    #[must_use]
+    pub const fn content(self) -> ArchivedContentPolicy {
+        self.content
+    }
 }
 
 /// Failure to build a read-only projection from already validated history.
@@ -41,12 +79,45 @@ pub fn project_archived_session(
     view: ArchivedSessionView,
     glyph_profile: GlyphProfile,
 ) -> Result<String, ArchivedProjectionError> {
+    project_archived_session_with_options(
+        history,
+        view,
+        glyph_profile,
+        ArchivedProjectionOptions::default(),
+    )
+}
+
+/// Projects durable history with explicit Transcript selection and content bounds.
+///
+/// Non-default options are rejected for every other view: arbitrary Chat tails can
+/// omit lifecycle context, while other diagnostics have their own completeness
+/// contracts and typed projections.
+pub fn project_archived_session_with_options(
+    history: &StoredSessionHistory,
+    view: ArchivedSessionView,
+    glyph_profile: GlyphProfile,
+    options: ArchivedProjectionOptions,
+) -> Result<String, ArchivedProjectionError> {
+    if view != ArchivedSessionView::Transcript && options != ArchivedProjectionOptions::default() {
+        return Err(ArchivedProjectionError {
+            detail: format!(
+                "archived projection bounds are supported only for Transcript, not {view:?}"
+            ),
+        });
+    }
     match view {
         ArchivedSessionView::Chat => project_chat(history.records(), glyph_profile),
-        ArchivedSessionView::Transcript => Ok(project_transcript(history)),
+        ArchivedSessionView::Transcript => Ok(project_transcript(history, options)),
         ArchivedSessionView::Request => Ok(request::project(history)),
-        ArchivedSessionView::Usage => usage::project(history, glyph_profile),
     }
+}
+
+/// Projects the typed Usage report for one durable Session history.
+pub fn project_archived_usage(
+    history: &StoredSessionHistory,
+    glyph_profile: GlyphProfile,
+) -> Result<String, ArchivedProjectionError> {
+    usage::project(history, glyph_profile)
 }
 
 fn project_chat(
@@ -70,17 +141,22 @@ fn project_chat(
         })
 }
 
-fn project_transcript(history: &StoredSessionHistory) -> String {
-    project_transcript_parts(
+fn project_transcript(
+    history: &StoredSessionHistory,
+    options: ArchivedProjectionOptions,
+) -> String {
+    project_transcript_parts_with_options(
         history.descriptor(),
         history.journal_cutoff(),
         history.recovery(),
         history.continuity(),
         history.discovery_consistent(),
         history.records(),
+        options,
     )
 }
 
+#[cfg(test)]
 fn project_transcript_parts(
     descriptor: &yo_core::SessionDescriptor,
     journal_cutoff: Option<yo_core::JournalSequence>,
@@ -88,6 +164,26 @@ fn project_transcript_parts(
     continuity: StoredSessionContinuity,
     discovery_consistent: bool,
     records: &[yo_core::TranscriptRecord],
+) -> String {
+    project_transcript_parts_with_options(
+        descriptor,
+        journal_cutoff,
+        recovery,
+        continuity,
+        discovery_consistent,
+        records,
+        ArchivedProjectionOptions::default(),
+    )
+}
+
+fn project_transcript_parts_with_options(
+    descriptor: &yo_core::SessionDescriptor,
+    journal_cutoff: Option<yo_core::JournalSequence>,
+    recovery: StoredSessionRecovery,
+    continuity: StoredSessionContinuity,
+    discovery_consistent: bool,
+    records: &[yo_core::TranscriptRecord],
+    options: ArchivedProjectionOptions,
 ) -> String {
     let cutoff = cutoff_text(journal_cutoff);
     let recovery = recovery_text(recovery);
@@ -104,9 +200,17 @@ fn project_transcript_parts(
         descriptor.session_id(),
         descriptor.workspace_path(),
     );
-    for (index, record) in records.iter().enumerate() {
+    let first_record = options
+        .limit()
+        .map_or(0, |limit| records.len().saturating_sub(limit.get()));
+    let selected_records = &records[first_record..];
+    for (offset, record) in selected_records.iter().enumerate() {
         output.push_str("\n\n");
-        output.push_str(&format_archival_record(index, record));
+        output.push_str(&format_archival_record(
+            first_record + offset,
+            record,
+            options.content(),
+        ));
     }
     output
 }

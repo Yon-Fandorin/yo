@@ -7,7 +7,6 @@ pub(crate) enum ViewSwitchTarget {
     Chat,
     Transcript,
     Request,
-    Usage,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,11 +23,11 @@ impl ViewSwitchBinding {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ViewSwitchBindings {
-    bindings: [ViewSwitchBinding; 4],
+    bindings: [ViewSwitchBinding; 3],
 }
 
 impl ViewSwitchBindings {
-    pub(crate) const fn new(bindings: [ViewSwitchBinding; 4]) -> Self {
+    pub(crate) const fn new(bindings: [ViewSwitchBinding; 3]) -> Self {
         Self { bindings }
     }
 
@@ -52,7 +51,6 @@ impl Default for ViewSwitchBindings {
             ViewSwitchBinding::new(KeyCode::Function(1), ViewSwitchTarget::Chat),
             ViewSwitchBinding::new(KeyCode::Function(2), ViewSwitchTarget::Transcript),
             ViewSwitchBinding::new(KeyCode::Function(3), ViewSwitchTarget::Request),
-            ViewSwitchBinding::new(KeyCode::Function(4), ViewSwitchTarget::Usage),
         ])
     }
 }
@@ -71,8 +69,8 @@ mod tests {
         })
     }
 
-    // 기본 view binding은 modifier 없는 F1/F2/F3/F4 press를 각각 네 관측 view로 정확히
-    // 매핑해 editor 문자 입력과 겹치지 않는다.
+    // 기본 view binding은 modifier 없는 F1/F2/F3 press만 세 관측 view로 정확히 매핑하며,
+    // 독립 명령으로 이동한 Usage를 F4 live mode로 다시 만들지 않는다.
     #[test]
     fn default_bindings_map_plain_function_key_presses_exactly() {
         let bindings = ViewSwitchBindings::default();
@@ -107,7 +105,7 @@ mod tests {
                 KeyModifiers::NONE,
                 KeyAction::Press
             )),
-            Some(ViewSwitchTarget::Usage)
+            None
         );
     }
 

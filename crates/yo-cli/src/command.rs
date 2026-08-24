@@ -1,4 +1,4 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf};
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use yo_tui::{GlyphProfile, PresentationMode};
@@ -53,6 +53,9 @@ enum CliCommand {
 
     /// List stored Sessions or inspect one Session.
     Session(SessionArguments),
+
+    /// Show usage for one stored Session.
+    Usage(UsageArguments),
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -136,6 +139,25 @@ struct SessionArguments {
     /// Use ASCII characters instead of rich terminal glyphs.
     #[arg(long, requires = "session_id")]
     ascii: bool,
+
+    /// Show at most the newest N semantic Transcript records.
+    #[arg(long, value_name = "N", requires = "session_id")]
+    limit: Option<NonZeroUsize>,
+
+    /// Select how much record payload the Transcript exposes.
+    #[arg(long, value_enum, value_name = "MODE", requires = "session_id")]
+    content: Option<SessionContent>,
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+struct UsageArguments {
+    /// Session whose usage should be shown.
+    #[arg(value_name = "SESSION_ID")]
+    session_id: yo_core::SessionId,
+
+    /// Use ASCII characters instead of rich terminal glyphs.
+    #[arg(long)]
+    ascii: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -161,6 +183,7 @@ pub(crate) enum Command {
     Default(DefaultCommand),
     Live(LiveOptions),
     Session(SessionCommand),
+    Usage(UsageCommand),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -190,7 +213,13 @@ pub(crate) enum SessionView {
     Chat,
     Transcript,
     Request,
-    Usage,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum SessionContent {
+    None,
+    Preview,
+    Full,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -199,6 +228,14 @@ pub(crate) struct SessionCommand {
     pub(crate) all: bool,
     pub(crate) details: bool,
     pub(crate) view: SessionView,
+    pub(crate) glyph_profile: GlyphProfile,
+    pub(crate) limit: Option<NonZeroUsize>,
+    pub(crate) content: Option<SessionContent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct UsageCommand {
+    pub(crate) session_id: yo_core::SessionId,
     pub(crate) glyph_profile: GlyphProfile,
 }
 
@@ -222,11 +259,28 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
         Some(CliCommand::Default(arguments)) => Ok(Command::Default(DefaultCommand {
             target: arguments.target,
         })),
-        Some(CliCommand::Session(arguments)) => Ok(Command::Session(SessionCommand {
+        Some(CliCommand::Session(arguments)) => {
+            let view = arguments.view.unwrap_or(SessionView::Chat);
+            if view != SessionView::Transcript
+                && (arguments.limit.is_some() || arguments.content.is_some())
+            {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "--limit and --content are supported only with --view transcript",
+                ));
+            }
+            Ok(Command::Session(SessionCommand {
+                session_id: arguments.session_id,
+                all: arguments.all,
+                details: arguments.details,
+                view,
+                glyph_profile: glyph_profile(arguments.ascii),
+                limit: arguments.limit,
+                content: arguments.content,
+            }))
+        },
+        Some(CliCommand::Usage(arguments)) => Ok(Command::Usage(UsageCommand {
             session_id: arguments.session_id,
-            all: arguments.all,
-            details: arguments.details,
-            view: arguments.view.unwrap_or(SessionView::Chat),
             glyph_profile: glyph_profile(arguments.ascii),
         })),
         None => Ok(Command::Live(LiveOptions {

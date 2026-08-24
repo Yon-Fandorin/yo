@@ -512,13 +512,21 @@ LocalSessionReader::discover
 workspace로 거른 metadata table을 stdout에 출력
 
 yo session SESSION_ID [--view chat|transcript|request]
+  [--limit N] [--content none|preview|full] [--ascii]
   ↓ writer lease 없는 한 시점의 physical snapshot
 yo-core read_stored_session
   ↓ envelope 검증 + Journal recovery
 StoredSessionHistory
-  ↓ Chat/Transcript message normalization 또는 Session 전체 Request correlation trace
+  ↓ Chat, bounded Transcript 또는 Session 전체 Request correlation Projection
   ↓ 정확한 Journal 경계, reader가 없으면 Request Audit을 명시적으로 unavailable 처리
 yo-tui archived Projection
+plain stdout
+
+yo usage SESSION_ID [--ascii]
+  ↓ 같은 읽기 전용 snapshot과 검증된 복구 경로
+StoredSessionHistory
+  ↓ typed 완료 usage 영수증과 coverage-aware aggregate
+yo-tui archived Usage Projection
 plain stdout
 ```
 
@@ -528,6 +536,15 @@ plain stdout
 Request에는 anchor selector가 없다. 인접 request를 추측하지 않고 durable correlation과
 availability record 전체를 Journal 시간순으로 출력한다. 이 Projection은 backend payload나
 physical repository envelope를 출력하지 않는다.
+
+`--limit`과 `--content`는 Transcript 전용 selector이며 Chat·Request·Session 목록에서는
+command parser가 거부한다. 양수 limit은 최신 semantic record를 고른 뒤 원래 Journal 번호를
+보존한 채 시간순으로 출력한다. selector를 생략하면 기존의 complete Transcript를 그대로
+유지한다. `content=none`은 payload type과 원래 UTF-8 byte 길이만 남기고, `preview`는 extended
+grapheme cluster를 자르지 않으면서 최대 256 UTF-8 byte를 남기며, `full`은 전체 payload를
+유지한다. 별도 Usage 명령은 typed Session usage Projection을 재사용하므로 CLI에서 영수증을
+다시 해석하지 않고 backend나 live TUI view도 시작하지 않는다. `--ascii`는 출력 glyph
+profile만 바꾼다.
 
 stdout이 terminal이면 `session.rs`가 관찰한 폭, Session 전용 열 우선순위와
 continuation hint를 범용 `yo-tui::plain` renderer에

@@ -1,5 +1,5 @@
 use std::{
-    num::NonZeroU64,
+    num::{NonZeroU64, NonZeroUsize},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -9,9 +9,9 @@ use yo_core::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
     AgentEvent, AgentIntent, AgentSession, BackendBindingEvidence, BackendCommandEvidence,
     BackendEvent, BackendIdentity, BackendOutcomeEvidence, BackendRequestEvidence,
-    BackendScriptStep, CommandAdmission, HostWorkspacePath, InputSubmission, ScriptedBackend,
-    SessionDescriptor, SessionId, SubmissionId, TranscriptRecord, TurnId, TurnRef, UserInput,
-    WorkspaceHostId,
+    BackendScriptStep, CommandAdmission, Failure, HostWorkspacePath, InputSubmission,
+    ScriptedBackend, SessionDescriptor, SessionId, SubmissionId, TranscriptRecord, TurnId,
+    TurnOutcome, TurnRef, UserInput, WorkspaceHostId,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
         RepositorySequence, SessionRepository, StoredBindingCacheState, StoredBindingCloseReason,
@@ -23,7 +23,9 @@ use yo_core::{
 };
 
 use super::{
-    ArchivedSessionView, project_archived_session, project_chat, project_transcript_parts,
+    ArchivedContentPolicy, ArchivedProjectionOptions, ArchivedSessionView,
+    project_archived_session, project_archived_session_with_options, project_archived_usage,
+    project_chat, project_transcript_parts, project_transcript_parts_with_options,
     request::{
         cache_state_text, close_reason_text, continuation_strategy_text, detail_availability_text,
         exchange_direction_text, exchange_kind_text, project_parts, transition_mode_text,
@@ -249,14 +251,216 @@ fn archived_transcript_labels_the_durable_observation_boundary() {
     assert!(!output.contains("metadata, and Request Audit detail are unavailable"));
 }
 
-// ArchivedSessionView::Usage는 동일한 StoredSessionHistory의 typed usage projection을 통해
-// 성공적으로 빈 Usage 보고서를 만들며, 기존 Chat/Transcript/Request routing과 분리된다.
+// 기존 진입점과 새 options 진입점의 기본값은 같은 durable history를 한 바이트도
+// 다르게 렌더링하지 않아, CLI가 새 API로 이동하기 전후의 stdout 호환성을 지킨다.
 #[test]
-fn archived_usage_routes_to_the_plain_usage_renderer() {
+fn archived_transcript_default_options_preserve_legacy_output_exactly() {
     let history = durable_request_history();
-    let output =
-        project_archived_session(&history, ArchivedSessionView::Usage, GlyphProfile::Ascii)
-            .unwrap();
+
+    let legacy = project_archived_session(
+        &history,
+        ArchivedSessionView::Transcript,
+        GlyphProfile::Ascii,
+    )
+    .unwrap();
+    let with_options = project_archived_session_with_options(
+        &history,
+        ArchivedSessionView::Transcript,
+        GlyphProfile::Ascii,
+        ArchivedProjectionOptions::default(),
+    )
+    .unwrap();
+
+    assert_eq!(with_options, legacy);
+}
+
+// limit=2는 전체 다섯 semantic record 중 최신 두 개를 먼저 고른 뒤 시간순으로
+// 출력하며, 선택된 record의 표시는 새 번호가 아니라 원래 #004와 #005를 유지한다.
+#[test]
+fn archived_transcript_limit_selects_the_newest_records_with_original_numbers() {
+    let (descriptor, records) = history();
+    let output = project_transcript_parts_with_options(
+        &descriptor,
+        None,
+        StoredSessionRecovery::NotRequired,
+        StoredSessionContinuity::NotObservable,
+        true,
+        &records,
+        ArchivedProjectionOptions::new(NonZeroUsize::new(2), ArchivedContentPolicy::Full),
+    );
+
+    assert!(!output.contains("[#003]"));
+    let fourth = output.find("[#004] event.activity_updated").unwrap();
+    let fifth = output.find("[#005] event.activity_finished").unwrap();
+    assert!(fourth < fifth);
+}
+
+// content=none은 사용자 입력, Activity update, Activity/Turn 실패 본문을 전혀
+// 노출하지 않고 각 본문의 의미 타입과 원래 UTF-8 byte 길이만 남긴다.
+#[test]
+fn archived_transcript_none_exposes_only_content_type_and_byte_length() {
+    let (descriptor, mut records) = history();
+    let turn = match &records[0] {
+        TranscriptRecord::CommandCommitted(AgentCommand::StartTurn { turn, .. }) => *turn,
+        record => panic!("unexpected fixture record: {record:?}"),
+    };
+    let activity = match &records[3] {
+        TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated { activity, .. }) => *activity,
+        record => panic!("unexpected fixture record: {record:?}"),
+    };
+    let input_secret = "INPUT_SECRET_가";
+    let update_secret = "UPDATE_SECRET_나";
+    let activity_failure_secret = "ACTIVITY_FAILURE_SECRET_다";
+    let turn_failure_secret = "TURN_FAILURE_SECRET_라";
+    records[0] = TranscriptRecord::CommandCommitted(AgentCommand::StartTurn {
+        turn,
+        input: UserInput::new(input_secret),
+    });
+    records[3] = TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated {
+        activity,
+        update: ActivityUpdate::TextDelta(update_secret.to_owned()),
+    });
+    records[4] = TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
+        activity,
+        outcome: ActivityOutcome::Failed(Failure::new(activity_failure_secret)),
+    });
+    records.push(TranscriptRecord::EventCommitted(AgentEvent::TurnFinished {
+        turn,
+        outcome: TurnOutcome::Failed(Failure::new(turn_failure_secret)),
+    }));
+
+    let output = project_transcript_parts_with_options(
+        &descriptor,
+        None,
+        StoredSessionRecovery::NotRequired,
+        StoredSessionContinuity::NotObservable,
+        true,
+        &records,
+        ArchivedProjectionOptions::new(None, ArchivedContentPolicy::None),
+    );
+
+    for secret in [
+        input_secret,
+        update_secret,
+        activity_failure_secret,
+        turn_failure_secret,
+    ] {
+        assert!(!output.contains(secret));
+    }
+    for (content_type, byte_length) in [
+        ("user_input", input_secret.len()),
+        ("activity_text_delta", update_secret.len()),
+        ("activity_failure_message", activity_failure_secret.len()),
+        ("turn_failure_message", turn_failure_secret.len()),
+    ] {
+        assert!(output.contains(&format!(
+            "content.type={content_type}\ncontent.utf8_bytes={byte_length}"
+        )));
+    }
+    assert!(!output.contains("content.preview="));
+}
+
+// 1MB를 넘는 단일 Unicode 입력도 content=preview 출력은 고정 크기로 제한되고,
+// UTF-8 경계를 자르지 않으며 preview 뒤의 비밀 문자열을 stdout에 포함하지 않는다.
+#[test]
+fn archived_transcript_preview_bounds_one_very_large_unicode_record() {
+    let (descriptor, records) = history();
+    let turn = match &records[0] {
+        TranscriptRecord::CommandCommitted(AgentCommand::StartTurn { turn, .. }) => *turn,
+        record => panic!("unexpected fixture record: {record:?}"),
+    };
+    let secret = "TAIL_SECRET_MUST_NOT_APPEAR";
+    let mut input = "가".repeat(400_000);
+    input.push_str(secret);
+    let input_bytes = input.len();
+    let records = [TranscriptRecord::CommandCommitted(
+        AgentCommand::StartTurn {
+            turn,
+            input: UserInput::new(input),
+        },
+    )];
+
+    let output = project_transcript_parts_with_options(
+        &descriptor,
+        None,
+        StoredSessionRecovery::NotRequired,
+        StoredSessionContinuity::NotObservable,
+        true,
+        &records,
+        ArchivedProjectionOptions::new(None, ArchivedContentPolicy::Preview),
+    );
+
+    assert!(
+        output.len() < 2_000,
+        "bounded output was {} bytes",
+        output.len()
+    );
+    assert!(output.contains(&format!("content.utf8_bytes={input_bytes}")));
+    assert!(output.contains(&format!("content.preview={:?}", "가".repeat(85))));
+    assert!(output.contains("content.preview_truncated=true"));
+    assert!(!output.contains(secret));
+}
+
+// 256-byte 경계에 걸친 결합 문자와 ZWJ emoji는 일부 code point만 preview에
+// 들어가지 않고, 예산 안에서 완결된 마지막 extended grapheme까지만 출력된다.
+#[test]
+fn archived_transcript_preview_preserves_combining_and_zwj_graphemes() {
+    let (descriptor, records) = history();
+    let turn = match &records[0] {
+        TranscriptRecord::CommandCommitted(AgentCommand::StartTurn { turn, .. }) => *turn,
+        record => panic!("unexpected fixture record: {record:?}"),
+    };
+    let cases = [("a".repeat(255), "e\u{301}"), ("b".repeat(250), "👩‍💻")];
+
+    for (complete_prefix, crossing_grapheme) in cases {
+        let input = format!("{complete_prefix}{crossing_grapheme}TAIL");
+        let records = [TranscriptRecord::CommandCommitted(
+            AgentCommand::StartTurn {
+                turn,
+                input: UserInput::new(input),
+            },
+        )];
+        let output = project_transcript_parts_with_options(
+            &descriptor,
+            None,
+            StoredSessionRecovery::NotRequired,
+            StoredSessionContinuity::NotObservable,
+            true,
+            &records,
+            ArchivedProjectionOptions::new(None, ArchivedContentPolicy::Preview),
+        );
+
+        assert!(output.contains(&format!("content.preview={complete_prefix:?}")));
+        assert!(!output.contains(crossing_grapheme));
+        assert!(output.contains("content.preview_truncated=true"));
+    }
+}
+
+// Transcript 이외의 view는 불완전한 lifecycle이나 진단 trace를 만들 수 있으므로
+// 새 진입점이 비기본 bound를 조용히 무시하지 않고 명시적인 오류로 거부한다.
+#[test]
+fn archived_projection_rejects_non_default_bounds_for_other_views() {
+    let history = durable_request_history();
+    let options = ArchivedProjectionOptions::new(None, ArchivedContentPolicy::Preview);
+
+    for view in [ArchivedSessionView::Chat, ArchivedSessionView::Request] {
+        let error =
+            project_archived_session_with_options(&history, view, GlyphProfile::Ascii, options)
+                .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("archived projection bounds are supported only for Transcript, not {view:?}")
+        );
+    }
+}
+
+// 독립 Usage 진입점은 동일한 StoredSessionHistory의 typed usage projection을 통해
+// 성공적으로 빈 보고서를 만들며, Chat/Transcript/Request view routing과 분리된다.
+#[test]
+fn archived_usage_has_a_direct_plain_renderer_entrypoint() {
+    let history = durable_request_history();
+    let output = project_archived_usage(&history, GlyphProfile::Ascii).unwrap();
 
     assert!(output.starts_with("Stored Session Usage\n"));
     assert!(output.contains("completed_receipts=0"));

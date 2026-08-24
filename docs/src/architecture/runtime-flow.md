@@ -546,13 +546,21 @@ LocalSessionReader::discover
 workspace-filtered metadata table on stdout
 
 yo session SESSION_ID [--view chat|transcript|request]
+  [--limit N] [--content none|preview|full] [--ascii]
   ↓ one point-in-time physical snapshot, no writer lease
 yo-core read_stored_session
   ↓ envelope validation + Journal recovery
 StoredSessionHistory
-  ↓ Chat/Transcript message normalization or full-session Request correlation trace
+  ↓ Chat, bounded Transcript, or full-session Request correlation projection
   ↓ exact Journal boundary; Request Audit explicitly unavailable without a reader
 yo-tui archived projection
+plain stdout
+
+yo usage SESSION_ID [--ascii]
+  ↓ the same read-only snapshot and validated recovery path
+StoredSessionHistory
+  ↓ typed completed usage receipts and coverage-aware aggregates
+yo-tui archived Usage projection
 plain stdout
 ```
 
@@ -563,6 +571,17 @@ Request has no anchor selector: it renders every durable correlation and
 availability record in chronological Journal order instead of guessing a
 nearby request. The projection never prints backend payloads or physical
 repository envelopes.
+
+`--limit` and `--content` are Transcript-only selectors and are rejected by
+the command parser for Chat, Request, and Session lists. A positive limit keeps
+the newest semantic records, then renders them chronologically with their
+original Journal numbers. Omission preserves the complete legacy Transcript.
+`content=none` retains the payload type and original UTF-8 byte length,
+`preview` retains at most 256 UTF-8 bytes without splitting an extended
+grapheme cluster, and `full` retains the complete payload. The separate Usage
+command reuses the typed Session usage projection; it neither decodes receipts
+again in the CLI nor starts a backend or live TUI view. `--ascii` changes only
+the output glyph profile.
 
 For terminal stdout, `session.rs` supplies the observed width and Session-specific
 column priorities and continuation hints to the generic `yo-tui::plain`

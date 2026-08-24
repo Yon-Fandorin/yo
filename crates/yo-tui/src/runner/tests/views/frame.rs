@@ -18,17 +18,17 @@ fn narrow_and_resized_frames_keep_mode_chrome_and_full_page_layout() {
         .unwrap();
 
     let narrow = render_and_commit(&mut state, Size::new(6, 5));
-    assert_eq!(narrow.lines().next(), Some("T1234"));
+    assert_eq!(narrow.lines().next(), Some("[T]123"));
     assert!(!narrow.contains('›'));
     let one_row = render_and_commit(&mut state, Size::new(6, 1));
-    assert_eq!(one_row, "T1234");
+    assert_eq!(one_row, "[T]123");
 
     assert_eq!(
         state.handle(InputEvent::Resize(Size::new(24, 9)), Duration::ZERO),
         Ok(StateEffect::Resize(Size::new(24, 9)))
     );
     let resized = render_and_commit(&mut state, Size::new(24, 9));
-    assert_eq!(resized.lines().next(), Some("Transcript · F1/F2/F3/F4"));
+    assert_eq!(resized.lines().next(), Some("Transcript · F1/F2/F3"));
     assert!(resized.contains("activity=1") || resized.contains("outcome=completed"));
     assert!(!resized.contains('›'));
 }
@@ -62,20 +62,17 @@ fn header_forms_switch_at_measured_cell_width_boundaries() {
 
     for (width, expected) in [
         (
-            72,
-            "Transcript · context - · F1 Chat · F2 Transcript · F3 Request · F4 Usage",
+            61,
+            "Transcript · context - · F1 Chat · F2 Transcript · F3 Request",
         ),
-        (
-            71,
-            "Transcript · F1 Chat · F2 Transcript · F3 Request · F4 Usage",
-        ),
-        (49, "Transcript · F1/F2/F3/F4"),
-        (48, "Transcript · F1/F2/F3/F4"),
-        (24, "Transcript · F1/F2/F3/F4"),
-        (23, "[T]1234"),
-        (6, "T1234"),
-        (5, "T1234"),
-        (4, "[T]"),
+        (60, "Transcript · F1 Chat · F2 Transcript · F3 Request"),
+        (49, "Transcript · F1 Chat · F2 Transcript · F3 Request"),
+        (48, "Transcript · F1/F2/F3"),
+        (21, "Transcript · F1/F2/F3"),
+        (20, "[T]123"),
+        (6, "[T]123"),
+        (5, "T123"),
+        (4, "T123"),
         (3, "[T]"),
         (2, "T"),
         (1, "T"),
