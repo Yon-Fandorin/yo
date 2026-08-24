@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{ImpactInput, changed_list, deferred_branch};
 
 pub(crate) fn check_commit(
@@ -103,6 +105,26 @@ pub(crate) enum Lens {
     FreshContext,
     CodeQuality,
     Integration,
+}
+
+pub(crate) fn minimum_lenses(
+    changed_paths: &[String],
+    integration_required: bool,
+) -> BTreeSet<Lens> {
+    let mut lenses = BTreeSet::new();
+    if changed_paths
+        .iter()
+        .any(|path| requires_fresh_context(path))
+    {
+        lenses.insert(Lens::FreshContext);
+    }
+    if changed_paths.iter().any(|path| requires_code_quality(path)) {
+        lenses.insert(Lens::CodeQuality);
+    }
+    if integration_required {
+        lenses.insert(Lens::Integration);
+    }
+    lenses
 }
 
 impl Lens {

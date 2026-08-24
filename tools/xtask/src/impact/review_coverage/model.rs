@@ -38,7 +38,7 @@ pub(super) enum Reviewer {
 }
 
 impl Reviewer {
-    fn parse(value: &str) -> Option<Self> {
+    pub(super) fn parse(value: &str) -> Option<Self> {
         let segments = value.split('/').collect::<Vec<_>>();
         match segments.as_slice() {
             ["human", identity] if valid_segment(identity) => Some(Self::Human {
@@ -70,6 +70,10 @@ impl Reviewer {
 
     pub(super) fn is_high_or_human(&self) -> bool {
         matches!(self, Self::Human { .. } | Self::Model { high: true, .. })
+    }
+
+    pub(super) fn is_human(&self) -> bool {
+        matches!(self, Self::Human { .. })
     }
 }
 

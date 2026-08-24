@@ -48,6 +48,7 @@ the assertion or silently skipping it.
 | Required explanations immediately above Rust tests | `cargo xtask check test-explanations` | Rust sources under `crates/`, `shared/`, and `tools/` |
 | Slice changes remain inside their bound local write-set | `cargo xtask check slice-scope` | One active Slice worktree; the planner first runs `cargo xtask slice-contract bind <contract.json>` |
 | Two Slice contracts have a common current integration base and disjoint declared ownership | `cargo xtask check slice-parallel <left.json> <right.json>` | Direct Slices use `develop`; Wave Slices use their Wave branch |
+| One clean Slice candidate has validation, review, risk, and approval evidence bound to the same identity | `cargo xtask slice gate <request.json>` | Returns exactly one next action without rerunning validation or review |
 | An accepted Slice is still exactly the reviewed local branch patch and is safe to clean up | Write the standard `close-metrics.json`, then run `cargo xtask slice close plan <slice> <plan.json>` and `cargo xtask slice close apply <plan.json>` | Run from the clean integration worktree; inspect the bound metrics, removal effects, and retained coordination paths before apply |
 | Repository hook policy or structured development checks | `cargo test -p xtask` | `tools/xtask/src` |
 | Prospective activation ContextBuild and review-packet identity | `cargo test -p methexis activation_review_context` and `cargo test -p xtask review_packet::tests::prospective` | Exact activation request, proposed Checkpoint/active record, authority mode, packet replay, and active-authority cross-use rejection |
@@ -99,6 +100,73 @@ does not identify the owning failure.
 The wrapper changes presentation, not validation semantics. Its logs are
 temporary operational artifacts: keep a required failure log only while the
 finding is unresolved and discard completed logs with the Slice worktree.
+
+## Consolidate one candidate gate
+
+Once a Slice candidate is a clean commit, save each bounded validation JSON
+summary and each final review response as a separate local file. Record their
+exact hashes, the candidate commit, canonical diff hash, required lenses,
+known unverified environments, risk classification, and human-origin approval
+in a `yo.slice-gate-request/v1alpha1` request. Then run:
+
+```bash
+cargo xtask slice gate /tmp/<slice>-gate.json
+```
+
+A minimal request with one declared check and one completed lens has this shape
+(repeat the evidence entries when more checks or lenses apply):
+
+```json
+{
+  "schema": "yo.slice-gate-request/v1alpha1",
+  "candidate_commit": "<full-commit>",
+  "required_lenses": ["fresh-context"],
+  "validation_evidence": [{
+    "name": "workspace-tests",
+    "argv": ["cargo", "test", "--workspace", "--all-targets"],
+    "result_path": "/tmp/workspace-tests.json",
+    "result_hash": "sha256:<summary-hash>",
+    "candidate_commit": "<full-commit>",
+    "reused": false
+  }],
+  "review_evidence": [{
+    "lens": "fresh-context",
+    "reviewer": "provider/session",
+    "route": "model-high/provider/model/session",
+    "verdict": "clear",
+    "candidate_commit": "<full-commit>",
+    "diff_hash": "sha256:<canonical-diff-hash>",
+    "result_path": "/tmp/fresh-context.txt",
+    "result_hash": "sha256:<response-hash>"
+  }],
+  "known_unverified_environments": [],
+  "risk": {
+    "classification": "human-attention",
+    "rationale": "changes workflow authority"
+  },
+  "approval": null
+}
+```
+
+After exact human approval, replace `null` with `kind: "exact_candidate"`, a
+`human/<identity>` authority and scope, plus the same `candidate_commit` and
+`diff_hash`. A routine request may instead use `kind: "standing_routine"` and
+omit those two exact identity fields only when its human-origin scope covers
+the work and no unverified environment remains.
+
+The command checks the bound Slice scope, clean `HEAD`, path-derived minimum
+lenses, evidence file hashes, candidate/diff identities, review routes, and
+approval shape. It returns a single `yo.slice-gate-result/v1alpha1` JSON line
+with exactly one `next_action`: `validate`, `review`, `approve`, or `integrate`.
+It never runs those actions itself. A changed candidate, stale diff, mutated
+evidence file, or omitted path-derived lens fails closed rather than producing
+a next action.
+
+This is an evidence-consistency check, not proof that the declarations are
+true. The coordinator still owns the completeness of the validation plan,
+semantic review lenses, risk classification, and recorded verdict. Keep the
+request and evidence in ignored coordination storage or outside the worktree,
+then remove them when the Slice closes.
 
 ## Slice-close baseline
 

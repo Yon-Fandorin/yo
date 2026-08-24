@@ -48,6 +48,7 @@ command, host, credential, platform을 기록한다.
 | Rust test 바로 위에 필요한 설명 | `cargo xtask check test-explanations` | `crates/`, `shared/`, `tools/` 아래 Rust source |
 | Slice 변경이 bind된 로컬 write-set 안에 머무는지 | `cargo xtask check slice-scope` | 하나의 활성 Slice worktree; planner가 먼저 `cargo xtask slice-contract bind <contract.json>` 실행 |
 | 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
+| 하나의 깨끗한 Slice 후보에서 검증, 리뷰, 위험, 승인 증거가 모두 같은 identity에 결속됐는지 | `cargo xtask slice gate <request.json>` | 검증이나 리뷰를 다시 실행하지 않고 다음 행동 하나만 반환 |
 | 수용된 Slice가 여전히 검수한 로컬 branch patch와 정확히 같고 안전하게 정리할 수 있는지 | 표준 `close-metrics.json`을 작성한 뒤 `cargo xtask slice close plan <slice> <plan.json>`과 `cargo xtask slice close apply <plan.json>` 실행 | 깨끗한 통합 worktree에서 실행하고 apply 전에 결속된 metrics, 제거 효과, 보존할 coordination 경로를 검토 |
 | 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | `tools/xtask/src` |
 | Prospective activation ContextBuild와 review-packet identity | `cargo test -p methexis activation_review_context`와 `cargo test -p xtask review_packet::tests::prospective` | 정확한 activation request, 제안 Checkpoint·active record, authority mode, packet 재생, active-authority 교차 사용 거절 |
@@ -94,6 +95,70 @@ golden과 snapshot은 fixture의 정확한 Projection을 증명한다. 의도적
 wrapper는 표시만 바꾸고 검증 의미는 바꾸지 않는다. log는 임시 운영 artifact다.
 필요한 실패 log는 finding이 미해결인 동안만 보존하고, 완료한 log는 Slice
 worktree와 함께 폐기한다.
+
+## 한 후보의 게이트 통합하기
+
+Slice 후보가 깨끗한 commit이 되면 bounded validation JSON summary와 각 최종
+review 응답을 별도 local file로 저장한다. 정확한 hash, 후보 commit, canonical diff
+hash, 필수 lens, 알려진 미검증 환경, 위험 분류, human-origin 승인을
+`yo.slice-gate-request/v1alpha1` request에 기록한 뒤 다음을 실행한다.
+
+```bash
+cargo xtask slice gate /tmp/<slice>-gate.json
+```
+
+선언한 검사 하나와 완료한 lens 하나가 있는 최소 request 형태는 다음과 같다.
+검사나 lens가 더 필요하면 해당 evidence entry를 반복한다.
+
+```json
+{
+  "schema": "yo.slice-gate-request/v1alpha1",
+  "candidate_commit": "<full-commit>",
+  "required_lenses": ["fresh-context"],
+  "validation_evidence": [{
+    "name": "workspace-tests",
+    "argv": ["cargo", "test", "--workspace", "--all-targets"],
+    "result_path": "/tmp/workspace-tests.json",
+    "result_hash": "sha256:<summary-hash>",
+    "candidate_commit": "<full-commit>",
+    "reused": false
+  }],
+  "review_evidence": [{
+    "lens": "fresh-context",
+    "reviewer": "provider/session",
+    "route": "model-high/provider/model/session",
+    "verdict": "clear",
+    "candidate_commit": "<full-commit>",
+    "diff_hash": "sha256:<canonical-diff-hash>",
+    "result_path": "/tmp/fresh-context.txt",
+    "result_hash": "sha256:<response-hash>"
+  }],
+  "known_unverified_environments": [],
+  "risk": {
+    "classification": "human-attention",
+    "rationale": "changes workflow authority"
+  },
+  "approval": null
+}
+```
+
+사람이 exact approval을 완료하면 `null`을 `kind: "exact_candidate"`,
+`human/<identity>` authority와 scope, 같은 `candidate_commit`과 `diff_hash`로
+교체한다. routine request는 human-origin scope가 이 작업을 포함하고 미검증 환경이
+남지 않았을 때만 `kind: "standing_routine"`을 사용하고 두 exact identity field를
+생략할 수 있다.
+
+이 command는 결속된 Slice 범위, 깨끗한 `HEAD`, 경로에서 도출한 최소 lens,
+evidence file hash, 후보/diff identity, review route, approval 형태를 확인한다.
+그리고 `validate`, `review`, `approve`, `integrate` 중 정확히 하나를
+`next_action`으로 담은 `yo.slice-gate-result/v1alpha1` JSON 한 줄을 반환한다.
+그 행동 자체를 실행하지는 않는다. 후보 변경, stale diff, 변조된 evidence file,
+경로 기반 lens 누락은 다음 행동을 만들지 않고 fail-closed된다.
+
+이는 증거 일관성 검사이지 선언이 참이라는 증명은 아니다. validation plan의
+완전성, semantic review lens, 위험 분류, 기록한 verdict의 정확성은 여전히
+coordinator가 소유한다. request와 evidence는 ignored coordination storage 또는
+worktree 밖에 두고 Slice 종료 시 제거한다.
 
 ## Slice 종료 기준선
 

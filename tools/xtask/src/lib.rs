@@ -8,6 +8,7 @@ mod review_packet;
 mod review_protocol;
 mod slice_close;
 mod slice_contract;
+mod slice_gate;
 mod slice_worktree;
 mod test_explanations;
 mod validation_stage;
@@ -53,10 +54,25 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     if scope == "close" {
         return run_slice_close(arguments);
     }
+    if scope == "gate" {
+        return run_slice_gate(arguments);
+    }
     if scope == "commit" {
         return run_slice_commit(arguments);
     }
     Err(general_usage())
+}
+
+fn run_slice_gate(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(slice_gate_usage)?;
+    if arguments.next().is_some() {
+        return Err(slice_gate_usage());
+    }
+    let repository = current_repository()?;
+    slice_gate::run(&repository, &request)
 }
 
 fn run_slice_commit(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -371,6 +387,7 @@ fn general_usage() -> String {
      cargo xtask slice create-activation <request.json>\n\
      cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
      cargo xtask slice review-delta <request.json>\n\
+     cargo xtask slice gate <request.json>\n\
      cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
      cargo xtask slice commit <commit-message-file>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
@@ -402,6 +419,10 @@ fn slice_close_usage() -> String {
     "usage: cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>".to_owned()
 }
 
+fn slice_gate_usage() -> String {
+    "usage: cargo xtask slice gate <request.json>".to_owned()
+}
+
 fn slice_commit_usage() -> String {
     "usage: cargo xtask slice commit <commit-message-file>".to_owned()
 }
@@ -420,7 +441,7 @@ mod cli_tests {
 
     use super::{
         activation_slice_usage, docs_accept_translation_usage, review_delta_usage,
-        review_packet_usage, run, slice_close_usage, slice_commit_usage,
+        review_packet_usage, run, slice_close_usage, slice_commit_usage, slice_gate_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -435,6 +456,7 @@ mod cli_tests {
              cargo xtask slice create-activation <request.json>\n\
              cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
              cargo xtask slice review-delta <request.json>\n\
+             cargo xtask slice gate <request.json>\n\
              cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
              cargo xtask slice commit <commit-message-file>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
@@ -556,6 +578,18 @@ mod cli_tests {
 
         assert_eq!(missing, review_delta_usage());
         assert_eq!(extra, review_delta_usage());
+    }
+
+    // Slice gate는 한 후보에 결속된 단일 request만 받아 서로 다른 후보의 증거가
+    // 추가 인자로 섞이거나 request 없는 기본 동작으로 승인되지 않게 한다.
+    #[test]
+    fn slice_gate_requires_exactly_one_request() {
+        let missing = run(["slice", "gate"].map(Into::into)).unwrap_err();
+        let extra =
+            run(["slice", "gate", "request.json", "extra.json"].map(Into::into)).unwrap_err();
+
+        assert_eq!(missing, slice_gate_usage());
+        assert_eq!(extra, slice_gate_usage());
     }
 
     // test-explanations 뒤의 불필요한 인자는 조용히 무시하지 않고 해당 명령의

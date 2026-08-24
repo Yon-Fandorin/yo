@@ -37,6 +37,23 @@ pub(crate) fn copy_accepted_commit_message(target: &Path) -> Result<(), String> 
     commit::copy_message(target)
 }
 
+pub(crate) fn reviewer_for_route(value: &str, lens: slice_review::Lens) -> Result<String, String> {
+    let reviewer =
+        model::Reviewer::parse(value).ok_or_else(|| format!("invalid review route `{value}`"))?;
+    if lens != slice_review::Lens::CodeQuality && !reviewer.is_high_or_human() {
+        return Err(format!(
+            "{} review requires a model-high or human route",
+            lens.label()
+        ));
+    }
+    Ok(reviewer.compact_id())
+}
+
+pub(crate) fn human_reviewer_for_route(value: &str) -> Option<String> {
+    let reviewer = model::Reviewer::parse(value)?;
+    reviewer.is_human().then(|| reviewer.compact_id())
+}
+
 fn check_with_cutover(input: &ImpactInput, cutover: &str) -> Result<(), String> {
     if !git::succeeds_in(
         &input.repository,

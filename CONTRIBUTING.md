@@ -333,6 +333,35 @@ After a command fails, classify the failure and change the input or state before
 retrying. Rerun a validation group only when its reviewed inputs changed or at a
 declared Slice gate.
 
+After the candidate is a clean commit, consolidate its existing evidence with
+`cargo xtask slice gate <request.json>`. The transient, versioned request names
+the candidate commit, planner-required review lenses, bounded validation
+summary files, final review response files, known unverified environments,
+risk classification, and any human-origin approval. Every validation and
+review entry carries the same candidate commit; every review and exact approval
+also carries the canonical base-to-candidate diff hash. Each referenced file is
+a bounded regular file with an exact `sha256:<hex>` hash.
+
+The gate does not execute validation, publish a review, interpret review prose,
+grant approval, commit, or integrate. It verifies the bound Slice and clean
+`HEAD`, derives the minimum path-based lenses from the ordinary review-impact
+rules, rejects stale identities or changed evidence, and returns one bounded
+JSON result whose `next_action` is exactly one of `validate`, `review`,
+`approve`, or `integrate`. Its `commit_trailers` are usable only when the
+corresponding recorded verdicts are factually accurate. The coordinator still
+owns completeness of the declared validation plan, semantic lenses, risk
+classification, and review disposition; the gate prevents identity drift, not
+false statements.
+
+An empty or failed validation set yields `validate`; missing required lenses
+yields `review`; otherwise missing authorization yields `approve`. A
+human-attention candidate requires `exact_candidate` approval bound to its
+commit and diff. A routine candidate may instead cite a `standing_routine`
+authorization with human origin and scope, but it cannot retain a known
+unverified environment. Only a complete, green, reviewed, and authorized
+request yields `integrate`. Keep the request and referenced evidence outside
+tracked paths, and discard them with completed Slice coordination.
+
 If a required full suite fails outside the changed boundary, run each exact
 failing test once in isolation to classify timing or shared-load sensitivity.
 An isolated pass is diagnostic evidence, not a replacement for the failed
