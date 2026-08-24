@@ -77,6 +77,8 @@ impl<P: JsonPeer> Backend<P> {
             | "current_mode_update"
             | "config_option_update"
             | "session_info_update"
+            // ACP usage_update reports cumulative Session/context state, while
+            // Session Usage accepts completed per-prompt receipts only.
             | "usage_update" => Ok(None),
             _ => Ok(None),
         }
@@ -502,15 +504,19 @@ impl<P: JsonPeer> Backend<P> {
 }
 
 fn prompt_usage_receipt(result: &Value, response_id: u64) -> Result<Option<Value>, BackendFailure> {
-    let Some(usage) = result.get("usage") else {
+    if let Some(usage) = result.get("usage") {
+        return standard_prompt_usage_receipt(usage, response_id).map(Some);
+    }
+
+    let Some(usage) = result.get("_meta").and_then(|meta| meta.get("usage")) else {
         return Ok(None);
     };
-    if !usage.is_object() {
-        return Err(protocol::protocol_failure(
-            "Grok ACP prompt usage is not an object",
-        ));
-    }
-    Ok(Some(json!({
+    grok_meta_prompt_usage_receipt(usage, response_id)
+}
+
+fn standard_prompt_usage_receipt(usage: &Value, response_id: u64) -> Result<Value, BackendFailure> {
+    require_usage_object(usage, "usage")?;
+    Ok(json!({
         "schema": "grok.acp-prompt-usage-receipt/v1",
         "source_profile": "grok.acp.prompt-response.usage/v1",
         "prompt_request_id": response_id,
@@ -522,7 +528,49 @@ fn prompt_usage_receipt(result: &Value, response_id: u64) -> Result<Option<Value
             "cache_read_input_tokens": non_negative_usage_at(usage, "cachedReadTokens")?,
             "cache_write_input_tokens": non_negative_usage_at(usage, "cachedWriteTokens")?,
         }
+    }))
+}
+
+fn grok_meta_prompt_usage_receipt(
+    usage: &Value,
+    response_id: u64,
+) -> Result<Option<Value>, BackendFailure> {
+    require_usage_object(usage, "_meta.usage")?;
+    let incomplete = match usage.get("usageIsIncomplete") {
+        None => false,
+        Some(Value::Bool(incomplete)) => *incomplete,
+        Some(_) => {
+            return Err(protocol::protocol_failure(
+                "Grok ACP prompt _meta.usage `usageIsIncomplete` is not a boolean",
+            ));
+        },
+    };
+    if incomplete {
+        return Ok(None);
+    }
+    Ok(Some(json!({
+        "schema": "grok.acp-prompt-usage-receipt/v1",
+        "source_profile": "grok.acp.prompt-response.meta-usage/v1",
+        "prompt_request_id": response_id,
+        "usage": {
+            "input_tokens": non_negative_usage_at(usage, "inputTokens")?,
+            "output_tokens": non_negative_usage_at(usage, "outputTokens")?,
+            "total_tokens": non_negative_usage_at(usage, "totalTokens")?,
+            "reasoning_tokens": non_negative_usage_at(usage, "reasoningTokens")?,
+            "cache_read_input_tokens": non_negative_usage_at(usage, "cachedReadTokens")?,
+            "cache_write_input_tokens": non_negative_usage_at(usage, "cacheCreationTokens")?,
+        }
     })))
+}
+
+fn require_usage_object(usage: &Value, field: &'static str) -> Result<(), BackendFailure> {
+    if usage.is_object() {
+        Ok(())
+    } else {
+        Err(protocol::protocol_failure(format!(
+            "Grok ACP prompt {field} is not an object"
+        )))
+    }
 }
 
 fn non_negative_usage_at(usage: &Value, field: &'static str) -> Result<u64, BackendFailure> {

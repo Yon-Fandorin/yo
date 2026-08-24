@@ -416,6 +416,121 @@ fn maps_prompt_stream_and_completion_to_semantic_events() {
     ));
 }
 
+// Grok Build 1.0.5가 표준 PromptResponse.usage 대신 제공하는 `_meta.usage`의
+// whole-prompt 값만 턴별 영수증으로 보존하고 sibling last-call 값은 사용하지 않습니다.
+#[test]
+fn maps_grok_meta_prompt_usage_to_semantic_receipt() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let messages = [
+        response(3, json!({ "sessionId": "grok-session-a" })),
+        response(
+            4,
+            json!({
+                "stopReason": "end_turn",
+                "_meta": {
+                    "inputTokens": 10,
+                    "outputTokens": 2,
+                    "cachedReadTokens": 1,
+                    "reasoningTokens": 1,
+                    "usage": {
+                        "inputTokens": 14_851,
+                        "outputTokens": 48,
+                        "totalTokens": 14_899,
+                        "cachedReadTokens": 11_648,
+                        "cacheCreationTokens": 7,
+                        "reasoningTokens": 34,
+                        "modelCalls": 1,
+                        "numTurns": 1
+                    }
+                }
+            }),
+        ),
+    ];
+    let (mut backend, _) = backend(messages);
+    create_session(&mut backend, session_id);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("test"),
+        })
+        .unwrap();
+
+    let BackendPoll::Event(BackendEvent::ActivityStarted {
+        activity: usage_activity,
+        kind: ActivityKind::ModelWork,
+    }) = backend.poll_event().unwrap()
+    else {
+        panic!("Grok meta prompt usage must start one ModelWork Activity");
+    };
+    let BackendPoll::Event(BackendEvent::ActivityUpdated {
+        activity,
+        update: yo_core::ActivityUpdate::TextSnapshot(receipt),
+    }) = backend.poll_event().unwrap()
+    else {
+        panic!("Grok meta prompt usage must be emitted as one durable text snapshot");
+    };
+    assert_eq!(activity, usage_activity);
+    assert_eq!(
+        serde_json::from_str::<Value>(&receipt).unwrap(),
+        json!({
+            "schema": "grok.acp-prompt-usage-receipt/v1",
+            "source_profile": "grok.acp.prompt-response.meta-usage/v1",
+            "prompt_request_id": 4,
+            "usage": {
+                "input_tokens": 14_851,
+                "output_tokens": 48,
+                "total_tokens": 14_899,
+                "reasoning_tokens": 34,
+                "cache_read_input_tokens": 11_648,
+                "cache_write_input_tokens": 7
+            }
+        })
+    );
+}
+
+// Grok이 whole-prompt ledger의 과소 집계 가능성을 표시하면 완전한 영수증으로
+// 오인하지 않고 usage Activity 없이 원래 완료 Turn만 보존합니다.
+#[test]
+fn omits_incomplete_grok_meta_prompt_usage() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let messages = [
+        response(3, json!({ "sessionId": "grok-session-a" })),
+        response(
+            4,
+            json!({
+                "stopReason": "end_turn",
+                "_meta": {
+                    "usage": {
+                        "inputTokens": 100,
+                        "outputTokens": 25,
+                        "totalTokens": 125,
+                        "cachedReadTokens": 60,
+                        "cacheCreationTokens": 5,
+                        "reasoningTokens": 10,
+                        "usageIsIncomplete": true
+                    }
+                }
+            }),
+        ),
+    ];
+    let (mut backend, _) = backend(messages);
+    create_session(&mut backend, session_id);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("test"),
+        })
+        .unwrap();
+
+    assert!(matches!(
+        backend.poll_event().unwrap(),
+        BackendPoll::Event(BackendEvent::ResumableTurnFinished { turn, .. })
+            if turn == active_turn
+    ));
+}
+
 // Grok prompt usage의 필수 token 값이 음수이면 영수증을 추측 보정하지 않고 Turn 종료
 // 전에 Protocol 실패로 닫아 잘못된 cache 수치가 durable Activity가 되지 않게 합니다.
 #[test]
@@ -435,6 +550,46 @@ fn rejects_malformed_grok_prompt_usage() {
                     "thoughtTokens": 10,
                     "cachedReadTokens": -1,
                     "cachedWriteTokens": 5
+                }
+            }),
+        ),
+    ];
+    let (mut backend, _) = backend(messages);
+    create_session(&mut backend, session_id);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("test"),
+        })
+        .unwrap();
+
+    let failure = backend.poll_event().unwrap_err();
+
+    assert_eq!(failure.kind(), BackendFailureKind::Protocol);
+    assert!(failure.message().contains("cachedReadTokens"));
+}
+
+// Grok vendor whole-prompt usage가 필수 cache 값을 잘못 보내면 sibling 값이나 0으로
+// 대체하지 않고 표준 usage와 같은 Protocol 실패 경계를 유지합니다.
+#[test]
+fn rejects_malformed_grok_meta_prompt_usage() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let messages = [
+        response(3, json!({ "sessionId": "grok-session-a" })),
+        response(
+            4,
+            json!({
+                "stopReason": "end_turn",
+                "_meta": {
+                    "usage": {
+                        "inputTokens": 100,
+                        "outputTokens": 25,
+                        "totalTokens": 125,
+                        "cachedReadTokens": -1,
+                        "cacheCreationTokens": 5,
+                        "reasoningTokens": 10
+                    }
                 }
             }),
         ),
