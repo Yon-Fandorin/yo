@@ -197,10 +197,23 @@ impl ChatCompletionsSseDecoder {
                     "Chat Completions [DONE] sentinel must not have an SSE event name",
                 ));
             }
-            if self.finish.is_none() || self.usage.is_none() {
-                return Err(protocol_failure(
-                    "Chat Completions [DONE] arrived before finish and final usage",
-                ));
+            match (self.finish.is_some(), self.usage.is_some()) {
+                (false, false) => {
+                    return Err(protocol_failure(
+                        "Chat Completions [DONE] arrived before finish reason and final usage",
+                    ));
+                },
+                (false, true) => {
+                    return Err(protocol_failure(
+                        "Chat Completions [DONE] arrived before finish reason",
+                    ));
+                },
+                (true, false) => {
+                    return Err(protocol_failure(
+                        "Chat Completions [DONE] arrived before final usage",
+                    ));
+                },
+                (true, true) => {},
             }
             self.done_seen = true;
             return Ok(Vec::new());

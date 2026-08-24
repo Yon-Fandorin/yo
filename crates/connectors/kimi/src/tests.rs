@@ -302,10 +302,10 @@ fn connector_enforces_local_tools_and_no_tools_profiles() {
     assert!(body.get("tool_choice").is_none());
 }
 
-// K3 wire는 profile에서 확정한 output/reasoning만 보내고 deprecated sampling 및
+// Platform K3 wire는 profile에서 확정한 output/reasoning만 보내고 deprecated sampling 및
 // stream_options를 넣지 않아 다른 Chat Completions 의미를 우연히 상속하지 않습니다.
 #[test]
-fn k3_request_uses_only_the_closed_kimi_wire_fields() {
+fn platform_k3_request_uses_only_the_closed_kimi_wire_fields() {
     let profile = admit_binding(&k3()).unwrap();
     let request = ModelConnectorRequest::new(
         vec![ModelConnectorInputItem::Message {
@@ -369,9 +369,9 @@ fn kimi_accepts_a_smaller_positive_cap_and_rejects_overflow_or_unknown() {
     }
 }
 
-// 1M Code k3는 hard max 131072 이하의 request cap 4096, preserved-thinking, caller의 typed
-// cache hint를 함께 보냅니다. hint가 없거나 endpoint/ModelId가 교차되면 transport 전에
-// 실패합니다.
+// 1M Code k3는 hard max 이하의 request cap, final usage 요청, preserved-thinking,
+// caller의 typed cache hint를 함께 보냅니다. hint가 없거나 endpoint/ModelId가 교차되면
+// transport 전에 실패합니다.
 #[test]
 fn code_k3_requires_preserved_thinking_and_typed_cache_affinity() {
     let complete = complete_at(
@@ -401,6 +401,7 @@ fn code_k3_requires_preserved_thinking_and_typed_cache_affinity() {
     let request = request.with_cache_affinity_hint(ModelCacheAffinityHint::for_session(session));
     let body = wire_body(&request, "k3", profile).unwrap();
     assert_eq!(body["max_completion_tokens"], 4_096);
+    assert_eq!(body["stream_options"]["include_usage"], true);
     assert_eq!(body["reasoning_effort"], "high");
     assert_eq!(body["thinking"], json!({"type": "enabled", "keep": "all"}));
     assert_eq!(body["prompt_cache_key"], session.to_string());
@@ -1441,4 +1442,40 @@ fn kimi_stream_rejects_usage_before_the_finish_reason() {
         let error = decoder.push(event(chunk).as_bytes()).unwrap_err();
         assert!(error.to_string().contains("before the finish"), "{error}");
     }
+}
+
+// `[DONE]`이 terminal evidence보다 먼저 오면 성공시키지 않되, finish와 usage가 모두
+// 없는 경우와 finish만 있고 usage가 없는 경우를 구분해 다음 wire 진단을 좁힙니다.
+#[test]
+fn kimi_done_failure_identifies_the_missing_terminal_evidence() {
+    let mut empty = ChatCompletionsSseDecoder::new_kimi(
+        ModelConnectorLimits::default(),
+        "kimi-k3".to_owned(),
+        true,
+    );
+    let error = empty.push(b"data: [DONE]\n\n").unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("before finish reason and final usage"),
+        "{error}"
+    );
+
+    let stream = [
+        event(json!({
+            "id":"kimi-no-usage","object":"chat.completion.chunk","model":"kimi-k3",
+            "choices":[{"index":0,"delta":{"role":"assistant","content":"done"},
+                "finish_reason":"stop"}]
+        })),
+        "data: [DONE]\n\n".to_owned(),
+    ]
+    .concat();
+    let mut missing_usage = ChatCompletionsSseDecoder::new_kimi(
+        ModelConnectorLimits::default(),
+        "kimi-k3".to_owned(),
+        true,
+    );
+    let error = missing_usage.push(stream.as_bytes()).unwrap_err();
+    assert!(error.to_string().contains("before final usage"), "{error}");
+    assert!(!error.to_string().contains("finish reason"), "{error}");
 }

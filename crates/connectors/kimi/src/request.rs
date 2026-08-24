@@ -198,6 +198,7 @@ pub(super) fn wire_body(
                     "Kimi Code K3 request reasoning effort differs from its complete profile",
                 ));
             }
+            body["stream_options"] = json!({"include_usage": true});
             body["reasoning_effort"] = Value::String(effort.as_str().to_owned());
             body["thinking"] = json!({"type": "enabled", "keep": "all"});
             body["prompt_cache_key"] = Value::String(required_cache_hint(request)?.to_owned());
