@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-002
-    revision: sha256:a8bc8794a88abaa186895595f4851bbf1f1b58fc6e625e9ba22df3324b8b4b20
+    revision: sha256:6fdab82cf5b838017ce0f85b17a99430da97b42ed9bc5d310a80bf5f69fd9352
 relations:
   depends_on:
     - agent.observability.session-journal
@@ -79,31 +79,45 @@ Session MUST open its durable history read-only and MAY offer only the explicitl
 confirmed fork permitted by the Continuation Anchor contract.
 
 The full UUID is the public Session identifier accepted by `yo session
-SESSION_ID` and `yo --resume SESSION_ID`. `yo` without a continuation option
-starts a new Session. `yo --continue` selects the most recently updated
-`eligible` Session in the current workspace and MUST fail without creating a
-Session when no candidate exists.
+SESSION_ID`, `yo usage SESSION_ID`, and `yo --resume SESSION_ID`. `yo` without
+a continuation option starts a new Session. `yo --continue` selects the most
+recently updated `eligible` Session in the current workspace and MUST fail
+without creating a Session when no candidate exists.
 
 A stored Session view is an archival Session Repository projection, not the
-live frontend view that merges the durable prefix with a process-local tail. It
-MUST be a read-only, point-in-time projection of only its durable semantic
-Journal. The initial CLI MUST expose this as `yo session
-SESSION_ID` plain output on stdout so it remains pipeable. Chat is the default
-projection; `--view transcript` selects the diagnostic Transcript projection,
-while Request exposure remains a later view contract. Diagnostics belong on
-stderr. When the repository can independently establish an active writer
-without acquiring its lease, a pending marker is treated as an in-flight
-append: the reader MUST stop at the last validated envelope before that marker
-and report a durable point-in-time snapshot. When no active writer can be
-established, a remaining marker MUST quarantine the Session. Failure to detect
-a live writer may conservatively quarantine availability but MUST NOT admit
-guarded bytes or weaken snapshot correctness.
-The view MUST NOT subscribe to later appends, start an Agent Backend, allocate
-or resume a Session, acquire the repository writer lease, create storage,
-repair a torn tail, or otherwise mutate repository state. It MUST ignore an
-incomplete final line as uncommitted, honor pending-marker quarantine and
-complete-line corruption, and preserve explicit interrupted, incomplete, and
-durability-gap states instead of presenting a continuous completed history.
+live frontend view that merges the durable prefix with a process-local tail.
+The local read-only CLI grammar MUST consist of these forms:
+
+- `yo session [--all] [--details]` for listing;
+- `yo session SESSION_ID [--view chat|transcript|request] [--ascii]` for an
+  archived view, defaulting to Chat;
+- Transcript alone MAY additionally accept `--limit N`, where N is positive,
+  and `--content none|preview|full`; and
+- `yo usage SESSION_ID [--ascii]` for the independent Session Usage report.
+
+`--ascii` MUST change glyph selection only. `--limit` and any explicitly
+supplied `--content`, including `--content full`, MUST be rejected for Chat and
+Request. Any other Session view, including Usage, MUST be a usage error. Usage
+MUST NOT be represented by a Session-view enum or route. Both direct-read
+commands MUST emit pipeable plain output on stdout and diagnostics on stderr.
+A missing or unreadable Session and any fatal projection error MUST retain its
+typed local diagnostic and MUST emit no partial stdout.
+
+Both direct-read commands MUST use the local non-creating Session reader and
+MUST capture one read-only, point-in-time projection of only the durable
+semantic Journal. When the repository can independently establish an active
+writer without acquiring its lease, a pending marker is treated as an
+in-flight append: the reader MUST stop at the last validated envelope before
+that marker and report a durable point-in-time snapshot. When no active writer
+can be established, a remaining marker MUST quarantine the Session. Failure to
+detect a live writer may conservatively quarantine availability but MUST NOT
+admit guarded bytes or weaken snapshot correctness. Neither command may
+subscribe to later appends, start an Agent Backend, allocate or resume a
+Session, acquire the repository writer lease, create storage, repair a torn
+tail, or otherwise mutate repository state. They MUST ignore an incomplete
+final line as uncommitted, honor pending-marker quarantine and complete-line
+corruption, and preserve explicit interrupted, incomplete, and durability-gap
+states instead of presenting a continuous completed history.
 
 The storage-neutral read boundary MUST make listing and replay available
 without exposing JSONL paths or write operations to the CLI. It is a read port
@@ -122,4 +136,6 @@ history from resume lets yo provide the useful inspection primitive required by
 every continuation fallback without guessing workspace identity, starting
 backend work, or treating an incomplete durable suffix as safe input. A summary
 inside each existing durable envelope keeps discovery bounded without creating
-a second writer, authority, or recovery path.
+a second writer, authority, or recovery path. The closed local command grammar
+keeps archived observability and Usage reporting independently addressable
+without opening either path into executable continuation.
