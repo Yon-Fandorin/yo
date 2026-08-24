@@ -103,6 +103,12 @@ pub use session::{
     ActivityId, ActivityRef, ActivityRequestRef, RequestId, SessionDescriptor, SessionId,
     SessionIdError, SessionIdGenerationError, SessionStartTime, TurnId, TurnRef,
 };
+pub use session_repository::{
+    CODEX_USAGE_SCHEMA, CacheReadShare, CacheReadSummary, GROK_USAGE_SCHEMA, MANAGED_USAGE_SCHEMA,
+    SessionUsage, SessionUsageAggregates, SessionUsageError, SessionUsageProjection,
+    SessionUsageProvider, SessionUsageReceipt, SessionUsageSource, UsageAggregate, UsageCoverage,
+    UsageValue,
+};
 pub use skill_reference::{
     SkillAvailability, SkillReference, SkillReferenceCandidate, SkillReferenceProvider,
     SkillReferenceProviderPoll, SkillReferenceScope, SkillReferenceSearchRequest,

@@ -2,6 +2,12 @@
 
 mod continuation;
 mod history;
+pub use history::{
+    CODEX_USAGE_SCHEMA, CacheReadShare, CacheReadSummary, GROK_USAGE_SCHEMA, MANAGED_USAGE_SCHEMA,
+    SessionUsage, SessionUsageAggregates, SessionUsageError, SessionUsageProjection,
+    SessionUsageProvider, SessionUsageReceipt, SessionUsageSource, UsageAggregate, UsageCoverage,
+    UsageValue,
+};
 pub(crate) mod journal;
 mod local;
 mod record;

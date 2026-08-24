@@ -30,8 +30,11 @@ fn three_modes_render_distinct_visible_projections_from_one_journal() {
         state.handle(function(2, KeyAction::Press), Duration::ZERO),
         Ok(StateEffect::Redraw)
     );
-    let transcript = render_and_commit(&mut state, Size::new(72, 40));
-    assert!(transcript.contains("Transcript · context 5/5 · F1 Chat · F2 Transcript · F3 Request"));
+    let transcript = render_and_commit(&mut state, Size::new(80, 40));
+    assert!(
+        transcript
+            .contains("Transcript · context 5/5 · F1 Chat · F2 Transcript · F3 Request · F4 Usage")
+    );
     assert!(transcript.contains("command.start_turn"));
     assert!(transcript.contains("event.activity_started"));
     assert!(transcript.contains("kind=tool_call"));
@@ -45,8 +48,10 @@ fn three_modes_render_distinct_visible_projections_from_one_journal() {
         state.handle(function(3, KeyAction::Press), Duration::ZERO),
         Ok(StateEffect::Redraw)
     );
-    let request = render_and_commit(&mut state, Size::new(72, 12));
-    assert!(request.contains("Request · context 5/5 · F1 Chat · F2 Transcript · F3 Request"));
+    let request = render_and_commit(&mut state, Size::new(80, 12));
+    assert!(
+        request.contains("Request · context 5/5 · F1 Chat · F2 Transcript · F3 Request · F4 Usage")
+    );
     assert!(request.contains("Live Session Request diagnostic"));
     assert!(request.contains("context_highlight=none(reason=no-direct-request)"));
     assert!(request.contains("no correlation records have been committed"));
@@ -77,6 +82,11 @@ fn function_keys_switch_exactly_and_idempotently() {
         Ok(StateEffect::Redraw)
     );
     assert_eq!(state.views().active(), ObservabilityView::Request);
+    assert_eq!(
+        state.handle(function(4, KeyAction::Press), Duration::ZERO),
+        Ok(StateEffect::Redraw)
+    );
+    assert_eq!(state.views().active(), ObservabilityView::Usage);
     assert_eq!(
         state.handle(function(1, KeyAction::Press), Duration::ZERO),
         Ok(StateEffect::Redraw)

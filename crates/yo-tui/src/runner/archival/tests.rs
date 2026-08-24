@@ -23,7 +23,7 @@ use yo_core::{
 };
 
 use super::{
-    project_chat, project_transcript_parts,
+    ArchivedSessionView, project_archived_session, project_chat, project_transcript_parts,
     request::{
         cache_state_text, close_reason_text, continuation_strategy_text, detail_availability_text,
         exchange_direction_text, exchange_kind_text, project_parts, transition_mode_text,
@@ -247,6 +247,20 @@ fn archived_transcript_labels_the_durable_observation_boundary() {
     assert!(output.contains("discovery=consistent"));
     assert!(output.contains("[#001] command.start_turn"));
     assert!(!output.contains("metadata, and Request Audit detail are unavailable"));
+}
+
+// ArchivedSessionView::Usage는 동일한 StoredSessionHistory의 typed usage projection을 통해
+// 성공적으로 빈 Usage 보고서를 만들며, 기존 Chat/Transcript/Request routing과 분리된다.
+#[test]
+fn archived_usage_routes_to_the_plain_usage_renderer() {
+    let history = durable_request_history();
+    let output =
+        project_archived_session(&history, ArchivedSessionView::Usage, GlyphProfile::Ascii)
+            .unwrap();
+
+    assert!(output.starts_with("Stored Session Usage\n"));
+    assert!(output.contains("completed_receipts=0"));
+    assert!(output.contains("No completed usage receipts are available."));
 }
 
 // 실제 durable 복구에서 얻은 다섯 상관 record와 명시적 close record를 합쳐 여섯

@@ -2,6 +2,7 @@
 
 mod normalizer;
 mod request_trace;
+mod session_usage;
 
 use std::fmt;
 
@@ -11,6 +12,12 @@ pub use request_trace::{
     StoredBindingTransitionMode, StoredContinuationStrategy, StoredExchangeDirection,
     StoredExchangeKind, StoredReplayExecutor, StoredRequestDetailAvailability,
     StoredRequestTraceEntry, StoredRequestTraceRecord,
+};
+pub use session_usage::{
+    CODEX_USAGE_SCHEMA, CacheReadShare, CacheReadSummary, GROK_USAGE_SCHEMA, MANAGED_USAGE_SCHEMA,
+    SessionUsage, SessionUsageAggregates, SessionUsageError, SessionUsageProjection,
+    SessionUsageProvider, SessionUsageReceipt, SessionUsageSource, UsageAggregate, UsageCoverage,
+    UsageValue,
 };
 
 use super::{
@@ -83,6 +90,10 @@ impl StoredSessionHistory {
     #[must_use]
     pub fn request_trace(&self) -> &[StoredRequestTraceEntry] {
         &self.request_trace
+    }
+
+    pub fn session_usage(&self) -> Result<SessionUsageProjection, SessionUsageError> {
+        SessionUsageProjection::from_records(&self.records)
     }
 }
 

@@ -308,6 +308,27 @@ fn direct_session_accepts_request_without_an_anchor_selector() {
     assert!(error.to_string().contains("unexpected argument '--at'"));
 }
 
+// `usage`는 같은 UUID의 보관된 Session Usage projection으로만 라우팅되고, ASCII 선택도
+// 다른 live presentation 설정으로 번지지 않는다.
+#[test]
+fn direct_session_accepts_usage_view() {
+    let id = "01890f00-0000-7000-8000-000000000001";
+    let Command::Session(command) = parse([
+        "session".into(),
+        id.into(),
+        "--view".into(),
+        "usage".into(),
+        "--ascii".into(),
+    ])
+    .unwrap() else {
+        panic!("the session command remains distinct from live startup");
+    };
+
+    assert_eq!(command.session_id.unwrap().to_string(), id);
+    assert_eq!(command.view, SessionView::Usage);
+    assert_eq!(command.glyph_profile, GlyphProfile::Ascii);
+}
+
 // list 전용 `--all`과 direct read UUID를 함께 쓰면 어느 쪽 의미도 임의로 우선하지 않고
 // 사용법 오류로 거부해 조회 범위와 출력 대상이 모호해지지 않는다.
 #[test]

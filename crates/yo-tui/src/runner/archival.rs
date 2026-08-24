@@ -1,6 +1,7 @@
 //! Read-only terminal-independent projections of one durable Session history.
 
 pub(in crate::runner) mod request;
+pub(in crate::runner) mod usage;
 
 use std::fmt;
 
@@ -17,6 +18,7 @@ pub enum ArchivedSessionView {
     Chat,
     Transcript,
     Request,
+    Usage,
 }
 
 /// Failure to build a read-only projection from already validated history.
@@ -43,6 +45,7 @@ pub fn project_archived_session(
         ArchivedSessionView::Chat => project_chat(history.records(), glyph_profile),
         ArchivedSessionView::Transcript => Ok(project_transcript(history)),
         ArchivedSessionView::Request => Ok(request::project(history)),
+        ArchivedSessionView::Usage => usage::project(history, glyph_profile),
     }
 }
 

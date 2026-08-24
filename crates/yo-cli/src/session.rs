@@ -89,6 +89,7 @@ fn show(
         SessionView::Chat => ArchivedSessionView::Chat,
         SessionView::Transcript => ArchivedSessionView::Transcript,
         SessionView::Request => ArchivedSessionView::Request,
+        SessionView::Usage => ArchivedSessionView::Usage,
     };
     let stdout = project_archived_session(&history, view, command.glyph_profile)
         .map_err(|error| AppError::single("projecting stored Session history", error))?;

@@ -221,7 +221,7 @@ fn transcript_page_movement_uses_visible_rows_and_not_neighbor_records() {
         .handle(key(KeyCode::PageUp, KeyModifiers::NONE), Duration::ZERO)
         .unwrap();
     let transcript = render_and_commit(&mut state, size);
-    assert!(transcript.contains("Transcript · F1/F2/F3"));
+    assert!(transcript.contains("Transcript · F1/F2/F3/F4"));
 
     state
         .handle(function(3, KeyAction::Press), Duration::ZERO)

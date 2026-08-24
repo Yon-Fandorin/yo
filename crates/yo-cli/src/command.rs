@@ -190,6 +190,7 @@ pub(crate) enum SessionView {
     Chat,
     Transcript,
     Request,
+    Usage,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
