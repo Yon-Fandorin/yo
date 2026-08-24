@@ -6,6 +6,13 @@ min_hk_version = "1.52.0"
 local checks = new Mapping<String, Step> {
     ["hk-test"] = Builtins.hk_test
     ["cargo-fmt"] = Builtins.cargo_fmt
+    ["bounded-validation-runner"] = new Step {
+        glob = List(
+            "tools/validation/bounded-run.sh",
+            "tools/validation/bounded-run-tests.sh",
+        )
+        check = "bash tools/validation/bounded-run-tests.sh"
+    }
     ["test-explanations"] = new Step {
         glob = List(
             "crates/**/*.rs",

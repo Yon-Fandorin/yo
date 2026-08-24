@@ -86,14 +86,28 @@ Goldens and snapshots establish an exact projection of their fixture. Review
 the diff when intentionally updating one; do not treat regeneration alone as
 evidence that the new output is correct.
 
+## Keep agent-facing output bounded
+
+Run verbose validation through `tools/validation/bounded-run.sh` when its
+output will return to an agent context. The wrapper preserves the command's
+exit status and complete combined output under the worktree-local
+`.local-exclude/validation-runs/` directory. A successful run returns one JSON
+summary line. A failed run returns the same summary and at most the final 16
+KiB of diagnostic output; inspect the complete local log only when that tail
+does not identify the owning failure.
+
+The wrapper changes presentation, not validation semantics. Its logs are
+temporary operational artifacts: keep a required failure log only while the
+finding is unresolved and discard completed logs with the Slice worktree.
+
 ## Slice-close baseline
 
 After focused checks pass, run the repository baseline:
 
 ```bash
-cargo test --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-hk check
+bash tools/validation/bounded-run.sh workspace-tests -- cargo test --workspace --all-targets
+bash tools/validation/bounded-run.sh workspace-clippy -- cargo clippy --workspace --all-targets -- -D warnings
+bash tools/validation/bounded-run.sh hk-check -- hk check
 ```
 
 `cargo test` runs the normal test set and compiles ignored tests; it does not

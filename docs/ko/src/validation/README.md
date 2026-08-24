@@ -82,14 +82,27 @@ golden과 snapshot은 fixture의 정확한 Projection을 증명한다. 의도적
 갱신할 때는 diff를 검토한다. 다시 생성했다는 사실만으로 새 출력이
 올바르다고 판단하지 않는다.
 
+## 에이전트에 반환하는 출력 제한하기
+
+자세한 검증 출력이 에이전트 context로 돌아갈 때는
+`tools/validation/bounded-run.sh`로 실행한다. wrapper는 command의 exit status와
+합쳐진 전체 출력을 보존하고 worktree-local
+`.local-exclude/validation-runs/` 디렉터리에 둔다. 성공하면 JSON summary 한 줄만
+반환한다. 실패하면 같은 summary와 마지막 diagnostic output 최대 16 KiB를 반환한다.
+그 tail만으로 소유 실패를 찾을 수 없을 때만 전체 local log를 확인한다.
+
+wrapper는 표시만 바꾸고 검증 의미는 바꾸지 않는다. log는 임시 운영 artifact다.
+필요한 실패 log는 finding이 미해결인 동안만 보존하고, 완료한 log는 Slice
+worktree와 함께 폐기한다.
+
 ## Slice 종료 기준선
 
 집중 검사가 통과하면 저장소 기준선을 실행한다.
 
 ```bash
-cargo test --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
-hk check
+bash tools/validation/bounded-run.sh workspace-tests -- cargo test --workspace --all-targets
+bash tools/validation/bounded-run.sh workspace-clippy -- cargo clippy --workspace --all-targets -- -D warnings
+bash tools/validation/bounded-run.sh hk-check -- hk check
 ```
 
 `cargo test`는 일반 test를 실행하고 ignored test를 compile하지만, 환경
