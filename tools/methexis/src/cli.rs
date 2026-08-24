@@ -32,6 +32,7 @@ USAGE:
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis prepare-approval <manifest.json> --reviewer <owner-id> [--replace-current]
+    methexis prepare-approval --canonical <knowledge-id> --revision <sha256:revision> --reviewer <owner-id> [--replace-current]
     methexis approve <request.json>
     methexis prepare-checkpoint
     methexis create-checkpoint <request.json>
@@ -48,7 +49,7 @@ COMMANDS:
     author-revision   Author a derived unit revision as tracked Draft proposals
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
-    prepare-approval  Emit an approval request from a review packet manifest
+    prepare-approval  Emit a Projection or canonical-basis approval request
     approve           Record a human-authorized approval proposal
     prepare-checkpoint Emit a Checkpoint request from the active roots
     create-checkpoint Create an immutable trusted-revision Checkpoint proposal
@@ -72,7 +73,7 @@ const UNSUPPORTED_COMMAND: &str = "\
 #[derive(Serialize)]
 struct Capabilities {
     schema: &'static str,
-    capabilities: [&'static str; 1],
+    capabilities: [&'static str; 2],
 }
 
 /// Runs the current Methexis command surface against explicit streams.
@@ -103,7 +104,10 @@ fn run_bootstrap(args: &[OsString], stdout: &mut impl Write) -> Option<io::Resul
             stdout,
             &Capabilities {
                 schema: "methexis.capabilities/v1",
-                capabilities: ["semantic-first-ko-on-demand/v1"],
+                capabilities: [
+                    "canonical-approval-on-demand-projection/v1",
+                    "semantic-first-ko-on-demand/v1",
+                ],
             },
             ExitCode::SUCCESS,
         )),
@@ -201,7 +205,7 @@ fn run_prepare_approval(
     stdout: &mut impl Write,
     stderr: &mut impl Write,
 ) -> io::Result<ExitCode> {
-    let Ok((manifest, reviewer, replace_current)) = parse_prepare_approval(args) else {
+    let Ok(parsed) = parse_prepare_approval(args) else {
         return write_json(
             stderr,
             &argument_failure("invalid_prepare_arguments", Vec::new()),
@@ -210,14 +214,48 @@ fn run_prepare_approval(
     };
     let root = env::current_dir()?;
     let service = ReviewService::new(&root);
-    match service.prepare_approval(Path::new(&manifest), &reviewer, replace_current) {
+    let result = match &parsed.target {
+        PrepareApprovalTarget::Manifest(manifest) => service.prepare_approval(
+            Path::new(manifest),
+            &parsed.reviewer,
+            parsed.replace_current,
+        ),
+        PrepareApprovalTarget::Canonical {
+            knowledge_id,
+            revision,
+        } => service.prepare_canonical_approval(
+            knowledge_id,
+            revision,
+            &parsed.reviewer,
+            parsed.replace_current,
+        ),
+    };
+    match result {
         Ok(request) => write_json_pretty(stdout, &request, ExitCode::SUCCESS),
         Err(error) => write_json(stderr, &error, ExitCode::from(2)),
     }
 }
 
-fn parse_prepare_approval(args: &[OsString]) -> Result<(OsString, String, bool), ()> {
+#[derive(Debug, PartialEq, Eq)]
+enum PrepareApprovalTarget {
+    Manifest(OsString),
+    Canonical {
+        knowledge_id: String,
+        revision: String,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct PrepareApprovalArgs {
+    target: PrepareApprovalTarget,
+    reviewer: String,
+    replace_current: bool,
+}
+
+fn parse_prepare_approval(args: &[OsString]) -> Result<PrepareApprovalArgs, ()> {
     let mut manifest = None;
+    let mut canonical = None;
+    let mut revision = None;
     let mut reviewer = None;
     let mut replace_current = false;
     let mut index = 0;
@@ -231,36 +269,57 @@ fn parse_prepare_approval(args: &[OsString]) -> Result<(OsString, String, bool),
             index += 1;
             continue;
         }
-        // Anything that is not --replace-current is either a --reviewer form
-        // (whose value falls through to the shared recording below) or the
-        // single positional manifest path.
-        let value = if argument == "--reviewer" {
-            index += 1;
-            let value = args.get(index).and_then(|value| value.to_str()).ok_or(())?;
-            if value.starts_with("--") {
+        let (kind, value) =
+            if argument == "--reviewer" || argument == "--canonical" || argument == "--revision" {
+                index += 1;
+                let value = args.get(index).and_then(|value| value.to_str()).ok_or(())?;
+                if value.starts_with("--") {
+                    return Err(());
+                }
+                (argument, value)
+            } else if let Some(value) = argument.strip_prefix("--reviewer=") {
+                ("--reviewer", value)
+            } else if let Some(value) = argument.strip_prefix("--canonical=") {
+                ("--canonical", value)
+            } else if let Some(value) = argument.strip_prefix("--revision=") {
+                ("--revision", value)
+            } else if argument.starts_with("--") {
                 return Err(());
-            }
-            value
-        } else if let Some(value) = argument.strip_prefix("--reviewer=") {
-            value
-        } else if argument.starts_with("--") {
+            } else {
+                if manifest.replace(args[index].clone()).is_some() {
+                    return Err(());
+                }
+                index += 1;
+                continue;
+            };
+        if value.is_empty() {
             return Err(());
-        } else {
-            if manifest.replace(args[index].clone()).is_some() {
-                return Err(());
-            }
-            index += 1;
-            continue;
+        }
+        let slot = match kind {
+            "--reviewer" => &mut reviewer,
+            "--canonical" => &mut canonical,
+            "--revision" => &mut revision,
+            _ => unreachable!(),
         };
-        if value.is_empty() || reviewer.replace(value.to_owned()).is_some() {
+        if slot.replace(value.to_owned()).is_some() {
             return Err(());
         }
         index += 1;
     }
-    match (manifest, reviewer) {
-        (Some(manifest), Some(reviewer)) => Ok((manifest, reviewer, replace_current)),
-        _ => Err(()),
-    }
+    let reviewer = reviewer.ok_or(())?;
+    let target = match (manifest, canonical, revision) {
+        (Some(manifest), None, None) => PrepareApprovalTarget::Manifest(manifest),
+        (None, Some(knowledge_id), Some(revision)) => PrepareApprovalTarget::Canonical {
+            knowledge_id,
+            revision,
+        },
+        _ => return Err(()),
+    };
+    Ok(PrepareApprovalArgs {
+        target,
+        reviewer,
+        replace_current,
+    })
 }
 
 #[cfg(test)]
@@ -290,12 +349,12 @@ mod prepare_approval_argument_tests {
     // 보존하고, 존재 여부는 기존 prepare 서비스 검증에 맡깁니다.
     #[test]
     fn equals_reviewer_preserves_a_leading_dash_literal() {
-        let (_, reviewer, replace_current) =
+        let parsed =
             parse_prepare_approval(&args(&["manifest.json", "--reviewer=--literal-owner"]))
                 .unwrap();
 
-        assert_eq!(reviewer, "--literal-owner");
-        assert!(!replace_current);
+        assert_eq!(parsed.reviewer, "--literal-owner");
+        assert!(!parsed.replace_current);
     }
 
     // 동일 옵션의 분리형·equals form 혼용은 마지막 값을 덮어쓰지 않고 기존 중복 오류를
@@ -308,6 +367,35 @@ mod prepare_approval_argument_tests {
                 "--reviewer",
                 "owner",
                 "--reviewer=other",
+            ]))
+            .is_err()
+        );
+    }
+
+    // canonical form은 ID와 revision을 한 쌍으로 요구하고 positional manifest와 섞이지 않는다.
+    #[test]
+    fn canonical_target_requires_an_exact_revision_and_no_manifest() {
+        let parsed = parse_prepare_approval(&args(&[
+            "--canonical",
+            "tui.relocated",
+            "--revision=sha256:1234",
+            "--reviewer",
+            "tui-architecture",
+        ]))
+        .unwrap();
+        assert_eq!(
+            parsed.target,
+            super::PrepareApprovalTarget::Canonical {
+                knowledge_id: "tui.relocated".to_owned(),
+                revision: "sha256:1234".to_owned(),
+            }
+        );
+        assert!(
+            parse_prepare_approval(&args(&[
+                "manifest.json",
+                "--canonical=tui.relocated",
+                "--revision=sha256:1234",
+                "--reviewer=owner",
             ]))
             .is_err()
         );

@@ -2,11 +2,15 @@
 
 use std::{fs, io::Read, path::Path};
 
+use serde::Deserialize;
+
 use super::{
-    APPROVAL_REQUEST_SCHEMA, APPROVAL_SCHEMA, ApprovalInput, ApprovalRecord, ApprovalRequest,
-    COMPILER, MAX_RECORD_BYTES, PROFILE, PROJECTION_REQUEST_SCHEMA, PROJECTION_SCHEMA,
-    ProjectionInput, ProjectionMetadata, ProjectionRecord, hash_bytes, local_diagnostic,
-    relative_path, semantic_hash, valid_hash, valid_review_time,
+    APPROVAL_REQUEST_SCHEMA, APPROVAL_SCHEMA, ApprovalBasis, ApprovalInput, ApprovalRecord,
+    ApprovalRequest, CANONICAL_APPROVAL_REQUEST_SCHEMA, CANONICAL_APPROVAL_SCHEMA,
+    CANONICAL_COMPILER, CANONICAL_PROFILE, COMPILER, CanonicalApprovalInput, CanonicalBasis,
+    MAX_RECORD_BYTES, PROFILE, PROJECTION_REQUEST_SCHEMA, PROJECTION_SCHEMA, ProjectionInput,
+    ProjectionMetadata, ProjectionRecord, hash_bytes, local_diagnostic, relative_path,
+    semantic_hash, valid_hash, valid_review_time,
 };
 use crate::{check::Diagnostic, model::KnowledgeUnit};
 
@@ -90,20 +94,35 @@ pub(super) fn render_review_packet(unit: &KnowledgeUnit, projection: &Projection
 
 pub(super) fn render_approval(
     request: &ApprovalRequest,
-    projection: &ProjectionRecord,
+    projection: Option<&ProjectionRecord>,
     request_hash: &str,
 ) -> Vec<u8> {
-    format!(
-        "schema: {APPROVAL_SCHEMA}\nknowledge_id: {}\nrevision: {}\nreviewer: {}\nreviewed_at: {}\nprojection_profile: {}\nprojection_compiler: {}\nprojection_hash: {}\nrequest_hash: {request_hash}\n",
-        request.knowledge_id,
-        request.expected_revision,
-        request.reviewer,
-        request.reviewed_at,
-        projection.metadata.profile,
-        projection.metadata.compiler,
-        projection.hash,
-    )
-    .into_bytes()
+    match request {
+        ApprovalRequest::Projection {
+            knowledge_id,
+            expected_revision,
+            reviewer,
+            reviewed_at,
+            ..
+        } => {
+            let projection = projection.expect("Projection request was validated with evidence");
+            format!(
+                "schema: {APPROVAL_SCHEMA}\nknowledge_id: {knowledge_id}\nrevision: {expected_revision}\nreviewer: {reviewer}\nreviewed_at: {reviewed_at}\nprojection_profile: {}\nprojection_compiler: {}\nprojection_hash: {}\nrequest_hash: {request_hash}\n",
+                projection.metadata.profile, projection.metadata.compiler, projection.hash,
+            )
+            .into_bytes()
+        },
+        ApprovalRequest::Canonical {
+            knowledge_id,
+            expected_revision,
+            reviewer,
+            reviewed_at,
+            ..
+        } => format!(
+            "schema: {CANONICAL_APPROVAL_SCHEMA}\nknowledge_id: {knowledge_id}\nrevision: {expected_revision}\nreviewer: {reviewer}\nreviewed_at: {reviewed_at}\nreview_basis: canonical\nrequest_hash: {request_hash}\n"
+        )
+        .into_bytes(),
+    }
 }
 
 #[allow(clippy::result_large_err)]
@@ -239,7 +258,11 @@ pub(super) fn parse_approval_bytes(
             Vec::new(),
         )
     })?;
-    let mut record: ApprovalRecord = serde_norway::from_str(content).map_err(|error| {
+    #[derive(Deserialize)]
+    struct SchemaOnly {
+        schema: String,
+    }
+    let schema: serde_norway::Value = serde_norway::from_str(content).map_err(|error| {
         local_diagnostic(
             display.clone(),
             "invalid_approval_yaml",
@@ -247,40 +270,177 @@ pub(super) fn parse_approval_bytes(
             Vec::new(),
         )
     })?;
+    let schema = serde_norway::from_value::<SchemaOnly>(schema)
+        .map_err(|error| {
+            local_diagnostic(
+                display.clone(),
+                "invalid_approval_yaml",
+                error.to_string(),
+                Vec::new(),
+            )
+        })?
+        .schema;
+    let mut record = match schema.as_str() {
+        APPROVAL_SCHEMA => parse_projection_approval(content, &display)?,
+        CANONICAL_APPROVAL_SCHEMA => parse_canonical_approval(content, &display)?,
+        _ => {
+            return Err(local_diagnostic(
+                display,
+                "invalid_approval",
+                "approval schema is unsupported".to_owned(),
+                Vec::new(),
+            ));
+        },
+    };
     let affected = vec![record.knowledge_id.clone()];
-    let expected_request_hash = semantic_hash(&ApprovalInput {
-        schema: APPROVAL_REQUEST_SCHEMA,
-        knowledge_id: &record.knowledge_id,
-        expected_revision: &record.revision,
-        projection_hash: &record.projection_hash,
-        reviewer: &record.reviewer,
-        reviewed_at: &record.reviewed_at,
-    });
-    if record.schema != APPROVAL_SCHEMA
-        || record.projection_profile != PROFILE
-        || record.projection_compiler != COMPILER
-        || !valid_hash(&record.revision)
-        || !valid_hash(&record.projection_hash)
+    if !valid_hash(&record.revision)
+        || !valid_hash(&record.review_hash)
         || !valid_hash(&record.request_hash)
         || !valid_review_time(&record.reviewed_at)
     {
         return Err(local_diagnostic(
             display,
             "invalid_approval",
-            "approval schema, identity, review time, or evidence hash is invalid".to_owned(),
-            affected,
-        ));
-    }
-    if record.request_hash != expected_request_hash {
-        return Err(local_diagnostic(
-            display,
-            "approval_lineage_mismatch",
-            "approval fields do not match their deterministic request lineage".to_owned(),
+            "approval identity, review time, or evidence hash is invalid".to_owned(),
             affected,
         ));
     }
     record.hash = hash_bytes(bytes);
     Ok(record)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectionApprovalWire {
+    schema: String,
+    knowledge_id: String,
+    revision: String,
+    reviewer: String,
+    reviewed_at: String,
+    projection_profile: String,
+    projection_compiler: String,
+    projection_hash: String,
+    request_hash: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CanonicalApprovalWire {
+    schema: String,
+    knowledge_id: String,
+    revision: String,
+    reviewer: String,
+    reviewed_at: String,
+    review_basis: CanonicalBasis,
+    request_hash: String,
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_projection_approval(content: &str, display: &str) -> Result<ApprovalRecord, Diagnostic> {
+    let wire: ProjectionApprovalWire = parse_approval_wire(content, display)?;
+    let expected_request_hash = semantic_hash(&ApprovalInput {
+        schema: APPROVAL_REQUEST_SCHEMA,
+        knowledge_id: &wire.knowledge_id,
+        expected_revision: &wire.revision,
+        projection_hash: &wire.projection_hash,
+        reviewer: &wire.reviewer,
+        reviewed_at: &wire.reviewed_at,
+    });
+    if wire.schema != APPROVAL_SCHEMA
+        || wire.projection_profile != PROFILE
+        || wire.projection_compiler != COMPILER
+        || !valid_hash(&wire.revision)
+        || !valid_hash(&wire.projection_hash)
+        || !valid_hash(&wire.request_hash)
+        || !valid_review_time(&wire.reviewed_at)
+    {
+        return Err(local_diagnostic(
+            display.to_owned(),
+            "invalid_approval",
+            "approval schema, Projection profile, or compiler is invalid".to_owned(),
+            vec![wire.knowledge_id],
+        ));
+    }
+    if wire.request_hash != expected_request_hash {
+        return Err(approval_lineage_diagnostic(display, &wire.knowledge_id));
+    }
+    Ok(ApprovalRecord {
+        knowledge_id: wire.knowledge_id,
+        revision: wire.revision,
+        reviewer: wire.reviewer,
+        reviewed_at: wire.reviewed_at,
+        basis: ApprovalBasis::Projection,
+        review_profile: wire.projection_profile,
+        review_compiler: wire.projection_compiler,
+        review_hash: wire.projection_hash,
+        request_hash: wire.request_hash,
+        hash: String::new(),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_canonical_approval(content: &str, display: &str) -> Result<ApprovalRecord, Diagnostic> {
+    let wire: CanonicalApprovalWire = parse_approval_wire(content, display)?;
+    let expected_request_hash = semantic_hash(&CanonicalApprovalInput {
+        schema: CANONICAL_APPROVAL_REQUEST_SCHEMA,
+        knowledge_id: &wire.knowledge_id,
+        expected_revision: &wire.revision,
+        review_basis: wire.review_basis,
+        reviewer: &wire.reviewer,
+        reviewed_at: &wire.reviewed_at,
+    });
+    if wire.schema != CANONICAL_APPROVAL_SCHEMA
+        || !valid_hash(&wire.revision)
+        || !valid_hash(&wire.request_hash)
+        || !valid_review_time(&wire.reviewed_at)
+    {
+        return Err(local_diagnostic(
+            display.to_owned(),
+            "invalid_approval",
+            "canonical approval schema, identity, review time, or request hash is invalid"
+                .to_owned(),
+            vec![wire.knowledge_id],
+        ));
+    }
+    if wire.request_hash != expected_request_hash {
+        return Err(approval_lineage_diagnostic(display, &wire.knowledge_id));
+    }
+    Ok(ApprovalRecord {
+        knowledge_id: wire.knowledge_id,
+        revision: wire.revision.clone(),
+        reviewer: wire.reviewer,
+        reviewed_at: wire.reviewed_at,
+        basis: ApprovalBasis::Canonical,
+        review_profile: CANONICAL_PROFILE.to_owned(),
+        review_compiler: CANONICAL_COMPILER.to_owned(),
+        review_hash: wire.revision,
+        request_hash: wire.request_hash,
+        hash: String::new(),
+    })
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_approval_wire<T: serde::de::DeserializeOwned>(
+    content: &str,
+    display: &str,
+) -> Result<T, Diagnostic> {
+    serde_norway::from_str(content).map_err(|error| {
+        local_diagnostic(
+            display.to_owned(),
+            "invalid_approval_yaml",
+            error.to_string(),
+            Vec::new(),
+        )
+    })
+}
+
+fn approval_lineage_diagnostic(display: &str, knowledge_id: &str) -> Diagnostic {
+    local_diagnostic(
+        display.to_owned(),
+        "approval_lineage_mismatch",
+        "approval fields do not match their deterministic request lineage".to_owned(),
+        vec![knowledge_id.to_owned()],
+    )
 }
 
 #[allow(clippy::result_large_err)]

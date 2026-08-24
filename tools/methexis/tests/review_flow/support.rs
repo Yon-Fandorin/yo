@@ -86,6 +86,21 @@ pub(super) fn approval_request(
     })
 }
 
+pub(super) fn canonical_approval_request(
+    revision: &str,
+    reviewer: &str,
+    reviewed_at: &str,
+) -> Value {
+    json!({
+        "schema": "methexis.approval-request/v1alpha2",
+        "knowledge_id": KNOWLEDGE_ID,
+        "expected_revision": revision,
+        "review_basis": "canonical",
+        "reviewer": reviewer,
+        "reviewed_at": reviewed_at,
+    })
+}
+
 pub(super) fn has_diagnostic(result: &Value, code: &str) -> bool {
     result["diagnostics"]
         .as_array()

@@ -25,6 +25,24 @@ fn unknown_reviewer_fails_at_preparation_time() {
     assert_eq!(failure["error"]["affected_ids"], json!([KNOWLEDGE_ID]));
 }
 
+// canonical 준비도 현재 foundation의 exact revision이 아니면 요청을 방출하지 않는다.
+#[test]
+fn canonical_preparation_rejects_a_stale_revision_before_emitting_a_request() {
+    let repository = GitRepository::foundation();
+    let failure = failure_json(repository.run(&[
+        "prepare-approval",
+        "--canonical",
+        KNOWLEDGE_ID,
+        "--revision",
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "--reviewer",
+        OWNER_ID,
+    ]));
+
+    assert_eq!(failure["error"]["code"], "revision_mismatch");
+    assert_eq!(failure["error"]["affected_ids"], json!([KNOWLEDGE_ID]));
+}
+
 // 기존 승인 기록이 없는 단위에 --replace-current를 요청하면 CAS predecessor를 지을 수 없으므로
 // 닫힌다.
 #[test]

@@ -49,6 +49,41 @@ fn prepare_approval_contract_fixtures_are_complete_and_current() {
     assert_eq!(failure, expected);
 }
 
+// canonical form은 manifest나 Projection을 읽지 않고 현재 exact Knowledge revision과
+// reviewer만 묶으며, prepare 단계에서는 approval 파일을 만들지 않는다.
+#[test]
+fn prepare_approval_can_bind_the_canonical_revision_directly() {
+    let repository = GitRepository::foundation();
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/prepare-approval-contract");
+    let revision = repository.revision_for(KNOWLEDGE_ID);
+    let approval_path = repository
+        .path
+        .join(format!("methexis/approvals/{KNOWLEDGE_ID}.yaml"));
+
+    let prepared = success_json(repository.run(&[
+        "prepare-approval",
+        "--canonical",
+        KNOWLEDGE_ID,
+        "--revision",
+        &revision,
+        "--reviewer",
+        OWNER_ID,
+    ]));
+    let normalized = normalize_reviewed_at(prepared);
+    let expected: Value = serde_json::from_slice(
+        &fs::read(examples.join("canonical-approval-request.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(normalized, expected);
+    assert!(!approval_path.exists());
+    assert!(
+        !repository
+            .path
+            .join(format!("methexis/review-projections/{KNOWLEDGE_ID}.md"))
+            .exists()
+    );
+}
+
 // 활성 Checkpoint를 통합한 저장소에서 prepare-checkpoint 출력을 golden과 비교하고,
 // 활성 Checkpoint가 없는 저장소에서는 no_active_checkpoint 실패 golden과 비교한다.
 #[test]

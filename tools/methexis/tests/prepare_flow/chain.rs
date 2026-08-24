@@ -119,3 +119,48 @@ fn initial_preparation_omits_replacement_and_writes_nothing() {
     assert_eq!(approval["status"], "written");
     assert!(approval_path.is_file());
 }
+
+// canonical prepare 출력은 Projection 없이 approve와 initial Checkpoint/activation 제안까지
+// 이어져 capability가 단순 CLI 광고가 아니라 완전한 최소 흐름임을 증명한다.
+#[test]
+fn canonical_preparation_chains_to_initial_activation_without_a_projection() {
+    let repository = GitRepository::foundation();
+    let revision = repository.revision_for(KNOWLEDGE_ID);
+    let prepared = success_json(repository.run(&[
+        "prepare-approval",
+        "--canonical",
+        KNOWLEDGE_ID,
+        "--revision",
+        &revision,
+        "--reviewer",
+        OWNER_ID,
+    ]));
+    let request = repository.request("canonical-approval.json", &prepared);
+    success_json(repository.run(&["approve", request.to_str().unwrap()]));
+    repository.git(&["add", "methexis/approvals"]);
+    repository.git(&["commit", "-m", "integrate canonical approval"]);
+    repository.git(&["branch", "-f", "develop", "HEAD"]);
+
+    let checkpoint_request = repository.request(
+        "canonical-checkpoint.json",
+        &json!({
+            "schema": "methexis.checkpoint-request/v1alpha1",
+            "roots": [KNOWLEDGE_ID]
+        }),
+    );
+    let created =
+        success_json(repository.run(&["create-checkpoint", checkpoint_request.to_str().unwrap()]));
+    let create_output = repository.request("canonical-create-output.json", &created);
+    let activation =
+        success_json(repository.run(&["prepare-activation", create_output.to_str().unwrap()]));
+    let activation_request = repository.request("canonical-activation.json", &activation);
+    let proposed =
+        success_json(repository.run(&["propose-activation", activation_request.to_str().unwrap()]));
+    assert_eq!(proposed["status"], "written");
+    assert!(
+        !repository
+            .path
+            .join(format!("methexis/review-projections/{KNOWLEDGE_ID}.md"))
+            .exists()
+    );
+}

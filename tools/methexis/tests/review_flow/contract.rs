@@ -128,3 +128,44 @@ fn projection_review_and_approval_form_an_idempotent_proposal_flow() {
     assert_eq!(check["units"][0]["approval_evidence"], "matching_proposal");
     assert_eq!(check["units"][0]["approval_reason"], Value::Null);
 }
+
+// canonical basis는 exact 영문 revision만 승인 증거로 사용하며 Projection 파일이나
+// review packet을 생성·요구하지 않는다.
+#[test]
+fn canonical_approval_needs_no_projection_and_remains_idempotent() {
+    let repository = TempRepository::new();
+    let revision = repository.revision();
+    let request = repository.request(
+        "canonical-approval.json",
+        &canonical_approval_request(&revision, "tui-architecture", "2026-07-24T12:00:00Z"),
+    );
+
+    let approval = success_json(run(
+        &repository.path,
+        &["approve", request.to_str().unwrap()],
+    ));
+    assert_eq!(approval["status"], "written");
+    let repeated = success_json(run(
+        &repository.path,
+        &["approve", request.to_str().unwrap()],
+    ));
+    assert_eq!(repeated["status"], "unchanged");
+    assert!(
+        !repository
+            .path
+            .join("methexis/review-projections/tui.relocated.md")
+            .exists()
+    );
+    let record = fs::read_to_string(
+        repository
+            .path
+            .join("methexis/approvals/tui.relocated.yaml"),
+    )
+    .unwrap();
+    assert!(record.contains("schema: methexis.approval/v1alpha2"));
+    assert!(record.contains("review_basis: canonical"));
+    assert!(!record.contains("projection_"));
+
+    let check = repository.check();
+    assert_eq!(check["units"][0]["approval_evidence"], "matching_proposal");
+}

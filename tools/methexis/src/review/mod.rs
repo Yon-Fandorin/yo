@@ -15,12 +15,16 @@ use crate::check::{Diagnostic, DiagnosticPhase};
 
 pub(crate) const PROJECTION_SCHEMA: &str = "methexis.review-projection/v1alpha1";
 const APPROVAL_SCHEMA: &str = "methexis.approval/v1alpha1";
+const CANONICAL_APPROVAL_SCHEMA: &str = "methexis.approval/v1alpha2";
 const PROJECTION_REQUEST_SCHEMA: &str = "methexis.review-projection-request/v1alpha1";
 const REVIEW_REQUEST_SCHEMA: &str = "methexis.review-request/v1alpha1";
 const APPROVAL_REQUEST_SCHEMA: &str = "methexis.approval-request/v1alpha1";
+const CANONICAL_APPROVAL_REQUEST_SCHEMA: &str = "methexis.approval-request/v1alpha2";
 const OPERATION_SCHEMA: &str = "methexis.operation/v1alpha1";
 const REVIEW_MANIFEST_SCHEMA: &str = "methexis.review-manifest/v1alpha1";
 pub(crate) const PROFILE: &str = "ko-review/v1alpha1";
+pub(crate) const CANONICAL_PROFILE: &str = "canonical-en/v1";
+pub(crate) const CANONICAL_COMPILER: &str = "not-applicable";
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_RECORD_BYTES: usize = 256 * 1024;
 pub(crate) const COMPILER: &str = concat!("methexis/", env!("CARGO_PKG_VERSION"));
@@ -73,17 +77,81 @@ struct ReviewRequest {
     projection_hash: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub(crate) enum CanonicalBasis {
+    #[serde(rename = "canonical")]
+    Canonical,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ApprovalRequest {
-    schema: String,
-    knowledge_id: String,
-    expected_revision: String,
-    projection_hash: String,
-    reviewer: String,
-    reviewed_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    replace_revision: Option<String>,
+#[serde(tag = "schema", deny_unknown_fields)]
+pub(crate) enum ApprovalRequest {
+    #[serde(rename = "methexis.approval-request/v1alpha1")]
+    Projection {
+        knowledge_id: String,
+        expected_revision: String,
+        projection_hash: String,
+        reviewer: String,
+        reviewed_at: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replace_revision: Option<String>,
+    },
+    #[serde(rename = "methexis.approval-request/v1alpha2")]
+    Canonical {
+        knowledge_id: String,
+        expected_revision: String,
+        review_basis: CanonicalBasis,
+        reviewer: String,
+        reviewed_at: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replace_revision: Option<String>,
+    },
+}
+
+impl ApprovalRequest {
+    fn knowledge_id(&self) -> &str {
+        match self {
+            Self::Projection { knowledge_id, .. } | Self::Canonical { knowledge_id, .. } => {
+                knowledge_id
+            },
+        }
+    }
+
+    fn expected_revision(&self) -> &str {
+        match self {
+            Self::Projection {
+                expected_revision, ..
+            }
+            | Self::Canonical {
+                expected_revision, ..
+            } => expected_revision,
+        }
+    }
+
+    fn reviewer(&self) -> &str {
+        match self {
+            Self::Projection { reviewer, .. } | Self::Canonical { reviewer, .. } => reviewer,
+        }
+    }
+
+    fn reviewed_at(&self) -> &str {
+        match self {
+            Self::Projection { reviewed_at, .. } | Self::Canonical { reviewed_at, .. } => {
+                reviewed_at
+            },
+        }
+    }
+
+    fn replace_revision(&self) -> Option<&str> {
+        match self {
+            Self::Projection {
+                replace_revision, ..
+            }
+            | Self::Canonical {
+                replace_revision, ..
+            } => replace_revision.as_deref(),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -92,6 +160,16 @@ struct ApprovalInput<'a> {
     knowledge_id: &'a str,
     expected_revision: &'a str,
     projection_hash: &'a str,
+    reviewer: &'a str,
+    reviewed_at: &'a str,
+}
+
+#[derive(Serialize)]
+struct CanonicalApprovalInput<'a> {
+    schema: &'static str,
+    knowledge_id: &'a str,
+    expected_revision: &'a str,
+    review_basis: CanonicalBasis,
     reviewer: &'a str,
     reviewed_at: &'a str,
 }
@@ -124,19 +202,23 @@ impl ProjectionRecord {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ApprovalBasis {
+    Projection,
+    Canonical,
+}
+
+#[derive(Clone, Debug)]
 struct ApprovalRecord {
-    schema: String,
     knowledge_id: String,
     revision: String,
     reviewer: String,
     reviewed_at: String,
-    projection_profile: String,
-    projection_compiler: String,
-    projection_hash: String,
+    basis: ApprovalBasis,
+    review_profile: String,
+    review_compiler: String,
+    review_hash: String,
     request_hash: String,
-    #[serde(skip)]
     hash: String,
 }
 
@@ -278,6 +360,22 @@ impl<'a> ReviewService<'a> {
         prepare::prepare_approval(
             self.repository_root,
             manifest_path,
+            reviewer,
+            replace_current,
+        )
+    }
+
+    pub(crate) fn prepare_canonical_approval(
+        &self,
+        knowledge_id: &str,
+        revision: &str,
+        reviewer: &str,
+        replace_current: bool,
+    ) -> Result<ApprovalRequest, OperationFailure> {
+        prepare::prepare_canonical_approval(
+            self.repository_root,
+            knowledge_id,
+            revision,
             reviewer,
             replace_current,
         )

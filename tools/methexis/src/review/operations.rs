@@ -7,10 +7,11 @@ use std::{
 };
 
 use super::{
-    APPROVAL_REQUEST_SCHEMA, ApprovalInput, ApprovalRequest, MAX_REQUEST_BYTES, OperationFailure,
-    OperationSuccess, PROJECTION_REQUEST_SCHEMA, ProjectionRecord, ProjectionRequest,
-    REVIEW_MANIFEST_SCHEMA, REVIEW_REQUEST_SCHEMA, ReviewManifest, ReviewRequest, SuccessInput,
-    failure_from_diagnostic, hash_bytes,
+    APPROVAL_REQUEST_SCHEMA, ApprovalInput, ApprovalRequest, CANONICAL_APPROVAL_REQUEST_SCHEMA,
+    CanonicalApprovalInput, MAX_REQUEST_BYTES, OperationFailure, OperationSuccess,
+    PROJECTION_REQUEST_SCHEMA, ProjectionRecord, ProjectionRequest, REVIEW_MANIFEST_SCHEMA,
+    REVIEW_REQUEST_SCHEMA, ReviewManifest, ReviewRequest, SuccessInput, failure_from_diagnostic,
+    hash_bytes,
     records::{
         parse_projection, projection_input_hash, render_approval, render_projection,
         render_review_packet,
@@ -199,73 +200,97 @@ pub(super) fn record_approval(
 ) -> Result<OperationSuccess, OperationFailure> {
     const OPERATION: &str = "record_approval";
     let request: ApprovalRequest = read_request(request_path, OPERATION)?;
-    require_schema(
-        OPERATION,
-        &request.schema,
-        APPROVAL_REQUEST_SCHEMA,
-        &request.knowledge_id,
-    )?;
-    if !valid_review_time(&request.reviewed_at) {
+    if !valid_review_time(request.reviewed_at()) {
         return Err(OperationFailure::new(
             OPERATION,
             "invalid_review_time",
             "reviewed_at must use UTC `YYYY-MM-DDTHH:MM:SSZ`",
-            vec![request.knowledge_id],
+            vec![request.knowledge_id().to_owned()],
             "provide the explicit human review time in UTC",
         ));
     }
-    let foundation = load_operation_foundation(repository_root, OPERATION, &request.knowledge_id)?;
+    let foundation = load_operation_foundation(repository_root, OPERATION, request.knowledge_id())?;
     let unit = require_unit(
         &foundation,
-        &request.knowledge_id,
-        &request.expected_revision,
+        request.knowledge_id(),
+        request.expected_revision(),
         OPERATION,
     )?;
     if !foundation
         .owners
         .iter()
-        .any(|owner| owner.id == request.reviewer)
+        .any(|owner| owner.id == request.reviewer())
     {
         return Err(OperationFailure::new(
             OPERATION,
             "unknown_reviewer",
-            format!("reviewer OwnerId `{}` does not exist", request.reviewer),
-            vec![request.knowledge_id],
+            format!("reviewer OwnerId `{}` does not exist", request.reviewer()),
+            vec![request.knowledge_id().to_owned()],
             "use a tracked OwnerId",
         ));
     }
-    let projection_path = repository_root
-        .join("methexis/review-projections")
-        .join(format!("{}.md", request.knowledge_id));
-    let projection = parse_projection(&projection_path, repository_root).map_err(|diagnostic| {
-        failure_from_diagnostic(
-            OPERATION,
-            diagnostic,
-            "generate the matching Projection first",
-        )
-    })?;
-    require_projection_match(OPERATION, unit, &projection, &request.projection_hash)?;
-
-    let request_hash = semantic_hash(&ApprovalInput {
-        schema: APPROVAL_REQUEST_SCHEMA,
-        knowledge_id: &request.knowledge_id,
-        expected_revision: &request.expected_revision,
-        projection_hash: &request.projection_hash,
-        reviewer: &request.reviewer,
-        reviewed_at: &request.reviewed_at,
-    });
-    let bytes = render_approval(&request, &projection, &request_hash);
+    let (request_hash, projection) = match &request {
+        ApprovalRequest::Projection {
+            knowledge_id,
+            expected_revision,
+            projection_hash,
+            reviewer,
+            reviewed_at,
+            ..
+        } => {
+            let projection_path = repository_root
+                .join("methexis/review-projections")
+                .join(format!("{knowledge_id}.md"));
+            let projection =
+                parse_projection(&projection_path, repository_root).map_err(|diagnostic| {
+                    failure_from_diagnostic(
+                        OPERATION,
+                        diagnostic,
+                        "generate the matching Projection first",
+                    )
+                })?;
+            require_projection_match(OPERATION, unit, &projection, projection_hash)?;
+            let request_hash = semantic_hash(&ApprovalInput {
+                schema: APPROVAL_REQUEST_SCHEMA,
+                knowledge_id,
+                expected_revision,
+                projection_hash,
+                reviewer,
+                reviewed_at,
+            });
+            (request_hash, Some(projection))
+        },
+        ApprovalRequest::Canonical {
+            knowledge_id,
+            expected_revision,
+            review_basis,
+            reviewer,
+            reviewed_at,
+            ..
+        } => (
+            semantic_hash(&CanonicalApprovalInput {
+                schema: CANONICAL_APPROVAL_REQUEST_SCHEMA,
+                knowledge_id,
+                expected_revision,
+                review_basis: *review_basis,
+                reviewer,
+                reviewed_at,
+            }),
+            None,
+        ),
+    };
+    let bytes = render_approval(&request, projection.as_ref(), &request_hash);
     let hash = hash_bytes(&bytes);
     let target = repository_root
         .join("methexis/approvals")
-        .join(format!("{}.yaml", request.knowledge_id));
+        .join(format!("{}.yaml", request.knowledge_id()));
     let status = publish_approval(
         repository_root,
         &target,
         &bytes,
-        request.replace_revision.as_deref(),
+        request.replace_revision(),
         OPERATION,
-        &request.knowledge_id,
+        request.knowledge_id(),
     )?;
 
     Ok(success(SuccessInput {
@@ -279,7 +304,7 @@ pub(super) fn record_approval(
             "submit the approval proposal through repository review; it is not authoritative yet"
                 .to_owned(),
         ],
-        id: request.knowledge_id,
+        id: request.knowledge_id().to_owned(),
     }))
 }
 
@@ -303,7 +328,7 @@ pub(crate) fn load_operation_foundation(
     })
 }
 
-fn require_unit<'a>(
+pub(crate) fn require_unit<'a>(
     foundation: &'a Foundation,
     id: &str,
     expected_revision: &str,

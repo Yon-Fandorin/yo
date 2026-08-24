@@ -1,10 +1,11 @@
-//! Approval-request preparation from a published review packet manifest.
+//! Approval-request preparation from either exact canonical Knowledge or a
+//! published review packet manifest.
 //!
-//! `prepare-approval` binds the manifest's KnowledgeId, RevisionId, and
-//! Projection hash into the exact ApprovalRequest wire shape so no value is
-//! copied by hand between commands. It only emits the request: it never
-//! writes `methexis/approvals/` and never records an approval, so human
-//! authorization remains the separate explicit `approve` step.
+//! `prepare-approval` binds either the caller's exact canonical KnowledgeId and
+//! RevisionId or a manifest's Projection lineage into the corresponding wire
+//! shape. It only emits the request: it never writes `methexis/approvals/` and
+//! never records an approval, so human authorization remains the separate
+//! explicit `approve` step.
 
 use std::{
     path::Path,
@@ -12,9 +13,9 @@ use std::{
 };
 
 use super::{
-    APPROVAL_REQUEST_SCHEMA, ApprovalRequest, OperationFailure, REVIEW_MANIFEST_SCHEMA,
-    ReviewManifest, failure_from_diagnostic,
-    operations::{load_operation_foundation, read_request, require_schema},
+    ApprovalRequest, CanonicalBasis, OperationFailure, REVIEW_MANIFEST_SCHEMA, ReviewManifest,
+    failure_from_diagnostic,
+    operations::{load_operation_foundation, read_request, require_schema, require_unit},
     records::parse_approval,
 };
 
@@ -43,23 +44,9 @@ pub(super) fn prepare_approval(
             "use a tracked OwnerId",
         ));
     }
-    let replace_revision = if replace_current {
-        let current_path = repository_root
-            .join("methexis/approvals")
-            .join(format!("{}.yaml", manifest.knowledge_id));
-        let current = parse_approval(&current_path, repository_root).map_err(|diagnostic| {
-            failure_from_diagnostic(
-                OPERATION,
-                diagnostic,
-                "review the current approval record or drop --replace-current",
-            )
-        })?;
-        Some(current.revision)
-    } else {
-        None
-    };
-    Ok(ApprovalRequest {
-        schema: APPROVAL_REQUEST_SCHEMA.to_owned(),
+    let replace_revision =
+        replacement_revision(repository_root, &manifest.knowledge_id, replace_current)?;
+    Ok(ApprovalRequest::Projection {
         knowledge_id: manifest.knowledge_id,
         expected_revision: manifest.revision,
         projection_hash: manifest.projection_hash,
@@ -67,6 +54,55 @@ pub(super) fn prepare_approval(
         reviewed_at: current_review_time(),
         replace_revision,
     })
+}
+
+pub(super) fn prepare_canonical_approval(
+    repository_root: &Path,
+    knowledge_id: &str,
+    revision: &str,
+    reviewer: &str,
+    replace_current: bool,
+) -> Result<ApprovalRequest, OperationFailure> {
+    let foundation = load_operation_foundation(repository_root, OPERATION, knowledge_id)?;
+    require_unit(&foundation, knowledge_id, revision, OPERATION)?;
+    if !foundation.owners.iter().any(|owner| owner.id == reviewer) {
+        return Err(OperationFailure::new(
+            OPERATION,
+            "unknown_reviewer",
+            format!("reviewer OwnerId `{reviewer}` does not exist"),
+            vec![knowledge_id.to_owned()],
+            "use a tracked OwnerId",
+        ));
+    }
+    Ok(ApprovalRequest::Canonical {
+        knowledge_id: knowledge_id.to_owned(),
+        expected_revision: revision.to_owned(),
+        review_basis: CanonicalBasis::Canonical,
+        reviewer: reviewer.to_owned(),
+        reviewed_at: current_review_time(),
+        replace_revision: replacement_revision(repository_root, knowledge_id, replace_current)?,
+    })
+}
+
+fn replacement_revision(
+    repository_root: &Path,
+    knowledge_id: &str,
+    replace_current: bool,
+) -> Result<Option<String>, OperationFailure> {
+    if !replace_current {
+        return Ok(None);
+    }
+    let current_path = repository_root
+        .join("methexis/approvals")
+        .join(format!("{knowledge_id}.yaml"));
+    let current = parse_approval(&current_path, repository_root).map_err(|diagnostic| {
+        failure_from_diagnostic(
+            OPERATION,
+            diagnostic,
+            "review the current approval record or drop --replace-current",
+        )
+    })?;
+    Ok(Some(current.revision))
 }
 
 fn current_review_time() -> String {

@@ -268,8 +268,9 @@ the accepted product path first.
 
 Keep contract authority, Checkpoint activation, and implementation as separate
 Slices. Until Methexis advertises the complete
-`semantic-first-ko-on-demand/v1` capability, use the legacy sequence in which
-Source, Knowledge, and Korean Projection form one reviewed candidate.
+`canonical-approval-on-demand-projection/v1` capability, use the legacy
+sequence in which Source, Knowledge, and Korean Projection form one reviewed
+candidate.
 
 With that capability, use this order for a contract Slice:
 
@@ -278,21 +279,25 @@ With that capability, use this order for a contract Slice:
 3. commit one clean semantic candidate and perform each required review lens;
 4. resolve all findings in one batch and reuse the same reviewer session for
    exact finding-resolution review when its lens and scope are unchanged;
-5. after semantic review clears, generate the matching Korean Projection once
-   on explicit human request and build the exact English-plus-Korean packet;
-6. record exact human approval of the Knowledge revision and Projection hash,
-   stage only the matching Projection and approval follow-through, and run
+5. after semantic review clears, prepare direct canonical approval for the
+   exact English Knowledge revision by default;
+6. only when the human explicitly requests additional Korean understanding,
+   generate or reuse the matching Korean Projection, build the exact
+   English-plus-Korean packet, and prepare the Projection-basis approval;
+7. record exact human approval using only the prepared basis, stage the
+   approval plus a Projection only for the Projection basis, and run
    `cargo xtask check methexis-check-for-stage`; and
-7. integrate that proposal, activate it through a separate Slice, run ordinary
+8. integrate that proposal, activate it through a separate Slice, run ordinary
    full `methexis check` against the trusted activation, and implement through
    another separate Slice.
 
-The Projection and approval-record paths are the only permitted additions after
-semantic review. Source, Knowledge, relations, and unrelated bytes remain
-identical to the reviewed semantic candidate. Any semantic change creates a
-new candidate and repeats the affected lens; a translation-only correction
-repeats human review only. Working-diff review before the clean candidate is
-preparation, not completed review.
+The approval-record path is the only required addition after semantic review;
+the Projection path is additionally permitted only for an explicitly requested
+Projection-basis review. Source, Knowledge, relations, and unrelated bytes
+remain identical to the reviewed semantic candidate. Any semantic change
+creates a new candidate and repeats the affected lens; a translation-only
+correction repeats human review only. Working-diff review before the clean
+candidate is preparation, not completed review.
 
 Existing legacy Projection and approval records remain valid for their exact
 approved revisions and are not regenerated in bulk. The capability selects the

@@ -69,14 +69,52 @@ fn invalid_requests_and_stale_projection_fail_without_partial_authority() {
     changed.push_str("\nMeaning changed.\n");
     fs::write(knowledge, changed).unwrap();
 
-    let failure = failure_json(run(&repository.path, &["check"]));
-    assert!(
-        failure["diagnostics"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|diagnostic| diagnostic["code"] == "stale_review_projection")
+    let check = success_json(run(&repository.path, &["check"]));
+    assert_eq!(check["units"][0]["approval_evidence"], "missing");
+    assert_eq!(check["units"][0]["approval_reason"], "missing_approval");
+}
+
+// fresh canonical approval은 선택적 stale Projection을 증거로 쓰지 않지만, Projection 자체가
+// 직접 편집되어 구조가 깨지면 저장소 무결성 검사는 계속 fail closed 한다.
+#[test]
+fn stale_projection_is_optional_for_canonical_approval_but_malformed_projection_still_fails() {
+    let repository = TempRepository::new();
+    let old_revision = repository.revision();
+    let projection_request = repository.request(
+        "old-projection.json",
+        &projection_request(&old_revision, "이전 revision의 선택적 번역입니다."),
     );
+    success_json(run(
+        &repository.path,
+        &["project-review", projection_request.to_str().unwrap()],
+    ));
+    let knowledge = repository
+        .path
+        .join("methexis/knowledge/first-location/unit.md");
+    let mut changed = fs::read_to_string(&knowledge).unwrap();
+    changed.push_str("\nCanonical meaning is now more explicit.\n");
+    fs::write(&knowledge, changed).unwrap();
+    let revision = repository.revision();
+    let request = repository.request(
+        "canonical.json",
+        &canonical_approval_request(&revision, "tui-architecture", "2026-07-24T12:00:00Z"),
+    );
+    success_json(run(
+        &repository.path,
+        &["approve", request.to_str().unwrap()],
+    ));
+
+    let check = repository.check();
+    assert_eq!(check["units"][0]["approval_evidence"], "matching_proposal");
+
+    let projection_path = repository
+        .path
+        .join("methexis/review-projections/tui.relocated.md");
+    let mut damaged = fs::read_to_string(&projection_path).unwrap();
+    damaged.push_str("\n직접 편집된 내용\n");
+    fs::write(projection_path, damaged).unwrap();
+    let failure = failure_json(run(&repository.path, &["check"]));
+    assert!(has_diagnostic(&failure, "projection_lineage_mismatch"));
 }
 
 // 안전하지 않거나 쓸 수 없는 출력 부모에는 임시 projection조차 남기지 않는다.
@@ -157,6 +195,37 @@ fn approval_rejects_wrong_evidence_reviewer_and_time() {
         ));
         assert_eq!(failure["error"]["code"], expected_code);
     }
+    assert!(
+        !repository
+            .path
+            .join("methexis/approvals/tui.relocated.yaml")
+            .exists()
+    );
+}
+
+// v1alpha2는 canonical basis만을 명시하는 요청이다. 다른 basis를 넣어 Projection 경로로
+// 암묵 전환하거나 fallback하지 않는다.
+#[test]
+fn canonical_request_rejects_a_different_basis_without_fallback() {
+    let repository = TempRepository::new();
+    let revision = repository.revision();
+    let request = repository.request(
+        "wrong-basis.json",
+        &json!({
+            "schema": "methexis.approval-request/v1alpha2",
+            "knowledge_id": KNOWLEDGE_ID,
+            "expected_revision": revision,
+            "review_basis": "projection",
+            "reviewer": "tui-architecture",
+            "reviewed_at": "2026-07-24T12:00:00Z",
+        }),
+    );
+
+    let failure = failure_json(run(
+        &repository.path,
+        &["approve", request.to_str().unwrap()],
+    ));
+    assert_eq!(failure["error"]["code"], "invalid_request");
     assert!(
         !repository
             .path

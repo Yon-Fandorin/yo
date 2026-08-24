@@ -7,8 +7,8 @@ use std::{
 };
 
 use super::{
-    ApprovalRecord, ProjectionRecord, ProposalState, ReviewValidation, global_diagnostic,
-    local_diagnostic,
+    ApprovalBasis, ApprovalRecord, ProjectionRecord, ProposalState, ReviewValidation,
+    global_diagnostic, local_diagnostic,
     records::{parse_approval, parse_projection},
     relative_path, sort_diagnostics,
 };
@@ -65,19 +65,6 @@ pub(crate) fn validate_records(
         }
     }
 
-    for (id, records) in &projections {
-        if records.len() > 1 {
-            for record in records {
-                diagnostics.push(global_diagnostic(
-                    repository_root,
-                    &record.path,
-                    "duplicate_review_projection",
-                    format!("KnowledgeId `{id}` has more than one review Projection"),
-                    vec![id.clone()],
-                ));
-            }
-        }
-    }
     for (id, records) in &approvals {
         if records.len() > 1 {
             for (_, path) in records {
@@ -92,40 +79,53 @@ pub(crate) fn validate_records(
         }
     }
 
-    let unique_projections = projections
-        .iter()
-        .filter_map(|(id, records)| (records.len() == 1).then_some((id.as_str(), &records[0])))
-        .collect::<BTreeMap<_, _>>();
-    for (id, projection) in &unique_projections {
-        match units.get(id) {
-            None => diagnostics.push(global_diagnostic(
-                repository_root,
-                &projection.path,
-                "unknown_projection_knowledge",
-                format!("review Projection targets unknown KnowledgeId `{id}`"),
-                vec![(*id).to_owned()],
-            )),
-            Some(unit) if projection.metadata.revision != unit.revision => {
+    let mut current_projection_groups = BTreeMap::<&str, Vec<&ProjectionRecord>>::new();
+    for (id, records) in &projections {
+        let Some(unit) = units.get(id.as_str()) else {
+            for projection in records {
                 diagnostics.push(global_diagnostic(
                     repository_root,
                     &projection.path,
-                    "stale_review_projection",
-                    format!(
-                        "Projection revision `{}` does not match current revision `{}`",
-                        projection.metadata.revision, unit.revision
-                    ),
-                    vec![(*id).to_owned()],
+                    "unknown_projection_knowledge",
+                    format!("review Projection targets unknown KnowledgeId `{id}`"),
+                    vec![id.clone()],
                 ));
-            },
-            Some(_) => {},
+            }
+            continue;
+        };
+        for projection in records {
+            if projection.metadata.revision == unit.revision {
+                current_projection_groups
+                    .entry(id.as_str())
+                    .or_default()
+                    .push(projection);
+            }
         }
     }
+
+    for (id, records) in &current_projection_groups {
+        if records.len() > 1 {
+            for projection in records {
+                diagnostics.push(global_diagnostic(
+                    repository_root,
+                    &projection.path,
+                    "duplicate_review_projection",
+                    format!("KnowledgeId `{id}` has more than one current review Projection"),
+                    vec![(*id).to_owned()],
+                ));
+            }
+        }
+    }
+    let current_projections = current_projection_groups
+        .iter()
+        .filter_map(|(id, records)| (records.len() == 1).then_some((*id, records[0])))
+        .collect::<BTreeMap<_, _>>();
 
     let mut states = foundation
         .units
         .iter()
         .map(|unit| {
-            let state = if unique_projections.contains_key(unit.metadata.id.as_str()) {
+            let state = if current_projections.contains_key(unit.metadata.id.as_str()) {
                 ProposalState {
                     evidence: "projection_ready",
                     reason: Some("missing_approval"),
@@ -177,28 +177,45 @@ pub(crate) fn validate_records(
             continue;
         }
 
-        let Some(projection) = unique_projections.get(id.as_str()) else {
-            diagnostics.push(global_diagnostic(
-                repository_root,
-                path,
-                "missing_approval_projection",
-                "current approval has no matching review Projection".to_owned(),
-                vec![id],
-            ));
-            continue;
-        };
-        if approval.projection_hash != projection.hash
-            || approval.projection_profile != projection.metadata.profile
-            || approval.projection_compiler != projection.metadata.compiler
-        {
-            diagnostics.push(global_diagnostic(
-                repository_root,
-                path,
-                "approval_projection_mismatch",
-                "approval evidence does not match the exact tracked Projection".to_owned(),
-                vec![id],
-            ));
-            continue;
+        match approval.basis {
+            ApprovalBasis::Projection => {
+                let Some(projection) = current_projections.get(id.as_str()) else {
+                    diagnostics.push(global_diagnostic(
+                        repository_root,
+                        path,
+                        "missing_approval_projection",
+                        "current Projection-basis approval has no matching review Projection"
+                            .to_owned(),
+                        vec![id],
+                    ));
+                    continue;
+                };
+                if approval.review_hash != projection.hash
+                    || approval.review_profile != projection.metadata.profile
+                    || approval.review_compiler != projection.metadata.compiler
+                {
+                    diagnostics.push(global_diagnostic(
+                        repository_root,
+                        path,
+                        "approval_projection_mismatch",
+                        "approval evidence does not match the exact tracked Projection".to_owned(),
+                        vec![id],
+                    ));
+                    continue;
+                }
+            },
+            ApprovalBasis::Canonical => {
+                if approval.review_hash != unit.revision {
+                    diagnostics.push(global_diagnostic(
+                        repository_root,
+                        path,
+                        "approval_canonical_mismatch",
+                        "canonical approval does not match the exact Knowledge revision".to_owned(),
+                        vec![id],
+                    ));
+                    continue;
+                }
+            },
         }
         states.insert(
             id.clone(),
@@ -210,9 +227,9 @@ pub(crate) fn validate_records(
         evidence.insert(
             id,
             super::ApprovalEvidence {
-                projection_hash: projection.hash.clone(),
-                projection_profile: projection.metadata.profile.clone(),
-                projection_compiler: projection.metadata.compiler.clone(),
+                projection_hash: approval.review_hash.clone(),
+                projection_profile: approval.review_profile.clone(),
+                projection_compiler: approval.review_compiler.clone(),
                 approval_hash: approval.hash.clone(),
             },
         );

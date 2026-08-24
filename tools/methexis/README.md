@@ -26,6 +26,7 @@ methexis author-revision <author-request.json>
 methexis project-review <projection-request.json>
 methexis build-review <review-request.json>
 methexis prepare-approval <manifest.json> --reviewer <owner-id> [--replace-current]
+methexis prepare-approval --canonical <knowledge-id> --revision <sha256:revision> --reviewer <owner-id> [--replace-current]
 methexis approve <approval-request.json>
 methexis prepare-checkpoint
 methexis create-checkpoint <checkpoint-request.json>
@@ -101,7 +102,9 @@ registered set is required. Without active trusted authority the class is
 
 `capabilities` reports complete supported workflow profiles. Callers use
 membership of `semantic-first-ko-on-demand/v1` to select the v1alpha2 authoring
-request; unknown or absent membership keeps the v1alpha1 compatibility path.
+request and `canonical-approval-on-demand-projection/v1` to select direct
+canonical approval. Unknown or absent membership keeps the corresponding
+v1alpha1 compatibility path.
 
 `author-revision` v1alpha2 accepts new Source content and/or a canonical
 English Knowledge body and writes only those tracked Draft proposals. It
@@ -114,21 +117,26 @@ in the same call. Neither path touches approval records. Both fail closed for
 units that do not pin exactly one `decision` Source and use sequential
 per-file compare-and-swap publication.
 
-`project-review` writes a generated file under
-`methexis/review-projections/`. `build-review` returns the path and hash of a
-local packet under `.local-exclude/methexis/reviews/`. After a human explicitly
-accepts that exact packet, `approve` writes a tracked proposal under
-`methexis/approvals/`.
+After semantic review clears, the default approval path binds the exact
+canonical English revision directly. A human who wants additional Korean
+understanding explicitly runs `project-review`, which writes a generated file
+under `methexis/review-projections/`, and `build-review`, which returns the path
+and hash of a local English-plus-Korean packet under
+`.local-exclude/methexis/reviews/`. `approve` records only the basis named by
+its versioned request and never creates, infers, or falls back to a Projection.
+Existing v1alpha1 Projection approvals remain valid for their exact evidence.
 
 The three `prepare-*` commands remove hand-copied hashes between these steps.
 Each binds values that already exist in the repository into the exact request
 wire shape the next command consumes, and prints that proposal request JSON on
 stdout; none of them performs the next step's mutation. `prepare-approval`
-reads a review packet manifest and emits the approval request with the current
-UTC `reviewed_at`; it validates `--reviewer` against the tracked Owner
-foundation, binds the current record's RevisionId as `replace_revision` only
-with `--replace-current`, and never writes `methexis/approvals/` — human
-approval remains the separate explicit `approve` step. `prepare-checkpoint`
+either reads a review packet manifest for the Projection basis or accepts
+`--canonical <knowledge-id> --revision <sha256:revision>` for the direct basis.
+Both forms emit the current UTC `reviewed_at`, validate `--reviewer` against
+the tracked Owner foundation, bind the current record's RevisionId as
+`replace_revision` only with `--replace-current`, and never write
+`methexis/approvals/` — human approval remains the separate explicit `approve`
+step. `prepare-checkpoint`
 reads the working-tree active record and emits a Checkpoint request carrying
 the currently active roots, failing closed when no active Checkpoint exists.
 `prepare-activation` reads one saved `create-checkpoint` result and emits the

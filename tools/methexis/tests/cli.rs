@@ -30,6 +30,7 @@ USAGE:
     methexis project-review <request.json>
     methexis build-review <request.json>
     methexis prepare-approval <manifest.json> --reviewer <owner-id> [--replace-current]
+    methexis prepare-approval --canonical <knowledge-id> --revision <sha256:revision> --reviewer <owner-id> [--replace-current]
     methexis approve <request.json>
     methexis prepare-checkpoint
     methexis create-checkpoint <request.json>
@@ -46,7 +47,7 @@ COMMANDS:
     author-revision   Author a derived unit revision as tracked Draft proposals
     project-review    Write a tracked Korean review Projection
     build-review      Build a local human-review packet
-    prepare-approval  Emit an approval request from a review packet manifest
+    prepare-approval  Emit a Projection or canonical-basis approval request
     approve           Record a human-authorized approval proposal
     prepare-checkpoint Emit a Checkpoint request from the active roots
     create-checkpoint Create an immutable trusted-revision Checkpoint proposal
@@ -420,7 +421,7 @@ fn version_uses_the_package_version() {
 // capability 출력은 부분 구현을 광고하지 않고 현재 완성된 workflow profile만 안정된 JSON으로
 // 알린다.
 #[test]
-fn capabilities_reports_the_complete_semantic_first_profile() {
+fn capabilities_reports_the_complete_review_profiles() {
     let output = methexis()
         .arg("capabilities")
         .output()
@@ -433,7 +434,10 @@ fn capabilities_reports_the_complete_semantic_first_profile() {
     assert_eq!(value["schema"], "methexis.capabilities/v1");
     assert_eq!(
         value["capabilities"],
-        serde_json::json!(["semantic-first-ko-on-demand/v1"])
+        serde_json::json!([
+            "canonical-approval-on-demand-projection/v1",
+            "semantic-first-ko-on-demand/v1"
+        ])
     );
 }
 

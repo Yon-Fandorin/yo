@@ -1,0 +1,8 @@
+{
+  "schema": "methexis.approval-request/v1alpha2",
+  "knowledge_id": "tui.relocated",
+  "expected_revision": "sha256:54e7e0b515b400d95c7a3578fbd72fef0ab0e1d71c6f1b057637ee0f2998874d",
+  "review_basis": "canonical",
+  "reviewer": "tui-architecture",
+  "reviewed_at": "<wall-clock>"
+}
