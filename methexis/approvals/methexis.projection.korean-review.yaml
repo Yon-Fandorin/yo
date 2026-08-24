@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: methexis.projection.korean-review
-revision: sha256:ee1d095ce3698562126d18ff724e6f0fe4c2446d846a2315276bfdc8055d8f62
+revision: sha256:21911aa16094c5c789703d79c456b5124adfb41d43024307e6f2ccd02d97eeca
 reviewer: methexis
-reviewed_at: 2026-08-10T08:01:16Z
+reviewed_at: 2026-08-24T13:46:45Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:c737baa00e4a4df620c6c71598ac30103b4a99f7cf81e1788c602c4f01786c7c
-request_hash: sha256:bbcf6c10d66644f628eb3beeda3bb98e4d161fd8c6d8a6dc65ed8641198bc347
+projection_hash: sha256:cd1a76d9b9b712259046d857b59bab131a3aeeaf85644767b49dc1ec21031dae
+request_hash: sha256:225b3ec23f807b35e1f99f2e0feffd0c8880b49c383f81f0e3dacb128661849d

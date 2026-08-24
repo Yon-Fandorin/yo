@@ -5,16 +5,16 @@ kind: rule
 owner: methexis
 sources:
   - id: methexis.interface-model.operation-chain
-    revision: sha256:c61c482eea63cd4e951ca0f49a8aa15e7a4fbfeef18126ddca0bdeb2b855c04f
+    revision: sha256:1c514912bbeb078f89943664d5441767afd18132af17e8a7fc103bf117b9588d
 ---
 # Methexis operation chain and authority boundaries
 
 ## Statement
 
-`semantic-first-ko-on-demand/v1` is exposed only for the complete minimal flow: `author-revision` writes Source and canonical English Knowledge Drafts; after repository-owned semantic review clears, `project-review` generates Korean only on explicit human request; `build-review` presents the exact English and Korean pair; and `prepare-approval` plus `approve` retain proposal and exact-human-authorization boundaries.
+`canonical-approval-on-demand-projection/v1` is exposed only for the complete minimal flow: `author-revision` writes Source and canonical English Knowledge Drafts; after repository-owned semantic review clears, `prepare-approval` may bind the exact canonical revision directly without a Projection or review packet; and `approve` retains the separate exact-human-authorization boundary.
 
-The capability selects the current operation path and creates no durable authority or artifact lineage. Without it, the legacy flow remains controlling and still requires exact-revision human approval. Existing legacy records remain valid for the exact revisions they bind without bulk migration.
+When a human explicitly requests additional Korean understanding, `project-review` and `build-review` form an optional branch that creates or reuses the exact Korean pair before `prepare-approval` emits a Projection-basis request. No operation may generate a Projection implicitly, switch review basis, or treat review as approval.
 
-Agent-review procedure, reviewer-session handling, and review evidence are owned exclusively by the repository workflow authority. Methexis consumes only the resulting workflow disposition and does not define a second provider-attestation or reviewer-routing policy.
+The capability selects the current operation path and creates no durable authority or artifact lineage. Existing `semantic-first-ko-on-demand/v1` and `methexis.approval/v1alpha1` Projection-backed records remain compatible for their exact revisions without bulk migration.
 
-After semantic review clears, `project-review` publishes Korean for the exact current revision on human request. Any semantic change restarts semantic review; a translation-only change repeats human review. Other prepare, Checkpoint, activation, validation, and ContextBuild boundaries are unchanged.
+Agent-review procedure, reviewer-session handling, and review evidence are owned exclusively by the repository workflow authority. Methexis consumes only the resulting workflow disposition and does not define a second provider-attestation or reviewer-routing policy. Other prepare, Checkpoint, activation, validation, and ContextBuild boundaries are unchanged except that each consumes the approval record's explicit review basis.

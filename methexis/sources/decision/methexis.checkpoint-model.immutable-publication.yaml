@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: methexis.checkpoint-model.immutable-publication
-revision: sha256:279f84c81eef5c0adb74d5358a25150ddc61b851c3839d745fd6c26535dae366
+revision: sha256:f2d038b86abe7498acf1a8d44ede5df5e1c6869cf2af6b9ca0766aaebdb792b8
 payload:
   kind: decision
-  content: Checkpoint creation reads exact blobs from one pinned trusted Git commit without checking it out and publishes an immutable create-if-absent proposal. The proposal records enough canonical lineage to reproduce its exact bytes from that commit. A collision with different bytes, an invalid approved closure, or unreadable input fails without replacing or publishing a different Checkpoint.
+  content: Checkpoint creation reads exact Source, Knowledge, approval, and declared review-basis evidence from one pinned trusted Git commit without checking it out and publishes an immutable create-if-absent proposal. Canonical approval needs no Projection blob; Projection approval requires its referenced exact Projection. The proposal records enough canonical lineage to reproduce its exact bytes from that commit. A collision with different bytes, an invalid approved closure, missing or mismatched selected-basis evidence, or unreadable input fails without replacing or publishing a different Checkpoint.

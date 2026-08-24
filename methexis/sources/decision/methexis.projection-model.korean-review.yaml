@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: methexis.projection-model.korean-review
-revision: sha256:051baf7734b890170422928469ffe1d0f437a0567424e468dd3545762fedb7ee
+revision: sha256:434651c2f922ce8133ce5f589234d70d1b49ca14a82d3756b1e716aaef2ddcbf
 payload:
   kind: decision
-  content: Methexis uses Source and canonical English Knowledge as the semantic authoring and agent-review surface. The complete semantic-first-ko-on-demand/v1 capability selects the current operation path and adds no durable authority lineage; without it, the exact-human-approved legacy flow remains controlling. Under the capability, author-revision changes only Source and Knowledge. After the exact semantic candidate clears review, project-review creates or replaces one Korean Projection only on human request. The Projection binds exact RevisionId, profile, compiler, request lineage, and bytes; stale or directly edited files fail validation. Human approval binds the revision and Projection hash. Legacy artifacts remain valid for their exact approved revisions without bulk migration.
+  content: Canonical English Knowledge is the semantic review surface. With canonical-approval-on-demand-projection/v1, Korean Projection is optional and created only on explicit human request when additional Korean understanding is wanted and no fresh exact-revision Projection exists. Canonical approval neither requires nor generates it. Projection-backed approval still binds exact lineage; stale optional Projection is ineligible evidence but does not block canonical approval, while malformed or directly edited Projection fails closed. Existing Projection approvals remain valid.

@@ -5,7 +5,7 @@ kind: rule
 owner: methexis
 sources:
   - id: methexis.checkpoint-model.immutable-publication
-    revision: sha256:279f84c81eef5c0adb74d5358a25150ddc61b851c3839d745fd6c26535dae366
+    revision: sha256:f2d038b86abe7498acf1a8d44ede5df5e1c6869cf2af6b9ca0766aaebdb792b8
 relations:
   depends_on:
     - methexis.checkpoint.selection
@@ -23,17 +23,8 @@ relations:
 
 ## Statement
 
-Checkpoint creation MUST resolve one configured trusted Git ref to an exact
-commit, read the required Source, Knowledge, Projection, and approval blobs from
-that pinned snapshot without checking it out, and select the approved closure
-from those captured bytes only.
+Checkpoint creation MUST resolve one configured trusted Git ref to an exact commit and read the required Source, Knowledge, approval, and declared review-basis evidence from that pinned snapshot without checking it out. A canonical-basis approval requires no Projection blob. A Projection-basis approval requires the exact referenced Projection profile, compiler, and hash. Unreferenced optional Projections are not part of the selected approval closure. The approved closure MUST be selected from those captured bytes only.
 
-The proposal MUST use a deterministic canonical record that binds its schema,
-trusted commit, historical Source-status marker, roots, selected exact
-revisions, and selection reasons into its `CheckpointId`. Before publication,
-the same record MUST be reproducible from the recorded commit.
+The proposal MUST use a deterministic canonical record that binds its schema, trusted commit, historical Source-status marker, roots, selected exact revisions, and selection reasons into its `CheckpointId`. Before publication, the same record MUST be reproducible from the recorded commit.
 
-The proposal MUST be published as an immutable create-if-absent artifact. An
-existing identical artifact MAY be reused. Different existing bytes, invalid
-closure, or unreadable input MUST fail without replacement, fallback, or a
-partial alternative Checkpoint.
+The proposal MUST be published as an immutable create-if-absent artifact. An existing identical artifact MAY be reused. Different existing bytes, invalid closure, missing or mismatched evidence for a selected review basis, or unreadable input MUST fail without replacement, fallback, or a partial alternative Checkpoint.

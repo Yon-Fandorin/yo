@@ -1,31 +1,27 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: methexis.validation.executable-evidence
-revision: sha256:c5f31b0ae924a9b9399f954446e60fea6049bd34294701625f0e18aa14a61e33
+revision: sha256:a8d987733520168b2c8b4cf9b03ac6d2fe3e062b9972f4fdf98d7afcc56f90ad
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:7d184ccade8ab02989ca86ffd63000ef869ec940ac17a85d24332b9b6ec277fc
+request_hash: sha256:05719ffb79cb9608faba1674b1255e6c1e3e1aa5f19dd1d6b9798186b4df8826
 ---
 # Korean Review Projection
 
 ## Translation
 
-Checkpoint 활성화는 승인, Source freshness, dependency closure, supersession 제외, 실행 증거와 review Projection 재현성을 검증합니다. 실행 증거는 content-addressed이며 context resolution은 전체 suite 대신 SOT-007 freshness guard를 실행합니다.
+# Executable evidence activation guard
 
-### 원문 대조
+## 명세
 
-아래 내용은 기존에 승인된 SOT Pilot 정본에서 의미 변경 없이 옮긴 canonical English 본문입니다. 규범 키워드, 식별자, 예외 및 경계까지 이 원문을 기준으로 검토합니다.
+Checkpoint activation은 다음 사항도 검증한다.
 
-Checkpoint activation additionally verifies:
+- approval과 Source freshness
+- 완전한 required dependency closure
+- 교체된 이전 Knowledge의 제외
+- 현재 executable evidence
+- 각 approval이 선언한 review basis에 대해 재현 가능한 evidence
 
-- approval and Source freshness;
-- complete required dependency closure;
-- exclusion of replaced old knowledge;
-- current executable evidence;
-- reproducible human-review projection.
+Canonical 근거 approval evidence는 정확한 canonical 영문 `RevisionId`를 직접 재현하며 Projection을 요구하지 않는다. Projection 근거 evidence는 참조된 정확한 human-review Projection도 재현한다. 선택된 basis의 evidence가 missing, malformed, mismatched이면 activation은 fail closed하며, 참조되지 않은 optional Projection은 참여하지 않는다.
 
-Executable evidence is content addressed. Unchanged code, knowledge, command,
-and tool inputs reuse prior evidence. Related changes stale only affected
-evidence. Context resolution consumes an active Checkpoint and does not rerun
-the entire validation suite, but it MUST run the freshness guard defined by
-`SOT-007` before using cached eligibility.
+Executable evidence는 content-addressed이다. 바뀌지 않은 code, knowledge, command, tool input은 이전 evidence를 재사용한다. 관련 변경은 영향받은 evidence만 stale로 만든다. Context resolution은 active Checkpoint를 소비하며 전체 validation suite를 다시 실행하지 않지만, cached eligibility를 사용하기 전에 `SOT-007`이 정의한 freshness guard를 실행해야 한다.

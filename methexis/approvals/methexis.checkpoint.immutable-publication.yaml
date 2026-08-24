@@ -1,9 +1,9 @@
 schema: methexis.approval/v1alpha1
 knowledge_id: methexis.checkpoint.immutable-publication
-revision: sha256:7fadc246f40d2c3f23c3df03a0c2dec08af9d356d07ab68bfa48e7e39f529745
+revision: sha256:762be92bf535190df41f18d33d74b5327e62b9910185395a1368735c95f5535e
 reviewer: methexis
-reviewed_at: 2026-08-09T11:06:29Z
+reviewed_at: 2026-08-24T13:46:45Z
 projection_profile: ko-review/v1alpha1
 projection_compiler: methexis/0.0.0
-projection_hash: sha256:e9c932fa1035493b935e2e7c98d849a049c3e806dd8b9b8f197513c85734c496
-request_hash: sha256:90670fd6a8ba40cae15a00fed80229afaae6b37917fe09cc0e9940155f4ac24b
+projection_hash: sha256:ac91db2aa81b89d02e7eaf37843aee17d3ca76048e80cc18bc6de9402b8b911e
+request_hash: sha256:614d052adfc6f10a32e05a2445bafda51cb920ba362c21f8a7c1916a0a76920c

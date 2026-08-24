@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: methexis.approval-model.exact-revision-binding
-revision: sha256:033bb7cd862d519529d40dcd389c434e4ba01512a27cfa1e1b8e3659defac0de
+revision: sha256:525f1a9e88ac01390d1599f5890b889f99e9a9c721101744fdc8a1b06ce2afe8
 payload:
   kind: decision
-  content: Approval binds one exact Knowledge RevisionId, reviewer OwnerId, review time, and the profile, compiler identity, and hash of the Korean review Projection. Approval never applies to a mutable KnowledgeId in general.
+  content: Approval binds one exact Knowledge RevisionId, reviewer OwnerId, review time, and an explicit canonical-English or Korean-Projection review basis. Canonical review requires no Projection; Projection-backed review additionally binds its exact profile, compiler, and hash. The basis cannot be inferred or switched, and existing exact v1alpha1 Projection approvals remain valid without migration.

@@ -1,23 +1,21 @@
 ---
 schema: methexis.review-projection/v1alpha1
 knowledge_id: methexis.projection.korean-review
-revision: sha256:ee1d095ce3698562126d18ff724e6f0fe4c2446d846a2315276bfdc8055d8f62
+revision: sha256:21911aa16094c5c789703d79c456b5124adfb41d43024307e6f2ccd02d97eeca
 profile: ko-review/v1alpha1
 compiler: methexis/0.0.0
-request_hash: sha256:e3ba521b5f9cafb1a72fb97fd0ece87a645509a3e4bad05054886afa3c0c4072
+request_hash: sha256:000d75bf1d21e2b92eeeae0e26e689ade7efed269b67c07d5e2545fee232a035
 ---
 # Korean Review Projection
 
 ## Translation
 
-# 요청 시점 한글 검토 투영본
+# 필요할 때 생성하는 한국어 검토 Projection
 
-## 규칙
+## 명세
 
-Source 레코드와 정본 영문 Knowledge가 의미 작성 및 에이전트 검토 표면이다. 이 흐름은 완전한 `semantic-first-ko-on-demand/v1` capability가 있을 때만 제공된다. capability는 현재 작업 경로만 선택하며 영구 권한이나 artifact 계보를 만들지 않는다. capability가 없으면 기존 흐름이 기준이며 여전히 정확한 사람 승인을 요구한다.
+Source record와 canonical 영문 Knowledge가 의미 작성 및 agent 검토 표면이다. 완전한 `canonical-approval-on-demand-projection/v1` capability는 한국어 검토 Projection을 모든 승인에 필요한 선행 조건이 아니라, 사람이 이해를 더 확실히 하기 위한 선택적 보조 수단으로 만든다. 이 capability가 없으면 기존 `semantic-first-ko-on-demand/v1` 흐름이 계속 제어한다.
 
-capability가 있으면 `author-revision`은 Source와 Knowledge만 변경하고 한글 Markdown을 입력받거나 생성하거나 복사하거나 교체하지 않는다. 오래된 기존 Projection은 현재 검토나 승인 증거가 아니며 authority validation이 거부한다.
+새 capability 아래에서는 authoring, approval, activation, validation, ContextBuild operation 중 어느 것도 한국어 Projection을 암묵적으로 생성해서는 안 된다. 사람이 한국어로 더 정확히 이해하기를 명시적으로 요청하면 `project-review`는 현재 정확한 리비전의 Projection이 있을 때 재사용하고, 없거나 stale이면 하나를 생성하거나 교체한다. 요청은 정확한 현재 `RevisionId`를 지정하며 교체 시 predecessor hash도 지정한다. Projection은 해당 리비전, profile, compiler, deterministic request lineage, 정확한 bytes에 결속된다. 직접 수정, malformed record, lineage drift는 fail closed한다.
 
-정확하고 깨끗한 의미 후보가 필수 검토를 통과한 뒤, 사람이 명시적으로 요청할 때만 `project-review`가 추적 한글 Projection 하나를 생성하거나 교체한다. 요청은 정확한 현재 `RevisionId`와 교체 시 이전 hash를 지정한다. Projection은 revision, profile, compiler, 결정적 요청 계보 및 정확한 바이트를 묶는다. 직접 편집, revision 불일치 또는 계보 불일치는 구조적 실패다.
-
-사람은 정확한 영문 revision과 한글 Projection을 함께 검토하고 approval은 revision과 Projection hash를 묶는다. 의미 변경은 영문 전용 검토로 돌아가고 번역만 바뀌면 사람 검토를 반복한다. 기존 legacy artifact는 일괄 이관 없이 정확한 승인 revision에 계속 유효하다.
+Canonical 근거 승인은 Projection을 요구하지 않는다. 참조되지 않은 stale Projection은 검토 증거로 부적격이지만, 일치하는 canonical 승인 또는 activation을 막아서는 안 된다. Projection 근거 승인은 여전히 정확한 영문·한국어 pair를 요구하고 Projection hash에 결속된다. 의미 변경은 영문 검토로 돌아가며, 번역만 바뀌면 human review만 다시 한다. 기존 legacy artifact는 일괄 migration 없이 자신이 승인받은 정확한 리비전에 대해 계속 유효하다.

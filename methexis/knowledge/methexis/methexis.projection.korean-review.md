@@ -5,7 +5,7 @@ kind: rule
 owner: methexis
 sources:
   - id: methexis.projection-model.korean-review
-    revision: sha256:051baf7734b890170422928469ffe1d0f437a0567424e468dd3545762fedb7ee
+    revision: sha256:434651c2f922ce8133ce5f589234d70d1b49ca14a82d3756b1e716aaef2ddcbf
 relations:
   depends_on:
     - methexis.knowledge.revision-identity
@@ -18,10 +18,8 @@ relations:
 
 ## Statement
 
-Source records and canonical English Knowledge are the semantic authoring and agent-review surface. This flow is available only with the complete `semantic-first-ko-on-demand/v1` capability. The capability selects the current operation path; it does not create durable authority or artifact lineage. Without it, the legacy flow remains controlling and still requires exact human approval.
+Source records and canonical English Knowledge are the semantic authoring and agent-review surface. The complete `canonical-approval-on-demand-projection/v1` capability makes the Korean review Projection an optional human-understanding aid rather than a prerequisite for every approval. Without that capability, the existing `semantic-first-ko-on-demand/v1` flow remains controlling.
 
-With the capability, `author-revision` changes Source and Knowledge only and does not accept, generate, copy forward, or replace Korean Markdown. An existing stale Projection is not current review or approval evidence and authority validation rejects it.
+Under the new capability, no authoring, approval, activation, validation, or ContextBuild operation may create a Korean Projection implicitly. When a human explicitly requests additional Korean understanding, `project-review` reuses a fresh exact-revision Projection when present or creates/replaces one when absent or stale. The request names the exact current `RevisionId` and predecessor hash when replacing. The Projection binds that revision, profile, compiler, deterministic request lineage, and exact bytes. Direct edits, malformed records, or lineage drift fail closed.
 
-After the exact clean semantic candidate clears required review, `project-review` creates or replaces the one tracked Korean Projection only on explicit human request. The request names the exact current `RevisionId` and predecessor hash when replacing. The Projection binds that revision, profile, compiler, deterministic request lineage, and exact bytes. Direct edits, revision drift, or lineage drift are structural failures.
-
-The human reviews the exact English revision and Korean Projection together, and approval binds the revision and Projection hash. Semantic change returns to English-only review; translation-only change repeats human review. Existing legacy artifacts remain valid for their exact approved revisions without bulk migration.
+A canonical-basis approval requires no Projection. An unreferenced stale Projection is ineligible as review evidence but MUST NOT block a matching canonical approval or activation. A Projection-basis approval still requires the exact English-plus-Korean pair and binds the Projection hash; semantic change returns to English review and translation-only change repeats human review. Existing legacy artifacts remain valid for their exact approved revisions without bulk migration.

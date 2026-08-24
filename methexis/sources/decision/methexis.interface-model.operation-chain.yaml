@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: methexis.interface-model.operation-chain
-revision: sha256:c61c482eea63cd4e951ca0f49a8aa15e7a4fbfeef18126ddca0bdeb2b855c04f
+revision: sha256:1c514912bbeb078f89943664d5441767afd18132af17e8a7fc103bf117b9588d
 payload:
   kind: decision
-  content: Methexis exposes semantic-first-ko-on-demand/v1 only for the complete minimal current-operation flow and creates no durable capability lineage. author-revision writes Source and canonical English Knowledge only; after repository-owned semantic review clears, project-review generates Korean on human request; build-review presents the English and Korean pair; prepare-approval and approve retain exact human authorization. Legacy fallback remains exact-revision approved. Agent-review procedure and evidence are owned exclusively by the repository workflow authority, not by Methexis.
+  content: Methexis exposes canonical-approval-on-demand-projection/v1 only for the complete flow. author-revision writes Source and English Knowledge; after semantic review, prepare-approval may bind the exact canonical revision directly, or explicit project-review and build-review may supply an optional Korean pair before Projection-backed approval. approve retains exact human authorization and never generates or switches review basis. Existing semantic-first and v1alpha1 Projection paths remain compatible. Repository workflow alone owns reviewer routing and evidence.
