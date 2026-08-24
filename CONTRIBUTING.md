@@ -367,6 +367,29 @@ unverified environment. Only a complete, green, reviewed, and authorized
 request yields `integrate`. Keep the request and referenced evidence outside
 tracked paths, and discard them with completed Slice coordination.
 
+Treat this `next_action` as the sole Slice-disposition prompt. Do not ask the
+human for setup, validation, working-commit, review, staging, or integration
+approval while an earlier gate action remains. When the gate first returns
+`approve`, present one exact proposal naming its candidate commit, diff hash,
+risk, and covered effects. A concise affirmative reply to that immediately
+preceding unchanged proposal is sufficient; never require the human to copy or
+retype the generated wording. Record that response as the request's
+human-origin approval, rerun the same gate, and do not ask again when it returns
+`integrate`.
+
+For a direct Slice, one exact proposal may cover squash into the bound
+integration ref, creation of its accepted commit, a normal fast-forward push
+of that ref to its configured origin, and hash-bound Slice close cleanup. The
+approval covers only the named candidate, diff, and effects. Any candidate or
+effect change returns to the affected gate; force-push, destructive recovery,
+additional semantic edits, and external Provider or validation-host egress are
+never implicit in this scope. A routine Slice already covered by a recorded
+`standing_routine` authorization proceeds from `integrate` without a
+candidate-specific prompt. Platform capability or sandbox confirmation is a
+separate execution boundary, not another Slice disposition; use only an
+already granted narrowly scoped command capability and never fabricate or
+broaden one from repository evidence.
+
 If a required full suite fails outside the changed boundary, run each exact
 failing test once in isolation to classify timing or shared-load sensitivity.
 An isolated pass is diagnostic evidence, not a replacement for the failed
