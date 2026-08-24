@@ -22,6 +22,7 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Mode {
+    BracketedPaste,
     AlternateScreen,
     CursorVisibility,
 }
@@ -30,12 +31,14 @@ enum Mode {
 enum Event {
     CaptureTty,
     EnableRaw,
+    EnableBracketedPaste,
     EnterAlternateScreen,
     NormalizeCursorVisibility,
     OperationPanic,
     ClearViewport,
     LeaveAlternateScreen,
     RestoreCursorVisibility,
+    DisableBracketedPaste,
     RestoreTty,
 }
 
@@ -96,6 +99,7 @@ impl TerminalBackend for RecordingBackend {
 
     fn acquire_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
+            Mode::BracketedPaste => self.events.borrow_mut().push(Event::EnableBracketedPaste),
             Mode::AlternateScreen => self.events.borrow_mut().push(Event::EnterAlternateScreen),
             Mode::CursorVisibility => self
                 .events
@@ -107,6 +111,7 @@ impl TerminalBackend for RecordingBackend {
 
     fn release_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
+            Mode::BracketedPaste => self.events.borrow_mut().push(Event::DisableBracketedPaste),
             Mode::AlternateScreen => self.events.borrow_mut().push(Event::LeaveAlternateScreen),
             Mode::CursorVisibility => self
                 .events
@@ -127,6 +132,10 @@ impl TerminalBackend for RecordingBackend {
 }
 
 impl ScreenModeBackend for RecordingBackend {
+    fn bracketed_paste_mode() -> Self::Mode {
+        Mode::BracketedPaste
+    }
+
     fn alternate_screen_mode() -> Self::Mode {
         Mode::AlternateScreen
     }
@@ -381,10 +390,12 @@ fn inline_boundary_cleans_up_before_returning_the_primary_panic() {
         &[
             Event::CaptureTty,
             Event::EnableRaw,
+            Event::EnableBracketedPaste,
             Event::NormalizeCursorVisibility,
             Event::OperationPanic,
             Event::ClearViewport,
             Event::RestoreCursorVisibility,
+            Event::DisableBracketedPaste,
             Event::RestoreTty,
         ]
     );
@@ -451,9 +462,11 @@ fn fullscreen_boundary_restores_terminal_before_returning_the_primary_panic() {
         &[
             Event::CaptureTty,
             Event::EnableRaw,
+            Event::EnableBracketedPaste,
             Event::EnterAlternateScreen,
             Event::OperationPanic,
             Event::LeaveAlternateScreen,
+            Event::DisableBracketedPaste,
             Event::RestoreTty,
         ]
     );

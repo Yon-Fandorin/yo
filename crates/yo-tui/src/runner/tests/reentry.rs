@@ -45,6 +45,7 @@ mod publication;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Mode {
+    BracketedPaste,
     AlternateScreen,
     CursorVisibility,
 }
@@ -81,6 +82,10 @@ impl TerminalBackend for Backend {
 }
 
 impl ScreenModeBackend for Backend {
+    fn bracketed_paste_mode() -> Self::Mode {
+        Mode::BracketedPaste
+    }
+
     fn alternate_screen_mode() -> Self::Mode {
         Mode::AlternateScreen
     }

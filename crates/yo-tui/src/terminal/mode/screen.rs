@@ -1,7 +1,4 @@
-use std::{
-    iter,
-    panic::{AssertUnwindSafe, catch_unwind},
-};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use super::{
     fullscreen::{FullscreenRenderError, FullscreenRenderer, FullscreenViewport},
@@ -40,12 +37,14 @@ where
     B: ScreenModeBackend,
 {
     match screen_mode {
-        ScreenMode::Inline => {
-            TerminalSession::enter(backend, iter::once(B::cursor_visibility_mode()))
-        },
-        ScreenMode::Fullscreen => {
-            TerminalSession::enter(backend, iter::once(B::alternate_screen_mode()))
-        },
+        ScreenMode::Inline => TerminalSession::enter(
+            backend,
+            [B::bracketed_paste_mode(), B::cursor_visibility_mode()],
+        ),
+        ScreenMode::Fullscreen => TerminalSession::enter(
+            backend,
+            [B::bracketed_paste_mode(), B::alternate_screen_mode()],
+        ),
     }
 }
 

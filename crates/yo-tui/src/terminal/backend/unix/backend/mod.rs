@@ -7,10 +7,13 @@ use crate::terminal::backend::{
 
 const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
+const ENABLE_BRACKETED_PASTE: &[u8] = b"\x1b[?2004h";
+const DISABLE_BRACKETED_PASTE: &[u8] = b"\x1b[?2004l";
 const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum UnixMode {
+    BracketedPaste,
     AlternateScreen,
     CursorVisibility,
 }
@@ -62,6 +65,7 @@ where
 
     fn acquire_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
+            UnixMode::BracketedPaste => self.write_mode(ENABLE_BRACKETED_PASTE),
             UnixMode::AlternateScreen => self.write_mode(ENTER_ALTERNATE_SCREEN),
             UnixMode::CursorVisibility => self.write_mode(SHOW_CURSOR),
         }
@@ -69,6 +73,7 @@ where
 
     fn release_mode(&mut self, mode: Self::Mode) -> Result<(), Self::Error> {
         match mode {
+            UnixMode::BracketedPaste => self.write_mode(DISABLE_BRACKETED_PASTE),
             UnixMode::AlternateScreen => self.write_mode(LEAVE_ALTERNATE_SCREEN),
             UnixMode::CursorVisibility => self.write_mode(SHOW_CURSOR),
         }
@@ -84,6 +89,10 @@ where
     D: TermiosDriver,
     W: Write,
 {
+    fn bracketed_paste_mode() -> Self::Mode {
+        UnixMode::BracketedPaste
+    }
+
     fn alternate_screen_mode() -> Self::Mode {
         UnixMode::AlternateScreen
     }

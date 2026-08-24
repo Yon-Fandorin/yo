@@ -98,6 +98,19 @@ fn alternate_screen_has_symmetric_owned_bytes() {
     assert_eq!(backend.output.flushes, 2);
 }
 
+// bracketed paste 진입과 해제는 큰 payload의 개행을 key command가 아닌 한 Paste event로
+// 구분할 수 있도록 yo가 소유한 정확한 ANSI bytes를 즉시 flush한다.
+#[test]
+fn bracketed_paste_has_symmetric_owned_bytes() {
+    let mut backend = backend(RecordingWriter::default());
+
+    backend.acquire_mode(UnixMode::BracketedPaste).unwrap();
+    backend.release_mode(UnixMode::BracketedPaste).unwrap();
+
+    assert_eq!(backend.output.bytes, b"\x1b[?2004h\x1b[?2004l");
+    assert_eq!(backend.output.flushes, 2);
+}
+
 // mode write의 flush 실패는 성공으로 숨기지 않아 lifecycle rollback을 실행할 수 있게 한다.
 #[test]
 fn uncertain_flush_failure_is_reported_as_output_failure() {
@@ -182,7 +195,8 @@ fn concrete_backend_connects_tty_capture_raw_entry_and_restoration() {
     );
 }
 
-// Inline recipe는 main screen을 유지하고 cursor visibility 복구만 대칭 등록한다.
+// Inline recipe는 main screen을 유지하면서 bracketed paste와 cursor visibility 복구를
+// 역순으로 등록한다.
 #[test]
 fn inline_recipe_never_acquires_the_alternate_screen() {
     let mut backend = backend(RecordingWriter::default());
@@ -192,14 +206,18 @@ fn inline_recipe_never_acquires_the_alternate_screen() {
         .close()
         .unwrap();
 
-    assert_eq!(backend.output.bytes, b"\x1b[?25h\x1b[?25h");
+    assert_eq!(
+        backend.output.bytes,
+        b"\x1b[?2004h\x1b[?25h\x1b[?25h\x1b[?2004l"
+    );
     assert_eq!(
         backend.tty.driver.applied,
         [TtyState { raw: true }, TtyState { raw: false }]
     );
 }
 
-// Inline session은 frame 출력 여부와 무관하게 종료 시 cursor-visible bytes를 다시 flush한다.
+// Inline session은 frame 출력 여부와 무관하게 종료 시 cursor-visible과 bracketed-paste
+// 해제 bytes를 역순으로 flush한다.
 #[test]
 fn inline_close_reasserts_cursor_visibility() {
     let mut backend = backend(RecordingWriter::default());
@@ -209,11 +227,12 @@ fn inline_close_reasserts_cursor_visibility() {
         .close()
         .unwrap();
 
-    assert!(backend.output.bytes.ends_with(b"\x1b[?25h"));
-    assert_eq!(backend.output.flushes, 2);
+    assert!(backend.output.bytes.ends_with(b"\x1b[?25h\x1b[?2004l"));
+    assert_eq!(backend.output.flushes, 4);
 }
 
-// Fullscreen recipe만 alternate screen을 획득하고 정상 종료에서 대칭적으로 해제한다.
+// Fullscreen recipe는 bracketed paste 뒤 alternate screen을 획득하고 정상 종료에서 둘을
+// 역순으로 해제한다.
 #[test]
 fn fullscreen_recipe_owns_the_alternate_screen() {
     let mut backend = backend(RecordingWriter::default());
@@ -223,7 +242,10 @@ fn fullscreen_recipe_owns_the_alternate_screen() {
         .close()
         .unwrap();
 
-    assert_eq!(backend.output.bytes, b"\x1b[?1049h\x1b[?1049l");
+    assert_eq!(
+        backend.output.bytes,
+        b"\x1b[?2004h\x1b[?1049h\x1b[?1049l\x1b[?2004l"
+    );
 }
 
 // lifecycle session과 Inline renderer는 같은 backend output stream을 순서대로 공유한다.
@@ -248,9 +270,9 @@ fn inline_renderer_writes_through_the_active_session_backend() {
 
     assert_eq!(
         backend.output.bytes,
-        b"\x1b[?25h\
+        b"\x1b[?2004h\x1b[?25h\
           \x1b[?25l\r\n\x1b[1A\x1b[1G\x1b[1G\x1b[0;39;49m  \
           \x1b[1G\x1b[?25h\
-          \x1b[?25h"
+          \x1b[?25h\x1b[?2004l"
     );
 }
