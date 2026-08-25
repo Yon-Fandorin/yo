@@ -2,6 +2,7 @@ mod apply;
 mod environment;
 mod metrics;
 mod plan;
+mod prepare;
 mod storage;
 
 use std::path::{Path, PathBuf};

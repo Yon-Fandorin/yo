@@ -456,6 +456,25 @@ unverified environment. Only a complete, green, reviewed, and authorized
 request yields `integrate`. Keep the request and referenced evidence outside
 tracked paths, and discard them with completed Slice coordination.
 
+When the gate returns `integrate`, keep the semantic commit title, explanation,
+and `Developer-Docs-Impact` decision in a small message source, but do not copy
+`Slice-Review` or `Review-Coverage` lines into it. From the clean Slice
+worktree, derive those exact trailers directly from the unchanged ready gate:
+
+```bash
+cargo xtask slice commit prepare \
+  .local-exclude/coordination/<slice>/gate.json \
+  /tmp/<slice>-message-source \
+  /tmp/<slice>-commit-message
+```
+
+The command re-evaluates the gate, requires `next_action: integrate`, and
+atomically publishes a new-or-byte-identical complete message. It does not
+stage, commit, integrate, or approve anything. After the exact Slice diff is
+squashed onto its integration branch, the existing
+`cargo xtask slice commit /tmp/<slice>-commit-message` boundary still performs
+preflight and creates the accepted commit.
+
 Treat this `next_action` as the sole Slice-disposition prompt. Do not ask the
 human for setup, validation, working-commit, review, staging, or integration
 approval while an earlier gate action remains. When the gate first returns
@@ -1201,9 +1220,62 @@ The resulting commit is the durable review unit; Task commits are not preserved.
 After the accepted commit exists, close its local Slice in two explicit steps
 from the integration worktree:
 
-First write
-`.local-exclude/coordination/<slice>/close-metrics.json`. This compact local
-record is operational evidence, not durable workflow authority:
+Prefer deriving
+`.local-exclude/coordination/<slice>/close-metrics.json` from the same ready
+gate after the accepted commit exists:
+
+```bash
+cargo xtask slice close prepare \
+  .local-exclude/coordination/<slice>/close-prepare.json
+```
+
+The experimental `yo.slice-close-prepare-request/v1alpha1` input names the
+Slice and gate request, then records only data the gate cannot know: execution
+lanes, review rounds and finding dispositions, review-packet totals, the
+elapsed bottleneck, and an optional one-to-one command mapping for each known
+unverified environment. Relative `gate_request_path` values resolve from the
+shared workspace root. The command finds the already accepted matching patch,
+re-evaluates the ready gate in the registered Slice worktree, derives the exact
+candidate and accepted commit, and copies the gate-verified validation names,
+argv, status, and reuse disposition. It atomically publishes only the standard
+metrics file and never commits, plans, or cleans up.
+
+```json
+{
+  "schema": "yo.slice-close-prepare-request/v1alpha1",
+  "slice": "example",
+  "gate_request_path": ".local-exclude/coordination/example/gate.json",
+  "execution_lanes": [{
+    "lane": "integration",
+    "mode": "serial",
+    "operation_count": 1,
+    "max_concurrency": 1
+  }],
+  "review": {
+    "rounds": 1,
+    "findings": {
+      "reported": 0,
+      "resolved": 0,
+      "not_reproduced": 0,
+      "accepted_limits": 0,
+      "remaining": 0
+    }
+  },
+  "review_packets": {
+    "publication_count": 0,
+    "total_managed_tokens": 0,
+    "largest_sections": [],
+    "reused_inputs": []
+  },
+  "unverified_validation": [],
+  "elapsed_bottleneck": {
+    "name": "independent review",
+    "elapsed_milliseconds": 45000
+  }
+}
+```
+
+Writing the complete standard file directly remains supported. Its shape is:
 
 ```json
 {

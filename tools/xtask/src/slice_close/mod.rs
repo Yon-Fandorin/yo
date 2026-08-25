@@ -2,6 +2,7 @@ mod coordination;
 mod git_state;
 mod metrics;
 mod model;
+mod prepare;
 mod storage;
 
 #[cfg(test)]
@@ -9,6 +10,7 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
+pub(crate) use prepare::run as prepare_metrics;
 use serde::Serialize;
 
 use self::{
@@ -23,6 +25,18 @@ use self::{
     },
 };
 use crate::{impact, slice_contract, slice_worktree};
+
+pub(super) struct AcceptedSlice {
+    pub(super) repository: PathBuf,
+    pub(super) integration_ref: String,
+    pub(super) integration_head: String,
+    pub(super) slice_ref: String,
+    pub(super) slice_head: String,
+    pub(super) patch_id: String,
+    pub(super) accepted_commit: String,
+    pub(super) worktree_path: PathBuf,
+    pub(super) bound: slice_contract::BoundSlice,
+}
 
 pub(crate) fn plan(
     repository: &Path,
@@ -57,6 +71,44 @@ pub(crate) fn plan(
 }
 
 fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
+    let accepted = accepted_slice(repository, slice)?;
+    let remove_coordination_contract =
+        accepted.bound.contract_path == standard_contract_path(&accepted.repository, slice)?;
+    let workspace = slice_worktree::workspace_root(&accepted.repository)?;
+    let close_metrics_path =
+        standard_coordination_directory(&accepted.repository, slice)?.join(metrics::FILE_NAME);
+    let close_metrics = metrics::capture(
+        &close_metrics_path,
+        slice,
+        &accepted.slice_head,
+        &accepted.accepted_commit,
+    )?;
+    let retained_coordination_paths =
+        coordination::retained_paths(&workspace, slice, remove_coordination_contract)?;
+    let mut plan = Plan {
+        schema: SCHEMA.to_owned(),
+        plan_id: String::new(),
+        slice: slice.to_owned(),
+        integration_ref: accepted.integration_ref,
+        integration_head: accepted.integration_head,
+        accepted_commit: accepted.accepted_commit,
+        slice_ref: accepted.slice_ref,
+        slice_head: accepted.slice_head,
+        slice_base: accepted.bound.base,
+        patch_id: accepted.patch_id,
+        worktree_path: accepted.worktree_path,
+        binding_path: accepted.bound.binding_path,
+        contract_path: accepted.bound.contract_path,
+        contract_id: accepted.bound.contract_id,
+        retained_coordination_paths,
+        close_metrics: Some(close_metrics),
+        effects: Effects::new(remove_coordination_contract),
+    };
+    plan.plan_id = identity(&plan)?;
+    Ok(plan)
+}
+
+fn accepted_slice(repository: &Path, slice: &str) -> Result<AcceptedSlice, String> {
     validate_slice_name(slice)?;
     let repository = repository_root(repository)?;
     ensure_clean(&repository, "integration worktree")?;
@@ -102,36 +154,18 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
     let (patch_id, accepted_commit) =
         find_accepted_commit(&repository, &integration_head, &bound.base, &slice_head)?;
     validate_accepted_commit(&repository, &current_ref, &accepted_commit)?;
-    let remove_coordination_contract =
-        bound.contract_path == standard_contract_path(&repository, slice)?;
-    let workspace = slice_worktree::workspace_root(&repository)?;
-    let close_metrics_path =
-        standard_coordination_directory(&repository, slice)?.join(metrics::FILE_NAME);
-    let close_metrics =
-        metrics::capture(&close_metrics_path, slice, &slice_head, &accepted_commit)?;
-    let retained_coordination_paths =
-        coordination::retained_paths(&workspace, slice, remove_coordination_contract)?;
-    let mut plan = Plan {
-        schema: SCHEMA.to_owned(),
-        plan_id: String::new(),
-        slice: slice.to_owned(),
+
+    Ok(AcceptedSlice {
+        repository,
         integration_ref: current_ref,
-        integration_head: integration_head.clone(),
+        integration_head,
         accepted_commit,
         slice_ref,
         slice_head,
-        slice_base: bound.base,
         patch_id,
         worktree_path: target.path.clone(),
-        binding_path: bound.binding_path,
-        contract_path: bound.contract_path,
-        contract_id: bound.contract_id,
-        retained_coordination_paths,
-        close_metrics: Some(close_metrics),
-        effects: Effects::new(remove_coordination_contract),
-    };
-    plan.plan_id = identity(&plan)?;
-    Ok(plan)
+        bound,
+    })
 }
 
 pub(crate) fn apply(repository: &Path, plan_path: &Path) -> Result<(), String> {

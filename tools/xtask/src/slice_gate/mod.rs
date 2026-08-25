@@ -32,6 +32,25 @@ const MAX_PATHS: usize = 256;
 const MAX_PATH_BYTES: usize = 32 * 1024;
 const MAX_EVIDENCE: usize = 32;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReadyGate {
+    pub(crate) slice: String,
+    pub(crate) candidate_commit: String,
+    pub(crate) diff_hash: String,
+    pub(crate) validation: Vec<ReadyValidation>,
+    pub(crate) review_count: usize,
+    pub(crate) known_unverified_environments: Vec<String>,
+    pub(crate) commit_trailers: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReadyValidation {
+    pub(crate) name: String,
+    pub(crate) argv: Vec<String>,
+    pub(crate) status: String,
+    pub(crate) reused: bool,
+}
+
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
     let output = evaluate(repository, request_path)?;
     println!(
@@ -40,6 +59,64 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
             .map_err(|error| format!("cannot encode Slice gate result: {error}"))?
     );
     Ok(())
+}
+
+pub(crate) fn ready(repository: &Path, request_path: &Path) -> Result<ReadyGate, String> {
+    let result = evaluate(repository, request_path)?;
+    if result.next_action != "integrate" {
+        return Err(format!(
+            "post-gate preparation requires next_action `integrate`, found `{}`",
+            result.next_action
+        ));
+    }
+
+    let request_bytes =
+        bounded_file::read_regular(request_path, REQUEST_LIMIT, "Slice gate request")?;
+    if review_protocol::digest(&request_bytes) != result.request_hash {
+        return Err("Slice gate request changed after ready evaluation".to_owned());
+    }
+    let request: Request = serde_json::from_slice(&request_bytes).map_err(|error| {
+        format!(
+            "invalid Slice gate request {} after ready evaluation: {error}",
+            request_path.display()
+        )
+    })?;
+    let mut commands = request
+        .validation_evidence
+        .into_iter()
+        .map(|entry| (entry.name, entry.argv))
+        .collect::<BTreeMap<_, _>>();
+    let validation = result
+        .validation
+        .into_iter()
+        .map(|entry| {
+            let argv = commands.remove(&entry.name).ok_or_else(|| {
+                format!(
+                    "ready gate validation `{}` lost its source command",
+                    entry.name
+                )
+            })?;
+            Ok(ReadyValidation {
+                name: entry.name,
+                argv,
+                status: entry.status,
+                reused: entry.reused,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    if !commands.is_empty() {
+        return Err("ready gate result omitted a source validation command".to_owned());
+    }
+
+    Ok(ReadyGate {
+        slice: result.slice,
+        candidate_commit: result.candidate_commit,
+        diff_hash: result.diff_hash,
+        validation,
+        review_count: result.review.len(),
+        known_unverified_environments: result.known_unverified_environments,
+        commit_trailers: result.commit_trailers,
+    })
 }
 
 fn evaluate(repository: &Path, request_path: &Path) -> Result<ResultDocument, String> {

@@ -49,7 +49,7 @@ command, host, credential, platform을 기록한다.
 | Slice 변경이 bind된 로컬 write-set 안에 머무는지 | `cargo xtask check slice-scope` | 하나의 활성 Slice worktree; planner가 먼저 `cargo xtask slice-contract bind <contract.json>` 실행 |
 | 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
 | 하나의 깨끗한 Slice 후보에서 검증, 리뷰, 위험, 승인 증거가 모두 같은 identity에 결속됐는지 | `cargo xtask slice gate <request.json>` | 검증이나 리뷰를 다시 실행하지 않고 다음 행동 하나만 반환 |
-| 수용된 Slice가 여전히 검수한 로컬 branch patch와 정확히 같고 안전하게 정리할 수 있는지 | 표준 `close-metrics.json`을 작성한 뒤 `cargo xtask slice close plan <slice> <plan.json>`과 `cargo xtask slice close apply <plan.json>` 실행 | 깨끗한 통합 worktree에서 실행하고 apply 전에 결속된 metrics, 제거 효과, 보존할 coordination 경로를 검토 |
+| ready Slice의 정확한 commit message와 close 기록을 identity 전사 없이 준비하는지 | `cargo xtask slice commit prepare <gate.json> <message-source> <message-out>` 실행 후 exact squash를 commit하고, `close plan/apply` 전에 `cargo xtask slice close prepare <request.json>` 실행 | 첫 prepare는 깨끗한 Slice worktree, close prepare는 accepted commit 이후 깨끗한 통합 worktree에서 실행 |
 | 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | `tools/xtask/src` |
 | Prospective activation ContextBuild와 review-packet identity | `cargo test -p methexis activation_review_context`와 `cargo test -p xtask review_packet::tests::prospective` | 정확한 activation request, 제안 Checkpoint·active record, authority mode, packet 재생, active-authority 교차 사용 거절 |
 | Linux/macOS 조건부 compile | `bash tools/validation/yo-cli-unix-matrix.sh` | 로컬 host 결과와 두 host를 위한 `.github/workflows/unix-compile.yml` |
@@ -239,12 +239,20 @@ commit hook이 통과한 경우에만 후보 결과를 수용 commit의 증거�
 그 밖에는 영향받은 검사를 다시 실행한다. 이 재사용은 후보 자체의 검증이나
 검수를 대체하지 않는다.
 
-Slice 종료 정리 명령은 이 검증 기준선의 일부가 아니다. 요청한 파일에 plan을
-직접 발행한 뒤 이미 수용된 결과를 소비한다. 로컬 worktree, 표준 임시 Slice
-contract, Slice branch를 제거하기 전에 정확한 ref, 검수 trailer, patch
-identity, worktree 청결 상태, binding, contract hash, plan hash를 다시
-검사한다. 계획 전에 완료한 실행 lane, 검수와 packet 합계, 검증 명령, 경과 시간
-병목, 미검증 환경을 표준 로컬 `close-metrics.json`에 기록한다. plan은 이
+Slice 종료 정리 명령은 이 검증 기준선의 일부가 아니다. gate가 `integrate`를
+반환하면 `slice commit prepare`는 stage나 commit 없이 사람이 작성한 의미
+message에 exact review trailer를 붙인다. 일치하는 accepted commit이 생긴 뒤
+`slice close prepare`는 같은 ready gate에서 identity와 통과한 validation 행을
+파생한다. 이 명령의 작은 `yo.slice-close-prepare-request/v1alpha1` 입력에는
+gate가 알 수 없는 실행 lane, review·packet 합계, 경과 시간 병목, 미검증 환경의
+command만 남고, 명령은 표준 `close-metrics.json`만 발행하며 cleanup을 plan하거나
+apply하지 않는다.
+
+close plan은 요청한 파일에 plan을 직접 발행한 뒤 이미 수용된 결과를 소비한다.
+로컬 worktree, 표준 임시 Slice contract, Slice branch를 제거하기 전에 정확한
+ref, 검수 trailer, patch identity, worktree 청결 상태, binding, contract hash,
+plan hash를 다시 검사한다. 전체 metrics 파일을 직접 작성하는 방식도 계속
+지원한다. plan은 이
 기록을 정확한 Slice candidate와 accepted commit에 결속하며 apply는 변경된
 metrics를 거부한다. plan은 metrics를 포함해 보존할 직계 coordination 항목도
 모두 나열하며, apply는 그 목록이 바뀌면 거절하고 해당 항목을 삭제하지 않는다.

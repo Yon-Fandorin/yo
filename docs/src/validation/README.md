@@ -49,7 +49,7 @@ the assertion or silently skipping it.
 | Slice changes remain inside their bound local write-set | `cargo xtask check slice-scope` | One active Slice worktree; the planner first runs `cargo xtask slice-contract bind <contract.json>` |
 | Two Slice contracts have a common current integration base and disjoint declared ownership | `cargo xtask check slice-parallel <left.json> <right.json>` | Direct Slices use `develop`; Wave Slices use their Wave branch |
 | One clean Slice candidate has validation, review, risk, and approval evidence bound to the same identity | `cargo xtask slice gate <request.json>` | Returns exactly one next action without rerunning validation or review |
-| An accepted Slice is still exactly the reviewed local branch patch and is safe to clean up | Write the standard `close-metrics.json`, then run `cargo xtask slice close plan <slice> <plan.json>` and `cargo xtask slice close apply <plan.json>` | Run from the clean integration worktree; inspect the bound metrics, removal effects, and retained coordination paths before apply |
+| A ready Slice needs an exact commit message and close record without identity transcription | Run `cargo xtask slice commit prepare <gate.json> <message-source> <message-out>`, commit the exact squash, then run `cargo xtask slice close prepare <request.json>` before `close plan/apply` | The first prepare runs in the clean Slice worktree; close prepare runs in the clean integration worktree after the accepted commit |
 | Repository hook policy or structured development checks | `cargo test -p xtask` | `tools/xtask/src` |
 | Prospective activation ContextBuild and review-packet identity | `cargo test -p methexis activation_review_context` and `cargo test -p xtask review_packet::tests::prospective` | Exact activation request, proposed Checkpoint/active record, authority mode, packet replay, and active-authority cross-use rejection |
 | Linux/macOS conditional compilation | `bash tools/validation/yo-cli-unix-matrix.sh` | Local host result plus `.github/workflows/unix-compile.yml` for both hosts |
@@ -251,14 +251,22 @@ external-state evidence expired, and commit hooks passed. Otherwise rerun the
 affected checks. This reuse never replaces validation or review of the
 candidate itself.
 
-The Slice-close cleanup command is not part of this validation baseline. It
+The Slice-close cleanup command is not part of this validation baseline. After
+the gate returns `integrate`, `slice commit prepare` appends its exact review
+trailers to a human-authored semantic message without staging or committing.
+After the matching accepted commit exists, `slice close prepare` derives its
+identities and passed validation rows from that same ready gate. Its compact
+`yo.slice-close-prepare-request/v1alpha1` input retains only operational facts
+the gate does not know: execution lanes, review and packet totals, elapsed
+bottleneck, and commands for known unverified environments. The command
+publishes the standard `close-metrics.json`; it does not plan or apply cleanup.
+
+The close plan
 publishes its plan directly to the requested file, then consumes the already
 accepted result afterward and rechecks the exact refs, review trailers, patch
 identity, worktree cleanliness, binding, contract hash, and plan hash before
 removing the local worktree, standard transient Slice contract, and Slice
-branch. Before planning, record the completed execution lanes, review and
-packet totals, validation commands, elapsed bottleneck, and unverified
-environments in the standard local `close-metrics.json`. The plan binds that
+branch. Directly writing the complete metrics file remains supported. The plan binds that
 record to the exact Slice candidate and accepted commit; apply rejects changed
 metrics. The plan also lists every immediate coordination entry it will
 retain, including the metrics; apply rejects a changed list and never removes

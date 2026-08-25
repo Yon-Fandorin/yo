@@ -7,6 +7,7 @@ mod review_delta;
 mod review_egress;
 mod review_packet;
 mod review_protocol;
+mod slice_accept;
 mod slice_close;
 mod slice_contract;
 mod slice_gate;
@@ -93,10 +94,32 @@ fn run_slice_gate(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), 
 }
 
 fn run_slice_commit(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
-    let message = arguments
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(slice_commit_usage)?;
+    let first = arguments.next().ok_or_else(slice_commit_usage)?;
+    if first == "prepare" {
+        let gate_request = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(slice_commit_usage)?;
+        let message_source = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(slice_commit_usage)?;
+        let output = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(slice_commit_usage)?;
+        if arguments.next().is_some() {
+            return Err(slice_commit_usage());
+        }
+        let repository = current_repository()?;
+        return slice_accept::prepare_commit_message(
+            &repository,
+            &gate_request,
+            &message_source,
+            &output,
+        );
+    }
+    let message = PathBuf::from(first);
     if arguments.next().is_some() {
         return Err(slice_commit_usage());
     }
@@ -197,6 +220,17 @@ fn run_slice_close(arguments: &mut impl Iterator<Item = OsString>) -> Result<(),
         .ok_or_else(slice_close_usage)?
         .to_string_lossy()
         .into_owned();
+    if action == "prepare" {
+        let request = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(slice_close_usage)?;
+        if arguments.next().is_some() {
+            return Err(slice_close_usage());
+        }
+        let repository = current_repository()?;
+        return slice_close::prepare_metrics(&repository, &request);
+    }
     let value = arguments
         .next()
         .map(PathBuf::from)
@@ -419,8 +453,8 @@ fn general_usage() -> String {
      cargo xtask slice review-egress <request.json>\n\
      cargo xtask slice gate <request.json>\n\
      cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
-     cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
-     cargo xtask slice commit <commit-message-file>\n\
+     cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
+     cargo xtask slice commit <commit-message-file|prepare GATE.json MESSAGE-SOURCE MESSAGE-OUT>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
      cargo xtask check test-explanations\n\
@@ -451,7 +485,8 @@ fn review_egress_usage() -> String {
 }
 
 fn slice_close_usage() -> String {
-    "usage: cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>".to_owned()
+    "usage: cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>"
+        .to_owned()
 }
 
 fn slice_gate_usage() -> String {
@@ -459,7 +494,7 @@ fn slice_gate_usage() -> String {
 }
 
 fn slice_commit_usage() -> String {
-    "usage: cargo xtask slice commit <commit-message-file>".to_owned()
+    "usage: cargo xtask slice commit <commit-message-file>\n       cargo xtask slice commit prepare <gate.json> <message-source> <message-out>".to_owned()
 }
 
 fn docs_accept_translation_usage() -> String {
@@ -495,8 +530,8 @@ mod cli_tests {
              cargo xtask slice review-egress <request.json>\n\
              cargo xtask slice gate <request.json>\n\
              cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
-             cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
-             cargo xtask slice commit <commit-message-file>\n\
+             cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
+             cargo xtask slice commit <commit-message-file|prepare GATE.json MESSAGE-SOURCE MESSAGE-OUT>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
              cargo xtask check test-explanations\n\
@@ -717,6 +752,8 @@ mod cli_tests {
             vec!["slice", "close", "apply"],
             vec!["slice", "close", "plan", "sample", "plan.json", "extra"],
             vec!["slice", "close", "apply", "plan.json", "extra"],
+            vec!["slice", "close", "prepare"],
+            vec!["slice", "close", "prepare", "request.json", "extra"],
             vec!["slice", "close", "unknown", "sample"],
         ] {
             assert_eq!(
@@ -726,14 +763,23 @@ mod cli_tests {
         }
     }
 
-    // accepted commit 명령은 사전 검증할 메시지 파일 하나만 받아, 누락되거나
-    // 추가된 입력으로 다른 메시지를 커밋하는 경로를 만들지 않는다.
+    // accepted commit과 prepare는 각자의 exact 입력 개수만 받아, 누락되거나 추가된
+    // 경로로 다른 게이트 또는 메시지를 소비하지 않는다.
     #[test]
     fn slice_commit_requires_exactly_one_prepared_message() {
         let missing = run(["slice", "commit"].map(Into::into)).unwrap_err();
         let extra = run(["slice", "commit", "message", "extra"].map(Into::into)).unwrap_err();
+        let prepare_missing =
+            run(["slice", "commit", "prepare", "gate", "source"].map(Into::into)).unwrap_err();
+        let prepare_extra = run([
+            "slice", "commit", "prepare", "gate", "source", "out", "extra",
+        ]
+        .map(Into::into))
+        .unwrap_err();
 
         assert_eq!(missing, slice_commit_usage());
         assert_eq!(extra, slice_commit_usage());
+        assert_eq!(prepare_missing, slice_commit_usage());
+        assert_eq!(prepare_extra, slice_commit_usage());
     }
 }

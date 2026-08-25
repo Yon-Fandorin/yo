@@ -6,8 +6,8 @@ use super::model::CloseMetricsArtifact;
 use crate::{bounded_file, review_protocol};
 
 pub(super) const FILE_NAME: &str = "close-metrics.json";
-const SCHEMA: &str = "yo.slice-close-metrics/v1";
-const MAX_BYTES: usize = 128 * 1024;
+pub(super) const SCHEMA: &str = "yo.slice-close-metrics/v1";
+pub(super) const MAX_BYTES: usize = 128 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -137,7 +137,7 @@ pub(super) fn require_current(
     }
 }
 
-fn validate(
+pub(super) fn validate(
     bytes: &[u8],
     slice: &str,
     slice_candidate: &str,
