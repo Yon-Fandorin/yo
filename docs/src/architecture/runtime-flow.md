@@ -280,6 +280,49 @@ Contracts:
 and
 [resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
+## One-shot print frontend
+
+`yo -p "prompt"` and `yo --print "prompt"` branch from the ordinary new-Session
+startup only after `SessionCreated`; they do not construct a `TuiSession` or
+acquire terminal state. The positional prompt, non-TTY stdin, or both form one
+non-empty UTF-8 input before backend or Session creation. When both are present,
+stdin comes first and the host inserts an LF only when stdin does not already
+end with one. TTY stdin supplies no implicit input.
+
+```text
+positional prompt + optional piped stdin
+    ↓ UTF-8 validation and deterministic composition
+ordinary new-Session startup through AgentSession
+    ↓ exactly one immutable InputSubmission
+AgentRuntime and selected Backend
+    ↕ ordinary internal provider and tool rounds
+TranscriptReader
+    ↓ ignore ModelWork, tool Activities, usage, trace, and intermediate messages
+last completed AgentMessage of the completed Turn
+    ↓ Session, Backend, and process cleanup
+stdout with a trailing LF when the answer lacks one
+```
+
+[`yo-cli/src/print.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/print.rs)
+owns only input composition, Submission admission, Transcript projection, and
+output framing. It retries a backpressured command with the same Submission
+identity and waits for both the matching admission outcome and terminal Turn
+outcome. The selected Backend continues to own provider requests and internal
+tool rounds. `--model` changes startup selection and `--no-tools` selects the
+ordinary empty tool registry; print mode grants neither tool permission nor an
+approval.
+
+An approval request, user-input request, rejected Submission, interrupted or
+failed Turn, missing completed Agent message, invalid input, startup failure, or
+cleanup failure returns nonzero and keeps stdout empty. Diagnostics use stderr.
+The successful answer is buffered until cleanup succeeds, so terminal control,
+progress Activities, request traces, Session identities, usage, and cache
+metrics never share stdout with the answer. Initial print mode rejects resume,
+continue, inline, fullscreen, and ASCII presentation flags.
+
+Contract:
+[first coding loop](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.delivery.first-coding-loop.md).
+
 ## Workspace reference assistance
 
 Typing an eligible `@query` in Chat follows a separate nonblocking route:

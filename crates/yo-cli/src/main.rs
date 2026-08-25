@@ -26,6 +26,8 @@ mod local_tools;
 #[cfg(unix)]
 mod model;
 #[cfg(unix)]
+mod print;
+#[cfg(unix)]
 mod process;
 #[cfg(unix)]
 mod session;
@@ -68,6 +70,7 @@ fn run(command: command::Command) -> Result<(), AppError> {
         command::Command::Session(command) => run_session_command(command),
         command::Command::Usage(command) => write_session_command_output(usage::run(command)?),
         command::Command::Live(options) => run_live_session(options),
+        command::Command::Print(options) => run_print_session(options),
     }
 }
 
@@ -135,6 +138,7 @@ fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
                         credentials: &mut credentials,
                         stored_preference: stored_preference.as_ref(),
                     },
+                    GenerationFrontend::Tui,
                 )
             },
             shutdown_live_session,
@@ -150,6 +154,12 @@ fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
             },
             Ok(Ok(SessionStep::Complete)) => break,
             Ok(Ok(SessionStep::Continue)) => {},
+            Ok(Ok(SessionStep::PrintComplete(_))) => {
+                errors.push(AppError::message(
+                    "interactive session returned a print-only outcome",
+                ));
+                break;
+            },
             Ok(Err(error)) => {
                 errors.push(error);
                 break;
@@ -191,6 +201,13 @@ enum SessionStep {
     Suspend,
     Continue,
     Complete,
+    PrintComplete(String),
+}
+
+#[cfg(unix)]
+enum GenerationFrontend {
+    Tui,
+    Print(String),
 }
 
 #[cfg(unix)]
@@ -208,12 +225,14 @@ fn run_agent_generation(
     options: command::LiveOptions,
     launch_failure_selection: command::LiveSelection,
     snapshots: StartupSnapshots<'_>,
+    frontend: GenerationFrontend,
 ) -> Result<SessionStep, AppError> {
     let StartupSnapshots {
         config,
         credentials,
         stored_preference,
     } = snapshots;
+    let uses_terminal_frontend = matches!(&frontend, GenerationFrontend::Tui);
     if live.is_none() {
         let storage = match storage::open_default() {
             Ok(storage) => storage,
@@ -290,26 +309,27 @@ fn run_agent_generation(
                 session_cwd.display()
             )]));
         }
-        let workspace_references = match yo_core::LocalWorkspaceReferenceProvider::start(
-            &session_cwd,
-            workspace_host_id,
-        ) {
-            Ok(provider) => provider,
-            Err(error) => {
-                if launch.resume_id().is_some() {
-                    drop(repository);
-                    return handle_launch_failure(
-                        launch_failure_selection,
-                        options.glyph_profile,
-                        live::ResumeFailureStage::WorkspaceReferences,
+        let workspace_references = if uses_terminal_frontend {
+            match yo_core::LocalWorkspaceReferenceProvider::start(&session_cwd, workspace_host_id) {
+                Ok(provider) => Some(provider),
+                Err(error) => {
+                    if launch.resume_id().is_some() {
+                        drop(repository);
+                        return handle_launch_failure(
+                            launch_failure_selection,
+                            options.glyph_profile,
+                            live::ResumeFailureStage::WorkspaceReferences,
+                            error,
+                        );
+                    }
+                    return Err(AppError::single(
+                        "starting workspace reference discovery",
                         error,
-                    );
-                }
-                return Err(AppError::single(
-                    "starting workspace reference discovery",
-                    error,
-                ));
-            },
+                    ));
+                },
+            }
+        } else {
+            None
         };
         let selection = match model::resolve(
             config,
@@ -340,23 +360,27 @@ fn run_agent_generation(
             model::StartupBackend::Host(host) if host.as_str() == yo_core::HostId::CODEX => {
                 let codex_config =
                     yo_backend_delegated_codex::CodexBackendConfig::new(&session_cwd);
-                let skills = match yo_backend_delegated_codex::CodexSkillReferenceProvider::start(
-                    codex_config.clone(),
-                    workspace_host_id,
-                ) {
-                    Ok(skills) => skills,
-                    Err(error) if launch.resume_id().is_some() => {
-                        drop(repository);
-                        return handle_launch_failure(
-                            launch_failure_selection,
-                            options.glyph_profile,
-                            live::ResumeFailureStage::SkillReferences,
-                            error,
-                        );
-                    },
-                    Err(error) => {
-                        return Err(AppError::single("starting Codex skill discovery", error));
-                    },
+                let skills = if uses_terminal_frontend {
+                    match yo_backend_delegated_codex::CodexSkillReferenceProvider::start(
+                        codex_config.clone(),
+                        workspace_host_id,
+                    ) {
+                        Ok(skills) => Some(skills),
+                        Err(error) if launch.resume_id().is_some() => {
+                            drop(repository);
+                            return handle_launch_failure(
+                                launch_failure_selection,
+                                options.glyph_profile,
+                                live::ResumeFailureStage::SkillReferences,
+                                error,
+                            );
+                        },
+                        Err(error) => {
+                            return Err(AppError::single("starting Codex skill discovery", error));
+                        },
+                    }
+                } else {
+                    None
                 };
                 let backend = match yo_backend_delegated_codex::CodexBackend::spawn(codex_config) {
                     Ok(backend) => backend,
@@ -371,7 +395,7 @@ fn run_agent_generation(
                     },
                     Err(error) => return Err(AppError::single("starting Codex", error)),
                 };
-                (Box::new(backend), Some(skills))
+                (Box::new(backend), skills)
             },
             model::StartupBackend::Host(host) if host.as_str() == yo_core::HostId::GROK => {
                 let grok_config = yo_backend_delegated_grok::GrokBackendConfig::new(&session_cwd);
@@ -465,6 +489,19 @@ fn run_agent_generation(
         let Some(agent) = agent else {
             return Ok(SessionStep::Complete);
         };
+        if let GenerationFrontend::Print(input) = frontend {
+            let mut session = agent.into_session();
+            let output = print::run(&mut session, input, || termination_requested(termination));
+            let cleanup = session
+                .shutdown()
+                .map(drop)
+                .map_err(|error| AppError::single("agent cleanup", error));
+            return match (output, cleanup) {
+                (Ok(output), Ok(())) => Ok(SessionStep::PrintComplete(output)),
+                (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+                (Err(primary), Err(cleanup)) => Err(AppError::combine(vec![primary, cleanup])),
+            };
+        }
         let mut tui = yo_tui::TuiSession::with_session_info(
             options.glyph_profile,
             yo_tui::TuiSessionInfo::new(selection.label(), compact_workspace_label(&session_cwd)),
@@ -472,7 +509,9 @@ fn run_agent_generation(
             yo_tui::MotionPreference::Standard,
         )
         .with_frame_rate_limit(config.frame_rate_limit())
-        .with_workspace_references(workspace_references);
+        .with_workspace_references(
+            workspace_references.expect("the terminal frontend started workspace references"),
+        );
         if let Some(skill_references) = skill_references {
             tui = tui.with_skill_references(skill_references);
         }
@@ -564,6 +603,81 @@ fn run_agent_generation(
     } else {
         Err(AppError::combine(errors))
     }
+}
+
+#[cfg(unix)]
+fn run_print_session(options: command::PrintOptions) -> Result<(), AppError> {
+    let input = print::read_input(options.prompt)?;
+    let cwd = std::env::current_dir()
+        .map_err(|error| AppError::single("reading the working directory", error))?;
+    let mut config =
+        config::load().map_err(|error| AppError::single("reading Yo configuration", error))?;
+    let stored_preference = connection::load_startup_connections(&mut config)?;
+    let mut credentials = None;
+    let mut host = process::termination::TerminationCoordinator::install().map_err(|error| {
+        AppError::single("installing the process termination coordinator", error)
+    })?;
+    let mut live = None;
+    let startup = command::LiveOptions {
+        mode: yo_tui::PresentationMode::Inline,
+        glyph_profile: yo_tui::GlyphProfile::Rich,
+        selection: command::LiveSelection::New,
+        model: options.model,
+        no_tools: options.no_tools,
+    };
+    let generation = host.with_active_resource(
+        &mut live,
+        |termination, live| {
+            run_agent_generation(
+                termination,
+                live,
+                &cwd,
+                startup,
+                command::LiveSelection::New,
+                StartupSnapshots {
+                    config: &config,
+                    credentials: &mut credentials,
+                    stored_preference: stored_preference.as_ref(),
+                },
+                GenerationFrontend::Print(input),
+            )
+        },
+        shutdown_live_session,
+    );
+
+    let mut output = None;
+    let mut errors = Vec::new();
+    match generation {
+        Ok(Ok(SessionStep::PrintComplete(value))) => output = Some(value),
+        Ok(Ok(_)) => errors.push(AppError::message(
+            "print session completed without a final-response outcome",
+        )),
+        Ok(Err(error)) => errors.push(error),
+        Err(error) => errors.push(AppError::message(format!(
+            "process termination session: {error}"
+        ))),
+    }
+    if let Err(error) = shutdown_live_session(&mut live) {
+        errors.push(error);
+    }
+    if let Err(error) = host.shutdown() {
+        errors.push(AppError::message(format!(
+            "process termination cleanup: {error}"
+        )));
+    }
+    if !errors.is_empty() {
+        return Err(AppError::combine(errors));
+    }
+    write_command_output(output.expect("a successful print session returned output"))
+}
+
+#[cfg(unix)]
+fn termination_requested(termination: &mut impl yo_tui::TerminationSource) -> bool {
+    use std::task::{Context, Poll};
+
+    let waker = std::task::Waker::noop();
+    let mut context = Context::from_waker(waker);
+    termination.poll_termination(&mut context) == Poll::Ready(yo_tui::TerminationEvent::Requested)
 }
 
 #[cfg(unix)]

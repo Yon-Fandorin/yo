@@ -16,6 +16,80 @@ fn no_argument_keeps_the_live_defaults() {
     );
 }
 
+// `-p`와 `--print`는 같은 비대화형 새 Session을 선택하고 positional prompt, model,
+// creation-only no-tools를 서로 독립된 값으로 보존합니다.
+#[test]
+fn print_mode_has_equivalent_short_and_long_forms() {
+    let expected = Command::Print(PrintOptions {
+        prompt: Some("explain this".to_owned()),
+        model: Some("qwencloud:default:qwen3.8-max".to_owned()),
+        no_tools: true,
+    });
+
+    assert_eq!(
+        parse([
+            "-p".into(),
+            "--model".into(),
+            "qwencloud:default:qwen3.8-max".into(),
+            "--no-tools".into(),
+            "explain this".into(),
+        ])
+        .unwrap(),
+        expected
+    );
+    assert_eq!(
+        parse([
+            "--print".into(),
+            "--model".into(),
+            "qwencloud:default:qwen3.8-max".into(),
+            "--no-tools".into(),
+            "explain this".into(),
+        ])
+        .unwrap(),
+        expected
+    );
+}
+
+// print 입력은 stdin만 사용하는 호출을 위해 positional prompt를 생략할 수 있지만,
+// prompt만 단독으로 주거나 두 개를 주면 대화형 호출로 추측하지 않고 문법 오류가 됩니다.
+#[test]
+fn print_prompt_is_optional_once_print_mode_is_selected() {
+    assert_eq!(
+        parse(["-p".into()]).unwrap(),
+        Command::Print(PrintOptions {
+            prompt: None,
+            model: None,
+            no_tools: false,
+        })
+    );
+    assert!(parse(["prompt without print".into()]).is_err());
+    assert!(parse(["-p".into(), "first".into(), "second".into()]).is_err());
+    assert_eq!(
+        parse(["-p".into(), "--".into(), "--literal prompt".into()]).unwrap(),
+        Command::Print(PrintOptions {
+            prompt: Some("--literal prompt".to_owned()),
+            model: None,
+            no_tools: false,
+        })
+    );
+}
+
+// 초기 print는 terminal presentation이나 continuation 의미를 만들지 않으므로 해당
+// 옵션 조합을 파싱 단계에서 거절하고, 허용된 model·no-tools만 남깁니다.
+#[test]
+fn print_rejects_terminal_and_continuation_options() {
+    let id = "01890f00-0000-7000-8000-000000000001";
+    for arguments in [
+        vec!["-p", "--inline"],
+        vec!["-p", "--fullscreen"],
+        vec!["-p", "--ascii"],
+        vec!["-p", "--continue"],
+        vec!["-p", "--resume", id],
+    ] {
+        assert!(parse(arguments.into_iter().map(Into::into)).is_err());
+    }
+}
+
 // `--no-tools`는 새 live Session의 명시적 restriction으로 전달되고, 저장된 replay
 // contract를 다시 쓰지 않도록 resume·continue와의 조합은 문법 단계에서 거절합니다.
 #[test]
@@ -436,6 +510,8 @@ fn help_is_successful_generated_command_documentation() {
     assert!(rendered.contains("disconnect"));
     assert!(rendered.contains("--model <MODEL_REFERENCE>"));
     assert!(rendered.contains("--no-tools"));
+    assert!(rendered.contains("-p, --print"));
+    assert!(rendered.contains("[PROMPT]"));
 }
 
 // `--version`도 도움말과 같은 성공 제어 흐름으로 stdout에 전달되고, Cargo package

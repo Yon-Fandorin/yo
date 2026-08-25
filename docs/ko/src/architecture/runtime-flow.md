@@ -261,6 +261,47 @@ label은 화면 표시용 metadata일 뿐 backend Session을 선택하거나 식
 그리고
 [resolved cell style](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/tui-architecture/tui.surface.resolved-style.md).
 
+## One-shot print frontend
+
+`yo -p "prompt"`와 `yo --print "prompt"`는 일반 새 Session 시작 경로에서
+`SessionCreated` 뒤에만 갈라진다. `TuiSession`을 만들거나 터미널 상태를 얻지
+않는다. 위치 prompt, TTY가 아닌 stdin 또는 둘 모두를 Backend나 Session 생성
+전에 비어 있지 않은 UTF-8 입력 하나로 만든다. 둘 다 있으면 stdin이 먼저 오며,
+stdin 끝에 LF가 없을 때만 host가 LF 하나를 넣는다. TTY stdin은 암묵적인 입력을
+제공하지 않는다.
+
+```text
+위치 prompt + 선택적인 piped stdin
+    ↓ UTF-8 검증과 결정론적 조합
+AgentSession까지 일반 새 Session 시작
+    ↓ 변경 불가능한 InputSubmission 정확히 하나
+AgentRuntime과 선택한 Backend
+    ↕ 일반적인 내부 provider·tool round
+TranscriptReader
+    ↓ ModelWork·tool Activity·usage·trace·중간 message 무시
+완료된 Turn에서 마지막으로 완료된 AgentMessage
+    ↓ Session·Backend·process 정리
+답변 끝에 LF가 없을 때 LF 하나를 붙인 stdout
+```
+
+[`yo-cli/src/print.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/print.rs)는
+입력 조합, Submission admission, Transcript 투영, 출력 framing만 소유한다.
+backpressure가 걸린 command는 같은 Submission identity로 다시 시도하고, 일치하는
+admission outcome과 terminal Turn outcome을 모두 기다린다. 선택한 Backend는 계속
+provider 요청과 내부 tool round를 소유한다. `--model`은 startup 선택을 바꾸고
+`--no-tools`는 일반 empty tool registry를 선택한다. print mode 자체는 tool 권한이나
+승인을 부여하지 않는다.
+
+승인 요청, 사용자 입력 요청, 거절된 Submission, 중단되거나 실패한 Turn, 완료된
+Agent message 누락, 잘못된 입력, startup 실패 또는 정리 실패는 0이 아닌 코드로
+종료하며 stdout을 비워 둔다. 진단은 stderr를 사용한다. 성공 응답은 정리가 성공할
+때까지 buffering하므로 터미널 제어, 진행 Activity, request trace, Session identity,
+usage, cache metric이 답변과 함께 stdout에 섞이지 않는다. 초기 print mode는 resume,
+continue, inline, fullscreen, ASCII 표시 flag를 거부한다.
+
+계약:
+[첫 coding loop](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.delivery.first-coding-loop.md).
+
 ## Workspace reference 도움
 
 Chat에서 유효한 `@query`를 입력하면 agent command와 분리된 다음

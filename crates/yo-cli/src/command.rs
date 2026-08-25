@@ -15,6 +15,24 @@ struct Cli {
     #[command(subcommand)]
     command: Option<CliCommand>,
 
+    /// Print one final response and exit without opening the terminal UI.
+    #[arg(
+        short = 'p',
+        long = "print",
+        conflicts_with_all = [
+            "inline",
+            "fullscreen",
+            "ascii",
+            "resume",
+            "continue_session"
+        ]
+    )]
+    print: bool,
+
+    /// Prompt for one print-mode Submission.
+    #[arg(value_name = "PROMPT", requires = "print")]
+    prompt: Option<String>,
+
     /// Render inside the current terminal screen.
     #[arg(long, conflicts_with = "fullscreen")]
     inline: bool,
@@ -173,6 +191,13 @@ pub(crate) struct LiveOptions {
     pub(crate) no_tools: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PrintOptions {
+    pub(crate) prompt: Option<String>,
+    pub(crate) model: Option<String>,
+    pub(crate) no_tools: bool,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum LiveSelection {
     #[default]
@@ -187,6 +212,7 @@ pub(crate) enum Command {
     Disconnect(DisconnectCommand),
     Default(DefaultCommand),
     Live(LiveOptions),
+    Print(PrintOptions),
     Session(SessionCommand),
     Usage(UsageCommand),
 }
@@ -287,6 +313,11 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
         Some(CliCommand::Usage(arguments)) => Ok(Command::Usage(UsageCommand {
             session_id: arguments.session_id,
             glyph_profile: glyph_profile(arguments.ascii),
+        })),
+        None if cli.print => Ok(Command::Print(PrintOptions {
+            prompt: cli.prompt,
+            model: cli.model,
+            no_tools: cli.no_tools,
         })),
         None => Ok(Command::Live(LiveOptions {
             mode: match (cli.inline, cli.fullscreen) {

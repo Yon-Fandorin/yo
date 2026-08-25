@@ -26,6 +26,26 @@ pub(crate) struct TuiAgentConnection {
 }
 
 impl TuiAgentConnection {
+    pub(crate) fn from_session(session: AgentSession) -> Self {
+        let transcript = session.transcript_reader();
+        let request_trace = session.request_trace_reader();
+        Self {
+            session,
+            transcript,
+            request_trace,
+            cursor: None,
+            request_cursor: None,
+            pending: VecDeque::new(),
+            journal_changed: false,
+            closed: false,
+            failure: None,
+        }
+    }
+
+    pub(crate) fn into_session(self) -> AgentSession {
+        self.session
+    }
+
     #[cfg(test)]
     pub(crate) fn start<B>(
         backend: B,
@@ -38,23 +58,7 @@ impl TuiAgentConnection {
         AgentSession::start_cancellable_with_id(backend, session_id, || {
             termination_requested(termination)
         })
-        .map(|session| {
-            session.map(|session| {
-                let transcript = session.transcript_reader();
-                let request_trace = session.request_trace_reader();
-                Self {
-                    session,
-                    transcript,
-                    request_trace,
-                    cursor: None,
-                    request_cursor: None,
-                    pending: VecDeque::new(),
-                    journal_changed: false,
-                    closed: false,
-                    failure: None,
-                }
-            })
-        })
+        .map(|session| session.map(Self::from_session))
     }
 
     pub(crate) fn start_persistent<B, R>(
@@ -70,23 +74,7 @@ impl TuiAgentConnection {
         AgentSession::start_cancellable_with_repository(backend, descriptor, repository, || {
             termination_requested(termination)
         })
-        .map(|session| {
-            session.map(|session| {
-                let transcript = session.transcript_reader();
-                let request_trace = session.request_trace_reader();
-                Self {
-                    session,
-                    transcript,
-                    request_trace,
-                    cursor: None,
-                    request_cursor: None,
-                    pending: VecDeque::new(),
-                    journal_changed: false,
-                    closed: false,
-                    failure: None,
-                }
-            })
-        })
+        .map(|session| session.map(Self::from_session))
     }
 
     pub(crate) fn start_resumed<B, R>(
@@ -115,23 +103,7 @@ impl TuiAgentConnection {
                 || termination_requested(termination),
             )
         };
-        started.map(|session| {
-            session.map(|session| {
-                let transcript = session.transcript_reader();
-                let request_trace = session.request_trace_reader();
-                Self {
-                    session,
-                    transcript,
-                    request_trace,
-                    cursor: None,
-                    request_cursor: None,
-                    pending: VecDeque::new(),
-                    journal_changed: false,
-                    closed: false,
-                    failure: None,
-                }
-            })
-        })
+        started.map(|session| session.map(Self::from_session))
     }
 
     pub(crate) fn shutdown(&mut self) -> Result<Vec<yo_core::AgentEvent>, AgentSessionError> {
