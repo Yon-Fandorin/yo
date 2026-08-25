@@ -61,7 +61,7 @@ bounded dialect-specific text/event-stream decoder
   ├── exact function call identity, name, and argument bytes
   └── completed, incomplete, or failed terminal + usage
   ↓ NativeModelBackend
-semantic ModelWork and ToolCall Activities
+semantic AgentMessage, ModelWork, and ToolCall Activities
   ↓ frozen ToolRegistry schema validation, host semantic-admission gate,
     and exact approval binding
 injected ToolExecutionHost, one serial execution attempt
@@ -75,6 +75,10 @@ credential file produces an empty snapshot without creating anything; an
 existing unsafe or malformed file fails closed. API keys have no environment
 fallback and diagnostic formatting never exposes their contents. Display names
 remain optional metadata and never participate in identity or routing.
+`NativeModelBackend` projects all visible content parts for one assistant
+output item through one `AgentMessage` Activity, including an intentional empty
+message item. Reasoning remains `ModelWork`, so print mode can select the final
+completed answer without exposing reasoning or mistaking it for the answer.
 `yo-core::model_connector` owns the neutral port and derives one built-in
 connector identity from `api_dialect`; `yo-cli` maps that exact identity and
 dialect to the independent Responses, Chat Completions, or Kimi crate without

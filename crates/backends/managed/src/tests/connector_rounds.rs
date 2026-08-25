@@ -4,17 +4,18 @@ use std::{
 };
 
 use yo_core::{
-    AccountId, ApiDialect, ModelContextProfile, ModelId, ModelProfileLayer, ModelProfileParameters,
-    NormalizedEndpoint, ProviderId, ProviderPrivateReplayEnvelope, ReplayProfile, UserInput,
-    VersionedProfileId,
+    AccountId, ActivityUpdate, ApiDialect, ModelContextProfile, ModelId, ModelProfileLayer,
+    ModelProfileParameters, NormalizedEndpoint, ProviderId, ProviderPrivateReplayEnvelope,
+    ReplayProfile, UserInput, VersionedProfileId,
 };
 
 use super::{
     super::{
-        AgentBackend, AgentCommand, BackendCommandEvidence, BackendEvent, BackendFailureKind,
-        EffectiveModelBinding, ModelConnectorEvent, ModelConnectorTerminal, ModelReplayItem,
-        ModelReplayRole, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-        ReasoningChannel, ToolApprovalRequirement, TurnOutcome,
+        ActivityKind, ActivityOutcome, AgentBackend, AgentCommand, BackendCommandEvidence,
+        BackendEvent, BackendFailureKind, BackendPoll, EffectiveModelBinding, ModelConnectorEvent,
+        ModelConnectorTerminal, ModelReplayItem, ModelReplayRole, NativeModelBackend,
+        NativeModelBackendConfig, NativeModelBackendServices, ReasoningChannel,
+        ToolApprovalRequirement, TurnOutcome,
     },
     support::{
         ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, completed,
@@ -165,6 +166,149 @@ fn kimi_round(response: &str, visible: &str, private: &str) -> Vec<ModelConnecto
         },
         completed(response),
     ]
+}
+
+fn completed_round_events(round: Vec<ModelConnectorEvent>) -> Vec<BackendEvent> {
+    let mut backend = backend(
+        vec![round],
+        ToolApprovalRequirement::Automatic,
+        Arc::new(Mutex::new(0)),
+    );
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("fixture"),
+        })
+        .unwrap();
+
+    let mut events = Vec::new();
+    for _ in 0..100 {
+        match backend.poll_event().unwrap() {
+            BackendPoll::Event(event) => {
+                let finished = matches!(
+                    event,
+                    BackendEvent::TurnFinished { .. } | BackendEvent::ResumableTurnFinished { .. }
+                );
+                events.push(event);
+                if finished {
+                    return events;
+                }
+            },
+            BackendPoll::Pending => {},
+            BackendPoll::Closed => panic!("backend closed before finishing the Turn"),
+        }
+    }
+    panic!("backend did not finish within the deterministic poll budget")
+}
+
+// managed Connector의 reasoning은 ModelWork로 남기되 visible assistant content는 content
+// part 수와 무관하게 하나의 completed AgentMessage로 투영해 print mode가 최종 답을 찾습니다.
+#[test]
+fn native_backend_projects_visible_assistant_as_one_agent_message() {
+    let events = completed_round_events(vec![
+        ModelConnectorEvent::ResponseCreated {
+            response_id: "response-1".to_owned(),
+        },
+        ModelConnectorEvent::ReasoningDelta {
+            output_index: 0,
+            item_id: "reasoning".to_owned(),
+            channel: ReasoningChannel::Summary,
+            part_index: 0,
+            delta: "thinking".to_owned(),
+        },
+        ModelConnectorEvent::TextDelta {
+            output_index: 1,
+            item_id: "message".to_owned(),
+            content_index: 0,
+            delta: "answer".to_owned(),
+        },
+        ModelConnectorEvent::TextDelta {
+            output_index: 1,
+            item_id: "message".to_owned(),
+            content_index: 1,
+            delta: "!".to_owned(),
+        },
+        ModelConnectorEvent::MessageDone {
+            output_index: 1,
+            item_id: "message".to_owned(),
+        },
+        completed("response-1"),
+    ]);
+    let agent_activities = events
+        .iter()
+        .filter_map(|event| match event {
+            BackendEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::AgentMessage,
+            } => Some(*activity),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(agent_activities.len(), 1);
+    let agent = agent_activities[0];
+    let text = events
+        .iter()
+        .filter_map(|event| match event {
+            BackendEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextDelta(delta),
+            } if *activity == agent => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        BackendEvent::ActivityStarted {
+            kind: ActivityKind::ModelWork,
+            ..
+        }
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
+        BackendEvent::ActivityFinished {
+            activity,
+            outcome: ActivityOutcome::Completed,
+        } if *activity == agent
+    )));
+    assert_eq!(text, "answer!");
+}
+
+// content delta가 없는 의도적인 빈 assistant item도 final-message identity를 잃지 않고
+// 빈 completed AgentMessage로 투영합니다.
+#[test]
+fn native_backend_projects_empty_assistant_item_as_agent_message() {
+    let events = completed_round_events(vec![
+        ModelConnectorEvent::ResponseCreated {
+            response_id: "empty".to_owned(),
+        },
+        ModelConnectorEvent::MessageDone {
+            output_index: 0,
+            item_id: "message".to_owned(),
+        },
+        completed("empty"),
+    ]);
+    let agent = events.iter().find_map(|event| match event {
+        BackendEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::AgentMessage,
+        } => Some(*activity),
+        _ => None,
+    });
+    assert!(
+        agent.is_some_and(|agent| events.iter().any(|event| matches!(
+            event,
+            BackendEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Completed,
+            } if *activity == agent
+        )))
+    );
 }
 
 struct ToolAwareBoundaryCounter {

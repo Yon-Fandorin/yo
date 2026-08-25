@@ -138,7 +138,7 @@ struct TurnState {
     delta: Vec<ModelReplayItem>,
     stream: Option<Box<dyn ModelConnectorStreamPort>>,
     response_id: Option<String>,
-    assistant_activities: HashMap<(usize, usize), ActivityRef>,
+    assistant_activities: BTreeMap<usize, ActivityRef>,
     reasoning_activities: HashMap<(usize, usize), ActivityRef>,
     call_activities: HashMap<String, CallActivity>,
     seen_call_ids: HashSet<String>,
@@ -615,7 +615,7 @@ impl NativeModelBackend {
             delta,
             stream: None,
             response_id: None,
-            assistant_activities: HashMap::new(),
+            assistant_activities: BTreeMap::new(),
             reasoning_activities: HashMap::new(),
             call_activities: HashMap::new(),
             seen_call_ids: self
@@ -943,6 +943,23 @@ impl NativeModelBackend {
         Ok(())
     }
 
+    fn assistant_activity(
+        &mut self,
+        state: &mut TurnState,
+        output_index: usize,
+    ) -> Result<ActivityRef, BackendFailure> {
+        if let Some(activity) = state.assistant_activities.get(&output_index) {
+            return Ok(*activity);
+        }
+        let activity = self.next_activity(state.turn)?;
+        state.assistant_activities.insert(output_index, activity);
+        self.events.push_back(BackendEvent::ActivityStarted {
+            activity,
+            kind: ActivityKind::AgentMessage,
+        });
+        Ok(activity)
+    }
+
     fn apply_visible_delta(
         &mut self,
         state: &mut TurnState,
@@ -952,23 +969,13 @@ impl NativeModelBackend {
         refusal: bool,
     ) -> Result<(), BackendFailure> {
         let key = (output_index, content_index);
-        let activity = if let Some(activity) = state.assistant_activities.get(&key) {
-            *activity
-        } else {
-            let activity = self.next_activity(state.turn)?;
-            state.assistant_activities.insert(key, activity);
-            self.events.push_back(BackendEvent::ActivityStarted {
-                activity,
-                kind: ActivityKind::ModelWork,
-            });
-            activity
-        };
         if state.round_replay.contains_key(&output_index) {
             return Err(failure(
                 BackendFailureKind::Protocol,
                 "model output index changed semantic item kind",
             ));
         }
+        let activity = self.assistant_activity(state, output_index)?;
         let target = if refusal {
             &mut state.round_refusals
         } else {
@@ -1030,6 +1037,7 @@ impl NativeModelBackend {
                         "model output index completed more than one semantic item",
                     ));
                 }
+                self.assistant_activity(state, output_index)?;
             },
             ModelConnectorEvent::ReasoningDelta {
                 output_index,

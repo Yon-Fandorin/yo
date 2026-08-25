@@ -60,7 +60,7 @@ dialect별 bounded text/event-stream decoder
   ├── 정확한 function call identity, 이름, argument byte
   └── completed, incomplete 또는 failed terminal + usage
   ↓ NativeModelBackend
-semantic ModelWork와 ToolCall Activity
+semantic AgentMessage, ModelWork, ToolCall Activity
   ↓ 고정된 ToolRegistry schema 검증, host semantic-admission gate,
     정확한 approval binding
 주입된 ToolExecutionHost의 직렬 단일 실행 시도
@@ -74,6 +74,10 @@ semantic ModelWork와 ToolCall Activity
 안전하지 않거나 형식이 잘못되면 실패-폐쇄한다. API key에는 environment
 fallback이 없고 diagnostic formatting은 내용을 노출하지 않는다. 표시 이름은
 optional metadata일 뿐 identity나 routing에 참여하지 않는다.
+`NativeModelBackend`는 의도적으로 빈 message item도 포함해 assistant output item
+하나의 모든 visible content part를 하나의 `AgentMessage` Activity로 투영한다.
+reasoning은 `ModelWork`로 남으므로 print mode는 reasoning을 노출하거나 답으로
+오인하지 않고 마지막으로 완료된 답을 선택할 수 있다.
 `yo-core::model_connector`는 중립 port를 소유하며 `api_dialect`에서 built-in connector
 identity 하나를 파생한다. `yo-cli`는 Provider probing이나 fallback 없이 그 exact identity와
 dialect를 독립 Responses, Chat Completions 또는 Kimi crate에 연결한다. Responses는 `responses`
