@@ -752,6 +752,17 @@ profile identifier is never reinterpreted in place. `v1alpha3` is reserved for
 the explicit prospective-activation request above and does not replace the
 ordinary `v1alpha2` route.
 
+Start every new experimental wire schema, profile, identity domain, request,
+result, manifest, or receipt family at `v1alpha1`. Do not publish a new shape as
+`v1` merely because it has no predecessor or only repository-local consumers.
+Promotion from `v1alphaN` to stable `v1` is a separate reviewed compatibility
+decision after producer, verifier, failure ordering, and migration behavior are
+accepted. Existing `v1` identifiers remain frozen and are not renamed. When an
+existing family needs changed experimental semantics, preserve that `v1`
+behavior and add the smallest unused `v1alphaN`; reserve a stable incompatible
+successor such as `v2` for a later explicit promotion rather than using it as an
+experimental starting point.
+
 Treat every published wire identifier as a frozen behavior boundary, not only
 as a serialization label. If validation or failure semantics change, keep the
 old producer/verifier behavior in its existing version-owned module and add the
