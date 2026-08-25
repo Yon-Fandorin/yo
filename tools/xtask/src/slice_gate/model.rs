@@ -60,7 +60,7 @@ pub(super) struct Approval {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct ValidationSummary {
+pub(super) struct LegacyValidationSummary {
     pub(super) schema: String,
     pub(super) name: String,
     pub(super) status: String,

@@ -134,6 +134,42 @@ impl Fixture {
         std::fs::write(&request_path, serde_json::to_vec(&self.request).unwrap()).unwrap();
         evaluate(&self.repository.path, &request_path)
     }
+
+    fn use_alpha_validation(&mut self) {
+        let argv = vec![
+            "cargo".to_owned(),
+            "test".to_owned(),
+            "--locked".to_owned(),
+            "-p".to_owned(),
+            "xtask".to_owned(),
+        ];
+        let path = PathBuf::from(
+            self.request["validation_evidence"][0]["result_path"]
+                .as_str()
+                .unwrap(),
+        );
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema": "yo.validation-run-summary/v1alpha1",
+                "name": "xtask",
+                "status": "passed",
+                "exit_code": 0,
+                "elapsed_seconds": 2,
+                "log_bytes": 42,
+                "log_path": ".local-exclude/validation-runs/xtask.log",
+                "log_hash": format!("sha256:{}", "a".repeat(64)),
+                "head_commit": self.candidate,
+                "worktree_state": "clean",
+                "command_argv_count": argv.len(),
+                "command_argv_hash": super::validation_summary::argv_hash(&argv),
+                "reused": false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        self.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
+    }
 }
 
 impl Drop for Fixture {
@@ -160,6 +196,56 @@ fn ready_candidate_reports_integrate_and_exact_trailers() {
             .iter()
             .all(|trailer| !trailer.starts_with("Review-Coverage:")
                 || trailer.ends_with(&fixture.diff_hash))
+    );
+}
+
+// 이미 발행된 frozen v1 summary는 alpha 도입 뒤에도 같은 검증 의미로 받아
+// 과거 Slice evidence를 마이그레이션하거나 다시 실행할 필요가 없게 한다.
+#[test]
+fn legacy_v1_validation_summary_remains_accepted() {
+    let fixture = Fixture::new();
+
+    assert_eq!(fixture.evaluate().unwrap().next_action, "integrate");
+}
+
+// v1alpha1 summary는 실행 당시 clean 후보와 exact argv를 자체적으로 결속하여
+// coordinator가 다른 command를 선언해 기존 green 결과를 재사용하지 못하게 한다.
+#[test]
+fn alpha_validation_summary_binds_candidate_and_argv() {
+    let mut fixture = Fixture::new();
+    fixture.use_alpha_validation();
+    assert_eq!(fixture.evaluate().unwrap().next_action, "integrate");
+
+    fixture.request["validation_evidence"][0]["argv"][4] = json!("other-package");
+    assert!(
+        fixture
+            .evaluate()
+            .unwrap_err()
+            .contains("command_argv_hash does not match")
+    );
+}
+
+// dirty worktree에서 나온 alpha summary는 command가 성공했더라도 clean 후보의
+// exact validation으로 승격하지 않아 실행 중인 변경을 누락한 green을 막는다.
+#[test]
+fn alpha_validation_summary_rejects_a_dirty_launch() {
+    let mut fixture = Fixture::new();
+    fixture.use_alpha_validation();
+    let path = PathBuf::from(
+        fixture.request["validation_evidence"][0]["result_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let mut summary: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    summary["worktree_state"] = json!("dirty");
+    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fixture.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
+
+    assert!(
+        fixture
+            .evaluate()
+            .unwrap_err()
+            .contains("worktree_state must be `clean`")
     );
 }
 

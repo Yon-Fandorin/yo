@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+
 readonly checker="$(pwd)/tools/validation/bounded-run.sh"
 fixture=$(mktemp -d)
 trap 'rm -rf "${fixture}"' EXIT
@@ -19,6 +21,27 @@ exec "${SYSTEM_MKTEMP}" "$1"
 EOF
 chmod +x "${fixture}/bin/mktemp"
 
+clean_repository="${fixture}/clean-repository"
+git init --quiet "${clean_repository}"
+git -C "${clean_repository}" config user.name "Bounded Run Test"
+git -C "${clean_repository}" config user.email "bounded-run@example.invalid"
+git -C "${clean_repository}" commit --quiet --allow-empty -m base
+clean_head=$(git -C "${clean_repository}" rev-parse HEAD)
+(
+    cd "${clean_repository}"
+    PATH="${fixture}/bin:${PATH}" \
+    SYSTEM_MKTEMP="${system_mktemp}" \
+    YO_BOUNDED_VALIDATION_LOG_ROOT="${clean_repository}/run-logs" \
+        bash "${checker}" clean-state -- true
+) >"${fixture}/clean.out" 2>"${fixture}/clean.err"
+clean_summary=$(<"${fixture}/clean.out")
+if [[ -s "${fixture}/clean.err" ||
+    "${clean_summary}" != *'"head_commit":"'"${clean_head}"'"'* ||
+    "${clean_summary}" != *'"worktree_state":"clean"'* ]]; then
+    echo "clean state: wrapper artifacts must not dirty the launch snapshot" >&2
+    exit 1
+fi
+
 PATH="${fixture}/bin:${PATH}" \
 SYSTEM_MKTEMP="${system_mktemp}" \
 YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
@@ -35,11 +58,21 @@ if [[ $(wc -l <"${fixture}/success.out") -ne 1 ]]; then
     exit 1
 fi
 success_summary=$(<"${fixture}/success.out")
-if [[ "${success_summary}" != *'"schema":"yo.validation-run-summary/v1"'* ||
+if [[ "${success_summary}" != *'"schema":"yo.validation-run-summary/v1alpha1"'* ||
     "${success_summary}" != *'"name":"success"'* ||
     "${success_summary}" != *'"status":"passed"'* ||
-    "${success_summary}" != *'"exit_code":0'* ]]; then
+    "${success_summary}" != *'"exit_code":0'* ||
+    "${success_summary}" != *'"log_hash":"sha256:1c1e319bdabcf409b2276fa2cce92da2a75b5d642552bfba278bfe680a2a5789"'* ||
+    "${success_summary}" != *'"head_commit":"'* ||
+    "${success_summary}" != *'"command_argv_count":3'* ||
+    "${success_summary}" != *'"command_argv_hash":"sha256:b2feeb2dc7a19ae550541f96076627745b156652ed171a1f7bc182cbdee19b74"'* ||
+    "${success_summary}" != *'"reused":false'* ]]; then
     echo "success: unexpected summary" >&2
+    exit 1
+fi
+if [[ "${success_summary}" != *'"worktree_state":"clean"'* &&
+    "${success_summary}" != *'"worktree_state":"dirty"'* ]]; then
+    echo "success: missing bounded worktree state" >&2
     exit 1
 fi
 success_log=$(find "${log_root}" -type f -name 'success.log.*' -print)

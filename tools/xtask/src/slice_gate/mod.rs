@@ -5,7 +5,7 @@ use std::{
 
 use model::{
     Approval, ApprovalResult, REQUEST_SCHEMA, RESULT_SCHEMA, Request, ResultDocument, ReviewResult,
-    Risk, ValidationResult, ValidationSummary,
+    Risk, ValidationResult,
 };
 
 use crate::{
@@ -19,6 +19,7 @@ use crate::{
 
 mod model;
 mod prepare;
+mod validation_summary;
 
 pub(crate) use prepare::run as prepare_request;
 
@@ -264,20 +265,15 @@ fn validation_results(
             &entry.result_hash,
             "validation result",
         )?;
-        let summary: ValidationSummary = serde_json::from_slice(&bytes)
-            .map_err(|error| format!("invalid validation result for `{}`: {error}", entry.name))?;
-        if summary.schema != "yo.validation-run-summary/v1"
-            || summary.name != entry.name
-            || !matches!(summary.status.as_str(), "passed" | "failed")
-            || (summary.status == "passed") != (summary.exit_code == 0)
-        {
-            return Err(format!(
-                "validation result `{}` has inconsistent summary fields",
-                entry.name
-            ));
-        }
+        let summary = validation_summary::verify(
+            &bytes,
+            &entry.name,
+            &entry.argv,
+            candidate,
+            entry.reused,
+        )
+        .map_err(|error| format!("invalid validation result for `{}`: {error}", entry.name))?;
         compact(&summary.log_path, 4096, "validation log path")?;
-        let _ = (summary.elapsed_seconds, summary.log_bytes);
         results.push(ValidationResult {
             name: entry.name.clone(),
             status: summary.status,

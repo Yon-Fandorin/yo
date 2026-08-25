@@ -34,6 +34,7 @@ repository=$(git rev-parse --show-toplevel 2>/dev/null) || {
 readonly repository
 readonly log_root="${YO_BOUNDED_VALIDATION_LOG_ROOT:-${repository}/.local-exclude/validation-runs}"
 readonly failure_tail_bytes=16384
+readonly command_argv_count=$#
 
 reject_control_bytes() {
     local label=$1
@@ -48,11 +49,75 @@ reject_control_bytes() {
 reject_control_bytes "repository path" "${repository}"
 reject_control_bytes "log root" "${log_root}"
 
+head_commit=$(git -C "${repository}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || {
+    echo "bounded validation: cannot resolve worktree HEAD" >&2
+    exit 64
+}
+readonly head_commit
+worktree_status=$(git -C "${repository}" status --porcelain=v1 --untracked-files=normal) || {
+    echo "bounded validation: cannot inspect worktree state" >&2
+    exit 64
+}
+readonly worktree_status
+if [[ -n "${worktree_status}" ]]; then
+    readonly worktree_state=dirty
+else
+    readonly worktree_state=clean
+fi
+
 umask 077
 mkdir -p "${log_root}"
 log_path=$(mktemp "${log_root}/${run_name}.log.XXXXXX")
 readonly log_path
 reject_control_bytes "log path" "${log_path}"
+
+if command -v sha256sum >/dev/null 2>&1; then
+    readonly sha256_tool=sha256sum
+elif command -v shasum >/dev/null 2>&1; then
+    readonly sha256_tool=shasum
+elif command -v openssl >/dev/null 2>&1; then
+    readonly sha256_tool=openssl
+else
+    echo "bounded validation: SHA-256 tool not found (expected sha256sum, shasum, or openssl)" >&2
+    exit 69
+fi
+
+sha256_file() {
+    local path=$1
+    case "${sha256_tool}" in
+        sha256sum)
+            sha256sum "${path}" | awk '{print $1}'
+            ;;
+        shasum)
+            shasum -a 256 "${path}" | awk '{print $1}'
+            ;;
+        openssl)
+            openssl dgst -sha256 "${path}" | awk '{print $NF}'
+            ;;
+    esac
+}
+
+argv_frame=$(mktemp "${log_root}/${run_name}.argv.XXXXXX")
+readonly argv_frame
+trap 'rm -f -- "${argv_frame}"' EXIT
+printf 'yo.validation-run-argv/v1alpha1\0' >"${argv_frame}"
+for argument in "$@"; do
+    argument_bytes=$(printf '%s' "${argument}" | wc -c)
+    argument_bytes=${argument_bytes//[[:space:]]/}
+    printf '%s:' "${argument_bytes}" >>"${argv_frame}"
+    printf '%s\0' "${argument}" >>"${argv_frame}"
+done
+command_argv_digest=$(sha256_file "${argv_frame}") || {
+    echo "bounded validation: cannot hash command arguments" >&2
+    exit 69
+}
+if [[ ! ${command_argv_digest} =~ ^[0-9a-f]{64}$ ]]; then
+    echo "bounded validation: SHA-256 tool returned a non-canonical argument digest" >&2
+    exit 69
+fi
+readonly command_argv_hash="sha256:${command_argv_digest}"
+rm -f -- "${argv_frame}"
+trap - EXIT
 
 started_at=$(date +%s)
 set +e
@@ -64,6 +129,15 @@ finished_at=$(date +%s)
 readonly elapsed_seconds=$((finished_at - started_at))
 log_bytes=$(wc -c <"${log_path}")
 readonly log_bytes="${log_bytes//[[:space:]]/}"
+log_digest=$(sha256_file "${log_path}") || {
+    echo "bounded validation: cannot hash complete log; complete log: ${log_path}" >&2
+    exit 69
+}
+if [[ ! ${log_digest} =~ ^[0-9a-f]{64}$ ]]; then
+    echo "bounded validation: SHA-256 tool returned a non-canonical log digest; complete log: ${log_path}" >&2
+    exit 69
+fi
+readonly log_hash="sha256:${log_digest}"
 
 if [[ "${log_path}" == "${repository}/"* ]]; then
     report_path=${log_path#"${repository}/"}
@@ -87,13 +161,18 @@ else
     result=failed
 fi
 
-printf '{"schema":"yo.validation-run-summary/v1","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s"}\n' \
+printf '{"schema":"yo.validation-run-summary/v1alpha1","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false}\n' \
     "$(json_escape "${run_name}")" \
     "${result}" \
     "${command_status}" \
     "${elapsed_seconds}" \
     "${log_bytes}" \
-    "$(json_escape "${report_path}")"
+    "$(json_escape "${report_path}")" \
+    "${log_hash}" \
+    "${head_commit}" \
+    "${worktree_state}" \
+    "${command_argv_count}" \
+    "${command_argv_hash}"
 
 if [[ ${command_status} -ne 0 ]]; then
     printf '%s\n' \

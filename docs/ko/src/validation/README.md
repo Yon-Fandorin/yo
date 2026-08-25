@@ -92,6 +92,15 @@ golden과 snapshot은 fixture의 정확한 Projection을 증명한다. 의도적
 반환한다. 실패하면 같은 summary와 마지막 diagnostic output 최대 16 KiB를 반환한다.
 그 tail만으로 소유 실패를 찾을 수 없을 때만 전체 local log를 확인한다.
 
+summary schema는 `yo.validation-run-summary/v1alpha1`이다. 실행을 시작할 때의
+`HEAD`, worktree가 clean이었는지, 정확한 command 인자 개수와 경계를 구분하는 hash,
+전체 log의 byte 수와 SHA-256을 기록한다. 따라서 Slice gate는 clean 후보의 결과를
+선언된 command와 자체 결속된 evidence로 비교할 수 있다. dirty summary는 local
+진단에는 쓸 수 있지만 후보 evidence로는 쓸 수 없다. 이 alpha는 항상
+`"reused":false`를 기록하며 이전 실행을 자동 탐색하거나 재사용하지 않는다. frozen
+`yo.validation-run-summary/v1` artifact는 legacy evidence로 gate 호환성을 유지하지만
+더 강한 실행 결속 정보는 없다.
+
 wrapper는 표시만 바꾸고 검증 의미는 바꾸지 않는다. log는 임시 운영 artifact다.
 필요한 실패 log는 finding이 미해결인 동안만 보존하고, 완료한 log는 Slice
 worktree와 함께 폐기한다.

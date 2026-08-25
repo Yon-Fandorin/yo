@@ -407,14 +407,16 @@ validation command names to match every and only its final validation
 artifacts, checks the current bound contract and clean candidate, validates the
 generated gate request, and re-reads all inputs before atomically publishing a
 new-or-byte-identical output. The same invocation returns the evaluated gate
-result. Current `yo.validation-run-summary/v1` bytes do not record their launch
-arguments, so the coordinator still supplies each exact `argv`; preparation
-binds that declaration to the reviewed summary but does not prove how the
-process was launched. When exact human approval is later recorded, add only its compact kind,
-authority, and scope to the preparation input and publish to a new output path;
-the command supplies the approved candidate and diff. It never executes a
-check, sends a review, interprets response prose, creates approval, commits, or
-integrates.
+result. New `yo.validation-run-summary/v1alpha1` evidence binds the launch
+`HEAD`, clean worktree state, exact `argv` hash, and complete-log hash; the gate
+verifies those fields against the candidate and declared command. Frozen
+`yo.validation-run-summary/v1` evidence remains accepted for compatibility but
+does not record its launch arguments, so its coordinator-supplied exact `argv`
+remains a declaration rather than launch proof. When exact human approval is
+later recorded, add only its compact kind, authority, and scope to the
+preparation input and publish to a new output path; the command supplies the
+approved candidate and diff. It never executes a check, sends a review,
+interprets response prose, creates approval, commits, or integrates.
 
 The gate does not execute validation, publish a review, interpret review prose,
 grant approval, commit, or integrate. It verifies the bound Slice and clean

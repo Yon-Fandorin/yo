@@ -97,6 +97,16 @@ summary line. A failed run returns the same summary and at most the final 16
 KiB of diagnostic output; inspect the complete local log only when that tail
 does not identify the owning failure.
 
+The summary schema is `yo.validation-run-summary/v1alpha1`. It records the
+launch `HEAD`, whether the worktree was clean, a boundary-aware hash and count
+of the exact command arguments, and the complete log's byte count and SHA-256.
+This makes a clean candidate's result self-binding when the Slice gate compares
+it with the declared command. A dirty summary remains useful for local
+diagnosis but is not candidate evidence. This alpha always reports
+`"reused":false`; it does not discover or reuse an earlier run automatically.
+Frozen `yo.validation-run-summary/v1` artifacts remain gate-compatible as
+legacy evidence but lack the stronger launch binding.
+
 The wrapper changes presentation, not validation semantics. Its logs are
 temporary operational artifacts: keep a required failure log only while the
 finding is unresolved and discard completed logs with the Slice worktree.
