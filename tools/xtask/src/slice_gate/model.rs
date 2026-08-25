@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 pub(super) const REQUEST_SCHEMA: &str = "yo.slice-gate-request/v1alpha1";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-gate-result/v1alpha1";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Request {
     pub(super) schema: String,
@@ -17,7 +17,7 @@ pub(super) struct Request {
     pub(super) approval: Option<Approval>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ValidationEvidence {
     pub(super) name: String,
@@ -28,7 +28,7 @@ pub(super) struct ValidationEvidence {
     pub(super) reused: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ReviewEvidence {
     pub(super) lens: String,
@@ -48,7 +48,7 @@ pub(super) struct Risk {
     pub(super) rationale: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Approval {
     pub(super) kind: String,

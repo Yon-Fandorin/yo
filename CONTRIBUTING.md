@@ -347,6 +347,75 @@ review entry carries the same candidate commit; every review and exact approval
 also carries the canonical base-to-candidate diff hash. Each referenced file is
 a bounded regular file with an exact `sha256:<hex>` hash.
 
+Do not copy those identities and hashes by hand when the candidate already has
+a published review-chain manifest. Prepare and evaluate the gate request from
+the existing artifacts instead:
+
+```bash
+cargo xtask slice gate prepare <prepare.json> <gate.json>
+```
+
+```json
+{
+  "schema": "yo.slice-gate-prepare-request/v1",
+  "manifest_path": ".local-exclude/methexis/slice-reviews/<id>/manifest.json",
+  "validation_commands": [
+    {
+      "name": "xtask",
+      "argv": ["cargo", "test", "--locked", "-p", "xtask"],
+      "reused": false
+    }
+  ],
+  "review_runs": [
+    {
+      "source": {
+        "kind": "delivery_receipt",
+        "receipt_path": ".local-exclude/coordination/<slice>/delivery.json",
+        "class": "model-high"
+      },
+      "result_path": ".local-exclude/coordination/<slice>/review.txt",
+      "verdicts": [
+        {"lens": "fresh-context", "verdict": "clear"},
+        {"lens": "code-quality", "verdict": "clear"}
+      ]
+    }
+  ],
+  "known_unverified_environments": [],
+  "risk": {
+    "classification": "human-attention",
+    "rationale": "changes workflow authority"
+  },
+  "approval": null
+}
+```
+
+The compact `yo.slice-gate-prepare-request/v1` input names the review-chain
+manifest, each reviewed validation name with its original command and reuse
+disposition, each final response with its lens verdicts, risk, and optional
+approval. A model review source should name its
+`yo.external-review-delivery-receipt/v1` and declare only whether the selected
+route satisfies `model` or `model-high`; the command derives provider, model,
+Session, reviewer, candidate, diff, artifact hashes, and required lenses. A
+human or repository-local agent review without a Provider receipt uses
+`{"kind":"declared_route","route":"human/<identity>"}` or the exact recorded
+model route. Delivery receipts remain local operational assertions rather than
+Provider-authenticated proof, so the coordinator still owns their factual
+accuracy.
+
+Preparation replays the complete original-or-delta review chain, requires the
+validation command names to match every and only its final validation
+artifacts, checks the current bound contract and clean candidate, validates the
+generated gate request, and re-reads all inputs before atomically publishing a
+new-or-byte-identical output. The same invocation returns the evaluated gate
+result. Current `yo.validation-run-summary/v1` bytes do not record their launch
+arguments, so the coordinator still supplies each exact `argv`; preparation
+binds that declaration to the reviewed summary but does not prove how the
+process was launched. When exact human approval is later recorded, add only its compact kind,
+authority, and scope to the preparation input and publish to a new output path;
+the command supplies the approved candidate and diff. It never executes a
+check, sends a review, interprets response prose, creates approval, commits, or
+integrates.
+
 The gate does not execute validation, publish a review, interpret review prose,
 grant approval, commit, or integrate. It verifies the bound Slice and clean
 `HEAD`, derives the minimum path-based lenses from the ordinary review-impact

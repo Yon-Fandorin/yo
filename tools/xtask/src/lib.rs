@@ -68,10 +68,23 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
 }
 
 fn run_slice_gate(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
-    let request = arguments
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(slice_gate_usage)?;
+    let first = arguments.next().ok_or_else(slice_gate_usage)?;
+    if first == "prepare" {
+        let request = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(slice_gate_usage)?;
+        let output = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(slice_gate_usage)?;
+        if arguments.next().is_some() {
+            return Err(slice_gate_usage());
+        }
+        let repository = current_repository()?;
+        return slice_gate::prepare_request(&repository, &request, &output);
+    }
+    let request = PathBuf::from(first);
     if arguments.next().is_some() {
         return Err(slice_gate_usage());
     }
@@ -405,6 +418,7 @@ fn general_usage() -> String {
      cargo xtask slice review-delta <request.json>\n\
      cargo xtask slice review-egress <request.json>\n\
      cargo xtask slice gate <request.json>\n\
+     cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
      cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
      cargo xtask slice commit <commit-message-file>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
@@ -441,7 +455,7 @@ fn slice_close_usage() -> String {
 }
 
 fn slice_gate_usage() -> String {
-    "usage: cargo xtask slice gate <request.json>".to_owned()
+    "usage: cargo xtask slice gate <request.json>\n       cargo xtask slice gate prepare <prepare.json> <gate.json>".to_owned()
 }
 
 fn slice_commit_usage() -> String {
@@ -480,6 +494,7 @@ mod cli_tests {
              cargo xtask slice review-delta <request.json>\n\
              cargo xtask slice review-egress <request.json>\n\
              cargo xtask slice gate <request.json>\n\
+             cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
              cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
              cargo xtask slice commit <commit-message-file>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
@@ -624,6 +639,29 @@ mod cli_tests {
             run(["slice", "gate", "request.json", "extra.json"].map(Into::into)).unwrap_err();
 
         assert_eq!(missing, slice_gate_usage());
+        assert_eq!(extra, slice_gate_usage());
+    }
+
+    // gate preparation은 compact source request와 별도의 immutable gate output 경로를
+    // 정확히 하나씩 요구하여 누락·덮어쓰기·추가 입력을 명령 경계에서 거부한다.
+    #[test]
+    fn slice_gate_prepare_requires_request_and_output() {
+        let missing_both = run(["slice", "gate", "prepare"].map(Into::into)).unwrap_err();
+        let missing_output =
+            run(["slice", "gate", "prepare", "prepare.json"].map(Into::into)).unwrap_err();
+        let extra = run([
+            "slice",
+            "gate",
+            "prepare",
+            "prepare.json",
+            "gate.json",
+            "extra.json",
+        ]
+        .map(Into::into))
+        .unwrap_err();
+
+        assert_eq!(missing_both, slice_gate_usage());
+        assert_eq!(missing_output, slice_gate_usage());
         assert_eq!(extra, slice_gate_usage());
     }
 

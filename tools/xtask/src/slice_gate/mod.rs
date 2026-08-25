@@ -18,6 +18,9 @@ use crate::{
 };
 
 mod model;
+mod prepare;
+
+pub(crate) use prepare::run as prepare_request;
 
 #[cfg(test)]
 mod tests;

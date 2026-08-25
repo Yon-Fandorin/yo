@@ -48,6 +48,13 @@ struct CapturedDeliveryReceipt {
     bytes: Vec<u8>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedDeliveryRoute {
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) session_id: String,
+}
+
 struct FinalRevalidation<'a> {
     request_path: &'a Path,
     request_bytes: &'a [u8],
@@ -458,6 +465,72 @@ fn capture_prior_delivery(
         );
     }
     Ok(Some(CapturedDeliveryReceipt { path, bytes }))
+}
+
+pub(crate) fn verify_completed_delivery(
+    repository: &Path,
+    receipt_path: &Path,
+    review: &VerifiedReview,
+) -> Result<VerifiedDeliveryRoute, String> {
+    let path = resolve_input_path(repository, &receipt_path.to_string_lossy());
+    let bytes = bounded_file::read_regular(
+        &path,
+        DELIVERY_RECEIPT_LIMIT,
+        "external review delivery receipt",
+    )?;
+    let receipt = parse_delivery_receipt(&bytes, "external review delivery receipt")?;
+    require_delivery_matches(
+        &receipt,
+        &review.review_id,
+        &review.packet_hash,
+        "external review delivery receipt does not match the reviewed packet",
+    )?;
+    Ok(VerifiedDeliveryRoute {
+        provider: receipt.route.provider,
+        model: receipt.route.model,
+        session_id: receipt.session_id,
+    })
+}
+
+fn parse_delivery_receipt(bytes: &[u8], label: &str) -> Result<DeliveryReceipt, String> {
+    let receipt: DeliveryReceipt =
+        serde_json::from_slice(bytes).map_err(|error| format!("invalid {label}: {error}"))?;
+    if receipt.schema != DELIVERY_RECEIPT_SCHEMA {
+        return Err(format!(
+            "unsupported delivery receipt schema `{}`; expected `{DELIVERY_RECEIPT_SCHEMA}`",
+            receipt.schema
+        ));
+    }
+    require_sha256(&receipt.review_id, "delivery ReviewId")?;
+    require_sha256(&receipt.packet_hash, "delivery packet hash")?;
+    validate_route(&receipt.route)?;
+    compact_token(
+        &receipt.session_id,
+        MAX_SESSION_ID_BYTES,
+        "delivery session id",
+    )?;
+    compact_token(
+        &receipt.provider_request_id,
+        256,
+        "delivery provider request id",
+    )?;
+    if receipt.provider_request_count != 1 {
+        return Err("delivery receipt must record exactly one provider request".to_owned());
+    }
+    Ok(receipt)
+}
+
+fn require_delivery_matches(
+    receipt: &DeliveryReceipt,
+    review_id: &str,
+    packet_hash: &str,
+    mismatch: &str,
+) -> Result<(), String> {
+    if receipt.review_id != review_id || receipt.packet_hash != packet_hash {
+        Err(mismatch.to_owned())
+    } else {
+        Ok(())
+    }
 }
 
 fn final_revalidate(
