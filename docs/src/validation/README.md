@@ -107,6 +107,23 @@ diagnosis but is not candidate evidence. This alpha always reports
 Frozen `yo.validation-run-summary/v1` artifacts remain gate-compatible as
 legacy evidence but lack the stronger launch binding.
 
+To retain a summary for review and gate preparation without copying stdout,
+create its ignored parent and publish it directly:
+
+```bash
+mkdir -p .local-exclude/coordination/<slice>/validation
+bash tools/validation/bounded-run.sh \
+  --summary-out .local-exclude/coordination/<slice>/validation/workspace-tests.json \
+  workspace-tests -- cargo test --workspace --all-targets
+```
+
+The output file and stdout line are byte-identical. Publication is atomic and
+create-only: a missing parent or existing target stops before the validation
+command, and a concurrent target collision is never overwritten. Add the
+published file to the immutable review packet so its manifest supplies the
+path and hash to `slice gate prepare`. This stores new evidence only; it does
+not reuse an earlier result.
+
 The wrapper changes presentation, not validation semantics. Its logs are
 temporary operational artifacts: keep a required failure log only while the
 finding is unresolved and discard completed logs with the Slice worktree.

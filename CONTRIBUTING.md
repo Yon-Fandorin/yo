@@ -352,6 +352,24 @@ a published review-chain manifest. Prepare and evaluate the gate request from
 the existing artifacts instead:
 
 ```bash
+mkdir -p .local-exclude/coordination/<slice>/validation
+bash tools/validation/bounded-run.sh \
+  --summary-out .local-exclude/coordination/<slice>/validation/xtask.json \
+  xtask -- cargo test --locked -p xtask
+```
+
+`--summary-out` atomically creates a file byte-identical to the one-line
+stdout summary. Its parent must already exist, and an existing target stops
+before validation rather than being overwritten or causing a duplicate run.
+Include that file as validation evidence in the immutable review packet; the
+review-chain manifest and gate preparation then derive its path and hash.
+The option changes storage only: it neither changes
+`yo.validation-run-summary/v1alpha1` bytes nor discovers or reuses a prior
+result.
+
+Then prepare the gate request:
+
+```bash
 cargo xtask slice gate prepare <prepare.json> <gate.json>
 ```
 

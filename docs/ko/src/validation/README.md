@@ -101,6 +101,22 @@ summary schema는 `yo.validation-run-summary/v1alpha1`이다. 실행을 시작�
 `yo.validation-run-summary/v1` artifact는 legacy evidence로 gate 호환성을 유지하지만
 더 강한 실행 결속 정보는 없다.
 
+stdout을 복사하지 않고 review와 gate preparation에 쓸 summary를 보존하려면 ignored
+부모 디렉터리를 만들고 직접 발행한다.
+
+```bash
+mkdir -p .local-exclude/coordination/<slice>/validation
+bash tools/validation/bounded-run.sh \
+  --summary-out .local-exclude/coordination/<slice>/validation/workspace-tests.json \
+  workspace-tests -- cargo test --workspace --all-targets
+```
+
+output file과 stdout 한 줄은 byte-identical하다. 발행은 atomic create-only다. 부모가
+없거나 target이 이미 있으면 validation command 전에 중단하고, 동시에 생긴 target도
+덮어쓰지 않는다. 발행한 파일을 immutable review packet에 추가하면 manifest가 경로와
+hash를 `slice gate prepare`에 제공한다. 이는 새 evidence 저장만 수행하며 이전 결과를
+재사용하지 않는다.
+
 wrapper는 표시만 바꾸고 검증 의미는 바꾸지 않는다. log는 임시 운영 artifact다.
 필요한 실패 log는 finding이 미해결인 동안만 보존하고, 완료한 log는 Slice
 worktree와 함께 폐기한다.

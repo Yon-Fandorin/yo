@@ -2,8 +2,18 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 <run-name> -- <command> [args...]" >&2
+    echo "usage: $0 [--summary-out <path>] <run-name> -- <command> [args...]" >&2
 }
+
+summary_out=""
+if [[ ${1:-} == "--summary-out" ]]; then
+    if [[ $# -lt 2 || -z $2 ]]; then
+        usage
+        exit 64
+    fi
+    summary_out=$2
+    shift 2
+fi
 
 if [[ $# -lt 3 ]]; then
     usage
@@ -48,6 +58,30 @@ reject_control_bytes() {
 
 reject_control_bytes "repository path" "${repository}"
 reject_control_bytes "log root" "${log_root}"
+if [[ -n ${summary_out} ]]; then
+    reject_control_bytes "summary output path" "${summary_out}"
+    if [[ ${summary_out} != /* ]]; then
+        invocation_directory=$(pwd -P) || {
+            echo "bounded validation: cannot resolve invocation directory" >&2
+            exit 64
+        }
+        summary_out="${invocation_directory}/${summary_out}"
+    fi
+    reject_control_bytes "resolved summary output path" "${summary_out}"
+    readonly summary_out
+    summary_parent=${summary_out%/*}
+    if [[ -z ${summary_parent} ]]; then
+        summary_parent=/
+    fi
+    if [[ ! -d ${summary_parent} ]]; then
+        echo "bounded validation: summary output parent must already exist: ${summary_parent}" >&2
+        exit 73
+    fi
+    if [[ -e ${summary_out} || -L ${summary_out} ]]; then
+        echo "bounded validation: summary output already exists: ${summary_out}" >&2
+        exit 73
+    fi
+fi
 
 head_commit=$(git -C "${repository}" rev-parse --verify 'HEAD^{commit}' 2>/dev/null) || {
     echo "bounded validation: cannot resolve worktree HEAD" >&2
@@ -161,7 +195,7 @@ else
     result=failed
 fi
 
-printf '{"schema":"yo.validation-run-summary/v1alpha1","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false}\n' \
+printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha1","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false}' \
     "$(json_escape "${run_name}")" \
     "${result}" \
     "${command_status}" \
@@ -173,6 +207,42 @@ printf '{"schema":"yo.validation-run-summary/v1alpha1","name":"%s","status":"%s"
     "${worktree_state}" \
     "${command_argv_count}" \
     "${command_argv_hash}"
+readonly summary_line
+
+if [[ -n ${summary_out} ]]; then
+    summary_temp=$(mktemp "${summary_parent}/.yo-validation-summary.XXXXXX") || {
+        echo "bounded validation: cannot prepare summary output: ${summary_out}" >&2
+        exit 73
+    }
+    readonly summary_temp
+    trap 'rm -f -- "${summary_temp}"' EXIT
+    if ! printf '%s\n' "${summary_line}" >"${summary_temp}"; then
+        echo "bounded validation: cannot write summary output: ${summary_out}" >&2
+        exit 73
+    fi
+    if ! ln "${summary_temp}" "${summary_out}" 2>/dev/null; then
+        echo "bounded validation: cannot atomically create summary output: ${summary_out}" >&2
+        exit 73
+    fi
+    if [[ ! -f ${summary_out} || ! ${summary_temp} -ef ${summary_out} ]]; then
+        nested_summary="${summary_out}/${summary_temp##*/}"
+        if [[ -f ${nested_summary} && ${summary_temp} -ef ${nested_summary} ]]; then
+            if ! rm -f -- "${nested_summary}"; then
+                echo "bounded validation: cannot clean misplaced summary link: ${nested_summary}" >&2
+                exit 73
+            fi
+        fi
+        echo "bounded validation: cannot atomically create summary output: ${summary_out}" >&2
+        exit 73
+    fi
+    if ! rm -f -- "${summary_temp}"; then
+        echo "bounded validation: summary published but temporary link cleanup failed: ${summary_temp}" >&2
+        exit 73
+    fi
+    trap - EXIT
+fi
+
+printf '%s\n' "${summary_line}"
 
 if [[ ${command_status} -ne 0 ]]; then
     printf '%s\n' \

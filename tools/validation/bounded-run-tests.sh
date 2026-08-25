@@ -9,6 +9,8 @@ trap 'rm -rf "${fixture}"' EXIT
 
 readonly log_root="${fixture}/logs"
 mkdir -p "${log_root}"
+readonly summary_root="${fixture}/summaries"
+mkdir -p "${summary_root}"
 readonly system_mktemp="$(command -v mktemp)"
 mkdir -p "${fixture}/bin"
 cat >"${fixture}/bin/mktemp" <<'EOF'
@@ -45,12 +47,16 @@ fi
 PATH="${fixture}/bin:${PATH}" \
 SYSTEM_MKTEMP="${system_mktemp}" \
 YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
-    bash "${checker}" success -- bash -c \
+    bash "${checker}" --summary-out "${summary_root}/success.json" success -- bash -c \
     'printf "visible only in the full log\n"; printf "diagnostic\n" >&2' \
     >"${fixture}/success.out" 2>"${fixture}/success.err"
 
 if [[ -s "${fixture}/success.err" ]]; then
     echo "success: wrapper must keep command output out of stderr" >&2
+    exit 1
+fi
+if ! cmp -s "${fixture}/success.out" "${summary_root}/success.json"; then
+    echo "success: published summary must be byte-identical to stdout" >&2
     exit 1
 fi
 if [[ $(wc -l <"${fixture}/success.out") -ne 1 ]]; then
@@ -85,7 +91,7 @@ set +e
 PATH="${fixture}/bin:${PATH}" \
 SYSTEM_MKTEMP="${system_mktemp}" \
 YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
-    bash "${checker}" failure -- bash -c \
+    bash "${checker}" --summary-out "${summary_root}/failure.json" failure -- bash -c \
     'printf "BEGIN-OF-FULL-LOG\n"; head -c 20000 /dev/zero | tr "\0" x; printf "\nEND-OF-FULL-LOG\n"; exit 7' \
     >"${fixture}/failure.out" 2>"${fixture}/failure.err"
 failure_status=$?
@@ -93,6 +99,10 @@ set -e
 
 if [[ ${failure_status} -ne 7 ]]; then
     echo "failure: wrapper did not preserve command status" >&2
+    exit 1
+fi
+if ! cmp -s "${fixture}/failure.out" "${summary_root}/failure.json"; then
+    echo "failure: published summary must preserve the failed child result" >&2
     exit 1
 fi
 failure_summary=$(<"${fixture}/failure.out")
@@ -144,6 +154,76 @@ if [[ ${control_status} -ne 64 || -e "${fixture}/control-ran" ||
 fi
 if ! grep -q 'log root contains unsupported control bytes' "${fixture}/control.err"; then
     echo "control path: expected a focused diagnostic" >&2
+    exit 1
+fi
+
+printf '%s\n' 'existing summary' >"${summary_root}/existing.json"
+set +e
+YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+    bash "${checker}" --summary-out "${summary_root}/existing.json" collision -- \
+    bash -c 'touch "$1"' _ "${fixture}/collision-ran" \
+    >"${fixture}/collision.out" 2>"${fixture}/collision.err"
+collision_status=$?
+set -e
+
+if [[ ${collision_status} -ne 73 || -e "${fixture}/collision-ran" ||
+    -s "${fixture}/collision.out" ||
+    "$(<"${summary_root}/existing.json")" != 'existing summary' ]]; then
+    echo "summary collision: existing evidence must stop before the child and remain unchanged" >&2
+    exit 1
+fi
+if ! grep -q 'summary output already exists' "${fixture}/collision.err"; then
+    echo "summary collision: expected a focused diagnostic" >&2
+    exit 1
+fi
+
+set +e
+YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+    bash "${checker}" --summary-out "${fixture}/missing/summary.json" missing-parent -- \
+    bash -c 'touch "$1"' _ "${fixture}/missing-parent-ran" \
+    >"${fixture}/missing-parent.out" 2>"${fixture}/missing-parent.err"
+missing_parent_status=$?
+set -e
+
+if [[ ${missing_parent_status} -ne 73 || -e "${fixture}/missing-parent-ran" ||
+    -e "${fixture}/missing" || -s "${fixture}/missing-parent.out" ]]; then
+    echo "missing parent: publication must fail before filesystem or child effects" >&2
+    exit 1
+fi
+if ! grep -q 'summary output parent must already exist' "${fixture}/missing-parent.err"; then
+    echo "missing parent: expected a focused diagnostic" >&2
+    exit 1
+fi
+
+mkdir -p "${fixture}/race-bin"
+system_ln=$(command -v ln)
+cat >"${fixture}/race-bin/ln" <<'EOF'
+#!/usr/bin/env bash
+mkdir -- "$2"
+exec "${SYSTEM_LN}" "$@"
+EOF
+chmod +x "${fixture}/race-bin/ln"
+
+set +e
+PATH="${fixture}/race-bin:${fixture}/bin:${PATH}" \
+SYSTEM_LN="${system_ln}" \
+SYSTEM_MKTEMP="${system_mktemp}" \
+YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+    bash "${checker}" --summary-out "${summary_root}/raced-directory.json" raced-directory -- true \
+    >"${fixture}/raced-directory.out" 2>"${fixture}/raced-directory.err"
+raced_directory_status=$?
+set -e
+raced_directory_entries=$(ls -A "${summary_root}/raced-directory.json")
+
+if [[ ${raced_directory_status} -ne 73 ||
+    ! -d "${summary_root}/raced-directory.json" ||
+    -n ${raced_directory_entries} ||
+    -s "${fixture}/raced-directory.out" ]]; then
+    echo "raced directory: publication must fail without leaving a nested summary" >&2
+    exit 1
+fi
+if ! grep -q 'cannot atomically create summary output' "${fixture}/raced-directory.err"; then
+    echo "raced directory: expected a focused diagnostic" >&2
     exit 1
 fi
 
