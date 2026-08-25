@@ -2243,6 +2243,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tiktoken-rs",
+ "yo-core",
 ]
 
 [[package]]

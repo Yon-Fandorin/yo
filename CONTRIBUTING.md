@@ -914,6 +914,63 @@ another preflight run as permission to resend. Terminal input that ended
 before a durable provider request remains a delivery-system diagnostic and is
 not silently retried under this authorization.
 
+For one original packet in a fresh Session, perform the authorized effect with
+the bounded repository delivery command instead of terminal paste, pane
+capture, or direct Session JSONL inspection. Create one empty output directory
+under the active Slice's shared coordination directory, then bind it and the
+exact egress request in a new experimental request:
+
+```json
+{
+  "schema": "yo.slice-review-delivery-request/v1alpha1",
+  "egress_request_path": ".local-exclude/coordination/<slice>/egress.json",
+  "egress_request_hash": "sha256:<egress-request-hash>",
+  "output_directory": ".local-exclude/coordination/<slice>/delivery"
+}
+```
+
+Run it once from the clean candidate worktree:
+
+```bash
+cargo xtask slice review-deliver <delivery-request.json>
+```
+
+The command replays `review-egress` authorization before and after preparing
+the runtime, resolves the sole checked-out clean integration worktree at the
+review manifest's trusted commit (including absence of non-ignored untracked
+files), and builds that exact current-integration `yo`. It
+then publishes an immutable `yo.external-review-delivery-claim/v1alpha1`
+before process launch and pipes the already verified packet bytes directly to
+one `yo -p --model <provider>:<account>:<model> --no-tools` process with a
+30-minute outer deadline. It uses an isolated durable Session repository
+inside the output directory and writes bounded `review.txt` and
+`diagnostic.txt` files rather than copying packet, terminal, or raw Session
+content into coordinator context.
+
+After process completion, the command reads that isolated repository through
+`yo-core`, requires exactly one byte-identical packet `StartTurn`, the exact
+authorized managed Provider/Account/Model binding, one durable accepted
+request, and one resumable Provider outcome. An outcome without its own stable
+identity uses that accepted request identity, as required by the durable
+Session contract. After a claim, setup, spawn, write, exit, timeout, capture,
+publication, and durable-observation failures are folded into a compact
+`yo.external-review-delivery-outcome/v1alpha1` whenever that output can still
+be published; each result or diagnostic artifact says whether its bytes were
+published. Only the fully successful path also publishes the frozen
+`yo.external-review-delivery-receipt/v1` consumed by finding-resolution and
+Slice-gate preparation, then returns `next_action: "interpret_review"`.
+
+The claim is intentionally not idempotent: once it exists, the same output
+directory can never authorize another launch, even when the process failed,
+the terminal disappeared, or durable request evidence is incomplete. Inspect
+the bounded outcome and request new human authority for any replacement; never
+delete or rename the claim to manufacture a retry. Build and preflight failures
+that occur before claim publication perform no Provider effect and may be
+corrected normally. The initial v1alpha1 delivery path supports only an
+original packet in a fresh managed-model Session. Finding-resolution resume,
+delegated hosts, print continuation, retry, steer, fallback, a second Provider,
+and tool execution remain outside this effect.
+
 Because a self-hosting diff may contain the wrapper's own sentinel source,
 v1alpha2 section metadata names its reversible sentinel-escape profile. The
 encoding doubles literal backslashes and replaces the first less-than byte of

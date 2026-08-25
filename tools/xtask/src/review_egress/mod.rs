@@ -55,6 +55,24 @@ pub(crate) struct VerifiedDeliveryRoute {
     pub(crate) session_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AuthorizedDelivery {
+    pub(crate) request_id: String,
+    pub(crate) authorization_id: String,
+    pub(crate) authority: String,
+    pub(crate) review_kind: &'static str,
+    pub(crate) review_id: String,
+    pub(crate) candidate_commit: String,
+    pub(crate) trusted_commit: String,
+    pub(crate) packet_hash: String,
+    pub(crate) packet_bytes: Vec<u8>,
+    pub(crate) managed_payload_tokens: usize,
+    pub(crate) provider: String,
+    pub(crate) account: String,
+    pub(crate) model: String,
+    pub(crate) fresh_session: bool,
+}
+
 struct FinalRevalidation<'a> {
     request_path: &'a Path,
     request_bytes: &'a [u8],
@@ -82,11 +100,29 @@ fn evaluate(repository: &Path, request_path: &Path) -> Result<ResultDocument, St
     })
 }
 
+pub(crate) fn authorize_delivery(
+    repository: &Path,
+    request_path: &Path,
+) -> Result<AuthorizedDelivery, String> {
+    authorize_with(repository, request_path, &|repository, manifest, hash| {
+        review_delta::verify_chain_head(repository, manifest, hash, &mut BTreeSet::new(), 0)
+    })
+    .map(|(_, delivery)| delivery)
+}
+
 fn evaluate_with(
     repository: &Path,
     request_path: &Path,
     verify: &dyn Fn(&Path, &Path, &str) -> Result<VerifiedReview, String>,
 ) -> Result<ResultDocument, String> {
+    authorize_with(repository, request_path, verify).map(|(document, _)| document)
+}
+
+fn authorize_with(
+    repository: &Path,
+    request_path: &Path,
+    verify: &dyn Fn(&Path, &Path, &str) -> Result<VerifiedReview, String>,
+) -> Result<(ResultDocument, AuthorizedDelivery), String> {
     let request_bytes =
         bounded_file::read_regular(request_path, REQUEST_LIMIT, "Slice review egress request")?;
     let request: Request = serde_json::from_slice(&request_bytes).map_err(|error| {
@@ -169,13 +205,35 @@ fn evaluate_with(
         verify,
     )?;
 
-    Ok(ResultDocument {
+    let request_id = digest(&request_bytes);
+    let authorization_id = digest(&authorization_bytes);
+    let review_kind = match classification.kind {
+        ReviewKind::Original => "original",
+        ReviewKind::FindingResolution => "finding_resolution",
+    };
+    let delivery = AuthorizedDelivery {
+        request_id: request_id.clone(),
+        authorization_id: authorization_id.clone(),
+        authority: authorization.authority.clone(),
+        review_kind,
+        review_id: verified.review_id.clone(),
+        candidate_commit: verified.candidate_commit.clone(),
+        trusted_commit: verified.trusted_commit.clone(),
+        packet_hash: verified.packet_hash.clone(),
+        packet_bytes: packet_bytes.clone(),
+        managed_payload_tokens: manifest.packet.managed_payload_tokens,
+        provider: request.route.provider.clone(),
+        account: request.route.account.clone(),
+        model: request.route.model.clone(),
+        fresh_session: matches!(request.session, Session::Fresh),
+    };
+    let document = ResultDocument {
         schema: RESULT_SCHEMA,
         ok: true,
         status: "authorized",
         next_action: "deliver_once",
-        request_id: digest(&request_bytes),
-        authorization_id: digest(&authorization_bytes),
+        request_id,
+        authorization_id,
         authority: authorization.authority,
         review_kind: classification.kind,
         review_id: verified.review_id,
@@ -197,7 +255,8 @@ fn evaluate_with(
             second_provider: false,
             tool_execution: false,
         },
-    })
+    };
+    Ok((document, delivery))
 }
 
 fn validate_request(request: &Request) -> Result<(), String> {
