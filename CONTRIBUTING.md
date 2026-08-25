@@ -693,6 +693,108 @@ capture and rendering code stays version-neutral. A compatibility test must
 replay a discriminating artifact accepted by the frozen version and show that
 the new version applies only its own stronger rule.
 
+When the human has granted a standing external-review authorization, check it
+against the exact published packet before asking for another egress approval:
+
+```json
+{
+  "schema": "yo.external-review-standing-authorization/v1",
+  "authority": "human/<owner>",
+  "status": "active",
+  "routes": [
+    {
+      "provider": "<provider>",
+      "account": "<account>",
+      "model": "<model>",
+      "max_packet_bytes": 1000000,
+      "max_managed_payload_tokens": 200000,
+      "allow_original_fresh": true,
+      "allow_finding_resolution_resume": true
+    }
+  ]
+}
+```
+
+Keep this human-origin record outside Git at the one common-workspace path
+`<Git-common-dir-parent>/.local-exclude/authorizations/external-review.json`.
+Every worktree reads that current canonical file; copies and caller-selected
+paths are ineligible. Create, replace, activate, or revoke it only from an
+explicit human statement that names the exact routes and limits; a
+Slice disposition, `go`, earlier delivery, or agent-authored proposal is not
+standing egress authority. Removing the file or changing `status` from
+`active` revokes it. The v1 semantics always exclude reviewer tool execution,
+retry, steer, fallback, a second provider, and every additional provider
+request. They permit at most one original packet in a fresh Session and one
+direct finding-resolution packet resumed in that same reviewer Session. A
+second delta, changed lens or scope, replacement route, unavailable-provider
+substitution, or larger packet requires a new explicit human decision.
+
+Bind one published manifest, the exact authorization bytes, route, and Session
+mode in a transient request:
+
+```json
+{
+  "schema": "yo.slice-review-egress-request/v1",
+  "manifest_path": ".local-exclude/methexis/slice-reviews/<id>/manifest.json",
+  "manifest_hash": "sha256:<manifest-hash>",
+  "authorization_hash": "sha256:<authorization-hash>",
+  "route": {
+    "provider": "<provider>",
+    "account": "<account>",
+    "model": "<model>"
+  },
+  "session": {"mode": "fresh"}
+}
+```
+
+After the original provider request durably starts, the coordinator records
+the exact identity observed from Yo's durable StartTurn and Session evidence
+before preparing a finding-resolution request:
+
+```json
+{
+  "schema": "yo.external-review-delivery-receipt/v1",
+  "review_id": "sha256:<original-review-id>",
+  "packet_hash": "sha256:<original-packet-hash>",
+  "route": {
+    "provider": "<provider>",
+    "account": "<account>",
+    "model": "<model>"
+  },
+  "session_id": "<returned-reviewer-session>",
+  "provider_request_id": "<returned-request-identity>",
+  "provider_request_count": 1
+}
+```
+
+This receipt is a local operational assertion, not authority. The preflight
+proves only its exact bytes and internal consistency; it cannot authenticate
+Provider provenance or prove the request count. The coordinator owns comparing
+the fields with Yo's durable evidence and must not create the receipt before a
+provider request starts. Bind its path and exact hash as `prior_delivery` in
+the delta egress request, and use
+`{"mode":"resume","id":"<same-reviewer-session>"}` only for that one direct
+finding-resolution packet. The preflight rejects a different route, Session,
+ReviewId, packet hash, absent request identity, or request count other than
+one. Then run:
+
+```bash
+cargo xtask slice review-egress <request.json>
+```
+
+The command replays the complete original-or-delta manifest chain, verifies
+the immutable packet, exact human-origin authorization hash, route, Session
+mode, prior delivery receipt when required, byte and token limits, then replays
+the complete chain again for final input and trusted-Git stability. It performs
+no network or provider operation. `next_action: "deliver_once"` removes a
+repeated human prompt only when the coordinator also observes that this exact
+ReviewId, route, and Session step has no prior provider request. It is an
+eligibility result, not a reusable delivery receipt: after a provider request
+starts, record the returned Session/request evidence and never interpret
+another preflight run as permission to resend. Terminal input that ended
+before a durable provider request remains a delivery-system diagnostic and is
+not silently retried under this authorization.
+
 Because a self-hosting diff may contain the wrapper's own sentinel source,
 v1alpha2 section metadata names its reversible sentinel-escape profile. The
 encoding doubles literal backslashes and replaces the first less-than byte of

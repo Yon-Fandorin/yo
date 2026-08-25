@@ -23,14 +23,14 @@ use crate::review_protocol::{
     Captured, digest, domain_digest, relative, require_commit, resolve_input_path,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedEvidence {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) hash: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct VerifiedReview {
     pub(crate) review_id: String,
     pub(crate) manifest_path: String,

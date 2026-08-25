@@ -23,7 +23,7 @@ use crate::{
     review_protocol::{artifact, digest, domain_digest, relative, resolve_input_path},
 };
 
-pub(super) fn verify_chain_head(
+pub(crate) fn verify_chain_head(
     repository: &Path,
     manifest_path: &Path,
     expected_hash: &str,

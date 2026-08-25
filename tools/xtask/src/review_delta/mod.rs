@@ -8,6 +8,8 @@ mod request;
 mod v1;
 mod v1alpha1;
 
+pub(crate) use chain::verify_chain_head;
+
 #[cfg(test)]
 mod tests;
 
@@ -18,7 +20,6 @@ use self::{
         capture_published, captured, require_current_file, require_current_packet,
         require_named_captures,
     },
-    chain::verify_chain_head,
     evidence::{
         TransitionContext, capture_prior_findings, capture_validation, require_exact_finding_set,
         sorted_findings, validate_transition,

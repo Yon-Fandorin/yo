@@ -4,6 +4,7 @@ mod docs_translation;
 mod git;
 mod impact;
 mod review_delta;
+mod review_egress;
 mod review_packet;
 mod review_protocol;
 mod slice_close;
@@ -50,6 +51,9 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     }
     if scope == "review-delta" {
         return run_review_delta(arguments);
+    }
+    if scope == "review-egress" {
+        return run_review_egress(arguments);
     }
     if scope == "close" {
         return run_slice_close(arguments);
@@ -160,6 +164,18 @@ fn run_review_delta(arguments: &mut impl Iterator<Item = OsString>) -> Result<()
     }
     let repository = current_repository()?;
     review_delta::run(&repository, &request)
+}
+
+fn run_review_egress(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(review_egress_usage)?;
+    if arguments.next().is_some() {
+        return Err(review_egress_usage());
+    }
+    let repository = current_repository()?;
+    review_egress::run(&repository, &request)
 }
 
 fn run_slice_close(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -387,6 +403,7 @@ fn general_usage() -> String {
      cargo xtask slice create-activation <request.json>\n\
      cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
      cargo xtask slice review-delta <request.json>\n\
+     cargo xtask slice review-egress <request.json>\n\
      cargo xtask slice gate <request.json>\n\
      cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
      cargo xtask slice commit <commit-message-file>\n\
@@ -415,6 +432,10 @@ fn review_delta_usage() -> String {
     "usage: cargo xtask slice review-delta <request.json>".to_owned()
 }
 
+fn review_egress_usage() -> String {
+    "usage: cargo xtask slice review-egress <request.json>".to_owned()
+}
+
 fn slice_close_usage() -> String {
     "usage: cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>".to_owned()
 }
@@ -441,7 +462,8 @@ mod cli_tests {
 
     use super::{
         activation_slice_usage, docs_accept_translation_usage, review_delta_usage,
-        review_packet_usage, run, slice_close_usage, slice_commit_usage, slice_gate_usage,
+        review_egress_usage, review_packet_usage, run, slice_close_usage, slice_commit_usage,
+        slice_gate_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -456,6 +478,7 @@ mod cli_tests {
              cargo xtask slice create-activation <request.json>\n\
              cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
              cargo xtask slice review-delta <request.json>\n\
+             cargo xtask slice review-egress <request.json>\n\
              cargo xtask slice gate <request.json>\n\
              cargo xtask slice close <plan SLICE [PLAN.json]|apply PLAN.json>\n\
              cargo xtask slice commit <commit-message-file>\n\
@@ -578,6 +601,18 @@ mod cli_tests {
 
         assert_eq!(missing, review_delta_usage());
         assert_eq!(extra, review_delta_usage());
+    }
+
+    // external review egress preflight도 packet과 standing authorization을 결속한 정확히
+    // 한 request만 받아 추가 입력으로 route나 권한을 넓히지 않는다.
+    #[test]
+    fn review_egress_requires_exactly_one_request() {
+        let missing = run(["slice", "review-egress"].map(Into::into)).unwrap_err();
+        let extra = run(["slice", "review-egress", "request.json", "extra.json"].map(Into::into))
+            .unwrap_err();
+
+        assert_eq!(missing, review_egress_usage());
+        assert_eq!(extra, review_egress_usage());
     }
 
     // Slice gate는 한 후보에 결속된 단일 request만 받아 서로 다른 후보의 증거가
