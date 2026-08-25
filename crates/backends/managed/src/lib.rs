@@ -496,15 +496,7 @@ impl NativeModelBackend {
                 .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
             config.reasoning_effort = admitted.profile().reasoning_effort();
             let tools = match admitted.profile().tool_policy() {
-                AdmittedToolPolicy::LocalTools => {
-                    if registry.is_empty() {
-                        return Err(failure(
-                            BackendFailureKind::Initialization,
-                            "local-tools/v1 requires a non-empty frozen tool registry",
-                        ));
-                    }
-                    true
-                },
+                AdmittedToolPolicy::LocalTools => !registry.is_empty(),
                 AdmittedToolPolicy::NoTools => {
                     if !registry.is_empty() {
                         return Err(failure(

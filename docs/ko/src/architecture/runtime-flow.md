@@ -175,6 +175,12 @@ Session 생성 전에 정확한 `yo connect`, `yo --model host:codex`, `yo --mod
 namespace를 바꾸지 않는다. 정확한 `host:codex` 또는 `host:grok`은 일치하는 delegated-host resume을 확인하며, 서로 다른
 cross-backend target은 handoff가 아직 미뤄져 있으므로 명시적으로 실패한다.
 
+새 native ModelTarget Session에서 `--no-tools`를 지정하면 선택한 complete model
+binding은 바꾸지 않고 local tool registry를 빈 상태로 고정한다. 이후 request는 현재
+tool definition과 tool choice를 생략하며, Session을 flag 없이 재개해도 exact replay가
+빈 registry를 보존한다. 이 option은 `--resume`, `--continue`, delegated HostTarget과
+함께 사용할 수 없고, live native model 교체도 Session의 빈 frozen registry를 유지한다.
+
 Yo-managed TUI가 idle일 때 `/model`은 Provider, Account, Model 순서로 정렬한 항목을
 범용 selection panel에 연다. label에는 optional display name을 쓰지만 각 행의
 identity는 완전한 안정 좌표다. `/model MODEL_REFERENCE`는 startup과 같은 resolver를

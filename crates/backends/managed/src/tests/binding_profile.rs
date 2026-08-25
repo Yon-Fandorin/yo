@@ -351,6 +351,38 @@ fn no_tools_profile_requires_an_empty_registry_and_disables_request_exposure() {
     assert!(body.get("tool_choice").is_none());
 }
 
+// local-tools/v1은 binding의 durable maximum으로 유지하면서 Session이 empty registry로
+// 좁힐 수 있고, 그 조합은 실제 request-local exposure를 disabled로 투영합니다.
+#[test]
+fn local_tools_profile_accepts_an_empty_session_registry() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut backend = backend_with_profile_and_registry(
+        profile("{}", "{}", "local-tools/v1"),
+        ToolRegistry::default().freeze(),
+        Arc::clone(&requests),
+    )
+    .unwrap();
+    assert!(backend.registry.is_empty());
+    assert!(!backend.tool_exposure_enabled);
+    assert!(backend.contract.tools().is_empty());
+
+    backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: turn().session_id(),
+        })
+        .unwrap();
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: turn(),
+            input: UserInput::from("restricted request"),
+        })
+        .unwrap();
+    let requests = requests.lock().unwrap();
+    let body = mock_tokenization_payload(&requests[0], "qwen3.8max");
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
+}
+
 // legacy catalog entry는 새 profile을 추정하지 않고 기존 yo.model-binding/v1 identity와
 // caller가 준 reasoning 설정을 그대로 유지해 이전 Session resume 의미를 보존합니다.
 #[test]

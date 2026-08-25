@@ -8,6 +8,8 @@ use yo_core::{
 use super::StartupBackend;
 use crate::{AppError, config::Config};
 
+const SESSION_TOOL_EXPOSURE_PROFILE: &str = "yo.session-tool-exposure/v1alpha1";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum DurableBackendKind {
     Host(HostId),
@@ -31,24 +33,43 @@ pub(super) fn resolve(
     config: &Config,
     stored_preference: Option<StartupTarget>,
     override_model: Option<&str>,
+    no_tools: bool,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
     if let Some(target) = resume {
         return resolve_resume(config, override_model, target);
     }
-    resolve_new_session(
+    resolve_new_session_with_tool_restriction(
         config.model_catalog(),
         stored_preference,
         None,
         override_model,
+        no_tools,
     )
 }
 
+#[cfg(test)]
 fn resolve_new_session(
     catalog: &yo_core::ModelCatalog,
     stored_preference: Option<StartupTarget>,
     operator: Option<StartupTarget>,
     reference: Option<&str>,
+) -> Result<StartupBackend, AppError> {
+    resolve_new_session_with_tool_restriction(
+        catalog,
+        stored_preference,
+        operator,
+        reference,
+        false,
+    )
+}
+
+fn resolve_new_session_with_tool_restriction(
+    catalog: &yo_core::ModelCatalog,
+    stored_preference: Option<StartupTarget>,
+    operator: Option<StartupTarget>,
+    reference: Option<&str>,
+    no_tools: bool,
 ) -> Result<StartupBackend, AppError> {
     let target = resolve_startup_target(
         catalog,
@@ -70,15 +91,19 @@ fn resolve_new_session(
         );
     };
     match target {
+        StartupTarget::Host(host) if no_tools => Err(AppError::many([format!(
+            "--no-tools ({SESSION_TOOL_EXPOSURE_PROFILE}) is supported only for native model Sessions; {} owns its tool surface",
+            host.reference()
+        )])),
         StartupTarget::Host(host) => resolve_host(host),
         StartupTarget::Model(selection) => {
             let entry = catalog
                 .resolve_model(selection.provider(), selection.account(), selection.model())
                 .map_err(|error| AppError::single("resolving the initial tool policy", error))?;
-            let registry_revision = if entry
-                .explicit_profile()
-                .is_some_and(|profile| profile.tool_capability_policy().as_str() == "no-tools/v1")
-            {
+            let registry_revision = if no_tools
+                || entry.explicit_profile().is_some_and(|profile| {
+                    profile.tool_capability_policy().as_str() == "no-tools/v1"
+                }) {
                 crate::local_tools::LocalToolRegistryRevision::NoTools
             } else {
                 crate::local_tools::LocalToolRegistryRevision::BasicFiles
@@ -745,6 +770,34 @@ mod tests {
             startup.registry_revision(),
             Some(crate::local_tools::LocalToolRegistryRevision::NoTools)
         );
+    }
+
+    // 명시적 Session restriction은 local-tools/v1 complete binding을 바꾸지 않고 empty
+    // registry만 선택하며, delegated HostTarget에는 Yo가 강제할 surface가 없어 거절합니다.
+    #[test]
+    fn explicit_no_tools_restricts_only_a_new_native_session() {
+        let catalog = selection_catalog(&[("qwencloud", "default", "model")]);
+        let startup =
+            resolve_new_session_with_tool_restriction(&catalog, None, None, Some("model"), true)
+                .unwrap();
+        assert_eq!(
+            startup.registry_revision(),
+            Some(crate::local_tools::LocalToolRegistryRevision::NoTools)
+        );
+        assert_eq!(startup.model_selection().unwrap().model().as_str(), "model");
+
+        let error = resolve_new_session_with_tool_restriction(
+            &catalog,
+            None,
+            None,
+            Some("host:codex"),
+            true,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("--no-tools"));
+        assert!(error.contains(SESSION_TOOL_EXPOSURE_PROFILE));
+        assert!(error.contains("owns its tool surface"));
     }
 
     // durable JSON 숫자는 serde가 큰 정수를 float로 바꾸기 전에 spelling대로 범위를

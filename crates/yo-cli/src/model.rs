@@ -83,9 +83,10 @@ pub(crate) fn resolve(
     config: &Config,
     stored_preference: Option<yo_core::StartupTarget>,
     override_model: Option<&str>,
+    no_tools: bool,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
-    startup::resolve(config, stored_preference, override_model, resume)
+    startup::resolve(config, stored_preference, override_model, no_tools, resume)
 }
 
 pub(crate) fn start_native(

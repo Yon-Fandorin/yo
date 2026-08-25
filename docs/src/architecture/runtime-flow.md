@@ -189,6 +189,13 @@ namespace; startup defaults never replace it. Exact `host:codex` or `host:grok`
 confirms the matching delegated-host resume, while a different cross-backend target fails explicitly because
 cross-backend handoff remains deferred.
 
+For a new native ModelTarget Session, `--no-tools` keeps the selected complete
+model binding unchanged but freezes an empty local tool registry. Requests then
+omit current tool definitions and tool choice, and exact replay preserves the
+empty registry when the Session is resumed without repeating the flag. The
+option is rejected with `--resume`, `--continue`, or a delegated HostTarget;
+live native model replacement retains the Session's frozen empty registry.
+
 While a Yo-managed TUI is idle, `/model` opens the generic selection panel with
 entries ordered as Provider, Account, then Model. Labels use the optional
 display names, but each row carries the complete stable coordinate. `/model

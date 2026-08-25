@@ -38,6 +38,10 @@ struct Cli {
     /// Select a startup target, such as host:grok or provider:account:model.
     #[arg(long, value_name = "MODEL_REFERENCE", allow_hyphen_values = true)]
     model: Option<String>,
+
+    /// Start a native Session without exposing local tools to the model.
+    #[arg(long, conflicts_with_all = ["resume", "continue_session"])]
+    no_tools: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
@@ -166,6 +170,7 @@ pub(crate) struct LiveOptions {
     pub(crate) glyph_profile: GlyphProfile,
     pub(crate) selection: LiveSelection,
     pub(crate) model: Option<String>,
+    pub(crate) no_tools: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -297,6 +302,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
                 (Some(_), true) => unreachable!("clap rejects conflicting continuation options"),
             },
             model: cli.model,
+            no_tools: cli.no_tools,
         })),
     }
 }

@@ -315,6 +315,7 @@ fn run_agent_generation(
             config,
             stored_preference.cloned(),
             options.model.as_deref(),
+            options.no_tools,
             match &launch {
                 Launch::New(_) => None,
                 Launch::Resume(continuation) => Some(continuation.target()),

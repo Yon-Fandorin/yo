@@ -11,8 +11,23 @@ fn no_argument_keeps_the_live_defaults() {
             glyph_profile: GlyphProfile::Rich,
             selection: LiveSelection::New,
             model: None,
+            no_tools: false,
         })
     );
+}
+
+// `--no-tools`는 새 live Session의 명시적 restriction으로 전달되고, 저장된 replay
+// contract를 다시 쓰지 않도록 resume·continue와의 조합은 문법 단계에서 거절합니다.
+#[test]
+fn live_no_tools_is_creation_only() {
+    let Command::Live(options) = parse(["--no-tools".into()]).unwrap() else {
+        panic!("--no-tools remains a live startup option");
+    };
+    assert!(options.no_tools);
+
+    let id = "01890f00-0000-7000-8000-000000000001";
+    assert!(parse(["--no-tools".into(), "--resume".into(), id.into()]).is_err());
+    assert!(parse(["--no-tools".into(), "--continue".into()]).is_err());
 }
 
 // `--model`은 새 Session과 resume 양쪽에서 같은 명시적 model reference로 보존되고,
@@ -420,6 +435,7 @@ fn help_is_successful_generated_command_documentation() {
     assert!(rendered.contains("usage"));
     assert!(rendered.contains("disconnect"));
     assert!(rendered.contains("--model <MODEL_REFERENCE>"));
+    assert!(rendered.contains("--no-tools"));
 }
 
 // `--version`도 도움말과 같은 성공 제어 흐름으로 stdout에 전달되고, Cargo package
