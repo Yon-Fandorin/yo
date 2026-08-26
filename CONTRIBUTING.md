@@ -990,6 +990,62 @@ another preflight run as permission to resend. A delivery attempt that ended
 before a durable provider request remains a delivery-system diagnostic and is
 not silently retried under this authorization.
 
+Before publishing an immutable delivery claim, inspect the selected target
+through one provider-neutral, read-only admission request:
+
+```json
+{
+  "schema": "yo.external-review-target-admission-request/v1alpha1",
+  "target": {
+    "kind": "managed_model",
+    "provider": "<provider>",
+    "account": "<account>",
+    "model": "<model>"
+  },
+  "connection_repository_path": "/absolute/path/to/connections.yaml",
+  "session_repository_path": "/absolute/path/to/sessions"
+}
+```
+
+```bash
+cargo xtask slice review-target-admission <request.json>
+```
+
+The alternate target shape is
+`{"kind":"delegated_host","host":"codex"}` or exact host `grok`; it omits
+`connection_repository_path`. Managed admission proves that the exact stored
+binding exists and reports its newest typed `last_failure`. Authentication,
+access-denied, exact-model-unavailable, and local-configuration observations
+stop admission. Other failure kinds remain visible but do not become inferred
+quota exhaustion or a routing prohibition. A delegated-host admission runs
+only the bounded exact executable `--version` probe and records its canonical
+path and version; it does not authenticate the host or make a model request.
+Its successful result is `prepared` with
+`next_action: "await_delegated_delivery_protocol"`, not managed
+`deliver_once` eligibility.
+
+The optional Session repository search reads at most the newest 64 Sessions
+and returns the latest matching receipt in the first most-recently-updated
+matching Session. The result names that selection basis and reports truncation
+or any unavailable or unreadable history in the inspected window as `unknown`;
+it never calls that bounded observation
+a global account total. `account_limit` and its reset remain `unknown` until a
+Provider supplies reviewed typed evidence. In particular, Session token totals
+and cache counts never become remaining quota.
+
+New managed original and continuation deliveries bind that exact request with
+`yo.slice-review-delivery-request/v1alpha2` or
+`yo.slice-review-continuation-delivery-request/v1alpha2` by adding
+`admission_request_path` and `admission_request_hash`. Delivery evaluates the
+same request before and after preparing current-develop Yo, requires its target
+to equal the authorized route, and stops before claim when the result is not
+admitted or changed. Its v1alpha2 claim records the exact admission-request
+hash and typed target. Frozen v1alpha1 delivery remains reproducible and does
+not acquire this stronger pre-claim behavior. A delegated-host admission is
+read-only preparation only until a separately reviewed egress and delivery
+protocol authorizes that host identity; it cannot make the current managed
+route schema launch a host.
+
 Before any authorized finding-resolution resume, create the repository-owned
 read-only continuation preflight request against the exact durable Session
 repository:

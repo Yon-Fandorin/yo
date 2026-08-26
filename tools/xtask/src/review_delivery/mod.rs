@@ -13,11 +13,13 @@ use std::{
 };
 
 use model::{
-    Artifact, CLAIM_SCHEMA, CONTINUATION_CLAIM_SCHEMA, CONTINUATION_OUTCOME_SCHEMA,
-    CONTINUATION_REQUEST_SCHEMA, CONTINUATION_RESULT_SCHEMA, Claim, ContinuationClaim,
-    ContinuationDeliveryOutcome, ContinuationRequest, ContinuationResultDocument,
-    DELIVERY_RECEIPT_SCHEMA, DeliveryOutcome, DeliveryReceipt, DeliveryRequest, OUTCOME_SCHEMA,
-    REQUEST_SCHEMA, RESULT_SCHEMA, Request, ResultDocument, Route,
+    AdmittedContinuationRequest, AdmittedRequest, Artifact, CLAIM_SCHEMA, CLAIM_SCHEMA_V1_ALPHA2,
+    CONTINUATION_CLAIM_SCHEMA, CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2, CONTINUATION_OUTCOME_SCHEMA,
+    CONTINUATION_REQUEST_SCHEMA, CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2, CONTINUATION_RESULT_SCHEMA,
+    CONTINUATION_RESULT_SCHEMA_V1_ALPHA2, Claim, ContinuationClaim, ContinuationDeliveryOutcome,
+    ContinuationRequest, ContinuationResultDocument, DELIVERY_RECEIPT_SCHEMA, DeliveryOutcome,
+    DeliveryReceipt, DeliveryRequest, OUTCOME_SCHEMA, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2,
+    RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2, Request, ResultDocument, Route,
 };
 use process::{execute_continuation_once, execute_once, exit_label, process_outcome};
 use serde::Serialize;
@@ -28,6 +30,7 @@ use crate::{
     bounded_file, git,
     review_egress::{self, AuthorizedDelivery},
     review_protocol::digest,
+    review_target_admission::{self, Admission, ReviewTarget},
     slice_contract,
 };
 
@@ -37,12 +40,54 @@ const DIAGNOSTIC_LIMIT: usize = 256 * 1024;
 
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
     match read_request(request_path)? {
-        DeliveryRequest::Original(request) => run_original(repository, request),
-        DeliveryRequest::Continuation(request) => run_continuation(repository, request),
+        DeliveryRequest::Original(request) => run_original(repository, request, None),
+        DeliveryRequest::AdmittedOriginal(request) => {
+            let admission = AdmissionReference {
+                path: request.admission_request_path,
+                hash: request.admission_request_hash,
+            };
+            run_original(
+                repository,
+                Request {
+                    schema: request.schema,
+                    egress_request_path: request.egress_request_path,
+                    egress_request_hash: request.egress_request_hash,
+                    output_directory: request.output_directory,
+                },
+                Some(admission),
+            )
+        },
+        DeliveryRequest::Continuation(request) => run_continuation(repository, request, None),
+        DeliveryRequest::AdmittedContinuation(request) => {
+            let admission = AdmissionReference {
+                path: request.admission_request_path,
+                hash: request.admission_request_hash,
+            };
+            run_continuation(
+                repository,
+                ContinuationRequest {
+                    schema: request.schema,
+                    preflight_request_path: request.preflight_request_path,
+                    preflight_request_hash: request.preflight_request_hash,
+                    output_directory: request.output_directory,
+                },
+                Some(admission),
+            )
+        },
     }
 }
 
-fn run_original(repository: &Path, request: Request) -> Result<(), String> {
+#[derive(Debug)]
+struct AdmissionReference {
+    path: String,
+    hash: String,
+}
+
+fn run_original(
+    repository: &Path,
+    request: Request,
+    admission: Option<AdmissionReference>,
+) -> Result<(), String> {
     let egress_request_path = shared_path(repository, &request.egress_request_path)?;
     require_exact_file_hash(
         &egress_request_path,
@@ -55,6 +100,10 @@ fn run_original(repository: &Path, request: Request) -> Result<(), String> {
 
     let initial = review_egress::authorize_delivery(repository, &egress_request_path)?;
     require_original_fresh(&initial)?;
+    let initial_admission = admission
+        .as_ref()
+        .map(|reference| evaluate_admission(repository, reference, &initial))
+        .transpose()?;
     let integration = integration_worktree(repository, &initial.trusted_commit)?;
     let yo_binary = build_current_yo(&integration)?;
     let yo_binary_hash = sha256_file(&yo_binary)?;
@@ -69,12 +118,23 @@ fn run_original(repository: &Path, request: Request) -> Result<(), String> {
     if authorized != initial {
         return Err("external review authorization changed while preparing delivery".to_owned());
     }
+    let final_admission = admission
+        .as_ref()
+        .map(|reference| evaluate_admission(repository, reference, &authorized))
+        .transpose()?;
+    if final_admission != initial_admission {
+        return Err("external review target admission changed while preparing delivery".to_owned());
+    }
     let model_reference = managed_model_reference(&authorized)?;
     require_integration_state(&integration, &authorized.trusted_commit)?;
     require_empty_directory(&output_directory)?;
     let claim_path = output_directory.join("claim.json");
     let claim = Claim {
-        schema: CLAIM_SCHEMA,
+        schema: if admission.is_some() {
+            CLAIM_SCHEMA_V1_ALPHA2
+        } else {
+            CLAIM_SCHEMA
+        },
         request_id: &authorized.request_id,
         authorization_id: &authorized.authorization_id,
         authority: &authorized.authority,
@@ -93,6 +153,8 @@ fn run_original(repository: &Path, request: Request) -> Result<(), String> {
         second_provider: false,
         tool_execution: false,
         yo_binary_hash: &yo_binary_hash,
+        admission_request_id: admission.as_ref().map(|reference| reference.hash.as_str()),
+        target: final_admission.as_ref().map(|admission| &admission.target),
     };
     let claim_bytes = canonical_json(&claim)?;
     publish_claim(&claim_path, &claim_bytes)?;
@@ -214,7 +276,11 @@ fn run_original(repository: &Path, request: Request) -> Result<(), String> {
     let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
 
     let result = ResultDocument {
-        schema: RESULT_SCHEMA,
+        schema: if admission.is_some() {
+            RESULT_SCHEMA_V1_ALPHA2
+        } else {
+            RESULT_SCHEMA
+        },
         ok: true,
         status: "completed",
         next_action: "interpret_review",
@@ -237,7 +303,11 @@ fn run_original(repository: &Path, request: Request) -> Result<(), String> {
     Ok(())
 }
 
-fn run_continuation(repository: &Path, request: ContinuationRequest) -> Result<(), String> {
+fn run_continuation(
+    repository: &Path,
+    request: ContinuationRequest,
+    admission: Option<AdmissionReference>,
+) -> Result<(), String> {
     let preflight_request_path = shared_path(repository, &request.preflight_request_path)?;
     require_exact_file_hash(
         &preflight_request_path,
@@ -250,6 +320,10 @@ fn run_continuation(repository: &Path, request: ContinuationRequest) -> Result<(
 
     let initial =
         crate::review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
+    let initial_admission = admission
+        .as_ref()
+        .map(|reference| evaluate_admission(repository, reference, &initial.delivery))
+        .transpose()?;
     let integration = integration_worktree(repository, &initial.delivery.trusted_commit)?;
     let yo_binary = build_current_yo(&integration)?;
     let yo_binary_hash = sha256_file(&yo_binary)?;
@@ -269,6 +343,16 @@ fn run_continuation(repository: &Path, request: ContinuationRequest) -> Result<(
         );
     }
     let authorized = &verified.delivery;
+    let final_admission = admission
+        .as_ref()
+        .map(|reference| evaluate_admission(repository, reference, authorized))
+        .transpose()?;
+    if final_admission != initial_admission {
+        return Err(
+            "external review target admission changed while preparing continuation delivery"
+                .to_owned(),
+        );
+    }
     require_integration_state(&integration, &authorized.trusted_commit)?;
     require_empty_directory(&output_directory)?;
     let session_id = authorized
@@ -280,7 +364,11 @@ fn run_continuation(repository: &Path, request: ContinuationRequest) -> Result<(
         .as_deref()
         .expect("continuation preflight requires a prior Provider request identity");
     let claim = ContinuationClaim {
-        schema: CONTINUATION_CLAIM_SCHEMA,
+        schema: if admission.is_some() {
+            CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2
+        } else {
+            CONTINUATION_CLAIM_SCHEMA
+        },
         request_id: &authorized.request_id,
         preflight_request_id: &verified.preflight_request_id,
         authorization_id: &authorized.authorization_id,
@@ -304,6 +392,8 @@ fn run_continuation(repository: &Path, request: ContinuationRequest) -> Result<(
         second_provider: false,
         tool_execution: false,
         yo_binary_hash: &yo_binary_hash,
+        admission_request_id: admission.as_ref().map(|reference| reference.hash.as_str()),
+        target: final_admission.as_ref().map(|admission| &admission.target),
     };
     let claim_path = output_directory.join("claim.json");
     publish_claim(&claim_path, &canonical_json(&claim)?)?;
@@ -431,7 +521,11 @@ fn run_continuation(repository: &Path, request: ContinuationRequest) -> Result<(
     )?;
     let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
     let result = ContinuationResultDocument {
-        schema: CONTINUATION_RESULT_SCHEMA,
+        schema: if admission.is_some() {
+            CONTINUATION_RESULT_SCHEMA_V1_ALPHA2
+        } else {
+            CONTINUATION_RESULT_SCHEMA
+        },
         ok: true,
         status: "completed",
         next_action: "interpret_review",
@@ -479,6 +573,18 @@ fn read_request(path: &Path) -> Result<DeliveryRequest, String> {
             require_sha256(&request.egress_request_hash, "egress_request_hash")?;
             Ok(DeliveryRequest::Original(request))
         },
+        REQUEST_SCHEMA_V1_ALPHA2 => {
+            let request: AdmittedRequest = serde_json::from_slice(&bytes).map_err(|error| {
+                format!("invalid admitted original review delivery request: {error}")
+            })?;
+            debug_assert_eq!(request.schema, REQUEST_SCHEMA_V1_ALPHA2);
+            compact_path(&request.egress_request_path, "egress_request_path")?;
+            compact_path(&request.admission_request_path, "admission_request_path")?;
+            compact_path(&request.output_directory, "output_directory")?;
+            require_sha256(&request.egress_request_hash, "egress_request_hash")?;
+            require_sha256(&request.admission_request_hash, "admission_request_hash")?;
+            Ok(DeliveryRequest::AdmittedOriginal(request))
+        },
         CONTINUATION_REQUEST_SCHEMA => {
             let request: ContinuationRequest = serde_json::from_slice(&bytes).map_err(|error| {
                 format!("invalid continuation review delivery request: {error}")
@@ -489,10 +595,53 @@ fn read_request(path: &Path) -> Result<DeliveryRequest, String> {
             require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
             Ok(DeliveryRequest::Continuation(request))
         },
+        CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2 => {
+            let request: AdmittedContinuationRequest =
+                serde_json::from_slice(&bytes).map_err(|error| {
+                    format!("invalid admitted continuation review delivery request: {error}")
+                })?;
+            debug_assert_eq!(request.schema, CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2);
+            compact_path(&request.preflight_request_path, "preflight_request_path")?;
+            compact_path(&request.admission_request_path, "admission_request_path")?;
+            compact_path(&request.output_directory, "output_directory")?;
+            require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
+            require_sha256(&request.admission_request_hash, "admission_request_hash")?;
+            Ok(DeliveryRequest::AdmittedContinuation(request))
+        },
         other => Err(format!(
-            "unsupported Slice review delivery request schema `{other}`; expected `{REQUEST_SCHEMA}` or `{CONTINUATION_REQUEST_SCHEMA}`"
+            "unsupported Slice review delivery request schema `{other}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{CONTINUATION_REQUEST_SCHEMA}`, or `{CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`"
         )),
     }
+}
+
+fn evaluate_admission(
+    repository: &Path,
+    reference: &AdmissionReference,
+    delivery: &AuthorizedDelivery,
+) -> Result<Admission, String> {
+    let path = shared_path(repository, &reference.path)?;
+    require_exact_file_hash(
+        &path,
+        &reference.hash,
+        REQUEST_LIMIT,
+        "external review target admission request",
+    )?;
+    let admission = review_target_admission::evaluate(&path)?;
+    let expected = ReviewTarget::managed(
+        delivery.provider.clone(),
+        delivery.account.clone(),
+        delivery.model.clone(),
+    );
+    if admission.target != expected {
+        return Err("review-target admission differs from the authorized managed route".to_owned());
+    }
+    if !admission.admitted() {
+        return Err(format!(
+            "external review target admission stopped before claim: {}",
+            admission.availability_detail()
+        ));
+    }
+    Ok(admission)
 }
 
 fn require_original_fresh(delivery: &AuthorizedDelivery) -> Result<(), String> {

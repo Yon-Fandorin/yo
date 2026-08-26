@@ -1,17 +1,26 @@
 use serde::{Deserialize, Serialize};
 
 pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-delivery-request/v1alpha1";
+pub(super) const REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-delivery-request/v1alpha2";
 pub(super) const CONTINUATION_REQUEST_SCHEMA: &str =
     "yo.slice-review-continuation-delivery-request/v1alpha1";
+pub(super) const CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2: &str =
+    "yo.slice-review-continuation-delivery-request/v1alpha2";
 pub(super) const CLAIM_SCHEMA: &str = "yo.external-review-delivery-claim/v1alpha1";
+pub(super) const CLAIM_SCHEMA_V1_ALPHA2: &str = "yo.external-review-delivery-claim/v1alpha2";
 pub(super) const CONTINUATION_CLAIM_SCHEMA: &str =
     "yo.external-review-continuation-delivery-claim/v1alpha1";
+pub(super) const CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2: &str =
+    "yo.external-review-continuation-delivery-claim/v1alpha2";
 pub(super) const OUTCOME_SCHEMA: &str = "yo.external-review-delivery-outcome/v1alpha1";
 pub(super) const CONTINUATION_OUTCOME_SCHEMA: &str =
     "yo.external-review-continuation-delivery-outcome/v1alpha1";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-delivery-result/v1alpha1";
+pub(super) const RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-delivery-result/v1alpha2";
 pub(super) const CONTINUATION_RESULT_SCHEMA: &str =
     "yo.slice-review-continuation-delivery-result/v1alpha1";
+pub(super) const CONTINUATION_RESULT_SCHEMA_V1_ALPHA2: &str =
+    "yo.slice-review-continuation-delivery-result/v1alpha2";
 pub(super) const DELIVERY_RECEIPT_SCHEMA: &str = "yo.external-review-delivery-receipt/v1";
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +34,17 @@ pub(super) struct Request {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct AdmittedRequest {
+    pub(super) schema: String,
+    pub(super) egress_request_path: String,
+    pub(super) egress_request_hash: String,
+    pub(super) admission_request_path: String,
+    pub(super) admission_request_hash: String,
+    pub(super) output_directory: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ContinuationRequest {
     pub(super) schema: String,
     pub(super) preflight_request_path: String,
@@ -32,10 +52,23 @@ pub(super) struct ContinuationRequest {
     pub(super) output_directory: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AdmittedContinuationRequest {
+    pub(super) schema: String,
+    pub(super) preflight_request_path: String,
+    pub(super) preflight_request_hash: String,
+    pub(super) admission_request_path: String,
+    pub(super) admission_request_hash: String,
+    pub(super) output_directory: String,
+}
+
 #[derive(Debug)]
 pub(super) enum DeliveryRequest {
     Original(Request),
+    AdmittedOriginal(AdmittedRequest),
     Continuation(ContinuationRequest),
+    AdmittedContinuation(AdmittedContinuationRequest),
 }
 
 #[derive(Debug, Serialize)]
@@ -74,6 +107,10 @@ pub(super) struct Claim<'a> {
     pub(super) second_provider: bool,
     pub(super) tool_execution: bool,
     pub(super) yo_binary_hash: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) admission_request_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) target: Option<&'a crate::review_target_admission::ReviewTarget>,
 }
 
 #[derive(Debug, Serialize)]
@@ -102,6 +139,10 @@ pub(super) struct ContinuationClaim<'a> {
     pub(super) second_provider: bool,
     pub(super) tool_execution: bool,
     pub(super) yo_binary_hash: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) admission_request_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) target: Option<&'a crate::review_target_admission::ReviewTarget>,
 }
 
 #[derive(Debug, Serialize)]

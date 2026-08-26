@@ -10,6 +10,7 @@ mod review_egress;
 mod review_packet;
 mod review_protocol;
 mod review_session;
+mod review_target_admission;
 mod slice_accept;
 mod slice_close;
 mod slice_contract;
@@ -65,6 +66,9 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     }
     if scope == "review-egress" {
         return run_review_egress(arguments);
+    }
+    if scope == "review-target-admission" {
+        return run_review_target_admission(arguments);
     }
     if scope == "close" {
         return run_slice_close(arguments);
@@ -234,6 +238,19 @@ fn run_review_delivery(arguments: &mut impl Iterator<Item = OsString>) -> Result
     }
     let repository = current_repository()?;
     review_delivery::run(&repository, &request)
+}
+
+fn run_review_target_admission(
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(review_target_admission_usage)?;
+    if arguments.next().is_some() {
+        return Err(review_target_admission_usage());
+    }
+    review_target_admission::run(&request)
 }
 
 fn run_review_continuation_preflight(
@@ -487,6 +504,7 @@ fn general_usage() -> String {
      cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
      cargo xtask slice review-delta <request.json>\n\
      cargo xtask slice review-egress <request.json>\n\
+     cargo xtask slice review-target-admission <request.json>\n\
      cargo xtask slice review-deliver <request.json>\n\
      cargo xtask slice review-continuation-preflight <request.json>\n\
      cargo xtask slice gate <request.json>\n\
@@ -526,6 +544,10 @@ fn review_delivery_usage() -> String {
     "usage: cargo xtask slice review-deliver <request.json>".to_owned()
 }
 
+fn review_target_admission_usage() -> String {
+    "usage: cargo xtask slice review-target-admission <request.json>".to_owned()
+}
+
 fn review_continuation_preflight_usage() -> String {
     "usage: cargo xtask slice review-continuation-preflight <request.json>".to_owned()
 }
@@ -557,8 +579,9 @@ mod cli_tests {
 
     use super::{
         activation_slice_usage, docs_accept_translation_usage, review_continuation_preflight_usage,
-        review_delivery_usage, review_delta_usage, review_egress_usage, review_packet_usage, run,
-        slice_close_usage, slice_commit_usage, slice_gate_usage,
+        review_delivery_usage, review_delta_usage, review_egress_usage, review_packet_usage,
+        review_target_admission_usage, run, slice_close_usage, slice_commit_usage,
+        slice_gate_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -574,6 +597,7 @@ mod cli_tests {
              cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
              cargo xtask slice review-delta <request.json>\n\
              cargo xtask slice review-egress <request.json>\n\
+             cargo xtask slice review-target-admission <request.json>\n\
              cargo xtask slice review-deliver <request.json>\n\
              cargo xtask slice review-continuation-preflight <request.json>\n\
              cargo xtask slice gate <request.json>\n\
@@ -711,6 +735,24 @@ mod cli_tests {
 
         assert_eq!(missing, review_egress_usage());
         assert_eq!(extra, review_egress_usage());
+    }
+
+    // target admission도 정확히 한 versioned request만 받아 호출자가 argv로 다른
+    // target이나 상태 경로를 덧붙이지 못하게 합니다.
+    #[test]
+    fn review_target_admission_requires_exactly_one_request() {
+        let missing = run(["slice", "review-target-admission"].map(Into::into)).unwrap_err();
+        let extra = run([
+            "slice",
+            "review-target-admission",
+            "request.json",
+            "extra.json",
+        ]
+        .map(Into::into))
+        .unwrap_err();
+
+        assert_eq!(missing, review_target_admission_usage());
+        assert_eq!(extra, review_target_admission_usage());
     }
 
     // 실제 외부 effect를 소유하는 review-deliver도 versioned request 하나만 받아

@@ -3,8 +3,8 @@ use std::os::unix::fs::PermissionsExt;
 use std::time::{Duration, Instant};
 
 use super::{
-    combine_failures, managed_model_reference,
-    model::DeliveryRequest,
+    canonical_json, combine_failures, managed_model_reference,
+    model::{CLAIM_SCHEMA, Claim, DeliveryRequest, Route},
     process::{execute_continuation_once, execute_once, execute_once_with_timeout},
     publish_claim, read_request, require_empty_directory, require_integration_state,
     require_original_fresh,
@@ -61,6 +61,77 @@ fn continuation_request_binds_one_preflight_and_output_directory() {
             .unwrap_err()
             .contains("unknown field")
     );
+}
+
+// admission-aware delivery는 frozen v1alpha1을 재해석하지 않고 exact admission request
+// path와 hash를 추가한 v1alpha2에서만 열립니다.
+#[test]
+fn v1alpha2_delivery_binds_one_target_admission_request() {
+    let repository = TestRepository::new("review-delivery-admission-request");
+    let original = serde_json::json!({
+        "schema": "yo.slice-review-delivery-request/v1alpha2",
+        "egress_request_path": ".local-exclude/egress.json",
+        "egress_request_hash": digest(b"egress"),
+        "admission_request_path": ".local-exclude/admission.json",
+        "admission_request_hash": digest(b"admission"),
+        "output_directory": ".local-exclude/coordination/slice/run"
+    });
+    let path = repository.write("original.json", &format!("{original}\n"));
+    assert!(matches!(
+        read_request(&path).unwrap(),
+        DeliveryRequest::AdmittedOriginal(_)
+    ));
+
+    let continuation = serde_json::json!({
+        "schema": "yo.slice-review-continuation-delivery-request/v1alpha2",
+        "preflight_request_path": ".local-exclude/preflight.json",
+        "preflight_request_hash": digest(b"preflight"),
+        "admission_request_path": ".local-exclude/admission.json",
+        "admission_request_hash": digest(b"admission"),
+        "output_directory": ".local-exclude/coordination/slice/continuation"
+    });
+    let path = repository.write("continuation.json", &format!("{continuation}\n"));
+    assert!(matches!(
+        read_request(&path).unwrap(),
+        DeliveryRequest::AdmittedContinuation(_)
+    ));
+}
+
+// frozen v1alpha1 claim은 새 optional 필드가 None일 때 기존 byte shape를 그대로 유지해
+// admission 도입이 과거 artifact 재현을 바꾸지 않습니다.
+#[test]
+fn v1alpha1_claim_omits_v1alpha2_admission_fields() {
+    let claim = Claim {
+        schema: CLAIM_SCHEMA,
+        request_id: "sha256:request",
+        authorization_id: "sha256:authorization",
+        authority: "human/yon",
+        review_id: "sha256:review",
+        candidate_commit: "candidate",
+        integration_commit: "integration",
+        packet_hash: "sha256:packet",
+        packet_bytes: 10,
+        managed_payload_tokens: 3,
+        route: Route {
+            provider: "qwencloud",
+            account: "default",
+            model: "qwen3.8-max",
+        },
+        session_mode: "fresh",
+        provider_request_limit: 1,
+        retries: 0,
+        steer: 0,
+        fallback: 0,
+        second_provider: false,
+        tool_execution: false,
+        yo_binary_hash: "sha256:binary",
+        admission_request_id: None,
+        target: None,
+    };
+    let value: serde_json::Value =
+        serde_json::from_slice(&canonical_json(&claim).unwrap()).unwrap();
+    assert!(value.get("admission_request_id").is_none());
+    assert!(value.get("target").is_none());
 }
 
 // 새 delivery wire는 저장소 규칙대로 v1alpha1에서 시작하고, 비슷한 stable v1이나
