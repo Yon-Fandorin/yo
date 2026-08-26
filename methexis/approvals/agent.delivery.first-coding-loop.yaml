@@ -1,7 +1,7 @@
 schema: methexis.approval/v1alpha2
 knowledge_id: agent.delivery.first-coding-loop
-revision: sha256:a860b6f9572bba2712c53a9fe44607e4898f99356b947b9ebfe53a939cc38e80
+revision: sha256:4db1184cb684a55557198dab98aa2dd4b833b7ea8618c9759d08eca4f34b2a2e
 reviewer: agent-runtime
-reviewed_at: 2026-08-25T05:21:00Z
+reviewed_at: 2026-08-26T04:36:29Z
 review_basis: canonical
-request_hash: sha256:7974b021391f5b4796d063934946e6d70293adc140cacad729f15df62f0f2e55
+request_hash: sha256:a75a4e199393a436ff5227b77923502a566119a8016bbf1624d2c6d871e3a362
