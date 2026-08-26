@@ -1,3 +1,4 @@
+mod carry;
 mod model;
 
 #[cfg(test)]
@@ -8,7 +9,10 @@ use std::{
     path::Path,
 };
 
-use model::{PrepareRequest, PrepareResult, RESULT_SCHEMA, ReviewSource, ValidationCommand};
+use model::{
+    PrepareRequest, PrepareResult, REQUEST_SCHEMA_V1_ALPHA1, RESULT_SCHEMA,
+    RESULT_SCHEMA_V1_ALPHA1, ReviewSource, ValidationCommand,
+};
 
 use super::{
     approval_result, changed_paths, evaluate,
@@ -31,6 +35,13 @@ const MANIFEST_LIMIT: usize = 8 * 1024 * 1024;
 const REVIEW_RESULT_LIMIT: usize = 64 * 1024;
 
 type VerifyReview<'a> = dyn Fn(&Path, &Path, &str) -> Result<VerifiedReview, String> + 'a;
+type VerifyCarry<'a> = dyn Fn(
+        &Path,
+        &VerifiedReview,
+        &str,
+        &model::CanonicalApprovalReviewCarry,
+    ) -> Result<model::CanonicalApprovalReviewCarryResult, String>
+    + 'a;
 
 pub(crate) fn run(
     repository: &Path,
@@ -44,6 +55,7 @@ pub(crate) fn run(
         &|repository, path, hash| {
             review_delta::verify_chain_head(repository, path, hash, &mut BTreeSet::new(), 0)
         },
+        &carry::verify,
     )?;
     println!(
         "{}",
@@ -58,6 +70,7 @@ fn prepare_with(
     prepare_path: &Path,
     output_path: &Path,
     verify: &VerifyReview<'_>,
+    verify_carry: &VerifyCarry<'_>,
 ) -> Result<PrepareResult, String> {
     let prepare_bytes = bounded_file::read_regular(
         prepare_path,
@@ -65,7 +78,8 @@ fn prepare_with(
         "Slice gate preparation request",
     )?;
     let request = parse_prepare_request(prepare_path, &prepare_bytes)?;
-    let (gate_request, review) = build_gate_request(repository, &request, verify)?;
+    let (gate_request, review, review_carry) =
+        build_gate_request(repository, &request, verify, verify_carry)?;
     let gate_bytes = canonical_gate_request(&gate_request)?;
 
     run_final_revalidate_hook()?;
@@ -78,8 +92,12 @@ fn prepare_with(
         return Err("Slice gate preparation request changed before publication".to_owned());
     }
     let current_request = parse_prepare_request(prepare_path, &current_prepare)?;
-    let (current_gate, current_review) = build_gate_request(repository, &current_request, verify)?;
-    if current_review != review || canonical_gate_request(&current_gate)? != gate_bytes {
+    let (current_gate, current_review, current_carry) =
+        build_gate_request(repository, &current_request, verify, verify_carry)?;
+    if current_review != review
+        || current_carry != review_carry
+        || canonical_gate_request(&current_gate)? != gate_bytes
+    {
         return Err("Slice gate preparation inputs changed before publication".to_owned());
     }
 
@@ -91,29 +109,57 @@ fn prepare_with(
     )?;
     let gate = evaluate(repository, output_path)?;
     Ok(PrepareResult {
-        schema: RESULT_SCHEMA,
+        schema: if review_carry.is_some() {
+            RESULT_SCHEMA_V1_ALPHA1
+        } else {
+            RESULT_SCHEMA
+        },
         ok: true,
         status: if created { "written" } else { "reused" },
         request_path: relative(repository, output_path),
         request_hash: digest(&gate_bytes),
         review_id: review.review_id,
+        review_carry,
         gate,
     })
 }
 
 fn parse_prepare_request(path: &Path, bytes: &[u8]) -> Result<PrepareRequest, String> {
-    let request: PrepareRequest = serde_json::from_slice(bytes).map_err(|error| {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
         format!(
             "invalid Slice gate preparation request {}: {error}",
             path.display()
         )
     })?;
-    if request.schema != model::REQUEST_SCHEMA {
-        return Err(format!(
-            "unsupported Slice gate preparation schema `{}`; expected `{}`",
-            request.schema,
-            model::REQUEST_SCHEMA
-        ));
+    let review_carry_present = value
+        .as_object()
+        .is_some_and(|object| object.contains_key("review_carry"));
+    let request: PrepareRequest = serde_json::from_value(value).map_err(|error| {
+        format!(
+            "invalid Slice gate preparation request {}: {error}",
+            path.display()
+        )
+    })?;
+    match request.schema.as_str() {
+        model::REQUEST_SCHEMA if !review_carry_present => {},
+        model::REQUEST_SCHEMA => {
+            return Err(format!(
+                "schema `{}` does not permit review_carry",
+                model::REQUEST_SCHEMA
+            ));
+        },
+        REQUEST_SCHEMA_V1_ALPHA1 if request.review_carry.is_some() => {},
+        REQUEST_SCHEMA_V1_ALPHA1 => {
+            return Err(format!(
+                "schema `{REQUEST_SCHEMA_V1_ALPHA1}` requires review_carry"
+            ));
+        },
+        other => {
+            return Err(format!(
+                "unsupported Slice gate preparation schema `{other}`; expected `{}` or `{REQUEST_SCHEMA_V1_ALPHA1}`",
+                model::REQUEST_SCHEMA
+            ));
+        },
     }
     if request.validation_commands.len() > 32 {
         return Err("validation_commands exceeds the 32-entry limit".to_owned());
@@ -128,7 +174,15 @@ fn build_gate_request(
     repository: &Path,
     request: &PrepareRequest,
     verify: &VerifyReview<'_>,
-) -> Result<(Request, VerifiedReview), String> {
+    verify_carry: &VerifyCarry<'_>,
+) -> Result<
+    (
+        Request,
+        VerifiedReview,
+        Option<model::CanonicalApprovalReviewCarryResult>,
+    ),
+    String,
+> {
     let bound = slice_contract::trusted_bound_slice(repository)?;
     slice_contract::trusted_check_bound_scope(repository)?;
     require_clean(repository)?;
@@ -142,7 +196,18 @@ fn build_gate_request(
     )?;
     let manifest_hash = digest(&manifest_bytes);
     let review = verify(repository, &manifest_path, &manifest_hash)?;
-    if review.base_commit != bound.base || review.candidate_commit != candidate {
+    if review.base_commit != bound.base {
+        return Err(format!(
+            "review chain base does not match bound Slice base {}",
+            bound.base
+        ));
+    }
+    let review_carry = request
+        .review_carry
+        .as_ref()
+        .map(|carry| verify_carry(repository, &review, &candidate, carry))
+        .transpose()?;
+    if review_carry.is_none() && review.candidate_commit != candidate {
         return Err(format!(
             "review chain identity does not match bound Slice {}..{}",
             bound.base, candidate
@@ -174,8 +239,19 @@ fn build_gate_request(
         bound.base_ref.starts_with("refs/heads/wave/"),
     )?;
 
-    let validation_evidence = prepare_validation(&review, &request.validation_commands)?;
-    let review_evidence = prepare_reviews(repository, &review, &request.review_runs, &diff_hash)?;
+    let validation_evidence = prepare_validation(
+        &review,
+        &request.validation_commands,
+        &candidate,
+        review_carry.is_some(),
+    )?;
+    let review_evidence = prepare_reviews(
+        repository,
+        &review,
+        &request.review_runs,
+        &candidate,
+        &diff_hash,
+    )?;
     let approval = request.approval.as_ref().map(|approval| Approval {
         kind: approval.kind.clone(),
         authority: approval.authority.clone(),
@@ -201,7 +277,7 @@ fn build_gate_request(
     validation_results(repository, &gate, &candidate)?;
     review_results(repository, &gate, &candidate, &diff_hash, &required)?;
     approval_result(&gate.risk, gate.approval.as_ref(), &candidate, &diff_hash)?;
-    Ok((gate, review))
+    Ok((gate, review, review_carry))
 }
 
 fn require_review_contract(
@@ -223,6 +299,8 @@ fn require_review_contract(
 fn prepare_validation(
     review: &VerifiedReview,
     commands: &[ValidationCommand],
+    candidate: &str,
+    carried: bool,
 ) -> Result<Vec<ValidationEvidence>, String> {
     let mut by_name = BTreeMap::new();
     for command in commands {
@@ -240,6 +318,12 @@ fn prepare_validation(
             "validation_commands must name every and only reviewed validation artifact".to_owned(),
         );
     }
+    if carried && commands.iter().any(|command| !command.reused) {
+        return Err(
+            "canonical approval review carry requires every reviewed validation command to declare reused:true"
+                .to_owned(),
+        );
+    }
     let mut prepared = review
         .validation_evidence
         .iter()
@@ -252,7 +336,7 @@ fn prepare_validation(
                 argv: command.argv.clone(),
                 result_path: evidence.path.clone(),
                 result_hash: evidence.hash.clone(),
-                candidate_commit: review.candidate_commit.clone(),
+                candidate_commit: candidate.to_owned(),
                 reused: command.reused,
             }
         })
@@ -265,6 +349,7 @@ fn prepare_reviews(
     repository: &Path,
     review: &VerifiedReview,
     runs: &[model::ReviewRun],
+    candidate: &str,
     diff_hash: &str,
 ) -> Result<Vec<ReviewEvidence>, String> {
     let mut prepared = Vec::new();
@@ -302,7 +387,7 @@ fn prepare_reviews(
                 reviewer,
                 route: route.clone(),
                 verdict: verdict.verdict.clone(),
-                candidate_commit: review.candidate_commit.clone(),
+                candidate_commit: candidate.to_owned(),
                 diff_hash: diff_hash.to_owned(),
                 result_path: run.result_path.clone(),
                 result_hash: result_hash.clone(),

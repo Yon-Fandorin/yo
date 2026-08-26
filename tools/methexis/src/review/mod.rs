@@ -315,6 +315,7 @@ struct SuccessInput<'a> {
     id: String,
 }
 
+mod carry;
 pub(crate) mod operations;
 mod prepare;
 pub(crate) mod records;
@@ -382,6 +383,7 @@ impl<'a> ReviewService<'a> {
     }
 }
 
+pub(crate) use carry::validate_canonical_approval_followthrough;
 pub(crate) use validation::validate_records;
 
 fn success(input: SuccessInput<'_>) -> OperationSuccess {

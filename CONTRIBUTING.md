@@ -306,6 +306,18 @@ creates a new candidate and repeats the affected lens; a translation-only
 correction repeats human review only. Working-diff review before the clean
 candidate is preparation, not completed review.
 
+Do not repeat a full semantic provider review solely because direct canonical
+approval creates a new commit. The repository may carry the cleared review to
+that strict descendant only when the reviewed candidate changed exactly one
+Knowledge file matching the requested KnowledgeId, did not change its approval
+path, and completed the fresh-context lens; the descendant may change exactly
+`methexis/approvals/<KnowledgeId>.yaml`. Methexis must rederive the current
+Knowledge revision, owner, request hash, replacement precondition, and exact
+canonical approval bytes from Git. Any other descendant path, noncanonical
+byte, stale revision, or owner mismatch requires a new affected review rather
+than carry. Carry binds review evidence to an exact mechanically derived
+candidate; it neither records nor grants human approval.
+
 Existing legacy Projection and approval records remain valid for their exact
 approved revisions and are not regenerated in bulk. The capability selects the
 current operation path and does not itself create durable authority lineage.
@@ -432,6 +444,31 @@ human or repository-local agent review without a Provider receipt uses
 model route. Delivery receipts remain local operational assertions rather than
 Provider-authenticated proof, so the coordinator still owns their factual
 accuracy.
+
+The experimental
+`yo.slice-gate-prepare-request/v1alpha1` adds exactly one
+`review_carry` value:
+
+```json
+{
+  "schema": "yo.slice-gate-prepare-request/v1alpha1",
+  "review_carry": {
+    "schema": "yo.canonical-approval-review-carry/v1alpha1",
+    "knowledge_id": "agent.example.unit"
+  }
+}
+```
+
+Use it only for the direct canonical approval follow-through described above;
+all other fields remain those of v1. Stable v1 rejects `review_carry`, while
+v1alpha1 requires it. Preparation verifies strict Git ancestry and the single
+approval-path transition, asks Methexis to reproduce the exact record, derives
+current-candidate review and approval identity, and returns
+`yo.slice-gate-prepare-result/v1alpha1` with the carry proof. Every reviewed
+validation command must declare `reused:true`; only v1alpha2 evidence with an
+unchanged exact argv and an ancestor launch commit can satisfy it. This path
+does not send another provider request, interpret new review prose, or bypass
+the ordinary human approval requirement.
 
 Preparation replays the complete original-or-delta review chain, requires the
 validation command names to match every and only its final validation

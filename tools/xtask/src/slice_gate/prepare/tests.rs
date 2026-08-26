@@ -2,7 +2,13 @@ use std::{cell::Cell, path::PathBuf};
 
 use serde_json::{Value, json};
 
-use super::{prepare_with, set_final_revalidate_hook};
+use super::{
+    model::{
+        CanonicalApprovalReviewCarryResult, REQUEST_SCHEMA_V1_ALPHA1, RESULT_SCHEMA_V1_ALPHA1,
+        REVIEW_CARRY_SCHEMA,
+    },
+    prepare_with, set_final_revalidate_hook,
+};
 use crate::{
     review_packet::{VerifiedEvidence, VerifiedReview},
     review_protocol::digest,
@@ -44,7 +50,7 @@ impl Fixture {
                 "base_ref": "refs/heads/develop",
                 "owned_contracts": ["repository.slice-gate.prepare.test"],
                 "dependencies": [],
-                "allowed_write_set": ["tools/**"],
+                "allowed_write_set": ["tools/**", "methexis/**"],
                 "focused_checks": ["cargo test --locked -p xtask slice_gate"],
                 "slice_close_checks": ["cargo test --locked -p xtask"]
             }))
@@ -54,9 +60,28 @@ impl Fixture {
         slice_contract::bind(&repository.path, &contract).unwrap();
 
         let validation = artifacts.join("validation.json");
+        let argv = ["cargo", "test", "--locked", "-p", "xtask"]
+            .map(str::to_owned)
+            .to_vec();
         std::fs::write(
             &validation,
-            br#"{"schema":"yo.validation-run-summary/v1","name":"xtask","status":"passed","exit_code":0,"elapsed_seconds":2,"log_bytes":42,"log_path":".local-exclude/validation-runs/xtask.log"}"#,
+            serde_json::to_vec(&json!({
+                "schema": "yo.validation-run-summary/v1alpha2",
+                "name": "xtask",
+                "status": "passed",
+                "exit_code": 0,
+                "elapsed_seconds": 2,
+                "log_bytes": 42,
+                "log_path": ".local-exclude/validation-runs/xtask.log",
+                "log_hash": digest(b"validation log"),
+                "head_commit": candidate,
+                "worktree_state": "clean",
+                "command_argv_count": argv.len(),
+                "command_argv_hash": crate::validation_summary::argv_hash(&argv),
+                "reused": false,
+                "reuse_policy": "reviewed-descendant/v1"
+            }))
+            .unwrap(),
         )
         .unwrap();
         let response = artifacts.join("review.txt");
@@ -156,6 +181,13 @@ impl Fixture {
     }
 
     fn publish(&self) -> Result<super::model::PrepareResult, String> {
+        self.publish_with_carry(None)
+    }
+
+    fn publish_with_carry(
+        &self,
+        carry: Option<CanonicalApprovalReviewCarryResult>,
+    ) -> Result<super::model::PrepareResult, String> {
         let expected_path = PathBuf::from(&self.review.manifest_path);
         let expected_hash = self.review.manifest_hash.clone();
         let review = self.review.clone();
@@ -169,6 +201,11 @@ impl Fixture {
                 assert_eq!(hash, expected_hash);
                 calls.set(calls.get() + 1);
                 Ok(review.clone())
+            },
+            &|_, _, _, _| {
+                carry
+                    .clone()
+                    .ok_or_else(|| "unexpected review carry in v1 fixture".to_owned())
             },
         );
         if result.is_ok() {
@@ -306,6 +343,124 @@ fn preparation_request_change_before_publication_fails_closed() {
         "Slice gate preparation request changed before publication"
     );
     assert!(!fixture.output_path.exists());
+}
+
+// 안정 v1 요청은 새 필드를 조용히 받아들이지 않고, carry가 있는 실험 계약만
+// v1alpha1로 명시하게 한다.
+#[test]
+fn stable_prepare_schema_rejects_review_carry() {
+    let mut fixture = Fixture::new();
+    fixture.request["review_carry"] = json!({
+        "schema": REVIEW_CARRY_SCHEMA,
+        "knowledge_id": "example.unit"
+    });
+    fixture.rewrite_request();
+
+    assert_eq!(
+        fixture.publish().unwrap_err(),
+        "schema `yo.slice-gate-prepare-request/v1` does not permit review_carry"
+    );
+}
+
+// 안정 v1은 새 필드의 null도 과거 unknown-field 실패처럼 거부한다.
+#[test]
+fn stable_prepare_schema_rejects_null_review_carry() {
+    let mut fixture = Fixture::new();
+    fixture.request["review_carry"] = Value::Null;
+    fixture.rewrite_request();
+
+    assert_eq!(
+        fixture.publish().unwrap_err(),
+        "schema `yo.slice-gate-prepare-request/v1` does not permit review_carry"
+    );
+}
+
+// 실험 스키마는 carry 없이 기존 v1의 별칭으로 사용하지 못한다.
+#[test]
+fn alpha_prepare_schema_requires_review_carry() {
+    let mut fixture = Fixture::new();
+    fixture.request["schema"] = json!(REQUEST_SCHEMA_V1_ALPHA1);
+    fixture.rewrite_request();
+
+    assert_eq!(
+        fixture.publish().unwrap_err(),
+        "schema `yo.slice-gate-prepare-request/v1alpha1` requires review_carry"
+    );
+}
+
+// 실험 스키마의 null은 carry 증거로 해석되지 않고 누락과 같이 닫혀 실패한다.
+#[test]
+fn alpha_prepare_schema_rejects_null_review_carry() {
+    let mut fixture = Fixture::new();
+    fixture.request["schema"] = json!(REQUEST_SCHEMA_V1_ALPHA1);
+    fixture.request["review_carry"] = Value::Null;
+    fixture.rewrite_request();
+
+    assert_eq!(
+        fixture.publish().unwrap_err(),
+        "schema `yo.slice-gate-prepare-request/v1alpha1` requires review_carry"
+    );
+}
+
+// 이미 검토된 semantic 후보의 strict descendant가 canonical approval 한 경로만
+// 더할 때, current candidate identity로 gate evidence를 다시 파생하고 alpha2 검증
+// 증거만 ancestor reuse로 받는다.
+#[test]
+fn prepares_exact_gate_for_canonical_approval_descendant() {
+    let mut fixture = Fixture::new();
+    fixture.repository.write(
+        "methexis/approvals/example.unit.yaml",
+        "canonical approval\n",
+    );
+    fixture
+        .repository
+        .git(["add", "methexis/approvals/example.unit.yaml"]);
+    fixture
+        .repository
+        .git(["commit", "--quiet", "-m", "canonical approval"]);
+    let candidate = git_line(&fixture.repository, &["rev-parse", "HEAD"]);
+
+    fixture.request["schema"] = json!(REQUEST_SCHEMA_V1_ALPHA1);
+    fixture.request["review_carry"] = json!({
+        "schema": REVIEW_CARRY_SCHEMA,
+        "knowledge_id": "example.unit"
+    });
+    fixture.request["validation_commands"][0]["reused"] = json!(true);
+    fixture.rewrite_request();
+
+    let carry = CanonicalApprovalReviewCarryResult {
+        schema: REVIEW_CARRY_SCHEMA,
+        knowledge_id: "example.unit".to_owned(),
+        reviewed_candidate: fixture.review.candidate_commit.clone(),
+        candidate_commit: candidate.clone(),
+        knowledge_path: "methexis/knowledge/agent-runtime/example.unit.md".to_owned(),
+        approval_path: "methexis/approvals/example.unit.yaml".to_owned(),
+        revision: digest(b"knowledge"),
+        reviewer: "human/owner".to_owned(),
+        reviewed_at: "2026-08-26".to_owned(),
+        request_hash: digest(b"request"),
+        approval_hash: digest(b"canonical approval\n"),
+        replaced_revision: None,
+        transition_diff_hash: digest(b"transition"),
+    };
+    let result = fixture.publish_with_carry(Some(carry)).unwrap();
+
+    assert_eq!(result.schema, RESULT_SCHEMA_V1_ALPHA1);
+    assert_eq!(result.gate.candidate_commit, candidate);
+    assert!(result.gate.validation[0].reused);
+    let generated: Value =
+        serde_json::from_slice(&std::fs::read(&fixture.output_path).unwrap()).unwrap();
+    assert!(
+        generated["review_evidence"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["candidate_commit"] == candidate)
+    );
+    assert_eq!(
+        result.review_carry.unwrap().reviewed_candidate,
+        fixture.review.candidate_commit
+    );
 }
 
 fn git_line(repository: &TestRepository, arguments: &[&str]) -> String {

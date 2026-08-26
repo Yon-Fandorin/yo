@@ -22,6 +22,19 @@ pub use check::{
 };
 pub use cli::run;
 
+/// Exact deterministic facts derived from a canonical approval proposal and
+/// the approval record, if any, that it replaces.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanonicalApprovalFollowthrough {
+    pub knowledge_id: String,
+    pub revision: String,
+    pub reviewer: String,
+    pub reviewed_at: String,
+    pub request_hash: String,
+    pub approval_hash: String,
+    pub replaced_revision: Option<String>,
+}
+
 /// Checks the tracked Draft corpus rooted at `repository_root`.
 #[must_use]
 pub fn check_repository(repository_root: &Path) -> CheckReport {
@@ -52,4 +65,22 @@ pub fn validate_review_proposals(repository_root: &Path) -> Result<usize, Vec<Di
     } else {
         Err(validation.diagnostics)
     }
+}
+
+/// Verifies that `approval_bytes` are the exact canonical output for the
+/// current Knowledge revision. `previous_approval_bytes` supplies the
+/// repository-derived replacement precondition; it is never inferred from the
+/// new record.
+pub fn validate_canonical_approval_followthrough(
+    repository_root: &Path,
+    knowledge_id: &str,
+    approval_bytes: &[u8],
+    previous_approval_bytes: Option<&[u8]>,
+) -> Result<CanonicalApprovalFollowthrough, Vec<Diagnostic>> {
+    review::validate_canonical_approval_followthrough(
+        repository_root,
+        knowledge_id,
+        approval_bytes,
+        previous_approval_bytes,
+    )
 }
