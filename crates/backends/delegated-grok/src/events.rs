@@ -304,6 +304,16 @@ impl<P: JsonPeer> Backend<P> {
                 format!("unsupported Grok ACP client request `{method}`"),
             ));
         }
+        if self.read_only_review {
+            self.client.reject(
+                wire_id,
+                -32000,
+                "read-only delegated review does not accept permission requests",
+            )?;
+            return Err(protocol::protocol_failure(
+                "Grok requested permission during a read-only delegated review",
+            ));
+        }
         self.validate_session(&params)?;
         let turn = self.active_turn()?;
         if self

@@ -3,12 +3,15 @@ use std::time::Duration;
 use serde_json::json;
 use yo_core::{
     AgentCommand, BackendBindingEvidence, BackendCommandEvidence, BackendFailureKind,
-    BackendIdentity, BackendPoll, ContinuationStrategy,
+    BackendIdentity, BackendPoll, ContinuationStrategy, UserInput,
 };
 
 use super::{
     super::client::AppServerClient,
-    support::{FakePeer, backend, initialize_response, session, thread_start_response},
+    support::{
+        FakePeer, backend, backend_with_profile, initialize_response, session,
+        thread_start_response, turn,
+    },
 };
 
 fn resume_binding(thread_id: &str) -> BackendBindingEvidence {
@@ -18,6 +21,28 @@ fn resume_binding(thread_id: &str) -> BackendBindingEvidence {
         BackendIdentity::new(
             "codex.app-server/thread-binding/v1",
             json!({ "sessionId": thread_id, "threadId": thread_id }).to_string(),
+        ),
+        BackendIdentity::new(
+            "codex.app-server/model-and-provider/v1",
+            json!({ "model": "gpt-test", "provider": "openai" }).to_string(),
+        ),
+        BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
+        ContinuationStrategy::BackendManagedState,
+    )
+}
+
+fn read_only_resume_binding(thread_id: &str) -> BackendBindingEvidence {
+    BackendBindingEvidence::new(
+        "codex-app-server",
+        "codex_cli_rs/0.145.0 (recorded)",
+        BackendIdentity::new(
+            "codex.app-server/thread-binding/v1alpha1",
+            json!({
+                "executionProfile": "yo.delegated-review-execution/v1alpha1",
+                "sessionId": thread_id,
+                "threadId": thread_id,
+            })
+            .to_string(),
         ),
         BackendIdentity::new(
             "codex.app-server/model-and-provider/v1",
@@ -106,6 +131,79 @@ fn resumes_one_verified_thread_without_starting_another() {
         sent.iter()
             .all(|message| message["method"] != "thread/start")
     );
+}
+
+// 읽기 전용 리뷰는 thread와 turn 양쪽에 승인 금지·읽기 전용 sandbox를 반복하고,
+// network 차단과 durable execution profile을 증거에 함께 고정합니다.
+#[test]
+fn read_only_review_applies_closed_thread_and_turn_policies() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let turn_response = json!({
+        "id": 3,
+        "result": { "turn": { "id": "turn-a" } }
+    });
+    let (mut backend, sent) =
+        backend_with_profile([thread_start_response(2, "thread-a"), turn_response], true);
+
+    let evidence = backend
+        .execute_command(AgentCommand::CreateSession { session_id })
+        .unwrap();
+    let BackendCommandEvidence::BindingOpened(binding) = evidence else {
+        panic!("thread/start must return the restricted binding");
+    };
+    assert_eq!(
+        binding.binding_identity().schema(),
+        "codex.app-server/thread-binding/v1alpha1"
+    );
+    assert!(
+        binding
+            .binding_identity()
+            .value()
+            .contains("yo.delegated-review-execution/v1alpha1")
+    );
+
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("review this"),
+        })
+        .unwrap();
+
+    let sent = sent.0.borrow();
+    assert_eq!(sent[2]["params"]["approvalPolicy"], "never");
+    assert_eq!(sent[2]["params"]["sandbox"], "read-only");
+    assert_eq!(sent[3]["params"]["approvalPolicy"], "never");
+    assert_eq!(
+        sent[3]["params"]["sandboxPolicy"],
+        json!({ "type": "readOnly", "networkAccess": false })
+    );
+}
+
+// 제한 Session resume은 같은 v1alpha1 profile만 받아 thread/resume에도 정책을 다시
+// 적용하고, 일반 backend로 잘못 재개하면 RPC 전 Session 실패로 닫습니다.
+#[test]
+fn read_only_resume_restores_policy_and_rejects_profile_downgrade() {
+    let (mut restricted, restricted_sent) =
+        backend_with_profile([thread_start_response(2, "thread-a")], true);
+    restricted
+        .resume_binding(session(1), &read_only_resume_binding("thread-a"))
+        .unwrap();
+    assert_eq!(
+        restricted_sent.0.borrow()[2]["params"],
+        json!({
+            "threadId": "thread-a",
+            "approvalPolicy": "never",
+            "sandbox": "read-only",
+        })
+    );
+
+    let (mut standard, standard_sent) = backend([]);
+    let failure = standard
+        .resume_binding(session(1), &read_only_resume_binding("thread-a"))
+        .unwrap_err();
+    assert_eq!(failure.kind(), BackendFailureKind::Session);
+    assert_eq!(standard_sent.0.borrow().len(), 2);
 }
 
 // thread/resume 직후 app-server가 재생하는 과거 누적 사용량은 현재 프로세스의 Yo Turn과

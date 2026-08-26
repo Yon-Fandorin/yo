@@ -12,6 +12,7 @@ fn no_argument_keeps_the_live_defaults() {
             selection: LiveSelection::New,
             model: None,
             no_tools: false,
+            sandbox: None,
         })
     );
 }
@@ -25,6 +26,7 @@ fn print_mode_has_equivalent_short_and_long_forms() {
         selection: LiveSelection::New,
         model: Some("qwencloud:default:qwen3.8-max".to_owned()),
         no_tools: true,
+        sandbox: None,
     });
 
     assert_eq!(
@@ -62,6 +64,7 @@ fn print_prompt_is_optional_once_print_mode_is_selected() {
             selection: LiveSelection::New,
             model: None,
             no_tools: false,
+            sandbox: None,
         })
     );
     assert!(parse(["prompt without print".into()]).is_err());
@@ -73,6 +76,7 @@ fn print_prompt_is_optional_once_print_mode_is_selected() {
             selection: LiveSelection::New,
             model: None,
             no_tools: false,
+            sandbox: None,
         })
     );
 }
@@ -106,6 +110,7 @@ fn print_resume_is_exact_and_rejects_incompatible_startup_options() {
             selection: LiveSelection::Resume(id.parse().unwrap()),
             model: None,
             no_tools: false,
+            sandbox: None,
         })
     );
 }
@@ -131,6 +136,7 @@ fn print_rejects_top_level_subcommands_without_literal_separator() {
             selection: LiveSelection::New,
             model: None,
             no_tools: false,
+            sandbox: None,
         })
     );
 
@@ -147,6 +153,7 @@ fn print_rejects_top_level_subcommands_without_literal_separator() {
             selection: LiveSelection::New,
             model: Some("session".to_owned()),
             no_tools: false,
+            sandbox: None,
         })
     );
 }
@@ -173,6 +180,40 @@ fn live_no_tools_is_creation_only() {
     let id = "01890f00-0000-7000-8000-000000000001";
     assert!(parse(["--no-tools".into(), "--resume".into(), id.into()]).is_err());
     assert!(parse(["--no-tools".into(), "--continue".into()]).is_err());
+}
+
+// `--sandbox read-only`는 비대화형 delegated host 리뷰를 명시하는 값으로 보존되고,
+// 평범한 live 실행이나 native tool restriction으로 잘못 해석되지 않습니다.
+#[test]
+fn read_only_sandbox_is_a_print_only_creation_profile() {
+    assert_eq!(
+        parse([
+            "-p".into(),
+            "--model".into(),
+            "host:codex".into(),
+            "--sandbox".into(),
+            "read-only".into(),
+            "review".into(),
+        ])
+        .unwrap(),
+        Command::Print(PrintOptions {
+            prompt: Some("review".to_owned()),
+            selection: LiveSelection::New,
+            model: Some("host:codex".to_owned()),
+            no_tools: false,
+            sandbox: Some(SandboxMode::ReadOnly),
+        })
+    );
+
+    let id = "01890f00-0000-7000-8000-000000000001";
+    for arguments in [
+        vec!["--sandbox", "read-only"],
+        vec!["-p", "--sandbox", "read-only", "--no-tools"],
+        vec!["-p", "--sandbox", "read-only", "--resume", id],
+        vec!["-p", "--sandbox", "writable", "review"],
+    ] {
+        assert!(parse(arguments.into_iter().map(Into::into)).is_err());
+    }
 }
 
 // `--model`은 새 Session과 resume 양쪽에서 같은 명시적 model reference로 보존되고,

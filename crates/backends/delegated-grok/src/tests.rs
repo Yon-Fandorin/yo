@@ -99,6 +99,13 @@ fn turn(session_id: SessionId, value: u64) -> TurnRef {
 }
 
 fn backend(later_messages: impl IntoIterator<Item = Value>) -> (Backend<FakePeer>, Sent) {
+    backend_with_profile(later_messages, false)
+}
+
+fn backend_with_profile(
+    later_messages: impl IntoIterator<Item = Value>,
+    read_only_review: bool,
+) -> (Backend<FakePeer>, Sent) {
     let messages = [
         vec![
             initialize_response(1, &["cached_token", "grok.com"], true),
@@ -112,6 +119,7 @@ fn backend(later_messages: impl IntoIterator<Item = Value>) -> (Backend<FakePeer
         Backend::new_uninitialized(
             AcpClient::new(peer, Duration::from_secs(1)),
             "/workspace".to_owned(),
+            read_only_review,
         ),
         sent,
     )
@@ -224,6 +232,24 @@ fn resume_binding(grok_session: &str) -> BackendBindingEvidence {
     )
 }
 
+fn read_only_resume_binding(grok_session: &str) -> BackendBindingEvidence {
+    BackendBindingEvidence::new(
+        "grok-build-acp",
+        "grok/recorded",
+        BackendIdentity::new(
+            "grok.acp/session-binding/v1alpha1",
+            json!({
+                "executionProfile": "yo.delegated-review-execution/v1alpha1",
+                "sessionId": grok_session,
+            })
+            .to_string(),
+        ),
+        BackendIdentity::new("grok.build/model-selection/v1", "backend-managed"),
+        BackendIdentity::new("grok.acp/session-locator/v1", grok_session),
+        ContinuationStrategy::BackendManagedState,
+    )
+}
+
 // 새 Session은 ACP v1 초기화 뒤 cached_token만 인증하고 session/new를 호출하며,
 // 반환된 Grok Session ID를 backend-managed Continuation 신원으로 보존합니다.
 #[test]
@@ -255,6 +281,36 @@ fn initializes_with_cached_login_and_opens_a_durable_session() {
     assert_eq!(sent[2]["params"]["cwd"], "/workspace");
 }
 
+// 읽기 전용 Grok Session은 일반 ACP payload를 바꾸지 않되 durable binding에 제한
+// execution profile을 기록해 이후 resume이 같은 process 정책을 복원할 수 있게 합니다.
+#[test]
+fn read_only_review_records_a_distinct_durable_binding() {
+    let (mut backend, sent) = backend_with_profile(
+        [response(3, json!({ "sessionId": "grok-session-a" }))],
+        true,
+    );
+
+    let evidence = backend
+        .execute_command(AgentCommand::CreateSession {
+            session_id: session(1),
+        })
+        .unwrap();
+    let BackendCommandEvidence::BindingOpened(binding) = evidence else {
+        panic!("session/new must return the restricted binding");
+    };
+    assert_eq!(
+        binding.binding_identity().schema(),
+        "grok.acp/session-binding/v1alpha1"
+    );
+    assert!(
+        binding
+            .binding_identity()
+            .value()
+            .contains("yo.delegated-review-execution/v1alpha1")
+    );
+    assert_eq!(sent.0.borrow()[2]["method"], "session/new");
+}
+
 // Grok이 cached_token을 광고하지 않으면 API key나 브라우저 flow로 자동 전환하지 않고,
 // 별도 과금 가능성을 피하기 위해 grok login 안내가 있는 Initialization 실패로 닫습니다.
 #[test]
@@ -264,6 +320,7 @@ fn refuses_to_fall_back_when_cached_login_is_unavailable() {
         let mut backend = Backend::new_uninitialized(
             AcpClient::new(peer, Duration::from_secs(1)),
             "/workspace".to_owned(),
+            false,
         );
 
         let failure = backend
@@ -289,6 +346,7 @@ fn rejected_cached_login_has_actionable_login_guidance() {
     let mut backend = Backend::new_uninitialized(
         AcpClient::new(peer, Duration::from_secs(1)),
         "/workspace".to_owned(),
+        false,
     );
 
     let failure = backend
@@ -674,6 +732,37 @@ fn maps_permission_options_and_returns_the_selected_once_decision() {
     assert_eq!(response["id"], "permission-a");
     assert_eq!(response["result"]["outcome"]["outcome"], "selected");
     assert_eq!(response["result"]["outcome"]["optionId"], "once");
+}
+
+// process가 제한 argv를 무시하거나 vendor 동작이 바뀌어 permission request가 와도,
+// read-only review는 사용자 승인으로 승격하지 않고 wire 거절 뒤 Protocol 실패합니다.
+#[test]
+fn read_only_review_rejects_permission_requests_without_an_approval_activity() {
+    let session_id = session(1);
+    let active_turn = turn(session_id, 1);
+    let (mut backend, sent) = backend_with_profile(
+        [
+            response(3, json!({ "sessionId": "grok-session-a" })),
+            permission_request("permission-a", Some("Run cargo test")),
+        ],
+        true,
+    );
+    create_session(&mut backend, session_id);
+    backend
+        .execute_command(AgentCommand::StartTurn {
+            turn: active_turn,
+            input: UserInput::from("review"),
+        })
+        .unwrap();
+
+    let failure = backend.poll_event().unwrap_err();
+    assert_eq!(failure.kind(), BackendFailureKind::Protocol);
+    assert!(failure.message().contains("read-only delegated review"));
+    assert!(backend.approvals.is_empty());
+    assert!(backend.pending_events.is_empty());
+    let rejection = sent.0.borrow().last().cloned().unwrap();
+    assert_eq!(rejection["id"], "permission-a");
+    assert_eq!(rejection["error"]["code"], -32000);
 }
 
 // permission request가 실행 가능한 tool 제목 없이 도착하면 승인 Activity를 만들거나
@@ -1287,6 +1376,25 @@ fn resumes_with_session_load_without_replaying_history_as_new_activity() {
     assert_eq!(evidence.session_locator().value(), "grok-session-a");
     assert_eq!(sent.0.borrow()[2]["method"], "session/load");
     assert_eq!(backend.poll_event().unwrap(), BackendPoll::Pending);
+}
+
+// 제한 binding은 같은 read-only backend에서만 session/load로 이어지고, 일반 backend가
+// 받으면 process 초기화 전 거절되어 resume이 권한을 넓히지 않습니다.
+#[test]
+fn read_only_resume_restores_profile_and_rejects_downgrade() {
+    let binding = read_only_resume_binding("grok-session-a");
+    let (mut restricted, restricted_sent) = backend_with_profile([response(3, json!({}))], true);
+    let evidence = restricted.resume_binding(session(1), &binding).unwrap();
+    assert_eq!(
+        evidence.binding_identity().schema(),
+        "grok.acp/session-binding/v1alpha1"
+    );
+    assert_eq!(restricted_sent.0.borrow()[2]["method"], "session/load");
+
+    let (mut standard, standard_sent) = backend([]);
+    let failure = standard.resume_binding(session(1), &binding).unwrap_err();
+    assert_eq!(failure.kind(), BackendFailureKind::Session);
+    assert!(standard_sent.0.borrow().is_empty());
 }
 
 // 설치되지 않은 실행 파일은 protocol이나 Session 오류로 오인하지 않고 시작 경계의

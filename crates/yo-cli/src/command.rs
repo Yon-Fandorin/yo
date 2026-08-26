@@ -59,6 +59,16 @@ struct Cli {
     /// Start a native Session without exposing local tools to the model.
     #[arg(long, conflicts_with_all = ["resume", "continue_session"])]
     no_tools: bool,
+
+    /// Restrict a print-mode delegated host Session to read-only review.
+    #[arg(
+        long,
+        value_enum,
+        value_name = "MODE",
+        requires = "print",
+        conflicts_with_all = ["no_tools", "resume", "continue_session"]
+    )]
+    sandbox: Option<SandboxMode>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
@@ -188,6 +198,7 @@ pub(crate) struct LiveOptions {
     pub(crate) selection: LiveSelection,
     pub(crate) model: Option<String>,
     pub(crate) no_tools: bool,
+    pub(crate) sandbox: Option<SandboxMode>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -196,6 +207,12 @@ pub(crate) struct PrintOptions {
     pub(crate) selection: LiveSelection,
     pub(crate) model: Option<String>,
     pub(crate) no_tools: bool,
+    pub(crate) sandbox: Option<SandboxMode>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(crate) enum SandboxMode {
+    ReadOnly,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -329,6 +346,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
                 selection,
                 model: cli.model,
                 no_tools: cli.no_tools,
+                sandbox: cli.sandbox,
             }))
         },
         None => Ok(Command::Live(LiveOptions {
@@ -346,6 +364,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
             },
             model: cli.model,
             no_tools: cli.no_tools,
+            sandbox: cli.sandbox,
         })),
     }
 }
@@ -365,7 +384,7 @@ fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::E
         if argument == "--" {
             break;
         }
-        if matches!(argument, "--model" | "--resume") {
+        if matches!(argument, "--model" | "--resume" | "--sandbox") {
             skip_option_value = true;
             continue;
         }

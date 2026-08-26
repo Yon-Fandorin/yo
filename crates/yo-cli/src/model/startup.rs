@@ -5,7 +5,7 @@ use yo_core::{
     StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
-use super::StartupBackend;
+use super::{DelegatedExecutionProfile, StartupBackend};
 use crate::{AppError, config::Config};
 
 const SESSION_TOOL_EXPOSURE_PROFILE: &str = "yo.session-tool-exposure/v1alpha1";
@@ -34,6 +34,7 @@ pub(super) fn resolve(
     stored_preference: Option<StartupTarget>,
     override_model: Option<&str>,
     no_tools: bool,
+    sandbox: Option<crate::command::SandboxMode>,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
     if let Some(target) = resume {
@@ -45,6 +46,7 @@ pub(super) fn resolve(
         None,
         override_model,
         no_tools,
+        sandbox.is_some(),
     )
 }
 
@@ -61,6 +63,7 @@ fn resolve_new_session(
         operator,
         reference,
         false,
+        false,
     )
 }
 
@@ -70,6 +73,7 @@ fn resolve_new_session_with_tool_restriction(
     operator: Option<StartupTarget>,
     reference: Option<&str>,
     no_tools: bool,
+    read_only_review: bool,
 ) -> Result<StartupBackend, AppError> {
     let target = resolve_startup_target(
         catalog,
@@ -95,7 +99,18 @@ fn resolve_new_session_with_tool_restriction(
             "--no-tools ({SESSION_TOOL_EXPOSURE_PROFILE}) is supported only for native model Sessions; {} owns its tool surface",
             host.reference()
         )])),
-        StartupTarget::Host(host) => resolve_host(host),
+        StartupTarget::Host(host) => resolve_host(
+            host,
+            if read_only_review {
+                DelegatedExecutionProfile::ReadOnlyReview
+            } else {
+                DelegatedExecutionProfile::Standard
+            },
+        ),
+        StartupTarget::Model(_) if read_only_review => Err(AppError::many([
+            "--sandbox read-only (yo.delegated-review-execution/v1alpha1) is supported only for delegated host Sessions"
+                .to_owned(),
+        ])),
         StartupTarget::Model(selection) => {
             let entry = catalog
                 .resolve_model(selection.provider(), selection.account(), selection.model())
@@ -119,7 +134,9 @@ fn resolve_resume(
     target: &BackendResumeTarget,
 ) -> Result<StartupBackend, AppError> {
     match classify_durable_backend(target.binding().backend_kind())? {
-        DurableBackendKind::Host(host) => return resolve_host_resume(host, override_model),
+        DurableBackendKind::Host(host) => {
+            return resolve_host_resume(host, override_model, target.binding());
+        },
         DurableBackendKind::Native => {},
     }
     let binding_identity = target.binding().binding_identity();
@@ -148,20 +165,46 @@ fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> 
     )]))
 }
 
-fn resolve_host(host: HostId) -> Result<StartupBackend, AppError> {
+fn resolve_host(
+    host: HostId,
+    execution: DelegatedExecutionProfile,
+) -> Result<StartupBackend, AppError> {
     crate::host::require_supported(&host)?;
-    Ok(StartupBackend::Host(host))
+    Ok(match execution {
+        DelegatedExecutionProfile::Standard => StartupBackend::Host(host),
+        DelegatedExecutionProfile::ReadOnlyReview => StartupBackend::ReadOnlyHost(host),
+    })
 }
 
 fn resolve_host_resume(
     host: HostId,
     override_model: Option<&str>,
+    binding: &yo_core::BackendBindingEvidence,
 ) -> Result<StartupBackend, AppError> {
+    let execution = durable_host_execution(&host, binding.binding_identity().schema())?;
     match override_model {
-        None => Ok(StartupBackend::Host(host)),
-        Some(reference) if reference == host.reference() => Ok(StartupBackend::Host(host)),
+        None => resolve_host(host, execution),
+        Some(reference) if reference == host.reference() => resolve_host(host, execution),
         Some(_) => Err(AppError::many([format!(
             "a different target cannot replace a {} Session; cross-backend handoff is not supported",
+            host.reference()
+        )])),
+    }
+}
+
+fn durable_host_execution(
+    host: &HostId,
+    binding_schema: &str,
+) -> Result<DelegatedExecutionProfile, AppError> {
+    match (host.as_str(), binding_schema) {
+        (HostId::CODEX, "codex.app-server/thread-binding/v1")
+        | (HostId::GROK, "grok.acp/session-binding/v1") => Ok(DelegatedExecutionProfile::Standard),
+        (HostId::CODEX, "codex.app-server/thread-binding/v1alpha1")
+        | (HostId::GROK, "grok.acp/session-binding/v1alpha1") => {
+            Ok(DelegatedExecutionProfile::ReadOnlyReview)
+        },
+        _ => Err(AppError::many([format!(
+            "{} Session has unsupported delegated execution binding `{binding_schema}`; it cannot be resumed without risking a permission downgrade",
             host.reference()
         )])),
     }
@@ -355,6 +398,34 @@ mod tests {
         .unwrap()
     }
 
+    fn codex_binding(schema: &str) -> yo_core::BackendBindingEvidence {
+        yo_core::BackendBindingEvidence::new(
+            "codex-app-server",
+            "codex/test",
+            yo_core::BackendIdentity::new(
+                schema,
+                serde_json::json!({ "sessionId": "session", "threadId": "thread" }).to_string(),
+            ),
+            yo_core::BackendIdentity::new("codex/model/v1", "model"),
+            yo_core::BackendIdentity::new("codex.app-server/thread-locator/v1", "thread"),
+            yo_core::ContinuationStrategy::BackendManagedState,
+        )
+    }
+
+    fn grok_binding(schema: &str) -> yo_core::BackendBindingEvidence {
+        yo_core::BackendBindingEvidence::new(
+            "grok-build-acp",
+            "grok/test",
+            yo_core::BackendIdentity::new(
+                schema,
+                serde_json::json!({ "sessionId": "session" }).to_string(),
+            ),
+            yo_core::BackendIdentity::new("grok/model/v1", "backend-managed"),
+            yo_core::BackendIdentity::new("grok.acp/session-locator/v1", "session"),
+            yo_core::ContinuationStrategy::BackendManagedState,
+        )
+    }
+
     // startup source가 모두 비면 setup guidance로 실패하고, Local Codex도 host target으로
     // 명시해야 한다. unique bare ModelId와 완전한 좌표는 operator startup 없이 선택한다.
     #[test]
@@ -420,7 +491,10 @@ mod tests {
             None,
         )
         .unwrap();
-        assert!(matches!(stored, StartupBackend::Host(host) if host == HostId::codex()));
+        assert!(matches!(
+            stored,
+            StartupBackend::Host(host) if host == HostId::codex()
+        ));
 
         let invoked = resolve_new_session(
             &catalog,
@@ -508,15 +582,83 @@ mod tests {
     #[test]
     fn codex_resume_accepts_only_absent_or_exact_host_override() {
         assert!(matches!(
-            resolve_host_resume(HostId::codex(), None).unwrap(),
+            resolve_host_resume(
+                HostId::codex(),
+                None,
+                &codex_binding("codex.app-server/thread-binding/v1")
+            )
+            .unwrap(),
             StartupBackend::Host(host) if host.as_str() == HostId::CODEX
         ));
         assert!(matches!(
-            resolve_host_resume(HostId::codex(), Some("host:codex")).unwrap(),
+            resolve_host_resume(
+                HostId::codex(),
+                Some("host:codex"),
+                &codex_binding("codex.app-server/thread-binding/v1")
+            )
+            .unwrap(),
             StartupBackend::Host(host) if host.as_str() == HostId::CODEX
         ));
-        assert!(resolve_host_resume(HostId::codex(), Some("host:grok")).is_err());
-        assert!(resolve_host_resume(HostId::codex(), Some("qwen3.8-max")).is_err());
+        let binding = codex_binding("codex.app-server/thread-binding/v1");
+        assert!(resolve_host_resume(HostId::codex(), Some("host:grok"), &binding).is_err());
+        assert!(resolve_host_resume(HostId::codex(), Some("qwen3.8-max"), &binding).is_err());
+    }
+
+    // 읽기 전용 리뷰는 새 delegated host에만 선택할 수 있고 Codex·Grok 모두 같은
+    // 실행 프로필로 해석되며, native model에 제한이 조용히 누락되지 않습니다.
+    #[test]
+    fn read_only_review_selects_only_delegated_hosts() {
+        let catalog = selection_catalog(&[("qwencloud", "default", "model")]);
+        for reference in ["host:codex", "host:grok"] {
+            assert!(matches!(
+                resolve_new_session_with_tool_restriction(
+                    &catalog,
+                    None,
+                    None,
+                    Some(reference),
+                    false,
+                    true,
+                )
+                .unwrap(),
+                StartupBackend::ReadOnlyHost(_)
+            ));
+        }
+
+        let error = resolve_new_session_with_tool_restriction(
+            &catalog,
+            None,
+            None,
+            Some("model"),
+            false,
+            true,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("delegated host Sessions"));
+    }
+
+    // resume 호출에는 `--sandbox`를 다시 받지 않고 저장된 binding schema에서 제한
+    // 프로필을 복원하며, 모르는 schema는 권한 완화 위험 때문에 시작 전에 거절합니다.
+    #[test]
+    fn delegated_resume_restores_the_durable_execution_profile() {
+        for (host, binding) in [
+            (
+                HostId::codex(),
+                codex_binding("codex.app-server/thread-binding/v1alpha1"),
+            ),
+            (
+                HostId::grok(),
+                grok_binding("grok.acp/session-binding/v1alpha1"),
+            ),
+        ] {
+            assert!(matches!(
+                resolve_host_resume(host, None, &binding).unwrap(),
+                StartupBackend::ReadOnlyHost(_)
+            ));
+        }
+
+        let unknown = codex_binding("codex.app-server/thread-binding/v2");
+        let error = resolve_host_resume(HostId::codex(), None, &unknown).unwrap_err();
+        assert!(error.to_string().contains("permission downgrade"));
     }
 
     // 저장된 backend kind를 추측해 Codex로 보내면 locator identity를 바꾸므로 알려진 두
@@ -777,9 +919,15 @@ mod tests {
     #[test]
     fn explicit_no_tools_restricts_only_a_new_native_session() {
         let catalog = selection_catalog(&[("qwencloud", "default", "model")]);
-        let startup =
-            resolve_new_session_with_tool_restriction(&catalog, None, None, Some("model"), true)
-                .unwrap();
+        let startup = resolve_new_session_with_tool_restriction(
+            &catalog,
+            None,
+            None,
+            Some("model"),
+            true,
+            false,
+        )
+        .unwrap();
         assert_eq!(
             startup.registry_revision(),
             Some(crate::local_tools::LocalToolRegistryRevision::NoTools)
@@ -792,6 +940,7 @@ mod tests {
             None,
             Some("host:codex"),
             true,
+            false,
         )
         .unwrap_err()
         .to_string();

@@ -29,6 +29,9 @@ use yo_core::{
 
 pub const HOST_ID: &str = "codex";
 pub const BACKEND_KIND: &str = "codex-app-server";
+const READ_ONLY_REVIEW_PROFILE: &str = "yo.delegated-review-execution/v1alpha1";
+const STANDARD_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1";
+const READ_ONLY_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1alpha1";
 
 /// Local stdio adapter for a compatible `codex app-server` process.
 pub struct CodexBackend {
@@ -63,7 +66,7 @@ impl CodexBackend {
         let peer = StdioPeer::spawn(&config)?;
         let client = AppServerClient::new(peer, config.request_timeout());
         Ok(Self {
-            inner: Backend::new_uninitialized(client, cwd),
+            inner: Backend::new_uninitialized(client, cwd, config.read_only_review()),
         })
     }
 
@@ -149,6 +152,7 @@ struct Backend<P> {
     initialized: bool,
     backend_version: Option<String>,
     cwd: String,
+    read_only_review: bool,
     session: Option<SessionBinding>,
     turns: HashMap<TurnRef, String>,
     wire_turns: HashMap<String, WireTurnBinding>,
@@ -162,12 +166,13 @@ struct Backend<P> {
 }
 
 impl<P: JsonMessagePeer> Backend<P> {
-    fn new_uninitialized(client: AppServerClient<P>, cwd: String) -> Self {
+    fn new_uninitialized(client: AppServerClient<P>, cwd: String, read_only_review: bool) -> Self {
         Self {
             client,
             initialized: false,
             backend_version: None,
             cwd,
+            read_only_review,
             session: None,
             turns: HashMap::new(),
             wire_turns: HashMap::new(),
@@ -193,14 +198,13 @@ impl<P: JsonMessagePeer> Backend<P> {
             AgentCommand::CreateSession { session_id } => self.create_session(session_id),
             AgentCommand::StartTurn { turn, input } => {
                 let thread_id = self.thread_id(turn.session_id())?.to_owned();
-                let call = self.client.call(
-                    "turn/start",
-                    json!({
-                        "threadId": thread_id,
-                        "input": [{ "type": "text", "text": input.into_string() }],
-                        "cwd": self.cwd,
-                    }),
-                )?;
+                let mut params = json!({
+                    "threadId": thread_id,
+                    "input": [{ "type": "text", "text": input.into_string() }],
+                    "cwd": self.cwd,
+                });
+                self.apply_turn_policy(&mut params);
+                let call = self.client.call("turn/start", params)?;
                 let wire_turn = protocol::string_at(&call.result, &["turn", "id"])?.to_owned();
                 self.turns.insert(turn, wire_turn.clone());
                 self.wire_turns.insert(
@@ -263,16 +267,12 @@ impl<P: JsonMessagePeer> Backend<P> {
         session_id: SessionId,
     ) -> Result<BackendCommandEvidence, BackendFailure> {
         self.initialize()?;
-        let result = self
-            .client
-            .call(
-                "thread/start",
-                json!({
-                    "cwd": self.cwd,
-                    "serviceName": "yo",
-                }),
-            )?
-            .result;
+        let mut params = json!({
+            "cwd": self.cwd,
+            "serviceName": "yo",
+        });
+        self.apply_thread_policy(&mut params);
+        let result = self.client.call("thread/start", params)?.result;
         let thread_id = protocol::string_at(&result, &["thread", "id"])?.to_owned();
         let backend_session_id = protocol::string_at(&result, &["thread", "sessionId"])?;
         let model = protocol::string_at(&result, &["model"])?;
@@ -280,11 +280,6 @@ impl<P: JsonMessagePeer> Backend<P> {
         let backend_version = self.backend_version.clone().ok_or_else(|| {
             protocol::protocol_failure("Codex backend version was not retained after initialize")
         })?;
-        let binding_value = json!({
-            "sessionId": backend_session_id,
-            "threadId": thread_id,
-        })
-        .to_string();
         let model_value = json!({
             "model": model,
             "provider": model_provider,
@@ -298,7 +293,7 @@ impl<P: JsonMessagePeer> Backend<P> {
             BackendBindingEvidence::new(
                 BACKEND_KIND,
                 backend_version,
-                BackendIdentity::new("codex.app-server/thread-binding/v1", binding_value),
+                self.binding_identity(backend_session_id, &thread_id),
                 BackendIdentity::new("codex.app-server/model-and-provider/v1", model_value),
                 BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
                 ContinuationStrategy::BackendManagedState,
@@ -340,6 +335,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                 ),
             ));
         }
+        self.validate_execution_binding(binding)?;
         let locator = binding.session_locator();
         if locator.schema() != "codex.app-server/thread-locator/v1" {
             return Err(BackendFailure::new(
@@ -349,22 +345,14 @@ impl<P: JsonMessagePeer> Backend<P> {
         }
         let thread_id = locator.value();
         self.initialize()?;
-        let result = self
-            .client
-            .call("thread/resume", json!({ "threadId": thread_id }))?
-            .result;
+        let mut params = json!({ "threadId": thread_id });
+        self.apply_thread_policy(&mut params);
+        let result = self.client.call("thread/resume", params)?.result;
         let resumed_thread = protocol::string_at(&result, &["thread", "id"])?;
         let backend_session_id = protocol::string_at(&result, &["thread", "sessionId"])?;
         let model = protocol::string_at(&result, &["model"])?;
         let model_provider = protocol::string_at(&result, &["modelProvider"])?;
-        let binding_identity = BackendIdentity::new(
-            "codex.app-server/thread-binding/v1",
-            json!({
-                "sessionId": backend_session_id,
-                "threadId": resumed_thread,
-            })
-            .to_string(),
-        );
+        let binding_identity = self.binding_identity(backend_session_id, resumed_thread);
         let model_identity = BackendIdentity::new(
             "codex.app-server/model-and-provider/v1",
             json!({ "model": model, "provider": model_provider }).to_string(),
@@ -392,6 +380,73 @@ impl<P: JsonMessagePeer> Backend<P> {
             codex: resumed_thread.to_owned(),
         });
         Ok(evidence)
+    }
+
+    fn apply_thread_policy(&self, params: &mut Value) {
+        if self.read_only_review {
+            params["approvalPolicy"] = json!("never");
+            params["sandbox"] = json!("read-only");
+        }
+    }
+
+    fn apply_turn_policy(&self, params: &mut Value) {
+        if self.read_only_review {
+            params["approvalPolicy"] = json!("never");
+            params["sandboxPolicy"] = json!({
+                "type": "readOnly",
+                "networkAccess": false,
+            });
+        }
+    }
+
+    fn binding_identity(&self, session_id: &str, thread_id: &str) -> BackendIdentity {
+        if self.read_only_review {
+            BackendIdentity::new(
+                READ_ONLY_BINDING_SCHEMA,
+                json!({
+                    "executionProfile": READ_ONLY_REVIEW_PROFILE,
+                    "sessionId": session_id,
+                    "threadId": thread_id,
+                })
+                .to_string(),
+            )
+        } else {
+            BackendIdentity::new(
+                STANDARD_BINDING_SCHEMA,
+                json!({ "sessionId": session_id, "threadId": thread_id }).to_string(),
+            )
+        }
+    }
+
+    fn validate_execution_binding(
+        &self,
+        binding: &BackendBindingEvidence,
+    ) -> Result<(), BackendFailure> {
+        let identity = binding.binding_identity();
+        let expected_schema = if self.read_only_review {
+            READ_ONLY_BINDING_SCHEMA
+        } else {
+            STANDARD_BINDING_SCHEMA
+        };
+        if identity.schema() != expected_schema {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "Codex durable execution profile differs from the requested resume profile",
+            ));
+        }
+        if self.read_only_review {
+            let value: Value = serde_json::from_str(identity.value()).map_err(|_| {
+                protocol::protocol_failure("Codex read-only review binding is malformed")
+            })?;
+            if value.get("executionProfile").and_then(Value::as_str)
+                != Some(READ_ONLY_REVIEW_PROFILE)
+            {
+                return Err(protocol::protocol_failure(
+                    "Codex read-only review binding has a different execution profile",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn respond_to_activity(

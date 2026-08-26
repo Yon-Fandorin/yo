@@ -27,6 +27,9 @@ use yo_core::{
 
 pub const HOST_ID: &str = "grok";
 pub const BACKEND_KIND: &str = "grok-build-acp";
+const READ_ONLY_REVIEW_PROFILE: &str = "yo.delegated-review-execution/v1alpha1";
+const STANDARD_BINDING_SCHEMA: &str = "grok.acp/session-binding/v1";
+const READ_ONLY_BINDING_SCHEMA: &str = "grok.acp/session-binding/v1alpha1";
 
 /// Local stdio adapter for the Grok Build Agent Client Protocol service.
 pub struct GrokBackend {
@@ -58,7 +61,7 @@ impl GrokBackend {
         let peer = StdioPeer::spawn(&config)?;
         let client = AcpClient::new(peer, config.request_timeout());
         Ok(Self {
-            inner: Backend::new_uninitialized(client, cwd),
+            inner: Backend::new_uninitialized(client, cwd, config.read_only_review()),
         })
     }
 
@@ -162,6 +165,7 @@ struct Backend<P> {
     backend_version: Option<String>,
     load_session: bool,
     cwd: String,
+    read_only_review: bool,
     session: Option<SessionBinding>,
     prompt: Option<PromptBinding>,
     messages: HashMap<MessageKey, MessageBinding>,
@@ -178,13 +182,14 @@ impl<P: JsonPeer> Backend<P> {
     const MAX_ACTIVE_ACTIVITIES: usize = 1024;
     const MAX_SESSION_TOOL_IDS: usize = 4096;
 
-    fn new_uninitialized(client: AcpClient<P>, cwd: String) -> Self {
+    fn new_uninitialized(client: AcpClient<P>, cwd: String, read_only_review: bool) -> Self {
         Self {
             client,
             initialized: false,
             backend_version: None,
             load_session: false,
             cwd,
+            read_only_review,
             session: None,
             prompt: None,
             messages: HashMap::new(),
@@ -316,6 +321,7 @@ impl<P: JsonPeer> Backend<P> {
                 ),
             ));
         }
+        self.validate_execution_binding(binding)?;
         let locator = binding.session_locator();
         if locator.schema() != "grok.acp/session-locator/v1" {
             return Err(BackendFailure::new(
@@ -483,14 +489,60 @@ impl<P: JsonPeer> Backend<P> {
         Ok(BackendBindingEvidence::new(
             BACKEND_KIND,
             backend_version,
-            BackendIdentity::new(
-                "grok.acp/session-binding/v1",
-                json!({ "sessionId": grok_session }).to_string(),
-            ),
+            self.binding_identity(grok_session),
             BackendIdentity::new("grok.build/model-selection/v1", "backend-managed"),
             BackendIdentity::new("grok.acp/session-locator/v1", grok_session),
             ContinuationStrategy::BackendManagedState,
         ))
+    }
+
+    fn binding_identity(&self, grok_session: &str) -> BackendIdentity {
+        if self.read_only_review {
+            BackendIdentity::new(
+                READ_ONLY_BINDING_SCHEMA,
+                json!({
+                    "executionProfile": READ_ONLY_REVIEW_PROFILE,
+                    "sessionId": grok_session,
+                })
+                .to_string(),
+            )
+        } else {
+            BackendIdentity::new(
+                STANDARD_BINDING_SCHEMA,
+                json!({ "sessionId": grok_session }).to_string(),
+            )
+        }
+    }
+
+    fn validate_execution_binding(
+        &self,
+        binding: &BackendBindingEvidence,
+    ) -> Result<(), BackendFailure> {
+        let identity = binding.binding_identity();
+        let expected_schema = if self.read_only_review {
+            READ_ONLY_BINDING_SCHEMA
+        } else {
+            STANDARD_BINDING_SCHEMA
+        };
+        if identity.schema() != expected_schema {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "Grok durable execution profile differs from the requested resume profile",
+            ));
+        }
+        if self.read_only_review {
+            let value: Value = serde_json::from_str(identity.value()).map_err(|_| {
+                protocol::protocol_failure("Grok read-only review binding is malformed")
+            })?;
+            if value.get("executionProfile").and_then(Value::as_str)
+                != Some(READ_ONLY_REVIEW_PROFILE)
+            {
+                return Err(protocol::protocol_failure(
+                    "Grok read-only review binding has a different execution profile",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn session_id(&self, session_id: SessionId) -> Result<&str, BackendFailure> {

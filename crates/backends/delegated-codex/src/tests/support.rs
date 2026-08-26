@@ -101,6 +101,13 @@ pub(super) fn activity(turn: TurnRef, value: u64) -> ActivityRef {
 pub(super) fn backend(
     later_messages: impl IntoIterator<Item = Value>,
 ) -> (Backend<FakePeer>, Sent) {
+    backend_with_profile(later_messages, false)
+}
+
+pub(super) fn backend_with_profile(
+    later_messages: impl IntoIterator<Item = Value>,
+    read_only_review: bool,
+) -> (Backend<FakePeer>, Sent) {
     let messages = [
         vec![initialize_response(1, "0.146.0")],
         later_messages.into_iter().collect(),
@@ -109,7 +116,7 @@ pub(super) fn backend(
     let (peer, sent) = FakePeer::new(messages);
     let mut client = AppServerClient::new(peer, Duration::from_secs(1));
     let initialize = client.initialize().unwrap();
-    let mut backend = Backend::new_uninitialized(client, "/workspace".into());
+    let mut backend = Backend::new_uninitialized(client, "/workspace".into(), read_only_review);
     backend.initialized = true;
     backend.backend_version = Some(initialize.user_agent);
     (backend, sent)

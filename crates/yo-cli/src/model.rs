@@ -17,6 +17,7 @@ mod tokenizer;
 #[derive(Clone, Debug)]
 pub(crate) enum StartupBackend {
     Host(HostId),
+    ReadOnlyHost(HostId),
     Native {
         provider: ProviderId,
         account: AccountId,
@@ -26,10 +27,23 @@ pub(crate) enum StartupBackend {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum DelegatedExecutionProfile {
+    #[default]
+    Standard,
+    ReadOnlyReview,
+}
+
+impl DelegatedExecutionProfile {
+    pub(crate) const fn is_read_only_review(self) -> bool {
+        matches!(self, Self::ReadOnlyReview)
+    }
+}
+
 impl StartupBackend {
     pub(crate) fn label(&self) -> &str {
         match self {
-            Self::Host(host) => host.as_str(),
+            Self::Host(host) | Self::ReadOnlyHost(host) => host.as_str(),
             Self::Native { model, .. } => model.as_str(),
         }
     }
@@ -46,7 +60,7 @@ impl StartupBackend {
 
     pub(crate) fn model_selection(&self) -> Option<yo_core::ModelSelection> {
         match self {
-            Self::Host(_) => None,
+            Self::Host(_) | Self::ReadOnlyHost(_) => None,
             Self::Native {
                 provider,
                 account,
@@ -64,10 +78,18 @@ impl StartupBackend {
         &self,
     ) -> Option<crate::local_tools::LocalToolRegistryRevision> {
         match self {
-            Self::Host(_) => None,
+            Self::Host(_) | Self::ReadOnlyHost(_) => None,
             Self::Native {
                 registry_revision, ..
             } => Some(*registry_revision),
+        }
+    }
+
+    pub(crate) fn delegated_host(&self) -> Option<(&HostId, DelegatedExecutionProfile)> {
+        match self {
+            Self::Host(host) => Some((host, DelegatedExecutionProfile::Standard)),
+            Self::ReadOnlyHost(host) => Some((host, DelegatedExecutionProfile::ReadOnlyReview)),
+            Self::Native { .. } => None,
         }
     }
 }
@@ -84,9 +106,17 @@ pub(crate) fn resolve(
     stored_preference: Option<yo_core::StartupTarget>,
     override_model: Option<&str>,
     no_tools: bool,
+    sandbox: Option<crate::command::SandboxMode>,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
-    startup::resolve(config, stored_preference, override_model, no_tools, resume)
+    startup::resolve(
+        config,
+        stored_preference,
+        override_model,
+        no_tools,
+        sandbox,
+        resume,
+    )
 }
 
 pub(crate) fn start_native(
@@ -107,7 +137,7 @@ pub(crate) fn credentials_for_startup<'a>(
     retained: &'a mut Option<CredentialSnapshot>,
     selection: &StartupBackend,
 ) -> Result<Option<&'a CredentialSnapshot>, AppError> {
-    if matches!(selection, StartupBackend::Host(_)) {
+    if selection.delegated_host().is_some() {
         return Ok(None);
     }
     if retained.is_none() {

@@ -336,6 +336,7 @@ fn run_agent_generation(
             stored_preference.cloned(),
             options.model.as_deref(),
             options.no_tools,
+            options.sandbox,
             match &launch {
                 Launch::New(_) => None,
                 Launch::Resume(continuation) => Some(continuation.target()),
@@ -361,10 +362,11 @@ fn run_agent_generation(
         let (backend, skill_references): (
             Box<dyn yo_core::AgentBackend + Send>,
             Option<yo_backend_delegated_codex::CodexSkillReferenceProvider>,
-        ) = match &selection {
-            model::StartupBackend::Host(host) if host.as_str() == yo_core::HostId::CODEX => {
+        ) = match selection.delegated_host() {
+            Some((host, execution)) if host.as_str() == yo_core::HostId::CODEX => {
                 let codex_config =
-                    yo_backend_delegated_codex::CodexBackendConfig::new(&session_cwd);
+                    yo_backend_delegated_codex::CodexBackendConfig::new(&session_cwd)
+                        .with_read_only_review(execution.is_read_only_review());
                 let skills = if uses_terminal_frontend {
                     match yo_backend_delegated_codex::CodexSkillReferenceProvider::start(
                         codex_config.clone(),
@@ -402,8 +404,9 @@ fn run_agent_generation(
                 };
                 (Box::new(backend), skills)
             },
-            model::StartupBackend::Host(host) if host.as_str() == yo_core::HostId::GROK => {
-                let grok_config = yo_backend_delegated_grok::GrokBackendConfig::new(&session_cwd);
+            Some((host, execution)) if host.as_str() == yo_core::HostId::GROK => {
+                let grok_config = yo_backend_delegated_grok::GrokBackendConfig::new(&session_cwd)
+                    .with_read_only_review(execution.is_read_only_review());
                 let backend = match yo_backend_delegated_grok::GrokBackend::spawn(grok_config) {
                     Ok(backend) => backend,
                     Err(error) if launch.resume_id().is_some() => {
@@ -419,13 +422,13 @@ fn run_agent_generation(
                 };
                 (Box::new(backend), None)
             },
-            model::StartupBackend::Host(host) => {
+            Some((host, _)) => {
                 return Err(AppError::message(format!(
                     "unsupported agent host {:?}",
                     host.as_str()
                 )));
             },
-            model::StartupBackend::Native { .. } => {
+            None => {
                 let selected_credentials =
                     match model::credentials_for_startup(config, credentials, &selection) {
                         Ok(Some(credentials)) => credentials,
@@ -643,6 +646,7 @@ fn run_print_session(options: command::PrintOptions) -> Result<(), AppError> {
         selection: options.selection,
         model: options.model,
         no_tools: options.no_tools,
+        sandbox: options.sandbox,
     };
     let generation = host.with_active_resource(
         &mut live,

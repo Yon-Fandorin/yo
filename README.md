@@ -14,6 +14,8 @@ yo -p "이 저장소의 테스트 명령을 알려줘"
 printf '이 오류를 분석해줘\n' | yo --print
 printf '참고 문맥\n' | yo -p "이어서 요약해줘"
 printf '이 finding을 다시 확인해줘\n' | yo -p --resume SESSION_ID
+yo -p --model host:codex --sandbox read-only "이 diff를 검토해줘"
+yo -p --model host:grok --sandbox read-only "이 diff를 검토해줘"
 ```
 
 마지막 예처럼 stdin과 위치 prompt를 함께 주면 stdin 뒤에 prompt가 이어진다.
@@ -26,6 +28,12 @@ Provider·Account·Model, 도구, replay 상태를 그대로 사용해 Turn 하�
 없고, 복구가 실패해도 새 Session이나 다른 모델로 대체하지 않는다. `-p/--print`는
 top-level 하위 명령과 한 호출에 섞을 수 없으며, 하위 명령과 같은 한 단어를 prompt로
 쓰려면 `yo -p -- session`처럼 `--` 뒤에 명시한다.
+
+`--sandbox read-only`는 새 print-mode Codex·Grok host Session만을 위한 제한
+프로필이다. 로컬 작업공간 쓰기, 웹 검색, 네트워크, 권한 상승을 닫고 Grok에는 읽기
+도구만 노출한다. 제한 프로필은 Session binding에 저장되므로 후속 Turn은
+`yo -p --resume SESSION_ID`로 이어가며 flag를 반복하지 않는다. native model,
+대화형 실행, `--no-tools`, 새 Session이 아닌 resume과의 조합은 시작 전에 거절된다.
 
 코드를 탐색하고 검증하는 방법은
 [`Developer Docs`](docs/src/README.md)에서 시작한다. 저장소 작업 방식은

@@ -19,7 +19,7 @@ impl StdioPeer {
             config.executable(),
             config.working_directory(),
         )
-        .with_arguments(["app-server", "--listen", "stdio://"])
+        .with_arguments(config.process_arguments())
         .with_shutdown_timeout(config.shutdown_timeout());
         StdioJsonlPeer::spawn(transport).map(Self)
     }
