@@ -400,6 +400,15 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    // projection framing은 정확히 하나의 trailing LF만 보장하고 이미 framing된 AgentMessage
+    // bytes에는 두 번째 LF를 추가하지 않습니다.
+    #[test]
+    fn output_framing_adds_only_a_missing_final_lf() {
+        assert_eq!(frame_output("answer".to_owned()), "answer\n");
+        assert_eq!(frame_output("answer\n".to_owned()), "answer\n");
+        assert_eq!(frame_output("answer\n\n".to_owned()), "answer\n\n");
+    }
+
     // approval이나 user-input round trip이 필요한 Turn은 답을 만들어 내거나 자동 응답하지
     // 않고 둘 다 즉시 실패하여 stdout 후보를 남기지 않습니다.
     #[test]

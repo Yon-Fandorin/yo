@@ -90,6 +90,55 @@ fn print_rejects_terminal_and_continuation_options() {
     }
 }
 
+// print mode와 top-level subcommand를 한 호출에 섞으면 subcommand나 prompt 중 하나를
+// 조용히 우선하지 않고, 사용자가 `--` 뒤의 명시적 literal prompt로 고치게 합니다.
+#[test]
+fn print_rejects_top_level_subcommands_without_literal_separator() {
+    for subcommand in ["connect", "disconnect", "default", "session", "usage"] {
+        let error = parse(["-p".into(), subcommand.into()]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        assert!(
+            error
+                .to_string()
+                .contains("use `--` before a literal prompt")
+        );
+    }
+
+    assert_eq!(
+        parse(["-p".into(), "--".into(), "session".into()]).unwrap(),
+        Command::Print(PrintOptions {
+            prompt: Some("session".to_owned()),
+            model: None,
+            no_tools: false,
+        })
+    );
+
+    assert_eq!(
+        parse([
+            "-p".into(),
+            "--model".into(),
+            "session".into(),
+            "question".into(),
+        ])
+        .unwrap(),
+        Command::Print(PrintOptions {
+            prompt: Some("question".to_owned()),
+            model: Some("session".to_owned()),
+            no_tools: false,
+        })
+    );
+}
+
+// `--` 뒤의 print 표기는 literal subcommand argument이므로 앞서 나온 subcommand와
+// print mode의 충돌로 오분류하지 않고, 이후 clap 문법만 해당 입력을 판단합니다.
+#[test]
+fn literal_print_flags_after_separator_do_not_trigger_print_conflict() {
+    for arguments in [["session", "--", "-p"], ["usage", "--", "--print"]] {
+        let error = parse(arguments.map(Into::into)).unwrap_err();
+        assert!(!error.to_string().contains("cannot be combined with"));
+    }
+}
+
 // `--no-tools`는 새 live Session의 명시적 restriction으로 전달되고, 저장된 replay
 // contract를 다시 쓰지 않도록 resume·continue와의 조합은 문법 단계에서 거절합니다.
 #[test]

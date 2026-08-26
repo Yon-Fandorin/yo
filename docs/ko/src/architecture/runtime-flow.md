@@ -301,7 +301,10 @@ Agent message 누락, 잘못된 입력, startup 실패 또는 정리 실패는 0
 종료하며 stdout을 비워 둔다. 진단은 stderr를 사용한다. 성공 응답은 정리가 성공할
 때까지 buffering하므로 터미널 제어, 진행 Activity, request trace, Session identity,
 usage, cache metric이 답변과 함께 stdout에 섞이지 않는다. 초기 print mode는 resume,
-continue, inline, fullscreen, ASCII 표시 flag를 거부한다.
+continue, inline, fullscreen, ASCII 표시 flag를 거부한다. 또한 같은 호출에 top-level
+하위 명령 token이 있으면 이를 positional prompt로 조용히 해석하지 않고 거부한다. prompt가
+하위 명령 이름과 같다면 `--`로 literal prompt의 시작을 명시한다. process 계층은 generation과
+정리가 성공한 뒤 이미 framing된 답변을 변경하지 않고 정확히 한 번만 게시한다.
 
 계약:
 [첫 coding loop](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.delivery.first-coding-loop.md).

@@ -322,7 +322,11 @@ cleanup failure returns nonzero and keeps stdout empty. Diagnostics use stderr.
 The successful answer is buffered until cleanup succeeds, so terminal control,
 progress Activities, request traces, Session identities, usage, and cache
 metrics never share stdout with the answer. Initial print mode rejects resume,
-continue, inline, fullscreen, and ASCII presentation flags.
+continue, inline, fullscreen, and ASCII presentation flags. It also rejects a
+top-level subcommand token in the same invocation instead of silently treating
+that token as the positional prompt; `--` explicitly starts a literal prompt
+when it equals a subcommand name. The process layer publishes the already
+framed answer once and unchanged only after generation and cleanup succeed.
 
 Contract:
 [first coding loop](https://github.com/Yon-Fandorin/yo/blob/develop/methexis/knowledge/agent-runtime/agent.delivery.first-coding-loop.md).

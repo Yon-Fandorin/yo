@@ -271,6 +271,8 @@ pub(crate) struct UsageCommand {
 }
 
 pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Command, clap::Error> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    reject_print_subcommand_overlap(&arguments)?;
     let cli = Cli::try_parse_from(std::iter::once(OsString::from("yo")).chain(arguments))?;
 
     match cli.command {
@@ -335,6 +337,48 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
             model: cli.model,
             no_tools: cli.no_tools,
         })),
+    }
+}
+
+fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::Error> {
+    let mut print_requested = false;
+    let mut subcommand = None;
+    let mut skip_option_value = false;
+    for argument in arguments {
+        if skip_option_value {
+            skip_option_value = false;
+            continue;
+        }
+        let Some(argument) = argument.to_str() else {
+            continue;
+        };
+        if argument == "--" {
+            break;
+        }
+        if matches!(argument, "--model" | "--resume") {
+            skip_option_value = true;
+            continue;
+        }
+        if matches!(argument, "-p" | "--print") {
+            print_requested = true;
+        } else if subcommand.is_none()
+            && matches!(
+                argument,
+                "connect" | "disconnect" | "default" | "session" | "usage"
+            )
+        {
+            subcommand = Some(argument);
+        }
+    }
+    if let (true, Some(subcommand)) = (print_requested, subcommand) {
+        Err(clap::Error::raw(
+            clap::error::ErrorKind::ArgumentConflict,
+            format!(
+                "-p/--print cannot be combined with the `{subcommand}` subcommand; use `--` before a literal prompt named `{subcommand}`"
+            ),
+        ))
+    } else {
+        Ok(())
     }
 }
 

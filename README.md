@@ -19,7 +19,9 @@ printf '참고 문맥\n' | yo -p "이어서 요약해줘"
 성공 시 stdout에는 완료된 최종 답변과 마지막 줄바꿈만 기록되고, 진행 상태·도구
 활동·사용량·Session 식별자는 섞이지 않는다. 실패 진단은 stderr로 가며 종료 코드는
 0이 아니다. `--model TARGET`과 새 Session 전용 `--no-tools`도 print mode에서
-각각 독립적으로 사용할 수 있다.
+각각 독립적으로 사용할 수 있다. `-p/--print`는 top-level 하위 명령과 한 호출에
+섞을 수 없으며, 하위 명령과 같은 한 단어를 prompt로 쓰려면 `yo -p -- session`처럼
+`--` 뒤에 명시한다.
 
 코드를 탐색하고 검증하는 방법은
 [`Developer Docs`](docs/src/README.md)에서 시작한다. 저장소 작업 방식은
