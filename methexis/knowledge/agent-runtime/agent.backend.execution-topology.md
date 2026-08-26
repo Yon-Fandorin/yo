@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-007
-    revision: sha256:3263653b2cae2683b0c0a7181f58e0d8124bd6b059db41deeebafa3123b0d270
+    revision: sha256:5020ccf81388bbdccc8003067a425c1265acf7fdeceb237f8445aa2df4ec8694
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -22,6 +22,35 @@ Generic backend lifecycle, capability, failure, evidence, and replay types MUST 
 
 Concrete backends MUST remain flat independent crates: `yo-backend-managed`, `yo-backend-delegated-codex`, and `yo-backend-delegated-grok`. Each depends on the foundation and `yo-core` specialization. The process host selects and constructs an admitted adapter. The current local delegated adapters are Codex app-server and Grok Build ACP.
 
+External-review routing MUST represent a managed ModelTarget and a delegated
+HostTarget as disjoint first-class target identities. It MUST NOT invent a
+ProviderId or AccountId for `host:codex` or `host:grok`. Managed review retains
+its exact empty Yo tool registry. Delegated review instead selects
+`yo.delegated-review-execution/v1alpha1` through print-mode exact
+`--sandbox read-only`; this profile permits only host-owned read-only
+inspection and MUST NOT be described as managed `no-tools`.
+
+For that profile, the Codex adapter MUST disable web search, fix
+`approvalPolicy` to `never`, and set the sandbox to read-only with tool network
+disabled on Thread creation, Thread resume, and every Turn. The Grok adapter
+MUST launch ACP with its
+read-only sandbox, `dontAsk`, only the `Read` and `Grep` built-ins, web and
+subagents disabled, and no Yo-supplied MCP servers. A permission request or
+mutable workspace effect outside those bounds is a failed review delivery,
+not a prompt for broader authority. The exact profile MUST be frozen in the
+durable host binding; resume restores it and MUST NOT silently downgrade to a
+normal delegated Session.
+
+One original review sends one immutable packet through one fresh isolated host
+Session. One direct finding-resolution review MAY resume that exact reviewer
+Session for one additional immutable packet. Retry, steer, fallback, target
+switch, and a second request for the same step are forbidden. The delivery
+claim and receipt MUST name the HostTarget, execution profile, and one durable
+host-request identity. They MUST state the actual host-owned tool boundary,
+MUST NOT publish managed `tool_execution: false`, and MUST leave Provider
+request identity and token usage unknown unless the delegated host supplies
+separately reviewed exact evidence.
+
 The Model Connector boundary MUST remain independent of the Agent Backend boundary. `yo-core` MUST own only the provider-neutral Connector port and shared Connector semantic request, observation, failure, cancellation, and complete-binding types, including the closed registry that derives the exact Connector identity from an admitted `api_dialect` and complete binding. Exact HTTP request construction, dialect stream decoding, endpoint policy, retry grammar, and provider-private payload interpretation MUST NOT enter `yo-core`, `yo-backend`, or `yo-backend-managed`.
 
 Concrete Model Connectors MUST remain flat independent crates under `crates/connectors/`: `yo-connector-openai-responses`, `yo-connector-openai-chat-completions`, and `yo-connector-kimi`. Each MUST depend on `yo-core`, MAY depend on `yo-backend` only for its connector-neutral replay contract and opaque provider-private envelope, MUST implement exactly its admitted Connector identity and dialect, and MUST NOT depend on another concrete Connector. `yo-core`, `yo-backend`, and `yo-backend-managed` MUST NOT depend on a concrete Connector. Kimi request and response grammar, private-assistant schema decoding and codec, lossless validation, extraction of the connector-neutral visible replay projection, and exact encoded-size calculation belong only to `yo-connector-kimi`. It MUST return that validated projection together with the bounded opaque provider-private envelope. `yo-backend` may retain and bound the envelope but MUST NOT interpret its Kimi fields; `yo-backend-managed` may validate only the envelope's declared schema identity, binding epoch, and bounds and compare the Connector-supplied projection with semantic replay.
@@ -33,5 +62,12 @@ A flat internal `yo-connector-transport` crate under `crates/connectors/transpor
 ## Rationale
 
 Keeping ownership, vendor, placement, and wire protocol orthogonal avoids local-only backend types and lets the same Session semantics cover local Codex and Grok processes, a remote agent host, and a yo-owned model loop. Independent adapter crates keep host protocol churn out of the semantic core and allow a new host without adding another concrete backend dependency to `yo-core`.
+
+Separating delegated read-only review from managed no-tools makes the recorded
+evidence honest: Yo can constrain each host through its own reviewed controls,
+but it cannot claim ownership of the host's agent loop or downstream Provider
+request. Freezing the profile in the binding keeps continuation from widening
+permissions, while a common target identity lets exact-once workflow code stay
+provider-neutral without manufacturing model-service coordinates.
 
 The three admitted model dialects already change independently and Kimi additionally owns private replay and provider-specific request rules. Flat Connector crates keep that churn out of `yo-core` and the managed loop, while the existing neutral replay foundation retains only correlation, bounds, and opaque durable payload. One narrow transport helper avoids copying byte-lifecycle mechanics without becoming a second semantic owner. Process-root injection preserves exact binding selection and lets terminal or future GUI frontends reuse the same semantic engine without importing every concrete Provider implementation.
