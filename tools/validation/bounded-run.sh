@@ -195,7 +195,7 @@ else
     result=failed
 fi
 
-printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha1","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false}' \
+printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha2","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false,"reuse_policy":"reviewed-descendant/v1"}' \
     "$(json_escape "${run_name}")" \
     "${result}" \
     "${command_status}" \

@@ -92,14 +92,17 @@ golden과 snapshot은 fixture의 정확한 Projection을 증명한다. 의도적
 반환한다. 실패하면 같은 summary와 마지막 diagnostic output 최대 16 KiB를 반환한다.
 그 tail만으로 소유 실패를 찾을 수 없을 때만 전체 local log를 확인한다.
 
-summary schema는 `yo.validation-run-summary/v1alpha1`이다. 실행을 시작할 때의
+summary schema는 `yo.validation-run-summary/v1alpha2`이다. 실행을 시작할 때의
 `HEAD`, worktree가 clean이었는지, 정확한 command 인자 개수와 경계를 구분하는 hash,
-전체 log의 byte 수와 SHA-256을 기록한다. 따라서 Slice gate는 clean 후보의 결과를
+전체 log의 byte 수와 SHA-256, `reviewed-descendant/v1` 재사용 정책을 기록한다.
+따라서 Slice gate는 clean 후보의 결과를
 선언된 command와 자체 결속된 evidence로 비교할 수 있다. dirty summary는 local
-진단에는 쓸 수 있지만 후보 evidence로는 쓸 수 없다. 이 alpha는 항상
-`"reused":false`를 기록하며 이전 실행을 자동 탐색하거나 재사용하지 않는다. frozen
-`yo.validation-run-summary/v1` artifact는 legacy evidence로 gate 호환성을 유지하지만
-더 강한 실행 결속 정보는 없다.
+진단에는 쓸 수 있지만 후보 evidence로는 쓸 수 없다. summary는 실제 실행을
+기록하므로 항상 `"reused":false`이며 이전 실행을 자동 탐색하거나 재사용하지 않는다.
+후속 gate는 동일한 정확 command의 통과 summary이고 trusted Git이 clean 실행 HEAD를
+검토된 최종 후보의 조상으로 증명할 때만 `"reused":true`를 선언할 수 있다. frozen
+`yo.validation-run-summary/v1`과 `v1alpha1` artifact는 원래 의미로 gate 호환성을
+유지하며 v1alpha1은 재사용을 허용하지 않는다.
 
 stdout을 복사하지 않고 review와 gate preparation에 쓸 summary를 보존하려면 ignored
 부모 디렉터리를 만들고 직접 발행한다.
@@ -115,7 +118,8 @@ output file과 stdout 한 줄은 byte-identical하다. 발행은 atomic create-o
 없거나 target이 이미 있으면 validation command 전에 중단하고, 동시에 생긴 target도
 덮어쓰지 않는다. 발행한 파일을 immutable review packet에 추가하면 manifest가 경로와
 hash를 `slice gate prepare`에 제공한다. 이는 새 evidence 저장만 수행하며 이전 결과를
-재사용하지 않는다.
+재사용하지 않는다. 재사용 판단은 이 runner가 아니라 후속 검토가 끝난 Slice gate
+request가 소유한다.
 
 wrapper는 표시만 바꾸고 검증 의미는 바꾸지 않는다. log는 임시 운영 artifact다.
 필요한 실패 log는 finding이 미해결인 동안만 보존하고, 완료한 log는 Slice

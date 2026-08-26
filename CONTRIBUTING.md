@@ -364,7 +364,7 @@ before validation rather than being overwritten or causing a duplicate run.
 Include that file as validation evidence in the immutable review packet; the
 review-chain manifest and gate preparation then derive its path and hash.
 The option changes storage only: it neither changes
-`yo.validation-run-summary/v1alpha1` bytes nor discovers or reuses a prior
+`yo.validation-run-summary/v1alpha2` bytes nor discovers or reuses a prior
 result.
 
 Then prepare the gate request:
@@ -425,19 +425,26 @@ validation command names to match every and only its final validation
 artifacts, checks the current bound contract and clean candidate, validates the
 generated gate request, and re-reads all inputs before atomically publishing a
 new-or-byte-identical output. The same invocation returns the evaluated gate
-result. New `yo.validation-run-summary/v1alpha1` evidence binds the launch
-`HEAD`, clean worktree state, exact `argv` hash, and complete-log hash; the gate
-verifies those fields against the candidate and declared command. Frozen
-`yo.external-operation-evidence/v1` artifacts whose reviewed name starts with
-`external-operation/` also pass through preparation without a copied summary.
-The gate revalidates their exact candidate, embedded command arguments,
-expected and observed exit status, counterfactual, and before/after
-observations against the prepared command. They always require `reused: false`;
-a successful match is a passed external-operation result and does not invent a
-validation log path. Frozen
-`yo.validation-run-summary/v1` evidence remains accepted for compatibility but
-does not record its launch arguments, so its coordinator-supplied exact `argv`
-remains a declaration rather than launch proof. When exact human approval is
+result. New `yo.validation-run-summary/v1alpha2` evidence binds the launch
+`HEAD`, clean worktree state, exact `argv` hash, complete-log hash, and the
+`reviewed-descendant/v1` reuse policy. A gate entry with `"reused":false`
+requires that launch HEAD to equal the candidate. A gate entry with
+`"reused":true` accepts only a clean, passing summary whose exact command is
+unchanged and whose launch HEAD trusted Git proves is an ancestor of the final
+candidate. The summary itself remains `"reused":false` because it records an
+execution; the gate entry records the later reuse disposition. Reuse is valid
+only after the immutable review-delta chain includes and reviews that evidence
+for the descendant candidate. Frozen `yo.external-operation-evidence/v1`
+artifacts whose reviewed name starts with `external-operation/` also pass
+through preparation without a copied summary. The gate revalidates their exact
+candidate, embedded command arguments, expected and observed exit status,
+counterfactual, and before/after observations against the prepared command.
+They always require `reused: false`; a successful match is a passed
+external-operation result and does not invent a validation log path. Frozen
+`yo.validation-run-summary/v1` and `v1alpha1` evidence remains accepted with
+its original meaning; v1alpha1 does not permit reuse. Legacy v1 does not record
+launch arguments, so its coordinator-supplied exact `argv` remains a
+declaration rather than launch proof. When exact human approval is
 later recorded, add only its compact kind, authority, and scope to the
 preparation input and publish to a new output path; the command supplies the
 approved candidate and diff. It never executes a check, sends a review,

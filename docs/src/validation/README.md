@@ -97,15 +97,20 @@ summary line. A failed run returns the same summary and at most the final 16
 KiB of diagnostic output; inspect the complete local log only when that tail
 does not identify the owning failure.
 
-The summary schema is `yo.validation-run-summary/v1alpha1`. It records the
+The summary schema is `yo.validation-run-summary/v1alpha2`. It records the
 launch `HEAD`, whether the worktree was clean, a boundary-aware hash and count
-of the exact command arguments, and the complete log's byte count and SHA-256.
+of the exact command arguments, the complete log's byte count and SHA-256, and
+the `reviewed-descendant/v1` reuse policy.
 This makes a clean candidate's result self-binding when the Slice gate compares
 it with the declared command. A dirty summary remains useful for local
-diagnosis but is not candidate evidence. This alpha always reports
-`"reused":false`; it does not discover or reuse an earlier run automatically.
-Frozen `yo.validation-run-summary/v1` artifacts remain gate-compatible as
-legacy evidence but lack the stronger launch binding.
+diagnosis but is not candidate evidence. The summary always reports
+`"reused":false` because it records an actual execution; it does not discover
+or reuse an earlier run automatically. A later gate may declare
+`"reused":true` only for a passing summary with the same exact command when
+trusted Git proves that its clean launch HEAD is an ancestor of the reviewed
+final candidate. Frozen `yo.validation-run-summary/v1` and `v1alpha1`
+artifacts remain gate-compatible with their original meaning; v1alpha1 does
+not permit reuse.
 
 To retain a summary for review and gate preparation without copying stdout,
 create its ignored parent and publish it directly:
@@ -122,7 +127,8 @@ create-only: a missing parent or existing target stops before the validation
 command, and a concurrent target collision is never overwritten. Add the
 published file to the immutable review packet so its manifest supplies the
 path and hash to `slice gate prepare`. This stores new evidence only; it does
-not reuse an earlier result.
+not reuse an earlier result. A reuse decision belongs to the later reviewed
+Slice gate request, not this runner.
 
 The wrapper changes presentation, not validation semantics. Its logs are
 temporary operational artifacts: keep a required failure log only while the

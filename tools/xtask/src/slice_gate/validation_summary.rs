@@ -1,10 +1,14 @@
+use std::path::Path;
+
 use serde::Deserialize;
 
 use super::{canonical_sha256, model::LegacyValidationSummary};
-use crate::{review_packet::external_operation, review_protocol};
+use crate::{git, review_packet::external_operation, review_protocol};
 
 const LEGACY_SCHEMA: &str = "yo.validation-run-summary/v1";
-const ALPHA_SCHEMA: &str = "yo.validation-run-summary/v1alpha1";
+const ALPHA1_SCHEMA: &str = "yo.validation-run-summary/v1alpha1";
+const ALPHA2_SCHEMA: &str = "yo.validation-run-summary/v1alpha2";
+const REVIEWED_DESCENDANT_REUSE: &str = "reviewed-descendant/v1";
 const ARGV_DOMAIN: &[u8] = b"yo.validation-run-argv/v1alpha1\0";
 
 pub(super) struct VerifiedSummary {
@@ -35,7 +39,27 @@ struct AlphaSummary {
     reused: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Alpha2Summary {
+    schema: String,
+    name: String,
+    status: String,
+    exit_code: i32,
+    elapsed_seconds: u64,
+    log_bytes: u64,
+    log_path: String,
+    log_hash: String,
+    head_commit: String,
+    worktree_state: String,
+    command_argv_count: usize,
+    command_argv_hash: String,
+    reused: bool,
+    reuse_policy: String,
+}
+
 pub(super) fn verify(
+    repository: &Path,
     bytes: &[u8],
     expected_name: &str,
     expected_argv: &[String],
@@ -46,7 +70,15 @@ pub(super) fn verify(
         .map_err(|error| format!("cannot read summary schema: {error}"))?;
     match envelope.schema.as_str() {
         LEGACY_SCHEMA => verify_legacy(bytes, expected_name),
-        ALPHA_SCHEMA => verify_alpha(
+        ALPHA1_SCHEMA => verify_alpha1(
+            bytes,
+            expected_name,
+            expected_argv,
+            candidate,
+            requested_reuse,
+        ),
+        ALPHA2_SCHEMA => verify_alpha2(
+            repository,
             bytes,
             expected_name,
             expected_argv,
@@ -61,7 +93,7 @@ pub(super) fn verify(
             requested_reuse,
         ),
         other => Err(format!(
-            "unsupported schema `{other}`; expected `{LEGACY_SCHEMA}`, `{ALPHA_SCHEMA}`, or `{}`",
+            "unsupported schema `{other}`; expected `{LEGACY_SCHEMA}`, `{ALPHA1_SCHEMA}`, `{ALPHA2_SCHEMA}`, or `{}`",
             external_operation::SCHEMA
         )),
     }
@@ -84,7 +116,7 @@ fn verify_legacy(bytes: &[u8], expected_name: &str) -> Result<VerifiedSummary, S
     })
 }
 
-fn verify_alpha(
+fn verify_alpha1(
     bytes: &[u8],
     expected_name: &str,
     expected_argv: &[String],
@@ -92,7 +124,7 @@ fn verify_alpha(
     requested_reuse: bool,
 ) -> Result<VerifiedSummary, String> {
     let summary: AlphaSummary = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-    if summary.schema != ALPHA_SCHEMA
+    if summary.schema != ALPHA1_SCHEMA
         || summary.name != expected_name
         || !matches!(summary.status.as_str(), "passed" | "failed")
         || (summary.status == "passed") != (summary.exit_code == 0)
@@ -148,6 +180,88 @@ fn verify_external_operation(
         status: "passed".to_owned(),
         log_path: None,
     })
+}
+
+fn verify_alpha2(
+    repository: &Path,
+    bytes: &[u8],
+    expected_name: &str,
+    expected_argv: &[String],
+    candidate: &str,
+    requested_reuse: bool,
+) -> Result<VerifiedSummary, String> {
+    let summary: Alpha2Summary =
+        serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    if summary.schema != ALPHA2_SCHEMA
+        || summary.name != expected_name
+        || !matches!(summary.status.as_str(), "passed" | "failed")
+        || (summary.status == "passed") != (summary.exit_code == 0)
+        || summary.reuse_policy != REVIEWED_DESCENDANT_REUSE
+    {
+        return Err("inconsistent summary fields".to_owned());
+    }
+    review_protocol::require_commit(&summary.head_commit, "validation summary head_commit")?;
+    if summary.worktree_state != "clean" {
+        return Err("worktree_state must be `clean`".to_owned());
+    }
+    if summary.reused {
+        return Err("an execution summary must record `reused:false`".to_owned());
+    }
+    if requested_reuse {
+        if summary.status != "passed" {
+            return Err("only passed validation evidence can be reused".to_owned());
+        }
+        if !git::trusted_succeeds_in(
+            repository,
+            &[
+                "merge-base",
+                "--is-ancestor",
+                &summary.head_commit,
+                candidate,
+            ],
+        )? {
+            return Err(format!(
+                "validation summary head_commit {} is not an ancestor of candidate {candidate}",
+                summary.head_commit
+            ));
+        }
+    } else if summary.head_commit != candidate {
+        return Err(format!(
+            "head_commit {} does not match candidate {candidate}",
+            summary.head_commit
+        ));
+    }
+    verify_command_and_log(
+        expected_argv,
+        summary.command_argv_count,
+        &summary.command_argv_hash,
+        &summary.log_hash,
+    )?;
+    let _ = (summary.elapsed_seconds, summary.log_bytes);
+    Ok(VerifiedSummary {
+        status: summary.status,
+        log_path: Some(summary.log_path),
+    })
+}
+
+fn verify_command_and_log(
+    expected_argv: &[String],
+    command_argv_count: usize,
+    command_argv_hash: &str,
+    log_hash: &str,
+) -> Result<(), String> {
+    if command_argv_count != expected_argv.len() {
+        return Err("command_argv_count does not match the gate request".to_owned());
+    }
+    canonical_sha256(command_argv_hash, "validation command argv hash")?;
+    let expected_hash = argv_hash(expected_argv);
+    if command_argv_hash != expected_hash {
+        return Err(format!(
+            "command_argv_hash does not match the gate request; expected {expected_hash}"
+        ));
+    }
+    canonical_sha256(log_hash, "validation log hash")?;
+    Ok(())
 }
 
 pub(super) fn argv_hash(argv: &[String]) -> String {

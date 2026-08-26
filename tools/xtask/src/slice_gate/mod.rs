@@ -343,6 +343,7 @@ fn validation_results(
             "validation result",
         )?;
         let summary = validation_summary::verify(
+            repository,
             &bytes,
             &entry.name,
             &entry.argv,

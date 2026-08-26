@@ -209,6 +209,44 @@ impl Fixture {
         self.request["validation_evidence"][0]["name"] = json!("external-operation/xtask");
         self.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
     }
+
+    fn use_alpha2_validation(&mut self, head_commit: &str, requested_reuse: bool) {
+        let argv = vec![
+            "cargo".to_owned(),
+            "test".to_owned(),
+            "--locked".to_owned(),
+            "-p".to_owned(),
+            "xtask".to_owned(),
+        ];
+        let path = PathBuf::from(
+            self.request["validation_evidence"][0]["result_path"]
+                .as_str()
+                .unwrap(),
+        );
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema": "yo.validation-run-summary/v1alpha2",
+                "name": "xtask",
+                "status": "passed",
+                "exit_code": 0,
+                "elapsed_seconds": 2,
+                "log_bytes": 42,
+                "log_path": ".local-exclude/validation-runs/xtask.log",
+                "log_hash": format!("sha256:{}", "a".repeat(64)),
+                "head_commit": head_commit,
+                "worktree_state": "clean",
+                "command_argv_count": argv.len(),
+                "command_argv_hash": super::validation_summary::argv_hash(&argv),
+                "reused": false,
+                "reuse_policy": "reviewed-descendant/v1"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        self.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
+        self.request["validation_evidence"][0]["reused"] = json!(requested_reuse);
+    }
 }
 
 impl Drop for Fixture {
@@ -312,12 +350,109 @@ fn external_operation_evidence_cannot_be_marked_reused() {
     let mut fixture = Fixture::new();
     fixture.use_external_operation();
     fixture.request["validation_evidence"][0]["reused"] = json!(true);
-
     assert!(
         fixture
             .evaluate()
             .unwrap_err()
             .contains("external-operation evidence cannot be reused")
+    );
+}
+
+// v1alpha2의 새 실행은 v1alpha1과 같은 exact-candidate 의미를 유지한다.
+// 재사용 여부를 선언하지 않았는데 과거 HEAD를 끼워 넣을 수는 없다.
+#[test]
+fn alpha2_new_validation_still_binds_the_exact_candidate() {
+    let mut fixture = Fixture::new();
+    let candidate = fixture.candidate.clone();
+    fixture.use_alpha2_validation(&candidate, false);
+    assert_eq!(fixture.evaluate().unwrap().next_action, "integrate");
+
+    let base = git_line(&fixture.repository.path, &["rev-parse", "HEAD^"]);
+    fixture.use_alpha2_validation(&base, false);
+    assert!(
+        fixture
+            .evaluate()
+            .unwrap_err()
+            .contains("does not match candidate")
+    );
+}
+
+// review-delta로 최종 후보까지 검토된 경우에만 과거 clean 통과 결과를 재사용하며,
+// 원 실행 HEAD가 최종 후보의 Git 조상인지 trusted Git으로 증명한다.
+#[test]
+fn alpha2_reuses_a_passed_ancestor_validation() {
+    let mut fixture = Fixture::new();
+    let base = git_line(&fixture.repository.path, &["rev-parse", "HEAD^"]);
+    fixture.use_alpha2_validation(&base, true);
+
+    let result = fixture.evaluate().unwrap();
+    assert_eq!(result.next_action, "integrate");
+    assert!(result.validation[0].reused);
+}
+
+// 분기만 같은 비조상 커밋의 green은 최종 후보에 포함된 코드 상태가 아니므로
+// exact argv와 clean 상태가 같아도 재사용 증거로 승격하지 않는다.
+#[test]
+fn alpha2_rejects_non_ancestor_reuse() {
+    let mut fixture = Fixture::new();
+    fixture
+        .repository
+        .git(["switch", "--quiet", "--detach", "HEAD^"]);
+    fixture
+        .repository
+        .write("tools/other.rs", "pub fn other() {}\n");
+    fixture.repository.git(["add", "tools/other.rs"]);
+    fixture
+        .repository
+        .git(["commit", "--quiet", "-m", "unrelated"]);
+    let unrelated = git_line(&fixture.repository.path, &["rev-parse", "HEAD"]);
+    fixture
+        .repository
+        .git(["switch", "--quiet", "slice/direct/gate-test"]);
+    fixture.use_alpha2_validation(&unrelated, true);
+
+    assert!(
+        fixture
+            .evaluate()
+            .unwrap_err()
+            .contains("is not an ancestor")
+    );
+}
+
+// summary는 실행 사실만 표현하므로 producer가 reused=true를 기록한 artifact나
+// 실패 결과를 coordinator가 재사용했다고 선언한 경우 모두 닫힌다.
+#[test]
+fn alpha2_reuse_requires_an_executed_passing_summary() {
+    let mut fixture = Fixture::new();
+    let base = git_line(&fixture.repository.path, &["rev-parse", "HEAD^"]);
+    fixture.use_alpha2_validation(&base, true);
+    let path = PathBuf::from(
+        fixture.request["validation_evidence"][0]["result_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let mut summary: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    summary["reused"] = json!(true);
+    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fixture.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
+    assert!(
+        fixture
+            .evaluate()
+            .unwrap_err()
+            .contains("execution summary must record")
+    );
+
+    fixture.use_alpha2_validation(&base, true);
+    let mut summary: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    summary["status"] = json!("failed");
+    summary["exit_code"] = json!(1);
+    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fixture.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
+    assert!(
+        fixture
+            .evaluate()
+            .unwrap_err()
+            .contains("only passed validation evidence can be reused")
     );
 }
 

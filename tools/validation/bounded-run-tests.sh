@@ -64,7 +64,7 @@ if [[ $(wc -l <"${fixture}/success.out") -ne 1 ]]; then
     exit 1
 fi
 success_summary=$(<"${fixture}/success.out")
-if [[ "${success_summary}" != *'"schema":"yo.validation-run-summary/v1alpha1"'* ||
+if [[ "${success_summary}" != *'"schema":"yo.validation-run-summary/v1alpha2"'* ||
     "${success_summary}" != *'"name":"success"'* ||
     "${success_summary}" != *'"status":"passed"'* ||
     "${success_summary}" != *'"exit_code":0'* ||
@@ -72,7 +72,8 @@ if [[ "${success_summary}" != *'"schema":"yo.validation-run-summary/v1alpha1"'* 
     "${success_summary}" != *'"head_commit":"'* ||
     "${success_summary}" != *'"command_argv_count":3'* ||
     "${success_summary}" != *'"command_argv_hash":"sha256:b2feeb2dc7a19ae550541f96076627745b156652ed171a1f7bc182cbdee19b74"'* ||
-    "${success_summary}" != *'"reused":false'* ]]; then
+    "${success_summary}" != *'"reused":false'* ||
+    "${success_summary}" != *'"reuse_policy":"reviewed-descendant/v1"'* ]]; then
     echo "success: unexpected summary" >&2
     exit 1
 fi
