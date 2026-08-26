@@ -14,12 +14,11 @@ use crate::{
         review_coverage,
         slice_review::{self, Lens},
     },
-    review_protocol, slice_contract,
+    review_protocol, slice_contract, validation_summary,
 };
 
 mod model;
 mod prepare;
-mod validation_summary;
 
 pub(crate) use prepare::run as prepare_request;
 

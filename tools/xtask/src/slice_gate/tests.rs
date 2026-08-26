@@ -162,7 +162,7 @@ impl Fixture {
                 "head_commit": self.candidate,
                 "worktree_state": "clean",
                 "command_argv_count": argv.len(),
-                "command_argv_hash": super::validation_summary::argv_hash(&argv),
+                "command_argv_hash": crate::validation_summary::argv_hash(&argv),
                 "reused": false
             }))
             .unwrap(),
@@ -237,7 +237,7 @@ impl Fixture {
                 "head_commit": head_commit,
                 "worktree_state": "clean",
                 "command_argv_count": argv.len(),
-                "command_argv_hash": super::validation_summary::argv_hash(&argv),
+                "command_argv_hash": crate::validation_summary::argv_hash(&argv),
                 "reused": false,
                 "reuse_policy": "reviewed-descendant/v1"
             }))

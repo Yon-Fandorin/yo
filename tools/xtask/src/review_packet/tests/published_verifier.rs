@@ -265,7 +265,11 @@ fn published_verifier_rejects_a_tag_object_as_the_candidate_commit() {
     .trim()
     .to_owned();
     let contract = repository.write(".local-exclude/contract.json", "contract\n");
-    let validation = repository.write(".local-exclude/validation.txt", "passed\n");
+    let validation = repository.write(
+        ".local-exclude/validation.txt",
+        r#"{"schema":"yo.validation-run-summary/v1","name":"baseline","status":"passed","exit_code":0,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/validation.log"}
+"#,
+    );
     let published = publish_original(
         &repository.path,
         &base,
@@ -349,7 +353,11 @@ fn published_verifier_rejects_unrelated_base_and_candidate_histories() {
     let candidate = repository_head(&repository.path);
     repository.git(["switch", "develop"]);
     let contract = repository.write(".local-exclude/contract.json", "contract\n");
-    let validation = repository.write(".local-exclude/validation.txt", "passed\n");
+    let validation = repository.write(
+        ".local-exclude/validation.txt",
+        r#"{"schema":"yo.validation-run-summary/v1","name":"baseline","status":"passed","exit_code":0,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/validation.log"}
+"#,
+    );
     let published = publish_original(
         &repository.path,
         &base,

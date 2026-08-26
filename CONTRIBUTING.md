@@ -697,6 +697,18 @@ an artifact. Methexis still owns and validates ContextBuild request semantics
 when resolution starts. A green readiness result covers only these input
 boundaries; it is preparation, not review evidence.
 
+For structured validation summaries, readiness also verifies the internal
+summary name against the request name, status/exit consistency, and canonical
+hash fields. `v1alpha1` and `v1alpha2` summaries must identify the exact clean
+candidate execution and record `reused: false`; `v1alpha2` must name the
+supported reuse policy. This deliberately happens before ContextBuild,
+tokenization, or publication so a wrapper-name typo, stale result, or malformed
+execution identity cannot consume a review round. The later Slice gate still
+binds the recorded argv count and hash to its exact requested command; the
+review-packet request carries no argv values and therefore cannot perform that
+last comparison. Legacy `yo.validation-run-summary/v1` remains accepted with
+its older name and status guarantees only.
+
 When correctness depends on behavior owned by an external executable rather
 than the repository's typed seam—such as Git hook source selection, process
 exit, signal, timeout, or filesystem publication ordering—include at least one

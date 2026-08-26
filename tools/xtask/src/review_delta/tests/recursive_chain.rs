@@ -162,7 +162,8 @@ fn recursive_chain_verifier_replays_two_hops_and_rejects_ineligible_artifacts() 
     let contract_path = repository.write(".local-exclude/contract.json", "contract\n");
     let baseline_path = repository.write(
         ".local-exclude/evidence-a.txt",
-        &format!("Candidate: {candidate_a}\n"),
+        r#"{"schema":"yo.validation-run-summary/v1","name":"baseline","status":"passed","exit_code":0,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/validation.log"}
+"#,
     );
     let seed = crate::review_packet::tests::support::publish_original(
         &repository.path,
@@ -475,7 +476,8 @@ fn assert_experimental_original_roots_accept_v1_alpha1_delta(
     let contract = repository.write(".local-exclude/contract.json", "contract\n");
     let baseline = repository.write(
         ".local-exclude/evidence-a.txt",
-        &format!("Candidate: {candidate_a}\n"),
+        r#"{"schema":"yo.validation-run-summary/v1","name":"baseline","status":"passed","exit_code":0,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/validation.log"}
+"#,
     );
     let seed = publish_original(
         &repository.path,

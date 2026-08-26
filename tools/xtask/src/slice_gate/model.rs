@@ -58,18 +58,6 @@ pub(super) struct Approval {
     pub(super) diff_hash: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct LegacyValidationSummary {
-    pub(super) schema: String,
-    pub(super) name: String,
-    pub(super) status: String,
-    pub(super) exit_code: i32,
-    pub(super) elapsed_seconds: u64,
-    pub(super) log_bytes: u64,
-    pub(super) log_path: String,
-}
-
 #[derive(Debug, Serialize)]
 pub(super) struct ResultDocument {
     pub(super) schema: &'static str,

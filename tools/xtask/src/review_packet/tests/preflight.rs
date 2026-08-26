@@ -148,7 +148,11 @@ fn run_preflight_child() -> bool {
     let status_path = std::env::var_os(CHILD_STATUS).expect("child status path is supplied");
     if let Some(path) = std::env::var_os(CHILD_MUTATION) {
         set_preflight_test_hook(move || {
-            std::fs::write(Path::new(&path), b"changed after capture\n")
+            std::fs::write(
+                Path::new(&path),
+                br#"{"schema":"yo.validation-run-summary/v1","name":"fixture-validation","status":"failed","exit_code":1,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/preflight-fixture/validation.log"}
+"#,
+            )
                 .map_err(|error| format!("cannot mutate validation fixture: {error}"))
         });
     }
@@ -238,7 +242,15 @@ impl PreflightFixture {
         );
         let validation_path = repository.write(
             ".local-exclude/preflight-fixture/validation.md",
-            "validation passed\n",
+            &json_text(&json!({
+                "schema": "yo.validation-run-summary/v1",
+                "name": "fixture-validation",
+                "status": "passed",
+                "exit_code": 0,
+                "elapsed_seconds": 0,
+                "log_bytes": 0,
+                "log_path": ".local-exclude/preflight-fixture/validation.log"
+            })),
         );
         let request_path = repository.write(
             ".local-exclude/preflight-fixture/review-request.json",

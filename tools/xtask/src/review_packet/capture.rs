@@ -17,6 +17,7 @@ use super::{
 use crate::{
     bounded_file,
     review_protocol::{Captured, NamedCaptured, digest, resolve_input_path, sorted_unique},
+    validation_summary,
 };
 
 pub(super) struct ContextCapture {
@@ -435,14 +436,12 @@ pub(super) fn capture_validation(
 ) -> Result<Vec<NamedCaptured>, String> {
     let mut names = BTreeSet::new();
     let mut paths = BTreeSet::new();
-    let mut captured_inputs = Vec::new();
+    let mut pending = Vec::new();
     for request in requests {
         if request.name.trim().is_empty() || !names.insert(request.name.clone()) {
             return Err("validation evidence names must be non-empty and unique".to_owned());
         }
         let path = resolve_input_path(repository, &request.path);
-        let bytes = bounded_file::read_regular(&path, MAX_INPUT_BYTES, "validation evidence")?;
-        super::external_operation::validate(&request.name, &bytes, candidate_commit)?;
         let canonical = std::fs::canonicalize(&path).map_err(|error| {
             format!(
                 "cannot resolve validation evidence path {}: {error}",
@@ -452,6 +451,23 @@ pub(super) fn capture_validation(
         if !paths.insert(canonical) {
             return Err("validation evidence paths must be unique".to_owned());
         }
+        pending.push((request, path));
+    }
+    let mut captured_inputs = Vec::new();
+    for (request, path) in pending {
+        let bytes = bounded_file::read_regular(&path, MAX_INPUT_BYTES, "validation evidence")?;
+        validation_summary::verify_review_input(
+            repository,
+            &bytes,
+            &request.name,
+            candidate_commit,
+        )
+        .map_err(|error| {
+            format!(
+                "invalid validation evidence for `{}`: {error}",
+                request.name
+            )
+        })?;
         captured_inputs.push(NamedCaptured {
             name: request.name.clone(),
             artifact: captured(path.to_string_lossy().into_owned(), bytes)?,

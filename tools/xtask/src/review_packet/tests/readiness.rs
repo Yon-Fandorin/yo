@@ -30,7 +30,11 @@ fn readiness_production_boundary_is_non_publishing_and_fails_closed() {
 
     let validation = fixture.validation_path.clone();
     set_test_hook(move || {
-        std::fs::write(validation, b"changed after capture\n")
+        std::fs::write(
+            validation,
+            br#"{"schema":"yo.validation-run-summary/v1","name":"validation","status":"failed","exit_code":1,"elapsed_seconds":0,"log_bytes":0,"log_path":".local-exclude/readiness/validation.log"}
+"#,
+        )
             .map_err(|error| format!("cannot mutate validation fixture: {error}"))
     });
     let mut changed_output = Vec::new();
@@ -113,6 +117,46 @@ fn readiness_rejects_duplicate_validation_paths() {
         check_readiness(&fixture.repository.path, &fixture.request_path, &mut output).unwrap_err();
 
     assert_eq!(error, "validation evidence paths must be unique");
+    assert!(output.is_empty());
+    assert!(!fixture.artifact_root.exists());
+}
+
+// review request의 wrapper name과 runner가 기록한 내부 name이 다르면 큰 packet을
+// 만들기 전에 readiness가 거부하여 뒤늦은 Slice gate 실패와 재검토를 막는다.
+#[test]
+fn readiness_rejects_a_wrapper_name_that_differs_from_the_summary() {
+    let fixture = ReadinessFixture::new();
+    std::fs::write(
+        &fixture.validation_path,
+        json_text(&json!({
+            "schema": "yo.validation-run-summary/v1alpha2",
+            "name": "yo-cli",
+            "status": "passed",
+            "exit_code": 0,
+            "elapsed_seconds": 0,
+            "log_bytes": 0,
+            "log_path": ".local-exclude/readiness/validation.log",
+            "log_hash": format!("sha256:{}", "1".repeat(64)),
+            "head_commit": fixture.candidate_commit,
+            "worktree_state": "clean",
+            "command_argv_count": 1,
+            "command_argv_hash": format!("sha256:{}", "2".repeat(64)),
+            "reused": false,
+            "reuse_policy": "reviewed-descendant/v1"
+        })),
+    )
+    .unwrap();
+    fixture.write_review_request(&fixture.context_path, &["yo-cli-tests"]);
+    let mut output = Vec::new();
+
+    let error =
+        check_readiness(&fixture.repository.path, &fixture.request_path, &mut output).unwrap_err();
+
+    assert!(
+        error.contains(
+            "summary name `yo-cli` does not match requested evidence name `yo-cli-tests`"
+        )
+    );
     assert!(output.is_empty());
     assert!(!fixture.artifact_root.exists());
 }
@@ -325,7 +369,15 @@ impl ReadinessFixture {
         );
         let validation_path = repository.write(
             ".local-exclude/readiness/validation.md",
-            "validation passed\n",
+            &json_text(&json!({
+                "schema": "yo.validation-run-summary/v1",
+                "name": "validation",
+                "status": "passed",
+                "exit_code": 0,
+                "elapsed_seconds": 0,
+                "log_bytes": 0,
+                "log_path": ".local-exclude/readiness/validation.log"
+            })),
         );
         let request_path = repository
             .path

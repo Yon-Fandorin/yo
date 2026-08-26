@@ -17,6 +17,7 @@ mod slice_gate;
 mod slice_worktree;
 mod test_explanations;
 mod validation_stage;
+mod validation_summary;
 
 #[cfg(test)]
 mod test_support;
