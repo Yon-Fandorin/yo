@@ -914,6 +914,42 @@ another preflight run as permission to resend. Terminal input that ended
 before a durable provider request remains a delivery-system diagnostic and is
 not silently retried under this authorization.
 
+Before any manual terminal input for an authorized finding-resolution resume,
+run the repository-owned read-only continuation preflight against the exact
+durable Session repository:
+
+```json
+{
+  "schema": "yo.slice-review-continuation-preflight-request/v1alpha1",
+  "egress_request_path": ".local-exclude/coordination/<slice>/delta-egress.json",
+  "egress_request_hash": "sha256:<exact-egress-request-hash>",
+  "session_repository_path": "/absolute/path/to/the/reviewer-session-repository"
+}
+```
+
+```bash
+cargo xtask slice review-continuation-preflight <request.json>
+```
+
+The command replays the finding-resolution egress authorization, then reads
+the named repository through `yo-core`. It requires exactly one StartTurn whose
+bytes hash to the prior original packet, exactly one matching managed
+Provider/Account/Model binding, exactly one accepted request and resumable
+outcome resolving to the prior delivery receipt's request identity, and a
+typed executable continuation with the newest durable Continuation Anchor. A
+missing or malformed Session, mismatched route or identity, extra request, or
+missing Anchor fails before terminal input. The successful result records the
+exact Session, route, candidate, request identity, binding epoch, and Anchor
+sequence, but publishes no artifact, acquires no terminal, and performs no
+Provider request.
+
+Run this preflight immediately before the manual input attempt and require that
+no other process is writing the reviewer Session between observation and
+delivery. Its result is current eligibility, not launch authority or retry
+authority, and it never falls back to a fresh Session. The bounded
+`review-deliver` command still owns only original-fresh delivery in v1alpha1;
+extending repository-owned delivery to resume remains a separate effect change.
+
 For one original packet in a fresh Session, perform the authorized effect with
 the bounded repository delivery command instead of terminal paste, pane
 capture, or direct Session JSONL inspection. Create one empty output directory

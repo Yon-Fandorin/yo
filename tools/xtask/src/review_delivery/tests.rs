@@ -7,10 +7,10 @@ use super::{
     process::{execute_once, execute_once_with_timeout},
     publish_claim, read_request, require_empty_directory, require_integration_state,
     require_original_fresh,
-    session::provider_request_identity,
 };
 use crate::{
-    review_egress::AuthorizedDelivery, review_protocol::digest, test_support::TestRepository,
+    review_egress::AuthorizedDelivery, review_protocol::digest,
+    review_session::provider_request_identity, test_support::TestRepository,
 };
 
 fn authorized() -> AuthorizedDelivery {
@@ -29,6 +29,9 @@ fn authorized() -> AuthorizedDelivery {
         account: "default".to_owned(),
         model: "qwen3.8-max".to_owned(),
         fresh_session: true,
+        session_id: None,
+        prior_packet_hash: None,
+        prior_provider_request_id: None,
     }
 }
 

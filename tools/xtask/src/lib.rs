@@ -3,11 +3,13 @@ mod bounded_file;
 mod docs_translation;
 mod git;
 mod impact;
+mod review_continuation_preflight;
 mod review_delivery;
 mod review_delta;
 mod review_egress;
 mod review_packet;
 mod review_protocol;
+mod review_session;
 mod slice_accept;
 mod slice_close;
 mod slice_contract;
@@ -56,6 +58,9 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     }
     if scope == "review-deliver" {
         return run_review_delivery(arguments);
+    }
+    if scope == "review-continuation-preflight" {
+        return run_review_continuation_preflight(arguments);
     }
     if scope == "review-egress" {
         return run_review_egress(arguments);
@@ -228,6 +233,20 @@ fn run_review_delivery(arguments: &mut impl Iterator<Item = OsString>) -> Result
     }
     let repository = current_repository()?;
     review_delivery::run(&repository, &request)
+}
+
+fn run_review_continuation_preflight(
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(review_continuation_preflight_usage)?;
+    if arguments.next().is_some() {
+        return Err(review_continuation_preflight_usage());
+    }
+    let repository = current_repository()?;
+    review_continuation_preflight::run(&repository, &request)
 }
 
 fn run_slice_close(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -467,6 +486,8 @@ fn general_usage() -> String {
      cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
      cargo xtask slice review-delta <request.json>\n\
      cargo xtask slice review-egress <request.json>\n\
+     cargo xtask slice review-deliver <request.json>\n\
+     cargo xtask slice review-continuation-preflight <request.json>\n\
      cargo xtask slice gate <request.json>\n\
      cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
      cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
@@ -504,6 +525,10 @@ fn review_delivery_usage() -> String {
     "usage: cargo xtask slice review-deliver <request.json>".to_owned()
 }
 
+fn review_continuation_preflight_usage() -> String {
+    "usage: cargo xtask slice review-continuation-preflight <request.json>".to_owned()
+}
+
 fn slice_close_usage() -> String {
     "usage: cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>"
         .to_owned()
@@ -530,9 +555,9 @@ mod cli_tests {
     use std::{cell::Cell, ffi::OsString};
 
     use super::{
-        activation_slice_usage, docs_accept_translation_usage, review_delivery_usage,
-        review_delta_usage, review_egress_usage, review_packet_usage, run, slice_close_usage,
-        slice_commit_usage, slice_gate_usage,
+        activation_slice_usage, docs_accept_translation_usage, review_continuation_preflight_usage,
+        review_delivery_usage, review_delta_usage, review_egress_usage, review_packet_usage, run,
+        slice_close_usage, slice_commit_usage, slice_gate_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -548,6 +573,8 @@ mod cli_tests {
              cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
              cargo xtask slice review-delta <request.json>\n\
              cargo xtask slice review-egress <request.json>\n\
+             cargo xtask slice review-deliver <request.json>\n\
+             cargo xtask slice review-continuation-preflight <request.json>\n\
              cargo xtask slice gate <request.json>\n\
              cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
              cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
@@ -695,6 +722,24 @@ mod cli_tests {
 
         assert_eq!(missing, review_delivery_usage());
         assert_eq!(extra, review_delivery_usage());
+    }
+
+    // finding-resolution preflight도 egress와 Session root를 담은 closed request 하나만
+    // 받아 추가 argv가 terminal input이나 resume 대상을 넓히지 못하게 합니다.
+    #[test]
+    fn review_continuation_preflight_requires_exactly_one_request() {
+        let missing = run(["slice", "review-continuation-preflight"].map(Into::into)).unwrap_err();
+        let extra = run([
+            "slice",
+            "review-continuation-preflight",
+            "request.json",
+            "extra.json",
+        ]
+        .map(Into::into))
+        .unwrap_err();
+
+        assert_eq!(missing, review_continuation_preflight_usage());
+        assert_eq!(extra, review_continuation_preflight_usage());
     }
 
     // Slice gate는 한 후보에 결속된 단일 request만 받아 서로 다른 후보의 증거가

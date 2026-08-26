@@ -46,6 +46,7 @@ struct PriorReview {
 struct CapturedDeliveryReceipt {
     path: PathBuf,
     bytes: Vec<u8>,
+    provider_request_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -71,6 +72,9 @@ pub(crate) struct AuthorizedDelivery {
     pub(crate) account: String,
     pub(crate) model: String,
     pub(crate) fresh_session: bool,
+    pub(crate) session_id: Option<String>,
+    pub(crate) prior_packet_hash: Option<String>,
+    pub(crate) prior_provider_request_id: Option<String>,
 }
 
 struct FinalRevalidation<'a> {
@@ -226,6 +230,17 @@ fn authorize_with(
         account: request.route.account.clone(),
         model: request.route.model.clone(),
         fresh_session: matches!(request.session, Session::Fresh),
+        session_id: match &request.session {
+            Session::Fresh => None,
+            Session::Resume { id } => Some(id.clone()),
+        },
+        prior_packet_hash: classification
+            .prior
+            .as_ref()
+            .map(|prior| prior.packet_hash.clone()),
+        prior_provider_request_id: prior_delivery
+            .as_ref()
+            .map(|delivery| delivery.provider_request_id.clone()),
     };
     let document = ResultDocument {
         schema: RESULT_SCHEMA,
@@ -523,7 +538,11 @@ fn capture_prior_delivery(
             "finding-resolution Session differs from the original delivery Session".to_owned(),
         );
     }
-    Ok(Some(CapturedDeliveryReceipt { path, bytes }))
+    Ok(Some(CapturedDeliveryReceipt {
+        path,
+        bytes,
+        provider_request_id: receipt.provider_request_id,
+    }))
 }
 
 pub(crate) fn verify_completed_delivery(

@@ -7,7 +7,10 @@ use yo_core::{
     },
 };
 
-use crate::review_egress::AuthorizedDelivery;
+use crate::{
+    review_egress::AuthorizedDelivery,
+    review_session::{managed_binding_matches, provider_request_identity},
+};
 
 #[derive(Clone, Default)]
 pub(super) struct SessionObservation {
@@ -104,23 +107,14 @@ fn observe_session_inner(
             StoredRequestTraceRecord::BindingOpened {
                 binding_identity, ..
             } => {
-                let binding: serde_json::Value = serde_json::from_str(binding_identity.value())
-                    .map_err(|error| {
-                        (
-                            observation.clone(),
-                            format!("managed binding identity is not JSON: {error}"),
-                        )
-                    })?;
                 binding_matches.push(
-                    [
-                        ("provider", delivery.provider.as_str()),
-                        ("account", delivery.account.as_str()),
-                        ("model", delivery.model.as_str()),
-                    ]
-                    .into_iter()
-                    .all(|(name, expected)| {
-                        binding.get(name).and_then(|value| value.as_str()) == Some(expected)
-                    }),
+                    managed_binding_matches(
+                        binding_identity.value(),
+                        &delivery.provider,
+                        &delivery.account,
+                        &delivery.model,
+                    )
+                    .map_err(|error| (observation.clone(), error))?,
                 );
             },
             StoredRequestTraceRecord::RequestAccepted {
@@ -152,20 +146,4 @@ fn observe_session_inner(
             .map_err(|error| (observation.clone(), error))?,
     );
     Ok(observation)
-}
-
-pub(super) fn provider_request_identity(
-    request_identities: &[String],
-    outcome_identities: &[Option<String>],
-) -> Result<String, String> {
-    if request_identities.len() != 1 || outcome_identities.len() != 1 {
-        return Err(format!(
-            "durable Session observed {} accepted requests and {} resumable outcomes; expected one each",
-            request_identities.len(),
-            outcome_identities.len()
-        ));
-    }
-    Ok(outcome_identities[0]
-        .clone()
-        .unwrap_or_else(|| request_identities[0].clone()))
 }
