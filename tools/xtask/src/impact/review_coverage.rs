@@ -264,9 +264,9 @@ fn usage(message: &str, expected_hash: &str, evidence: &slice_review::Evidence) 
         .iter()
         .map(|review| {
             let reviewer = if review.lens == slice_review::Lens::CodeQuality {
-                "<model/provider/model/session|model-high/provider/model/session|human/name>"
+                "<model/provider/model/session|model-high/provider/model/session|delegated/host/session|delegated-high/host/session|human/name>"
             } else {
-                "<model-high/provider/model/session|human/name>"
+                "<model-high/provider/model/session|delegated-high/host/session|human/name>"
             };
             format!(
                 "  Review-Coverage: {} - exact - {reviewer} - {expected_hash}",

@@ -24,6 +24,41 @@ fn accepts_high_boundary_and_mechanical_quality_model_coverage() {
     assert_eq!(validate(&message, DIFF_HASH), Ok(()));
 }
 
+// delegated host review는 하위 Provider/Model을 Yo가 추측하지 않고 host/session만으로
+// compact reviewer와 exact high-capability coverage를 연결합니다.
+#[test]
+fn accepts_delegated_host_review_without_provider_identity() {
+    let message = format!(
+        "feat: delegated reviewed\n\n\
+         Slice-Review: fresh-context - completed - codex/fresh-session - clear\n\
+         Slice-Review: code-quality - completed - grok/quality-session - clear\n\
+         Review-Coverage: fresh-context - exact - \
+         delegated-high/codex/fresh-session - {DIFF_HASH}\n\
+         Review-Coverage: code-quality - exact - \
+         delegated/grok/quality-session - {DIFF_HASH}\n"
+    );
+
+    assert_eq!(validate(&message, DIFF_HASH), Ok(()));
+}
+
+// ledger grammar는 target admission의 closed host 집합과 같아야 하며 미래 이름을
+// high-capability review 증거로 선점하지 않습니다.
+#[test]
+fn rejects_an_unadmitted_delegated_host() {
+    let message = format!(
+        "feat: delegated reviewed\n\n\
+         Slice-Review: fresh-context - completed - future/session - clear\n\
+         Review-Coverage: fresh-context - exact - \
+         delegated-high/future/session - {DIFF_HASH}\n"
+    );
+
+    assert!(
+        validate(&message, DIFF_HASH)
+            .unwrap_err()
+            .contains("invalid Review-Coverage")
+    );
+}
+
 // 사람이 정확한 patch와 lens를 직접 읽고 같은 identity로 verdict를 남긴 경우에는
 // 모델 호출 없이도 fresh-context와 code-quality coverage를 모두 충족한다.
 #[test]

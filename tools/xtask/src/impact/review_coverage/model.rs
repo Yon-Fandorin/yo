@@ -35,6 +35,11 @@ pub(super) enum Reviewer {
         provider: String,
         session: String,
     },
+    Delegated {
+        high: bool,
+        host: String,
+        session: String,
+    },
 }
 
 impl Reviewer {
@@ -55,6 +60,15 @@ impl Reviewer {
                     session: (*session).to_owned(),
                 })
             },
+            [class @ ("delegated" | "delegated-high"), host, session]
+                if valid_delegated_host(host) && valid_segment(session) =>
+            {
+                Some(Self::Delegated {
+                    high: *class == "delegated-high",
+                    host: (*host).to_owned(),
+                    session: (*session).to_owned(),
+                })
+            },
             _ => None,
         }
     }
@@ -65,16 +79,26 @@ impl Reviewer {
             Self::Model {
                 provider, session, ..
             } => format!("{provider}/{session}"),
+            Self::Delegated { host, session, .. } => format!("{host}/{session}"),
         }
     }
 
     pub(super) fn is_high_or_human(&self) -> bool {
-        matches!(self, Self::Human { .. } | Self::Model { high: true, .. })
+        matches!(
+            self,
+            Self::Human { .. }
+                | Self::Model { high: true, .. }
+                | Self::Delegated { high: true, .. }
+        )
     }
 
     pub(super) fn is_human(&self) -> bool {
         matches!(self, Self::Human { .. })
     }
+}
+
+fn valid_delegated_host(value: &str) -> bool {
+    matches!(value, "codex" | "grok")
 }
 
 fn valid_segment(value: &str) -> bool {

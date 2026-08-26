@@ -19,6 +19,17 @@ use crate::{
     review_session::{managed_binding_matches, provider_request_identity},
 };
 
+mod delegated;
+
+pub(crate) use delegated::VerifiedHostContinuation;
+
+pub(crate) fn evaluate_delegated(
+    repository: &Path,
+    request_path: &Path,
+) -> Result<VerifiedHostContinuation, String> {
+    delegated::evaluate(repository, request_path)
+}
+
 const REQUEST_SCHEMA: &str = "yo.slice-review-continuation-preflight-request/v1alpha1";
 const RESULT_SCHEMA: &str = "yo.slice-review-continuation-preflight-result/v1alpha1";
 const REQUEST_LIMIT: usize = 64 * 1024;
@@ -79,6 +90,20 @@ pub(crate) struct VerifiedContinuation {
 }
 
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
+    let bytes = bounded_file::read_regular(
+        request_path,
+        REQUEST_LIMIT,
+        "Slice review continuation preflight request",
+    )?;
+    let schema = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|error| format!("invalid continuation preflight request: {error}"))?
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "continuation preflight request has no string schema".to_owned())?
+        .to_owned();
+    if schema == delegated::REQUEST_SCHEMA {
+        return delegated::run(repository, request_path);
+    }
     let verified = evaluate(repository, request_path)?;
     let delivery = &verified.delivery;
     let (session_id, prior_packet_hash, prior_provider_request_id) =

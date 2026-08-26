@@ -5,13 +5,18 @@ use std::time::{Duration, Instant};
 use super::{
     canonical_json, combine_failures, managed_model_reference,
     model::{CLAIM_SCHEMA, Claim, DeliveryRequest, Route},
-    process::{execute_continuation_once, execute_once, execute_once_with_timeout},
+    process::{
+        execute_continuation_once, execute_delegated_continuation_once, execute_delegated_once,
+        execute_once, execute_once_with_timeout,
+    },
     publish_claim, read_request, require_empty_directory, require_integration_state,
     require_original_fresh,
 };
 use crate::{
-    review_egress::AuthorizedDelivery, review_protocol::digest,
-    review_session::provider_request_identity, test_support::TestRepository,
+    review_egress::{AuthorizedDelivery, AuthorizedHostDelivery},
+    review_protocol::digest,
+    review_session::provider_request_identity,
+    test_support::TestRepository,
 };
 
 fn authorized() -> AuthorizedDelivery {
@@ -33,6 +38,27 @@ fn authorized() -> AuthorizedDelivery {
         session_id: None,
         prior_packet_hash: None,
         prior_provider_request_id: None,
+    }
+}
+
+fn authorized_host() -> AuthorizedHostDelivery {
+    AuthorizedHostDelivery {
+        request_id: "sha256:request".to_owned(),
+        authorization_id: "sha256:authorization".to_owned(),
+        authority: "human/yon".to_owned(),
+        review_kind: "original",
+        review_id: "sha256:review".to_owned(),
+        candidate_commit: "11".repeat(20),
+        trusted_commit: "22".repeat(20),
+        packet_hash: "sha256:packet".to_owned(),
+        packet_bytes: b"review packet".to_vec(),
+        managed_payload_tokens: 3,
+        host: "codex".to_owned(),
+        execution_profile: "yo.delegated-review-execution/v1alpha1".to_owned(),
+        fresh_session: true,
+        session_id: None,
+        prior_packet_hash: None,
+        prior_host_request_id: None,
     }
 }
 
@@ -95,6 +121,31 @@ fn v1alpha2_delivery_binds_one_target_admission_request() {
         read_request(&path).unwrap(),
         DeliveryRequest::AdmittedContinuation(_)
     ));
+}
+
+// delegated delivery는 managed request를 재해석하지 않고 host 전용 v1alpha1 schema와
+// exact admission request를 요구합니다.
+#[test]
+fn delegated_delivery_request_has_a_closed_host_shape() {
+    let repository = TestRepository::new("review-delegated-delivery-request");
+    let valid = serde_json::json!({
+        "schema": "yo.slice-review-delegated-delivery-request/v1alpha1",
+        "egress_request_path": ".local-exclude/egress.json",
+        "egress_request_hash": digest(b"egress"),
+        "admission_request_path": ".local-exclude/admission.json",
+        "admission_request_hash": digest(b"admission"),
+        "output_directory": ".local-exclude/coordination/slice/run"
+    });
+    let path = repository.write("valid.json", &format!("{valid}\n"));
+    assert!(matches!(
+        read_request(&path).unwrap(),
+        DeliveryRequest::Delegated(_)
+    ));
+
+    let mut extra = valid;
+    extra["provider_request_limit"] = 1.into();
+    let path = repository.write("extra.json", &format!("{extra}\n"));
+    assert!(read_request(&path).unwrap_err().contains("unknown field"));
 }
 
 // frozen v1alpha1 claim은 새 optional 필드가 None일 때 기존 byte shape를 그대로 유지해
@@ -304,6 +355,62 @@ fn continuation_launch_uses_exact_print_resume_arguments() {
         std::fs::read(sessions.join("stdin")).unwrap(),
         b"delta packet"
     );
+
+    let mut delegated = authorized_host();
+    delegated.review_kind = "finding_resolution";
+    delegated.fresh_session = false;
+    delegated.session_id = delivery.session_id.clone();
+    delegated.packet_bytes = b"delegated delta".to_vec();
+    let capture = execute_delegated_continuation_once(
+        &executable,
+        &repository.path,
+        &output,
+        &sessions,
+        delegated.session_id.as_deref().unwrap(),
+        &delegated,
+    );
+    assert!(capture.status.unwrap().success());
+    assert_eq!(
+        std::fs::read_to_string(sessions.join("argv")).unwrap(),
+        "-p\n--resume\n01890f00-0000-7000-8000-000000000001\n"
+    );
+    assert_eq!(
+        std::fs::read(sessions.join("stdin")).unwrap(),
+        b"delegated delta"
+    );
+}
+
+#[cfg(unix)]
+// fresh delegated launch는 managed `--no-tools`를 주장하지 않고 승인된 host와
+// read-only profile만 argv로 고정합니다.
+#[test]
+fn delegated_launch_uses_exact_host_read_only_arguments() {
+    let repository = TestRepository::new("review-delegated-delivery-launch");
+    let executable = repository.write(
+        "yo",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$YO_SESSION_REPOSITORY.argv\"\ncat > \"$YO_SESSION_REPOSITORY.stdin\"\nprintf 'reviewed\\n'\n",
+    );
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+
+    for host in ["codex", "grok"] {
+        let output = repository.path.join(format!("output-{host}"));
+        std::fs::create_dir(&output).unwrap();
+        let mut delivery = authorized_host();
+        delivery.host = host.to_owned();
+        let capture = execute_delegated_once(&executable, &repository.path, &output, &delivery);
+
+        assert!(capture.status.unwrap().success());
+        assert_eq!(
+            std::fs::read_to_string(output.join("sessions.argv")).unwrap(),
+            format!("-p\n--model\nhost:{host}\n--sandbox\nread-only\n")
+        );
+        assert_eq!(
+            std::fs::read(output.join("sessions.stdin")).unwrap(),
+            b"review packet"
+        );
+    }
 }
 
 #[cfg(unix)]

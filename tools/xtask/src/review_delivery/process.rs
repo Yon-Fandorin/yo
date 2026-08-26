@@ -8,7 +8,10 @@ use std::{
 };
 
 use super::{DIAGNOSTIC_LIMIT, REVIEW_RESULT_LIMIT, combine_failures, model::ProcessOutcome};
-use crate::{bounded_file, review_egress::AuthorizedDelivery};
+use crate::{
+    bounded_file,
+    review_egress::{AuthorizedDelivery, AuthorizedHostDelivery},
+};
 
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -69,6 +72,54 @@ pub(super) fn execute_continuation_once(
     session_repository: &Path,
     session_id: &str,
     delivery: &AuthorizedDelivery,
+) -> ProcessCapture {
+    let arguments = vec![
+        "-p".to_owned(),
+        "--resume".to_owned(),
+        session_id.to_owned(),
+    ];
+    execute_command_once_with_timeout(
+        yo_binary,
+        integration,
+        output,
+        session_repository,
+        &arguments,
+        &delivery.packet_bytes,
+        DELIVERY_TIMEOUT,
+    )
+}
+
+pub(super) fn execute_delegated_once(
+    yo_binary: &Path,
+    integration: &Path,
+    output: &Path,
+    delivery: &AuthorizedHostDelivery,
+) -> ProcessCapture {
+    let arguments = vec![
+        "-p".to_owned(),
+        "--model".to_owned(),
+        format!("host:{}", delivery.host),
+        "--sandbox".to_owned(),
+        "read-only".to_owned(),
+    ];
+    execute_command_once_with_timeout(
+        yo_binary,
+        integration,
+        output,
+        &output.join("sessions"),
+        &arguments,
+        &delivery.packet_bytes,
+        DELIVERY_TIMEOUT,
+    )
+}
+
+pub(super) fn execute_delegated_continuation_once(
+    yo_binary: &Path,
+    integration: &Path,
+    output: &Path,
+    session_repository: &Path,
+    session_id: &str,
+    delivery: &AuthorizedHostDelivery,
 ) -> ProcessCapture {
     let arguments = vec![
         "-p".to_owned(),

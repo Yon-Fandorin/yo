@@ -363,18 +363,36 @@ fn prepare_reviews(
                 receipt_path,
                 class,
             } => {
-                if !matches!(class.as_str(), "model" | "model-high") {
-                    return Err("delivery receipt class must be model or model-high".to_owned());
-                }
-                let delivery = review_egress::verify_completed_delivery(
+                let delivery = review_egress::verify_any_completed_delivery(
                     repository,
                     Path::new(receipt_path),
                     review,
                 )?;
-                format!(
-                    "{class}/{}/{}/{}",
-                    delivery.provider, delivery.model, delivery.session_id
-                )
+                match delivery {
+                    review_egress::VerifiedDeliveryRoute::Managed {
+                        provider,
+                        model,
+                        session_id,
+                    } if matches!(class.as_str(), "model" | "model-high") => {
+                        format!("{class}/{provider}/{model}/{session_id}")
+                    },
+                    review_egress::VerifiedDeliveryRoute::Delegated { host, session_id }
+                        if matches!(class.as_str(), "delegated" | "delegated-high") =>
+                    {
+                        format!("{class}/{host}/{session_id}")
+                    },
+                    review_egress::VerifiedDeliveryRoute::Managed { .. } => {
+                        return Err(
+                            "managed delivery receipt class must be model or model-high".to_owned()
+                        );
+                    },
+                    review_egress::VerifiedDeliveryRoute::Delegated { .. } => {
+                        return Err(
+                            "delegated delivery receipt class must be delegated or delegated-high"
+                                .to_owned(),
+                        );
+                    },
+                }
             },
             ReviewSource::DeclaredRoute { route } => route.clone(),
         };

@@ -22,6 +22,24 @@ pub(super) const CONTINUATION_RESULT_SCHEMA: &str =
 pub(super) const CONTINUATION_RESULT_SCHEMA_V1_ALPHA2: &str =
     "yo.slice-review-continuation-delivery-result/v1alpha2";
 pub(super) const DELIVERY_RECEIPT_SCHEMA: &str = "yo.external-review-delivery-receipt/v1";
+pub(super) const DELEGATED_REQUEST_SCHEMA: &str =
+    "yo.slice-review-delegated-delivery-request/v1alpha1";
+pub(super) const DELEGATED_CONTINUATION_REQUEST_SCHEMA: &str =
+    "yo.slice-review-delegated-continuation-delivery-request/v1alpha1";
+pub(super) const DELEGATED_CLAIM_SCHEMA: &str =
+    "yo.external-review-delegated-delivery-claim/v1alpha1";
+pub(super) const DELEGATED_CONTINUATION_CLAIM_SCHEMA: &str =
+    "yo.external-review-delegated-continuation-delivery-claim/v1alpha1";
+pub(super) const DELEGATED_OUTCOME_SCHEMA: &str =
+    "yo.external-review-delegated-delivery-outcome/v1alpha1";
+pub(super) const DELEGATED_CONTINUATION_OUTCOME_SCHEMA: &str =
+    "yo.external-review-delegated-continuation-delivery-outcome/v1alpha1";
+pub(super) const DELEGATED_RESULT_SCHEMA: &str =
+    "yo.slice-review-delegated-delivery-result/v1alpha1";
+pub(super) const DELEGATED_CONTINUATION_RESULT_SCHEMA: &str =
+    "yo.slice-review-delegated-continuation-delivery-result/v1alpha1";
+pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA: &str =
+    "yo.external-review-delegated-delivery-receipt/v1alpha1";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +87,30 @@ pub(super) enum DeliveryRequest {
     AdmittedOriginal(AdmittedRequest),
     Continuation(ContinuationRequest),
     AdmittedContinuation(AdmittedContinuationRequest),
+    Delegated(DelegatedRequest),
+    DelegatedContinuation(DelegatedContinuationRequest),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DelegatedRequest {
+    pub(super) schema: String,
+    pub(super) egress_request_path: String,
+    pub(super) egress_request_hash: String,
+    pub(super) admission_request_path: String,
+    pub(super) admission_request_hash: String,
+    pub(super) output_directory: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DelegatedContinuationRequest {
+    pub(super) schema: String,
+    pub(super) preflight_request_path: String,
+    pub(super) preflight_request_hash: String,
+    pub(super) admission_request_path: String,
+    pub(super) admission_request_hash: String,
+    pub(super) output_directory: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -224,6 +266,145 @@ pub(super) struct ContinuationResultDocument {
     pub(super) integration_commit: String,
     pub(super) session_id: String,
     pub(super) provider_request_id: String,
+    pub(super) continuation_anchor_sequence: u64,
+    pub(super) review_result: Artifact,
+    pub(super) diagnostic: Artifact,
+    pub(super) outcome: Artifact,
+    pub(super) delivery_receipt: Artifact,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedTarget<'a> {
+    pub(super) kind: &'static str,
+    pub(super) host: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedClaim<'a> {
+    pub(super) schema: &'static str,
+    pub(super) request_id: &'a str,
+    pub(super) authorization_id: &'a str,
+    pub(super) authority: &'a str,
+    pub(super) review_id: &'a str,
+    pub(super) candidate_commit: &'a str,
+    pub(super) integration_commit: &'a str,
+    pub(super) packet_hash: &'a str,
+    pub(super) packet_bytes: usize,
+    pub(super) managed_payload_tokens: usize,
+    pub(super) target: DelegatedTarget<'a>,
+    pub(super) execution_profile: &'a str,
+    pub(super) session_mode: &'static str,
+    pub(super) host_request_limit: usize,
+    pub(super) retries: usize,
+    pub(super) steer: usize,
+    pub(super) fallback: usize,
+    pub(super) target_switch: bool,
+    pub(super) yo_binary_hash: &'a str,
+    pub(super) admission_request_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedContinuationClaim<'a> {
+    pub(super) schema: &'static str,
+    pub(super) request_id: &'a str,
+    pub(super) preflight_request_id: &'a str,
+    pub(super) authorization_id: &'a str,
+    pub(super) authority: &'a str,
+    pub(super) review_id: &'a str,
+    pub(super) candidate_commit: &'a str,
+    pub(super) integration_commit: &'a str,
+    pub(super) packet_hash: &'a str,
+    pub(super) packet_bytes: usize,
+    pub(super) managed_payload_tokens: usize,
+    pub(super) target: DelegatedTarget<'a>,
+    pub(super) execution_profile: &'a str,
+    pub(super) session_mode: &'static str,
+    pub(super) session_id: &'a str,
+    pub(super) prior_host_request_id: &'a str,
+    pub(super) continuation_anchor_sequence: u64,
+    pub(super) binding_epoch: u64,
+    pub(super) host_request_limit: usize,
+    pub(super) retries: usize,
+    pub(super) steer: usize,
+    pub(super) fallback: usize,
+    pub(super) target_switch: bool,
+    pub(super) yo_binary_hash: &'a str,
+    pub(super) admission_request_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedDeliveryOutcome {
+    pub(super) schema: &'static str,
+    pub(super) request_id: String,
+    pub(super) status: &'static str,
+    pub(super) process: ProcessOutcome,
+    pub(super) session_id: Option<String>,
+    pub(super) durable_host_request_count: usize,
+    pub(super) host_request_id: Option<String>,
+    pub(super) review_result: Artifact,
+    pub(super) diagnostic: Artifact,
+    pub(super) failure: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedContinuationDeliveryOutcome {
+    pub(super) schema: &'static str,
+    pub(super) request_id: String,
+    pub(super) preflight_request_id: String,
+    pub(super) status: &'static str,
+    pub(super) process: ProcessOutcome,
+    pub(super) session_id: String,
+    pub(super) durable_host_request_count: usize,
+    pub(super) host_request_id: Option<String>,
+    pub(super) continuation_anchor_sequence: Option<u64>,
+    pub(super) review_result: Artifact,
+    pub(super) diagnostic: Artifact,
+    pub(super) failure: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedDeliveryReceipt<'a> {
+    pub(super) schema: &'static str,
+    pub(super) review_id: &'a str,
+    pub(super) packet_hash: &'a str,
+    pub(super) target: DelegatedTarget<'a>,
+    pub(super) execution_profile: &'a str,
+    pub(super) session_id: &'a str,
+    pub(super) host_request_id: &'a str,
+    pub(super) host_request_count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedResultDocument {
+    pub(super) schema: &'static str,
+    pub(super) ok: bool,
+    pub(super) status: &'static str,
+    pub(super) next_action: &'static str,
+    pub(super) request_id: String,
+    pub(super) review_id: String,
+    pub(super) candidate_commit: String,
+    pub(super) integration_commit: String,
+    pub(super) session_id: String,
+    pub(super) host_request_id: String,
+    pub(super) review_result: Artifact,
+    pub(super) diagnostic: Artifact,
+    pub(super) outcome: Artifact,
+    pub(super) delivery_receipt: Artifact,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedContinuationResultDocument {
+    pub(super) schema: &'static str,
+    pub(super) ok: bool,
+    pub(super) status: &'static str,
+    pub(super) next_action: &'static str,
+    pub(super) request_id: String,
+    pub(super) preflight_request_id: String,
+    pub(super) review_id: String,
+    pub(super) candidate_commit: String,
+    pub(super) integration_commit: String,
+    pub(super) session_id: String,
+    pub(super) host_request_id: String,
     pub(super) continuation_anchor_sequence: u64,
     pub(super) review_result: Artifact,
     pub(super) diagnostic: Artifact,

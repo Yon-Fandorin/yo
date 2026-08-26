@@ -4,6 +4,14 @@ pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-egress-request/v1";
 pub(super) const AUTHORIZATION_SCHEMA: &str = "yo.external-review-standing-authorization/v1";
 pub(super) const DELIVERY_RECEIPT_SCHEMA: &str = "yo.external-review-delivery-receipt/v1";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-egress-result/v1";
+pub(super) const DELEGATED_REQUEST_SCHEMA: &str =
+    "yo.slice-review-delegated-egress-request/v1alpha1";
+pub(super) const DELEGATED_AUTHORIZATION_SCHEMA: &str =
+    "yo.external-review-delegated-authorization/v1alpha1";
+pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA: &str =
+    "yo.external-review-delegated-delivery-receipt/v1alpha1";
+pub(super) const DELEGATED_RESULT_SCHEMA: &str = "yo.slice-review-delegated-egress-result/v1alpha1";
+pub(super) const DELEGATED_EXECUTION_PROFILE: &str = "yo.delegated-review-execution/v1alpha1";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,6 +24,34 @@ pub(super) struct Request {
     pub(super) session: Session,
     #[serde(default)]
     pub(super) prior_delivery: Option<Artifact>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DelegatedRequest {
+    pub(super) schema: String,
+    pub(super) manifest_path: String,
+    pub(super) manifest_hash: String,
+    pub(super) authorization_hash: String,
+    pub(super) target: DelegatedTarget,
+    pub(super) execution_profile: String,
+    pub(super) session: Session,
+    #[serde(default)]
+    pub(super) prior_delivery: Option<Artifact>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub(super) enum DelegatedTarget {
+    DelegatedHost { host: String },
+}
+
+impl DelegatedTarget {
+    pub(super) fn host(&self) -> &str {
+        match self {
+            Self::DelegatedHost { host } => host,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -40,6 +76,26 @@ pub(super) struct Authorization {
     pub(super) authority: String,
     pub(super) status: String,
     pub(super) routes: Vec<AuthorizedRoute>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DelegatedAuthorization {
+    pub(super) schema: String,
+    pub(super) authority: String,
+    pub(super) status: String,
+    pub(super) targets: Vec<AuthorizedDelegatedTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AuthorizedDelegatedTarget {
+    pub(super) host: String,
+    pub(super) execution_profile: String,
+    pub(super) max_packet_bytes: usize,
+    pub(super) max_managed_payload_tokens: usize,
+    pub(super) allow_original_fresh: bool,
+    pub(super) allow_finding_resolution_resume: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -94,6 +150,19 @@ pub(super) struct DeliveryReceipt {
     pub(super) provider_request_count: usize,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DelegatedDeliveryReceipt {
+    pub(super) schema: String,
+    pub(super) review_id: String,
+    pub(super) packet_hash: String,
+    pub(super) target: DelegatedTarget,
+    pub(super) execution_profile: String,
+    pub(super) session_id: String,
+    pub(super) host_request_id: String,
+    pub(super) host_request_count: usize,
+}
+
 #[derive(Debug, Serialize)]
 pub(super) struct ResultDocument {
     pub(super) schema: &'static str,
@@ -110,6 +179,25 @@ pub(super) struct ResultDocument {
     pub(super) route: Route,
     pub(super) session: Session,
     pub(super) limits: DeliveryLimits,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedResultDocument {
+    pub(super) schema: &'static str,
+    pub(super) ok: bool,
+    pub(super) status: &'static str,
+    pub(super) next_action: &'static str,
+    pub(super) request_id: String,
+    pub(super) authorization_id: String,
+    pub(super) authority: String,
+    pub(super) review_kind: ReviewKind,
+    pub(super) review_id: String,
+    pub(super) candidate_commit: String,
+    pub(super) packet: PacketResult,
+    pub(super) target: DelegatedTarget,
+    pub(super) execution_profile: String,
+    pub(super) session: Session,
+    pub(super) limits: DelegatedDeliveryLimits,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -136,4 +224,14 @@ pub(super) struct DeliveryLimits {
     pub(super) fallback: usize,
     pub(super) second_provider: bool,
     pub(super) tool_execution: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct DelegatedDeliveryLimits {
+    pub(super) host_requests: usize,
+    pub(super) additional_host_requests: usize,
+    pub(super) retries: usize,
+    pub(super) steer: usize,
+    pub(super) fallback: usize,
+    pub(super) target_switch: bool,
 }

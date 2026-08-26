@@ -1,3 +1,5 @@
+mod delegated;
+mod delegated_session;
 mod model;
 mod process;
 mod session;
@@ -17,9 +19,11 @@ use model::{
     CONTINUATION_CLAIM_SCHEMA, CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2, CONTINUATION_OUTCOME_SCHEMA,
     CONTINUATION_REQUEST_SCHEMA, CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2, CONTINUATION_RESULT_SCHEMA,
     CONTINUATION_RESULT_SCHEMA_V1_ALPHA2, Claim, ContinuationClaim, ContinuationDeliveryOutcome,
-    ContinuationRequest, ContinuationResultDocument, DELIVERY_RECEIPT_SCHEMA, DeliveryOutcome,
-    DeliveryReceipt, DeliveryRequest, OUTCOME_SCHEMA, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2,
-    RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2, Request, ResultDocument, Route,
+    ContinuationRequest, ContinuationResultDocument, DELEGATED_CONTINUATION_REQUEST_SCHEMA,
+    DELEGATED_REQUEST_SCHEMA, DELIVERY_RECEIPT_SCHEMA, DelegatedContinuationRequest,
+    DelegatedRequest, DeliveryOutcome, DeliveryReceipt, DeliveryRequest, OUTCOME_SCHEMA,
+    REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2, Request,
+    ResultDocument, Route,
 };
 use process::{execute_continuation_once, execute_once, exit_label, process_outcome};
 use serde::Serialize;
@@ -28,7 +32,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     bounded_file, git,
-    review_egress::{self, AuthorizedDelivery},
+    review_egress::{self, AuthorizedDelivery, AuthorizedHostDelivery},
     review_protocol::digest,
     review_target_admission::{self, Admission, ReviewTarget},
     slice_contract,
@@ -73,6 +77,10 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
                 },
                 Some(admission),
             )
+        },
+        DeliveryRequest::Delegated(request) => delegated::run_original(repository, request),
+        DeliveryRequest::DelegatedContinuation(request) => {
+            delegated::run_continuation(repository, request)
         },
     }
 }
@@ -608,10 +616,68 @@ fn read_request(path: &Path) -> Result<DeliveryRequest, String> {
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
             Ok(DeliveryRequest::AdmittedContinuation(request))
         },
+        DELEGATED_REQUEST_SCHEMA => {
+            let request: DelegatedRequest = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("invalid delegated review delivery request: {error}"))?;
+            debug_assert_eq!(request.schema, DELEGATED_REQUEST_SCHEMA);
+            compact_path(&request.egress_request_path, "egress_request_path")?;
+            compact_path(&request.admission_request_path, "admission_request_path")?;
+            compact_path(&request.output_directory, "output_directory")?;
+            require_sha256(&request.egress_request_hash, "egress_request_hash")?;
+            require_sha256(&request.admission_request_hash, "admission_request_hash")?;
+            Ok(DeliveryRequest::Delegated(request))
+        },
+        DELEGATED_CONTINUATION_REQUEST_SCHEMA => {
+            let request: DelegatedContinuationRequest =
+                serde_json::from_slice(&bytes).map_err(|error| {
+                    format!("invalid delegated continuation delivery request: {error}")
+                })?;
+            debug_assert_eq!(request.schema, DELEGATED_CONTINUATION_REQUEST_SCHEMA);
+            compact_path(&request.preflight_request_path, "preflight_request_path")?;
+            compact_path(&request.admission_request_path, "admission_request_path")?;
+            compact_path(&request.output_directory, "output_directory")?;
+            require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
+            require_sha256(&request.admission_request_hash, "admission_request_hash")?;
+            Ok(DeliveryRequest::DelegatedContinuation(request))
+        },
         other => Err(format!(
-            "unsupported Slice review delivery request schema `{other}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{CONTINUATION_REQUEST_SCHEMA}`, or `{CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`"
+            "unsupported Slice review delivery request schema `{other}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{CONTINUATION_REQUEST_SCHEMA}`, `{CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`, `{DELEGATED_REQUEST_SCHEMA}`, or `{DELEGATED_CONTINUATION_REQUEST_SCHEMA}`"
         )),
     }
+}
+
+fn evaluate_host_admission(
+    repository: &Path,
+    request_path: &str,
+    request_hash: &str,
+    delivery: &AuthorizedHostDelivery,
+) -> Result<Admission, String> {
+    let path = shared_path(repository, request_path)?;
+    require_exact_file_hash(
+        &path,
+        request_hash,
+        REQUEST_LIMIT,
+        "delegated external review target admission request",
+    )?;
+    let admission = review_target_admission::evaluate(&path)?;
+    let expected = ReviewTarget::DelegatedHost {
+        host: delivery.host.clone(),
+    };
+    if admission.target != expected {
+        return Err(
+            "review-target admission differs from the authorized delegated host".to_owned(),
+        );
+    }
+    if !admission.admitted() {
+        return Err(format!(
+            "delegated external review target admission stopped before claim: {}",
+            admission.availability_detail()
+        ));
+    }
+    if !admission.supports_delegated_delivery() {
+        return Err("delegated delivery requires target admission v1alpha2 eligibility".to_owned());
+    }
+    Ok(admission)
 }
 
 fn evaluate_admission(

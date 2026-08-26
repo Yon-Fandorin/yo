@@ -1,3 +1,4 @@
+mod delegated;
 mod model;
 
 #[cfg(test)]
@@ -50,11 +51,19 @@ struct CapturedDeliveryReceipt {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct VerifiedDeliveryRoute {
-    pub(crate) provider: String,
-    pub(crate) model: String,
-    pub(crate) session_id: String,
+pub(crate) enum VerifiedDeliveryRoute {
+    Managed {
+        provider: String,
+        model: String,
+        session_id: String,
+    },
+    Delegated {
+        host: String,
+        session_id: String,
+    },
 }
+
+pub(crate) use delegated::{AuthorizedHostDelivery, authorize_host_delivery};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AuthorizedDelivery {
@@ -89,6 +98,17 @@ struct FinalRevalidation<'a> {
 }
 
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
+    let bytes =
+        bounded_file::read_regular(request_path, REQUEST_LIMIT, "Slice review egress request")?;
+    let schema = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|error| format!("invalid Slice review egress request: {error}"))?
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Slice review egress request has no string schema".to_owned())?
+        .to_owned();
+    if schema == model::DELEGATED_REQUEST_SCHEMA {
+        return delegated::run(repository, request_path);
+    }
     let output = evaluate(repository, request_path)?;
     println!(
         "{}",
@@ -563,11 +583,35 @@ pub(crate) fn verify_completed_delivery(
         &review.packet_hash,
         "external review delivery receipt does not match the reviewed packet",
     )?;
-    Ok(VerifiedDeliveryRoute {
+    Ok(VerifiedDeliveryRoute::Managed {
         provider: receipt.route.provider,
         model: receipt.route.model,
         session_id: receipt.session_id,
     })
+}
+
+pub(crate) fn verify_any_completed_delivery(
+    repository: &Path,
+    receipt_path: &Path,
+    review: &VerifiedReview,
+) -> Result<VerifiedDeliveryRoute, String> {
+    let path = resolve_input_path(repository, &receipt_path.to_string_lossy());
+    let bytes = bounded_file::read_regular(
+        &path,
+        DELIVERY_RECEIPT_LIMIT,
+        "external review delivery receipt",
+    )?;
+    let schema = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|error| format!("invalid external review delivery receipt: {error}"))?
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "external review delivery receipt has no string schema".to_owned())?
+        .to_owned();
+    if schema == DELIVERY_RECEIPT_SCHEMA {
+        verify_completed_delivery(repository, receipt_path, review)
+    } else {
+        delegated::verify_completed_delivery_bytes(&bytes, review)
+    }
 }
 
 fn parse_delivery_receipt(bytes: &[u8], label: &str) -> Result<DeliveryReceipt, String> {

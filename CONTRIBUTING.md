@@ -1013,16 +1013,20 @@ cargo xtask slice review-target-admission <request.json>
 
 The alternate target shape is
 `{"kind":"delegated_host","host":"codex"}` or exact host `grok`; it omits
-`connection_repository_path`. Managed admission proves that the exact stored
+`connection_repository_path`. Use request v1alpha2 for that delegated target;
+v1alpha1 remains a frozen preparation-only probe. Managed admission proves that the exact stored
 binding exists and reports its newest typed `last_failure`. Authentication,
 access-denied, exact-model-unavailable, and local-configuration observations
 stop admission. Other failure kinds remain visible but do not become inferred
 quota exhaustion or a routing prohibition. A delegated-host admission runs
 only the bounded exact executable `--version` probe and records its canonical
 path and version; it does not authenticate the host or make a model request.
-Its successful result is `prepared` with
-`next_action: "await_delegated_delivery_protocol"`, not managed
-`deliver_once` eligibility.
+Frozen v1alpha1 keeps its successful delegated result as `prepared` with
+`next_action: "await_delegated_delivery_protocol"`. The new
+`yo.external-review-target-admission-request/v1alpha2` preserves managed
+behavior and returns `eligible` with `next_action: "deliver_delegated_once"`
+for an admitted host. This selects the separate delegated protocol below; it
+never makes the host eligible for managed `deliver_once`.
 
 The optional Session repository search reads at most the newest 64 Sessions
 and returns the latest matching receipt in the first most-recently-updated
@@ -1041,10 +1045,92 @@ same request before and after preparing current-develop Yo, requires its target
 to equal the authorized route, and stops before claim when the result is not
 admitted or changed. Its v1alpha2 claim records the exact admission-request
 hash and typed target. Frozen v1alpha1 delivery remains reproducible and does
-not acquire this stronger pre-claim behavior. A delegated-host admission is
-read-only preparation only until a separately reviewed egress and delivery
-protocol authorizes that host identity; it cannot make the current managed
-route schema launch a host.
+not acquire this stronger pre-claim behavior. A delegated-host admission
+cannot make any managed route schema launch a host.
+
+Keep delegated-host authority in the separate common-workspace file
+`.local-exclude/authorizations/external-review-delegated.json`. Create or
+replace it only from a human statement naming the exact hosts and limits:
+
+```json
+{
+  "schema": "yo.external-review-delegated-authorization/v1alpha1",
+  "authority": "human/<owner>",
+  "status": "active",
+  "targets": [
+    {
+      "host": "codex",
+      "execution_profile": "yo.delegated-review-execution/v1alpha1",
+      "max_packet_bytes": 4000000,
+      "max_managed_payload_tokens": 500000,
+      "allow_original_fresh": true,
+      "allow_finding_resolution_resume": true
+    }
+  ]
+}
+```
+
+The closed target set is `codex` and `grok`, so this authorization accepts at
+most two unique entries. It never names Provider, Account, or downstream model
+coordinates. Bind one exact review manifest, authorization revision, target,
+profile, and Session mode in a delegated egress request:
+
+```json
+{
+  "schema": "yo.slice-review-delegated-egress-request/v1alpha1",
+  "manifest_path": ".local-exclude/methexis/slice-reviews/<id>/manifest.json",
+  "manifest_hash": "sha256:<manifest-hash>",
+  "authorization_hash": "sha256:<authorization-hash>",
+  "target": {"kind": "delegated_host", "host": "codex"},
+  "execution_profile": "yo.delegated-review-execution/v1alpha1",
+  "session": {"mode": "fresh"}
+}
+```
+
+`cargo xtask slice review-egress <request.json>` replays the same immutable
+review chain and limits as managed egress, but returns
+`deliver_delegated_once`. Its limit record uses `host_requests` and
+`target_switch`; it deliberately has no `tool_execution: false` claim because
+read-only host tools remain owned by Codex or Grok.
+
+For a fresh delegated review, bind that egress and an exact v1alpha2 host
+admission to one empty output directory:
+
+```json
+{
+  "schema": "yo.slice-review-delegated-delivery-request/v1alpha1",
+  "egress_request_path": ".local-exclude/coordination/<slice>/egress.json",
+  "egress_request_hash": "sha256:<egress-request-hash>",
+  "admission_request_path": ".local-exclude/coordination/<slice>/admission.json",
+  "admission_request_hash": "sha256:<admission-request-hash>",
+  "output_directory": ".local-exclude/coordination/<slice>/delivery"
+}
+```
+
+The repository delivery command evaluates egress and admission twice around
+the exact current-develop build, publishes an immutable delegated claim, then
+launches exactly one `yo -p --model host:<host> --sandbox read-only`. It
+requires one byte-identical `StartTurn`, the host-specific alpha binding with
+the exact execution profile, one accepted durable request, and one resumable
+outcome. That identity is recorded as `host_request_id`, never as a Provider
+request. A successful run publishes:
+
+```json
+{
+  "schema": "yo.external-review-delegated-delivery-receipt/v1alpha1",
+  "review_id": "sha256:<review-id>",
+  "packet_hash": "sha256:<packet-hash>",
+  "target": {"kind": "delegated_host", "host": "codex"},
+  "execution_profile": "yo.delegated-review-execution/v1alpha1",
+  "session_id": "<reviewer-session>",
+  "host_request_id": "<durable-host-request-identity>",
+  "host_request_count": 1
+}
+```
+
+Provider request identity and token or cache usage remain unknown unless the
+host publishes independently reviewed exact evidence. Claim reuse, retry,
+steer, fallback, target switch, and a second host request are forbidden.
 
 Before any authorized finding-resolution resume, create the repository-owned
 read-only continuation preflight request against the exact durable Session
@@ -1102,6 +1188,15 @@ byte-identical StartTurn, one new accepted request and resumable outcome, the
 same binding epoch, and a newer durable Continuation Anchor. It then publishes
 the same bounded review, diagnostic, outcome, and delivery-receipt artifact
 roles used by original delivery.
+
+Delegated finding-resolution uses the parallel experimental schemas
+`yo.slice-review-delegated-continuation-preflight-request/v1alpha1` and
+`yo.slice-review-delegated-continuation-delivery-request/v1alpha1`. The latter
+also binds the exact delegated admission request. Its checks use the same
+Session and execution profile and record `prior_host_request_id`; the resumed
+launch is exactly `yo -p --resume <same-session>`. The successful receipt keeps
+the delegated shape above. It does not reinterpret any managed continuation
+artifact or claim Provider visibility.
 
 The preflight and the checks before claim publication are current eligibility,
 not retry authority. No other process may write the reviewer Session during
@@ -1163,10 +1258,11 @@ the terminal disappeared, or durable request evidence is incomplete. Inspect
 the bounded outcome and request new human authority for any replacement; never
 delete or rename the claim to manufacture a retry. Build and preflight failures
 that occur before claim publication perform no Provider effect and may be
-corrected normally. The v1alpha1 request schemas separately cover an original
+corrected normally. The managed v1alpha1 request schemas separately cover an original
 packet in a fresh managed-model Session and an authorized finding-resolution
-delta in its exact stored Session. Delegated hosts, retry, steer, fallback, a
-second Provider, and tool execution remain outside this effect.
+delta in its exact stored Session. Delegated hosts use only the disjoint alpha
+schemas above. Retry, steer, fallback, a second target request, and managed
+tool-execution claims remain outside both effects.
 
 Because a self-hosting diff may contain the wrapper's own sentinel source,
 v1alpha2 section metadata names its reversible sentinel-escape profile. The
@@ -1367,6 +1463,7 @@ exact ledger entry for every completed lens:
 ```text
 Review-Coverage: fresh-context - exact - model-high/codex/gpt-5.6-sol/session-id - sha256:<canonical-diff>
 Review-Coverage: code-quality - exact - model/codex/gpt-5.6-luna/session-id - sha256:<canonical-diff>
+Review-Coverage: fresh-context - exact - delegated-high/codex/session-id - sha256:<canonical-diff>
 ```
 
 `model-high/<provider>/<model>/<session>` records an independently selected
@@ -1375,6 +1472,10 @@ integration review. Mechanical code-quality review may use
 `model/<provider>/<model>/<session>`. The provider and session must reproduce
 the compact `<provider>/<session>` identity in the matching `Slice-Review`.
 This records the actual route without hard-coding one vendor as policy.
+`delegated-high/<host>/<session>` and `delegated/<host>/<session>` record the
+same lens classes for a host-owned review whose downstream Provider and model
+are not visible to Yo. They reproduce `<host>/<session>` in `Slice-Review` and
+must not invent downstream coordinates.
 
 A person may perform any lens instead:
 

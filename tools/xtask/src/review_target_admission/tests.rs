@@ -37,10 +37,10 @@ fn review_target_identity_keeps_models_and_hosts_separate() {
     );
 }
 
-// 관리형 admission만 기존 managed delivery로 이어지고, 위임형 host probe 성공은
-// 별도 egress/delivery 계약이 생기기 전까지 preparation 상태에 머뭅니다.
+// 관리형과 delegated target은 서로 다른 실행 경로를 선택하되 둘 다 claim 전 exact
+// admission 결과를 제공하며, host가 managed deliver_once로 섞이지 않습니다.
 #[test]
-fn admitted_next_action_does_not_authorize_delegated_delivery() {
+fn admitted_next_action_selects_the_disjoint_delivery_protocol() {
     let managed = ReviewTarget::ManagedModel {
         provider: "qwencloud".to_owned(),
         account: "default".to_owned(),
@@ -50,10 +50,17 @@ fn admitted_next_action_does_not_authorize_delegated_delivery() {
         host: "codex".to_owned(),
     };
 
-    assert_eq!(managed.admitted_outcome(), ("eligible", "deliver_once"));
     assert_eq!(
-        delegated.admitted_outcome(),
+        managed.admitted_outcome(super::model::REQUEST_SCHEMA),
+        ("eligible", "deliver_once")
+    );
+    assert_eq!(
+        delegated.admitted_outcome(super::model::REQUEST_SCHEMA),
         ("prepared", "await_delegated_delivery_protocol")
+    );
+    assert_eq!(
+        delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA2),
+        ("eligible", "deliver_delegated_once")
     );
 }
 
@@ -78,10 +85,11 @@ fn unavailable_session_inside_bounded_search_returns_unknown() {
     );
 }
 
-// 새 wire family는 저장소 정책대로 v1alpha1에서 시작하고 stable v1이나 관리형
-// `route` 모양을 같은 admission 요청으로 재해석하지 않습니다.
+// 이미 발행된 v1alpha1은 그대로 수용하고 delegated delivery 의미는 v1alpha2에서만
+// 추가합니다. stable v1이나 관리형 `route` 모양은 어느 alpha 요청으로도 재해석하지
+// 않습니다.
 #[test]
-fn admission_request_requires_v1alpha1_and_closed_target_shape() {
+fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     let valid = serde_json::json!({
         "schema": "yo.external-review-target-admission-request/v1alpha1",
         "target": {
@@ -94,6 +102,10 @@ fn admission_request_requires_v1alpha1_and_closed_target_shape() {
     });
     let parsed: super::model::Request = serde_json::from_value(valid.clone()).unwrap();
     super::validate_request(&parsed).unwrap();
+    assert_eq!(
+        super::model::result_schema(&parsed.schema),
+        super::model::RESULT_SCHEMA
+    );
 
     let mut stable = valid.clone();
     stable["schema"] = "yo.external-review-target-admission-request/v1".into();
@@ -101,7 +113,16 @@ fn admission_request_requires_v1alpha1_and_closed_target_shape() {
     assert!(
         super::validate_request(&stable)
             .unwrap_err()
-            .contains("v1alpha1")
+            .contains("v1alpha2")
+    );
+
+    let mut alpha2 = valid.clone();
+    alpha2["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA2.into();
+    let alpha2: super::model::Request = serde_json::from_value(alpha2).unwrap();
+    super::validate_request(&alpha2).unwrap();
+    assert_eq!(
+        super::model::result_schema(&alpha2.schema),
+        super::model::RESULT_SCHEMA_V1_ALPHA2
     );
 
     let mut extra = valid;

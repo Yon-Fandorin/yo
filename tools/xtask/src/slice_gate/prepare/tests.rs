@@ -298,6 +298,44 @@ fn prepares_and_evaluates_exact_gate_request_from_existing_artifacts() {
     );
 }
 
+// delegated receipt는 Provider/Account를 만들지 않고 host/session만으로 exact coverage와
+// matching compact reviewer identity를 생성합니다.
+#[test]
+fn prepares_delegated_host_coverage_without_provider_coordinates() {
+    let mut fixture = Fixture::new();
+    let receipt = PathBuf::from(
+        fixture.request["review_runs"][0]["source"]["receipt_path"]
+            .as_str()
+            .unwrap(),
+    );
+    std::fs::write(
+        &receipt,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&json!({
+                "schema": "yo.external-review-delegated-delivery-receipt/v1alpha1",
+                "review_id": fixture.review.review_id,
+                "packet_hash": fixture.review.packet_hash,
+                "target": {"kind": "delegated_host", "host": "codex"},
+                "execution_profile": "yo.delegated-review-execution/v1alpha1",
+                "session_id": "review-session",
+                "host_request_id": "host-request-1",
+                "host_request_count": 1
+            }))
+            .unwrap()
+        ),
+    )
+    .unwrap();
+    fixture.request["review_runs"][0]["source"]["class"] = json!("delegated-high");
+    fixture.rewrite_request();
+
+    let result = fixture.publish().unwrap();
+    assert!(result.gate.review.iter().all(|entry| {
+        entry.reviewer == "codex/review-session"
+            && entry.route == "delegated-high/codex/review-session"
+    }));
+}
+
 // 준비 파일이 리뷰 manifest에 없거나 누락된 검증 이름을 쓰면 자동 생성 과정이 임의로
 // 증거를 버리거나 추가하지 않고 정확한 집합 불일치로 중단한다.
 #[test]

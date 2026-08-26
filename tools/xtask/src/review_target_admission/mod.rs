@@ -12,7 +12,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use model::{AccountLimit, Availability, Decision, REQUEST_SCHEMA, RESULT_SCHEMA, Request};
+use model::{
+    AccountLimit, Availability, Decision, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2, Request,
+    result_schema,
+};
 pub(crate) use model::{Admission, ReviewTarget};
 use yo_core::{AccountId, LocalConnectionRepository, ModelId, ModelRequestFailureKind, ProviderId};
 
@@ -72,14 +75,14 @@ fn evaluate_request(request: &Request) -> Result<Admission, String> {
         Decision::Admit
     };
     let (status, next_action) = if matches!(decision, Decision::Admit) {
-        request.target.admitted_outcome()
+        request.target.admitted_outcome(&request.schema)
     } else {
         ("stopped", "select_human_authorized_alternative")
     };
     let (usage_search, last_exact_usage_receipt) =
         usage::latest_receipt(request.session_repository_path.as_deref(), &request.target);
     Ok(Admission {
-        schema: RESULT_SCHEMA,
+        schema: result_schema(&request.schema),
         ok: matches!(decision, Decision::Admit),
         status,
         next_action,
@@ -99,9 +102,12 @@ fn evaluate_request(request: &Request) -> Result<Admission, String> {
 }
 
 fn validate_request(request: &Request) -> Result<(), String> {
-    if request.schema != REQUEST_SCHEMA {
+    if !matches!(
+        request.schema.as_str(),
+        REQUEST_SCHEMA | REQUEST_SCHEMA_V1_ALPHA2
+    ) {
         return Err(format!(
-            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}`",
+            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}` or `{REQUEST_SCHEMA_V1_ALPHA2}`",
             request.schema
         ));
     }

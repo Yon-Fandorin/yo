@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 
 pub(super) const REQUEST_SCHEMA: &str = "yo.external-review-target-admission-request/v1alpha1";
 pub(super) const RESULT_SCHEMA: &str = "yo.external-review-target-admission-result/v1alpha1";
+pub(super) const REQUEST_SCHEMA_V1_ALPHA2: &str =
+    "yo.external-review-target-admission-request/v1alpha2";
+pub(super) const RESULT_SCHEMA_V1_ALPHA2: &str =
+    "yo.external-review-target-admission-result/v1alpha2";
+
+pub(super) fn result_schema(request_schema: &str) -> &'static str {
+    match request_schema {
+        REQUEST_SCHEMA => RESULT_SCHEMA,
+        REQUEST_SCHEMA_V1_ALPHA2 => RESULT_SCHEMA_V1_ALPHA2,
+        _ => unreachable!("validated admission schema"),
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -36,10 +48,16 @@ impl ReviewTarget {
         }
     }
 
-    pub(super) const fn admitted_outcome(&self) -> (&'static str, &'static str) {
-        match self {
-            Self::ManagedModel { .. } => ("eligible", "deliver_once"),
-            Self::DelegatedHost { .. } => ("prepared", "await_delegated_delivery_protocol"),
+    pub(super) fn admitted_outcome(&self, request_schema: &str) -> (&'static str, &'static str) {
+        match (request_schema, self) {
+            (_, Self::ManagedModel { .. }) => ("eligible", "deliver_once"),
+            (REQUEST_SCHEMA, Self::DelegatedHost { .. }) => {
+                ("prepared", "await_delegated_delivery_protocol")
+            },
+            (REQUEST_SCHEMA_V1_ALPHA2, Self::DelegatedHost { .. }) => {
+                ("eligible", "deliver_delegated_once")
+            },
+            _ => unreachable!("validated admission schema"),
         }
     }
 }
@@ -144,5 +162,11 @@ impl Admission {
 
     pub(crate) fn availability_detail(&self) -> &str {
         &self.availability.detail
+    }
+
+    pub(crate) fn supports_delegated_delivery(&self) -> bool {
+        self.schema == RESULT_SCHEMA_V1_ALPHA2
+            && matches!(self.target, ReviewTarget::DelegatedHost { .. })
+            && matches!(self.decision, Decision::Admit)
     }
 }
