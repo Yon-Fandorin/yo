@@ -170,6 +170,45 @@ impl Fixture {
         .unwrap();
         self.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
     }
+
+    fn use_external_operation(&mut self) {
+        let argv = vec![
+            "cargo".to_owned(),
+            "test".to_owned(),
+            "--locked".to_owned(),
+            "-p".to_owned(),
+            "xtask".to_owned(),
+        ];
+        let path = PathBuf::from(
+            self.request["validation_evidence"][0]["result_path"]
+                .as_str()
+                .unwrap(),
+        );
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema": "yo.external-operation-evidence/v1",
+                "candidate_commit": self.candidate,
+                "operation": {
+                    "working_directory": ".",
+                    "argv": argv,
+                    "expected_exit": {"kind": "code", "value": 0},
+                    "observed_exit": {"kind": "code", "value": 0}
+                },
+                "counterfactual": "the operation must fail when the behavior regresses",
+                "observations": [{
+                    "name": "HEAD",
+                    "expected_relation": "equal",
+                    "before": self.candidate,
+                    "after": self.candidate
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        self.request["validation_evidence"][0]["name"] = json!("external-operation/xtask");
+        self.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
+    }
 }
 
 impl Drop for Fixture {
@@ -246,6 +285,39 @@ fn alpha_validation_summary_rejects_a_dirty_launch() {
             .evaluate()
             .unwrap_err()
             .contains("worktree_state must be `clean`")
+    );
+}
+
+// immutable review packet에서 이미 검증한 external-operation evidence도 gate가
+// 같은 후보와 exact argv에 다시 결속하면 별도 summary 복사 없이 통합 증거가 된다.
+#[test]
+fn external_operation_evidence_binds_candidate_and_argv() {
+    let mut fixture = Fixture::new();
+    fixture.use_external_operation();
+    assert_eq!(fixture.evaluate().unwrap().next_action, "integrate");
+
+    fixture.request["validation_evidence"][0]["argv"][4] = json!("other-package");
+    assert!(
+        fixture
+            .evaluate()
+            .unwrap_err()
+            .contains("external-operation argv does not match")
+    );
+}
+
+// external-operation evidence는 한 번 실행한 관측 결과이며 validation reuse 정책이
+// 아니므로 gate request가 reused로 재분류하면 명시적으로 거부한다.
+#[test]
+fn external_operation_evidence_cannot_be_marked_reused() {
+    let mut fixture = Fixture::new();
+    fixture.use_external_operation();
+    fixture.request["validation_evidence"][0]["reused"] = json!(true);
+
+    assert!(
+        fixture
+            .evaluate()
+            .unwrap_err()
+            .contains("external-operation evidence cannot be reused")
     );
 }
 

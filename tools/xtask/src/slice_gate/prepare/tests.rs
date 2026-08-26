@@ -184,6 +184,43 @@ impl Fixture {
         )
         .unwrap();
     }
+
+    fn use_external_operation(&mut self) {
+        let argv = vec![
+            "cargo".to_owned(),
+            "test".to_owned(),
+            "--locked".to_owned(),
+            "-p".to_owned(),
+            "xtask".to_owned(),
+        ];
+        let path = PathBuf::from(&self.review.validation_evidence[0].path);
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema": "yo.external-operation-evidence/v1",
+                "candidate_commit": self.review.candidate_commit,
+                "operation": {
+                    "working_directory": ".",
+                    "argv": argv,
+                    "expected_exit": {"kind": "code", "value": 0},
+                    "observed_exit": {"kind": "code", "value": 0}
+                },
+                "counterfactual": "the operation must fail when the behavior regresses",
+                "observations": [{
+                    "name": "HEAD",
+                    "expected_relation": "equal",
+                    "before": self.review.candidate_commit,
+                    "after": self.review.candidate_commit
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        self.review.validation_evidence[0].name = "external-operation/xtask".to_owned();
+        self.review.validation_evidence[0].hash = digest(&std::fs::read(&path).unwrap());
+        self.request["validation_commands"][0]["name"] = json!("external-operation/xtask");
+        self.rewrite_request();
+    }
 }
 
 impl Drop for Fixture {
@@ -236,6 +273,19 @@ fn validation_command_names_must_match_reviewed_artifacts_exactly() {
         fixture.publish().unwrap_err(),
         "validation_commands must name every and only reviewed validation artifact"
     );
+}
+
+// review-chain manifest의 external-operation artifact는 prepare 단계에서도 같은
+// 후보와 내장 argv를 검증하여 direct gate 수기 전사 없이 gate request로 파생한다.
+#[test]
+fn prepares_external_operation_evidence_from_review_chain() {
+    let mut fixture = Fixture::new();
+    fixture.use_external_operation();
+
+    let result = fixture.publish().unwrap();
+    assert_eq!(result.gate.next_action, "integrate");
+    assert_eq!(result.gate.validation[0].name, "external-operation/xtask");
+    assert_eq!(result.gate.validation[0].status, "passed");
 }
 
 // 첫 capture 뒤 준비 파일이 바뀌면 새 approval나 route가 조용히 섞인 gate request를

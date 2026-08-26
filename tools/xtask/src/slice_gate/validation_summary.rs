@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use super::{canonical_sha256, model::LegacyValidationSummary};
-use crate::review_protocol;
+use crate::{review_packet::external_operation, review_protocol};
 
 const LEGACY_SCHEMA: &str = "yo.validation-run-summary/v1";
 const ALPHA_SCHEMA: &str = "yo.validation-run-summary/v1alpha1";
@@ -9,7 +9,7 @@ const ARGV_DOMAIN: &[u8] = b"yo.validation-run-argv/v1alpha1\0";
 
 pub(super) struct VerifiedSummary {
     pub(super) status: String,
-    pub(super) log_path: String,
+    pub(super) log_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -53,8 +53,16 @@ pub(super) fn verify(
             candidate,
             requested_reuse,
         ),
+        external_operation::SCHEMA => verify_external_operation(
+            bytes,
+            expected_name,
+            expected_argv,
+            candidate,
+            requested_reuse,
+        ),
         other => Err(format!(
-            "unsupported schema `{other}`; expected `{LEGACY_SCHEMA}` or `{ALPHA_SCHEMA}`"
+            "unsupported schema `{other}`; expected `{LEGACY_SCHEMA}`, `{ALPHA_SCHEMA}`, or `{}`",
+            external_operation::SCHEMA
         )),
     }
 }
@@ -72,7 +80,7 @@ fn verify_legacy(bytes: &[u8], expected_name: &str) -> Result<VerifiedSummary, S
     let _ = (summary.elapsed_seconds, summary.log_bytes);
     Ok(VerifiedSummary {
         status: summary.status,
-        log_path: summary.log_path,
+        log_path: Some(summary.log_path),
     })
 }
 
@@ -118,7 +126,27 @@ fn verify_alpha(
     let _ = (summary.elapsed_seconds, summary.log_bytes);
     Ok(VerifiedSummary {
         status: summary.status,
-        log_path: summary.log_path,
+        log_path: Some(summary.log_path),
+    })
+}
+
+fn verify_external_operation(
+    bytes: &[u8],
+    expected_name: &str,
+    expected_argv: &[String],
+    candidate: &str,
+    requested_reuse: bool,
+) -> Result<VerifiedSummary, String> {
+    external_operation::validate_for_gate(
+        expected_name,
+        bytes,
+        candidate,
+        expected_argv,
+        requested_reuse,
+    )?;
+    Ok(VerifiedSummary {
+        status: "passed".to_owned(),
+        log_path: None,
     })
 }
 

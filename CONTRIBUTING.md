@@ -428,6 +428,13 @@ new-or-byte-identical output. The same invocation returns the evaluated gate
 result. New `yo.validation-run-summary/v1alpha1` evidence binds the launch
 `HEAD`, clean worktree state, exact `argv` hash, and complete-log hash; the gate
 verifies those fields against the candidate and declared command. Frozen
+`yo.external-operation-evidence/v1` artifacts whose reviewed name starts with
+`external-operation/` also pass through preparation without a copied summary.
+The gate revalidates their exact candidate, embedded command arguments,
+expected and observed exit status, counterfactual, and before/after
+observations against the prepared command. They always require `reused: false`;
+a successful match is a passed external-operation result and does not invent a
+validation log path. Frozen
 `yo.validation-run-summary/v1` evidence remains accepted for compatibility but
 does not record its launch arguments, so its coordinator-supplied exact `argv`
 remains a declaration rather than launch proof. When exact human approval is

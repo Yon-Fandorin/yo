@@ -350,7 +350,9 @@ fn validation_results(
             entry.reused,
         )
         .map_err(|error| format!("invalid validation result for `{}`: {error}", entry.name))?;
-        compact(&summary.log_path, 4096, "validation log path")?;
+        if let Some(log_path) = &summary.log_path {
+            compact(log_path, 4096, "validation log path")?;
+        }
         results.push(ValidationResult {
             name: entry.name.clone(),
             status: summary.status,
