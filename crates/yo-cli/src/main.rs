@@ -353,6 +353,11 @@ fn run_agent_generation(
             },
             Err(error) => return Err(error),
         };
+        require_exact_print_resume_binding(
+            uses_terminal_frontend,
+            launch.resume_id().is_some(),
+            selection.replaces_binding(),
+        )?;
         let (backend, skill_references): (
             Box<dyn yo_core::AgentBackend + Send>,
             Option<yo_backend_delegated_codex::CodexSkillReferenceProvider>,
@@ -606,6 +611,20 @@ fn run_agent_generation(
 }
 
 #[cfg(unix)]
+fn require_exact_print_resume_binding(
+    uses_terminal_frontend: bool,
+    is_resume: bool,
+    replaces_binding: bool,
+) -> Result<(), AppError> {
+    if !uses_terminal_frontend && is_resume && replaces_binding {
+        return Err(AppError::message(
+            "print resume requires the saved backend binding to remain executable without replacement",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
 fn run_print_session(options: command::PrintOptions) -> Result<(), AppError> {
     let input = print::read_input(options.prompt)?;
     let cwd = std::env::current_dir()
@@ -621,7 +640,7 @@ fn run_print_session(options: command::PrintOptions) -> Result<(), AppError> {
     let startup = command::LiveOptions {
         mode: yo_tui::PresentationMode::Inline,
         glyph_profile: yo_tui::GlyphProfile::Rich,
-        selection: command::LiveSelection::New,
+        selection: options.selection,
         model: options.model,
         no_tools: options.no_tools,
     };
@@ -633,6 +652,8 @@ fn run_print_session(options: command::PrintOptions) -> Result<(), AppError> {
                 live,
                 &cwd,
                 startup,
+                // Print resume fails closed instead of falling back to a read-only
+                // Session projection that could write unrelated bytes to stdout.
                 command::LiveSelection::New,
                 StartupSnapshots {
                     config: &config,
@@ -874,7 +895,19 @@ mod color_capability_tests {
 
 #[cfg(all(test, unix))]
 mod print_output_tests {
-    use super::{AppError, finish_print_output};
+    use super::{AppError, finish_print_output, require_exact_print_resume_binding};
+
+    // 저장된 native profile과 현재 catalog가 달라 replacement가 필요해도 print resume은
+    // Backend를 시작하지 않으며, 같은 상태의 TUI resume이나 새 print Session 의미는
+    // 기존 공용 경로에 남겨 둡니다.
+    #[test]
+    fn print_resume_rejects_binding_replacement_before_startup() {
+        let error = require_exact_print_resume_binding(false, true, true).unwrap_err();
+        assert!(error.to_string().contains("without replacement"));
+        assert!(require_exact_print_resume_binding(true, true, true).is_ok());
+        assert!(require_exact_print_resume_binding(false, false, true).is_ok());
+        assert!(require_exact_print_resume_binding(false, true, false).is_ok());
+    }
 
     // print projection이 이미 framing한 bytes는 cleanup 성공 뒤 publisher에 정확히 한 번
     // 전달되며 process layer가 두 번째 LF나 다른 stdout payload를 덧붙이지 않습니다.

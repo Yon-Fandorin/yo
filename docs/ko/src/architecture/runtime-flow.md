@@ -267,17 +267,17 @@ label은 화면 표시용 metadata일 뿐 backend Session을 선택하거나 식
 
 ## One-shot print frontend
 
-`yo -p "prompt"`와 `yo --print "prompt"`는 일반 새 Session 시작 경로에서
-`SessionCreated` 뒤에만 갈라진다. `TuiSession`을 만들거나 터미널 상태를 얻지
-않는다. 위치 prompt, TTY가 아닌 stdin 또는 둘 모두를 Backend나 Session 생성
-전에 비어 있지 않은 UTF-8 입력 하나로 만든다. 둘 다 있으면 stdin이 먼저 오며,
-stdin 끝에 LF가 없을 때만 host가 LF 하나를 넣는다. TTY stdin은 암묵적인 입력을
-제공하지 않는다.
+`yo -p "prompt"`와 `yo --print "prompt"`는 `TuiSession`을 만들거나 터미널
+상태를 얻지 않고 일반 새 Session 시작 또는 정확한 `--resume SESSION_ID` 복구를
+사용한다. 위치 prompt, TTY가 아닌 stdin 또는 둘 모두를 Backend 시작이나 Session
+복구 전에 비어 있지 않은 UTF-8 입력 하나로 만든다. 둘 다 있으면 stdin이 먼저
+오며, stdin 끝에 LF가 없을 때만 host가 LF 하나를 넣는다. TTY stdin은 암묵적인
+입력을 제공하지 않는다.
 
 ```text
 위치 prompt + 선택적인 piped stdin
     ↓ UTF-8 검증과 결정론적 조합
-AgentSession까지 일반 새 Session 시작
+AgentSession까지 일반 새 Session 시작 또는 정확한 저장 Session 복구
     ↓ 변경 불가능한 InputSubmission 정확히 하나
 AgentRuntime과 선택한 Backend
     ↕ 일반적인 내부 provider·tool round
@@ -294,16 +294,22 @@ backpressure가 걸린 command는 같은 Submission identity로 다시 시도하
 admission outcome과 terminal Turn outcome을 모두 기다린다. 선택한 Backend는 계속
 provider 요청과 내부 tool round를 소유한다. `--model`은 startup 선택을 바꾸고
 `--no-tools`는 일반 empty tool registry를 선택한다. print mode 자체는 tool 권한이나
-승인을 부여하지 않는다.
+승인을 부여하지 않는다. 대신 `--resume SESSION_ID`는 저장된 Session identity,
+Provider/Account/Model binding, tool registry, replay 상태, usage, cache, request
+lineage를 보존한다. 최종 응답 투영은 복구된 Transcript observation head에서
+시작한다. 이 연속 좌표는 복구 중 durable Journal record가 압축되어도 올바르게
+유지되므로 이전 Turn의 출력은 제외된다.
 
 승인 요청, 사용자 입력 요청, 거절된 Submission, 중단되거나 실패한 Turn, 완료된
 Agent message 누락, 잘못된 입력, startup 실패 또는 정리 실패는 0이 아닌 코드로
 종료하며 stdout을 비워 둔다. 진단은 stderr를 사용한다. 성공 응답은 정리가 성공할
 때까지 buffering하므로 터미널 제어, 진행 Activity, request trace, Session identity,
-usage, cache metric이 답변과 함께 stdout에 섞이지 않는다. 초기 print mode는 resume,
-continue, inline, fullscreen, ASCII 표시 flag를 거부한다. 또한 같은 호출에 top-level
-하위 명령 token이 있으면 이를 positional prompt로 조용히 해석하지 않고 거부한다. prompt가
-하위 명령 이름과 같다면 `--`로 literal prompt의 시작을 명시한다. process 계층은 generation과
+usage, cache metric이 답변과 함께 stdout에 섞이지 않는다. print resume은
+`--continue`, `--model`, 새 Session 전용 `--no-tools` 제한과 terminal 표시 flag를
+거부한다. 복구나 binding 실패 시 새 Session을 만들거나 retry, steer, fallback 또는
+다른 Provider 선택을 하지 않는다. 또한 같은 호출에 top-level 하위 명령 token이
+있으면 이를 positional prompt로 조용히 해석하지 않고 거부한다. prompt가 하위 명령
+이름과 같다면 `--`로 literal prompt의 시작을 명시한다. process 계층은 generation과
 정리가 성공한 뒤 이미 framing된 답변을 변경하지 않고 정확히 한 번만 게시한다.
 
 계약:

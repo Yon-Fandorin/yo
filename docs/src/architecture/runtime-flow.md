@@ -286,17 +286,18 @@ and
 
 ## One-shot print frontend
 
-`yo -p "prompt"` and `yo --print "prompt"` branch from the ordinary new-Session
-startup only after `SessionCreated`; they do not construct a `TuiSession` or
-acquire terminal state. The positional prompt, non-TTY stdin, or both form one
-non-empty UTF-8 input before backend or Session creation. When both are present,
-stdin comes first and the host inserts an LF only when stdin does not already
-end with one. TTY stdin supplies no implicit input.
+`yo -p "prompt"` and `yo --print "prompt"` use either ordinary new-Session
+startup or exact `--resume SESSION_ID` recovery without constructing a
+`TuiSession` or acquiring terminal state. The positional prompt, non-TTY stdin,
+or both form one non-empty UTF-8 input before backend startup or Session
+recovery. When both are present, stdin comes first and the host inserts an LF
+only when stdin does not already end with one. TTY stdin supplies no implicit
+input.
 
 ```text
 positional prompt + optional piped stdin
     ↓ UTF-8 validation and deterministic composition
-ordinary new-Session startup through AgentSession
+ordinary new-Session startup or exact stored-Session recovery through AgentSession
     ↓ exactly one immutable InputSubmission
 AgentRuntime and selected Backend
     ↕ ordinary internal provider and tool rounds
@@ -314,15 +315,21 @@ identity and waits for both the matching admission outcome and terminal Turn
 outcome. The selected Backend continues to own provider requests and internal
 tool rounds. `--model` changes startup selection and `--no-tools` selects the
 ordinary empty tool registry; print mode grants neither tool permission nor an
-approval.
+approval. `--resume SESSION_ID` instead preserves the stored Session identity,
+Provider/Account/Model binding, tool registry, replay state, usage, cache, and
+request lineage. Its final-response projection starts at the recovered
+Transcript observation head, whose contiguous coordinate remains correct when
+durable Journal records were compacted, so prior Turn output is excluded.
 
 An approval request, user-input request, rejected Submission, interrupted or
 failed Turn, missing completed Agent message, invalid input, startup failure, or
 cleanup failure returns nonzero and keeps stdout empty. Diagnostics use stderr.
 The successful answer is buffered until cleanup succeeds, so terminal control,
 progress Activities, request traces, Session identities, usage, and cache
-metrics never share stdout with the answer. Initial print mode rejects resume,
-continue, inline, fullscreen, and ASCII presentation flags. It also rejects a
+metrics never share stdout with the answer. Print resume rejects `--continue`,
+`--model`, the creation-only `--no-tools` restriction, and terminal presentation
+flags. Recovery or binding failure does not create a fresh Session, retry,
+steer, fall back, or select another Provider. Print mode also rejects a
 top-level subcommand token in the same invocation instead of silently treating
 that token as the positional prompt; `--` explicitly starts a literal prompt
 when it equals a subcommand name. The process layer publishes the already

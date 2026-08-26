@@ -7,8 +7,9 @@ use std::{
 
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand, AgentEvent,
-    AgentIntent, AgentSession, AgentSessionPoll, CommandAdmission, JournalSequence, PendingCommand,
-    SubmissionId, SubmissionOutcome, TranscriptReader, TranscriptRecord, TurnOutcome, TurnRef,
+    AgentIntent, AgentSession, AgentSessionPoll, CommandAdmission, PendingCommand, SubmissionId,
+    SubmissionOutcome, TranscriptObservation, TranscriptObservationSequence, TranscriptReader,
+    TranscriptRecord, TurnOutcome, TurnRef,
 };
 
 use crate::diagnostic::AppError;
@@ -65,6 +66,8 @@ pub(crate) fn run(
     if is_terminated() {
         return Err(AppError::message("print session interrupted"));
     }
+    let transcript = session.transcript_reader();
+    let mut cursor = transcript.read_observations_after(None).head();
     let submission_id = SubmissionId::new()
         .map_err(|error| AppError::single("creating the print Submission", error))?;
     let intent = AgentIntent::Submit(yo_core::InputSubmission::new(
@@ -76,8 +79,6 @@ pub(crate) fn run(
             .dispatch(intent)
             .map_err(|error| AppError::single("submitting print input", error))?,
     );
-    let transcript = session.transcript_reader();
-    let mut cursor = None;
     let mut projection = FinalResponseProjection::default();
     let mut accepted = false;
     let mut completed = None;
@@ -146,13 +147,13 @@ fn pending_admission(admission: CommandAdmission) -> Option<PendingCommand> {
 
 fn drain_transcript(
     transcript: &TranscriptReader,
-    cursor: &mut Option<JournalSequence>,
+    cursor: &mut Option<TranscriptObservationSequence>,
     projection: &mut FinalResponseProjection,
     completed: &mut Option<String>,
 ) -> Result<bool, AppError> {
     let mut changed = false;
     loop {
-        let slice = transcript.read_after(*cursor);
+        let slice = transcript.read_observations_after(*cursor);
         let head = slice.head();
         let entries = slice.into_entries();
         if entries.is_empty() {
@@ -161,7 +162,9 @@ fn drain_transcript(
         changed = true;
         for entry in entries {
             *cursor = Some(entry.sequence());
-            if let Some(message) = projection.observe(entry.record())? {
+            if let TranscriptObservation::Record(record) = entry.observation()
+                && let Some(message) = projection.observe(record)?
+            {
                 *completed = Some(message);
             }
         }
@@ -294,12 +297,24 @@ impl FinalResponseProjection {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, num::NonZeroU64, path::PathBuf};
+    use std::{
+        fs,
+        num::NonZeroU64,
+        path::PathBuf,
+        sync::{Arc, Mutex},
+    };
 
     use yo_core::{
-        ActivityId, BackendEvent, BackendScriptStep, Failure, HostWorkspacePath, RequestId,
-        ScriptedBackend, SessionDescriptor, SubmissionRejection, SubmissionRejectionKind, TurnId,
-        WorkspaceHostId, session_repository::LocalSessionRepository,
+        ActivityId, BackendBindingEvidence, BackendCommandEvidence, BackendEvent, BackendIdentity,
+        BackendOutcomeEvidence, BackendRequestEvidence, BackendScriptStep, ContinuationStrategy,
+        Failure, HostWorkspacePath, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+        ModelReplayRole, ReplayExecutor, RequestId, ScriptedBackend, SessionDescriptor,
+        SubmissionRejection, SubmissionRejectionKind, TurnId, WorkspaceHostId,
+        session_repository::{
+            AppendError, AppendReceipt, DurableRecord, LocalSessionRepository, RepositoryEntry,
+            RepositoryError, RepositorySequence, SessionRepository, SessionWriterRepository,
+            recover_stored_session_continuation,
+        },
     };
 
     use super::*;
@@ -398,6 +413,72 @@ mod tests {
         );
         session.shutdown().unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    // resumed print는 dispatch 전에 기존 observation head를 cursor로 고정합니다. 복구 시
+    // Journal sequence가 압축되어도 첫 Turn을 재출력하거나 두 번째 Turn을 건너뛰지 않습니다.
+    #[test]
+    fn resumed_runner_excludes_prior_turn_history() {
+        let workspace = HostWorkspacePath::normalize_local(
+            std::env::current_dir().expect("the test process has a working directory"),
+        )
+        .unwrap();
+        let descriptor =
+            SessionDescriptor::new(WorkspaceHostId::new().unwrap(), workspace).unwrap();
+        let session_id = descriptor.session_id();
+        let first_turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
+        let second_turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
+        let first_backend = ScriptedBackend::new(resumable_script(
+            first_turn,
+            "first question",
+            "first answer",
+            "request-1",
+            true,
+        ));
+        let mut repository = MemoryRepository::default();
+        let mut first = AgentSession::start_cancellable_with_repository(
+            first_backend,
+            descriptor,
+            repository.clone(),
+            || false,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            run(&mut first, "first question".to_owned(), || false).unwrap(),
+            "first answer\n"
+        );
+        first.shutdown().unwrap();
+        drop(first);
+
+        let continuation =
+            recover_stored_session_continuation(&mut repository, session_id).unwrap();
+        let target = continuation.target().clone();
+        let mut second_steps = vec![BackendScriptStep::Resume {
+            target: Box::new(target),
+            evidence: resumable_binding(),
+        }];
+        second_steps.extend(resumable_script(
+            second_turn,
+            "follow up",
+            "second answer",
+            "request-2",
+            false,
+        ));
+        let second_backend = ScriptedBackend::new(second_steps);
+        let mut second = AgentSession::start_cancellable_with_continuation(
+            second_backend,
+            continuation,
+            repository,
+            || false,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            run(&mut second, "follow up".to_owned(), || false).unwrap(),
+            "second answer\n"
+        );
+        second.shutdown().unwrap();
     }
 
     // projection framing은 정확히 하나의 trailing LF만 보장하고 이미 framing된 AgentMessage
@@ -528,6 +609,51 @@ mod tests {
         steps: Vec<BackendScriptStep>,
     }
 
+    #[derive(Clone, Debug, Default)]
+    struct MemoryRepository {
+        entries: Arc<Mutex<Vec<RepositoryEntry>>>,
+    }
+
+    impl SessionRepository for MemoryRepository {
+        fn append(
+            &mut self,
+            _session_id: yo_core::SessionId,
+            record: DurableRecord,
+        ) -> Result<AppendReceipt, AppendError> {
+            let mut entries = self.entries.lock().unwrap();
+            let sequence = RepositorySequence::new(u64::try_from(entries.len()).unwrap() + 1);
+            entries.push(RepositoryEntry::new(sequence, record));
+            Ok(AppendReceipt::new(sequence))
+        }
+
+        fn read_after(
+            &self,
+            _session_id: yo_core::SessionId,
+            sequence: Option<RepositorySequence>,
+            limit: usize,
+        ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+            let after = sequence.map_or(0, RepositorySequence::get);
+            Ok(self
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.sequence().get() > after)
+                .take(limit)
+                .cloned()
+                .collect())
+        }
+    }
+
+    impl SessionWriterRepository for MemoryRepository {
+        fn acquire_session_writer(
+            &mut self,
+            _session_id: yo_core::SessionId,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+    }
+
     impl SessionFixture {
         fn new(input: &str, later: impl FnOnce(TurnRef) -> Vec<BackendScriptStep>) -> Self {
             let workspace = HostWorkspacePath::normalize_local(
@@ -576,5 +702,90 @@ mod tests {
 
     fn activity(turn: TurnRef, id: u64) -> ActivityRef {
         ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(id).unwrap()))
+    }
+
+    fn resumable_binding() -> BackendBindingEvidence {
+        BackendBindingEvidence::new(
+            "managed",
+            "test/v1",
+            BackendIdentity::new("managed.session/v1", "session"),
+            BackendIdentity::new(
+                "managed.model-service-binding/v1",
+                "managed:qwencloud:default:qwen3.8-max",
+            ),
+            BackendIdentity::new("managed.session-locator/v1", "session"),
+            ContinuationStrategy::ExactReplay {
+                executor: ReplayExecutor::LocalClient,
+                replay_profile: yo_core::ReplayProfile::SemanticOnly,
+            },
+        )
+    }
+
+    fn resumable_script(
+        turn: TurnRef,
+        input: &str,
+        answer: &str,
+        request_id: &str,
+        create: bool,
+    ) -> Vec<BackendScriptStep> {
+        let mut steps = Vec::new();
+        if create {
+            steps.push(BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::CreateSession {
+                    session_id: turn.session_id(),
+                },
+                evidence: BackendCommandEvidence::BindingOpened(resumable_binding()),
+            });
+        }
+        steps.push(BackendScriptStep::AcceptCommandWithEvidence {
+            command: AgentCommand::StartTurn {
+                turn,
+                input: yo_core::UserInput::new(input),
+            },
+            evidence: BackendCommandEvidence::RequestAccepted(BackendRequestEvidence::new(
+                "managed/request/v1",
+                BackendIdentity::new("managed.request/v1", request_id),
+                BackendIdentity::new("managed.accepted-request/v1", request_id),
+            )),
+        });
+        let message = activity(turn, 1);
+        steps.extend([
+            BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+                activity: message,
+                kind: ActivityKind::AgentMessage,
+            }),
+            BackendScriptStep::Emit(BackendEvent::ActivityUpdated {
+                activity: message,
+                update: ActivityUpdate::TextSnapshot(answer.to_owned()),
+            }),
+            BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+                activity: message,
+                outcome: ActivityOutcome::Completed,
+            }),
+            BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+                turn,
+                evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
+                    "managed.outcome/v1",
+                    request_id,
+                ))
+                .with_replay(ModelReplayDelta::new(
+                    create.then(|| ModelReplayContract::new("system", Vec::new())),
+                    vec![
+                        ModelReplayItem::Message {
+                            role: ModelReplayRole::User,
+                            content: input.to_owned(),
+                            refusal: None,
+                        },
+                        ModelReplayItem::Message {
+                            role: ModelReplayRole::Assistant,
+                            content: answer.to_owned(),
+                            refusal: None,
+                        },
+                    ],
+                )),
+            }),
+            BackendScriptStep::Shutdown(Ok(())),
+        ]);
+        steps
     }
 }

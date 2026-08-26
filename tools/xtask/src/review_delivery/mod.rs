@@ -13,12 +13,15 @@ use std::{
 };
 
 use model::{
-    Artifact, CLAIM_SCHEMA, Claim, DELIVERY_RECEIPT_SCHEMA, DeliveryOutcome, DeliveryReceipt,
-    OUTCOME_SCHEMA, REQUEST_SCHEMA, RESULT_SCHEMA, Request, ResultDocument, Route,
+    Artifact, CLAIM_SCHEMA, CONTINUATION_CLAIM_SCHEMA, CONTINUATION_OUTCOME_SCHEMA,
+    CONTINUATION_REQUEST_SCHEMA, CONTINUATION_RESULT_SCHEMA, Claim, ContinuationClaim,
+    ContinuationDeliveryOutcome, ContinuationRequest, ContinuationResultDocument,
+    DELIVERY_RECEIPT_SCHEMA, DeliveryOutcome, DeliveryReceipt, DeliveryRequest, OUTCOME_SCHEMA,
+    REQUEST_SCHEMA, RESULT_SCHEMA, Request, ResultDocument, Route,
 };
-use process::{execute_once, exit_label, process_outcome};
+use process::{execute_continuation_once, execute_once, exit_label, process_outcome};
 use serde::Serialize;
-use session::observe_session;
+use session::{observe_continuation, observe_session};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -33,7 +36,13 @@ const REVIEW_RESULT_LIMIT: usize = 4 * 1024 * 1024;
 const DIAGNOSTIC_LIMIT: usize = 256 * 1024;
 
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
-    let request = read_request(request_path)?;
+    match read_request(request_path)? {
+        DeliveryRequest::Original(request) => run_original(repository, request),
+        DeliveryRequest::Continuation(request) => run_continuation(repository, request),
+    }
+}
+
+fn run_original(repository: &Path, request: Request) -> Result<(), String> {
     let egress_request_path = shared_path(repository, &request.egress_request_path)?;
     require_exact_file_hash(
         &egress_request_path,
@@ -228,24 +237,262 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     Ok(())
 }
 
-fn read_request(path: &Path) -> Result<Request, String> {
+fn run_continuation(repository: &Path, request: ContinuationRequest) -> Result<(), String> {
+    let preflight_request_path = shared_path(repository, &request.preflight_request_path)?;
+    require_exact_file_hash(
+        &preflight_request_path,
+        &request.preflight_request_hash,
+        REQUEST_LIMIT,
+        "Slice review continuation preflight request",
+    )?;
+    let output_directory = output_directory(repository, &request.output_directory)?;
+    require_empty_directory(&output_directory)?;
+
+    let initial =
+        crate::review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
+    let integration = integration_worktree(repository, &initial.delivery.trusted_commit)?;
+    let yo_binary = build_current_yo(&integration)?;
+    let yo_binary_hash = sha256_file(&yo_binary)?;
+
+    require_exact_file_hash(
+        &preflight_request_path,
+        &request.preflight_request_hash,
+        REQUEST_LIMIT,
+        "Slice review continuation preflight request",
+    )?;
+    let verified =
+        crate::review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
+    if verified != initial {
+        return Err(
+            "reviewer Session or continuation authority changed while preparing delivery"
+                .to_owned(),
+        );
+    }
+    let authorized = &verified.delivery;
+    require_integration_state(&integration, &authorized.trusted_commit)?;
+    require_empty_directory(&output_directory)?;
+    let session_id = authorized
+        .session_id
+        .as_deref()
+        .expect("continuation preflight requires a reviewer Session");
+    let prior_provider_request_id = authorized
+        .prior_provider_request_id
+        .as_deref()
+        .expect("continuation preflight requires a prior Provider request identity");
+    let claim = ContinuationClaim {
+        schema: CONTINUATION_CLAIM_SCHEMA,
+        request_id: &authorized.request_id,
+        preflight_request_id: &verified.preflight_request_id,
+        authorization_id: &authorized.authorization_id,
+        authority: &authorized.authority,
+        review_id: &authorized.review_id,
+        candidate_commit: &authorized.candidate_commit,
+        integration_commit: &authorized.trusted_commit,
+        packet_hash: &authorized.packet_hash,
+        packet_bytes: authorized.packet_bytes.len(),
+        managed_payload_tokens: authorized.managed_payload_tokens,
+        route: route(authorized),
+        session_mode: "resume",
+        session_id,
+        prior_provider_request_id,
+        continuation_anchor_sequence: verified.continuation_anchor_sequence,
+        binding_epoch: verified.binding_epoch,
+        provider_request_limit: 1,
+        retries: 0,
+        steer: 0,
+        fallback: 0,
+        second_provider: false,
+        tool_execution: false,
+        yo_binary_hash: &yo_binary_hash,
+    };
+    let claim_path = output_directory.join("claim.json");
+    publish_claim(&claim_path, &canonical_json(&claim)?)?;
+
+    let capture = execute_continuation_once(
+        &yo_binary,
+        &integration,
+        &output_directory,
+        &verified.session_root,
+        session_id,
+        authorized,
+    );
+    let observation = observe_continuation(
+        &verified.session_root,
+        &authorized.packet_bytes,
+        authorized,
+        verified.continuation_anchor_sequence,
+        verified.binding_epoch,
+    );
+    let status_failure = capture.status.as_ref().and_then(|status| {
+        (!status.success()).then(|| {
+            format!(
+                "current-develop yo continuation exited without success ({})",
+                exit_label(status)
+            )
+        })
+    });
+    let review_path = output_directory.join("review.txt");
+    let review_publication_failure = publish_exact(
+        &review_path,
+        &capture.stdout,
+        REVIEW_RESULT_LIMIT,
+        "review result",
+    )
+    .err();
+    let diagnostic_path = output_directory.join("diagnostic.txt");
+    let diagnostic_publication_failure = publish_exact(
+        &diagnostic_path,
+        &capture.stderr,
+        DIAGNOSTIC_LIMIT,
+        "review diagnostic",
+    )
+    .err();
+    let review_artifact = artifact(
+        &review_path,
+        &capture.stdout,
+        review_publication_failure.is_none(),
+    );
+    let diagnostic_artifact = artifact(
+        &diagnostic_path,
+        &capture.stderr,
+        diagnostic_publication_failure.is_none(),
+    );
+    let failure = [
+        capture.failure.clone(),
+        status_failure,
+        observation.failure.clone(),
+        review_publication_failure,
+        diagnostic_publication_failure,
+    ]
+    .into_iter()
+    .fold(None, combine_failures);
+    let outcome = ContinuationDeliveryOutcome {
+        schema: CONTINUATION_OUTCOME_SCHEMA,
+        request_id: authorized.request_id.clone(),
+        preflight_request_id: verified.preflight_request_id.clone(),
+        status: if failure.is_none() {
+            "completed"
+        } else {
+            "failed"
+        },
+        process: process_outcome(capture.status.as_ref()),
+        session_id: session_id.to_owned(),
+        durable_provider_request_count: observation.provider_request_count,
+        provider_request_id: observation.provider_request_id.clone(),
+        continuation_anchor_sequence: observation.continuation_anchor_sequence,
+        review_result: artifact(&review_path, &capture.stdout, review_artifact.published),
+        diagnostic: artifact(
+            &diagnostic_path,
+            &capture.stderr,
+            diagnostic_artifact.published,
+        ),
+        failure: failure.clone(),
+    };
+    let outcome_path = output_directory.join("outcome.json");
+    let outcome_bytes = canonical_json(&outcome)?;
+    publish_exact(
+        &outcome_path,
+        &outcome_bytes,
+        REQUEST_LIMIT,
+        "external review continuation delivery outcome",
+    )?;
+    let outcome_artifact = artifact(&outcome_path, &outcome_bytes, true);
+
+    if let Some(failure) = failure {
+        return Err(format!(
+            "external review continuation stopped after its immutable one-attempt claim: {failure}; inspect {}",
+            outcome_path.display()
+        ));
+    }
+
+    let provider_request_id = observation
+        .provider_request_id
+        .as_deref()
+        .expect("a completed continuation has one new Provider request identity");
+    let continuation_anchor_sequence = observation
+        .continuation_anchor_sequence
+        .expect("a completed continuation has a new durable anchor");
+    let receipt = DeliveryReceipt {
+        schema: DELIVERY_RECEIPT_SCHEMA,
+        review_id: &authorized.review_id,
+        packet_hash: &authorized.packet_hash,
+        route: route(authorized),
+        session_id,
+        provider_request_id,
+        provider_request_count: 1,
+    };
+    let receipt_path = output_directory.join("delivery.json");
+    let receipt_bytes = canonical_json(&receipt)?;
+    publish_exact(
+        &receipt_path,
+        &receipt_bytes,
+        REQUEST_LIMIT,
+        "external review delivery receipt",
+    )?;
+    let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
+    let result = ContinuationResultDocument {
+        schema: CONTINUATION_RESULT_SCHEMA,
+        ok: true,
+        status: "completed",
+        next_action: "interpret_review",
+        request_id: authorized.request_id.clone(),
+        preflight_request_id: verified.preflight_request_id,
+        review_id: authorized.review_id.clone(),
+        candidate_commit: authorized.candidate_commit.clone(),
+        integration_commit: authorized.trusted_commit.clone(),
+        session_id: session_id.to_owned(),
+        provider_request_id: provider_request_id.to_owned(),
+        continuation_anchor_sequence,
+        review_result: review_artifact,
+        diagnostic: diagnostic_artifact,
+        outcome: outcome_artifact,
+        delivery_receipt: receipt_artifact,
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&result).map_err(|error| {
+            format!("cannot encode Slice review continuation delivery result: {error}")
+        })?
+    );
+    Ok(())
+}
+
+fn read_request(path: &Path) -> Result<DeliveryRequest, String> {
     let bytes = bounded_file::read_regular(path, REQUEST_LIMIT, "Slice review delivery request")?;
-    let request: Request = serde_json::from_slice(&bytes).map_err(|error| {
+    let header: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
         format!(
             "invalid Slice review delivery request {}: {error}",
             path.display()
         )
     })?;
-    if request.schema != REQUEST_SCHEMA {
-        return Err(format!(
-            "unsupported Slice review delivery request schema `{}`; expected `{REQUEST_SCHEMA}`",
-            request.schema
-        ));
+    let schema = header
+        .get("schema")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "Slice review delivery request has no string schema".to_owned())?;
+    match schema {
+        REQUEST_SCHEMA => {
+            let request: Request = serde_json::from_slice(&bytes)
+                .map_err(|error| format!("invalid original review delivery request: {error}"))?;
+            debug_assert_eq!(request.schema, REQUEST_SCHEMA);
+            compact_path(&request.egress_request_path, "egress_request_path")?;
+            compact_path(&request.output_directory, "output_directory")?;
+            require_sha256(&request.egress_request_hash, "egress_request_hash")?;
+            Ok(DeliveryRequest::Original(request))
+        },
+        CONTINUATION_REQUEST_SCHEMA => {
+            let request: ContinuationRequest = serde_json::from_slice(&bytes).map_err(|error| {
+                format!("invalid continuation review delivery request: {error}")
+            })?;
+            debug_assert_eq!(request.schema, CONTINUATION_REQUEST_SCHEMA);
+            compact_path(&request.preflight_request_path, "preflight_request_path")?;
+            compact_path(&request.output_directory, "output_directory")?;
+            require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
+            Ok(DeliveryRequest::Continuation(request))
+        },
+        other => Err(format!(
+            "unsupported Slice review delivery request schema `{other}`; expected `{REQUEST_SCHEMA}` or `{CONTINUATION_REQUEST_SCHEMA}`"
+        )),
     }
-    compact_path(&request.egress_request_path, "egress_request_path")?;
-    compact_path(&request.output_directory, "output_directory")?;
-    require_sha256(&request.egress_request_hash, "egress_request_hash")?;
-    Ok(request)
 }
 
 fn require_original_fresh(delivery: &AuthorizedDelivery) -> Result<(), String> {

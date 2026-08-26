@@ -104,6 +104,13 @@ Before parallel dispatch, the slice planner or wave coordinator must confirm:
 - every Slice has an independent completion gate; and
 - parallel sibling Waves declare their Join Wave.
 
+Compare the declared write-sets before freezing sibling candidates. If work
+that will integrate in sequence shares a workflow, documentation, manifest, or
+other mutable path, declare that dependency and create the downstream Slice
+from the accepted parent instead of freezing both from the same base and later
+recomposing their edits. Keep same-base parallelism for disjoint write-sets;
+`cargo xtask check slice-parallel` remains the mechanical check.
+
 There is no fixed concurrency limit. Stop new dispatch when review queues, unresolved conflicts, or contention hotspots accumulate.
 
 ## Coordination contracts
@@ -366,6 +373,12 @@ review-chain manifest and gate preparation then derive its path and hash.
 The option changes storage only: it neither changes
 `yo.validation-run-summary/v1alpha2` bytes nor discovers or reuses a prior
 result.
+
+Use this bounded runner for every coordinator-owned validation command,
+including the final combined-workspace gate. Read and retain the one-line
+summary by default; open the bounded log only when the summary reports failure
+or a named diagnosis requires it. Do not paste successful compiler or test
+logs into coordinator or reviewer context.
 
 Then prepare the gate request:
 
@@ -924,13 +937,13 @@ repeated human prompt only when the coordinator also observes that this exact
 ReviewId, route, and Session step has no prior provider request. It is an
 eligibility result, not a reusable delivery receipt: after a provider request
 starts, record the returned Session/request evidence and never interpret
-another preflight run as permission to resend. Terminal input that ended
+another preflight run as permission to resend. A delivery attempt that ended
 before a durable provider request remains a delivery-system diagnostic and is
 not silently retried under this authorization.
 
-Before any manual terminal input for an authorized finding-resolution resume,
-run the repository-owned read-only continuation preflight against the exact
-durable Session repository:
+Before any authorized finding-resolution resume, create the repository-owned
+read-only continuation preflight request against the exact durable Session
+repository:
 
 ```json
 {
@@ -952,17 +965,46 @@ Provider/Account/Model binding, exactly one accepted request and resumable
 outcome resolving to the prior delivery receipt's request identity, and a
 typed executable continuation with the newest durable Continuation Anchor. A
 missing or malformed Session, mismatched route or identity, extra request, or
-missing Anchor fails before terminal input. The successful result records the
+missing Anchor fails before launch. The successful result records the
 exact Session, route, candidate, request identity, binding epoch, and Anchor
 sequence, but publishes no artifact, acquires no terminal, and performs no
-Provider request.
+Provider request. Bind that exact request and one new empty output directory in
+the continuation delivery request:
 
-Run this preflight immediately before the manual input attempt and require that
-no other process is writing the reviewer Session between observation and
-delivery. Its result is current eligibility, not launch authority or retry
-authority, and it never falls back to a fresh Session. The bounded
-`review-deliver` command still owns only original-fresh delivery in v1alpha1;
-extending repository-owned delivery to resume remains a separate effect change.
+```json
+{
+  "schema": "yo.slice-review-continuation-delivery-request/v1alpha1",
+  "preflight_request_path": ".local-exclude/coordination/<slice>/continuation-preflight.json",
+  "preflight_request_hash": "sha256:<exact-preflight-request-hash>",
+  "output_directory": ".local-exclude/coordination/<slice>/continuation-delivery"
+}
+```
+
+Run the same repository delivery command once from the clean candidate
+worktree:
+
+```bash
+cargo xtask slice review-deliver <continuation-delivery-request.json>
+```
+
+The command evaluates the preflight before and after building the exact
+current-integration `yo`, requires that the authority and stored Session did
+not change, then publishes an immutable continuation claim before launching
+one `yo -p --resume <same-session>` process. It pipes only the authorized delta
+packet to stdin and never pastes into or reads a terminal. After completion it
+requires the unchanged prior Turn and Provider identity, exactly one new
+byte-identical StartTurn, one new accepted request and resumable outcome, the
+same binding epoch, and a newer durable Continuation Anchor. It then publishes
+the same bounded review, diagnostic, outcome, and delivery-receipt artifact
+roles used by original delivery.
+
+The preflight and the checks before claim publication are current eligibility,
+not retry authority. No other process may write the reviewer Session during
+delivery. Once the continuation claim exists the attempt is consumed, even if
+process or observation fails; inspect the bounded outcome and request new human
+authority rather than deleting the claim or retrying. The path never creates a
+fresh Session, switches binding, retries, steers, falls back, invokes a second
+Provider, or enables tools.
 
 For one original packet in a fresh Session, perform the authorized effect with
 the bounded repository delivery command instead of terminal paste, pane
@@ -1016,10 +1058,10 @@ the terminal disappeared, or durable request evidence is incomplete. Inspect
 the bounded outcome and request new human authority for any replacement; never
 delete or rename the claim to manufacture a retry. Build and preflight failures
 that occur before claim publication perform no Provider effect and may be
-corrected normally. The initial v1alpha1 delivery path supports only an
-original packet in a fresh managed-model Session. Finding-resolution resume,
-delegated hosts, print continuation, retry, steer, fallback, a second Provider,
-and tool execution remain outside this effect.
+corrected normally. The v1alpha1 request schemas separately cover an original
+packet in a fresh managed-model Session and an authorized finding-resolution
+delta in its exact stored Session. Delegated hosts, retry, steer, fallback, a
+second Provider, and tool execution remain outside this effect.
 
 Because a self-hosting diff may contain the wrapper's own sentinel source,
 v1alpha2 section metadata names its reversible sentinel-escape profile. The

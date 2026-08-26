@@ -22,6 +22,7 @@ fn no_argument_keeps_the_live_defaults() {
 fn print_mode_has_equivalent_short_and_long_forms() {
     let expected = Command::Print(PrintOptions {
         prompt: Some("explain this".to_owned()),
+        selection: LiveSelection::New,
         model: Some("qwencloud:default:qwen3.8-max".to_owned()),
         no_tools: true,
     });
@@ -58,6 +59,7 @@ fn print_prompt_is_optional_once_print_mode_is_selected() {
         parse(["-p".into()]).unwrap(),
         Command::Print(PrintOptions {
             prompt: None,
+            selection: LiveSelection::New,
             model: None,
             no_tools: false,
         })
@@ -68,26 +70,44 @@ fn print_prompt_is_optional_once_print_mode_is_selected() {
         parse(["-p".into(), "--".into(), "--literal prompt".into()]).unwrap(),
         Command::Print(PrintOptions {
             prompt: Some("--literal prompt".to_owned()),
+            selection: LiveSelection::New,
             model: None,
             no_tools: false,
         })
     );
 }
 
-// 초기 print는 terminal presentation이나 continuation 의미를 만들지 않으므로 해당
-// 옵션 조합을 파싱 단계에서 거절하고, 허용된 model·no-tools만 남깁니다.
+// print resume은 exact Session ID만 보존하고 terminal, newest-Session 추론,
+// binding 교체, creation-only tool restriction을 모두 문법 단계에서 거절합니다.
 #[test]
-fn print_rejects_terminal_and_continuation_options() {
+fn print_resume_is_exact_and_rejects_incompatible_startup_options() {
     let id = "01890f00-0000-7000-8000-000000000001";
     for arguments in [
         vec!["-p", "--inline"],
         vec!["-p", "--fullscreen"],
         vec!["-p", "--ascii"],
         vec!["-p", "--continue"],
-        vec!["-p", "--resume", id],
+        vec!["-p", "--resume", id, "--no-tools"],
+        vec!["-p", "--resume", id, "--model", "kimi:default:k3"],
     ] {
         assert!(parse(arguments.into_iter().map(Into::into)).is_err());
     }
+
+    assert_eq!(
+        parse([
+            "-p".into(),
+            "--resume".into(),
+            id.into(),
+            "follow up".into()
+        ])
+        .unwrap(),
+        Command::Print(PrintOptions {
+            prompt: Some("follow up".to_owned()),
+            selection: LiveSelection::Resume(id.parse().unwrap()),
+            model: None,
+            no_tools: false,
+        })
+    );
 }
 
 // print mode와 top-level subcommand를 한 호출에 섞으면 subcommand나 prompt 중 하나를
@@ -108,6 +128,7 @@ fn print_rejects_top_level_subcommands_without_literal_separator() {
         parse(["-p".into(), "--".into(), "session".into()]).unwrap(),
         Command::Print(PrintOptions {
             prompt: Some("session".to_owned()),
+            selection: LiveSelection::New,
             model: None,
             no_tools: false,
         })
@@ -123,6 +144,7 @@ fn print_rejects_top_level_subcommands_without_literal_separator() {
         .unwrap(),
         Command::Print(PrintOptions {
             prompt: Some("question".to_owned()),
+            selection: LiveSelection::New,
             model: Some("session".to_owned()),
             no_tools: false,
         })

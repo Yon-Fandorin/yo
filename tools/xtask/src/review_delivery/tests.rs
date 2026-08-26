@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use super::{
     combine_failures, managed_model_reference,
-    process::{execute_once, execute_once_with_timeout},
+    model::DeliveryRequest,
+    process::{execute_continuation_once, execute_once, execute_once_with_timeout},
     publish_claim, read_request, require_empty_directory, require_integration_state,
     require_original_fresh,
 };
@@ -33,6 +34,33 @@ fn authorized() -> AuthorizedDelivery {
         prior_packet_hash: None,
         prior_provider_request_id: None,
     }
+}
+
+// continuation effect는 기존 original-fresh wire를 재해석하지 않고 preflight bytes만
+// 가리키는 별도 v1alpha1 closed shape로 시작합니다.
+#[test]
+fn continuation_request_binds_one_preflight_and_output_directory() {
+    let repository = TestRepository::new("review-continuation-delivery-request");
+    let valid = serde_json::json!({
+        "schema": "yo.slice-review-continuation-delivery-request/v1alpha1",
+        "preflight_request_path": ".local-exclude/preflight.json",
+        "preflight_request_hash": digest(b"preflight"),
+        "output_directory": ".local-exclude/coordination/slice/continuation"
+    });
+    let valid_path = repository.write("valid.json", &format!("{valid}\n"));
+    assert!(matches!(
+        read_request(&valid_path).unwrap(),
+        DeliveryRequest::Continuation(_)
+    ));
+
+    let mut extra = valid;
+    extra["retry"] = 1.into();
+    let extra_path = repository.write("extra.json", &format!("{extra}\n"));
+    assert!(
+        read_request(&extra_path)
+            .unwrap_err()
+            .contains("unknown field")
+    );
 }
 
 // 새 delivery wire는 저장소 규칙대로 v1alpha1에서 시작하고, 비슷한 stable v1이나
@@ -161,6 +189,50 @@ fn claimed_spawn_failure_returns_one_bounded_capture() {
     assert!(capture.failure.as_deref().unwrap().contains("cannot start"));
     assert!(!output.join(".review.stdout.tmp").exists());
     assert!(!output.join(".review.stderr.tmp").exists());
+}
+
+#[cfg(unix)]
+// continuation launch는 TUI나 model override를 열지 않고 exact Session의 print resume
+// argv, 기존 Session repository, immutable delta stdin만 child에 전달합니다.
+#[test]
+fn continuation_launch_uses_exact_print_resume_arguments() {
+    let repository = TestRepository::new("review-continuation-delivery-launch");
+    let output = repository.path.join("output");
+    let sessions = repository.path.join("sessions");
+    std::fs::create_dir(&output).unwrap();
+    std::fs::create_dir(&sessions).unwrap();
+    let executable = repository.write(
+        "yo",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$YO_SESSION_REPOSITORY/argv\"\ncat > \"$YO_SESSION_REPOSITORY/stdin\"\nprintf 'reviewed\\n'\n",
+    );
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+    let mut delivery = authorized();
+    delivery.review_kind = "finding_resolution";
+    delivery.fresh_session = false;
+    delivery.session_id = Some("01890f00-0000-7000-8000-000000000001".to_owned());
+    delivery.packet_bytes = b"delta packet".to_vec();
+
+    let capture = execute_continuation_once(
+        &executable,
+        &repository.path,
+        &output,
+        &sessions,
+        delivery.session_id.as_deref().unwrap(),
+        &delivery,
+    );
+
+    assert!(capture.status.unwrap().success());
+    assert_eq!(capture.stdout, b"reviewed\n");
+    assert_eq!(
+        std::fs::read_to_string(sessions.join("argv")).unwrap(),
+        "-p\n--resume\n01890f00-0000-7000-8000-000000000001\n"
+    );
+    assert_eq!(
+        std::fs::read(sessions.join("stdin")).unwrap(),
+        b"delta packet"
+    );
 }
 
 #[cfg(unix)]

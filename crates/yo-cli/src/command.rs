@@ -23,7 +23,6 @@ struct Cli {
             "inline",
             "fullscreen",
             "ascii",
-            "resume",
             "continue_session"
         ]
     )]
@@ -194,6 +193,7 @@ pub(crate) struct LiveOptions {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PrintOptions {
     pub(crate) prompt: Option<String>,
+    pub(crate) selection: LiveSelection,
     pub(crate) model: Option<String>,
     pub(crate) no_tools: bool,
 }
@@ -316,11 +316,21 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
             session_id: arguments.session_id,
             glyph_profile: glyph_profile(arguments.ascii),
         })),
-        None if cli.print => Ok(Command::Print(PrintOptions {
-            prompt: cli.prompt,
-            model: cli.model,
-            no_tools: cli.no_tools,
-        })),
+        None if cli.print => {
+            let selection = cli.resume.map_or(LiveSelection::New, LiveSelection::Resume);
+            if selection != LiveSelection::New && cli.model.is_some() {
+                return Err(clap::Error::raw(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "--print --resume uses the stored model binding and cannot be combined with --model",
+                ));
+            }
+            Ok(Command::Print(PrintOptions {
+                prompt: cli.prompt,
+                selection,
+                model: cli.model,
+                no_tools: cli.no_tools,
+            }))
+        },
         None => Ok(Command::Live(LiveOptions {
             mode: match (cli.inline, cli.fullscreen) {
                 (false, true) => PresentationMode::Fullscreen,

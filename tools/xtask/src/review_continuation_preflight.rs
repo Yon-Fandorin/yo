@@ -69,7 +69,55 @@ struct Observation {
     continuation_anchors: Vec<(u64, u64, u64, u64)>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct VerifiedContinuation {
+    pub(crate) preflight_request_id: String,
+    pub(crate) delivery: AuthorizedDelivery,
+    pub(crate) session_root: PathBuf,
+    pub(crate) continuation_anchor_sequence: u64,
+    pub(crate) binding_epoch: u64,
+}
+
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
+    let verified = evaluate(repository, request_path)?;
+    let delivery = &verified.delivery;
+    let (session_id, prior_packet_hash, prior_provider_request_id) =
+        require_finding_resolution(delivery)?;
+    let result = ResultDocument {
+        schema: RESULT_SCHEMA,
+        ok: true,
+        status: "eligible",
+        next_action: "deliver_finding_resolution_once",
+        artifacts_published: false,
+        provider_requests: 0,
+        request_id: verified.preflight_request_id,
+        egress_request_id: &delivery.request_id,
+        review_id: &delivery.review_id,
+        candidate_commit: &delivery.candidate_commit,
+        session_id,
+        route: Route {
+            provider: &delivery.provider,
+            account: &delivery.account,
+            model: &delivery.model,
+        },
+        prior_packet_hash,
+        prior_provider_request_id,
+        continuation_anchor_sequence: verified.continuation_anchor_sequence,
+        binding_epoch: verified.binding_epoch,
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&result).map_err(|error| {
+            format!("cannot encode Slice review continuation preflight result: {error}")
+        })?
+    );
+    Ok(())
+}
+
+pub(crate) fn evaluate(
+    repository: &Path,
+    request_path: &Path,
+) -> Result<VerifiedContinuation, String> {
     let request_bytes = bounded_file::read_regular(
         request_path,
         REQUEST_LIMIT,
@@ -122,38 +170,13 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         "Slice review continuation preflight request",
     )?;
 
-    let result = ResultDocument {
-        schema: RESULT_SCHEMA,
-        ok: true,
-        status: "eligible",
-        next_action: "deliver_finding_resolution_once",
-        artifacts_published: false,
-        provider_requests: 0,
-        request_id: digest(&request_bytes),
-        egress_request_id: &delivery.request_id,
-        review_id: &delivery.review_id,
-        candidate_commit: &delivery.candidate_commit,
-        session_id: delivery
-            .session_id
-            .as_deref()
-            .expect("a finding-resolution delivery has a Session"),
-        route: Route {
-            provider: &delivery.provider,
-            account: &delivery.account,
-            model: &delivery.model,
-        },
-        prior_packet_hash,
-        prior_provider_request_id,
+    Ok(VerifiedContinuation {
+        preflight_request_id: digest(&request_bytes),
+        delivery,
+        session_root,
         continuation_anchor_sequence: continuation.target().source_anchor_sequence().get(),
         binding_epoch: continuation.target().epoch(),
-    };
-    println!(
-        "{}",
-        serde_json::to_string(&result).map_err(|error| {
-            format!("cannot encode Slice review continuation preflight result: {error}")
-        })?
-    );
-    Ok(())
+    })
 }
 
 fn parse_request(path: &Path, bytes: &[u8]) -> Result<Request, String> {

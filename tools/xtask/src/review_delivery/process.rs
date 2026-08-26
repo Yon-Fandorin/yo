@@ -45,6 +45,56 @@ pub(super) fn execute_once_with_timeout(
     delivery: &AuthorizedDelivery,
     timeout: Duration,
 ) -> ProcessCapture {
+    let arguments = vec![
+        "-p".to_owned(),
+        "--model".to_owned(),
+        model.to_owned(),
+        "--no-tools".to_owned(),
+    ];
+    execute_command_once_with_timeout(
+        yo_binary,
+        integration,
+        output,
+        &output.join("sessions"),
+        &arguments,
+        &delivery.packet_bytes,
+        timeout,
+    )
+}
+
+pub(super) fn execute_continuation_once(
+    yo_binary: &Path,
+    integration: &Path,
+    output: &Path,
+    session_repository: &Path,
+    session_id: &str,
+    delivery: &AuthorizedDelivery,
+) -> ProcessCapture {
+    let arguments = vec![
+        "-p".to_owned(),
+        "--resume".to_owned(),
+        session_id.to_owned(),
+    ];
+    execute_command_once_with_timeout(
+        yo_binary,
+        integration,
+        output,
+        session_repository,
+        &arguments,
+        &delivery.packet_bytes,
+        DELIVERY_TIMEOUT,
+    )
+}
+
+fn execute_command_once_with_timeout(
+    yo_binary: &Path,
+    integration: &Path,
+    output: &Path,
+    session_repository: &Path,
+    arguments: &[String],
+    packet: &[u8],
+    timeout: Duration,
+) -> ProcessCapture {
     let stdout_path = output.join(".review.stdout.tmp");
     let stderr_path = output.join(".review.stderr.tmp");
     let stdout = match create_new(&stdout_path, "temporary review stdout") {
@@ -65,8 +115,8 @@ pub(super) fn execute_once_with_timeout(
         },
     };
     let child = Command::new(yo_binary)
-        .args(["-p", "--model", model, "--no-tools"])
-        .env("YO_SESSION_REPOSITORY", output.join("sessions"))
+        .args(arguments)
+        .env("YO_SESSION_REPOSITORY", session_repository)
         .current_dir(integration)
         .stdin(Stdio::piped())
         .stdout(Stdio::from(stdout))
@@ -75,7 +125,7 @@ pub(super) fn execute_once_with_timeout(
     let (status, process_failure) = match child {
         Ok(mut child) => {
             let writer = child.stdin.take().map(|mut stdin| {
-                let packet = delivery.packet_bytes.clone();
+                let packet = packet.to_vec();
                 thread::Builder::new()
                     .name("review-delivery-stdin".to_owned())
                     .spawn(move || {
