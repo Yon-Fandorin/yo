@@ -22,12 +22,21 @@ runtime을 소유한다.
 갱신하거나 저장하지 않는다. 직접 xAI API 또는 OAuth 통합은 별도의 Provider
 설계이며 이 host adapter 안의 fallback이 되어서는 안 된다.
 
+`yo account grok --refresh`는 initialize-authenticate prefix만 재사용한 뒤 child를
+종료한다. 성공한 authentication metadata의 정확한 `subscription_tier`를 Provider
+중립 account snapshot으로 변환하며 email, team identity, authentication mode
+metadata는 무시한다. Agent Session을 만들거나 prompt를 보내지 않는다. 설치된
+Grok CLI 1.0.5는 더 새로운 `x.ai/billing` extension을 노출하지 않으므로 plan
+이름에서 quota window를 추론하지 않는다.
+
 ## Compatibility 계약
 
 adapter가 사용하는 wire surface는 fail-closed로 유지한다.
 
 - 빈 client capability와 ACP protocol version 1로 initialize한다.
 - 설치된 agent가 `cached_token`을 광고해야 하며 정확히 그 method로 인증한다.
+- account snapshot을 만들 때는 크기가 제한되고 비어 있지 않으며 앞뒤 공백과
+  제어문자가 없는 정확한 subscription tier만 허용한다.
 - `session/new`로 만들고 agent가 load 지원을 광고할 때만 `session/load`로
   재개한다.
 - 모든 response, Session update, permission request, terminal prompt 결과를
@@ -55,6 +64,8 @@ CLI가 설치되어 있고 `grok login`이 완료된 환경에서는 inference T
 cargo test -p yo-backend-delegated-grok \
   local_grok_authenticates_and_shuts_down_without_a_session \
   -- --ignored --nocapture
+
+yo account grok --refresh
 ```
 
 실제 prompt나 TUI smoke run은 외부 service capacity를 소비한다. Turn 수준

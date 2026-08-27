@@ -1,6 +1,11 @@
 use std::fmt::Write as _;
 
-use yo_backend_delegated_codex::{CodexBackendConfig, read_account_capacity};
+use yo_backend_delegated_codex::{
+    CodexBackendConfig, read_account_capacity as read_codex_account_capacity,
+};
+use yo_backend_delegated_grok::{
+    GrokBackendConfig, read_account_capacity as read_grok_account_capacity,
+};
 use yo_core::{
     AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountId,
     KimiCatalogSeed, LocalConnectionRepository, LocalCredentialRepository, ProviderId,
@@ -24,6 +29,7 @@ pub(crate) fn run(command: AccountCommand) -> Result<String, AppError> {
     }
     let snapshot = match parse_source(&command.source)? {
         AccountSource::Codex => read_codex_capacity()?,
+        AccountSource::Grok => read_grok_capacity()?,
         AccountSource::Kimi(account) => read_kimi_capacity(account)?,
     };
     match command.format {
@@ -36,12 +42,16 @@ pub(crate) fn run(command: AccountCommand) -> Result<String, AppError> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AccountSource<'a> {
     Codex,
+    Grok,
     Kimi(&'a str),
 }
 
 fn parse_source(source: &str) -> Result<AccountSource<'_>, AppError> {
     if source == "codex" {
         return Ok(AccountSource::Codex);
+    }
+    if source == "grok" {
+        return Ok(AccountSource::Grok);
     }
     if let Some(account) = source.strip_prefix("kimi:")
         && !account.is_empty()
@@ -50,15 +60,22 @@ fn parse_source(source: &str) -> Result<AccountSource<'_>, AppError> {
         return Ok(AccountSource::Kimi(account));
     }
     Err(AppError::message(format!(
-        "unsupported account source `{source}`; current support: codex, kimi:<account>"
+        "unsupported account source `{source}`; current support: codex, grok, kimi:<account>"
     )))
 }
 
 fn read_codex_capacity() -> Result<AccountCapacitySnapshot, AppError> {
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
-    read_account_capacity(CodexBackendConfig::new(cwd))
+    read_codex_account_capacity(CodexBackendConfig::new(cwd))
         .map_err(|error| AppError::single("refreshing Codex account capacity", error))
+}
+
+fn read_grok_capacity() -> Result<AccountCapacitySnapshot, AppError> {
+    let cwd = std::env::current_dir()
+        .map_err(|error| AppError::single("reading the working directory", error))?;
+    read_grok_account_capacity(GrokBackendConfig::new(cwd))
+        .map_err(|error| AppError::single("refreshing Grok account capacity", error))
 }
 
 fn read_kimi_capacity(account: &str) -> Result<AccountCapacitySnapshot, AppError> {
@@ -150,7 +167,9 @@ fn render(snapshot: &AccountCapacitySnapshot, style: PresentationStyle) -> Strin
     output.push('\n');
     style.push(&mut output, TextStyle::Bold, "Usage limits");
     output.push('\n');
-    if snapshot.buckets().is_empty() {
+    if !snapshot.buckets().iter().any(|bucket| {
+        bucket.primary().is_some() || bucket.secondary().is_some() || bucket.credits().is_some()
+    }) {
         style.push(
             &mut output,
             TextStyle::Muted,
@@ -310,7 +329,10 @@ fn display_status(snapshot: &AccountCapacitySnapshot) -> (String, TextStyle) {
         );
     }
     if snapshot.buckets().iter().any(|bucket| {
-        bucket.primary().is_some() || bucket.secondary().is_some() || bucket.credits().is_some()
+        bucket.plan().is_some()
+            || bucket.primary().is_some()
+            || bucket.secondary().is_some()
+            || bucket.credits().is_some()
     }) {
         ("Available".to_owned(), TextStyle::Positive)
     } else {
@@ -369,11 +391,18 @@ mod tests {
     #[test]
     fn parses_exact_account_sources() {
         assert_eq!(parse_source("codex").unwrap(), AccountSource::Codex);
+        assert_eq!(parse_source("grok").unwrap(), AccountSource::Grok);
         assert_eq!(
             parse_source("kimi:default").unwrap(),
             AccountSource::Kimi("default")
         );
-        for source in ["kimi", "kimi:", "kimi:default:extra", "qwencloud"] {
+        for source in [
+            "kimi",
+            "kimi:",
+            "kimi:default:extra",
+            "qwencloud",
+            "grok:default",
+        ] {
             assert!(parse_source(source).is_err());
         }
     }
@@ -431,6 +460,33 @@ mod tests {
 
         assert!(output.contains("Kimi account"));
         assert!(output.contains("Plan     Moderato"));
+    }
+
+    // Grok 인증 응답은 subscription tier만 제공하므로 이를 플랜과 가용 상태로 표시하되
+    // Provider가 보고하지 않은 잔여 한도 창은 만들지 않습니다.
+    #[test]
+    fn renders_grok_subscription_without_inventing_capacity_windows() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("grok").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("grok".to_owned()),
+                None,
+                Some("SuperGrok".to_owned()),
+                None,
+                None,
+                None,
+                None,
+            )],
+        );
+
+        let output = render(&snapshot, PresentationStyle::Plain);
+
+        assert!(output.contains("Grok account"));
+        assert!(output.contains("Plan     SuperGrok"));
+        assert!(output.contains("Status   Available"));
+        assert!(output.contains("No capacity information available."));
+        assert!(!output.contains("% left"));
     }
 
     // Provider 내부 limit ID가 여러 개여도 일반 화면은 이를 제품명처럼 노출하지 않고,

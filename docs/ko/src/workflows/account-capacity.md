@@ -9,11 +9,13 @@
 
 ```bash
 yo account codex --refresh
+yo account grok --refresh
 yo account kimi:default --refresh
 yo account kimi:default --refresh --format json
 ```
 
-`codex`는 로컬에 설치된 Codex 계정을 뜻한다. `kimi:ACCOUNT`는 Yo에
+`codex`와 `grok`은 각각 로컬에 설치된 delegated host가 사용하는 계정을 뜻한다.
+`kimi:ACCOUNT`는 Yo에
 `kimi-code-membership/v1` catalog profile 또는 정확한 canonical Kimi Code
 complete binding과 정확한 Provider-and-Account credential로 이미 저장된 계정
 하나를 지정한다. Binding fallback은 catalog-seed persistence 이전에 만든 연결을
@@ -23,11 +25,15 @@ complete binding과 정확한 Provider-and-Account credential로 이미 저장�
 `--refresh`는 의도적으로 live read를 수행한다. 어느 경로도 Agent Session을
 만들거나 모델 prompt를 보내거나 다른 Provider로 fallback하지 않는다. Codex는
 로컬 app-server를 시작해 initialize한 뒤 `account/rateLimits/read`를 한 번 호출하고
-종료한다. Kimi는 먼저 계정 등급명을 얻기 위해 인증한 `GET /coding/v1/me`를 한 번
-수행한 뒤, 한도 조회를 위해 인증한 `GET /coding/v1/usages`를 한 번 수행한다.
-redirect와 retry는 비활성화하고 각 성공 body는 1 MiB로 제한한다. Kimi 계정
-등급명은 Provider가 보고한 정확한 값을 plan으로 표시하며, Yo는 한도 크기로 이를
-추론하지 않는다.
+종료한다. Grok은 `grok agent stdio`를 시작해 ACP v1로 initialize하고, 광고된
+`cached_token` method로 한 번 인증한 뒤 정확한 `_meta.subscription_tier`를 읽고
+종료한다. Identity metadata는 무시한다. Grok CLI 1.0.5는 account-capacity method를
+노출하지 않으므로 Yo는 plan만 보고하고 usage window나 remaining percentage를
+만들지 않는다. Kimi는 먼저 계정 등급명을 얻기 위해 인증한
+`GET /coding/v1/me`를 한 번 수행한 뒤, 한도 조회를 위해 인증한
+`GET /coding/v1/usages`를 한 번 수행한다. redirect와 retry는 비활성화하고 각 성공
+body는 1 MiB로 제한한다. Provider plan 이름은 정확히 표시하며 Yo는 한도 크기로
+이를 추론하지 않는다.
 
 Text 출력은 사람용이다. `--format json`은 같은 Provider 중립 snapshot을 agent가
 읽을 수 있는 versioned `yo.account-capacity/v1alpha1` schema로 출력한다. Provider의
@@ -44,6 +50,7 @@ upstream 변경이 근거를 조용히 바꾸지 못하도록 commit에 고정�
 | 기능 | 고정한 upstream 소스 | Yo 적용 지점 |
 |---|---|---|
 | Codex 계정 잔여량 | OpenAI Codex commit `89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5`: [app-server rate-limit request와 field](https://github.com/openai/codex/blob/89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5/codex-rs/app-server/README.md#7-rate-limits-chatgpt), [v2 account protocol type](https://github.com/openai/codex/blob/89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5/codex-rs/app-server-protocol/src/protocol/v2/account.rs) | [`delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs)가 app-server lifecycle을 소유하고 [`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/protocol.rs)가 반환 bucket을 변환한다. |
+| Grok 계정 plan | xAI Grok Build commit `9684fa3cdbf2995e30ea8b9b637f1db008f144fc`: [ACP authenticate response 구성](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/agent/mvp_agent/mod.rs), [typed authentication metadata](https://github.com/xai-org/grok-build/blob/9684fa3cdbf2995e30ea8b9b637f1db008f144fc/crates/codegen/xai-grok-shell/src/auth/meta.rs). 설치된 Grok CLI `1.0.5 (5115b46bc9)`에서도 정확한 경계를 관찰했다. | [`delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs)가 initialize-authenticate-shutdown read를 소유하고 [`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/protocol.rs)가 정확한 subscription tier만 변환한다. |
 | Kimi Code 계정 잔여량 | MoonshotAI Kimi Code commit `21f7ef64f0851504227617f4501bf8359031d9a5`: canonical `/me` request와 `user_level_name`의 근거인 [`managed-userinfo.ts`](https://github.com/MoonshotAI/kimi-code/blob/21f7ef64f0851504227617f4501bf8359031d9a5/packages/oauth/src/managed-userinfo.ts), `/usages`, weekly summary, rolling window, fixed-point booster balance의 근거인 [`managed-usage.ts`](https://github.com/MoonshotAI/kimi-code/blob/21f7ef64f0851504227617f4501bf8359031d9a5/packages/oauth/src/managed-usage.ts) | [`usage.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog/usage.rs)가 Kimi catalog seed 옆에서 제품 확인, 두 exact request, bounded parser, 중립 snapshot 변환을 소유한다. |
 
 Adapter를 바꿀 때는 새 upstream commit을 확인해 source link를 다시 고정하고,
@@ -54,6 +61,9 @@ branch를 인용하거나 UI 출력만 보고 private endpoint를 추론하지 �
 
 - 저장된 Kimi 계정이나 credential이 없으면 local configuration error이며 요청을
   보내지 않는다.
+- Grok cached login이 없거나 subscription tier가 없거나 문자열이 아니거나 안전하지
+  않으면 refresh를 실패시킨다. Direct xAI 접근으로 fallback하거나 Grok credential
+  file을 읽거나 identity metadata를 노출하지 않는다.
 - 성공이 아닌 status, redirect, 잘못된 media type, malformed JSON, 누락되거나
   안전하지 않은 Kimi 등급명, 잘못된 reset time, 0인 limit, 초과 row, 초과 byte는
   부분적인 정상 보고서 대신 refresh 전체를 실패시킨다.

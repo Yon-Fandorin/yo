@@ -1,5 +1,8 @@
 use serde_json::{Value, json};
-use yo_core::{BackendFailure, BackendFailureKind};
+use yo_core::{
+    AccountCapacityBucket, AccountCapacitySnapshot, AccountId, BackendFailure, BackendFailureKind,
+    ProviderId,
+};
 
 pub(super) const PROTOCOL_VERSION: u64 = 1;
 const MAX_REQUEST_ID_BYTES: usize = 4096;
@@ -184,6 +187,45 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
         auth_methods,
         load_session,
     })
+}
+
+pub(super) fn decode_account_capacity(
+    authentication: Value,
+) -> Result<AccountCapacitySnapshot, BackendFailure> {
+    let metadata = authentication
+        .get("_meta")
+        .and_then(Value::as_object)
+        .ok_or_else(|| protocol_failure("Grok authenticate response has no `_meta` object"))?;
+    let subscription_tier = metadata
+        .get("subscription_tier")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            protocol_failure("Grok authenticate response has no string `subscription_tier`")
+        })?;
+    if subscription_tier.is_empty()
+        || subscription_tier.len() > 256
+        || subscription_tier.trim() != subscription_tier
+        || subscription_tier.chars().any(char::is_control)
+    {
+        return Err(protocol_failure(
+            "Grok authenticate response has an invalid `subscription_tier`",
+        ));
+    }
+    let provider = ProviderId::new("grok").map_err(|error| protocol_failure(error.to_string()))?;
+    let account = AccountId::new("default").map_err(|error| protocol_failure(error.to_string()))?;
+    Ok(AccountCapacitySnapshot::new(
+        provider,
+        account,
+        vec![AccountCapacityBucket::new(
+            Some("grok".to_owned()),
+            None,
+            Some(subscription_tier.to_owned()),
+            None,
+            None,
+            None,
+            None,
+        )],
+    ))
 }
 
 pub(super) fn string_at<'a>(value: &'a Value, path: &[&str]) -> Result<&'a str, BackendFailure> {

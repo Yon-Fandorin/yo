@@ -24,6 +24,14 @@ read, copy, refresh, or persist that token. Direct xAI API or OAuth integration
 is a separate Provider design and must not become a fallback inside this host
 adapter.
 
+`yo account grok --refresh` reuses only the initialize-authenticate prefix and
+then shuts the child down. It maps the exact `subscription_tier` from the
+successful authentication metadata into the provider-neutral account snapshot;
+email, team identity, and authentication-mode metadata are ignored. It creates
+no Agent Session and sends no prompt. Installed Grok CLI 1.0.5 does not expose
+the newer `x.ai/billing` extension, so the command does not infer quota windows
+from a plan name.
+
 ## Compatibility contract
 
 Keep the adapter fail-closed around the wire surface it consumes:
@@ -31,6 +39,8 @@ Keep the adapter fail-closed around the wire surface it consumes:
 - initialize with ACP protocol version 1 and empty client capabilities;
 - require the installed agent to advertise `cached_token`, then authenticate
   with exactly that method;
+- accept only a bounded, non-empty, whitespace-exact, control-free subscription
+  tier when producing an account snapshot;
 - create with `session/new`, and resume with `session/load` only when the agent
   advertises load support;
 - correlate every response, Session update, permission request, and terminal
@@ -59,6 +69,8 @@ inference Turn:
 cargo test -p yo-backend-delegated-grok \
   local_grok_authenticates_and_shuts_down_without_a_session \
   -- --ignored --nocapture
+
+yo account grok --refresh
 ```
 
 A real prompt or TUI smoke run consumes external service capacity. Run one only

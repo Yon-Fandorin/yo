@@ -9,7 +9,10 @@ use yo_core::{
     TurnRef, UserInput,
 };
 
-use super::{Backend, GrokBackend, GrokBackendConfig, client::AcpClient, transport::PeerPoll};
+use super::{
+    Backend, GrokBackend, GrokBackendConfig, client::AcpClient, observe_account_capacity, protocol,
+    transport::PeerPoll,
+};
 
 #[derive(Clone)]
 struct Sent(Rc<RefCell<Vec<Value>>>);
@@ -76,6 +79,64 @@ fn initialize_response(id: u64, auth_methods: &[&str], load_session: bool) -> Va
 
 fn response(id: u64, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
+}
+
+// 계정 조회는 기존 initialize와 cached-token authenticate만 수행하고 Agent Session이나
+// prompt를 만들지 않은 채 공개 subscription tier를 공용 snapshot으로 투영합니다.
+#[test]
+fn reads_account_capacity_from_authentication_metadata_without_a_session() {
+    let messages = [
+        initialize_response(1, &["cached_token", "grok.com"], true),
+        response(
+            2,
+            json!({
+                "_meta": {
+                    "email": "ignored@example.test",
+                    "auth_mode": "Oidc",
+                    "team_id": null,
+                    "subscription_tier": "SuperGrok"
+                }
+            }),
+        ),
+    ];
+    let (peer, sent) = FakePeer::new(messages);
+    let mut client = AcpClient::new(peer, Duration::from_secs(1));
+
+    let snapshot = observe_account_capacity(&mut client).unwrap();
+
+    assert_eq!(snapshot.provider().as_str(), "grok");
+    assert_eq!(snapshot.account().as_str(), "default");
+    assert_eq!(snapshot.buckets().len(), 1);
+    assert_eq!(snapshot.buckets()[0].id(), Some("grok"));
+    assert_eq!(snapshot.buckets()[0].plan(), Some("SuperGrok"));
+    assert!(snapshot.buckets()[0].primary().is_none());
+    assert!(snapshot.buckets()[0].secondary().is_none());
+
+    let sent = sent.0.borrow();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[0]["method"], "initialize");
+    assert_eq!(sent[1]["method"], "authenticate");
+    assert!(sent.iter().all(|message| {
+        !matches!(
+            message["method"].as_str(),
+            Some("session/new" | "session/load" | "session/prompt")
+        )
+    }));
+}
+
+// 플랜을 추측하면 로그인 성공을 용량 정보로 오인하므로 누락·공백·제어문자 tier는
+// Unknown으로 꾸미지 않고 protocol 실패로 닫습니다.
+#[test]
+fn rejects_missing_or_unsafe_account_subscription_tiers() {
+    for authentication in [
+        json!({ "_meta": {} }),
+        json!({ "_meta": { "subscription_tier": null } }),
+        json!({ "_meta": { "subscription_tier": "" } }),
+        json!({ "_meta": { "subscription_tier": " SuperGrok" } }),
+        json!({ "_meta": { "subscription_tier": "Super\nGrok" } }),
+    ] {
+        assert!(protocol::decode_account_capacity(authentication).is_err());
+    }
 }
 
 fn error_response(id: u64, code: i64, message: &str) -> Value {

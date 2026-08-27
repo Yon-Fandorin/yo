@@ -39,15 +39,7 @@ pub struct GrokBackend {
 impl GrokBackend {
     /// Spawns `grok agent stdio`; initialization and cached-token authentication are deferred.
     pub fn spawn(config: GrokBackendConfig) -> Result<Self, BackendFailure> {
-        if !config.working_directory().is_absolute()
-            || !config.working_directory().is_dir()
-            || config.request_timeout().is_zero()
-        {
-            return Err(BackendFailure::new(
-                BackendFailureKind::Initialization,
-                "Grok requires an existing absolute working directory and a non-zero request timeout",
-            ));
-        }
+        validate_config(&config)?;
         let cwd = config
             .working_directory()
             .to_str()
@@ -72,6 +64,95 @@ impl GrokBackend {
         let cleanup = backend.inner.shutdown();
         combine_with_cleanup(verification, cleanup)
     }
+}
+
+/// Reads the current Grok subscription tier without creating an Agent Session.
+pub fn read_account_capacity(
+    config: GrokBackendConfig,
+) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
+    validate_config(&config)?;
+    let peer = StdioPeer::spawn(&config)?;
+    let mut client = AcpClient::new(peer, config.request_timeout());
+    let observation = observe_account_capacity(&mut client);
+    let cleanup = client.shutdown();
+    combine_with_cleanup(observation, cleanup)
+}
+
+fn validate_config(config: &GrokBackendConfig) -> Result<(), BackendFailure> {
+    if !config.working_directory().is_absolute()
+        || !config.working_directory().is_dir()
+        || config.request_timeout().is_zero()
+    {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Initialization,
+            "Grok requires an existing absolute working directory and a non-zero request timeout",
+        ));
+    }
+    Ok(())
+}
+
+struct AuthenticatedGrok {
+    initialized: protocol::InitializeResult,
+    authentication: Value,
+}
+
+fn initialize_and_authenticate<P: JsonPeer>(
+    client: &mut AcpClient<P>,
+) -> Result<AuthenticatedGrok, BackendFailure> {
+    let result = client
+        .call(
+            "initialize",
+            json!({
+                "protocolVersion": protocol::PROTOCOL_VERSION,
+                "clientCapabilities": {},
+                "clientInfo": {
+                    "name": "yo",
+                    "title": "yo",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+            }),
+        )?
+        .result;
+    let initialized = protocol::decode_initialize(result)?;
+    if !initialized
+        .auth_methods
+        .iter()
+        .any(|method| method == "cached_token")
+    {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Initialization,
+            "Grok has no cached login; run `grok login` before using `host:grok`",
+        ));
+    }
+    let authentication = client
+        .call(
+            "authenticate",
+            json!({
+                "methodId": "cached_token",
+                "_meta": { "headless": true },
+            }),
+        )
+        .map_err(|error| {
+            BackendFailure::new(
+                error.kind(),
+                format!(
+                    "Grok cached login authentication failed; run `grok login` and retry: {}",
+                    error.message()
+                ),
+            )
+        })?
+        .result;
+    Ok(AuthenticatedGrok {
+        initialized,
+        authentication,
+    })
+}
+
+fn observe_account_capacity<P: JsonPeer>(
+    client: &mut AcpClient<P>,
+) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
+    let authenticated = initialize_and_authenticate(client)?;
+    protocol::decode_account_capacity(authenticated.authentication)
 }
 
 impl BackendAdapter for GrokBackend {
@@ -207,49 +288,8 @@ impl<P: JsonPeer> Backend<P> {
         if self.initialized {
             return Ok(());
         }
-        let result = self
-            .client
-            .call(
-                "initialize",
-                json!({
-                    "protocolVersion": protocol::PROTOCOL_VERSION,
-                    "clientCapabilities": {},
-                    "clientInfo": {
-                        "name": "yo",
-                        "title": "yo",
-                        "version": env!("CARGO_PKG_VERSION"),
-                    },
-                }),
-            )?
-            .result;
-        let initialized = protocol::decode_initialize(result)?;
-        if !initialized
-            .auth_methods
-            .iter()
-            .any(|method| method == "cached_token")
-        {
-            return Err(BackendFailure::new(
-                BackendFailureKind::Initialization,
-                "Grok has no cached login; run `grok login` before using `host:grok`",
-            ));
-        }
-        self.client
-            .call(
-                "authenticate",
-                json!({
-                    "methodId": "cached_token",
-                    "_meta": { "headless": true },
-                }),
-            )
-            .map_err(|error| {
-                BackendFailure::new(
-                    error.kind(),
-                    format!(
-                        "Grok cached login authentication failed; run `grok login` and retry: {}",
-                        error.message()
-                    ),
-                )
-            })?;
+        let authenticated = initialize_and_authenticate(&mut self.client)?;
+        let initialized = authenticated.initialized;
         self.backend_version = Some(format!(
             "{}/{}",
             initialized.agent_name, initialized.agent_version
@@ -652,13 +692,13 @@ fn validate_session_id(session_id: &str) -> Result<(), BackendFailure> {
     Ok(())
 }
 
-fn combine_with_cleanup(
-    primary: Result<(), BackendFailure>,
+fn combine_with_cleanup<T>(
+    primary: Result<T, BackendFailure>,
     cleanup: Result<(), BackendFailure>,
-) -> Result<(), BackendFailure> {
+) -> Result<T, BackendFailure> {
     match (primary, cleanup) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Ok(()), Err(cleanup)) => Err(cleanup),
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(cleanup)) => Err(cleanup),
         (Err(primary), Ok(())) => Err(primary),
         (Err(primary), Err(cleanup)) => Err(BackendFailure::new(
             primary.kind(),
