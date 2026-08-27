@@ -35,6 +35,11 @@ top-level 하위 명령과 한 호출에 섞을 수 없으며, 하위 명령과 
 `yo -p --resume SESSION_ID`로 이어가며 flag를 반복하지 않는다. native model,
 대화형 실행, `--no-tools`, 새 Session이 아닌 resume과의 조합은 시작 전에 거절된다.
 
+저장된 Session의 토큰·캐시 사용량은 `yo usage SESSION_ID`로 확인한다. 계정 자체의
+현재 한도는 별도 개념이며, 첫 지원 경로인 Codex는 `yo account codex --refresh`로
+명시적으로 한 번 조회한다. 이 조회는 새 Agent Session이나 모델 요청을 만들지 않으며,
+Codex가 보고한 사용률·남은 비율·초기화 시각만 표시한다.
+
 코드를 탐색하고 검증하는 방법은
 [`Developer Docs`](docs/src/README.md)에서 시작한다. 저장소 작업 방식은
 [`CONTRIBUTING.md`](CONTRIBUTING.md)를 따른다.

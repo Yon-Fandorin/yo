@@ -1,6 +1,11 @@
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 use serde_json::{Value, json};
-use yo_core::{BackendFailure, BackendFailureKind};
+use yo_core::{
+    AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
+    AccountId, BackendFailure, BackendFailureKind, ProviderId,
+};
 
 const SUPPORTED_CODEX_MAJOR: u64 = 0;
 const SUPPORTED_CODEX_MINORS: &[u64] = &[145, 146, 149];
@@ -33,6 +38,54 @@ pub(super) struct InitializeResult {
     pub user_agent: String,
     pub platform_family: String,
     pub platform_os: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountRateLimitsResponse {
+    rate_limits: WireRateLimitSnapshot,
+    #[serde(default)]
+    rate_limits_by_limit_id: Option<BTreeMap<String, WireRateLimitSnapshot>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireRateLimitSnapshot {
+    #[serde(default)]
+    credits: Option<WireCreditsSnapshot>,
+    #[serde(default)]
+    limit_id: Option<String>,
+    #[serde(default)]
+    limit_name: Option<String>,
+    #[serde(default)]
+    plan_type: Option<String>,
+    #[serde(default)]
+    primary: Option<WireRateLimitWindow>,
+    #[serde(default)]
+    rate_limit_reached_type: Option<String>,
+    #[serde(default)]
+    secondary: Option<WireRateLimitWindow>,
+    #[serde(default)]
+    spend_control_reached: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireRateLimitWindow {
+    used_percent: i64,
+    #[serde(default)]
+    window_duration_mins: Option<i64>,
+    #[serde(default)]
+    resets_at: Option<i64>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireCreditsSnapshot {
+    #[serde(default)]
+    balance: Option<String>,
+    has_credits: bool,
+    unlimited: bool,
 }
 
 pub(super) fn request(id: u64, method: &str, params: Value) -> Value {
@@ -123,6 +176,66 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
         ));
     }
     Ok(initialize)
+}
+
+pub(super) fn decode_account_capacity(
+    result: Value,
+) -> Result<AccountCapacitySnapshot, BackendFailure> {
+    let decoded: AccountRateLimitsResponse = serde_json::from_value(result).map_err(|error| {
+        protocol_failure(format!(
+            "invalid Codex account/rateLimits/read response: {error}"
+        ))
+    })?;
+    let buckets = match decoded.rate_limits_by_limit_id {
+        Some(buckets) if !buckets.is_empty() => buckets
+            .into_iter()
+            .map(|(id, bucket)| decode_capacity_bucket(Some(id), bucket))
+            .collect::<Result<Vec<_>, _>>()?,
+        _ => vec![decode_capacity_bucket(None, decoded.rate_limits)?],
+    };
+    let provider = ProviderId::new("codex").map_err(|error| protocol_failure(error.to_string()))?;
+    let account = AccountId::new("default").map_err(|error| protocol_failure(error.to_string()))?;
+    Ok(AccountCapacitySnapshot::new(provider, account, buckets))
+}
+
+fn decode_capacity_bucket(
+    fallback_id: Option<String>,
+    bucket: WireRateLimitSnapshot,
+) -> Result<AccountCapacityBucket, BackendFailure> {
+    let primary = bucket.primary.map(decode_capacity_window).transpose()?;
+    let secondary = bucket.secondary.map(decode_capacity_window).transpose()?;
+    let credits = bucket.credits.map(|credits| {
+        AccountCredits::new(credits.balance, credits.has_credits, credits.unlimited)
+    });
+    let limit_reason = bucket.rate_limit_reached_type.or_else(|| {
+        bucket
+            .spend_control_reached
+            .filter(|reached| *reached)
+            .map(|_| "spend_control_reached".to_owned())
+    });
+    Ok(AccountCapacityBucket::new(
+        bucket.limit_id.or(fallback_id),
+        bucket.limit_name,
+        bucket.plan_type,
+        primary,
+        secondary,
+        credits,
+        limit_reason,
+    ))
+}
+
+fn decode_capacity_window(
+    window: WireRateLimitWindow,
+) -> Result<AccountCapacityWindow, BackendFailure> {
+    let used_percent = u8::try_from(window.used_percent)
+        .map_err(|_| protocol_failure("Codex account usedPercent is outside 0..=100"))?;
+    let duration = window
+        .window_duration_mins
+        .map(u64::try_from)
+        .transpose()
+        .map_err(|_| protocol_failure("Codex account windowDurationMins is negative"))?;
+    AccountCapacityWindow::new(used_percent, duration, window.resets_at)
+        .map_err(|error| protocol_failure(error.to_string()))
 }
 
 fn ensure_supported_version(user_agent: &str) -> Result<(), BackendFailure> {

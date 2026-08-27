@@ -1,5 +1,6 @@
 //! Provider-neutral model-service identities, bindings, catalogs, and resolved credentials.
 
+mod account_capacity;
 mod binding;
 mod binding_profile;
 mod catalog;
@@ -16,6 +17,9 @@ mod qwencloud_catalog;
 mod selection;
 mod startup;
 
+pub use account_capacity::{
+    AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
+};
 pub use binding::{ApiDialect, ConnectorId, EffectiveModelBinding, NormalizedEndpoint};
 pub use binding_profile::CompleteModelBinding;
 pub use catalog::{

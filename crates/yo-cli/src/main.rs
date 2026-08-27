@@ -8,6 +8,8 @@ use std::{io::Write, process::ExitCode};
 use diagnostic::AppError;
 
 #[cfg(unix)]
+mod account;
+#[cfg(unix)]
 mod agent;
 #[cfg(unix)]
 mod command;
@@ -58,6 +60,7 @@ fn main() -> ExitCode {
 #[cfg(unix)]
 fn run(command: command::Command) -> Result<(), AppError> {
     match command {
+        command::Command::Account(command) => write_command_output(account::run(command)?),
         command::Command::Connect(command) => {
             write_command_output(connection::run_connect(command)?)
         },

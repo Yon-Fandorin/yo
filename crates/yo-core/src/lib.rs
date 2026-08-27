@@ -68,6 +68,7 @@ pub use model_profile_admission::{
     admit_new_complete_binding,
 };
 pub use model_service::{
+    AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
     AccountId, ApiCredential, ApiDialect, CompleteModelBinding, ConnectionAccount,
     ConnectionCatalogSeed, ConnectionCommit, ConnectionCredentialAction, ConnectionOperationError,
     ConnectionOperationExecutionError, ConnectionOperationExecutionOutcome,

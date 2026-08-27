@@ -1,5 +1,6 @@
 mod support;
 
+mod account_capacity;
 mod coding_events;
 mod initialization;
 mod server_requests;

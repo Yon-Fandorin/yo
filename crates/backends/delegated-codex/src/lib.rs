@@ -44,15 +44,7 @@ impl CodexBackend {
     /// The initialize handshake is deferred to `CreateSession` so the runtime owner can cancel it
     /// through [`yo_core::AgentBackend::stop_handle`].
     pub fn spawn(config: CodexBackendConfig) -> Result<Self, BackendFailure> {
-        if !config.working_directory().is_absolute()
-            || !config.working_directory().is_dir()
-            || config.request_timeout().is_zero()
-        {
-            return Err(BackendFailure::new(
-                BackendFailureKind::Initialization,
-                "Codex requires an existing absolute working directory and a non-zero request timeout",
-            ));
-        }
+        validate_config(&config)?;
         let cwd = config
             .working_directory()
             .to_str()
@@ -89,6 +81,51 @@ impl CodexBackend {
             )),
         }
     }
+}
+
+/// Reads the current Codex account capacity without creating an Agent Session.
+pub fn read_account_capacity(
+    config: CodexBackendConfig,
+) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
+    validate_config(&config)?;
+    let peer = StdioPeer::spawn(&config)?;
+    let mut client = AppServerClient::new(peer, config.request_timeout());
+    let observation = observe_account_capacity(&mut client);
+    let cleanup = client.shutdown();
+    match (observation, cleanup) {
+        (Ok(snapshot), Ok(())) => Ok(snapshot),
+        (Ok(_), Err(cleanup)) => Err(cleanup),
+        (Err(observation), Ok(())) => Err(observation),
+        (Err(observation), Err(cleanup)) => Err(BackendFailure::new(
+            observation.kind(),
+            format!(
+                "{}; cleanup also failed: {}",
+                observation.message(),
+                cleanup
+            ),
+        )),
+    }
+}
+
+fn validate_config(config: &CodexBackendConfig) -> Result<(), BackendFailure> {
+    if !config.working_directory().is_absolute()
+        || !config.working_directory().is_dir()
+        || config.request_timeout().is_zero()
+    {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Initialization,
+            "Codex requires an existing absolute working directory and a non-zero request timeout",
+        ));
+    }
+    Ok(())
+}
+
+fn observe_account_capacity<P: JsonMessagePeer>(
+    client: &mut AppServerClient<P>,
+) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
+    client.initialize()?;
+    let result = client.call("account/rateLimits/read", Value::Null)?.result;
+    protocol::decode_account_capacity(result)
 }
 
 impl BackendAdapter for CodexBackend {

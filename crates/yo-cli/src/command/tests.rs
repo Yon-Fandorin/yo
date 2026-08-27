@@ -1,5 +1,20 @@
 use super::*;
 
+// 계정 용량 조회는 Session Usage와 다른 최상위 명령이며, 초기 live 구현은 외부 관측을
+// 사용자가 명시한 `--refresh` 한 번으로만 시작하고 Codex source를 그대로 보존합니다.
+#[test]
+fn account_capacity_requires_an_explicit_refresh() {
+    assert_eq!(
+        parse(["account".into(), "codex".into(), "--refresh".into()]).unwrap(),
+        Command::Account(AccountCommand {
+            source: "codex".to_owned(),
+            refresh: true,
+        })
+    );
+    assert!(parse(["account".into(), "codex".into()]).is_err());
+    assert!(parse(["account".into(), "--refresh".into()]).is_err());
+}
+
 // 인자가 없으면 기존 제품 진입점인 live Inline/Rich 실행으로 남아 `session` 기능 추가가
 // 평범한 `yo`의 backend 시작 동작을 바꾸지 않는다.
 #[test]
@@ -619,6 +634,7 @@ fn help_is_successful_generated_command_documentation() {
     assert!(rendered.contains("yo <COMMAND>"));
     assert!(rendered.contains("session"));
     assert!(rendered.contains("usage"));
+    assert!(rendered.contains("account"));
     assert!(rendered.contains("disconnect"));
     assert!(rendered.contains("--model <MODEL_REFERENCE>"));
     assert!(rendered.contains("--no-tools"));

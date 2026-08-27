@@ -73,6 +73,9 @@ struct Cli {
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
 enum CliCommand {
+    /// Show current capacity reported by one account source.
+    Account(AccountArguments),
+
     /// Connect one service target.
     Connect(ConnectArguments),
 
@@ -87,6 +90,17 @@ enum CliCommand {
 
     /// Show usage for one stored Session.
     Usage(UsageArguments),
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+struct AccountArguments {
+    /// Account source to inspect. The first supported source is codex.
+    #[arg(value_name = "SOURCE")]
+    source: String,
+
+    /// Perform one explicit live refresh instead of reading Session usage.
+    #[arg(long, required = true)]
+    refresh: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -225,6 +239,7 @@ pub(crate) enum LiveSelection {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum Command {
+    Account(AccountCommand),
     Connect(ConnectCommand),
     Disconnect(DisconnectCommand),
     Default(DefaultCommand),
@@ -232,6 +247,12 @@ pub(crate) enum Command {
     Print(PrintOptions),
     Session(SessionCommand),
     Usage(UsageCommand),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AccountCommand {
+    pub(crate) source: String,
+    pub(crate) refresh: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -293,6 +314,10 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
     let cli = Cli::try_parse_from(std::iter::once(OsString::from("yo")).chain(arguments))?;
 
     match cli.command {
+        Some(CliCommand::Account(arguments)) => Ok(Command::Account(AccountCommand {
+            source: arguments.source,
+            refresh: arguments.refresh,
+        })),
         Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {
             target: arguments.target.unwrap_or_default(),
             from: arguments.from,
