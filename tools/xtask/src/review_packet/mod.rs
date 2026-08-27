@@ -68,6 +68,23 @@ const PAYLOAD_SUFFIX: &str = "\n<<<YO-REVIEW-PAYLOAD-END>>>\n";
 
 pub(crate) use verifier::{VerifiedEvidence, VerifiedReview, verify_published};
 
+#[derive(Clone, Debug)]
+pub(crate) struct PublishedReview {
+    pub(crate) status: &'static str,
+    pub(crate) schema: &'static str,
+    pub(crate) authority: Option<&'static str>,
+    pub(crate) review_id: String,
+    pub(crate) trusted_commit: String,
+    pub(crate) candidate_commit: String,
+    pub(crate) packet_path: String,
+    pub(crate) packet_hash: String,
+    pub(crate) packet_bytes: usize,
+    pub(crate) managed_payload_tokens: usize,
+    pub(crate) manifest_path: String,
+    pub(crate) manifest_hash: String,
+    pub(crate) max_managed_payload_tokens: usize,
+}
+
 pub(crate) fn is_original_manifest_schema(schema: &str) -> bool {
     matches!(
         schema,
@@ -79,6 +96,33 @@ pub(crate) fn is_original_manifest_schema(schema: &str) -> bool {
 }
 
 pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
+    let published = publish(repository, request_path)?;
+    write_result(
+        &ResultRecord {
+            schema: published.schema,
+            ok: true,
+            operation: "build_slice_review_packet",
+            status: published.status,
+            authority: published.authority,
+            review_id: published.review_id,
+            trusted_commit: published.trusted_commit,
+            candidate_commit: published.candidate_commit,
+            packet: ArtifactWithTokens {
+                path: published.packet_path,
+                hash: published.packet_hash,
+                managed_payload_tokens: published.managed_payload_tokens,
+            },
+            manifest: Artifact {
+                path: published.manifest_path,
+                hash: published.manifest_hash,
+            },
+            max_managed_payload_tokens: published.max_managed_payload_tokens,
+        },
+        "review packet result",
+    )
+}
+
+pub(crate) fn publish(repository: &Path, request_path: &Path) -> Result<PublishedReview, String> {
     let PreparedReview {
         repository,
         request,
@@ -88,6 +132,7 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     } = prepare_review(repository, request_path)?;
     let rendered = render_packet_with_metadata(&review_id, &plan, &inputs)?;
     let managed_payload_tokens = require_packet_budget(&rendered.bytes, inputs.max_tokens)?;
+    let packet_bytes = rendered.bytes.len();
     let packet_hash = digest(&rendered.bytes);
     let delivery_profile_id = plan.delivery_profile.id.clone();
     let manifest = build_manifest(
@@ -112,29 +157,21 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         final_revalidate(&repository, &request, &inputs)
     })?;
 
-    write_result(
-        &ResultRecord {
-            schema: result_schema(&delivery_profile_id)?,
-            ok: true,
-            operation: "build_slice_review_packet",
-            status,
-            authority: authority_label(&delivery_profile_id),
-            review_id,
-            trusted_commit: inputs.context.result.trusted_commit.clone(),
-            candidate_commit: inputs.candidate_commit.clone(),
-            packet: ArtifactWithTokens {
-                path: relative(&repository, &output_directory.join("packet.md")),
-                hash: packet_hash,
-                managed_payload_tokens,
-            },
-            manifest: Artifact {
-                path: relative(&repository, &output_directory.join("manifest.json")),
-                hash: manifest_hash,
-            },
-            max_managed_payload_tokens: inputs.max_tokens,
-        },
-        "review packet result",
-    )
+    Ok(PublishedReview {
+        status,
+        schema: result_schema(&delivery_profile_id)?,
+        authority: authority_label(&delivery_profile_id),
+        review_id,
+        trusted_commit: inputs.context.result.trusted_commit.clone(),
+        candidate_commit: inputs.candidate_commit.clone(),
+        packet_path: relative(&repository, &output_directory.join("packet.md")),
+        packet_hash,
+        packet_bytes,
+        managed_payload_tokens,
+        manifest_path: relative(&repository, &output_directory.join("manifest.json")),
+        manifest_hash,
+        max_managed_payload_tokens: inputs.max_tokens,
+    })
 }
 
 pub(super) fn preflight(

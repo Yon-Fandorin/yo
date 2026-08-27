@@ -8,6 +8,7 @@ mod review_delivery;
 mod review_delta;
 mod review_egress;
 mod review_packet;
+mod review_prepare;
 mod review_protocol;
 mod review_session;
 mod review_target_admission;
@@ -56,6 +57,9 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     if scope == "review-packet" {
         return run_review_packet(arguments);
     }
+    if scope == "review-prepare" {
+        return run_review_prepare(arguments);
+    }
     if scope == "review-delta" {
         return run_review_delta(arguments);
     }
@@ -87,6 +91,18 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
         return run_slice_status(arguments);
     }
     Err(general_usage())
+}
+
+fn run_review_prepare(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(review_prepare_usage)?;
+    if arguments.next().is_some() {
+        return Err(review_prepare_usage());
+    }
+    let repository = current_repository()?;
+    review_prepare::run(&repository, &request)
 }
 
 fn run_slice_accept(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -545,6 +561,7 @@ fn general_usage() -> String {
     "usage:\n\
      cargo xtask slice create-activation <request.json>\n\
      cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
+     cargo xtask slice review-prepare <request.json>\n\
      cargo xtask slice review-delta <request.json>\n\
      cargo xtask slice review-egress <request.json>\n\
      cargo xtask slice review-target-admission <request.json>\n\
@@ -575,6 +592,10 @@ fn activation_slice_usage() -> String {
 fn review_packet_usage() -> String {
     "usage: cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>"
         .to_owned()
+}
+
+fn review_prepare_usage() -> String {
+    "usage: cargo xtask slice review-prepare <request.json>".to_owned()
 }
 
 fn review_delta_usage() -> String {
@@ -633,8 +654,8 @@ mod cli_tests {
     use super::{
         activation_slice_usage, docs_accept_translation_usage, review_continuation_preflight_usage,
         review_delivery_usage, review_delta_usage, review_egress_usage, review_packet_usage,
-        review_target_admission_usage, run, slice_accept_usage, slice_close_usage,
-        slice_commit_usage, slice_gate_usage, slice_status_usage,
+        review_prepare_usage, review_target_admission_usage, run, slice_accept_usage,
+        slice_close_usage, slice_commit_usage, slice_gate_usage, slice_status_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -648,6 +669,7 @@ mod cli_tests {
             "usage:\n\
              cargo xtask slice create-activation <request.json>\n\
              cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
+             cargo xtask slice review-prepare <request.json>\n\
              cargo xtask slice review-delta <request.json>\n\
              cargo xtask slice review-egress <request.json>\n\
              cargo xtask slice review-target-admission <request.json>\n\
@@ -717,6 +739,18 @@ mod cli_tests {
 
         assert_eq!(missing, review_packet_usage());
         assert_eq!(extra, review_packet_usage());
+    }
+
+    // 통합 review preparation도 한 versioned request만 받아 semantic 입력과 target을
+    // 추가 argv로 교체하거나 두 번째 준비 경로를 암묵적으로 만들지 않습니다.
+    #[test]
+    fn review_prepare_requires_exactly_one_request() {
+        let missing = run(["slice", "review-prepare"].map(Into::into)).unwrap_err();
+        let extra = run(["slice", "review-prepare", "request.json", "extra.json"].map(Into::into))
+            .unwrap_err();
+
+        assert_eq!(missing, review_prepare_usage());
+        assert_eq!(extra, review_prepare_usage());
     }
 
     // preflight도 publication과 같은 하나의 versioned request를 요구하여, request가

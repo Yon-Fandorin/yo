@@ -643,11 +643,12 @@ the assertion to manufacture a pass.
 
 Before publishing immutable review input, finish the coordinator's actual-code
 check and freeze the candidate, fixture prerequisites, planned Developer Docs
-impact, review questions, and uniquely named validation evidence. Run
-review-packet preflight to expose the exact managed-payload budget and section
-costs without publishing an eligible packet. Publish only after the preflight
-is ready and no input is expected to change; preflight is preparation, not
-completed review.
+impact, review questions, and uniquely named validation evidence. A manually
+assembled review runs review-packet preflight to expose the exact
+managed-payload budget and section costs without publishing an eligible packet.
+The integrated `review-prepare` path below performs the same input, scope, and
+complete-packet budget checks in its single publication pass. Publish only when
+no input is expected to change; preparation is not completed review.
 
 Select review Knowledge anchors from the current active Checkpoint before
 constructing the request. A known Knowledge file, earlier packet, or previously
@@ -941,6 +942,62 @@ same unchanged review-delta v1 chain. New requests use `v1alpha2`; a published
 profile identifier is never reinterpreted in place. `v1alpha3` is reserved for
 the explicit prospective-activation request above and does not replace the
 ordinary `v1alpha2` route.
+
+For a new original review, prefer one integrated, request-free preparation over
+manually copying the ContextBuild, packet, egress, admission, and delivery JSON
+files. From the clean candidate worktree, provide only the semantic review
+selection and one authorized target:
+
+```json
+{
+  "schema": "yo.slice-review-prepare-request/v1alpha1",
+  "slice": "example-slice",
+  "knowledge_ids": ["methexis.review.bounded-packet"],
+  "context_max_tokens": 16000,
+  "repository_authority_paths": ["CONTRIBUTING.md"],
+  "validation_evidence": [
+    {"name": "xtask", "path": "/absolute/path/to/xtask.json"}
+  ],
+  "review_lenses": ["fresh-context", "code-quality"],
+  "review_questions": ["Is the complete reviewed boundary correct?"],
+  "max_managed_payload_tokens": 100000,
+  "target": {
+    "kind": "managed_model",
+    "provider": "qwencloud",
+    "account": "default",
+    "model": "qwen3.8-max",
+    "connection_repository_path": "/absolute/path/to/connections.yaml",
+    "session_repository_path": "/absolute/path/to/sessions"
+  }
+}
+```
+
+```bash
+cargo xtask slice review-prepare <request.json>
+```
+
+The command requires the standard bound contract at
+`.local-exclude/coordination/<slice>/slice-contract.json`, writes the ContextBuild
+and packet requests only below the candidate worktree's ignored
+`.local-exclude/coordination/<slice>/`, and publishes the egress, admission, and
+delivery requests only below the shared standard coordination directory. It
+evaluates request-free target admission before ContextBuild or packet work,
+builds or content-address reuses the packet once, binds the current canonical
+standing authorization, requires an empty delivery output directory, and
+returns the exact packet budget plus one `deliver_once` or
+`deliver_delegated_once` next action. It makes zero Provider
+requests and never retries, steers, falls back, or selects another target.
+
+The alternate target is
+`{"kind":"delegated_host","host":"codex"}` or exact host `grok`, with an
+optional absolute `session_repository_path`. It derives the frozen delegated
+execution profile, v1alpha3 state-ready admission, and v1alpha2 delivery shape;
+callers do not supply Provider or Account coordinates for a delegated host.
+An exact rerun reuses every file. Any byte-different existing request or any
+claim/result already present in the delivery directory stops preparation
+without overwriting or deleting it. Use the individual lower-level commands
+for finding-resolution continuations, prospective activation, reproduction of
+frozen schemas, or section-by-section packet diagnostics.
 
 Start every new experimental wire schema, profile, identity domain, request,
 result, manifest, or receipt family at `v1alpha1`. Do not publish a new shape as
