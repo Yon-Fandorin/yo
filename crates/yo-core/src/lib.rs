@@ -78,9 +78,10 @@ pub use model_service::{
     ConnectorId, CredentialCommit, CredentialMutationAction, CredentialRepository,
     CredentialRevision, CredentialSnapshot, CredentialStore, EffectiveModelBinding,
     EffectiveModelProfile, ExternalConnectionError, ExternalDisconnectCredentialAction,
-    ExternalDisconnectError, HostId, KIMI_PRIVATE_REPLAY_PROFILE, KimiCatalogAvailability,
-    KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind, KimiCatalogModel,
-    KimiCatalogSeed, LocalConnectionOperationGuard, LocalConnectionOperationJournal,
+    ExternalDisconnectError, HostId, KIMI_PRIVATE_REPLAY_PROFILE, KimiAccountCapacityError,
+    KimiAccountCapacityFailureKind, KimiCatalogAvailability, KimiCatalogDisabledReason,
+    KimiCatalogError, KimiCatalogFailureKind, KimiCatalogModel, KimiCatalogSeed,
+    LocalConnectionOperationGuard, LocalConnectionOperationJournal,
     LocalConnectionOperationRepositories, LocalConnectionOperationSession,
     LocalConnectionRepository, LocalCredentialRepository, LocalCredentialStore,
     LocalCredentialStoreError, LocalModelRequestObservation, ModelCatalog, ModelCatalogEntry,
@@ -95,8 +96,8 @@ pub use model_service::{
     QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogModel,
     QwenCloudCatalogSeed, SEMANTIC_REPLAY_PROFILE, StartupPolicy, StartupSelectionSources,
     StartupTarget, StoredModelBinding, VersionedProfileId, discover_kimi_models,
-    discover_openrouter_models, parse_kimi_catalog_snapshot, plan_connection_recovery,
-    resolve_startup_target,
+    discover_openrouter_models, parse_kimi_account_capacity_snapshot, parse_kimi_catalog_snapshot,
+    plan_connection_recovery, read_kimi_account_capacity, resolve_startup_target,
 };
 pub use request_trace::{RequestTraceEntry, RequestTraceRecord};
 pub use runtime::{AgentRuntime, RuntimeError, RuntimePoll};

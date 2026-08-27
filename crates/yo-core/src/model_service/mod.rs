@@ -46,8 +46,10 @@ pub use connection_repository::{
 pub use credential::{ApiCredential, CredentialStore};
 pub use identity::{AccountId, ModelId, ModelServiceError, ProviderId};
 pub use kimi_catalog::{
-    KimiCatalogAvailability, KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind,
-    KimiCatalogModel, KimiCatalogSeed, discover_kimi_models, parse_kimi_catalog_snapshot,
+    KimiAccountCapacityError, KimiAccountCapacityFailureKind, KimiCatalogAvailability,
+    KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind, KimiCatalogModel,
+    KimiCatalogSeed, discover_kimi_models, parse_kimi_account_capacity_snapshot,
+    parse_kimi_catalog_snapshot, read_kimi_account_capacity,
 };
 pub use local_credentials::{
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,

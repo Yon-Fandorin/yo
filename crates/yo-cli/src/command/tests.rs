@@ -15,6 +15,21 @@ fn account_capacity_requires_an_explicit_refresh() {
     assert_eq!(
         parse([
             "account".into(),
+            "kimi:default".into(),
+            "--refresh".into(),
+            "--format".into(),
+            "json".into(),
+        ])
+        .unwrap(),
+        Command::Account(AccountCommand {
+            source: "kimi:default".to_owned(),
+            refresh: true,
+            format: OutputFormat::Json,
+        })
+    );
+    assert_eq!(
+        parse([
+            "account".into(),
             "codex".into(),
             "--refresh".into(),
             "--format".into(),

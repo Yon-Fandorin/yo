@@ -107,7 +107,7 @@ impl AccountCapacityBucket {
     }
 }
 
-/// One rolling capacity window, expressed only in Provider-reported percentages.
+/// One rolling capacity window, normalized to a bounded percentage from Provider-reported data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AccountCapacityWindow {
     used_percent: u8,
@@ -131,6 +131,31 @@ impl AccountCapacityWindow {
             window_duration_minutes,
             resets_at_unix_seconds,
         })
+    }
+
+    pub fn from_usage_ratio(
+        used: u64,
+        limit: u64,
+        window_duration_minutes: Option<u64>,
+        resets_at_unix_seconds: Option<i64>,
+    ) -> Result<Self, ModelServiceError> {
+        if limit == 0 {
+            return Err(ModelServiceError::new(
+                "account capacity limit must be positive",
+            ));
+        }
+        let used = u128::from(used).min(u128::from(limit));
+        let limit = u128::from(limit);
+        let used_percent = if used == 0 {
+            0
+        } else {
+            ((used * 100).div_ceil(limit)).min(100) as u8
+        };
+        Self::new(
+            used_percent,
+            window_duration_minutes,
+            resets_at_unix_seconds,
+        )
     }
 
     #[must_use]
@@ -202,5 +227,19 @@ mod tests {
         assert_eq!(window.window_duration_minutes(), Some(300));
         assert_eq!(window.resets_at_unix_seconds(), Some(1_800_000_000));
         assert!(AccountCapacityWindow::new(101, None, None).is_err());
+    }
+
+    // Count-based Providers normalize conservatively: the displayed remaining percentage never
+    // exceeds the exact remaining ratio, and overage saturates instead of wrapping or rejecting a
+    // still meaningful exhausted window.
+    #[test]
+    fn capacity_window_normalizes_provider_usage_counts() {
+        let partial = AccountCapacityWindow::from_usage_ratio(1, 3, Some(300), None).unwrap();
+        assert_eq!(partial.used_percent(), 34);
+        assert_eq!(partial.remaining_percent(), 66);
+
+        let exhausted = AccountCapacityWindow::from_usage_ratio(110, 100, None, None).unwrap();
+        assert_eq!(exhausted.used_percent(), 100);
+        assert!(AccountCapacityWindow::from_usage_ratio(0, 0, None, None).is_err());
     }
 }

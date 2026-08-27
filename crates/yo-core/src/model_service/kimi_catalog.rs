@@ -1,12 +1,13 @@
 use std::{error::Error, fmt};
 
 use super::{
-    AccountId, ApiCredential, ModelCatalogEntry, ModelId, ModelServiceError, NormalizedEndpoint,
-    ProviderId, VersionedProfileId,
+    AccountId, ApiCredential, ApiDialect, ConnectorId, EffectiveModelBinding, ModelCatalogEntry,
+    ModelId, ModelServiceError, NormalizedEndpoint, ProviderId, VersionedProfileId,
 };
 
 mod normalize;
 mod transport;
+mod usage;
 
 use self::normalize::normalize_catalog;
 
@@ -78,6 +79,29 @@ impl KimiCatalogSeed {
 
     pub const fn account(&self) -> &AccountId {
         &self.account
+    }
+
+    /// Recovers the Code Membership product seed from an exact durable Kimi binding.
+    ///
+    /// This supports connections retained before catalog-seed persistence without treating an
+    /// arbitrary Kimi-compatible endpoint as the managed Kimi Code product.
+    pub fn from_code_membership_binding(
+        binding: &EffectiveModelBinding,
+    ) -> Result<Option<Self>, ModelServiceError> {
+        if binding.provider_id().as_str() != KIMI_PROVIDER
+            || binding.connector_id().as_str() != ConnectorId::KIMI_CHAT_COMPLETIONS
+            || binding.api_dialect() != ApiDialect::KimiChatCompletions
+        {
+            return Ok(None);
+        }
+        let seed = Self::resolve(
+            VersionedProfileId::new(KIMI_CODE_CATALOG_PROFILE)?,
+            binding.provider_id().clone(),
+            binding.account_id().clone(),
+            None,
+            None,
+        )?;
+        Ok((binding.endpoint() == &seed.endpoint).then_some(seed))
     }
 }
 
@@ -221,6 +245,11 @@ pub fn parse_kimi_catalog_snapshot(
 ) -> Result<Vec<KimiCatalogModel>, KimiCatalogError> {
     normalize_catalog(seed, bytes)
 }
+
+pub use usage::{
+    KimiAccountCapacityError, KimiAccountCapacityFailureKind, parse_kimi_account_capacity_snapshot,
+    read_kimi_account_capacity,
+};
 
 fn failure(kind: KimiCatalogFailureKind, message: impl Into<String>) -> KimiCatalogError {
     KimiCatalogError::new(kind, message)

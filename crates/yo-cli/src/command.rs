@@ -94,7 +94,7 @@ enum CliCommand {
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 struct AccountArguments {
-    /// Account source to inspect. The first supported source is codex.
+    /// Account source to inspect: codex or kimi:<account>.
     #[arg(value_name = "SOURCE")]
     source: String,
 

@@ -1,37 +1,115 @@
 use std::fmt::Write as _;
 
 use yo_backend_delegated_codex::{CodexBackendConfig, read_account_capacity};
-use yo_core::{AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow};
+use yo_core::{
+    AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountId,
+    KimiCatalogSeed, LocalConnectionRepository, LocalCredentialRepository, ProviderId,
+    read_kimi_account_capacity,
+};
 
 mod json;
 
 use super::{
     AppError,
     command::{AccountCommand, OutputFormat},
+    config,
     presentation::{PresentationStyle, TextStyle, remaining_bar},
 };
 
 pub(crate) fn run(command: AccountCommand) -> Result<String, AppError> {
-    if command.source != "codex" {
-        return Err(AppError::message(format!(
-            "unsupported account source `{}`; current support: codex",
-            command.source
-        )));
-    }
     if !command.refresh {
         return Err(AppError::message(
             "account capacity currently requires an explicit --refresh",
         ));
     }
-    let cwd = std::env::current_dir()
-        .map_err(|error| AppError::single("reading the working directory", error))?;
-    let snapshot = read_account_capacity(CodexBackendConfig::new(cwd))
-        .map_err(|error| AppError::single("refreshing Codex account capacity", error))?;
+    let snapshot = match parse_source(&command.source)? {
+        AccountSource::Codex => read_codex_capacity()?,
+        AccountSource::Kimi(account) => read_kimi_capacity(account)?,
+    };
     match command.format {
         OutputFormat::Text => Ok(render(&snapshot, PresentationStyle::for_stdout())),
         OutputFormat::Json => json::render(&snapshot)
             .map_err(|error| AppError::single("serializing account capacity JSON", error)),
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AccountSource<'a> {
+    Codex,
+    Kimi(&'a str),
+}
+
+fn parse_source(source: &str) -> Result<AccountSource<'_>, AppError> {
+    if source == "codex" {
+        return Ok(AccountSource::Codex);
+    }
+    if let Some(account) = source.strip_prefix("kimi:")
+        && !account.is_empty()
+        && !account.contains(':')
+    {
+        return Ok(AccountSource::Kimi(account));
+    }
+    Err(AppError::message(format!(
+        "unsupported account source `{source}`; current support: codex, kimi:<account>"
+    )))
+}
+
+fn read_codex_capacity() -> Result<AccountCapacitySnapshot, AppError> {
+    let cwd = std::env::current_dir()
+        .map_err(|error| AppError::single("reading the working directory", error))?;
+    read_account_capacity(CodexBackendConfig::new(cwd))
+        .map_err(|error| AppError::single("refreshing Codex account capacity", error))
+}
+
+fn read_kimi_capacity(account: &str) -> Result<AccountCapacitySnapshot, AppError> {
+    let provider = ProviderId::new("kimi")
+        .map_err(|error| AppError::single("resolving the Kimi Provider", error))?;
+    let account = AccountId::new(account)
+        .map_err(|error| AppError::single("resolving the Kimi Account", error))?;
+    let config = config::load().map_err(|error| AppError::single("loading config", error))?;
+    let connections = LocalConnectionRepository::new(config.connection_path())
+        .capture()
+        .map_err(|error| AppError::single("reading stored model connections", error))?;
+    let seed = connections
+        .kimi_catalog_seed(&provider, &account)
+        .map_err(|error| AppError::single("resolving the stored Kimi account", error))?;
+    let seed = match seed {
+        Some(seed) => Some(seed),
+        None => derive_kimi_code_seed(&connections, &provider, &account)?,
+    }
+    .ok_or_else(|| {
+        AppError::message(format!(
+            "no stored Kimi Code Membership account `{account}`"
+        ))
+    })?;
+    let credentials = LocalCredentialRepository::new(config.credential_path())
+        .capture()
+        .map_err(|error| AppError::single("reading stored model credentials", error))?;
+    let credential = credentials.resolve(&provider, &account).ok_or_else(|| {
+        AppError::message(format!("no stored credential for Kimi account `{account}`"))
+    })?;
+    read_kimi_account_capacity(&seed, credential)
+        .map_err(|error| AppError::single("refreshing Kimi account capacity", error))
+}
+
+fn derive_kimi_code_seed(
+    connections: &yo_core::ConnectionSnapshot,
+    provider: &ProviderId,
+    account: &AccountId,
+) -> Result<Option<KimiCatalogSeed>, AppError> {
+    for binding in connections
+        .models()
+        .iter()
+        .map(|stored| stored.complete().binding())
+        .filter(|binding| binding.provider_id() == provider && binding.account_id() == account)
+    {
+        if let Some(seed) = KimiCatalogSeed::from_code_membership_binding(binding)
+            .map_err(|error| AppError::single("resolving the stored Kimi product", error))?
+        {
+            return Ok(Some(seed));
+        }
+    }
+    Ok(None)
 }
 
 fn render(snapshot: &AccountCapacitySnapshot, style: PresentationStyle) -> String {
@@ -285,6 +363,20 @@ mod tests {
     use yo_core::{AccountCredits, AccountId, ProviderId};
 
     use super::*;
+
+    // Kimi source는 저장된 account를 명시하는 exact 두 segment 문법만 받아 Provider나
+    // 기본 계정을 추측하지 않습니다.
+    #[test]
+    fn parses_exact_account_sources() {
+        assert_eq!(parse_source("codex").unwrap(), AccountSource::Codex);
+        assert_eq!(
+            parse_source("kimi:default").unwrap(),
+            AccountSource::Kimi("default")
+        );
+        for source in ["kimi", "kimi:", "kimi:default:extra", "qwencloud"] {
+            assert!(parse_source(source).is_err());
+        }
+    }
 
     // 공용 snapshot 출력은 Provider가 준 사용률과 reset을 그대로 표시하고 남은 비율만
     // 보수 산술로 더해, Session token 합계나 cache token을 계정 quota로 오인하지 않습니다.

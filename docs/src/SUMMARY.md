@@ -12,5 +12,6 @@
   - [Add a new Provider](./workflows/provider-catalogs/new-provider.md)
 - [Follow Codex app-server upstream](./workflows/codex-upstream.md)
 - [Follow Grok ACP upstream](./workflows/grok-acp.md)
+- [Inspect account capacity](./workflows/account-capacity.md)
 - [Validation](./validation/README.md)
   - [Terminal environment matrix](./validation/terminal-matrix.md)

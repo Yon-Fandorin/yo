@@ -34,6 +34,38 @@ fn code_seed() -> KimiCatalogSeed {
     .unwrap()
 }
 
+// Catalog seed를 저장하기 전의 durable connection도 canonical Code Membership
+// complete binding 자체로 제품을 증명할 수 있지만 Platform endpoint는 같은 Kimi
+// dialect여도 해당 증거가 되지 않습니다.
+#[test]
+fn recovers_code_membership_seed_only_from_the_canonical_binding() {
+    let code_payload = serde_json::to_vec(&json!({
+        "object": "list",
+        "data": [{"object":"model", "id":"k3", "context_length":1048576}]
+    }))
+    .unwrap();
+    let code_models = normalize_catalog(&code_seed(), &code_payload).unwrap();
+    let code_binding = code_models[0].entry().unwrap().binding();
+    let recovered = KimiCatalogSeed::from_code_membership_binding(code_binding)
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.profile().as_str(), "kimi-code-membership/v1");
+    assert_eq!(recovered.account().as_str(), "code");
+
+    let platform_payload = serde_json::to_vec(&json!({
+        "object": "list",
+        "data": [{"object":"model", "id":"kimi-k3", "context_length":1048576}]
+    }))
+    .unwrap();
+    let platform_models = normalize_catalog(&seed(), &platform_payload).unwrap();
+    let platform_binding = platform_models[0].entry().unwrap().binding();
+    assert!(
+        KimiCatalogSeed::from_code_membership_binding(platform_binding)
+            .unwrap()
+            .is_none()
+    );
+}
+
 // 인증 inventory의 네 개 reviewed ModelId만 exact overlay로 실행 가능해지고, K3/K2.7은
 // private replay를, K2.6은 semantic-only replay를 가진 완전한 binding으로 해석됩니다.
 #[test]
