@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub(super) const SCHEMA: &str = "yo.slice-close-plan/v4";
+pub(super) const SCHEMA: &str = "yo.slice-close-plan/v1alpha1";
+const LEGACY_SCHEMA_V4: &str = "yo.slice-close-plan/v4";
 const LEGACY_SCHEMA_V3: &str = "yo.slice-close-plan/v3";
 const LEGACY_SCHEMA_V2: &str = "yo.slice-close-plan/v2";
 
@@ -26,6 +27,8 @@ pub(super) struct Plan {
     pub(super) contract_id: String,
     #[serde(default)]
     pub(super) retained_coordination_paths: Vec<PathBuf>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) coordination_cleanup_paths: Vec<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) close_metrics: Option<CloseMetricsArtifact>,
     pub(super) effects: Effects,
@@ -45,6 +48,8 @@ pub(super) struct Effects {
     pub(super) remove_binding: bool,
     pub(super) remove_coordination_contract: bool,
     pub(super) delete_slice_branch: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub(super) remove_coordination_directory: bool,
 }
 
 impl Effects {
@@ -54,8 +59,13 @@ impl Effects {
             remove_binding: true,
             remove_coordination_contract,
             delete_slice_branch: true,
+            remove_coordination_directory: remove_coordination_contract,
         }
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Serialize)]
@@ -70,6 +80,13 @@ struct PlanIdentityV4<'a> {
     #[serde(flatten)]
     legacy: PlanIdentityV3<'a>,
     close_metrics: &'a CloseMetricsArtifact,
+}
+
+#[derive(Serialize)]
+struct PlanIdentityV1Alpha1<'a> {
+    #[serde(flatten)]
+    legacy: PlanIdentityV4<'a>,
+    coordination_cleanup_paths: &'a [PathBuf],
 }
 
 #[derive(Serialize)]
@@ -93,23 +110,47 @@ struct LegacyPlanIdentityV2<'a> {
 pub(super) fn validate_plan_shape(plan: &Plan) -> Result<(), String> {
     if !matches!(
         plan.schema.as_str(),
-        SCHEMA | LEGACY_SCHEMA_V3 | LEGACY_SCHEMA_V2
+        SCHEMA | LEGACY_SCHEMA_V4 | LEGACY_SCHEMA_V3 | LEGACY_SCHEMA_V2
     ) {
         return Err(format!(
-            "unsupported Slice close plan schema `{}`; expected `{SCHEMA}`, `{LEGACY_SCHEMA_V3}`, or `{LEGACY_SCHEMA_V2}`",
+            "unsupported Slice close plan schema `{}`; expected `{SCHEMA}`, `{LEGACY_SCHEMA_V4}`, `{LEGACY_SCHEMA_V3}`, or `{LEGACY_SCHEMA_V2}`",
             plan.schema
         ));
     }
-    if plan.schema == LEGACY_SCHEMA_V2 && !plan.retained_coordination_paths.is_empty() {
+    if plan.schema == LEGACY_SCHEMA_V2
+        && (!plan.retained_coordination_paths.is_empty()
+            || !plan.coordination_cleanup_paths.is_empty())
+    {
+        return Err("legacy Slice close plans cannot contain coordination path sets".to_owned());
+    }
+    if matches!(plan.schema.as_str(), SCHEMA | LEGACY_SCHEMA_V4) && plan.close_metrics.is_none() {
+        return Err("Slice close plan v1alpha1 or v4 requires bound close metrics".to_owned());
+    }
+    if matches!(plan.schema.as_str(), LEGACY_SCHEMA_V3 | LEGACY_SCHEMA_V2)
+        && plan.close_metrics.is_some()
+    {
+        return Err("Slice close plans before v4 cannot contain close metrics".to_owned());
+    }
+    if plan.schema != SCHEMA
+        && (!plan.coordination_cleanup_paths.is_empty()
+            || plan.effects.remove_coordination_directory)
+    {
         return Err(
-            "legacy Slice close plans cannot contain retained coordination paths".to_owned(),
+            "stable Slice close plans through v4 cannot remove the coordination directory"
+                .to_owned(),
         );
     }
-    if plan.schema == SCHEMA && plan.close_metrics.is_none() {
-        return Err("Slice close plan v4 requires bound close metrics".to_owned());
-    }
-    if plan.schema != SCHEMA && plan.close_metrics.is_some() {
-        return Err("legacy Slice close plans cannot contain close metrics".to_owned());
+    if plan.schema == SCHEMA
+        && (plan.effects.remove_coordination_directory != plan.effects.remove_coordination_contract
+            || (plan.effects.remove_coordination_directory
+                && !plan.retained_coordination_paths.is_empty())
+            || (!plan.effects.remove_coordination_directory
+                && !plan.coordination_cleanup_paths.is_empty()))
+    {
+        return Err(
+            "Slice close plan v1alpha1 must delete standard coordination as one effect or preserve nonstandard coordination"
+                .to_owned(),
+        );
     }
     validate_slice_name(&plan.slice)?;
     if !plan.effects.remove_worktree
@@ -125,7 +166,16 @@ pub(super) fn validate_plan_shape(plan: &Plan) -> Result<(), String> {
 }
 
 pub(super) fn binds_retained_coordination(plan: &Plan) -> bool {
-    plan.schema != LEGACY_SCHEMA_V2
+    matches!(plan.schema.as_str(), LEGACY_SCHEMA_V4 | LEGACY_SCHEMA_V3)
+        || (plan.schema == SCHEMA && !plan.effects.remove_coordination_directory)
+}
+
+pub(super) fn binds_coordination_cleanup(plan: &Plan) -> bool {
+    plan.schema == SCHEMA && plan.effects.remove_coordination_directory
+}
+
+pub(super) fn binds_close_metrics(plan: &Plan) -> bool {
+    matches!(plan.schema.as_str(), SCHEMA | LEGACY_SCHEMA_V4)
 }
 
 pub(super) fn identity(plan: &Plan) -> Result<String, String> {
@@ -152,7 +202,7 @@ pub(super) fn identity(plan: &Plan) -> Result<String, String> {
     let bytes = match plan.schema.as_str() {
         LEGACY_SCHEMA_V2 => serde_json::to_vec(&v3.legacy),
         LEGACY_SCHEMA_V3 => serde_json::to_vec(&v3),
-        SCHEMA => {
+        LEGACY_SCHEMA_V4 => {
             let close_metrics = plan
                 .close_metrics
                 .as_ref()
@@ -160,6 +210,18 @@ pub(super) fn identity(plan: &Plan) -> Result<String, String> {
             serde_json::to_vec(&PlanIdentityV4 {
                 legacy: v3,
                 close_metrics,
+            })
+        },
+        SCHEMA => {
+            let close_metrics = plan.close_metrics.as_ref().ok_or_else(|| {
+                "Slice close plan v1alpha1 requires bound close metrics".to_owned()
+            })?;
+            serde_json::to_vec(&PlanIdentityV1Alpha1 {
+                legacy: PlanIdentityV4 {
+                    legacy: v3,
+                    close_metrics,
+                },
+                coordination_cleanup_paths: &plan.coordination_cleanup_paths,
             })
         },
         _ => {

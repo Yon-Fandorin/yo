@@ -12,7 +12,10 @@ use rustix::{
     io::Errno,
 };
 
+use crate::bounded_file;
+
 const MAX_RETAINED_PATHS: usize = 64;
+const MAX_CLEANUP_PATHS: usize = 256;
 const OPEN_DIRECTORY: OFlags = OFlags::RDONLY
     .union(OFlags::DIRECTORY)
     .union(OFlags::NOFOLLOW)
@@ -77,7 +80,7 @@ pub(super) fn retained_paths(
         }
         if retained.len() == MAX_RETAINED_PATHS {
             return Err(format!(
-                "Slice coordination directory {} exceeds the {MAX_RETAINED_PATHS}-entry reporting limit after excluding the planned standard contract",
+                "Slice coordination directory {} exceeds the {MAX_RETAINED_PATHS}-entry reporting limit",
                 coordination.display()
             ));
         }
@@ -89,6 +92,104 @@ pub(super) fn retained_paths(
             .cmp(right.as_os_str().as_bytes())
     });
     Ok(retained)
+}
+
+pub(super) fn remove_directory(
+    workspace: &Path,
+    slice: &str,
+    expected_paths: &[PathBuf],
+) -> Result<(), String> {
+    let coordination = workspace
+        .join(".local-exclude")
+        .join("coordination")
+        .join(slice);
+    let current = cleanup_paths(workspace, slice)?;
+    if current != expected_paths {
+        return Err("Slice coordination cleanup paths changed after planning".to_owned());
+    }
+    let metadata = std::fs::symlink_metadata(&coordination).map_err(|error| {
+        format!(
+            "cannot inspect Slice coordination directory {} before cleanup: {error}",
+            coordination.display()
+        )
+    })?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("Slice coordination cleanup target must be a real directory".to_owned());
+    }
+    std::fs::remove_dir_all(&coordination).map_err(|error| {
+        format!(
+            "cannot remove completed Slice coordination directory {}: {error}",
+            coordination.display()
+        )
+    })?;
+    let parent = bounded_file::open_directory(
+        coordination
+            .parent()
+            .expect("standard Slice coordination has a parent"),
+        "Slice coordination cleanup",
+    )?;
+    bounded_file::sync_directory(&parent, "Slice coordination cleanup")
+}
+
+pub(super) fn cleanup_paths(workspace: &Path, slice: &str) -> Result<Vec<PathBuf>, String> {
+    let coordination = workspace
+        .join(".local-exclude")
+        .join("coordination")
+        .join(slice);
+    let metadata = match std::fs::symlink_metadata(&coordination) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect Slice coordination cleanup root {}: {error}",
+                coordination.display()
+            ));
+        },
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err("Slice coordination cleanup root must be a real directory".to_owned());
+    }
+    let mut paths = Vec::new();
+    collect_cleanup_paths(&coordination, &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_cleanup_paths(directory: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
+    let mut entries = std::fs::read_dir(directory)
+        .map_err(|error| {
+            format!(
+                "cannot enumerate Slice coordination cleanup directory {}: {error}",
+                directory.display()
+            )
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| {
+            format!(
+                "cannot read Slice coordination cleanup directory {}: {error}",
+                directory.display()
+            )
+        })?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        if paths.len() == MAX_CLEANUP_PATHS {
+            return Err(format!(
+                "Slice coordination cleanup exceeds the {MAX_CLEANUP_PATHS}-path reporting limit"
+            ));
+        }
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path).map_err(|error| {
+            format!(
+                "cannot inspect Slice coordination cleanup path {}: {error}",
+                path.display()
+            )
+        })?;
+        paths.push(path.clone());
+        if metadata.is_dir() && !metadata.file_type().is_symlink() {
+            collect_cleanup_paths(&path, paths)?;
+        }
+    }
+    Ok(())
 }
 
 fn open_optional_directory(

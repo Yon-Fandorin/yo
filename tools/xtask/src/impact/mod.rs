@@ -33,7 +33,6 @@ impl ImpactInput {
         )
     }
 
-    #[cfg(test)]
     pub(crate) fn load_from(
         repository: &Path,
         message_path: PathBuf,

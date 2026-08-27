@@ -20,8 +20,9 @@ use self::{
         matching_patch_id, remove_worktree, repository_root, resolve_commit, worktrees,
     },
     model::{
-        Effects, Plan, SCHEMA, binds_retained_coordination, identity, slice_ref_for,
-        validate_plan_shape, validate_slice_name,
+        Effects, Plan, SCHEMA, binds_close_metrics, binds_coordination_cleanup,
+        binds_retained_coordination, identity, slice_ref_for, validate_plan_shape,
+        validate_slice_name,
     },
 };
 use crate::{impact, slice_contract, slice_worktree};
@@ -83,8 +84,15 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
         &accepted.slice_head,
         &accepted.accepted_commit,
     )?;
-    let retained_coordination_paths =
-        coordination::retained_paths(&workspace, slice, remove_coordination_contract)?;
+    let (retained_coordination_paths, coordination_cleanup_paths) = if remove_coordination_contract
+    {
+        (Vec::new(), coordination::cleanup_paths(&workspace, slice)?)
+    } else {
+        (
+            coordination::retained_paths(&workspace, slice, false)?,
+            Vec::new(),
+        )
+    };
     let mut plan = Plan {
         schema: SCHEMA.to_owned(),
         plan_id: String::new(),
@@ -101,6 +109,7 @@ fn build_plan(repository: &Path, slice: &str) -> Result<Plan, String> {
         contract_path: accepted.bound.contract_path,
         contract_id: accepted.bound.contract_id,
         retained_coordination_paths,
+        coordination_cleanup_paths,
         close_metrics: Some(close_metrics),
         effects: Effects::new(remove_coordination_contract),
     };
@@ -192,11 +201,11 @@ fn apply_with_before_delete(
             plan.plan_id
         ));
     }
-    if plan.schema != SCHEMA
+    if !binds_close_metrics(&plan)
         && accepted_commit_requires_close_metrics(&repository, &plan.accepted_commit)?
     {
         return Err(
-            "accepted commits at or after the close-metrics cutover require a v4 Slice close plan"
+            "accepted commits at or after the close-metrics cutover require v4 or newer Slice close plan"
                 .to_owned(),
         );
     }
@@ -211,7 +220,7 @@ fn apply_with_before_delete(
         if retained != plan.retained_coordination_paths {
             return Err("retained Slice coordination paths changed after planning".to_owned());
         }
-        if plan.schema == SCHEMA {
+        if binds_close_metrics(&plan) {
             metrics::require_current(
                 plan.close_metrics
                     .as_ref()
@@ -221,6 +230,21 @@ fn apply_with_before_delete(
                 &plan.accepted_commit,
             )?;
         }
+    }
+    if binds_coordination_cleanup(&plan) {
+        let workspace = slice_worktree::workspace_root(&repository)?;
+        let cleanup = coordination::cleanup_paths(&workspace, &plan.slice)?;
+        if cleanup != plan.coordination_cleanup_paths {
+            return Err("Slice coordination cleanup paths changed after planning".to_owned());
+        }
+        metrics::require_current(
+            plan.close_metrics
+                .as_ref()
+                .expect("validated v1alpha1 plan has close metrics"),
+            &plan.slice,
+            &plan.slice_head,
+            &plan.accepted_commit,
+        )?;
     }
     if current_branch_ref(&repository)? != plan.integration_ref {
         return Err(format!(
@@ -279,7 +303,10 @@ fn apply_with_before_delete(
         },
     }
 
-    if plan.effects.remove_coordination_contract {
+    if plan.effects.remove_coordination_directory {
+        let workspace = slice_worktree::workspace_root(&repository)?;
+        coordination::remove_directory(&workspace, &plan.slice, &plan.coordination_cleanup_paths)?;
+    } else if plan.effects.remove_coordination_contract {
         storage::remove_coordination_contract(&plan.contract_path, &plan.contract_id)?;
     }
 
@@ -291,7 +318,9 @@ fn apply_with_before_delete(
         &plan.slice_ref,
         &plan.slice_head,
     ) {
-        let state = if worktree_was_present && plan.effects.remove_coordination_contract {
+        let state = if worktree_was_present && plan.effects.remove_coordination_directory {
+            "the planned worktree, binding, and standard coordination directory were removed"
+        } else if worktree_was_present && plan.effects.remove_coordination_contract {
             "the planned worktree, binding, and standard coordination contract were removed"
         } else if worktree_was_present {
             "the planned worktree and binding were removed"
@@ -347,7 +376,13 @@ fn validate_plan_effects(repository: &Path, plan: &Plan) -> Result<(), String> {
     if plan.effects.remove_coordination_contract != expected {
         return Err("Slice close plan coordination-contract effect does not match its bounded standard path".to_owned());
     }
-    if plan.schema == SCHEMA {
+    if plan.schema == SCHEMA && plan.effects.remove_coordination_directory != expected {
+        return Err(
+            "Slice close plan coordination-directory effect does not match its standard contract path"
+                .to_owned(),
+        );
+    }
+    if binds_close_metrics(plan) {
         let expected_metrics =
             standard_coordination_directory(repository, &plan.slice)?.join(metrics::FILE_NAME);
         if plan
@@ -375,7 +410,7 @@ fn standard_coordination_directory(repository: &Path, slice: &str) -> Result<Pat
 
 fn validate_plan_storage(repository: &Path, path: &Path, plan: &Plan) -> Result<(), String> {
     if path_within(path, &plan.worktree_path)?
-        || (binds_retained_coordination(plan)
+        || ((binds_retained_coordination(plan) || binds_coordination_cleanup(plan))
             && path_within(
                 path,
                 &standard_coordination_directory(repository, &plan.slice)?,

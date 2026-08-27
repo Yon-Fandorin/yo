@@ -8,6 +8,14 @@ pub(crate) fn check(input: &ImpactInput) -> Result<(), String> {
     )
 }
 
+pub(crate) fn check_candidate(input: &ImpactInput, diff: &[u8]) -> Result<(), String> {
+    combine(
+        slice_review::check(input),
+        review_coverage::check_candidate_diff(input, diff),
+        developer_docs::check(input),
+    )
+}
+
 fn combine(
     review: Result<(), String>,
     coverage: Result<(), String>,

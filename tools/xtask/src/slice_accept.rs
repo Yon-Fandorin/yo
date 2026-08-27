@@ -1,5 +1,4 @@
 use std::{
-    env,
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -139,49 +138,16 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
     slice_worktree::expect_ref(&integration, &integration_ref, &integration_head)?;
     slice_worktree::expect_ref(&state.worktree, &state.branch, &state.head)?;
 
-    let candidate_diff = canonical_diff(&state.worktree, &state.bound.base, &state.head)?;
-    let merge_status = git::command_in(&integration, false)
-        .args(["merge", "--squash", state.branch.as_str()])
-        .stdin(Stdio::null())
-        .status()
-        .map_err(|error| format!("cannot start accepted Slice squash: {error}"))?;
-    if !merge_status.success() {
-        return Err(format!(
-            "accepted Slice squash failed ({merge_status}); integration worktree requires inspection"
-        ));
-    }
-    let staged_diff = git::output_bytes_in(
+    let accepted_commit = integrate_candidate(
         &integration,
-        &[
-            "diff",
-            "--cached",
-            "--binary",
-            "--full-index",
-            "--no-ext-diff",
-            "--no-renames",
-            "--",
-        ],
-        false,
+        &integration_ref,
+        &integration_head,
+        &state.worktree,
+        &state.branch,
+        &state.bound.base,
+        &state.head,
+        &message_output,
     )?;
-    if staged_diff != candidate_diff {
-        return Err(
-            "squashed index differs from the exact reviewed candidate diff; integration worktree requires inspection"
-                .to_owned(),
-        );
-    }
-
-    let input = load_impact_input(&integration, message_output.clone())?;
-    impact::preflight::check(&input)?;
-    impact::review_coverage::create_accepted_commit(&input.repository, &message_output)?;
-    let accepted_commit = slice_worktree::resolve_commit(&integration, &integration_ref)?;
-    let accepted_diff = canonical_diff(
-        &integration,
-        &format!("{accepted_commit}^"),
-        &accepted_commit,
-    )?;
-    if accepted_diff != candidate_diff {
-        return Err("accepted commit differs from the exact reviewed candidate diff".to_owned());
-    }
 
     let push_spec = format!("{integration_ref}:{integration_ref}");
     let push_status = git::command_in(&integration, false)
@@ -223,6 +189,124 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
         .map_err(|error| format!("cannot encode Slice accept result: {error}"))?
     );
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn integrate_candidate(
+    integration: &Path,
+    integration_ref: &str,
+    integration_head: &str,
+    candidate_repository: &Path,
+    candidate_branch: &str,
+    candidate_base: &str,
+    candidate_head: &str,
+    message_output: &Path,
+) -> Result<String, String> {
+    integrate_candidate_with(
+        integration,
+        integration_ref,
+        integration_head,
+        candidate_repository,
+        candidate_branch,
+        candidate_base,
+        candidate_head,
+        message_output,
+        impact::review_coverage::create_accepted_commit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn integrate_candidate_with(
+    integration: &Path,
+    integration_ref: &str,
+    integration_head: &str,
+    candidate_repository: &Path,
+    candidate_branch: &str,
+    candidate_base: &str,
+    candidate_head: &str,
+    message_output: &Path,
+    commit: impl FnOnce(&Path, &Path) -> Result<(), String>,
+) -> Result<String, String> {
+    let candidate_diff = canonical_diff(candidate_repository, candidate_base, candidate_head)?;
+    let changed_paths =
+        candidate_changed_paths(candidate_repository, candidate_base, candidate_head)?;
+    let branch = integration_ref
+        .strip_prefix("refs/heads/")
+        .ok_or_else(|| format!("unsupported integration ref `{integration_ref}`"))?;
+    let preflight = ImpactInput {
+        message: git::read(message_output, "prepared accepted commit message")?,
+        changed_paths: changed_paths.clone(),
+        branch: branch.to_owned(),
+        merge_head: None,
+        repository: integration.to_path_buf(),
+        inherit_git_environment: false,
+    };
+    impact::preflight::check_candidate(&preflight, &candidate_diff)?;
+    slice_worktree::ensure_clean(integration, "integration worktree", "Slice acceptance")?;
+    slice_worktree::expect_ref(integration, integration_ref, integration_head)?;
+    slice_worktree::expect_ref(candidate_repository, candidate_branch, candidate_head)?;
+
+    let merge_status = git::command_in(integration, false)
+        .args(["merge", "--squash", candidate_branch])
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|error| format!("cannot start accepted Slice squash: {error}"))?;
+    if !merge_status.success() {
+        return Err(format!(
+            "accepted Slice squash failed ({merge_status}); integration worktree requires inspection"
+        ));
+    }
+    let staged_diff = git::output_bytes_in(
+        integration,
+        &[
+            "diff",
+            "--cached",
+            "--binary",
+            "--full-index",
+            "--no-ext-diff",
+            "--no-renames",
+            "--",
+        ],
+        false,
+    )?;
+    if staged_diff != candidate_diff {
+        return Err(
+            "squashed index differs from the exact reviewed candidate diff; integration worktree requires inspection"
+                .to_owned(),
+        );
+    }
+
+    let commit_result = (|| {
+        let input = ImpactInput::load_from(
+            integration,
+            message_output.to_path_buf(),
+            None,
+            Some(branch.to_owned()),
+            true,
+        )?;
+        impact::preflight::check(&input)?;
+        commit(&input.repository, message_output)
+    })();
+    if let Err(error) = commit_result {
+        return Err(recover_precommit_failure(
+            integration,
+            integration_ref,
+            integration_head,
+            &candidate_diff,
+            &changed_paths,
+            error,
+        ));
+    }
+    let accepted_commit = slice_worktree::resolve_commit(integration, integration_ref)?;
+    let accepted_diff = canonical_diff(
+        integration,
+        &format!("{accepted_commit}^"),
+        &accepted_commit,
+    )?;
+    if accepted_diff != candidate_diff {
+        return Err("accepted commit differs from the exact reviewed candidate diff".to_owned());
+    }
+    Ok(accepted_commit)
 }
 
 fn validate_accept_request(request: &AcceptRequest) -> Result<(), String> {
@@ -364,28 +448,101 @@ fn integration_worktree(repository: &Path, reference: &str) -> Result<PathBuf, S
     }
 }
 
-fn load_impact_input(repository: &Path, message: PathBuf) -> Result<ImpactInput, String> {
-    let original = env::current_dir()
-        .map_err(|error| format!("cannot capture Slice accept working directory: {error}"))?;
-    env::set_current_dir(repository).map_err(|error| {
-        format!(
-            "cannot enter integration worktree {} for commit preflight: {error}",
-            repository.display()
-        )
-    })?;
-    let loaded = ImpactInput::load(message, None, None, true);
-    let restored = env::set_current_dir(&original).map_err(|error| {
-        format!(
-            "cannot restore Slice accept working directory {}: {error}",
-            original.display()
-        )
-    });
-    match (loaded, restored) {
-        (Ok(input), Ok(())) => Ok(input),
-        (Err(error), Ok(())) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
-        (Err(load), Err(restore)) => Err(format!("{load}; {restore}")),
+fn candidate_changed_paths(
+    repository: &Path,
+    base: &str,
+    candidate: &str,
+) -> Result<Vec<String>, String> {
+    let output = git::trusted_output_bytes_in(
+        repository,
+        &[
+            "diff",
+            "--name-only",
+            "-z",
+            "--diff-filter=ACDMR",
+            "--no-renames",
+            base,
+            candidate,
+            "--",
+        ],
+    )?;
+    let paths = output
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::str::from_utf8(path)
+                .map(str::to_owned)
+                .map_err(|error| format!("candidate changed path must be UTF-8: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if paths.is_empty() {
+        return Err("accepted candidate has no changed paths".to_owned());
     }
+    Ok(paths)
+}
+
+fn recover_precommit_failure(
+    integration: &Path,
+    integration_ref: &str,
+    integration_head: &str,
+    candidate_diff: &[u8],
+    changed_paths: &[String],
+    error: String,
+) -> String {
+    match restore_exact_squash(
+        integration,
+        integration_ref,
+        integration_head,
+        candidate_diff,
+        changed_paths,
+    ) {
+        Ok(()) => format!(
+            "{error}; the exact staged squash was automatically restored and the integration worktree is clean"
+        ),
+        Err(restore) => format!(
+            "{error}; automatic pre-commit restoration was not safe: {restore}; inspect the integration worktree"
+        ),
+    }
+}
+
+fn restore_exact_squash(
+    integration: &Path,
+    integration_ref: &str,
+    integration_head: &str,
+    candidate_diff: &[u8],
+    changed_paths: &[String],
+) -> Result<(), String> {
+    slice_worktree::expect_ref(integration, integration_ref, integration_head)?;
+    let staged = git::output_bytes_in(
+        integration,
+        &[
+            "diff",
+            "--cached",
+            "--binary",
+            "--full-index",
+            "--no-ext-diff",
+            "--no-renames",
+            "--",
+        ],
+        false,
+    )?;
+    if staged != candidate_diff {
+        return Err("staged bytes no longer equal the exact candidate diff".to_owned());
+    }
+    let status = git::command_in(integration, false)
+        .args(["restore", "--source=HEAD", "--staged", "--worktree", "--"])
+        .args(changed_paths)
+        .stdin(Stdio::null())
+        .status()
+        .map_err(|error| format!("cannot start exact staged-squash restoration: {error}"))?;
+    if !status.success() {
+        return Err(format!("exact staged-squash restoration failed ({status})"));
+    }
+    slice_worktree::ensure_clean(
+        integration,
+        "integration worktree",
+        "Slice acceptance rollback",
+    )
 }
 
 fn canonical_diff(repository: &Path, base: &str, candidate: &str) -> Result<Vec<u8>, String> {

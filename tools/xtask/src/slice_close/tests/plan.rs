@@ -11,7 +11,7 @@ fn describes_only_the_verified_slice_cleanup() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
 
-    assert_eq!(plan.schema, "yo.slice-close-plan/v4");
+    assert_eq!(plan.schema, "yo.slice-close-plan/v1alpha1");
     assert_eq!(plan.slice, "sample");
     assert_eq!(plan.integration_ref, "refs/heads/develop");
     assert_eq!(plan.integration_head, plan.accepted_commit);
@@ -19,10 +19,12 @@ fn describes_only_the_verified_slice_cleanup() {
     assert!(plan.effects.remove_worktree);
     assert!(plan.effects.remove_binding);
     assert!(plan.effects.remove_coordination_contract);
+    assert!(plan.effects.remove_coordination_directory);
     assert!(plan.effects.delete_slice_branch);
+    assert!(plan.retained_coordination_paths.is_empty());
     assert_eq!(
-        plan.retained_coordination_paths,
-        vec![fixture.metrics_path.clone()]
+        plan.coordination_cleanup_paths,
+        vec![fixture.metrics_path.clone(), fixture.contract_path.clone()]
     );
     assert_eq!(
         plan.close_metrics.as_ref().unwrap().path,
@@ -31,10 +33,10 @@ fn describes_only_the_verified_slice_cleanup() {
     assert_eq!(plan.plan_id, identity(&plan).unwrap());
 }
 
-// 표준 contract와 함께 handoff나 하위 디렉터리가 있으면 plan은 삭제 대상에서
-// 제외한 coordination 경로를 정렬해 보여 주어 사람이 후속 소유자를 판단하게 한다.
+// 표준 coordination 아래의 handoff와 생성 디렉터리도 완료 Slice의 임시 자료이므로
+// plan은 정렬된 전체 삭제 대상을 보여 주고 기본 cleanup 효과에 함께 묶습니다.
 #[test]
-fn reports_retained_coordination_paths_without_claiming_cleanup() {
+fn reports_every_coordination_cleanup_path() {
     let fixture = CloseFixture::new();
     let coordination = fixture.contract_path.parent().unwrap();
     let notes = coordination.join("notes");
@@ -45,24 +47,30 @@ fn reports_retained_coordination_paths_without_claiming_cleanup() {
     let plan = fixture.plan();
 
     assert_eq!(
-        plan.retained_coordination_paths,
-        vec![fixture.metrics_path.clone(), handoff, notes],
+        plan.coordination_cleanup_paths,
+        vec![
+            fixture.metrics_path.clone(),
+            handoff,
+            notes,
+            fixture.contract_path.clone(),
+        ],
     );
+    assert!(plan.retained_coordination_paths.is_empty());
 }
 
-// retained coordination 항목이 너무 많아 plan의 보고가 불완전해질 수 있으면
+// coordination cleanup 항목이 너무 많아 plan의 보고가 불완전해질 수 있으면
 // 일부만 조용히 생략하지 않고 cleanup 계획 생성을 거절한다.
 #[test]
-fn rejects_more_retained_coordination_paths_than_the_plan_can_report() {
+fn rejects_more_cleanup_paths_than_the_plan_can_report() {
     let fixture = CloseFixture::new();
     let coordination = fixture.contract_path.parent().unwrap();
-    for index in 0..65 {
+    for index in 0..255 {
         std::fs::write(coordination.join(format!("note-{index:02}")), "retain me\n").unwrap();
     }
 
     let error = build_plan(&fixture.repository.path, "sample").unwrap_err();
 
-    assert!(error.contains("64-entry reporting limit"));
+    assert!(error.contains("256-path reporting limit"));
 }
 
 // plan 출력 경로를 주면 agent가 stdout JSON을 다시 쓰지 않아도 exact bytes가
@@ -128,8 +136,12 @@ fn linked_integration_worktree_reports_shared_coordination_paths() {
     let plan = build_plan(&linked, "sample").unwrap();
 
     assert_eq!(
-        plan.retained_coordination_paths,
-        vec![fixture.metrics_path.clone(), handoff]
+        plan.coordination_cleanup_paths,
+        vec![
+            fixture.metrics_path.clone(),
+            handoff,
+            fixture.contract_path.clone(),
+        ]
     );
     git(
         &fixture.repository.path,

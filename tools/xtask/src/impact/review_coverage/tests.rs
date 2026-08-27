@@ -1,6 +1,6 @@
 use super::{
-    check_commit_with_cutover, check_prepare_commit_message_with_cutover, check_with_cutover,
-    current_review_diff, validate,
+    check_candidate_diff_with_cutover, check_commit_with_cutover,
+    check_prepare_commit_message_with_cutover, check_with_cutover, current_review_diff, validate,
 };
 use crate::{impact::ImpactInput, review_protocol::digest, test_support::TestRepository};
 
@@ -209,6 +209,38 @@ fn staged_and_committed_boundaries_share_the_exact_review_surface() {
         .to_owned();
 
     check_commit_with_cutover(&repository.path, &accepted, "develop", &cutover).unwrap();
+}
+
+// accept 사전검증은 integration index를 만들기 전에도 전달받은 exact candidate diff의
+// hash를 Review-Coverage trailer와 비교하여 오래된 검토 메시지를 먼저 거부합니다.
+#[test]
+fn candidate_diff_is_checked_before_the_index_is_mutated() {
+    let repository = TestRepository::new("candidate-review-coverage");
+    repository.write("base.txt", "base\n");
+    repository.git(["add", "base.txt"]);
+    repository.git(["commit", "--quiet", "-m", "test: coverage cutover"]);
+    let cutover = crate::git::output_in(&repository.path, &["rev-parse", "HEAD"], false)
+        .unwrap()
+        .trim()
+        .to_owned();
+    let candidate_diff = b"exact candidate diff\n";
+    let message = coverage_message(&digest(candidate_diff));
+    let message_path = repository.write("message", &message);
+    let input = ImpactInput::load_from(
+        &repository.path,
+        message_path,
+        None,
+        Some("develop".to_owned()),
+        true,
+    )
+    .unwrap();
+
+    check_candidate_diff_with_cutover(&input, candidate_diff, &cutover).unwrap();
+    assert!(
+        check_candidate_diff_with_cutover(&input, b"different\n", &cutover)
+            .unwrap_err()
+            .contains("does not match the accepted review surface")
+    );
 }
 
 // cutover 이후 accepted 브랜치에서는 amend/copy 동작을 거부하지만, 같은 저장소의

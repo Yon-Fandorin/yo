@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::{bounded_file, git, slice_contract, slice_worktree};
 
-const RESULT_SCHEMA: &str = "yo.slice-status/v1alpha1";
+const RESULT_SCHEMA: &str = "yo.slice-status/v1alpha2";
 const JSON_LIMIT: usize = 8 * 1024 * 1024;
 const MAX_JSON_FILES: usize = 256;
 const MAX_SCAN_DEPTH: usize = 6;
@@ -30,6 +30,7 @@ struct Artifacts {
     delivery_receipts: usize,
     review_rounds: usize,
     durable_requests: u64,
+    prior_findings: usize,
 }
 
 struct ReviewLineage {
@@ -37,6 +38,7 @@ struct ReviewLineage {
     latest_candidate: Option<String>,
     status: &'static str,
     current_review_ids: BTreeSet<String>,
+    latest_review_ids: BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -78,19 +80,10 @@ pub(crate) fn run(repository: &Path, slice: &str) -> Result<(), String> {
         &coordination,
         &state.head,
         &reviews.current_review_ids,
+        &reviews.latest_review_ids,
         &mut budget,
     )?;
-    let next_action = if !state.clean {
-        "clean_candidate"
-    } else if reviews.status == "broken" {
-        "restore_review_lineage"
-    } else if reviews.current_review_ids.is_empty() || artifacts.review_rounds == 0 {
-        "review"
-    } else if artifacts.gate_requests == 0 {
-        "prepare_gate"
-    } else {
-        "run_gate"
-    };
+    let next_action = next_action(&state, &reviews, &artifacts);
     let result = ResultDocument {
         schema: RESULT_SCHEMA,
         ok: true,
@@ -116,6 +109,31 @@ pub(crate) fn run(repository: &Path, slice: &str) -> Result<(), String> {
             .map_err(|error| format!("cannot encode compact Slice status: {error}"))?
     );
     Ok(())
+}
+
+fn next_action(state: &SliceState, reviews: &ReviewLineage, artifacts: &Artifacts) -> &'static str {
+    if !state.clean {
+        "clean_candidate"
+    } else if reviews.status == "broken" {
+        "restore_review_lineage"
+    } else if reviews.current_review_ids.is_empty() {
+        if reviews
+            .latest_candidate
+            .as_deref()
+            .is_some_and(|candidate| candidate != state.head)
+            && artifacts.prior_findings > 0
+        {
+            "review_delta"
+        } else {
+            "build_review"
+        }
+    } else if artifacts.review_rounds == 0 {
+        "deliver_current_review"
+    } else if artifacts.gate_requests == 0 {
+        "prepare_gate"
+    } else {
+        "run_gate"
+    }
 }
 
 pub(crate) fn locate(repository: &Path, slice: &str) -> Result<SliceState, String> {
@@ -184,6 +202,7 @@ fn scan_coordination(
     root: &Path,
     candidate: &str,
     current_review_ids: &BTreeSet<String>,
+    latest_review_ids: &BTreeSet<String>,
     budget: &mut ScanBudget,
 ) -> Result<Artifacts, String> {
     if !root.exists() {
@@ -214,6 +233,13 @@ fn scan_coordination(
             {
                 found.gate_requests += 1;
             }
+        } else if schema == "yo.slice-review-findings/v1"
+            && value
+                .get("review_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|review_id| latest_review_ids.contains(review_id))
+        {
+            found.prior_findings += 1;
         } else if schema.contains("delivery-claim/")
             && value
                 .get("candidate_commit")
@@ -275,6 +301,7 @@ fn scan_review_lineage(
     files.sort();
     files.dedup();
     let mut candidates = BTreeSet::new();
+    let mut review_ids = BTreeMap::<String, BTreeSet<String>>::new();
     let mut current_review_ids = BTreeSet::new();
     let mut broken = false;
     for path in files {
@@ -302,13 +329,18 @@ fn scan_review_lineage(
             continue;
         }
         candidates.insert(candidate.to_owned());
-        if candidate == state.head
-            && let Some(review_id) = value
-                .get("review_id")
-                .or_else(|| value.get("review_delta_id"))
-                .and_then(serde_json::Value::as_str)
+        if let Some(review_id) = value
+            .get("review_id")
+            .or_else(|| value.get("review_delta_id"))
+            .and_then(serde_json::Value::as_str)
         {
-            current_review_ids.insert(review_id.to_owned());
+            review_ids
+                .entry(candidate.to_owned())
+                .or_default()
+                .insert(review_id.to_owned());
+            if candidate == state.head {
+                current_review_ids.insert(review_id.to_owned());
+            }
         }
         if !git::trusted_succeeds_in(
             &state.worktree,
@@ -343,11 +375,17 @@ fn scan_review_lineage(
             latest = Some(candidate.clone());
         }
     }
+    let latest_review_ids = latest
+        .as_ref()
+        .and_then(|candidate| review_ids.get(candidate))
+        .cloned()
+        .unwrap_or_default();
     Ok(ReviewLineage {
         packets: candidates.len(),
         latest_candidate: latest,
         status: if broken { "broken" } else { "preserved" },
         current_review_ids,
+        latest_review_ids,
     })
 }
 
@@ -406,6 +444,86 @@ fn is_commit(value: &str) -> bool {
 mod tests {
     use super::*;
     use crate::test_support::TestRepository;
+
+    fn state(head: &str) -> SliceState {
+        SliceState {
+            worktree: PathBuf::from("/tmp/example"),
+            branch: "refs/heads/slice/direct/example".to_owned(),
+            head: head.to_owned(),
+            bound: slice_contract::BoundSlice {
+                slice: "example".to_owned(),
+                base: "base".to_owned(),
+                base_ref: "refs/heads/develop".to_owned(),
+                binding_path: PathBuf::from("binding"),
+                contract_path: PathBuf::from("contract"),
+                contract_id: "sha256:contract".to_owned(),
+            },
+            clean: true,
+        }
+    }
+
+    // 현재 후보 packet이 이미 있으면 같은 packet을 다시 만들라고 하지 않고 delivery로,
+    // 이전 후보만 있으면 전체 packet 대신 review delta로 다음 행동을 구분합니다.
+    #[test]
+    fn next_action_reuses_current_review_or_selects_delta() {
+        let current = ReviewLineage {
+            packets: 1,
+            latest_candidate: Some("current".to_owned()),
+            status: "preserved",
+            current_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
+            latest_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
+        };
+        assert_eq!(
+            next_action(&state("current"), &current, &Artifacts::default()),
+            "deliver_current_review"
+        );
+
+        let prior = ReviewLineage {
+            packets: 1,
+            latest_candidate: Some("prior".to_owned()),
+            status: "preserved",
+            current_review_ids: BTreeSet::new(),
+            latest_review_ids: BTreeSet::from(["sha256:prior".to_owned()]),
+        };
+        assert_eq!(
+            next_action(
+                &state("current"),
+                &prior,
+                &Artifacts {
+                    prior_findings: 1,
+                    ..Artifacts::default()
+                },
+            ),
+            "review_delta"
+        );
+        assert_eq!(
+            next_action(&state("current"), &prior, &Artifacts::default()),
+            "build_review"
+        );
+    }
+
+    // receipt와 current-candidate gate가 있으면 review/gate 생성을 반복하지 않고 기존
+    // exact gate 실행으로 바로 이어져 content-addressed reuse 경계를 보존합니다.
+    #[test]
+    fn next_action_reuses_existing_gate_inputs() {
+        let reviews = ReviewLineage {
+            packets: 1,
+            latest_candidate: Some("current".to_owned()),
+            status: "preserved",
+            current_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
+            latest_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
+        };
+        let artifacts = Artifacts {
+            review_rounds: 1,
+            gate_requests: 1,
+            ..Artifacts::default()
+        };
+
+        assert_eq!(
+            next_action(&state("current"), &reviews, &artifacts),
+            "run_gate"
+        );
+    }
 
     // Slice 이름과 branch matcher는 임의 경로나 다른 Wave의 접두사를 느슨하게
     // 받아들이지 않고 direct 또는 정확한 한 Wave branch만 선택합니다.
@@ -517,6 +635,14 @@ mod tests {
                 }),
             ),
             (
+                "prior-findings.json",
+                serde_json::json!({
+                    "schema": "yo.slice-review-findings/v1",
+                    "review_id": "sha256:current-review",
+                    "candidate_commit": "reviewed"
+                }),
+            ),
+            (
                 "stale-receipt.json",
                 serde_json::json!({
                     "schema": "yo.external-review-delivery-receipt/v1",
@@ -531,6 +657,7 @@ mod tests {
             &root,
             "current",
             &BTreeSet::from(["sha256:current-review".to_owned()]),
+            &BTreeSet::from(["sha256:current-review".to_owned()]),
             &mut ScanBudget::default(),
         )
         .unwrap();
@@ -538,6 +665,7 @@ mod tests {
         assert_eq!(artifacts.gate_requests, 0);
         assert_eq!(artifacts.delivery_receipts, 1);
         assert_eq!(artifacts.review_rounds, 1);
+        assert_eq!(artifacts.prior_findings, 1);
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -17,6 +17,27 @@ pub(crate) fn check(input: &ImpactInput) -> Result<(), String> {
     check_with_cutover(input, CUTOVER_PARENT)
 }
 
+pub(crate) fn check_candidate_diff(input: &ImpactInput, diff: &[u8]) -> Result<(), String> {
+    check_candidate_diff_with_cutover(input, diff, CUTOVER_PARENT)
+}
+
+fn check_candidate_diff_with_cutover(
+    input: &ImpactInput,
+    diff: &[u8],
+    cutover: &str,
+) -> Result<(), String> {
+    if deferred_branch(&input.branch)
+        || !git::succeeds_in(
+            &input.repository,
+            &["merge-base", "--is-ancestor", cutover, "HEAD"],
+            input.inherit_git_environment,
+        )?
+    {
+        return Ok(());
+    }
+    validate(&input.message, &digest(diff))
+}
+
 pub(crate) fn check_commit(repository: &Path, commit: &str, branch: &str) -> Result<(), String> {
     check_commit_with_cutover(repository, commit, branch, CUTOVER_PARENT)
 }

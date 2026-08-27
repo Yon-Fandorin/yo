@@ -394,6 +394,14 @@ The option changes storage only: it neither changes
 `yo.validation-run-summary/v1alpha2` bytes nor discovers or reuses a prior
 result.
 
+Do not rerun an unchanged passing command merely to give a descendant candidate
+a new filename. When the review-delta transition classifies that exact summary
+as unaffected, keep its original path and hash, list it under
+`reused_validation_evidence`, and set the matching gate preparation command to
+`"reused":true`. Run a new bounded command only for affected validation or the
+declared final Slice-close baseline. The immutable delta chain and gate, not a
+copied summary, prove that reuse applies to the descendant.
+
 Use this bounded runner for every coordinator-owned validation command,
 including the final combined-workspace gate. Read and retain the one-line
 summary by default; open the bounded log only when the summary reports failure
@@ -521,10 +529,18 @@ false statements.
 
 Use `cargo xtask slice status <slice>` for the coordinator's ordinary progress
 check instead of reopening raw Session JSONL, terminal panes, or all evidence.
-It emits one `yo.slice-status/v1alpha1` JSON line containing clean `HEAD`,
+It emits one `yo.slice-status/v1alpha2` JSON line containing clean `HEAD`,
 review ancestry and round count, validation/gate artifact counts, delivery
 claim/receipt counts, durable external request count, and one next action. Its
 bounded scan reads at most 256 JSON files and never prints their content.
+`build_review` means no applicable prior finding chain can be reused.
+`review_delta` means the latest reviewed candidate is an ancestor of current
+`HEAD` and its exact reviewer-authored finding set is present, so continue from
+that manifest instead of rebuilding a full packet. `deliver_current_review`
+means the current candidate already has a content-addressed packet and only its
+authorized delivery remains. `prepare_gate` and `run_gate` likewise reuse the
+existing current-candidate review and exact gate bytes rather than publishing
+duplicates.
 
 An empty or failed validation set yields `validate`; missing required lenses
 yields `review`; otherwise missing authorization yields `approve`. A
@@ -591,10 +607,15 @@ orchestrated transition. The `yo.slice-accept-request/v1alpha1` request binds
 the gate, message source, and close-preparation bytes by hash and names the
 message output, close plan, remote, ref, and identical approval scope. It
 revalidates both worktrees and all inputs immediately before the first
-mutation, requires the staged and accepted diffs to equal the reviewed
-candidate bytes, and stops at the named phase on failure. It never force
-pushes, invents approval, reruns validation, sends review, or repairs a failed
-integration automatically.
+mutation and requires the staged and accepted diffs to equal the reviewed
+candidate bytes. Before squash it evaluates commit impact against the
+candidate paths and exact diff, so message or review-coverage errors leave the
+integration worktree untouched. If the later pre-commit check or commit process
+fails while the integration ref and exact staged bytes are still unchanged, it
+restores those candidate paths to the original clean integration state. A
+changed ref, non-exact index, conflict, accepted commit, or push failure remains
+preserved for inspection. It never force pushes, invents approval, reruns
+validation, or sends review.
 
 ```json
 {
@@ -904,6 +925,9 @@ captures a no-renames binary diff, and returns only the immutable packet and
 manifest paths, hashes, ReviewId, and token count. An over-budget packet fails
 without truncation. Deliver the exact `packet.md` bytes as the provider's sole
 caller-controlled prompt; do not add parallel instructions or authority.
+Publication is content-addressed: the same frozen request and inputs return the
+existing packet and manifest with `status:"reused"`. Reuse that result directly;
+do not copy it to a new coordination path or count it as another review round.
 
 The current experimental profile renders the ContextBuild and repository authorities
 under stable logical wrapper paths before the candidate-specific plan,
@@ -1469,6 +1493,12 @@ content-addressed `packet.md` plus manifest. Deliver those packet bytes
 unchanged to the recorded reviewer session. This command does not start or
 select a provider.
 
+Ordinary coordination follows `cargo xtask slice status <slice>`: when it
+returns `review_delta`, use the latest applicable manifest as the prior chain
+head and do not publish another full base-to-candidate packet. Repeating
+the same delta request returns the already published content-addressed artifact
+as `reused`; repeating it is not another review or Provider request.
+
 Before replaying a published original review, its verifier validates every
 manifest Git revision without invoking Git. It then requires the base and
 candidate fields to name those exact commit objects and requires the base to
@@ -1827,20 +1857,24 @@ edit it. Store it outside the worktree and Slice coordination directory it
 closes. `plan` requires clean
 integration and Slice worktrees, the bound contract, accepted review evidence,
 and exact Slice/accepted-commit patch identity. It fixes refs, paths, binding,
-effects, and the coordination entries that will remain. Generate a fresh plan
-if integration advances. Newly generated plans use
-`yo.slice-close-plan/v4`. A v2 or v3 plan remains resumable under its original
+effects, and the coordination entries covered by cleanup. Generate a fresh plan
+if integration advances. Newly generated plans use the experimental
+`yo.slice-close-plan/v1alpha1`. A v2 or v3 plan remains resumable under its original
 identity and safety checks only when its accepted commit predates the tracked
-close-metrics cutover marker; commits containing that marker require v4 even if
-a caller rewrites and rehashes a legacy-shaped plan.
+close-metrics cutover marker; v4 keeps its metrics-bound retained-entry
+semantics. Commits containing that marker require v4 or newer even if a caller
+rewrites and rehashes a legacy-shaped plan.
 
-`apply` revalidates that state and the retained-entry list, then removes only
-the registered worktree and binding, the exact standard
-`.local-exclude/coordination/<slice>/slice-contract.json` when applicable, and
-the expected local Slice branch. It preserves remote refs, nonstandard
-contracts, handoffs, requests, notes, and other reported coordination entries;
-reconcile those through their own owner. The entire worktree, including ignored
-output, is removed, so move retained material first. A repository lock, final
+`apply` revalidates that state and the v1alpha1 cleanup-entry list, then removes the
+registered worktree and binding, the complete standard
+`.local-exclude/coordination/<slice>` directory, and the expected local Slice
+branch. Slice coordination is temporary: promote stable decisions first and
+move genuinely unresolved work to the local backlog before planning close.
+The plan binds at most 256 recursively enumerated cleanup paths and apply
+rejects any added or removed entry before deletion.
+Nonstandard contract paths remain preserved under their own owner. The entire
+worktree, including ignored output, is removed, so move retained material
+first. A repository lock, final
 worktree check, and compare-and-swap ref transaction protect cooperating
 applies; raw Git does not use the lock. A stale plan fails closed, while an
 interrupted apply can resume the planned contract or branch deletion.

@@ -36,7 +36,7 @@ fn final_ref_guard_preserves_the_slice_branch_on_late_integration_drift() {
     .unwrap_err();
 
     assert!(error.contains("guarded git update-ref failed"));
-    assert!(error.contains("worktree, binding, and standard coordination contract were removed"));
+    assert!(error.contains("worktree, binding, and standard coordination directory were removed"));
     assert!(error.contains("Slice ref refs/heads/slice/direct/sample"));
     assert!(error.contains("separately verified branch cleanup"));
     assert!(!fixture.slice_worktree.exists());
@@ -69,6 +69,10 @@ fn rejects_a_rehashed_but_incorrect_contract_effect() {
     let fixture = CloseFixture::new();
     let mut plan = fixture.plan();
     plan.effects.remove_coordination_contract = false;
+    plan.effects.remove_coordination_directory = false;
+    plan.coordination_cleanup_paths.clear();
+    plan.retained_coordination_paths =
+        vec![fixture.metrics_path.clone(), fixture.contract_path.clone()];
     plan.plan_id = identity(&plan).unwrap();
     fixture.write_plan(&plan);
 
@@ -100,9 +104,9 @@ fn rejects_contract_content_drift() {
 }
 
 // plan을 검토한 뒤 coordination 항목이 추가되거나 사라지면 apply는 사용자가 본
-// 보존 목록과 현재 상태가 다르므로 어떤 cleanup도 시작하기 전에 거절한다.
+// cleanup 목록과 현재 상태가 다르므로 어떤 삭제도 시작하기 전에 거절합니다.
 #[test]
-fn rejects_retained_coordination_drift_before_cleanup() {
+fn rejects_coordination_drift_before_cleanup() {
     let fixture = CloseFixture::new();
     let plan = fixture.plan();
     fixture.write_plan(&plan);
@@ -111,10 +115,29 @@ fn rejects_retained_coordination_drift_before_cleanup() {
 
     let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
 
-    assert!(error.contains("retained Slice coordination paths changed"));
+    assert!(error.contains("Slice coordination cleanup paths changed"));
     assert!(fixture.slice_worktree.exists());
     assert!(fixture.contract_path.exists());
     assert!(handoff.exists());
+}
+
+// 기존 coordination 하위 디렉터리 안에 계획 이후 파일이 추가돼도 재귀 경로 목록이
+// 변화를 감지하여 새 파일과 Slice worktree를 모두 보존합니다.
+#[test]
+fn rejects_nested_coordination_drift_before_cleanup() {
+    let fixture = CloseFixture::new();
+    let notes = fixture.contract_path.with_file_name("notes");
+    std::fs::create_dir(&notes).unwrap();
+    let plan = fixture.plan();
+    fixture.write_plan(&plan);
+    let late = notes.join("late.txt");
+    std::fs::write(&late, "late\n").unwrap();
+
+    let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
+
+    assert!(error.contains("Slice coordination cleanup paths changed"));
+    assert!(fixture.slice_worktree.exists());
+    assert!(late.exists());
 }
 
 // 계획된 경로의 worktree가 detached되거나 다른 branch로 전환된 것은 제거 완료가
@@ -204,6 +227,7 @@ fn rejects_a_plan_stored_inside_the_slice_coordination_directory() {
 #[test]
 fn completes_the_verified_cleanup() {
     let fixture = CloseFixture::new();
+    let coordination = fixture.contract_path.parent().unwrap().to_path_buf();
     let plan = fixture.plan();
     fixture.write_plan(&plan);
 
@@ -211,16 +235,17 @@ fn completes_the_verified_cleanup() {
 
     assert!(!fixture.slice_worktree.exists());
     assert!(!fixture.contract_path.exists());
+    assert!(!coordination.exists());
     assert!(!git_succeeds(
         &fixture.repository.path,
         &["show-ref", "--verify", "refs/heads/slice/direct/sample"]
     ));
 }
 
-// 정상 cleanup은 plan에 보고된 비표준 coordination 파일과 디렉터리를 그대로
-// 보존하고 표준 contract, worktree, Slice branch만 제거한다.
+// 정상 cleanup은 plan에 보고된 완료 Slice의 coordination 파일과 하위 디렉터리를
+// 표준 contract와 함께 제거하여 별도의 수동 캐시 정리를 남기지 않습니다.
 #[test]
-fn preserves_reported_coordination_paths() {
+fn removes_reported_coordination_paths() {
     let fixture = CloseFixture::new();
     let coordination = fixture.contract_path.parent().unwrap();
     let handoff = coordination.join("handoff.md");
@@ -232,9 +257,33 @@ fn preserves_reported_coordination_paths() {
 
     apply(&fixture.repository.path, &fixture.plan_path).unwrap();
 
-    assert!(handoff.exists());
-    assert!(notes.exists());
+    assert!(!handoff.exists());
+    assert!(!notes.exists());
     assert!(!fixture.contract_path.exists());
+    assert!(!coordination.exists());
+}
+
+#[cfg(unix)]
+// coordination 내부 symlink는 링크 항목만 삭제하고 가리키는 외부 디렉터리는 따라가지
+// 않아 완료 캐시 정리가 Slice 경계 밖의 로컬 자료를 제거하지 않습니다.
+#[test]
+fn coordination_cleanup_does_not_follow_symlinks() {
+    let fixture = CloseFixture::new();
+    let outside = crate::test_support::unique_path("slice-close-outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    std::fs::write(outside.join("preserved.txt"), "preserve me\n").unwrap();
+    std::os::unix::fs::symlink(
+        &outside,
+        fixture.contract_path.with_file_name("outside-link"),
+    )
+    .unwrap();
+    let plan = fixture.plan();
+    fixture.write_plan(&plan);
+
+    apply(&fixture.repository.path, &fixture.plan_path).unwrap();
+
+    assert!(outside.join("preserved.txt").exists());
+    std::fs::remove_dir_all(outside).unwrap();
 }
 
 // v3 도입 전에 발행된 v2 plan은 새 retained 필드가 없어도 기존 identity로
@@ -246,6 +295,8 @@ fn applies_a_legacy_v2_plan() {
     plan.schema = "yo.slice-close-plan/v2".to_owned();
     plan.close_metrics = None;
     plan.retained_coordination_paths.clear();
+    plan.coordination_cleanup_paths.clear();
+    plan.effects.remove_coordination_directory = false;
     plan.plan_id = identity(&plan).unwrap();
     let mut encoded = serde_json::to_value(&plan).unwrap();
     encoded
@@ -273,6 +324,8 @@ fn rejects_retained_paths_added_to_a_legacy_plan() {
     plan.schema = "yo.slice-close-plan/v2".to_owned();
     plan.close_metrics = None;
     plan.retained_coordination_paths = vec![fixture.contract_path.with_file_name("handoff.md")];
+    plan.coordination_cleanup_paths.clear();
+    plan.effects.remove_coordination_directory = false;
     plan.plan_id = identity(&plan).unwrap();
     fixture.write_plan(&plan);
 
@@ -282,7 +335,7 @@ fn rejects_retained_paths_added_to_a_legacy_plan() {
     assert!(fixture.slice_worktree.exists());
 }
 
-// v4에서 metrics를 빼거나 v3에 새 metrics 필드를 붙이면 어느 identity 규칙으로
+// v1alpha1에서 metrics를 빼거나 v3에 새 metrics 필드를 붙이면 어느 identity 규칙으로
 // 검증할지 모호하므로 apply가 cleanup 전에 두 schema/field 조합을 모두 거부한다.
 #[test]
 fn rejects_close_metrics_that_do_not_match_the_plan_schema() {
@@ -291,15 +344,17 @@ fn rejects_close_metrics_that_do_not_match_the_plan_schema() {
     missing.close_metrics = None;
     current.write_plan(&missing);
     let missing_error = apply(&current.repository.path, &current.plan_path).unwrap_err();
-    assert!(missing_error.contains("v4 requires bound close metrics"));
+    assert!(missing_error.contains("v1alpha1 or v4 requires bound close metrics"));
     assert!(current.slice_worktree.exists());
 
     let legacy = CloseFixture::new();
     let mut unexpected = legacy.plan();
     unexpected.schema = "yo.slice-close-plan/v3".to_owned();
+    unexpected.coordination_cleanup_paths.clear();
+    unexpected.effects.remove_coordination_directory = false;
     legacy.write_plan(&unexpected);
     let unexpected_error = apply(&legacy.repository.path, &legacy.plan_path).unwrap_err();
-    assert!(unexpected_error.contains("legacy Slice close plans cannot contain close metrics"));
+    assert!(unexpected_error.contains("plans before v4 cannot contain close metrics"));
     assert!(legacy.slice_worktree.exists());
 }
 
@@ -352,7 +407,12 @@ fn preserves_a_nonstandard_contract_path() {
 #[test]
 fn resumes_after_worktree_and_contract_were_already_removed() {
     let fixture = CloseFixture::new();
-    let plan = fixture.plan();
+    let mut plan = fixture.plan();
+    plan.schema = "yo.slice-close-plan/v4".to_owned();
+    plan.retained_coordination_paths = vec![fixture.metrics_path.clone()];
+    plan.coordination_cleanup_paths.clear();
+    plan.effects.remove_coordination_directory = false;
+    plan.plan_id = identity(&plan).unwrap();
     fixture.write_plan(&plan);
     git(
         &fixture.repository.path,
@@ -378,7 +438,12 @@ fn resumes_after_worktree_and_contract_were_already_removed() {
 #[test]
 fn changed_contract_after_worktree_removal_is_preserved() {
     let fixture = CloseFixture::new();
-    let plan = fixture.plan();
+    let mut plan = fixture.plan();
+    plan.schema = "yo.slice-close-plan/v4".to_owned();
+    plan.retained_coordination_paths = vec![fixture.metrics_path.clone()];
+    plan.coordination_cleanup_paths.clear();
+    plan.effects.remove_coordination_directory = false;
+    plan.plan_id = identity(&plan).unwrap();
     fixture.write_plan(&plan);
     git(
         &fixture.repository.path,

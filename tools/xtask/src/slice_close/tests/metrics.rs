@@ -130,6 +130,9 @@ fn apply_preserves_legacy_v3_plan_compatibility() {
     let mut plan = fixture.plan();
     plan.schema = "yo.slice-close-plan/v3".to_owned();
     plan.close_metrics = None;
+    plan.retained_coordination_paths = vec![fixture.metrics_path.clone()];
+    plan.coordination_cleanup_paths.clear();
+    plan.effects.remove_coordination_directory = false;
     plan.plan_id = identity(&plan).unwrap();
     fixture.write_plan(&plan);
 
@@ -140,7 +143,7 @@ fn apply_preserves_legacy_v3_plan_compatibility() {
     assert!(fixture.metrics_path.exists());
 }
 
-// metrics cutover marker가 accepted commit tree에 있으면 current v4 plan을 v2나
+// metrics cutover marker가 accepted commit tree에 있으면 current v1alpha1 plan을 v2나
 // v3로 낮추고 identity를 다시 계산해도 legacy provenance가 아니므로 거부한다.
 #[test]
 fn apply_rejects_rehashed_legacy_downgrade_after_metrics_cutover() {
@@ -149,15 +152,19 @@ fn apply_rejects_rehashed_legacy_downgrade_after_metrics_cutover() {
         let mut plan = fixture.plan();
         plan.schema = schema.to_owned();
         plan.close_metrics = None;
+        plan.coordination_cleanup_paths.clear();
+        plan.effects.remove_coordination_directory = false;
         if schema.ends_with("/v2") {
             plan.retained_coordination_paths.clear();
+        } else {
+            plan.retained_coordination_paths = vec![fixture.metrics_path.clone()];
         }
         plan.plan_id = identity(&plan).unwrap();
         fixture.write_plan(&plan);
 
         let error = apply(&fixture.repository.path, &fixture.plan_path).unwrap_err();
 
-        assert!(error.contains("at or after the close-metrics cutover require a v4"));
+        assert!(error.contains("at or after the close-metrics cutover require v4 or newer"));
         assert!(fixture.slice_worktree.exists());
         assert!(fixture.contract_path.exists());
     }
