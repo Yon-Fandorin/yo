@@ -409,6 +409,30 @@ mod tests {
         assert!(!output.contains("token"));
     }
 
+    // Kimi `/me`의 공개 등급명은 일반 식별자 변환을 거쳐도 원문 의미를 유지해
+    // 실제 계정 출력에서 Unknown 대신 Provider가 보고한 Moderato를 보여줍니다.
+    #[test]
+    fn renders_kimi_account_level_name_as_the_plan() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("kimi").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("kimi".to_owned()),
+                None,
+                Some("Moderato".to_owned()),
+                Some(AccountCapacityWindow::new(0, Some(10_080), None).unwrap()),
+                None,
+                None,
+                None,
+            )],
+        );
+
+        let output = render(&snapshot, PresentationStyle::Plain);
+
+        assert!(output.contains("Kimi account"));
+        assert!(output.contains("Plan     Moderato"));
+    }
+
     // Provider 내부 limit ID가 여러 개여도 일반 화면은 이를 제품명처럼 노출하지 않고,
     // 표준 한도와 용도가 확정되지 않은 추가 한도로만 구분합니다.
     #[test]

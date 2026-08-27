@@ -65,7 +65,13 @@ pub fn read_kimi_account_capacity(
     credential: &ApiCredential,
 ) -> Result<AccountCapacitySnapshot, KimiAccountCapacityError> {
     require_code_membership(seed)?;
-    let request_url = seed.endpoint.append_path_segment("usages").map_err(|_| {
+    let profile_url = seed.endpoint.append_path_segment("me").map_err(|_| {
+        failure(
+            KimiAccountCapacityFailureKind::Configuration,
+            "Kimi Code endpoint cannot accept the account-profile path",
+        )
+    })?;
+    let usage_url = seed.endpoint.append_path_segment("usages").map_err(|_| {
         failure(
             KimiAccountCapacityFailureKind::Configuration,
             "Kimi Code endpoint cannot accept the usages path",
@@ -91,13 +97,23 @@ pub fn read_kimi_account_capacity(
                 "cannot initialize the Kimi account-capacity request runtime",
             )
         })?;
-    let bytes = runtime.block_on(fetch(&client, request_url, credential))?;
-    parse_kimi_account_capacity_snapshot(seed, &bytes)
+    let profile_bytes = runtime.block_on(fetch(&client, profile_url, credential))?;
+    let plan = parse_kimi_account_plan(&profile_bytes)?;
+    let usage_bytes = runtime.block_on(fetch(&client, usage_url, credential))?;
+    parse_kimi_account_capacity_snapshot_with_plan(seed, &usage_bytes, Some(plan))
 }
 
 pub fn parse_kimi_account_capacity_snapshot(
     seed: &KimiCatalogSeed,
     bytes: &[u8],
+) -> Result<AccountCapacitySnapshot, KimiAccountCapacityError> {
+    parse_kimi_account_capacity_snapshot_with_plan(seed, bytes, None)
+}
+
+fn parse_kimi_account_capacity_snapshot_with_plan(
+    seed: &KimiCatalogSeed,
+    bytes: &[u8],
+    plan: Option<String>,
 ) -> Result<AccountCapacitySnapshot, KimiAccountCapacityError> {
     require_code_membership(seed)?;
     if bytes.len() > MAX_RESPONSE_BYTES {
@@ -139,7 +155,7 @@ pub fn parse_kimi_account_capacity_snapshot(
     buckets.push(AccountCapacityBucket::new(
         Some("kimi".to_owned()),
         None,
-        None,
+        plan.clone(),
         primary.map(|row| row.window),
         secondary.map(|row| row.window),
         credits,
@@ -150,7 +166,7 @@ pub fn parse_kimi_account_capacity_snapshot(
         buckets.push(AccountCapacityBucket::new(
             Some(format!("kimi-limit-{}", index + 2)),
             row.name,
-            None,
+            plan.clone(),
             Some(row.window),
             None,
             None,
@@ -163,6 +179,19 @@ pub fn parse_kimi_account_capacity_snapshot(
         seed.account.clone(),
         buckets,
     ))
+}
+
+fn parse_kimi_account_plan(bytes: &[u8]) -> Result<String, KimiAccountCapacityError> {
+    if bytes.len() > MAX_RESPONSE_BYTES {
+        return Err(limit_failure("Kimi account-profile response exceeds 1 MiB"));
+    }
+    let root: Value = serde_json::from_slice(bytes)
+        .map_err(|_| protocol_failure("Kimi account-profile response is not valid JSON"))?;
+    let object = root
+        .as_object()
+        .ok_or_else(|| protocol_failure("Kimi account-profile response must be an object"))?;
+    optional_name(object.get("user_level_name"))?
+        .ok_or_else(|| protocol_failure("Kimi account-profile response has no user_level_name"))
 }
 
 fn require_code_membership(seed: &KimiCatalogSeed) -> Result<(), KimiAccountCapacityError> {
@@ -624,6 +653,50 @@ mod tests {
         assert_eq!(bucket.limit_reason(), None);
     }
 
+    // Kimi Code의 `/me`가 보고한 사용자 등급명은 공개 플랜명과 같은 값을 가지므로
+    // 별도 추정 없이 모든 계정 한도 bucket의 공용 plan 필드로 전달합니다.
+    #[test]
+    fn decodes_account_level_name_as_the_capacity_plan() {
+        let plan = parse_kimi_account_plan(
+            &serde_json::to_vec(&json!({
+                "user_level": 20,
+                "user_level_name": "Moderato"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let snapshot = parse_kimi_account_capacity_snapshot_with_plan(
+            &code_seed(),
+            &usage_payload(),
+            Some(plan),
+        )
+        .unwrap();
+
+        assert_eq!(snapshot.buckets()[0].plan(), Some("Moderato"));
+        assert!(
+            snapshot
+                .buckets()
+                .iter()
+                .all(|bucket| bucket.plan() == Some("Moderato"))
+        );
+    }
+
+    // `/me` 성공 응답에 등급명이 없거나 표시 경계를 벗어난 값이 있으면 플랜을
+    // 만들어내지 않고 protocol failure로 닫아 Unknown과 유효한 등급을 혼동하지 않습니다.
+    #[test]
+    fn rejects_missing_or_unsafe_account_level_names() {
+        for payload in [
+            json!({}),
+            json!({"user_level_name": null}),
+            json!({"user_level_name": ""}),
+            json!({"user_level_name": "unsafe\nname"}),
+        ] {
+            let error =
+                parse_kimi_account_plan(&serde_json::to_vec(&payload).unwrap()).unwrap_err();
+            assert_eq!(error.kind(), KimiAccountCapacityFailureKind::Protocol);
+        }
+    }
+
     // 성공 응답이어도 usable capacity가 없거나 배열·window가 계약 밖이면 조용히
     // Unknown으로 만들지 않고 protocol failure로 닫습니다.
     #[test]
@@ -731,6 +804,59 @@ mod tests {
             !serde_json::to_string(&requests)
                 .unwrap()
                 .contains("sentinel-kimi-usage-key")
+        );
+    }
+
+    // Kimi Code 계정 플랜 조회도 usage와 같은 no-redirect·no-retry Bearer 경계를
+    // 사용하며 exact GET `/v1/me` 응답만 profile parser에 전달합니다.
+    #[test]
+    fn fetches_one_authenticated_account_profile_over_local_tls() {
+        if run_in_tls_child(
+            "model_service::kimi_catalog::usage::tests::fetches_one_authenticated_account_profile_over_local_tls",
+        ) {
+            return;
+        }
+        let body = serde_json::to_vec(&json!({"user_level_name": "Moderato"})).unwrap();
+        let server = LocalTlsServer::start(LocalServerMode::Success {
+            body: body.clone(),
+            content_type: "application/json".to_owned(),
+        });
+        let root = env::var_os("YO_MODEL_CONNECTOR_TEST_ROOT").unwrap();
+        let roots = reqwest::Certificate::from_pem_bundle(&fs::read(root).unwrap()).unwrap();
+        let client = Client::builder()
+            .add_root_certificate(roots[0].clone())
+            .redirect(redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .build()
+            .unwrap();
+        let url = NormalizedEndpoint::parse(server.endpoint())
+            .unwrap()
+            .append_path_segment("me")
+            .unwrap();
+        let received = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(fetch(
+                &client,
+                url,
+                &ApiCredential::new("sentinel-kimi-profile-key").unwrap(),
+            ))
+            .unwrap();
+        assert_eq!(parse_kimi_account_plan(&received).unwrap(), "Moderato");
+        server.wait_for_response_sent();
+        let requests = server.requests();
+        assert_eq!(server.accepted_connections(), 1);
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["method"], "GET");
+        assert_eq!(requests[0]["path"], "/v1/me");
+        assert_eq!(requests[0]["headers"]["accept"], "application/json");
+        assert!(requests[0].get("authorization").is_none());
+        assert!(requests[0]["authorization_sha256"].is_string());
+        assert!(
+            !serde_json::to_string(&requests)
+                .unwrap()
+                .contains("sentinel-kimi-profile-key")
         );
     }
 }

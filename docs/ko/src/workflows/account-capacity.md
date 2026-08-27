@@ -23,8 +23,11 @@ complete binding과 정확한 Provider-and-Account credential로 이미 저장�
 `--refresh`는 의도적으로 live read를 수행한다. 어느 경로도 Agent Session을
 만들거나 모델 prompt를 보내거나 다른 Provider로 fallback하지 않는다. Codex는
 로컬 app-server를 시작해 initialize한 뒤 `account/rateLimits/read`를 한 번 호출하고
-종료한다. Kimi는 인증한 `GET /coding/v1/usages`를 한 번만 수행한다. redirect와
-retry는 비활성화하고 성공 body는 1 MiB로 제한한다.
+종료한다. Kimi는 먼저 계정 등급명을 얻기 위해 인증한 `GET /coding/v1/me`를 한 번
+수행한 뒤, 한도 조회를 위해 인증한 `GET /coding/v1/usages`를 한 번 수행한다.
+redirect와 retry는 비활성화하고 각 성공 body는 1 MiB로 제한한다. Kimi 계정
+등급명은 Provider가 보고한 정확한 값을 plan으로 표시하며, Yo는 한도 크기로 이를
+추론하지 않는다.
 
 Text 출력은 사람용이다. `--format json`은 같은 Provider 중립 snapshot을 agent가
 읽을 수 있는 versioned `yo.account-capacity/v1alpha1` schema로 출력한다. Provider의
@@ -41,7 +44,7 @@ upstream 변경이 근거를 조용히 바꾸지 못하도록 commit에 고정�
 | 기능 | 고정한 upstream 소스 | Yo 적용 지점 |
 |---|---|---|
 | Codex 계정 잔여량 | OpenAI Codex commit `89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5`: [app-server rate-limit request와 field](https://github.com/openai/codex/blob/89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5/codex-rs/app-server/README.md#7-rate-limits-chatgpt), [v2 account protocol type](https://github.com/openai/codex/blob/89650c66f2f3ff0d028d3f5d6d0b187b2ed49be5/codex-rs/app-server-protocol/src/protocol/v2/account.rs) | [`delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs)가 app-server lifecycle을 소유하고 [`protocol.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/protocol.rs)가 반환 bucket을 변환한다. |
-| Kimi Code 계정 잔여량 | MoonshotAI Kimi Code commit `bd5e32f6835d0890fc52e19ed7eebc430b033b77`: canonical endpoint, `/usages` request, weekly summary, rolling window, fixed-point booster balance를 담은 [`managed-usage.ts`](https://github.com/MoonshotAI/kimi-code/blob/bd5e32f6835d0890fc52e19ed7eebc430b033b77/packages/oauth/src/managed-usage.ts) | [`usage.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog/usage.rs)가 Kimi catalog seed 옆에서 제품 확인, exact request, bounded parser, 중립 snapshot 변환을 소유한다. |
+| Kimi Code 계정 잔여량 | MoonshotAI Kimi Code commit `21f7ef64f0851504227617f4501bf8359031d9a5`: canonical `/me` request와 `user_level_name`의 근거인 [`managed-userinfo.ts`](https://github.com/MoonshotAI/kimi-code/blob/21f7ef64f0851504227617f4501bf8359031d9a5/packages/oauth/src/managed-userinfo.ts), `/usages`, weekly summary, rolling window, fixed-point booster balance의 근거인 [`managed-usage.ts`](https://github.com/MoonshotAI/kimi-code/blob/21f7ef64f0851504227617f4501bf8359031d9a5/packages/oauth/src/managed-usage.ts) | [`usage.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/kimi_catalog/usage.rs)가 Kimi catalog seed 옆에서 제품 확인, 두 exact request, bounded parser, 중립 snapshot 변환을 소유한다. |
 
 Adapter를 바꿀 때는 새 upstream commit을 확인해 source link를 다시 고정하고,
 차이를 판별하는 fixture와 정확한 live boundary를 검증한다. 고정하지 않은 `main`
@@ -51,9 +54,9 @@ branch를 인용하거나 UI 출력만 보고 private endpoint를 추론하지 �
 
 - 저장된 Kimi 계정이나 credential이 없으면 local configuration error이며 요청을
   보내지 않는다.
-- 성공이 아닌 status, redirect, 잘못된 media type, malformed JSON, 잘못된 reset
-  time, 0인 limit, 초과 row, 초과 byte는 부분적인 정상 보고서 대신 refresh 전체를
-  실패시킨다.
+- 성공이 아닌 status, redirect, 잘못된 media type, malformed JSON, 누락되거나
+  안전하지 않은 Kimi 등급명, 잘못된 reset time, 0인 limit, 초과 row, 초과 byte는
+  부분적인 정상 보고서 대신 refresh 전체를 실패시킨다.
 - Secret은 정확한 인증 request에만 쓰며 error, snapshot, text, JSON, test
   evidence에 남기지 않는다.
 - Account-capacity 실패는 Session을 시작하거나 Provider를 재시도하거나 저장된
