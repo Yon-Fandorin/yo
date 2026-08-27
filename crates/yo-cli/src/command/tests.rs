@@ -9,6 +9,22 @@ fn account_capacity_requires_an_explicit_refresh() {
         Command::Account(AccountCommand {
             source: "codex".to_owned(),
             refresh: true,
+            format: OutputFormat::Text,
+        })
+    );
+    assert_eq!(
+        parse([
+            "account".into(),
+            "codex".into(),
+            "--refresh".into(),
+            "--format".into(),
+            "json".into(),
+        ])
+        .unwrap(),
+        Command::Account(AccountCommand {
+            source: "codex".to_owned(),
+            refresh: true,
+            format: OutputFormat::Json,
         })
     );
     assert!(parse(["account".into(), "codex".into()]).is_err());

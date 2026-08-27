@@ -101,6 +101,10 @@ struct AccountArguments {
     /// Perform one explicit live refresh instead of reading Session usage.
     #[arg(long, required = true)]
     refresh: bool,
+
+    /// Select human-readable text or stable machine-readable JSON.
+    #[arg(long, value_enum, default_value = "text")]
+    format: OutputFormat,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -253,6 +257,14 @@ pub(crate) enum Command {
 pub(crate) struct AccountCommand {
     pub(crate) source: String,
     pub(crate) refresh: bool,
+    pub(crate) format: OutputFormat,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub(crate) enum OutputFormat {
+    #[default]
+    Text,
+    Json,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -317,6 +329,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
         Some(CliCommand::Account(arguments)) => Ok(Command::Account(AccountCommand {
             source: arguments.source,
             refresh: arguments.refresh,
+            format: arguments.format,
         })),
         Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {
             target: arguments.target.unwrap_or_default(),

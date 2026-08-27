@@ -105,7 +105,7 @@ fn styled_rendering_colors_only_semantic_labels() {
 // 따라서 로그·파이프·접근성 설정에서는 제품 오류가 항상 plain text로 남습니다.
 #[test]
 fn styling_requires_a_terminal_and_respects_no_color() {
-    assert!(styling_enabled(true, false));
-    assert!(!styling_enabled(false, false));
-    assert!(!styling_enabled(true, true));
+    assert!(PresentationStyle::for_output(true, false).is_ansi());
+    assert!(!PresentationStyle::for_output(false, false).is_ansi());
+    assert!(!PresentationStyle::for_output(true, true).is_ansi());
 }

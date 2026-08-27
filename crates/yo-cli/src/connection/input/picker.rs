@@ -3,8 +3,11 @@ use std::fs::File;
 use unicode_segmentation::UnicodeSegmentation;
 use yo_tui::surface::Grapheme;
 
-use super::super::presentation::{PresentationStyle, default_width, escape_remote_text};
-use crate::AppError;
+use super::super::presentation::{default_width, escape_remote_text};
+use crate::{
+    AppError,
+    presentation::{PresentationStyle, TextStyle},
+};
 
 const MAX_VISIBLE_RESULTS: usize = 8;
 const MAX_QUERY_BYTES: usize = 1024;
@@ -352,7 +355,11 @@ fn render_lines(
     style: PresentationStyle,
 ) -> Vec<String> {
     let width = width.saturating_sub(1).max(1);
-    let mut lines = vec![styled("Model catalog", "\x1b[1;36m", style)];
+    let mut lines = vec![styled(
+        &clip_line("Model catalog", width),
+        TextStyle::Accent,
+        style,
+    )];
     lines.extend(wrap_text(
         &format!("Provider  {}", escape_remote_text(&identity.provider)),
         width,
@@ -362,7 +369,11 @@ fn render_lines(
         width,
     ));
     lines.extend([
-        styled("Select one model", "\x1b[1m", style),
+        styled(
+            &clip_line("Select one model", width),
+            TextStyle::Bold,
+            style,
+        ),
         clip_line(
             &format!("Search  {}_", escape_remote_text(&state.query)),
             width,
@@ -370,7 +381,11 @@ fn render_lines(
         String::new(),
     ]);
     if state.matches.is_empty() {
-        lines.push(styled("  No matching models", "\x1b[2m", style));
+        lines.push(styled(
+            &clip_line("  No matching models", width),
+            TextStyle::Muted,
+            style,
+        ));
     } else {
         for match_index in state.viewport_start
             ..(state.viewport_start + MAX_VISIBLE_RESULTS).min(state.matches.len())
@@ -408,7 +423,7 @@ fn render_lines(
                 readable_optional_limit(choice.output_limit),
             );
             lines.push(if state.selected == Some(match_index) {
-                styled(&clip_line(&row, width), "\x1b[30;46m", style)
+                styled(&clip_line(&row, width), TextStyle::Selected, style)
             } else {
                 clip_line(&row, width)
             });
@@ -431,14 +446,14 @@ fn render_lines(
         lines.extend(wrap_text(&availability, width));
     }
     lines.push(styled(
-        "↑↓ navigate · type to filter · Enter select · Esc cancel",
-        "\x1b[2m",
+        &clip_line(
+            "↑↓ navigate · type to filter · Enter select · Esc cancel",
+            width,
+        ),
+        TextStyle::Muted,
         style,
     ));
     lines
-        .into_iter()
-        .map(|line| clip_styled_line(&line, width))
-        .collect()
 }
 
 fn readable_limit(value: u64) -> String {
@@ -453,11 +468,8 @@ fn readable_optional_limit(value: Option<u64>) -> String {
     value.map_or_else(|| "?".to_owned(), readable_limit)
 }
 
-fn styled(value: &str, ansi: &str, style: PresentationStyle) -> String {
-    match style {
-        PresentationStyle::Plain => value.to_owned(),
-        PresentationStyle::Ansi => format!("{ansi}{value}\x1b[0m"),
-    }
+fn styled(value: &str, text_style: TextStyle, style: PresentationStyle) -> String {
+    style.decorate(text_style, value)
 }
 
 fn clip_line(value: &str, width: usize) -> String {
@@ -480,20 +492,6 @@ fn clip_line(value: &str, width: usize) -> String {
     }
     clipped.push_str("...");
     clipped
-}
-
-fn clip_styled_line(value: &str, width: usize) -> String {
-    if !value.contains('\x1b') {
-        return clip_line(value, width);
-    }
-    let Some(prefix_end) = value.find('m') else {
-        return clip_line(value, width);
-    };
-    let prefix = &value[..=prefix_end];
-    let content = value[prefix_end + 1..]
-        .strip_suffix("\x1b[0m")
-        .unwrap_or("");
-    format!("{prefix}{}\x1b[0m", clip_line(content, width))
 }
 
 fn wrap_text(value: &str, width: usize) -> Vec<String> {

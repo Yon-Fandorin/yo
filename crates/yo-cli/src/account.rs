@@ -3,7 +3,13 @@ use std::fmt::Write as _;
 use yo_backend_delegated_codex::{CodexBackendConfig, read_account_capacity};
 use yo_core::{AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow};
 
-use super::{AppError, command::AccountCommand};
+mod json;
+
+use super::{
+    AppError,
+    command::{AccountCommand, OutputFormat},
+    presentation::{PresentationStyle, TextStyle, remaining_bar},
+};
 
 pub(crate) fn run(command: AccountCommand) -> Result<String, AppError> {
     if command.source != "codex" {
@@ -21,81 +27,257 @@ pub(crate) fn run(command: AccountCommand) -> Result<String, AppError> {
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let snapshot = read_account_capacity(CodexBackendConfig::new(cwd))
         .map_err(|error| AppError::single("refreshing Codex account capacity", error))?;
-    Ok(render(&snapshot))
+    match command.format {
+        OutputFormat::Text => Ok(render(&snapshot, PresentationStyle::for_stdout())),
+        OutputFormat::Json => json::render(&snapshot)
+            .map_err(|error| AppError::single("serializing account capacity JSON", error)),
+    }
 }
 
-fn render(snapshot: &AccountCapacitySnapshot) -> String {
-    let mut output = format!("{}:{}\n", snapshot.provider(), snapshot.account());
+fn render(snapshot: &AccountCapacitySnapshot, style: PresentationStyle) -> String {
+    let mut output = String::new();
+    style.push(
+        &mut output,
+        TextStyle::Bold,
+        &format!(
+            "{} account",
+            display_identifier(snapshot.provider().as_str())
+        ),
+    );
+    output.push('\n');
+    push_field(
+        &mut output,
+        "Account",
+        &terminal_safe(snapshot.account().as_str()),
+        style,
+        None,
+    );
+    push_field(&mut output, "Plan", &display_plan(snapshot), style, None);
+    let (status, status_tone) = display_status(snapshot);
+    push_field(&mut output, "Status", &status, style, Some(status_tone));
+    if let Some(credits) = snapshot
+        .buckets()
+        .iter()
+        .find_map(|bucket| bucket.credits())
+    {
+        push_field(
+            &mut output,
+            "Credits",
+            &display_credits(credits),
+            style,
+            None,
+        );
+    }
+
+    output.push('\n');
+    style.push(&mut output, TextStyle::Bold, "Usage limits");
+    output.push('\n');
     if snapshot.buckets().is_empty() {
-        output.push_str("capacity: unknown\n");
+        style.push(
+            &mut output,
+            TextStyle::Muted,
+            "  No capacity information available.",
+        );
+        output.push('\n');
         return output;
     }
-    let show_bucket = snapshot.buckets().len() > 1;
-    for bucket in snapshot.buckets() {
-        if show_bucket {
-            let identity = bucket.id().or_else(|| bucket.name()).unwrap_or("unknown");
-            let _ = writeln!(output, "bucket: {identity}");
+
+    for (index, bucket) in snapshot.buckets().iter().enumerate() {
+        let nested = is_additional_bucket(snapshot, bucket, index);
+        if nested {
+            let heading = additional_bucket_heading(bucket);
+            output.push_str("  ");
+            style.push(&mut output, TextStyle::Bold, &format!("{heading} limit:"));
+            output.push('\n');
         }
-        render_bucket(&mut output, bucket, show_bucket);
+        render_bucket(&mut output, bucket, nested, style);
     }
     output
 }
 
-fn render_bucket(output: &mut String, bucket: &AccountCapacityBucket, indent: bool) {
-    let prefix = if indent { "  " } else { "" };
-    let _ = writeln!(
-        output,
-        "{prefix}plan: {}",
-        bucket.plan().unwrap_or("unknown")
-    );
-    if let Some(window) = bucket.primary() {
-        render_window(output, prefix, "primary", *window);
+fn push_field(
+    output: &mut String,
+    label: &str,
+    value: &str,
+    style: PresentationStyle,
+    tone: Option<TextStyle>,
+) {
+    output.push_str("  ");
+    style.push(output, TextStyle::Muted, &format!("{label:<9}"));
+    match tone {
+        Some(tone) => style.push(output, tone, value),
+        None => output.push_str(value),
     }
-    if let Some(window) = bucket.secondary() {
-        render_window(output, prefix, "secondary", *window);
-    }
-    if let Some(credits) = bucket.credits() {
-        let value = if credits.unlimited() {
-            "unlimited".to_owned()
-        } else if let Some(balance) = credits.balance() {
-            balance.to_owned()
-        } else if credits.has_credits() {
-            "available".to_owned()
+    output.push('\n');
+}
+
+fn render_bucket(
+    output: &mut String,
+    bucket: &AccountCapacityBucket,
+    nested: bool,
+    style: PresentationStyle,
+) {
+    let windows = [
+        ("Primary", bucket.primary().copied()),
+        ("Secondary", bucket.secondary().copied()),
+    ]
+    .into_iter()
+    .filter_map(|(label, window)| window.map(|window| (label, window)))
+    .collect::<Vec<_>>();
+
+    for (index, (label, window)) in windows.iter().enumerate() {
+        let prefix = if nested {
+            if index + 1 == windows.len() {
+                "  └─ "
+            } else {
+                "  ├─ "
+            }
         } else {
-            "none".to_owned()
+            "  "
         };
-        let _ = writeln!(output, "{prefix}credits: {value}");
-    }
-    if let Some(reason) = bucket.limit_reason() {
-        let _ = writeln!(output, "{prefix}status: limited ({reason})");
-    } else if bucket.primary().is_some()
-        || bucket.secondary().is_some()
-        || bucket.credits().is_some()
-    {
-        let _ = writeln!(output, "{prefix}status: available");
-    } else {
-        let _ = writeln!(output, "{prefix}status: unknown");
+        render_window(output, prefix, label, *window, style);
     }
 }
 
-fn render_window(output: &mut String, prefix: &str, label: &str, window: AccountCapacityWindow) {
-    let _ = write!(
-        output,
-        "{prefix}{label}: {}% used, {}% remaining",
-        window.used_percent(),
-        window.remaining_percent()
-    );
-    if let Some(duration) = window.window_duration_minutes() {
-        let _ = write!(output, ", window {duration}m");
-    }
+fn render_window(
+    output: &mut String,
+    prefix: &str,
+    fallback_label: &str,
+    window: AccountCapacityWindow,
+    style: PresentationStyle,
+) {
+    let label = window
+        .window_duration_minutes()
+        .map_or_else(|| format!("{fallback_label} limit:"), display_window_label);
+    let _ = write!(output, "{prefix}{label:<15} [");
+    let remaining = window.remaining_percent();
+    let tone = if remaining >= 50 {
+        TextStyle::Positive
+    } else if remaining >= 20 {
+        TextStyle::Warning
+    } else {
+        TextStyle::Danger
+    };
+    style.push(output, tone, &remaining_bar(remaining, 20));
+    let _ = write!(output, "] {remaining:>3}% left");
     if let Some(reset) = window.resets_at_unix_seconds() {
-        let display = jiff::Timestamp::from_second(reset).map_or_else(
-            |_| format!("unix:{reset}"),
-            |timestamp| timestamp.to_string(),
-        );
-        let _ = write!(output, ", resets {display}");
+        let _ = write!(output, " (resets {})", display_reset(reset));
     }
     output.push('\n');
+}
+
+fn display_window_label(minutes: u64) -> String {
+    const MINUTES_PER_DAY: u64 = 24 * 60;
+    if minutes == 7 * MINUTES_PER_DAY {
+        return "Weekly limit:".to_owned();
+    }
+    if minutes != 0 && minutes.is_multiple_of(60) {
+        let hours = minutes / 60;
+        return format!("{hours}h limit:");
+    }
+    format!("{minutes}m limit:")
+}
+
+fn display_reset(unix_seconds: i64) -> String {
+    jiff::Timestamp::from_second(unix_seconds).map_or_else(
+        |_| format!("unix:{unix_seconds}"),
+        |timestamp| {
+            timestamp
+                .to_zoned(jiff::tz::TimeZone::system())
+                .strftime("%b %-d, %H:%M %Z")
+                .to_string()
+        },
+    )
+}
+
+fn is_additional_bucket(
+    snapshot: &AccountCapacitySnapshot,
+    bucket: &AccountCapacityBucket,
+    index: usize,
+) -> bool {
+    index != 0 && bucket.id() != Some(snapshot.provider().as_str())
+}
+
+fn additional_bucket_heading(bucket: &AccountCapacityBucket) -> String {
+    if let Some(name) = bucket.name().filter(|name| !name.trim().is_empty()) {
+        return terminal_safe(name);
+    }
+    "Additional".to_owned()
+}
+
+fn display_plan(snapshot: &AccountCapacitySnapshot) -> String {
+    let mut plans = snapshot.buckets().iter().filter_map(|bucket| bucket.plan());
+    let Some(first) = plans.next() else {
+        return "Unknown".to_owned();
+    };
+    if plans.all(|plan| plan == first) {
+        match first {
+            "prolite" => "Pro Lite".to_owned(),
+            _ => display_identifier(first),
+        }
+    } else {
+        "Multiple".to_owned()
+    }
+}
+
+fn display_status(snapshot: &AccountCapacitySnapshot) -> (String, TextStyle) {
+    if let Some(reason) = snapshot
+        .buckets()
+        .iter()
+        .find_map(|bucket| bucket.limit_reason())
+    {
+        return (
+            format!("Limited · {}", display_identifier(reason)),
+            TextStyle::Danger,
+        );
+    }
+    if snapshot.buckets().iter().any(|bucket| {
+        bucket.primary().is_some() || bucket.secondary().is_some() || bucket.credits().is_some()
+    }) {
+        ("Available".to_owned(), TextStyle::Positive)
+    } else {
+        ("Unknown".to_owned(), TextStyle::Muted)
+    }
+}
+
+fn display_credits(credits: &yo_core::AccountCredits) -> String {
+    if credits.unlimited() {
+        "Unlimited".to_owned()
+    } else if !credits.has_credits() {
+        "None".to_owned()
+    } else {
+        credits
+            .balance()
+            .map_or_else(|| "Available".to_owned(), terminal_safe)
+    }
+}
+
+fn display_identifier(value: &str) -> String {
+    value
+        .split(['_', '-'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let safe = terminal_safe(part);
+            let mut characters = safe.chars();
+            match characters.next() {
+                Some(first) => format!("{}{}", first.to_uppercase(), characters.as_str()),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn terminal_safe(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for character in value.chars() {
+        if character.is_control() {
+            output.extend(character.escape_default());
+        } else {
+            output.push(character);
+        }
+    }
+    output
 }
 
 #[cfg(test)]
@@ -122,12 +304,77 @@ mod tests {
             )],
         );
 
-        let output = render(&snapshot);
+        let output = render(&snapshot, PresentationStyle::Plain);
 
-        assert!(output.contains("codex:default"));
-        assert!(output.contains("plan: plus"));
-        assert!(output.contains("primary: 37% used, 63% remaining, window 300m"));
-        assert!(output.contains("credits: 12.5"));
+        assert!(output.contains("Codex account"));
+        assert!(output.contains("Account  default"));
+        assert!(output.contains("Plan     Plus"));
+        assert!(output.contains("Status   Available"));
+        assert!(output.contains("Credits  12.5"));
+        assert!(output.contains("5h limit:"));
+        assert!(output.contains("[████████████░░░░░░░░]  63% left"));
+        assert!(output.contains("(resets "));
         assert!(!output.contains("token"));
+    }
+
+    // Provider 내부 limit ID가 여러 개여도 일반 화면은 이를 제품명처럼 노출하지 않고,
+    // 표준 한도와 용도가 확정되지 않은 추가 한도로만 구분합니다.
+    #[test]
+    fn hides_internal_bucket_ids_behind_neutral_sections() {
+        let bucket = |id: &str, name: Option<&str>, duration| {
+            AccountCapacityBucket::new(
+                Some(id.to_owned()),
+                name.map(str::to_owned),
+                Some("prolite".to_owned()),
+                Some(AccountCapacityWindow::new(0, Some(duration), None).unwrap()),
+                name.map(|_| AccountCapacityWindow::new(0, Some(10_080), None).unwrap()),
+                None,
+                None,
+            )
+        };
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![
+                bucket("codex", None, 10_080),
+                bucket("codex_bengalfox", Some("GPT-5.3-Codex-Spark"), 300),
+            ],
+        );
+
+        let output = render(&snapshot, PresentationStyle::Plain);
+
+        assert!(output.contains("Plan     Pro Lite"));
+        assert!(output.contains("  Weekly limit:"));
+        assert!(output.contains("  GPT-5.3-Codex-Spark limit:\n  ├─ 5h limit:"));
+        assert!(output.contains("\n  └─ Weekly limit:"));
+        assert!(!output.contains("bengalfox"));
+        assert!(!output.contains("bucket:"));
+    }
+
+    // TTY 출력만 제목과 상태를 꾸미고, 파이프나 파일로 보내는 기본 렌더링에는
+    // 제어 문자를 넣지 않아 같은 정보를 안정적인 일반 텍스트로 유지합니다.
+    #[test]
+    fn ansi_decoration_is_explicit_and_plain_output_stays_clean() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("codex".to_owned()),
+                None,
+                None,
+                Some(AccountCapacityWindow::new(90, None, None).unwrap()),
+                None,
+                None,
+                None,
+            )],
+        );
+
+        let plain = render(&snapshot, PresentationStyle::Plain);
+        let ansi = render(&snapshot, PresentationStyle::Ansi);
+
+        assert!(!plain.contains('\u{1b}'));
+        assert!(ansi.contains("\u{1b}[1m"));
+        assert!(ansi.contains("\u{1b}[31m"));
+        assert_eq!(crate::presentation::strip_ansi(&ansi), plain);
     }
 }

@@ -1,46 +1,14 @@
-use std::{collections::BTreeSet, env, fmt::Write as _, io::IsTerminal as _, num::NonZeroU16};
+use std::{collections::BTreeSet, fmt::Write as _, io::IsTerminal as _, num::NonZeroU16};
 
 use unicode_segmentation::UnicodeSegmentation;
 use yo_core::{CompleteModelBinding, CredentialMutationAction, ModelSelection};
 use yo_tui::surface::{Grapheme, GraphemeError};
 
+use crate::presentation::{PresentationStyle, TextStyle};
+
 const DEFAULT_WIDTH: u16 = 80;
 const FIELD_LABEL_WIDTH: usize = 16;
 const FIELD_INDENT: usize = 2;
-
-const ANSI_BOLD: &str = "\u{1b}[1m";
-const ANSI_BOLD_CYAN: &str = "\u{1b}[1;36m";
-const ANSI_GREEN: &str = "\u{1b}[32m";
-const ANSI_YELLOW: &str = "\u{1b}[33m";
-const ANSI_RED: &str = "\u{1b}[31m";
-const ANSI_DIM: &str = "\u{1b}[2m";
-const ANSI_RESET: &str = "\u{1b}[0m";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum PresentationStyle {
-    Plain,
-    Ansi,
-}
-
-impl PresentationStyle {
-    pub(super) fn for_controlling_terminal() -> Self {
-        if env::var_os("NO_COLOR").is_some() {
-            Self::Plain
-        } else {
-            Self::Ansi
-        }
-    }
-
-    fn push(self, output: &mut String, ansi: &str, value: &str) {
-        if self == Self::Ansi {
-            output.push_str(ansi);
-            output.push_str(value);
-            output.push_str(ANSI_RESET);
-        } else {
-            output.push_str(value);
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum StoredConnectionChange {
@@ -71,12 +39,12 @@ impl PlanAction {
         }
     }
 
-    const fn ansi(self) -> &'static str {
+    const fn text_style(self) -> TextStyle {
         match self {
-            Self::Add | Self::Success => ANSI_GREEN,
-            Self::Change | Self::Attention => ANSI_YELLOW,
-            Self::Remove => ANSI_RED,
-            Self::Keep => ANSI_DIM,
+            Self::Add | Self::Success => TextStyle::Positive,
+            Self::Change | Self::Attention => TextStyle::Warning,
+            Self::Remove => TextStyle::Danger,
+            Self::Keep => TextStyle::Muted,
         }
     }
 }
@@ -923,7 +891,7 @@ impl SuccessPresentation {
     fn for_stdout() -> Self {
         let stdout = std::io::stdout();
         let terminal = stdout.is_terminal();
-        Self::for_output(&stdout, terminal, env::var_os("NO_COLOR").is_some())
+        Self::for_output(&stdout, terminal, std::env::var_os("NO_COLOR").is_some())
     }
 
     fn for_output(output: &impl std::os::fd::AsFd, terminal: bool, no_color: bool) -> Self {
@@ -932,11 +900,7 @@ impl SuccessPresentation {
             .flatten()
             .and_then(|size| NonZeroU16::new(size.ws_col))
             .unwrap_or_else(default_width);
-        let style = if terminal && !no_color {
-            PresentationStyle::Ansi
-        } else {
-            PresentationStyle::Plain
-        };
+        let style = PresentationStyle::for_output(terminal, no_color);
         Self { width, style }
     }
 
@@ -1074,16 +1038,16 @@ fn push_success_heading(
 ) -> Result<(), PresentationError> {
     let inline = format!("✓ {heading}");
     if safe_width(&inline)? <= width {
-        style.push(output, ANSI_GREEN, "✓");
+        style.push(output, TextStyle::Positive, "✓");
         output.push(' ');
-        style.push(output, ANSI_BOLD, heading);
+        style.push(output, TextStyle::Bold, heading);
         output.push('\n');
         return Ok(());
     }
-    style.push(output, ANSI_GREEN, "✓");
+    style.push(output, TextStyle::Positive, "✓");
     output.push('\n');
     for line in wrap(heading, width)? {
-        style.push(output, ANSI_BOLD, &line);
+        style.push(output, TextStyle::Bold, &line);
         output.push('\n');
     }
     Ok(())
@@ -1132,18 +1096,18 @@ fn push_title(
 ) -> Result<(), PresentationError> {
     let inline = format!("{title}  {target}");
     if safe_width(&inline)? <= width {
-        style.push(output, ANSI_BOLD_CYAN, title);
+        style.push(output, TextStyle::Accent, title);
         output.push_str("  ");
-        style.push(output, ANSI_BOLD, target);
+        style.push(output, TextStyle::Bold, target);
         output.push('\n');
         return Ok(());
     }
     for line in wrap(title, width)? {
-        style.push(output, ANSI_BOLD_CYAN, &line);
+        style.push(output, TextStyle::Accent, &line);
         output.push('\n');
     }
     for line in wrap(target, width)? {
-        style.push(output, ANSI_BOLD, &line);
+        style.push(output, TextStyle::Bold, &line);
         output.push('\n');
     }
     Ok(())
@@ -1156,7 +1120,7 @@ fn push_section_heading(
     style: PresentationStyle,
 ) -> Result<(), PresentationError> {
     for line in wrap(heading, width)? {
-        style.push(output, ANSI_BOLD, &line);
+        style.push(output, TextStyle::Bold, &line);
         output.push('\n');
     }
     Ok(())
@@ -1172,34 +1136,34 @@ fn push_change(
 ) -> Result<(), PresentationError> {
     const PREFIX_WIDTH: usize = 2;
     if width <= PREFIX_WIDTH {
-        style.push(output, action.ansi(), action.marker());
+        style.push(output, action.text_style(), action.marker());
         output.push('\n');
         for line in wrap(label, width)? {
-            style.push(output, ANSI_BOLD, &line);
+            style.push(output, TextStyle::Bold, &line);
             output.push('\n');
         }
     } else {
         for (index, line) in wrap(label, width - PREFIX_WIDTH)?.iter().enumerate() {
             if index == 0 {
-                style.push(output, action.ansi(), action.marker());
+                style.push(output, action.text_style(), action.marker());
                 output.push(' ');
             } else {
                 output.push_str("  ");
             }
-            style.push(output, ANSI_BOLD, line);
+            style.push(output, TextStyle::Bold, line);
             output.push('\n');
         }
     }
     let detail_indent = 2_usize;
     if width <= detail_indent {
         for line in wrap(detail, width)? {
-            style.push(output, ANSI_DIM, &line);
+            style.push(output, TextStyle::Muted, &line);
             output.push('\n');
         }
     } else {
         for line in wrap(detail, width - detail_indent)? {
             output.push_str("  ");
-            style.push(output, ANSI_DIM, &line);
+            style.push(output, TextStyle::Muted, &line);
             output.push('\n');
         }
     }
@@ -1218,11 +1182,11 @@ fn push_detail_field(
         let prefix = format!("  {label:<FIELD_LABEL_WIDTH$}");
         for (index, line) in wrap(value, width - inline_prefix)?.iter().enumerate() {
             if index == 0 {
-                style.push(output, ANSI_DIM, &prefix);
+                style.push(output, TextStyle::Muted, &prefix);
             } else {
-                style.push(output, ANSI_DIM, &" ".repeat(inline_prefix));
+                style.push(output, TextStyle::Muted, &" ".repeat(inline_prefix));
             }
-            style.push(output, ANSI_DIM, line);
+            style.push(output, TextStyle::Muted, line);
             output.push('\n');
         }
     } else {
@@ -1230,12 +1194,12 @@ fn push_detail_field(
         let content_width = width.saturating_sub(indent).max(1);
         for line in wrap(label, content_width)? {
             output.push_str(&" ".repeat(indent));
-            style.push(output, ANSI_DIM, &line);
+            style.push(output, TextStyle::Muted, &line);
             output.push('\n');
         }
         for line in wrap(value, content_width)? {
             output.push_str(&" ".repeat(indent));
-            style.push(output, ANSI_DIM, &line);
+            style.push(output, TextStyle::Muted, &line);
             output.push('\n');
         }
     }
@@ -1267,10 +1231,10 @@ fn push_model_list_field(
         for (index, line) in wrap_list(&displayed, inline_width)?.iter().enumerate() {
             style.push(
                 output,
-                ANSI_DIM,
+                TextStyle::Muted,
                 if index == 0 { &prefix } else { &continuation },
             );
-            style.push(output, ANSI_DIM, line);
+            style.push(output, TextStyle::Muted, line);
             output.push('\n');
         }
     } else {
@@ -1278,7 +1242,7 @@ fn push_model_list_field(
         let content_width = width.saturating_sub(indent).max(1);
         for line in wrap(label, content_width)? {
             output.push_str(&" ".repeat(indent));
-            style.push(output, ANSI_DIM, &line);
+            style.push(output, TextStyle::Muted, &line);
             output.push('\n');
         }
         for value in displayed {
@@ -1359,7 +1323,7 @@ fn push_plan_summary(
     style: PresentationStyle,
 ) -> Result<(), PresentationError> {
     for line in wrap(&counts.sentence(), width)? {
-        style.push(output, ANSI_BOLD, &line);
+        style.push(output, TextStyle::Bold, &line);
         output.push('\n');
     }
     Ok(())
@@ -1375,7 +1339,7 @@ fn push_bullet(
     const PREFIX_WIDTH: usize = 4;
     if width <= PREFIX_WIDTH {
         for line in wrap(value, width)? {
-            style.push(output, ANSI_DIM, &line);
+            style.push(output, TextStyle::Muted, &line);
             output.push('\n');
         }
         return Ok(());
@@ -1384,8 +1348,12 @@ fn push_bullet(
         .into_iter()
         .enumerate()
     {
-        style.push(output, ANSI_DIM, if index == 0 { PREFIX } else { "    " });
-        style.push(output, ANSI_DIM, &line);
+        style.push(
+            output,
+            TextStyle::Muted,
+            if index == 0 { PREFIX } else { "    " },
+        );
+        style.push(output, TextStyle::Muted, &line);
         output.push('\n');
     }
     Ok(())

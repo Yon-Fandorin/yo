@@ -5,9 +5,7 @@ use std::{
     io::{self, IsTerminal, Write},
 };
 
-const ERROR_STYLE: &str = "\x1b[1;31m";
-const TIP_STYLE: &str = "\x1b[1;36m";
-const RESET_STYLE: &str = "\x1b[0m";
+use crate::presentation::{PresentationStyle, TextStyle};
 
 #[derive(Debug)]
 pub(crate) struct AppError {
@@ -65,7 +63,9 @@ impl AppError {
 
     pub(crate) fn print(&self) -> io::Result<()> {
         let stderr = io::stderr();
-        let styled = styling_enabled(stderr.is_terminal(), env::var_os("NO_COLOR").is_some());
+        let styled =
+            PresentationStyle::for_output(stderr.is_terminal(), env::var_os("NO_COLOR").is_some())
+                .is_ansi();
         let mut stderr = stderr.lock();
         stderr.write_all(self.render(styled).as_bytes())?;
         stderr.flush()
@@ -76,7 +76,7 @@ impl AppError {
         if self.failures.len() == 1 {
             render_single(&mut output, &self.failures[0], styled);
         } else {
-            push_label(&mut output, "error:", ERROR_STYLE, styled);
+            push_label(&mut output, "error:", TextStyle::Error, styled);
             output.push_str(" multiple operations failed\n\n");
             for failure in &self.failures {
                 push_indented(&mut output, &failure.to_string(), "  - ", "    ");
@@ -85,7 +85,7 @@ impl AppError {
         }
         if !self.help.is_empty() {
             output.push('\n');
-            push_label(&mut output, "tip:", TIP_STYLE, styled);
+            push_label(&mut output, "tip:", TextStyle::Tip, styled);
             output.push_str(" try one of these commands\n\n");
             for command in &self.help {
                 output.push_str("  ");
@@ -143,13 +143,13 @@ impl Error for AppError {}
 fn render_single(output: &mut String, failure: &AppFailure, styled: bool) {
     match failure {
         AppFailure::Message(message) => {
-            push_label(output, "error:", ERROR_STYLE, styled);
+            push_label(output, "error:", TextStyle::Error, styled);
             output.push(' ');
             push_indented(output, message, "", "  ");
             output.push('\n');
         },
         AppFailure::Context { context, cause } => {
-            push_label(output, "error:", ERROR_STYLE, styled);
+            push_label(output, "error:", TextStyle::Error, styled);
             output.push(' ');
             output.push_str(context);
             output.push_str(" failed\n\nCaused by:\n");
@@ -159,18 +159,8 @@ fn render_single(output: &mut String, failure: &AppFailure, styled: bool) {
     }
 }
 
-fn push_label(output: &mut String, label: &str, style: &str, styled: bool) {
-    if styled {
-        output.push_str(style);
-    }
-    output.push_str(label);
-    if styled {
-        output.push_str(RESET_STYLE);
-    }
-}
-
-fn styling_enabled(stderr_is_terminal: bool, no_color_is_set: bool) -> bool {
-    stderr_is_terminal && !no_color_is_set
+fn push_label(output: &mut String, label: &str, text_style: TextStyle, styled: bool) {
+    PresentationStyle::for_output(styled, false).push(output, text_style, label);
 }
 
 fn push_indented(output: &mut String, value: &str, first: &str, continuation: &str) {

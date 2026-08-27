@@ -13,8 +13,8 @@ mod picker;
 pub(super) use file::AuthorizedCredentialFileInput;
 pub(super) use picker::ModelPickerItem;
 
-use super::presentation::{Confirmation, PresentationStyle, default_width};
-use crate::AppError;
+use super::presentation::{Confirmation, default_width};
+use crate::{AppError, presentation::PresentationStyle};
 
 const MAX_INPUT_BYTES: usize = 16 * 1024;
 
