@@ -366,6 +366,14 @@ review entry carries the same candidate commit; every review and exact approval
 also carries the canonical base-to-candidate diff hash. Each referenced file is
 a bounded regular file with an exact `sha256:<hex>` hash.
 
+Once any immutable review manifest names that candidate, preserve it as an
+ancestor: do not amend, rebase, or replace the reviewed commit. Apply a finding
+fix as a new child commit and publish a review delta. `cargo xtask slice status
+<slice>` checks every manifest bound to the exact Slice Contract and reports
+`review_lineage:"broken"` when a reviewed candidate is no longer an ancestor
+of current Slice `HEAD`; stop there instead of regenerating evidence for the
+rewritten history.
+
 Do not copy those identities and hashes by hand when the candidate already has
 a published review-chain manifest. Prepare and evaluate the gate request from
 the existing artifacts instead:
@@ -511,6 +519,13 @@ owns completeness of the declared validation plan, semantic lenses, risk
 classification, and review disposition; the gate prevents identity drift, not
 false statements.
 
+Use `cargo xtask slice status <slice>` for the coordinator's ordinary progress
+check instead of reopening raw Session JSONL, terminal panes, or all evidence.
+It emits one `yo.slice-status/v1alpha1` JSON line containing clean `HEAD`,
+review ancestry and round count, validation/gate artifact counts, delivery
+claim/receipt counts, durable external request count, and one next action. Its
+bounded scan reads at most 256 JSON files and never prints their content.
+
 An empty or failed validation set yields `validate`; missing required lenses
 yields `review`; otherwise missing authorization yields `approve`. A
 human-attention candidate requires `exact_candidate` approval bound to its
@@ -561,6 +576,42 @@ candidate-specific prompt. Platform capability or sandbox confirmation is a
 separate execution boundary, not another Slice disposition; use only an
 already granted narrowly scoped command capability and never fabricate or
 broaden one from repository evidence.
+
+When that exact proposal covers all three accepted effects, record its gate
+scope in this canonical form:
+
+```text
+yo.slice-accept-effects/v1alpha1;slice=<slice>;candidate=<commit>;squash=true;push=<remote>:<full-integration-ref>;close=true
+```
+
+Then `cargo xtask slice accept <request.json>` may perform ready-gate message
+derivation, exact squash, accepted commit, non-force exact-ref push,
+close-metrics preparation, close planning, and verified cleanup as one
+orchestrated transition. The `yo.slice-accept-request/v1alpha1` request binds
+the gate, message source, and close-preparation bytes by hash and names the
+message output, close plan, remote, ref, and identical approval scope. It
+revalidates both worktrees and all inputs immediately before the first
+mutation, requires the staged and accepted diffs to equal the reviewed
+candidate bytes, and stops at the named phase on failure. It never force
+pushes, invents approval, reruns validation, sends review, or repairs a failed
+integration automatically.
+
+```json
+{
+  "schema": "yo.slice-accept-request/v1alpha1",
+  "slice": "<slice>",
+  "gate_request_path": ".local-exclude/coordination/<slice>/gate.json",
+  "gate_request_hash": "sha256:<gate-hash>",
+  "message_source_path": ".local-exclude/coordination/<slice>/message.txt",
+  "message_source_hash": "sha256:<message-hash>",
+  "message_output_path": "/tmp/<slice>-commit-message",
+  "close_prepare_request_path": ".local-exclude/coordination/<slice>/close-prepare.json",
+  "close_prepare_request_hash": "sha256:<close-prepare-hash>",
+  "close_plan_path": "/tmp/<slice>-close-plan.json",
+  "push": {"remote": "origin", "reference": "refs/heads/develop"},
+  "approval_scope": "yo.slice-accept-effects/v1alpha1;..."
+}
+```
 
 If a required full suite fails outside the changed boundary, run each exact
 failing test once in isolation to classify timing or shared-load sensitivity.
@@ -1013,7 +1064,7 @@ cargo xtask slice review-target-admission <request.json>
 
 The alternate target shape is
 `{"kind":"delegated_host","host":"codex"}` or exact host `grok`; it omits
-`connection_repository_path`. Use request v1alpha2 for that delegated target;
+`connection_repository_path`. Use request v1alpha2 or v1alpha3 for that delegated target;
 v1alpha1 remains a frozen preparation-only probe. Managed admission proves that the exact stored
 binding exists and reports its newest typed `last_failure`. Authentication,
 access-denied, exact-model-unavailable, and local-configuration observations
@@ -1027,6 +1078,14 @@ Frozen v1alpha1 keeps its successful delegated result as `prepared` with
 behavior and returns `eligible` with `next_action: "deliver_delegated_once"`
 for an admitted host. This selects the separate delegated protocol below; it
 never makes the host eligible for managed `deliver_once`.
+
+Prefer `yo.external-review-target-admission-request/v1alpha3` for a new
+delegated delivery. It preserves the version probe and additionally creates,
+writes, and removes one unique sentinel in the existing host state directory
+(`$HOME/.codex` or `$HOME/.grok`) before any delivery claim. This request-free
+probe catches a read-only or missing host state mount that a version-only probe
+cannot see. A successful probe leaves no file and still proves neither account
+entitlement nor quota.
 
 The optional Session repository search reads at most the newest 64 Sessions
 and returns the latest matching receipt in the first most-recently-updated
@@ -1070,6 +1129,23 @@ replace it only from a human statement naming the exact hosts and limits:
 }
 ```
 
+New standing authority should use
+`yo.external-review-delegated-authorization/v1alpha2` and replace the two
+request-kind booleans with these three explicit fields:
+
+```json
+{
+  "max_original_fresh_requests": 1,
+  "max_finding_resolution_resume_requests": 1,
+  "max_total_requests": 2
+}
+```
+
+Each per-kind value is `0` or `1`, and their sum must equal the total. This
+makes the human authorization, egress classifier, and exact one-original plus
+one-direct-resolution chain state the same round limit. Frozen v1alpha1 keeps
+its boolean meaning.
+
 The closed target set is `codex` and `grok`, so this authorization accepts at
 most two unique entries. It never names Provider, Account, or downstream model
 coordinates. Bind one exact review manifest, authorization revision, target,
@@ -1107,6 +1183,12 @@ admission to one empty output directory:
 }
 ```
 
+Use delivery request `v1alpha2` with admission `v1alpha3` for new work. It has
+the same fields and effect count as the frozen `v1alpha1` delivery request, but
+requires the host-state readiness proof and records alpha2 claim/result
+schemas. `v1alpha1` continues to require only frozen admission v1alpha2
+eligibility and is not silently strengthened.
+
 The repository delivery command evaluates egress and admission twice around
 the exact current-develop build, publishes an immutable delegated claim, then
 launches exactly one `yo -p --model host:<host> --sandbox read-only`. It
@@ -1131,6 +1213,31 @@ request. A successful run publishes:
 Provider request identity and token or cache usage remain unknown unless the
 host publishes independently reviewed exact evidence. Claim reuse, retry,
 steer, fallback, target switch, and a second host request are forbidden.
+
+If the launched process succeeded and the exact durable Session later becomes
+observable but the original observation failed before `delivery.json` was
+published, recover only the receipt:
+
+```bash
+cargo xtask slice review-deliver finalize <finalize-request.json>
+```
+
+```json
+{
+  "schema": "yo.slice-review-delegated-delivery-finalize-request/v1alpha1",
+  "delivery_request_path": ".local-exclude/coordination/<slice>/delivery-request.json",
+  "delivery_request_hash": "sha256:<exact-request-hash>"
+}
+```
+
+The `yo.slice-review-delegated-delivery-finalize-request/v1alpha1` input binds
+only `delivery_request_path` and `delivery_request_hash`. The command replays
+authorization, admission, immutable claim, process outcome, published review
+and diagnostic hashes, and the exact Session trace. It launches no Yo, host,
+or Provider process and records `provider_requests:0` and `host_requests:0` in
+an immutable `finalization.json`. A failed process, changed artifact, absent
+request, extra request, or wrong binding remains unrecoverable; never use
+finalization as retry authority.
 
 Before any authorized finding-resolution resume, create the repository-owned
 read-only continuation preflight request against the exact durable Session

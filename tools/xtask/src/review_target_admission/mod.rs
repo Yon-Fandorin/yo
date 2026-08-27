@@ -5,16 +5,18 @@ mod usage;
 mod tests;
 
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
 
 use model::{
-    AccountLimit, Availability, Decision, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2, Request,
-    result_schema,
+    AccountLimit, Availability, Decision, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2,
+    REQUEST_SCHEMA_V1_ALPHA3, Request, result_schema,
 };
 pub(crate) use model::{Admission, ReviewTarget};
 use yo_core::{AccountId, LocalConnectionRepository, ModelId, ModelRequestFailureKind, ProviderId};
@@ -25,6 +27,7 @@ const REQUEST_LIMIT: usize = 64 * 1024;
 const MAX_TOKEN_BYTES: usize = 128;
 const HOST_VERSION_LIMIT: usize = 256;
 const HOST_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+static HOST_STATE_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn run(request_path: &Path) -> Result<(), String> {
     let admission = evaluate(request_path)?;
@@ -67,7 +70,9 @@ fn evaluate_request(request: &Request) -> Result<Admission, String> {
             account,
             model,
         ),
-        ReviewTarget::DelegatedHost { host } => host_availability(host),
+        ReviewTarget::DelegatedHost { host } => {
+            host_availability(host, request.schema == REQUEST_SCHEMA_V1_ALPHA3)
+        },
     };
     let decision = if availability.state == "unavailable" {
         Decision::Stop
@@ -104,10 +109,10 @@ fn evaluate_request(request: &Request) -> Result<Admission, String> {
 fn validate_request(request: &Request) -> Result<(), String> {
     if !matches!(
         request.schema.as_str(),
-        REQUEST_SCHEMA | REQUEST_SCHEMA_V1_ALPHA2
+        REQUEST_SCHEMA | REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3
     ) {
         return Err(format!(
-            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}` or `{REQUEST_SCHEMA_V1_ALPHA2}`",
+            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, or `{REQUEST_SCHEMA_V1_ALPHA3}`",
             request.schema
         ));
     }
@@ -238,21 +243,34 @@ const fn blocking_failure(kind: ModelRequestFailureKind) -> bool {
     )
 }
 
-fn host_availability(host: &str) -> Availability {
-    match probe_host_version(host) {
+fn host_availability(host: &str, require_state_readiness: bool) -> Availability {
+    match probe_host(host, require_state_readiness) {
         Ok((executable, version)) => Availability {
             state: "available",
-            source: "delegated_host_executable_version",
+            source: if require_state_readiness {
+                "delegated_host_executable_and_state_readiness"
+            } else {
+                "delegated_host_executable_version"
+            },
             failure_kind: None,
             observed_at: None,
             version: Some(version),
             executable: Some(executable),
-            detail: "the executable answered its bounded version probe; account usage and entitlement remain host-owned"
-                .to_owned(),
+            detail: if require_state_readiness {
+                "the executable answered its bounded version probe and its existing host-state directory passed a create-and-remove probe; account usage and entitlement remain host-owned"
+                    .to_owned()
+            } else {
+                "the executable answered its bounded version probe; account usage and entitlement remain host-owned"
+                    .to_owned()
+            },
         },
         Err(error) => Availability {
             state: "unavailable",
-            source: "delegated_host_executable_version",
+            source: if require_state_readiness {
+                "delegated_host_executable_and_state_readiness"
+            } else {
+                "delegated_host_executable_version"
+            },
             failure_kind: Some("local_configuration".to_owned()),
             observed_at: None,
             version: None,
@@ -260,6 +278,70 @@ fn host_availability(host: &str) -> Availability {
             detail: error,
         },
     }
+}
+
+fn probe_host(host: &str, require_state_readiness: bool) -> Result<(String, String), String> {
+    let result = probe_host_version(host)?;
+    if require_state_readiness {
+        let state = host_state_directory(host)?;
+        probe_host_state_writable(&state)?;
+    }
+    Ok(result)
+}
+
+fn host_state_directory(host: &str) -> Result<PathBuf, String> {
+    let home = std::env::var_os("HOME")
+        .ok_or_else(|| "HOME is unavailable for delegated-host state readiness".to_owned())?;
+    let home = PathBuf::from(home);
+    if !home.is_absolute() {
+        return Err("HOME must be absolute for delegated-host state readiness".to_owned());
+    }
+    Ok(home.join(match host {
+        "codex" => ".codex",
+        "grok" => ".grok",
+        _ => unreachable!("validated delegated host"),
+    }))
+}
+
+fn probe_host_state_writable(directory: &Path) -> Result<(), String> {
+    let metadata = fs::metadata(directory).map_err(|error| {
+        format!(
+            "cannot inspect delegated-host state directory {}: {error}",
+            directory.display()
+        )
+    })?;
+    if !metadata.is_dir() {
+        return Err(format!(
+            "delegated-host state path {} is not a directory",
+            directory.display()
+        ));
+    }
+    let sequence = HOST_STATE_PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let path = directory.join(format!(".yo-readiness-{}-{sequence}", std::process::id()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| {
+            format!(
+                "delegated-host state directory {} is not writable: {error}",
+                directory.display()
+            )
+        })?;
+    if let Err(error) = file.write_all(b"yo delegated-host readiness\n") {
+        let _ = fs::remove_file(&path);
+        return Err(format!(
+            "cannot write delegated-host readiness sentinel {}: {error}",
+            path.display()
+        ));
+    }
+    drop(file);
+    fs::remove_file(&path).map_err(|error| {
+        format!(
+            "cannot remove delegated-host readiness sentinel {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn probe_host_version(host: &str) -> Result<(String, String), String> {

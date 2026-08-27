@@ -24,20 +24,32 @@ pub(super) const CONTINUATION_RESULT_SCHEMA_V1_ALPHA2: &str =
 pub(super) const DELIVERY_RECEIPT_SCHEMA: &str = "yo.external-review-delivery-receipt/v1";
 pub(super) const DELEGATED_REQUEST_SCHEMA: &str =
     "yo.slice-review-delegated-delivery-request/v1alpha1";
+pub(super) const DELEGATED_REQUEST_SCHEMA_V1_ALPHA2: &str =
+    "yo.slice-review-delegated-delivery-request/v1alpha2";
 pub(super) const DELEGATED_CONTINUATION_REQUEST_SCHEMA: &str =
     "yo.slice-review-delegated-continuation-delivery-request/v1alpha1";
+pub(super) const DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2: &str =
+    "yo.slice-review-delegated-continuation-delivery-request/v1alpha2";
 pub(super) const DELEGATED_CLAIM_SCHEMA: &str =
     "yo.external-review-delegated-delivery-claim/v1alpha1";
+pub(super) const DELEGATED_CLAIM_SCHEMA_V1_ALPHA2: &str =
+    "yo.external-review-delegated-delivery-claim/v1alpha2";
 pub(super) const DELEGATED_CONTINUATION_CLAIM_SCHEMA: &str =
     "yo.external-review-delegated-continuation-delivery-claim/v1alpha1";
+pub(super) const DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2: &str =
+    "yo.external-review-delegated-continuation-delivery-claim/v1alpha2";
 pub(super) const DELEGATED_OUTCOME_SCHEMA: &str =
     "yo.external-review-delegated-delivery-outcome/v1alpha1";
 pub(super) const DELEGATED_CONTINUATION_OUTCOME_SCHEMA: &str =
     "yo.external-review-delegated-continuation-delivery-outcome/v1alpha1";
 pub(super) const DELEGATED_RESULT_SCHEMA: &str =
     "yo.slice-review-delegated-delivery-result/v1alpha1";
+pub(super) const DELEGATED_RESULT_SCHEMA_V1_ALPHA2: &str =
+    "yo.slice-review-delegated-delivery-result/v1alpha2";
 pub(super) const DELEGATED_CONTINUATION_RESULT_SCHEMA: &str =
     "yo.slice-review-delegated-continuation-delivery-result/v1alpha1";
+pub(super) const DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA2: &str =
+    "yo.slice-review-delegated-continuation-delivery-result/v1alpha2";
 pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA: &str =
     "yo.external-review-delegated-delivery-receipt/v1alpha1";
 

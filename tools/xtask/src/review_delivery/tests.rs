@@ -123,8 +123,8 @@ fn v1alpha2_delivery_binds_one_target_admission_request() {
     ));
 }
 
-// delegated delivery는 managed request를 재해석하지 않고 host 전용 v1alpha1 schema와
-// exact admission request를 요구합니다.
+// delegated delivery는 managed request를 재해석하지 않고 host 전용 schema와 exact
+// admission request를 요구하며 alpha2도 같은 closed field set만 확장합니다.
 #[test]
 fn delegated_delivery_request_has_a_closed_host_shape() {
     let repository = TestRepository::new("review-delegated-delivery-request");
@@ -141,6 +141,17 @@ fn delegated_delivery_request_has_a_closed_host_shape() {
         read_request(&path).unwrap(),
         DeliveryRequest::Delegated(_)
     ));
+
+    let mut alpha2 = valid.clone();
+    alpha2["schema"] = "yo.slice-review-delegated-delivery-request/v1alpha2".into();
+    let path = repository.write("alpha2.json", &format!("{alpha2}\n"));
+    let DeliveryRequest::Delegated(alpha2) = read_request(&path).unwrap() else {
+        panic!("alpha2 delegated request selected another delivery protocol");
+    };
+    assert_eq!(
+        alpha2.schema,
+        "yo.slice-review-delegated-delivery-request/v1alpha2"
+    );
 
     let mut extra = valid;
     extra["provider_request_limit"] = 1.into();

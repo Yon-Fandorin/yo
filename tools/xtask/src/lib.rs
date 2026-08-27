@@ -15,6 +15,7 @@ mod slice_accept;
 mod slice_close;
 mod slice_contract;
 mod slice_gate;
+mod slice_status;
 mod slice_worktree;
 mod test_explanations;
 mod validation_stage;
@@ -79,7 +80,37 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     if scope == "commit" {
         return run_slice_commit(arguments);
     }
+    if scope == "accept" {
+        return run_slice_accept(arguments);
+    }
+    if scope == "status" {
+        return run_slice_status(arguments);
+    }
     Err(general_usage())
+}
+
+fn run_slice_accept(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(slice_accept_usage)?;
+    if arguments.next().is_some() {
+        return Err(slice_accept_usage());
+    }
+    let repository = current_repository()?;
+    slice_accept::accept(&repository, &request)
+}
+
+fn run_slice_status(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let slice = arguments
+        .next()
+        .and_then(|value| value.into_string().ok())
+        .ok_or_else(slice_status_usage)?;
+    if arguments.next().is_some() {
+        return Err(slice_status_usage());
+    }
+    let repository = current_repository()?;
+    slice_status::run(&repository, &slice)
 }
 
 fn run_slice_gate(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -229,15 +260,27 @@ fn run_review_egress(arguments: &mut impl Iterator<Item = OsString>) -> Result<(
 }
 
 fn run_review_delivery(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
-    let request = arguments
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(review_delivery_usage)?;
+    let first = arguments.next().ok_or_else(review_delivery_usage)?;
+    let (finalize, request) = if first == "finalize" {
+        (
+            true,
+            arguments
+                .next()
+                .map(PathBuf::from)
+                .ok_or_else(review_delivery_usage)?,
+        )
+    } else {
+        (false, PathBuf::from(first))
+    };
     if arguments.next().is_some() {
         return Err(review_delivery_usage());
     }
     let repository = current_repository()?;
-    review_delivery::run(&repository, &request)
+    if finalize {
+        review_delivery::finalize(&repository, &request)
+    } else {
+        review_delivery::run(&repository, &request)
+    }
 }
 
 fn run_review_target_admission(
@@ -505,12 +548,14 @@ fn general_usage() -> String {
      cargo xtask slice review-delta <request.json>\n\
      cargo xtask slice review-egress <request.json>\n\
      cargo xtask slice review-target-admission <request.json>\n\
-     cargo xtask slice review-deliver <request.json>\n\
+     cargo xtask slice review-deliver <request.json|finalize FINALIZE.json>\n\
      cargo xtask slice review-continuation-preflight <request.json>\n\
      cargo xtask slice gate <request.json>\n\
      cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
      cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
      cargo xtask slice commit <commit-message-file|prepare GATE.json MESSAGE-SOURCE MESSAGE-OUT>\n\
+     cargo xtask slice accept <request.json>\n\
+     cargo xtask slice status <slice>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
      cargo xtask check test-explanations\n\
@@ -541,7 +586,7 @@ fn review_egress_usage() -> String {
 }
 
 fn review_delivery_usage() -> String {
-    "usage: cargo xtask slice review-deliver <request.json>".to_owned()
+    "usage: cargo xtask slice review-deliver <request.json|finalize FINALIZE.json>".to_owned()
 }
 
 fn review_target_admission_usage() -> String {
@@ -565,6 +610,14 @@ fn slice_commit_usage() -> String {
     "usage: cargo xtask slice commit <commit-message-file>\n       cargo xtask slice commit prepare <gate.json> <message-source> <message-out>".to_owned()
 }
 
+fn slice_status_usage() -> String {
+    "usage: cargo xtask slice status <slice>".to_owned()
+}
+
+fn slice_accept_usage() -> String {
+    "usage: cargo xtask slice accept <request.json>".to_owned()
+}
+
 fn docs_accept_translation_usage() -> String {
     "usage: cargo xtask docs accept-translation <relative-page.md>".to_owned()
 }
@@ -580,8 +633,8 @@ mod cli_tests {
     use super::{
         activation_slice_usage, docs_accept_translation_usage, review_continuation_preflight_usage,
         review_delivery_usage, review_delta_usage, review_egress_usage, review_packet_usage,
-        review_target_admission_usage, run, slice_close_usage, slice_commit_usage,
-        slice_gate_usage,
+        review_target_admission_usage, run, slice_accept_usage, slice_close_usage,
+        slice_commit_usage, slice_gate_usage, slice_status_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -598,12 +651,14 @@ mod cli_tests {
              cargo xtask slice review-delta <request.json>\n\
              cargo xtask slice review-egress <request.json>\n\
              cargo xtask slice review-target-admission <request.json>\n\
-             cargo xtask slice review-deliver <request.json>\n\
+             cargo xtask slice review-deliver <request.json|finalize FINALIZE.json>\n\
              cargo xtask slice review-continuation-preflight <request.json>\n\
              cargo xtask slice gate <request.json>\n\
              cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
              cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
              cargo xtask slice commit <commit-message-file|prepare GATE.json MESSAGE-SOURCE MESSAGE-OUT>\n\
+             cargo xtask slice accept <request.json>\n\
+             cargo xtask slice status <slice>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
              cargo xtask check test-explanations\n\
@@ -765,6 +820,25 @@ mod cli_tests {
 
         assert_eq!(missing, review_delivery_usage());
         assert_eq!(extra, review_delivery_usage());
+        let finalize_missing =
+            run(["slice", "review-deliver", "finalize"].map(Into::into)).unwrap_err();
+        assert_eq!(finalize_missing, review_delivery_usage());
+    }
+
+    // status와 accept도 Slice 이름 또는 versioned request 하나만 받아 compact 관측과
+    // mutation 경계가 여분 인자로 달라지지 않습니다.
+    #[test]
+    fn status_and_accept_require_one_input() {
+        for (scope, usage) in [
+            ("status", slice_status_usage()),
+            ("accept", slice_accept_usage()),
+        ] {
+            assert_eq!(run(["slice", scope].map(Into::into)).unwrap_err(), usage);
+            assert_eq!(
+                run(["slice", scope, "input", "extra"].map(Into::into)).unwrap_err(),
+                usage
+            );
+        }
     }
 
     // finding-resolution preflight도 egress와 Session root를 담은 closed request 하나만

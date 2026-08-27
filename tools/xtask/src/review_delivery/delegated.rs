@@ -6,13 +6,16 @@ use super::{
     delegated_session::{observe_host_continuation, observe_host_session},
     evaluate_host_admission, exit_label, integration_worktree,
     model::{
-        DELEGATED_CLAIM_SCHEMA, DELEGATED_CONTINUATION_CLAIM_SCHEMA,
-        DELEGATED_CONTINUATION_OUTCOME_SCHEMA, DELEGATED_CONTINUATION_RESULT_SCHEMA,
-        DELEGATED_DELIVERY_RECEIPT_SCHEMA, DELEGATED_OUTCOME_SCHEMA, DELEGATED_RESULT_SCHEMA,
-        DelegatedClaim, DelegatedContinuationClaim, DelegatedContinuationDeliveryOutcome,
-        DelegatedContinuationRequest, DelegatedContinuationResultDocument,
-        DelegatedDeliveryOutcome, DelegatedDeliveryReceipt, DelegatedRequest,
-        DelegatedResultDocument, DelegatedTarget,
+        DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2,
+        DELEGATED_CONTINUATION_CLAIM_SCHEMA, DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2,
+        DELEGATED_CONTINUATION_OUTCOME_SCHEMA, DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2,
+        DELEGATED_CONTINUATION_RESULT_SCHEMA, DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA2,
+        DELEGATED_DELIVERY_RECEIPT_SCHEMA, DELEGATED_OUTCOME_SCHEMA,
+        DELEGATED_REQUEST_SCHEMA_V1_ALPHA2, DELEGATED_RESULT_SCHEMA,
+        DELEGATED_RESULT_SCHEMA_V1_ALPHA2, DelegatedClaim, DelegatedContinuationClaim,
+        DelegatedContinuationDeliveryOutcome, DelegatedContinuationRequest,
+        DelegatedContinuationResultDocument, DelegatedDeliveryOutcome, DelegatedDeliveryReceipt,
+        DelegatedRequest, DelegatedResultDocument, DelegatedTarget,
     },
     output_directory,
     process::{execute_delegated_continuation_once, execute_delegated_once},
@@ -22,6 +25,7 @@ use super::{
 use crate::review_egress::{self, AuthorizedHostDelivery};
 
 pub(super) fn run_original(repository: &Path, request: DelegatedRequest) -> Result<(), String> {
+    let require_state_readiness = request.schema == DELEGATED_REQUEST_SCHEMA_V1_ALPHA2;
     let egress_request_path = shared_path(repository, &request.egress_request_path)?;
     require_exact_file_hash(
         &egress_request_path,
@@ -39,6 +43,7 @@ pub(super) fn run_original(repository: &Path, request: DelegatedRequest) -> Resu
         &request.admission_request_path,
         &request.admission_request_hash,
         &initial,
+        require_state_readiness,
     )?;
     let integration = integration_worktree(repository, &initial.trusted_commit)?;
     let yo_binary = build_current_yo(&integration)?;
@@ -59,6 +64,7 @@ pub(super) fn run_original(repository: &Path, request: DelegatedRequest) -> Resu
         &request.admission_request_path,
         &request.admission_request_hash,
         &authorized,
+        require_state_readiness,
     )?;
     if final_admission != initial_admission {
         return Err(
@@ -69,7 +75,11 @@ pub(super) fn run_original(repository: &Path, request: DelegatedRequest) -> Resu
     require_empty_directory(&output_directory)?;
 
     let claim = DelegatedClaim {
-        schema: DELEGATED_CLAIM_SCHEMA,
+        schema: if require_state_readiness {
+            DELEGATED_CLAIM_SCHEMA_V1_ALPHA2
+        } else {
+            DELEGATED_CLAIM_SCHEMA
+        },
         request_id: &authorized.request_id,
         authorization_id: &authorized.authorization_id,
         authority: &authorized.authority,
@@ -203,7 +213,11 @@ pub(super) fn run_original(repository: &Path, request: DelegatedRequest) -> Resu
     )?;
     let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
     let result = DelegatedResultDocument {
-        schema: DELEGATED_RESULT_SCHEMA,
+        schema: if require_state_readiness {
+            DELEGATED_RESULT_SCHEMA_V1_ALPHA2
+        } else {
+            DELEGATED_RESULT_SCHEMA
+        },
         ok: true,
         status: "completed",
         next_action: "interpret_review",
@@ -230,6 +244,7 @@ pub(super) fn run_continuation(
     repository: &Path,
     request: DelegatedContinuationRequest,
 ) -> Result<(), String> {
+    let require_state_readiness = request.schema == DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2;
     let preflight_path = shared_path(repository, &request.preflight_request_path)?;
     require_exact_file_hash(
         &preflight_path,
@@ -247,6 +262,7 @@ pub(super) fn run_continuation(
         &request.admission_request_path,
         &request.admission_request_hash,
         &initial.delivery,
+        require_state_readiness,
     )?;
     let integration = integration_worktree(repository, &initial.delivery.trusted_commit)?;
     let yo_binary = build_current_yo(&integration)?;
@@ -272,6 +288,7 @@ pub(super) fn run_continuation(
         &request.admission_request_path,
         &request.admission_request_hash,
         authorized,
+        require_state_readiness,
     )?;
     if final_admission != initial_admission {
         return Err(
@@ -290,7 +307,11 @@ pub(super) fn run_continuation(
     require_empty_directory(&output_directory)?;
 
     let claim = DelegatedContinuationClaim {
-        schema: DELEGATED_CONTINUATION_CLAIM_SCHEMA,
+        schema: if require_state_readiness {
+            DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2
+        } else {
+            DELEGATED_CONTINUATION_CLAIM_SCHEMA
+        },
         request_id: &authorized.request_id,
         preflight_request_id: &verified.preflight_request_id,
         authorization_id: &authorized.authorization_id,
@@ -439,7 +460,11 @@ pub(super) fn run_continuation(
     )?;
     let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
     let result = DelegatedContinuationResultDocument {
-        schema: DELEGATED_CONTINUATION_RESULT_SCHEMA,
+        schema: if require_state_readiness {
+            DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA2
+        } else {
+            DELEGATED_CONTINUATION_RESULT_SCHEMA
+        },
         ok: true,
         status: "completed",
         next_action: "interpret_review",

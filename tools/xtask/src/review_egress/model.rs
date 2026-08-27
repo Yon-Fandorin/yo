@@ -8,6 +8,8 @@ pub(super) const DELEGATED_REQUEST_SCHEMA: &str =
     "yo.slice-review-delegated-egress-request/v1alpha1";
 pub(super) const DELEGATED_AUTHORIZATION_SCHEMA: &str =
     "yo.external-review-delegated-authorization/v1alpha1";
+pub(super) const DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2: &str =
+    "yo.external-review-delegated-authorization/v1alpha2";
 pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA: &str =
     "yo.external-review-delegated-delivery-receipt/v1alpha1";
 pub(super) const DELEGATED_RESULT_SCHEMA: &str = "yo.slice-review-delegated-egress-result/v1alpha1";
@@ -89,6 +91,31 @@ pub(super) struct DelegatedAuthorization {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct DelegatedAuthorizationV1Alpha2 {
+    pub(super) schema: String,
+    pub(super) authority: String,
+    pub(super) status: String,
+    pub(super) targets: Vec<AuthorizedDelegatedTargetV1Alpha2>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub(super) enum DelegatedAuthorizationDocument {
+    Alpha1(DelegatedAuthorization),
+    Alpha2(DelegatedAuthorizationV1Alpha2),
+}
+
+impl DelegatedAuthorizationDocument {
+    pub(super) fn authority(&self) -> &str {
+        match self {
+            Self::Alpha1(value) => &value.authority,
+            Self::Alpha2(value) => &value.authority,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct AuthorizedDelegatedTarget {
     pub(super) host: String,
     pub(super) execution_profile: String,
@@ -96,6 +123,18 @@ pub(super) struct AuthorizedDelegatedTarget {
     pub(super) max_managed_payload_tokens: usize,
     pub(super) allow_original_fresh: bool,
     pub(super) allow_finding_resolution_resume: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AuthorizedDelegatedTargetV1Alpha2 {
+    pub(super) host: String,
+    pub(super) execution_profile: String,
+    pub(super) max_packet_bytes: usize,
+    pub(super) max_managed_payload_tokens: usize,
+    pub(super) max_original_fresh_requests: usize,
+    pub(super) max_finding_resolution_resume_requests: usize,
+    pub(super) max_total_requests: usize,
 }
 
 #[derive(Debug, Deserialize)]

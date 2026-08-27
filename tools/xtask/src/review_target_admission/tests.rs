@@ -62,6 +62,10 @@ fn admitted_next_action_selects_the_disjoint_delivery_protocol() {
         delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA2),
         ("eligible", "deliver_delegated_once")
     );
+    assert_eq!(
+        delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA3),
+        ("eligible", "deliver_delegated_once")
+    );
 }
 
 // bounded 탐색 구간에 신뢰할 수 없는 Session이 있으면 이를 absence로 건너뛰지 않고,
@@ -125,9 +129,36 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
         super::model::RESULT_SCHEMA_V1_ALPHA2
     );
 
+    let mut alpha3 = valid.clone();
+    alpha3["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA3.into();
+    let alpha3: super::model::Request = serde_json::from_value(alpha3).unwrap();
+    super::validate_request(&alpha3).unwrap();
+    assert_eq!(
+        super::model::result_schema(&alpha3.schema),
+        super::model::RESULT_SCHEMA_V1_ALPHA3
+    );
+
     let mut extra = valid;
     extra["target"]["route"] = "host:codex".into();
     assert!(serde_json::from_value::<super::model::Request>(extra).is_err());
+}
+
+// 강한 delegated admission은 실제 host 상태 경로에서 claim 전에 필요한 최소
+// create/remove 권한을 증명하고 성공한 probe 파일을 남기지 않습니다.
+#[test]
+fn delegated_state_readiness_is_request_free_and_self_cleaning() {
+    let temporary = crate::test_support::unique_path("delegated-state-readiness");
+    std::fs::create_dir_all(&temporary).unwrap();
+    super::probe_host_state_writable(&temporary).unwrap();
+    assert_eq!(std::fs::read_dir(&temporary).unwrap().count(), 0);
+
+    let missing = temporary.join("missing");
+    assert!(
+        super::probe_host_state_writable(&missing)
+            .unwrap_err()
+            .contains("cannot inspect")
+    );
+    std::fs::remove_dir(&temporary).unwrap();
 }
 
 // Provider가 공개한 account quota source가 없는 상태는 token 합계를 잔여량으로
