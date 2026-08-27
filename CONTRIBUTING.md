@@ -461,6 +461,46 @@ model route. Delivery receipts remain local operational assertions rather than
 Provider-authenticated proof, so the coordinator still owns their factual
 accuracy.
 
+For a review prepared with `yo.slice-review-prepare-request/v1alpha2`, use the
+structured gate-preparation shape and omit caller-declared verdicts:
+
+```json
+{
+  "schema": "yo.slice-gate-prepare-request/v1alpha2",
+  "manifest_path": ".local-exclude/methexis/slice-reviews/<id>/manifest.json",
+  "validation_commands": [{
+    "name": "xtask",
+    "argv": ["cargo", "test", "--locked", "-p", "xtask"],
+    "reused": false
+  }],
+  "review_runs": [{
+    "source": {
+      "kind": "delivery_receipt",
+      "receipt_path": ".local-exclude/coordination/<slice>/delivery.json",
+      "class": "model-high"
+    },
+    "result_path": ".local-exclude/coordination/<slice>/review.txt"
+  }],
+  "known_unverified_environments": [],
+  "risk": {
+    "classification": "human-attention",
+    "rationale": "changes workflow authority"
+  },
+  "approval": null
+}
+```
+
+This experimental shape requires the response's single terminal
+`yo.slice-review-result/v1alpha1` envelope. Gate preparation verifies its exact
+review-chain ID, candidate, every requested lens, `clear` or `findings`
+verdict, and the bidirectional consistency of finding IDs, summaries, and
+affected lenses. It hashes the complete response as before but derives the
+gate verdicts only from that closed envelope. It rejects a missing, duplicate,
+non-terminal, stale, partial, or internally inconsistent envelope; it never
+infers a verdict from surrounding prose. Stable v1 and v1alpha1 retain their
+caller-declared `verdicts` behavior, while v1alpha2 rejects that field so the
+two authorities cannot be mixed.
+
 The experimental
 `yo.slice-gate-prepare-request/v1alpha1` adds exactly one
 `review_carry` value:
@@ -514,7 +554,7 @@ declaration rather than launch proof. When exact human approval is
 later recorded, add only its compact kind, authority, and scope to the
 preparation input and publish to a new output path; the command supplies the
 approved candidate and diff. It never executes a check, sends a review,
-interprets response prose, creates approval, commits, or integrates.
+infers a verdict from response prose, creates approval, commits, or integrates.
 
 The gate does not execute validation, publish a review, interpret review prose,
 grant approval, commit, or integrate. It verifies the bound Slice and clean
@@ -950,7 +990,7 @@ selection and one authorized target:
 
 ```json
 {
-  "schema": "yo.slice-review-prepare-request/v1alpha1",
+  "schema": "yo.slice-review-prepare-request/v1alpha2",
   "slice": "example-slice",
   "knowledge_ids": ["methexis.review.bounded-packet"],
   "context_max_tokens": 16000,
@@ -987,6 +1027,25 @@ standing authorization, requires an empty delivery output directory, and
 returns the exact packet budget plus one `deliver_once` or
 `deliver_delegated_once` next action. It makes zero Provider
 requests and never retries, steers, falls back, or selects another target.
+
+The v1alpha2 preparation appends one fixed output-contract instruction after
+the caller's review questions. After any explanation, the reviewer must end
+with exactly one terminal envelope and no trailing prose:
+
+```text
+<<<YO-SLICE-REVIEW-RESULT>>>
+{"schema":"yo.slice-review-result/v1alpha1","review_id":"<current review id>","candidate_commit":"<current candidate>","verdicts":[{"lens":"<requested lens>","verdict":"clear"}],"findings":[]}
+<<<YO-SLICE-REVIEW-RESULT-END>>>
+```
+
+Each requested lens appears exactly once. A `findings` verdict requires at
+least one bounded material finding naming that lens, a clear lens cannot be
+named by a finding, and findings are empty exactly when every lens is clear.
+The same instruction remains part of the immutable review plan visible to a
+direct finding-resolution continuation. Frozen review-preparation v1alpha1
+does not add this instruction and remains eligible only for the legacy gate
+shape with coordinator-declared verdicts. The corresponding preparation result
+schemas are v1alpha2 and v1alpha1 respectively.
 
 The alternate target is
 `{"kind":"delegated_host","host":"codex"}` or exact host `grok`, with an

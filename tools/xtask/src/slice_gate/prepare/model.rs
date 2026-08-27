@@ -4,8 +4,10 @@ use super::super::{ResultDocument, Risk};
 
 pub(super) const REQUEST_SCHEMA: &str = "yo.slice-gate-prepare-request/v1";
 pub(super) const REQUEST_SCHEMA_V1_ALPHA1: &str = "yo.slice-gate-prepare-request/v1alpha1";
+pub(super) const REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-gate-prepare-request/v1alpha2";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-gate-prepare-result/v1";
 pub(super) const RESULT_SCHEMA_V1_ALPHA1: &str = "yo.slice-gate-prepare-result/v1alpha1";
+pub(super) const RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-gate-prepare-result/v1alpha2";
 pub(super) const REVIEW_CARRY_SCHEMA: &str = "yo.canonical-approval-review-carry/v1alpha1";
 
 #[derive(Debug, Deserialize)]
@@ -44,7 +46,8 @@ pub(super) struct ValidationCommand {
 pub(super) struct ReviewRun {
     pub(super) source: ReviewSource,
     pub(super) result_path: String,
-    pub(super) verdicts: Vec<LensVerdict>,
+    #[serde(default)]
+    pub(super) verdicts: Option<Vec<LensVerdict>>,
 }
 
 #[derive(Debug, Deserialize)]

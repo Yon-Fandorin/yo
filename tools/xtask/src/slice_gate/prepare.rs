@@ -10,8 +10,9 @@ use std::{
 };
 
 use model::{
-    PrepareRequest, PrepareResult, REQUEST_SCHEMA_V1_ALPHA1, RESULT_SCHEMA,
-    RESULT_SCHEMA_V1_ALPHA1, ReviewSource, ValidationCommand,
+    PrepareRequest, PrepareResult, REQUEST_SCHEMA_V1_ALPHA1, REQUEST_SCHEMA_V1_ALPHA2,
+    RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA1, RESULT_SCHEMA_V1_ALPHA2, ReviewSource,
+    ValidationCommand,
 };
 
 use super::{
@@ -26,7 +27,7 @@ use crate::{
     review_delta, review_egress,
     review_packet::VerifiedReview,
     review_protocol::{digest, relative, resolve_input_path},
-    slice_contract,
+    review_result, slice_contract,
 };
 
 const PREPARE_REQUEST_LIMIT: usize = 64 * 1024;
@@ -108,12 +109,13 @@ fn prepare_with(
         "prepared Slice gate request",
     )?;
     let gate = evaluate(repository, output_path)?;
+    let result_schema = match request.schema.as_str() {
+        REQUEST_SCHEMA_V1_ALPHA1 => RESULT_SCHEMA_V1_ALPHA1,
+        REQUEST_SCHEMA_V1_ALPHA2 => RESULT_SCHEMA_V1_ALPHA2,
+        _ => RESULT_SCHEMA,
+    };
     Ok(PrepareResult {
-        schema: if review_carry.is_some() {
-            RESULT_SCHEMA_V1_ALPHA1
-        } else {
-            RESULT_SCHEMA
-        },
+        schema: result_schema,
         ok: true,
         status: if created { "written" } else { "reused" },
         request_path: relative(repository, output_path),
@@ -134,6 +136,18 @@ fn parse_prepare_request(path: &Path, bytes: &[u8]) -> Result<PrepareRequest, St
     let review_carry_present = value
         .as_object()
         .is_some_and(|object| object.contains_key("review_carry"));
+    let verdict_presence = value
+        .get("review_runs")
+        .and_then(serde_json::Value::as_array)
+        .map(|runs| {
+            runs.iter()
+                .map(|run| {
+                    run.as_object()
+                        .is_some_and(|object| object.contains_key("verdicts"))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let request: PrepareRequest = serde_json::from_value(value).map_err(|error| {
         format!(
             "invalid Slice gate preparation request {}: {error}",
@@ -141,22 +155,44 @@ fn parse_prepare_request(path: &Path, bytes: &[u8]) -> Result<PrepareRequest, St
         )
     })?;
     match request.schema.as_str() {
-        model::REQUEST_SCHEMA if !review_carry_present => {},
-        model::REQUEST_SCHEMA => {
+        model::REQUEST_SCHEMA if review_carry_present => {
             return Err(format!(
                 "schema `{}` does not permit review_carry",
                 model::REQUEST_SCHEMA
             ));
         },
-        REQUEST_SCHEMA_V1_ALPHA1 if request.review_carry.is_some() => {},
-        REQUEST_SCHEMA_V1_ALPHA1 => {
+        model::REQUEST_SCHEMA if verdict_presence.iter().any(|present| !*present) => {
+            return Err(format!(
+                "schema `{}` requires declared verdicts",
+                model::REQUEST_SCHEMA
+            ));
+        },
+        model::REQUEST_SCHEMA => {},
+        REQUEST_SCHEMA_V1_ALPHA1 if request.review_carry.is_none() => {
             return Err(format!(
                 "schema `{REQUEST_SCHEMA_V1_ALPHA1}` requires review_carry"
             ));
         },
+        REQUEST_SCHEMA_V1_ALPHA1 if verdict_presence.iter().any(|present| !*present) => {
+            return Err(format!(
+                "schema `{REQUEST_SCHEMA_V1_ALPHA1}` requires declared verdicts"
+            ));
+        },
+        REQUEST_SCHEMA_V1_ALPHA1 => {},
+        REQUEST_SCHEMA_V1_ALPHA2 if review_carry_present => {
+            return Err(format!(
+                "schema `{REQUEST_SCHEMA_V1_ALPHA2}` does not permit review_carry"
+            ));
+        },
+        REQUEST_SCHEMA_V1_ALPHA2 if verdict_presence.iter().any(|present| *present) => {
+            return Err(format!(
+                "schema `{REQUEST_SCHEMA_V1_ALPHA2}` derives verdicts from structured review results and does not permit declared verdicts"
+            ));
+        },
+        REQUEST_SCHEMA_V1_ALPHA2 => {},
         other => {
             return Err(format!(
-                "unsupported Slice gate preparation schema `{other}`; expected `{}` or `{REQUEST_SCHEMA_V1_ALPHA1}`",
+                "unsupported Slice gate preparation schema `{other}`; expected `{}`, `{REQUEST_SCHEMA_V1_ALPHA1}`, or `{REQUEST_SCHEMA_V1_ALPHA2}`",
                 model::REQUEST_SCHEMA
             ));
         },
@@ -251,6 +287,7 @@ fn build_gate_request(
         &request.review_runs,
         &candidate,
         &diff_hash,
+        request.schema == REQUEST_SCHEMA_V1_ALPHA2,
     )?;
     let approval = request.approval.as_ref().map(|approval| Approval {
         kind: approval.kind.clone(),
@@ -351,6 +388,7 @@ fn prepare_reviews(
     runs: &[model::ReviewRun],
     candidate: &str,
     diff_hash: &str,
+    structured: bool,
 ) -> Result<Vec<ReviewEvidence>, String> {
     let mut prepared = Vec::new();
     for run in runs {
@@ -396,15 +434,34 @@ fn prepare_reviews(
             },
             ReviewSource::DeclaredRoute { route } => route.clone(),
         };
-        for verdict in &run.verdicts {
-            let lens = Lens::parse(&verdict.lens)
-                .ok_or_else(|| format!("unknown review lens `{}`", verdict.lens))?;
+        let verdicts = if structured {
+            review_result::verify(
+                &result_bytes,
+                &review.review_id,
+                candidate,
+                &review.review_lenses,
+            )?
+            .verdicts
+            .into_iter()
+            .map(|verdict| (verdict.lens, verdict.verdict))
+            .collect::<Vec<_>>()
+        } else {
+            run.verdicts
+                .as_deref()
+                .ok_or_else(|| "legacy gate preparation requires declared verdicts".to_owned())?
+                .iter()
+                .map(|verdict| (verdict.lens.clone(), verdict.verdict.clone()))
+                .collect::<Vec<_>>()
+        };
+        for (lens_name, verdict) in verdicts {
+            let lens = Lens::parse(&lens_name)
+                .ok_or_else(|| format!("unknown review lens `{lens_name}`"))?;
             let reviewer = review_coverage::reviewer_for_route(&route, lens)?;
             prepared.push(ReviewEvidence {
-                lens: verdict.lens.clone(),
+                lens: lens_name,
                 reviewer,
                 route: route.clone(),
-                verdict: verdict.verdict.clone(),
+                verdict,
                 candidate_commit: candidate.to_owned(),
                 diff_hash: diff_hash.to_owned(),
                 result_path: run.result_path.clone(),

@@ -17,12 +17,13 @@ use self::model::{
     DELIVERY_PROFILE, DelegatedAdmission, DelegatedEgress, DelegatedTarget, DeliveryRequest,
     FreshSession, MANAGED_ADMISSION_SCHEMA, MANAGED_DELIVERY_SCHEMA, MANAGED_EGRESS_SCHEMA,
     ManagedAdmission, ManagedAdmissionTarget, ManagedEgress, ManagedRoute, REQUEST_SCHEMA,
-    RESULT_SCHEMA, REVIEW_SCHEMA, Request, ReviewRequest, TOKENIZER_PROFILE, Target,
+    REQUEST_SCHEMA_V1_ALPHA2, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2, REVIEW_SCHEMA, Request,
+    ReviewRequest, TOKENIZER_PROFILE, Target,
 };
 use crate::{
     bounded_file, review_egress, review_packet,
     review_protocol::{digest, relative},
-    review_target_admission, slice_contract, slice_worktree,
+    review_result, review_target_admission, slice_contract, slice_worktree,
 };
 
 const REQUEST_LIMIT: usize = 256 * 1024;
@@ -135,6 +136,7 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         max_tokens: request.context_max_tokens,
     };
     let context_bytes = canonical_json(&context)?;
+    let review_questions = prepared_review_questions(&request);
     let review = ReviewRequest {
         schema: REVIEW_SCHEMA,
         context_request_path: &context_relative,
@@ -143,7 +145,7 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         repository_authority_paths: &request.repository_authority_paths,
         validation_evidence: &request.validation_evidence,
         review_lenses: &request.review_lenses,
-        review_questions: &request.review_questions,
+        review_questions: &review_questions,
         delivery_profile: DELIVERY_PROFILE,
         tokenizer_profile: TOKENIZER_PROFILE,
         max_managed_payload_tokens: request.max_managed_payload_tokens,
@@ -232,8 +234,13 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let context_hash = digest(&context_bytes);
     let review_hash = digest(&review_bytes);
     let delivery_hash = digest(&delivery_bytes);
+    let result_schema = if request.schema == REQUEST_SCHEMA_V1_ALPHA2 {
+        RESULT_SCHEMA_V1_ALPHA2
+    } else {
+        RESULT_SCHEMA
+    };
     let result = serde_json::json!({
-        "schema": RESULT_SCHEMA,
+        "schema": result_schema,
         "ok": true,
         "status": if created { "created" } else { "reused" },
         "artifacts_published": true,
@@ -468,9 +475,12 @@ fn require_eligible_admission(path: &Path, expected_next_action: &str) -> Result
 }
 
 fn validate_and_normalize(request: &mut Request) -> Result<(), String> {
-    if request.schema != REQUEST_SCHEMA {
+    if !matches!(
+        request.schema.as_str(),
+        REQUEST_SCHEMA | REQUEST_SCHEMA_V1_ALPHA2
+    ) {
         return Err(format!(
-            "unsupported Slice review preparation schema `{}`; expected `{REQUEST_SCHEMA}`",
+            "unsupported Slice review preparation schema `{}`; expected `{REQUEST_SCHEMA}` or `{REQUEST_SCHEMA_V1_ALPHA2}`",
             request.schema
         ));
     }
@@ -537,6 +547,14 @@ fn validate_and_normalize(request: &mut Request) -> Result<(), String> {
         },
     }
     Ok(())
+}
+
+fn prepared_review_questions(request: &Request) -> Vec<String> {
+    let mut questions = request.review_questions.clone();
+    if request.schema == REQUEST_SCHEMA_V1_ALPHA2 {
+        questions.push(review_result::OUTPUT_INSTRUCTION.to_owned());
+    }
+    questions
 }
 
 fn normalize_strings(values: &mut [String], label: &str) -> Result<(), String> {

@@ -4,8 +4,8 @@ use serde_json::json;
 
 use super::{
     DELEGATED_DELIVERY_SCHEMA, MANAGED_DELIVERY_SCHEMA, PreparedBytes, PreparedPaths, Request,
-    RouteKind, Target, egress_document, require_empty_directory, require_prepared_requests_current,
-    target_preparation, validate_and_normalize,
+    RouteKind, Target, egress_document, prepared_review_questions, require_empty_directory,
+    require_prepared_requests_current, target_preparation, validate_and_normalize,
 };
 use crate::{review_packet::PublishedReview, test_support::unique_path};
 
@@ -205,4 +205,24 @@ fn final_prepared_request_check_rejects_post_publication_drift() {
             .unwrap_err()
             .contains("Slice review packet request changed")
     );
+}
+
+// alpha2 통합 경로만 terminal structured-result 지시를 정확히 한 번 추가하고,
+// 이미 발행된 alpha1 준비 의미와 호출자가 작성한 질문은 그대로 보존합니다.
+#[test]
+fn alpha2_adds_structured_result_instruction_without_reinterpreting_alpha1() {
+    let legacy = request(json!({"kind": "delegated_host", "host": "codex"}));
+    assert_eq!(prepared_review_questions(&legacy), legacy.review_questions);
+
+    let mut structured = legacy;
+    structured.schema = "yo.slice-review-prepare-request/v1alpha2".to_owned();
+    let questions = prepared_review_questions(&structured);
+    assert_eq!(questions.len(), structured.review_questions.len() + 1);
+    assert!(
+        questions
+            .last()
+            .unwrap()
+            .contains("yo.slice-review-result/v1alpha1")
+    );
+    validate_and_normalize(&mut structured).unwrap();
 }

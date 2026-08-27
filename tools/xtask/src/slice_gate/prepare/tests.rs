@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 
 use super::{
     model::{
-        CanonicalApprovalReviewCarryResult, REQUEST_SCHEMA_V1_ALPHA1, RESULT_SCHEMA_V1_ALPHA1,
-        REVIEW_CARRY_SCHEMA,
+        CanonicalApprovalReviewCarryResult, REQUEST_SCHEMA_V1_ALPHA1, REQUEST_SCHEMA_V1_ALPHA2,
+        RESULT_SCHEMA_V1_ALPHA1, RESULT_SCHEMA_V1_ALPHA2, REVIEW_CARRY_SCHEMA,
     },
     prepare_with, set_final_revalidate_hook,
 };
@@ -258,6 +258,38 @@ impl Fixture {
         self.request["validation_commands"][0]["name"] = json!("external-operation/xtask");
         self.rewrite_request();
     }
+
+    fn use_structured_result(&mut self) {
+        self.request["schema"] = json!(REQUEST_SCHEMA_V1_ALPHA2);
+        self.request["review_runs"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("verdicts");
+        let response = PathBuf::from(
+            self.request["review_runs"][0]["result_path"]
+                .as_str()
+                .unwrap(),
+        );
+        let result = json!({
+            "schema": "yo.slice-review-result/v1alpha1",
+            "review_id": self.review.review_id,
+            "candidate_commit": self.review.candidate_commit,
+            "verdicts": [
+                {"lens": "code-quality", "verdict": "clear"},
+                {"lens": "fresh-context", "verdict": "clear"}
+            ],
+            "findings": []
+        });
+        std::fs::write(
+            response,
+            format!(
+                "review complete\n<<<YO-SLICE-REVIEW-RESULT>>>\n{}\n<<<YO-SLICE-REVIEW-RESULT-END>>>\n",
+                serde_json::to_string(&result).unwrap()
+            ),
+        )
+        .unwrap();
+        self.rewrite_request();
+    }
 }
 
 impl Drop for Fixture {
@@ -295,6 +327,53 @@ fn prepares_and_evaluates_exact_gate_request_from_existing_artifacts() {
     assert_eq!(
         generated["validation_evidence"][0]["result_hash"],
         fixture.review.validation_evidence[0].hash
+    );
+}
+
+// alpha2 준비는 response의 terminal envelope에서 exact lens verdict를 파생하여
+// coordinator가 clear/findings를 다시 입력하지 않아도 같은 gate evidence를 만듭니다.
+#[test]
+fn structured_result_drives_gate_without_declared_verdicts() {
+    let mut fixture = Fixture::new();
+    fixture.use_structured_result();
+
+    let result = fixture.publish().unwrap();
+    assert_eq!(result.schema, RESULT_SCHEMA_V1_ALPHA2);
+    assert_eq!(result.gate.next_action, "integrate");
+    assert!(
+        result
+            .gate
+            .review
+            .iter()
+            .all(|entry| entry.verdict == "clear")
+    );
+}
+
+// legacy schema는 수기 verdict를 계속 요구하고 alpha2는 이를 금지하여 어느 쪽도
+// 누락을 clear로 추정하거나 두 authority를 조용히 혼합하지 않습니다.
+#[test]
+fn prepare_schema_keeps_declared_and_structured_verdict_authority_disjoint() {
+    let mut legacy = Fixture::new();
+    legacy.request["review_runs"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("verdicts");
+    legacy.rewrite_request();
+    assert!(
+        legacy
+            .publish()
+            .unwrap_err()
+            .contains("requires declared verdicts")
+    );
+
+    let mut structured = Fixture::new();
+    structured.request["schema"] = json!(REQUEST_SCHEMA_V1_ALPHA2);
+    structured.rewrite_request();
+    assert!(
+        structured
+            .publish()
+            .unwrap_err()
+            .contains("does not permit declared verdicts")
     );
 }
 
