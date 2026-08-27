@@ -361,7 +361,9 @@ mod tests {
     // startup 오류를 유지하면서 exact stored model에 local_configuration warning을 남깁니다.
     #[test]
     fn missing_startup_credential_records_local_configuration_failure() {
-        let root = std::env::temp_dir().join(format!(
+        let temp_dir = std::fs::canonicalize(std::env::temp_dir())
+            .expect("the native startup fixture temp directory must resolve physically");
+        let root = temp_dir.join(format!(
             "yo-native-missing-credential-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
