@@ -75,6 +75,9 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     if scope == "review-continuation-preflight" {
         return run_review_continuation_preflight(arguments);
     }
+    if scope == "review-result-correction-preflight" {
+        return run_review_result_correction_preflight(arguments);
+    }
     if scope == "cost-report" {
         return run_cost_report(arguments);
     }
@@ -173,6 +176,20 @@ fn run_slice_status(arguments: &mut impl Iterator<Item = OsString>) -> Result<()
     }
     let repository = current_repository()?;
     slice_status::run(&repository, &slice)
+}
+
+fn run_review_result_correction_preflight(
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(review_result_correction_preflight_usage)?;
+    if arguments.next().is_some() {
+        return Err(review_result_correction_preflight_usage());
+    }
+    let repository = current_repository()?;
+    review_result::correction_preflight(&repository, &request)
 }
 
 fn run_slice_gate(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -632,6 +649,7 @@ fn general_usage() -> String {
      cargo xtask slice review-target-admission <request.json>\n\
      cargo xtask slice review-deliver <request.json|finalize FINALIZE.json>\n\
      cargo xtask slice review-continuation-preflight <request.json>\n\
+     cargo xtask slice review-result-correction-preflight <request.json>\n\
      cargo xtask slice cost-report <request.json> <output.json>\n\
      cargo xtask slice gate <request.json>\n\
      cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
@@ -687,6 +705,10 @@ fn review_target_admission_usage() -> String {
 
 fn review_continuation_preflight_usage() -> String {
     "usage: cargo xtask slice review-continuation-preflight <request.json>".to_owned()
+}
+
+fn review_result_correction_preflight_usage() -> String {
+    "usage: cargo xtask slice review-result-correction-preflight <request.json>".to_owned()
 }
 
 fn cost_report_usage() -> String {
@@ -752,6 +774,7 @@ mod cli_tests {
              cargo xtask slice review-target-admission <request.json>\n\
              cargo xtask slice review-deliver <request.json|finalize FINALIZE.json>\n\
              cargo xtask slice review-continuation-preflight <request.json>\n\
+             cargo xtask slice review-result-correction-preflight <request.json>\n\
              cargo xtask slice cost-report <request.json> <output.json>\n\
              cargo xtask slice gate <request.json>\n\
              cargo xtask slice gate prepare <prepare.json> <gate.json>\n\

@@ -104,6 +104,55 @@ if [[ -s "${fixture}/reusable-local.err" ||
     exit 1
 fi
 
+(
+    cd "${clean_repository}"
+    PATH="${fixture}/bin:${PATH}" \
+    SYSTEM_MKTEMP="${system_mktemp}" \
+    YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+        bash "${checker}" --resource-class cargo-heavy leased -- true
+) >"${fixture}/leased.out" 2>"${fixture}/leased.err"
+leased_summary=$(<"${fixture}/leased.out")
+if [[ -s "${fixture}/leased.err" ||
+    "${leased_summary}" != *'"schema":"yo.validation-run-summary/v1alpha4"'* ||
+    "${leased_summary}" != *'"class":"cargo-heavy"'* ||
+    "${leased_summary}" != *'"status":"acquired"'* ||
+    -d "${clean_repository}/.local-exclude/validation-leases/cargo-heavy" ]]; then
+    echo "resource lease: expected one released cargo-heavy lease and v1alpha4 evidence" >&2
+    exit 1
+fi
+
+mkdir -p "${clean_repository}/.local-exclude/validation-leases/cargo-heavy"
+set +e
+(
+    cd "${clean_repository}"
+    YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+        bash "${checker}" --resource-class cargo-heavy collision -- \
+        bash -c 'touch "$1"' _ "${fixture}/leased-collision-ran"
+) >"${fixture}/leased-collision.out" 2>"${fixture}/leased-collision.err"
+leased_collision_status=$?
+set -e
+rmdir "${clean_repository}/.local-exclude/validation-leases/cargo-heavy"
+if [[ ${leased_collision_status} -ne 75 || -e "${fixture}/leased-collision-ran" ||
+    -s "${fixture}/leased-collision.out" ]] ||
+    ! grep -q 'resource lease is already held' "${fixture}/leased-collision.err"; then
+    echo "resource lease collision: the second cargo-heavy child must fail before execution" >&2
+    exit 1
+fi
+
+set +e
+(
+    cd "${clean_repository}"
+    unset CARGO_TARGET_DIR
+    bash "${checker}" --resource-class independent missing-target -- true
+) >"${fixture}/independent.out" 2>"${fixture}/independent.err"
+independent_status=$?
+set -e
+if [[ ${independent_status} -ne 64 ]] ||
+    ! grep -q 'requires an absolute CARGO_TARGET_DIR' "${fixture}/independent.err"; then
+    echo "independent lease: an explicit isolated Cargo target is required" >&2
+    exit 1
+fi
+
 set +e
 PATH="${fixture}/bin:${PATH}" \
 SYSTEM_MKTEMP="${system_mktemp}" \

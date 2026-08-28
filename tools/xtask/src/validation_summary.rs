@@ -8,6 +8,7 @@ const LEGACY_SCHEMA: &str = "yo.validation-run-summary/v1";
 const ALPHA1_SCHEMA: &str = "yo.validation-run-summary/v1alpha1";
 const ALPHA2_SCHEMA: &str = "yo.validation-run-summary/v1alpha2";
 const ALPHA3_SCHEMA: &str = "yo.validation-run-summary/v1alpha3";
+const ALPHA4_SCHEMA: &str = "yo.validation-run-summary/v1alpha4";
 const REVIEWED_DESCENDANT_REUSE: &str = "reviewed-descendant/v1";
 const CONTEXT_REUSE: &str = "reviewed-descendant-context/v1";
 const REUSE_CONTEXT_SCHEMA: &str = "yo.validation-reuse-context/v1alpha1";
@@ -96,6 +97,38 @@ struct Alpha3Summary {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Alpha4Summary {
+    schema: String,
+    name: String,
+    status: String,
+    exit_code: i32,
+    elapsed_seconds: u64,
+    log_bytes: u64,
+    log_path: String,
+    log_hash: String,
+    head_commit: String,
+    worktree_state: String,
+    command_argv_count: usize,
+    command_argv_hash: String,
+    reused: bool,
+    reuse_policy: String,
+    #[serde(default)]
+    reuse_context: Option<ReuseContext>,
+    resource_lease: ResourceLease,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResourceLease {
+    schema: String,
+    class: String,
+    key: String,
+    status: String,
+    wait_attempts: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ReuseContext {
     schema: String,
     platform_os: String,
@@ -131,6 +164,14 @@ pub(crate) fn verify(
             requested_reuse,
         ),
         ALPHA3_SCHEMA => verify_alpha3(
+            repository,
+            bytes,
+            expected_name,
+            expected_argv,
+            candidate,
+            requested_reuse,
+        ),
+        ALPHA4_SCHEMA => verify_alpha4(
             repository,
             bytes,
             expected_name,
@@ -189,6 +230,16 @@ pub(crate) fn verify_review_input(
                 &summary.log_hash,
             )
         },
+        ALPHA4_SCHEMA => {
+            let summary: Alpha4Summary = parse(bytes)?;
+            verify_alpha4_identity(&summary, expected_name, candidate)?;
+            verify_resource_lease(&summary.resource_lease)?;
+            verify_recorded_command_and_log(
+                summary.command_argv_count,
+                &summary.command_argv_hash,
+                &summary.log_hash,
+            )
+        },
         external_operation::SCHEMA => external_operation::validate(expected_name, bytes, candidate),
         other => unsupported_schema(other),
     }
@@ -204,7 +255,7 @@ fn parse<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, String> {
 
 fn unsupported_schema<T>(schema: &str) -> Result<T, String> {
     Err(format!(
-        "unsupported schema `{schema}`; expected `{LEGACY_SCHEMA}`, `{ALPHA1_SCHEMA}`, `{ALPHA2_SCHEMA}`, `{ALPHA3_SCHEMA}`, or `{}`",
+        "unsupported schema `{schema}`; expected `{LEGACY_SCHEMA}`, `{ALPHA1_SCHEMA}`, `{ALPHA2_SCHEMA}`, `{ALPHA3_SCHEMA}`, `{ALPHA4_SCHEMA}`, or `{}`",
         external_operation::SCHEMA
     ))
 }
@@ -313,6 +364,41 @@ fn verify_alpha3_identity(
     )?;
     if summary.reuse_policy != CONTEXT_REUSE {
         return Err(format!("reuse_policy must be `{CONTEXT_REUSE}`"));
+    }
+    verify_exact_execution(
+        &summary.head_commit,
+        &summary.worktree_state,
+        summary.reused,
+        candidate,
+    )
+}
+
+fn verify_alpha4_identity(
+    summary: &Alpha4Summary,
+    expected_name: &str,
+    candidate: &str,
+) -> Result<(), String> {
+    verify_common(
+        &summary.schema,
+        ALPHA4_SCHEMA,
+        &summary.name,
+        expected_name,
+        &summary.status,
+        summary.exit_code,
+    )?;
+    match &summary.reuse_context {
+        Some(context) => {
+            if summary.reuse_policy != CONTEXT_REUSE {
+                return Err(format!("reuse_policy must be `{CONTEXT_REUSE}`"));
+            }
+            verify_reuse_context_format(context)?;
+        },
+        None if summary.reuse_policy == REVIEWED_DESCENDANT_REUSE => {},
+        None => {
+            return Err(format!(
+                "reuse_policy must be `{REVIEWED_DESCENDANT_REUSE}` without reuse_context"
+            ));
+        },
     }
     verify_exact_execution(
         &summary.head_commit,
@@ -517,6 +603,104 @@ fn verify_alpha3(
     })
 }
 
+fn verify_alpha4(
+    repository: &Path,
+    bytes: &[u8],
+    expected_name: &str,
+    expected_argv: &[String],
+    candidate: &str,
+    requested_reuse: bool,
+) -> Result<VerifiedSummary, String> {
+    let summary: Alpha4Summary = parse(bytes)?;
+    verify_common(
+        &summary.schema,
+        ALPHA4_SCHEMA,
+        &summary.name,
+        expected_name,
+        &summary.status,
+        summary.exit_code,
+    )?;
+    verify_resource_lease(&summary.resource_lease)?;
+    review_protocol::require_commit(&summary.head_commit, "validation summary head_commit")?;
+    if summary.worktree_state != "clean" {
+        return Err("worktree_state must be `clean`".to_owned());
+    }
+    if summary.reused {
+        return Err("an execution summary must record `reused:false`".to_owned());
+    }
+    match &summary.reuse_context {
+        Some(context) => {
+            if summary.reuse_policy != CONTEXT_REUSE {
+                return Err(format!("reuse_policy must be `{CONTEXT_REUSE}`"));
+            }
+            verify_reuse_context_format(context)?;
+            if requested_reuse {
+                verify_current_reuse_context(context)?;
+            }
+        },
+        None if summary.reuse_policy == REVIEWED_DESCENDANT_REUSE => {},
+        None => {
+            return Err(format!(
+                "reuse_policy must be `{REVIEWED_DESCENDANT_REUSE}` without reuse_context"
+            ));
+        },
+    }
+    if requested_reuse {
+        if summary.status != "passed" {
+            return Err("only passed validation evidence can be reused".to_owned());
+        }
+        if !git::trusted_succeeds_in(
+            repository,
+            &[
+                "merge-base",
+                "--is-ancestor",
+                &summary.head_commit,
+                candidate,
+            ],
+        )? {
+            return Err(format!(
+                "validation summary head_commit {} is not an ancestor of candidate {candidate}",
+                summary.head_commit
+            ));
+        }
+    } else if summary.head_commit != candidate {
+        return Err(format!(
+            "head_commit {} does not match candidate {candidate}",
+            summary.head_commit
+        ));
+    }
+    verify_command_and_log(
+        expected_argv,
+        summary.command_argv_count,
+        &summary.command_argv_hash,
+        &summary.log_hash,
+    )?;
+    let _ = (summary.elapsed_seconds, summary.log_bytes);
+    Ok(VerifiedSummary {
+        status: summary.status,
+        log_path: Some(summary.log_path),
+    })
+}
+
+fn verify_resource_lease(lease: &ResourceLease) -> Result<(), String> {
+    if lease.schema != "yo.validation-resource-lease/v1alpha1"
+        || !matches!(lease.class.as_str(), "cargo-heavy" | "independent")
+        || lease.key.is_empty()
+        || lease.key.len() > 128
+        || lease
+            .key
+            .bytes()
+            .any(|byte| byte.is_ascii_whitespace() || byte.is_ascii_control())
+        || lease.status != "acquired"
+        || lease.wait_attempts != 0
+    {
+        return Err(
+            "validation resource lease is not a closed acquired v1alpha1 observation".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn verify_reuse_context_format(context: &ReuseContext) -> Result<(), String> {
     if context.schema != REUSE_CONTEXT_SCHEMA {
         return Err(format!(
@@ -692,6 +876,20 @@ mod tests {
         .unwrap()
     }
 
+    fn alpha4(name: &str, candidate: &str) -> Vec<u8> {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&alpha3(name, candidate)).unwrap();
+        value["schema"] = json!("yo.validation-run-summary/v1alpha4");
+        value["resource_lease"] = json!({
+            "schema": "yo.validation-resource-lease/v1alpha1",
+            "class": "cargo-heavy",
+            "key": "cargo-heavy",
+            "status": "acquired",
+            "wait_attempts": 0
+        });
+        serde_json::to_vec(&value).unwrap()
+    }
+
     // 패킷 준비 단계가 runner 내부 이름과 exact candidate를 묶어 늦은 gate 실패를 막는다.
     #[test]
     fn review_input_binds_name_and_exact_candidate_before_publication() {
@@ -753,6 +951,29 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("none-declared"));
+    }
+
+    // leased v1alpha4 evidence is accepted only when both the inherited execution identity
+    // and its closed, non-waiting resource observation are intact.
+    #[test]
+    fn alpha4_review_input_requires_closed_resource_lease() {
+        let candidate = "a".repeat(40);
+        let repository = std::path::Path::new(".");
+        let bytes = alpha4("yo-cli", &candidate);
+        verify_review_input(repository, &bytes, "yo-cli", &candidate).unwrap();
+
+        let mut summary: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        summary["resource_lease"]["wait_attempts"] = json!(1);
+        assert!(
+            verify_review_input(
+                repository,
+                &serde_json::to_vec(&summary).unwrap(),
+                "yo-cli",
+                &candidate,
+            )
+            .unwrap_err()
+            .contains("resource lease")
+        );
     }
 
     // gate의 재사용 시점에는 현재 platform과 toolchain을 다시 관찰하므로 이전 실행의

@@ -8,7 +8,9 @@ use serde::Serialize;
 
 use crate::{bounded_file, git, slice_contract, slice_worktree};
 
-const RESULT_SCHEMA: &str = "yo.slice-status/v1alpha2";
+mod delivery;
+
+const RESULT_SCHEMA: &str = "yo.slice-status/v1alpha3";
 const JSON_LIMIT: usize = 8 * 1024 * 1024;
 const MAX_JSON_FILES: usize = 256;
 const MAX_SCAN_DEPTH: usize = 6;
@@ -22,15 +24,43 @@ pub(crate) struct SliceState {
     pub(crate) clean: bool,
 }
 
-#[derive(Default)]
 struct Artifacts {
-    validation_summaries: usize,
+    validations: Vec<ValidationSummary>,
     gate_requests: usize,
     claims: usize,
     delivery_receipts: usize,
     review_rounds: usize,
     durable_requests: u64,
     prior_findings: usize,
+    superseded: usize,
+    delivery: delivery::Projection,
+    delivery_request: Option<PathBuf>,
+}
+
+impl Default for Artifacts {
+    fn default() -> Self {
+        Self {
+            validations: Vec::new(),
+            gate_requests: 0,
+            claims: 0,
+            delivery_receipts: 0,
+            review_rounds: 0,
+            durable_requests: 0,
+            prior_findings: 0,
+            superseded: 0,
+            delivery: delivery::prepared(),
+            delivery_request: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct ValidationSummary {
+    name: String,
+    status: String,
+    log_hash: String,
+    path: String,
+    reused: bool,
 }
 
 struct ReviewLineage {
@@ -39,11 +69,28 @@ struct ReviewLineage {
     status: &'static str,
     current_review_ids: BTreeSet<String>,
     latest_review_ids: BTreeSet<String>,
+    current_validations: Vec<EffectiveValidation>,
+}
+
+struct EffectiveValidation {
+    name: String,
+    path: PathBuf,
+    hash: String,
+    reused: bool,
 }
 
 #[derive(Default)]
 struct ScanBudget {
     json_files: usize,
+}
+
+struct CoordinationScope<'a> {
+    repository: &'a Path,
+    workspace: &'a Path,
+    candidate: &'a str,
+    current_review_ids: &'a BTreeSet<String>,
+    latest_review_ids: &'a BTreeSet<String>,
+    current_validations: &'a [EffectiveValidation],
 }
 
 #[derive(Serialize)]
@@ -58,13 +105,20 @@ struct ResultDocument {
     review_lineage: &'static str,
     review_packets: usize,
     review_rounds: usize,
+    review_chain: Vec<String>,
     latest_packet_candidate: Option<String>,
-    validation_summaries: usize,
+    validation_summaries: Vec<ValidationSummary>,
     gate_requests: usize,
     delivery_claims: usize,
     delivery_receipts: usize,
     durable_external_requests: u64,
+    superseded_artifacts: usize,
+    delivery: delivery::Projection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    blocking_reason: Option<String>,
     next_action: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_argv: Option<Vec<String>>,
 }
 
 pub(crate) fn run(repository: &Path, slice: &str) -> Result<(), String> {
@@ -78,12 +132,18 @@ pub(crate) fn run(repository: &Path, slice: &str) -> Result<(), String> {
     let reviews = scan_review_lineage(&state, &workspace, &mut budget)?;
     let artifacts = scan_coordination(
         &coordination,
-        &state.head,
-        &reviews.current_review_ids,
-        &reviews.latest_review_ids,
+        &CoordinationScope {
+            repository: &state.worktree,
+            workspace: &workspace,
+            candidate: &state.head,
+            current_review_ids: &reviews.current_review_ids,
+            latest_review_ids: &reviews.latest_review_ids,
+            current_validations: &reviews.current_validations,
+        },
         &mut budget,
     )?;
     let next_action = next_action(&state, &reviews, &artifacts);
+    let (next_argv, blocking_reason) = next_invocation(slice, next_action, &artifacts);
     let result = ResultDocument {
         schema: RESULT_SCHEMA,
         ok: true,
@@ -95,13 +155,18 @@ pub(crate) fn run(repository: &Path, slice: &str) -> Result<(), String> {
         review_lineage: reviews.status,
         review_packets: reviews.packets,
         review_rounds: artifacts.review_rounds,
+        review_chain: reviews.current_review_ids.iter().cloned().collect(),
         latest_packet_candidate: reviews.latest_candidate,
-        validation_summaries: artifacts.validation_summaries,
+        validation_summaries: artifacts.validations,
         gate_requests: artifacts.gate_requests,
         delivery_claims: artifacts.claims,
         delivery_receipts: artifacts.delivery_receipts,
         durable_external_requests: artifacts.durable_requests,
+        superseded_artifacts: artifacts.superseded,
+        delivery: artifacts.delivery,
+        blocking_reason,
         next_action,
+        next_argv,
     };
     println!(
         "{}",
@@ -128,11 +193,60 @@ fn next_action(state: &SliceState, reviews: &ReviewLineage, artifacts: &Artifact
             "build_review"
         }
     } else if artifacts.review_rounds == 0 {
-        "deliver_current_review"
+        artifacts.delivery.next_action
     } else if artifacts.gate_requests == 0 {
         "prepare_gate"
     } else {
         "run_gate"
+    }
+}
+
+fn next_invocation(
+    slice: &str,
+    action: &str,
+    artifacts: &Artifacts,
+) -> (Option<Vec<String>>, Option<String>) {
+    match action {
+        "deliver_current_review" => artifacts
+            .delivery_request
+            .as_ref()
+            .map(|path| {
+                (
+                    Some(vec![
+                        "cargo".to_owned(),
+                        "xtask".to_owned(),
+                        "slice".to_owned(),
+                        "review-deliver".to_owned(),
+                        path.display().to_string(),
+                    ]),
+                    None,
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    None,
+                    Some("no current immutable delivery request is published".to_owned()),
+                )
+            }),
+        "await_current_delivery" => (
+            Some(vec![
+                "cargo".to_owned(),
+                "xtask".to_owned(),
+                "slice".to_owned(),
+                "status".to_owned(),
+                slice.to_owned(),
+            ]),
+            artifacts.delivery.blocking_reason.clone(),
+        ),
+        "interpret_review" | "reconcile_failed_delivery" | "reconcile_unknown_delivery" => {
+            (None, artifacts.delivery.blocking_reason.clone())
+        },
+        _ => (
+            None,
+            Some(format!(
+                "`{action}` requires an explicit content-addressed request before an exact argv exists"
+            )),
+        ),
     }
 }
 
@@ -200,9 +314,7 @@ fn validate_slice_name(slice: &str) -> Result<(), String> {
 
 fn scan_coordination(
     root: &Path,
-    candidate: &str,
-    current_review_ids: &BTreeSet<String>,
-    latest_review_ids: &BTreeSet<String>,
+    scope: &CoordinationScope<'_>,
     budget: &mut ScanBudget,
 ) -> Result<Artifacts, String> {
     if !root.exists() {
@@ -212,7 +324,8 @@ fn scan_coordination(
     collect_json(root, 0, &mut files, budget)?;
     let mut found = Artifacts::default();
     let mut values = Vec::new();
-    let mut current_request_ids = BTreeSet::new();
+    let mut current_claims = Vec::new();
+    let mut delivery_requests = Vec::new();
     for path in files {
         let bytes = bounded_file::read_regular(&path, JSON_LIMIT, "Slice coordination JSON")?;
         let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
@@ -222,39 +335,90 @@ fn scan_coordination(
             continue;
         };
         if schema.starts_with("yo.validation-run-summary/") {
-            if value.get("head_commit").and_then(serde_json::Value::as_str) == Some(candidate) {
-                found.validation_summaries += 1;
+            let name = value
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown");
+            let effective = scope.current_validations.iter().find(|evidence| {
+                evidence.name == name
+                    && evidence.path == path
+                    && evidence.hash == crate::review_protocol::digest(&bytes)
+            });
+            let current = if scope.current_review_ids.is_empty() {
+                value.get("head_commit").and_then(serde_json::Value::as_str)
+                    == Some(scope.candidate)
+            } else {
+                effective.is_some()
+            };
+            if current {
+                found.validations.push(ValidationSummary {
+                    name: name.to_owned(),
+                    status: value
+                        .get("status")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_owned(),
+                    log_hash: value
+                        .get("log_hash")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_owned(),
+                    path: path.display().to_string(),
+                    reused: effective.is_some_and(|evidence| evidence.reused),
+                });
+            } else {
+                found.superseded += 1;
             }
         } else if schema.starts_with("yo.slice-gate-request/") {
             if value
                 .get("candidate_commit")
                 .and_then(serde_json::Value::as_str)
-                == Some(candidate)
+                == Some(scope.candidate)
             {
                 found.gate_requests += 1;
+            } else {
+                found.superseded += 1;
             }
         } else if schema == "yo.slice-review-findings/v1"
             && value
                 .get("review_id")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|review_id| latest_review_ids.contains(review_id))
+                .is_some_and(|review_id| scope.latest_review_ids.contains(review_id))
         {
             found.prior_findings += 1;
         } else if schema.contains("delivery-claim/")
             && value
                 .get("candidate_commit")
                 .and_then(serde_json::Value::as_str)
-                == Some(candidate)
+                == Some(scope.candidate)
+            && value
+                .get("review_id")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|review_id| scope.current_review_ids.contains(review_id))
         {
             found.claims += 1;
             if let Some(request_id) = value.get("request_id").and_then(serde_json::Value::as_str) {
-                current_request_ids.insert(request_id.to_owned());
+                current_claims.push((
+                    request_id.to_owned(),
+                    path.parent().unwrap_or(root).to_path_buf(),
+                ));
+            }
+        } else if schema.contains("delivery-claim/") {
+            found.superseded += 1;
+        } else if is_delivery_request_schema(schema) {
+            match delivery_request_review_id(scope.repository, scope.workspace, &value)? {
+                Some(review_id) if scope.current_review_ids.contains(&review_id) => {
+                    delivery_requests.push(path.clone());
+                },
+                Some(_) => found.superseded += 1,
+                None => {},
             }
         }
-        values.push(value);
+        values.push((path, value));
     }
     let mut completed_reviews = BTreeSet::new();
-    for value in values {
+    let mut outcomes = BTreeMap::<String, (String, u64)>::new();
+    for (_, value) in &values {
         let schema = value
             .get("schema")
             .and_then(serde_json::Value::as_str)
@@ -263,25 +427,166 @@ fn scan_coordination(
             && let Some(review_id) = value
                 .get("review_id")
                 .and_then(serde_json::Value::as_str)
-                .filter(|review_id| current_review_ids.contains(*review_id))
+                .filter(|review_id| scope.current_review_ids.contains(*review_id))
         {
             found.delivery_receipts += 1;
             completed_reviews.insert(review_id.to_owned());
         }
-        if value
-            .get("request_id")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|request_id| current_request_ids.contains(request_id))
+        if schema.contains("delivery-outcome/")
+            && let Some(request_id) = value.get("request_id").and_then(serde_json::Value::as_str)
         {
-            found.durable_requests += value
+            let durable = value
                 .get("durable_host_request_count")
                 .or_else(|| value.get("durable_provider_request_count"))
                 .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
+            outcomes.insert(
+                request_id.to_owned(),
+                (
+                    value
+                        .get("status")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown")
+                        .to_owned(),
+                    durable,
+                ),
+            );
         }
     }
     found.review_rounds = completed_reviews.len();
+    let has_current_receipt = !completed_reviews.is_empty();
+    let attempts = current_claims
+        .into_iter()
+        .map(|(request_id, output_directory)| {
+            let outcome = outcomes.get(&request_id);
+            delivery::AttemptInput {
+                request_id,
+                output_directory,
+                outcome_status: outcome.map(|(status, _)| status.clone()),
+                outcome_durable_requests: outcome.map(|(_, durable)| *durable),
+                has_receipt: has_current_receipt,
+            }
+        })
+        .collect::<Vec<_>>();
+    found.delivery = delivery::project(attempts)?;
+    found.durable_requests = found.delivery.durable_request_count;
+    found.validations.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    if delivery_requests.len() == 1 {
+        found.delivery_request = delivery_requests.pop();
+    }
     Ok(found)
+}
+
+fn is_delivery_request_schema(schema: &str) -> bool {
+    matches!(
+        schema.split('/').next(),
+        Some(
+            "yo.slice-review-delivery-request"
+                | "yo.slice-review-delegated-delivery-request"
+                | "yo.slice-review-continuation-delivery-request"
+                | "yo.slice-review-delegated-continuation-delivery-request"
+        )
+    )
+}
+
+fn delivery_request_review_id(
+    repository: &Path,
+    workspace: &Path,
+    request: &serde_json::Value,
+) -> Result<Option<String>, String> {
+    let (egress_path, egress_hash, egress_is_shared) = if let (Some(path), Some(hash)) = (
+        request
+            .get("egress_request_path")
+            .and_then(serde_json::Value::as_str),
+        request
+            .get("egress_request_hash")
+            .and_then(serde_json::Value::as_str),
+    ) {
+        (path.to_owned(), hash.to_owned(), true)
+    } else if let (Some(path), Some(hash)) = (
+        request
+            .get("preflight_request_path")
+            .and_then(serde_json::Value::as_str),
+        request
+            .get("preflight_request_hash")
+            .and_then(serde_json::Value::as_str),
+    ) {
+        let path = resolve_status_path(workspace, path);
+        let bytes = bounded_file::read_regular(&path, JSON_LIMIT, "review continuation preflight")?;
+        if crate::review_protocol::digest(&bytes) != hash {
+            return Err("review continuation preflight hash changed".to_owned());
+        }
+        let value: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("invalid review continuation preflight: {error}"))?;
+        let Some(egress_path) = value
+            .get("egress_request_path")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return Ok(None);
+        };
+        let Some(egress_hash) = value
+            .get("egress_request_hash")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return Ok(None);
+        };
+        (egress_path.to_owned(), egress_hash.to_owned(), false)
+    } else {
+        return Ok(None);
+    };
+    let egress_path = resolve_status_path(
+        if egress_is_shared {
+            workspace
+        } else {
+            repository
+        },
+        &egress_path,
+    );
+    let egress_bytes =
+        bounded_file::read_regular(&egress_path, JSON_LIMIT, "review egress request")?;
+    if crate::review_protocol::digest(&egress_bytes) != egress_hash {
+        return Err("review egress request hash changed".to_owned());
+    }
+    let egress: serde_json::Value = serde_json::from_slice(&egress_bytes)
+        .map_err(|error| format!("invalid review egress request: {error}"))?;
+    let Some(manifest_path) = egress
+        .get("manifest_path")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+    let Some(manifest_hash) = egress
+        .get("manifest_hash")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Ok(None);
+    };
+    let manifest_path = resolve_status_path(repository, manifest_path);
+    let manifest_bytes =
+        bounded_file::read_regular(&manifest_path, JSON_LIMIT, "review-chain manifest")?;
+    if crate::review_protocol::digest(&manifest_bytes) != manifest_hash {
+        return Err("review-chain manifest hash changed".to_owned());
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("invalid review-chain manifest: {error}"))?;
+    Ok(manifest
+        .get("review_id")
+        .or_else(|| manifest.get("review_delta_id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned))
+}
+
+fn resolve_status_path(root: &Path, value: &str) -> PathBuf {
+    let path = Path::new(value);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    }
 }
 
 fn scan_review_lineage(
@@ -303,6 +608,7 @@ fn scan_review_lineage(
     let mut candidates = BTreeSet::new();
     let mut review_ids = BTreeMap::<String, BTreeSet<String>>::new();
     let mut current_review_ids = BTreeSet::new();
+    let mut current_validations = BTreeMap::<String, EffectiveValidation>::new();
     let mut broken = false;
     for path in files {
         if path.file_name().and_then(|name| name.to_str()) != Some("manifest.json") {
@@ -340,6 +646,14 @@ fn scan_review_lineage(
                 .insert(review_id.to_owned());
             if candidate == state.head {
                 current_review_ids.insert(review_id.to_owned());
+                for validation in manifest_validations(&value, &state.worktree)? {
+                    if current_validations
+                        .insert(validation.name.clone(), validation)
+                        .is_some()
+                    {
+                        broken = true;
+                    }
+                }
             }
         }
         if !git::trusted_succeeds_in(
@@ -386,7 +700,51 @@ fn scan_review_lineage(
         status: if broken { "broken" } else { "preserved" },
         current_review_ids,
         latest_review_ids,
+        current_validations: current_validations.into_values().collect(),
     })
+}
+
+fn manifest_validations(
+    manifest: &serde_json::Value,
+    repository: &Path,
+) -> Result<Vec<EffectiveValidation>, String> {
+    let mut result = Vec::new();
+    for (pointer, reused) in [
+        ("/inputs/validation_evidence", false),
+        ("/inputs/reused_validation_evidence", true),
+        ("/inputs/affected_validation_evidence", false),
+    ] {
+        let Some(entries) = manifest
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        for entry in entries {
+            let Some(name) = entry.get("name").and_then(serde_json::Value::as_str) else {
+                return Err("review manifest validation evidence has no name".to_owned());
+            };
+            let Some(path) = entry
+                .pointer("/artifact/path")
+                .and_then(serde_json::Value::as_str)
+            else {
+                return Err("review manifest validation evidence has no artifact path".to_owned());
+            };
+            let Some(hash) = entry
+                .pointer("/artifact/hash")
+                .and_then(serde_json::Value::as_str)
+            else {
+                return Err("review manifest validation evidence has no artifact hash".to_owned());
+            };
+            result.push(EffectiveValidation {
+                name: name.to_owned(),
+                path: resolve_status_path(repository, path),
+                hash: hash.to_owned(),
+                reused,
+            });
+        }
+    }
+    Ok(result)
 }
 
 fn collect_json(
@@ -472,6 +830,7 @@ mod tests {
             status: "preserved",
             current_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
             latest_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
+            current_validations: Vec::new(),
         };
         assert_eq!(
             next_action(&state("current"), &current, &Artifacts::default()),
@@ -484,6 +843,7 @@ mod tests {
             status: "preserved",
             current_review_ids: BTreeSet::new(),
             latest_review_ids: BTreeSet::from(["sha256:prior".to_owned()]),
+            current_validations: Vec::new(),
         };
         assert_eq!(
             next_action(
@@ -512,6 +872,7 @@ mod tests {
             status: "preserved",
             current_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
             latest_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
+            current_validations: Vec::new(),
         };
         let artifacts = Artifacts {
             review_rounds: 1,
@@ -610,6 +971,9 @@ mod tests {
                 "current-validation.json",
                 serde_json::json!({
                     "schema": "yo.validation-run-summary/v1alpha2",
+                    "name": "current-validation",
+                    "status": "passed",
+                    "log_hash": "sha256:log",
                     "head_commit": "current"
                 }),
             ),
@@ -653,20 +1017,133 @@ mod tests {
             fs::write(root.join(name), serde_json::to_vec(&value).unwrap()).unwrap();
         }
 
+        let current_validation_path = root.join("current-validation.json");
+        let current_validation_hash =
+            crate::review_protocol::digest(&fs::read(&current_validation_path).unwrap());
+        let effective = [EffectiveValidation {
+            name: "current-validation".to_owned(),
+            path: current_validation_path,
+            hash: current_validation_hash,
+            reused: true,
+        }];
         let artifacts = scan_coordination(
             &root,
-            "current",
-            &BTreeSet::from(["sha256:current-review".to_owned()]),
-            &BTreeSet::from(["sha256:current-review".to_owned()]),
+            &CoordinationScope {
+                repository: &root,
+                workspace: &root,
+                candidate: "current",
+                current_review_ids: &BTreeSet::from(["sha256:current-review".to_owned()]),
+                latest_review_ids: &BTreeSet::from(["sha256:current-review".to_owned()]),
+                current_validations: &effective,
+            },
             &mut ScanBudget::default(),
         )
         .unwrap();
-        assert_eq!(artifacts.validation_summaries, 1);
+        assert_eq!(artifacts.validations.len(), 1);
+        assert!(artifacts.validations[0].reused);
         assert_eq!(artifacts.gate_requests, 0);
         assert_eq!(artifacts.delivery_receipts, 1);
         assert_eq!(artifacts.review_rounds, 1);
         assert_eq!(artifacts.prior_findings, 1);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    // claim은 외부 효과가 아직 관측되지 않았더라도 exact-once 소유권을 소비하므로 compact
+    // coordinator는 같은 review에 대한 두 번째 delivery 명령을 절대 제안하지 않습니다.
+    #[test]
+    fn current_claim_blocks_a_second_delivery() {
+        let root = crate::test_support::unique_path("slice-status-current-claim");
+        fs::create_dir_all(root.join("attempt")).unwrap();
+        fs::write(
+            root.join("attempt/claim.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "yo.external-review-delivery-claim/v1alpha2",
+                "request_id": "sha256:request",
+                "review_id": "sha256:review",
+                "candidate_commit": "current"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let artifacts = scan_coordination(
+            &root,
+            &CoordinationScope {
+                repository: &root,
+                workspace: &root,
+                candidate: "current",
+                current_review_ids: &BTreeSet::from(["sha256:review".to_owned()]),
+                latest_review_ids: &BTreeSet::from(["sha256:review".to_owned()]),
+                current_validations: &[],
+            },
+            &mut ScanBudget::default(),
+        )
+        .unwrap();
+        let reviews = ReviewLineage {
+            packets: 1,
+            latest_candidate: Some("current".to_owned()),
+            status: "preserved",
+            current_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
+            latest_review_ids: BTreeSet::from(["sha256:review".to_owned()]),
+            current_validations: Vec::new(),
+        };
+        assert_eq!(artifacts.delivery.state, delivery::State::Claimed);
+        assert_eq!(
+            next_action(&state("current"), &reviews, &artifacts),
+            "await_current_delivery"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // coordination에 이전 후보의 유일한 delivery request만 남아 있어도 그 request가
+    // 가리키는 manifest ReviewId를 다시 결속해 현재 review의 exact argv로 제안하지 않습니다.
+    #[test]
+    fn stale_delivery_request_is_not_current_next_argv() {
+        let repository = crate::test_support::unique_path("slice-status-stale-delivery");
+        let coordination = repository.join("coordination");
+        let manifest_path = repository.join("stale-manifest.json");
+        fs::create_dir_all(&coordination).unwrap();
+        let manifest = serde_json::to_vec(&serde_json::json!({
+            "schema": "yo.slice-review-manifest/v1",
+            "review_id": "sha256:stale-review"
+        }))
+        .unwrap();
+        fs::write(&manifest_path, &manifest).unwrap();
+        let egress = serde_json::to_vec(&serde_json::json!({
+            "schema": "yo.slice-review-delegated-egress-request/v1alpha1",
+            "manifest_path": manifest_path.display().to_string(),
+            "manifest_hash": crate::review_protocol::digest(&manifest)
+        }))
+        .unwrap();
+        let egress_path = coordination.join("stale-egress.json");
+        fs::write(&egress_path, &egress).unwrap();
+        fs::write(
+            coordination.join("review-delivery.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "yo.slice-review-delegated-delivery-request/v1alpha2",
+                "egress_request_path": egress_path.display().to_string(),
+                "egress_request_hash": crate::review_protocol::digest(&egress)
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let artifacts = scan_coordination(
+            &coordination,
+            &CoordinationScope {
+                repository: &repository,
+                workspace: &repository,
+                candidate: "current",
+                current_review_ids: &BTreeSet::from(["sha256:current-review".to_owned()]),
+                latest_review_ids: &BTreeSet::from(["sha256:current-review".to_owned()]),
+                current_validations: &[],
+            },
+            &mut ScanBudget::default(),
+        )
+        .unwrap();
+        assert!(artifacts.delivery_request.is_none());
+        assert_eq!(artifacts.superseded, 1);
+        fs::remove_dir_all(repository).unwrap();
     }
 
     // original manifest의 review_id와 finding-resolution manifest의 review_delta_id는

@@ -468,6 +468,16 @@ bytes and has no network, clock, account, service, or other external-state
 dependency. It emits `yo.validation-run-summary/v1alpha3`; omit it to retain
 the frozen `v1alpha2` output.
 
+The runner gives commands whose executable is `cargo` the repository-wide
+`cargo-heavy` resource lease by default. A second cargo-heavy run fails before
+the child starts instead of waiting and consuming another compiler cache and
+agent polling loop. Use `--resource-class independent` only with an absolute,
+isolated `CARGO_TARGET_DIR`; different target identities may then run in
+parallel. Either leased form emits `yo.validation-run-summary/v1alpha4` with
+the exact class, opaque resource key, acquired status, and zero wait attempts.
+This is execution evidence, not a concurrency target: increase parallelism
+only after measured CPU and memory headroom justify the independent class.
+
 Do not rerun an unchanged passing command merely to give a descendant candidate
 a new filename. When the review-delta transition classifies that exact summary
 as unaffected, keep its original path and hash, list it under
@@ -555,6 +565,16 @@ result version containing the content-addressed Provider Usage artifact.
 Select it through `yo.slice-review-prepare-request/v1alpha3`; older preparation
 versions continue to emit their frozen delivery versions.
 
+For a new review, `yo.slice-review-prepare-request/v1alpha4` keeps the same
+Usage-bound delivery but replaces the caller-maintained authority list with
+`repository_authority_policy:"changed-workflow-authority/v1alpha1"` and an
+empty `repository_authority_paths`. Preparation derives the list from the
+exact bound base-to-HEAD paths. It always includes the small root `AGENTS.md`
+router, adds `CONTRIBUTING.md` for repository workflow/tooling changes, and
+adds any changed nested `AGENTS.md` exactly. Older preparation schemas keep
+their explicit non-empty list. This reduces the fixed packet cost for product
+code without allowing a caller to omit changed workflow authority.
+
 For a review prepared with `yo.slice-review-prepare-request/v1alpha2`, use the
 structured gate-preparation shape and omit caller-declared verdicts:
 
@@ -594,6 +614,17 @@ non-terminal, stale, partial, or internally inconsistent envelope; it never
 infers a verdict from surrounding prose. Stable v1 and v1alpha1 retain their
 caller-declared `verdicts` behavior, while v1alpha2 rejects that field so the
 two authorities cannot be mixed.
+
+If that complete terminal result is semantically valid but only its
+`review_id` or `candidate_commit` envelope is wrong, run `cargo xtask slice
+review-result-correction-preflight <request.json>`. The request freezes the
+review-chain manifest, completed delivery receipt, and response by exact path
+and SHA-256. The preflight replays their bindings and validates every lens and
+finding while deliberately separating the two identity fields. It emits no
+Provider request and reports eligibility only for identity-envelope drift.
+Any correction remains one separately authorized request to the exact same
+Session; semantic, lens, finding, route, or receipt drift is not correctable by
+this path.
 
 The experimental
 `yo.slice-gate-prepare-request/v1alpha1` adds exactly one
@@ -673,10 +704,16 @@ false statements.
 
 Use `cargo xtask slice status <slice>` for the coordinator's ordinary progress
 check instead of reopening raw Session JSONL, terminal panes, or all evidence.
-It emits one `yo.slice-status/v1alpha2` JSON line containing clean `HEAD`,
-review ancestry and round count, validation/gate artifact counts, delivery
-claim/receipt counts, durable external request count, and one next action. Its
-bounded scan reads at most 256 JSON files and never prints their content.
+It emits one `yo.slice-status/v1alpha3` JSON line containing clean `HEAD`, the
+current review chain, effective validation identities, superseded artifact
+count, gate counts, and a typed delivery projection. Delivery progresses
+through `prepared`, `claimed`, `process_started`,
+`durable_request_observed`, `completed`, `failed_before_effect`, or
+`failed_or_unknown_effect`; every state after `claimed` forbids the status
+command from proposing another delivery. When a content-addressed command is
+already published, `next_argv` is its exact argv. Otherwise it is absent with
+a blocking reason rather than a placeholder command. The bounded scan reads at
+most 256 JSON files and never prints their content.
 `build_review` means no applicable prior finding chain can be reused.
 `review_delta` means the latest reviewed candidate is an ancestor of current
 `HEAD` and its exact reviewer-authored finding set is present, so continue from

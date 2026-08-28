@@ -6,6 +6,8 @@ pub(super) const REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-prepare-reque
 pub(super) const RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-prepare-result/v1alpha2";
 pub(super) const REQUEST_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-prepare-request/v1alpha3";
 pub(super) const RESULT_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-prepare-result/v1alpha3";
+pub(super) const REQUEST_SCHEMA_V1_ALPHA4: &str = "yo.slice-review-prepare-request/v1alpha4";
+pub(super) const RESULT_SCHEMA_V1_ALPHA4: &str = "yo.slice-review-prepare-result/v1alpha4";
 pub(super) const CONTEXT_SCHEMA: &str = "methexis.context-request/v1alpha1";
 pub(super) const REVIEW_SCHEMA: &str = "yo.slice-review-packet-request/v1";
 pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-markdown/v1alpha2";
@@ -33,6 +35,8 @@ pub(super) struct Request {
     pub(super) knowledge_ids: Vec<String>,
     pub(super) context_max_tokens: usize,
     pub(super) repository_authority_paths: Vec<String>,
+    #[serde(default)]
+    pub(super) repository_authority_policy: Option<String>,
     pub(super) validation_evidence: Vec<Evidence>,
     pub(super) review_lenses: Vec<String>,
     pub(super) review_questions: Vec<String>,

@@ -5,8 +5,9 @@ use serde_json::json;
 use super::{
     DELEGATED_DELIVERY_SCHEMA, DELEGATED_USAGE_DELIVERY_SCHEMA, MANAGED_DELIVERY_SCHEMA,
     MANAGED_USAGE_DELIVERY_SCHEMA, PreparedBytes, PreparedPaths, Request, RouteKind, Target,
-    egress_document, prepared_review_questions, require_empty_directory,
-    require_prepared_requests_current, target_preparation, validate_and_normalize,
+    authority_paths_for_changed_paths, egress_document, prepared_review_questions,
+    require_empty_directory, require_prepared_requests_current, target_preparation,
+    validate_and_normalize,
 };
 use crate::{review_packet::PublishedReview, test_support::unique_path};
 
@@ -58,6 +59,31 @@ fn request(target: serde_json::Value) -> Request {
         "target": target
     }))
     .unwrap()
+}
+
+// code-only 후보는 큰 repository workflow 문서를 반복 복사하지 않고, workflow 구현이나
+// AGENTS authority 자체가 바뀐 후보만 exact authority bytes를 packet에 포함합니다.
+#[test]
+fn changed_authority_policy_omits_fixed_cost_for_product_code() {
+    assert_eq!(
+        authority_paths_for_changed_paths(&["crates/yo-core/src/lib.rs".to_owned()]),
+        vec!["AGENTS.md".to_owned()]
+    );
+    assert_eq!(
+        authority_paths_for_changed_paths(&[
+            "tools/xtask/src/lib.rs".to_owned(),
+            "nested/AGENTS.md".to_owned(),
+        ]),
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING.md".to_owned(),
+            "nested/AGENTS.md".to_owned()
+        ]
+    );
+    assert_eq!(
+        authority_paths_for_changed_paths(&["CONTRIBUTING/review-and-integration.md".to_owned()]),
+        vec!["AGENTS.md".to_owned(), "CONTRIBUTING.md".to_owned()]
+    );
 }
 
 // 관리형 준비는 사람이 반복 작성하던 egress와 admission 문서를 동일 manifest 및
@@ -272,5 +298,23 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
             .last()
             .map(String::as_str),
         Some(crate::review_result::OUTPUT_INSTRUCTION)
+    );
+}
+
+// alpha4만 caller authority 목록을 금지하고 고정 policy를 요구해, 비용 절감이 임의
+// authority 누락으로 바뀌지 않도록 request 경계에서 닫습니다.
+#[test]
+fn alpha4_requires_derived_authority_policy() {
+    let mut derived = request(json!({"kind": "delegated_host", "host": "grok"}));
+    derived.schema = "yo.slice-review-prepare-request/v1alpha4".to_owned();
+    derived.repository_authority_paths.clear();
+    derived.repository_authority_policy = Some("changed-workflow-authority/v1alpha1".to_owned());
+    validate_and_normalize(&mut derived).unwrap();
+
+    derived.repository_authority_paths = vec!["CONTRIBUTING.md".to_owned()];
+    assert!(
+        validate_and_normalize(&mut derived)
+            .unwrap_err()
+            .contains("requires the caller list to be empty")
     );
 }

@@ -1,12 +1,26 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    bounded_file, review_delta, review_egress,
+    review_protocol::{digest, resolve_input_path},
+};
 
 pub(crate) const SCHEMA: &str = "yo.slice-review-result/v1alpha1";
 const START: &[u8] = b"<<<YO-SLICE-REVIEW-RESULT>>>";
 const END: &[u8] = b"<<<YO-SLICE-REVIEW-RESULT-END>>>";
 const MAX_FINDINGS: usize = 64;
 const MAX_SUMMARY_BYTES: usize = 4096;
+const CORRECTION_REQUEST_SCHEMA: &str =
+    "yo.slice-review-result-correction-preflight-request/v1alpha1";
+const CORRECTION_RESULT_SCHEMA: &str =
+    "yo.slice-review-result-correction-preflight-result/v1alpha1";
+const CORRECTION_REQUEST_LIMIT: usize = 64 * 1024;
+const REVIEW_RESULT_LIMIT: usize = 64 * 1024;
 
 pub(crate) const OUTPUT_INSTRUCTION: &str = r#"Finish the response with exactly one terminal structured result after any explanation. Copy the current packet's exact ReviewId (or ReviewDeltaId), candidate commit, and every requested lens exactly once. Use verdict `clear` or `findings`; list every material finding with a unique finding_id, bounded summary, and its affected lenses. Findings must be empty exactly when every lens is clear. Write nothing after the end marker:
 <<<YO-SLICE-REVIEW-RESULT>>>
@@ -17,6 +31,13 @@ pub(crate) const OUTPUT_INSTRUCTION: &str = r#"Finish the response with exactly 
 pub(crate) struct VerifiedResult {
     pub(crate) verdicts: Vec<Verdict>,
     pub(crate) findings: Vec<Finding>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InspectedResult {
+    review_id: String,
+    candidate_commit: String,
+    verified: VerifiedResult,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -50,6 +71,19 @@ pub(crate) fn verify(
     expected_candidate: &str,
     expected_lenses: &[String],
 ) -> Result<VerifiedResult, String> {
+    let inspected = inspect(response, expected_lenses)?;
+    if inspected.review_id != expected_review_id {
+        return Err(
+            "structured review result does not identify the reviewed chain head".to_owned(),
+        );
+    }
+    if inspected.candidate_commit != expected_candidate {
+        return Err("structured review result does not identify the reviewed candidate".to_owned());
+    }
+    Ok(inspected.verified)
+}
+
+fn inspect(response: &[u8], expected_lenses: &[String]) -> Result<InspectedResult, String> {
     let start = exactly_one(response, START, "structured review result start marker")?;
     let json_start = start + START.len();
     let json_end = exactly_one(response, END, "structured review result end marker")?;
@@ -71,15 +105,6 @@ pub(crate) fn verify(
             document.schema
         ));
     }
-    if document.review_id != expected_review_id {
-        return Err(
-            "structured review result does not identify the reviewed chain head".to_owned(),
-        );
-    }
-    if document.candidate_commit != expected_candidate {
-        return Err("structured review result does not identify the reviewed candidate".to_owned());
-    }
-
     let expected = expected_lenses
         .iter()
         .map(String::as_str)
@@ -150,10 +175,155 @@ pub(crate) fn verify(
         );
     }
 
-    Ok(VerifiedResult {
-        verdicts: verdicts.into_values().collect(),
-        findings: document.findings,
+    Ok(InspectedResult {
+        review_id: document.review_id,
+        candidate_commit: document.candidate_commit,
+        verified: VerifiedResult {
+            verdicts: verdicts.into_values().collect(),
+            findings: document.findings,
+        },
     })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CorrectionRequest {
+    schema: String,
+    manifest_path: String,
+    manifest_hash: String,
+    delivery_receipt_path: String,
+    delivery_receipt_hash: String,
+    review_result_path: String,
+    review_result_hash: String,
+}
+
+#[derive(Debug, Serialize)]
+struct CorrectionResult {
+    schema: &'static str,
+    ok: bool,
+    status: &'static str,
+    next_action: &'static str,
+    provider_requests: usize,
+    expected_review_id: String,
+    observed_review_id: String,
+    expected_candidate_commit: String,
+    observed_candidate_commit: String,
+    session_id: String,
+    route: String,
+    immutable_result_hash: String,
+}
+
+pub(crate) fn correction_preflight(repository: &Path, request_path: &Path) -> Result<(), String> {
+    let request_bytes = bounded_file::read_regular(
+        request_path,
+        CORRECTION_REQUEST_LIMIT,
+        "review-result correction preflight request",
+    )?;
+    let request: CorrectionRequest = serde_json::from_slice(&request_bytes)
+        .map_err(|error| format!("invalid review-result correction preflight request: {error}"))?;
+    if request.schema != CORRECTION_REQUEST_SCHEMA {
+        return Err(format!(
+            "unsupported review-result correction preflight schema `{}`; expected `{CORRECTION_REQUEST_SCHEMA}`",
+            request.schema
+        ));
+    }
+    for (value, label) in [
+        (&request.manifest_hash, "manifest_hash"),
+        (&request.delivery_receipt_hash, "delivery_receipt_hash"),
+        (&request.review_result_hash, "review_result_hash"),
+    ] {
+        require_sha256(value, label)?;
+    }
+    let manifest_path = resolve_input_path(repository, &request.manifest_path);
+    let receipt_path = resolve_input_path(repository, &request.delivery_receipt_path);
+    let result_path = resolve_input_path(repository, &request.review_result_path);
+    let review = review_delta::verify_chain_head(
+        repository,
+        &manifest_path,
+        &request.manifest_hash,
+        &mut BTreeSet::new(),
+        0,
+    )?;
+    let receipt_bytes = bounded_file::read_regular(
+        &receipt_path,
+        CORRECTION_REQUEST_LIMIT,
+        "review delivery receipt",
+    )?;
+    require_exact_hash(
+        &receipt_bytes,
+        &request.delivery_receipt_hash,
+        "review delivery receipt",
+    )?;
+    let route = review_egress::verify_any_completed_delivery(repository, &receipt_path, &review)?;
+    let result_bytes = bounded_file::read_regular(
+        &result_path,
+        REVIEW_RESULT_LIMIT,
+        "structured review result",
+    )?;
+    require_exact_hash(
+        &result_bytes,
+        &request.review_result_hash,
+        "structured review result",
+    )?;
+    let inspected = inspect(&result_bytes, &review.review_lenses)?;
+    let review_id_drift = inspected.review_id != review.review_id;
+    let candidate_drift = inspected.candidate_commit != review.candidate_commit;
+    if !review_id_drift && !candidate_drift {
+        return Err("structured review result already has the exact identity envelope".to_owned());
+    }
+    let (route, session_id) = match route {
+        review_egress::VerifiedDeliveryRoute::Managed {
+            provider,
+            model,
+            session_id,
+        } => (format!("managed/{provider}/{model}"), session_id),
+        review_egress::VerifiedDeliveryRoute::Delegated { host, session_id } => {
+            (format!("delegated/{host}"), session_id)
+        },
+    };
+    let result = CorrectionResult {
+        schema: CORRECTION_RESULT_SCHEMA,
+        ok: true,
+        status: "eligible_identity_envelope_only",
+        next_action: "request_exact_same_session_envelope_correction_once",
+        provider_requests: 0,
+        expected_review_id: review.review_id,
+        observed_review_id: inspected.review_id,
+        expected_candidate_commit: review.candidate_commit,
+        observed_candidate_commit: inspected.candidate_commit,
+        session_id,
+        route,
+        immutable_result_hash: digest(&result_bytes),
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&result)
+            .map_err(|error| format!("cannot encode correction preflight result: {error}"))?
+    );
+    Ok(())
+}
+
+fn require_sha256(value: &str, label: &str) -> Result<(), String> {
+    if value.len() == 71
+        && value.starts_with("sha256:")
+        && value[7..]
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} must be a canonical sha256:<64 lowercase hex> identity"
+        ))
+    }
+}
+
+fn require_exact_hash(bytes: &[u8], expected: &str, label: &str) -> Result<(), String> {
+    if digest(bytes) == expected {
+        Ok(())
+    } else {
+        Err(format!("{label} hash does not match its frozen bytes"))
+    }
 }
 
 fn exactly_one(bytes: &[u8], needle: &[u8], label: &str) -> Result<usize, String> {
@@ -268,6 +438,23 @@ mod tests {
             verify(&bytes, "sha256:review", "candidate", &lenses())
                 .unwrap_err()
                 .contains("explain every and only")
+        );
+    }
+
+    // correction preflight는 verdict 의미가 온전하고 identity envelope만 틀린 응답만
+    // 식별해야 하므로 semantic 검증과 exact identity 검증을 분리합니다.
+    #[test]
+    fn inspection_preserves_semantics_while_exposing_identity_drift() {
+        let bytes = response(
+            r#"{"schema":"yo.slice-review-result/v1alpha1","review_id":"sha256:wrong","candidate_commit":"wrong-candidate","verdicts":[{"lens":"code-quality","verdict":"clear"},{"lens":"fresh-context","verdict":"clear"}],"findings":[]}"#,
+        );
+        let inspected = inspect(&bytes, &lenses()).unwrap();
+        assert_eq!(inspected.review_id, "sha256:wrong");
+        assert_eq!(inspected.candidate_commit, "wrong-candidate");
+        assert!(
+            verify(&bytes, "sha256:review", "candidate", &lenses())
+                .unwrap_err()
+                .contains("chain head")
         );
     }
 }

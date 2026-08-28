@@ -18,11 +18,12 @@ use self::model::{
     DelegatedTarget, DeliveryRequest, FreshSession, MANAGED_ADMISSION_SCHEMA,
     MANAGED_DELIVERY_SCHEMA, MANAGED_EGRESS_SCHEMA, MANAGED_USAGE_DELIVERY_SCHEMA,
     ManagedAdmission, ManagedAdmissionTarget, ManagedEgress, ManagedRoute, REQUEST_SCHEMA,
-    REQUEST_SCHEMA_V1_ALPHA2, REQUEST_SCHEMA_V1_ALPHA3, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2,
-    RESULT_SCHEMA_V1_ALPHA3, REVIEW_SCHEMA, Request, ReviewRequest, TOKENIZER_PROFILE, Target,
+    REQUEST_SCHEMA_V1_ALPHA2, REQUEST_SCHEMA_V1_ALPHA3, REQUEST_SCHEMA_V1_ALPHA4, RESULT_SCHEMA,
+    RESULT_SCHEMA_V1_ALPHA2, RESULT_SCHEMA_V1_ALPHA3, RESULT_SCHEMA_V1_ALPHA4, REVIEW_SCHEMA,
+    Request, ReviewRequest, TOKENIZER_PROFILE, Target,
 };
 use crate::{
-    bounded_file, review_egress, review_packet,
+    bounded_file, git, review_egress, review_packet,
     review_protocol::{digest, relative},
     review_result, review_target_admission, slice_contract, slice_worktree,
 };
@@ -93,6 +94,7 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
             request.slice, bound.slice
         ));
     }
+    apply_repository_authority_policy(&repository, &bound, &mut request)?;
     let shared_directory = workspace
         .join(".local-exclude/coordination")
         .join(&request.slice);
@@ -156,7 +158,13 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let mut created = false;
     created |= publish(&context_path, &context_bytes, "ContextBuild request")?;
     created |= publish(&review_path, &review_bytes, "Slice review packet request")?;
-    let target = target_preparation(&request.target, request.schema == REQUEST_SCHEMA_V1_ALPHA3)?;
+    let target = target_preparation(
+        &request.target,
+        matches!(
+            request.schema.as_str(),
+            REQUEST_SCHEMA_V1_ALPHA3 | REQUEST_SCHEMA_V1_ALPHA4
+        ),
+    )?;
     created |= publish(
         &admission_path,
         &target.admission,
@@ -236,6 +244,7 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let review_hash = digest(&review_bytes);
     let delivery_hash = digest(&delivery_bytes);
     let result_schema = match request.schema.as_str() {
+        REQUEST_SCHEMA_V1_ALPHA4 => RESULT_SCHEMA_V1_ALPHA4,
         REQUEST_SCHEMA_V1_ALPHA3 => RESULT_SCHEMA_V1_ALPHA3,
         REQUEST_SCHEMA_V1_ALPHA2 => RESULT_SCHEMA_V1_ALPHA2,
         _ => RESULT_SCHEMA,
@@ -486,20 +495,46 @@ fn require_eligible_admission(path: &Path, expected_next_action: &str) -> Result
 fn validate_and_normalize(request: &mut Request) -> Result<(), String> {
     if !matches!(
         request.schema.as_str(),
-        REQUEST_SCHEMA | REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3
+        REQUEST_SCHEMA
+            | REQUEST_SCHEMA_V1_ALPHA2
+            | REQUEST_SCHEMA_V1_ALPHA3
+            | REQUEST_SCHEMA_V1_ALPHA4
     ) {
         return Err(format!(
-            "unsupported Slice review preparation schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, or `{REQUEST_SCHEMA_V1_ALPHA3}`",
+            "unsupported Slice review preparation schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, or `{REQUEST_SCHEMA_V1_ALPHA4}`",
             request.schema
         ));
     }
     compact_token(&request.slice, "slice")?;
     require_path_component(&request.slice, "slice")?;
     normalize_strings(&mut request.knowledge_ids, "knowledge_ids")?;
-    normalize_strings(
-        &mut request.repository_authority_paths,
-        "repository_authority_paths",
-    )?;
+    if request.schema == REQUEST_SCHEMA_V1_ALPHA4 {
+        if !request.repository_authority_paths.is_empty() {
+            return Err(
+                "v1alpha4 derives repository_authority_paths and requires the caller list to be empty"
+                    .to_owned(),
+            );
+        }
+        if request.repository_authority_policy.as_deref()
+            != Some("changed-workflow-authority/v1alpha1")
+        {
+            return Err(
+                "v1alpha4 requires repository_authority_policy `changed-workflow-authority/v1alpha1`"
+                    .to_owned(),
+            );
+        }
+    } else {
+        if request.repository_authority_policy.is_some() {
+            return Err(
+                "repository_authority_policy is supported only by review preparation v1alpha4"
+                    .to_owned(),
+            );
+        }
+        normalize_strings(
+            &mut request.repository_authority_paths,
+            "repository_authority_paths",
+        )?;
+    }
     normalize_strings(&mut request.review_lenses, "review_lenses")?;
     require_non_empty_strings(&request.review_questions, "review_questions")?;
     if request.validation_evidence.is_empty() {
@@ -562,11 +597,55 @@ fn prepared_review_questions(request: &Request) -> Vec<String> {
     let mut questions = request.review_questions.clone();
     if matches!(
         request.schema.as_str(),
-        REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3
+        REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3 | REQUEST_SCHEMA_V1_ALPHA4
     ) {
         questions.push(review_result::OUTPUT_INSTRUCTION.to_owned());
     }
     questions
+}
+
+fn apply_repository_authority_policy(
+    repository: &Path,
+    bound: &slice_contract::BoundSlice,
+    request: &mut Request,
+) -> Result<(), String> {
+    if request.schema != REQUEST_SCHEMA_V1_ALPHA4 {
+        return Ok(());
+    }
+    let range = format!("{}..HEAD", bound.base);
+    let changed = git::output_bytes_in(repository, &["diff", "--name-only", "-z", &range], false)?;
+    let changed = changed
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| {
+            std::str::from_utf8(path).map(str::to_owned).map_err(|_| {
+                "changed path is not UTF-8; repository authority routing is ambiguous".to_owned()
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    request.repository_authority_paths = authority_paths_for_changed_paths(&changed);
+    Ok(())
+}
+
+fn authority_paths_for_changed_paths(changed: &[String]) -> Vec<String> {
+    let workflow_changed = changed.iter().any(|path| {
+        path == "CONTRIBUTING.md"
+            || path == "AGENTS.md"
+            || path.starts_with("CONTRIBUTING/")
+            || path.starts_with("tools/xtask/")
+            || path.starts_with("tools/validation/")
+            || path.starts_with(".github/")
+    });
+    let mut authorities = BTreeSet::from(["AGENTS.md".to_owned()]);
+    if workflow_changed {
+        authorities.insert("CONTRIBUTING.md".to_owned());
+    }
+    for path in changed {
+        if path == "AGENTS.md" || path.ends_with("/AGENTS.md") {
+            authorities.insert(path.clone());
+        }
+    }
+    authorities.into_iter().collect()
 }
 
 fn normalize_strings(values: &mut [String], label: &str) -> Result<(), String> {

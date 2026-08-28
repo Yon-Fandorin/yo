@@ -2,11 +2,12 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 [--summary-out <path>] [--reusable-local] <run-name> -- <command> [args...]" >&2
+    echo "usage: $0 [--summary-out <path>] [--reusable-local] [--resource-class <cargo-heavy|independent>] <run-name> -- <command> [args...]" >&2
 }
 
 summary_out=""
 reusable_local=false
+resource_class=""
 while [[ ${1:-} == --* ]]; do
     case ${1:-} in
         --summary-out)
@@ -20,6 +21,14 @@ while [[ ${1:-} == --* ]]; do
         --reusable-local)
             reusable_local=true
             shift
+            ;;
+        --resource-class)
+            if [[ $# -lt 2 || ! ${2:-} =~ ^(cargo-heavy|independent)$ ]]; then
+                usage
+                exit 64
+            fi
+            resource_class=$2
+            shift 2
             ;;
         *)
             usage
@@ -50,11 +59,32 @@ if [[ $# -eq 0 ]]; then
     exit 64
 fi
 
+if [[ -z ${resource_class} ]]; then
+    if [[ ${1##*/} == cargo ]]; then
+        resource_class=cargo-heavy
+    else
+        resource_class=unleased
+    fi
+fi
+if [[ ${resource_class} == independent ]]; then
+    if [[ -z ${CARGO_TARGET_DIR:-} || ${CARGO_TARGET_DIR} != /* ]]; then
+        echo "bounded validation: independent resource class requires an absolute CARGO_TARGET_DIR" >&2
+        exit 64
+    fi
+fi
+readonly resource_class
+
 repository=$(git rev-parse --show-toplevel 2>/dev/null) || {
     echo "bounded validation: run from a Git worktree" >&2
     exit 64
 }
 readonly repository
+git_common_directory=$(git -C "${repository}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+    echo "bounded validation: cannot resolve shared Git directory" >&2
+    exit 64
+}
+readonly git_common_directory
+readonly workspace_root=${git_common_directory%/.git}
 readonly log_root="${YO_BOUNDED_VALIDATION_LOG_ROOT:-${repository}/.local-exclude/validation-runs}"
 readonly failure_tail_bytes=16384
 readonly command_argv_count=$#
@@ -71,6 +101,10 @@ reject_control_bytes() {
 
 reject_control_bytes "repository path" "${repository}"
 reject_control_bytes "log root" "${log_root}"
+reject_control_bytes "shared Git directory" "${git_common_directory}"
+if [[ ${resource_class} == independent ]]; then
+    reject_control_bytes "CARGO_TARGET_DIR" "${CARGO_TARGET_DIR}"
+fi
 if [[ -n ${summary_out} ]]; then
     reject_control_bytes "summary output path" "${summary_out}"
     if [[ ${summary_out} != /* ]]; then
@@ -212,6 +246,45 @@ readonly command_argv_hash="sha256:${command_argv_digest}"
 rm -f -- "${argv_frame}"
 trap - EXIT
 
+lease_path=""
+lease_key="none"
+summary_temp=""
+cleanup() {
+    if [[ -n ${summary_temp} ]]; then
+        rm -f -- "${summary_temp}"
+    fi
+    if [[ -n ${lease_path} ]]; then
+        rm -f -- "${lease_path}/owner"
+        rmdir -- "${lease_path}" 2>/dev/null || true
+    fi
+}
+if [[ ${resource_class} != unleased ]]; then
+    lease_root="${workspace_root}/.local-exclude/validation-leases"
+    mkdir -p -- "${lease_root}"
+    if [[ ${resource_class} == cargo-heavy ]]; then
+        lease_key=cargo-heavy
+    else
+        resource_frame=$(mktemp "${log_root}/${run_name}.resource.XXXXXX")
+        printf 'yo.validation-resource/v1alpha1\0%s\0' "${CARGO_TARGET_DIR}" >"${resource_frame}"
+        resource_digest=$(sha256_file "${resource_frame}") || {
+            rm -f -- "${resource_frame}"
+            echo "bounded validation: cannot identify independent validation resource" >&2
+            exit 69
+        }
+        rm -f -- "${resource_frame}"
+        lease_key="independent-${resource_digest}"
+    fi
+    lease_path="${lease_root}/${lease_key}"
+    if ! mkdir -- "${lease_path}" 2>/dev/null; then
+        echo "bounded validation: resource lease is already held: ${lease_key}" >&2
+        exit 75
+    fi
+    trap cleanup EXIT
+    printf 'pid=%s\nrun=%s\nrepository=%s\n' "$$" "${run_name}" "${repository}" >"${lease_path}/owner"
+fi
+readonly lease_key
+trap cleanup EXIT
+
 started_at=$(date +%s)
 set +e
 "$@" >"${log_path}" 2>&1
@@ -254,7 +327,40 @@ else
     result=failed
 fi
 
-if [[ ${reusable_local} == true ]]; then
+if [[ ${resource_class} != unleased && ${reusable_local} == true ]]; then
+    printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha4","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false,"reuse_policy":"reviewed-descendant-context/v1","reuse_context":{"schema":"yo.validation-reuse-context/v1alpha1","platform_os":"%s","platform_arch":"%s","toolchain_hash":"%s","external_state":"none-declared"},"resource_lease":{"schema":"yo.validation-resource-lease/v1alpha1","class":"%s","key":"%s","status":"acquired","wait_attempts":0}}' \
+        "$(json_escape "${run_name}")" \
+        "${result}" \
+        "${command_status}" \
+        "${elapsed_seconds}" \
+        "${log_bytes}" \
+        "$(json_escape "${report_path}")" \
+        "${log_hash}" \
+        "${head_commit}" \
+        "${worktree_state}" \
+        "${command_argv_count}" \
+        "${command_argv_hash}" \
+        "${platform_os}" \
+        "${platform_arch}" \
+        "${toolchain_hash}" \
+        "${resource_class}" \
+        "${lease_key}"
+elif [[ ${resource_class} != unleased ]]; then
+    printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha4","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false,"reuse_policy":"reviewed-descendant/v1","resource_lease":{"schema":"yo.validation-resource-lease/v1alpha1","class":"%s","key":"%s","status":"acquired","wait_attempts":0}}' \
+        "$(json_escape "${run_name}")" \
+        "${result}" \
+        "${command_status}" \
+        "${elapsed_seconds}" \
+        "${log_bytes}" \
+        "$(json_escape "${report_path}")" \
+        "${log_hash}" \
+        "${head_commit}" \
+        "${worktree_state}" \
+        "${command_argv_count}" \
+        "${command_argv_hash}" \
+        "${resource_class}" \
+        "${lease_key}"
+elif [[ ${reusable_local} == true ]]; then
     printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha3","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false,"reuse_policy":"reviewed-descendant-context/v1","reuse_context":{"schema":"yo.validation-reuse-context/v1alpha1","platform_os":"%s","platform_arch":"%s","toolchain_hash":"%s","external_state":"none-declared"}}' \
         "$(json_escape "${run_name}")" \
         "${result}" \
@@ -291,8 +397,6 @@ if [[ -n ${summary_out} ]]; then
         echo "bounded validation: cannot prepare summary output: ${summary_out}" >&2
         exit 73
     }
-    readonly summary_temp
-    trap 'rm -f -- "${summary_temp}"' EXIT
     if ! printf '%s\n' "${summary_line}" >"${summary_temp}"; then
         echo "bounded validation: cannot write summary output: ${summary_out}" >&2
         exit 73
@@ -316,7 +420,7 @@ if [[ -n ${summary_out} ]]; then
         echo "bounded validation: summary published but temporary link cleanup failed: ${summary_temp}" >&2
         exit 73
     fi
-    trap - EXIT
+    summary_temp=""
 fi
 
 printf '%s\n' "${summary_line}"
