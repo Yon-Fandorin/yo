@@ -1,16 +1,17 @@
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::time::{Duration, Instant};
 
 use super::{
     canonical_json, combine_failures, managed_model_reference,
     model::{CLAIM_SCHEMA, Claim, DeliveryRequest, Route},
+    prepare_output_directory_at,
     process::{
         execute_continuation_once, execute_delegated_continuation_once, execute_delegated_once,
         execute_once, execute_once_with_timeout,
     },
-    publish_claim, read_request, require_empty_directory, require_integration_state,
-    require_original_fresh,
+    publish_claim, read_request, read_request_with_output_policy, require_empty_directory,
+    require_integration_state, require_original_fresh,
 };
 use crate::{
     review_egress::{AuthorizedDelivery, AuthorizedHostDelivery},
@@ -121,6 +122,58 @@ fn v1alpha2_delivery_binds_one_target_admission_request() {
         read_request(&path).unwrap(),
         DeliveryRequest::AdmittedContinuation(_)
     ));
+}
+
+// 문서의 managed alpha3 원본·continuation 형태가 exact admission을 빠뜨리지 않고
+// 파싱되며, frozen alpha2와 달리 새 output 준비만 선택함을 확인합니다.
+#[test]
+fn documented_managed_v1alpha3_shapes_bind_admission_and_prepare_output() {
+    let repository = TestRepository::new("review-delivery-output-version");
+    let request = |schema: &str| {
+        serde_json::json!({
+            "schema": schema,
+            "egress_request_path": ".local-exclude/egress.json",
+            "egress_request_hash": digest(b"egress"),
+            "admission_request_path": ".local-exclude/admission.json",
+            "admission_request_hash": digest(b"admission"),
+            "output_directory": ".local-exclude/coordination/slice/run"
+        })
+    };
+    let alpha2 = repository.write(
+        "alpha2.json",
+        &format!("{}\n", request("yo.slice-review-delivery-request/v1alpha2")),
+    );
+    let alpha3 = repository.write(
+        "alpha3.json",
+        &format!("{}\n", request("yo.slice-review-delivery-request/v1alpha3")),
+    );
+
+    assert!(!read_request_with_output_policy(&alpha2).unwrap().1);
+    let (request, prepare_output) = read_request_with_output_policy(&alpha3).unwrap();
+    assert!(prepare_output);
+    let DeliveryRequest::AdmittedOriginal(request) = request else {
+        panic!("alpha3 selected another delivery protocol");
+    };
+    assert_eq!(request.schema, "yo.slice-review-delivery-request/v1alpha2");
+
+    let continuation = serde_json::json!({
+        "schema": "yo.slice-review-continuation-delivery-request/v1alpha3",
+        "preflight_request_path": ".local-exclude/preflight.json",
+        "preflight_request_hash": digest(b"preflight"),
+        "admission_request_path": ".local-exclude/admission.json",
+        "admission_request_hash": digest(b"admission"),
+        "output_directory": ".local-exclude/coordination/slice/continuation"
+    });
+    let continuation = repository.write("continuation-alpha3.json", &format!("{continuation}\n"));
+    let (request, prepare_output) = read_request_with_output_policy(&continuation).unwrap();
+    assert!(prepare_output);
+    let DeliveryRequest::AdmittedContinuation(request) = request else {
+        panic!("alpha3 selected another continuation protocol");
+    };
+    assert_eq!(
+        request.schema,
+        "yo.slice-review-continuation-delivery-request/v1alpha2"
+    );
 }
 
 // delegated delivery는 managed request를 재해석하지 않고 host 전용 schema와 exact
@@ -284,6 +337,57 @@ fn output_directory_must_be_empty_before_claim() {
         require_empty_directory(&output)
             .unwrap_err()
             .contains("must be empty")
+    );
+}
+
+// 로컬 준비 단계가 exact output child를 만들고 쓰기 probe를 회수하므로, 존재하지
+// 않는 디렉터리가 Provider request 전의 delivery 실패로 잘못 계산되지 않습니다.
+#[test]
+fn output_directory_preparation_creates_and_checks_exact_child() {
+    let repository = TestRepository::new("review-delivery-output-prepare");
+    let coordination = repository.path.join("coordination");
+    std::fs::create_dir(&coordination).unwrap();
+    let output = coordination.join("attempt-1");
+
+    let prepared = prepare_output_directory_at(&coordination, &output).unwrap();
+    assert_eq!(prepared, std::fs::canonicalize(&output).unwrap());
+    assert!(std::fs::read_dir(&prepared).unwrap().next().is_none());
+    prepare_output_directory_at(&coordination, &output).unwrap();
+}
+
+// 이전 attempt 파일이 남은 경로는 준비 단계에서 거부해 새 claim이나 외부 요청이
+// 기존 결과와 섞이지 않도록 합니다.
+#[test]
+fn output_directory_preparation_rejects_nonempty_directory() {
+    let repository = TestRepository::new("review-delivery-output-nonempty");
+    let coordination = repository.path.join("coordination");
+    let output = coordination.join("attempt-1");
+    std::fs::create_dir_all(&output).unwrap();
+    std::fs::write(output.join("claim.json"), b"claimed").unwrap();
+
+    assert!(
+        prepare_output_directory_at(&coordination, &output)
+            .unwrap_err()
+            .contains("must be empty")
+    );
+}
+
+#[cfg(unix)]
+// Slice 안을 가리키더라도 최종 symlink는 실제 output 소유권을 흐리므로 claim 전에
+// 거부해 경로 교체나 alias를 통한 결과 덮어쓰기를 막습니다.
+#[test]
+fn output_directory_preparation_rejects_final_symlink() {
+    let repository = TestRepository::new("review-delivery-output-symlink");
+    let coordination = repository.path.join("coordination");
+    let target = coordination.join("target");
+    let output = coordination.join("attempt-1");
+    std::fs::create_dir_all(&target).unwrap();
+    symlink(&target, &output).unwrap();
+
+    assert!(
+        prepare_output_directory_at(&coordination, &output)
+            .unwrap_err()
+            .contains("real directory")
     );
 }
 

@@ -9,7 +9,7 @@ mod session;
 mod tests;
 
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::Read,
     path::{Path, PathBuf},
     process::Command,
@@ -43,10 +43,20 @@ use crate::{
 const REQUEST_LIMIT: usize = 64 * 1024;
 const REVIEW_RESULT_LIMIT: usize = 4 * 1024 * 1024;
 const DIAGNOSTIC_LIMIT: usize = 256 * 1024;
+const REQUEST_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-delivery-request/v1alpha3";
+const CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3: &str =
+    "yo.slice-review-continuation-delivery-request/v1alpha3";
+const DELEGATED_REQUEST_SCHEMA_V1_ALPHA3: &str =
+    "yo.slice-review-delegated-delivery-request/v1alpha3";
+const DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3: &str =
+    "yo.slice-review-delegated-continuation-delivery-request/v1alpha3";
 
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
-    match read_request(request_path)? {
-        DeliveryRequest::Original(request) => run_original(repository, request, None),
+    let (request, prepare_output) = read_request_with_output_policy(request_path)?;
+    match request {
+        DeliveryRequest::Original(request) => {
+            run_original(repository, request, None, prepare_output)
+        },
         DeliveryRequest::AdmittedOriginal(request) => {
             let admission = AdmissionReference {
                 path: request.admission_request_path,
@@ -61,9 +71,12 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
                     output_directory: request.output_directory,
                 },
                 Some(admission),
+                prepare_output,
             )
         },
-        DeliveryRequest::Continuation(request) => run_continuation(repository, request, None),
+        DeliveryRequest::Continuation(request) => {
+            run_continuation(repository, request, None, prepare_output)
+        },
         DeliveryRequest::AdmittedContinuation(request) => {
             let admission = AdmissionReference {
                 path: request.admission_request_path,
@@ -78,11 +91,14 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
                     output_directory: request.output_directory,
                 },
                 Some(admission),
+                prepare_output,
             )
         },
-        DeliveryRequest::Delegated(request) => delegated::run_original(repository, request),
+        DeliveryRequest::Delegated(request) => {
+            delegated::run_original(repository, request, prepare_output)
+        },
         DeliveryRequest::DelegatedContinuation(request) => {
-            delegated::run_continuation(repository, request)
+            delegated::run_continuation(repository, request, prepare_output)
         },
     }
 }
@@ -101,6 +117,7 @@ fn run_original(
     repository: &Path,
     request: Request,
     admission: Option<AdmissionReference>,
+    prepare_output: bool,
 ) -> Result<(), String> {
     let egress_request_path = shared_path(repository, &request.egress_request_path)?;
     require_exact_file_hash(
@@ -109,8 +126,8 @@ fn run_original(
         REQUEST_LIMIT,
         "Slice review egress request",
     )?;
-    let output_directory = output_directory(repository, &request.output_directory)?;
-    require_empty_directory(&output_directory)?;
+    let output_directory =
+        delivery_output_directory(repository, &request.output_directory, prepare_output)?;
 
     let initial = review_egress::authorize_delivery(repository, &egress_request_path)?;
     require_original_fresh(&initial)?;
@@ -321,6 +338,7 @@ fn run_continuation(
     repository: &Path,
     request: ContinuationRequest,
     admission: Option<AdmissionReference>,
+    prepare_output: bool,
 ) -> Result<(), String> {
     let preflight_request_path = shared_path(repository, &request.preflight_request_path)?;
     require_exact_file_hash(
@@ -329,8 +347,8 @@ fn run_continuation(
         REQUEST_LIMIT,
         "Slice review continuation preflight request",
     )?;
-    let output_directory = output_directory(repository, &request.output_directory)?;
-    require_empty_directory(&output_directory)?;
+    let output_directory =
+        delivery_output_directory(repository, &request.output_directory, prepare_output)?;
 
     let initial =
         crate::review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
@@ -566,6 +584,10 @@ fn run_continuation(
 }
 
 fn read_request(path: &Path) -> Result<DeliveryRequest, String> {
+    read_request_with_output_policy(path).map(|(request, _)| request)
+}
+
+fn read_request_with_output_policy(path: &Path) -> Result<(DeliveryRequest, bool), String> {
     let bytes = bounded_file::read_regular(path, REQUEST_LIMIT, "Slice review delivery request")?;
     let header: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
         format!(
@@ -585,19 +607,20 @@ fn read_request(path: &Path) -> Result<DeliveryRequest, String> {
             compact_path(&request.egress_request_path, "egress_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.egress_request_hash, "egress_request_hash")?;
-            Ok(DeliveryRequest::Original(request))
+            Ok((DeliveryRequest::Original(request), false))
         },
-        REQUEST_SCHEMA_V1_ALPHA2 => {
-            let request: AdmittedRequest = serde_json::from_slice(&bytes).map_err(|error| {
+        REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3 => {
+            let mut request: AdmittedRequest = serde_json::from_slice(&bytes).map_err(|error| {
                 format!("invalid admitted original review delivery request: {error}")
             })?;
-            debug_assert_eq!(request.schema, REQUEST_SCHEMA_V1_ALPHA2);
+            let prepare_output = request.schema == REQUEST_SCHEMA_V1_ALPHA3;
+            request.schema = REQUEST_SCHEMA_V1_ALPHA2.to_owned();
             compact_path(&request.egress_request_path, "egress_request_path")?;
             compact_path(&request.admission_request_path, "admission_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.egress_request_hash, "egress_request_hash")?;
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
-            Ok(DeliveryRequest::AdmittedOriginal(request))
+            Ok((DeliveryRequest::AdmittedOriginal(request), prepare_output))
         },
         CONTINUATION_REQUEST_SCHEMA => {
             let request: ContinuationRequest = serde_json::from_slice(&bytes).map_err(|error| {
@@ -607,54 +630,64 @@ fn read_request(path: &Path) -> Result<DeliveryRequest, String> {
             compact_path(&request.preflight_request_path, "preflight_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
-            Ok(DeliveryRequest::Continuation(request))
+            Ok((DeliveryRequest::Continuation(request), false))
         },
-        CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2 => {
-            let request: AdmittedContinuationRequest =
+        CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2 | CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3 => {
+            let mut request: AdmittedContinuationRequest =
                 serde_json::from_slice(&bytes).map_err(|error| {
                     format!("invalid admitted continuation review delivery request: {error}")
                 })?;
-            debug_assert_eq!(request.schema, CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2);
+            let prepare_output = request.schema == CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3;
+            request.schema = CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2.to_owned();
             compact_path(&request.preflight_request_path, "preflight_request_path")?;
             compact_path(&request.admission_request_path, "admission_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
-            Ok(DeliveryRequest::AdmittedContinuation(request))
+            Ok((
+                DeliveryRequest::AdmittedContinuation(request),
+                prepare_output,
+            ))
         },
-        DELEGATED_REQUEST_SCHEMA | DELEGATED_REQUEST_SCHEMA_V1_ALPHA2 => {
-            let request: DelegatedRequest = serde_json::from_slice(&bytes)
+        DELEGATED_REQUEST_SCHEMA
+        | DELEGATED_REQUEST_SCHEMA_V1_ALPHA2
+        | DELEGATED_REQUEST_SCHEMA_V1_ALPHA3 => {
+            let mut request: DelegatedRequest = serde_json::from_slice(&bytes)
                 .map_err(|error| format!("invalid delegated review delivery request: {error}"))?;
-            debug_assert!(matches!(
-                request.schema.as_str(),
-                DELEGATED_REQUEST_SCHEMA | DELEGATED_REQUEST_SCHEMA_V1_ALPHA2
-            ));
+            let prepare_output = request.schema == DELEGATED_REQUEST_SCHEMA_V1_ALPHA3;
+            if prepare_output {
+                request.schema = DELEGATED_REQUEST_SCHEMA_V1_ALPHA2.to_owned();
+            }
             compact_path(&request.egress_request_path, "egress_request_path")?;
             compact_path(&request.admission_request_path, "admission_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.egress_request_hash, "egress_request_hash")?;
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
-            Ok(DeliveryRequest::Delegated(request))
+            Ok((DeliveryRequest::Delegated(request), prepare_output))
         },
-        DELEGATED_CONTINUATION_REQUEST_SCHEMA | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2 => {
-            let request: DelegatedContinuationRequest =
-                serde_json::from_slice(&bytes).map_err(|error| {
+        DELEGATED_CONTINUATION_REQUEST_SCHEMA
+        | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2
+        | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3 => {
+            let mut request: DelegatedContinuationRequest = serde_json::from_slice(&bytes)
+                .map_err(|error| {
                     format!("invalid delegated continuation delivery request: {error}")
                 })?;
-            debug_assert!(matches!(
-                request.schema.as_str(),
-                DELEGATED_CONTINUATION_REQUEST_SCHEMA
-                    | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2
-            ));
+            let prepare_output = request.schema == DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3;
+            if prepare_output {
+                request.schema = DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2.to_owned();
+            }
             compact_path(&request.preflight_request_path, "preflight_request_path")?;
             compact_path(&request.admission_request_path, "admission_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
-            Ok(DeliveryRequest::DelegatedContinuation(request))
+            Ok((
+                DeliveryRequest::DelegatedContinuation(request),
+                prepare_output,
+            ))
         },
         other => Err(format!(
-            "unsupported Slice review delivery request schema `{other}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{CONTINUATION_REQUEST_SCHEMA}`, `{CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`, `{DELEGATED_REQUEST_SCHEMA}`, `{DELEGATED_REQUEST_SCHEMA_V1_ALPHA2}`, `{DELEGATED_CONTINUATION_REQUEST_SCHEMA}`, or `{DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`"
+            "unsupported Slice review delivery request schema `{other}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, `{CONTINUATION_REQUEST_SCHEMA}`, `{CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`, `{CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3}`, `{DELEGATED_REQUEST_SCHEMA}`, `{DELEGATED_REQUEST_SCHEMA_V1_ALPHA2}`, `{DELEGATED_REQUEST_SCHEMA_V1_ALPHA3}`, `{DELEGATED_CONTINUATION_REQUEST_SCHEMA}`, `{DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`, or `{DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3}`"
         )),
     }
 }
@@ -765,6 +798,40 @@ fn managed_model_reference(delivery: &AuthorizedDelivery) -> Result<String, Stri
 }
 
 fn output_directory(repository: &Path, requested: &str) -> Result<PathBuf, String> {
+    let (root, coordination) = coordination_directory(repository)?;
+    let requested = requested_output_path(&root, requested);
+    require_real_directory(&requested)?;
+    let requested = fs::canonicalize(&requested).map_err(|error| {
+        format!(
+            "cannot resolve review delivery output directory {}: {error}",
+            requested.display()
+        )
+    })?;
+    require_output_child(&coordination, &requested)?;
+    Ok(requested)
+}
+
+fn prepare_output_directory(repository: &Path, requested: &str) -> Result<PathBuf, String> {
+    let (root, coordination) = coordination_directory(repository)?;
+    let requested = requested_output_path(&root, requested);
+    prepare_output_directory_at(&coordination, &requested)
+}
+
+fn delivery_output_directory(
+    repository: &Path,
+    requested: &str,
+    prepare_output: bool,
+) -> Result<PathBuf, String> {
+    if prepare_output {
+        prepare_output_directory(repository, requested)
+    } else {
+        let output = output_directory(repository, requested)?;
+        require_empty_directory(&output)?;
+        Ok(output)
+    }
+}
+
+fn coordination_directory(repository: &Path) -> Result<(PathBuf, PathBuf), String> {
     let bound = slice_contract::trusted_bound_slice(repository)?;
     let root = common_workspace_root(repository)?;
     let coordination = root
@@ -777,25 +844,117 @@ fn output_directory(repository: &Path, requested: &str) -> Result<PathBuf, Strin
             coordination.display()
         )
     })?;
+    Ok((root, coordination))
+}
+
+fn requested_output_path(root: &Path, requested: &str) -> PathBuf {
     let requested = PathBuf::from(requested);
-    let requested = if requested.is_absolute() {
+    if requested.is_absolute() {
         requested
     } else {
         root.join(requested)
-    };
-    let requested = fs::canonicalize(&requested).map_err(|error| {
+    }
+}
+
+fn prepare_output_directory_at(coordination: &Path, requested: &Path) -> Result<PathBuf, String> {
+    let coordination = fs::canonicalize(coordination).map_err(|error| {
+        format!(
+            "cannot resolve Slice coordination directory {}: {error}",
+            coordination.display()
+        )
+    })?;
+    match fs::symlink_metadata(requested) {
+        Ok(_) => require_real_directory(requested)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let parent = requested.parent().ok_or_else(|| {
+                "review delivery output directory must have an existing parent".to_owned()
+            })?;
+            let name = requested.file_name().ok_or_else(|| {
+                "review delivery output directory must end in a directory name".to_owned()
+            })?;
+            let parent = fs::canonicalize(parent).map_err(|error| {
+                format!(
+                    "cannot resolve review delivery output parent {}: {error}",
+                    parent.display()
+                )
+            })?;
+            if parent != coordination && !parent.starts_with(&coordination) {
+                return Err(format!(
+                    "review delivery output directory must be a child of {}",
+                    coordination.display()
+                ));
+            }
+            let created = parent.join(name);
+            fs::create_dir(&created).map_err(|error| {
+                format!(
+                    "cannot create review delivery output directory {}: {error}",
+                    created.display()
+                )
+            })?;
+        },
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect output directory {}: {error}",
+                requested.display()
+            ));
+        },
+    }
+    require_real_directory(requested)?;
+    let requested = fs::canonicalize(requested).map_err(|error| {
         format!(
             "cannot resolve review delivery output directory {}: {error}",
             requested.display()
         )
     })?;
-    if requested == coordination || !requested.starts_with(&coordination) {
+    require_output_child(&coordination, &requested)?;
+    require_empty_directory(&requested)?;
+    verify_directory_writable(&requested)?;
+    require_empty_directory(&requested)?;
+    Ok(requested)
+}
+
+fn require_output_child(coordination: &Path, requested: &Path) -> Result<(), String> {
+    if requested == coordination || !requested.starts_with(coordination) {
         return Err(format!(
             "review delivery output directory must be a child of {}",
             coordination.display()
         ));
     }
-    Ok(requested)
+    Ok(())
+}
+
+fn require_real_directory(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "cannot inspect output directory {}: {error}",
+            path.display()
+        )
+    })?;
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        return Err("review delivery output must be a real directory".to_owned());
+    }
+    Ok(())
+}
+
+fn verify_directory_writable(path: &Path) -> Result<(), String> {
+    let probe = path.join(".yo-review-delivery-write-probe");
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+        .map_err(|error| {
+            format!(
+                "review delivery output directory {} is not writable: {error}",
+                path.display()
+            )
+        })?;
+    drop(file);
+    fs::remove_file(&probe).map_err(|error| {
+        format!(
+            "cannot remove review delivery output write probe {}: {error}",
+            probe.display()
+        )
+    })
 }
 
 fn shared_path(repository: &Path, requested: &str) -> Result<PathBuf, String> {
@@ -823,15 +982,7 @@ fn common_workspace_root(repository: &Path) -> Result<PathBuf, String> {
 }
 
 fn require_empty_directory(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| {
-        format!(
-            "cannot inspect output directory {}: {error}",
-            path.display()
-        )
-    })?;
-    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
-        return Err("review delivery output must be a real directory".to_owned());
-    }
+    require_real_directory(path)?;
     let mut entries = fs::read_dir(path)
         .map_err(|error| format!("cannot read output directory {}: {error}", path.display()))?;
     if entries

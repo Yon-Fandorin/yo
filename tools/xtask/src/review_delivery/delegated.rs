@@ -17,14 +17,17 @@ use super::{
         DelegatedContinuationResultDocument, DelegatedDeliveryOutcome, DelegatedDeliveryReceipt,
         DelegatedRequest, DelegatedResultDocument, DelegatedTarget,
     },
-    output_directory,
     process::{execute_delegated_continuation_once, execute_delegated_once},
     process_outcome, publish_claim, publish_exact, require_empty_directory,
     require_exact_file_hash, require_integration_state, sha256_file, shared_path,
 };
 use crate::review_egress::{self, AuthorizedHostDelivery};
 
-pub(super) fn run_original(repository: &Path, request: DelegatedRequest) -> Result<(), String> {
+pub(super) fn run_original(
+    repository: &Path,
+    request: DelegatedRequest,
+    prepare_output: bool,
+) -> Result<(), String> {
     let require_state_readiness = request.schema == DELEGATED_REQUEST_SCHEMA_V1_ALPHA2;
     let egress_request_path = shared_path(repository, &request.egress_request_path)?;
     require_exact_file_hash(
@@ -33,8 +36,8 @@ pub(super) fn run_original(repository: &Path, request: DelegatedRequest) -> Resu
         REQUEST_LIMIT,
         "delegated Slice review egress request",
     )?;
-    let output_directory = output_directory(repository, &request.output_directory)?;
-    require_empty_directory(&output_directory)?;
+    let output_directory =
+        super::delivery_output_directory(repository, &request.output_directory, prepare_output)?;
 
     let initial = review_egress::authorize_host_delivery(repository, &egress_request_path)?;
     require_original_fresh(&initial)?;
@@ -243,6 +246,7 @@ pub(super) fn run_original(repository: &Path, request: DelegatedRequest) -> Resu
 pub(super) fn run_continuation(
     repository: &Path,
     request: DelegatedContinuationRequest,
+    prepare_output: bool,
 ) -> Result<(), String> {
     let require_state_readiness = request.schema == DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2;
     let preflight_path = shared_path(repository, &request.preflight_request_path)?;
@@ -252,8 +256,8 @@ pub(super) fn run_continuation(
         REQUEST_LIMIT,
         "delegated continuation preflight request",
     )?;
-    let output_directory = output_directory(repository, &request.output_directory)?;
-    require_empty_directory(&output_directory)?;
+    let output_directory =
+        super::delivery_output_directory(repository, &request.output_directory, prepare_output)?;
 
     let initial =
         crate::review_continuation_preflight::evaluate_delegated(repository, &preflight_path)?;

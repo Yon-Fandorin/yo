@@ -1,3 +1,5 @@
+use serde_json::json;
+
 use super::{
     super::{
         AffectedPathPolicy, MAX_AGGREGATE_EVIDENCE_BYTES,
@@ -6,6 +8,7 @@ use super::{
             TransitionContext, add_evidence_bytes, capture_validation, require_exact_finding_set,
             validate_transition,
         },
+        normalize_request_schema,
         request::validate_request,
     },
     support::{commit, finding, hash, prior, prior_findings},
@@ -17,6 +20,7 @@ use crate::{
     },
     review_packet,
     review_protocol::{NamedCaptured, digest},
+    validation_summary::argv_hash,
 };
 
 // continuation에 finding, 양수 budget, replacement 전용 evidence가 모두 있어야
@@ -56,6 +60,11 @@ fn request_requires_findings_budget_and_affected_evidence() {
         validate_request(&request).unwrap_err(),
         "managed payload token budget must be positive"
     );
+    request.max_managed_payload_tokens = 100;
+    request.schema = "yo.slice-review-delta-request/v1alpha2".to_owned();
+    assert!(normalize_request_schema(&mut request));
+    assert_eq!(request.schema, REQUEST_SCHEMA);
+    validate_request(&request).unwrap();
 }
 // reviewer가 작성한 findings artifact의 모든 ID와 오직 그 ID만 disposition에
 // 대응해야 적격 continuation이 됨을 확인한다.
@@ -90,9 +99,10 @@ fn validation_capture_requires_complete_non_overlapping_classification() {
         path: stable_path.to_string_lossy().into_owned(),
         hash: digest(b"stable green\n"),
     }]);
+    let candidate = commit(3);
 
     assert!(
-        capture_validation(&root, &prior, &[], &[])
+        capture_validation(&root, &prior, &candidate, false, &[], &[])
             .unwrap_err()
             .contains("must be classified")
     );
@@ -100,6 +110,8 @@ fn validation_capture_requires_complete_non_overlapping_classification() {
         capture_validation(
             &root,
             &prior,
+            &candidate,
+            false,
             &["stable".to_owned()],
             &[EvidenceRequest {
                 name: "stable".to_owned(),
@@ -109,10 +121,75 @@ fn validation_capture_requires_complete_non_overlapping_classification() {
         .unwrap_err()
         .contains("both reused and affected")
     );
-    let (reused, affected) =
-        capture_validation(&root, &prior, &["stable".to_owned()], &[]).unwrap();
+    let (reused, affected) = capture_validation(
+        &root,
+        &prior,
+        &candidate,
+        false,
+        &["stable".to_owned()],
+        &[],
+    )
+    .unwrap();
     assert_eq!(reused.len(), 1);
     assert!(affected.is_empty());
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+// delta가 immutable packet을 게시하기 전에 request alias와 summary 내부 이름, exact
+// replacement candidate를 함께 검증해 늦은 gate 거부를 앞당깁니다.
+#[test]
+fn affected_validation_name_mismatch_is_rejected_during_capture() {
+    let root = crate::test_support::unique_path("review-delta-evidence-name");
+    std::fs::create_dir_all(&root).unwrap();
+    let candidate = commit(3);
+    let summary = serde_json::to_vec(&json!({
+        "schema": "yo.validation-run-summary/v1alpha2",
+        "name": "resolution-affected-tests",
+        "status": "passed",
+        "exit_code": 0,
+        "elapsed_seconds": 1,
+        "log_bytes": 1,
+        "log_path": ".local-exclude/test.log",
+        "log_hash": format!("sha256:{}", "1".repeat(64)),
+        "head_commit": candidate,
+        "worktree_state": "clean",
+        "command_argv_count": 2,
+        "command_argv_hash": argv_hash(&["cargo".to_owned(), "test".to_owned()]),
+        "reused": false,
+        "reuse_policy": "reviewed-descendant/v1"
+    }))
+    .unwrap();
+    let summary_path = root.join("affected.json");
+    std::fs::write(&summary_path, summary).unwrap();
+
+    let legacy = capture_validation(
+        &root,
+        &prior(Vec::new()),
+        &candidate,
+        false,
+        &[],
+        &[EvidenceRequest {
+            name: "affected-tests".to_owned(),
+            path: summary_path.to_string_lossy().into_owned(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(legacy.1.len(), 1);
+
+    let error = capture_validation(
+        &root,
+        &prior(Vec::new()),
+        &candidate,
+        true,
+        &[],
+        &[EvidenceRequest {
+            name: "affected-tests".to_owned(),
+            path: summary_path.to_string_lossy().into_owned(),
+        }],
+    )
+    .unwrap_err();
+    assert!(error.contains("invalid affected validation evidence"));
+    assert!(error.contains("does not match requested evidence name"));
     std::fs::remove_dir_all(root).unwrap();
 }
 

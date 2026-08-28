@@ -17,6 +17,7 @@ use crate::{
     review_protocol::{
         Captured, NamedCaptured, artifact, require_commit, resolve_input_path, sorted_unique,
     },
+    validation_summary,
 };
 
 pub(super) fn validate_transition(
@@ -235,6 +236,8 @@ pub(super) fn capture_prior_findings(
 pub(super) fn capture_validation(
     repository: &Path,
     prior: &VerifiedReview,
+    replacement_candidate: &str,
+    verify_affected_identity: bool,
     reused_names: &[String],
     affected_requests: &[EvidenceRequest],
 ) -> Result<(Vec<NamedCaptured>, Vec<NamedCaptured>), String> {
@@ -252,12 +255,27 @@ pub(super) fn capture_validation(
         if reused_set.contains(&request.name) {
             return Err("validation evidence cannot be both reused and affected".to_owned());
         }
+        let artifact = capture_file(
+            &resolve_input_path(repository, &request.path),
+            "affected validation evidence",
+        )?;
+        if verify_affected_identity {
+            validation_summary::verify_review_input(
+                repository,
+                &artifact.bytes,
+                &request.name,
+                replacement_candidate,
+            )
+            .map_err(|error| {
+                format!(
+                    "invalid affected validation evidence for `{}`: {error}",
+                    request.name
+                )
+            })?;
+        }
         let item = NamedCaptured {
             name: request.name.clone(),
-            artifact: capture_file(
-                &resolve_input_path(repository, &request.path),
-                "affected validation evidence",
-            )?,
+            artifact,
         };
         add_evidence_size(&mut aggregate_bytes, &item)?;
         affected.push(item);

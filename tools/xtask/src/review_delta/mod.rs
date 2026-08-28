@@ -48,6 +48,7 @@ const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const MAX_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_PACKET_BYTES: usize = 32 * 1024 * 1024;
 const MAX_AGGREGATE_EVIDENCE_BYTES: usize = 32 * 1024 * 1024;
+const REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-delta-request/v1alpha2";
 const PREAMBLE: &str = "# yo Slice Finding-Resolution Review Delta\n\nThis is the complete caller-controlled continuation payload for the same reviewer, lens, and scope. Identify the prior ReviewId and candidate from your existing session, verify that the supplied prior-findings artifact is the exact finding set you issued, then inspect only the replacement delta and supplied dispositions/evidence. Fail closed if that prior context or exact finding set is unavailable.\n";
 const SECTION_PREFIX: &str = "\n<<<YO-REVIEW-DELTA-SECTION ";
 const METADATA_SUFFIX: &str = ">>>\n";
@@ -92,8 +93,9 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         MAX_REQUEST_BYTES,
         "Slice review delta request",
     )?;
-    let request: Request = serde_json::from_slice(&request_bytes)
+    let mut request: Request = serde_json::from_slice(&request_bytes)
         .map_err(|error| format!("invalid Slice review delta request: {error}"))?;
+    let verify_affected_identity = normalize_request_schema(&mut request);
     validate_request(&request)?;
     let contract = v1alpha1::contract();
     trusted_ensure_clean(&repository, "building a review delta")?;
@@ -156,6 +158,8 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let (reused_validation, affected_validation) = capture_validation(
         &repository,
         &prior,
+        &replacement_candidate,
+        verify_affected_identity,
         &request.reused_validation_evidence,
         &request.affected_validation_evidence,
     )?;
@@ -215,7 +219,13 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         .join(".local-exclude/methexis/slice-review-deltas")
         .join(suffix);
     let status = storage::publish(&output_directory, &packet, &manifest_bytes, || {
-        final_revalidate(&repository, &request, &inputs, contract)
+        final_revalidate(
+            &repository,
+            &request,
+            &inputs,
+            contract,
+            verify_affected_identity,
+        )
     })?;
 
     let result = ResultRecord {
@@ -244,11 +254,21 @@ pub(super) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
         .map_err(|error| format!("cannot write review delta result: {error}"))
 }
 
+fn normalize_request_schema(request: &mut Request) -> bool {
+    if request.schema == REQUEST_SCHEMA_V1_ALPHA2 {
+        request.schema = v1alpha1::REQUEST_SCHEMA.to_owned();
+        true
+    } else {
+        false
+    }
+}
+
 fn final_revalidate(
     repository: &Path,
     request: &Request,
     inputs: &Inputs,
     contract: WireContract,
+    verify_affected_identity: bool,
 ) -> Result<(), String> {
     trusted_ensure_clean(repository, "returning a review delta")?;
     let bound = slice_contract::trusted_bound_slice(repository)?;
@@ -314,6 +334,8 @@ fn final_revalidate(
     let (reused, affected) = capture_validation(
         repository,
         &inputs.prior,
+        &inputs.replacement_candidate,
+        verify_affected_identity,
         &request.reused_validation_evidence,
         &request.affected_validation_evidence,
     )?;

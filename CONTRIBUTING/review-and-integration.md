@@ -504,6 +504,21 @@ review chain and limits as managed egress, but returns
 `target_switch`; it deliberately has no `tool_execution: false` claim because
 read-only host tools remain owned by Codex or Grok.
 
+For every managed or delegated delivery, name one exact output child below the
+active Slice's shared coordination directory. Integrated `review-prepare`
+creates and checks that child before publishing its frozen v1alpha2 delivery
+request. For an individually assembled lower-level delivery, use the new
+managed or delegated original or continuation request `v1alpha3`. Before any
+claim or external request, alpha3 creates the final directory when only it is
+missing, then verifies that the resolved path remains inside the Slice, is a
+real empty directory, and accepts a create-and-remove write probe. It never
+creates missing parent directories. A symlink, non-empty path, unwritable
+directory, or path outside the Slice fails as local preparation and consumes
+no external request. Frozen v1alpha1 and v1alpha2 delivery requests retain
+their existing-directory precondition and failure order. Alpha3 normalizes to
+the existing alpha2 claim, outcome, result, and finalization artifacts after
+this new local pre-claim step; finalization never creates an output directory.
+
 For a fresh delegated review, bind that egress and an exact v1alpha2 host
 admission to one empty output directory:
 
@@ -518,11 +533,12 @@ admission to one empty output directory:
 }
 ```
 
-Use delivery request `v1alpha2` with admission `v1alpha3` for new work. It has
-the same fields and effect count as the frozen `v1alpha1` delivery request, but
-requires the host-state readiness proof and records alpha2 claim/result
-schemas. `v1alpha1` continues to require only frozen admission v1alpha2
-eligibility and is not silently strengthened.
+Frozen delivery request `v1alpha2` with admission `v1alpha3` requires the
+host-state readiness proof and records alpha2 claim/result schemas.
+Individually assembled new work uses delivery request `v1alpha3` with the same
+admission and artifact schemas plus the output preparation step above.
+`v1alpha1` continues to require only frozen admission v1alpha2 eligibility and
+neither older request is silently strengthened.
 
 The repository delivery command evaluates egress and admission twice around
 the exact current-develop build, publishes an immutable delegated claim, then
@@ -601,14 +617,16 @@ missing or malformed Session, mismatched route or identity, extra request, or
 missing Anchor fails before launch. The successful result records the
 exact Session, route, candidate, request identity, binding epoch, and Anchor
 sequence, but publishes no artifact, acquires no terminal, and performs no
-Provider request. Bind that exact request and one new empty output directory in
-the continuation delivery request:
+Provider request. Bind that exact request, the exact current target-admission
+request, and one new output directory in the continuation delivery request:
 
 ```json
 {
-  "schema": "yo.slice-review-continuation-delivery-request/v1alpha1",
+  "schema": "yo.slice-review-continuation-delivery-request/v1alpha3",
   "preflight_request_path": ".local-exclude/coordination/<slice>/continuation-preflight.json",
   "preflight_request_hash": "sha256:<exact-preflight-request-hash>",
+  "admission_request_path": ".local-exclude/coordination/<slice>/admission.json",
+  "admission_request_hash": "sha256:<exact-admission-request-hash>",
   "output_directory": ".local-exclude/coordination/<slice>/continuation-delivery"
 }
 ```
@@ -650,15 +668,17 @@ Provider, or enables tools.
 
 For one original packet in a fresh Session, perform the authorized effect with
 the bounded repository delivery command instead of terminal paste, pane
-capture, or direct Session JSONL inspection. Create one empty output directory
-under the active Slice's shared coordination directory, then bind it and the
-exact egress request in a new experimental request:
+capture, or direct Session JSONL inspection. Bind the exact egress and current
+target-admission requests plus one new output directory under the active
+Slice's shared coordination directory in a new experimental request:
 
 ```json
 {
-  "schema": "yo.slice-review-delivery-request/v1alpha1",
+  "schema": "yo.slice-review-delivery-request/v1alpha3",
   "egress_request_path": ".local-exclude/coordination/<slice>/egress.json",
   "egress_request_hash": "sha256:<egress-request-hash>",
+  "admission_request_path": ".local-exclude/coordination/<slice>/admission.json",
+  "admission_request_hash": "sha256:<exact-admission-request-hash>",
   "output_directory": ".local-exclude/coordination/<slice>/delivery"
 }
 ```
@@ -763,7 +783,7 @@ reviewer-authored evidence, not a worker-selected subset:
 
 ```json
 {
-  "schema": "yo.slice-review-delta-request/v1alpha1",
+  "schema": "yo.slice-review-delta-request/v1alpha2",
   "prior_manifest_path": ".local-exclude/methexis/slice-reviews/<review-id>/manifest.json",
   "prior_manifest_hash": "sha256:<manifest-hash-from-review-packet-result>",
   "prior_findings_path": ".local-exclude/coordination/<slice>/review-findings.json",
@@ -789,14 +809,23 @@ reviewer-authored evidence, not a worker-selected subset:
 cargo xtask slice review-delta <request.json>
 ```
 
-The command fully reproduces the prior packet and manifest from their captured
+The new request `yo.slice-review-delta-request/v1alpha2` fully reproduces the
+prior packet and manifest from their captured
 inputs before accepting them; the prior manifest may be either the original
 review or the latest verified review delta in the same chain. It then requires dispositions (`resolved`,
 `not_reproduced`, or `accepted_limit`) for every and only prior finding ID,
 requires at least one replacement-specific affected validation item, requires
 every prior validation item to be classified as reused or affected, verifies
-reused bytes, requires every affected evidence body to name the exact
+reused bytes, requires every affected structured summary's internal name to
+equal its request name and every affected evidence body to name the exact
 replacement commit, and enforces a cumulative evidence bound while capturing.
+Those identity checks finish before immutable delta publication, so correct a
+summary-name alias or stale candidate in the evidence-producing command rather
+than publishing a packet that the later gate cannot consume.
+Frozen request v1alpha1 retains its prior capture and failure order and does
+not acquire the structured-summary identity precheck. Both request versions
+publish the existing canonical v1alpha1 delta packet family; the captured
+request bytes keep their producer identity distinct.
 Store each candidate's evidence at a new immutable path; overwriting evidence
 referenced by an earlier review makes that chain head ineligible. The command
 captures the no-renames binary prior-to-replacement diff and returns one
