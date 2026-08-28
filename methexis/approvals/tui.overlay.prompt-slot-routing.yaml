@@ -1,9 +1,7 @@
-schema: methexis.approval/v1alpha1
+schema: methexis.approval/v1alpha2
 knowledge_id: tui.overlay.prompt-slot-routing
-revision: sha256:98716f609a3d30008068429e069ccd966edfc0f66b98b7a85ccc2c707cdabdda
+revision: sha256:219fce70c73421bf0d4f2efd059464301fcb1b4755cdd06e4db2204b6141f037
 reviewer: tui-architecture
-reviewed_at: 2026-08-03T03:21:32Z
-projection_profile: ko-review/v1alpha1
-projection_compiler: methexis/0.0.0
-projection_hash: sha256:2ecb6db5b901745797ede6fafb99f857446ff64e43b90968d574827f7498e44f
-request_hash: sha256:2fc866dd7e59d1f9477196fcf4b8b74bc8f29aa10e784dbfafbe5aa3e0c6145b
+reviewed_at: 2026-08-28T07:04:34Z
+review_basis: canonical
+request_hash: sha256:642230c88b5fc8c1ee314c9d25532871619da9c2679e969d3cd18b336da6fa2c

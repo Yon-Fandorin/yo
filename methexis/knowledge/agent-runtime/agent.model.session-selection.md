@@ -5,11 +5,12 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.model-002
-    revision: sha256:19b15ed44b3d834f64bf054f08fce37fef5645fefe7a7f305bc61896257318a3
+    revision: sha256:9b26615a4b7f6ea9c37fed8369ff3ed0022f66781c06aaf37ca6716d64bd7b78
 relations:
   depends_on:
     - agent.model.service-binding
     - agent.runtime.command-event-boundary
+    - agent.runtime.active-turn-input
     - agent.session.continuation-lineage
   constrained_by:
     - tui.overlay.selection-panel
@@ -42,7 +43,48 @@ The first successfully committed `yo connect` that explicitly selects one exact 
 
 Before disconnect or grouped replacement removes targets, selection derives one prospective transition. If the exact explicit ModelTarget preference is removed, the same public CAS clears it; otherwise it is preserved. Preview shows the old value, transition, and effective lower target or setup-required outcome. HostTarget is never cleared by model removal.
 
-`yo model` and `/model` are ModelTarget-only. Preparation validates policy, credential, tokenizer, protocol, the derived connector, normalized endpoint, every resolved effective-profile field including replay profile and its authorization provenance, complete-binding freshness, and staleness. A live TUI switch prepares while the old binding remains usable, rejects an active Turn, atomically closes the old epoch and opens the new one, and leaves the old binding usable on preparation, replay, or publication failure.
+`yo model` and `/model` are ModelTarget-only. Preparation validates policy,
+credential, tokenizer, protocol, the derived connector, normalized endpoint,
+every resolved effective-profile field including replay profile and its
+authorization provenance, complete-binding freshness, and staleness. An idle
+live TUI switch prepares while the old binding remains usable, atomically closes
+the old epoch and opens the new one, and leaves the old binding usable on
+preparation, replay, or publication failure.
+
+During an active Turn, the editable TUI MAY resolve a direct `/model` reference
+or open the picker, but it MUST NOT replace the current binding immediately.
+Accepting a different target MUST retain at most one invocation-local
+next-Turn reservation and report that the exact selected model will apply to
+the next Turn. The current Turn, every steer for it, and every outstanding
+Activity response MUST continue through the current binding. Model selection
+MUST NOT answer, cancel, or otherwise consume that Activity. A later explicit
+selection before application begins MUST replace the reservation; explicitly
+selecting the current model before application MUST cancel it with a local
+notice. The reservation MUST NOT enter the Session Journal or change durable
+binding state before application, and process exit or Session shutdown before
+application MUST discard it.
+
+When the exact current Turn's `TurnFinished` is observed with `Durable` Journal
+durability, the TUI MUST seal the reserved target and synchronously leave its
+terminal-input loop for the existing host replacement boundary. From that
+point until replacement succeeds or fails, terminal input MUST remain
+suspended: no later `/model`, Activity response, steer, or new-Turn submission
+may race or replace the sealed target. Before this boundary, active-Turn text
+MUST retain the exact `TurnRef` under the active-turn input contract; if the
+worker finished before the frontend observed it, rejection MUST preserve or
+restore the draft and MUST NOT admit a new Turn.
+
+The host MUST apply the sealed target through the same validated preparation
+and atomic binding-replacement boundary used by an idle switch, then re-enter
+the TUI only after the outcome is ready to report. Success MUST clear the
+reservation and make the new binding current before input resumes, so the next
+Turn uses it. Failure MUST clear the reservation, keep the previous binding,
+and report that outcome before input resumes; no preserved draft may be
+auto-dispatched. If `TurnFinished` is observed while Journal durability is
+`MemoryOnly` or `Gap`, the TUI MUST instead fail and clear the reservation,
+retain the previous binding, and report that durable completion could not be
+established. An Activity response that allows the current Turn to continue is
+not the next Turn and MUST NOT trigger early application.
 
 Resume selects the newest durable Continuation Anchor before considering an override and never consults stored preference or policy default. With no explicit override it uses the Anchor binding subject to current policy and exact credential availability. Policy denial or missing credential opens history read-only with denial or reconnect guidance and no fallback, Anchor mutation, or epoch. A HostTarget override that identifies the same host adapter is a same-binding confirmation; an exact override equal to the Anchor binding does not create a replacement epoch.
 

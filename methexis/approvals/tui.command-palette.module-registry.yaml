@@ -1,0 +1,7 @@
+schema: methexis.approval/v1alpha2
+knowledge_id: tui.command-palette.module-registry
+revision: sha256:41a45cdcd1002f4a35e80d5cd0a6e5f12a2c813c5f19a0e3e2f88ce7a85b4630
+reviewer: tui-architecture
+reviewed_at: 2026-08-28T07:04:34Z
+review_basis: canonical
+request_hash: sha256:43c88107a09004b9da850ea39c012bd3842eb7bd1ae41e757f421549e64eee18

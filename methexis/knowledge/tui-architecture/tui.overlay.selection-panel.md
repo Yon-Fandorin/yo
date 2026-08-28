@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.overlay-001
-    revision: sha256:65e8ef9fd3132d421a4b6aa1a5c7e1e46f5bb3a54e68f8d0d755645fac0197df
+    revision: sha256:749c879abfd73b581c0e92f3f56d7d37ba3cdfc468392ae209e2cf3e0a863391
 relations:
   constrained_by:
     - tui.surface.geometry
@@ -34,19 +34,24 @@ and typed availability of either enabled or disabled with a reason. Title,
 captions, labels, detail, and disabled reasons MUST pass the existing safe
 grapheme and control-text validation before publication. Navigation MUST skip
 disabled entries, and accept MUST never return a disabled identity. An
-all-disabled snapshot MUST remain displayable with no selection and accept
-MUST return a handled no-selection outcome.
+all-disabled snapshot MUST remain displayable with no selection and accept MUST
+return a handled no-selection outcome.
 
-One snapshot-level interaction gate MUST be independent of per-entry
-availability. A fresh snapshot MAY issue one acceptance receipt for its enabled
-selection. A pending-replacement snapshot MUST preserve the entries, selected
-identity, and entry styling supplied by the last fresh snapshot, but
-`Tab` and `Enter` MUST be handled without issuing a receipt or submitting the
-draft. Returning to fresh state MUST preserve the selected identity when it is
-still enabled. The panel MUST NOT represent snapshot freshness by changing an
-entry's semantic availability. While destination geometry is unchanged, the
-pending viewport MUST remain stable. Resize MUST apply normal fitting,
-selection visibility, and insufficient-geometry hiding rules.
+One provider-controlled snapshot-level interaction gate MUST be independent of
+per-entry availability. A fresh snapshot MAY issue one acceptance receipt for
+its enabled selection. A pending-replacement snapshot MUST preserve the
+entries, selected identity, and entry styling supplied by the last fresh
+snapshot, but `Tab` and `Enter` MUST be handled without issuing a receipt or
+submitting the draft. Returning to fresh state MUST preserve the selected
+identity when it is still enabled. The panel MUST NOT represent snapshot
+freshness by changing an entry's semantic availability. While destination
+geometry is unchanged, the pending viewport MUST remain stable. Resize MUST
+apply normal fitting, selection visibility, and insufficient-geometry hiding
+rules. This is the panel's only semantic interaction gate. The panel MUST NOT
+own or infer whether its caller has committed a rendered frame;
+synchronization between a logically refreshed snapshot and its visible
+presentation belongs to the prompt-slot routing owner and MUST NOT be
+reimplemented by a provider.
 
 Optional title status MUST be typed as static or activity presentation; render
 code MUST NOT infer activity by parsing its text. The provider or controller
@@ -79,3 +84,6 @@ Rib's completion and picker retain distinct state and effects but share a
 recognizable panel language. Reusing that narrower presentation boundary gives
 Yo consistent prompt-adjacent choices without forcing filesystem completion,
 session resume, model preview, and later providers into one controller.
+Separating semantic replacement freshness from caller-owned frame
+synchronization keeps one owner for each gate and prevents individual providers
+from racing visible selection.
