@@ -24,11 +24,16 @@ impl TestRepository {
         std::fs::create_dir_all(&path).unwrap();
         let repository = Self { path };
         repository.git(["init", "--quiet", "-b", "develop"]);
-        repository.git(["config", "user.name", "xtask Test"]);
-        repository.git(["config", "user.email", "xtask@example.invalid"]);
+        repository.git(["config", "--local", "user.name", "xtask Test"]);
+        repository.git(["config", "--local", "user.email", "xtask@example.invalid"]);
         let hooks = repository.path.join(".git/disabled-hooks");
         std::fs::create_dir_all(&hooks).unwrap();
-        repository.git(["config", "core.hooksPath", hooks.to_str().unwrap()]);
+        repository.git([
+            "config",
+            "--local",
+            "core.hooksPath",
+            hooks.to_str().unwrap(),
+        ]);
         repository
     }
 
@@ -41,12 +46,17 @@ impl TestRepository {
         path
     }
 
+    pub(crate) fn commit_all(&self, message: &str) {
+        self.git(["add", "."]);
+        self.git(["commit", "-qm", message]);
+    }
+
     pub(crate) fn git<I, S>(&self, arguments: I)
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let status = crate::git::command_in(&self.path, false)
+        let status = crate::git::test_command_in(&self.path)
             .args(arguments)
             .status()
             .unwrap();

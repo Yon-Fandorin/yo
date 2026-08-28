@@ -1,15 +1,11 @@
-use std::{
-    fs,
-    path::PathBuf,
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::fs;
 
 use super::{
     Authority, GitEnvironment, StageReport, ValidationMode, classify_staged_paths,
     handle_staged_check_output, methexis_check_arguments,
     require_exact_candidate_worktree_with_environment, validation_mode_with_environment,
 };
+use crate::test_support::TestRepository;
 
 const DRAFT_REPORT: &str = r#"{
     "schema": "methexis.check/v1alpha1",
@@ -283,66 +279,4 @@ fn staged_semantic_repository(name: &str) -> TestRepository {
     repository.write("methexis/knowledge/one.md", "candidate\n");
     repository.git(["add", "methexis/knowledge/one.md"]);
     repository
-}
-
-struct TestRepository {
-    path: PathBuf,
-}
-
-impl TestRepository {
-    fn new(name: &str) -> Self {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system clock follows Unix epoch")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "yo-validation-stage-{name}-{}-{unique}",
-            std::process::id()
-        ));
-        fs::create_dir(&path).unwrap();
-        let repository = Self { path };
-        repository.git(["init", "-q"]);
-        repository.git(["config", "user.email", "test@example.invalid"]);
-        repository.git(["config", "user.name", "validation-stage-test"]);
-        repository
-    }
-
-    fn write(&self, relative: &str, contents: &str) {
-        let path = self.path.join(relative);
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        fs::write(path, contents).unwrap();
-    }
-
-    fn commit_all(&self, message: &str) {
-        self.git(["add", "."]);
-        self.git(["commit", "-qm", message]);
-    }
-
-    fn git<const N: usize>(&self, arguments: [&str; N]) {
-        let output = Command::new("git")
-            .args(arguments)
-            .current_dir(&self.path)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_COMMON_DIR")
-            .env_remove("GIT_OBJECT_DIRECTORY")
-            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
-            .env_remove("GIT_PREFIX")
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-}
-
-impl Drop for TestRepository {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
-    }
 }

@@ -35,6 +35,7 @@ enum GitEnvironment {
 }
 
 impl GitEnvironment {
+    #[cfg(test)]
     fn is_isolated(self) -> bool {
         match self {
             Self::Caller => false,
@@ -153,22 +154,16 @@ fn untracked_methexis_paths(
     Ok(output.stdout)
 }
 
-fn git_command(repository: &Path, environment: GitEnvironment) -> Command {
+fn git_command(repository: &Path, _environment: GitEnvironment) -> Command {
+    #[cfg(test)]
+    if _environment.is_isolated() {
+        let mut command = crate::git::test_command_in(repository);
+        command.stdin(Stdio::null());
+        return command;
+    }
+
     let mut command = Command::new("git");
     command.current_dir(repository).stdin(Stdio::null());
-    if environment.is_isolated() {
-        for variable in [
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_INDEX_FILE",
-            "GIT_COMMON_DIR",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-            "GIT_PREFIX",
-        ] {
-            command.env_remove(variable);
-        }
-    }
     command
 }
 

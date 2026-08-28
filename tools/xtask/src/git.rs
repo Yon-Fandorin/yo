@@ -115,8 +115,15 @@ pub(crate) fn command_in(directory: &Path, inherit_repository_environment: bool)
     command.current_dir(directory);
     if !inherit_repository_environment {
         clear_repository_environment(&mut command);
+        #[cfg(test)]
+        isolate_test_environment(&mut command);
     }
     command
+}
+
+#[cfg(test)]
+pub(crate) fn test_command_in(directory: &Path) -> Command {
+    command_in(directory, false)
 }
 
 pub(crate) fn trusted_output_in(directory: &Path, arguments: &[&str]) -> Result<String, String> {
@@ -202,6 +209,28 @@ fn clear_repository_environment(command: &mut Command) {
     }
 }
 
+#[cfg(test)]
+fn isolate_test_environment(command: &mut Command) {
+    let inherited = [
+        ("PATH", std::env::var_os("PATH")),
+        ("TMPDIR", std::env::var_os("TMPDIR")),
+        ("TMP", std::env::var_os("TMP")),
+        ("TEMP", std::env::var_os("TEMP")),
+    ];
+    command.env_clear();
+    for (name, value) in inherited {
+        if let Some(value) = value {
+            command.env(name, value);
+        }
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
+        .env("LANG", "C");
+}
+
 pub(crate) fn interpret_trailers(message: &str) -> Result<String, String> {
     let mut child = command_in(Path::new("."), false)
         .args(["interpret-trailers", "--parse"])
@@ -230,4 +259,110 @@ pub(crate) fn interpret_trailers(message: &str) -> Result<String, String> {
 pub(crate) fn read(path: &Path, label: &str) -> Result<String, String> {
     std::fs::read_to_string(path)
         .map_err(|error| format!("cannot read {label} {}: {error}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{fs, path::Path, process::Command};
+
+    use super::{isolate_test_environment, test_command_in};
+    use crate::test_support::unique_path;
+
+    // 바깥 저장소를 가리키는 Git 환경을 자식 명령마다 주입해도 공용 테스트 격리가
+    // 이를 제거하여 바깥 config·index·HEAD/ref 바이트와 commit identity를 보존한다.
+    #[test]
+    fn isolated_test_commands_preserve_outer_repository_bytes_and_identity() {
+        let root = unique_path("git-isolation");
+        let outer = root.join("outer");
+        let inner = root.join("inner");
+        fs::create_dir_all(&outer).unwrap();
+        fs::create_dir_all(&inner).unwrap();
+
+        run(
+            &mut test_command_in(&outer),
+            ["init", "-q", "-b", "develop"],
+        );
+        run(
+            &mut test_command_in(&outer),
+            ["config", "--local", "user.name", "Outer Owner"],
+        );
+        run(
+            &mut test_command_in(&outer),
+            ["config", "--local", "user.email", "outer@example.invalid"],
+        );
+        fs::write(outer.join("tracked.txt"), b"outer\n").unwrap();
+        run(&mut test_command_in(&outer), ["add", "tracked.txt"]);
+        run(&mut test_command_in(&outer), ["commit", "-qm", "outer"]);
+
+        let git_dir = outer.join(".git");
+        let before = outer_repository_bytes(&git_dir);
+
+        run(
+            &mut poisoned_test_command(&inner, &outer),
+            ["init", "-q", "-b", "develop"],
+        );
+        run(
+            &mut poisoned_test_command(&inner, &outer),
+            ["config", "--local", "user.name", "Inner Test"],
+        );
+        run(
+            &mut poisoned_test_command(&inner, &outer),
+            ["config", "--local", "user.email", "inner@example.invalid"],
+        );
+        fs::write(inner.join("tracked.txt"), b"inner\n").unwrap();
+        run(
+            &mut poisoned_test_command(&inner, &outer),
+            ["add", "tracked.txt"],
+        );
+        run(
+            &mut poisoned_test_command(&inner, &outer),
+            ["commit", "-qm", "inner"],
+        );
+
+        let identity = poisoned_test_command(&inner, &outer)
+            .args(["log", "-1", "--format=%an%x00%ae"])
+            .output()
+            .unwrap();
+        assert!(identity.status.success());
+        assert_eq!(identity.stdout, b"Inner Test\0inner@example.invalid\n");
+        assert_eq!(outer_repository_bytes(&git_dir), before);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn poisoned_test_command(directory: &Path, outer: &Path) -> Command {
+        let git_dir = outer.join(".git");
+        let mut command = Command::new("git");
+        command
+            .current_dir(directory)
+            .env("GIT_DIR", &git_dir)
+            .env("GIT_WORK_TREE", outer)
+            .env("GIT_COMMON_DIR", &git_dir)
+            .env("GIT_INDEX_FILE", git_dir.join("index"))
+            .env("GIT_NAMESPACE", "outer-namespace")
+            .env("GIT_AUTHOR_NAME", "Leaked Author")
+            .env("GIT_AUTHOR_EMAIL", "leaked-author@example.invalid")
+            .env("GIT_COMMITTER_NAME", "Leaked Committer")
+            .env("GIT_COMMITTER_EMAIL", "leaked-committer@example.invalid");
+        isolate_test_environment(&mut command);
+        command
+    }
+
+    fn outer_repository_bytes(git_dir: &Path) -> [Vec<u8>; 4] {
+        [
+            fs::read(git_dir.join("config")).unwrap(),
+            fs::read(git_dir.join("index")).unwrap(),
+            fs::read(git_dir.join("HEAD")).unwrap(),
+            fs::read(git_dir.join("refs/heads/develop")).unwrap(),
+        ]
+    }
+
+    fn run<const N: usize>(command: &mut Command, arguments: [&str; N]) {
+        let output = command.args(arguments).output().unwrap();
+        assert!(
+            output.status.success(),
+            "Git failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
