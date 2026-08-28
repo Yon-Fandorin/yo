@@ -9,6 +9,11 @@ pub(crate) struct Worktree {
     pub(crate) branch: Option<String>,
 }
 
+pub(crate) enum ExistingRef {
+    Direct(String),
+    Symbolic(String),
+}
+
 pub(crate) fn worktrees(repository: &Path) -> Result<Vec<Worktree>, String> {
     let bytes = git::output_bytes_in(
         repository,
@@ -122,5 +127,120 @@ pub(crate) fn ensure_clean(repository: &Path, label: &str, operation: &str) -> R
         Ok(())
     } else {
         Err(format!("{label} must be clean before {operation}"))
+    }
+}
+
+pub(crate) fn validate_branch_ref(repository: &Path, branch_ref: &str) -> Result<(), String> {
+    let branch = branch_ref
+        .strip_prefix("refs/heads/")
+        .ok_or_else(|| format!("invalid Slice branch ref `{branch_ref}`"))?;
+    if git::succeeds_in(repository, &["check-ref-format", "--branch", branch], false)? {
+        Ok(())
+    } else {
+        Err(format!(
+            "Slice name does not form a valid Git branch `{branch}`"
+        ))
+    }
+}
+
+pub(crate) fn existing_ref(
+    repository: &Path,
+    reference: &str,
+) -> Result<Option<ExistingRef>, String> {
+    if let Some(target) = symbolic_ref_target(repository, reference)? {
+        return Ok(Some(ExistingRef::Symbolic(target)));
+    }
+    if git::succeeds_in(
+        repository,
+        &["show-ref", "--verify", "--quiet", reference],
+        false,
+    )? {
+        resolve_commit(repository, reference)
+            .map(ExistingRef::Direct)
+            .map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn symbolic_ref_target(repository: &Path, reference: &str) -> Result<Option<String>, String> {
+    let output = git::command_in(repository, false)
+        .args(["symbolic-ref", "--quiet", reference])
+        .output()
+        .map_err(|error| format!("cannot inspect Slice ref `{reference}`: {error}"))?;
+    if output.status.success() {
+        let target = String::from_utf8(output.stdout)
+            .map_err(|error| format!("Git returned a non-UTF-8 symbolic ref target: {error}"))?;
+        let target = target.trim();
+        if target.is_empty() {
+            Err(format!(
+                "Git returned an empty symbolic ref target for `{reference}`"
+            ))
+        } else {
+            Ok(Some(target.to_owned()))
+        }
+    } else if output.status.code() == Some(1) {
+        Ok(None)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!(
+            "cannot inspect Slice ref `{reference}` with Git symbolic-ref: {}{}",
+            output.status,
+            if stderr.trim().is_empty() {
+                String::new()
+            } else {
+                format!(": {}", stderr.trim())
+            }
+        ))
+    }
+}
+
+pub(crate) fn validate_coordinates(
+    worktree: &Worktree,
+    expected_path: &Path,
+    expected_branch: &str,
+    expected_head: &str,
+) -> Result<(), String> {
+    if worktree.path == expected_path
+        && worktree.branch.as_deref() == Some(expected_branch)
+        && worktree.head == expected_head
+    {
+        Ok(())
+    } else {
+        Err(
+            "existing Slice worktree does not match the requested path, branch, and base"
+                .to_owned(),
+        )
+    }
+}
+
+pub(crate) fn create(
+    repository: &Path,
+    path: &Path,
+    branch_ref: &str,
+    base: &str,
+    branch_exists: bool,
+) -> Result<(), String> {
+    let branch = branch_ref
+        .strip_prefix("refs/heads/")
+        .ok_or_else(|| format!("invalid Slice branch ref `{branch_ref}`"))?;
+    let mut command = git::command_in(repository, false);
+    command.args(["worktree", "add", "--quiet"]);
+    if branch_exists {
+        command.arg(path).arg(branch);
+    } else {
+        command.args(["-b", branch]).arg(path).arg(base);
+    }
+    let output = command
+        .output()
+        .map_err(|error| format!("cannot start git worktree add: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git worktree add failed with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
     }
 }

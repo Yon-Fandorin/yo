@@ -9,12 +9,29 @@ use super::{
 };
 use crate::bounded_file;
 
+pub(crate) struct ActiveContract {
+    pub(crate) contract: model::SliceContract,
+    pub(crate) contract_path: PathBuf,
+}
+
 pub(crate) fn bound_slice(repository: &Path) -> Result<BoundSlice, String> {
     bound_slice_with(repository, false)
 }
 
 pub(crate) fn trusted_bound_slice(repository: &Path) -> Result<BoundSlice, String> {
     bound_slice_with(repository, true)
+}
+
+pub(crate) fn active_contract(repository: &Path) -> Result<ActiveContract, String> {
+    let repository = repository_root(repository)?;
+    let contract_path = bound_contract_path_with(&repository, false)?;
+    let contract = model::load(&contract_path)?;
+    model::validate(&repository, &contract)?;
+    model::validate_slice_branch(&repository, &contract)?;
+    Ok(ActiveContract {
+        contract,
+        contract_path,
+    })
 }
 
 fn bound_slice_with(repository: &Path, trusted: bool) -> Result<BoundSlice, String> {

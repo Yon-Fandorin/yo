@@ -17,6 +17,7 @@ mod review_target_admission;
 mod slice_accept;
 mod slice_close;
 mod slice_contract;
+mod slice_create;
 mod slice_gate;
 mod slice_status;
 mod slice_worktree;
@@ -53,6 +54,9 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> Result<(), String> 
 }
 
 fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    if scope == "create" {
+        return run_slice_create(arguments);
+    }
     if scope == "create-activation" {
         return run_activation_slice(arguments);
     }
@@ -96,6 +100,18 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
         return run_slice_status(arguments);
     }
     Err(general_usage())
+}
+
+fn run_slice_create(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let contract = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(slice_create_usage)?;
+    if arguments.next().is_some() {
+        return Err(slice_create_usage());
+    }
+    let repository = current_repository()?;
+    slice_create::run(&repository, &contract)
 }
 
 fn run_cost_report(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -589,6 +605,7 @@ fn usage(check: &str) -> String {
 
 fn general_usage() -> String {
     "usage:\n\
+     cargo xtask slice create <slice-contract.json>\n\
      cargo xtask slice create-activation <request.json>\n\
      cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
      cargo xtask slice review-prepare <request.json>\n\
@@ -614,6 +631,10 @@ fn general_usage() -> String {
      cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
+}
+
+fn slice_create_usage() -> String {
+    "usage: cargo xtask slice create <slice-contract.json>".to_owned()
 }
 
 fn activation_slice_usage() -> String {
@@ -691,7 +712,7 @@ mod cli_tests {
         review_continuation_preflight_usage, review_delivery_usage, review_delta_usage,
         review_egress_usage, review_packet_usage, review_prepare_usage,
         review_target_admission_usage, run, slice_accept_usage, slice_close_usage,
-        slice_commit_usage, slice_gate_usage, slice_status_usage,
+        slice_commit_usage, slice_create_usage, slice_gate_usage, slice_status_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -703,6 +724,7 @@ mod cli_tests {
         assert_eq!(
             error,
             "usage:\n\
+             cargo xtask slice create <slice-contract.json>\n\
              cargo xtask slice create-activation <request.json>\n\
              cargo xtask slice review-packet [--check-readiness|--preflight] <request.json>\n\
              cargo xtask slice review-prepare <request.json>\n\
@@ -729,6 +751,18 @@ mod cli_tests {
              cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
              <commit-message-file> [changed-paths-file] [branch]"
         );
+    }
+
+    // 일반 Slice bootstrap도 정확히 한 immutable 계약만 받아 누락되거나 추가된
+    // positional input이 별도 branch identity로 해석되지 않게 합니다.
+    #[test]
+    fn slice_create_requires_exactly_one_contract() {
+        let missing = run(["slice", "create"].map(Into::into)).unwrap_err();
+        let extra = run(["slice", "create", "slice-contract.json", "extra.json"].map(Into::into))
+            .unwrap_err();
+
+        assert_eq!(missing, slice_create_usage());
+        assert_eq!(extra, slice_create_usage());
     }
 
     // 최상위 명령 분배는 첫 번째 명령이 없거나 알 수 없는 경우에도 기존 구현처럼 비교할 두 값을

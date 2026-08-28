@@ -9,17 +9,17 @@ pub(super) const BINDING_FILE: &str = "yo-slice-contract";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct SliceContract {
-    pub(super) schema: String,
-    pub(super) slice: String,
-    pub(super) base: String,
-    pub(super) base_ref: String,
-    pub(super) owned_contracts: Vec<String>,
+pub(crate) struct SliceContract {
+    pub(crate) schema: String,
+    pub(crate) slice: String,
+    pub(crate) base: String,
+    pub(crate) base_ref: String,
+    pub(crate) owned_contracts: Vec<String>,
     #[serde(default)]
-    pub(super) dependencies: Vec<String>,
-    pub(super) allowed_write_set: Vec<String>,
-    pub(super) focused_checks: Vec<String>,
-    pub(super) slice_close_checks: Vec<String>,
+    pub(crate) dependencies: Vec<String>,
+    pub(crate) allowed_write_set: Vec<String>,
+    pub(crate) focused_checks: Vec<String>,
+    pub(crate) slice_close_checks: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -46,7 +46,7 @@ pub(crate) struct EnsuredBinding {
     pub(crate) created: bool,
 }
 
-pub(super) fn load(path: &Path) -> Result<SliceContract, String> {
+pub(crate) fn load(path: &Path) -> Result<SliceContract, String> {
     read_contract(path).map(|(contract, _)| contract)
 }
 
@@ -58,7 +58,7 @@ pub(super) fn read_contract(path: &Path) -> Result<(SliceContract, Vec<u8>), Str
     Ok((contract, bytes))
 }
 
-pub(super) fn validate(repository: &Path, contract: &SliceContract) -> Result<(), String> {
+pub(crate) fn validate(repository: &Path, contract: &SliceContract) -> Result<(), String> {
     validate_with(repository, contract, false)
 }
 

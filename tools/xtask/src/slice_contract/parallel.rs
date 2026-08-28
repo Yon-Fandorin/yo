@@ -51,6 +51,21 @@ pub(crate) fn check_parallel(
         ));
     }
 
+    ensure_lease_compatible(&left, &right)?;
+
+    println!(
+        "{{\"schema\":\"yo.slice-parallel-check/v1\",\"ok\":true,\"left\":{},\"right\":{},\"base\":{}}}",
+        json(&left.slice)?,
+        json(&right.slice)?,
+        json(&left.base)?
+    );
+    Ok(())
+}
+
+pub(crate) fn ensure_lease_compatible(
+    left: &model::SliceContract,
+    right: &model::SliceContract,
+) -> Result<(), String> {
     let left_rules = model::parse_rules(&left.allowed_write_set)?;
     let right_rules = model::parse_rules(&right.allowed_write_set)?;
     let overlaps = overlaps(&left_rules, &right_rules);
@@ -81,13 +96,6 @@ pub(crate) fn check_parallel(
             shared_contracts.join(", ")
         ));
     }
-
-    println!(
-        "{{\"schema\":\"yo.slice-parallel-check/v1\",\"ok\":true,\"left\":{},\"right\":{},\"base\":{}}}",
-        json(&left.slice)?,
-        json(&right.slice)?,
-        json(&left.base)?
-    );
     Ok(())
 }
 

@@ -13,11 +13,6 @@ use crate::{git, slice_contract, slice_worktree};
 
 const DEVELOP_REF: &str = "refs/heads/develop";
 
-enum ExistingRef {
-    Direct(String),
-    Symbolic(String),
-}
-
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
     let bytes = match storage::read_request(request_path) {
         Ok(bytes) => bytes,
@@ -89,10 +84,10 @@ fn prepare_bytes_with_post_binding(
         ));
     }
     let branch_ref = format!("refs/heads/slice/direct/{}", request.slice);
-    validate_branch_ref(&repository, &branch_ref)?;
-    let existing_commit = match existing_ref(&repository, &branch_ref)? {
-        Some(ExistingRef::Direct(commit)) => Some(commit),
-        Some(ExistingRef::Symbolic(target)) => {
+    slice_worktree::validate_branch_ref(&repository, &branch_ref)?;
+    let existing_commit = match slice_worktree::existing_ref(&repository, &branch_ref)? {
+        Some(slice_worktree::ExistingRef::Direct(commit)) => Some(commit),
+        Some(slice_worktree::ExistingRef::Symbolic(target)) => {
             return Err(format!(
                 "{branch_ref} is a symbolic ref to {target}; activation Slice setup requires a direct branch ref"
             ));
@@ -145,7 +140,7 @@ fn prepare_bytes_with_post_binding(
         ));
     }
     if let Some(worktree) = existing_worktree {
-        validate_worktree(worktree, &worktree_path, &branch_ref, &base)?;
+        slice_worktree::validate_coordinates(worktree, &worktree_path, &branch_ref, &base)?;
         slice_worktree::ensure_clean(
             &worktree.path,
             "activation Slice worktree",
@@ -164,7 +159,7 @@ fn prepare_bytes_with_post_binding(
     let worktree_created = if existing_worktree.is_some() {
         false
     } else {
-        create_worktree(
+        slice_worktree::create(
             &repository,
             &worktree_path,
             &branch_ref,
@@ -230,38 +225,6 @@ fn validate_recovered_base(repository: &Path, base: &str) -> Result<(), String> 
     }
 }
 
-fn validate_branch_ref(repository: &Path, branch_ref: &str) -> Result<(), String> {
-    let branch = branch_ref
-        .strip_prefix("refs/heads/")
-        .ok_or_else(|| format!("invalid Slice branch ref `{branch_ref}`"))?;
-    if git::succeeds_in(repository, &["check-ref-format", "--branch", branch], false)? {
-        Ok(())
-    } else {
-        Err(format!(
-            "Slice name does not form a valid Git branch `{branch}`"
-        ))
-    }
-}
-
-fn validate_worktree(
-    worktree: &slice_worktree::Worktree,
-    expected_path: &Path,
-    expected_branch: &str,
-    expected_head: &str,
-) -> Result<(), String> {
-    if worktree.path == expected_path
-        && worktree.branch.as_deref() == Some(expected_branch)
-        && worktree.head == expected_head
-    {
-        Ok(())
-    } else {
-        Err(
-            "existing Slice worktree does not match the requested path, branch, and base"
-                .to_owned(),
-        )
-    }
-}
-
 fn validate_prepared_worktree(
     repository: &Path,
     expected_path: &Path,
@@ -276,92 +239,12 @@ fn validate_prepared_worktree(
             worktree.path == expected_path || worktree.branch.as_deref() == Some(expected_branch)
         })
         .ok_or_else(|| "prepared activation Slice worktree is no longer registered".to_owned())?;
-    validate_worktree(worktree, expected_path, expected_branch, expected_head)?;
+    slice_worktree::validate_coordinates(worktree, expected_path, expected_branch, expected_head)?;
     slice_worktree::ensure_clean(
         &worktree.path,
         "activation Slice worktree",
         "activation Slice setup",
     )
-}
-
-fn existing_ref(repository: &Path, reference: &str) -> Result<Option<ExistingRef>, String> {
-    if let Some(target) = symbolic_ref_target(repository, reference)? {
-        return Ok(Some(ExistingRef::Symbolic(target)));
-    }
-    if git::succeeds_in(
-        repository,
-        &["show-ref", "--verify", "--quiet", reference],
-        false,
-    )? {
-        slice_worktree::resolve_commit(repository, reference)
-            .map(ExistingRef::Direct)
-            .map(Some)
-    } else {
-        Ok(None)
-    }
-}
-
-fn symbolic_ref_target(repository: &Path, reference: &str) -> Result<Option<String>, String> {
-    let output = git::command_in(repository, false)
-        .args(["symbolic-ref", "--quiet", reference])
-        .output()
-        .map_err(|error| format!("cannot inspect Slice ref `{reference}`: {error}"))?;
-    if output.status.success() {
-        let target = String::from_utf8(output.stdout)
-            .map_err(|error| format!("Git returned a non-UTF-8 symbolic ref target: {error}"))?;
-        let target = target.trim();
-        if target.is_empty() {
-            Err(format!(
-                "Git returned an empty symbolic ref target for `{reference}`"
-            ))
-        } else {
-            Ok(Some(target.to_owned()))
-        }
-    } else if output.status.code() == Some(1) {
-        Ok(None)
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!(
-            "cannot inspect Slice ref `{reference}` with Git symbolic-ref: {}{}",
-            output.status,
-            if stderr.trim().is_empty() {
-                String::new()
-            } else {
-                format!(": {}", stderr.trim())
-            }
-        ))
-    }
-}
-
-fn create_worktree(
-    repository: &Path,
-    path: &Path,
-    branch_ref: &str,
-    base: &str,
-    branch_exists: bool,
-) -> Result<(), String> {
-    let branch = branch_ref
-        .strip_prefix("refs/heads/")
-        .ok_or_else(|| format!("invalid Slice branch ref `{branch_ref}`"))?;
-    let mut command = git::command_in(repository, false);
-    command.args(["worktree", "add", "--quiet"]);
-    if branch_exists {
-        command.arg(path).arg(branch);
-    } else {
-        command.args(["-b", branch]).arg(path).arg(base);
-    }
-    let output = command
-        .output()
-        .map_err(|error| format!("cannot start git worktree add: {error}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "git worktree add failed with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
-    }
 }
 
 fn effect(created: bool) -> Effect {

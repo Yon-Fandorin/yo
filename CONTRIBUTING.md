@@ -46,6 +46,24 @@ git switch wave/<wave>
 git switch -c slice/<wave>/<slice>
 ```
 
+In the bare-workspace layout, freeze the accepted `yo.slice-contract/v1`
+contract first and create its Slice transactionally from any registered
+worktree:
+
+```bash
+cargo xtask slice create <slice-contract.json>
+```
+
+The command discovers the one clean worktree attached to the contract's
+integration ref, verifies its exact base, and rejects ownership or write-lease
+overlap with every other active bound Slice. It then publishes the exact input
+under `.local-exclude/coordination/<slice>/`, creates the canonical Slice
+branch and `.local-exclude/worktrees/<slice>/`, and binds the published
+contract. Its versioned JSON result reports each effect as `created` or
+`reused` and returns one `cargo xtask check slice-scope` next action with its
+working directory. An exact retry may complete missing effects; conflicting
+or ambiguous state is preserved and reported instead of being cleaned up.
+
 Create a Task branch from its Slice only when concurrent workers need isolation. A worker that can safely operate in the Slice worktree returns evidence without adding a branch layer. Task commit history is working context; the slice planner reconciles Task results into the reviewable Slice outcome.
 
 For a direct Methexis activation Slice, record only the semantic coordination

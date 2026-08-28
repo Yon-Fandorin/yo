@@ -9,23 +9,28 @@ mod tests;
 use std::path::{Path, PathBuf};
 
 pub(crate) use binding::{
-    bind, binding_path_for, bound_slice, ensure_bound, trusted_bound_slice, verify_bound_exact,
+    active_contract, bind, binding_path_for, bound_slice, ensure_bound, trusted_bound_slice,
+    verify_bound_exact,
 };
-pub(crate) use model::BoundSlice;
 // Preserve the prior crate-visible facade type path; current callers infer it.
 #[allow(unused_imports)]
 pub(crate) use model::EnsuredBinding;
 #[cfg(test)]
 use model::PathRule;
-pub(crate) use parallel::check_parallel;
+pub(crate) use model::{BoundSlice, SliceContract};
 #[cfg(test)]
 use parallel::overlaps;
+pub(crate) use parallel::{check_parallel, ensure_lease_compatible};
 pub(crate) use scope::{check_bound_scope, check_scope, trusted_check_bound_scope};
 #[cfg(test)]
 use scope::{check_bound_scope_with_index, check_scope_with_index};
 use serde::Serialize;
 
 use crate::git;
+
+pub(crate) fn validate_contract(repository: &Path, contract: &SliceContract) -> Result<(), String> {
+    model::validate(repository, contract)
+}
 
 fn repository_root(directory: &Path) -> Result<PathBuf, String> {
     repository_root_with(directory, false)
