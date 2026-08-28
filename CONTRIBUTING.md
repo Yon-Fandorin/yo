@@ -674,6 +674,72 @@ validation, or sends review.
 }
 ```
 
+Do not transcribe the ready gate identity, hashes, review trailers, validation
+commands, approval scope, integration ref, or downstream artifact paths into
+that request by hand. From the clean bound Slice worktree, put only the
+irreducible semantic and observed inputs in one preparation request and run:
+
+```bash
+cargo xtask slice accept prepare \
+  .local-exclude/coordination/<slice>/accept-prepare.json
+```
+
+```json
+{
+  "schema": "yo.slice-accept-prepare-request/v1alpha1",
+  "gate_request_path": ".local-exclude/coordination/<slice>/gate.json",
+  "message_source_path": ".local-exclude/coordination/<slice>/message.txt",
+  "close_observations": {
+    "execution_lanes": [
+      {"lane": "integration", "mode": "serial", "operation_count": 1, "max_concurrency": 1}
+    ],
+    "review": {
+      "rounds": 1,
+      "findings": {
+        "reported": 0,
+        "resolved": 0,
+        "not_reproduced": 0,
+        "accepted_limits": 0,
+        "remaining": 0
+      }
+    },
+    "review_packets": {
+      "publication_count": 0,
+      "total_managed_tokens": 0,
+      "largest_sections": [],
+      "reused_inputs": []
+    },
+    "unverified_validation": [],
+    "elapsed_bottleneck": {"name": "review", "elapsed_milliseconds": 1000}
+  },
+  "push_remote": "origin"
+}
+```
+
+The `yo.slice-accept-prepare-request/v1alpha1` input names the unchanged ready
+gate, the human-written commit message source, the push remote, and
+`close_observations`. Those observations are only facts the gate cannot derive:
+execution-lane counts, review rounds and finding dispositions, packet sizes and
+reuse, commands for known unverified environments, and the measured elapsed
+bottleneck. Do not estimate or invent those values. The command verifies the
+gate's existing exact-effect approval and both worktrees, validates the close
+observations against the gate, then publishes new-or-byte-identical
+`close-prepare.json` and `accept.json` in the Slice's standard coordination
+directory. Candidate-scoped commit-message and close-plan output paths are
+derived under the platform temporary directory.
+
+The bounded result reports the base, candidate, diff, evidence/trailer counts,
+approval scope, artifact paths, and hashes. Any changed gate or message bytes,
+stale worktree/ref, approval mismatch, invalid observation, aliased path, or
+conflicting prior output fails before either downstream request is published.
+This preparation does not approve, integrate, push, or close the Slice. After
+inspecting its result, use the generated exact request without rebuilding it:
+
+```bash
+cargo xtask slice accept \
+  .local-exclude/coordination/<slice>/accept.json
+```
+
 If a required full suite fails outside the changed boundary, run each exact
 failing test once in isolation to classify timing or shared-load sensitivity.
 An isolated pass is diagnostic evidence, not a replacement for the failed

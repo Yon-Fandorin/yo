@@ -3,7 +3,7 @@ use std::{
     process::Stdio,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     bounded_file, git,
@@ -16,7 +16,7 @@ const REQUEST_LIMIT: usize = 64 * 1024;
 const ACCEPT_REQUEST_SCHEMA: &str = "yo.slice-accept-request/v1alpha1";
 const ACCEPT_RESULT_SCHEMA: &str = "yo.slice-accept-result/v1alpha1";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct AcceptRequest {
     schema: String,
@@ -33,7 +33,7 @@ struct AcceptRequest {
     approval_scope: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Push {
     remote: String,
@@ -190,6 +190,10 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
     );
     Ok(())
 }
+
+mod prepare;
+
+pub(crate) use prepare::prepare;
 
 #[allow(clippy::too_many_arguments)]
 fn integrate_candidate(

@@ -107,10 +107,19 @@ fn run_review_prepare(arguments: &mut impl Iterator<Item = OsString>) -> Result<
 }
 
 fn run_slice_accept(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
-    let request = arguments
-        .next()
-        .map(PathBuf::from)
-        .ok_or_else(slice_accept_usage)?;
+    let first = arguments.next().ok_or_else(slice_accept_usage)?;
+    if first == "prepare" {
+        let request = arguments
+            .next()
+            .map(PathBuf::from)
+            .ok_or_else(slice_accept_usage)?;
+        if arguments.next().is_some() {
+            return Err(slice_accept_usage());
+        }
+        let repository = current_repository()?;
+        return slice_accept::prepare(&repository, &request);
+    }
+    let request = PathBuf::from(first);
     if arguments.next().is_some() {
         return Err(slice_accept_usage());
     }
@@ -572,7 +581,7 @@ fn general_usage() -> String {
      cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
      cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
      cargo xtask slice commit <commit-message-file|prepare GATE.json MESSAGE-SOURCE MESSAGE-OUT>\n\
-     cargo xtask slice accept <request.json>\n\
+     cargo xtask slice accept <request.json|prepare PREPARE.json>\n\
      cargo xtask slice status <slice>\n\
      cargo xtask docs accept-translation <relative-page.md>\n\
      cargo xtask slice-contract bind <slice-contract.json>\n\
@@ -637,7 +646,7 @@ fn slice_status_usage() -> String {
 }
 
 fn slice_accept_usage() -> String {
-    "usage: cargo xtask slice accept <request.json>".to_owned()
+    "usage: cargo xtask slice accept <request.json>\n       cargo xtask slice accept prepare <prepare.json>".to_owned()
 }
 
 fn docs_accept_translation_usage() -> String {
@@ -680,7 +689,7 @@ mod cli_tests {
              cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
              cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
              cargo xtask slice commit <commit-message-file|prepare GATE.json MESSAGE-SOURCE MESSAGE-OUT>\n\
-             cargo xtask slice accept <request.json>\n\
+             cargo xtask slice accept <request.json|prepare PREPARE.json>\n\
              cargo xtask slice status <slice>\n\
              cargo xtask docs accept-translation <relative-page.md>\n\
              cargo xtask slice-contract bind <slice-contract.json>\n\
@@ -861,7 +870,7 @@ mod cli_tests {
     }
 
     // status와 accept도 Slice 이름 또는 versioned request 하나만 받아 compact 관측과
-    // mutation 경계가 여분 인자로 달라지지 않습니다.
+    // mutation 경계가 여분 인자로 달라지지 않으며, prepare 역시 입력 하나만 받습니다.
     #[test]
     fn status_and_accept_require_one_input() {
         for (scope, usage) in [
@@ -874,6 +883,14 @@ mod cli_tests {
                 usage
             );
         }
+        assert_eq!(
+            run(["slice", "accept", "prepare"].map(Into::into)).unwrap_err(),
+            slice_accept_usage()
+        );
+        assert_eq!(
+            run(["slice", "accept", "prepare", "input", "extra"].map(Into::into)).unwrap_err(),
+            slice_accept_usage()
+        );
     }
 
     // finding-resolution preflight도 egress와 Session root를 담은 closed request 하나만

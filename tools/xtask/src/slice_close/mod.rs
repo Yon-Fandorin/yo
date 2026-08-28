@@ -10,7 +10,10 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-pub(crate) use prepare::run as prepare_metrics;
+pub(crate) use prepare::{
+    Observations as CloseObservations, request_bytes as close_prepare_request_bytes,
+    run as prepare_metrics, validate_request_bytes as validate_close_prepare_request,
+};
 use serde::Serialize;
 
 use self::{
