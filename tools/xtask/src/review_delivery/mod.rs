@@ -4,6 +4,7 @@ mod finalize;
 mod model;
 mod process;
 mod session;
+mod usage;
 
 #[cfg(test)]
 mod tests;
@@ -19,18 +20,20 @@ use model::{
     AdmittedContinuationRequest, AdmittedRequest, Artifact, CLAIM_SCHEMA, CLAIM_SCHEMA_V1_ALPHA2,
     CONTINUATION_CLAIM_SCHEMA, CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2, CONTINUATION_OUTCOME_SCHEMA,
     CONTINUATION_REQUEST_SCHEMA, CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2, CONTINUATION_RESULT_SCHEMA,
-    CONTINUATION_RESULT_SCHEMA_V1_ALPHA2, Claim, ContinuationClaim, ContinuationDeliveryOutcome,
-    ContinuationRequest, ContinuationResultDocument, DELEGATED_CONTINUATION_REQUEST_SCHEMA,
+    CONTINUATION_RESULT_SCHEMA_V1_ALPHA2, CONTINUATION_RESULT_SCHEMA_V1_ALPHA3, Claim,
+    ContinuationClaim, ContinuationDeliveryOutcome, ContinuationRequest,
+    ContinuationResultDocument, DELEGATED_CONTINUATION_REQUEST_SCHEMA,
     DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2, DELEGATED_REQUEST_SCHEMA,
     DELEGATED_REQUEST_SCHEMA_V1_ALPHA2, DELIVERY_RECEIPT_SCHEMA, DelegatedContinuationRequest,
     DelegatedRequest, DeliveryOutcome, DeliveryReceipt, DeliveryRequest, OUTCOME_SCHEMA,
-    REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2, Request,
-    ResultDocument, Route,
+    REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2,
+    RESULT_SCHEMA_V1_ALPHA3, Request, ResultDocument, Route,
 };
 use process::{execute_continuation_once, execute_once, exit_label, process_outcome};
 use serde::Serialize;
 use session::{observe_continuation, observe_session};
 use sha2::{Digest, Sha256};
+use usage::{UsageBinding, UsageTarget};
 
 use crate::{
     bounded_file, git,
@@ -44,19 +47,30 @@ const REQUEST_LIMIT: usize = 64 * 1024;
 const REVIEW_RESULT_LIMIT: usize = 4 * 1024 * 1024;
 const DIAGNOSTIC_LIMIT: usize = 256 * 1024;
 const REQUEST_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-delivery-request/v1alpha3";
+const REQUEST_SCHEMA_V1_ALPHA4: &str = "yo.slice-review-delivery-request/v1alpha4";
 const CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3: &str =
     "yo.slice-review-continuation-delivery-request/v1alpha3";
+const CONTINUATION_REQUEST_SCHEMA_V1_ALPHA4: &str =
+    "yo.slice-review-continuation-delivery-request/v1alpha4";
 const DELEGATED_REQUEST_SCHEMA_V1_ALPHA3: &str =
     "yo.slice-review-delegated-delivery-request/v1alpha3";
+const DELEGATED_REQUEST_SCHEMA_V1_ALPHA4: &str =
+    "yo.slice-review-delegated-delivery-request/v1alpha4";
 const DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3: &str =
     "yo.slice-review-delegated-continuation-delivery-request/v1alpha3";
+const DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA4: &str =
+    "yo.slice-review-delegated-continuation-delivery-request/v1alpha4";
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DeliveryPolicy {
+    prepare_output: bool,
+    bind_usage: bool,
+}
 
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
-    let (request, prepare_output) = read_request_with_output_policy(request_path)?;
+    let (request, policy) = read_request_with_output_policy(request_path)?;
     match request {
-        DeliveryRequest::Original(request) => {
-            run_original(repository, request, None, prepare_output)
-        },
+        DeliveryRequest::Original(request) => run_original(repository, request, None, policy),
         DeliveryRequest::AdmittedOriginal(request) => {
             let admission = AdmissionReference {
                 path: request.admission_request_path,
@@ -71,11 +85,11 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
                     output_directory: request.output_directory,
                 },
                 Some(admission),
-                prepare_output,
+                policy,
             )
         },
         DeliveryRequest::Continuation(request) => {
-            run_continuation(repository, request, None, prepare_output)
+            run_continuation(repository, request, None, policy)
         },
         DeliveryRequest::AdmittedContinuation(request) => {
             let admission = AdmissionReference {
@@ -91,14 +105,12 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
                     output_directory: request.output_directory,
                 },
                 Some(admission),
-                prepare_output,
+                policy,
             )
         },
-        DeliveryRequest::Delegated(request) => {
-            delegated::run_original(repository, request, prepare_output)
-        },
+        DeliveryRequest::Delegated(request) => delegated::run_original(repository, request, policy),
         DeliveryRequest::DelegatedContinuation(request) => {
-            delegated::run_continuation(repository, request, prepare_output)
+            delegated::run_continuation(repository, request, policy)
         },
     }
 }
@@ -117,7 +129,7 @@ fn run_original(
     repository: &Path,
     request: Request,
     admission: Option<AdmissionReference>,
-    prepare_output: bool,
+    policy: DeliveryPolicy,
 ) -> Result<(), String> {
     let egress_request_path = shared_path(repository, &request.egress_request_path)?;
     require_exact_file_hash(
@@ -127,7 +139,7 @@ fn run_original(
         "Slice review egress request",
     )?;
     let output_directory =
-        delivery_output_directory(repository, &request.output_directory, prepare_output)?;
+        delivery_output_directory(repository, &request.output_directory, policy.prepare_output)?;
 
     let initial = review_egress::authorize_delivery(repository, &egress_request_path)?;
     require_original_fresh(&initial)?;
@@ -236,12 +248,43 @@ fn run_original(
         &capture.stderr,
         diagnostic_publication_failure.is_none(),
     );
+    let (provider_usage, usage_failure) = if policy.bind_usage && observation.failure.is_none() {
+        publish_provider_usage(
+            &output_directory.join("sessions"),
+            &output_directory,
+            UsageBinding {
+                review_id: authorized.review_id.clone(),
+                packet_hash: authorized.packet_hash.clone(),
+                request_id: observation
+                    .provider_request_id
+                    .clone()
+                    .expect("successful observation has one Provider request"),
+                session_id: observation
+                    .session_id
+                    .clone()
+                    .expect("successful observation has one Session"),
+                turn_id: observation
+                    .turn_id
+                    .expect("successful observation has one request turn"),
+                target: UsageTarget::ManagedModel {
+                    provider: authorized.provider.clone(),
+                    account: authorized.account.clone(),
+                    model: authorized.model.clone(),
+                },
+            },
+        )
+        .map(|artifact| (Some(artifact), None))
+        .unwrap_or_else(|error| (None, Some(error)))
+    } else {
+        (None, None)
+    };
     let failure = [
         capture.failure.clone(),
         status_failure,
         observation.failure.clone(),
         review_publication_failure,
         diagnostic_publication_failure,
+        usage_failure,
     ]
     .into_iter()
     .fold(None, combine_failures);
@@ -307,7 +350,9 @@ fn run_original(
     let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
 
     let result = ResultDocument {
-        schema: if admission.is_some() {
+        schema: if policy.bind_usage {
+            RESULT_SCHEMA_V1_ALPHA3
+        } else if admission.is_some() {
             RESULT_SCHEMA_V1_ALPHA2
         } else {
             RESULT_SCHEMA
@@ -325,6 +370,7 @@ fn run_original(
         diagnostic: diagnostic_artifact,
         outcome: outcome_artifact,
         delivery_receipt: receipt_artifact,
+        provider_usage,
     };
     println!(
         "{}",
@@ -338,7 +384,7 @@ fn run_continuation(
     repository: &Path,
     request: ContinuationRequest,
     admission: Option<AdmissionReference>,
-    prepare_output: bool,
+    policy: DeliveryPolicy,
 ) -> Result<(), String> {
     let preflight_request_path = shared_path(repository, &request.preflight_request_path)?;
     require_exact_file_hash(
@@ -348,7 +394,7 @@ fn run_continuation(
         "Slice review continuation preflight request",
     )?;
     let output_directory =
-        delivery_output_directory(repository, &request.output_directory, prepare_output)?;
+        delivery_output_directory(repository, &request.output_directory, policy.prepare_output)?;
 
     let initial =
         crate::review_continuation_preflight::evaluate(repository, &preflight_request_path)?;
@@ -479,12 +525,40 @@ fn run_continuation(
         &capture.stderr,
         diagnostic_publication_failure.is_none(),
     );
+    let (provider_usage, usage_failure) = if policy.bind_usage && observation.failure.is_none() {
+        publish_provider_usage(
+            &verified.session_root,
+            &output_directory,
+            UsageBinding {
+                review_id: authorized.review_id.clone(),
+                packet_hash: authorized.packet_hash.clone(),
+                request_id: observation
+                    .provider_request_id
+                    .clone()
+                    .expect("successful continuation has one Provider request"),
+                session_id: session_id.to_owned(),
+                turn_id: observation
+                    .turn_id
+                    .expect("successful continuation has one request turn"),
+                target: UsageTarget::ManagedModel {
+                    provider: authorized.provider.clone(),
+                    account: authorized.account.clone(),
+                    model: authorized.model.clone(),
+                },
+            },
+        )
+        .map(|artifact| (Some(artifact), None))
+        .unwrap_or_else(|error| (None, Some(error)))
+    } else {
+        (None, None)
+    };
     let failure = [
         capture.failure.clone(),
         status_failure,
         observation.failure.clone(),
         review_publication_failure,
         diagnostic_publication_failure,
+        usage_failure,
     ]
     .into_iter()
     .fold(None, combine_failures);
@@ -553,7 +627,9 @@ fn run_continuation(
     )?;
     let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
     let result = ContinuationResultDocument {
-        schema: if admission.is_some() {
+        schema: if policy.bind_usage {
+            CONTINUATION_RESULT_SCHEMA_V1_ALPHA3
+        } else if admission.is_some() {
             CONTINUATION_RESULT_SCHEMA_V1_ALPHA2
         } else {
             CONTINUATION_RESULT_SCHEMA
@@ -573,6 +649,7 @@ fn run_continuation(
         diagnostic: diagnostic_artifact,
         outcome: outcome_artifact,
         delivery_receipt: receipt_artifact,
+        provider_usage,
     };
     println!(
         "{}",
@@ -587,7 +664,9 @@ fn read_request(path: &Path) -> Result<DeliveryRequest, String> {
     read_request_with_output_policy(path).map(|(request, _)| request)
 }
 
-fn read_request_with_output_policy(path: &Path) -> Result<(DeliveryRequest, bool), String> {
+fn read_request_with_output_policy(
+    path: &Path,
+) -> Result<(DeliveryRequest, DeliveryPolicy), String> {
     let bytes = bounded_file::read_regular(path, REQUEST_LIMIT, "Slice review delivery request")?;
     let header: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
         format!(
@@ -607,20 +686,29 @@ fn read_request_with_output_policy(path: &Path) -> Result<(DeliveryRequest, bool
             compact_path(&request.egress_request_path, "egress_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.egress_request_hash, "egress_request_hash")?;
-            Ok((DeliveryRequest::Original(request), false))
+            Ok((
+                DeliveryRequest::Original(request),
+                DeliveryPolicy::default(),
+            ))
         },
-        REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3 => {
+        REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3 | REQUEST_SCHEMA_V1_ALPHA4 => {
             let mut request: AdmittedRequest = serde_json::from_slice(&bytes).map_err(|error| {
                 format!("invalid admitted original review delivery request: {error}")
             })?;
-            let prepare_output = request.schema == REQUEST_SCHEMA_V1_ALPHA3;
+            let policy = DeliveryPolicy {
+                prepare_output: matches!(
+                    request.schema.as_str(),
+                    REQUEST_SCHEMA_V1_ALPHA3 | REQUEST_SCHEMA_V1_ALPHA4
+                ),
+                bind_usage: request.schema == REQUEST_SCHEMA_V1_ALPHA4,
+            };
             request.schema = REQUEST_SCHEMA_V1_ALPHA2.to_owned();
             compact_path(&request.egress_request_path, "egress_request_path")?;
             compact_path(&request.admission_request_path, "admission_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.egress_request_hash, "egress_request_hash")?;
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
-            Ok((DeliveryRequest::AdmittedOriginal(request), prepare_output))
+            Ok((DeliveryRequest::AdmittedOriginal(request), policy))
         },
         CONTINUATION_REQUEST_SCHEMA => {
             let request: ContinuationRequest = serde_json::from_slice(&bytes).map_err(|error| {
@@ -630,32 +718,47 @@ fn read_request_with_output_policy(path: &Path) -> Result<(DeliveryRequest, bool
             compact_path(&request.preflight_request_path, "preflight_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
-            Ok((DeliveryRequest::Continuation(request), false))
+            Ok((
+                DeliveryRequest::Continuation(request),
+                DeliveryPolicy::default(),
+            ))
         },
-        CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2 | CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3 => {
+        CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2
+        | CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3
+        | CONTINUATION_REQUEST_SCHEMA_V1_ALPHA4 => {
             let mut request: AdmittedContinuationRequest =
                 serde_json::from_slice(&bytes).map_err(|error| {
                     format!("invalid admitted continuation review delivery request: {error}")
                 })?;
-            let prepare_output = request.schema == CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3;
+            let policy = DeliveryPolicy {
+                prepare_output: matches!(
+                    request.schema.as_str(),
+                    CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3 | CONTINUATION_REQUEST_SCHEMA_V1_ALPHA4
+                ),
+                bind_usage: request.schema == CONTINUATION_REQUEST_SCHEMA_V1_ALPHA4,
+            };
             request.schema = CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2.to_owned();
             compact_path(&request.preflight_request_path, "preflight_request_path")?;
             compact_path(&request.admission_request_path, "admission_request_path")?;
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
-            Ok((
-                DeliveryRequest::AdmittedContinuation(request),
-                prepare_output,
-            ))
+            Ok((DeliveryRequest::AdmittedContinuation(request), policy))
         },
         DELEGATED_REQUEST_SCHEMA
         | DELEGATED_REQUEST_SCHEMA_V1_ALPHA2
-        | DELEGATED_REQUEST_SCHEMA_V1_ALPHA3 => {
+        | DELEGATED_REQUEST_SCHEMA_V1_ALPHA3
+        | DELEGATED_REQUEST_SCHEMA_V1_ALPHA4 => {
             let mut request: DelegatedRequest = serde_json::from_slice(&bytes)
                 .map_err(|error| format!("invalid delegated review delivery request: {error}"))?;
-            let prepare_output = request.schema == DELEGATED_REQUEST_SCHEMA_V1_ALPHA3;
-            if prepare_output {
+            let policy = DeliveryPolicy {
+                prepare_output: matches!(
+                    request.schema.as_str(),
+                    DELEGATED_REQUEST_SCHEMA_V1_ALPHA3 | DELEGATED_REQUEST_SCHEMA_V1_ALPHA4
+                ),
+                bind_usage: request.schema == DELEGATED_REQUEST_SCHEMA_V1_ALPHA4,
+            };
+            if policy.prepare_output {
                 request.schema = DELEGATED_REQUEST_SCHEMA_V1_ALPHA2.to_owned();
             }
             compact_path(&request.egress_request_path, "egress_request_path")?;
@@ -663,17 +766,25 @@ fn read_request_with_output_policy(path: &Path) -> Result<(DeliveryRequest, bool
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.egress_request_hash, "egress_request_hash")?;
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
-            Ok((DeliveryRequest::Delegated(request), prepare_output))
+            Ok((DeliveryRequest::Delegated(request), policy))
         },
         DELEGATED_CONTINUATION_REQUEST_SCHEMA
         | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2
-        | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3 => {
+        | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3
+        | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA4 => {
             let mut request: DelegatedContinuationRequest = serde_json::from_slice(&bytes)
                 .map_err(|error| {
                     format!("invalid delegated continuation delivery request: {error}")
                 })?;
-            let prepare_output = request.schema == DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3;
-            if prepare_output {
+            let policy = DeliveryPolicy {
+                prepare_output: matches!(
+                    request.schema.as_str(),
+                    DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3
+                        | DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA4
+                ),
+                bind_usage: request.schema == DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA4,
+            };
+            if policy.prepare_output {
                 request.schema = DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2.to_owned();
             }
             compact_path(&request.preflight_request_path, "preflight_request_path")?;
@@ -681,13 +792,10 @@ fn read_request_with_output_policy(path: &Path) -> Result<(DeliveryRequest, bool
             compact_path(&request.output_directory, "output_directory")?;
             require_sha256(&request.preflight_request_hash, "preflight_request_hash")?;
             require_sha256(&request.admission_request_hash, "admission_request_hash")?;
-            Ok((
-                DeliveryRequest::DelegatedContinuation(request),
-                prepare_output,
-            ))
+            Ok((DeliveryRequest::DelegatedContinuation(request), policy))
         },
         other => Err(format!(
-            "unsupported Slice review delivery request schema `{other}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, `{CONTINUATION_REQUEST_SCHEMA}`, `{CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`, `{CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3}`, `{DELEGATED_REQUEST_SCHEMA}`, `{DELEGATED_REQUEST_SCHEMA_V1_ALPHA2}`, `{DELEGATED_REQUEST_SCHEMA_V1_ALPHA3}`, `{DELEGATED_CONTINUATION_REQUEST_SCHEMA}`, `{DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2}`, or `{DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA3}`"
+            "unsupported Slice review delivery request schema `{other}`; expected a supported original, continuation, or delegated delivery schema from v1alpha1 through v1alpha4"
         )),
     }
 }
@@ -1085,6 +1193,23 @@ fn route(delivery: &AuthorizedDelivery) -> Route<'_> {
         account: &delivery.account,
         model: &delivery.model,
     }
+}
+
+fn publish_provider_usage(
+    session_root: &Path,
+    output_directory: &Path,
+    binding: UsageBinding,
+) -> Result<Artifact, String> {
+    let document = usage::project(session_root, binding)?;
+    let bytes = canonical_json(&document)?;
+    let path = output_directory.join("provider-usage.json");
+    publish_exact(
+        &path,
+        &bytes,
+        REQUEST_LIMIT,
+        "external review Provider Usage binding",
+    )?;
+    Ok(artifact(&path, &bytes, true))
 }
 
 fn canonical_json(value: &impl Serialize) -> Result<Vec<u8>, String> {

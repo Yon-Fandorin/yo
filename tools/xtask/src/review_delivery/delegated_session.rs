@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use yo_core::{
-    AgentCommand, SessionId, TranscriptRecord,
+    AgentCommand, SessionId, TranscriptRecord, TurnId,
     session_repository::{
         LocalSessionReader, StoredRequestTraceRecord, StoredSessionReader, read_stored_session,
         read_stored_session_continuation,
@@ -21,6 +21,7 @@ pub(super) struct HostSessionObservation {
     pub(super) session_id: Option<String>,
     pub(super) host_request_count: usize,
     pub(super) host_request_id: Option<String>,
+    pub(super) turn_id: Option<TurnId>,
     pub(super) failure: Option<String>,
 }
 
@@ -28,6 +29,7 @@ pub(super) struct HostSessionObservation {
 pub(super) struct HostContinuationObservation {
     pub(super) host_request_count: usize,
     pub(super) host_request_id: Option<String>,
+    pub(super) turn_id: Option<TurnId>,
     pub(super) continuation_anchor_sequence: Option<u64>,
     pub(super) failure: Option<String>,
 }
@@ -35,7 +37,9 @@ pub(super) struct HostContinuationObservation {
 struct HostTraceObservation {
     binding_matches: Vec<bool>,
     requests: Vec<String>,
+    request_turns: Vec<TurnId>,
     outcomes: Vec<Option<String>>,
+    outcome_turns: Vec<TurnId>,
     anchor_count: usize,
 }
 
@@ -149,10 +153,12 @@ fn observe_host_session_inner(
                 .to_owned(),
         ));
     }
+    require_matching_turns(&trace).map_err(|error| (observation.clone(), error))?;
     observation.host_request_id = Some(
         host_request_identity(&trace.requests, &trace.outcomes)
             .map_err(|error| (observation.clone(), error))?,
     );
+    observation.turn_id = trace.request_turns.first().copied();
     Ok(observation)
 }
 
@@ -232,6 +238,7 @@ fn observe_host_continuation_inner(
             ),
         ));
     }
+    require_matching_turns(&trace).map_err(|error| (observation.clone(), error))?;
     let prior = host_request_identity(&trace.requests[..1], &trace.outcomes[..1])
         .map_err(|error| (observation.clone(), error))?;
     if delivery.prior_host_request_id.as_deref() != Some(prior.as_str()) {
@@ -244,6 +251,7 @@ fn observe_host_continuation_inner(
         host_request_identity(&trace.requests[1..], &trace.outcomes[1..])
             .map_err(|error| (observation.clone(), error))?,
     );
+    observation.turn_id = trace.request_turns.get(1).copied();
     let continuation = read_stored_session_continuation(&reader, session_id).map_err(|error| {
         (
             observation.clone(),
@@ -268,7 +276,9 @@ fn observe_trace(
 ) -> Result<HostTraceObservation, String> {
     let mut bindings = Vec::new();
     let mut requests = Vec::new();
+    let mut request_turns = Vec::new();
     let mut outcomes = Vec::new();
+    let mut outcome_turns = Vec::new();
     let mut anchors = 0;
     for entry in history.request_trace() {
         match entry.record() {
@@ -286,15 +296,25 @@ fn observe_trace(
                     )?,
             ),
             StoredRequestTraceRecord::RequestAccepted {
-                request_identity, ..
-            } => requests.push(request_identity.value().to_owned()),
+                turn_id,
+                request_identity,
+                ..
+            } => {
+                request_turns.push(*turn_id);
+                requests.push(request_identity.value().to_owned());
+            },
             StoredRequestTraceRecord::ResumableOutcome {
-                outcome_identity, ..
-            } => outcomes.push(
-                outcome_identity
-                    .as_ref()
-                    .map(|identity| identity.value().to_owned()),
-            ),
+                turn_id,
+                outcome_identity,
+                ..
+            } => {
+                outcome_turns.push(*turn_id);
+                outcomes.push(
+                    outcome_identity
+                        .as_ref()
+                        .map(|identity| identity.value().to_owned()),
+                );
+            },
             StoredRequestTraceRecord::ContinuationAnchor { .. } => anchors += 1,
             _ => {},
         }
@@ -302,7 +322,20 @@ fn observe_trace(
     Ok(HostTraceObservation {
         binding_matches: bindings,
         requests,
+        request_turns,
         outcomes,
+        outcome_turns,
         anchor_count: anchors,
     })
+}
+
+fn require_matching_turns(trace: &HostTraceObservation) -> Result<(), String> {
+    if trace.request_turns == trace.outcome_turns {
+        Ok(())
+    } else {
+        Err(
+            "durable delegated request and outcome records disagree on their exact turn identities"
+                .to_owned(),
+        )
+    }
 }

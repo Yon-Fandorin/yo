@@ -464,6 +464,26 @@ model route. Delivery receipts remain local operational assertions rather than
 Provider-authenticated proof, so the coordinator still owns their factual
 accuracy.
 
+Use the delivery request's `v1alpha4` form when the completed review must also
+bind actual Provider Usage. It preserves the existing claim, outcome, and
+`delivery.json` schemas and publishes a separate
+`yo.external-review-provider-usage/v1alpha1` artifact at
+`provider-usage.json`. The artifact independently reopens the durable Session,
+requires the delivery receipt's exact request identity on its recorded turn,
+and requires every usage source on that turn to match the admitted managed
+Provider/Account/Model or delegated Codex/Grok host. It records the Session and
+turn identities, source-specific receipt fields, the hash and byte count of
+each raw terminal usage snapshot, and presence-aware input, output, total,
+reasoning, cache-read, and cache-write values. Multiple receipts are summed
+with explicit complete or partial coverage. An absent receipt is represented
+as `unavailable`, never as a guessed zero. A request, Session, turn, target, raw
+snapshot, or usage projection mismatch fails the already-claimed attempt
+without launching another Provider request. Earlier request and result
+versions retain their existing output bytes; only `v1alpha4` returns the new
+result version containing the content-addressed Provider Usage artifact.
+Select it through `yo.slice-review-prepare-request/v1alpha3`; older preparation
+versions continue to emit their frozen delivery versions.
+
 For a review prepared with `yo.slice-review-prepare-request/v1alpha2`, use the
 structured gate-preparation shape and omit caller-declared verdicts:
 

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use super::{
     canonical_json, combine_failures, managed_model_reference,
-    model::{CLAIM_SCHEMA, Claim, DeliveryRequest, Route},
+    model::{Artifact, CLAIM_SCHEMA, Claim, DeliveryRequest, ResultDocument, Route},
     prepare_output_directory_at,
     process::{
         execute_continuation_once, execute_delegated_continuation_once, execute_delegated_once,
@@ -148,9 +148,15 @@ fn documented_managed_v1alpha3_shapes_bind_admission_and_prepare_output() {
         &format!("{}\n", request("yo.slice-review-delivery-request/v1alpha3")),
     );
 
-    assert!(!read_request_with_output_policy(&alpha2).unwrap().1);
-    let (request, prepare_output) = read_request_with_output_policy(&alpha3).unwrap();
-    assert!(prepare_output);
+    assert!(
+        !read_request_with_output_policy(&alpha2)
+            .unwrap()
+            .1
+            .prepare_output
+    );
+    let (request, policy) = read_request_with_output_policy(&alpha3).unwrap();
+    assert!(policy.prepare_output);
+    assert!(!policy.bind_usage);
     let DeliveryRequest::AdmittedOriginal(request) = request else {
         panic!("alpha3 selected another delivery protocol");
     };
@@ -165,8 +171,9 @@ fn documented_managed_v1alpha3_shapes_bind_admission_and_prepare_output() {
         "output_directory": ".local-exclude/coordination/slice/continuation"
     });
     let continuation = repository.write("continuation-alpha3.json", &format!("{continuation}\n"));
-    let (request, prepare_output) = read_request_with_output_policy(&continuation).unwrap();
-    assert!(prepare_output);
+    let (request, policy) = read_request_with_output_policy(&continuation).unwrap();
+    assert!(policy.prepare_output);
+    assert!(!policy.bind_usage);
     let DeliveryRequest::AdmittedContinuation(request) = request else {
         panic!("alpha3 selected another continuation protocol");
     };
@@ -174,6 +181,40 @@ fn documented_managed_v1alpha3_shapes_bind_admission_and_prepare_output() {
         request.schema,
         "yo.slice-review-continuation-delivery-request/v1alpha2"
     );
+}
+
+// 기존 alpha3 output 준비 의미를 바꾸지 않고 새 alpha4만 exact request-turn Usage
+// artifact를 요구하며, managed와 delegated 요청 모두 같은 opt-in 정책을 선택합니다.
+#[test]
+fn v1alpha4_requests_opt_into_provider_usage_binding() {
+    let repository = TestRepository::new("review-delivery-usage-version");
+    let managed = serde_json::json!({
+        "schema": "yo.slice-review-delivery-request/v1alpha4",
+        "egress_request_path": ".local-exclude/egress.json",
+        "egress_request_hash": digest(b"egress"),
+        "admission_request_path": ".local-exclude/admission.json",
+        "admission_request_hash": digest(b"admission"),
+        "output_directory": ".local-exclude/coordination/slice/run"
+    });
+    let path = repository.write("managed-alpha4.json", &format!("{managed}\n"));
+    let (request, policy) = read_request_with_output_policy(&path).unwrap();
+    assert!(matches!(request, DeliveryRequest::AdmittedOriginal(_)));
+    assert!(policy.prepare_output);
+    assert!(policy.bind_usage);
+
+    let delegated = serde_json::json!({
+        "schema": "yo.slice-review-delegated-delivery-request/v1alpha4",
+        "egress_request_path": ".local-exclude/egress.json",
+        "egress_request_hash": digest(b"egress"),
+        "admission_request_path": ".local-exclude/admission.json",
+        "admission_request_hash": digest(b"admission"),
+        "output_directory": ".local-exclude/coordination/slice/run"
+    });
+    let path = repository.write("delegated-alpha4.json", &format!("{delegated}\n"));
+    let (request, policy) = read_request_with_output_policy(&path).unwrap();
+    assert!(matches!(request, DeliveryRequest::Delegated(_)));
+    assert!(policy.prepare_output);
+    assert!(policy.bind_usage);
 }
 
 // delegated delivery는 managed request를 재해석하지 않고 host 전용 schema와 exact
@@ -247,6 +288,47 @@ fn v1alpha1_claim_omits_v1alpha2_admission_fields() {
         serde_json::from_slice(&canonical_json(&claim).unwrap()).unwrap();
     assert!(value.get("admission_request_id").is_none());
     assert!(value.get("target").is_none());
+}
+
+// 새 usage artifact 필드는 None일 때 frozen result JSON에 나타나지 않고, 새 result
+// version이 exact artifact를 제공할 때만 content-addressed reference로 추가됩니다.
+#[test]
+fn frozen_results_omit_the_new_provider_usage_artifact() {
+    let artifact = |path: &str| Artifact {
+        path: path.to_owned(),
+        hash: digest(path.as_bytes()),
+        bytes: path.len(),
+        published: true,
+    };
+    let mut result = ResultDocument {
+        schema: "yo.slice-review-delivery-result/v1alpha2",
+        ok: true,
+        status: "completed",
+        next_action: "interpret_review",
+        request_id: "request".to_owned(),
+        review_id: "review".to_owned(),
+        candidate_commit: "11".repeat(20),
+        integration_commit: "22".repeat(20),
+        session_id: "session".to_owned(),
+        provider_request_id: "provider-request".to_owned(),
+        review_result: artifact("review.txt"),
+        diagnostic: artifact("diagnostic.txt"),
+        outcome: artifact("outcome.json"),
+        delivery_receipt: artifact("delivery.json"),
+        provider_usage: None,
+    };
+    let value: serde_json::Value =
+        serde_json::from_slice(&canonical_json(&result).unwrap()).unwrap();
+    assert!(value.get("provider_usage").is_none());
+
+    result.schema = "yo.slice-review-delivery-result/v1alpha3";
+    result.provider_usage = Some(artifact("provider-usage.json"));
+    let value: serde_json::Value =
+        serde_json::from_slice(&canonical_json(&result).unwrap()).unwrap();
+    assert_eq!(
+        value["provider_usage"]["path"],
+        serde_json::json!("provider-usage.json")
+    );
 }
 
 // 새 delivery wire는 저장소 규칙대로 v1alpha1에서 시작하고, 비슷한 stable v1이나

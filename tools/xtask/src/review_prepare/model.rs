@@ -4,6 +4,8 @@ pub(super) const REQUEST_SCHEMA: &str = "yo.slice-review-prepare-request/v1alpha
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-prepare-result/v1alpha1";
 pub(super) const REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-prepare-request/v1alpha2";
 pub(super) const RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-prepare-result/v1alpha2";
+pub(super) const REQUEST_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-prepare-request/v1alpha3";
+pub(super) const RESULT_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-prepare-result/v1alpha3";
 pub(super) const CONTEXT_SCHEMA: &str = "methexis.context-request/v1alpha1";
 pub(super) const REVIEW_SCHEMA: &str = "yo.slice-review-packet-request/v1";
 pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-markdown/v1alpha2";
@@ -18,6 +20,9 @@ pub(super) const DELEGATED_ADMISSION_SCHEMA: &str =
 pub(super) const MANAGED_DELIVERY_SCHEMA: &str = "yo.slice-review-delivery-request/v1alpha2";
 pub(super) const DELEGATED_DELIVERY_SCHEMA: &str =
     "yo.slice-review-delegated-delivery-request/v1alpha2";
+pub(super) const MANAGED_USAGE_DELIVERY_SCHEMA: &str = "yo.slice-review-delivery-request/v1alpha4";
+pub(super) const DELEGATED_USAGE_DELIVERY_SCHEMA: &str =
+    "yo.slice-review-delegated-delivery-request/v1alpha4";
 pub(super) const DELEGATED_EXECUTION_PROFILE: &str = "yo.delegated-review-execution/v1alpha1";
 
 #[derive(Debug, Deserialize)]

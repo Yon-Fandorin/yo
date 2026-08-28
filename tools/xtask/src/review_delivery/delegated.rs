@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use super::{
-    DIAGNOSTIC_LIMIT, REQUEST_LIMIT, REVIEW_RESULT_LIMIT, artifact, build_current_yo,
-    canonical_json, combine_failures,
+    DIAGNOSTIC_LIMIT, DeliveryPolicy, REQUEST_LIMIT, REVIEW_RESULT_LIMIT, artifact,
+    build_current_yo, canonical_json, combine_failures,
     delegated_session::{observe_host_continuation, observe_host_session},
     evaluate_host_admission, exit_label, integration_worktree,
     model::{
@@ -10,23 +10,25 @@ use super::{
         DELEGATED_CONTINUATION_CLAIM_SCHEMA, DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2,
         DELEGATED_CONTINUATION_OUTCOME_SCHEMA, DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2,
         DELEGATED_CONTINUATION_RESULT_SCHEMA, DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA2,
-        DELEGATED_DELIVERY_RECEIPT_SCHEMA, DELEGATED_OUTCOME_SCHEMA,
-        DELEGATED_REQUEST_SCHEMA_V1_ALPHA2, DELEGATED_RESULT_SCHEMA,
-        DELEGATED_RESULT_SCHEMA_V1_ALPHA2, DelegatedClaim, DelegatedContinuationClaim,
-        DelegatedContinuationDeliveryOutcome, DelegatedContinuationRequest,
-        DelegatedContinuationResultDocument, DelegatedDeliveryOutcome, DelegatedDeliveryReceipt,
-        DelegatedRequest, DelegatedResultDocument, DelegatedTarget,
+        DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA3, DELEGATED_DELIVERY_RECEIPT_SCHEMA,
+        DELEGATED_OUTCOME_SCHEMA, DELEGATED_REQUEST_SCHEMA_V1_ALPHA2, DELEGATED_RESULT_SCHEMA,
+        DELEGATED_RESULT_SCHEMA_V1_ALPHA2, DELEGATED_RESULT_SCHEMA_V1_ALPHA3, DelegatedClaim,
+        DelegatedContinuationClaim, DelegatedContinuationDeliveryOutcome,
+        DelegatedContinuationRequest, DelegatedContinuationResultDocument,
+        DelegatedDeliveryOutcome, DelegatedDeliveryReceipt, DelegatedRequest,
+        DelegatedResultDocument, DelegatedTarget,
     },
     process::{execute_delegated_continuation_once, execute_delegated_once},
-    process_outcome, publish_claim, publish_exact, require_empty_directory,
+    process_outcome, publish_claim, publish_exact, publish_provider_usage, require_empty_directory,
     require_exact_file_hash, require_integration_state, sha256_file, shared_path,
+    usage::{UsageBinding, UsageTarget},
 };
 use crate::review_egress::{self, AuthorizedHostDelivery};
 
 pub(super) fn run_original(
     repository: &Path,
     request: DelegatedRequest,
-    prepare_output: bool,
+    policy: DeliveryPolicy,
 ) -> Result<(), String> {
     let require_state_readiness = request.schema == DELEGATED_REQUEST_SCHEMA_V1_ALPHA2;
     let egress_request_path = shared_path(repository, &request.egress_request_path)?;
@@ -36,8 +38,11 @@ pub(super) fn run_original(
         REQUEST_LIMIT,
         "delegated Slice review egress request",
     )?;
-    let output_directory =
-        super::delivery_output_directory(repository, &request.output_directory, prepare_output)?;
+    let output_directory = super::delivery_output_directory(
+        repository,
+        &request.output_directory,
+        policy.prepare_output,
+    )?;
 
     let initial = review_egress::authorize_host_delivery(repository, &egress_request_path)?;
     require_original_fresh(&initial)?;
@@ -146,12 +151,41 @@ pub(super) fn run_original(
         &capture.stderr,
         diagnostic_publication_failure.is_none(),
     );
+    let (provider_usage, usage_failure) = if policy.bind_usage && observation.failure.is_none() {
+        publish_provider_usage(
+            &output_directory.join("sessions"),
+            &output_directory,
+            UsageBinding {
+                review_id: authorized.review_id.clone(),
+                packet_hash: authorized.packet_hash.clone(),
+                request_id: observation
+                    .host_request_id
+                    .clone()
+                    .expect("successful delegated observation has one host request"),
+                session_id: observation
+                    .session_id
+                    .clone()
+                    .expect("successful delegated observation has one Session"),
+                turn_id: observation
+                    .turn_id
+                    .expect("successful delegated observation has one request turn"),
+                target: UsageTarget::DelegatedHost {
+                    host: authorized.host.clone(),
+                },
+            },
+        )
+        .map(|artifact| (Some(artifact), None))
+        .unwrap_or_else(|error| (None, Some(error)))
+    } else {
+        (None, None)
+    };
     let failure = [
         capture.failure.clone(),
         status_failure,
         observation.failure.clone(),
         review_publication_failure,
         diagnostic_publication_failure,
+        usage_failure,
     ]
     .into_iter()
     .fold(None, combine_failures);
@@ -216,7 +250,9 @@ pub(super) fn run_original(
     )?;
     let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
     let result = DelegatedResultDocument {
-        schema: if require_state_readiness {
+        schema: if policy.bind_usage {
+            DELEGATED_RESULT_SCHEMA_V1_ALPHA3
+        } else if require_state_readiness {
             DELEGATED_RESULT_SCHEMA_V1_ALPHA2
         } else {
             DELEGATED_RESULT_SCHEMA
@@ -234,6 +270,7 @@ pub(super) fn run_original(
         diagnostic: diagnostic_artifact,
         outcome: outcome_artifact,
         delivery_receipt: receipt_artifact,
+        provider_usage,
     };
     println!(
         "{}",
@@ -246,7 +283,7 @@ pub(super) fn run_original(
 pub(super) fn run_continuation(
     repository: &Path,
     request: DelegatedContinuationRequest,
-    prepare_output: bool,
+    policy: DeliveryPolicy,
 ) -> Result<(), String> {
     let require_state_readiness = request.schema == DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2;
     let preflight_path = shared_path(repository, &request.preflight_request_path)?;
@@ -256,8 +293,11 @@ pub(super) fn run_continuation(
         REQUEST_LIMIT,
         "delegated continuation preflight request",
     )?;
-    let output_directory =
-        super::delivery_output_directory(repository, &request.output_directory, prepare_output)?;
+    let output_directory = super::delivery_output_directory(
+        repository,
+        &request.output_directory,
+        policy.prepare_output,
+    )?;
 
     let initial =
         crate::review_continuation_preflight::evaluate_delegated(repository, &preflight_path)?;
@@ -393,12 +433,38 @@ pub(super) fn run_continuation(
         &capture.stderr,
         diagnostic_publication_failure.is_none(),
     );
+    let (provider_usage, usage_failure) = if policy.bind_usage && observation.failure.is_none() {
+        publish_provider_usage(
+            &verified.session_root,
+            &output_directory,
+            UsageBinding {
+                review_id: authorized.review_id.clone(),
+                packet_hash: authorized.packet_hash.clone(),
+                request_id: observation
+                    .host_request_id
+                    .clone()
+                    .expect("successful delegated continuation has one host request"),
+                session_id: session_id.to_owned(),
+                turn_id: observation
+                    .turn_id
+                    .expect("successful delegated continuation has one request turn"),
+                target: UsageTarget::DelegatedHost {
+                    host: authorized.host.clone(),
+                },
+            },
+        )
+        .map(|artifact| (Some(artifact), None))
+        .unwrap_or_else(|error| (None, Some(error)))
+    } else {
+        (None, None)
+    };
     let failure = [
         capture.failure.clone(),
         status_failure,
         observation.failure.clone(),
         review_publication_failure,
         diagnostic_publication_failure,
+        usage_failure,
     ]
     .into_iter()
     .fold(None, combine_failures);
@@ -464,7 +530,9 @@ pub(super) fn run_continuation(
     )?;
     let receipt_artifact = artifact(&receipt_path, &receipt_bytes, true);
     let result = DelegatedContinuationResultDocument {
-        schema: if require_state_readiness {
+        schema: if policy.bind_usage {
+            DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA3
+        } else if require_state_readiness {
             DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA2
         } else {
             DELEGATED_CONTINUATION_RESULT_SCHEMA
@@ -484,6 +552,7 @@ pub(super) fn run_continuation(
         diagnostic: diagnostic_artifact,
         outcome: outcome_artifact,
         delivery_receipt: receipt_artifact,
+        provider_usage,
     };
     println!(
         "{}",

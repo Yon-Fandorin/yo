@@ -17,10 +17,13 @@ pub(super) const CONTINUATION_OUTCOME_SCHEMA: &str =
     "yo.external-review-continuation-delivery-outcome/v1alpha1";
 pub(super) const RESULT_SCHEMA: &str = "yo.slice-review-delivery-result/v1alpha1";
 pub(super) const RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-review-delivery-result/v1alpha2";
+pub(super) const RESULT_SCHEMA_V1_ALPHA3: &str = "yo.slice-review-delivery-result/v1alpha3";
 pub(super) const CONTINUATION_RESULT_SCHEMA: &str =
     "yo.slice-review-continuation-delivery-result/v1alpha1";
 pub(super) const CONTINUATION_RESULT_SCHEMA_V1_ALPHA2: &str =
     "yo.slice-review-continuation-delivery-result/v1alpha2";
+pub(super) const CONTINUATION_RESULT_SCHEMA_V1_ALPHA3: &str =
+    "yo.slice-review-continuation-delivery-result/v1alpha3";
 pub(super) const DELIVERY_RECEIPT_SCHEMA: &str = "yo.external-review-delivery-receipt/v1";
 pub(super) const DELEGATED_REQUEST_SCHEMA: &str =
     "yo.slice-review-delegated-delivery-request/v1alpha1";
@@ -46,10 +49,14 @@ pub(super) const DELEGATED_RESULT_SCHEMA: &str =
     "yo.slice-review-delegated-delivery-result/v1alpha1";
 pub(super) const DELEGATED_RESULT_SCHEMA_V1_ALPHA2: &str =
     "yo.slice-review-delegated-delivery-result/v1alpha2";
+pub(super) const DELEGATED_RESULT_SCHEMA_V1_ALPHA3: &str =
+    "yo.slice-review-delegated-delivery-result/v1alpha3";
 pub(super) const DELEGATED_CONTINUATION_RESULT_SCHEMA: &str =
     "yo.slice-review-delegated-continuation-delivery-result/v1alpha1";
 pub(super) const DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA2: &str =
     "yo.slice-review-delegated-continuation-delivery-result/v1alpha2";
+pub(super) const DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA3: &str =
+    "yo.slice-review-delegated-continuation-delivery-result/v1alpha3";
 pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA: &str =
     "yo.external-review-delegated-delivery-receipt/v1alpha1";
 
@@ -263,6 +270,8 @@ pub(super) struct ResultDocument {
     pub(super) diagnostic: Artifact,
     pub(super) outcome: Artifact,
     pub(super) delivery_receipt: Artifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_usage: Option<Artifact>,
 }
 
 #[derive(Debug, Serialize)]
@@ -283,6 +292,8 @@ pub(super) struct ContinuationResultDocument {
     pub(super) diagnostic: Artifact,
     pub(super) outcome: Artifact,
     pub(super) delivery_receipt: Artifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_usage: Option<Artifact>,
 }
 
 #[derive(Debug, Serialize)]
@@ -402,6 +413,8 @@ pub(super) struct DelegatedResultDocument {
     pub(super) diagnostic: Artifact,
     pub(super) outcome: Artifact,
     pub(super) delivery_receipt: Artifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_usage: Option<Artifact>,
 }
 
 #[derive(Debug, Serialize)]
@@ -422,4 +435,6 @@ pub(super) struct DelegatedContinuationResultDocument {
     pub(super) diagnostic: Artifact,
     pub(super) outcome: Artifact,
     pub(super) delivery_receipt: Artifact,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_usage: Option<Artifact>,
 }

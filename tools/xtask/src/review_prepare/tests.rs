@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use serde_json::json;
 
 use super::{
-    DELEGATED_DELIVERY_SCHEMA, MANAGED_DELIVERY_SCHEMA, PreparedBytes, PreparedPaths, Request,
-    RouteKind, Target, egress_document, prepared_review_questions, require_empty_directory,
+    DELEGATED_DELIVERY_SCHEMA, DELEGATED_USAGE_DELIVERY_SCHEMA, MANAGED_DELIVERY_SCHEMA,
+    MANAGED_USAGE_DELIVERY_SCHEMA, PreparedBytes, PreparedPaths, Request, RouteKind, Target,
+    egress_document, prepared_review_questions, require_empty_directory,
     require_prepared_requests_current, target_preparation, validate_and_normalize,
 };
 use crate::{review_packet::PublishedReview, test_support::unique_path};
@@ -78,7 +79,7 @@ fn managed_route_documents_bind_current_authorization_and_delivery_shape() {
         "session_repository_path": "/tmp/sessions"
     }));
 
-    let target = target_preparation(&request.target).unwrap();
+    let target = target_preparation(&request.target, false).unwrap();
     let egress = egress_document(&workspace.0, &request.target, &published_review()).unwrap();
     assert!(matches!(target.kind, RouteKind::Managed));
     assert_eq!(target.next_action, "deliver_once");
@@ -110,7 +111,7 @@ fn delegated_route_documents_keep_host_owned_identity() {
         "session_repository_path": "/tmp/sessions"
     }));
 
-    let target = target_preparation(&request.target).unwrap();
+    let target = target_preparation(&request.target, false).unwrap();
     let egress = egress_document(&workspace.0, &request.target, &published_review()).unwrap();
     assert!(matches!(target.kind, RouteKind::Delegated));
     assert_eq!(target.next_action, "deliver_delegated_once");
@@ -225,4 +226,51 @@ fn alpha2_adds_structured_result_instruction_without_reinterpreting_alpha1() {
             .contains("yo.slice-review-result/v1alpha1")
     );
     validate_and_normalize(&mut structured).unwrap();
+}
+
+// 준비 alpha3만 새 delivery alpha4를 선택해 Provider Usage 결속을 켜며, managed와
+// delegated 양쪽의 기존 준비 schema는 그대로 남습니다.
+#[test]
+fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versions() {
+    let mut managed = request(json!({
+        "kind": "managed_model",
+        "provider": "kimi",
+        "account": "default",
+        "model": "k3",
+        "connection_repository_path": "/tmp/connections.yaml"
+    }));
+    assert_eq!(
+        target_preparation(&managed.target, false)
+            .unwrap()
+            .delivery_schema,
+        MANAGED_DELIVERY_SCHEMA
+    );
+    managed.schema = "yo.slice-review-prepare-request/v1alpha3".to_owned();
+    validate_and_normalize(&mut managed).unwrap();
+    assert_eq!(
+        target_preparation(&managed.target, true)
+            .unwrap()
+            .delivery_schema,
+        MANAGED_USAGE_DELIVERY_SCHEMA
+    );
+
+    let delegated = request(json!({"kind": "delegated_host", "host": "grok"}));
+    assert_eq!(
+        target_preparation(&delegated.target, false)
+            .unwrap()
+            .delivery_schema,
+        DELEGATED_DELIVERY_SCHEMA
+    );
+    assert_eq!(
+        target_preparation(&delegated.target, true)
+            .unwrap()
+            .delivery_schema,
+        DELEGATED_USAGE_DELIVERY_SCHEMA
+    );
+    assert_eq!(
+        prepared_review_questions(&managed)
+            .last()
+            .map(String::as_str),
+        Some(crate::review_result::OUTPUT_INSTRUCTION)
+    );
 }

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use yo_core::{
-    AgentCommand, SessionId, TranscriptRecord,
+    AgentCommand, SessionId, TranscriptRecord, TurnId,
     session_repository::{
         LocalSessionReader, StoredRequestTraceRecord, StoredSessionReader, read_stored_session,
         read_stored_session_continuation,
@@ -19,6 +19,7 @@ pub(super) struct SessionObservation {
     pub(super) session_id: Option<String>,
     pub(super) provider_request_count: usize,
     pub(super) provider_request_id: Option<String>,
+    pub(super) turn_id: Option<TurnId>,
     pub(super) failure: Option<String>,
 }
 
@@ -26,6 +27,7 @@ pub(super) struct SessionObservation {
 pub(super) struct ContinuationObservation {
     pub(super) provider_request_count: usize,
     pub(super) provider_request_id: Option<String>,
+    pub(super) turn_id: Option<TurnId>,
     pub(super) continuation_anchor_sequence: Option<u64>,
     pub(super) failure: Option<String>,
 }
@@ -120,7 +122,9 @@ fn observe_continuation_inner(
 
     let mut binding_matches = Vec::new();
     let mut request_identities = Vec::new();
+    let mut request_turns = Vec::new();
     let mut outcome_identities = Vec::new();
+    let mut outcome_turns = Vec::new();
     let mut continuation_anchor_count = 0;
     for entry in history.request_trace() {
         match entry.record() {
@@ -136,15 +140,25 @@ fn observe_continuation_inner(
                 .map_err(|error| (observation.clone(), error))?,
             ),
             StoredRequestTraceRecord::RequestAccepted {
-                request_identity, ..
-            } => request_identities.push(request_identity.value().to_owned()),
+                turn_id,
+                request_identity,
+                ..
+            } => {
+                request_turns.push(*turn_id);
+                request_identities.push(request_identity.value().to_owned());
+            },
             StoredRequestTraceRecord::ResumableOutcome {
-                outcome_identity, ..
-            } => outcome_identities.push(
-                outcome_identity
-                    .as_ref()
-                    .map(|identity| identity.value().to_owned()),
-            ),
+                turn_id,
+                outcome_identity,
+                ..
+            } => {
+                outcome_turns.push(*turn_id);
+                outcome_identities.push(
+                    outcome_identity
+                        .as_ref()
+                        .map(|identity| identity.value().to_owned()),
+                );
+            },
             StoredRequestTraceRecord::ContinuationAnchor { .. } => {
                 continuation_anchor_count += 1;
             },
@@ -165,6 +179,8 @@ fn observe_continuation_inner(
         continuation_anchor_count,
     )
     .map_err(|error| (observation.clone(), error))?;
+    require_matching_turns(&request_turns, &outcome_turns)
+        .map_err(|error| (observation.clone(), error))?;
     let prior_identity =
         provider_request_identity(&request_identities[..1], &outcome_identities[..1])
             .map_err(|error| (observation.clone(), error))?;
@@ -178,6 +194,7 @@ fn observe_continuation_inner(
         provider_request_identity(&request_identities[1..], &outcome_identities[1..])
             .map_err(|error| (observation.clone(), error))?,
     );
+    observation.turn_id = request_turns.get(1).copied();
 
     let continuation = read_stored_session_continuation(&reader, session_id).map_err(|error| {
         (
@@ -276,7 +293,9 @@ fn observe_session_inner(
 
     let mut binding_matches = Vec::new();
     let mut request_identities = Vec::new();
+    let mut request_turns = Vec::new();
     let mut outcome_identities = Vec::new();
+    let mut outcome_turns = Vec::new();
     for entry in history.request_trace() {
         match entry.record() {
             StoredRequestTraceRecord::BindingOpened {
@@ -293,15 +312,25 @@ fn observe_session_inner(
                 );
             },
             StoredRequestTraceRecord::RequestAccepted {
-                request_identity, ..
-            } => request_identities.push(request_identity.value().to_owned()),
+                turn_id,
+                request_identity,
+                ..
+            } => {
+                request_turns.push(*turn_id);
+                request_identities.push(request_identity.value().to_owned());
+            },
             StoredRequestTraceRecord::ResumableOutcome {
-                outcome_identity, ..
-            } => outcome_identities.push(
-                outcome_identity
-                    .as_ref()
-                    .map(|identity| identity.value().to_owned()),
-            ),
+                turn_id,
+                outcome_identity,
+                ..
+            } => {
+                outcome_turns.push(*turn_id);
+                outcome_identities.push(
+                    outcome_identity
+                        .as_ref()
+                        .map(|identity| identity.value().to_owned()),
+                );
+            },
             _ => {},
         }
     }
@@ -316,16 +345,34 @@ fn observe_session_inner(
             ),
         ));
     }
+    require_matching_turns(&request_turns, &outcome_turns)
+        .map_err(|error| (observation.clone(), error))?;
     observation.provider_request_id = Some(
         provider_request_identity(&request_identities, &outcome_identities)
             .map_err(|error| (observation.clone(), error))?,
     );
+    observation.turn_id = request_turns.first().copied();
     Ok(observation)
+}
+
+fn require_matching_turns(requests: &[TurnId], outcomes: &[TurnId]) -> Result<(), String> {
+    if requests == outcomes {
+        Ok(())
+    } else {
+        Err(
+            "durable request and outcome records disagree on their exact turn identities"
+                .to_owned(),
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::require_continuation_counts;
+    use std::num::NonZeroU64;
+
+    use yo_core::TurnId;
+
+    use super::{require_continuation_counts, require_matching_turns};
 
     // finding-resolution 완료 관측은 original과 continuation 각각 하나의 accepted request,
     // resumable outcome, Anchor를 가져야 하며 어느 축의 누락·중복도 exact-once 성공으로
@@ -343,5 +390,15 @@ mod tests {
         ] {
             assert!(require_continuation_counts(counts.0, counts.1, counts.2).is_err());
         }
+    }
+
+    // accepted request와 resumable outcome이 같은 개수더라도 turn이 다르면 usage를
+    // 다른 요청에 귀속할 수 있으므로 delivery 관측을 성공시키지 않습니다.
+    #[test]
+    fn request_and_outcome_turns_must_match_exactly() {
+        let first = TurnId::new(NonZeroU64::new(1).unwrap());
+        let second = TurnId::new(NonZeroU64::new(2).unwrap());
+        assert!(require_matching_turns(&[first], &[first]).is_ok());
+        assert!(require_matching_turns(&[first], &[second]).is_err());
     }
 }

@@ -14,11 +14,12 @@ use serde::Serialize;
 use self::model::{
     CONTEXT_SCHEMA, ContextAnchor, ContextRequest, DELEGATED_ADMISSION_SCHEMA,
     DELEGATED_DELIVERY_SCHEMA, DELEGATED_EGRESS_SCHEMA, DELEGATED_EXECUTION_PROFILE,
-    DELIVERY_PROFILE, DelegatedAdmission, DelegatedEgress, DelegatedTarget, DeliveryRequest,
-    FreshSession, MANAGED_ADMISSION_SCHEMA, MANAGED_DELIVERY_SCHEMA, MANAGED_EGRESS_SCHEMA,
+    DELEGATED_USAGE_DELIVERY_SCHEMA, DELIVERY_PROFILE, DelegatedAdmission, DelegatedEgress,
+    DelegatedTarget, DeliveryRequest, FreshSession, MANAGED_ADMISSION_SCHEMA,
+    MANAGED_DELIVERY_SCHEMA, MANAGED_EGRESS_SCHEMA, MANAGED_USAGE_DELIVERY_SCHEMA,
     ManagedAdmission, ManagedAdmissionTarget, ManagedEgress, ManagedRoute, REQUEST_SCHEMA,
-    REQUEST_SCHEMA_V1_ALPHA2, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2, REVIEW_SCHEMA, Request,
-    ReviewRequest, TOKENIZER_PROFILE, Target,
+    REQUEST_SCHEMA_V1_ALPHA2, REQUEST_SCHEMA_V1_ALPHA3, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2,
+    RESULT_SCHEMA_V1_ALPHA3, REVIEW_SCHEMA, Request, ReviewRequest, TOKENIZER_PROFILE, Target,
 };
 use crate::{
     bounded_file, review_egress, review_packet,
@@ -155,7 +156,7 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let mut created = false;
     created |= publish(&context_path, &context_bytes, "ContextBuild request")?;
     created |= publish(&review_path, &review_bytes, "Slice review packet request")?;
-    let target = target_preparation(&request.target)?;
+    let target = target_preparation(&request.target, request.schema == REQUEST_SCHEMA_V1_ALPHA3)?;
     created |= publish(
         &admission_path,
         &target.admission,
@@ -234,10 +235,10 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let context_hash = digest(&context_bytes);
     let review_hash = digest(&review_bytes);
     let delivery_hash = digest(&delivery_bytes);
-    let result_schema = if request.schema == REQUEST_SCHEMA_V1_ALPHA2 {
-        RESULT_SCHEMA_V1_ALPHA2
-    } else {
-        RESULT_SCHEMA
+    let result_schema = match request.schema.as_str() {
+        REQUEST_SCHEMA_V1_ALPHA3 => RESULT_SCHEMA_V1_ALPHA3,
+        REQUEST_SCHEMA_V1_ALPHA2 => RESULT_SCHEMA_V1_ALPHA2,
+        _ => RESULT_SCHEMA,
     };
     let result = serde_json::json!({
         "schema": result_schema,
@@ -278,7 +279,7 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     Ok(())
 }
 
-fn target_preparation(target: &Target) -> Result<TargetPreparation, String> {
+fn target_preparation(target: &Target, bind_usage: bool) -> Result<TargetPreparation, String> {
     match target {
         Target::ManagedModel {
             provider,
@@ -301,7 +302,11 @@ fn target_preparation(target: &Target) -> Result<TargetPreparation, String> {
                 connection_repository_path,
                 session_repository_path: session_repository_path.as_deref(),
             })?,
-            delivery_schema: MANAGED_DELIVERY_SCHEMA,
+            delivery_schema: if bind_usage {
+                MANAGED_USAGE_DELIVERY_SCHEMA
+            } else {
+                MANAGED_DELIVERY_SCHEMA
+            },
         }),
         Target::DelegatedHost {
             host,
@@ -318,7 +323,11 @@ fn target_preparation(target: &Target) -> Result<TargetPreparation, String> {
                 },
                 session_repository_path: session_repository_path.as_deref(),
             })?,
-            delivery_schema: DELEGATED_DELIVERY_SCHEMA,
+            delivery_schema: if bind_usage {
+                DELEGATED_USAGE_DELIVERY_SCHEMA
+            } else {
+                DELEGATED_DELIVERY_SCHEMA
+            },
         }),
     }
 }
@@ -477,10 +486,10 @@ fn require_eligible_admission(path: &Path, expected_next_action: &str) -> Result
 fn validate_and_normalize(request: &mut Request) -> Result<(), String> {
     if !matches!(
         request.schema.as_str(),
-        REQUEST_SCHEMA | REQUEST_SCHEMA_V1_ALPHA2
+        REQUEST_SCHEMA | REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3
     ) {
         return Err(format!(
-            "unsupported Slice review preparation schema `{}`; expected `{REQUEST_SCHEMA}` or `{REQUEST_SCHEMA_V1_ALPHA2}`",
+            "unsupported Slice review preparation schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, or `{REQUEST_SCHEMA_V1_ALPHA3}`",
             request.schema
         ));
     }
@@ -551,7 +560,10 @@ fn validate_and_normalize(request: &mut Request) -> Result<(), String> {
 
 fn prepared_review_questions(request: &Request) -> Vec<String> {
     let mut questions = request.review_questions.clone();
-    if request.schema == REQUEST_SCHEMA_V1_ALPHA2 {
+    if matches!(
+        request.schema.as_str(),
+        REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3
+    ) {
         questions.push(review_result::OUTPUT_INSTRUCTION.to_owned());
     }
     questions
