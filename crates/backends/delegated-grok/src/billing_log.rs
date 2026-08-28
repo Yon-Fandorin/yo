@@ -75,7 +75,7 @@ fn decode_usage(event: &Value) -> Result<Option<AccountCapacityWindow>, BackendF
 
     // Grok's proto JSON omits zero-valued scalars. A valid current period with an
     // absent percentage therefore means zero used, matching Grok's own TUI.
-    let used = match config.get("creditUsagePercent") {
+    let used_percent_basis_points = match config.get("creditUsagePercent") {
         None => 0,
         Some(value) => {
             let value = value.as_f64().ok_or_else(|| {
@@ -86,12 +86,16 @@ fn decode_usage(event: &Value) -> Result<Option<AccountCapacityWindow>, BackendF
                     "Grok billing log creditUsagePercent is outside 0..=100",
                 ));
             }
-            value.ceil() as u8
+            (value * 100.0).ceil().min(10_000.0) as u16
         },
     };
-    AccountCapacityWindow::new(used, Some(WEEKLY_MINUTES), Some(reset.as_second()))
-        .map(Some)
-        .map_err(|error| protocol_failure(error.to_string()))
+    AccountCapacityWindow::from_used_percent_basis_points(
+        used_percent_basis_points,
+        Some(WEEKLY_MINUTES),
+        Some(reset.as_second()),
+    )
+    .map(Some)
+    .map_err(|error| protocol_failure(error.to_string()))
 }
 
 fn io_failure(error: std::io::Error) -> BackendFailure {
@@ -128,6 +132,8 @@ mod tests {
         std::fs::remove_file(path).unwrap();
 
         assert_eq!(window.used_percent(), 13);
+        assert_eq!(window.used_percent_basis_points(), 1_210);
+        assert_eq!(window.remaining_percent_basis_points(), 8_790);
         assert_eq!(window.window_duration_minutes(), Some(WEEKLY_MINUTES));
     }
 

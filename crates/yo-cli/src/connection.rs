@@ -6,6 +6,8 @@ mod external;
 mod input;
 mod presentation;
 
+pub(crate) use input::read_hidden_secret;
+pub(crate) use presentation::{HiddenSecretAction, HiddenSecretPrompt};
 use yo_core::{
     CompleteModelBinding, ConnectionOperationExecutionError, ConnectionRepositoryError,
     ConnectionSnapshot, HostId, LocalConnectionOperationRepositories, LocalConnectionRepository,

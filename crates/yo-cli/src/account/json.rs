@@ -1,12 +1,12 @@
-use serde::Serialize;
-use yo_core::{
-    AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
-};
+use serde::{Serialize, Serializer};
+use yo_core::{AccountCapacityBucket, AccountCapacityWindow, AccountCredits};
 
-const SCHEMA: &str = "yo.account-capacity/v1alpha1";
+use super::AccountCapacityReport;
 
-pub(super) fn render(snapshot: &AccountCapacitySnapshot) -> Result<String, serde_json::Error> {
-    let mut output = serde_json::to_string(&AccountCapacityOutput::from(snapshot))?;
+const SCHEMA: &str = "yo.account-capacity/v1alpha2";
+
+pub(super) fn render(report: &AccountCapacityReport) -> Result<String, serde_json::Error> {
+    let mut output = serde_json::to_string(&AccountCapacityOutput::from(report))?;
     output.push('\n');
     Ok(output)
 }
@@ -18,10 +18,13 @@ struct AccountCapacityOutput<'a> {
     provider: &'a str,
     account: &'a str,
     limits: Vec<AccountLimitOutput<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider_data: Option<&'a super::AccountProviderData>,
 }
 
-impl<'a> From<&'a AccountCapacitySnapshot> for AccountCapacityOutput<'a> {
-    fn from(snapshot: &'a AccountCapacitySnapshot) -> Self {
+impl<'a> From<&'a AccountCapacityReport> for AccountCapacityOutput<'a> {
+    fn from(report: &'a AccountCapacityReport) -> Self {
+        let snapshot = &report.snapshot;
         Self {
             schema: SCHEMA,
             provider: snapshot.provider().as_str(),
@@ -31,6 +34,7 @@ impl<'a> From<&'a AccountCapacitySnapshot> for AccountCapacityOutput<'a> {
                 .iter()
                 .map(AccountLimitOutput::from)
                 .collect(),
+            provider_data: report.provider_data.as_ref(),
         }
     }
 }
@@ -71,19 +75,44 @@ impl<'a> From<&'a AccountCapacityBucket> for AccountLimitOutput<'a> {
 struct AccountWindowOutput {
     kind: &'static str,
     window_minutes: Option<u64>,
-    used_percent: u8,
-    remaining_percent: u8,
+    used_percent: PercentOutput,
+    remaining_percent: PercentOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    used: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<u64>,
     resets_at_unix_seconds: Option<i64>,
 }
 
 impl AccountWindowOutput {
     fn new(kind: &'static str, window: AccountCapacityWindow) -> Self {
+        let (used, limit) = window
+            .reported_usage()
+            .map_or((None, None), |(used, limit)| (Some(used), Some(limit)));
         Self {
             kind,
             window_minutes: window.window_duration_minutes(),
-            used_percent: window.used_percent(),
-            remaining_percent: window.remaining_percent(),
+            used_percent: PercentOutput(window.used_percent_basis_points()),
+            remaining_percent: PercentOutput(window.remaining_percent_basis_points()),
+            used,
+            limit,
             resets_at_unix_seconds: window.resets_at_unix_seconds(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PercentOutput(u16);
+
+impl Serialize for PercentOutput {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if self.0.is_multiple_of(100) {
+            serializer.serialize_u16(self.0 / 100)
+        } else {
+            serializer.serialize_f64(f64::from(self.0) / 100.0)
         }
     }
 }
@@ -109,7 +138,7 @@ impl<'a> From<&'a AccountCredits> for AccountCreditsOutput<'a> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use yo_core::{AccountId, ProviderId};
+    use yo_core::{AccountCapacitySnapshot, AccountId, ProviderId};
 
     use super::*;
 
@@ -144,7 +173,7 @@ mod tests {
             ],
         );
 
-        let output = render(&snapshot).unwrap();
+        let output = render(&AccountCapacityReport::plain(snapshot)).unwrap();
         let decoded: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(output.lines().count(), 1);
@@ -152,7 +181,7 @@ mod tests {
         assert_eq!(
             decoded,
             json!({
-                "schema": "yo.account-capacity/v1alpha1",
+                "schema": "yo.account-capacity/v1alpha2",
                 "provider": "codex",
                 "account": "default",
                 "limits": [
@@ -200,5 +229,64 @@ mod tests {
                 ]
             })
         );
+    }
+
+    // JSON number는 소수 비율을 잃지 않으면서 정수 비율의 기존 표현도 보존합니다.
+    #[test]
+    fn preserves_fractional_percentages_as_json_numbers() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("qwencloud").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("qwencloud".to_owned()),
+                None,
+                None,
+                Some(
+                    AccountCapacityWindow::from_used_percent_basis_points(163, None, None).unwrap(),
+                ),
+                None,
+                None,
+                None,
+            )],
+        );
+
+        let output = render(&AccountCapacityReport::plain(snapshot)).unwrap();
+        let decoded: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(decoded["limits"][0]["windows"][0]["usedPercent"], 1.63);
+        assert_eq!(
+            decoded["limits"][0]["windows"][0]["remainingPercent"],
+            98.37
+        );
+        assert!(decoded["limits"][0]["windows"][0].get("used").is_none());
+        assert!(decoded.get("providerData").is_none());
+    }
+
+    // Count 기반 Provider는 정규화된 percentage뿐 아니라 Provider가 보고한 exact
+    // numerator와 denominator도 보존하여 agent가 원 단위를 다시 확인할 수 있습니다.
+    #[test]
+    fn preserves_reported_usage_counts() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("kimi").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("weekly".to_owned()),
+                None,
+                None,
+                Some(AccountCapacityWindow::from_usage_ratio(1, 3, None, None).unwrap()),
+                None,
+                None,
+                None,
+            )],
+        );
+
+        let output = render(&AccountCapacityReport::plain(snapshot)).unwrap();
+        let decoded: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let window = &decoded["limits"][0]["windows"][0];
+
+        assert_eq!(window["usedPercent"], 33.34);
+        assert_eq!(window["remainingPercent"], 66.66);
+        assert_eq!(window["used"], 1);
+        assert_eq!(window["limit"], 3);
     }
 }

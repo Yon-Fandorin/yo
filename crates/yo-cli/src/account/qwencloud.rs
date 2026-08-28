@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use reqwest::{Client, RequestBuilder, Url, header, redirect};
+use serde::Serialize;
 use serde_json::Value;
 use tokio::time::{Instant, timeout_at};
 use yo_core::{
@@ -11,8 +12,6 @@ use yo_core::{
 
 use crate::AppError;
 
-const COOKIE_ENV: &str = "QWEN_CLOUD_COOKIE";
-const SEC_TOKEN_ENV: &str = "QWEN_CLOUD_SEC_TOKEN";
 const LOGIN_COOKIE: &str = "login_qwencloud_ticket";
 const DASHBOARD_URL: &str = "https://home.qwencloud.com/";
 const GATEWAY_URL: &str = "https://cs-data.qwencloud.com/data/api.json";
@@ -35,36 +34,93 @@ enum ExpectedMedia {
     Json,
 }
 
+pub(super) struct QwenCloudCapacityError {
+    kind: QwenCloudCapacityErrorKind,
+    source: AppError,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct QwenCloudProviderData {
+    spec_code: String,
+    usage: QwenCloudUsageData,
+    quota: QwenCloudQuotaData,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct QwenCloudUsageData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    per5_hour_percentage: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    per5_hour_reset_time: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    per1_week_percentage: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    per1_week_reset_time: Option<Value>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct QwenCloudQuotaData {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    five_hour: Option<Value>,
+    weekly: Value,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QwenCloudCapacityErrorKind {
+    ExpiredSession,
+    Other,
+}
+
+impl QwenCloudCapacityError {
+    pub(super) fn is_expired_session(&self) -> bool {
+        self.kind == QwenCloudCapacityErrorKind::ExpiredSession
+    }
+
+    pub(super) fn into_app_error(self) -> AppError {
+        self.source
+    }
+}
+
+impl From<AppError> for QwenCloudCapacityError {
+    fn from(source: AppError) -> Self {
+        Self {
+            kind: QwenCloudCapacityErrorKind::Other,
+            source,
+        }
+    }
+}
+
+impl std::fmt::Debug for QwenCloudCapacityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("QwenCloudCapacityError")
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
+}
+
+type QwenCloudResult<T> = Result<T, QwenCloudCapacityError>;
+
+pub(super) fn validate_account_session(cookie: ApiCredential) -> Result<ApiCredential, AppError> {
+    if cookie_value(cookie.expose_secret(), LOGIN_COOKIE).is_none() {
+        return Err(AppError::message(
+            "QwenCloud browser Cookie has no non-empty login_qwencloud_ticket",
+        ));
+    }
+    Ok(cookie)
+}
+
 /// Reads QwenCloud Personal Token Plan capacity through its authenticated console session.
 ///
 /// The inference `sk-sp-*` key cannot authorize the console gateway. The caller supplies the
-/// session-scoped browser cookie through `QWEN_CLOUD_COOKIE`; Yo never persists it.
+/// exact account-session secret captured from the local credential snapshot.
 pub(super) fn read_account_capacity(
     provider: &ProviderId,
     account: &AccountId,
-) -> Result<AccountCapacitySnapshot, AppError> {
-    let cookie = std::env::var(COOKIE_ENV).map_err(|_| missing_cookie_error())?;
-    let cookie = ApiCredential::new(cookie).map_err(|_| {
-        AppError::message(
-            "QWEN_CLOUD_COOKIE must contain 1 to 16384 bytes without control characters",
-        )
-    })?;
-    if cookie_value(cookie.expose_secret(), LOGIN_COOKIE).is_none() {
-        return Err(AppError::message(
-            "QWEN_CLOUD_COOKIE is not a QwenCloud console session: its Cookie header has no login_qwencloud_ticket",
-        ));
-    }
-    let configured_sec_token = std::env::var(SEC_TOKEN_ENV)
-        .ok()
-        .filter(|value| !value.is_empty())
-        .map(ApiCredential::new)
-        .transpose()
-        .map_err(|_| {
-            AppError::message(
-                "QWEN_CLOUD_SEC_TOKEN must contain 1 to 16384 bytes without control characters",
-            )
-        })?;
-
+    cookie: &ApiCredential,
+) -> QwenCloudResult<(AccountCapacitySnapshot, QwenCloudProviderData)> {
     let client = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .redirect(redirect::Policy::none())
@@ -76,13 +132,7 @@ pub(super) fn read_account_capacity(
         .build()
         .map_err(|_| AppError::message("cannot initialize the QwenCloud capacity runtime"))?;
 
-    runtime.block_on(read_remote_snapshot(
-        &client,
-        provider,
-        account,
-        &cookie,
-        configured_sec_token.as_ref(),
-    ))
+    runtime.block_on(read_remote_snapshot(&client, provider, account, cookie))
 }
 
 async fn read_remote_snapshot(
@@ -90,15 +140,14 @@ async fn read_remote_snapshot(
     provider: &ProviderId,
     account: &AccountId,
     cookie: &ApiCredential,
-    configured_sec_token: Option<&ApiCredential>,
-) -> Result<AccountCapacitySnapshot, AppError> {
+) -> QwenCloudResult<(AccountCapacitySnapshot, QwenCloudProviderData)> {
     let cookie_sec_token = cookie_value(cookie.expose_secret(), "sec_token")
         .map(str::to_owned)
         .map(ApiCredential::new)
         .transpose()
         .map_err(|_| AppError::message("QwenCloud console sec_token is invalid"))?;
     let resolved_sec_token;
-    let sec_token = if let Some(token) = configured_sec_token.or(cookie_sec_token.as_ref()) {
+    let sec_token = if let Some(token) = cookie_sec_token.as_ref() {
         token
     } else {
         resolved_sec_token = resolve_sec_token(client, cookie).await?;
@@ -110,13 +159,13 @@ async fn read_remote_snapshot(
         call_gateway(client, cookie, sec_token, "subscription"),
         call_gateway(client, cookie, sec_token, "quota-config"),
     )?;
-    decode_snapshot(&usage, &subscription, &quota_config, provider, account)
+    decode_snapshot(&usage, &subscription, &quota_config, provider, account).map_err(Into::into)
 }
 
 async fn resolve_sec_token(
     client: &Client,
     cookie: &ApiCredential,
-) -> Result<ApiCredential, AppError> {
+) -> QwenCloudResult<ApiCredential> {
     let request = client
         .get(DASHBOARD_URL)
         .header(header::COOKIE, cookie.expose_secret())
@@ -128,13 +177,9 @@ async fn resolve_sec_token(
     let bytes = fetch_bounded(request, ExpectedMedia::Html).await?;
     let html = std::str::from_utf8(&bytes)
         .map_err(|_| AppError::message("QwenCloud dashboard response is not valid UTF-8"))?;
-    let token = extract_sec_token(html).ok_or_else(|| {
-        AppError::message(
-            "QwenCloud console session did not expose sec_token; refresh the browser login and copy the full Cookie header again, or set QWEN_CLOUD_SEC_TOKEN",
-        )
-    })?;
-    ApiCredential::new(token.to_owned())
-        .map_err(|_| AppError::message("QwenCloud dashboard returned an invalid sec_token"))
+    let token = extract_sec_token(html).ok_or_else(expired_session_error)?;
+    Ok(ApiCredential::new(token.to_owned())
+        .map_err(|_| AppError::message("QwenCloud dashboard returned an invalid sec_token"))?)
 }
 
 async fn call_gateway(
@@ -142,7 +187,7 @@ async fn call_gateway(
     cookie: &ApiCredential,
     sec_token: &ApiCredential,
     endpoint: &str,
-) -> Result<Value, AppError> {
+) -> QwenCloudResult<Value> {
     let request = build_gateway_request(client, cookie, sec_token, endpoint)?;
     let bytes = fetch_bounded(request, ExpectedMedia::Json).await?;
     decode_gateway_envelope(&bytes)
@@ -153,7 +198,7 @@ fn build_gateway_request(
     cookie: &ApiCredential,
     sec_token: &ApiCredential,
     endpoint: &str,
-) -> Result<RequestBuilder, AppError> {
+) -> QwenCloudResult<RequestBuilder> {
     let api = format!("{GATEWAY_API_PREFIX}{endpoint}");
     let mut url = Url::parse(GATEWAY_URL)
         .map_err(|_| AppError::message("the built-in QwenCloud gateway URL is invalid"))?;
@@ -196,7 +241,7 @@ fn build_gateway_request(
 async fn fetch_bounded(
     request: RequestBuilder,
     expected_media: ExpectedMedia,
-) -> Result<Vec<u8>, AppError> {
+) -> QwenCloudResult<Vec<u8>> {
     let deadline = Instant::now() + REQUEST_TIMEOUT;
     let response = timeout_at(deadline, request.send())
         .await
@@ -209,7 +254,8 @@ async fn fetch_bounded(
         return Err(AppError::message(format!(
             "QwenCloud capacity endpoint returned HTTP status {}",
             response.status().as_u16()
-        )));
+        ))
+        .into());
     }
     let content_type = response
         .headers()
@@ -219,15 +265,14 @@ async fn fetch_bounded(
     if !matches_media_type(content_type, expected_media) {
         return Err(AppError::message(
             "QwenCloud capacity success returned an unexpected media type",
-        ));
+        )
+        .into());
     }
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
     {
-        return Err(AppError::message(
-            "QwenCloud capacity response exceeds 1 MiB",
-        ));
+        return Err(AppError::message("QwenCloud capacity response exceeds 1 MiB").into());
     }
 
     let mut bytes = Vec::new();
@@ -243,23 +288,24 @@ async fn fetch_bounded(
             Some(Ok(chunk)) => {
                 body_progress = Instant::now();
                 if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-                    return Err(AppError::message(
-                        "QwenCloud capacity response exceeds 1 MiB",
-                    ));
+                    return Err(
+                        AppError::message("QwenCloud capacity response exceeds 1 MiB").into(),
+                    );
                 }
                 bytes.extend_from_slice(&chunk);
             },
             Some(Err(_)) => {
                 return Err(AppError::message(
                     "QwenCloud capacity response body could not be read",
-                ));
+                )
+                .into());
             },
             None => return Ok(bytes),
         }
     }
 }
 
-fn decode_gateway_envelope(bytes: &[u8]) -> Result<Value, AppError> {
+fn decode_gateway_envelope(bytes: &[u8]) -> QwenCloudResult<Value> {
     let root: Value = serde_json::from_slice(bytes)
         .map_err(|_| AppError::message("QwenCloud console response is not valid JSON"))?;
     let root_code = root.get("code");
@@ -277,12 +323,13 @@ fn decode_gateway_envelope(bytes: &[u8]) -> Result<Value, AppError> {
     {
         return Err(AppError::message(
             "QwenCloud console rejected the capacity request; the browser session may have expired",
-        ));
+        )
+        .into());
     }
-    inner
+    Ok(inner
         .get("data")
         .cloned()
-        .ok_or_else(|| AppError::message("QwenCloud console response has no capacity payload"))
+        .ok_or_else(|| AppError::message("QwenCloud console response has no capacity payload"))?)
 }
 
 fn decode_snapshot(
@@ -291,7 +338,7 @@ fn decode_snapshot(
     quota_config: &Value,
     provider: &ProviderId,
     account: &AccountId,
-) -> Result<AccountCapacitySnapshot, AppError> {
+) -> Result<(AccountCapacitySnapshot, QwenCloudProviderData), AppError> {
     let spec_code = bounded_text(subscription.get("specCode"), "subscription specCode")?;
     let tier = quota_config
         .get(spec_code)
@@ -299,7 +346,7 @@ fn decode_snapshot(
         .ok_or_else(|| {
             AppError::message("QwenCloud quota configuration has no active subscription tier")
         })?;
-    validate_positive_number(tier.get("weekly"), "weekly quota")?;
+    let weekly_quota = validate_positive_number(tier.get("weekly"), "weekly quota")?;
     if tier.contains_key("five_hour") {
         validate_positive_number(tier.get("five_hour"), "five-hour quota")?;
     }
@@ -319,7 +366,7 @@ fn decode_snapshot(
     let limited = primary
         .iter()
         .chain(secondary.iter())
-        .any(|window| window.used_percent() == 100);
+        .any(|window| window.used_percent_basis_points() == 10_000);
     let bucket = AccountCapacityBucket::new(
         Some("qwencloud".to_owned()),
         Some("QwenCloud Token Plan".to_owned()),
@@ -329,10 +376,30 @@ fn decode_snapshot(
         None,
         limited.then(|| "usage_limit_reached".to_owned()),
     );
-    Ok(AccountCapacitySnapshot::new(
-        provider.clone(),
-        account.clone(),
-        vec![bucket],
+    let provider_data = QwenCloudProviderData {
+        spec_code: spec_code.to_owned(),
+        usage: QwenCloudUsageData {
+            per5_hour_percentage: five_hour
+                .as_ref()
+                .and_then(|_| usage.get("per5HourPercentage").cloned()),
+            per5_hour_reset_time: five_hour
+                .as_ref()
+                .and_then(|_| usage.get("per5HourResetTime").cloned()),
+            per1_week_percentage: weekly
+                .as_ref()
+                .and_then(|_| usage.get("per1WeekPercentage").cloned()),
+            per1_week_reset_time: weekly
+                .as_ref()
+                .and_then(|_| usage.get("per1WeekResetTime").cloned()),
+        },
+        quota: QwenCloudQuotaData {
+            five_hour: tier.get("five_hour").cloned(),
+            weekly: weekly_quota.clone(),
+        },
+    };
+    Ok((
+        AccountCapacitySnapshot::new(provider.clone(), account.clone(), vec![bucket]),
+        provider_data,
     ))
 }
 
@@ -354,14 +421,18 @@ fn decode_window(
             "QwenCloud usage {percentage_field} is outside 0..1"
         )));
     }
-    let used_percent = (percentage * 100.0).ceil().min(100.0) as u8;
+    let used_percent_basis_points = (percentage * 10_000.0).ceil().min(10_000.0) as u16;
     let reset = usage
         .get(&reset_field)
         .map(|value| normalize_reset(value, &reset_field))
         .transpose()?;
-    AccountCapacityWindow::new(used_percent, Some(duration_minutes), reset)
-        .map(Some)
-        .map_err(|error| AppError::single("normalizing QwenCloud capacity", error))
+    AccountCapacityWindow::from_used_percent_basis_points(
+        used_percent_basis_points,
+        Some(duration_minutes),
+        reset,
+    )
+    .map(Some)
+    .map_err(|error| AppError::single("normalizing QwenCloud capacity", error))
 }
 
 fn normalize_reset(value: &Value, field: &str) -> Result<i64, AppError> {
@@ -392,16 +463,20 @@ fn bounded_text<'a>(value: Option<&'a Value>, field: &str) -> Result<&'a str, Ap
     Ok(value)
 }
 
-fn validate_positive_number(value: Option<&Value>, field: &str) -> Result<(), AppError> {
-    let value = value
-        .and_then(number)
+fn validate_positive_number<'a>(
+    value: Option<&'a Value>,
+    field: &str,
+) -> Result<&'a Value, AppError> {
+    let source =
+        value.ok_or_else(|| AppError::message(format!("QwenCloud {field} is not numeric")))?;
+    let value = number(source)
         .ok_or_else(|| AppError::message(format!("QwenCloud {field} is not numeric")))?;
     if !value.is_finite() || value <= 0.0 {
         return Err(AppError::message(format!(
             "QwenCloud {field} must be finite and positive"
         )));
     }
-    Ok(())
+    Ok(source)
 }
 
 fn number(value: &Value) -> Option<f64> {
@@ -460,16 +535,13 @@ fn matches_media_type(content_type: &str, expected: ExpectedMedia) -> bool {
     }
 }
 
-fn missing_cookie_error() -> AppError {
-    AppError::message(
-        "QwenCloud account capacity needs the current browser console session. Log in at home.qwencloud.com, open Billing > Subscription, copy the complete Cookie request header from a cs-data.qwencloud.com api.json request, and set QWEN_CLOUD_COOKIE for this command. Qwen model requests do not require this cookie",
-    )
-}
-
-fn expired_session_error() -> AppError {
-    AppError::message(
-        "QwenCloud console session expired; log in again and refresh QWEN_CLOUD_COOKIE. The stored Qwen model connection is unchanged",
-    )
+pub(super) fn expired_session_error() -> QwenCloudCapacityError {
+    QwenCloudCapacityError {
+        kind: QwenCloudCapacityErrorKind::ExpiredSession,
+        source: AppError::message(
+            "QwenCloud console session expired; enter a new browser Cookie. The stored model connection and API key are unchanged",
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -552,7 +624,7 @@ mod tests {
             "moderato": { "five_hour": 3_000, "weekly": 10_000 }
         });
 
-        let snapshot = decode_snapshot(
+        let (snapshot, provider_data) = decode_snapshot(
             &usage,
             &subscription,
             &quota_config,
@@ -568,14 +640,32 @@ mod tests {
             Some(300)
         );
         assert_eq!(bucket.primary().unwrap().used_percent(), 26);
+        assert_eq!(bucket.primary().unwrap().used_percent_basis_points(), 2_510);
         assert_eq!(
             bucket.secondary().unwrap().window_duration_minutes(),
             Some(10_080)
         );
-        assert_eq!(bucket.secondary().unwrap().used_percent(), 56);
+        assert_eq!(bucket.secondary().unwrap().used_percent(), 55);
+        assert_eq!(
+            bucket.secondary().unwrap().used_percent_basis_points(),
+            5_500
+        );
         assert_eq!(
             bucket.secondary().unwrap().resets_at_unix_seconds(),
             Some(1_800_500_000)
+        );
+        assert_eq!(
+            serde_json::to_value(provider_data).unwrap(),
+            serde_json::json!({
+                "specCode": "moderato",
+                "usage": {
+                    "per5HourPercentage": 0.251,
+                    "per5HourResetTime": 1_800_000_000_000_i64,
+                    "per1WeekPercentage": 0.55,
+                    "per1WeekResetTime": 1_800_500_000_000_i64
+                },
+                "quota": { "five_hour": 3_000, "weekly": 10_000 }
+            })
         );
     }
 
@@ -592,7 +682,7 @@ mod tests {
             "lite": { "weekly": 2_500 }
         });
 
-        let snapshot = decode_snapshot(
+        let (snapshot, provider_data) = decode_snapshot(
             &usage,
             &subscription,
             &quota_config,
@@ -608,6 +698,17 @@ mod tests {
         );
         assert_eq!(bucket.primary().unwrap().used_percent(), 40);
         assert!(bucket.secondary().is_none());
+        assert_eq!(
+            serde_json::to_value(provider_data).unwrap(),
+            serde_json::json!({
+                "specCode": "lite",
+                "usage": {
+                    "per1WeekPercentage": "0.4",
+                    "per1WeekResetTime": 1_800_500_000_i64
+                },
+                "quota": { "weekly": 2_500 }
+            })
+        );
     }
 
     // Login redirect와 malformed envelope는 정상 quota로 해석하지 않으며, payload parser는
@@ -619,10 +720,12 @@ mod tests {
             decode_gateway_envelope(&gateway_payload(payload.clone())).unwrap(),
             payload
         );
+        let expired = decode_gateway_envelope(br#"{"code":"ConsoleNeedLogin"}"#).unwrap_err();
+        assert!(expired.is_expired_session());
         for bytes in [
-            br#"{"code":"ConsoleNeedLogin"}"#.as_slice(),
-            br#"{"code":"200","data":{"DataV2":{"data":{"code":"FAILED","success":false}}}}"#,
-            br#"not-json"#,
+            br#"{"code":"200","data":{"DataV2":{"data":{"code":"FAILED","success":false}}}}"#
+                .as_slice(),
+            br#"not-json"#.as_slice(),
         ] {
             assert!(decode_gateway_envelope(bytes).is_err());
         }
@@ -640,6 +743,8 @@ mod tests {
             None
         );
         assert_eq!(cookie_value("login_qwencloud_ticket=", LOGIN_COOKIE), None);
+        assert!(validate_account_session(ApiCredential::new(cookie).unwrap()).is_ok());
+        assert!(validate_account_session(ApiCredential::new("cna=x").unwrap()).is_err());
     }
 
     // Dashboard HTML에서 bounded quoted SEC_TOKEN만 추출하여 다른 script text나 control

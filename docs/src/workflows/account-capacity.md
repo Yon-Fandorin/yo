@@ -41,57 +41,70 @@ makes one authenticated `GET /coding/v1/me` for the account level name, then
 one authenticated `GET /coding/v1/usages` for its limits. Redirects and retries
 are disabled and each successful body is bounded to 1 MiB. Provider plan names
 are shown exactly; Yo does not derive them from limit sizes. QwenCloud reads the
-complete `QWEN_CLOUD_COOKIE` only for the exact QwenCloud console origin. It
-resolves `sec_token` from the cookie or one bounded dashboard HTML response, then
-sends the console's `usage`, `subscription`, and `quota-config` requests
-concurrently. Redirects and retries are disabled, every request has an
-eight-second deadline, and every successful body is bounded to 1 MiB. The
-returned 5-hour window is optional because the Provider can omit it; the 7-day
-window and active `specCode` remain Provider-authored observations.
+stored account-session Cookie only for the exact QwenCloud console origin. It
+resolves `sec_token` from that Cookie or one bounded dashboard HTML response,
+keeps the result only for the current invocation, then sends the console's
+`usage`, `subscription`, and `quota-config` requests concurrently. Redirects and
+automatic HTTP retries are disabled, every request has an eight-second deadline,
+and every successful body is bounded to 1 MiB. The returned 5-hour window is
+optional because the Provider can omit it; the 7-day window and active `specCode`
+remain Provider-authored observations.
 
 ### QwenCloud console session
 
 Qwen model requests still need only the stored `sk-sp-*` inference key and
 matching Token Plan endpoint. Account-capacity refresh instead needs the browser
-session that can open QwenCloud Billing. Yo does not install another CLI, use an
-Alibaba management profile, or persist the browser cookie.
+session that can open QwenCloud Billing. Yo does not install another CLI or use
+an Alibaba management profile. It stores this session separately from the model
+API key under the same Provider-and-Account record in `credentials.yaml`.
 
 1. Sign in at `https://home.qwencloud.com`, then open **Billing > Subscription**.
 2. In browser Developer Tools, open **Network**, reload, select an `api.json`
    request to `cs-data.qwencloud.com`, and copy the complete `Cookie` request
    header. It must contain `login_qwencloud_ticket`.
-3. Paste it into a hidden shell read:
-
-   ```bash
-   read -rs QWEN_CLOUD_COOKIE
-   export QWEN_CLOUD_COOKIE
-   ```
-
-   Press Enter after pasting. The cookie remains process-local and is not written
-   to Yo configuration.
-4. Yo normally resolves `sec_token` from the logged-in dashboard. Only when that
-   fails, copy the request's `sec_token` form field and provide it the same way:
-
-   ```bash
-   read -rs QWEN_CLOUD_SEC_TOKEN
-   export QWEN_CLOUD_SEC_TOKEN
-   ```
-5. Refresh once, then remove both values from the shell:
+3. Run the refresh from an interactive terminal:
 
    ```bash
    yo account qwencloud:default --refresh
-   unset QWEN_CLOUD_COOKIE QWEN_CLOUD_SEC_TOKEN
    ```
 
-Missing or expired console state fails only this account-capacity refresh. It
-never disables the stored Qwen model connection or sends a model request.
+   When the account session is absent, Yo prompts for the complete Cookie with
+   terminal echo disabled and persists it locally. Later refreshes reuse that
+   value. If QwenCloud explicitly reports that the session expired, Yo prompts
+   once for a replacement, persists it, and performs exactly one renewed refresh.
+   A non-interactive invocation fails with an actionable error when input is
+   required.
+4. `sec_token` needs no separate input or stored field. Yo derives it from the
+   persisted Cookie when present, otherwise from one dashboard response, and
+   discards the derived value when the command ends.
+
+Missing or expired console state affects only this account-capacity refresh. It
+never replaces or disables the stored Qwen model API key, sends a model request,
+or falls back to another Provider.
+
+Before any Cookie capture, Yo acquires the shared connection-operation lane,
+recovers a pending connection operation, verifies both the exact stored Token
+Plan binding and its API credential, and captures the credential revision. The
+account-session mutation is prepared against that observed revision before the
+no-echo prompt or remote refresh. A concurrent credential or session change
+therefore reports a conflict instead of being silently replanned or overwritten.
 
 Text output is for people. `--format json` emits the same provider-neutral
-snapshot under the versioned `yo.account-capacity/v1alpha1` schema for agents.
-Provider count values are normalized conservatively: the used percentage is
-rounded up, so the displayed remaining percentage never overstates the exact
-remaining ratio. Missing data stays absent or Unknown; it is not synthesized
-from Session token usage.
+snapshot under the versioned `yo.account-capacity/v1alpha2` schema for agents.
+Provider percentages are retained to `0.01%`; whole values omit a noisy `.0`.
+Count values are normalized conservatively by rounding used capacity up to that
+precision, so displayed remaining capacity never overstates the exact ratio.
+Their exact reported `used` and `limit` counts remain on each JSON window.
+JSON also retains an optional, allowlisted `providerData` object for native data
+that cannot be represented by the neutral snapshot. QwenCloud keeps its exact
+reported percentages and reset values, active `specCode`, and active-tier quota
+values there; authentication material and unvalidated envelope fields are never
+included. Missing data stays absent or Unknown and is not synthesized from
+Session token usage.
+
+The earlier `v1alpha1` shape remains the integer-percentage contract. `v1alpha2`
+is the first shape that admits fractional percentages, exact count fields, and
+allowlisted `providerData`; consumers must dispatch on the recorded schema.
 
 ## Referenced upstream code
 
@@ -119,10 +132,10 @@ an unpinned `main` branch or infer a private endpoint from UI output.
   tier fails the refresh. An absent or unusable Grok billing log only omits the
   usage window. Yo does not fall back to direct xAI access, read Grok's credential
   file, or expose identity metadata.
-- A missing, non-QwenCloud, or expired console cookie fails QwenCloud refresh
-  before any model request. Yo never substitutes the stored inference key for
-  console authentication, persists the browser session, or sends it to a
-  configurable origin.
+- A missing QwenCloud account session starts one no-echo interactive capture. An
+  explicitly expired session starts one replacement capture and at most one
+  renewed refresh. Yo never substitutes the stored inference key for console
+  authentication or sends the browser session to a configurable origin.
 - QwenCloud does not publish this Personal Token Plan console gateway as a
   stable public API. An upstream console change can require a pinned-source and
   fixture update; Yo fails closed instead of guessing a replacement shape.

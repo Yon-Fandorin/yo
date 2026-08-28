@@ -39,56 +39,64 @@ extension을 노출하지 않으므로 Yo는 Grok 공식 `unified.jsonl`의 마�
 `GET /coding/v1/me`를 한 번 수행한 뒤, 한도 조회를 위해 인증한
 `GET /coding/v1/usages`를 한 번 수행한다. redirect와 retry는 비활성화하고 각 성공
 body는 1 MiB로 제한한다. Provider plan 이름은 정확히 표시하며 Yo는 한도 크기로
-이를 추론하지 않는다. QwenCloud는 완전한 `QWEN_CLOUD_COOKIE`를 정확한 QwenCloud
-console origin에만 사용한다. Cookie 또는 bounded dashboard HTML response 하나에서
-`sec_token`을 해석한 뒤 console의 `usage`, `subscription`, `quota-config` request를
-병렬로 보낸다. Redirect와 retry는 비활성화하고 모든 request에는 8초 deadline,
-모든 성공 body에는 1 MiB 한도를 둔다. Provider가 5시간 window를 생략할 수 있으므로
-그 window는 optional이며, 7일 window와 active `specCode`는 Provider가 작성한
-관측값으로 유지한다.
+이를 추론하지 않는다. QwenCloud는 저장된 account-session Cookie를 정확한 QwenCloud
+console origin에만 사용한다. 그 Cookie 또는 bounded dashboard HTML response 하나에서
+`sec_token`을 해석하고 현재 invocation 동안만 보유한 뒤, console의 `usage`,
+`subscription`, `quota-config` request를 병렬로 보낸다. Redirect와 자동 HTTP retry는
+비활성화하고 모든 request에는 8초 deadline, 모든 성공 body에는 1 MiB 한도를 둔다.
+Provider가 5시간 window를 생략할 수 있으므로 그 window는 optional이며, 7일 window와
+active `specCode`는 Provider가 작성한 관측값으로 유지한다.
 
 ### QwenCloud console session
 
 Qwen 모델 요청에는 계속 저장된 `sk-sp-*` 추론 키와 그에 맞는 Token Plan
 endpoint만 필요하다. 계정 잔여량 refresh는 대신 QwenCloud Billing을 열 수 있는
 browser session이 필요하다. Yo는 다른 CLI를 설치하거나 Alibaba 관리 profile을
-사용하거나 browser cookie를 영속화하지 않는다.
+사용하지 않는다. 이 session은 같은 Provider-and-Account record의 모델 API key와
+분리된 값으로 `credentials.yaml`에 저장한다.
 
 1. `https://home.qwencloud.com`에 로그인하고 **Billing > Subscription**을 연다.
 2. Browser Developer Tools의 **Network**를 연 뒤 새로고침하고,
    `cs-data.qwencloud.com`의 `api.json` request를 선택해 완전한 `Cookie` request
    header를 복사한다. 값에 `login_qwencloud_ticket`이 있어야 한다.
-3. shell의 숨김 입력으로 붙여 넣는다.
-
-   ```bash
-   read -rs QWEN_CLOUD_COOKIE
-   export QWEN_CLOUD_COOKIE
-   ```
-
-   붙여 넣은 뒤 Enter를 누른다. Cookie는 process-local로만 남고 Yo 설정에는 쓰지
-   않는다.
-4. Yo는 보통 로그인된 dashboard에서 `sec_token`을 해석한다. 이 과정만 실패하면
-   request의 `sec_token` form field를 복사해 같은 방식으로 제공한다.
-
-   ```bash
-   read -rs QWEN_CLOUD_SEC_TOKEN
-   export QWEN_CLOUD_SEC_TOKEN
-   ```
-5. 한 번 refresh한 뒤 두 값을 shell에서 모두 지운다.
+3. Interactive terminal에서 refresh를 실행한다.
 
    ```bash
    yo account qwencloud:default --refresh
-   unset QWEN_CLOUD_COOKIE QWEN_CLOUD_SEC_TOKEN
    ```
 
-Console 상태가 없거나 만료되면 이 계정 잔여량 refresh만 실패한다. 저장된 Qwen 모델 연결을
-비활성화하거나 모델 요청을 보내지 않는다.
+   저장된 account session이 없으면 Yo가 terminal echo를 끄고 완전한 Cookie를 묻고
+   로컬에 저장한다. 이후 refresh는 그 값을 재사용한다. QwenCloud가 session 만료를
+   명시하면 Yo는 replacement를 한 번만 다시 묻고 저장한 뒤 정확히 한 번 갱신
+   refresh를 수행한다. 입력이 필요한 비대화형 실행은 수행 가능한 안내와 함께
+   실패한다.
+4. `sec_token`은 별도 입력이나 저장 field가 필요 없다. Cookie 안에 있으면 거기서,
+   없으면 dashboard response 한 번에서 유도하고 command가 끝나면 폐기한다.
+
+Console 상태의 누락이나 만료는 이 계정 잔여량 refresh에만 영향을 준다. 저장된 Qwen
+모델 API key를 교체하거나 비활성화하지 않고 모델 요청이나 다른 Provider fallback을
+시작하지 않는다.
+
+Cookie를 입력받기 전에 Yo는 공유 connection-operation lane을 획득하고 pending operation을
+복구한 뒤 exact 저장 Token Plan binding과 그 API credential을 모두 확인하고 credential
+revision을 capture한다. Account-session mutation은 no-echo prompt나 remote refresh 전에
+그 관찰 revision에 묶어 준비한다. 따라서 credential이나 session이 동시에 바뀌면 조용히
+다시 계획하거나 덮어쓰지 않고 conflict를 보고한다.
 
 Text 출력은 사람용이다. `--format json`은 같은 Provider 중립 snapshot을 agent가
-읽을 수 있는 versioned `yo.account-capacity/v1alpha1` schema로 출력한다. Provider의
-count 값은 보수적으로 정규화한다. used percentage를 올림하므로 표시한 remaining
-percentage가 정확한 잔여 비율보다 커지지 않는다. 누락된 값은 absent 또는 Unknown으로
-남고 Session token usage로 합성하지 않는다.
+읽을 수 있는 versioned `yo.account-capacity/v1alpha2` schema로 출력한다. Provider의
+percentage는 `0.01%`까지 보존하고 정수 값에는 불필요한 `.0`을 붙이지 않는다. count
+값은 이 정밀도에서 used capacity를 올림해 보수적으로 정규화하므로 표시한 remaining
+capacity가 정확한 비율보다 커지지 않는다. Provider가 보고한 exact `used`와 `limit`
+count도 각 JSON window에 유지한다. JSON은 중립 snapshot으로 표현할 수 없는
+Provider 고유 데이터를 allowlist한 optional `providerData`에도 보존한다. QwenCloud는
+Provider가 보고한 exact percentage와 reset 값, active `specCode`, active-tier quota
+값을 여기에 유지하지만 인증 material과 검증하지 않은 envelope field는 포함하지
+않는다. 누락된 값은 absent 또는 Unknown으로 남고 Session token usage로 합성하지 않는다.
+
+이전 `v1alpha1` shape는 정수 percentage 계약으로 유지한다. `v1alpha2`는 fractional
+percentage, exact count field, allowlist한 `providerData`를 처음 허용하는 shape이며
+consumer는 기록된 schema로 명시적으로 dispatch해야 한다.
 
 ## 참고한 upstream 코드
 
@@ -115,9 +123,10 @@ branch를 인용하거나 UI 출력만 보고 private endpoint를 추론하지 �
   않으면 refresh를 실패시킨다. Grok billing log가 없거나 사용할 수 없으면 usage
   window만 생략한다. Direct xAI 접근으로 fallback하거나 Grok credential file을
   읽거나 identity metadata를 노출하지 않는다.
-- Console cookie가 없거나 QwenCloud cookie가 아니거나 만료되면 QwenCloud refresh는
-  모델 요청 전에 실패한다. Yo는 저장된 inference key를 console 인증에 대신 쓰거나,
-  browser session을 영속화하거나, 설정 가능한 origin으로 전송하지 않는다.
+- 저장된 QwenCloud account session이 없으면 no-echo interactive capture를 한 번
+  시작한다. 명시적으로 만료된 session이면 replacement capture 한 번과 최대 한 번의
+  갱신 refresh만 수행한다. 저장된 inference key를 console 인증에 대신 쓰거나 browser
+  session을 설정 가능한 origin으로 전송하지 않는다.
 - QwenCloud는 이 Personal Token Plan console gateway를 안정적인 공개 API로 제공하지
   않는다. Upstream console이 바뀌면 고정 source와 fixture 갱신이 필요할 수 있으며,
   Yo는 대체 shape를 추측하지 않고 실패한다.

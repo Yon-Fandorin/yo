@@ -80,6 +80,7 @@ impl std::fmt::Debug for CredentialRevision {
 pub struct CredentialSnapshot {
     revision: CredentialRevision,
     credentials: CredentialStore,
+    account_sessions: CredentialStore,
 }
 
 impl CredentialSnapshot {
@@ -93,6 +94,19 @@ impl CredentialSnapshot {
         self.credentials.resolve(provider, account)
     }
 
+    /// Resolves the optional account-observation session for one exact Provider and Account.
+    ///
+    /// Model dispatch must continue to use [`Self::resolve`]; this secret is reserved for the
+    /// account-capacity boundary that owns its fixed remote origin.
+    #[must_use]
+    pub fn resolve_account_session(
+        &self,
+        provider: &ProviderId,
+        account: &AccountId,
+    ) -> Option<&ApiCredential> {
+        self.account_sessions.resolve(provider, account)
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.credentials.is_empty()
@@ -101,6 +115,32 @@ impl CredentialSnapshot {
     #[must_use]
     pub const fn credentials(&self) -> &CredentialStore {
         &self.credentials
+    }
+
+    /// Prepares an exact account-session mutation against this observed credential revision.
+    ///
+    /// Keeping preparation on the snapshot lets a caller bind later secret capture and remote
+    /// work to the state it actually inspected instead of silently replanning at commit time.
+    pub fn prepare_set_account_session(
+        &self,
+        provider: &ProviderId,
+        account: &AccountId,
+    ) -> Result<PreparedAccountSessionMutation, LocalCredentialStoreError> {
+        if self.resolve(provider, account).is_none() {
+            return Err(LocalCredentialStoreError::InvalidMutation);
+        }
+        let action = if self.resolve_account_session(provider, account).is_some() {
+            CredentialMutationAction::Replace
+        } else {
+            CredentialMutationAction::Add
+        };
+        Ok(PreparedAccountSessionMutation {
+            expected_revision: self.revision.clone(),
+            planned_revision: wire::new_revision()?,
+            provider: provider.clone(),
+            account: account.clone(),
+            action,
+        })
     }
 
     pub(crate) fn matches_expected(&self, mutation: &PreparedCredentialMutation) -> bool {
@@ -131,6 +171,7 @@ impl std::fmt::Debug for CredentialSnapshot {
             .debug_struct("CredentialSnapshot")
             .field("revision", &self.revision)
             .field("credential_count", &self.credentials.len())
+            .field("account_session_count", &self.account_sessions.len())
             .finish()
     }
 }
@@ -151,6 +192,31 @@ pub struct PreparedCredentialMutation {
     provider: ProviderId,
     account: AccountId,
     action: CredentialMutationAction,
+}
+
+/// One prepared mutation of the optional account-session field for an existing exact account.
+///
+/// The candidate secret remains in the caller until commit and is never retained here.
+#[derive(Clone, Eq, PartialEq)]
+pub struct PreparedAccountSessionMutation {
+    expected_revision: CredentialRevision,
+    planned_revision: CredentialRevision,
+    provider: ProviderId,
+    account: AccountId,
+    action: CredentialMutationAction,
+}
+
+impl std::fmt::Debug for PreparedAccountSessionMutation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PreparedAccountSessionMutation")
+            .field("expected_revision", &self.expected_revision)
+            .field("planned_revision", &self.planned_revision)
+            .field("provider", &self.provider)
+            .field("account", &self.account)
+            .field("action", &self.action)
+            .finish()
+    }
 }
 
 impl PreparedCredentialMutation {
@@ -196,6 +262,13 @@ impl PreparedCredentialMutation {
             account,
             action,
         })
+    }
+}
+
+impl PreparedAccountSessionMutation {
+    #[must_use]
+    pub const fn planned_revision(&self) -> &CredentialRevision {
+        &self.planned_revision
     }
 }
 
@@ -284,6 +357,20 @@ impl LocalCredentialRepository {
         self.prepare(provider, account, false)
     }
 
+    /// Prepares an add or replacement of the optional account-session field for an existing
+    /// Provider-and-Account API credential.
+    pub fn prepare_set_account_session(
+        &self,
+        provider: &ProviderId,
+        account: &AccountId,
+    ) -> Result<PreparedAccountSessionMutation, LocalCredentialStoreError> {
+        let (_parent, lock) = storage::lock_repository(&self.path)?;
+        let snapshot = storage::read_snapshot(&self.path)?.public();
+        let mutation = snapshot.prepare_set_account_session(provider, account)?;
+        drop(lock);
+        Ok(mutation)
+    }
+
     fn prepare(
         &self,
         provider: &ProviderId,
@@ -361,6 +448,54 @@ impl LocalCredentialRepository {
         drop(lock);
         Ok(CredentialCommit::Committed)
     }
+
+    /// Commits one prepared account-session add or replacement without changing the model API
+    /// credential in the same account record.
+    pub fn commit_account_session(
+        &self,
+        mutation: &PreparedAccountSessionMutation,
+        candidate: &ApiCredential,
+    ) -> Result<CredentialCommit, LocalCredentialStoreError> {
+        let (parent, lock) = storage::lock_repository(&self.path)?;
+        let mut current = storage::read_snapshot(&self.path)?;
+
+        if current.revision == mutation.planned_revision {
+            return if current.resolve_account_session(&mutation.provider, &mutation.account)
+                == Some(candidate)
+            {
+                Ok(CredentialCommit::AlreadyCommitted)
+            } else {
+                Err(LocalCredentialStoreError::Conflict(self.path.clone()))
+            };
+        }
+        if current.revision != mutation.expected_revision
+            || current
+                .resolve(&mutation.provider, &mutation.account)
+                .is_none()
+            || !mutation.action.matches_presence(
+                current
+                    .resolve_account_session(&mutation.provider, &mutation.account)
+                    .is_some(),
+            )
+        {
+            return Err(LocalCredentialStoreError::Conflict(self.path.clone()));
+        }
+
+        current.apply_account_session(mutation, candidate);
+        let planned = mutation
+            .planned_revision
+            .managed_token()
+            .expect("new credential revisions are always managed tokens");
+        let encoded = wire::encode(planned, &current.entries)?;
+        storage::publish(
+            &self.path,
+            &parent,
+            mutation.expected_revision.is_absent(),
+            &encoded,
+        )?;
+        drop(lock);
+        Ok(CredentialCommit::Committed)
+    }
 }
 
 impl CredentialRepository for LocalCredentialRepository {
@@ -421,6 +556,7 @@ pub(super) struct StoredCredentialSnapshot {
     revision: CredentialRevision,
     pub(super) entries: Vec<CredentialEntry>,
     credentials: CredentialStore,
+    account_sessions: CredentialStore,
 }
 
 impl StoredCredentialSnapshot {
@@ -428,17 +564,32 @@ impl StoredCredentialSnapshot {
         revision: CredentialRevision,
         entries: Vec<CredentialEntry>,
     ) -> Result<Self, LocalCredentialStoreError> {
-        let credentials = CredentialStore::new(entries.iter().map(|entry| {
+        let mut credentials = CredentialStore::new(entries.iter().map(|entry| {
             (
                 (entry.provider.clone(), entry.account.clone()),
                 entry.credential.clone(),
             )
         }))
         .map_err(|_| LocalCredentialStoreError::InvalidContents(PathBuf::new()))?;
+        let account_sessions = CredentialStore::new(entries.iter().filter_map(|entry| {
+            entry.account_session.as_ref().map(|session| {
+                (
+                    (entry.provider.clone(), entry.account.clone()),
+                    session.clone(),
+                )
+            })
+        }))
+        .map_err(|_| LocalCredentialStoreError::InvalidContents(PathBuf::new()))?;
+        credentials.retain_auxiliary_secret_material(
+            entries
+                .iter()
+                .filter_map(|entry| entry.account_session.clone()),
+        );
         Ok(Self {
             revision,
             entries,
             credentials,
+            account_sessions,
         })
     }
 
@@ -450,11 +601,20 @@ impl StoredCredentialSnapshot {
         CredentialSnapshot {
             revision: self.revision,
             credentials: self.credentials,
+            account_sessions: self.account_sessions,
         }
     }
 
     fn resolve(&self, provider: &ProviderId, account: &AccountId) -> Option<&ApiCredential> {
         self.credentials.resolve(provider, account)
+    }
+
+    fn resolve_account_session(
+        &self,
+        provider: &ProviderId,
+        account: &AccountId,
+    ) -> Option<&ApiCredential> {
+        self.account_sessions.resolve(provider, account)
     }
 
     fn apply(&mut self, mutation: &PreparedCredentialMutation, candidate: Option<&ApiCredential>) {
@@ -466,6 +626,7 @@ impl StoredCredentialSnapshot {
                 provider: mutation.provider.clone(),
                 account: mutation.account.clone(),
                 credential: candidate.expect("candidate presence was validated").clone(),
+                account_session: None,
             }),
             CredentialMutationAction::Replace => {
                 self.entries[position.expect("replace presence was validated")].credential =
@@ -477,6 +638,19 @@ impl StoredCredentialSnapshot {
             },
         }
     }
+
+    fn apply_account_session(
+        &mut self,
+        mutation: &PreparedAccountSessionMutation,
+        candidate: &ApiCredential,
+    ) {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.provider == mutation.provider && entry.account == mutation.account)
+            .expect("account-session preparation requires the model credential to remain present");
+        entry.account_session = Some(candidate.clone());
+    }
 }
 
 #[derive(Clone)]
@@ -484,4 +658,5 @@ pub(super) struct CredentialEntry {
     pub(super) provider: ProviderId,
     pub(super) account: AccountId,
     pub(super) credential: ApiCredential,
+    pub(super) account_session: Option<ApiCredential>,
 }

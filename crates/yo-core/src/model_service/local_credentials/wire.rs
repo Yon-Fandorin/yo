@@ -38,7 +38,8 @@ pub(super) fn decode(
             .map(|((provider, account), credential)| CredentialEntry {
                 provider,
                 account,
-                credential,
+                credential: credential.api_key,
+                account_session: credential.account_session,
             })
             .collect(),
     })
@@ -57,6 +58,10 @@ pub(super) fn encode(
                 entry.account.as_str(),
                 AccountCredentialRef {
                     api_key: entry.credential.expose_secret(),
+                    account_session: entry
+                        .account_session
+                        .as_ref()
+                        .map(ApiCredential::expose_secret),
                 },
             );
         if previous.is_some() {
@@ -121,7 +126,7 @@ struct CredentialFile {
     #[serde(default)]
     revision: Option<String>,
     #[serde(deserialize_with = "deserialize_providers")]
-    providers: Vec<((ProviderId, AccountId), ApiCredential)>,
+    providers: Vec<((ProviderId, AccountId), DecodedAccountCredential)>,
 }
 
 #[derive(Serialize)]
@@ -134,14 +139,23 @@ struct CredentialFileRef<'a> {
 #[serde(deny_unknown_fields)]
 struct AccountCredential {
     api_key: String,
+    #[serde(default)]
+    account_session: Option<String>,
 }
 
 #[derive(Clone, Copy, Serialize)]
 struct AccountCredentialRef<'a> {
     api_key: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_session: Option<&'a str>,
 }
 
-struct ProviderCredentials(Vec<(AccountId, ApiCredential)>);
+struct DecodedAccountCredential {
+    api_key: ApiCredential,
+    account_session: Option<ApiCredential>,
+}
+
+struct ProviderCredentials(Vec<(AccountId, DecodedAccountCredential)>);
 
 impl<'de> Deserialize<'de> for ProviderCredentials {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -169,8 +183,15 @@ impl<'de> Deserialize<'de> for ProviderCredentials {
                     if !seen.insert(account.clone()) {
                         return Err(de::Error::custom("duplicate AccountId inside Provider"));
                     }
-                    let credential =
-                        ApiCredential::new(credential.api_key).map_err(de::Error::custom)?;
+                    let credential = DecodedAccountCredential {
+                        api_key: ApiCredential::new(credential.api_key)
+                            .map_err(de::Error::custom)?,
+                        account_session: credential
+                            .account_session
+                            .map(ApiCredential::new)
+                            .transpose()
+                            .map_err(de::Error::custom)?,
+                    };
                     accounts.push((account, credential));
                 }
                 Ok(ProviderCredentials(accounts))
@@ -181,7 +202,7 @@ impl<'de> Deserialize<'de> for ProviderCredentials {
     }
 }
 
-type ScopedCredential = ((ProviderId, AccountId), ApiCredential);
+type ScopedCredential = ((ProviderId, AccountId), DecodedAccountCredential);
 
 fn deserialize_providers<'de, D>(deserializer: D) -> Result<Vec<ScopedCredential>, D::Error>
 where

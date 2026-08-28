@@ -195,6 +195,94 @@ fn replacing_one_pair_materializes_a_revision_for_the_current_snapshot() {
     drop(directory);
 }
 
+// 같은 account record의 account_session은 API key와 독립적으로 추가·재시도·보존되며,
+// local tool redaction store에도 포함되고 마지막 pair 제거 때 함께 사라집니다.
+#[test]
+fn account_session_round_trips_without_replacing_the_model_credential() {
+    let (_directory, repository) = repository("account-session");
+    let (provider, account) = pair("qwencloud", "default");
+    let add = repository.prepare_set(&provider, &account).unwrap();
+    repository
+        .commit(&add, Some(&secret("sk-sp-model")))
+        .unwrap();
+
+    let session = secret("cna=x; login_qwencloud_ticket=session-secret");
+    let set_session = repository
+        .prepare_set_account_session(&provider, &account)
+        .unwrap();
+    assert!(!format!("{set_session:?}").contains(session.expose_secret()));
+    assert_eq!(
+        repository
+            .commit_account_session(&set_session, &session)
+            .unwrap(),
+        CredentialCommit::Committed
+    );
+    assert_eq!(
+        repository
+            .commit_account_session(&set_session, &session)
+            .unwrap(),
+        CredentialCommit::AlreadyCommitted
+    );
+
+    let replace_api = repository.prepare_set(&provider, &account).unwrap();
+    repository
+        .commit(&replace_api, Some(&secret("sk-sp-rotated")))
+        .unwrap();
+    let captured = repository.capture().unwrap();
+    assert_eq!(
+        captured
+            .resolve(&provider, &account)
+            .unwrap()
+            .expose_secret(),
+        "sk-sp-rotated"
+    );
+    assert_eq!(
+        captured
+            .resolve_account_session(&provider, &account)
+            .unwrap()
+            .expose_secret(),
+        session.expose_secret()
+    );
+    assert!(
+        captured
+            .credentials()
+            .contains_secret_material(session.expose_secret())
+    );
+    assert!(
+        fs::read_to_string(repository.path())
+            .unwrap()
+            .contains("account_session:")
+    );
+
+    let remove = repository
+        .prepare_remove(&provider, &account)
+        .unwrap()
+        .unwrap();
+    repository.commit(&remove, None).unwrap();
+    let captured = repository.capture().unwrap();
+    assert!(captured.resolve(&provider, &account).is_none());
+    assert!(
+        captured
+            .resolve_account_session(&provider, &account)
+            .is_none()
+    );
+}
+
+// account_session은 기존 Provider-and-Account API credential의 보조 field이므로 단독으로
+// 새 account record를 만들지 못하고 저장소 byte도 게시하지 않습니다.
+#[test]
+fn account_session_requires_an_existing_model_credential() {
+    let (_directory, repository) = repository("account-session-without-model");
+    let (provider, account) = pair("qwencloud", "default");
+
+    let error = repository
+        .prepare_set_account_session(&provider, &account)
+        .unwrap_err();
+
+    assert!(matches!(error, LocalCredentialStoreError::InvalidMutation));
+    assert!(!repository.path().exists());
+}
+
 // 별도 format classifier가 없으므로 top-level version은 일반 invalid-content이며
 // secret을 진단에 노출하거나 원문을 자동 변환하지 않습니다.
 #[test]

@@ -54,7 +54,7 @@ pub use kimi_catalog::{
 pub use local_credentials::{
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
     CredentialSnapshot, LocalCredentialRepository, LocalCredentialStore, LocalCredentialStoreError,
-    PreparedCredentialMutation,
+    PreparedAccountSessionMutation, PreparedCredentialMutation,
 };
 pub use openrouter_discovery::{
     OpenRouterAuthoredModel, OpenRouterDisabledReason, OpenRouterDiscoveredModel,

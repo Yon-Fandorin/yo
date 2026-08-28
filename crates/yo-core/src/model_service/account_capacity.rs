@@ -110,7 +110,9 @@ impl AccountCapacityBucket {
 /// One rolling capacity window, normalized to a bounded percentage from Provider-reported data.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AccountCapacityWindow {
-    used_percent: u8,
+    used_percent_basis_points: u16,
+    reported_used: Option<u64>,
+    reported_limit: Option<u64>,
     window_duration_minutes: Option<u64>,
     resets_at_unix_seconds: Option<i64>,
 }
@@ -127,7 +129,28 @@ impl AccountCapacityWindow {
             ));
         }
         Ok(Self {
-            used_percent,
+            used_percent_basis_points: u16::from(used_percent) * 100,
+            reported_used: None,
+            reported_limit: None,
+            window_duration_minutes,
+            resets_at_unix_seconds,
+        })
+    }
+
+    pub fn from_used_percent_basis_points(
+        used_percent_basis_points: u16,
+        window_duration_minutes: Option<u64>,
+        resets_at_unix_seconds: Option<i64>,
+    ) -> Result<Self, ModelServiceError> {
+        if used_percent_basis_points > 10_000 {
+            return Err(ModelServiceError::new(
+                "account capacity used percent must be between 0 and 100",
+            ));
+        }
+        Ok(Self {
+            used_percent_basis_points,
+            reported_used: None,
+            reported_limit: None,
             window_duration_minutes,
             resets_at_unix_seconds,
         })
@@ -144,28 +167,49 @@ impl AccountCapacityWindow {
                 "account capacity limit must be positive",
             ));
         }
-        let used = u128::from(used).min(u128::from(limit));
-        let limit = u128::from(limit);
-        let used_percent = if used == 0 {
+        let normalized_used = u128::from(used).min(u128::from(limit));
+        let normalized_limit = u128::from(limit);
+        let used_percent_basis_points = if normalized_used == 0 {
             0
         } else {
-            ((used * 100).div_ceil(limit)).min(100) as u8
+            ((normalized_used * 10_000).div_ceil(normalized_limit)).min(10_000) as u16
         };
-        Self::new(
-            used_percent,
+        let mut window = Self::from_used_percent_basis_points(
+            used_percent_basis_points,
             window_duration_minutes,
             resets_at_unix_seconds,
-        )
+        )?;
+        window.reported_used = Some(used);
+        window.reported_limit = Some(limit);
+        Ok(window)
     }
 
     #[must_use]
     pub const fn used_percent(self) -> u8 {
-        self.used_percent
+        self.used_percent_basis_points.div_ceil(100) as u8
     }
 
     #[must_use]
     pub const fn remaining_percent(self) -> u8 {
-        100 - self.used_percent
+        (self.remaining_percent_basis_points() / 100) as u8
+    }
+
+    #[must_use]
+    pub const fn used_percent_basis_points(self) -> u16 {
+        self.used_percent_basis_points
+    }
+
+    #[must_use]
+    pub const fn remaining_percent_basis_points(self) -> u16 {
+        10_000 - self.used_percent_basis_points
+    }
+
+    #[must_use]
+    pub const fn reported_usage(self) -> Option<(u64, u64)> {
+        match (self.reported_used, self.reported_limit) {
+            (Some(used), Some(limit)) => Some((used, limit)),
+            _ => None,
+        }
     }
 
     #[must_use]
@@ -237,6 +281,9 @@ mod tests {
         let partial = AccountCapacityWindow::from_usage_ratio(1, 3, Some(300), None).unwrap();
         assert_eq!(partial.used_percent(), 34);
         assert_eq!(partial.remaining_percent(), 66);
+        assert_eq!(partial.used_percent_basis_points(), 3_334);
+        assert_eq!(partial.remaining_percent_basis_points(), 6_666);
+        assert_eq!(partial.reported_usage(), Some((1, 3)));
 
         let exhausted = AccountCapacityWindow::from_usage_ratio(110, 100, None, None).unwrap();
         assert_eq!(exhausted.used_percent(), 100);

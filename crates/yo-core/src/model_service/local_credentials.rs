@@ -10,7 +10,8 @@ mod wire;
 pub use error::LocalCredentialStoreError;
 pub use repository::{
     CredentialCommit, CredentialMutationAction, CredentialRepository, CredentialRevision,
-    CredentialSnapshot, LocalCredentialRepository, PreparedCredentialMutation,
+    CredentialSnapshot, LocalCredentialRepository, PreparedAccountSessionMutation,
+    PreparedCredentialMutation,
 };
 
 /// Backward-compatible startup reader for `credentials.yaml`.

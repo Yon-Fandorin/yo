@@ -47,6 +47,7 @@ impl fmt::Display for ApiCredential {
 #[derive(Clone, Default)]
 pub struct CredentialStore {
     credentials: HashMap<(ProviderId, AccountId), ApiCredential>,
+    auxiliary_secret_material: Vec<ApiCredential>,
 }
 
 impl CredentialStore {
@@ -88,6 +89,13 @@ impl CredentialStore {
         self.credentials.len()
     }
 
+    pub(super) fn retain_auxiliary_secret_material(
+        &mut self,
+        credentials: impl IntoIterator<Item = ApiCredential>,
+    ) {
+        self.auxiliary_secret_material.extend(credentials);
+    }
+
     /// Reports whether a semantic value contains any credential in this snapshot.
     ///
     /// This permits redaction gates to cover every configured Account without exposing an
@@ -96,6 +104,7 @@ impl CredentialStore {
     pub fn contains_secret_material(&self, value: &str) -> bool {
         self.credentials
             .values()
+            .chain(self.auxiliary_secret_material.iter())
             .any(|credential| value.contains(credential.expose_secret()))
     }
 }

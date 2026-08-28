@@ -13,7 +13,7 @@ mod picker;
 pub(super) use file::AuthorizedCredentialFileInput;
 pub(super) use picker::ModelPickerItem;
 
-use super::presentation::{Confirmation, default_width};
+use super::presentation::{Confirmation, HiddenSecretPrompt, default_width};
 use crate::{AppError, presentation::PresentationStyle};
 
 const MAX_INPUT_BYTES: usize = 16 * 1024;
@@ -99,15 +99,16 @@ impl TtyConnectionInput {
             .map_err(|_| AppError::message("terminal input must be valid UTF-8"))
     }
 
-    fn read_credential_with(
+    fn read_secret_with(
         &mut self,
-        account: &str,
+        prompt: &str,
+        validation_context: &'static str,
         read: impl FnOnce(&File) -> Result<String, AppError>,
     ) -> Result<ApiCredential, AppError> {
         let terminal = self.terminal()?;
-        write!(terminal, "API key for {account}: ")
+        write!(terminal, "{prompt}")
             .and_then(|()| terminal.flush())
-            .map_err(|error| AppError::single("writing the API-key prompt", error))?;
+            .map_err(|error| AppError::single("writing the hidden-secret prompt", error))?;
         let original = termios::tcgetattr(&*terminal)
             .map_err(|error| AppError::single("reading terminal echo settings", error))?;
         let mut hidden = original.clone();
@@ -126,10 +127,40 @@ impl TtyConnectionInput {
         let restore_result = restore.restore();
         writeln!(terminal)
             .and_then(|()| terminal.flush())
-            .map_err(|error| AppError::single("finishing the API-key prompt", error))?;
+            .map_err(|error| AppError::single("finishing the hidden-secret prompt", error))?;
         restore_result?;
-        ApiCredential::new(value?).map_err(|error| AppError::single("reading the API key", error))
+        ApiCredential::new(value?).map_err(|error| AppError::single(validation_context, error))
     }
+
+    fn read_credential_with(
+        &mut self,
+        account: &str,
+        read: impl FnOnce(&File) -> Result<String, AppError>,
+    ) -> Result<ApiCredential, AppError> {
+        self.read_secret_with(
+            &format!("API key for {account}: "),
+            "reading the API key",
+            read,
+        )
+    }
+}
+
+pub(crate) fn read_hidden_secret(
+    prompt: &HiddenSecretPrompt,
+    validation_context: &'static str,
+) -> Result<ApiCredential, AppError> {
+    let mut input = TtyConnectionInput::new();
+    let terminal_width = {
+        let terminal = input.terminal()?;
+        rustix::termios::tcgetwinsize(&*terminal)
+            .ok()
+            .and_then(|size| std::num::NonZeroU16::new(size.ws_col))
+            .unwrap_or_else(default_width)
+    };
+    let rendered = prompt
+        .render_styled(terminal_width, input.style)
+        .map_err(|error| AppError::single("formatting the hidden-secret prompt", error))?;
+    input.read_secret_with(&rendered, validation_context, TtyConnectionInput::read_line)
 }
 
 impl ExternalConnectInput for TtyConnectionInput {
