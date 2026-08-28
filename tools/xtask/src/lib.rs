@@ -1,5 +1,6 @@
 mod activation_slice;
 mod bounded_file;
+mod cost_report;
 mod docs_translation;
 mod git;
 mod impact;
@@ -70,6 +71,9 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
     if scope == "review-continuation-preflight" {
         return run_review_continuation_preflight(arguments);
     }
+    if scope == "cost-report" {
+        return run_cost_report(arguments);
+    }
     if scope == "review-egress" {
         return run_review_egress(arguments);
     }
@@ -92,6 +96,22 @@ fn run_slice(scope: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
         return run_slice_status(arguments);
     }
     Err(general_usage())
+}
+
+fn run_cost_report(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let request = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(cost_report_usage)?;
+    let output = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(cost_report_usage)?;
+    if arguments.next().is_some() {
+        return Err(cost_report_usage());
+    }
+    let repository = current_repository()?;
+    cost_report::run(&repository, &request, &output)
 }
 
 fn run_review_prepare(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -577,6 +597,7 @@ fn general_usage() -> String {
      cargo xtask slice review-target-admission <request.json>\n\
      cargo xtask slice review-deliver <request.json|finalize FINALIZE.json>\n\
      cargo xtask slice review-continuation-preflight <request.json>\n\
+     cargo xtask slice cost-report <request.json> <output.json>\n\
      cargo xtask slice gate <request.json>\n\
      cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
      cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
@@ -628,6 +649,10 @@ fn review_continuation_preflight_usage() -> String {
     "usage: cargo xtask slice review-continuation-preflight <request.json>".to_owned()
 }
 
+fn cost_report_usage() -> String {
+    "usage: cargo xtask slice cost-report <request.json> <output.json>".to_owned()
+}
+
 fn slice_close_usage() -> String {
     "usage: cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>"
         .to_owned()
@@ -662,10 +687,11 @@ mod cli_tests {
     use std::{cell::Cell, ffi::OsString};
 
     use super::{
-        activation_slice_usage, docs_accept_translation_usage, review_continuation_preflight_usage,
-        review_delivery_usage, review_delta_usage, review_egress_usage, review_packet_usage,
-        review_prepare_usage, review_target_admission_usage, run, slice_accept_usage,
-        slice_close_usage, slice_commit_usage, slice_gate_usage, slice_status_usage,
+        activation_slice_usage, cost_report_usage, docs_accept_translation_usage,
+        review_continuation_preflight_usage, review_delivery_usage, review_delta_usage,
+        review_egress_usage, review_packet_usage, review_prepare_usage,
+        review_target_admission_usage, run, slice_accept_usage, slice_close_usage,
+        slice_commit_usage, slice_gate_usage, slice_status_usage,
     };
 
     // 인자 없이 실행했을 때 서로 다른 입력 계약을 한 문장으로 섞지 않고,
@@ -685,6 +711,7 @@ mod cli_tests {
              cargo xtask slice review-target-admission <request.json>\n\
              cargo xtask slice review-deliver <request.json|finalize FINALIZE.json>\n\
              cargo xtask slice review-continuation-preflight <request.json>\n\
+             cargo xtask slice cost-report <request.json> <output.json>\n\
              cargo xtask slice gate <request.json>\n\
              cargo xtask slice gate prepare <prepare.json> <gate.json>\n\
              cargo xtask slice close <prepare REQUEST.json|plan SLICE [PLAN.json]|apply PLAN.json>\n\
@@ -737,6 +764,25 @@ mod cli_tests {
 
         assert_eq!(missing, activation_slice_usage());
         assert_eq!(extra, activation_slice_usage());
+    }
+
+    // 비용 owner report는 source request와 새 output 경로를 모두 요구하며 추가 인자를
+    // 무시한 채 다른 artifact를 만들지 않는다.
+    #[test]
+    fn cost_report_requires_request_and_output() {
+        let missing = run(["slice", "cost-report", "request.json"].map(Into::into)).unwrap_err();
+        let extra = run([
+            "slice",
+            "cost-report",
+            "request.json",
+            "output.json",
+            "extra.json",
+        ]
+        .map(Into::into))
+        .unwrap_err();
+
+        assert_eq!(missing, cost_report_usage());
+        assert_eq!(extra, cost_report_usage());
     }
 
     // review packet 생성도 정확히 한 versioned request만 받아 입력 일부가

@@ -780,6 +780,24 @@ gate: rerun the original required suite and count both suite attempts and the
 classification runs in the Slice close metrics. Do not loop retries or weaken
 the assertion to manufacture a pass.
 
+Keep Slice cost observations separated by their factual owner. Prepare a
+content-addressed `yo.slice-cost-report-request/v1alpha1`, then publish its
+bounded, create-only report with:
+
+```bash
+cargo xtask slice cost-report <request.json> <output.json>
+```
+
+The request has exactly five owners: packet publication, Provider Usage,
+coordinator context, command output, and elapsed time. Each owner names its
+measurement basis and immutable JSON sources, and each unavailable or partial
+number carries its reason. The report preserves those owners and deliberately
+has no cross-owner grand total: tokens, bytes, request counts, and elapsed time
+are different observations, while Provider Usage and coordinator context may
+overlap. A source artifact may appear under only one owner. The command checks
+every source hash and schema before and immediately before publication; it
+does not reinterpret Provider receipts or infer missing measurements.
+
 Before publishing immutable review input, finish the coordinator's actual-code
 check and freeze the candidate, fixture prerequisites, planned Developer Docs
 impact, review questions, and uniquely named validation evidence. A manually
