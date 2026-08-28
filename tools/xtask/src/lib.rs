@@ -459,6 +459,7 @@ fn run_check(check: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
         "test-explanations" => run_test_explanations_check(arguments),
         "slice-scope" => run_slice_scope_check(arguments),
         "slice-parallel" => run_slice_parallel_check(arguments),
+        "wave-assembly" => run_wave_assembly_check(arguments),
         "methexis-check-for-stage" => run_methexis_check_for_stage(arguments),
         "review-coverage-operation" => run_review_coverage_operation_check(arguments),
         "commit-preflight" | "developer-docs-impact" | "slice-review-impact" => {
@@ -504,6 +505,19 @@ fn run_slice_parallel_check(arguments: &mut impl Iterator<Item = OsString>) -> R
     }
     let repository = current_repository()?;
     slice_contract::check_parallel(&repository, &left, &right)
+}
+
+fn run_wave_assembly_check(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
+    let boundary = arguments
+        .next()
+        .map(PathBuf::from)
+        .ok_or_else(|| usage("wave-assembly"))?;
+    let components = arguments.map(PathBuf::from).collect::<Vec<_>>();
+    if components.is_empty() {
+        return Err(usage("wave-assembly"));
+    }
+    let repository = current_repository()?;
+    slice_contract::check_wave_assembly(&repository, &boundary, &components)
 }
 
 fn run_methexis_check_for_stage(
@@ -590,6 +604,10 @@ fn usage(check: &str) -> String {
         "slice-parallel" => {
             return "usage: cargo xtask check slice-parallel <left.json> <right.json>".to_owned();
         },
+        "wave-assembly" => {
+            return "usage: cargo xtask check wave-assembly <boundary.json> <component.json>..."
+                .to_owned();
+        },
         "review-coverage-operation" => {
             return "usage: cargo xtask check review-coverage-operation \
                     <commit-message-file> [source] [commit]"
@@ -627,6 +645,7 @@ fn general_usage() -> String {
      cargo xtask check methexis-check-for-stage\n\
      cargo xtask check slice-scope [slice-contract.json]\n\
      cargo xtask check slice-parallel <left.json> <right.json>\n\
+     cargo xtask check wave-assembly <boundary.json> <component.json>...\n\
      cargo xtask check review-coverage-operation <commit-message-file> [source] [commit]\n\
      cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
@@ -746,6 +765,7 @@ mod cli_tests {
              cargo xtask check methexis-check-for-stage\n\
              cargo xtask check slice-scope [slice-contract.json]\n\
              cargo xtask check slice-parallel <left.json> <right.json>\n\
+             cargo xtask check wave-assembly <boundary.json> <component.json>...\n\
              cargo xtask check review-coverage-operation \
              <commit-message-file> [source] [commit]\n\
              cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \

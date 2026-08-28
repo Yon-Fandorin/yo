@@ -207,7 +207,60 @@ cargo xtask check slice-parallel <left.json> <right.json>
 It requires the same current integration base—`refs/heads/develop` for direct
 Slices or their `refs/heads/wave/<wave>` branch for Wave Slices—and rejects
 overlapping write leases or contract ownership. It supplements the dispatch
-checklist above. Bind each accepted contract once in its Slice worktree:
+checklist above.
+
+When several backend Slices own independent Provider semantics but one later
+Slice must compose shared files, keep those responsibilities in a local
+`yo.wave-assembly-boundary/v1alpha1` document. The boundary names the current
+Wave base and exactly one deferred assembly owner; its contract and write sets
+must contain only shared composition paths such as `Cargo.lock`, facades,
+registries, repository summaries, and coordinated documentation:
+
+```json
+{
+  "schema": "yo.wave-assembly-boundary/v1alpha1",
+  "wave": "backend-work",
+  "base": "<current full Wave commit>",
+  "base_ref": "refs/heads/wave/backend-work",
+  "assembly_slice": "backend-composition",
+  "owned_contracts": ["agent.backend.composition"],
+  "allowed_write_set": [
+    "Cargo.lock",
+    "crates/yo-cli/src/backend.rs",
+    "README.md",
+    "docs/src/architecture/code-map.md",
+    "docs/ko/src/architecture/code-map.md",
+    "docs/ko/source.sha256"
+  ]
+}
+```
+
+Before dispatching the component Slices, check the boundary and every exact
+component contract together:
+
+```bash
+cargo xtask check wave-assembly \
+  .local-exclude/coordination/<wave>/assembly-boundary.json \
+  .local-exclude/coordination/<component-a>/slice-contract.json \
+  .local-exclude/coordination/<component-b>/slice-contract.json
+```
+
+The check requires the boundary and all components to share the current Wave
+base, applies the ordinary pairwise lease and semantic-ownership checks, and
+rejects any component that claims an assembly-owned path or contract. It makes
+no branch, worktree, lease, or file mutation. Each component's ordinary
+`slice-scope` check then keeps its actual diff inside that closed provider-owned
+write set.
+
+Integrate the reviewed components into the Wave serially. Only afterward,
+create the named assembly Slice from the new Wave head with an ordinary
+`yo.slice-contract/v1` contract using the boundary's exact ownership sets.
+Review that final composition as its own exact diff and integrate it serially;
+do not keep an old-base assembly worktree alive beside the components or let a
+component update shared manifests, facades, documentation, or Projection
+hashes opportunistically.
+
+Bind each accepted contract once in its Slice worktree:
 
 ```bash
 cargo xtask slice-contract bind <its-contract.json>

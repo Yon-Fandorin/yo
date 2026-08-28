@@ -1,3 +1,4 @@
+mod assembly;
 mod binding;
 mod model;
 mod parallel;
@@ -8,6 +9,7 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
+pub(crate) use assembly::check_wave_assembly;
 pub(crate) use binding::{
     active_contract, bind, binding_path_for, bound_slice, ensure_bound, trusted_bound_slice,
     verify_bound_exact,
