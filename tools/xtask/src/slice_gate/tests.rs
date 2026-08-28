@@ -247,6 +247,51 @@ impl Fixture {
         self.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
         self.request["validation_evidence"][0]["reused"] = json!(requested_reuse);
     }
+
+    fn use_alpha3_validation(&mut self, head_commit: &str, requested_reuse: bool) {
+        let argv = vec![
+            "cargo".to_owned(),
+            "test".to_owned(),
+            "--locked".to_owned(),
+            "-p".to_owned(),
+            "xtask".to_owned(),
+        ];
+        let path = PathBuf::from(
+            self.request["validation_evidence"][0]["result_path"]
+                .as_str()
+                .unwrap(),
+        );
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&json!({
+                "schema": "yo.validation-run-summary/v1alpha3",
+                "name": "xtask",
+                "status": "passed",
+                "exit_code": 0,
+                "elapsed_seconds": 2,
+                "log_bytes": 42,
+                "log_path": ".local-exclude/validation-runs/xtask.log",
+                "log_hash": format!("sha256:{}", "a".repeat(64)),
+                "head_commit": head_commit,
+                "worktree_state": "clean",
+                "command_argv_count": argv.len(),
+                "command_argv_hash": crate::validation_summary::argv_hash(&argv),
+                "reused": false,
+                "reuse_policy": "reviewed-descendant-context/v1",
+                "reuse_context": {
+                    "schema": "yo.validation-reuse-context/v1alpha1",
+                    "platform_os": std::env::consts::OS,
+                    "platform_arch": std::env::consts::ARCH,
+                    "toolchain_hash": crate::validation_summary::current_toolchain_hash().unwrap(),
+                    "external_state": "none-declared"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        self.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
+        self.request["validation_evidence"][0]["reused"] = json!(requested_reuse);
+    }
 }
 
 impl Drop for Fixture {
@@ -388,6 +433,27 @@ fn alpha2_reuses_a_passed_ancestor_validation() {
     let result = fixture.evaluate().unwrap();
     assert_eq!(result.next_action, "integrate");
     assert!(result.validation[0].reused);
+}
+
+// v1alpha3 재사용은 Git ancestry와 exact argv뿐 아니라 gate 시점의 platform 및
+// Rust toolchain context까지 같을 때만 열리고 context가 달라지면 즉시 닫힌다.
+#[test]
+fn alpha3_reuse_requires_the_current_execution_context() {
+    let mut fixture = Fixture::new();
+    let base = git_line(&fixture.repository.path, &["rev-parse", "HEAD^"]);
+    fixture.use_alpha3_validation(&base, true);
+    assert!(fixture.evaluate().unwrap().validation[0].reused);
+
+    let path = PathBuf::from(
+        fixture.request["validation_evidence"][0]["result_path"]
+            .as_str()
+            .unwrap(),
+    );
+    let mut summary: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    summary["reuse_context"]["platform_os"] = json!("changed-os");
+    std::fs::write(&path, serde_json::to_vec(&summary).unwrap()).unwrap();
+    fixture.request["validation_evidence"][0]["result_hash"] = json!(digest_file(&path));
+    assert!(fixture.evaluate().unwrap_err().contains("platform changed"));
 }
 
 // 분기만 같은 비조상 커밋의 green은 최종 후보에 포함된 코드 상태가 아니므로

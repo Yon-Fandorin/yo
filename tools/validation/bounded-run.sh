@@ -2,18 +2,31 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: $0 [--summary-out <path>] <run-name> -- <command> [args...]" >&2
+    echo "usage: $0 [--summary-out <path>] [--reusable-local] <run-name> -- <command> [args...]" >&2
 }
 
 summary_out=""
-if [[ ${1:-} == "--summary-out" ]]; then
-    if [[ $# -lt 2 || -z $2 ]]; then
-        usage
-        exit 64
-    fi
-    summary_out=$2
-    shift 2
-fi
+reusable_local=false
+while [[ ${1:-} == --* ]]; do
+    case ${1:-} in
+        --summary-out)
+            if [[ $# -lt 2 || -z $2 ]]; then
+                usage
+                exit 64
+            fi
+            summary_out=$2
+            shift 2
+            ;;
+        --reusable-local)
+            reusable_local=true
+            shift
+            ;;
+        *)
+            usage
+            exit 64
+            ;;
+    esac
+done
 
 if [[ $# -lt 3 ]]; then
     usage
@@ -131,6 +144,52 @@ sha256_file() {
     esac
 }
 
+if [[ ${reusable_local} == true ]]; then
+    platform_os=$(uname -s | tr '[:upper:]' '[:lower:]') || {
+        echo "bounded validation: cannot identify the platform" >&2
+        exit 69
+    }
+    case ${platform_os} in
+        darwin) platform_os=macos ;;
+    esac
+    readonly platform_os
+    platform_arch=$(uname -m) || {
+        echo "bounded validation: cannot identify the architecture" >&2
+        exit 69
+    }
+    case ${platform_arch} in
+        arm64) platform_arch=aarch64 ;;
+        amd64) platform_arch=x86_64 ;;
+    esac
+    readonly platform_arch
+
+    toolchain_frame=$(mktemp "${log_root}/${run_name}.toolchain.XXXXXX")
+    readonly toolchain_frame
+    trap 'rm -f -- "${toolchain_frame}"' EXIT
+    printf 'yo.validation-toolchain/v1alpha1\0' >"${toolchain_frame}"
+    for tool in rustc cargo; do
+        tool_output=$("${tool}" -Vv 2>/dev/null) || {
+            echo "bounded validation: cannot fingerprint ${tool} -Vv" >&2
+            exit 69
+        }
+        tool_bytes=$(printf '%s' "${tool_output}" | wc -c)
+        tool_bytes=${tool_bytes//[[:space:]]/}
+        printf '%s:' "${tool_bytes}" >>"${toolchain_frame}"
+        printf '%s\0' "${tool_output}" >>"${toolchain_frame}"
+    done
+    toolchain_digest=$(sha256_file "${toolchain_frame}") || {
+        echo "bounded validation: cannot hash the toolchain context" >&2
+        exit 69
+    }
+    if [[ ! ${toolchain_digest} =~ ^[0-9a-f]{64}$ ]]; then
+        echo "bounded validation: SHA-256 tool returned a non-canonical toolchain digest" >&2
+        exit 69
+    fi
+    readonly toolchain_hash="sha256:${toolchain_digest}"
+    rm -f -- "${toolchain_frame}"
+    trap - EXIT
+fi
+
 argv_frame=$(mktemp "${log_root}/${run_name}.argv.XXXXXX")
 readonly argv_frame
 trap 'rm -f -- "${argv_frame}"' EXIT
@@ -195,18 +254,36 @@ else
     result=failed
 fi
 
-printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha2","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false,"reuse_policy":"reviewed-descendant/v1"}' \
-    "$(json_escape "${run_name}")" \
-    "${result}" \
-    "${command_status}" \
-    "${elapsed_seconds}" \
-    "${log_bytes}" \
-    "$(json_escape "${report_path}")" \
-    "${log_hash}" \
-    "${head_commit}" \
-    "${worktree_state}" \
-    "${command_argv_count}" \
-    "${command_argv_hash}"
+if [[ ${reusable_local} == true ]]; then
+    printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha3","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false,"reuse_policy":"reviewed-descendant-context/v1","reuse_context":{"schema":"yo.validation-reuse-context/v1alpha1","platform_os":"%s","platform_arch":"%s","toolchain_hash":"%s","external_state":"none-declared"}}' \
+        "$(json_escape "${run_name}")" \
+        "${result}" \
+        "${command_status}" \
+        "${elapsed_seconds}" \
+        "${log_bytes}" \
+        "$(json_escape "${report_path}")" \
+        "${log_hash}" \
+        "${head_commit}" \
+        "${worktree_state}" \
+        "${command_argv_count}" \
+        "${command_argv_hash}" \
+        "${platform_os}" \
+        "${platform_arch}" \
+        "${toolchain_hash}"
+else
+    printf -v summary_line '{"schema":"yo.validation-run-summary/v1alpha2","name":"%s","status":"%s","exit_code":%d,"elapsed_seconds":%d,"log_bytes":%d,"log_path":"%s","log_hash":"%s","head_commit":"%s","worktree_state":"%s","command_argv_count":%d,"command_argv_hash":"%s","reused":false,"reuse_policy":"reviewed-descendant/v1"}' \
+        "$(json_escape "${run_name}")" \
+        "${result}" \
+        "${command_status}" \
+        "${elapsed_seconds}" \
+        "${log_bytes}" \
+        "$(json_escape "${report_path}")" \
+        "${log_hash}" \
+        "${head_commit}" \
+        "${worktree_state}" \
+        "${command_argv_count}" \
+        "${command_argv_hash}"
+fi
 readonly summary_line
 
 if [[ -n ${summary_out} ]]; then

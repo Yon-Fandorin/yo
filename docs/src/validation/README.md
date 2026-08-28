@@ -97,7 +97,8 @@ summary line. A failed run returns the same summary and at most the final 16
 KiB of diagnostic output; inspect the complete local log only when that tail
 does not identify the owning failure.
 
-The summary schema is `yo.validation-run-summary/v1alpha2`. It records the
+By default the summary schema is the frozen
+`yo.validation-run-summary/v1alpha2`. It records the
 launch `HEAD`, whether the worktree was clean, a boundary-aware hash and count
 of the exact command arguments, the complete log's byte count and SHA-256, and
 the `reviewed-descendant/v1` reuse policy.
@@ -112,6 +113,17 @@ final candidate. Frozen `yo.validation-run-summary/v1` and `v1alpha1`
 artifacts remain gate-compatible with their original meaning; v1alpha1 does
 not permit reuse.
 
+For a command whose result is determined entirely by local repository bytes,
+add `--reusable-local`. This opt-in emits
+`yo.validation-run-summary/v1alpha3` with the
+`reviewed-descendant-context/v1` policy. Besides the v1alpha2 bindings, it
+records the target OS, architecture, and a Rust/Cargo toolchain fingerprint.
+At a later reused gate, Yo observes those values again and fails closed if they
+changed. Its `external_state:"none-declared"` assertion excludes commands that
+depend on a network, clock, account, service, or other external state; rerun
+such commands instead. The option does not search for an earlier receipt and
+never changes an existing summary.
+
 To retain a summary for review and gate preparation without copying stdout,
 create its ignored parent and publish it directly:
 
@@ -119,6 +131,7 @@ create its ignored parent and publish it directly:
 mkdir -p .local-exclude/coordination/<slice>/validation
 bash tools/validation/bounded-run.sh \
   --summary-out .local-exclude/coordination/<slice>/validation/workspace-tests.json \
+  --reusable-local \
   workspace-tests -- cargo test --workspace --all-targets
 ```
 

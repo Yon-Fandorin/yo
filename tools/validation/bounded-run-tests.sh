@@ -88,6 +88,22 @@ if [[ -z "${success_log}" || "$(<"${success_log}")" != $'visible only in the ful
     exit 1
 fi
 
+PATH="${fixture}/bin:${PATH}" \
+SYSTEM_MKTEMP="${system_mktemp}" \
+YO_BOUNDED_VALIDATION_LOG_ROOT="${log_root}" \
+    bash "${checker}" --reusable-local reusable-local -- true \
+    >"${fixture}/reusable-local.out" 2>"${fixture}/reusable-local.err"
+reusable_summary=$(<"${fixture}/reusable-local.out")
+if [[ -s "${fixture}/reusable-local.err" ||
+    "${reusable_summary}" != *'"schema":"yo.validation-run-summary/v1alpha3"'* ||
+    "${reusable_summary}" != *'"reuse_policy":"reviewed-descendant-context/v1"'* ||
+    "${reusable_summary}" != *'"reuse_context":{"schema":"yo.validation-reuse-context/v1alpha1"'* ||
+    "${reusable_summary}" != *'"toolchain_hash":"sha256:'* ||
+    "${reusable_summary}" != *'"external_state":"none-declared"'* ]]; then
+    echo "reusable local: expected a context-bound v1alpha3 summary" >&2
+    exit 1
+fi
+
 set +e
 PATH="${fixture}/bin:${PATH}" \
 SYSTEM_MKTEMP="${system_mktemp}" \

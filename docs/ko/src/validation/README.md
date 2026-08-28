@@ -92,7 +92,7 @@ golden과 snapshot은 fixture의 정확한 Projection을 증명한다. 의도적
 반환한다. 실패하면 같은 summary와 마지막 diagnostic output 최대 16 KiB를 반환한다.
 그 tail만으로 소유 실패를 찾을 수 없을 때만 전체 local log를 확인한다.
 
-summary schema는 `yo.validation-run-summary/v1alpha2`이다. 실행을 시작할 때의
+기본 summary schema는 frozen `yo.validation-run-summary/v1alpha2`이다. 실행을 시작할 때의
 `HEAD`, worktree가 clean이었는지, 정확한 command 인자 개수와 경계를 구분하는 hash,
 전체 log의 byte 수와 SHA-256, `reviewed-descendant/v1` 재사용 정책을 기록한다.
 따라서 Slice gate는 clean 후보의 결과를
@@ -104,6 +104,15 @@ summary schema는 `yo.validation-run-summary/v1alpha2`이다. 실행을 시작�
 `yo.validation-run-summary/v1`과 `v1alpha1` artifact는 원래 의미로 gate 호환성을
 유지하며 v1alpha1은 재사용을 허용하지 않는다.
 
+결과가 local 저장소 byte만으로 결정되는 command에는 `--reusable-local`을 추가한다.
+이 opt-in은 `reviewed-descendant-context/v1` 정책을 가진
+`yo.validation-run-summary/v1alpha3`을 출력한다. v1alpha2 결속에 더해 target OS,
+architecture, Rust/Cargo toolchain fingerprint를 기록한다. 후속 reused gate에서 Yo는
+이 값을 다시 관측하고 달라졌으면 fail-closed한다. `external_state:"none-declared"`
+선언은 network, clock, account, service 또는 그 밖의 external state에 의존하는
+command를 제외한다. 그런 command는 재실행한다. 이 옵션은 이전 receipt를 탐색하지
+않으며 기존 summary를 변경하지 않는다.
+
 stdout을 복사하지 않고 review와 gate preparation에 쓸 summary를 보존하려면 ignored
 부모 디렉터리를 만들고 직접 발행한다.
 
@@ -111,6 +120,7 @@ stdout을 복사하지 않고 review와 gate preparation에 쓸 summary를 보�
 mkdir -p .local-exclude/coordination/<slice>/validation
 bash tools/validation/bounded-run.sh \
   --summary-out .local-exclude/coordination/<slice>/validation/workspace-tests.json \
+  --reusable-local \
   workspace-tests -- cargo test --workspace --all-targets
 ```
 

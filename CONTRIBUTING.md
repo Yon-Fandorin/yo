@@ -382,6 +382,7 @@ the existing artifacts instead:
 mkdir -p .local-exclude/coordination/<slice>/validation
 bash tools/validation/bounded-run.sh \
   --summary-out .local-exclude/coordination/<slice>/validation/xtask.json \
+  --reusable-local \
   xtask -- cargo test --locked -p xtask
 ```
 
@@ -390,9 +391,11 @@ stdout summary. Its parent must already exist, and an existing target stops
 before validation rather than being overwritten or causing a duplicate run.
 Include that file as validation evidence in the immutable review packet; the
 review-chain manifest and gate preparation then derive its path and hash.
-The option changes storage only: it neither changes
-`yo.validation-run-summary/v1alpha2` bytes nor discovers or reuses a prior
-result.
+`--summary-out` changes storage only. `--reusable-local` is a separate,
+explicit assertion that the command is deterministic from local repository
+bytes and has no network, clock, account, service, or other external-state
+dependency. It emits `yo.validation-run-summary/v1alpha3`; omit it to retain
+the frozen `v1alpha2` output.
 
 Do not rerun an unchanged passing command merely to give a descendant candidate
 a new filename. When the review-delta transition classifies that exact summary
@@ -533,7 +536,16 @@ generated gate request, and re-reads all inputs before atomically publishing a
 new-or-byte-identical output. The same invocation returns the evaluated gate
 result. New `yo.validation-run-summary/v1alpha2` evidence binds the launch
 `HEAD`, clean worktree state, exact `argv` hash, complete-log hash, and the
-`reviewed-descendant/v1` reuse policy. A gate entry with `"reused":false`
+`reviewed-descendant/v1` reuse policy. New opt-in
+`yo.validation-run-summary/v1alpha3` evidence additionally records the target
+OS and architecture plus a bounded Rust/Cargo toolchain fingerprint under
+`reviewed-descendant-context/v1`. When a gate requests reuse, it observes that
+context again and rejects changed platform or toolchain state automatically.
+Its closed `external_state:"none-declared"` value means the producer asserted
+that the command has no external dependency; commands that cannot make that
+assertion must be rerun and must not use `--reusable-local`.
+
+A gate entry with `"reused":false`
 requires that launch HEAD to equal the candidate. A gate entry with
 `"reused":true` accepts only a clean, passing summary whose exact command is
 unchanged and whose launch HEAD trusted Git proves is an ancestor of the final
@@ -547,8 +559,9 @@ candidate, embedded command arguments, expected and observed exit status,
 counterfactual, and before/after observations against the prepared command.
 They always require `reused: false`; a successful match is a passed
 external-operation result and does not invent a validation log path. Frozen
-`yo.validation-run-summary/v1` and `v1alpha1` evidence remains accepted with
-its original meaning; v1alpha1 does not permit reuse. Legacy v1 does not record
+`yo.validation-run-summary/v1`, `v1alpha1`, and `v1alpha2` evidence remains
+accepted with its original meaning; v1alpha1 does not permit reuse. Legacy v1
+does not record
 launch arguments, so its coordinator-supplied exact `argv` remains a
 declaration rather than launch proof. When exact human approval is
 later recorded, add only its compact kind, authority, and scope to the
