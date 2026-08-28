@@ -1,6 +1,7 @@
 //! Deterministic completed cell state for yo terminal interfaces.
 
 pub(crate) mod appearance;
+pub(crate) mod command;
 pub mod html;
 pub(crate) mod input;
 pub(crate) mod layout;

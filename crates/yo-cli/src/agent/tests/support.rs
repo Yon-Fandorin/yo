@@ -64,6 +64,12 @@ pub(super) fn dispatch_until_queued(
             CommandAdmission::Backpressured(_) => {
                 return Err("timed out retrying a backpressured test command".to_owned());
             },
+            CommandAdmission::Rejected { rejection, .. } => {
+                return Err(format!(
+                    "test command was rejected: {}",
+                    rejection.message()
+                ));
+            },
         }
     }
 }

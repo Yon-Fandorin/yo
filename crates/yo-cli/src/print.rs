@@ -78,7 +78,7 @@ pub(crate) fn run(
         session
             .dispatch(intent)
             .map_err(|error| AppError::single("submitting print input", error))?,
-    );
+    )?;
     let mut projection = FinalResponseProjection::default();
     let mut accepted = false;
     let mut completed = None;
@@ -94,7 +94,7 @@ pub(crate) fn run(
                 session
                     .retry(command)
                     .map_err(|error| AppError::single("admitting print input", error))?,
-            );
+            )?;
             changed |= pending.is_none();
         }
 
@@ -138,10 +138,14 @@ fn observe_submission_outcome(
     }
 }
 
-fn pending_admission(admission: CommandAdmission) -> Option<PendingCommand> {
+fn pending_admission(admission: CommandAdmission) -> Result<Option<PendingCommand>, AppError> {
     match admission {
-        CommandAdmission::Queued => None,
-        CommandAdmission::Backpressured(pending) => Some(pending),
+        CommandAdmission::Queued => Ok(None),
+        CommandAdmission::Backpressured(pending) => Ok(Some(pending)),
+        CommandAdmission::Rejected { rejection, .. } => Err(AppError::message(format!(
+            "print Submission rejected: {}",
+            rejection.message()
+        ))),
     }
 }
 
@@ -541,6 +545,26 @@ mod tests {
             observe_submission_outcome(SubmissionOutcome::Accepted { id: other }, expected)
                 .unwrap_err();
         assert!(unrelated.to_string().contains("unrelated Submission"));
+    }
+
+    // worker queue에 들어가기 전 동기 admission 거절도 비동기 outcome과 같은 이유를
+    // 보고하고, print loop가 이를 성공적으로 queue된 command로 기다리지 않게 합니다.
+    #[test]
+    fn synchronous_submission_rejection_stops_print_admission() {
+        let error = pending_admission(CommandAdmission::Rejected {
+            id: SubmissionId::new().unwrap(),
+            rejection: SubmissionRejection::new(
+                SubmissionRejectionKind::StaleReference,
+                "the target Turn ended",
+            ),
+        })
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("rejected: the target Turn ended")
+        );
     }
 
     // Turn interruption과 failure는 서로 구분되는 진단으로 끝나며, 그 전에 completed

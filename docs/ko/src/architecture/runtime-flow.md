@@ -185,11 +185,46 @@ tool definition과 tool choice를 생략하며, Session을 flag 없이 재개해
 빈 registry를 보존한다. 이 option은 `--resume`, `--continue`, delegated HostTarget과
 함께 사용할 수 없고, live native model 교체도 Session의 빈 frozen registry를 유지한다.
 
-Yo-managed TUI가 idle일 때 `/model`은 Provider, Account, Model 순서로 정렬한 항목을
-범용 selection panel에 연다. label에는 optional display name을 쓰지만 각 행의
-identity는 완전한 안정 좌표다. `/model MODEL_REFERENCE`는 startup과 같은 resolver를
-사용하므로 bare 형식은 현재 namespace에 머물고 qualified 형식은 설정된 다른 Provider나
-Account를 선택할 수 있다. delegated host로 시작한 live Session은 이 picker를 노출하지 않는다.
+편집 가능한 Chat에서 유일한 prompt token의 slash를 입력하고 cursor가 draft 끝에 있으면
+prompt에 인접한 command palette가 열린다. 이어지는 문자는 순서가 정해진 `/help`,
+`/model`, `/exit` catalog를 filtering한다. `command/`의 각 child는 command 하나의 ID,
+invocation, description, typed effect를 소유한다. 얕은 registry는 uniqueness 검증,
+순서 합성, 항목 filtering, help Projection만 담당한다. 공용 overlay slot은 위·아래 이동,
+Enter 또는 Tab acceptance, Esc 닫기를 소유한다. open됐지만 아직 표시되지 않은 panel은
+key를 소유하지 않는다. 한 번 보인 instance가 refresh되면 token과 revision을 포함한
+presentation receipt가 일치하는 frame이 commit될 때까지 이동과 acceptance에 fence를
+둔다. stale하거나 대체된 frame은 이 fence를 해제할 수 없다. 일치하는 hidden commit은
+fence를 해제하는 동시에 instance를 unpresented로 표시하므로, 여전히 key를 소유하지 않는다.
+
+palette가 unknown 또는 아직 표시되지 않은 partial slash draft를 소유한 상태에서 Enter를
+누르면 로컬 unknown command를 알리고 draft를 보존한다. 표시된 partial query에서는 선택된
+enabled row를 대신 accept할 수 있다. 실제로 보인 palette를 닫은 Esc만 정확히 같은 unchanged
+draft의 ordinary submission 한 번을 허용한다. 대기 중인 Activity가 있으면 그 Activity에
+답하고, 없으면 Turn을 시작하거나 frontend가 관찰한 정확한 `TurnRef`를 steer한다.
+draft를 편집하면 이 예외는 취소된다. `/help`는 로컬 command 요약을 추가하고 `/model`은
+Activity 응답 처리보다 먼저 selection flow에 들어가므로 둘 다 대기 중인 Activity를
+암묵적으로 답하거나 취소하지 않는다. `/exit`는 명시적인 process-lifecycle 예외이며 기존
+runner 종료 경계를 사용한다. 읽기 전용 view에서는 palette가 비활성화되지만 pending
+Activity는 이 로컬 command를 숨기지 않는다.
+
+Turn이 보이는 동안 제출한 일반 prompt는 정확히 그 `TurnRef`를 `yo-core`까지 전달한다.
+worker가 이미 해당 Turn을 끝냈다면 core는 같은 text를 새 Turn으로 재해석하지 않고 steer를
+거절한다. backpressure와 retry도 같은 immutable intent를 보존한다.
+
+Yo-managed TUI에서 `/model`은 Provider, Account, Model 순서로 정렬한 항목을 범용
+selection panel에 연다. label에는 optional display name을 쓰지만 각 행의 identity는
+완전한 안정 좌표다. `/model MODEL_REFERENCE`는 startup과 같은 resolver를 사용하므로 bare
+형식은 현재 namespace에 머물고 qualified 형식은 설정된 다른 Provider나 Account를 선택할
+수 있다. delegated host로 시작한 live Session은 이 picker를 노출하지 않는다. idle에서의
+선택은 즉시 host 교체를 요청한다. active Turn, pending Activity 또는 pending prompt
+admission 중에는 다음 Turn을 위한 model 하나를 대신 예약하고 사용자에게 알린다. 현재 Turn,
+steer, Activity 응답은 이전 model을 계속 사용한다. 이후 선택은 예약을 교체하며 현재 model을
+고르면 예약을 취소한다.
+
+정확한 active Turn의 durable 완료만 예약을 확정한다. memory-only 완료나 durability gap은
+이전 model을 유지하면서 예약을 지우고 실패를 화면에 알린다. 예약이 확정되면 TUI가 terminal
+input loop를 동기적으로 벗어나고, terminal input이 중단된 동안 process host가 교체를 수행한
+뒤 보존된 TUI가 다시 진입한다.
 
 frontend 중립 `ModelSelectionController`가 이 resolution 규칙을 소유한다. 선택을
 accept하면 process host는 현재 binding을 유지한 채 startup credential snapshot,

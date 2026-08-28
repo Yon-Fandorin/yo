@@ -17,14 +17,19 @@ use yo_core::{
     AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll,
     BackendAdapter, BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure,
     BackendPoll, BackendResumeTarget, BackendStopHandle, CommandAdmission, TranscriptRecord,
-    TurnRef, UserInput,
+    TurnOutcome, TurnRef, UserInput,
 };
 
 use crate::{
     appearance::{AppearanceCandidate, ColorCapability, GlyphProfile, MotionPreference},
+    input::event::{
+        InputEvent, KeyAction, KeyCode as YoKeyCode, KeyEvent as YoKeyEvent,
+        KeyModifiers as YoKeyModifiers, KeyState,
+    },
     runner::{
         AgentAction, AgentConnection, AgentPoll, DispatchOutcome, FrameRateLimit, PendingDispatch,
         TerminationEvent, TerminationSource, TuiSession,
+        state::StateEffect,
         unix::{FrameViewport, GenerationStart, LivePresenter, LoopError, LoopExit, drive},
     },
     surface::{CellContent, Point, Size, Surface},
@@ -662,6 +667,54 @@ struct BlockingAgentBackend {
     blocked: bool,
 }
 
+struct FinishingBlockingAgentBackend {
+    entered: mpsc::Sender<TurnRef>,
+    release: mpsc::Receiver<()>,
+    pending_finish: Option<TurnRef>,
+}
+
+impl BackendAdapter for FinishingBlockingAgentBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
+    fn stop_handle(&self) -> BackendStopHandle {
+        BackendStopHandle::no_op()
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::none().with_steer()
+    }
+
+    fn execute_command(
+        &mut self,
+        command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        if let AgentCommand::StartTurn { turn, .. } = command {
+            self.pending_finish = Some(turn);
+            self.entered.send(turn).unwrap();
+            self.release.recv().unwrap();
+        }
+        Ok(BackendCommandEvidence::None)
+    }
+
+    fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
+        Ok(self
+            .pending_finish
+            .take()
+            .map_or(BackendPoll::Pending, |turn| {
+                BackendPoll::Event(BackendEvent::TurnFinished {
+                    turn,
+                    outcome: TurnOutcome::Completed,
+                })
+            }))
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        Ok(())
+    }
+}
+
 impl BackendAdapter for BlockingAgentBackend {
     type Command = AgentCommand;
     type Event = BackendEvent;
@@ -842,6 +895,116 @@ fn next_terminal_generation_retries_both_retained_backpressure_slots() {
     let parts = retained.parts_mut();
     assert!(parts.pending_control.is_none());
     assert!(parts.pending_dispatch.is_none());
+    agent.session.shutdown().unwrap();
+}
+
+// 이전 generation에서 exact Turn steer가 backpressure로 남은 뒤 그 Turn이 끝나도, 다음
+// generation의 재시도는 terminal을 죽이지 않고 같은 ID의 거절을 표시하며 draft를 보존한다.
+#[test]
+fn next_generation_recovers_a_stale_retained_steer_as_a_submission_rejection() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = FinishingBlockingAgentBackend {
+        entered: entered_tx,
+        release: release_rx,
+        pending_finish: None,
+    };
+    let session = AgentSession::start(backend).unwrap();
+    let transcript = session.transcript_reader();
+    let mut agent = CoreAgent {
+        session,
+        retries: 0,
+    };
+    wait_for_session_change(&mut agent.session);
+    dispatch_until_queued(
+        &mut agent.session,
+        AgentIntent::submit("working".to_owned()).unwrap(),
+    );
+    let observed_turn = entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+    let mut retained = TuiSession::new(ColorCapability::Unknown, MotionPreference::Standard);
+    let pending = {
+        let state = retained.parts_mut().state;
+        state
+            .observe(AgentEvent::TurnStarted {
+                turn: observed_turn,
+            })
+            .unwrap();
+        state
+            .handle(InputEvent::Paste("late steer".to_owned()), Duration::ZERO)
+            .unwrap();
+        let StateEffect::Dispatch(action) = state
+            .handle(
+                InputEvent::Key(YoKeyEvent {
+                    code: YoKeyCode::Enter,
+                    modifiers: YoKeyModifiers::NONE,
+                    action: KeyAction::Press,
+                    state: KeyState::NONE,
+                }),
+                Duration::ZERO,
+            )
+            .unwrap()
+        else {
+            panic!("active prompt input must create an exact-Turn steer");
+        };
+        assert!(matches!(
+            &action,
+            AgentAction::Steer { turn, submission }
+                if *turn == observed_turn && submission.input().as_str() == "late steer"
+        ));
+        let CommandAdmission::Backpressured(pending) = agent.dispatch(action).unwrap() else {
+            panic!("the provider-held runtime lock must retain the exact steer");
+        };
+        pending
+    };
+    *retained.parts_mut().pending_dispatch = Some(pending);
+
+    release_tx.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        if transcript.read_after(None).entries().iter().any(|entry| {
+            matches!(
+                entry.record(),
+                TranscriptRecord::EventCommitted(AgentEvent::TurnFinished { turn, .. })
+                    if *turn == observed_turn
+            )
+        }) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the core Session did not finish the retained steer target"
+        );
+        thread::yield_now();
+    }
+    retained
+        .parts_mut()
+        .state
+        .observe(AgentEvent::TurnFinished {
+            turn: observed_turn,
+            outcome: TurnOutcome::Completed,
+        })
+        .unwrap();
+
+    let polls = Rc::new(Cell::new(0));
+    run_generation(
+        &mut retained,
+        &mut agent,
+        Events::new([], Rc::clone(&polls), Rc::new(Cell::new(0))),
+        2,
+    );
+
+    assert_eq!(agent.retries, 1);
+    let parts = retained.parts_mut();
+    assert!(parts.pending_dispatch.is_none());
+    assert_eq!(parts.state.editor().text(), "late steer");
+    assert!(parts.state.transcript().items().iter().any(|item| {
+        matches!(
+            item.body(),
+            crate::transcript::TranscriptBody::Message(message)
+                if message.text().contains("Submission rejected")
+        )
+    }));
     agent.session.shutdown().unwrap();
 }
 

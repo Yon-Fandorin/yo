@@ -5,8 +5,8 @@ use super::{
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand, AgentEvent,
     ApprovalDecision, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendScriptStep, InputSubmission, RequestId, RuntimeError, RuntimePoll, ScriptedBackend,
-    SubmissionId, SubmissionOutcome, TurnOutcome, UserInput,
+    BackendScriptStep, CommandAdmission, InputSubmission, RequestId, RuntimeError, RuntimePoll,
+    ScriptedBackend, SubmissionId, SubmissionOutcome, TurnOutcome, UserInput,
 };
 
 // 첫 prompt는 Session을 한 번 만든 뒤 Turn 1을 시작하고 backend의 완료 event를 그대로
@@ -142,6 +142,52 @@ fn starts_a_new_turn_before_the_frontend_polls_completion() {
     assert_eq!(
         next_poll(&mut app).unwrap(),
         RuntimePoll::Event(AgentEvent::TurnStarted { turn: second })
+    );
+    app.shutdown().unwrap();
+}
+
+// TUI가 Turn 1을 보고 만든 steer는 worker가 그 Turn을 이미 끝냈다면 새 Turn으로
+// 재해석되지 않는다. poll 지연은 prompt의 원래 귀속을 바꿀 수 없다.
+#[test]
+fn rejects_an_exact_steer_after_its_observed_turn_finishes() {
+    let first = turn(1);
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: first,
+            input: UserInput::from("first"),
+        }),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: first,
+            outcome: TurnOutcome::Completed,
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = start_app(backend);
+
+    app.dispatch(AgentIntent::submit("first".to_owned()).unwrap())
+        .unwrap();
+    app.wait_until_processed(1);
+    app.wait_until_no_active_turn();
+    let submission =
+        InputSubmission::new(SubmissionId::new().unwrap(), UserInput::from("late steer"));
+    let submission_id = submission.id();
+
+    assert_eq!(
+        app.dispatch(AgentIntent::Steer {
+            turn: first,
+            submission,
+        })
+        .unwrap(),
+        CommandAdmission::Rejected {
+            id: submission_id,
+            rejection: crate::SubmissionRejection::new(
+                crate::SubmissionRejectionKind::StaleReference,
+                "the command's target Turn is no longer active",
+            ),
+        }
     );
     app.shutdown().unwrap();
 }

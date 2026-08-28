@@ -7,6 +7,8 @@ use std::{
     time::Instant,
 };
 
+use yo_core::SubmissionOutcome;
+
 use self::finalize::{LiveCleanup, LiveRunReport, finish};
 use crate::{
     appearance::{ColorCapability, MotionPreference},
@@ -357,27 +359,23 @@ where
         )?;
 
         if let Some(action) = pending_control.take() {
-            match agent
+            let admission = agent
                 .retry(action)
-                .map_err(|error| LoopError::Agent(error.to_string()))?
-            {
-                DispatchOutcome::Queued => {},
-                DispatchOutcome::Backpressured(action) => {
-                    *pending_control = Some(action);
-                },
+                .map_err(|error| LoopError::Agent(error.to_string()))?;
+            let effect = apply_admission(state, pending_control, admission)?;
+            if finish_admission_effect(effect, &mut frames) {
+                return Ok(LoopExit::User);
             }
         }
         if pending_control.is_none()
             && let Some(action) = pending_dispatch.take()
         {
-            match agent
+            let admission = agent
                 .retry(action)
-                .map_err(|error| LoopError::Agent(error.to_string()))?
-            {
-                DispatchOutcome::Queued => {},
-                DispatchOutcome::Backpressured(action) => {
-                    *pending_dispatch = Some(action);
-                },
+                .map_err(|error| LoopError::Agent(error.to_string()))?;
+            let effect = apply_admission(state, pending_dispatch, admission)?;
+            if finish_admission_effect(effect, &mut frames) {
+                return Ok(LoopExit::User);
             }
         }
         let backpressured = pending_control.is_some() || pending_dispatch.is_some();
@@ -412,6 +410,9 @@ where
         match observation {
             OrdinaryObservation::Agent(observation) => {
                 if apply_agent_poll(state, observation)? {
+                    if state.model_switch_ready() {
+                        return Ok(LoopExit::User);
+                    }
                     frames.request(FrameRequest::Coalesced);
                 }
             },
@@ -451,18 +452,17 @@ where
                         if is_interrupt {
                             *pending_dispatch = None;
                         }
-                        match agent
+                        let admission = agent
                             .dispatch(action)
-                            .map_err(|error| LoopError::Agent(error.to_string()))?
-                        {
-                            DispatchOutcome::Queued => {},
-                            DispatchOutcome::Backpressured(action) => {
-                                if backpressured || is_interrupt {
-                                    *pending_control = Some(action);
-                                } else {
-                                    *pending_dispatch = Some(action);
-                                }
-                            },
+                            .map_err(|error| LoopError::Agent(error.to_string()))?;
+                        let retained = if backpressured || is_interrupt {
+                            &mut *pending_control
+                        } else {
+                            &mut *pending_dispatch
+                        };
+                        let effect = apply_admission(state, retained, admission)?;
+                        if finish_admission_effect(effect, &mut frames) {
+                            return Ok(LoopExit::User);
                         }
                         frames.request(FrameRequest::Coalesced);
                     },
@@ -487,6 +487,47 @@ where
                 }
             },
         }
+    }
+}
+
+fn apply_admission(
+    state: &mut crate::runner::state::TuiState,
+    retained: &mut Option<crate::runner::PendingDispatch>,
+    admission: DispatchOutcome,
+) -> Result<StateEffect, LoopError> {
+    match admission {
+        DispatchOutcome::Queued => {
+            *retained = None;
+            Ok(StateEffect::Unchanged)
+        },
+        DispatchOutcome::Backpressured(pending) => {
+            *retained = Some(pending);
+            Ok(StateEffect::Unchanged)
+        },
+        DispatchOutcome::Rejected { id, rejection } => {
+            *retained = None;
+            state
+                .observe_submission_outcome(SubmissionOutcome::Rejected { id, rejection })
+                .map_err(LoopError::State)
+        },
+    }
+}
+
+fn finish_admission_effect(effect: StateEffect, frames: &mut FrameScheduler) -> bool {
+    match effect {
+        StateEffect::Unchanged => false,
+        StateEffect::Redraw => {
+            frames.request(FrameRequest::Coalesced);
+            false
+        },
+        StateEffect::Exit => true,
+        StateEffect::Dispatch(_)
+        | StateEffect::WorkspaceSearch(_)
+        | StateEffect::SkillSearch(_)
+        | StateEffect::Resize(_)
+        | StateEffect::Suspend => {
+            unreachable!("submission admission cannot produce an unrelated state effect")
+        },
     }
 }
 

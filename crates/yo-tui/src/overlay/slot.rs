@@ -7,6 +7,12 @@ use crate::input::event::{InputEvent, KeyAction};
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct OverlayInstanceToken(u64);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OverlayPresentation {
+    token: OverlayInstanceToken,
+    revision: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AcceptanceReceipt {
     token: OverlayInstanceToken,
@@ -18,6 +24,8 @@ pub(crate) enum OverlayInputEffect {
     Unhandled,
     Consumed,
     Redraw,
+    Dismissed(OverlayInstanceToken),
+    AcceptedEmpty(OverlayInstanceToken),
     FilterChanged(usize),
     Accepted(AcceptanceReceipt),
 }
@@ -25,6 +33,7 @@ pub(crate) enum OverlayInputEffect {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SlotError {
     TokenOverflow,
+    PresentationRevisionOverflow,
     StaleToken,
     NoSelection,
     ChatNotVisible,
@@ -36,7 +45,6 @@ pub(crate) enum SlotError {
 pub(crate) struct PromptOverlaySlot {
     generation: u64,
     current: Option<OverlayInstance>,
-    presented: bool,
     bindings: OverlayBindings,
 }
 
@@ -44,12 +52,31 @@ pub(crate) struct PromptOverlaySlot {
 struct OverlayInstance {
     token: OverlayInstanceToken,
     panel: SelectionPanel,
+    presentation_revision: u64,
+    presented: bool,
+    presentation_pending: bool,
+    accepts_empty: bool,
 }
 
 impl PromptOverlaySlot {
     pub(crate) fn open(
         &mut self,
         snapshot: PanelSnapshot,
+    ) -> Result<OverlayInstanceToken, SlotError> {
+        self.open_inner(snapshot, false)
+    }
+
+    pub(crate) fn open_accepting_empty(
+        &mut self,
+        snapshot: PanelSnapshot,
+    ) -> Result<OverlayInstanceToken, SlotError> {
+        self.open_inner(snapshot, true)
+    }
+
+    fn open_inner(
+        &mut self,
+        snapshot: PanelSnapshot,
+        accepts_empty: bool,
     ) -> Result<OverlayInstanceToken, SlotError> {
         self.generation = self
             .generation
@@ -59,8 +86,11 @@ impl PromptOverlaySlot {
         self.current = Some(OverlayInstance {
             token,
             panel: SelectionPanel::new(snapshot),
+            presentation_revision: 0,
+            presented: false,
+            presentation_pending: false,
+            accepts_empty,
         });
-        self.presented = false;
         Ok(token)
     }
 
@@ -70,6 +100,13 @@ impl PromptOverlaySlot {
         snapshot: PanelSnapshot,
     ) -> Result<(), SlotError> {
         let current = self.matching_mut(token)?;
+        if current.presented || current.presentation_pending {
+            current.presentation_revision = current
+                .presentation_revision
+                .checked_add(1)
+                .ok_or(SlotError::PresentationRevisionOverflow)?;
+            current.presentation_pending = true;
+        }
         current.panel.refresh(snapshot);
         Ok(())
     }
@@ -82,7 +119,6 @@ impl PromptOverlaySlot {
 
     pub(crate) fn close_current(&mut self) {
         self.current = None;
-        self.presented = false;
     }
 
     pub(crate) fn accept(
@@ -105,7 +141,11 @@ impl PromptOverlaySlot {
     }
 
     pub(crate) fn handle(&mut self, input: &InputEvent) -> OverlayInputEffect {
-        if !self.presented {
+        if !self
+            .current
+            .as_ref()
+            .is_some_and(|current| current.presented)
+        {
             return OverlayInputEffect::Unhandled;
         }
         let Some(binding) = self.bindings.classify(input) else {
@@ -114,11 +154,21 @@ impl PromptOverlaySlot {
         match binding.action {
             OverlayAction::Dismiss => {
                 if binding.key_action == KeyAction::Press {
+                    let token = self.current().token;
                     self.close_current();
-                    OverlayInputEffect::Redraw
+                    OverlayInputEffect::Dismissed(token)
                 } else {
                     OverlayInputEffect::Consumed
                 }
+            },
+            OverlayAction::Previous
+            | OverlayAction::Next
+            | OverlayAction::FilterPrevious
+            | OverlayAction::FilterNext
+            | OverlayAction::Accept
+                if self.current().presentation_pending =>
+            {
+                OverlayInputEffect::Consumed
             },
             OverlayAction::Previous => {
                 self.current_mut().panel.previous();
@@ -145,6 +195,16 @@ impl PromptOverlaySlot {
             OverlayAction::Accept => {
                 if binding.key_action == KeyAction::Press {
                     let token = self.current().token;
+                    if !self.current().panel.is_fresh() {
+                        return OverlayInputEffect::Consumed;
+                    }
+                    if self.current().panel.selected_identity().is_none() {
+                        return if self.current().accepts_empty {
+                            OverlayInputEffect::AcceptedEmpty(token)
+                        } else {
+                            OverlayInputEffect::Consumed
+                        };
+                    }
                     self.accept(token)
                         .map_or(OverlayInputEffect::Consumed, OverlayInputEffect::Accepted)
                 } else {
@@ -156,7 +216,9 @@ impl PromptOverlaySlot {
     }
 
     pub(crate) fn wants_input(&self, input: &InputEvent) -> bool {
-        self.presented
+        self.current
+            .as_ref()
+            .is_some_and(|current| current.presented)
             && self.bindings.classify(input).is_some_and(|binding| {
                 binding.action != OverlayAction::Interrupt
                     && (!matches!(
@@ -170,16 +232,50 @@ impl PromptOverlaySlot {
         self.current.as_ref().map(|current| &current.panel)
     }
 
+    #[cfg(test)]
     pub(crate) const fn is_open(&self) -> bool {
         self.current.is_some()
+    }
+
+    pub(crate) fn is_current(&self, token: OverlayInstanceToken) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|current| current.token == token)
     }
 
     pub(crate) const fn bindings(&self) -> &OverlayBindings {
         &self.bindings
     }
 
+    pub(crate) fn presentation(&self) -> Option<OverlayPresentation> {
+        self.current.as_ref().map(|current| OverlayPresentation {
+            token: current.token,
+            revision: current.presentation_revision,
+        })
+    }
+
+    pub(crate) fn commit_presentation(
+        &mut self,
+        presentation: OverlayPresentation,
+        visible: bool,
+    ) -> bool {
+        let Some(current) = self.current.as_mut().filter(|current| {
+            current.token == presentation.token
+                && current.presentation_revision == presentation.revision
+        }) else {
+            return false;
+        };
+        current.presented = visible;
+        current.presentation_pending = false;
+        true
+    }
+
+    #[cfg(test)]
     pub(crate) fn set_presented(&mut self, presented: bool) {
-        self.presented = presented && self.current.is_some();
+        if let Some(current) = self.current.as_mut() {
+            current.presented = presented;
+            current.presentation_pending = false;
+        }
     }
 
     pub(crate) fn set_pending(

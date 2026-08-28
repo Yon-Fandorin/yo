@@ -410,10 +410,28 @@ fn retains_the_temporal_target_while_the_runtime_is_busy() {
             },
         );
     }
-    assert!(matches!(
-        app.retry(retained),
-        Err(AgentSessionError::TurnNoLongerActive)
-    ));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut admission = app.retry(retained).unwrap();
+    loop {
+        match admission {
+            CommandAdmission::Rejected { id, rejection } => {
+                assert_eq!(id, submission_id);
+                assert_eq!(
+                    rejection,
+                    crate::SubmissionRejection::new(
+                        SubmissionRejectionKind::StaleReference,
+                        "the command's target Turn is no longer active",
+                    )
+                );
+                break;
+            },
+            CommandAdmission::Backpressured(retained) if Instant::now() < deadline => {
+                thread::yield_now();
+                admission = app.retry(retained).unwrap();
+            },
+            other => panic!("the finished Turn steer did not resolve as rejected: {other:?}"),
+        }
+    }
     app.shutdown().unwrap();
 }
 
@@ -464,6 +482,9 @@ fn accepted_interrupt_rejects_retained_and_new_steers() {
                 );
                 retained_interrupt = pending;
                 thread::sleep(Duration::from_millis(1));
+            },
+            CommandAdmission::Rejected { .. } => {
+                panic!("an interrupt has no correlated submission to reject")
             },
         }
     }

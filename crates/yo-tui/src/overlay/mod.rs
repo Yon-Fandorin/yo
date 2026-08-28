@@ -10,7 +10,8 @@ pub(crate) use selection::{
     SelectionPanelGlyphs, SelectionPanelStyles,
 };
 pub(crate) use slot::{
-    AcceptanceReceipt, OverlayInputEffect, OverlayInstanceToken, PromptOverlaySlot, SlotError,
+    AcceptanceReceipt, OverlayInputEffect, OverlayInstanceToken, OverlayPresentation,
+    PromptOverlaySlot, SlotError,
 };
 
 #[cfg(test)]

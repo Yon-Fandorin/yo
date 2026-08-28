@@ -95,7 +95,7 @@ fn all_disabled_panel_remains_displayable_without_acceptance() {
 #[test]
 fn escape_dismisses_visible_panel_while_ctrl_c_bypasses_it() {
     let mut slot = PromptOverlaySlot::default();
-    slot.open(snapshot(vec![enabled("one", "One")])).unwrap();
+    let token = slot.open(snapshot(vec![enabled("one", "One")])).unwrap();
     slot.set_presented(true);
 
     assert_eq!(
@@ -105,7 +105,7 @@ fn escape_dismisses_visible_panel_while_ctrl_c_bypasses_it() {
     assert!(slot.panel().is_some());
     assert_eq!(
         slot.handle(&key(KeyCode::Escape, KeyModifiers::NONE)),
-        OverlayInputEffect::Redraw
+        OverlayInputEffect::Dismissed(token)
     );
     assert!(slot.panel().is_none());
 }
@@ -199,10 +199,68 @@ fn pending_snapshot_gate_blocks_acceptance_without_changing_entry_availability()
 
     slot.refresh(token, snapshot(vec![enabled("one", "One")]))
         .unwrap();
+    let refreshed = slot.presentation().unwrap();
+    assert_eq!(
+        slot.handle(&key(KeyCode::Enter, KeyModifiers::NONE)),
+        OverlayInputEffect::Consumed
+    );
+    assert!(slot.commit_presentation(refreshed, true));
     let OverlayInputEffect::Accepted(receipt) =
         slot.handle(&key(KeyCode::Enter, KeyModifiers::NONE))
     else {
         panic!("fresh snapshot must accept its preserved enabled selection");
     };
     assert_eq!(receipt.identity(), "one");
+}
+
+// 이미 표시된 instance를 refresh하면 이전 frame receipt는 새 snapshot의 selection gate를
+// 해제할 수 없고, 정확히 새 revision이 표시된 뒤에만 Enter가 다시 acceptance된다.
+#[test]
+fn stale_presentation_receipt_cannot_release_a_refreshed_panel() {
+    let mut slot = PromptOverlaySlot::default();
+    let token = slot.open(snapshot(vec![enabled("one", "One")])).unwrap();
+    let first = slot.presentation().unwrap();
+    assert!(slot.commit_presentation(first, true));
+
+    slot.refresh(token, snapshot(vec![enabled("two", "Two")]))
+        .unwrap();
+    let refreshed = slot.presentation().unwrap();
+    assert_ne!(refreshed, first);
+    assert!(!slot.commit_presentation(first, true));
+    assert_eq!(
+        slot.handle(&key(KeyCode::Enter, KeyModifiers::NONE)),
+        OverlayInputEffect::Consumed
+    );
+
+    assert!(slot.commit_presentation(refreshed, true));
+    let OverlayInputEffect::Accepted(receipt) =
+        slot.handle(&key(KeyCode::Enter, KeyModifiers::NONE))
+    else {
+        panic!("matching refreshed presentation must release acceptance");
+    };
+    assert_eq!(receipt.identity(), "two");
+}
+
+// layout에 가려져 한 번도 보이지 않은 panel의 refresh는 selection 입력을 새로 소유하지
+// 않는다. matching hidden commit 뒤에도 editor가 Enter와 Esc를 계속 받는다.
+#[test]
+fn hidden_refresh_remains_unpresented_and_yields_input() {
+    let mut slot = PromptOverlaySlot::default();
+    let token = slot.open(snapshot(vec![enabled("one", "One")])).unwrap();
+    let hidden = slot.presentation().unwrap();
+    assert!(slot.commit_presentation(hidden, false));
+
+    slot.refresh(token, snapshot(vec![enabled("two", "Two")]))
+        .unwrap();
+    let refreshed = slot.presentation().unwrap();
+    assert_eq!(refreshed, hidden);
+    assert!(slot.commit_presentation(refreshed, false));
+    assert_eq!(
+        slot.handle(&key(KeyCode::Enter, KeyModifiers::NONE)),
+        OverlayInputEffect::Unhandled
+    );
+    assert_eq!(
+        slot.handle(&key(KeyCode::Escape, KeyModifiers::NONE)),
+        OverlayInputEffect::Unhandled
+    );
 }

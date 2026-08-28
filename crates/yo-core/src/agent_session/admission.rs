@@ -6,7 +6,8 @@ use std::{
 
 use super::{AgentIntent, AgentSession, AgentSessionError, CommandAdmission, PendingCommand};
 use crate::{
-    ActivityRequestRef, ActivityResponse, AgentCommand, SubmissionId, TurnId, TurnRef, UserInput,
+    ActivityRequestRef, ActivityResponse, AgentCommand, SubmissionId, SubmissionRejection,
+    SubmissionRejectionKind, TurnId, TurnRef, UserInput,
 };
 
 #[derive(Default)]
@@ -18,6 +19,16 @@ pub(super) struct SessionState {
 }
 
 impl AgentSession {
+    fn stale_turn_rejection(id: SubmissionId) -> CommandAdmission {
+        CommandAdmission::Rejected {
+            id,
+            rejection: SubmissionRejection::new(
+                SubmissionRejectionKind::StaleReference,
+                "the command's target Turn is no longer active",
+            ),
+        }
+    }
+
     fn resolve_action(
         &mut self,
         action: AgentIntent,
@@ -49,6 +60,23 @@ impl AgentSession {
                         submission_id,
                     ))
                 }
+            },
+            AgentIntent::Steer { turn, submission } => {
+                if state.active_turn != Some(turn) {
+                    return Err(AgentSessionError::TurnNoLongerActive);
+                }
+                if state.interrupted_turns.contains(&turn) {
+                    return Err(AgentSessionError::TurnInterruptPending);
+                }
+                let submission_id = submission.id();
+                self.reserve_submission(submission_id)?;
+                Ok(PendingCommand::from_submission(
+                    AgentCommand::SteerTurn {
+                        turn,
+                        input: submission.into_input(),
+                    },
+                    submission_id,
+                ))
             },
             AgentIntent::Interrupt => {
                 Ok(PendingCommand::from_command(AgentCommand::InterruptTurn {
@@ -95,11 +123,21 @@ impl AgentSession {
                         .store(turn.turn_id().get().get(), Ordering::Release);
                 },
                 Some(active) if active == *turn => {},
-                Some(_) => return Err(AgentSessionError::TurnNoLongerActive),
+                Some(_) => {
+                    return pending.submission_id().map_or_else(
+                        || Err(AgentSessionError::TurnNoLongerActive),
+                        |id| Ok(Self::stale_turn_rejection(id)),
+                    );
+                },
             },
-            AgentCommand::SteerTurn { turn, .. } | AgentCommand::InterruptTurn { turn }
-                if state.active_turn != Some(*turn) =>
-            {
+            AgentCommand::SteerTurn { turn, .. } if state.active_turn != Some(*turn) => {
+                return Ok(Self::stale_turn_rejection(
+                    pending
+                        .submission_id()
+                        .expect("every steer command carries a SubmissionId"),
+                ));
+            },
+            AgentCommand::InterruptTurn { turn } if state.active_turn != Some(*turn) => {
                 return Err(AgentSessionError::TurnNoLongerActive);
             },
             _ => {},
@@ -197,6 +235,17 @@ impl AgentSession {
                     ))
                 }
             },
+            AgentIntent::Steer { turn, submission } => {
+                let submission_id = submission.id();
+                self.reserve_submission(submission_id)?;
+                Ok(PendingCommand::from_submission(
+                    AgentCommand::SteerTurn {
+                        turn,
+                        input: submission.into_input(),
+                    },
+                    submission_id,
+                ))
+            },
             AgentIntent::Interrupt => {
                 Ok(PendingCommand::from_command(AgentCommand::InterruptTurn {
                     turn: active_turn.ok_or(AgentSessionError::NoActiveTurn)?,
@@ -228,7 +277,19 @@ impl AgentSession {
             },
             Err(TryLockError::Poisoned(error)) => error.into_inner(),
         };
-        let command = self.resolve_action(action, &mut state)?;
+        let exact_steer_id = match &action {
+            AgentIntent::Steer { submission, .. } => Some(submission.id()),
+            _ => None,
+        };
+        let command = match self.resolve_action(action, &mut state) {
+            Ok(command) => command,
+            Err(AgentSessionError::TurnNoLongerActive) if exact_steer_id.is_some() => {
+                let id = exact_steer_id.expect("the guarded exact steer has an identity");
+                self.reserve_submission(id)?;
+                return Ok(Self::stale_turn_rejection(id));
+            },
+            Err(error) => return Err(error),
+        };
         self.queue_command(command, &mut state)
     }
 

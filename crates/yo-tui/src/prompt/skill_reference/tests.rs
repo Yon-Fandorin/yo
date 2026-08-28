@@ -76,6 +76,7 @@ fn left_and_right_cycle_provenance_filters_over_cached_candidates() {
     };
     assert_eq!(index, 1);
     assert!(assist.filter_changed(index, &mut overlay));
+    overlay.set_presented(true);
     let OverlayInputEffect::Accepted(receipt) = overlay.handle(&key(KeyCode::Enter)) else {
         panic!("the workspace result should remain selectable");
     };
@@ -147,6 +148,7 @@ fn pending_replacement_blocks_filter_changes_until_matching_skill_results_arrive
         ),
         &mut overlay,
     );
+    overlay.set_presented(true);
     let OverlayInputEffect::Accepted(receipt) = overlay.handle(&key(KeyCode::Enter)) else {
         panic!("matching replacement results must reopen acceptance");
     };

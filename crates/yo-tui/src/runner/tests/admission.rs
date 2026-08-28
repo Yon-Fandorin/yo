@@ -67,6 +67,32 @@ fn committed_submitted_prompt_becomes_one_user_transcript_item() {
     assert_eq!(rendered_row(&state, Size::new(12, 3), 0), "❯ question");
 }
 
+// active Turn을 보고 작성한 prompt는 generic submit이 아니라 그 TurnRef를 고정한 steer로
+// 전달되어, core가 poll 지연 뒤 새 Turn으로 재해석할 수 없다.
+#[test]
+fn active_turn_submission_carries_the_exact_observed_turn() {
+    let mut state = TuiState::new();
+    let observed = turn();
+    state
+        .observe(yo_core::AgentEvent::TurnStarted { turn: observed })
+        .unwrap();
+    state
+        .handle(
+            InputEvent::Paste("focus on tests".to_owned()),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+    let StateEffect::Dispatch(AgentAction::Steer { turn, submission }) = state
+        .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+        .unwrap()
+    else {
+        panic!("active-Turn input must retain its observed TurnRef");
+    };
+    assert_eq!(turn, observed);
+    assert_eq!(submission.input().as_str(), "focus on tests");
+}
+
 // admission이 진행되는 동안 사용자가 draft를 고치면 이전 snapshot의 Accepted는 그 새
 // 편집을 지우지 않고, 같은 ID 결과를 다시 받아도 이미 소비한 snapshot을 건드리지 않는다.
 #[test]

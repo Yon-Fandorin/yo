@@ -3,19 +3,20 @@ use std::{collections::VecDeque, time::Duration};
 use yo_core::{
     ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent, ApprovalDecision, InputSubmission,
     JournalDurability, RequestTraceEntry, SkillReferenceSearchRequest, SkillReferenceSearchUpdate,
-    SubmissionId, SubmissionOutcome, TranscriptRecord, UserInput, WorkspaceReferenceSearchRequest,
-    WorkspaceReferenceSearchUpdate,
+    SubmissionId, SubmissionOutcome, TranscriptRecord, TurnRef, UserInput,
+    WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchUpdate,
 };
 
 use crate::{
     appearance::{AppearancePin, AppearanceRevision},
+    command::{CommandEffect, CommandPalette, CommandRegistry, model_argument},
     input::{
         editor::{EditorEffect, PromptEditor},
         event::InputEvent,
     },
     overlay::{
-        AcceptanceReceipt, OverlayInputEffect, OverlayInstanceToken, PanelSnapshot,
-        PromptOverlaySlot, SlotError,
+        AcceptanceReceipt, OverlayInputEffect, OverlayInstanceToken, OverlayPresentation,
+        PanelSnapshot, PromptOverlaySlot, SlotError,
     },
     prompt::{
         assist::{PromptAssistController, PromptAssistRequest},
@@ -84,6 +85,7 @@ pub(super) struct PreparedFrame {
     pub(super) appearance_revision: AppearanceRevision,
     pub(super) motion_demand: Option<MotionDemand>,
     pub(super) overlay_presented: bool,
+    pub(super) overlay_presentation: Option<OverlayPresentation>,
     pub(super) reprepare_for_publication: bool,
     view_state: ObservabilityViewState,
 }
@@ -99,17 +101,19 @@ pub(super) struct TuiState {
     editor: PromptEditor,
     views: ObservabilityViews,
     pending_requests: VecDeque<PendingRequest>,
-    turn_active: bool,
+    active_turn: Option<TurnRef>,
     durability: Option<JournalDurability>,
     session_info: TuiSessionInfo,
     presentation_mode: PresentationMode,
     overlay: PromptOverlaySlot,
+    command_palette: CommandPalette,
     accepted_overlays: VecDeque<AcceptanceReceipt>,
     prompt_assist: PromptAssistController,
     pending_submissions: VecDeque<InputSubmission>,
     model_selection: Option<ModelSelectionState>,
     model_overlay: Option<OverlayInstanceToken>,
     pending_model_selection: Option<yo_core::ModelSelection>,
+    reserved_model_selection: Option<yo_core::ModelSelection>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,6 +158,8 @@ impl TuiState {
             ViewInputEffect::Redraw => {
                 if self.views.active() != active_before {
                     self.overlay.close_current();
+                    self.command_palette.dismiss();
+                    self.model_overlay = None;
                     self.prompt_assist.cancel();
                 }
                 return Ok(StateEffect::Redraw);
@@ -163,11 +169,29 @@ impl TuiState {
         match self.overlay.handle(&input) {
             OverlayInputEffect::Unhandled => {},
             OverlayInputEffect::Consumed => return Ok(StateEffect::Unchanged),
-            OverlayInputEffect::Redraw => {
-                if !self.overlay.is_open() {
-                    self.prompt_assist.cancel();
+            OverlayInputEffect::Redraw => return Ok(StateEffect::Redraw),
+            OverlayInputEffect::Dismissed(token) => {
+                if self
+                    .command_palette
+                    .dismiss_visible(token, self.editor.text())
+                {
+                    return Ok(StateEffect::Redraw);
                 }
+                if self.model_overlay == Some(token) {
+                    self.model_overlay = None;
+                }
+                self.prompt_assist.cancel();
                 return Ok(StateEffect::Redraw);
+            },
+            OverlayInputEffect::AcceptedEmpty(token) => {
+                if self
+                    .command_palette
+                    .reject_visible(token, &mut self.overlay)
+                {
+                    self.push_unknown_command_notice(self.editor.text().to_owned())?;
+                    return Ok(StateEffect::Redraw);
+                }
+                return Ok(StateEffect::Unchanged);
             },
             OverlayInputEffect::FilterChanged(selected) => {
                 self.prompt_assist
@@ -175,6 +199,10 @@ impl TuiState {
                 return Ok(StateEffect::Redraw);
             },
             OverlayInputEffect::Accepted(receipt) => {
+                if let Some(command) = self.command_palette.accept(&receipt) {
+                    let draft = self.editor.text().to_owned();
+                    return self.execute_command(command.effect(), command.invocation(), &draft);
+                }
                 if self.prompt_assist.accept(&receipt, &mut self.editor) {
                     return Ok(StateEffect::Redraw);
                 }
@@ -195,7 +223,7 @@ impl TuiState {
 
         let previous_text = self.editor.text().to_owned();
         let previous_cursor = self.editor.cursor_byte_index();
-        let effect = self.editor.handle(input, self.turn_active, now);
+        let effect = self.editor.handle(input, self.active_turn.is_some(), now);
         match effect {
             EditorEffect::BufferChanged => {
                 let edit = WorkspaceEdit::between(
@@ -207,23 +235,52 @@ impl TuiState {
                 let assist_eligible = self.views.active()
                     == crate::runner::view::ObservabilityView::Chat
                     && !self.has_pending_request();
-                Ok(self
-                    .prompt_assist
-                    .prompt_changed(
-                        &self.editor,
-                        &mut self.overlay,
-                        edit.as_ref(),
-                        assist_eligible,
-                    )
-                    .map_or(StateEffect::Redraw, |request| match request {
+                let command_eligible =
+                    self.views.active() == crate::runner::view::ObservabilityView::Chat;
+                let request = self.prompt_assist.prompt_changed(
+                    &self.editor,
+                    &mut self.overlay,
+                    edit.as_ref(),
+                    assist_eligible,
+                );
+                self.command_palette.sync(
+                    self.editor.text(),
+                    self.editor.cursor_byte_index(),
+                    &mut self.overlay,
+                    command_eligible,
+                );
+                Ok(
+                    request.map_or(StateEffect::Redraw, |request| match request {
                         PromptAssistRequest::Workspace(request) => {
                             StateEffect::WorkspaceSearch(request)
                         },
                         PromptAssistRequest::Skill(request) => StateEffect::SkillSearch(request),
-                    }))
+                    }),
+                )
             },
             EditorEffect::Submitted(text) => {
-                if self.prompt_assist.has_accepted_references() {
+                let escaped_palette = self.command_palette.take_escape(&text);
+                if !escaped_palette {
+                    if let Some(command) = self
+                        .command_palette
+                        .exact_submission(&text, previous_cursor)
+                    {
+                        self.command_palette.close(&mut self.overlay);
+                        return self.execute_command(command.effect(), command.invocation(), &text);
+                    }
+                    if model_argument(&text).is_some() {
+                        self.command_palette.close(&mut self.overlay);
+                        return self.handle_model_command(&text, &text);
+                    }
+                    if self.command_palette.owns_submission(&text, previous_cursor) {
+                        self.command_palette.close(&mut self.overlay);
+                        self.editor.replace_range(0..0, &text);
+                        self.push_unknown_command_notice(text)?;
+                        return Ok(StateEffect::Redraw);
+                    }
+                }
+                self.command_palette.close(&mut self.overlay);
+                if !escaped_palette && self.prompt_assist.has_accepted_references() {
                     self.editor.replace_range(0..0, &text);
                     self.chat.push_notice(
                         "Structured reference selected. Exact admission is not connected yet; the draft was preserved."
@@ -233,9 +290,6 @@ impl TuiState {
                 }
                 if let Some(request) = self.pending_requests.front().copied() {
                     return self.request_response(request, text);
-                }
-                if text == "/model" || text.starts_with("/model ") {
-                    return self.handle_model_command(&text);
                 }
                 if self
                     .pending_submissions
@@ -253,9 +307,15 @@ impl TuiState {
                 let submission = InputSubmission::new(id, UserInput::new(text.clone()));
                 self.pending_submissions.push_back(submission.clone());
                 self.editor.replace_range(0..0, &text);
-                Ok(StateEffect::Dispatch(AgentAction::Submit(submission)))
+                Ok(StateEffect::Dispatch(match self.active_turn {
+                    Some(turn) => AgentAction::Steer { turn, submission },
+                    None => AgentAction::Submit(submission),
+                }))
             },
-            EditorEffect::Exit => Ok(StateEffect::Exit),
+            EditorEffect::Exit => {
+                self.cancel_model_switches();
+                Ok(StateEffect::Exit)
+            },
             EditorEffect::InterruptTask => Ok(StateEffect::Dispatch(AgentAction::Interrupt)),
             EditorEffect::Unhandled | EditorEffect::NoChange | EditorEffect::ExitArmed => {
                 Ok(StateEffect::Unchanged)
@@ -289,6 +349,14 @@ impl TuiState {
             SubmissionOutcome::Rejected { rejection, .. } => {
                 self.chat
                     .push_notice(format!("Submission rejected: {}", rejection.message()))?;
+                if self.active_turn.is_none()
+                    && self.pending_submissions.is_empty()
+                    && !self.has_pending_request()
+                    && let Some(selection) = self.reserved_model_selection.take()
+                {
+                    self.pending_model_selection = Some(selection);
+                    return Ok(StateEffect::Exit);
+                }
                 Ok(StateEffect::Redraw)
             },
         }
@@ -298,7 +366,7 @@ impl TuiState {
         &mut self,
         record: TranscriptRecord,
     ) -> Result<StateEffect, StateError> {
-        self.observe_live_lifecycle(&record);
+        let lifecycle_effect = self.observe_live_lifecycle(&record)?;
         let chat_change = self.chat.observe_record(&record)?;
         let effect = record_effect(&record);
         self.views
@@ -310,7 +378,11 @@ impl TuiState {
                 },
             )
             .map_err(StateError::Transcript)?;
-        Ok(effect)
+        Ok(match lifecycle_effect {
+            StateEffect::Exit => StateEffect::Exit,
+            StateEffect::Redraw => StateEffect::Redraw,
+            _ => effect,
+        })
     }
 
     pub(super) fn observe_request_trace(&mut self, entry: RequestTraceEntry) {
@@ -387,12 +459,15 @@ impl TuiState {
         self.observe_record(TranscriptRecord::EventCommitted(event))
     }
 
-    fn observe_live_lifecycle(&mut self, record: &TranscriptRecord) {
+    fn observe_live_lifecycle(
+        &mut self,
+        record: &TranscriptRecord,
+    ) -> Result<StateEffect, StateError> {
         let TranscriptRecord::EventCommitted(event) = record else {
-            return;
+            return Ok(StateEffect::Unchanged);
         };
         match event {
-            AgentEvent::TurnStarted { .. } => self.turn_active = true,
+            AgentEvent::TurnStarted { turn } => self.active_turn = Some(*turn),
             AgentEvent::ActivityStarted { activity, kind } => {
                 let request = match kind {
                     ActivityKind::ApprovalRequest { request_id } => Some(PendingRequest::Approval(
@@ -405,6 +480,8 @@ impl TuiState {
                 };
                 if let Some(request) = request {
                     self.overlay.close_current();
+                    self.command_palette.dismiss();
+                    self.model_overlay = None;
                     self.prompt_assist.cancel();
                     self.pending_requests.push_back(request);
                 }
@@ -413,9 +490,24 @@ impl TuiState {
                 self.pending_requests
                     .retain(|request| request.activity() != *activity);
             },
-            AgentEvent::TurnFinished { .. } => self.turn_active = false,
+            AgentEvent::TurnFinished { turn, .. } if self.active_turn == Some(*turn) => {
+                self.active_turn = None;
+                if let Some(selection) = self.reserved_model_selection.take() {
+                    if matches!(self.durability, Some(JournalDurability::Durable { .. })) {
+                        self.pending_model_selection = Some(selection);
+                        return Ok(StateEffect::Exit);
+                    }
+                    self.chat.push_notice(
+                        "The reserved model was not applied because durable Turn completion could not be established; the previous model remains active."
+                            .to_owned(),
+                    )?;
+                    return Ok(StateEffect::Redraw);
+                }
+            },
+            AgentEvent::TurnFinished { .. } => {},
             AgentEvent::SessionCreated { .. } | AgentEvent::ActivityUpdated { .. } => {},
         }
+        Ok(StateEffect::Unchanged)
     }
 
     #[cfg(test)]
@@ -496,6 +588,7 @@ impl TuiState {
             0
         };
         let live_transcript = self.chat.transcript().suffix(live_start);
+        let overlay_presentation = self.overlay.presentation();
         let render_options = ObservabilityRenderOptions {
             appearance: snapshot,
             chrome: self.chrome_snapshot(),
@@ -557,6 +650,7 @@ impl TuiState {
             motion_demand: frame.motion_period.map(|period| MotionDemand { period }),
             view_state: frame.state,
             overlay_presented: frame.overlay_presented,
+            overlay_presentation,
             reprepare_for_publication: publication_enabled
                 && self.presentation_mode == PresentationMode::Inline
                 && !publication_eligible
@@ -566,7 +660,7 @@ impl TuiState {
 
     fn chrome_snapshot(&self) -> ShellChromeSnapshot<'_> {
         ShellChromeSnapshot {
-            turn_active: self.turn_active,
+            turn_active: self.active_turn.is_some(),
             backend: self.session_info.backend(),
             workspace: self.session_info.workspace(),
             mode: self.presentation_mode,
@@ -608,6 +702,7 @@ impl TuiState {
         if self.has_pending_request() {
             return Err(SlotError::AgentInteractionPending);
         }
+        self.command_palette.close(&mut self.overlay);
         self.overlay.open(snapshot)
     }
 
@@ -656,81 +751,91 @@ impl TuiState {
         let _ = self.chat.push_notice(notice);
     }
 
-    fn handle_model_command(&mut self, text: &str) -> Result<StateEffect, StateError> {
-        if self.turn_active || !self.pending_submissions.is_empty() || self.has_pending_request() {
-            self.chat.push_notice(
-                "Model switching is available only while the Session is idle.".to_owned(),
-            )?;
-            return Ok(StateEffect::Redraw);
-        }
+    fn handle_model_command(&mut self, text: &str, draft: &str) -> Result<StateEffect, StateError> {
         let Some(selection) = self.model_selection.as_ref() else {
             self.chat.push_notice(
                 "No configured model catalog is available for this Session.".to_owned(),
             )?;
+            self.restore_draft(draft);
             return Ok(StateEffect::Redraw);
         };
-        let argument = text
-            .strip_prefix("/model")
-            .expect("command prefix checked")
-            .trim();
+        let argument = model_argument(text).expect("command syntax checked");
         if argument.is_empty() {
-            match selection.panel() {
+            let panel = selection.panel();
+            match panel {
                 Ok(panel) => match self.overlay.open(panel) {
                     Ok(token) => {
                         self.model_overlay = Some(token);
+                        self.clear_editor();
                     },
                     Err(error) => {
                         self.chat.push_notice(format!(
                             "The model picker could not be opened: {error:?}"
                         ))?;
+                        self.restore_draft(draft);
                     },
                 },
                 Err(error) => {
                     self.chat.push_notice(error)?;
+                    self.restore_draft(draft);
                 },
             }
             return Ok(StateEffect::Redraw);
         }
-        match selection.resolve_direct(argument) {
-            Ok(selected) if selection.is_current(&selected) => {
-                self.chat
-                    .push_notice(format!("Model {} is already selected.", selected.model()))?;
-                Ok(StateEffect::Redraw)
-            },
-            Ok(selected) => {
-                self.pending_model_selection = Some(selected);
-                Ok(StateEffect::Exit)
+        let resolved = selection.resolve_direct(argument).map(|selected| {
+            let is_current = selection.is_current(&selected);
+            (selected, is_current)
+        });
+        match resolved {
+            Ok((selected, true)) => self.accept_current_model(selected),
+            Ok((selected, false)) => {
+                self.clear_editor();
+                self.admit_model_selection(selected)
             },
             Err(error) => {
                 self.chat
                     .push_notice(format!("Model switch rejected: {error}"))?;
+                self.restore_draft(draft);
                 Ok(StateEffect::Redraw)
+            },
+        }
+    }
+
+    fn execute_command(
+        &mut self,
+        effect: CommandEffect,
+        invocation: &str,
+        draft: &str,
+    ) -> Result<StateEffect, StateError> {
+        match effect {
+            CommandEffect::ShowHelp => {
+                self.chat
+                    .push_notice(CommandRegistry::built_in().help_notice())?;
+                self.clear_editor();
+                Ok(StateEffect::Redraw)
+            },
+            CommandEffect::SelectModel => self.handle_model_command(invocation, draft),
+            CommandEffect::ExitProcess => {
+                self.cancel_model_switches();
+                self.clear_editor();
+                Ok(StateEffect::Exit)
             },
         }
     }
 
     fn accept_model_selection(&mut self, identity: &str) -> Result<StateEffect, StateError> {
-        if self.turn_active || !self.pending_submissions.is_empty() || self.has_pending_request() {
-            self.chat.push_notice(
-                "Model switching is available only while the Session is idle.".to_owned(),
-            )?;
-            return Ok(StateEffect::Redraw);
-        }
         let Some(controller) = self.model_selection.as_ref() else {
             self.chat
                 .push_notice("The model selection controller is unavailable.".to_owned())?;
             return Ok(StateEffect::Redraw);
         };
-        match controller.accept_identity(identity) {
-            Ok(selected) if controller.is_current(&selected) => {
-                self.chat
-                    .push_notice(format!("Model {} is already selected.", selected.model()))?;
-                Ok(StateEffect::Redraw)
-            },
-            Ok(selected) => {
-                self.pending_model_selection = Some(selected);
-                Ok(StateEffect::Exit)
-            },
+        let accepted = controller.accept_identity(identity).map(|selected| {
+            let is_current = controller.is_current(&selected);
+            (selected, is_current)
+        });
+        match accepted {
+            Ok((selected, true)) => self.accept_current_model(selected),
+            Ok((selected, false)) => self.admit_model_selection(selected),
             Err(error) => {
                 self.chat
                     .push_notice(format!("Model switch rejected: {error}"))?;
@@ -739,9 +844,78 @@ impl TuiState {
         }
     }
 
+    fn accept_current_model(
+        &mut self,
+        selected: yo_core::ModelSelection,
+    ) -> Result<StateEffect, StateError> {
+        self.clear_editor();
+        if self.reserved_model_selection.take().is_some() {
+            self.chat.push_notice(format!(
+                "Reserved model switch canceled; model {} remains selected.",
+                selected.model()
+            ))?;
+        } else {
+            self.chat
+                .push_notice(format!("Model {} is already selected.", selected.model()))?;
+        }
+        Ok(StateEffect::Redraw)
+    }
+
+    fn admit_model_selection(
+        &mut self,
+        selected: yo_core::ModelSelection,
+    ) -> Result<StateEffect, StateError> {
+        if self.active_turn.is_some()
+            || !self.pending_submissions.is_empty()
+            || self.has_pending_request()
+        {
+            let label = format!(
+                "{}::{}::{}",
+                selected.provider().as_str(),
+                selected.account().as_str(),
+                selected.model().as_str()
+            );
+            self.reserved_model_selection = Some(selected);
+            self.chat
+                .push_notice(format!("Model {label} will be applied to the next Turn."))?;
+            Ok(StateEffect::Redraw)
+        } else {
+            self.pending_model_selection = Some(selected);
+            Ok(StateEffect::Exit)
+        }
+    }
+
+    fn push_unknown_command_notice(&mut self, text: String) -> Result<(), StateError> {
+        self.chat.push_notice(format!(
+            "Unknown command `{text}`. Press Esc while the command palette is visible to send it to the agent."
+        )).map(|_| ())
+    }
+
+    fn clear_editor(&mut self) {
+        let length = self.editor.text().len();
+        self.editor.replace_range(0..length, "");
+    }
+
+    fn restore_draft(&mut self, draft: &str) {
+        let length = self.editor.text().len();
+        self.editor.replace_range(0..length, draft);
+    }
+
+    fn cancel_model_switches(&mut self) {
+        self.pending_model_selection = None;
+        self.reserved_model_selection = None;
+    }
+
+    pub(super) const fn model_switch_ready(&self) -> bool {
+        self.pending_model_selection.is_some()
+    }
+
     pub(super) fn commit_frame(&mut self, frame: &PreparedFrame) {
         self.views.commit(frame.view_state);
-        self.overlay.set_presented(frame.overlay_presented);
+        if let Some(presentation) = frame.overlay_presentation {
+            self.overlay
+                .commit_presentation(presentation, frame.overlay_presented);
+        }
     }
 
     pub(super) fn acknowledge_publication(&mut self, frame: &PreparedFrame) -> bool {
@@ -838,7 +1012,7 @@ impl TuiState {
     }
 
     pub(super) const fn turn_active(&self) -> bool {
-        self.turn_active
+        self.active_turn.is_some()
     }
 
     pub(super) fn views(&self) -> &ObservabilityViews {

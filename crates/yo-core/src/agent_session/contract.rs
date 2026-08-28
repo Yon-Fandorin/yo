@@ -1,6 +1,6 @@
 use crate::{
     ActivityRequestRef, AgentCommand, ApprovalDecision, InputSubmission, SubmissionId,
-    SubmissionIdGenerationError, UserInput,
+    SubmissionIdGenerationError, SubmissionRejection, TurnRef, UserInput,
 };
 
 /// A frontend intent directed at an agent Session.
@@ -8,6 +8,13 @@ use crate::{
 pub enum AgentIntent {
     /// Starts a Turn or steers the active Turn.
     Submit(InputSubmission),
+    /// Steers exactly the Turn observed by the frontend.
+    Steer {
+        /// The Turn that owned the prompt when the submission was created.
+        turn: TurnRef,
+        /// The immutable correlated submission.
+        submission: InputSubmission,
+    },
     /// Requests interruption of the active Turn.
     Interrupt,
     /// Answers one correlated approval request.
@@ -43,6 +50,13 @@ pub enum CommandAdmission {
     Queued,
     /// The Session is busy; the frontend retains and retries this operation.
     Backpressured(PendingCommand),
+    /// The correlated submission was rejected before any part reached the worker.
+    Rejected {
+        /// The immutable submission identity owned by this result.
+        id: SubmissionId,
+        /// The frontend-neutral reason admission did not occur.
+        rejection: SubmissionRejection,
+    },
 }
 
 /// An opaque, single-use operation retained across nonblocking backpressure.

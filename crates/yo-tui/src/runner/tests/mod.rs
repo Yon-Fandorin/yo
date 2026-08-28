@@ -13,6 +13,7 @@ mod activity_projection;
 mod admission;
 mod appearance;
 mod backpressure;
+mod command_palette;
 mod integration;
 mod interrupt;
 mod job_control;

@@ -200,12 +200,53 @@ empty registry when the Session is resumed without repeating the flag. The
 option is rejected with `--resume`, `--continue`, or a delegated HostTarget;
 live native model replacement retains the Session's frozen empty registry.
 
-While a Yo-managed TUI is idle, `/model` opens the generic selection panel with
-entries ordered as Provider, Account, then Model. Labels use the optional
-display names, but each row carries the complete stable coordinate. `/model
-MODEL_REFERENCE` uses the same resolver as startup, so its bare form remains in
-the current namespace while a qualified form can select another configured
-Provider or Account. A delegated-host live Session does not expose this picker.
+In editable Chat, a slash in the only prompt token opens the prompt-adjacent
+command palette while the cursor is at the end of the draft. Further characters
+filter the ordered `/help`, `/model`, and `/exit` catalog. Each child under
+`command/` owns one command's ID, invocation, description, and typed effect; the
+shallow registry only validates uniqueness, composes order, filters entries,
+and projects help. The shared overlay slot owns Up/Down navigation, Enter or Tab
+acceptance, and Esc dismissal. An open but unpresented panel owns no keys. After
+a visible instance is refreshed, its token-and-revision presentation receipt
+fences movement and acceptance until the matching frame is committed; stale or
+superseded frames cannot release that fence. A matching hidden commit releases
+the fence while marking the instance unpresented, so it still owns no keys.
+
+Enter while the palette owns an unknown or unpresented partial slash draft
+reports a local unknown command and preserves the draft. A visibly presented
+partial query may instead accept its enabled selected row. Only Esc that
+dismisses a concretely visible palette arms that exact unchanged draft for one
+ordinary submission: it answers the outstanding Activity when one exists,
+otherwise it starts a Turn or steers the exact `TurnRef` observed by the
+frontend. Editing the draft cancels the exception. `/help` adds a local command summary and
+`/model` enters the selection flow before Activity-response handling, so neither
+implicitly answers or cancels an outstanding Activity. `/exit` is the explicit
+process-lifecycle exception and uses the existing runner exit boundary. A
+read-only view makes the palette ineligible; a pending Activity does not hide
+these local commands.
+
+An ordinary prompt submitted while a Turn is visible carries that exact
+`TurnRef` into `yo-core`. If the worker has already finished it, core rejects
+the steer instead of reinterpreting the same text as a new Turn. Backpressure
+and retry retain the same immutable intent.
+
+In a Yo-managed TUI, `/model` opens the generic selection panel with entries
+ordered as Provider, Account, then Model. Labels use the optional display names,
+but each row carries the complete stable coordinate. `/model MODEL_REFERENCE`
+uses the same resolver as startup, so its bare form remains in the current
+namespace while a qualified form can select another configured Provider or
+Account. A delegated-host live Session does not expose this picker. An idle
+selection requests host replacement immediately. During an active Turn, a
+pending Activity, or pending prompt admission, it instead reserves one model
+for the next Turn and tells the user; the current Turn, steers, and Activity
+responses continue on the old model. A later choice replaces the reservation,
+and choosing the current model cancels it.
+
+Only a durable completion of the exact active Turn seals a reservation. A
+memory-only or durability-gap completion clears it with a visible failure while
+keeping the previous model. Once sealed, the TUI leaves its terminal input loop
+synchronously, the process host performs replacement with terminal input
+suspended, and the retained TUI reenters afterward.
 
 The frontend-neutral `ModelSelectionController` owns those resolution rules.
 After acceptance, the process host constructs and validates the candidate
