@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    io::{self, Write},
+    time::{Duration, Instant},
+};
 
 use serde_json::{Value, json};
 use yo_backend::transport::{JsonMessagePeer, JsonRpcMailbox};
@@ -53,6 +56,9 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             )?
             .result;
         let initialize = protocol::decode_initialize(result)?;
+        if let Some(warning) = &initialize.compatibility_warning {
+            let _ = writeln!(io::stderr().lock(), "yo: warning: {warning}");
+        }
         self.peer.send(&protocol::initialized_notification())?;
         Ok(initialize)
     }

@@ -1,6 +1,6 @@
 # Codex app-server upstream 따라가기
 
-설치된 Codex minor line이 거부되거나 upstream schema 또는 event가 바뀌었을
+설치된 Codex minor line이 compatibility 경고를 내거나 upstream schema 또는 event가 바뀌었을
 때, 혹은 adapter를 의도적으로 새 app-server로 옮길 때 이 흐름을 사용한다.
 이는 운영 검증 가이드이며 adapter 계약의 두 번째 소유자가 아니다.
 
@@ -13,8 +13,9 @@
 ## 허용 전 gate
 
 새 실행 파일이 설치됐다는 사실은 compatibility 증거가 아니라 후보라는
-뜻이다. 알 수 없는 minor line은 적용 가능한 gate가 모두 통과할 때까지
-fail-closed로 유지한다.
+뜻이다. 지원하는 `0.x` protocol major 안의 알 수 없는 minor line은 일반적인
+Codex 업데이트가 시작을 막지 않도록 경고 후 계속한다. major가 다르거나
+해석할 수 없으면 계속 fail-closed로 둔다. 다음 gate로 경고를 해소한다.
 
 | gate | 확인하는 것 | 확인하지 못하는 것 |
 |---|---|---|
@@ -25,7 +26,8 @@ fail-closed로 유지한다.
 | 설치본 coding-loop test | 실제 Turn, tool, file-change, event, cleanup 흐름 | 다른 host나 terminal 경로 |
 | TUI smoke test | 사용자가 진입하고 제출하고 관찰하고 종료할 수 있음 | 해당 환경에서 실행하지 않은 macOS, SSH, 중첩 tmux |
 
-이 gate를 느슨한 minimum-version 비교로 대체하지 않는다. 이전에 검증한
+이 gate를 느슨한 minimum-version 비교로 대체하거나 경고-only line을 검증된
+line으로 표현하지 않는다. 이전에 검증한
 line은 제거에 대한 별도 compatibility 증거와 review가 없으면 유지한다.
 
 ## 후보 확인하기
@@ -66,15 +68,14 @@ tracked schema의 필요성을 입증하지 않았다면 생성된 schema는 일
 failure를 모두 검사한다.
 
 ```bash
-cargo test -p yo-core backend::codex::tests
-cargo test -p yo-core backend::codex::protocol::tests
+cargo test --locked -p yo-backend-delegated-codex
 ```
 
 그다음 후보가 설치된 환경에서 실제 initialization 경계를 실행한다.
 
 ```bash
-cargo test -p yo-core \
-  backend::codex::tests::local_codex_initializes_and_shuts_down \
+cargo test --locked -p yo-backend-delegated-codex \
+  tests::smoke::local_codex_initializes_and_shuts_down \
   -- --ignored --nocapture
 ```
 
@@ -82,8 +83,8 @@ cargo test -p yo-core \
 검증한다.
 
 ```bash
-cargo test -p yo-core \
-  agent_session::tests::codex::local_codex_completes_a_real_file_change \
+cargo test --locked -p yo-backend-delegated-codex \
+  --test live_agent_session local_codex_completes_a_real_file_change \
   -- --ignored --nocapture
 ```
 
@@ -101,8 +102,8 @@ run을 한 번 수행한다. 응답만 요구하는 prompt를 제출하고, 완�
 2. 이전 검증 line을 의도적으로 폐기하는 경우가 아니면 유지한다.
 3. positive test가 허용한 모든 line을 실행하게 한다.
 4. negative test는 실제로 검증하지 않은 line을 사용한다.
-5. 잘못되거나 알 수 없는 version은 대응 가능한 오류와 함께 fail-closed로
-   유지한다.
+5. 잘못된 version과 다른 protocol major는 대응 가능한 오류와 함께
+   fail-closed로 유지하고, 같은 major의 알 수 없는 minor는 경고-only로 둔다.
 6. [Slice 종료 기준선](../validation/#slice-종료-기준선)을 실행한다.
 7. provider compatibility는 제품 경계의 failure 동작을 바꾸므로
    fresh-context review를 받는다.

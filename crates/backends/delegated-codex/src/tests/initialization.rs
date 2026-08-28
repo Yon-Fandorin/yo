@@ -265,18 +265,21 @@ fn rejects_a_resumed_thread_with_different_model_identity() {
     assert_eq!(sent.0.borrow()[2]["method"], "thread/resume");
 }
 
-// 검증하지 않은 Codex minor 버전이면 initialized 알림이나 Session 명령을 보내기 전에
-// Initialization 실패로 연결을 중단하고, 검증된 최신 0.149는 이 경로에 들지 않게 한다.
+// 검증하지 않은 같은-major Codex minor 버전은 경고를 제공하면서도 initialized까지 보내
+// 사용자의 로컬 Codex 업데이트가 Yo Session 시작 자체를 막지 않게 한다.
 #[test]
-fn incompatible_version_fails_during_initialization() {
+fn unverified_minor_warns_and_completes_initialization() {
     let (peer, sent) = FakePeer::new([initialize_response(1, "0.150.0")]);
     let mut client = AppServerClient::new(peer, Duration::from_secs(1));
 
-    let failure = match client.initialize() {
-        Ok(_) => panic!("an unverified Codex version must not initialize"),
-        Err(failure) => failure,
-    };
+    let initialize = client.initialize().unwrap();
 
-    assert_eq!(failure.kind(), BackendFailureKind::Initialization);
-    assert_eq!(sent.0.borrow().len(), 1);
+    assert!(
+        initialize
+            .compatibility_warning
+            .as_deref()
+            .is_some_and(|warning| warning.contains("0.150.0"))
+    );
+    assert_eq!(sent.0.borrow().len(), 2);
+    assert_eq!(sent.0.borrow()[1], json!({ "method": "initialized" }));
 }

@@ -1,6 +1,6 @@
 # Follow Codex app-server upstream
 
-Use this workflow when an installed Codex minor line is rejected, an upstream
+Use this workflow when an installed Codex minor line produces a compatibility warning, an upstream
 schema or event changes, or the adapter must deliberately move to a newer
 app-server. This is operational validation guidance, not a second owner for the
 adapter contract.
@@ -14,7 +14,9 @@ Do not copy the current version set into this guide.
 ## Gate before admission
 
 A newer installed executable is a candidate, not evidence of compatibility.
-Keep an unknown minor line fail-closed until all applicable gates pass:
+Yo warns and continues for an unknown minor within the supported `0.x` protocol
+major so a routine Codex update does not block startup. A different or
+unparseable major remains fail-closed. Use these gates to retire the warning:
 
 | Gate | Establishes | Does not establish |
 |---|---|---|
@@ -25,7 +27,8 @@ Keep an unknown minor line fail-closed until all applicable gates pass:
 | Installed coding-loop test | Real Turn, tool, file-change, event, and cleanup flow | Other hosts or terminal routes |
 | TUI smoke test | The user can enter, submit, observe, and exit | macOS, SSH, or nested tmux unless run there |
 
-Do not replace these gates with a permissive minimum-version comparison.
+Do not replace these gates with a permissive minimum-version comparison or
+present a warning-only line as verified.
 Retain an older verified line unless removal has its own compatibility evidence
 and review.
 
@@ -67,15 +70,14 @@ minor line. Cover both the expected flow and a discriminating failure before
 changing the allowlist:
 
 ```bash
-cargo test -p yo-core backend::codex::tests
-cargo test -p yo-core backend::codex::protocol::tests
+cargo test --locked -p yo-backend-delegated-codex
 ```
 
 Then run the real initialization boundary with the candidate installed:
 
 ```bash
-cargo test -p yo-core \
-  backend::codex::tests::local_codex_initializes_and_shuts_down \
+cargo test --locked -p yo-backend-delegated-codex \
+  tests::smoke::local_codex_initializes_and_shuts_down \
   -- --ignored --nocapture
 ```
 
@@ -83,8 +85,8 @@ When authentication and model access are available, verify the complete coding
 loop in its disposable workspace:
 
 ```bash
-cargo test -p yo-core \
-  agent_session::tests::codex::local_codex_completes_a_real_file_change \
+cargo test --locked -p yo-backend-delegated-codex \
+  --test live_agent_session local_codex_completes_a_real_file_change \
   -- --ignored --nocapture
 ```
 
@@ -102,7 +104,8 @@ Admit the minor line only after the relevant evidence passes:
 2. Keep the previous verified lines unless deliberately retiring one.
 3. Make the positive test exercise every admitted line.
 4. Make the negative test use an actually unverified line.
-5. Keep malformed or unknown versions fail-closed with an actionable error.
+5. Keep malformed versions and different protocol majors fail-closed with an
+   actionable error; keep same-major unknown minors warning-only.
 6. Run the [Slice-close baseline](../validation/#slice-close-baseline).
 7. Obtain fresh-context review because provider compatibility changes failure
    behavior at a product boundary.

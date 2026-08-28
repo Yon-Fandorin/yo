@@ -38,6 +38,8 @@ pub(super) struct InitializeResult {
     pub user_agent: String,
     pub platform_family: String,
     pub platform_os: String,
+    #[serde(skip)]
+    pub compatibility_warning: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -163,7 +165,8 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
             format!("invalid Codex initialize response: {error}"),
         )
     })?;
-    ensure_supported_version(&initialize.user_agent)?;
+    let mut initialize = initialize;
+    initialize.compatibility_warning = version_compatibility_warning(&initialize.user_agent)?;
     if initialize.platform_family != "unix"
         || !matches!(initialize.platform_os.as_str(), "linux" | "macos")
     {
@@ -238,7 +241,7 @@ fn decode_capacity_window(
         .map_err(|error| protocol_failure(error.to_string()))
 }
 
-fn ensure_supported_version(user_agent: &str) -> Result<(), BackendFailure> {
+fn version_compatibility_warning(user_agent: &str) -> Result<Option<String>, BackendFailure> {
     let version = user_agent
         .split_whitespace()
         .find_map(|part| part.split_once('/').map(|(_, version)| version))
@@ -246,22 +249,37 @@ fn ensure_supported_version(user_agent: &str) -> Result<(), BackendFailure> {
     let mut components = version.split('.');
     let major = components.next().and_then(|part| part.parse::<u64>().ok());
     let minor = components.next().and_then(|part| part.parse::<u64>().ok());
-    if major == Some(SUPPORTED_CODEX_MAJOR)
-        && minor.is_some_and(|minor| SUPPORTED_CODEX_MINORS.contains(&minor))
-    {
-        return Ok(());
+    let Some(major) = major else {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Initialization,
+            format!("Codex app-server returned an unparseable version in `{user_agent}`"),
+        ));
+    };
+    let Some(minor) = minor else {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Initialization,
+            format!("Codex app-server returned an unparseable version in `{user_agent}`"),
+        ));
+    };
+    if major != SUPPORTED_CODEX_MAJOR {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Initialization,
+            format!(
+                "unsupported Codex app-server major version in `{user_agent}`; yo requires {SUPPORTED_CODEX_MAJOR}.x"
+            ),
+        ));
+    }
+    if SUPPORTED_CODEX_MINORS.contains(&minor) {
+        return Ok(None);
     }
     let supported = SUPPORTED_CODEX_MINORS
         .iter()
         .map(|minor| format!("{SUPPORTED_CODEX_MAJOR}.{minor}"))
         .collect::<Vec<_>>()
         .join(", ");
-    Err(BackendFailure::new(
-        BackendFailureKind::Initialization,
-        format!(
-            "unsupported Codex app-server version in `{user_agent}`; yo currently verifies {supported}"
-        ),
-    ))
+    Ok(Some(format!(
+        "Codex app-server `{user_agent}` is newer or otherwise unverified; continuing because its 0.x protocol major matches (verified minor lines: {supported})"
+    )))
 }
 
 pub(super) fn string_at<'a>(value: &'a Value, path: &[&str]) -> Result<&'a str, BackendFailure> {
@@ -288,18 +306,43 @@ mod tests {
     // userAgent의 부가 문자열이 달라도 허용하고, 각 patch 업데이트는 다시 막지 않는다.
     #[test]
     fn accepts_each_verified_codex_minor_line() {
-        assert!(ensure_supported_version("codex_cli_rs/0.145.3 (Linux)").is_ok());
-        assert!(ensure_supported_version("yo/0.146.0 (Arch Linux; x86_64)").is_ok());
-        assert!(ensure_supported_version("codex_cli_rs/0.149.0 (Linux)").is_ok());
+        assert_eq!(
+            version_compatibility_warning("codex_cli_rs/0.145.3 (Linux)").unwrap(),
+            None
+        );
+        assert_eq!(
+            version_compatibility_warning("yo/0.146.0 (Arch Linux; x86_64)").unwrap(),
+            None
+        );
+        assert_eq!(
+            version_compatibility_warning("codex_cli_rs/0.149.0 (Linux)").unwrap(),
+            None
+        );
     }
 
-    // 아직 wire 호환성을 검증하지 않은 다음 Codex minor line은 시작 단계에서 명시적으로
-    // 거절하고, 오류에는 현재 허용한 세 line을 모두 표시해 대응 범위를 알 수 있게 한다.
+    // 같은 protocol major의 새 minor line은 설치 업데이트만으로 Yo가 막히지 않게 허용하되,
+    // 경고에 실제 userAgent와 검증된 line을 함께 남겨 호환성 불확실성을 숨기지 않는다.
     #[test]
-    fn rejects_an_unverified_codex_minor_line() {
-        let failure = ensure_supported_version("codex_cli_rs/0.150.0").unwrap_err();
+    fn warns_for_an_unverified_codex_minor_line() {
+        let warning = version_compatibility_warning("codex_cli_rs/0.150.0")
+            .unwrap()
+            .expect("an unverified minor line must produce a warning");
+
+        assert!(warning.contains("codex_cli_rs/0.150.0"));
+        assert!(warning.contains("0.145, 0.146, 0.149"));
+    }
+
+    // protocol major가 달라지거나 version을 해석할 수 없으면 minor 업데이트와 구분해
+    // 초기화 전에 계속 거부하여 실제 비호환 wire를 무조건 실행하지 않는다.
+    #[test]
+    fn rejects_a_different_or_unparseable_protocol_major() {
+        let failure = version_compatibility_warning("codex_cli_rs/1.0.0").unwrap_err();
         assert_eq!(failure.kind(), BackendFailureKind::Initialization);
-        assert!(failure.message().contains("0.145, 0.146, 0.149"));
+        assert!(failure.message().contains("requires 0.x"));
+
+        let failure = version_compatibility_warning("codex_cli_rs/unknown").unwrap_err();
+        assert_eq!(failure.kind(), BackendFailureKind::Initialization);
+        assert!(failure.message().contains("unparseable version"));
     }
 
     // method와 id가 함께 있는 app-server 메시지는 일반 notification이 아니라 클라이언트가
