@@ -1327,6 +1327,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
@@ -1594,6 +1595,18 @@ dependencies = [
  "ryu",
  "serde",
  "unsafe-libyaml-norway",
+]
+
+[[package]]
+name = "serde_urlencoded"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3491c14715ca2294c4d6a88f15e84739788c1d030eed8c110436aafdaa2f3fd"
+dependencies = [
+ "form_urlencoded",
+ "itoa",
+ "ryu",
+ "serde",
 ]
 
 [[package]]
@@ -2270,6 +2283,7 @@ dependencies = [
 name = "yo-backend-delegated-grok"
 version = "0.0.0"
 dependencies = [
+ "jiff",
  "serde_json",
  "uuid",
  "yo-backend",
@@ -2291,16 +2305,19 @@ name = "yo-cli"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "futures-util",
  "getrandom 0.4.3",
  "jiff",
  "libc",
  "memchr",
  "nix",
+ "reqwest",
  "rustix",
  "serde",
  "serde_json",
  "signal-hook",
  "tiktoken-rs",
+ "tokio",
  "unicode-segmentation",
  "yo-backend-delegated-codex",
  "yo-backend-delegated-grok",

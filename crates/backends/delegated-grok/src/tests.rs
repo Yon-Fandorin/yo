@@ -102,7 +102,7 @@ fn reads_account_capacity_from_authentication_metadata_without_a_session() {
     let (peer, sent) = FakePeer::new(messages);
     let mut client = AcpClient::new(peer, Duration::from_secs(1));
 
-    let snapshot = observe_account_capacity(&mut client).unwrap();
+    let snapshot = observe_account_capacity(&mut client, None).unwrap();
 
     assert_eq!(snapshot.provider().as_str(), "grok");
     assert_eq!(snapshot.account().as_str(), "default");
@@ -135,7 +135,7 @@ fn rejects_missing_or_unsafe_account_subscription_tiers() {
         json!({ "_meta": { "subscription_tier": " SuperGrok" } }),
         json!({ "_meta": { "subscription_tier": "Super\nGrok" } }),
     ] {
-        assert!(protocol::decode_account_capacity(authentication).is_err());
+        assert!(protocol::decode_account_capacity(authentication, None).is_err());
     }
 }
 

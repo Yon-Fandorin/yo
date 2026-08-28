@@ -38,9 +38,10 @@ top-level 하위 명령과 한 호출에 섞을 수 없으며, 하위 명령과 
 저장된 Session의 토큰·캐시 사용량은 `yo usage SESSION_ID`로 확인한다. 계정 자체의
 현재 한도는 별도 개념이며, Codex는 `yo account codex --refresh`, 로컬 Grok은
 `yo account grok --refresh`, 저장된 Kimi Code Membership 계정은
-`yo account kimi:ACCOUNT --refresh`로 명시적으로 한 번 조회한다. 어느 경로도 새
+`yo account kimi:ACCOUNT --refresh`, 저장된 QwenCloud Token Plan 계정은
+`yo account qwencloud:ACCOUNT --refresh`로 명시적으로 한 번 조회한다. 어느 경로도 새
 Agent Session이나 모델 요청을 만들지 않는다. Yo는 Provider가 보고한 플랜과 한도만
-공용 화면으로 표시하며, 현재 Grok처럼 잔여량을 보고하지 않는 경로에서는 이를
+공용 화면으로 표시하며, 유효한 잔여량 관측이 없는 경로에서는 이를
 합성하지 않는다. Agent가 읽을 때는 `--format json`을 덧붙인다. 구현이 참고한
 upstream 소스와 정확한 어댑터 경계는
 [`Account capacity`](docs/src/workflows/account-capacity.md)에 기록한다.

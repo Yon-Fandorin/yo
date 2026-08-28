@@ -12,6 +12,7 @@ pub struct GrokBackendConfig {
     request_timeout: Duration,
     shutdown_timeout: Duration,
     read_only_review: bool,
+    usage_log_path: Option<PathBuf>,
 }
 
 impl GrokBackendConfig {
@@ -22,6 +23,7 @@ impl GrokBackendConfig {
             request_timeout: Duration::from_secs(30),
             shutdown_timeout: Duration::from_secs(2),
             read_only_review: false,
+            usage_log_path: default_usage_log_path(),
         }
     }
 
@@ -43,6 +45,10 @@ impl GrokBackendConfig {
 
     pub fn read_only_review(&self) -> bool {
         self.read_only_review
+    }
+
+    pub(crate) fn usage_log_path(&self) -> Option<&Path> {
+        self.usage_log_path.as_deref()
     }
 
     pub(crate) fn process_arguments(&self) -> Vec<&'static str> {
@@ -83,6 +89,19 @@ impl GrokBackendConfig {
         self.read_only_review = enabled;
         self
     }
+
+    /// Overrides the bounded unified-log source used for the latest billing snapshot.
+    pub fn with_usage_log_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.usage_log_path = Some(path.into());
+        self
+    }
+}
+
+fn default_usage_log_path() -> Option<PathBuf> {
+    let root = std::env::var_os("GROK_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".grok")))?;
+    root.is_absolute().then(|| root.join("logs/unified.jsonl"))
 }
 
 #[cfg(test)]

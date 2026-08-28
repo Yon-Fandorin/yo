@@ -1,3 +1,4 @@
+mod billing_log;
 mod client;
 mod config;
 mod events;
@@ -71,9 +72,12 @@ pub fn read_account_capacity(
     config: GrokBackendConfig,
 ) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
     validate_config(&config)?;
+    let usage = config
+        .usage_log_path()
+        .and_then(|path| billing_log::read_latest_usage(path).ok().flatten());
     let peer = StdioPeer::spawn(&config)?;
     let mut client = AcpClient::new(peer, config.request_timeout());
-    let observation = observe_account_capacity(&mut client);
+    let observation = observe_account_capacity(&mut client, usage);
     let cleanup = client.shutdown();
     combine_with_cleanup(observation, cleanup)
 }
@@ -150,9 +154,10 @@ fn initialize_and_authenticate<P: JsonPeer>(
 
 fn observe_account_capacity<P: JsonPeer>(
     client: &mut AcpClient<P>,
+    usage: Option<yo_core::AccountCapacityWindow>,
 ) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
     let authenticated = initialize_and_authenticate(client)?;
-    protocol::decode_account_capacity(authenticated.authentication)
+    protocol::decode_account_capacity(authenticated.authentication, usage)
 }
 
 impl BackendAdapter for GrokBackend {

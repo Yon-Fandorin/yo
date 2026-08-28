@@ -13,6 +13,7 @@ use yo_core::{
 };
 
 mod json;
+mod qwencloud;
 
 use super::{
     AppError,
@@ -31,6 +32,7 @@ pub(crate) fn run(command: AccountCommand) -> Result<String, AppError> {
         AccountSource::Codex => read_codex_capacity()?,
         AccountSource::Grok => read_grok_capacity()?,
         AccountSource::Kimi(account) => read_kimi_capacity(account)?,
+        AccountSource::QwenCloud(account) => read_qwencloud_capacity(account)?,
     };
     match command.format {
         OutputFormat::Text => Ok(render(&snapshot, PresentationStyle::for_stdout())),
@@ -44,6 +46,7 @@ enum AccountSource<'a> {
     Codex,
     Grok,
     Kimi(&'a str),
+    QwenCloud(&'a str),
 }
 
 fn parse_source(source: &str) -> Result<AccountSource<'_>, AppError> {
@@ -59,9 +62,49 @@ fn parse_source(source: &str) -> Result<AccountSource<'_>, AppError> {
     {
         return Ok(AccountSource::Kimi(account));
     }
+    if let Some(account) = source.strip_prefix("qwencloud:")
+        && !account.is_empty()
+        && !account.contains(':')
+    {
+        return Ok(AccountSource::QwenCloud(account));
+    }
     Err(AppError::message(format!(
-        "unsupported account source `{source}`; current support: codex, grok, kimi:<account>"
+        "unsupported account source `{source}`; current support: codex, grok, kimi:<account>, qwencloud:<account>"
     )))
+}
+
+fn read_qwencloud_capacity(account: &str) -> Result<AccountCapacitySnapshot, AppError> {
+    let provider = ProviderId::new("qwencloud")
+        .map_err(|error| AppError::single("resolving the QwenCloud Provider", error))?;
+    let account = AccountId::new(account)
+        .map_err(|error| AppError::single("resolving the QwenCloud Account", error))?;
+    let config = config::load().map_err(|error| AppError::single("loading config", error))?;
+    let connections = LocalConnectionRepository::new(config.connection_path())
+        .capture()
+        .map_err(|error| AppError::single("reading stored model connections", error))?;
+    if !has_qwencloud_token_plan_binding(&connections, &provider, &account) {
+        return Err(AppError::message(format!(
+            "no stored QwenCloud Token Plan account `{account}`"
+        )));
+    }
+    qwencloud::read_account_capacity(&provider, &account)
+}
+
+fn has_qwencloud_token_plan_binding(
+    connections: &yo_core::ConnectionSnapshot,
+    provider: &ProviderId,
+    account: &AccountId,
+) -> bool {
+    connections
+        .models()
+        .iter()
+        .map(|stored| stored.complete().binding())
+        .any(|binding| {
+            binding.provider_id() == provider
+                && binding.account_id() == account
+                && binding.endpoint().as_str().trim_end_matches('/')
+                    == "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+        })
 }
 
 fn read_codex_capacity() -> Result<AccountCapacitySnapshot, AppError> {
@@ -310,6 +353,7 @@ fn display_plan(snapshot: &AccountCapacitySnapshot) -> String {
     if plans.all(|plan| plan == first) {
         match first {
             "prolite" => "Pro Lite".to_owned(),
+            "supergrok" => "SuperGrok".to_owned(),
             _ => display_identifier(first),
         }
     } else {
@@ -396,11 +440,17 @@ mod tests {
             parse_source("kimi:default").unwrap(),
             AccountSource::Kimi("default")
         );
+        assert_eq!(
+            parse_source("qwencloud:default").unwrap(),
+            AccountSource::QwenCloud("default")
+        );
         for source in [
             "kimi",
             "kimi:",
             "kimi:default:extra",
             "qwencloud",
+            "qwencloud:",
+            "qwencloud:default:extra",
             "grok:default",
         ] {
             assert!(parse_source(source).is_err());
@@ -472,7 +522,7 @@ mod tests {
             vec![AccountCapacityBucket::new(
                 Some("grok".to_owned()),
                 None,
-                Some("SuperGrok".to_owned()),
+                Some("supergrok".to_owned()),
                 None,
                 None,
                 None,

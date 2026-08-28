@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use yo_core::{
-    AccountCapacityBucket, AccountCapacitySnapshot, AccountId, BackendFailure, BackendFailureKind,
-    ProviderId,
+    AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountId,
+    BackendFailure, BackendFailureKind, ProviderId,
 };
 
 pub(super) const PROTOCOL_VERSION: u64 = 1;
@@ -191,6 +191,7 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
 
 pub(super) fn decode_account_capacity(
     authentication: Value,
+    primary: Option<AccountCapacityWindow>,
 ) -> Result<AccountCapacitySnapshot, BackendFailure> {
     let metadata = authentication
         .get("_meta")
@@ -220,7 +221,7 @@ pub(super) fn decode_account_capacity(
             Some("grok".to_owned()),
             None,
             Some(subscription_tier.to_owned()),
-            None,
+            primary,
             None,
             None,
             None,
