@@ -19,6 +19,20 @@ impl ModelSelectionState {
             .iter()
             .map(|choice| {
                 let selection = choice.selection();
+                let detail = Some(format!(
+                    "{} / {} / {}",
+                    selection.provider(),
+                    selection.account(),
+                    selection.model()
+                ));
+                if let Some(reason) = choice.disabled_reason() {
+                    return SelectionEntry::disabled(
+                        selection.row_identity(),
+                        choice.model_label(),
+                        detail,
+                        reason,
+                    );
+                }
                 let context = choice.last_failure().map_or_else(
                     || format!("{} › {}", choice.provider_label(), choice.account_label()),
                     |failure| {
@@ -35,12 +49,7 @@ impl ModelSelectionState {
                     selection.row_identity(),
                     choice.model_label(),
                     Some(context),
-                    Some(format!(
-                        "{} / {} / {}",
-                        selection.provider(),
-                        selection.account(),
-                        selection.model()
-                    )),
+                    detail,
                 )
             })
             .collect();
@@ -105,6 +114,40 @@ mod tests {
         }
     }
 
+    fn rendered_panel(state: &ModelSelectionState) -> String {
+        let panel = SelectionPanel::new(state.panel().unwrap());
+        let appearance = AppearanceState::default();
+        let pin = appearance.pin();
+        let prepared = panel
+            .prepare(
+                Size::new(180, 6),
+                pin.snapshot().styles().overlay,
+                &OverlayBindings::default(),
+                false,
+            )
+            .unwrap();
+        let prepared_size = prepared.size();
+        let mut surface = Surface::new(prepared_size).unwrap();
+        let mut view = surface
+            .view(Rect::new(Point::new(0, 0), prepared_size))
+            .unwrap();
+        prepared.paint(&mut view).unwrap();
+        (0..prepared_size.height)
+            .map(|y| {
+                let mut row = String::new();
+                for x in 0..prepared_size.width {
+                    match surface.cell(Point::new(x, y)).unwrap().content() {
+                        CellContent::Blank => row.push(' '),
+                        CellContent::Continuation { .. } => {},
+                        CellContent::Grapheme { text, .. } => row.push_str(text),
+                    }
+                }
+                row
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     // A remembered request failure is visible context, not an availability gate: the exact
     // Provider/Account/Model row remains selectable while carrying the durable warning.
     #[test]
@@ -148,37 +191,7 @@ mod tests {
             None,
         );
         let state = ModelSelectionState::new(controller);
-        let panel = SelectionPanel::new(state.panel().unwrap());
-        let appearance = AppearanceState::default();
-        let pin = appearance.pin();
-        let prepared = panel
-            .prepare(
-                Size::new(180, 6),
-                pin.snapshot().styles().overlay,
-                &OverlayBindings::default(),
-                false,
-            )
-            .unwrap();
-        let prepared_size = prepared.size();
-        let mut surface = Surface::new(prepared_size).unwrap();
-        let mut view = surface
-            .view(Rect::new(Point::new(0, 0), prepared_size))
-            .unwrap();
-        prepared.paint(&mut view).unwrap();
-        let rendered = (0..prepared_size.height)
-            .map(|y| {
-                let mut row = String::new();
-                for x in 0..prepared_size.width {
-                    match surface.cell(Point::new(x, y)).unwrap().content() {
-                        CellContent::Blank => row.push(' '),
-                        CellContent::Continuation { .. } => {},
-                        CellContent::Grapheme { text, .. } => row.push_str(text),
-                    }
-                }
-                row
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let rendered = rendered_panel(&state);
 
         assert!(
             rendered
@@ -188,6 +201,57 @@ mod tests {
         assert_eq!(
             state.accept_identity(&selection.row_identity()).unwrap(),
             selection
+        );
+    }
+
+    // operator가 비활성화한 stored model은 picker에서 사라지지 않고 한 가지 이유로
+    // 표시되지만 row 수락은 같은 binding을 새 작업으로 시작하지 못하게 거절합니다.
+    #[test]
+    fn disabled_model_is_visible_with_reason_and_cannot_be_accepted() {
+        let directory = TestDirectory::new();
+        let repository = LocalConnectionRepository::new(directory.0.join("connections.yaml"));
+        let complete = CompleteModelBinding::from_durable_json(
+            r#"{"provider":"qwencloud","account":"default","model":"qwen3.8max","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{"effort":"medium"},"optional_request_parameters":{},"tool_capability_policy":"local-tools/v1"}"#,
+        )
+        .unwrap();
+        let account = ConnectionAccount::new(
+            ProviderId::new("qwencloud").unwrap(),
+            AccountId::new("default").unwrap(),
+            Some("Qwen Cloud".to_owned()),
+            Some("Default".to_owned()),
+        )
+        .unwrap();
+        let binding = StoredModelBinding::new(complete, Some("Qwen 3.8 Max".to_owned())).unwrap();
+        let selection = binding.selection();
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_model_upsert(account, binding)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_model_activation(&selection, false)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+
+        let controller = ModelSelectionController::new(
+            repository.capture().unwrap().model_catalog().unwrap(),
+            None,
+        );
+        let state = ModelSelectionState::new(controller);
+        let rendered = rendered_panel(&state);
+
+        assert!(rendered.contains("Qwen 3.8 Max"), "{rendered}");
+        assert!(rendered.contains("disabled by operator"), "{rendered}");
+        assert!(
+            state
+                .accept_identity(&selection.row_identity())
+                .unwrap_err()
+                .contains("disabled by operator")
         );
     }
 }

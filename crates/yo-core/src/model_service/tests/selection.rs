@@ -1,8 +1,9 @@
 use super::{
     super::{
-        AccountId, ModelCatalog, ModelId, ModelSelection, ModelSelectionController, ProviderId,
+        AccountId, ModelCatalog, ModelId, ModelSelection, ModelSelectionController,
+        ModelServiceErrorKind, ProviderId,
     },
-    support::selection_entry,
+    support::{disabled_selection_entry, selection_entry},
 };
 
 // picker는 완전한 좌표 순서를 보존하고 bare Model 참조는 현재 Provider와 Account에
@@ -157,4 +158,37 @@ fn model_reference_diagnostic_bounds_rejected_input() {
     assert!(!diagnostic.contains("sensitive-tail"));
     assert!(diagnostic.len() < 1_000);
     assert!(diagnostic.contains("qwencloud:default:qwen3.8-max"));
+}
+
+// 비활성화한 binding은 picker 선택지와 activation 명령의 lookup에는 남지만 새 model work의
+// direct reference와 row 수락은 같은 typed 실패로 닫히는지 검증한다.
+#[test]
+fn disabled_binding_remains_visible_but_new_selection_fails_with_one_typed_reason() {
+    let catalog = ModelCatalog::new(vec![disabled_selection_entry(
+        "qwencloud",
+        "default",
+        "qwen3.8-max",
+    )])
+    .unwrap();
+    let controller = ModelSelectionController::new(catalog, None);
+    let choice = &controller.choices()[0];
+    let selection = choice.selection();
+
+    assert!(!choice.is_enabled());
+    assert_eq!(choice.disabled_reason(), Some("disabled by operator"));
+    for error in [
+        controller.resolve_reference("qwen3.8-max").unwrap_err(),
+        controller
+            .accept_row_identity(&selection.row_identity())
+            .unwrap_err(),
+    ] {
+        assert_eq!(error.kind(), ModelServiceErrorKind::ModelBindingDisabled);
+        assert!(error.to_string().contains("disabled by operator"));
+    }
+    assert_eq!(
+        controller
+            .resolve_reference_for_activation("qwen3.8-max")
+            .unwrap(),
+        selection.clone()
+    );
 }

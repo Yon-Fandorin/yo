@@ -16,6 +16,7 @@ pub struct ModelCatalogEntry {
     account_display_name: Option<String>,
     model_display_name: Option<String>,
     last_failure: Option<ModelLastFailure>,
+    enabled: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,6 +45,7 @@ impl ModelCatalogEntry {
             account_display_name,
             model_display_name,
             last_failure: None,
+            enabled: true,
         })
     }
 
@@ -63,6 +65,7 @@ impl ModelCatalogEntry {
             account_display_name,
             model_display_name,
             last_failure: None,
+            enabled: true,
             binding: CatalogBinding::Complete(binding),
         })
     }
@@ -73,6 +76,7 @@ impl ModelCatalogEntry {
         account_display_name: Option<String>,
         model_display_name: Option<String>,
         last_failure: Option<ModelLastFailure>,
+        enabled: bool,
     ) -> Result<Self, ModelServiceError> {
         validate_display_name("Provider", provider_display_name.as_deref())?;
         validate_display_name("Account", account_display_name.as_deref())?;
@@ -83,6 +87,7 @@ impl ModelCatalogEntry {
             account_display_name,
             model_display_name,
             last_failure,
+            enabled,
         })
     }
 
@@ -112,6 +117,27 @@ impl ModelCatalogEntry {
     #[must_use]
     pub const fn last_failure(&self) -> Option<&ModelLastFailure> {
         self.last_failure.as_ref()
+    }
+
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn require_enabled(&self) -> Result<(), ModelServiceError> {
+        if self.enabled {
+            Ok(())
+        } else {
+            let binding = self.binding();
+            Err(ModelServiceError::model_binding_disabled(
+                &super::ModelSelection::new(
+                    binding.provider_id().clone(),
+                    binding.account_id().clone(),
+                    binding.model_id().clone(),
+                )
+                .canonical_reference(),
+            ))
+        }
     }
 
     pub const fn context(&self) -> &ModelContextProfile {

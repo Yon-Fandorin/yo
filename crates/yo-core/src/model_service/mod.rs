@@ -44,7 +44,7 @@ pub use connection_repository::{
     ModelRequestFailureKind, PreparedConnectionMutation, StoredModelBinding,
 };
 pub use credential::{ApiCredential, CredentialStore};
-pub use identity::{AccountId, ModelId, ModelServiceError, ProviderId};
+pub use identity::{AccountId, ModelId, ModelServiceError, ModelServiceErrorKind, ProviderId};
 pub use kimi_catalog::{
     KimiAccountCapacityError, KimiAccountCapacityFailureKind, KimiCatalogAvailability,
     KimiCatalogDisabledReason, KimiCatalogError, KimiCatalogFailureKind, KimiCatalogModel,

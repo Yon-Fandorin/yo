@@ -168,6 +168,7 @@ impl ConnectionSnapshot {
                     account.account_display_name().map(str::to_owned),
                     binding.model_display_name().map(str::to_owned),
                     binding.last_failure().cloned(),
+                    binding.is_enabled(),
                 )
                 .map_err(|_| ConnectionRepositoryError::InvalidMutation)
             })
@@ -267,7 +268,7 @@ impl ConnectionSnapshot {
     fn model_upsert_state(
         &self,
         account: ConnectionAccount,
-        binding: StoredModelBinding,
+        mut binding: StoredModelBinding,
     ) -> Result<StoredSnapshotState, ConnectionRepositoryError> {
         if !stored::account_matches_binding(&account, &binding) {
             return Err(ConnectionRepositoryError::CoordinateMismatch);
@@ -287,8 +288,14 @@ impl ConnectionSnapshot {
         let binding_position = bindings
             .iter()
             .position(|current| stored::binding_matches_selection(current, &selection));
+        let inserted = binding_position.is_none();
         match binding_position {
-            Some(index) => bindings[index] = binding,
+            Some(index) => {
+                if bindings[index].complete() == binding.complete() {
+                    binding = binding.with_enabled(bindings[index].is_enabled());
+                }
+                bindings[index] = binding;
+            },
             None => bindings.push(binding),
         }
         stored::validate_state(&accounts, &bindings)
@@ -296,7 +303,7 @@ impl ConnectionSnapshot {
         let preference = self
             .preference
             .clone()
-            .or(Some(StartupTarget::Model(selection)));
+            .or_else(|| inserted.then_some(StartupTarget::Model(selection)));
         Ok((preference, accounts, bindings, self.catalog_seeds.clone()))
     }
 
@@ -335,6 +342,7 @@ impl ConnectionSnapshot {
             }) {
                 *replacement = replacement
                     .clone()
+                    .with_enabled(retained.is_enabled())
                     .with_last_failure(retained.last_failure().cloned());
             }
         }
@@ -397,6 +405,42 @@ impl ConnectionSnapshot {
         bindings[index] = current.clone().with_last_failure(last_failure);
         self.prepare_snapshot(
             self.preference.clone(),
+            self.accounts.clone(),
+            bindings,
+            self.catalog_seeds.clone(),
+        )
+    }
+
+    /// Enables or disables one exact stored binding without changing its complete identity.
+    pub fn prepare_model_activation(
+        &self,
+        selection: &ModelSelection,
+        enabled: bool,
+    ) -> Result<Option<PreparedConnectionMutation>, ConnectionRepositoryError> {
+        let Some(index) = self
+            .bindings
+            .iter()
+            .position(|binding| stored::binding_matches_selection(binding, selection))
+        else {
+            return Err(ConnectionRepositoryError::ModelNotFound {
+                provider: selection.provider().to_string(),
+                account: selection.account().to_string(),
+                model: selection.model().to_string(),
+            });
+        };
+        if self.bindings[index].is_enabled() == enabled {
+            return Ok(None);
+        }
+        let mut bindings = self.bindings.clone();
+        bindings[index] = bindings[index].clone().with_enabled(enabled);
+        let disabled_target = StartupTarget::Model(selection.clone());
+        let preference = if !enabled && self.preference.as_ref() == Some(&disabled_target) {
+            None
+        } else {
+            self.preference.clone()
+        };
+        self.prepare_snapshot(
+            preference,
             self.accounts.clone(),
             bindings,
             self.catalog_seeds.clone(),

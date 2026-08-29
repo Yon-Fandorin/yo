@@ -85,6 +85,9 @@ enum CliCommand {
     /// Show or change the stored startup default.
     Default(DefaultArguments),
 
+    /// Enable or disable one stored model binding for new work.
+    Model(ModelArguments),
+
     /// List stored Sessions or inspect one Session.
     Session(SessionArguments),
 
@@ -168,6 +171,27 @@ struct DefaultArguments {
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
+struct ModelArguments {
+    #[command(subcommand)]
+    action: ModelActionArguments,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
+enum ModelActionArguments {
+    /// Admit one stored model binding for new work.
+    Enable(ModelTargetArguments),
+    /// Reject one stored model binding for new work while preserving it for later use.
+    Disable(ModelTargetArguments),
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+struct ModelTargetArguments {
+    /// Exact stored model target to mutate.
+    #[arg(value_name = "TARGET", allow_hyphen_values = true)]
+    target: String,
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
 struct SessionArguments {
     /// Session to inspect.
     #[arg(value_name = "SESSION_ID", conflicts_with_all = ["all", "details"])]
@@ -247,6 +271,7 @@ pub(crate) enum Command {
     Connect(ConnectCommand),
     Disconnect(DisconnectCommand),
     Default(DefaultCommand),
+    Model(ModelCommand),
     Live(LiveOptions),
     Print(PrintOptions),
     Session(SessionCommand),
@@ -287,6 +312,12 @@ pub(crate) struct DisconnectCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DefaultCommand {
     pub(crate) target: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ModelCommand {
+    pub(crate) target: String,
+    pub(crate) enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -347,6 +378,13 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
         Some(CliCommand::Default(arguments)) => Ok(Command::Default(DefaultCommand {
             target: arguments.target,
         })),
+        Some(CliCommand::Model(arguments)) => {
+            let (target, enabled) = match arguments.action {
+                ModelActionArguments::Enable(arguments) => (arguments.target, true),
+                ModelActionArguments::Disable(arguments) => (arguments.target, false),
+            };
+            Ok(Command::Model(ModelCommand { target, enabled }))
+        },
         Some(CliCommand::Session(arguments)) => {
             let view = arguments.view.unwrap_or(SessionView::Chat);
             if view != SessionView::Transcript
@@ -431,7 +469,7 @@ fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::E
         } else if subcommand.is_none()
             && matches!(
                 argument,
-                "connect" | "disconnect" | "default" | "session" | "usage"
+                "connect" | "disconnect" | "default" | "model" | "session" | "usage"
             )
         {
             subcommand = Some(argument);

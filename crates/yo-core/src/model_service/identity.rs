@@ -56,15 +56,36 @@ fn validate_id(label: &'static str, value: &str) -> Result<(), ModelServiceError
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ModelServiceError {
+    kind: ModelServiceErrorKind,
     message: String,
 }
 
 impl ModelServiceError {
     pub(super) fn new(message: impl Into<String>) -> Self {
         Self {
+            kind: ModelServiceErrorKind::Generic,
             message: message.into(),
         }
     }
+
+    pub(super) fn model_binding_disabled(reference: &str) -> Self {
+        Self {
+            kind: ModelServiceErrorKind::ModelBindingDisabled,
+            message: format!("model binding {reference} is disabled by operator"),
+        }
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> ModelServiceErrorKind {
+        self.kind
+    }
+}
+
+/// Stable classification for failures that callers must distinguish from diagnostics alone.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModelServiceErrorKind {
+    Generic,
+    ModelBindingDisabled,
 }
 
 impl fmt::Display for ModelServiceError {

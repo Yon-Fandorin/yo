@@ -179,6 +179,22 @@ Session 생성 전에 정확한 `yo connect`, `yo --model host:codex`, `yo --mod
 namespace를 바꾸지 않는다. 정확한 `host:codex` 또는 `host:grok`은 일치하는 delegated-host resume을 확인하며, 서로 다른
 cross-backend target은 handoff가 아직 미뤄져 있으므로 명시적으로 실패한다.
 
+저장된 각 complete ModelTarget에는 binding identity, catalog availability, credential,
+`last_failure`와 분리된 operator activation 상태도 있다. `yo model disable TARGET`은
+complete binding을 보존하지만 새 startup 기본값, explicit 또는 bare `--model` 선택,
+live picker, live replacement, 다음 Turn 예약에서는 typed 이유 `disabled by operator`로
+차단한다. Picker는 그 이유와 함께 행을 계속 보여 준다. 정확한 저장 preference를
+disable하면 같은 public CAS에서 지우고, `yo model enable TARGET`은 preference를 다시
+만들지 않는다. 두 명령은 모두 idempotent하고 복구된 connection-operation lane을
+사용하며 Provider request를 만들지 않고 credential byte를 읽거나 다시 쓰지 않는다.
+
+Disable은 이미 admit된 Turn을 중단하지 않는다. 저장 native Session은 `--model`
+override가 없고 durable complete binding이 정확히 그대로일 때만 disabled model을
+resume할 수 있다. 같은 좌표를 포함한 explicit override는 새 선택이므로 차단되고,
+달라진 complete binding도 replacement 작업으로 차단된다. Enable은 durable disabled
+marker를 제거한다. Exact credential rotation과 exact complete group reimport는
+activation을 보존하지만 바뀐 complete binding은 enabled 상태로 시작한다.
+
 새 native ModelTarget Session에서 `--no-tools`를 지정하면 선택한 complete model
 binding은 바꾸지 않고 local tool registry를 빈 상태로 고정한다. 이후 request는 현재
 tool definition과 tool choice를 생략하며, Session을 flag 없이 재개해도 exact replay가
@@ -1050,6 +1066,12 @@ rotation 뒤의 오래된 outcome은 버린다. Observation 저장 failure는 �
 request outcome을 바꾸지 않는다. Capture한 failure는 이후 model-picker snapshot에서
 warning으로 표시하지만 해당 행을 disable·숨김·후순위 처리하지 않는다.
 
+Activation은 저장 binding마다 compatible optional durable field 하나를 사용한다. Field가
+없으면 enabled이며 이것만 enabled encoding이다. 정확한 `enabled: false`만 disabled를
+뜻하고 present true, null, non-boolean 값은 invalid다. 따라서 이전 binary는 all-enabled
+snapshot을 읽고 disabled binding이 있는 snapshot은 unknown field로 거절하며, enable이
+field를 제거한 뒤에는 다시 읽을 수 있다.
+
 파일이 없으면 canonical unset snapshot이며 디렉터리를 만들지 않고 읽는다. Capture는 모르는
 field, 중복 account나 binding coordinate, 대응 account가 없는 binding, 모순된 Provider 표시
 metadata, 올바르지 않은 complete binding, 범위를 벗어난 quote 없는 structured-profile 숫자를
@@ -1070,11 +1092,14 @@ connect나 import는 표시되는 definition이 같아도 복구가 구별할 �
 model catalog와 preference를 직접 제공하며 manual/stored composition이나 provenance conflict
 경로는 없다. 초기 선택, resume matching, live model picker는 같은 complete 저장 profile을 쓴다.
 
-`yo default TARGET`, `yo default --unset`, 명시적 `yo connect host:codex` 또는 `host:grok`, external model
-connect, external model disconnect는 nonblocking process operation lock 하나를 사용하고 새
+`yo default TARGET`, `yo default --unset`, `yo model enable TARGET`, `yo model disable TARGET`,
+명시적 `yo connect host:codex` 또는 `host:grok`, external model connect, external model disconnect는
+nonblocking process operation lock 하나를 사용하고 새
 command configuration을 읽기 전에 pending multi-repository work를 해결한다. Preference-only command는 target admission 또는
 local delegated-host 검증과 마지막 configuration guard 뒤 public CAS 하나를 게시하고, 새 operation
-journal을 만들거나 credential revision을 확인하지 않으며 저장 definition을 보존한다. External
+journal을 만들거나 credential revision을 확인하지 않으며 저장 definition을 보존한다. Activation
+command도 credential을 확인하지 않고 activation과 exact preference-clear transition만 public CAS
+하나로 게시한다. External
 connect, import, disconnect는 위의 operation별 journal 순서를 사용한다. 자유 형식 Provider
 onboarding은 더 약한 경로를 빌리지 않고 아직 구현하지 않은 상태로 남는다.
 

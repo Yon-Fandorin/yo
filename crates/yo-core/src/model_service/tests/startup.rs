@@ -1,9 +1,10 @@
 use super::{
     super::{
-        AccountId, ModelCatalog, ModelId, ModelSelection, ModelSelectionController, ProviderId,
-        StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
+        AccountId, ModelCatalog, ModelId, ModelSelection, ModelSelectionController,
+        ModelServiceErrorKind, ProviderId, StartupPolicy, StartupSelectionSources, StartupTarget,
+        resolve_startup_target,
     },
-    support::selection_entry,
+    support::{disabled_selection_entry, selection_entry},
 };
 
 // HostTarget은 bare model namespace와 분리되고, 같은 bytes의 ModelId는 qualified form으로만
@@ -219,4 +220,42 @@ fn enforced_startup_policy_rejects_conflicts_and_malformed_forms() {
         )
         .is_err()
     );
+}
+
+// invocation, 저장 preference, policy default처럼 새 작업을 예약하는 모든 startup source는
+// catalog에 남아 있는 disabled binding을 동일한 typed 실패로 거절하는지 검증한다.
+#[test]
+fn startup_sources_reject_a_disabled_model_binding() {
+    let catalog = ModelCatalog::new(vec![disabled_selection_entry("p", "a", "disabled")]).unwrap();
+    let target = StartupTarget::Model(ModelSelection::new(
+        ProviderId::new("p").unwrap(),
+        AccountId::new("a").unwrap(),
+        ModelId::new("disabled").unwrap(),
+    ));
+
+    let cases = [
+        (
+            StartupPolicy::initial(),
+            StartupSelectionSources {
+                invocation: Some("disabled"),
+                ..StartupSelectionSources::default()
+            },
+        ),
+        (
+            StartupPolicy::initial(),
+            StartupSelectionSources {
+                stored_preference: Some(target.clone()),
+                ..StartupSelectionSources::default()
+            },
+        ),
+        (
+            StartupPolicy::new(true, None, Some(target.clone())).unwrap(),
+            StartupSelectionSources::default(),
+        ),
+    ];
+    for (policy, sources) in cases {
+        let error = resolve_startup_target(&catalog, &policy, sources).unwrap_err();
+        assert_eq!(error.kind(), ModelServiceErrorKind::ModelBindingDisabled);
+        assert!(error.to_string().contains("disabled by operator"));
+    }
 }

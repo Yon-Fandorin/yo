@@ -193,6 +193,25 @@ namespace; startup defaults never replace it. Exact `host:codex` or `host:grok`
 confirms the matching delegated-host resume, while a different cross-backend target fails explicitly because
 cross-backend handoff remains deferred.
 
+Each stored complete ModelTarget also has an operator activation state that is
+separate from binding identity, catalog availability, credentials, and
+`last_failure`. `yo model disable TARGET` retains the complete binding but
+blocks it for new startup defaults, explicit or bare `--model` selection, the
+live picker, live replacement, and next-Turn reservation with the typed reason
+`disabled by operator`. The picker keeps the row visible with that reason.
+Disabling the exact stored preference clears it in the same public CAS; `yo
+model enable TARGET` never recreates the preference. Both commands are
+idempotent, use the recovered connection-operation lane, make no Provider
+request, and neither read nor rewrite credential bytes.
+
+Disable does not interrupt a Turn that was already admitted. A saved native
+Session may resume a disabled model only when no `--model` override is present
+and its durable complete binding is exactly unchanged. An explicit override,
+including the same coordinate, is a fresh selection and is blocked; a changed
+complete binding is blocked as replacement work. Enabling removes the durable
+disabled marker. Exact credential rotation and exact complete group reimport
+preserve activation, while a changed complete binding starts enabled.
+
 For a new native ModelTarget Session, `--no-tools` keeps the selected complete
 model binding unchanged but freezes an empty local tool registry. Requests then
 omit current tool definitions and tool choice, and exact replay preserves the
@@ -1161,6 +1180,13 @@ is reported separately and never changes the underlying request outcome. A
 captured failure is shown as a warning in a later model-picker snapshot but
 does not disable, hide, or deprioritize the row.
 
+Activation uses one compatible optional durable field on each stored binding.
+Its absence means enabled and is the only enabled encoding; exact `enabled:
+false` means disabled. Present `true`, null, and non-boolean values are invalid.
+Consequently an older binary reads an all-enabled snapshot, rejects a snapshot
+that contains a disabled binding as an unknown field, and can read it again
+after enable removes the field.
+
 An absent file is the canonical unset snapshot and is read without creating a
 directory. Capture rejects unknown fields, duplicate account or binding
 coordinates, bindings without their account, inconsistent Provider display
@@ -1186,14 +1212,16 @@ The snapshot directly supplies the model catalog and preference; there is no
 manual/stored composition or provenance conflict path. Startup, resume matching,
 and the live model picker use the same complete stored profiles.
 
-`yo default TARGET`, `yo default --unset`, explicit `yo connect host:codex`,
-external model connect, and external model disconnect use one nonblocking
-process operation lock and resolve pending multi-repository work before reading
-new command configuration. The
+`yo default TARGET`, `yo default --unset`, `yo model enable TARGET`, `yo model
+disable TARGET`, explicit `yo connect host:codex`, external model connect, and
+external model disconnect use one nonblocking process operation lock and
+resolve pending multi-repository work before reading new command configuration. The
 preference-only commands publish one public CAS after target admission or Local
 Codex verification plus the final configuration guard; they do not create a new
 operation journal or inspect credential revisions, and re-encoding preserves
-stored definitions. External connect, import, and disconnect use their operation-specific
+stored definitions. Activation commands likewise publish only the activation
+and exact preference-clear transition in one public CAS without inspecting
+credentials. External connect, import, and disconnect use their operation-specific
 journaled sequences above. Free-form Provider onboarding remains unimplemented
 rather than borrowing a weaker path.
 

@@ -165,7 +165,14 @@ fn print_resume_is_exact_and_rejects_incompatible_startup_options() {
 // 조용히 우선하지 않고, 사용자가 `--` 뒤의 명시적 literal prompt로 고치게 합니다.
 #[test]
 fn print_rejects_top_level_subcommands_without_literal_separator() {
-    for subcommand in ["connect", "disconnect", "default", "session", "usage"] {
+    for subcommand in [
+        "connect",
+        "disconnect",
+        "default",
+        "model",
+        "session",
+        "usage",
+    ] {
         let error = parse(["-p".into(), subcommand.into()]).unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
         assert!(
@@ -317,6 +324,34 @@ fn default_command_requires_exactly_one_set_or_clear_intent() {
     );
     assert!(parse(["default".into()]).is_err());
     assert!(parse(["default".into(), "host:codex".into(), "--unset".into(),]).is_err());
+}
+
+// model activation 문법은 저장 binding 하나와 enable/disable 의도를 정확히 보존하고,
+// action이나 target이 빠진 호출을 대화형 선택 또는 기본 동작으로 추측하지 않습니다.
+#[test]
+fn model_activation_command_requires_one_action_and_exact_target() {
+    assert_eq!(
+        parse([
+            "model".into(),
+            "disable".into(),
+            "qwencloud:default:qwen3.8-max".into(),
+        ])
+        .unwrap(),
+        Command::Model(ModelCommand {
+            target: "qwencloud:default:qwen3.8-max".to_owned(),
+            enabled: false,
+        })
+    );
+    assert_eq!(
+        parse(["model".into(), "enable".into(), "-vendor-model".into(),]).unwrap(),
+        Command::Model(ModelCommand {
+            target: "-vendor-model".to_owned(),
+            enabled: true,
+        })
+    );
+    assert!(parse(["model".into()]).is_err());
+    assert!(parse(["model".into(), "disable".into()]).is_err());
+    assert!(parse(["model".into(), "enable".into(), "one".into(), "two".into(),]).is_err());
 }
 
 // connect 문법은 하나의 exact target을 필수로 보존하고 값 없는 호출이나 복수 target을

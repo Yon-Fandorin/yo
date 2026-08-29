@@ -69,6 +69,9 @@ fn run(command: command::Command) -> Result<(), AppError> {
         command::Command::Default(command) => {
             write_command_output(connection::run_default(command)?)
         },
+        command::Command::Model(command) => {
+            write_command_output(connection::run_model_activation(command)?)
+        },
         command::Command::Disconnect(command) => {
             write_command_output(connection::run_disconnect(command)?)
         },

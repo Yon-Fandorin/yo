@@ -214,6 +214,6 @@ fn validate_target(
         return Ok(());
     };
     catalog
-        .resolve_model(selection.provider(), selection.account(), selection.model())
-        .map(|_| ())
+        .resolve_model(selection.provider(), selection.account(), selection.model())?
+        .require_enabled()
 }

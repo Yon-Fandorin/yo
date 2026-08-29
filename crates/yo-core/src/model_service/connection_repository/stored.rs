@@ -82,6 +82,7 @@ impl ConnectionAccount {
 pub struct StoredModelBinding {
     complete: CompleteModelBinding,
     model_display_name: Option<String>,
+    enabled: bool,
     last_failure: Option<ModelLastFailure>,
 }
 
@@ -102,16 +103,19 @@ impl StoredModelBinding {
         Ok(Self {
             complete,
             model_display_name,
+            enabled: true,
             last_failure: None,
         })
     }
 
-    pub(super) fn from_durable_with_failure(
+    pub(super) fn from_durable_with_state(
         complete: CompleteModelBinding,
         model_display_name: Option<String>,
+        enabled: bool,
         last_failure: Option<ModelLastFailure>,
     ) -> Result<Self, ModelServiceError> {
         let mut stored = Self::from_durable(complete, model_display_name)?;
+        stored.enabled = enabled;
         stored.last_failure = last_failure;
         Ok(stored)
     }
@@ -131,8 +135,18 @@ impl StoredModelBinding {
         self.last_failure.as_ref()
     }
 
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub(super) fn with_last_failure(mut self, last_failure: Option<ModelLastFailure>) -> Self {
         self.last_failure = last_failure;
+        self
+    }
+
+    pub(super) fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
         self
     }
 

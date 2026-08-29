@@ -243,6 +243,11 @@ fn resolve_native_resume(
         .resolve_model(selection.provider(), selection.account(), selection.model())
         .map_err(|error| AppError::single("resolving resumed model", error))?;
     let replace_binding = !durable_binding.matches(entry);
+    if reference.is_some() || replace_binding {
+        entry
+            .require_enabled()
+            .map_err(|error| AppError::single("resolving resumed model", error))?;
+    }
     Ok(native_selection(
         selection,
         replace_binding,
@@ -362,9 +367,73 @@ struct DurableBinding {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf, time::SystemTime};
+
     use yo_core::{EffectiveModelProfile, ModelProfileParameters, VersionedProfileId};
 
     use super::*;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn new(name: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "yo-cli-model-startup-{}-{name}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn complete_binding(effort: &str) -> CompleteModelBinding {
+        CompleteModelBinding::from_durable_json(&format!(
+            r#"{{"provider":"qwencloud","account":"default","model":"model","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
+        ))
+        .unwrap()
+    }
+
+    fn disabled_complete_catalog() -> (TestDirectory, yo_core::ModelCatalog, CompleteModelBinding) {
+        let directory = TestDirectory::new("disabled-catalog");
+        let repository =
+            yo_core::LocalConnectionRepository::new(directory.0.join("connections.yaml"));
+        let complete = complete_binding("medium");
+        let account = yo_core::ConnectionAccount::new(
+            ProviderId::new("qwencloud").unwrap(),
+            AccountId::new("default").unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+        let binding = yo_core::StoredModelBinding::new(complete.clone(), None).unwrap();
+        let selection = binding.selection();
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_model_upsert(account, binding)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_model_activation(&selection, false)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        let catalog = repository.capture().unwrap().model_catalog().unwrap();
+        (directory, catalog, complete)
+    }
 
     fn selection_catalog(entries: &[(&str, &str, &str)]) -> yo_core::ModelCatalog {
         selection_catalog_with_tokenizer(entries, "utf8-bytes/v1")
@@ -872,6 +941,40 @@ mod tests {
             .unwrap()
             .replaces_binding()
         );
+    }
+
+    // 이미 admit된 native Session은 exact complete binding을 그대로 resume할 때만 disabled
+    // 상태를 통과하고, 같은 좌표의 명시 override나 달라진 durable binding은 새 선택으로
+    // 간주되어 시작 전에 거절됩니다.
+    #[test]
+    fn disabled_native_binding_resumes_only_without_override_and_with_exact_identity() {
+        let (_directory, catalog, exact) = disabled_complete_catalog();
+        let resumed = resolve_native_resume(
+            &catalog,
+            DurableNativeBinding::Complete(exact.clone()),
+            None,
+            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+        )
+        .unwrap();
+        assert!(!resumed.replaces_binding());
+
+        let explicit = resolve_native_resume(
+            &catalog,
+            DurableNativeBinding::Complete(exact),
+            Some("model"),
+            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+        )
+        .unwrap_err();
+        assert!(explicit.to_string().contains("disabled by operator"));
+
+        let changed = resolve_native_resume(
+            &catalog,
+            DurableNativeBinding::Complete(complete_binding("high")),
+            None,
+            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+        )
+        .unwrap_err();
+        assert!(changed.to_string().contains("disabled by operator"));
     }
 
     // complete schema는 full-binding attribution이므로 알 수 없는 필드를 legacy v1처럼

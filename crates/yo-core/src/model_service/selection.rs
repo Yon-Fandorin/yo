@@ -72,6 +72,7 @@ pub struct ModelSelectionChoice {
     account_label: String,
     model_label: String,
     last_failure: Option<ModelLastFailure>,
+    enabled: bool,
 }
 
 impl ModelSelectionChoice {
@@ -98,6 +99,20 @@ impl ModelSelectionChoice {
     #[must_use]
     pub const fn last_failure(&self) -> Option<&ModelLastFailure> {
         self.last_failure.as_ref()
+    }
+
+    #[must_use]
+    pub const fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[must_use]
+    pub const fn disabled_reason(&self) -> Option<&'static str> {
+        if self.enabled {
+            None
+        } else {
+            Some("disabled by operator")
+        }
     }
 }
 
@@ -136,6 +151,7 @@ impl ModelSelectionController {
                         .unwrap_or(binding.model_id().as_str())
                         .to_owned(),
                     last_failure: entry.last_failure().cloned(),
+                    enabled: entry.is_enabled(),
                 }
             })
             .collect::<Vec<_>>();
@@ -167,6 +183,23 @@ impl ModelSelectionController {
         }
     }
 
+    /// Resolves one stored model coordinate for an operator activation mutation.
+    ///
+    /// This is lookup rather than model-work admission, so the current activation state is
+    /// intentionally visible to the caller instead of rejecting a disabled binding.
+    pub fn resolve_reference_for_activation(
+        &self,
+        reference: &str,
+    ) -> Result<ModelSelection, ModelServiceError> {
+        if let Some(host) = super::HostId::from_reference(reference)? {
+            return Err(ModelServiceError::new(format!(
+                "{} is a HostTarget and has no stored model activation state",
+                host.reference()
+            )));
+        }
+        self.resolve_model_reference(reference, false)
+    }
+
     pub fn resolve_target_reference(
         &self,
         reference: &str,
@@ -174,6 +207,15 @@ impl ModelSelectionController {
         if let Some(host) = super::HostId::from_reference(reference)? {
             return Ok(StartupTarget::Host(host));
         }
+        self.resolve_model_reference(reference, true)
+            .map(StartupTarget::Model)
+    }
+
+    fn resolve_model_reference(
+        &self,
+        reference: &str,
+        require_enabled: bool,
+    ) -> Result<ModelSelection, ModelServiceError> {
         let mut matches = BTreeSet::new();
         for choice in &self.choices {
             let selection = choice.selection();
@@ -192,9 +234,10 @@ impl ModelSelectionController {
         }
 
         match matches.len() {
-            1 => self
-                .accept_exact(matches.first().expect("one reference match exists"))
-                .map(StartupTarget::Model),
+            1 if require_enabled => {
+                self.accept_exact(matches.first().expect("one reference match exists"))
+            },
+            1 => Ok(matches.first().expect("one reference match exists").clone()),
             0 => Err(reference_error(
                 reference,
                 "is not configured",
@@ -230,7 +273,8 @@ impl ModelSelectionController {
         selection: &ModelSelection,
     ) -> Result<ModelSelection, ModelServiceError> {
         self.catalog
-            .resolve_model(selection.provider(), selection.account(), selection.model())?;
+            .resolve_model(selection.provider(), selection.account(), selection.model())?
+            .require_enabled()?;
         Ok(selection.clone())
     }
 }

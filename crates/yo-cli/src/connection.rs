@@ -16,7 +16,7 @@ use yo_core::{
 
 use crate::{
     AppError,
-    command::{ConnectCommand, DefaultCommand, DisconnectCommand},
+    command::{ConnectCommand, DefaultCommand, DisconnectCommand, ModelCommand},
     config::{self, Config},
     storage,
 };
@@ -90,6 +90,59 @@ pub(crate) fn run_disconnect(command: DisconnectCommand) -> Result<String, AppEr
             .map_err(|error| AppError::single("locating Yo configuration", error))?,
     )?;
     disconnect::run_external_disconnect(&config_path, command)
+}
+
+pub(crate) fn run_model_activation(command: ModelCommand) -> Result<String, AppError> {
+    let config_path = absolute_config_path(
+        config::selected_path()
+            .map_err(|error| AppError::single("locating Yo configuration", error))?,
+    )?;
+    execute_model_activation(&config_path, command)
+}
+
+fn execute_model_activation(config_path: &Path, command: ModelCommand) -> Result<String, AppError> {
+    let repositories = operation_repositories(config_path)?;
+    let mut session = repositories
+        .acquire()
+        .map_err(|error| AppError::single("acquiring the connection operation lane", error))?;
+    session
+        .recover_pending_operation()
+        .map_err(|error| AppError::single("recovering a pending connection operation", error))?;
+    let config = config::load_from(config_path)
+        .map_err(|error| AppError::single("reading Yo configuration", error))?;
+    let snapshot = session
+        .capture_connections()
+        .map_err(|error| AppError::single("capturing stored connections", error))?;
+    let catalog = snapshot
+        .model_catalog()
+        .map_err(|error| AppError::single("building the stored model catalog", error))?;
+    let current = snapshot
+        .preference()
+        .and_then(StartupTarget::model)
+        .cloned();
+    let selection = yo_core::ModelSelectionController::new(catalog, current)
+        .resolve_reference_for_activation(&command.target)
+        .map_err(|error| AppError::single("resolving stored model activation target", error))?;
+    let mutation = snapshot
+        .prepare_model_activation(&selection, command.enabled)
+        .map_err(|error| AppError::single("preparing stored model activation", error))?;
+    config
+        .verify_unchanged()
+        .map_err(|error| AppError::single("guarding Yo configuration", error))?;
+    if let Some(mutation) = mutation {
+        session
+            .commit_connection_mutation(&mutation)
+            .map_err(|error| AppError::single("publishing stored model activation", error))?;
+    }
+    Ok(format!(
+        "model: {}; status: {}\n",
+        presentation::escape_remote_text(&selection.canonical_reference()),
+        if command.enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    ))
 }
 
 fn absolute_config_path(path: std::path::PathBuf) -> Result<std::path::PathBuf, AppError> {
@@ -444,6 +497,68 @@ mod tests {
             "qwencloud:default:stored"
         );
         assert_ne!(after.revision(), &before_revision);
+    }
+
+    // enable/disable은 공용 operation lane의 connections CAS만 사용하고 credential bytes는
+    // 읽거나 다시 쓰지 않으며, exact 재실행은 revision을 늘리지 않고 enable도 지운
+    // preference를 복원하지 않습니다.
+    #[test]
+    fn model_activation_is_idempotent_and_preserves_credential_bytes() {
+        let directory = TestDirectory::new("model-activation");
+        let config_path = empty_config(&directory);
+        let repository = repository_at(&config_path);
+        let (account, binding) = stored_fixture("stored", "medium");
+        let provider = account.provider_id().clone();
+        let account_id = account.account_id().clone();
+        let mutation = repository
+            .capture()
+            .unwrap()
+            .prepare_model_upsert(account, binding)
+            .unwrap()
+            .unwrap();
+        repository.commit(&mutation).unwrap();
+        let credentials =
+            yo_core::LocalCredentialRepository::new(directory.0.join("credentials.yaml"));
+        let mutation =
+            yo_core::CredentialRepository::prepare_set(&credentials, &provider, &account_id)
+                .unwrap();
+        let credential = yo_core::ApiCredential::new("unchanged-secret").unwrap();
+        yo_core::CredentialRepository::commit(&credentials, &mutation, Some(&credential)).unwrap();
+        let credential_bytes = fs::read(credentials.path()).unwrap();
+        let command = ModelCommand {
+            target: "qwencloud:default:stored".to_owned(),
+            enabled: false,
+        };
+
+        assert_eq!(
+            execute_model_activation(&config_path, command.clone()).unwrap(),
+            "model: qwencloud:default:stored; status: disabled\n"
+        );
+        let disabled = repository.capture().unwrap();
+        assert!(!disabled.models()[0].is_enabled());
+        assert!(disabled.preference().is_none());
+        assert_eq!(fs::read(credentials.path()).unwrap(), credential_bytes);
+        let disabled_revision = disabled.revision().clone();
+
+        execute_model_activation(&config_path, command).unwrap();
+        assert_eq!(repository.capture().unwrap().revision(), &disabled_revision);
+
+        assert_eq!(
+            execute_model_activation(
+                &config_path,
+                ModelCommand {
+                    target: "stored".to_owned(),
+                    enabled: true,
+                },
+            )
+            .unwrap(),
+            "model: qwencloud:default:stored; status: enabled\n"
+        );
+        let enabled = repository.capture().unwrap();
+        assert!(enabled.models()[0].is_enabled());
+        assert!(enabled.preference().is_none());
+        assert_eq!(fs::read(credentials.path()).unwrap(), credential_bytes);
+        assert!(!directory.0.join("connection-operation.yaml").exists());
     }
 
     // Local Codex 검증이 실패하면 준비된 preference bytes가 있어도 CAS를 호출하지 않고

@@ -194,6 +194,12 @@ struct WireBinding {
     profile: WireProfile,
     #[serde(
         default,
+        deserialize_with = "deserialize_disabled_activation",
+        skip_serializing_if = "Option::is_none"
+    )]
+    enabled: Option<bool>,
+    #[serde(
+        default,
         deserialize_with = "deserialize_optional_non_null",
         skip_serializing_if = "Option::is_none"
     )]
@@ -213,6 +219,7 @@ impl From<&StoredModelBinding> for WireBinding {
             connector: binding.connector_id().as_str().to_owned(),
             base_url: binding.endpoint().as_str().to_owned(),
             profile: WireProfile::from(profile),
+            enabled: (!stored.is_enabled()).then_some(false),
             last_failure: stored.last_failure().map(WireLastFailure::from),
         }
     }
@@ -311,6 +318,20 @@ where
     }
 }
 
+fn deserialize_disabled_activation<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let enabled = bool::deserialize(deserializer)?;
+    if enabled {
+        Err(serde::de::Error::custom(
+            "present enabled must be exact boolean false",
+        ))
+    } else {
+        Ok(Some(false))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum WireTarget {
@@ -397,6 +418,7 @@ fn parse_binding(binding: WireBinding) -> Result<StoredModelBinding, crate::Mode
         connector,
         base_url,
         profile,
+        enabled,
         last_failure,
     } = binding;
     let dialect = profile.api_dialect.parse()?;
@@ -417,9 +439,10 @@ fn parse_binding(binding: WireBinding) -> Result<StoredModelBinding, crate::Mode
             ModelLastFailure::new(kind, failure.observed_at)
         })
         .transpose()?;
-    StoredModelBinding::from_durable_with_failure(
+    StoredModelBinding::from_durable_with_state(
         CompleteModelBinding::new(effective, profile)?,
         model_display_name,
+        enabled.unwrap_or(true),
         last_failure,
     )
 }
