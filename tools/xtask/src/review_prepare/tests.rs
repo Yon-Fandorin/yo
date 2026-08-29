@@ -5,9 +5,9 @@ use serde_json::json;
 use super::{
     DELEGATED_DELIVERY_SCHEMA, DELEGATED_USAGE_DELIVERY_SCHEMA, MANAGED_DELIVERY_SCHEMA,
     MANAGED_USAGE_DELIVERY_SCHEMA, PreparedBytes, PreparedPaths, Request, RouteKind, Target,
-    authority_paths_for_changed_paths, egress_document, prepared_review_questions,
-    require_empty_directory, require_prepared_requests_current, target_preparation,
-    validate_and_normalize,
+    authority_paths_for_changed_paths_v1alpha1, authority_paths_for_changed_paths_v1alpha2,
+    egress_document, prepared_review_questions, require_empty_directory,
+    require_prepared_requests_current, target_preparation, validate_and_normalize,
 };
 use crate::{review_packet::PublishedReview, test_support::unique_path};
 
@@ -66,11 +66,11 @@ fn request(target: serde_json::Value) -> Request {
 #[test]
 fn changed_authority_policy_omits_fixed_cost_for_product_code() {
     assert_eq!(
-        authority_paths_for_changed_paths(&["crates/yo-core/src/lib.rs".to_owned()]),
+        authority_paths_for_changed_paths_v1alpha1(&["crates/yo-core/src/lib.rs".to_owned()]),
         vec!["AGENTS.md".to_owned()]
     );
     assert_eq!(
-        authority_paths_for_changed_paths(&[
+        authority_paths_for_changed_paths_v1alpha1(&[
             "tools/xtask/src/lib.rs".to_owned(),
             "nested/AGENTS.md".to_owned(),
         ]),
@@ -81,9 +81,171 @@ fn changed_authority_policy_omits_fixed_cost_for_product_code() {
         ]
     );
     assert_eq!(
-        authority_paths_for_changed_paths(&["CONTRIBUTING/review-and-integration.md".to_owned()]),
+        authority_paths_for_changed_paths_v1alpha1(&[
+            "CONTRIBUTING/review-and-integration.md".to_owned(),
+        ]),
         vec!["AGENTS.md".to_owned(), "CONTRIBUTING.md".to_owned()]
     );
+}
+
+// alpha2 policy는 변경된 workflow 책임만 직접 소유 문서로 라우팅하고, 공용 facade는
+// 구체 구현 경로가 정한 소유자를 불필요하게 넓히지 않습니다.
+#[test]
+fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&[
+            "tools/xtask/src/lib.rs".to_owned(),
+            "tools/xtask/src/review_prepare/mod.rs".to_owned(),
+        ]),
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING/review-packets.md".to_owned()
+        ]
+    );
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&[
+            "tools/xtask/src/lib.rs".to_owned(),
+            "tools/xtask/src/review_delivery/mod.rs".to_owned(),
+        ]),
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING/review-delivery.md".to_owned()
+        ]
+    );
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&[
+            "tools/xtask/src/lib.rs".to_owned(),
+            "tools/xtask/src/slice_gate/mod.rs".to_owned(),
+        ]),
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING/review-and-integration.md".to_owned(),
+        ]
+    );
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&[
+            "tools/xtask/src/slice_contract/mod.rs".to_owned(),
+        ]),
+        vec!["AGENTS.md".to_owned(), "CONTRIBUTING.md".to_owned()]
+    );
+}
+
+// 여러 책임을 실제로 건드린 후보는 소유 문서의 합집합을 포함하고, 변경된 nested
+// AGENTS authority도 exact path로 보존합니다.
+#[test]
+fn changed_authority_policy_v1alpha2_unions_cross_owner_changes() {
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&[
+            "tools/xtask/src/review_packet/mod.rs".to_owned(),
+            "tools/xtask/src/review_egress/mod.rs".to_owned(),
+            "tools/xtask/src/slice_close/mod.rs".to_owned(),
+            "nested/AGENTS.md".to_owned(),
+        ]),
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING/review-and-integration.md".to_owned(),
+            "CONTRIBUTING/review-delivery.md".to_owned(),
+            "CONTRIBUTING/review-packets.md".to_owned(),
+            "nested/AGENTS.md".to_owned(),
+        ]
+    );
+}
+
+// packet, delivery, gate가 함께 소비하는 protocol과 packet/gate가 함께 소비하는 result
+// 파일은 한 소유자로 축소하지 않고 실제 소비 영역의 authority 합집합을 포함합니다.
+#[test]
+fn changed_authority_policy_v1alpha2_routes_shared_protocol_owners() {
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&[
+            "tools/xtask/src/review_protocol.rs".to_owned(),
+        ]),
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING/review-and-integration.md".to_owned(),
+            "CONTRIBUTING/review-delivery.md".to_owned(),
+            "CONTRIBUTING/review-packets.md".to_owned(),
+        ]
+    );
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&[
+            "tools/xtask/src/review_result.rs".to_owned(),
+        ]),
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING/review-and-integration.md".to_owned(),
+            "CONTRIBUTING/review-packets.md".to_owned(),
+        ]
+    );
+}
+
+// 소유자를 식별할 companion 없이 공용 facade나 shared workflow 기반만 바뀌면 모든
+// workflow owner를 포함해 누락 대신 비용 증가로 fail-closed합니다.
+#[test]
+fn changed_authority_policy_v1alpha2_fails_closed_for_ambiguous_workflow() {
+    let expected = vec![
+        "AGENTS.md".to_owned(),
+        "CONTRIBUTING.md".to_owned(),
+        "CONTRIBUTING/review-and-integration.md".to_owned(),
+        "CONTRIBUTING/review-delivery.md".to_owned(),
+        "CONTRIBUTING/review-packets.md".to_owned(),
+    ];
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&["tools/xtask/src/lib.rs".to_owned()]),
+        expected
+    );
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&[
+            "tools/xtask/src/bounded_file.rs".to_owned(),
+            "tools/xtask/src/review_prepare/mod.rs".to_owned(),
+        ]),
+        expected
+    );
+}
+
+// product-only 후보는 기존처럼 작은 root router만 포함하며, 직접 변경한 review owner는
+// root CONTRIBUTING을 경유하지 않고 그 exact file을 포함합니다.
+#[test]
+fn changed_authority_policy_v1alpha2_keeps_product_cost_minimal() {
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(&["crates/yo-core/src/lib.rs".to_owned()]),
+        vec!["AGENTS.md".to_owned()]
+    );
+    assert_eq!(
+        authority_paths_for_changed_paths_v1alpha2(
+            &["CONTRIBUTING/review-delivery.md".to_owned(),]
+        ),
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING/review-delivery.md".to_owned()
+        ]
+    );
+}
+
+// 실제 repository authority bytes를 동일 tokenizer로 비교해, packet 전용 작은 후보와
+// packet+integration 중간 후보가 기존 coarse root authority보다 각각 2,000 tokens 이상
+// 줄어드는지 고정합니다. 이 수치는 lens나 owner를 생략하지 않은 라우팅 결과입니다.
+#[test]
+fn precise_authority_owners_materially_reduce_small_and_medium_fixed_cost() {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let root = std::fs::read(repository.join("CONTRIBUTING.md")).unwrap();
+    let packets = std::fs::read(repository.join("CONTRIBUTING/review-packets.md")).unwrap();
+    let integration =
+        std::fs::read(repository.join("CONTRIBUTING/review-and-integration.md")).unwrap();
+    let tokenizer = tiktoken_rs::o200k_base_singleton();
+    let count = |bytes: &[u8]| {
+        tokenizer
+            .encode_with_special_tokens(std::str::from_utf8(bytes).unwrap())
+            .len()
+    };
+    let root_tokens = count(&root);
+    let packet_tokens = count(&packets);
+    let mut medium = packets;
+    medium.push(b'\n');
+    medium.extend(integration);
+    let medium_tokens = count(&medium);
+
+    assert!(root_tokens >= packet_tokens + 2_000);
+    assert!(root_tokens >= medium_tokens + 2_000);
 }
 
 // 관리형 준비는 사람이 반복 작성하던 egress와 admission 문서를 동일 manifest 및
@@ -301,8 +463,8 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
     );
 }
 
-// alpha4만 caller authority 목록을 금지하고 고정 policy를 요구해, 비용 절감이 임의
-// authority 누락으로 바뀌지 않도록 request 경계에서 닫습니다.
+// alpha4는 기존 alpha1 policy를 계속 요구해 이미 발행된 요청의 라우팅 의미가 새
+// 세분화 정책으로 바뀌지 않도록 동결합니다.
 #[test]
 fn alpha4_requires_derived_authority_policy() {
     let mut derived = request(json!({"kind": "delegated_host", "host": "grok"}));
@@ -316,5 +478,23 @@ fn alpha4_requires_derived_authority_policy() {
         validate_and_normalize(&mut derived)
             .unwrap_err()
             .contains("requires the caller list to be empty")
+    );
+}
+
+// alpha5는 caller 목록을 금지하고 alpha2 policy만 받아, 세분화된 owner 선택이 임의
+// authority 누락이나 alpha4 의미 재해석으로 바뀌지 않게 합니다.
+#[test]
+fn alpha5_requires_precise_derived_authority_policy() {
+    let mut derived = request(json!({"kind": "delegated_host", "host": "grok"}));
+    derived.schema = "yo.slice-review-prepare-request/v1alpha5".to_owned();
+    derived.repository_authority_paths.clear();
+    derived.repository_authority_policy = Some("changed-workflow-authority/v1alpha2".to_owned());
+    validate_and_normalize(&mut derived).unwrap();
+
+    derived.repository_authority_policy = Some("changed-workflow-authority/v1alpha1".to_owned());
+    assert!(
+        validate_and_normalize(&mut derived)
+            .unwrap_err()
+            .contains("changed-workflow-authority/v1alpha2")
     );
 }

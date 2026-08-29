@@ -545,35 +545,11 @@ model route. Delivery receipts remain local operational assertions rather than
 Provider-authenticated proof, so the coordinator still owns their factual
 accuracy.
 
-Use the delivery request's `v1alpha4` form when the completed review must also
-bind actual Provider Usage. It preserves the existing claim, outcome, and
-`delivery.json` schemas and publishes a separate
-`yo.external-review-provider-usage/v1alpha1` artifact at
-`provider-usage.json`. The artifact independently reopens the durable Session,
-requires the delivery receipt's exact request identity on its recorded turn,
-and requires every usage source on that turn to match the admitted managed
-Provider/Account/Model or delegated Codex/Grok host. It records the Session and
-turn identities, source-specific receipt fields, the hash and byte count of
-each raw terminal usage snapshot, and presence-aware input, output, total,
-reasoning, cache-read, and cache-write values. Multiple receipts are summed
-with explicit complete or partial coverage. An absent receipt is represented
-as `unavailable`, never as a guessed zero. A request, Session, turn, target, raw
-snapshot, or usage projection mismatch fails the already-claimed attempt
-without launching another Provider request. Earlier request and result
-versions retain their existing output bytes; only `v1alpha4` returns the new
-result version containing the content-addressed Provider Usage artifact.
-Select it through `yo.slice-review-prepare-request/v1alpha3`; older preparation
-versions continue to emit their frozen delivery versions.
-
-For a new review, `yo.slice-review-prepare-request/v1alpha4` keeps the same
-Usage-bound delivery but replaces the caller-maintained authority list with
-`repository_authority_policy:"changed-workflow-authority/v1alpha1"` and an
-empty `repository_authority_paths`. Preparation derives the list from the
-exact bound base-to-HEAD paths. It always includes the small root `AGENTS.md`
-router, adds `CONTRIBUTING.md` for repository workflow/tooling changes, and
-adds any changed nested `AGENTS.md` exactly. Older preparation schemas keep
-their explicit non-empty list. This reduces the fixed packet cost for product
-code without allowing a caller to omit changed workflow authority.
+Review-preparation schema selection, Provider Usage binding, and repository
+authority routing are owned by
+[Review packets](CONTRIBUTING/review-packets.md). New requests use its precise
+derived-authority version; frozen older requests retain their recorded
+behavior.
 
 For a review prepared with `yo.slice-review-prepare-request/v1alpha2`, use the
 structured gate-preparation shape and omit caller-declared verdicts:
@@ -1035,10 +1011,13 @@ restore every resource the fixture owns.
 
 ## Review and integration
 
-The complete review, evidence, gate, integration, and Slice-cleanup workflow is
-owned by [Review and integration](CONTRIBUTING/review-and-integration.md).
-Read that authority before preparing or accepting a Slice review. This file
-routes to it and does not duplicate its rules.
+Review packet construction is owned by
+[Review packets](CONTRIBUTING/review-packets.md), external review effects by
+[Review delivery](CONTRIBUTING/review-delivery.md), and verdict evidence,
+approval, integration, and cleanup by
+[Review and integration](CONTRIBUTING/review-and-integration.md). Read only the
+owners applicable to the current transition; this file does not duplicate
+their rules.
 ## Knowledge retention
 
 At Slice or Wave close:
