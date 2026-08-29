@@ -14,7 +14,9 @@ use crate::{
 const MESSAGE_LIMIT: usize = 64 * 1024;
 const REQUEST_LIMIT: usize = 64 * 1024;
 const ACCEPT_REQUEST_SCHEMA: &str = "yo.slice-accept-request/v1alpha1";
+const ACCEPT_REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-request/v1alpha2";
 const ACCEPT_RESULT_SCHEMA: &str = "yo.slice-accept-result/v1alpha1";
+const ACCEPT_RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-result/v1alpha2";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -30,7 +32,10 @@ struct AcceptRequest {
     close_prepare_request_hash: String,
     close_plan_path: String,
     push: Push,
-    approval_scope: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    approval_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effect_scope: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -104,12 +109,13 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
         &request.push.remote,
         &integration_ref,
     );
-    if request.approval_scope != expected_scope {
+    let recorded_scope = request.effect_scope()?;
+    if recorded_scope != expected_scope {
         return Err(format!(
-            "Slice accept approval_scope must equal `{expected_scope}`"
+            "Slice accept effect scope must equal `{expected_scope}`"
         ));
     }
-    require_gate_scope(&gate_path, &expected_scope)?;
+    require_gate_authorization(&gate_path, &expected_scope, &request.schema)?;
 
     revalidate_inputs(
         &request,
@@ -175,7 +181,7 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
     println!(
         "{}",
         serde_json::to_string(&serde_json::json!({
-            "schema": ACCEPT_RESULT_SCHEMA,
+            "schema": request.result_schema(),
             "ok": true,
             "status": "accepted",
             "slice": request.slice,
@@ -314,11 +320,29 @@ fn integrate_candidate_with(
 }
 
 fn validate_accept_request(request: &AcceptRequest) -> Result<(), String> {
-    if request.schema != ACCEPT_REQUEST_SCHEMA {
-        return Err(format!(
-            "unsupported Slice accept request schema `{}`; expected `{ACCEPT_REQUEST_SCHEMA}`",
-            request.schema
-        ));
+    match request.schema.as_str() {
+        ACCEPT_REQUEST_SCHEMA
+            if request.approval_scope.is_some() && request.effect_scope.is_none() => {},
+        ACCEPT_REQUEST_SCHEMA_V1_ALPHA2
+            if request.approval_scope.is_none() && request.effect_scope.is_some() => {},
+        ACCEPT_REQUEST_SCHEMA => {
+            return Err(
+                "yo.slice-accept-request/v1alpha1 requires approval_scope and forbids effect_scope"
+                    .to_owned(),
+            );
+        },
+        ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 => {
+            return Err(
+                "yo.slice-accept-request/v1alpha2 requires effect_scope and forbids approval_scope"
+                    .to_owned(),
+            );
+        },
+        _ => {
+            return Err(format!(
+                "unsupported Slice accept request schema `{}`; expected `{ACCEPT_REQUEST_SCHEMA}` or `{ACCEPT_REQUEST_SCHEMA_V1_ALPHA2}`",
+                request.schema
+            ));
+        },
     }
     for (value, label) in [
         (&request.gate_request_path, "gate_request_path"),
@@ -364,13 +388,36 @@ fn validate_accept_request(request: &AcceptRequest) -> Result<(), String> {
     Ok(())
 }
 
+impl AcceptRequest {
+    fn effect_scope(&self) -> Result<&str, String> {
+        match self.schema.as_str() {
+            ACCEPT_REQUEST_SCHEMA => self.approval_scope.as_deref(),
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 => self.effect_scope.as_deref(),
+            _ => None,
+        }
+        .ok_or_else(|| "Slice accept request has no version-matched effect scope".to_owned())
+    }
+
+    fn result_schema(&self) -> &'static str {
+        if self.schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 {
+            ACCEPT_RESULT_SCHEMA_V1_ALPHA2
+        } else {
+            ACCEPT_RESULT_SCHEMA
+        }
+    }
+}
+
 fn effect_scope(slice: &str, candidate: &str, remote: &str, reference: &str) -> String {
     format!(
         "yo.slice-accept-effects/v1alpha1;slice={slice};candidate={candidate};squash=true;push={remote}:{reference};close=true"
     )
 }
 
-fn require_gate_scope(path: &Path, expected: &str) -> Result<(), String> {
+fn require_gate_authorization(
+    path: &Path,
+    expected: &str,
+    accept_schema: &str,
+) -> Result<(), String> {
     let bytes = bounded_file::read_regular(path, REQUEST_LIMIT, "Slice gate request")?;
     let gate: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|error| format!("invalid Slice gate request: {error}"))?;
@@ -380,13 +427,33 @@ fn require_gate_scope(path: &Path, expected: &str) -> Result<(), String> {
     let scope = gate
         .pointer("/approval/scope")
         .and_then(serde_json::Value::as_str);
-    if kind != Some("exact_candidate") || scope != Some(expected) {
-        return Err(
-            "one-command acceptance requires the ready gate's exact_candidate approval to name the canonical squash, push, and close effects"
+    match (accept_schema, kind) {
+        (ACCEPT_REQUEST_SCHEMA, Some("exact_candidate"))
+        | (ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, Some("exact_candidate"))
+            if scope == Some(expected) => Ok(()),
+        (ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, Some("standing_routine"))
+            if gate.pointer("/risk/classification").and_then(serde_json::Value::as_str)
+                == Some("routine")
+                && gate
+                    .pointer("/approval/authority")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|authority| authority.starts_with("human/") && authority.len() > 6)
+                && scope.is_some_and(|scope| !scope.trim().is_empty())
+                && gate.pointer("/approval/candidate_commit").is_none_or(serde_json::Value::is_null)
+                && gate.pointer("/approval/diff_hash").is_none_or(serde_json::Value::is_null) =>
+        {
+            Ok(())
+        },
+        (ACCEPT_REQUEST_SCHEMA, _) => Err(
+            "one-command acceptance v1alpha1 requires the ready gate's exact_candidate approval to name the canonical squash, push, and close effects"
                 .to_owned(),
-        );
+        ),
+        (ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, _) => Err(
+            "one-command acceptance v1alpha2 requires either the exact canonical effect approval or a satisfied human-origin standing_routine gate"
+                .to_owned(),
+        ),
+        _ => Err("unsupported Slice accept request schema for gate authorization".to_owned()),
     }
-    Ok(())
 }
 
 fn revalidate_inputs(

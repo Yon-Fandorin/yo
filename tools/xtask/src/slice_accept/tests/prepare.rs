@@ -1,11 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    ensure_distinct_paths, preflight_publication, prepare_with, require_unchanged,
-    temporary_output_paths,
+    PREPARE_REQUEST_SCHEMA, PREPARE_REQUEST_SCHEMA_V1_ALPHA2, ensure_distinct_paths,
+    preflight_publication, prepare_with, require_unchanged, temporary_output_paths,
 };
 use crate::{
-    review_protocol, slice_accept::require_gate_scope, slice_close, slice_contract, test_support,
+    review_protocol,
+    slice_accept::{
+        ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, require_gate_authorization,
+    },
+    slice_close, slice_contract, test_support,
 };
 
 struct Fixture {
@@ -185,6 +189,45 @@ impl Fixture {
             candidate_commit,
         }
     }
+
+    fn exact_alpha2() -> Self {
+        let fixture = Self::new();
+        fixture.set_prepare_schema(PREPARE_REQUEST_SCHEMA_V1_ALPHA2);
+        fixture
+    }
+
+    fn standing_routine(prepare_schema: &str) -> Self {
+        let fixture = Self::new();
+        let mut gate: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&fixture.gate).unwrap()).unwrap();
+        gate["risk"] = serde_json::json!({
+            "classification": "routine",
+            "rationale": "mechanical follow-through under an accepted contract"
+        });
+        gate["approval"] = serde_json::json!({
+            "kind": "standing_routine",
+            "authority": "human/yon",
+            "scope": "routine exact-contract implementation"
+        });
+        std::fs::write(
+            &fixture.gate,
+            format!("{}\n", serde_json::to_string_pretty(&gate).unwrap()),
+        )
+        .unwrap();
+        fixture.set_prepare_schema(prepare_schema);
+        fixture
+    }
+
+    fn set_prepare_schema(&self, schema: &str) {
+        let mut prepare: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&self.prepare).unwrap()).unwrap();
+        prepare["schema"] = serde_json::Value::String(schema.to_owned());
+        std::fs::write(
+            &self.prepare,
+            format!("{}\n", serde_json::to_string_pretty(&prepare).unwrap()),
+        )
+        .unwrap();
+    }
 }
 
 impl Drop for Fixture {
@@ -265,6 +308,63 @@ fn one_prepare_derives_hash_bound_accept_and_close_requests() {
     );
 }
 
+// v1alpha2 준비는 satisfied standing_routine을 새 사람 승인으로 가장하지 않고,
+// 후보·remote·ref·squash·close를 별도 effect_scope에 결정적으로 결속합니다.
+#[test]
+fn alpha2_standing_routine_derives_exact_effect_scope() {
+    let fixture = Fixture::standing_routine(PREPARE_REQUEST_SCHEMA_V1_ALPHA2);
+
+    prepare_with(&fixture.candidate, &fixture.prepare, || Ok(())).unwrap();
+
+    let accept: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.coordination.join("accept.json")).unwrap())
+            .unwrap();
+    assert_eq!(accept["schema"], ACCEPT_REQUEST_SCHEMA_V1_ALPHA2);
+    assert!(accept.get("approval_scope").is_none());
+    assert_eq!(
+        accept["effect_scope"],
+        super::super::effect_scope(
+            "post-gate-test",
+            &fixture.candidate_commit,
+            "origin",
+            "refs/heads/develop"
+        )
+    );
+}
+
+// 새 준비 버전은 exact_candidate 게이트도 같은 exact effect 결속으로 옮겨 기존
+// 강한 승인 경로를 standing_routine 지원 때문에 약화시키지 않습니다.
+#[test]
+fn alpha2_exact_candidate_uses_the_same_effect_scope() {
+    let fixture = Fixture::exact_alpha2();
+
+    prepare_with(&fixture.candidate, &fixture.prepare, || Ok(())).unwrap();
+
+    let accept: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.coordination.join("accept.json")).unwrap())
+            .unwrap();
+    assert_eq!(accept["schema"], ACCEPT_REQUEST_SCHEMA_V1_ALPHA2);
+    assert!(
+        accept["effect_scope"]
+            .as_str()
+            .unwrap()
+            .contains(&fixture.candidate_commit)
+    );
+}
+
+// 이미 발행된 v1alpha1 의미는 그대로 exact_candidate 전용이므로 같은 standing
+// 게이트가 새 버전 선택 없이 조용히 허용되지 않습니다.
+#[test]
+fn alpha1_standing_routine_remains_rejected() {
+    let fixture = Fixture::standing_routine(PREPARE_REQUEST_SCHEMA);
+
+    let error = prepare_with(&fixture.candidate, &fixture.prepare, || Ok(())).unwrap_err();
+
+    assert!(error.contains("v1alpha1 requires"));
+    assert!(!fixture.coordination.join("accept.json").exists());
+    assert!(!fixture.coordination.join("close-prepare.json").exists());
+}
+
 // 준비 도중 gate 파일이 같은 의미의 JSON이라도 바이트가 바뀌면 원래 capture의
 // hash를 가진 accept/close request를 하나도 발행하지 않고 stale 상태로 중단합니다.
 #[test]
@@ -314,8 +414,8 @@ fn gate_scope_mismatch_is_rejected_before_publication() {
     )
     .unwrap();
 
-    require_gate_scope(&path, "scope-a").unwrap();
-    let error = require_gate_scope(&path, "scope-b").unwrap_err();
+    require_gate_authorization(&path, "scope-a", ACCEPT_REQUEST_SCHEMA).unwrap();
+    let error = require_gate_authorization(&path, "scope-b", ACCEPT_REQUEST_SCHEMA).unwrap_err();
 
     assert!(error.contains("exact_candidate approval"));
     std::fs::remove_file(path).unwrap();

@@ -3,15 +3,17 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ACCEPT_REQUEST_SCHEMA, AcceptRequest, Push, effect_scope, integration_worktree,
-    require_gate_scope, validate_accept_request,
+    ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, AcceptRequest, Push, effect_scope,
+    integration_worktree, require_gate_authorization, validate_accept_request,
 };
 use crate::{
     bounded_file, git, review_protocol, slice_close, slice_contract, slice_gate, slice_worktree,
 };
 
 const PREPARE_REQUEST_SCHEMA: &str = "yo.slice-accept-prepare-request/v1alpha1";
+const PREPARE_REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-prepare-request/v1alpha2";
 const PREPARE_RESULT_SCHEMA: &str = "yo.slice-accept-prepare-result/v1alpha1";
+const PREPARE_RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-prepare-result/v1alpha2";
 const INPUT_LIMIT: usize = 64 * 1024;
 const ACCEPT_FILE: &str = "accept.json";
 const CLOSE_PREPARE_FILE: &str = "close-prepare.json";
@@ -28,7 +30,7 @@ struct PrepareRequest {
 
 #[derive(Serialize)]
 struct PrepareResult<'a> {
-    schema: &'static str,
+    schema: &'a str,
     ok: bool,
     status: &'a str,
     slice: &'a str,
@@ -38,7 +40,10 @@ struct PrepareResult<'a> {
     validation_count: usize,
     review_evidence_count: usize,
     commit_trailer_count: usize,
-    approval_scope: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    approval_scope: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effect_scope: Option<&'a str>,
     accept_request_path: &'a Path,
     accept_request_hash: String,
     close_prepare_request_path: &'a Path,
@@ -68,6 +73,7 @@ fn prepare_with(
         )
     })?;
     validate_request(&request)?;
+    let (accept_schema, result_schema) = output_schemas(&request.schema)?;
 
     let bound = slice_contract::trusted_bound_slice(repository)?;
     slice_contract::trusted_check_bound_scope(repository)?;
@@ -116,13 +122,13 @@ fn prepare_with(
         return Err("bound Slice base is not an ancestor of current integration HEAD".to_owned());
     }
 
-    let approval_scope = effect_scope(
+    let bound_effect_scope = effect_scope(
         &bound.slice,
         &candidate,
         &request.push_remote,
         &integration_ref,
     );
-    require_gate_scope(&gate_path, &approval_scope)?;
+    require_gate_authorization(&gate_path, &bound_effect_scope, accept_schema)?;
 
     let coordination = workspace
         .join(".local-exclude")
@@ -152,7 +158,7 @@ fn prepare_with(
     slice_close::validate_close_prepare_request(&close_prepare_bytes, &gate, &candidate)?;
 
     let accept_request = AcceptRequest {
-        schema: ACCEPT_REQUEST_SCHEMA.to_owned(),
+        schema: accept_schema.to_owned(),
         slice: bound.slice.clone(),
         gate_request_path,
         gate_request_hash: review_protocol::digest(&gate_bytes),
@@ -166,7 +172,10 @@ fn prepare_with(
             remote: request.push_remote.clone(),
             reference: integration_ref.clone(),
         },
-        approval_scope: approval_scope.clone(),
+        approval_scope: (accept_schema == ACCEPT_REQUEST_SCHEMA)
+            .then(|| bound_effect_scope.clone()),
+        effect_scope: (accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA2)
+            .then(|| bound_effect_scope.clone()),
     };
     validate_accept_request(&accept_request)?;
     let mut accept_bytes = serde_json::to_vec_pretty(&accept_request)
@@ -194,7 +203,8 @@ fn prepare_with(
         &integration,
         &integration_ref,
         &integration_head,
-        &approval_scope,
+        accept_schema,
+        &bound_effect_scope,
     )?;
 
     let close_created = bounded_file::publish_new_or_exact(
@@ -214,7 +224,7 @@ fn prepare_with(
         _ => "written",
     };
     let result = PrepareResult {
-        schema: PREPARE_RESULT_SCHEMA,
+        schema: result_schema,
         ok: true,
         status,
         slice: &bound.slice,
@@ -224,7 +234,10 @@ fn prepare_with(
         validation_count: gate.validation.len(),
         review_evidence_count: gate.review_count,
         commit_trailer_count: gate.commit_trailers.len(),
-        approval_scope: &approval_scope,
+        approval_scope: (accept_schema == ACCEPT_REQUEST_SCHEMA)
+            .then_some(bound_effect_scope.as_str()),
+        effect_scope: (accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA2)
+            .then_some(bound_effect_scope.as_str()),
         accept_request_path: &accept_path,
         accept_request_hash: review_protocol::digest(&accept_bytes),
         close_prepare_request_path: &close_prepare_path,
@@ -241,9 +254,12 @@ fn prepare_with(
 }
 
 fn validate_request(request: &PrepareRequest) -> Result<(), String> {
-    if request.schema != PREPARE_REQUEST_SCHEMA {
+    if !matches!(
+        request.schema.as_str(),
+        PREPARE_REQUEST_SCHEMA | PREPARE_REQUEST_SCHEMA_V1_ALPHA2
+    ) {
         return Err(format!(
-            "unsupported Slice accept preparation schema `{}`; expected `{PREPARE_REQUEST_SCHEMA}`",
+            "unsupported Slice accept preparation schema `{}`; expected `{PREPARE_REQUEST_SCHEMA}` or `{PREPARE_REQUEST_SCHEMA_V1_ALPHA2}`",
             request.schema
         ));
     }
@@ -265,6 +281,17 @@ fn validate_request(request: &PrepareRequest) -> Result<(), String> {
         return Err("push_remote must be one bounded Git remote token".to_owned());
     }
     Ok(())
+}
+
+fn output_schemas(request_schema: &str) -> Result<(&'static str, &'static str), String> {
+    match request_schema {
+        PREPARE_REQUEST_SCHEMA => Ok((ACCEPT_REQUEST_SCHEMA, PREPARE_RESULT_SCHEMA)),
+        PREPARE_REQUEST_SCHEMA_V1_ALPHA2 => Ok((
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA2,
+            PREPARE_RESULT_SCHEMA_V1_ALPHA2,
+        )),
+        _ => Err("unsupported Slice accept preparation schema".to_owned()),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -371,7 +398,8 @@ fn revalidate_inputs(
     integration: &Path,
     integration_ref: &str,
     integration_head: &str,
-    approval_scope: &str,
+    accept_schema: &str,
+    effect_scope: &str,
 ) -> Result<(), String> {
     let current_request = bounded_file::read_regular(
         request_path,
@@ -408,7 +436,7 @@ fn revalidate_inputs(
     {
         return Err("integration ref changed before post-gate publication".to_owned());
     }
-    require_gate_scope(gate_path, approval_scope)
+    require_gate_authorization(gate_path, effect_scope, accept_schema)
 }
 
 fn require_unchanged(original: &[u8], current: &[u8], label: &str) -> Result<(), String> {
