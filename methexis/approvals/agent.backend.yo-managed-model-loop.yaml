@@ -1,9 +1,7 @@
-schema: methexis.approval/v1alpha1
+schema: methexis.approval/v1alpha2
 knowledge_id: agent.backend.yo-managed-model-loop
-revision: sha256:ff95e4c6332db98234d9106d3707c3d8a2ef322b0e40b29cae3910c84184d541
+revision: sha256:a777d3c3c9e148593db1f0b4db9d01d63b6eedb98dcb4dded4517e1905c0a22a
 reviewer: agent-runtime
-reviewed_at: 2026-08-22T10:55:15Z
-projection_profile: ko-review/v1alpha1
-projection_compiler: methexis/0.0.0
-projection_hash: sha256:07ec0082e8a160ce21ee6652b0cdf94e42d6abde8995517567c0fc2507b7ca21
-request_hash: sha256:7b642aec72a7622e325ef151cf3bbf30898084854ab6b799a88194a13bc26060
+reviewed_at: 2026-08-30T10:52:40Z
+review_basis: canonical
+request_hash: sha256:77159d206daa3d8ea33a1620915457c3a95325707e91b2440acda3b9b9ceb757
