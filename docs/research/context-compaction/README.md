@@ -2,7 +2,7 @@
 
 > Status: non-authoritative research input
 >
-> 조사 기준일: 2026-08-29
+> 조사 기준일: 2026-08-30
 
 이 디렉터리는 장시간 실행되는 코딩 에이전트가 context window 압력에
 대응하는 방식을 비교한다. 제품 계약이나 Yo의 동작을 정의하지 않는다.
@@ -42,6 +42,24 @@ Methexis KnowledgeUnit만이 소유한다.
 tool schema까지 포함한 rendered input을 기준으로 삼는다. 따라서 85%나 95%라는
 숫자만 복사해서는 동일한 안전 여유가 생기지 않는다.
 
+## Summary 출력 형식 비교
+
+도구들은 같은 정보를 보존하려 해도 모델에게 요구하는 출력 형식은 서로 다르다.
+
+| 도구 | 모델 생성 본문 | 런타임이 별도로 보강하는 내용 |
+|---|---|---|
+| Codex local | 진행, 결정, 제약, 다음 단계와 핵심 참조를 담은 자유형 handoff | 최근 사용자 메시지와 고정 continuation prefix |
+| Codex remote | client가 해석하지 않는 opaque compaction item | Responses continuation 상태 |
+| Kimi Code | 대화 언어의 1인칭 현재형 handoff, 고정 heading 없음 | 최근 사용자 prompt, live TODO와 summary prefix |
+| Pi | `Goal`, `Constraints & Preferences`, `Progress`, `Key Decisions`, `Next Steps`, `Critical Context`의 고정 Markdown | 읽거나 수정한 파일 목록과 retained suffix |
+| Qwen Code | `<state_snapshot>` 아래 고정 XML field | 복원 attachment와 현재 파일·상태 관찰 |
+| Grok Build | `<summary>` 안의 번호 section 또는 짧은 자유형 summary | 마지막 실제 query, task, sub-agent, TODO, MCP, project instruction과 transcript pointer |
+
+자유형 handoff는 자연스럽고 task 크기에 비례하기 쉽지만 구조 누락을 기계적으로
+찾기 어렵다. 엄격한 XML은 검증하기 쉽지만 모든 사용자 메시지나 전체 code snippet
+복제를 요구하면 summary 자체가 다시 커진다. 고정 Markdown은 두 극단의 중간이며,
+사람과 모델이 읽기 쉽고 heading 존재와 순서를 결정적으로 검사할 수 있다.
+
 ## 공통 구조
 
 다섯 도구에서 반복해서 나타나는 구조는 다음과 같다.
@@ -75,16 +93,58 @@ Kimi Code와 Grok Build에서 참고할 부분은 summary 자체보다 **현재 
 몰래 포함해서는 안 된다. Codex의 opaque compaction은 OpenAI Connector 전용
 최적화 후보일 수 있지만 Provider-neutral Journal 표현을 대체할 수 없다.
 
+### 조사 결과를 조합한 첫 portable 형식
+
+Yo에는 모델이 고정 Markdown heading 안에서 현재 대화 언어로 자유롭게 쓰고,
+기계가 아는 값은 모델이 다시 생성하지 않는 혼합형이 적합하다.
+
+```text
+# Context Checkpoint
+## Current Objective
+## Active Constraints
+## Decisions
+## Verified Progress
+## Current State
+## Unknown or Unverified
+## Next Actions
+## Critical References
+```
+
+이 본문은 exact metadata의 authority가 아니다. `context_epoch`, source event 범위,
+retained semantic group, token 측정, loss disclosure, content-addressed receipt와 hash는
+Journal이 구조화된 envelope로 덧붙여야 한다. live TODO나 structured plan이 별도
+authority로 존재하면 summary가 그 목록을 복제하지 않고, 다음 작업의 이유와 순서만
+남긴다. 근거가 없는 섹션은 내용을 발명하거나 비워 두지 않고 exact `None.`으로
+표시한다. 모든 사용자 메시지, 전체 code snippet, credentials, private reasoning과
+provider-private bytes는 본문에 넣지 않는다.
+
 ### 첫 구현에 맞는 범위
 
 - Connector가 만든 전체 입력을 정확히 센다.
-- 90% 이상에서 persisted context strategy가 `Compact` 또는 `Reject`를 결정한다.
+- 기본 85%에서 warning을 관측하고 90% 이상에서 persisted context strategy가
+  `Compact` 또는 `Reject`를 결정한다.
+- pressure decision은 exact `Admit`, `Compact`, `Reject` 세 가지이고 warning은
+  별도 관측 상태다. 압축 후 두 번째 `Compact`는 typed `Reject`로 닫는다.
 - 오래된 visible semantic prefix만 같은 binding으로 한 번 요약한다.
-- tools를 비활성화하고 최근의 완전한 semantic group과 현재 입력을 원문으로
-  보존한다.
-- rebuilt payload를 다시 정확히 센 뒤 `Admit`일 때만 Journal epoch를 원자적으로
-  전환한다.
+- tools를 비활성화하고 현재 입력, 미처리 steer와 approval, 최신 complete semantic
+  group, canonical system/tool context를 원문으로 보존한다.
+- 추가로 보존하는 과거 원문의 budget은 input limit의 10%와 65,536 token 중 작은
+  값으로 제한한다. 현재 입력, 미처리 steer·approval, 최신 complete semantic group과
+  canonical system/tool context는 이 선택 예산 때문에 자르지 않는다.
+- 필수 보존 집합과 summary만으로 rebuilt payload가 trigger에 도달하면 압축 성공으로
+  간주하지 않고 `Reject`한다.
+- rebuilt payload를 다시 정확히 센 뒤 `Admit`일 때만 별도 `context_epoch`을
+  원자적으로 전환한다. Backend binding epoch은 바뀌지 않는다.
+- active Turn에서는 완결된 tool/approval semantic group 뒤와 다음 ordinary Turn
+  model request
+  사이에서만 checkpoint를 만든다. checkpoint가 exact system/tools 계약을 소유하고,
+  Turn 종료 delta는 최신 checkpoint 뒤의 model-visible suffix만 기록한다.
 - 실패, 취소 또는 두 번째 `Compact`에서는 원 Journal을 변경하지 않는다.
+- summarized prefix의 오래된 대형 tool/media output은 raw Journal을 지우지 않고
+  content-addressed receipt를 operator disclosure로 남긴다. receipt나 placeholder가
+  model input을 치환하지 않으며, model-visible bounded read는 frozen tool registry를
+  바꾸는 별도 후속 계약으로 둔다.
+- 자동 압축과 `/compact`는 같은 pipeline과 실패 규칙을 사용한다.
 
 ### 독립된 후속 계약이 필요한 후보
 
@@ -93,7 +153,8 @@ Kimi Code와 Grok Build에서 참고할 부분은 summary 자체보다 **현재 
 - Provider-native opaque compaction item
 - 현재 파일을 다시 읽어 과거 context 대신 넣는 restoration attachment
 - 두 번 이상의 요약, retry 또는 fallback
-- 모델이 원 transcript를 필요할 때 읽는 transcript-pointer tool
+- Provider나 Session 경계를 넘는 transcript-pointer 또는 임의 path read
+- receipt를 검증해 Session Journal 원문 일부를 읽는 bounded artifact tool
 
 ## Yo의 승인된 소유자
 

@@ -2,7 +2,7 @@
 
 > Status: non-authoritative research input
 >
-> 조사 기준일: 2026-08-29
+> 조사 기준일: 2026-08-30
 
 ## 조사 범위
 
@@ -45,6 +45,23 @@ request로 전달할 continuation state다.
   포함될 수 있다.
 - opaque item의 byte 크기만으로 내부에 보존된 의미량을 판단할 수 없다.
 
+## Local summary 형식과 retained history
+
+`codex-cli 0.150.1`의 정확한 `rust-v0.150.1` source에서 local fallback prompt와
+history replacement를 교차 확인했다. Prompt는 다음 종류의 정보를 요구하지만
+고정 Markdown heading이나 XML schema는 강제하지 않는다.
+
+- 현재 진행과 핵심 결정
+- 계속 적용되는 context, 제약과 사용자 선호
+- 남은 작업과 명확한 다음 단계
+- 작업을 재개하는 데 필요한 값, 예시와 참조
+
+결과는 마지막 assistant text를 fixed compaction prefix와 함께 사용한다. Local
+replacement는 최근 user message를 최대 약 20K token까지 summary와 함께 남기며,
+경계 message text를 줄일 수 있다. 반면 remote v2는 visible summary가 아니라
+Provider가 만든 opaque item과 허용된 최근 message를 사용한다. 두 경로를 하나의
+사람이 읽는 format으로 설명하면 안 된다.
+
 ## 현재 로컬 Codex 관찰
 
 조사 환경의 `codex-cli 0.150.1`을 대상으로 다음을 확인했다.
@@ -61,7 +78,6 @@ Binary의 모듈 이름에서는 remote compaction v2와 local fallback 경로�
 관찰됐다. 다음 사항은 공개 문서만으로 확정할 수 없다.
 
 - 어떤 조건에서 CLI가 remote와 local compaction을 선택하는가.
-- local fallback summary의 정확한 prompt와 보존 경계는 무엇인가.
 - `effective_context_window_percent`가 모든 모델과 계정에서 같은가.
 - Provider-native item에 어떤 private reasoning state가 보존되는가.
 
@@ -112,4 +128,7 @@ Journal의 visible history가 독립 복구 가능해야 한다.
 - [OpenAI Docs: Compaction](https://developers.openai.com/api/docs/guides/compaction)
 - [OpenAI API reference: Compact a response](https://developers.openai.com/api/reference/java/resources/responses/methods/compact)
 - [OpenAI Docs: Latest model guidance](https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2)
+- [Codex local compaction prompt `rust-v0.150.1`](https://github.com/openai/codex/blob/rust-v0.150.1/codex-rs/prompts/templates/compact/prompt.md)
+- [Codex local compaction implementation `rust-v0.150.1`](https://github.com/openai/codex/blob/rust-v0.150.1/codex-rs/core/src/compact.rs)
+- [Codex remote compaction v2 `rust-v0.150.1`](https://github.com/openai/codex/blob/rust-v0.150.1/codex-rs/core/src/compact_remote_v2.rs)
 - 로컬 관찰: `codex-cli 0.150.1`, `codex debug models --bundled`

@@ -2,7 +2,7 @@
 
 > Status: non-authoritative research input
 >
-> 조사 기준일: 2026-08-29
+> 조사 기준일: 2026-08-30
 
 ## 시작 조건
 
@@ -67,6 +67,26 @@ summary하는 구조보다 최근 원문이 어떻게 흡수되는지 명확하�
 summary 최대 token은 reserve budget의 일부와 모델 output 한도 중 작은 값으로
 제한된다. 조사한 구현에서는 일반 compaction에 대략 `0.8 * reserveTokens` 상한을
 적용했다.
+
+Pi의 기본 summary 본문은 다음 Markdown heading을 고정한다.
+
+```text
+## Goal
+## Constraints & Preferences
+## Progress
+### Done
+### In Progress
+### Blocked
+## Key Decisions
+## Next Steps
+## Critical Context
+```
+
+재압축할 때는 이전 summary를 별도 tag로 전달하고 같은 구조를 갱신한다. 한 turn
+중간을 잘라야 하면 잘린 prefix를 `Early Progress`로 따로 요약한 뒤 기존 summary와
+합친다. 읽거나 수정한 파일 목록은 모델이 기억에 의존해 생성하지 않고 runtime이
+결정적으로 덧붙인다. Tool result는 summary 입력에 넣기 전에 bounded text로
+직렬화한다.
 
 ## 영속화와 복구
 

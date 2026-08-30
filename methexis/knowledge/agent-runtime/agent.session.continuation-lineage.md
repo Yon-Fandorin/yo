@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-001
-    revision: sha256:304b4e64d8bb64499cf6bf09ff2b4e08025852ffeaa6dd57a785744888353092
+    revision: sha256:5351e29ca017025832c40404fcabeccab7151d565a510fb9708784ce95349242
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -38,16 +38,24 @@ A Continuation Anchor MUST identify an accepted backend request, its correlated
 stable resumable outcome, the fully committed semantic Journal boundary, and
 the versioned backend binding and locator needed to continue. Those identities
 and the locator are bounded Session Journal correlation data, not optional
-Request Audit detail. Resume MUST select the newest durable Continuation Anchor
-and MUST NOT fall back to an older binding locator: an older backend lacks the
-later committed history and may only become a replacement binding through the
-replay rules below. Incomplete, unaccepted, or uncommitted suffixes MUST remain
-diagnostic evidence and MUST NOT become automatic continuation input.
+Request Audit detail. Without a context checkpoint, resume MUST select the
+newest durable Continuation Anchor and MUST NOT fall back to an older binding
+locator. With a valid checkpoint, resume MUST select that checkpoint as the
+model-context reconstruction root, then apply only successor-epoch replay
+through the newest successor-epoch Anchor; its source Anchor is provenance, not
+the current reconstruction boundary. An older backend lacks the later committed
+history and may only become a replacement binding through the replay rules
+below. Incomplete, unaccepted, or uncommitted suffixes MUST remain diagnostic
+evidence and MUST NOT become automatic continuation input.
 Request payloads, headers, revision or attempt evidence, and other Request Audit
 detail MUST NOT be required to construct or validate an Anchor.
 
-When no durable Continuation Anchor exists, yo MUST open the saved Session
-read-only. It MAY offer an explicitly confirmed empty child Session that
+When neither a durable Continuation Anchor nor a valid context checkpoint
+exists, yo MUST open the saved Session read-only. A checkpoint with no later
+accepted request may reconstruct its successor context without a
+successor-epoch Anchor. A later accepted request without a completed matching
+Anchor remains uncertain and MUST open read-only rather than be resent. Yo MAY
+offer an explicitly confirmed empty child Session that
 records its parent and the absence of a source anchor, but it MUST NOT replay
 or resend the uncommitted suffix. A recovery snapshot MAY support a later
 Continuation Anchor only after durable publication completes and every anchor
@@ -97,10 +105,21 @@ profile cannot consume that exact item, the transition is never `exact_replay`:
 it requires the separately approved `lossy_handoff` path unless an independently
 reviewed lossless conversion contract exists. The same rule covers K3 effort or a K2.7 Code ModelId or speed-tier change,
 as well as any endpoint, connector, replay-profile, or schema change, even when
-the target itself does not require private state. Missing, wrong-epoch, unbounded, or wrong-schema
+the target itself does not require private state. Missing, wrong-binding-epoch, unbounded, or wrong-schema
 source state likewise makes exact replay unavailable rather than lossy by
 omission. The binding transition, backend and model identities, replay boundary,
 private-replay availability, and known cache loss MUST be recorded.
+
+The executable source for a replacement binding MUST be the newest complete
+reconstruction, never merely the Anchor that predates a checkpoint. When a
+successor-epoch Anchor exists, its lineage includes the checkpoint root and
+later delta suffixes. When a checkpoint has no later accepted request, the
+transition MAY name that checkpoint directly as its source. This direct source
+is a binding-transition seed, not application of the old checkpoint inside the
+new binding. It replays the checkpoint's contract, synthetic body, and inline
+retained groups after target-profile validation. A transition MUST NOT select
+the checkpoint's older provenance Anchor and thereby reintroduce its summarized
+prefix.
 
 If only a lossy handoff is possible, yo MUST open the saved Session read-only,
 describe the missing or transformed context, and ask once before continuing.
@@ -112,7 +131,9 @@ native resume. Provider-private replay contents MUST remain hidden during that
 disclosure; the operator sees only its schema, presence, byte count, and whether
 the target can preserve it.
 
-Persisting `summarize-older-semantic-history/v1` as the Session's versioned context strategy selects the standing automatic policy for the backend's separately bounded compaction handoff in that Session. Yo MUST show the resulting lossy boundary and measurements but MUST NOT interrupt every pressure event for another confirmation. This is the sole exception to the preceding per-handoff approval rule and covers only the exact source Anchor and boundary, visible summary, retained semantic suffix, dropped-private disclosure, and successor epoch durably committed by that compaction contract. `exact-replay-only/v1` permits no automatic loss. Provider, Model, connector, endpoint, replay-profile, schema, or any other replacement-driven lossy handoff MUST still open read-only, describe the loss, and obtain one explicit confirmation; it MUST NOT reuse the automatic-compaction policy.
+Context history MUST use a positive monotonic Session-global `context_epoch` independent of the backend binding epoch. The initial binding starts context epoch 1, and each later binding inherits the Session's current context epoch unchanged. Only a durable same-binding `yo.context-checkpoint/v1alpha1` advances it by exactly one; a context-policy replacement or binding transition does not. Every accepted model request MUST identify both the binding epoch and context epoch current at dispatch. An active Turn may cross a checkpoint only between complete correlated semantic groups and before its next ordinary Turn request; its terminal replay delta, resumable outcome, and Continuation Anchor use the newest epoch and latest accepted request, while earlier requests remain historical evidence in their original epochs. Recovery MUST apply replay deltas only to their exact current context epoch, apply a checkpoint with its exact replay contract and inline retained replay items as the sole atomic replacement that opens its named successor, and reject gaps, duplicates, regressions, direct cross-binding checkpoint application, or records appended after a checkpoint that name its superseded epoch. Historical records at or before the checkpoint source boundary remain valid evidence. A retained provider-private item remains valid across this same-binding context-epoch increment because its `binding_epoch` is unchanged; only a binding-epoch mismatch is cross-binding-epoch private state. The reconstructed replay bound measures the checkpoint's synthetic user-role body, inline retained groups, and non-duplicating later successor-epoch delta suffixes rather than the replaced prefix. Changing context epoch alone MUST NOT close or open a backend binding, claim Provider-native resume, alter binding-transition cache evidence, or infer Provider cache preservation or loss. Only cache-read tokens reported by a later actual ModelWork usage receipt are evidence of a cache read.
+
+Persisting enabled `portable-summary/v1alpha1` in `yo.context-policy/v1alpha1` selects the standing automatic policy for the backend's exact bounded compaction pipeline and does not ask again at each pressure event. Explicit idle `/compact` is the matching manual authorization for that same pipeline. Yo MUST show the resulting lossy boundary, measurements, retained raw budget, receipt count, and loss classes. This is the sole exception to the preceding per-handoff approval rule and covers only the exact source Anchor and semantic boundary, fixed-structure visible summary, retained semantic suffix, Session-scoped artifact receipts, dropped-private disclosure, and successor context epoch atomically committed by the backend compaction contract. Disabled compaction and `exact-replay-only/v1alpha1` permit no automatic or manual loss. Provider, Model, connector, endpoint, replay-profile, schema, or any other replacement-driven lossy handoff MUST still open read-only, describe the loss, and obtain one explicit confirmation; it MUST NOT reuse context-compaction policy or advance only the context epoch.
 
 ## Rationale
 

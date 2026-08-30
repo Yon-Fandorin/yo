@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:2b30e95c91540ce3cdda40087841196e60d8fe2f4679c10270c5cbba4b2369a9
+    revision: sha256:4031459899151783f0ab8bbf86fbf7374c2969d2738c2feb062435545fd3b2b6
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -31,6 +31,10 @@ fourth reviewed revision explicitly extends that same shape with the optional
 assistant-refusal replay field defined below. This fifth reviewed revision
 additively extends the same pre-release semantic shape with one provider-private
 replay item and replay-profile evidence while retaining the physical v1 envelope.
+This sixth reviewed revision replaces the unimplemented
+`context_compaction_handoff` development proposal with same-binding
+`context_checkpoint` and context-epoch evidence. The displaced handoff shape is
+unreadable development data rather than an accepted alias.
 Its exact shape and UUIDv7 Session identity are part of the
 baseline; a matching schema tag alone MUST NOT admit a record.
 
@@ -43,7 +47,8 @@ fail closed before semantic admission.
 Every persisted `command_committed`, `event_committed`,
 `backend_exchange_observed`, `backend_binding_opened`,
 `backend_binding_closed`, `backend_request_accepted`, `model_replay_delta`,
-`backend_resumable_outcome`, and `continuation_anchor` record contains a
+`backend_resumable_outcome`, `continuation_anchor`, `context_policy_changed`,
+and `context_checkpoint` record contains a
 required positive `journal_sequence`. The sole Session Journal writer assigns
 that identity when it commits the backend-neutral semantic record; a codec,
 repository, retry, snapshot builder, or remote transport MUST NOT allocate or
@@ -134,8 +139,8 @@ rule changes MUST NOT silently change its decoder.
 This third explicitly reviewed pre-release semantic `/v1` replaces the
 immediately preceding replay-delta development shape. Logs written in the
 displaced shape MUST fail closed even though the schema tag is unchanged. The
-replacement admits one general exchange record and exactly six
-continuation-specific records. Existing correlation records remain bounded and
+replacement admits one general exchange record and exactly eight
+continuation-and-context records. Existing correlation records remain bounded and
 payload-free. The separate `model_replay_delta` is bounded, payload-bearing
 semantic Journal data rather than Request Audit detail:
 
@@ -149,14 +154,19 @@ semantic Journal data rather than Request Audit detail:
   and `transition` and `continuation_strategy` objects defined below;
 - `backend_binding_closed` contains the positive `epoch` being closed and exact
   `reason: replaced`, `revoked`, or `exhausted`;
-- `backend_request_accepted` contains positive `epoch`, positive `turn_id`, the
+- `backend_request_accepted` contains positive `epoch`, positive
+  `context_epoch`, positive `turn_id`, the
   accepted submission's canonical UUIDv4 `operation_id`, and a
   positive `exchange_sequence` plus a `request_identity` object with `schema`
   and `value`;
-- `model_replay_delta` contains positive `epoch`, positive `turn_id`, positive
+- `model_replay_delta` contains positive `epoch`, positive `context_epoch`,
+  positive `turn_id`, positive
   `accepted_request_sequence`, an optional replay contract, and an ordered
-  non-empty list of exact replay items. The replay contract is
-  present exactly once at the start of a replay chain and contains the exact
+  non-empty list of exact replay items. At binding open, the replay contract is
+  present exactly once at the start of that binding's initial replay chain. A
+  same-binding checkpoint carries the exact replay contract for its successor
+  chain, so later deltas in that exact binding and successor context epoch omit
+  it until another checkpoint or binding transition. The replay contract contains the exact
   system prompt plus ordered tools with name, safe description, schema version,
   and closed JSON schema. An item is exactly a message with role, visible UTF-8
   content, and an optional independent visible refusal; a function call with
@@ -167,13 +177,27 @@ semantic Journal data rather than Request Audit detail:
   refusal MUST be a non-null JSON string containing UTF-8, including the valid
   empty string `""`; null and every non-string value MUST fail closed. Content
   and refusal preserve their exact decoded UTF-8 bytes independently;
-- `backend_resumable_outcome` contains positive `epoch`, positive `turn_id`,
+- `backend_resumable_outcome` contains positive `epoch`, positive
+  `context_epoch`, positive `turn_id`,
   positive `accepted_request_sequence`, optional positive
   `replay_delta_sequence`, exact `status: completed`, and an optional
   `outcome_identity` object with `schema` and `value`; and
-- `continuation_anchor` contains positive `epoch`, positive
+- `continuation_anchor` contains positive `epoch`, positive `context_epoch`, positive
   `accepted_request_sequence`, positive `resumable_outcome_sequence`, and
-  positive `journal_boundary`.
+  positive `journal_boundary`;
+- `context_policy_changed` contains `profile` with exact value
+  `yo.context-policy/v1alpha1`, positive `policy_revision`, boolean `enabled`,
+  exact `strategy`, integer `warning_percent`, integer `trigger_percent`, and
+  the optional retained-raw fields defined below; and
+- `context_checkpoint` contains `profile` with exact value
+  `yo.context-checkpoint/v1alpha1`, the positive binding `epoch`, positive
+  `previous_context_epoch`, positive `successor_context_epoch`, positive
+  `source_anchor_sequence`, positive `source_journal_boundary`, positive
+  `policy_revision`, exact `strategy`, positive `input_token_limit`,
+  non-negative `input_tokens_before` and `input_tokens_after`, required
+  `replay_contract` with the closed replay-contract shape defined above, and the closed
+  summary, retained-group, receipt, loss, and summary-usage fields defined
+  below.
 
 `exchange_kind` is exactly `request`, `response`, `notification`,
 `server_request`, `retry`, or `terminal_outcome`. `direction` is exactly
@@ -240,8 +264,12 @@ The closed provider-private replay variant has exact `kind:
 provider_private_assistant`, exact non-null `schema:
 kimi.assistant-message/v1alpha1`, positive `binding_epoch`, and `message`; no
 other item field is admitted. `binding_epoch` MUST equal the containing replay
-delta epoch and its open binding MUST carry exact replay profile
-`kimi-private-local-plaintext/v1`. The closed message object contains exactly
+delta or checkpoint binding epoch, whose open binding MUST carry exact replay profile
+`kimi-private-local-plaintext/v1`. It is a backend binding epoch, never a
+context epoch. A same-binding checkpoint
+therefore preserves an inline retained private item with that unchanged
+`binding_epoch` across the context-epoch increment; only a binding-epoch
+mismatch is cross-binding-epoch private state. The closed message object contains exactly
 required `role: assistant`, required UTF-8 string `reasoning_content`, required
 `content` as either a UTF-8 string or null, and optional `tool_calls`. Absent or
 null reasoning, an absent content field, and every unknown field fail closed.
@@ -276,10 +304,14 @@ identity, replay boundary, replay-content and contract digests, binding epoch,
 availability, and retention under an independently reviewed contract.
 
 The closed `transition` object contains exact `mode: initial`, `exact_replay`,
-or `lossy_handoff`; exact `cache: not_applicable`, `lost`, or `unknown`; and an
-optional positive `source_anchor_sequence`. `initial` requires
-`cache: not_applicable` and no source Anchor. Both replacement modes require a
-source Anchor in an earlier closed epoch. `exact_replay` requires `cache: lost`.
+or `lossy_handoff`; exact `cache: not_applicable`, `lost`, or `unknown`; and
+optional positive `source_anchor_sequence` and `source_checkpoint_sequence`.
+`initial` requires `cache: not_applicable` and neither source coordinate. Both
+replacement modes require exactly one source coordinate in an earlier closed
+epoch. A source Anchor after a checkpoint names the reconstruction whose lineage
+starts at that checkpoint. A source checkpoint is valid only when it is the
+newest executable reconstruction root and no later request was accepted in its
+binding. `exact_replay` requires `cache: lost`.
 `lossy_handoff` requires `cache: lost` or `unknown` and marks the binding open
 as the visible context-loss boundary. Its user-approved transformed-context
 description remains ordinary semantic Journal data rather than an opaque
@@ -287,8 +319,9 @@ backend identity. The binding's backend and model identities, transition mode,
 source Anchor, and cache state therefore remain available without Request Audit
 detail.
 
-When the source Anchor's selected replay prefix contains a provider-private
-item, a replacement `transition.mode: exact_replay` is valid only when the
+When the selected replay reconstruction named by a source Anchor or source
+checkpoint contains a provider-private item, a replacement
+`transition.mode: exact_replay` is valid only when the
 target records the same complete binding identity and replay profile or an
 independently reviewed lossless-conversion schema. Without such a converter,
 every different target MUST use `lossy_handoff`; dropping the item while
@@ -305,7 +338,45 @@ and MUST NOT emit another binding-open record. Before accepting another request,
 the adapter MUST compare the resumed backend identity against the recorded
 `binding_identity` under its versioned schema. A mismatch fails native resume;
 the old epoch MUST close and an explicitly permitted replacement epoch MUST
-open before another request can be accepted. A `backend_request_accepted` record
+open before another request can be accepted.
+
+Context epoch is a separate positive Session-global counter whose initial value
+is 1. Every binding opened after the initial binding inherits the current
+context epoch unchanged. Only a valid same-binding `context_checkpoint`
+increments it by exactly one. Every `backend_request_accepted` MUST carry the
+context epoch current at its dispatch. An active Turn may span context epochs
+only across a checkpoint committed between complete correlated semantic groups
+and before its next ordinary Turn request. Its terminal `model_replay_delta`,
+`backend_resumable_outcome`, and `continuation_anchor` MUST use the newest
+context epoch and latest accepted request in that epoch; their binding and
+context epoch pair MUST match. Earlier accepted requests in the same Turn
+remain historical evidence under their original epochs. A request, delta,
+outcome, or Anchor whose JournalSequence is later than a checkpoint MUST name
+that checkpoint's successor context epoch; naming its previous epoch is stale
+and MUST fail closed even though its binding epoch still matches. Historical
+records at or before the checkpoint's source boundary remain valid,
+byte-identical evidence and MUST NOT be rejected merely because their context
+epoch has since been superseded.
+
+Context policy revision is a separate positive Session-global counter. The
+sole writer MUST commit revision 1 before the first
+`backend_request_accepted`; every replacement increments it by exactly one and
+becomes current at its own JournalSequence. `strategy` is exactly
+`portable-summary/v1alpha1` or `exact-replay-only/v1alpha1`.
+`warning_percent` is an integer from 1 through 99, `trigger_percent` is an
+integer from 2 through 100, and warning MUST be strictly lower than trigger.
+`retained_raw_percent`, when present, is an integer from 1 through 100;
+`retained_raw_max_tokens`, when present, is positive. The retained-raw fields
+are permitted only with `portable-summary/v1alpha1` and bound only additional
+older groups; `exact-replay-only/v1alpha1` MUST omit both. Boolean `enabled`
+does not erase the selected strategy or its valid bounds: false disables both
+automatic and manual compaction, while preserving a closed policy that can be
+re-enabled only by another policy revision. Unknown fields, strategies,
+invalid combinations, skipped or repeated revisions, or an accepted request
+before revision 1 fail closed. A checkpoint MUST name the exact policy revision
+and strategy current at its JournalSequence.
+
+A `backend_request_accepted` record
 is valid only in the verified open epoch after yo has committed the matching
 `StartTurn` or `SteerTurn` and observed its outbound request exchange. Its
 `operation_id` MUST equal both that command's unique SubmissionId and the
@@ -318,9 +389,15 @@ same epoch.
 A `model_replay_delta` is valid only for an `exact_replay` binding and only
 after a matching semantic `TurnFinished` with outcome `completed`. A
 `backend_managed_state` binding MUST NOT emit one. It MUST reference the latest accepted
-request for that Turn and epoch. Its message, function-call, and function-result
-order and relationships MUST validate independently of presentation records or
-old connector payloads. The encoded replay contract is limited to 1 MiB, one
+request for that Turn and epoch. Without a checkpoint in the Turn, it contains
+the Turn's complete model-visible replay addition. If the Turn crosses one or
+more checkpoints, it contains exactly the non-empty model-visible suffix
+committed after the newest checkpoint record and MUST NOT duplicate that
+checkpoint's replay contract, synthetic body, retained groups, or any earlier
+Turn item. Its message, function-call, and function-result order and
+relationships MUST validate both within the suffix and against the checkpoint
+root independently of presentation records or old connector payloads. The
+encoded replay contract is limited to 1 MiB, one
 delta to 16 MiB, and the replay prefix selected by an Anchor to 64 MiB and 4096
 items. Replay-prefix or model-context capacity exhaustion discovered before a
 final assistant answer is accepted produces a typed failed non-resumable Turn
@@ -337,14 +414,15 @@ user message MUST fail closed during evidence validation and wire decoding
 rather than being reinterpreted by a connector.
 
 The complete canonical JSON encoding of one provider-private item is limited to
-16 MiB and counts once inside, never in addition to, the same 16 MiB delta and
-64 MiB prefix ceilings. Reasoning, content, IDs, names, and argument fragments
+16 MiB. It counts once inside the containing delta's 16-MiB ceiling or the
+checkpoint retained groups' 64-MiB prefix ceiling, never in addition to the
+applicable limit. Reasoning, content, IDs, names, and argument fragments
 are checked incrementally before an excess byte is retained; their final JSON
 escaping is included in the canonical delta metric. Snapshots preserve the
 exact item, its relative order, replay profile, and epoch and revalidate the
-same projection and bounds. A failed private admission rejects the whole delta
-and therefore prevents its outcome and Anchor rather than dropping or redacting
-only the private item.
+same projection and bounds. A failed private admission rejects the whole replay
+container and therefore prevents its delta or checkpoint commit and any later
+outcome and Anchor rather than dropping or redacting only the private item.
 
 A `backend_resumable_outcome` is valid only after a matching semantic
 `TurnFinished` with outcome `completed` and MUST reference the latest accepted
@@ -363,8 +441,8 @@ outcome in the same semantic commit. For an `exact_replay` binding, that outcome
 MUST immediately follow its referenced replay delta. For a
 `backend_managed_state` binding, the outcome MUST immediately follow the matching
 `TurnFinished(completed)` and no replay delta may intervene. Every `*_sequence`,
-`source_anchor_sequence`, `correlation_sequence`, and `journal_boundary` in
-these seven records is a
+`source_anchor_sequence`, `source_checkpoint_sequence`, `correlation_sequence`, and `journal_boundary` in
+these nine record kinds is a
 semantic `JournalSequence`, never a storage-only ReplaySequence. The request
 and outcome sequences MUST identify the correlated records in the same epoch,
 and `journal_boundary` MUST equal the resumable outcome's JournalSequence. The
@@ -468,7 +546,64 @@ credentials, complete environment values, execution-host diagnostics, and
 configured prohibited literals MUST NOT enter the semantic record. The admitted
 exact value, including an explicit bounded replacement, is the sole replay value.
 
-A bounded `context_compaction_handoff` record MUST identify the positive source and successor binding epochs, source Continuation Anchor and committed boundary, exact versioned context-strategy identity, positive `input_token_limit`, exact pre-compaction and post-rebuild input-token counts, exact visible UTF-8 summary, first retained semantic sequence, and whether provider-private state was dropped. When private state is dropped, the record contains only its bounded schema identity, presence, encoded byte count, and loss classification and MUST NOT contain its hidden bytes. The strategy identity uses the existing bounded versioned-profile grammar; the summary uses the existing per-message decoded UTF-8 and canonical replay-prefix limits rather than a new output-size policy. The sole semantic writer MUST atomically append `backend_binding_closed(reason: replaced)`, the handoff, and `backend_binding_opened(reason: lossy_handoff)` in that order before any request is accepted in the successor epoch. Failure, cancellation before that commit, or a rebuilt strategy result other than `Admit` MUST append none of those transition records and leaves every original record authoritative and byte-unchanged. Recovery and snapshots MUST validate the complete source-Anchor, boundary, retained-sequence, and epoch graph and reconstruct successor model context from the exact summary followed by the retained semantic suffix, never by silently reusing the summarized prefix. This is an additive pre-release extension of the same `format: anchored-session` semantic generation: the physical envelope, discovery object, checksum representation, and checksum preimage remain unchanged; the current reader accepts prior records, a prior closed-shape reader rejects the new record, and no migration, dual write, omission, or compatibility shim is provided.
+A bounded `context_checkpoint` record has no fields beyond the closed list in
+the record grammar above, including its required replay contract, plus
+`portable_body`, `retained_groups`, optional
+`first_retained_sequence`, `artifact_receipts`, `losses`, and `summary_usage`.
+`portable_body` is the validated Markdown UTF-8 string under the existing
+16-MiB message-content bound. `retained_groups` is an ordered array of closed
+objects containing only positive inclusive `first_sequence` and
+`last_sequence` plus an ordered non-empty `items` array using the exact replay-item
+grammar above. Source ranges MUST be non-overlapping, strictly increasing,
+identify whole correlated semantic groups at or before
+`source_journal_boundary`, and belong to the named binding and previous context
+epoch. They are provenance, not replay-byte locators: the inline items committed
+by the sole semantic writer are the durable replay authority and recovery MUST
+NOT derive them from Activities, presentation, or ReplaySequence. Every group
+MUST validate its internal call/result and provider-private relationships. Across
+all groups there are at most 4,096 items and their complete canonical encoding,
+together with the synthetic body, MUST fit the 64-MiB replay-prefix bound. The optional
+`first_retained_sequence` is present exactly when the array is non-empty and
+equals its first range's `first_sequence`.
+
+Each `artifact_receipts` item contains only `profile` with exact value
+`yo.context-artifact-receipt/v1alpha1`, lowercase `sha256:<64-hex>`
+`content_hash`, positive `byte_count`, non-empty ASCII `media_kind` of at most
+128 bytes, positive `source_context_epoch`, and positive
+`source_journal_sequence`. Its source MUST be an eligible visible output in the
+summarized prefix of the same Session, named previous context epoch, and source
+boundary. The receipt is operator disclosure only in this revision and MUST NOT
+appear in `portable_body`, retained-group items, or reconstructed Connector
+input; raw bytes, a replay placeholder, expiry, a path, another Session, or
+retrieval authority are not fields. `losses` is an ordered bounded list of
+exactly either `visible_prefix_summarized` with positive inclusive source
+sequence bounds, or `provider_private_dropped` with non-empty bounded ASCII
+`schema`, exact `present: true`, positive `byte_count`, and positive
+`source_journal_sequence`. Unknown variants or fields fail closed.
+`summary_usage` is exactly one closed `yo.model-usage-receipt/v1` content object
+for the summary response under the backend usage contract; it retains its
+source attribution and reported availability objects without embedding a raw
+wire response.
+
+The successor context epoch MUST equal the previous value plus one without
+overflow. `source_anchor_sequence` MUST identify a valid Anchor in the same
+binding and previous context epoch, and `source_journal_boundary` MUST be at
+least that Anchor's committed boundary and no later than the checkpoint's
+preceding semantic sequence. Every retained, receipt, and loss coordinate MUST
+be inside that exact boundary. `policy_revision` and `strategy` MUST equal the
+policy current immediately before the checkpoint. Provider-private state,
+private reasoning, credentials, uncommitted effects, arbitrary filesystem
+paths, and raw artifact bytes MUST NOT enter the checkpoint. A retained group
+that originally contains a required provider-private assistant item remains
+indivisible and reconstructs that exact Journal-backed item; a private item in
+the summarized prefix is intentionally absent from successor replay and is
+represented only by `provider_private_dropped`.
+
+The sole semantic writer MUST append that one checkpoint atomically without a `backend_binding_closed` or `backend_binding_opened` record. Its required replay contract MUST equal the exact canonical system and ordered tool contract used by the binding at the source boundary. During an active Turn, the source boundary MUST follow a completely committed correlated semantic group and precede both the checkpoint and the next accepted ordinary Turn request; it MUST NOT split a model response, pending tool effect, or incomplete group. Before commit, the writer MUST encode every selected retained group from its already admitted semantic replay state directly into that group's inline `items`; after commit, the checkpoint is their sole durable replay authority even when the Turn has not finished. Only after durable commit may model-visible replay become exactly one synthetic `user` message whose content is `portable_body`, followed by those exact inline retained-group items in original order under that replay contract. The checkpoint changes neither complete binding identity nor the binding transition's cache field and MUST NOT claim that Provider cache was preserved or lost; a later terminal ModelWork usage receipt is the sole evidence for reported cache reads. Failure, cancellation before commit, malformed summary, artifact-integrity failure, another `Compact`, typed `Reject`, or durability failure MUST append no checkpoint and leaves every original record and epoch authoritative and byte-unchanged.
+
+Recovery and snapshots MUST validate the complete source-Anchor, boundary, replay-contract, inline retained-group, receipt, loss, policy, usage, and paired epoch graph. They MUST apply a checkpoint only when its previous context epoch is current in its named open binding and replace that binding's model-visible replay exactly once. The newest valid checkpoint is the reconstruction root for its named binding; its source Anchor remains provenance. Recovery starts with the checkpoint's replay contract, synthetic body, and inline retained-group items, then applies only non-duplicating same-binding successor-epoch delta suffixes through the newest matching Anchor. A checkpoint without a later accepted request is sufficient to reconstruct context without a successor Anchor; any later accepted request lacking a completed matching outcome and Anchor retains the existing uncertain-request read-only behavior. The 64-MiB and 4,096-item replay-prefix bounds apply to that reconstructed root plus successor-epoch deltas, not the summarized historical prefix. Recovery rejects a gap, duplicate, regression, direct cross-binding checkpoint application, a record appended after the checkpoint that names its superseded context epoch, a same-binding successor delta carrying another replay contract, or a replay delta duplicating or crossing the checkpoint boundary. Historical records at or before the source boundary remain valid and byte-identical. A later binding transition inherits the Session's current context epoch unchanged and MUST seed from the newest executable reconstruction: either a successor Anchor whose lineage includes the checkpoint root and later delta suffixes, or the checkpoint itself when no later request was accepted. Naming the checkpoint in `source_checkpoint_sequence` is transition-source evidence, not cross-binding application of its old binding epoch. The new binding's first replay delta carries that binding's replay contract and MUST NOT restore the checkpoint's summarized prefix. Only another valid checkpoint increments context epoch.
+
+This pre-release replacement preserves `format: anchored-session`, the physical envelope, discovery object, checksum representation, and checksum preimage. The current reader accepts every preceding record except the displaced `context_compaction_handoff`, rejects that old kind and every mixed old/new compaction graph, and admits the new checkpoint and context-epoch fields only under their closed shape. A preceding reader rejects the new record or field. Existing history that contains no displaced handoff remains byte-identical; no migration, dual write, omission, downgrade path, or compatibility shim is provided.
 
 ## Rationale
 

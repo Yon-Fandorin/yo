@@ -2,7 +2,7 @@
 
 > Status: non-authoritative research input
 >
-> 조사 기준일: 2026-08-29
+> 조사 기준일: 2026-08-30
 
 ## 시작 조건과 사용자 제어
 
@@ -39,6 +39,17 @@ Summary는 continuation에 필요한 현재 상태를 구조화하도록 유도�
 빈 문자열, 지나치게 짧은 응답이나 prompt를 되풀이한 degenerate output을
 검사하고 결과를 sanitize한다. 유효하지 않은 결과는 bounded evidence를 남긴 뒤
 다시 시도할 수 있다.
+
+상세 prompt는 최종 결과를 하나의 `<summary>` block과 번호 section으로 요구한다.
+사용자 의도, 기술 개념, 파일과 code, 오류와 해결, 문제 해결 상태와 모든 실제
+user message가 주된 section이다. Short-prompt mode는 rigid section 대신 successor
+assistant가 이어서 작업할 수 있는 자유형 summary를 요구한다. 즉 Grok Build도 한
+가지 고정 format만 쓰지 않는다.
+
+Model이 만든 본문 밖에서 runtime은 마지막 실제 user query, edited path, 실행 중
+task와 sub-agent, MCP server, TODO, project instruction을 typed state로 다시 붙인다.
+Summary에는 raw transcript path를 담은 `<transcript_location>` pointer도 추가할 수
+있다. 이 분리는 모델이 현재 상태 값을 추측하거나 긴 목록을 되풀이하지 않게 한다.
 
 Two-pass를 켜면 첫 pass에서 넓게 추출하고 두 번째 pass에서 정리하거나 검증하는
 형태를 사용할 수 있다. 품질은 높아질 수 있지만 request 수와 latency가 늘며 두
@@ -102,3 +113,4 @@ source Continuation Anchor와 first retained semantic sequence를 사용할 수 
 - [Grok Build slash commands](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/04-slash-commands.md)
 - [Grok Build compaction policy](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-agent/src/compaction.rs)
 - [Grok Build compaction state utilities](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-chat-state/src/compaction_utils.rs)
+- [Grok Build compaction prompt and request assembly](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-shell/src/session/helpers/session_compact.rs)

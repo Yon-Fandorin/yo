@@ -2,7 +2,7 @@
 
 > Status: non-authoritative research input
 >
-> 조사 기준일: 2026-08-29
+> 조사 기준일: 2026-08-30
 
 ## 다단계 압력 관리
 
@@ -50,6 +50,28 @@ query를 실행한다. 현재 구현은 다음을 고려한다.
 사용자는 `/compress`로 LLM summary를 요청할 수 있고 `/compress-fast`로 오래된
 tool output과 thinking을 규칙 기반으로 빠르게 줄일 수 있다. 두 명령을 분리한
 점은 손실 종류와 비용을 사용자에게 드러낸다.
+
+### 현재 state snapshot 형식
+
+조사 기준일의 compression prompt는 scratch analysis를 먼저 작성하게 한 뒤 이를
+제거하고, 최종 결과를 정확한 `<state_snapshot>` XML로 제한한다. 고정 field는
+다음과 같다.
+
+- `primary_request_and_intent`
+- `key_technical_concepts`
+- `files_and_code_sections`
+- `errors_and_fixes`
+- `problem_solving`
+- `all_user_messages`
+- `pending_tasks`
+- `current_work`
+- `next_step`
+
+구조 누락은 결정적으로 검출하기 쉽지만 모든 user message와 full code snippet을
+요구하는 현재 prompt는 긴 Session에서 summary 비용을 크게 만들 수 있다. Qwen의
+별도 project-summary prompt는 `Overall Goal`, `Key Knowledge`, `Recent Actions`,
+`Current Plan` Markdown을 사용하므로 같은 제품 안에서도 continuation compaction과
+사용자용 project summary는 다른 format이다.
 
 ## 상태 복원
 
@@ -108,6 +130,7 @@ loss disclosure와 exact before/after measurement를 갖춘 후 추가하는 편
 ## 출처
 
 - [Qwen Code chat compression service](https://github.com/QwenLM/qwen-code/blob/main/packages/core/src/services/chatCompressionService.ts)
+- [Qwen Code compression and project-summary prompts](https://github.com/QwenLM/qwen-code/blob/main/packages/core/src/core/prompts.ts)
 - [Qwen Code micro-compaction implementation](https://github.com/QwenLM/qwen-code/blob/main/packages/core/src/services/microcompaction/microcompact.ts)
 - [Qwen Code settings](https://github.com/QwenLM/qwen-code/blob/main/docs/users/configuration/settings.md)
 - [Qwen Code commands](https://github.com/QwenLM/qwen-code/blob/main/docs/users/features/commands.md)

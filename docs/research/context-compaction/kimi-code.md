@@ -2,7 +2,7 @@
 
 > Status: non-authoritative research input
 >
-> 조사 기준일: 2026-08-29
+> 조사 기준일: 2026-08-30
 
 ## 전체 구조
 
@@ -49,6 +49,22 @@ Full compaction은 오래된 conversation을 LLM에 전달해 continuation용 su
 새 context를 구성하고 오래된 assistant/tool message를 제거했다. 이후 release에서
 summary 표시, state handoff와 micro compaction이 계속 보강됐다. 따라서 특정
 버전의 message shape를 Kimi Code의 영구 계약으로 간주해서는 안 된다.
+
+### 현재 handoff 출력 형식
+
+조사 기준일의 prompt는 rigid section heading을 쓰지 말라고 명시하고, 현재 대화와
+같은 언어로 1인칭 현재형 handoff를 작성하게 한다. 다음 turn에는 최근 user
+message와 이 note만 남는다고 가정한다.
+
+Handoff에는 최신 요청의 실제 의도, 계속 적용되는 제약과 결정, 검증된 command와
+path 및 결과, 아직 모르는 사실, 정확한 다음 command와 남은 순서를 담는다. 완료를
+검증하지 않은 작업은 명시적으로 unverified로 남긴다. Live TODO는 자동으로 다시
+붙으므로 목록 자체를 복제하지 않고 task 사이의 이유와 순서만 기록한다.
+
+구현은 assistant/tool history를 버리고 summary와 최근 실제 user message를
+user-role context로 재구성한다. 최근 message budget은 약 20K token이며 앞쪽 2K와
+뒤쪽 18K를 우선하여 중간이 생략될 수 있다. 따라서 자유형 note만 보고 모든 원문이
+남는다고 가정할 수 없다.
 
 ## Micro compaction
 
@@ -105,5 +121,7 @@ strategy로 설계해야 한다.
 
 - [Kimi Code full compaction implementation](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core/src/agent/compaction/full.ts)
 - [Kimi Code compaction strategy](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core/src/agent/compaction/strategy.ts)
+- [Kimi Code handoff instruction](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core/src/agent/compaction/compaction-instruction.md)
+- [Kimi Code handoff history construction](https://github.com/MoonshotAI/kimi-code/blob/main/packages/agent-core/src/agent/compaction/handoff.ts)
 - [Kimi Code changelog](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)
 - [Kimi Code: What's new](https://www.kimi.com/code/docs/en/kimi-code/whats-new.html)
