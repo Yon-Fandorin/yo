@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-007
-    revision: sha256:5020ccf81388bbdccc8003067a425c1265acf7fdeceb237f8445aa2df4ec8694
+    revision: sha256:0173528a6b1f486aa92f90b12d2f4b3f76f3ba23ad53248de3a0aa9f9267dc45
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -42,14 +42,19 @@ durable host binding; resume restores it and MUST NOT silently downgrade to a
 normal delegated Session.
 
 One original review sends one immutable packet through one fresh isolated host
-Session. One direct finding-resolution review MAY resume that exact reviewer
-Session for one additional immutable packet. Retry, steer, fallback, target
-switch, and a second request for the same step are forbidden. The delivery
-claim and receipt MUST name the HostTarget, execution profile, and one durable
-host-request identity. They MUST state the actual host-owned tool boundary,
-MUST NOT publish managed `tool_execution: false`, and MUST leave Provider
-request identity and token usage unknown unless the delegated host supplies
-separately reviewed exact evidence.
+Session. Finding-resolution delivery MUST resume that exact reviewer Session
+and send one additional immutable packet per step. Frozen authorizations retain
+one direct resolution. A separately versioned bounded-multihop authorization
+MAY permit an explicit finite maximum; egress MUST count the immutable
+review-delta chain and bind every step to the immediately preceding delivery
+receipt. The first step beyond the authorized maximum MUST fail before host
+delivery. Retry, steer, fallback, target switch, and a second request for the
+same step remain forbidden. The delivery claim and receipt MUST name the
+HostTarget, execution profile, and one durable host-request identity. They MUST
+state the actual host-owned tool boundary, MUST NOT publish managed
+`tool_execution: false`, and MUST leave Provider request identity and token
+usage unknown unless the delegated host supplies separately reviewed exact
+evidence.
 
 The Model Connector boundary MUST remain independent of the Agent Backend boundary. `yo-core` MUST own only the provider-neutral Connector port and shared Connector semantic request, observation, failure, cancellation, and complete-binding types, including the closed registry that derives the exact Connector identity from an admitted `api_dialect` and complete binding. Exact HTTP request construction, dialect stream decoding, endpoint policy, retry grammar, and provider-private payload interpretation MUST NOT enter `yo-core`, `yo-backend`, or `yo-backend-managed`.
 
