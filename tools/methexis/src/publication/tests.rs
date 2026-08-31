@@ -114,6 +114,41 @@ fn kernel_lock_is_recovered_after_owner_is_killed() {
 }
 
 #[cfg(unix)]
+// 불변 target을 검증하는 reader끼리는 같은 lock을 동시에 보유하되 writer는 모든 reader가
+// 끝날 때까지 진입하지 못해, 병렬 review가 cache 읽기 때문에 서로 실패하지 않게 합니다.
+#[test]
+fn shared_target_locks_coexist_and_exclude_a_writer() {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "methexis-shared-lock-{}-{unique}",
+        std::process::id()
+    ));
+    fs::create_dir(&root).unwrap();
+    let target = root.join("records/item.yaml");
+
+    let first = super::lock_target_shared(&root, &target).unwrap();
+    let second = super::lock_target_shared(&root, &target).unwrap();
+    assert!(matches!(
+        super::lock_target(&root, &target),
+        Err(super::PublicationError::Locked(_))
+    ));
+
+    drop(first);
+    drop(second);
+    let writer = super::lock_target(&root, &target).unwrap();
+    drop(writer);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
 // 같은 bytes로 path를 교체해도 capture의 inode identity guard는 변경을 탐지한다.
 #[test]
 fn captured_file_rejects_same_byte_identity_replacement() {

@@ -108,7 +108,7 @@ fn verify_artifacts(
         ("context.md", artifacts.context.as_slice()),
         ("manifest.json", artifacts.manifest.as_slice()),
     ];
-    let lock = publication::lock_target(repository_root, &directory)
+    let lock = publication::lock_target_shared(repository_root, &directory)
         .map_err(|error| storage::publication_failure(error, &directory).into_verification())?;
     let verified = match lock
         .directory_state(&files)

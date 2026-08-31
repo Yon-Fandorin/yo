@@ -71,6 +71,10 @@ pub(crate) struct TargetLock {
     _lock_file: File,
 }
 
+pub(crate) struct SharedTargetLock {
+    inner: TargetLock,
+}
+
 pub(crate) struct RepositoryGuard {
     _root: File,
 }
@@ -382,9 +386,53 @@ impl TargetLock {
     }
 }
 
+impl SharedTargetLock {
+    pub(crate) fn directory_state(
+        &self,
+        files: &[(&str, &[u8])],
+    ) -> Result<DirectoryState, PublicationError> {
+        self.inner.directory_state(files)
+    }
+
+    pub(crate) fn revalidate_directory(
+        &self,
+        verified: &VerifiedDirectory,
+        files: &[(&str, &[u8])],
+    ) -> Result<bool, PublicationError> {
+        self.inner.revalidate_directory(verified, files)
+    }
+}
+
 pub(crate) fn lock_target(
     repository_root: &Path,
     target: &Path,
+) -> Result<TargetLock, PublicationError> {
+    lock_target_with(
+        repository_root,
+        target,
+        FlockOperation::NonBlockingLockExclusive,
+        true,
+    )
+}
+
+pub(crate) fn lock_target_shared(
+    repository_root: &Path,
+    target: &Path,
+) -> Result<SharedTargetLock, PublicationError> {
+    lock_target_with(
+        repository_root,
+        target,
+        FlockOperation::NonBlockingLockShared,
+        false,
+    )
+    .map(|inner| SharedTargetLock { inner })
+}
+
+fn lock_target_with(
+    repository_root: &Path,
+    target: &Path,
+    operation: FlockOperation,
+    record_owner: bool,
 ) -> Result<TargetLock, PublicationError> {
     let (parent, target_name) = open_parent(repository_root, target)?;
     reject_symlink(&parent, &target_name, target)?;
@@ -408,18 +456,19 @@ pub(crate) fn lock_target(
             "publication lock must be a singly linked regular file",
         )));
     }
-    flock(&file, FlockOperation::NonBlockingLockExclusive)
-        .map_err(|error| PublicationError::Locked(errno(error)))?;
-    ftruncate(&file, 0).map_err(|error| PublicationError::Io(errno(error)))?;
-    file.rewind().map_err(PublicationError::Io)?;
-    writeln!(
-        file,
-        "pid={} target={}",
-        std::process::id(),
-        relative.display()
-    )
-    .map_err(PublicationError::Io)?;
-    file.sync_all().map_err(PublicationError::Io)?;
+    flock(&file, operation).map_err(|error| PublicationError::Locked(errno(error)))?;
+    if record_owner {
+        ftruncate(&file, 0).map_err(|error| PublicationError::Io(errno(error)))?;
+        file.rewind().map_err(PublicationError::Io)?;
+        writeln!(
+            file,
+            "pid={} target={}",
+            std::process::id(),
+            relative.display()
+        )
+        .map_err(PublicationError::Io)?;
+        file.sync_all().map_err(PublicationError::Io)?;
+    }
     Ok(TargetLock {
         parent,
         target_name,
