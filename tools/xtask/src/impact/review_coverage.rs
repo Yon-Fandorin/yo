@@ -54,6 +54,13 @@ pub(crate) fn create_accepted_commit(repository: &Path, message: &Path) -> Resul
     commit::create(repository, message)
 }
 
+pub(crate) fn create_accepted_commit_from_verified_candidate(
+    repository: &Path,
+    message: &Path,
+) -> Result<(), String> {
+    commit::create_from_verified_candidate(repository, message)
+}
+
 pub(crate) fn copy_accepted_commit_message(target: &Path) -> Result<(), String> {
     commit::copy_message(target)
 }

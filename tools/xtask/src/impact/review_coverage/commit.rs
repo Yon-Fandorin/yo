@@ -11,10 +11,28 @@ pub(super) fn create(repository: &Path, message: &Path) -> Result<(), String> {
     create_with_editor(repository, message, &executable)
 }
 
+pub(super) fn create_from_verified_candidate(
+    repository: &Path,
+    message: &Path,
+) -> Result<(), String> {
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("cannot locate the xtask executable: {error}"))?;
+    create_with_editor_mode(repository, message, &executable, true)
+}
+
 pub(super) fn create_with_editor(
     repository: &Path,
     message: &Path,
     executable: &Path,
+) -> Result<(), String> {
+    create_with_editor_mode(repository, message, executable, false)
+}
+
+fn create_with_editor_mode(
+    repository: &Path,
+    message: &Path,
+    executable: &Path,
+    skip_duplicate_hooks: bool,
 ) -> Result<(), String> {
     let branch = git::optional_output_in(
         repository,
@@ -45,8 +63,9 @@ pub(super) fn create_with_editor(
         )
     })?;
     let editor = format!("{} {EDITOR_COMMAND}", shell_quote(executable)?);
-    let status = git::command_in(repository, false)
-        .args(["commit", "--no-amend", "--no-template"])
+    let mut command = git::command_in(repository, false);
+    command.args(commit_arguments(skip_duplicate_hooks));
+    let status = command
         .env("GIT_EDITOR", editor)
         .env(MESSAGE_ENVIRONMENT, message)
         .stdin(Stdio::inherit())
@@ -59,6 +78,14 @@ pub(super) fn create_with_editor(
     } else {
         Err(format!("accepted git commit failed with {status}"))
     }
+}
+
+fn commit_arguments(skip_duplicate_hooks: bool) -> Vec<&'static str> {
+    let mut arguments = vec!["commit", "--no-amend", "--no-template"];
+    if skip_duplicate_hooks {
+        arguments.push("--no-verify");
+    }
+    arguments
 }
 
 pub(super) fn copy_message(target: &Path) -> Result<(), String> {
@@ -80,4 +107,28 @@ fn shell_quote(path: &Path) -> Result<String, String> {
         .to_str()
         .ok_or_else(|| "xtask executable path must be valid UTF-8".to_owned())?;
     Ok(format!("'{}'", value.replace('\'', "'\\''")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::commit_arguments;
+
+    // 일반 accepted commit은 기존 hook 경계를 그대로 사용합니다.
+    #[test]
+    fn ordinary_commit_keeps_hooks() {
+        assert_eq!(
+            commit_arguments(false),
+            ["commit", "--no-amend", "--no-template"]
+        );
+    }
+
+    // exact candidate의 현재-context hk 영수증을 재사용하는 fast path만 Git의
+    // 중복 pre-commit/commit-msg 실행을 생략합니다.
+    #[test]
+    fn verified_candidate_commit_skips_duplicate_hooks() {
+        assert_eq!(
+            commit_arguments(true),
+            ["commit", "--no-amend", "--no-template", "--no-verify"]
+        );
+    }
 }

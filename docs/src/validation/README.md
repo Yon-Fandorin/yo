@@ -221,7 +221,8 @@ After focused checks pass, run the repository baseline:
 ```bash
 bash tools/validation/bounded-run.sh workspace-tests -- cargo test --workspace --all-targets
 bash tools/validation/bounded-run.sh workspace-clippy -- cargo clippy --workspace --all-targets -- -D warnings
-bash tools/validation/bounded-run.sh hk-check -- hk check
+bash tools/validation/bounded-run.sh hk-candidate -- \
+  hk check --check --from-ref BASE_SHA --to-ref CANDIDATE_SHA
 ```
 
 `cargo test` runs the normal test set and compiles ignored tests; it does not
@@ -263,22 +264,30 @@ If the Slice changes a platform or external-environment boundary, add the
 relevant matrix command rather than claiming the baseline covered it.
 
 Do not rerun the unchanged baseline merely because a reviewed candidate was
-squashed. Its result remains evidence for the accepted commit only when an
-exact Git diff proves both commits have the same tree, integration added no
-conflict resolution or edit, the toolchain and environment are unchanged, no
-external-state evidence expired, and commit hooks passed. Otherwise rerun the
-affected checks. This reuse never replaces validation or review of the
-candidate itself.
+squashed. New fast acceptance may use a candidate-bound
+`hk check --check --from-ref BASE_SHA --to-ref CANDIDATE_SHA` result in place of
+duplicate commit hooks only when the integration HEAD is the candidate base,
+those arguments equal the gate's exact base and candidate, and the result is
+passing, non-reused, no-external-state evidence whose OS,
+architecture, and Rust/Cargo fingerprint still match. It records that choice as
+`candidate_hk_receipt`; otherwise it records `git_hooks` and runs the hooks.
+This reuse never replaces validation or review of the candidate itself.
 
 The Slice-close cleanup command is not part of this validation baseline. After
 the gate returns `integrate`, `slice commit prepare` appends its exact review
 trailers to a human-authored semantic message without staging or committing.
-After the matching accepted commit exists, `slice close prepare` derives its
-identities and passed validation rows from that same ready gate. Its compact
-`yo.slice-close-prepare-request/v1alpha1` input retains only operational facts
-the gate does not know: execution lanes, review and packet totals, elapsed
-bottleneck, and commands for known unverified environments. The command
-publishes the standard `close-metrics.json`; it does not plan or apply cleanup.
+New `slice accept prepare` uses
+`yo.slice-accept-prepare-request/v1alpha3`. It needs only the ready gate and
+human-written message source; `push_remote` is optional. It derives a compact
+`yo.slice-close-prepare-request/v1alpha2` and the corresponding candidate,
+validation, and review-evidence count instead of
+blocking cleanup on manually reconstructed lane, packet, and timing totals.
+The compact path requires no known unverified environment because it cannot
+derive that environment's missing command; use the frozen observed-metrics path
+when the gate must retain such a mapping.
+Frozen earlier requests keep their original observed-metrics shape. Close
+preparation publishes the standard `close-metrics.json`; it does not itself
+plan or apply cleanup.
 
 The close plan
 publishes its plan directly to the requested file, then consumes the already

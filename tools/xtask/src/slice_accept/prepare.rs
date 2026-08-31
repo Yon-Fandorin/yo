@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, AcceptRequest, Push, effect_scope,
+    ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, ACCEPT_REQUEST_SCHEMA_V1_ALPHA3,
+    AcceptRequest, Push, effect_scope, fast_commit_verification, fast_effect_scope,
     integration_worktree, require_gate_authorization, validate_accept_request,
 };
 use crate::{
@@ -12,8 +13,10 @@ use crate::{
 
 const PREPARE_REQUEST_SCHEMA: &str = "yo.slice-accept-prepare-request/v1alpha1";
 const PREPARE_REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-prepare-request/v1alpha2";
+const PREPARE_REQUEST_SCHEMA_V1_ALPHA3: &str = "yo.slice-accept-prepare-request/v1alpha3";
 const PREPARE_RESULT_SCHEMA: &str = "yo.slice-accept-prepare-result/v1alpha1";
 const PREPARE_RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-prepare-result/v1alpha2";
+const PREPARE_RESULT_SCHEMA_V1_ALPHA3: &str = "yo.slice-accept-prepare-result/v1alpha3";
 const INPUT_LIMIT: usize = 64 * 1024;
 const ACCEPT_FILE: &str = "accept.json";
 const CLOSE_PREPARE_FILE: &str = "close-prepare.json";
@@ -24,8 +27,10 @@ struct PrepareRequest {
     schema: String,
     gate_request_path: String,
     message_source_path: String,
-    close_observations: slice_close::CloseObservations,
-    push_remote: String,
+    #[serde(default)]
+    close_observations: Option<slice_close::CloseObservations>,
+    #[serde(default)]
+    push_remote: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -44,6 +49,10 @@ struct PrepareResult<'a> {
     approval_scope: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     effect_scope: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    commit_verification: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pushed: Option<bool>,
     accept_request_path: &'a Path,
     accept_request_hash: String,
     close_prepare_request_path: &'a Path,
@@ -93,6 +102,14 @@ fn prepare_with(
     if gate.slice != bound.slice || gate.candidate_commit != candidate {
         return Err("ready gate does not identify the bound Slice HEAD".to_owned());
     }
+    if accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA3
+        && !gate.known_unverified_environments.is_empty()
+    {
+        return Err(
+            "fast Slice acceptance requires no known unverified environments; use the legacy observed close path"
+                .to_owned(),
+        );
+    }
     super::compose_message(&message_bytes, &gate.commit_trailers)?;
 
     let integration = integration_worktree(repository, &bound.base_ref)?;
@@ -122,12 +139,31 @@ fn prepare_with(
         return Err("bound Slice base is not an ancestor of current integration HEAD".to_owned());
     }
 
-    let bound_effect_scope = effect_scope(
-        &bound.slice,
-        &candidate,
-        &request.push_remote,
-        &integration_ref,
-    );
+    let push = request.push_remote.as_ref().map(|remote| Push {
+        remote: remote.clone(),
+        reference: integration_ref.clone(),
+    });
+    let commit_verification = (accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA3)
+        .then(|| fast_commit_verification(&gate, &bound.base, &integration_head));
+    let bound_effect_scope = if accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA3 {
+        fast_effect_scope(
+            &bound.slice,
+            &candidate,
+            push.as_ref(),
+            &integration_ref,
+            commit_verification.expect("v1alpha3 commit verification is derived"),
+        )
+    } else {
+        effect_scope(
+            &bound.slice,
+            &candidate,
+            request
+                .push_remote
+                .as_deref()
+                .expect("legacy prepare request requires push_remote"),
+            &integration_ref,
+        )
+    };
     require_gate_authorization(&gate_path, &bound_effect_scope, accept_schema)?;
 
     let coordination = workspace
@@ -150,11 +186,20 @@ fn prepare_with(
     let gate_request_path = portable_path(&workspace, &gate_path)?;
     let message_source_path = portable_path(&workspace, &message_source)?;
     let close_prepare_request_path = portable_path(&workspace, &close_prepare_path)?;
-    let close_prepare_bytes = slice_close::close_prepare_request_bytes(
-        &bound.slice,
-        &gate_request_path,
-        &request.close_observations,
-    )?;
+    let close_prepare_bytes = if accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA3 {
+        slice_close::close_prepare_request_bytes(&bound.slice, &gate_request_path, None)?
+    } else {
+        slice_close::close_prepare_request_bytes(
+            &bound.slice,
+            &gate_request_path,
+            Some(
+                request
+                    .close_observations
+                    .as_ref()
+                    .expect("legacy prepare request requires close_observations"),
+            ),
+        )?
+    };
     slice_close::validate_close_prepare_request(&close_prepare_bytes, &gate, &candidate)?;
 
     let accept_request = AcceptRequest {
@@ -168,14 +213,15 @@ fn prepare_with(
         close_prepare_request_path,
         close_prepare_request_hash: review_protocol::digest(&close_prepare_bytes),
         close_plan_path: path_text(&close_plan_path)?,
-        push: Push {
-            remote: request.push_remote.clone(),
-            reference: integration_ref.clone(),
-        },
+        push,
+        commit_verification: commit_verification.map(str::to_owned),
         approval_scope: (accept_schema == ACCEPT_REQUEST_SCHEMA)
             .then(|| bound_effect_scope.clone()),
-        effect_scope: (accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA2)
-            .then(|| bound_effect_scope.clone()),
+        effect_scope: matches!(
+            accept_schema,
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 | ACCEPT_REQUEST_SCHEMA_V1_ALPHA3
+        )
+        .then(|| bound_effect_scope.clone()),
     };
     validate_accept_request(&accept_request)?;
     let mut accept_bytes = serde_json::to_vec_pretty(&accept_request)
@@ -236,8 +282,13 @@ fn prepare_with(
         commit_trailer_count: gate.commit_trailers.len(),
         approval_scope: (accept_schema == ACCEPT_REQUEST_SCHEMA)
             .then_some(bound_effect_scope.as_str()),
-        effect_scope: (accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA2)
-            .then_some(bound_effect_scope.as_str()),
+        effect_scope: matches!(
+            accept_schema,
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 | ACCEPT_REQUEST_SCHEMA_V1_ALPHA3
+        )
+        .then_some(bound_effect_scope.as_str()),
+        commit_verification,
+        pushed: prepare_result_pushed(accept_schema, request.push_remote.is_some()),
         accept_request_path: &accept_path,
         accept_request_hash: review_protocol::digest(&accept_bytes),
         close_prepare_request_path: &close_prepare_path,
@@ -253,13 +304,19 @@ fn prepare_with(
     Ok(())
 }
 
+fn prepare_result_pushed(accept_schema: &str, pushed: bool) -> Option<bool> {
+    (accept_schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA3).then_some(pushed)
+}
+
 fn validate_request(request: &PrepareRequest) -> Result<(), String> {
     if !matches!(
         request.schema.as_str(),
-        PREPARE_REQUEST_SCHEMA | PREPARE_REQUEST_SCHEMA_V1_ALPHA2
+        PREPARE_REQUEST_SCHEMA
+            | PREPARE_REQUEST_SCHEMA_V1_ALPHA2
+            | PREPARE_REQUEST_SCHEMA_V1_ALPHA3
     ) {
         return Err(format!(
-            "unsupported Slice accept preparation schema `{}`; expected `{PREPARE_REQUEST_SCHEMA}` or `{PREPARE_REQUEST_SCHEMA_V1_ALPHA2}`",
+            "unsupported Slice accept preparation schema `{}`; expected `{PREPARE_REQUEST_SCHEMA}`, `{PREPARE_REQUEST_SCHEMA_V1_ALPHA2}`, or `{PREPARE_REQUEST_SCHEMA_V1_ALPHA3}`",
             request.schema
         ));
     }
@@ -271,12 +328,25 @@ fn validate_request(request: &PrepareRequest) -> Result<(), String> {
             return Err(format!("{label} must be a non-empty bounded path"));
         }
     }
-    if request.push_remote.is_empty()
-        || request.push_remote.len() > 64
-        || !request
-            .push_remote
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    let legacy = request.schema != PREPARE_REQUEST_SCHEMA_V1_ALPHA3;
+    if legacy && (request.close_observations.is_none() || request.push_remote.is_none()) {
+        return Err(
+            "legacy Slice accept preparation requires close_observations and push_remote"
+                .to_owned(),
+        );
+    }
+    if !legacy && request.close_observations.is_some() {
+        return Err(
+            "v1alpha3 derives close metrics from the ready gate and forbids close_observations"
+                .to_owned(),
+        );
+    }
+    if let Some(remote) = &request.push_remote
+        && (remote.is_empty()
+            || remote.len() > 64
+            || !remote
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')))
     {
         return Err("push_remote must be one bounded Git remote token".to_owned());
     }
@@ -289,6 +359,10 @@ fn output_schemas(request_schema: &str) -> Result<(&'static str, &'static str), 
         PREPARE_REQUEST_SCHEMA_V1_ALPHA2 => Ok((
             ACCEPT_REQUEST_SCHEMA_V1_ALPHA2,
             PREPARE_RESULT_SCHEMA_V1_ALPHA2,
+        )),
+        PREPARE_REQUEST_SCHEMA_V1_ALPHA3 => Ok((
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA3,
+            PREPARE_RESULT_SCHEMA_V1_ALPHA3,
         )),
         _ => Err("unsupported Slice accept preparation schema".to_owned()),
     }

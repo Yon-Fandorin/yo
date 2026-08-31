@@ -7,6 +7,7 @@ use crate::{bounded_file, review_protocol};
 
 pub(super) const FILE_NAME: &str = "close-metrics.json";
 pub(super) const SCHEMA: &str = "yo.slice-close-metrics/v1";
+pub(super) const DERIVED_SCHEMA: &str = "yo.slice-close-metrics/v1alpha1";
 pub(super) const MAX_BYTES: usize = 128 * 1024;
 
 #[derive(Deserialize)]
@@ -22,6 +23,23 @@ struct Metrics {
     validation: Vec<Validation>,
     elapsed_bottleneck: ElapsedBottleneck,
     known_unverified_environments: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DerivedMetrics {
+    schema: String,
+    slice: String,
+    slice_candidate: String,
+    accepted_commit: String,
+    validation: Vec<Validation>,
+    review_evidence_count: usize,
+    known_unverified_environments: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct SchemaEnvelope {
+    schema: String,
 }
 
 #[derive(Deserialize)]
@@ -143,6 +161,11 @@ pub(super) fn validate(
     slice_candidate: &str,
     accepted_commit: &str,
 ) -> Result<(), String> {
+    let envelope: SchemaEnvelope = serde_json::from_slice(bytes)
+        .map_err(|error| format!("invalid Slice close metrics: {error}"))?;
+    if envelope.schema == DERIVED_SCHEMA {
+        return validate_derived(bytes, slice, slice_candidate, accepted_commit);
+    }
     let metrics: Metrics = serde_json::from_slice(bytes)
         .map_err(|error| format!("invalid Slice close metrics: {error}"))?;
     if metrics.schema != SCHEMA {
@@ -183,6 +206,63 @@ pub(super) fn validate(
         || metrics.elapsed_bottleneck.elapsed_milliseconds == 0
     {
         return Err("Slice close metrics require a nonzero elapsed bottleneck".to_owned());
+    }
+    Ok(())
+}
+
+fn validate_derived(
+    bytes: &[u8],
+    slice: &str,
+    slice_candidate: &str,
+    accepted_commit: &str,
+) -> Result<(), String> {
+    let metrics: DerivedMetrics = serde_json::from_slice(bytes)
+        .map_err(|error| format!("invalid derived Slice close metrics: {error}"))?;
+    if metrics.schema != DERIVED_SCHEMA {
+        return Err(format!(
+            "derived Slice close metrics must use schema `{DERIVED_SCHEMA}`"
+        ));
+    }
+    validate_identity(
+        &metrics.slice,
+        &metrics.slice_candidate,
+        &metrics.accepted_commit,
+        slice,
+        slice_candidate,
+        accepted_commit,
+    )?;
+    if metrics.review_evidence_count > 3 {
+        return Err("derived Slice close metrics exceed the three-lens review limit".to_owned());
+    }
+    if validate_validation(&metrics.validation)? {
+        return Err("derived Slice close validation cannot invent unverified commands".to_owned());
+    }
+    if !metrics.known_unverified_environments.is_empty() {
+        return Err(
+            "derived Slice close metrics cannot represent known unverified environments".to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_identity(
+    actual_slice: &str,
+    actual_candidate: &str,
+    actual_accepted: &str,
+    slice: &str,
+    slice_candidate: &str,
+    accepted_commit: &str,
+) -> Result<(), String> {
+    if actual_slice != slice {
+        return Err("Slice close metrics name does not match the planned Slice".to_owned());
+    }
+    review_protocol::require_commit(actual_candidate, "Slice close metrics candidate")?;
+    review_protocol::require_commit(actual_accepted, "Slice close metrics accepted commit")?;
+    if actual_candidate != slice_candidate || actual_accepted != accepted_commit {
+        return Err(
+            "Slice close metrics do not identify the exact candidate and accepted commit"
+                .to_owned(),
+        );
     }
     Ok(())
 }

@@ -48,6 +48,7 @@ pub(crate) struct ReadyValidation {
     pub(crate) argv: Vec<String>,
     pub(crate) status: String,
     pub(crate) reused: bool,
+    pub(crate) current_reusable_context: bool,
 }
 
 pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> {
@@ -83,23 +84,40 @@ pub(crate) fn ready(repository: &Path, request_path: &Path) -> Result<ReadyGate,
     let mut commands = request
         .validation_evidence
         .into_iter()
-        .map(|entry| (entry.name, entry.argv))
-        .collect::<BTreeMap<_, _>>();
+        .map(|entry| {
+            let bytes = captured(
+                repository,
+                &entry.result_path,
+                &entry.result_hash,
+                "validation result",
+            )?;
+            let current_context =
+                validation_summary::current_reusable_context(&bytes).map_err(|error| {
+                    format!(
+                        "cannot revalidate current context for `{}`: {error}",
+                        entry.name
+                    )
+                })?;
+            Ok((entry.name, (entry.argv, current_context)))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
     let validation = result
         .validation
         .into_iter()
         .map(|entry| {
-            let argv = commands.remove(&entry.name).ok_or_else(|| {
-                format!(
-                    "ready gate validation `{}` lost its source command",
-                    entry.name
-                )
-            })?;
+            let (argv, current_reusable_context) =
+                commands.remove(&entry.name).ok_or_else(|| {
+                    format!(
+                        "ready gate validation `{}` lost its source command",
+                        entry.name
+                    )
+                })?;
             Ok(ReadyValidation {
                 name: entry.name,
                 argv,
                 status: entry.status,
                 reused: entry.reused,
+                current_reusable_context,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;

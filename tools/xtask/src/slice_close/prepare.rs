@@ -6,6 +6,7 @@ use super::{accepted_slice, metrics, standard_coordination_directory};
 use crate::{bounded_file, review_protocol, slice_gate, slice_worktree};
 
 const REQUEST_SCHEMA: &str = "yo.slice-close-prepare-request/v1alpha1";
+const DERIVED_REQUEST_SCHEMA: &str = "yo.slice-close-prepare-request/v1alpha2";
 const RESULT_SCHEMA: &str = "yo.slice-close-metrics-publication/v1alpha1";
 const REQUEST_LIMIT: usize = 64 * 1024;
 
@@ -15,8 +16,8 @@ struct Request {
     schema: String,
     slice: String,
     gate_request_path: String,
-    #[serde(flatten)]
-    observations: Observations,
+    #[serde(flatten, default)]
+    observations: Option<Observations>,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -104,6 +105,17 @@ struct Metrics<'a> {
 }
 
 #[derive(Serialize)]
+struct DerivedMetrics<'a> {
+    schema: &'static str,
+    slice: &'a str,
+    slice_candidate: &'a str,
+    accepted_commit: &'a str,
+    validation: Vec<Validation<'a>>,
+    review_evidence_count: usize,
+    known_unverified_environments: &'a [String],
+}
+
+#[derive(Serialize)]
 struct Validation<'a> {
     name: &'a str,
     argv: &'a [String],
@@ -180,11 +192,25 @@ fn parse_request(path: &Path, bytes: &[u8]) -> Result<Request, String> {
             path.display()
         )
     })?;
-    if request.schema != REQUEST_SCHEMA {
-        return Err(format!(
-            "unsupported Slice close preparation schema `{}`; expected `{REQUEST_SCHEMA}`",
-            request.schema
-        ));
+    match request.schema.as_str() {
+        REQUEST_SCHEMA if request.observations.is_some() => {},
+        DERIVED_REQUEST_SCHEMA if request.observations.is_none() => {},
+        REQUEST_SCHEMA => {
+            return Err(format!(
+                "Slice close preparation schema `{REQUEST_SCHEMA}` requires operational observations"
+            ));
+        },
+        DERIVED_REQUEST_SCHEMA => {
+            return Err(format!(
+                "Slice close preparation schema `{DERIVED_REQUEST_SCHEMA}` derives metrics and forbids operational observations"
+            ));
+        },
+        _ => {
+            return Err(format!(
+                "unsupported Slice close preparation schema `{}`; expected `{REQUEST_SCHEMA}` or `{DERIVED_REQUEST_SCHEMA}`",
+                request.schema
+            ));
+        },
     }
     Ok(request)
 }
@@ -198,8 +224,15 @@ fn build_metrics(
     if gate.slice != request.slice || gate.candidate_commit != slice_candidate {
         return Err("ready gate does not identify the accepted Slice candidate".to_owned());
     }
-    if gate.review_count == 0 && request.observations.review.rounds != 0
-        || gate.review_count != 0 && request.observations.review.rounds == 0
+    if request.schema == DERIVED_REQUEST_SCHEMA {
+        return build_derived_metrics(request, gate, slice_candidate, accepted_commit);
+    }
+    let observations = request
+        .observations
+        .as_ref()
+        .expect("v1alpha1 observations were validated");
+    if gate.review_count == 0 && observations.review.rounds != 0
+        || gate.review_count != 0 && observations.review.rounds == 0
     {
         return Err(
             "review rounds must match whether the ready gate contains review evidence".to_owned(),
@@ -210,14 +243,13 @@ fn build_metrics(
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let observed_environments = request
-        .observations
+    let observed_environments = observations
         .unverified_validation
         .iter()
         .map(|entry| entry.environment.as_str())
         .collect::<BTreeSet<_>>();
     if gate_environments != observed_environments
-        || gate_environments.len() != request.observations.unverified_validation.len()
+        || gate_environments.len() != observations.unverified_validation.len()
     {
         return Err(
             "unverified validation must map one-to-one to the ready gate environments".to_owned(),
@@ -236,8 +268,7 @@ fn build_metrics(
         })
         .collect::<Vec<_>>();
     validation.extend(
-        request
-            .observations
+        observations
             .unverified_validation
             .iter()
             .map(|entry| Validation {
@@ -253,11 +284,11 @@ fn build_metrics(
         slice: &request.slice,
         slice_candidate,
         accepted_commit,
-        execution_lanes: &request.observations.execution_lanes,
-        review: &request.observations.review,
-        review_packets: &request.observations.review_packets,
+        execution_lanes: &observations.execution_lanes,
+        review: &observations.review,
+        review_packets: &observations.review_packets,
         validation,
-        elapsed_bottleneck: &request.observations.elapsed_bottleneck,
+        elapsed_bottleneck: &observations.elapsed_bottleneck,
         known_unverified_environments: &gate.known_unverified_environments,
     };
     let mut bytes = serde_json::to_vec_pretty(&metrics)
@@ -267,16 +298,60 @@ fn build_metrics(
     Ok(bytes)
 }
 
+fn build_derived_metrics(
+    request: &Request,
+    gate: &slice_gate::ReadyGate,
+    slice_candidate: &str,
+    accepted_commit: &str,
+) -> Result<Vec<u8>, String> {
+    if !gate.known_unverified_environments.is_empty() {
+        return Err(
+            "derived Slice close metrics require no known unverified environments; use explicit observed metrics"
+                .to_owned(),
+        );
+    }
+    let validation = gate
+        .validation
+        .iter()
+        .map(|entry| Validation {
+            name: &entry.name,
+            argv: &entry.argv,
+            runs: 1,
+            status: "passed",
+            reused: entry.reused,
+        })
+        .collect::<Vec<_>>();
+    let metrics = DerivedMetrics {
+        schema: super::metrics::DERIVED_SCHEMA,
+        slice: &request.slice,
+        slice_candidate,
+        accepted_commit,
+        validation,
+        review_evidence_count: gate.review_count,
+        known_unverified_environments: &gate.known_unverified_environments,
+    };
+    let mut bytes = serde_json::to_vec_pretty(&metrics)
+        .map_err(|error| format!("cannot encode derived Slice close metrics: {error}"))?;
+    bytes.push(b'\n');
+    metrics::validate(&bytes, &request.slice, slice_candidate, accepted_commit)?;
+    Ok(bytes)
+}
+
 pub(crate) fn request_bytes(
     slice: &str,
     gate_request_path: &str,
-    observations: &Observations,
+    observations: Option<&Observations>,
 ) -> Result<Vec<u8>, String> {
     let request = Request {
-        schema: REQUEST_SCHEMA.to_owned(),
+        schema: if observations.is_some() {
+            REQUEST_SCHEMA
+        } else {
+            DERIVED_REQUEST_SCHEMA
+        }
+        .to_owned(),
         slice: slice.to_owned(),
         gate_request_path: gate_request_path.to_owned(),
-        observations: observations.clone(),
+        observations: observations.cloned(),
     };
     let mut bytes = serde_json::to_vec_pretty(&request)
         .map_err(|error| format!("cannot encode Slice close preparation request: {error}"))?;

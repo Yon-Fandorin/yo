@@ -15,8 +15,12 @@ const MESSAGE_LIMIT: usize = 64 * 1024;
 const REQUEST_LIMIT: usize = 64 * 1024;
 const ACCEPT_REQUEST_SCHEMA: &str = "yo.slice-accept-request/v1alpha1";
 const ACCEPT_REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-request/v1alpha2";
+const ACCEPT_REQUEST_SCHEMA_V1_ALPHA3: &str = "yo.slice-accept-request/v1alpha3";
 const ACCEPT_RESULT_SCHEMA: &str = "yo.slice-accept-result/v1alpha1";
 const ACCEPT_RESULT_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-result/v1alpha2";
+const ACCEPT_RESULT_SCHEMA_V1_ALPHA3: &str = "yo.slice-accept-result/v1alpha3";
+const COMMIT_GIT_HOOKS: &str = "git_hooks";
+const COMMIT_CANDIDATE_HK_RECEIPT: &str = "candidate_hk_receipt";
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -31,7 +35,10 @@ struct AcceptRequest {
     close_prepare_request_path: String,
     close_prepare_request_hash: String,
     close_plan_path: String,
-    push: Push,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    push: Option<Push>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    commit_verification: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     approval_scope: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,7 +70,17 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
     let integration = integration_worktree(repository, &state.bound.base_ref)?;
     slice_worktree::ensure_clean(&integration, "integration worktree", "Slice acceptance")?;
     let integration_ref = slice_worktree::current_branch_ref(&integration, "Slice acceptance")?;
-    if integration_ref != state.bound.base_ref || request.push.reference != integration_ref {
+    if integration_ref != state.bound.base_ref {
+        return Err(format!(
+            "Slice acceptance must use its bound integration ref `{}`",
+            state.bound.base_ref
+        ));
+    }
+    if request
+        .push
+        .as_ref()
+        .is_some_and(|push| push.reference != integration_ref)
+    {
         return Err(format!(
             "Slice acceptance must push its bound integration ref `{}`",
             state.bound.base_ref
@@ -103,12 +120,7 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
     if gate.slice != request.slice || gate.candidate_commit != state.head {
         return Err("ready gate does not identify the registered Slice HEAD".to_owned());
     }
-    let expected_scope = effect_scope(
-        &request.slice,
-        &state.head,
-        &request.push.remote,
-        &integration_ref,
-    );
+    let expected_scope = request.expected_effect_scope(&state.head, &integration_ref)?;
     let recorded_scope = request.effect_scope()?;
     if recorded_scope != expected_scope {
         return Err(format!(
@@ -144,6 +156,17 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
     slice_worktree::expect_ref(&integration, &integration_ref, &integration_head)?;
     slice_worktree::expect_ref(&state.worktree, &state.branch, &state.head)?;
 
+    let current_gate = slice_gate::ready(&state.worktree, &gate_path)?;
+    if current_gate != gate {
+        return Err("ready gate or validation context changed before accepted commit".to_owned());
+    }
+    let commit_verification = request.commit_verification()?;
+    require_commit_verification(
+        commit_verification,
+        &current_gate,
+        &state.bound.base,
+        &integration_head,
+    )?;
     let accepted_commit = integrate_candidate(
         &integration,
         &integration_ref,
@@ -153,18 +176,21 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
         &state.bound.base,
         &state.head,
         &message_output,
+        commit_verification,
     )?;
 
-    let push_spec = format!("{integration_ref}:{integration_ref}");
-    let push_status = git::command_in(&integration, false)
-        .args(["push", "--porcelain", &request.push.remote, &push_spec])
-        .stdin(Stdio::null())
-        .status()
-        .map_err(|error| format!("cannot start accepted integration push: {error}"))?;
-    if !push_status.success() {
-        return Err(format!(
-            "accepted commit {accepted_commit} exists locally but push failed ({push_status})"
-        ));
+    if let Some(push) = &request.push {
+        let push_spec = format!("{integration_ref}:{integration_ref}");
+        let push_status = git::command_in(&integration, false)
+            .args(["push", "--porcelain", &push.remote, &push_spec])
+            .stdin(Stdio::null())
+            .status()
+            .map_err(|error| format!("cannot start accepted integration push: {error}"))?;
+        if !push_status.success() {
+            return Err(format!(
+                "accepted commit {accepted_commit} exists locally but push failed ({push_status})"
+            ));
+        }
     }
 
     revalidate_inputs(
@@ -178,23 +204,50 @@ pub(crate) fn accept(repository: &Path, request_path: &Path) -> Result<(), Strin
     slice_close::prepare_metrics(&integration, &close_prepare)?;
     slice_close::plan(&integration, &request.slice, Some(&close_plan))?;
     slice_close::apply(&integration, &close_plan)?;
+    let result = accept_result(
+        &request,
+        &state.head,
+        &accepted_commit,
+        &integration_ref,
+        commit_verification,
+    );
     println!(
         "{}",
-        serde_json::to_string(&serde_json::json!({
-            "schema": request.result_schema(),
-            "ok": true,
-            "status": "accepted",
-            "slice": request.slice,
-            "candidate_commit": state.head,
-            "accepted_commit": accepted_commit,
-            "integration_ref": integration_ref,
-            "remote": request.push.remote,
-            "pushed": true,
-            "closed": true
-        }))
-        .map_err(|error| format!("cannot encode Slice accept result: {error}"))?
+        serde_json::to_string(&result)
+            .map_err(|error| format!("cannot encode Slice accept result: {error}"))?
     );
     Ok(())
+}
+
+fn accept_result(
+    request: &AcceptRequest,
+    candidate_commit: &str,
+    accepted_commit: &str,
+    integration_ref: &str,
+    commit_verification: &str,
+) -> serde_json::Value {
+    let mut result = serde_json::json!({
+        "schema": request.result_schema(),
+        "ok": true,
+        "status": "accepted",
+        "slice": request.slice,
+        "candidate_commit": candidate_commit,
+        "accepted_commit": accepted_commit,
+        "integration_ref": integration_ref,
+        "remote": request.push.as_ref().map(|push| push.remote.as_str()),
+        "pushed": request.push.is_some(),
+        "closed": true
+    });
+    if request.schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA3 {
+        result
+            .as_object_mut()
+            .expect("Slice accept result is an object")
+            .insert(
+                "commit_verification".to_owned(),
+                serde_json::Value::String(commit_verification.to_owned()),
+            );
+    }
+    result
 }
 
 mod prepare;
@@ -211,7 +264,15 @@ fn integrate_candidate(
     candidate_base: &str,
     candidate_head: &str,
     message_output: &Path,
+    commit_verification: &str,
 ) -> Result<String, String> {
+    let commit = match commit_verification {
+        COMMIT_GIT_HOOKS => impact::review_coverage::create_accepted_commit,
+        COMMIT_CANDIDATE_HK_RECEIPT => {
+            impact::review_coverage::create_accepted_commit_from_verified_candidate
+        },
+        _ => return Err("unsupported accepted commit verification mode".to_owned()),
+    };
     integrate_candidate_with(
         integration,
         integration_ref,
@@ -221,7 +282,7 @@ fn integrate_candidate(
         candidate_base,
         candidate_head,
         message_output,
-        impact::review_coverage::create_accepted_commit,
+        commit,
     )
 }
 
@@ -322,9 +383,21 @@ fn integrate_candidate_with(
 fn validate_accept_request(request: &AcceptRequest) -> Result<(), String> {
     match request.schema.as_str() {
         ACCEPT_REQUEST_SCHEMA
-            if request.approval_scope.is_some() && request.effect_scope.is_none() => {},
+            if request.approval_scope.is_some()
+                && request.effect_scope.is_none()
+                && request.push.is_some()
+                && request.commit_verification.is_none() => {},
         ACCEPT_REQUEST_SCHEMA_V1_ALPHA2
-            if request.approval_scope.is_none() && request.effect_scope.is_some() => {},
+            if request.approval_scope.is_none()
+                && request.effect_scope.is_some()
+                && request.push.is_some()
+                && request.commit_verification.is_none() => {},
+        ACCEPT_REQUEST_SCHEMA_V1_ALPHA3
+            if request.approval_scope.is_none()
+                && request.effect_scope.is_some()
+                && request.commit_verification.as_deref().is_some_and(|mode| {
+                    matches!(mode, COMMIT_GIT_HOOKS | COMMIT_CANDIDATE_HK_RECEIPT)
+                }) => {},
         ACCEPT_REQUEST_SCHEMA => {
             return Err(
                 "yo.slice-accept-request/v1alpha1 requires approval_scope and forbids effect_scope"
@@ -337,9 +410,15 @@ fn validate_accept_request(request: &AcceptRequest) -> Result<(), String> {
                     .to_owned(),
             );
         },
+        ACCEPT_REQUEST_SCHEMA_V1_ALPHA3 => {
+            return Err(
+                "yo.slice-accept-request/v1alpha3 requires effect_scope and one closed commit_verification mode, and forbids approval_scope"
+                    .to_owned(),
+            );
+        },
         _ => {
             return Err(format!(
-                "unsupported Slice accept request schema `{}`; expected `{ACCEPT_REQUEST_SCHEMA}` or `{ACCEPT_REQUEST_SCHEMA_V1_ALPHA2}`",
+                "unsupported Slice accept request schema `{}`; expected `{ACCEPT_REQUEST_SCHEMA}`, `{ACCEPT_REQUEST_SCHEMA_V1_ALPHA2}`, or `{ACCEPT_REQUEST_SCHEMA_V1_ALPHA3}`",
                 request.schema
             ));
         },
@@ -375,13 +454,13 @@ fn validate_accept_request(request: &AcceptRequest) -> Result<(), String> {
             return Err(format!("{label} must be sha256:<64 lowercase hex>"));
         }
     }
-    if request.push.remote.is_empty()
-        || request.push.remote.len() > 64
-        || !request
-            .push
-            .remote
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    if let Some(push) = &request.push
+        && (push.remote.is_empty()
+            || push.remote.len() > 64
+            || !push
+                .remote
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')))
     {
         return Err("push remote must be one bounded Git remote token".to_owned());
     }
@@ -392,17 +471,55 @@ impl AcceptRequest {
     fn effect_scope(&self) -> Result<&str, String> {
         match self.schema.as_str() {
             ACCEPT_REQUEST_SCHEMA => self.approval_scope.as_deref(),
-            ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 => self.effect_scope.as_deref(),
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 | ACCEPT_REQUEST_SCHEMA_V1_ALPHA3 => {
+                self.effect_scope.as_deref()
+            },
             _ => None,
         }
         .ok_or_else(|| "Slice accept request has no version-matched effect scope".to_owned())
     }
 
     fn result_schema(&self) -> &'static str {
-        if self.schema == ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 {
-            ACCEPT_RESULT_SCHEMA_V1_ALPHA2
-        } else {
-            ACCEPT_RESULT_SCHEMA
+        match self.schema.as_str() {
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 => ACCEPT_RESULT_SCHEMA_V1_ALPHA2,
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA3 => ACCEPT_RESULT_SCHEMA_V1_ALPHA3,
+            _ => ACCEPT_RESULT_SCHEMA,
+        }
+    }
+
+    fn commit_verification(&self) -> Result<&str, String> {
+        match self.schema.as_str() {
+            ACCEPT_REQUEST_SCHEMA | ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 => Ok(COMMIT_GIT_HOOKS),
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA3 => self
+                .commit_verification
+                .as_deref()
+                .ok_or_else(|| "fast Slice acceptance has no commit verification mode".to_owned()),
+            _ => Err("unsupported Slice accept request schema".to_owned()),
+        }
+    }
+
+    fn expected_effect_scope(&self, candidate: &str, reference: &str) -> Result<String, String> {
+        match self.schema.as_str() {
+            ACCEPT_REQUEST_SCHEMA | ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 => {
+                let push = self
+                    .push
+                    .as_ref()
+                    .ok_or_else(|| "legacy Slice acceptance requires push".to_owned())?;
+                Ok(effect_scope(
+                    &self.slice,
+                    candidate,
+                    &push.remote,
+                    reference,
+                ))
+            },
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA3 => Ok(fast_effect_scope(
+                &self.slice,
+                candidate,
+                self.push.as_ref(),
+                reference,
+                self.commit_verification()?,
+            )),
+            _ => Err("unsupported Slice accept request schema".to_owned()),
         }
     }
 }
@@ -411,6 +528,68 @@ fn effect_scope(slice: &str, candidate: &str, remote: &str, reference: &str) -> 
     format!(
         "yo.slice-accept-effects/v1alpha1;slice={slice};candidate={candidate};squash=true;push={remote}:{reference};close=true"
     )
+}
+
+fn fast_effect_scope(
+    slice: &str,
+    candidate: &str,
+    push: Option<&Push>,
+    reference: &str,
+    commit_verification: &str,
+) -> String {
+    let push = push.map_or_else(
+        || "none".to_owned(),
+        |push| format!("{}:{reference}", push.remote),
+    );
+    format!(
+        "yo.slice-accept-effects/v1alpha2;slice={slice};candidate={candidate};squash=true;push={push};commit_verification={commit_verification};close=true"
+    )
+}
+
+fn fast_commit_verification(
+    gate: &slice_gate::ReadyGate,
+    candidate_base: &str,
+    integration_head: &str,
+) -> &'static str {
+    let exact_hk_argv = [
+        "hk",
+        "check",
+        "--check",
+        "--from-ref",
+        candidate_base,
+        "--to-ref",
+        gate.candidate_commit.as_str(),
+    ];
+    let exact_hk_receipt = gate.validation.iter().any(|entry| {
+        entry.status == "passed"
+            && !entry.reused
+            && entry.current_reusable_context
+            && entry.argv.iter().map(String::as_str).eq(exact_hk_argv)
+    });
+    if candidate_base == integration_head && exact_hk_receipt {
+        COMMIT_CANDIDATE_HK_RECEIPT
+    } else {
+        COMMIT_GIT_HOOKS
+    }
+}
+
+fn require_commit_verification(
+    requested: &str,
+    gate: &slice_gate::ReadyGate,
+    candidate_base: &str,
+    integration_head: &str,
+) -> Result<(), String> {
+    let current = fast_commit_verification(gate, candidate_base, integration_head);
+    if requested == COMMIT_CANDIDATE_HK_RECEIPT && current != requested {
+        Err(
+            "candidate_hk_receipt commit verification is no longer eligible; rerun accept preparation so Git hooks remain enabled"
+                .to_owned(),
+        )
+    } else if matches!(requested, COMMIT_GIT_HOOKS | COMMIT_CANDIDATE_HK_RECEIPT) {
+        Ok(())
+    } else {
+        Err("unsupported accepted commit verification mode".to_owned())
+    }
 }
 
 fn require_gate_authorization(
@@ -430,8 +609,9 @@ fn require_gate_authorization(
     match (accept_schema, kind) {
         (ACCEPT_REQUEST_SCHEMA, Some("exact_candidate"))
         | (ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, Some("exact_candidate"))
+        | (ACCEPT_REQUEST_SCHEMA_V1_ALPHA3, Some("exact_candidate"))
             if scope == Some(expected) => Ok(()),
-        (ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, Some("standing_routine"))
+        (ACCEPT_REQUEST_SCHEMA_V1_ALPHA2 | ACCEPT_REQUEST_SCHEMA_V1_ALPHA3, Some("standing_routine"))
             if gate.pointer("/risk/classification").and_then(serde_json::Value::as_str)
                 == Some("routine")
                 && gate
@@ -450,6 +630,10 @@ fn require_gate_authorization(
         ),
         (ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, _) => Err(
             "one-command acceptance v1alpha2 requires either the exact canonical effect approval or a satisfied human-origin standing_routine gate"
+                .to_owned(),
+        ),
+        (ACCEPT_REQUEST_SCHEMA_V1_ALPHA3, _) => Err(
+            "fast one-command acceptance requires either the exact canonical effect approval or a satisfied human-origin standing_routine gate"
                 .to_owned(),
         ),
         _ => Err("unsupported Slice accept request schema for gate authorization".to_owned()),

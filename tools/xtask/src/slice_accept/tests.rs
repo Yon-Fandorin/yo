@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    canonical_diff, compose_message, effect_scope, integrate_candidate_with, integration_worktree,
+    ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA3, AcceptRequest,
+    COMMIT_CANDIDATE_HK_RECEIPT, COMMIT_GIT_HOOKS, Push, accept_result, canonical_diff,
+    compose_message, effect_scope, fast_commit_verification, fast_effect_scope,
+    integrate_candidate_with, integration_worktree,
 };
-use crate::{slice_worktree, test_support::TestRepository};
+use crate::{slice_gate, slice_worktree, test_support::TestRepository};
 
 struct AcceptanceFixture {
     repository: TestRepository,
@@ -122,6 +125,118 @@ fn effect_scope_binds_every_orchestrated_mutation() {
         scope,
         effect_scope("example", &"a".repeat(40), "backup", "refs/heads/develop")
     );
+}
+
+// fast accept의 승인 범위는 push 생략과 commit 검증 방식을 명시적으로 고정하여
+// 로컬 통합 승인이 나중에 원격 효과나 hook 우회로 확대되지 않게 합니다.
+#[test]
+fn fast_effect_scope_binds_no_push_and_commit_verification() {
+    let scope = fast_effect_scope(
+        "example",
+        &"a".repeat(40),
+        None,
+        "refs/heads/develop",
+        COMMIT_CANDIDATE_HK_RECEIPT,
+    );
+    assert_eq!(
+        scope,
+        format!(
+            "yo.slice-accept-effects/v1alpha2;slice=example;candidate={};squash=true;push=none;commit_verification=candidate_hk_receipt;close=true",
+            "a".repeat(40)
+        )
+    );
+}
+
+// 후보 base가 integration HEAD와 같고 현재 host/toolchain에서 exact 후보 diff를
+// 선택한 hk receipt가 있을 때만 중복 Git hook을 생략합니다.
+#[test]
+fn fast_commit_requires_exact_current_hk_receipt() {
+    let candidate = "a".repeat(40);
+    let mut gate = slice_gate::ReadyGate {
+        slice: "example".to_owned(),
+        candidate_commit: candidate.clone(),
+        diff_hash: "sha256:diff".to_owned(),
+        validation: vec![slice_gate::ReadyValidation {
+            name: "hk".to_owned(),
+            argv: vec![
+                "hk".to_owned(),
+                "check".to_owned(),
+                "--check".to_owned(),
+                "--from-ref".to_owned(),
+                "base".to_owned(),
+                "--to-ref".to_owned(),
+                candidate,
+            ],
+            status: "passed".to_owned(),
+            reused: false,
+            current_reusable_context: true,
+        }],
+        review_count: 1,
+        known_unverified_environments: Vec::new(),
+        commit_trailers: Vec::new(),
+    };
+    assert_eq!(
+        fast_commit_verification(&gate, "base", "base"),
+        COMMIT_CANDIDATE_HK_RECEIPT
+    );
+    gate.validation[0].current_reusable_context = false;
+    assert_eq!(
+        fast_commit_verification(&gate, "base", "base"),
+        COMMIT_GIT_HOOKS
+    );
+    gate.validation[0].current_reusable_context = true;
+    assert_eq!(
+        fast_commit_verification(&gate, "base", "advanced"),
+        COMMIT_GIT_HOOKS
+    );
+    gate.validation[0].argv = vec!["hk".to_owned(), "check".to_owned()];
+    assert_eq!(
+        fast_commit_verification(&gate, "base", "base"),
+        COMMIT_GIT_HOOKS
+    );
+}
+
+// 동결된 accept result에는 새 verification 필드를 보태지 않고, 새 v1alpha3
+// 결과에서만 실제 선택된 hook 검증 방식을 공개합니다.
+#[test]
+fn accept_result_keeps_legacy_fields_frozen() {
+    let mut request = AcceptRequest {
+        schema: ACCEPT_REQUEST_SCHEMA.to_owned(),
+        slice: "example".to_owned(),
+        gate_request_path: "gate.json".to_owned(),
+        gate_request_hash: format!("sha256:{}", "a".repeat(64)),
+        message_source_path: "message.txt".to_owned(),
+        message_source_hash: format!("sha256:{}", "b".repeat(64)),
+        message_output_path: "message.out".to_owned(),
+        close_prepare_request_path: "close.json".to_owned(),
+        close_prepare_request_hash: format!("sha256:{}", "c".repeat(64)),
+        close_plan_path: "plan.json".to_owned(),
+        push: Some(Push {
+            remote: "origin".to_owned(),
+            reference: "refs/heads/develop".to_owned(),
+        }),
+        commit_verification: None,
+        approval_scope: Some("legacy".to_owned()),
+        effect_scope: None,
+    };
+    let legacy = accept_result(
+        &request,
+        "candidate",
+        "accepted",
+        "develop",
+        COMMIT_GIT_HOOKS,
+    );
+    assert!(legacy.get("commit_verification").is_none());
+
+    request.schema = ACCEPT_REQUEST_SCHEMA_V1_ALPHA3.to_owned();
+    let current = accept_result(
+        &request,
+        "candidate",
+        "accepted",
+        "develop",
+        COMMIT_GIT_HOOKS,
+    );
+    assert_eq!(current["commit_verification"], COMMIT_GIT_HOOKS);
 }
 
 // 사람이 준비한 원문에 이전 후보의 review trailer가 섞이면 ready 게이트의 exact

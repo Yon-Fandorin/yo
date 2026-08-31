@@ -21,6 +21,33 @@ pub(crate) struct VerifiedSummary {
     pub(crate) log_path: Option<String>,
 }
 
+/// Returns whether this exact validation result carries a reusable local
+/// execution context that still matches the current host.  Callers use this
+/// only to replace an otherwise duplicate local validation; a legacy or
+/// external-state summary remains valid gate evidence but is not eligible for
+/// that fast path.
+pub(crate) fn current_reusable_context(bytes: &[u8]) -> Result<bool, String> {
+    let envelope = schema(bytes)?;
+    match envelope.schema.as_str() {
+        ALPHA3_SCHEMA => {
+            let summary: Alpha3Summary = parse(bytes)?;
+            verify_reuse_context_format(&summary.reuse_context)?;
+            reusable_context_matches_current(&summary.reuse_context)
+        },
+        ALPHA4_SCHEMA => {
+            let summary: Alpha4Summary = parse(bytes)?;
+            verify_resource_lease(&summary.resource_lease)?;
+            let Some(context) = &summary.reuse_context else {
+                return Ok(false);
+            };
+            verify_reuse_context_format(context)?;
+            reusable_context_matches_current(context)
+        },
+        LEGACY_SCHEMA | ALPHA1_SCHEMA | ALPHA2_SCHEMA | external_operation::SCHEMA => Ok(false),
+        other => unsupported_schema(other),
+    }
+}
+
 #[derive(Deserialize)]
 struct SchemaEnvelope {
     schema: String,
@@ -741,6 +768,12 @@ fn verify_current_reuse_context(context: &ReuseContext) -> Result<(), String> {
     Ok(())
 }
 
+fn reusable_context_matches_current(context: &ReuseContext) -> Result<bool, String> {
+    Ok(context.platform_os == std::env::consts::OS
+        && context.platform_arch == std::env::consts::ARCH
+        && context.toolchain_hash == current_toolchain_hash()?)
+}
+
 pub(crate) fn current_toolchain_hash() -> Result<String, String> {
     let mut framed = Vec::from(TOOLCHAIN_DOMAIN);
     for tool in ["rustc", "cargo"] {
@@ -825,8 +858,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        ReuseContext, argv_hash, current_toolchain_hash, verify_current_reuse_context,
-        verify_review_input,
+        ReuseContext, argv_hash, current_reusable_context, current_toolchain_hash,
+        verify_current_reuse_context, verify_review_input,
     };
 
     fn alpha2(name: &str, candidate: &str) -> Vec<u8> {
@@ -974,6 +1007,21 @@ mod tests {
             .unwrap_err()
             .contains("resource lease")
         );
+    }
+
+    // commit fast path는 현재 platform/toolchain까지 다시 맞춘 context-bound summary만
+    // 사용할 수 있고 frozen v1alpha2 evidence는 정상 gate 증거여도 hook 대체는 못 합니다.
+    #[test]
+    fn commit_fast_path_requires_current_context_bound_evidence() {
+        let candidate = "a".repeat(40);
+        assert!(current_reusable_context(&alpha3("hk", &candidate)).unwrap());
+        assert!(current_reusable_context(&alpha4("hk", &candidate)).unwrap());
+        assert!(!current_reusable_context(&alpha2("hk", &candidate)).unwrap());
+
+        let mut stale: serde_json::Value =
+            serde_json::from_slice(&alpha3("hk", &candidate)).unwrap();
+        stale["reuse_context"]["platform_os"] = json!("changed-os");
+        assert!(!current_reusable_context(&serde_json::to_vec(&stale).unwrap()).unwrap());
     }
 
     // gate의 재사용 시점에는 현재 platform과 toolchain을 다시 관찰하므로 이전 실행의

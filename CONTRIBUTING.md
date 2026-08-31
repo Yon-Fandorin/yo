@@ -758,23 +758,30 @@ yo.slice-accept-effects/v1alpha1;slice=<slice>;candidate=<commit>;squash=true;pu
 ```
 
 For a satisfied human-origin `standing_routine` gate, the preparation command
-derives the same canonical value as an exact `effect_scope`; it does not claim
-that the generic standing authorization contained candidate-specific wording.
-The ready gate still proves routine classification and human origin, while the
-derived scope separately freezes the candidate, remote, ref, squash, and close
-effects before mutation.
+derives the exact `effect_scope`; it does not claim that the generic standing
+authorization contained candidate-specific wording. New fast acceptance uses
+`yo.slice-accept-effects/v1alpha2`, which additionally freezes whether push is
+`none` and whether commit verification uses ordinary `git_hooks` or the
+`candidate_hk_receipt` fast path.
 
 Then `cargo xtask slice accept <request.json>` may perform ready-gate message
-derivation, exact squash, accepted commit, non-force exact-ref push,
-close-metrics preparation, close planning, and verified cleanup as one
-orchestrated transition. The `yo.slice-accept-request/v1alpha2` request binds
+derivation, exact squash, accepted commit, an optional non-force exact-ref
+push, derived close-metrics preparation, close planning, and verified cleanup
+as one orchestrated transition. The `yo.slice-accept-request/v1alpha3` request binds
 the gate, message source, and close-preparation bytes by hash and names the
-message output, close plan, remote, ref, and exact derived effect scope. It
+message output, close plan, optional remote, commit-verification mode, and exact
+derived effect scope. It
 revalidates both worktrees and all inputs immediately before the first
 mutation and requires the staged and accepted diffs to equal the reviewed
 candidate bytes. Before squash it evaluates commit impact against the
 candidate paths and exact diff, so message or review-coverage errors leave the
-integration worktree untouched. If the later pre-commit check or commit process
+integration worktree untouched. It selects `candidate_hk_receipt` only when a
+non-reused passing `hk check --check --from-ref BASE --to-ref CANDIDATE`
+summary names the gate's exact base and candidate, is bound to that candidate, its
+declared no-external-state OS, architecture, and Rust/Cargo fingerprint still
+match, and the integration HEAD is the candidate base. That exact case skips
+only the duplicate pre-commit and commit-msg hooks; every other case records
+`git_hooks` and follows the ordinary hook path. If the later commit process
 fails while the integration ref and exact staged bytes are still unchanged, it
 restores those candidate paths to the original clean integration state. A
 changed ref, non-exact index, conflict, accepted commit, or push failure remains
@@ -783,7 +790,7 @@ validation, or sends review.
 
 ```json
 {
-  "schema": "yo.slice-accept-request/v1alpha2",
+  "schema": "yo.slice-accept-request/v1alpha3",
   "slice": "<slice>",
   "gate_request_path": ".local-exclude/coordination/<slice>/gate.json",
   "gate_request_hash": "sha256:<gate-hash>",
@@ -793,15 +800,15 @@ validation, or sends review.
   "close_prepare_request_path": ".local-exclude/coordination/<slice>/close-prepare.json",
   "close_prepare_request_hash": "sha256:<close-prepare-hash>",
   "close_plan_path": "/tmp/<slice>-close-plan.json",
-  "push": {"remote": "origin", "reference": "refs/heads/develop"},
-  "effect_scope": "yo.slice-accept-effects/v1alpha1;..."
+  "commit_verification": "candidate_hk_receipt",
+  "effect_scope": "yo.slice-accept-effects/v1alpha2;..."
 }
 ```
 
 Do not transcribe the ready gate identity, hashes, review trailers, validation
 commands, approval or effect scope, integration ref, or downstream artifact paths into
 that request by hand. From the clean bound Slice worktree, put only the
-irreducible semantic and observed inputs in one preparation request and run:
+irreducible semantic inputs in one preparation request and run:
 
 ```bash
 cargo xtask slice accept prepare \
@@ -810,45 +817,26 @@ cargo xtask slice accept prepare \
 
 ```json
 {
-  "schema": "yo.slice-accept-prepare-request/v1alpha2",
+  "schema": "yo.slice-accept-prepare-request/v1alpha3",
   "gate_request_path": ".local-exclude/coordination/<slice>/gate.json",
-  "message_source_path": ".local-exclude/coordination/<slice>/message.txt",
-  "close_observations": {
-    "execution_lanes": [
-      {"lane": "integration", "mode": "serial", "operation_count": 1, "max_concurrency": 1}
-    ],
-    "review": {
-      "rounds": 1,
-      "findings": {
-        "reported": 0,
-        "resolved": 0,
-        "not_reproduced": 0,
-        "accepted_limits": 0,
-        "remaining": 0
-      }
-    },
-    "review_packets": {
-      "publication_count": 0,
-      "total_managed_tokens": 0,
-      "largest_sections": [],
-      "reused_inputs": []
-    },
-    "unverified_validation": [],
-    "elapsed_bottleneck": {"name": "review", "elapsed_milliseconds": 1000}
-  },
-  "push_remote": "origin"
+  "message_source_path": ".local-exclude/coordination/<slice>/message.txt"
 }
 ```
 
-The `yo.slice-accept-prepare-request/v1alpha2` input names the unchanged ready
-gate, the human-written commit message source, the push remote, and
-`close_observations`. Those observations are only facts the gate cannot derive:
-execution-lane counts, review rounds and finding dispositions, packet sizes and
-reuse, commands for known unverified environments, and the measured elapsed
-bottleneck. Do not estimate or invent those values. The command verifies the
+The `yo.slice-accept-prepare-request/v1alpha3` input names only the unchanged ready
+gate and the human-written commit message source. Add `"push_remote":"origin"`
+only when the same transition should push; omission means local integration.
+The command derives the close record's candidate, accepted validation, and review
+evidence count from the ready gate. Because a compact record cannot derive the
+missing command for an unverified environment, this fast path requires the gate
+to have no known unverified environment; use the legacy observed-close path
+when such a mapping must be retained. It does
+not ask the caller to recreate execution lanes, review rounds, packet sizes, or
+elapsed timing, and the compact derived record deliberately makes no claim
+about facts that no durable artifact observed. The command verifies the
 gate's existing exact-effect approval or satisfied human-origin
 `standing_routine` authorization and both worktrees, validates the close
-observations against the gate, then publishes new-or-byte-identical
+request against the gate, then publishes new-or-byte-identical
 `close-prepare.json` and `accept.json` in the Slice's standard coordination
 directory. Candidate-scoped commit-message and close-plan output paths are
 derived under the platform temporary directory.
@@ -865,13 +853,14 @@ cargo xtask slice accept \
   .local-exclude/coordination/<slice>/accept.json
 ```
 
-Frozen `yo.slice-accept-prepare-request/v1alpha1` and
-`yo.slice-accept-request/v1alpha1` remain exact-candidate-only and retain their
-`approval_scope` field and result schemas. New preparations use `v1alpha2`;
-they emit `effect_scope` and accept either the same exact-candidate approval or
-a ready routine gate whose standing authorization already passed the gate's
-human-origin checks. Neither version permits a force push, a different ref, a
-changed candidate, or an unplanned cleanup effect.
+Frozen `yo.slice-accept-prepare-request/v1alpha1`/`v1alpha2` and matching accept
+requests and results retain their original required-push, caller-observation,
+and output-field behavior.
+New preparations use `v1alpha3`; they emit `effect_scope` and accept either the
+same exact-candidate approval or a ready routine gate whose standing
+authorization already passed the gate's human-origin checks. No version permits
+a force push, a different ref, a changed candidate, or an unplanned cleanup
+effect.
 
 If a required full suite fails outside the changed boundary, run each exact
 failing test once in isolation to classify timing or shared-load sensitivity.

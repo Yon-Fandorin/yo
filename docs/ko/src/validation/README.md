@@ -206,7 +206,8 @@ worktree 밖에 두고 Slice 종료 시 제거한다.
 ```bash
 bash tools/validation/bounded-run.sh workspace-tests -- cargo test --workspace --all-targets
 bash tools/validation/bounded-run.sh workspace-clippy -- cargo clippy --workspace --all-targets -- -D warnings
-bash tools/validation/bounded-run.sh hk-check -- hk check
+bash tools/validation/bounded-run.sh hk-candidate -- \
+  hk check --check --from-ref BASE_SHA --to-ref CANDIDATE_SHA
 ```
 
 `cargo test`는 일반 test를 실행하고 ignored test를 compile하지만, 환경
@@ -247,20 +248,23 @@ Slice가 platform이나 외부 환경 경계를 바꾼다면 기준선이 이를
 주장하지 말고 관련 matrix 명령을 추가한다.
 
 검수한 후보를 squash했다는 이유만으로 바뀌지 않은 기준선을 다시 실행하지
-않는다. 정확한 Git diff로 두 commit의 tree가 같고, 통합 과정에 conflict 해소나
-다른 수정이 없으며, toolchain과 환경이 같고, 외부 상태 증거가 만료되지 않았고,
-commit hook이 통과한 경우에만 후보 결과를 수용 commit의 증거로 재사용한다.
-그 밖에는 영향받은 검사를 다시 실행한다. 이 재사용은 후보 자체의 검증이나
+않는다. 새 fast acceptance는 integration HEAD가 candidate base이고,
+`hk check --check --from-ref BASE_SHA --to-ref CANDIDATE_SHA`의 두 SHA가 gate의
+정확한 base와 candidate이며, 결과가 성공·비재사용·외부 상태 없음으로 기록됐고 OS, architecture,
+Rust/Cargo fingerprint가 여전히 일치할 때만 candidate-bound 결과로 중복 commit
+hook을 대신할 수 있다. 이 선택은 `candidate_hk_receipt`로 기록한다. 그 밖에는
+`git_hooks`를 기록하고 hook을 실행한다. 이 재사용은 후보 자체의 검증이나
 검수를 대체하지 않는다.
 
-Slice 종료 정리 명령은 이 검증 기준선의 일부가 아니다. gate가 `integrate`를
-반환하면 `slice commit prepare`는 stage나 commit 없이 사람이 작성한 의미
-message에 exact review trailer를 붙인다. 일치하는 accepted commit이 생긴 뒤
-`slice close prepare`는 같은 ready gate에서 identity와 통과한 validation 행을
-파생한다. 이 명령의 작은 `yo.slice-close-prepare-request/v1alpha1` 입력에는
-gate가 알 수 없는 실행 lane, review·packet 합계, 경과 시간 병목, 미검증 환경의
-command만 남고, 명령은 표준 `close-metrics.json`만 발행하며 cleanup을 plan하거나
-apply하지 않는다.
+새 `slice accept prepare`는 `yo.slice-accept-prepare-request/v1alpha3`을 사용한다.
+ready gate와 사람이 작성한 message source만 필요하고 `push_remote`는 선택 사항이다.
+이 명령은 작은 `yo.slice-close-prepare-request/v1alpha2`와 candidate, validation,
+review evidence 수를 파생한다. compact 경로는 미검증 환경의 누락 command를 파생할
+수 없으므로 알려진 미검증 환경이 없어야 한다. 그 매핑을 보존해야 하는 gate는 고정된
+observed-metrics 경로를 사용한다. 따라서 사람이 실행 lane,
+packet, 경과 시간 합계를 다시 만들어야 cleanup이 진행되는 병목이 없다. 고정된
+이전 요청은 기존 observed-metrics 모양을 유지한다. close preparation은 표준
+`close-metrics.json`을 발행하지만 cleanup을 직접 plan하거나 apply하지 않는다.
 
 close plan은 요청한 파일에 plan을 직접 발행한 뒤 이미 수용된 결과를 소비한다.
 로컬 worktree, 표준 임시 Slice contract, Slice branch를 제거하기 전에 정확한

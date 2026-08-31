@@ -1,13 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    PREPARE_REQUEST_SCHEMA, PREPARE_REQUEST_SCHEMA_V1_ALPHA2, ensure_distinct_paths,
-    preflight_publication, prepare_with, require_unchanged, temporary_output_paths,
+    PREPARE_REQUEST_SCHEMA, PREPARE_REQUEST_SCHEMA_V1_ALPHA2, PREPARE_REQUEST_SCHEMA_V1_ALPHA3,
+    ensure_distinct_paths, preflight_publication, prepare_result_pushed, prepare_with,
+    require_unchanged, temporary_output_paths,
 };
 use crate::{
     review_protocol,
     slice_accept::{
-        ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, require_gate_authorization,
+        ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, ACCEPT_REQUEST_SCHEMA_V1_ALPHA3,
+        COMMIT_GIT_HOOKS, fast_effect_scope, require_gate_authorization,
     },
     slice_close, slice_contract, test_support,
 };
@@ -196,6 +198,39 @@ impl Fixture {
         fixture
     }
 
+    fn fast_no_push() -> Self {
+        let fixture = Self::new();
+        let mut prepare: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&fixture.prepare).unwrap()).unwrap();
+        prepare["schema"] = serde_json::json!(PREPARE_REQUEST_SCHEMA_V1_ALPHA3);
+        prepare
+            .as_object_mut()
+            .unwrap()
+            .remove("close_observations");
+        prepare.as_object_mut().unwrap().remove("push_remote");
+        std::fs::write(
+            &fixture.prepare,
+            format!("{}\n", serde_json::to_string_pretty(&prepare).unwrap()),
+        )
+        .unwrap();
+
+        let mut gate: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&fixture.gate).unwrap()).unwrap();
+        gate["approval"]["scope"] = serde_json::json!(fast_effect_scope(
+            "post-gate-test",
+            &fixture.candidate_commit,
+            None,
+            "refs/heads/develop",
+            COMMIT_GIT_HOOKS,
+        ));
+        std::fs::write(
+            &fixture.gate,
+            format!("{}\n", serde_json::to_string_pretty(&gate).unwrap()),
+        )
+        .unwrap();
+        fixture
+    }
+
     fn standing_routine(prepare_schema: &str) -> Self {
         let fixture = Self::new();
         let mut gate: serde_json::Value =
@@ -352,6 +387,71 @@ fn alpha2_exact_candidate_uses_the_same_effect_scope() {
     );
 }
 
+// v1alpha3은 gate가 이미 가진 사실만으로 close request를 만들고 push가 빠진 exact
+// effect를 고정하여 사람이 관측 수치를 옮겨 적거나 별도 로컬 통합을 할 필요가 없습니다.
+#[test]
+fn alpha3_derives_close_and_allows_no_push() {
+    let fixture = Fixture::fast_no_push();
+
+    prepare_with(&fixture.candidate, &fixture.prepare, || Ok(())).unwrap();
+
+    let accept: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.coordination.join("accept.json")).unwrap())
+            .unwrap();
+    let close: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(fixture.coordination.join("close-prepare.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(accept["schema"], ACCEPT_REQUEST_SCHEMA_V1_ALPHA3);
+    assert!(accept.get("push").is_none());
+    assert_eq!(accept["commit_verification"], COMMIT_GIT_HOOKS);
+    assert!(
+        accept["effect_scope"]
+            .as_str()
+            .unwrap()
+            .contains("push=none")
+    );
+    assert_eq!(close["schema"], "yo.slice-close-prepare-request/v1alpha2");
+    assert!(close.get("execution_lanes").is_none());
+    assert!(close.get("elapsed_bottleneck").is_none());
+}
+
+// 새 출력 필드는 v1alpha3에만 존재하여 frozen prepare result를 재실행해도 이전
+// schema의 byte shape에 `pushed`가 새로 생기지 않습니다.
+#[test]
+fn prepare_result_keeps_legacy_pushed_field_absent() {
+    assert_eq!(prepare_result_pushed(ACCEPT_REQUEST_SCHEMA, true), None);
+    assert_eq!(
+        prepare_result_pushed(ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, true),
+        None
+    );
+    assert_eq!(
+        prepare_result_pushed(ACCEPT_REQUEST_SCHEMA_V1_ALPHA3, false),
+        Some(false)
+    );
+}
+
+// compact close record는 미검증 환경의 누락 command를 추측하지 않고 두 downstream
+// request를 발행하기 전에 legacy observed path 사용을 요구합니다.
+#[test]
+fn alpha3_rejects_known_unverified_environments_before_publication() {
+    let fixture = Fixture::fast_no_push();
+    let mut gate: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&fixture.gate).unwrap()).unwrap();
+    gate["known_unverified_environments"] = serde_json::json!(["macOS host unavailable"]);
+    std::fs::write(
+        &fixture.gate,
+        format!("{}\n", serde_json::to_string_pretty(&gate).unwrap()),
+    )
+    .unwrap();
+
+    let error = prepare_with(&fixture.candidate, &fixture.prepare, || Ok(())).unwrap_err();
+
+    assert!(error.contains("requires no known unverified environments"));
+    assert!(!fixture.coordination.join("accept.json").exists());
+    assert!(!fixture.coordination.join("close-prepare.json").exists());
+}
+
 // 이미 발행된 v1alpha1 의미는 그대로 exact_candidate 전용이므로 같은 standing
 // 게이트가 새 버전 선택 없이 조용히 허용되지 않습니다.
 #[test]
@@ -392,7 +492,7 @@ fn close_observations_generate_the_frozen_downstream_shape() {
     let bytes = slice_close::close_prepare_request_bytes(
         "sample",
         ".local-exclude/coordination/sample/gate.json",
-        &observations(),
+        Some(&observations()),
     )
     .unwrap();
     let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

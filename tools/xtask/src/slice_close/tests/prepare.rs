@@ -15,6 +15,7 @@ fn gate(environments: Vec<String>) -> slice_gate::ReadyGate {
             ],
             status: "passed".to_owned(),
             reused: false,
+            current_reusable_context: true,
         }],
         review_count: 1,
         known_unverified_environments: environments,
@@ -102,4 +103,42 @@ fn requires_one_unverified_command_per_gate_environment() {
     .unwrap_err();
 
     assert!(error.contains("map one-to-one"));
+}
+
+// fast accept는 사람이 실행 레인·패킷 토큰·경과 시간을 다시 적지 않아도 ready
+// gate가 이미 검증한 종료 필드만 새 compact metrics로 파생합니다.
+#[test]
+fn derives_compact_metrics_without_manual_observations() {
+    let request = super::super::prepare::request_bytes("sample", "gate.json", None).unwrap();
+    let bytes = build_metrics_for_test(
+        &request,
+        &gate(Vec::new()),
+        "1111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222",
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    assert_eq!(value["schema"], "yo.slice-close-metrics/v1alpha1");
+    assert_eq!(value["review_evidence_count"], 1);
+    assert_eq!(value["validation"][0]["name"], "xtask");
+    assert!(value.get("execution_lanes").is_none());
+    assert!(value.get("elapsed_bottleneck").is_none());
+    assert!(value.get("review_packets").is_none());
+}
+
+// derived metrics에는 환경별 누락 command를 표현할 필드가 없으므로 이름만 복사해
+// 손실 기록을 만들지 않고 explicit observed metrics 사용을 요구합니다.
+#[test]
+fn derived_metrics_reject_known_unverified_environments() {
+    let request = super::super::prepare::request_bytes("sample", "gate.json", None).unwrap();
+    let error = build_metrics_for_test(
+        &request,
+        &gate(vec!["macOS host unavailable".to_owned()]),
+        "1111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222",
+    )
+    .unwrap_err();
+
+    assert!(error.contains("require no known unverified environments"));
 }
