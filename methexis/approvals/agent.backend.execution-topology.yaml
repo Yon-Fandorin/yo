@@ -1,7 +1,7 @@
 schema: methexis.approval/v1alpha2
 knowledge_id: agent.backend.execution-topology
-revision: sha256:837ccf93064a7485ce8bf379d9c57bfecacf4aac6a2eb6a2f1c0103b6bb6d1b2
+revision: sha256:c134a18a110a81b37cf021faec6f939e0158a5982e29b9c29b53ef434d0305ba
 reviewer: agent-runtime
-reviewed_at: 2026-08-31T04:06:26Z
+reviewed_at: 2026-08-31T13:48:25Z
 review_basis: canonical
-request_hash: sha256:163aaf8c2b0140d3feddeb884c4c3ec16d8ee76a5148dc23879f00023dc14614
+request_hash: sha256:909fd180fe16daa0ba2e74fbfa27b4b037ba571d937ef94906a3423289b71a13

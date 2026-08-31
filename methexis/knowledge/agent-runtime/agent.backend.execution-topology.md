@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.backend-007
-    revision: sha256:0173528a6b1f486aa92f90b12d2f4b3f76f3ba23ad53248de3a0aa9f9267dc45
+    revision: sha256:347f5f6817cd685426c1388acb3d4833ab6ef04e579388d138674c08681ad625
 relations:
   depends_on:
     - agent.core.frontend-independent-boundary
@@ -33,13 +33,30 @@ inspection and MUST NOT be described as managed `no-tools`.
 For that profile, the Codex adapter MUST disable web search, fix
 `approvalPolicy` to `never`, and set the sandbox to read-only with tool network
 disabled on Thread creation, Thread resume, and every Turn. The Grok adapter
-MUST launch ACP with its
-read-only sandbox, `dontAsk`, only the `Read` and `Grep` built-ins, web and
-subagents disabled, and no Yo-supplied MCP servers. A permission request or
+MUST prefer its native read-only sandbox with `dontAsk`, only the `Read` and
+`Grep` built-ins, web and subagents disabled, and no Yo-supplied MCP servers
+when request-free admission proves that exact profile starts successfully.
+When a Linux host cannot provide the native sandbox primitives, admission MAY
+instead select exact `yo-bwrap-read-only/v1alpha1`, but only for the bounded
+immutable-packet external-review runner. That outer profile MUST provide a
+read-only root and workspace; isolated user, PID, IPC, and UTS namespaces;
+dropped capabilities; private runtime and temporary mounts; masked host
+runtime sockets; and writable binds limited to exact Grok state and the exact
+Session repository. It MUST retain network access only because the delegated
+host owns its Provider request, and MUST launch Grok ACP with native sandboxing
+off, `dontAsk`, an empty tool registry, web and subagents disabled, and no
+Yo-supplied MCP servers. Before ACP spawn, the Grok backend MUST independently
+attest the exact runner marker, an exact read-only sentinel mount, and a failed
+workspace create probe. An environment marker alone MUST NOT select the
+fallback. Missing bubblewrap support, an incomplete mount boundary, a writable
+workspace, or any other unsupported condition MUST fail closed; native
+sandboxing remains preferred. A permission request or
 mutable workspace effect outside those bounds is a failed review delivery,
-not a prompt for broader authority. The exact profile MUST be frozen in the
-durable host binding; resume restores it and MUST NOT silently downgrade to a
-normal delegated Session.
+not a prompt for broader authority. The exact delegated review profile MUST be
+frozen in the durable host binding; resume restores it and MUST NOT silently
+downgrade to a normal delegated Session. Admission MUST record the actual
+native or outer isolation selected for each delivery, and claims and receipts
+MUST preserve that value.
 
 One original review sends one immutable packet through one fresh isolated host
 Session. Finding-resolution delivery MUST resume that exact reviewer Session
@@ -50,7 +67,8 @@ review-delta chain and bind every step to the immediately preceding delivery
 receipt. The first step beyond the authorized maximum MUST fail before host
 delivery. Retry, steer, fallback, target switch, and a second request for the
 same step remain forbidden. The delivery claim and receipt MUST name the
-HostTarget, execution profile, and one durable host-request identity. They MUST
+HostTarget, execution profile, actual selected execution isolation when one is
+admitted, and one durable host-request identity. They MUST
 state the actual host-owned tool boundary, MUST NOT publish managed
 `tool_execution: false`, and MUST leave Provider request identity and token
 usage unknown unless the delegated host supplies separately reviewed exact
