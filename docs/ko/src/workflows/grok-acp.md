@@ -49,6 +49,23 @@ adapter가 사용하는 wire surface는 fail-closed로 유지한다.
 확인하고 허용한 형태를 malformed, mismatched, unsupported message와 구분하는
 결정론적 fixture를 유지한다.
 
+외부 검토에서는 admission v1alpha4가 stdin이 이미 EOF인 상태로 동결된 reviewer
+profile도 시작한다.
+
+```text
+grok --sandbox read-only --permission-mode dontAsk --tools Read,Grep \
+  --no-subagents --disable-web-search agent stdio
+```
+
+이 bounded startup probe는 ContextBuild나 packet 발행보다 먼저 실행된다. prompt,
+ACP initialize, Session request 또는 비공개 packet을 전송하지 않는다. sandbox 시작
+실패는 사용 불가능한 host이며 warning이나 sandbox 없는 fallback으로 바꾸지 않는다.
+Grok 1.0.13은 제한된 Linux container에서 bubblewrap profile이 container-runtime
+socket을 가리지 못하면 이 probe에 실패할 수 있다. 설치 version 문자열과 쓰기 가능한
+`~/.grok`만으로 reviewer profile 실행 가능성을 증명하지 않는다. 현재 upstream은
+runtime socket 처리를 sandbox 구현 내부에서 다루므로 해당 동작이 포함된 release가
+나오면 host를 갱신하는 것이 우선 해결책이다.
+
 ## 집중 검증
 
 먼저 결정론적 adapter test를 실행한다.

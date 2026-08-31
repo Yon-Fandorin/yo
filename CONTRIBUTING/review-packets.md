@@ -170,7 +170,7 @@ selection and one authorized target:
 
 ```json
 {
-  "schema": "yo.slice-review-prepare-request/v1alpha5",
+  "schema": "yo.slice-review-prepare-request/v1alpha6",
   "slice": "example-slice",
   "knowledge_ids": ["methexis.review.bounded-packet"],
   "context_max_tokens": 16000,
@@ -209,7 +209,7 @@ returns the exact packet budget plus one `deliver_once` or
 `deliver_delegated_once` next action. It makes zero Provider
 requests and never retries, steers, falls back, or selects another target.
 
-Preparations from v1alpha2 through v1alpha5 append one fixed output-contract
+Preparations from v1alpha2 through v1alpha6 append one fixed output-contract
 instruction after the caller's review questions. After any explanation, the
 reviewer must end with exactly one terminal envelope and no trailing prose:
 
@@ -226,24 +226,30 @@ The same instruction remains part of the immutable review plan visible to a
 direct finding-resolution continuation. Frozen review-preparation v1alpha1
 does not add this instruction and remains eligible only for the legacy gate
 shape with coordinator-declared verdicts. Each preparation request version
-emits its same-numbered result schema: v1alpha1 through v1alpha5 remain
+emits its same-numbered result schema: v1alpha1 through v1alpha6 remain
 distinct frozen boundaries.
 
 The alternate target is
 `{"kind":"delegated_host","host":"codex"}` or exact host `grok`, with an
 optional absolute `session_repository_path`. It derives the frozen delegated
-execution profile, v1alpha3 state-ready admission, and v1alpha2 delivery shape;
-callers do not supply Provider or Account coordinates for a delegated host.
+execution profile and v1alpha2 delivery shape. New v1alpha6 preparation uses
+v1alpha4 admission for `host:grok`, which starts that exact read-only profile
+with EOF stdin before packet construction and permits no prompt, ACP initialize,
+Session, or Provider request. `host:codex` retains v1alpha3 state-ready
+admission until an equivalent request-free profile probe is defined. Callers
+do not supply Provider or Account coordinates for a delegated host.
 An exact rerun reuses every file. Any byte-different existing request or any
 claim/result already present in the delivery directory stops preparation
 without overwriting or deleting it. Use the individual lower-level commands
 for finding-resolution continuations, prospective activation, reproduction of
 frozen schemas, or section-by-section packet diagnostics.
 
-For a new review, v1alpha5 preserves v1alpha4's Usage-bound delivery and
-derives repository authority from the bound base-to-HEAD paths. It requires
+For a new review, v1alpha6 preserves v1alpha5's authority routing and
+v1alpha4's Usage-bound delivery while adding Grok execution-profile admission.
+It derives repository authority from the bound base-to-HEAD paths and requires
 `repository_authority_policy:"changed-workflow-authority/v1alpha2"` and an
-empty caller `repository_authority_paths`:
+empty caller `repository_authority_paths`. Frozen v1alpha5 retains the same
+authority behavior without the Grok startup probe:
 
 - always include the small root `AGENTS.md` router and every changed nested
   `AGENTS.md` exactly;
@@ -258,7 +264,7 @@ empty caller `repository_authority_paths`:
 
 Product-only candidates therefore keep only `AGENTS.md`, while a focused
 workflow candidate carries only its directly applicable owner. The result uses
-`yo.slice-review-prepare-result/v1alpha5`. Frozen v1alpha4 keeps
+`yo.slice-review-prepare-result/v1alpha6`. Frozen v1alpha4 keeps
 `changed-workflow-authority/v1alpha1`, which includes root `CONTRIBUTING.md`
 for any workflow/tooling path; neither schema nor policy is reinterpreted.
 

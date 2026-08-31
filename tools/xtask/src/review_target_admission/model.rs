@@ -10,12 +10,17 @@ pub(super) const REQUEST_SCHEMA_V1_ALPHA3: &str =
     "yo.external-review-target-admission-request/v1alpha3";
 pub(super) const RESULT_SCHEMA_V1_ALPHA3: &str =
     "yo.external-review-target-admission-result/v1alpha3";
+pub(super) const REQUEST_SCHEMA_V1_ALPHA4: &str =
+    "yo.external-review-target-admission-request/v1alpha4";
+pub(super) const RESULT_SCHEMA_V1_ALPHA4: &str =
+    "yo.external-review-target-admission-result/v1alpha4";
 
 pub(super) fn result_schema(request_schema: &str) -> &'static str {
     match request_schema {
         REQUEST_SCHEMA => RESULT_SCHEMA,
         REQUEST_SCHEMA_V1_ALPHA2 => RESULT_SCHEMA_V1_ALPHA2,
         REQUEST_SCHEMA_V1_ALPHA3 => RESULT_SCHEMA_V1_ALPHA3,
+        REQUEST_SCHEMA_V1_ALPHA4 => RESULT_SCHEMA_V1_ALPHA4,
         _ => unreachable!("validated admission schema"),
     }
 }
@@ -63,6 +68,9 @@ impl ReviewTarget {
                 ("eligible", "deliver_delegated_once")
             },
             (REQUEST_SCHEMA_V1_ALPHA3, Self::DelegatedHost { .. }) => {
+                ("eligible", "deliver_delegated_once")
+            },
+            (REQUEST_SCHEMA_V1_ALPHA4, Self::DelegatedHost { .. }) => {
                 ("eligible", "deliver_delegated_once")
             },
             _ => unreachable!("validated admission schema"),
@@ -179,8 +187,10 @@ impl Admission {
     }
 
     pub(crate) fn has_delegated_host_state_readiness(&self) -> bool {
-        self.schema == RESULT_SCHEMA_V1_ALPHA3
-            && matches!(self.target, ReviewTarget::DelegatedHost { .. })
+        matches!(
+            self.schema,
+            RESULT_SCHEMA_V1_ALPHA3 | RESULT_SCHEMA_V1_ALPHA4
+        ) && matches!(self.target, ReviewTarget::DelegatedHost { .. })
             && matches!(self.decision, Decision::Admit)
     }
 }

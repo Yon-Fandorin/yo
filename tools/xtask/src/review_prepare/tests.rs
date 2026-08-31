@@ -267,7 +267,7 @@ fn managed_route_documents_bind_current_authorization_and_delivery_shape() {
         "session_repository_path": "/tmp/sessions"
     }));
 
-    let target = target_preparation(&request.target, false).unwrap();
+    let target = target_preparation(&request.target, false, false).unwrap();
     let egress = egress_document(&workspace.0, &request.target, &published_review()).unwrap();
     assert!(matches!(target.kind, RouteKind::Managed));
     assert_eq!(target.next_action, "deliver_once");
@@ -299,7 +299,7 @@ fn delegated_route_documents_keep_host_owned_identity() {
         "session_repository_path": "/tmp/sessions"
     }));
 
-    let target = target_preparation(&request.target, false).unwrap();
+    let target = target_preparation(&request.target, false, false).unwrap();
     let egress = egress_document(&workspace.0, &request.target, &published_review()).unwrap();
     assert!(matches!(target.kind, RouteKind::Delegated));
     assert_eq!(target.next_action, "deliver_delegated_once");
@@ -428,7 +428,7 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
         "connection_repository_path": "/tmp/connections.yaml"
     }));
     assert_eq!(
-        target_preparation(&managed.target, false)
+        target_preparation(&managed.target, false, false)
             .unwrap()
             .delivery_schema,
         MANAGED_DELIVERY_SCHEMA
@@ -436,7 +436,7 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
     managed.schema = "yo.slice-review-prepare-request/v1alpha3".to_owned();
     validate_and_normalize(&mut managed).unwrap();
     assert_eq!(
-        target_preparation(&managed.target, true)
+        target_preparation(&managed.target, true, false)
             .unwrap()
             .delivery_schema,
         MANAGED_USAGE_DELIVERY_SCHEMA
@@ -444,13 +444,13 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
 
     let delegated = request(json!({"kind": "delegated_host", "host": "grok"}));
     assert_eq!(
-        target_preparation(&delegated.target, false)
+        target_preparation(&delegated.target, false, false)
             .unwrap()
             .delivery_schema,
         DELEGATED_DELIVERY_SCHEMA
     );
     assert_eq!(
-        target_preparation(&delegated.target, true)
+        target_preparation(&delegated.target, true, false)
             .unwrap()
             .delivery_schema,
         DELEGATED_USAGE_DELIVERY_SCHEMA
@@ -496,5 +496,36 @@ fn alpha5_requires_precise_derived_authority_policy() {
         validate_and_normalize(&mut derived)
             .unwrap_err()
             .contains("changed-workflow-authority/v1alpha2")
+    );
+}
+
+// alpha6는 기존 Usage/authority 계약을 보존하면서 Grok에만 request-free exact
+// execution-profile admission을 추가합니다. Codex는 검증되지 않은 invocation을
+// 발명하지 않고 alpha3 state readiness를 계속 사용합니다.
+#[test]
+fn alpha6_selects_profile_readiness_only_for_grok() {
+    let mut grok = request(json!({"kind": "delegated_host", "host": "grok"}));
+    grok.schema = "yo.slice-review-prepare-request/v1alpha6".to_owned();
+    grok.repository_authority_paths.clear();
+    grok.repository_authority_policy = Some("changed-workflow-authority/v1alpha2".to_owned());
+    validate_and_normalize(&mut grok).unwrap();
+    let prepared = target_preparation(&grok.target, true, true).unwrap();
+    let admission: serde_json::Value = serde_json::from_slice(&prepared.admission).unwrap();
+    assert_eq!(
+        admission["schema"],
+        "yo.external-review-target-admission-request/v1alpha4"
+    );
+    assert_eq!(prepared.delivery_schema, DELEGATED_USAGE_DELIVERY_SCHEMA);
+
+    let mut codex = request(json!({"kind": "delegated_host", "host": "codex"}));
+    codex.schema = "yo.slice-review-prepare-request/v1alpha6".to_owned();
+    codex.repository_authority_paths.clear();
+    codex.repository_authority_policy = Some("changed-workflow-authority/v1alpha2".to_owned());
+    validate_and_normalize(&mut codex).unwrap();
+    let prepared = target_preparation(&codex.target, true, true).unwrap();
+    let admission: serde_json::Value = serde_json::from_slice(&prepared.admission).unwrap();
+    assert_eq!(
+        admission["schema"],
+        "yo.external-review-target-admission-request/v1alpha3"
     );
 }

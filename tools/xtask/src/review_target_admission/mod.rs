@@ -6,9 +6,9 @@ mod tests;
 
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
@@ -16,7 +16,7 @@ use std::{
 
 use model::{
     AccountLimit, Availability, Decision, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2,
-    REQUEST_SCHEMA_V1_ALPHA3, Request, result_schema,
+    REQUEST_SCHEMA_V1_ALPHA3, REQUEST_SCHEMA_V1_ALPHA4, Request, result_schema,
 };
 pub(crate) use model::{Admission, ReviewTarget};
 use yo_core::{AccountId, LocalConnectionRepository, ModelId, ModelRequestFailureKind, ProviderId};
@@ -26,6 +26,7 @@ use crate::bounded_file;
 const REQUEST_LIMIT: usize = 64 * 1024;
 const MAX_TOKEN_BYTES: usize = 128;
 const HOST_VERSION_LIMIT: usize = 256;
+const HOST_DIAGNOSTIC_LIMIT: usize = 8 * 1024;
 const HOST_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 static HOST_STATE_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -70,9 +71,14 @@ fn evaluate_request(request: &Request) -> Result<Admission, String> {
             account,
             model,
         ),
-        ReviewTarget::DelegatedHost { host } => {
-            host_availability(host, request.schema == REQUEST_SCHEMA_V1_ALPHA3)
-        },
+        ReviewTarget::DelegatedHost { host } => host_availability(
+            host,
+            match request.schema.as_str() {
+                REQUEST_SCHEMA_V1_ALPHA4 => HostReadiness::ExecutionProfile,
+                REQUEST_SCHEMA_V1_ALPHA3 => HostReadiness::State,
+                _ => HostReadiness::Version,
+            },
+        ),
     };
     let decision = if availability.state == "unavailable" {
         Decision::Stop
@@ -109,10 +115,13 @@ fn evaluate_request(request: &Request) -> Result<Admission, String> {
 fn validate_request(request: &Request) -> Result<(), String> {
     if !matches!(
         request.schema.as_str(),
-        REQUEST_SCHEMA | REQUEST_SCHEMA_V1_ALPHA2 | REQUEST_SCHEMA_V1_ALPHA3
+        REQUEST_SCHEMA
+            | REQUEST_SCHEMA_V1_ALPHA2
+            | REQUEST_SCHEMA_V1_ALPHA3
+            | REQUEST_SCHEMA_V1_ALPHA4
     ) {
         return Err(format!(
-            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, or `{REQUEST_SCHEMA_V1_ALPHA3}`",
+            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, or `{REQUEST_SCHEMA_V1_ALPHA4}`",
             request.schema
         ));
     }
@@ -243,33 +252,42 @@ const fn blocking_failure(kind: ModelRequestFailureKind) -> bool {
     )
 }
 
-fn host_availability(host: &str, require_state_readiness: bool) -> Availability {
-    match probe_host(host, require_state_readiness) {
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum HostReadiness {
+    Version,
+    State,
+    ExecutionProfile,
+}
+
+fn host_availability(host: &str, readiness: HostReadiness) -> Availability {
+    match probe_host(host, readiness) {
         Ok((executable, version)) => Availability {
             state: "available",
-            source: if require_state_readiness {
-                "delegated_host_executable_and_state_readiness"
-            } else {
-                "delegated_host_executable_version"
+            source: match readiness {
+                HostReadiness::Version => "delegated_host_executable_version",
+                HostReadiness::State => "delegated_host_executable_and_state_readiness",
+                HostReadiness::ExecutionProfile => {
+                    "delegated_host_executable_state_and_execution_profile_readiness"
+                },
             },
             failure_kind: None,
             observed_at: None,
             version: Some(version),
             executable: Some(executable),
-            detail: if require_state_readiness {
-                "the executable answered its bounded version probe and its existing host-state directory passed a create-and-remove probe; account usage and entitlement remain host-owned"
-                    .to_owned()
-            } else {
-                "the executable answered its bounded version probe; account usage and entitlement remain host-owned"
-                    .to_owned()
+            detail: match readiness {
+                HostReadiness::Version => "the executable answered its bounded version probe; account usage and entitlement remain host-owned".to_owned(),
+                HostReadiness::State => "the executable answered its bounded version probe and its existing host-state directory passed a create-and-remove probe; account usage and entitlement remain host-owned".to_owned(),
+                HostReadiness::ExecutionProfile => "the executable answered its bounded version probe, its existing host-state directory passed a create-and-remove probe, and the exact request-free execution profile started successfully; account usage and entitlement remain host-owned".to_owned(),
             },
         },
         Err(error) => Availability {
             state: "unavailable",
-            source: if require_state_readiness {
-                "delegated_host_executable_and_state_readiness"
-            } else {
-                "delegated_host_executable_version"
+            source: match readiness {
+                HostReadiness::Version => "delegated_host_executable_version",
+                HostReadiness::State => "delegated_host_executable_and_state_readiness",
+                HostReadiness::ExecutionProfile => {
+                    "delegated_host_executable_state_and_execution_profile_readiness"
+                },
             },
             failure_kind: Some("local_configuration".to_owned()),
             observed_at: None,
@@ -280,13 +298,126 @@ fn host_availability(host: &str, require_state_readiness: bool) -> Availability 
     }
 }
 
-fn probe_host(host: &str, require_state_readiness: bool) -> Result<(String, String), String> {
-    let result = probe_host_version(host)?;
-    if require_state_readiness {
+fn probe_host(host: &str, readiness: HostReadiness) -> Result<(String, String), String> {
+    let (executable, version) = probe_host_version(host)?;
+    if readiness != HostReadiness::Version {
         let state = host_state_directory(host)?;
         probe_host_state_writable(&state)?;
     }
-    Ok(result)
+    if readiness == HostReadiness::ExecutionProfile {
+        if host != "grok" {
+            return Err(format!(
+                "no request-free execution-profile readiness probe is registered for delegated host `{host}`"
+            ));
+        }
+        probe_grok_read_only_startup(&executable)?;
+    }
+    Ok((executable.to_string_lossy().into_owned(), version))
+}
+
+fn probe_grok_read_only_startup(executable: &Path) -> Result<(), String> {
+    let mut child = Command::new(executable)
+        .args([
+            "--sandbox",
+            "read-only",
+            "--permission-mode",
+            "dontAsk",
+            "--tools",
+            "Read,Grep",
+            "--no-subagents",
+            "--disable-web-search",
+            "agent",
+            "stdio",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot start Grok's request-free read-only profile: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .expect("piped Grok startup stdout is available");
+    let stderr = child
+        .stderr
+        .take()
+        .expect("piped Grok startup stderr is available");
+    let stdout_reader = thread::spawn(move || read_bounded_diagnostic(stdout));
+    let stderr_reader = thread::spawn(move || read_bounded_diagnostic(stderr));
+    let status = wait_for_host_probe(&mut child, "Grok's request-free read-only profile");
+    let (stdout, stdout_exceeded) = stdout_reader
+        .join()
+        .map_err(|_| "cannot collect Grok's request-free read-only profile stdout".to_owned())?;
+    let (stderr, stderr_exceeded) = stderr_reader
+        .join()
+        .map_err(|_| "cannot collect Grok's request-free read-only profile stderr".to_owned())?;
+    let status = status?;
+    if stdout_exceeded || stderr_exceeded {
+        return Err(format!(
+            "Grok's request-free read-only profile exceeded the {HOST_DIAGNOSTIC_LIMIT}-byte per-stream diagnostic limit"
+        ));
+    }
+    if status.success() {
+        return Ok(());
+    }
+    let diagnostic = [stdout, stderr]
+        .into_iter()
+        .filter(|bytes| !bytes.is_empty())
+        .map(|bytes| compact_diagnostic(&bytes))
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if diagnostic.is_empty() {
+        Err(format!(
+            "Grok's request-free read-only profile exited without success ({status})"
+        ))
+    } else {
+        Err(format!(
+            "Grok's request-free read-only profile exited without success ({status}): {diagnostic}"
+        ))
+    }
+}
+
+fn compact_diagnostic(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn read_bounded_diagnostic(mut reader: impl Read) -> (Vec<u8>, bool) {
+    let mut retained = Vec::new();
+    let mut exceeded = false;
+    let mut buffer = [0_u8; 1024];
+    while let Ok(read) = reader.read(&mut buffer) {
+        if read == 0 {
+            break;
+        }
+        let remaining = HOST_DIAGNOSTIC_LIMIT.saturating_sub(retained.len());
+        retained.extend_from_slice(&buffer[..read.min(remaining)]);
+        exceeded |= read > remaining;
+    }
+    (retained, exceeded)
+}
+
+fn wait_for_host_probe(child: &mut Child, label: &str) -> Result<ExitStatus, String> {
+    let deadline = Instant::now() + HOST_PROBE_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{label} exceeded its 10-second deadline"));
+            },
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("cannot observe {label}: {error}"));
+            },
+        }
+    }
 }
 
 fn host_state_directory(host: &str) -> Result<PathBuf, String> {
@@ -344,7 +475,7 @@ fn probe_host_state_writable(directory: &Path) -> Result<(), String> {
     })
 }
 
-fn probe_host_version(host: &str) -> Result<(String, String), String> {
+fn probe_host_version(host: &str) -> Result<(PathBuf, String), String> {
     let executable = resolve_executable(host)?;
     let mut child = Command::new(&executable)
         .arg("--version")
@@ -398,10 +529,7 @@ fn probe_host_version(host: &str) -> Result<(String, String), String> {
             "`{host} --version` must return one non-empty visible ASCII line"
         ));
     }
-    Ok((
-        executable.to_string_lossy().into_owned(),
-        version.to_owned(),
-    ))
+    Ok((executable, version.to_owned()))
 }
 
 fn resolve_executable(name: &str) -> Result<PathBuf, String> {

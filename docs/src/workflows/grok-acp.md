@@ -53,6 +53,24 @@ Do not infer compatibility from the executable version alone. Inspect the
 candidate's ACP behavior and retain deterministic fixtures that distinguish
 the admitted shape from malformed, mismatched, or unsupported messages.
 
+For external review, admission v1alpha4 also starts the frozen reviewer profile
+with stdin already at EOF:
+
+```text
+grok --sandbox read-only --permission-mode dontAsk --tools Read,Grep \
+  --no-subagents --disable-web-search agent stdio
+```
+
+This bounded startup probe happens before ContextBuild or packet publication.
+It sends no prompt, ACP initialize, Session request, or private packet. A
+sandbox startup failure is an unavailable host, not a warning and not grounds
+for an unsandboxed fallback. Grok 1.0.13 can fail this probe in restricted Linux
+containers when its bubblewrap profile cannot mask a container-runtime socket;
+the installed version string and writable `~/.grok` alone do not prove that the
+reviewer profile can run. Current upstream keeps runtime-socket handling inside
+the sandbox implementation, so upgrading the host remains the preferred fix
+when a release containing that behavior is available.
+
 ## Focused validation
 
 Run deterministic adapter tests first:

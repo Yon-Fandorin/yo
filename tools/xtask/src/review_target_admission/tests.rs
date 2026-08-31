@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{path::PathBuf, str::FromStr};
 
 use yo_core::{
     ModelRequestFailureKind, SessionId,
@@ -64,6 +64,10 @@ fn admitted_next_action_selects_the_disjoint_delivery_protocol() {
     );
     assert_eq!(
         delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA3),
+        ("eligible", "deliver_delegated_once")
+    );
+    assert_eq!(
+        delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA4),
         ("eligible", "deliver_delegated_once")
     );
 }
@@ -138,6 +142,15 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
         super::model::RESULT_SCHEMA_V1_ALPHA3
     );
 
+    let mut alpha4 = valid.clone();
+    alpha4["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA4.into();
+    let alpha4: super::model::Request = serde_json::from_value(alpha4).unwrap();
+    super::validate_request(&alpha4).unwrap();
+    assert_eq!(
+        super::model::result_schema(&alpha4.schema),
+        super::model::RESULT_SCHEMA_V1_ALPHA4
+    );
+
     let mut extra = valid;
     extra["target"]["route"] = "host:codex".into();
     assert!(serde_json::from_value::<super::model::Request>(extra).is_err());
@@ -159,6 +172,49 @@ fn delegated_state_readiness_is_request_free_and_self_cleaning() {
             .contains("cannot inspect")
     );
     std::fs::remove_dir(&temporary).unwrap();
+}
+
+#[cfg(unix)]
+fn executable_script(label: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = crate::test_support::unique_path(label);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&path, permissions).unwrap();
+    path
+}
+
+#[cfg(unix)]
+// profile probe는 prompt나 ACP initialize를 쓰지 않고 stdin EOF에서 exact Grok
+// reviewer argv의 sandbox startup 성공만 확인합니다.
+#[test]
+fn grok_profile_readiness_uses_exact_request_free_argv() {
+    let script = executable_script(
+        "grok-profile-ready",
+        r#"test "$*" = "--sandbox read-only --permission-mode dontAsk --tools Read,Grep --no-subagents --disable-web-search agent stdio" || exit 7
+if IFS= read -r unexpected; then exit 8; fi
+exit 0"#,
+    );
+    super::probe_grok_read_only_startup(&script).unwrap();
+    std::fs::remove_file(script).unwrap();
+}
+
+#[cfg(unix)]
+// sandbox가 부분 적용을 거부하면 admission은 stderr 원인을 보존해 claim 전에
+// fail-closed하며 unsandboxed fallback을 시도하지 않습니다.
+#[test]
+fn grok_profile_readiness_reports_sandbox_startup_failure() {
+    let script = executable_script(
+        "grok-profile-unavailable",
+        "echo 'cannot mask /run/containerd/containerd.sock'\necho 'could not apply the read-only sandbox profile' >&2\nexit 1",
+    );
+    let error = super::probe_grok_read_only_startup(&script).unwrap_err();
+    assert!(error.contains("exited without success"));
+    assert!(error.contains("cannot mask /run/containerd/containerd.sock"));
+    assert!(error.contains("could not apply the read-only sandbox profile"));
+    std::fs::remove_file(script).unwrap();
 }
 
 // Provider가 공개한 account quota source가 없는 상태는 token 합계를 잔여량으로
