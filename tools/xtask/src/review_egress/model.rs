@@ -10,6 +10,10 @@ pub(super) const DELEGATED_AUTHORIZATION_SCHEMA: &str =
     "yo.external-review-delegated-authorization/v1alpha1";
 pub(super) const DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2: &str =
     "yo.external-review-delegated-authorization/v1alpha2";
+pub(super) const DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3: &str =
+    "yo.external-review-delegated-authorization/v1alpha3";
+pub(super) const DELEGATED_REVIEW_CHAIN_PROFILE: &str =
+    "yo.external-review-chain/bounded-multihop/v1alpha1";
 pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA: &str =
     "yo.external-review-delegated-delivery-receipt/v1alpha1";
 pub(super) const DELEGATED_RESULT_SCHEMA: &str = "yo.slice-review-delegated-egress-result/v1alpha1";
@@ -99,10 +103,21 @@ pub(super) struct DelegatedAuthorizationV1Alpha2 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DelegatedAuthorizationV1Alpha3 {
+    pub(super) schema: String,
+    pub(super) authority: String,
+    pub(super) status: String,
+    pub(super) review_chain_profile: String,
+    pub(super) targets: Vec<AuthorizedDelegatedTargetV1Alpha3>,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
 pub(super) enum DelegatedAuthorizationDocument {
     Alpha1(DelegatedAuthorization),
     Alpha2(DelegatedAuthorizationV1Alpha2),
+    Alpha3(DelegatedAuthorizationV1Alpha3),
 }
 
 impl DelegatedAuthorizationDocument {
@@ -110,6 +125,7 @@ impl DelegatedAuthorizationDocument {
         match self {
             Self::Alpha1(value) => &value.authority,
             Self::Alpha2(value) => &value.authority,
+            Self::Alpha3(value) => &value.authority,
         }
     }
 }
@@ -139,6 +155,18 @@ pub(super) struct AuthorizedDelegatedTargetV1Alpha2 {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct AuthorizedDelegatedTargetV1Alpha3 {
+    pub(super) host: String,
+    pub(super) execution_profile: String,
+    pub(super) max_packet_bytes: usize,
+    pub(super) max_managed_payload_tokens: usize,
+    pub(super) max_original_fresh_requests: usize,
+    pub(super) max_finding_resolution_resume_requests: usize,
+    pub(super) max_total_requests: usize,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct AuthorizedRoute {
     pub(super) provider: String,
     pub(super) account: String,
@@ -154,6 +182,8 @@ pub(super) struct ManifestHeader {
     pub(super) schema: String,
     #[serde(default)]
     pub(super) review_id: Option<String>,
+    #[serde(default)]
+    pub(super) review_delta_id: Option<String>,
     pub(super) packet: PacketRecord,
     #[serde(default)]
     pub(super) inputs: Option<ManifestInputs>,

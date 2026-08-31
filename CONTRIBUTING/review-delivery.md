@@ -217,6 +217,18 @@ makes the human authorization, egress classifier, and exact one-original plus
 one-direct-resolution chain state the same round limit. Frozen v1alpha1 keeps
 its boolean meaning.
 
+The frozen v1alpha1 and v1alpha2 delegated authorizations permit at most one
+finding-resolution request. When that resolution reports new material
+findings, `yo.external-review-delegated-authorization/v1alpha3` may authorize
+a larger explicit `max_finding_resolution_resume_requests` under
+`yo.external-review-chain/bounded-multihop/v1alpha1`. It permits one original
+request and at most 63 finding-resolution requests, with their sum recorded as
+`max_total_requests`. Egress counts the immutable review-delta chain, binds
+each step to the immediately preceding delivery receipt and the same Session,
+and rejects the first over-limit step before host delivery. This changes
+neither the one-request delivery execution limit nor the zero retry, steer,
+fallback, and target-switch rules.
+
 The closed target set is `codex` and `grok`, so this authorization accepts at
 most two unique entries. It never names Provider, Account, or downstream model
 coordinates. Bind one exact review manifest, authorization revision, target,

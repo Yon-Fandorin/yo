@@ -6,11 +6,12 @@ use super::{
     bounded_file, classify_review_kind, compact_path, compact_token, digest, git,
     model::{
         AuthorizedDelegatedTarget, AuthorizedDelegatedTargetV1Alpha2,
-        DELEGATED_AUTHORIZATION_SCHEMA, DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2,
+        AuthorizedDelegatedTargetV1Alpha3, DELEGATED_AUTHORIZATION_SCHEMA,
+        DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2, DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3,
         DELEGATED_DELIVERY_RECEIPT_SCHEMA, DELEGATED_EXECUTION_PROFILE, DELEGATED_REQUEST_SCHEMA,
-        DELEGATED_RESULT_SCHEMA, DelegatedAuthorizationDocument, DelegatedDeliveryLimits,
-        DelegatedDeliveryReceipt, DelegatedRequest, DelegatedResultDocument, ManifestHeader,
-        PacketResult, ReviewKind, Session,
+        DELEGATED_RESULT_SCHEMA, DELEGATED_REVIEW_CHAIN_PROFILE, DelegatedAuthorizationDocument,
+        DelegatedDeliveryLimits, DelegatedDeliveryReceipt, DelegatedRequest,
+        DelegatedResultDocument, ManifestHeader, PacketResult, ReviewKind, Session,
     },
     require_exact_hash, require_sha256, resolve_input_path, review_delta,
 };
@@ -19,6 +20,7 @@ use crate::review_packet::VerifiedReview;
 const MAX_HOST_TARGETS: usize = 2;
 const MAX_HOST_TOKEN_BYTES: usize = 32;
 const MAX_HOST_REQUEST_ID_BYTES: usize = 256;
+const MAX_FINDING_RESOLUTION_REQUESTS: usize = 63;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AuthorizedHostDelivery {
@@ -139,6 +141,7 @@ fn authorize_with(
         &request,
         &authorization,
         classification.kind,
+        classification.finding_resolution_request_index,
         packet_bytes.len(),
         manifest.packet.managed_payload_tokens,
     )?;
@@ -290,7 +293,7 @@ fn validate_authorization(authorization: &DelegatedAuthorizationDocument) -> Res
         DelegatedAuthorizationDocument::Alpha1(value) => {
             if value.schema != DELEGATED_AUTHORIZATION_SCHEMA {
                 return Err(format!(
-                    "unsupported delegated external review authorization schema `{}`; expected `{DELEGATED_AUTHORIZATION_SCHEMA}` or `{DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2}`",
+                    "unsupported delegated external review authorization schema `{}`; expected `{DELEGATED_AUTHORIZATION_SCHEMA}`, `{DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2}`, or `{DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3}`",
                     value.schema
                 ));
             }
@@ -303,8 +306,26 @@ fn validate_authorization(authorization: &DelegatedAuthorizationDocument) -> Res
         DelegatedAuthorizationDocument::Alpha2(value) => {
             if value.schema != DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2 {
                 return Err(format!(
-                    "unsupported delegated external review authorization schema `{}`; expected `{DELEGATED_AUTHORIZATION_SCHEMA}` or `{DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2}`",
+                    "unsupported delegated external review authorization schema `{}`; expected `{DELEGATED_AUTHORIZATION_SCHEMA}`, `{DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2}`, or `{DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3}`",
                     value.schema
+                ));
+            }
+            (
+                value.schema.as_str(),
+                value.status.as_str(),
+                value.targets.len(),
+            )
+        },
+        DelegatedAuthorizationDocument::Alpha3(value) => {
+            if value.schema != DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3 {
+                return Err(format!(
+                    "unsupported delegated external review authorization schema `{}`; expected `{DELEGATED_AUTHORIZATION_SCHEMA}`, `{DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2}`, or `{DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3}`",
+                    value.schema
+                ));
+            }
+            if value.review_chain_profile != DELEGATED_REVIEW_CHAIN_PROFILE {
+                return Err(format!(
+                    "delegated authorization v1alpha3 requires review_chain_profile `{DELEGATED_REVIEW_CHAIN_PROFILE}`"
                 ));
             }
             (
@@ -369,10 +390,35 @@ fn validate_authorization(authorization: &DelegatedAuthorizationDocument) -> Res
                 }
             }
         },
+        DelegatedAuthorizationDocument::Alpha3(value) => {
+            for target in &value.targets {
+                validate_target_limits(
+                    &mut hosts,
+                    &target.host,
+                    &target.execution_profile,
+                    target.max_packet_bytes,
+                    target.max_managed_payload_tokens,
+                )?;
+                if target.max_original_fresh_requests > 1
+                    || target.max_finding_resolution_resume_requests
+                        > MAX_FINDING_RESOLUTION_REQUESTS
+                    || target.max_total_requests
+                        != target.max_original_fresh_requests
+                            + target.max_finding_resolution_resume_requests
+                    || target.max_total_requests == 0
+                {
+                    return Err(format!(
+                        "delegated authorization v1alpha3 requires original 0..=1 and finding-resolution 0..={MAX_FINDING_RESOLUTION_REQUESTS} limits whose nonzero sum equals max_total_requests"
+                    ));
+                }
+            }
+        },
     }
     debug_assert!(matches!(
         schema,
-        DELEGATED_AUTHORIZATION_SCHEMA | DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2
+        DELEGATED_AUTHORIZATION_SCHEMA
+            | DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2
+            | DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3
     ));
     Ok(())
 }
@@ -406,6 +452,7 @@ fn authorize(
     request: &DelegatedRequest,
     authorization: &DelegatedAuthorizationDocument,
     review_kind: ReviewKind,
+    finding_resolution_request_index: usize,
     packet_bytes: usize,
     managed_payload_tokens: usize,
 ) -> Result<(), String> {
@@ -413,7 +460,8 @@ fn authorize(
     match (review_kind, &request.session) {
         (ReviewKind::Original, Session::Fresh) if target.allow_original_fresh() => {},
         (ReviewKind::FindingResolution, Session::Resume { .. })
-            if target.allow_finding_resolution_resume() => {},
+            if finding_resolution_request_index
+                <= target.max_finding_resolution_resume_requests() => {},
         (ReviewKind::Original, Session::Fresh) => {
             return Err("the target does not authorize an original fresh review".to_owned());
         },
@@ -447,6 +495,7 @@ fn authorize(
 enum AuthorizedTarget<'a> {
     Alpha1(&'a AuthorizedDelegatedTarget),
     Alpha2(&'a AuthorizedDelegatedTargetV1Alpha2),
+    Alpha3(&'a AuthorizedDelegatedTargetV1Alpha3),
 }
 
 impl AuthorizedTarget<'_> {
@@ -454,13 +503,15 @@ impl AuthorizedTarget<'_> {
         match self {
             Self::Alpha1(value) => value.allow_original_fresh,
             Self::Alpha2(value) => value.max_original_fresh_requests == 1,
+            Self::Alpha3(value) => value.max_original_fresh_requests == 1,
         }
     }
 
-    fn allow_finding_resolution_resume(&self) -> bool {
+    fn max_finding_resolution_resume_requests(&self) -> usize {
         match self {
-            Self::Alpha1(value) => value.allow_finding_resolution_resume,
-            Self::Alpha2(value) => value.max_finding_resolution_resume_requests == 1,
+            Self::Alpha1(value) => usize::from(value.allow_finding_resolution_resume),
+            Self::Alpha2(value) => value.max_finding_resolution_resume_requests,
+            Self::Alpha3(value) => value.max_finding_resolution_resume_requests,
         }
     }
 
@@ -468,6 +519,7 @@ impl AuthorizedTarget<'_> {
         match self {
             Self::Alpha1(value) => value.max_packet_bytes,
             Self::Alpha2(value) => value.max_packet_bytes,
+            Self::Alpha3(value) => value.max_packet_bytes,
         }
     }
 
@@ -475,6 +527,7 @@ impl AuthorizedTarget<'_> {
         match self {
             Self::Alpha1(value) => value.max_managed_payload_tokens,
             Self::Alpha2(value) => value.max_managed_payload_tokens,
+            Self::Alpha3(value) => value.max_managed_payload_tokens,
         }
     }
 }
@@ -500,6 +553,14 @@ fn authorized_target<'a>(
                     && target.execution_profile == request.execution_profile
             })
             .map(AuthorizedTarget::Alpha2),
+        DelegatedAuthorizationDocument::Alpha3(value) => value
+            .targets
+            .iter()
+            .find(|target| {
+                target.host == request.target.host()
+                    && target.execution_profile == request.execution_profile
+            })
+            .map(AuthorizedTarget::Alpha3),
     }
     .ok_or_else(|| "requested delegated review target is not authorized".to_owned())
 }
@@ -625,6 +686,7 @@ mod tests {
     use super::*;
     use crate::review_egress::model::{
         AuthorizedDelegatedTarget, DelegatedAuthorization, DelegatedAuthorizationV1Alpha2,
+        DelegatedAuthorizationV1Alpha3,
     };
 
     fn target(host: &str) -> AuthorizedDelegatedTarget {
@@ -706,6 +768,88 @@ mod tests {
             ))
             .unwrap_err()
             .contains("sum equals")
+        );
+    }
+
+    // v1alpha3은 recursive review chain이 계산한 resolution request index를 사람의
+    // explicit 총량과 비교해 두 번째 후속은 허용하고 그 다음 요청은 fail closed합니다.
+    #[test]
+    fn alpha3_authorization_bounds_recursive_resolution_requests() {
+        let authorization_text = serde_json::json!({
+            "schema": DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3,
+            "authority": "human/yon",
+            "status": "active",
+            "review_chain_profile": DELEGATED_REVIEW_CHAIN_PROFILE,
+            "targets": [{
+                "host": "codex",
+                "execution_profile": DELEGATED_EXECUTION_PROFILE,
+                "max_packet_bytes": 4_000_000,
+                "max_managed_payload_tokens": 500_000,
+                "max_original_fresh_requests": 1,
+                "max_finding_resolution_resume_requests": 2,
+                "max_total_requests": 3
+            }]
+        });
+        let authorization: DelegatedAuthorizationDocument =
+            serde_json::from_value(authorization_text).unwrap();
+        assert!(matches!(
+            authorization,
+            DelegatedAuthorizationDocument::Alpha3(_)
+        ));
+        validate_authorization(&authorization).unwrap();
+
+        let typed_authorization =
+            DelegatedAuthorizationDocument::Alpha3(DelegatedAuthorizationV1Alpha3 {
+                schema: DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3.to_owned(),
+                authority: "human/yon".to_owned(),
+                status: "active".to_owned(),
+                review_chain_profile: DELEGATED_REVIEW_CHAIN_PROFILE.to_owned(),
+                targets: vec![AuthorizedDelegatedTargetV1Alpha3 {
+                    host: "codex".to_owned(),
+                    execution_profile: DELEGATED_EXECUTION_PROFILE.to_owned(),
+                    max_packet_bytes: 4_000_000,
+                    max_managed_payload_tokens: 500_000,
+                    max_original_fresh_requests: 1,
+                    max_finding_resolution_resume_requests: 2,
+                    max_total_requests: 3,
+                }],
+            });
+        validate_authorization(&typed_authorization).unwrap();
+        let request = DelegatedRequest {
+            schema: DELEGATED_REQUEST_SCHEMA.to_owned(),
+            manifest_path: "manifest.json".to_owned(),
+            manifest_hash: format!("sha256:{}", "1".repeat(64)),
+            authorization_hash: format!("sha256:{}", "2".repeat(64)),
+            target: crate::review_egress::model::DelegatedTarget::DelegatedHost {
+                host: "codex".to_owned(),
+            },
+            execution_profile: DELEGATED_EXECUTION_PROFILE.to_owned(),
+            session: Session::Resume {
+                id: "session".to_owned(),
+            },
+            prior_delivery: None,
+        };
+
+        authorize(
+            &request,
+            &authorization,
+            ReviewKind::FindingResolution,
+            2,
+            1,
+            1,
+        )
+        .unwrap();
+        assert!(
+            authorize(
+                &request,
+                &authorization,
+                ReviewKind::FindingResolution,
+                3,
+                1,
+                1,
+            )
+            .unwrap_err()
+            .contains("does not authorize")
         );
     }
 

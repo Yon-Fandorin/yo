@@ -62,6 +62,7 @@ fn exact_route_authorizes_the_two_bounded_review_kinds() {
         &original,
         &authorization,
         ReviewKind::Original,
+        0,
         900_000,
         190_000,
     )
@@ -74,6 +75,7 @@ fn exact_route_authorizes_the_two_bounded_review_kinds() {
         &continuation,
         &authorization,
         ReviewKind::FindingResolution,
+        1,
         40_000,
         12_000,
     )
@@ -88,18 +90,25 @@ fn route_and_packet_limits_fail_closed() {
     let mut wrong = request(Session::Fresh);
     wrong.route.account = "other".to_owned();
     assert_eq!(
-        authorize(&wrong, &authorization, ReviewKind::Original, 1, 1).unwrap_err(),
+        authorize(&wrong, &authorization, ReviewKind::Original, 0, 1, 1).unwrap_err(),
         "requested external review route is not authorized"
     );
 
     let exact = request(Session::Fresh);
     assert!(
-        authorize(&exact, &authorization, ReviewKind::Original, 1_000_001, 1)
-            .unwrap_err()
-            .contains("byte route limit")
+        authorize(
+            &exact,
+            &authorization,
+            ReviewKind::Original,
+            0,
+            1_000_001,
+            1
+        )
+        .unwrap_err()
+        .contains("byte route limit")
     );
     assert!(
-        authorize(&exact, &authorization, ReviewKind::Original, 1, 200_001)
+        authorize(&exact, &authorization, ReviewKind::Original, 0, 1, 200_001)
             .unwrap_err()
             .contains("token route limit")
     );
@@ -114,13 +123,21 @@ fn session_mode_must_match_review_kind() {
         id: "existing-session".to_owned(),
     });
     assert_eq!(
-        authorize(&resume, &authorization, ReviewKind::Original, 1, 1).unwrap_err(),
+        authorize(&resume, &authorization, ReviewKind::Original, 0, 1, 1).unwrap_err(),
         "an original review requires a fresh Session"
     );
 
     let fresh = request(Session::Fresh);
     assert_eq!(
-        authorize(&fresh, &authorization, ReviewKind::FindingResolution, 1, 1).unwrap_err(),
+        authorize(
+            &fresh,
+            &authorization,
+            ReviewKind::FindingResolution,
+            1,
+            1,
+            1,
+        )
+        .unwrap_err(),
         "a finding-resolution review requires the existing reviewer Session"
     );
 }
@@ -168,10 +185,10 @@ fn standing_authorization_requires_active_human_origin_and_unique_routes() {
     );
 }
 
-// exact direct delta까지만 standing 범위로 분류하고, delta를 다시 잇는 세 번째 provider
-// request는 별도 human 승인이 없으면 preflight 단계에서 멈춘다.
+// review chain은 immediate prior identity를 보존하며 request index를 계산하고, direct
+// standing authorization은 별도 다중-hop 권한이 없으므로 두 번째 resolution을 거부한다.
 #[test]
-fn only_one_direct_finding_resolution_is_standing_authorized() {
+fn recursive_classification_counts_resolution_requests_but_direct_authorization_stays_bounded() {
     let repository = crate::test_support::TestRepository::new("review-egress-depth");
     let original_text = format!(
         "{{\"schema\":\"yo.slice-review-manifest/v1\",\"review_id\":\"{}\",\"packet\":{{\"hash\":\"{}\",\"managed_payload_tokens\":1}}}}\n",
@@ -183,6 +200,7 @@ fn only_one_direct_finding_resolution_is_standing_authorized() {
     let direct = ManifestHeader {
         schema: "yo.slice-review-delta-manifest/v1".to_owned(),
         review_id: None,
+        review_delta_id: Some(hash(8)),
         packet: PacketRecord {
             hash: hash(3),
             managed_payload_tokens: 1,
@@ -194,37 +212,51 @@ fn only_one_direct_finding_resolution_is_standing_authorized() {
             }),
         }),
     };
-    assert_eq!(
-        classify_review_kind(&repository.path, &direct)
-            .unwrap()
-            .kind,
-        ReviewKind::FindingResolution
-    );
+    let direct_classification = classify_review_kind(&repository.path, &direct).unwrap();
+    assert_eq!(direct_classification.kind, ReviewKind::FindingResolution);
+    assert_eq!(direct_classification.finding_resolution_request_index, 1);
 
-    let nested_text = format!(
-        "{{\"schema\":\"yo.slice-review-delta-manifest/v1\",\"packet\":{{\"hash\":\"{}\",\"managed_payload_tokens\":1}}}}\n",
-        hash(7)
+    let direct_text = format!(
+        "{{\"schema\":\"yo.slice-review-delta-manifest/v1\",\"review_delta_id\":\"{}\",\"packet\":{{\"hash\":\"{}\",\"managed_payload_tokens\":1}},\"inputs\":{{\"prior_manifest\":{{\"path\":\"{}\",\"hash\":\"{}\"}}}}}}\n",
+        hash(8),
+        hash(3),
+        original_path.display(),
+        digest(original_bytes),
     );
-    let nested_bytes = nested_text.as_bytes();
-    let nested_path = repository.write(".local-exclude/delta/manifest.json", &nested_text);
+    let direct_bytes = direct_text.as_bytes();
+    let direct_path = repository.write(".local-exclude/delta/manifest.json", &direct_text);
     let nested = ManifestHeader {
         schema: "yo.slice-review-delta-manifest/v1".to_owned(),
         review_id: None,
+        review_delta_id: Some(hash(9)),
         packet: PacketRecord {
             hash: hash(4),
             managed_payload_tokens: 1,
         },
         inputs: Some(ManifestInputs {
             prior_manifest: Some(Artifact {
-                path: nested_path.to_string_lossy().into_owned(),
-                hash: digest(nested_bytes),
+                path: direct_path.to_string_lossy().into_owned(),
+                hash: digest(direct_bytes),
             }),
         }),
     };
+    let nested_classification = classify_review_kind(&repository.path, &nested).unwrap();
+    assert_eq!(nested_classification.finding_resolution_request_index, 2);
+    assert_eq!(nested_classification.prior.unwrap().review_id, hash(8));
+    let continuation = request(Session::Resume {
+        id: "existing-session".to_owned(),
+    });
     assert!(
-        classify_review_kind(&repository.path, &nested)
-            .unwrap_err()
-            .contains("at most one direct")
+        authorize(
+            &continuation,
+            &authorization(),
+            ReviewKind::FindingResolution,
+            2,
+            1,
+            1,
+        )
+        .unwrap_err()
+        .contains("at most one direct")
     );
 }
 
@@ -450,6 +482,7 @@ fn finding_resolution_binds_the_original_delivery_receipt() {
     });
     let classification = ReviewClassification {
         kind: ReviewKind::FindingResolution,
+        finding_resolution_request_index: 1,
         prior: Some(PriorReview {
             review_id,
             packet_hash,

@@ -30,10 +30,12 @@ const MAX_ROUTES: usize = 16;
 const MAX_ROUTE_TOKEN_BYTES: usize = 128;
 const MAX_SESSION_ID_BYTES: usize = 256;
 const MAX_AUTHORIZED_TOKENS: usize = 1_000_000;
+const MAX_REVIEW_CHAIN_REQUESTS: usize = 64;
 
 #[derive(Debug)]
 struct ReviewClassification {
     kind: ReviewKind,
+    finding_resolution_request_index: usize,
     prior: Option<PriorReview>,
 }
 
@@ -209,6 +211,7 @@ fn authorize_with(
         &request,
         &authorization,
         classification.kind,
+        classification.finding_resolution_request_index,
         packet_bytes.len(),
         manifest.packet.managed_payload_tokens,
     )?;
@@ -398,6 +401,7 @@ fn authorize(
     request: &Request,
     authorization: &Authorization,
     review_kind: ReviewKind,
+    finding_resolution_request_index: usize,
     packet_bytes: usize,
     managed_payload_tokens: usize,
 ) -> Result<(), String> {
@@ -414,12 +418,20 @@ fn authorize(
     match (review_kind, &request.session) {
         (ReviewKind::Original, Session::Fresh) if route.allow_original_fresh => {},
         (ReviewKind::FindingResolution, Session::Resume { .. })
-            if route.allow_finding_resolution_resume => {},
+            if route.allow_finding_resolution_resume && finding_resolution_request_index == 1 => {},
         (ReviewKind::Original, Session::Fresh) => {
             return Err("the route does not authorize an original fresh review".to_owned());
         },
-        (ReviewKind::FindingResolution, Session::Resume { .. }) => {
+        (ReviewKind::FindingResolution, Session::Resume { .. })
+            if !route.allow_finding_resolution_resume =>
+        {
             return Err("the route does not authorize a finding-resolution resume".to_owned());
+        },
+        (ReviewKind::FindingResolution, Session::Resume { .. }) => {
+            return Err(
+                "standing authorization allows at most one direct finding-resolution request"
+                    .to_owned(),
+            );
         },
         (ReviewKind::Original, Session::Resume { .. }) => {
             return Err("an original review requires a fresh Session".to_owned());
@@ -453,42 +465,72 @@ fn classify_review_kind(
     if review_packet::is_original_manifest_schema(&manifest.schema) {
         return Ok(ReviewClassification {
             kind: ReviewKind::Original,
+            finding_resolution_request_index: 0,
             prior: None,
         });
     }
 
-    let prior = manifest
+    let mut seen = BTreeSet::new();
+    let mut finding_resolution_request_index = 0usize;
+    let mut immediate_prior = None;
+    let mut next_prior = manifest
         .inputs
         .as_ref()
         .and_then(|inputs| inputs.prior_manifest.as_ref())
-        .ok_or_else(|| "finding-resolution manifest has no prior_manifest".to_owned())?;
-    require_sha256(&prior.hash, "prior manifest hash")?;
-    let prior_path = resolve_input_path(repository, &prior.path);
-    let prior_bytes = bounded_file::read_regular(
-        &prior_path,
-        MANIFEST_LIMIT,
-        "prior published review manifest",
-    )?;
-    require_exact_hash(&prior.hash, &prior_bytes, "prior published review manifest")?;
-    let prior_manifest: ManifestHeader = serde_json::from_slice(&prior_bytes)
-        .map_err(|error| format!("invalid prior published review manifest: {error}"))?;
-    if !review_packet::is_original_manifest_schema(&prior_manifest.schema) {
-        return Err(
-            "standing authorization allows at most one direct finding-resolution request"
-                .to_owned(),
-        );
+        .map(|prior| (prior.path.clone(), prior.hash.clone()));
+    loop {
+        finding_resolution_request_index = finding_resolution_request_index
+            .checked_add(1)
+            .ok_or_else(|| "review continuation request count is exhausted".to_owned())?;
+        if finding_resolution_request_index >= MAX_REVIEW_CHAIN_REQUESTS {
+            return Err(format!(
+                "review continuation chain exceeds the {}-request safety limit",
+                MAX_REVIEW_CHAIN_REQUESTS - 1
+            ));
+        }
+        let (prior_path_value, prior_hash) = next_prior
+            .take()
+            .ok_or_else(|| "finding-resolution manifest has no prior_manifest".to_owned())?;
+        require_sha256(&prior_hash, "prior manifest hash")?;
+        if !seen.insert(prior_hash.clone()) {
+            return Err("review continuation chain contains a cycle".to_owned());
+        }
+        let prior_path = resolve_input_path(repository, &prior_path_value);
+        let prior_bytes = bounded_file::read_regular(
+            &prior_path,
+            MANIFEST_LIMIT,
+            "prior published review manifest",
+        )?;
+        require_exact_hash(&prior_hash, &prior_bytes, "prior published review manifest")?;
+        let prior_manifest: ManifestHeader = serde_json::from_slice(&prior_bytes)
+            .map_err(|error| format!("invalid prior published review manifest: {error}"))?;
+        if immediate_prior.is_none() {
+            let review_id = prior_manifest
+                .review_id
+                .as_ref()
+                .or(prior_manifest.review_delta_id.as_ref())
+                .ok_or_else(|| "prior review manifest has no review identity".to_owned())?
+                .clone();
+            require_sha256(&review_id, "prior review identity")?;
+            require_sha256(&prior_manifest.packet.hash, "prior packet hash")?;
+            immediate_prior = Some(PriorReview {
+                review_id,
+                packet_hash: prior_manifest.packet.hash.clone(),
+            });
+        }
+        if review_packet::is_original_manifest_schema(&prior_manifest.schema) {
+            break;
+        }
+        next_prior = prior_manifest
+            .inputs
+            .as_ref()
+            .and_then(|inputs| inputs.prior_manifest.as_ref())
+            .map(|prior| (prior.path.clone(), prior.hash.clone()));
     }
-    let review_id = prior_manifest
-        .review_id
-        .ok_or_else(|| "prior original review manifest has no review_id".to_owned())?;
-    require_sha256(&review_id, "prior original ReviewId")?;
-    require_sha256(&prior_manifest.packet.hash, "prior original packet hash")?;
     Ok(ReviewClassification {
         kind: ReviewKind::FindingResolution,
-        prior: Some(PriorReview {
-            review_id,
-            packet_hash: prior_manifest.packet.hash,
-        }),
+        finding_resolution_request_index,
+        prior: immediate_prior,
     })
 }
 
