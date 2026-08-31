@@ -9,13 +9,30 @@ pub(crate) use yo_backend::{
 };
 
 /// Durable Yo coordinates required to reconnect one existing backend binding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackendResumeSource {
+    ContinuationAnchor(crate::JournalSequence),
+    ContextCheckpoint(crate::JournalSequence),
+}
+
+impl BackendResumeSource {
+    #[must_use]
+    pub const fn sequence(self) -> crate::JournalSequence {
+        match self {
+            Self::ContinuationAnchor(sequence) | Self::ContextCheckpoint(sequence) => sequence,
+        }
+    }
+}
+
+/// Durable Yo coordinates required to reconnect one existing backend binding.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackendResumeTarget {
     session_id: crate::SessionId,
     epoch: u64,
     binding: BackendBindingEvidence,
     model_replay: ModelReplay,
-    source_anchor_sequence: crate::JournalSequence,
+    replay_contract_rebind_required: bool,
+    source: BackendResumeSource,
 }
 
 impl BackendResumeTarget {
@@ -30,7 +47,24 @@ impl BackendResumeTarget {
             epoch,
             binding,
             model_replay: ModelReplay::default(),
-            source_anchor_sequence,
+            replay_contract_rebind_required: false,
+            source: BackendResumeSource::ContinuationAnchor(source_anchor_sequence),
+        }
+    }
+
+    pub(crate) fn from_checkpoint(
+        session_id: crate::SessionId,
+        epoch: u64,
+        binding: BackendBindingEvidence,
+        source_checkpoint_sequence: crate::JournalSequence,
+    ) -> Self {
+        Self {
+            session_id,
+            epoch,
+            binding,
+            model_replay: ModelReplay::default(),
+            replay_contract_rebind_required: false,
+            source: BackendResumeSource::ContextCheckpoint(source_checkpoint_sequence),
         }
     }
 
@@ -54,13 +88,38 @@ impl BackendResumeTarget {
         &self.model_replay
     }
 
+    pub(crate) const fn replay_contract_rebind_required(&self) -> bool {
+        self.replay_contract_rebind_required
+    }
+
     #[must_use]
-    pub const fn source_anchor_sequence(&self) -> crate::JournalSequence {
-        self.source_anchor_sequence
+    pub const fn source(&self) -> BackendResumeSource {
+        self.source
+    }
+
+    #[must_use]
+    pub const fn source_anchor_sequence(&self) -> Option<crate::JournalSequence> {
+        match self.source {
+            BackendResumeSource::ContinuationAnchor(sequence) => Some(sequence),
+            BackendResumeSource::ContextCheckpoint(_) => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn source_checkpoint_sequence(&self) -> Option<crate::JournalSequence> {
+        match self.source {
+            BackendResumeSource::ContinuationAnchor(_) => None,
+            BackendResumeSource::ContextCheckpoint(sequence) => Some(sequence),
+        }
     }
 
     pub(crate) fn with_model_replay(mut self, replay: ModelReplay) -> Self {
         self.model_replay = replay;
+        self
+    }
+
+    pub(crate) const fn with_replay_contract_rebind_required(mut self, required: bool) -> Self {
+        self.replay_contract_rebind_required = required;
         self
     }
 }

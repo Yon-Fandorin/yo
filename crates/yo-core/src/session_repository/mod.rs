@@ -1,6 +1,8 @@
 //! Storage-neutral durable Session records.
 
 mod continuation;
+#[cfg(test)]
+pub(crate) use continuation::build_continuation;
 mod history;
 pub use history::{
     CODEX_USAGE_SCHEMA, CacheReadShare, CacheReadSummary, GROK_USAGE_SCHEMA, MANAGED_USAGE_SCHEMA,

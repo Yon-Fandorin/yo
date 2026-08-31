@@ -382,7 +382,7 @@ fn idle_replacement_is_immediately_resumable_without_another_turn() {
         session_id,
         2,
         replacement.clone(),
-        target.source_anchor_sequence(),
+        target.source().sequence(),
     )
     .with_model_replay(target.model_replay().clone());
     let second_candidate = ScriptedBackend::new([
@@ -414,6 +414,7 @@ fn idle_replacement_is_immediately_resumable_without_another_turn() {
     let recovered = recover_stored_session_continuation(&mut repository, session_id).unwrap();
     assert_eq!(recovered.target().epoch(), 3);
     assert_eq!(recovered.target().binding(), &second_replacement);
+    assert!(recovered.target().replay_contract_rebind_required());
 }
 
 // replacement transition의 durable append가 실패하면 candidate만 정리하고 기존 backend가
@@ -546,7 +547,7 @@ fn replacement_resume_publishes_a_new_binding_epoch_from_the_exact_anchor() {
                 "outcome-2",
             ))
             .with_replay(ModelReplayDelta::new(
-                None,
+                Some(ModelReplayContract::new("replacement system", Vec::new())),
                 vec![
                     ModelReplayItem::Message {
                         role: ModelReplayRole::User,
@@ -596,6 +597,7 @@ fn replacement_resume_publishes_a_new_binding_epoch_from_the_exact_anchor() {
     let recovered = recover_stored_session_continuation(&mut repository, session_id).unwrap();
     assert_eq!(recovered.target().epoch(), 2);
     assert_eq!(recovered.target().binding(), &replacement);
+    assert!(!recovered.target().replay_contract_rebind_required());
     assert_eq!(
         recovered.target().model_replay().items().len(),
         previous_replay.items().len() + 2

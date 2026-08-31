@@ -42,6 +42,8 @@ pub(crate) fn project_live(
             resumable_outcome(outcome)
         },
         crate::journal::SemanticRecord::ContinuationAnchor(anchor) => continuation_anchor(anchor),
+        crate::journal::SemanticRecord::ContextPolicyChanged(_)
+        | crate::journal::SemanticRecord::ContextCheckpoint(_) => return None,
         crate::journal::SemanticRecord::CommandCommitted(_)
         | crate::journal::SemanticRecord::EventCommitted(_) => return None,
     };
@@ -56,11 +58,17 @@ fn binding_opened(binding: &crate::journal::codec::BackendBindingOpened) -> Requ
         binding_identity: identity(binding.binding_identity()),
         model_identity: identity(binding.model_identity()),
         session_locator: identity(binding.session_locator()),
-        transition: StoredBindingTransition::new(
-            transition_mode(binding.transition().mode()),
-            cache_state(binding.transition().cache()),
-            binding.transition().source_anchor_sequence(),
-        ),
+        transition: {
+            let transition = StoredBindingTransition::new(
+                transition_mode(binding.transition().mode()),
+                cache_state(binding.transition().cache()),
+                binding.transition().source_anchor_sequence(),
+            );
+            match binding.transition().source_checkpoint_sequence() {
+                Some(sequence) => transition.with_source_checkpoint_sequence(sequence),
+                None => transition,
+            }
+        },
         continuation_strategy: continuation_strategy(binding.continuation_strategy()),
     }
 }
@@ -130,6 +138,8 @@ fn project_record(record: &JournalRecord) -> Option<RequestTraceRecord> {
         JournalRecord::SessionDescriptor(_)
         | JournalRecord::CommandCommitted(_)
         | JournalRecord::EventCommitted(_)
+        | JournalRecord::ContextPolicyChanged(_)
+        | JournalRecord::ContextCheckpoint(_)
         | JournalRecord::MessageReset(_)
         | JournalRecord::MessageSegment(_)
         | JournalRecord::MessageEnded(_) => None,

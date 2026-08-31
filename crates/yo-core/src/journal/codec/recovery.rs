@@ -91,8 +91,20 @@ impl RecoveredJournal {
         self.correlation.latest_anchor()
     }
 
+    pub(crate) const fn context_checkpoint(&self) -> Option<JournalSequence> {
+        self.correlation.latest_checkpoint()
+    }
+
+    pub(crate) const fn context_epoch(&self) -> Option<u64> {
+        self.correlation.context_epoch()
+    }
+
     pub(crate) const fn model_replay(&self) -> &crate::ModelReplay {
         self.correlation.model_replay()
+    }
+
+    pub(crate) const fn replay_contract_rebind_required(&self) -> bool {
+        self.correlation.replay_contract_rebind_required()
     }
 
     pub(crate) fn discovery_states(&self) -> &[RecoveredDiscovery] {
@@ -194,6 +206,7 @@ fn apply_commit(
             "semantic Journal cutoff moved backwards",
         ));
     }
+    validate_checkpoint_commit_boundary(commit)?;
     validate_semantic_sequences(
         commit,
         (commit.kind() == JournalCommitKind::Incremental)
@@ -258,6 +271,21 @@ fn apply_commit(
         binding_epoch: recovered.correlation.open_epoch(),
         continuation_anchor: recovered.correlation.latest_anchor(),
     });
+    Ok(())
+}
+
+fn validate_checkpoint_commit_boundary(commit: &JournalCommit) -> Result<(), JournalCodecError> {
+    if commit.kind() != JournalCommitKind::Incremental {
+        return Ok(());
+    }
+    if commit.records().iter().enumerate().any(|(index, entry)| {
+        matches!(entry.record(), JournalRecord::ContextCheckpoint(_))
+            && index + 1 != commit.records().len()
+    }) {
+        return Err(JournalCodecError::new(
+            "an incremental context checkpoint must be the final record in its physical commit",
+        ));
+    }
     Ok(())
 }
 
@@ -444,7 +472,9 @@ fn apply_message_record(
         | JournalRecord::BackendRequestAccepted(_)
         | JournalRecord::ModelReplayDelta(_)
         | JournalRecord::BackendResumableOutcome(_)
-        | JournalRecord::ContinuationAnchor(_) => {},
+        | JournalRecord::ContinuationAnchor(_)
+        | JournalRecord::ContextPolicyChanged(_)
+        | JournalRecord::ContextCheckpoint(_) => {},
     }
     Ok(())
 }

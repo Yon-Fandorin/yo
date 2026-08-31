@@ -1,6 +1,7 @@
 use super::codec::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
-    BackendResumableOutcome, ContinuationAnchor, ModelReplayDeltaRecord,
+    BackendResumableOutcome, ContextCheckpoint, ContextPolicyChanged, ContinuationAnchor,
+    ModelReplayDeltaRecord,
 };
 use crate::{AgentCommand, AgentEvent, SubmissionId};
 
@@ -48,6 +49,8 @@ pub(crate) enum SemanticRecord {
     ModelReplayDelta(ModelReplayDeltaRecord),
     BackendResumableOutcome(BackendResumableOutcome),
     ContinuationAnchor(ContinuationAnchor),
+    ContextPolicyChanged(ContextPolicyChanged),
+    ContextCheckpoint(ContextCheckpoint),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

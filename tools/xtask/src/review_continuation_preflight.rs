@@ -199,7 +199,13 @@ pub(crate) fn evaluate(
         preflight_request_id: digest(&request_bytes),
         delivery,
         session_root,
-        continuation_anchor_sequence: continuation.target().source_anchor_sequence().get(),
+        continuation_anchor_sequence: continuation
+            .target()
+            .source_anchor_sequence()
+            .ok_or_else(|| {
+                "Slice review continuation requires a Continuation Anchor source".to_owned()
+            })?
+            .get(),
         binding_epoch: continuation.target().epoch(),
     })
 }

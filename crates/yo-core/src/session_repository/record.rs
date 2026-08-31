@@ -186,7 +186,10 @@ impl StoredSession {
                 if summary.discovery().continuation_anchor().is_some() {
                     ContinuationEligibility::Eligible
                 } else {
-                    ContinuationEligibility::Unavailable
+                    // The physical v1 discovery shape intentionally remains unchanged and cannot
+                    // distinguish an incomplete legacy history from a checkpoint-only replay
+                    // root. Full semantic recovery owns that decision.
+                    ContinuationEligibility::Unknown
                 }
             },
             Self::Unavailable {

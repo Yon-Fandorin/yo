@@ -1,6 +1,7 @@
 use super::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
-    BackendResumableOutcome, ContinuationAnchor, ModelReplayDeltaRecord,
+    BackendResumableOutcome, ContextCheckpoint, ContextPolicyChanged, ContinuationAnchor,
+    ModelReplayDeltaRecord,
 };
 use crate::{
     ActivityKind, ActivityRef, AgentCommand, AgentEvent, JournalSequence, SessionDescriptor,
@@ -213,6 +214,8 @@ pub(crate) enum JournalRecord {
     ModelReplayDelta(ModelReplayDeltaRecord),
     BackendResumableOutcome(BackendResumableOutcome),
     ContinuationAnchor(ContinuationAnchor),
+    ContextPolicyChanged(ContextPolicyChanged),
+    ContextCheckpoint(ContextCheckpoint),
     MessageReset(MessageReset),
     MessageSegment(MessageSegment),
     MessageEnded(MessageTerminal),
@@ -246,6 +249,12 @@ impl JournalRecord {
             },
             Self::ContinuationAnchor(record) => {
                 Some(SemanticRecord::ContinuationAnchor(record.clone()))
+            },
+            Self::ContextPolicyChanged(record) => {
+                Some(SemanticRecord::ContextPolicyChanged(record.clone()))
+            },
+            Self::ContextCheckpoint(record) => {
+                Some(SemanticRecord::ContextCheckpoint(record.clone()))
             },
             Self::SessionDescriptor(_)
             | Self::MessageReset(_)
@@ -284,7 +293,9 @@ impl JournalRecord {
             | Self::BackendRequestAccepted(_)
             | Self::ModelReplayDelta(_)
             | Self::BackendResumableOutcome(_)
-            | Self::ContinuationAnchor(_) => None,
+            | Self::ContinuationAnchor(_)
+            | Self::ContextPolicyChanged(_)
+            | Self::ContextCheckpoint(_) => None,
         }
     }
 

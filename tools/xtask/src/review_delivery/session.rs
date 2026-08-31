@@ -202,7 +202,17 @@ fn observe_continuation_inner(
             format!("continued Session has no new durable Continuation Anchor: {error}"),
         )
     })?;
-    let anchor = continuation.target().source_anchor_sequence().get();
+    let anchor = continuation
+        .target()
+        .source_anchor_sequence()
+        .ok_or_else(|| {
+            (
+                observation.clone(),
+                "continued review Session has a checkpoint source, not a new Continuation Anchor"
+                    .to_owned(),
+            )
+        })?
+        .get();
     if continuation.target().epoch() != binding_epoch || anchor <= prior_anchor_sequence {
         return Err((
             observation,

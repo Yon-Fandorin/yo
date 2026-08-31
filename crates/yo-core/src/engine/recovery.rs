@@ -73,7 +73,9 @@ impl AgentEngine {
                 | SemanticRecord::BackendRequestAccepted(_)
                 | SemanticRecord::ModelReplayDelta(_)
                 | SemanticRecord::BackendResumableOutcome(_)
-                | SemanticRecord::ContinuationAnchor(_) => {},
+                | SemanticRecord::ContinuationAnchor(_)
+                | SemanticRecord::ContextPolicyChanged(_)
+                | SemanticRecord::ContextCheckpoint(_) => {},
             }
         }
         if !expected.is_empty() {

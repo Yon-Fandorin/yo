@@ -10,7 +10,8 @@ use super::{
 };
 use crate::{
     AgentCommand, AgentEvent, BackendBindingEvidence, BackendOutcomeEvidence,
-    BackendRequestEvidence, ContinuationStrategy, SubmissionId, TurnOutcome, TurnRef,
+    BackendRequestEvidence, BackendResumeSource, ContinuationStrategy, SubmissionId, TurnOutcome,
+    TurnRef,
 };
 
 impl SessionJournal {
@@ -45,7 +46,7 @@ impl SessionJournal {
         &mut self,
         previous_epoch: u64,
         epoch: u64,
-        source_anchor_sequence: JournalSequence,
+        source: BackendResumeSource,
         evidence: BackendBindingEvidence,
     ) -> bool {
         use super::codec::{BackendBindingClosed, BindingCloseReason};
@@ -62,11 +63,19 @@ impl SessionJournal {
                 versioned(evidence.binding_identity()),
                 versioned(evidence.model_identity()),
                 versioned(evidence.session_locator()),
-                BindingTransition::new(
-                    TransitionMode::ExactReplay,
-                    CacheState::Lost,
-                    Some(source_anchor_sequence),
-                ),
+                match source {
+                    BackendResumeSource::ContinuationAnchor(source_anchor_sequence) => {
+                        BindingTransition::new(
+                            TransitionMode::ExactReplay,
+                            CacheState::Lost,
+                            Some(source_anchor_sequence),
+                        )
+                    },
+                    BackendResumeSource::ContextCheckpoint(source_checkpoint_sequence) => {
+                        BindingTransition::new(TransitionMode::ExactReplay, CacheState::Lost, None)
+                            .with_source_checkpoint_sequence(source_checkpoint_sequence)
+                    },
+                },
                 evidence.continuation_strategy(),
             )),
         ])

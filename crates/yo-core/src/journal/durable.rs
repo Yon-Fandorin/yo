@@ -297,6 +297,20 @@ impl DurableJournal {
                     JournalRecord::ContinuationAnchor(anchor.clone()),
                 ));
             },
+            SemanticRecord::ContextPolicyChanged(policy) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::ContextPolicyChanged(policy.clone()),
+                ));
+            },
+            SemanticRecord::ContextCheckpoint(checkpoint) => {
+                self.flush_boundaries(None, durable);
+                durable.push(PendingJournalRecord::semantic(
+                    entry.sequence(),
+                    JournalRecord::ContextCheckpoint(checkpoint.clone()),
+                ));
+            },
         }
     }
 

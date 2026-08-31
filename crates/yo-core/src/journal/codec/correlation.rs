@@ -159,6 +159,7 @@ pub(crate) struct BindingTransition {
     mode: TransitionMode,
     cache: CacheState,
     source_anchor_sequence: Option<JournalSequence>,
+    source_checkpoint_sequence: Option<JournalSequence>,
 }
 
 impl BindingTransition {
@@ -171,7 +172,16 @@ impl BindingTransition {
             mode,
             cache,
             source_anchor_sequence,
+            source_checkpoint_sequence: None,
         }
+    }
+
+    pub(crate) const fn with_source_checkpoint_sequence(
+        mut self,
+        source_checkpoint_sequence: JournalSequence,
+    ) -> Self {
+        self.source_checkpoint_sequence = Some(source_checkpoint_sequence);
+        self
     }
 
     pub(crate) const fn mode(&self) -> TransitionMode {
@@ -184,6 +194,10 @@ impl BindingTransition {
 
     pub(crate) const fn source_anchor_sequence(&self) -> Option<JournalSequence> {
         self.source_anchor_sequence
+    }
+
+    pub(crate) const fn source_checkpoint_sequence(&self) -> Option<JournalSequence> {
+        self.source_checkpoint_sequence
     }
 }
 
@@ -286,6 +300,7 @@ impl BackendBindingClosed {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BackendRequestAccepted {
     epoch: u64,
+    context_epoch: Option<u64>,
     turn_id: TurnId,
     operation_id: OperationId,
     exchange_sequence: JournalSequence,
@@ -302,6 +317,7 @@ impl BackendRequestAccepted {
     ) -> Self {
         Self {
             epoch,
+            context_epoch: None,
             turn_id,
             operation_id,
             exchange_sequence,
@@ -309,8 +325,17 @@ impl BackendRequestAccepted {
         }
     }
 
+    pub(crate) const fn with_context_epoch(mut self, context_epoch: u64) -> Self {
+        self.context_epoch = Some(context_epoch);
+        self
+    }
+
     pub(crate) const fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    pub(crate) const fn context_epoch(&self) -> Option<u64> {
+        self.context_epoch
     }
 
     pub(crate) const fn turn_id(&self) -> TurnId {
@@ -333,6 +358,7 @@ impl BackendRequestAccepted {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct BackendResumableOutcome {
     epoch: u64,
+    context_epoch: Option<u64>,
     turn_id: TurnId,
     accepted_request_sequence: JournalSequence,
     outcome_identity: Option<VersionedIdentity>,
@@ -349,6 +375,7 @@ impl BackendResumableOutcome {
     ) -> Self {
         Self {
             epoch,
+            context_epoch: None,
             turn_id,
             accepted_request_sequence,
             outcome_identity,
@@ -356,8 +383,17 @@ impl BackendResumableOutcome {
         }
     }
 
+    pub(crate) const fn with_context_epoch(mut self, context_epoch: u64) -> Self {
+        self.context_epoch = Some(context_epoch);
+        self
+    }
+
     pub(crate) const fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    pub(crate) const fn context_epoch(&self) -> Option<u64> {
+        self.context_epoch
     }
 
     pub(crate) const fn turn_id(&self) -> TurnId {
@@ -380,6 +416,7 @@ impl BackendResumableOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ModelReplayDeltaRecord {
     epoch: u64,
+    context_epoch: Option<u64>,
     turn_id: TurnId,
     accepted_request_sequence: JournalSequence,
     delta: ModelReplayDelta,
@@ -394,14 +431,24 @@ impl ModelReplayDeltaRecord {
     ) -> Self {
         Self {
             epoch,
+            context_epoch: None,
             turn_id,
             accepted_request_sequence,
             delta,
         }
     }
 
+    pub(crate) const fn with_context_epoch(mut self, context_epoch: u64) -> Self {
+        self.context_epoch = Some(context_epoch);
+        self
+    }
+
     pub(crate) const fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    pub(crate) const fn context_epoch(&self) -> Option<u64> {
+        self.context_epoch
     }
 
     pub(crate) const fn turn_id(&self) -> TurnId {
@@ -420,6 +467,7 @@ impl ModelReplayDeltaRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ContinuationAnchor {
     epoch: u64,
+    context_epoch: Option<u64>,
     accepted_request_sequence: JournalSequence,
     resumable_outcome_sequence: JournalSequence,
     journal_boundary: JournalSequence,
@@ -434,14 +482,24 @@ impl ContinuationAnchor {
     ) -> Self {
         Self {
             epoch,
+            context_epoch: None,
             accepted_request_sequence,
             resumable_outcome_sequence,
             journal_boundary,
         }
     }
 
+    pub(crate) const fn with_context_epoch(mut self, context_epoch: u64) -> Self {
+        self.context_epoch = Some(context_epoch);
+        self
+    }
+
     pub(crate) const fn epoch(&self) -> u64 {
         self.epoch
+    }
+
+    pub(crate) const fn context_epoch(&self) -> Option<u64> {
+        self.context_epoch
     }
 
     pub(crate) const fn accepted_request_sequence(&self) -> JournalSequence {

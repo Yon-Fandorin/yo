@@ -6,8 +6,9 @@ use super::{
     journal::{recover_entries, recover_repository},
 };
 use crate::{
-    AgentCommand, BackendBindingEvidence, BackendIdentity, BackendResumeTarget,
-    ContinuationStrategy, ModelReplay, SessionDescriptor, SessionId, SubmissionId,
+    AgentCommand, BackendBindingEvidence, BackendIdentity, BackendResumeSource,
+    BackendResumeTarget, ContinuationStrategy, ModelReplay, SessionDescriptor, SessionId,
+    SubmissionId,
     journal::{JournalEntry, codec::JournalRecord},
 };
 
@@ -115,7 +116,7 @@ pub fn read_stored_session_continuation(
     build_continuation(recovered, session_id)
 }
 
-fn build_continuation(
+pub(crate) fn build_continuation(
     recovered: crate::journal::codec::RecoveredJournal,
     session_id: SessionId,
 ) -> Result<StoredSessionContinuation, StoredSessionContinuationError> {
@@ -146,38 +147,70 @@ fn build_continuation(
                 "the open backend binding is absent from the recovered semantic Journal",
             )
         })?;
-    let transition_anchor = binding.transition().source_anchor_sequence();
-    let anchor_sequence = recovered
+    let transition_source = binding
+        .transition()
+        .source_anchor_sequence()
+        .map(BackendResumeSource::ContinuationAnchor)
+        .or_else(|| {
+            binding
+                .transition()
+                .source_checkpoint_sequence()
+                .map(BackendResumeSource::ContextCheckpoint)
+        });
+    let open_epoch_has_accepted_request = recovered.records().iter().any(|record| {
+        matches!(
+            record.record(),
+            JournalRecord::BackendRequestAccepted(request) if request.epoch() == epoch
+        )
+    });
+    let resume_source = recovered
         .continuation_anchor()
-        .or(transition_anchor)
-        .ok_or_else(|| {
-            StoredSessionContinuationError::new(format!(
-                "stored Session {session_id} has no newest durable Continuation Anchor"
-            ))
-        })?;
-    let anchor_epoch = recovered
-        .records()
-        .iter()
-        .find_map(|record| {
-            (record.journal_sequence() == Some(anchor_sequence))
-                .then(|| match record.record() {
-                    JournalRecord::ContinuationAnchor(anchor) => Some(anchor.epoch()),
-                    _ => None,
-                })
+        .map(BackendResumeSource::ContinuationAnchor)
+        .or_else(|| {
+            recovered
+                .context_checkpoint()
+                .map(BackendResumeSource::ContextCheckpoint)
+        })
+        .or_else(|| {
+            (!open_epoch_has_accepted_request)
+                .then_some(transition_source)
                 .flatten()
         })
         .ok_or_else(|| {
             StoredSessionContinuationError::new(format!(
-                "Continuation Anchor {} is absent from the recovered semantic Journal",
-                anchor_sequence.get()
+                "stored Session {session_id} has no newest durable Continuation Anchor or context checkpoint"
             ))
         })?;
-    let resumes_from_replacement_source = transition_anchor == Some(anchor_sequence)
+    let source_sequence = resume_source.sequence();
+    let source_epoch = recovered
+        .records()
+        .iter()
+        .find_map(|record| {
+            (record.journal_sequence() == Some(source_sequence)).then_some(record.record())
+        })
+        .and_then(|record| match (resume_source, record) {
+            (
+                BackendResumeSource::ContinuationAnchor(_),
+                JournalRecord::ContinuationAnchor(anchor),
+            ) => Some(anchor.epoch()),
+            (
+                BackendResumeSource::ContextCheckpoint(_),
+                JournalRecord::ContextCheckpoint(checkpoint),
+            ) => Some(checkpoint.epoch()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            StoredSessionContinuationError::new(format!(
+                "continuation source {} is absent from the recovered semantic Journal",
+                source_sequence.get()
+            ))
+        })?;
+    let resumes_from_replacement_source = transition_source == Some(resume_source)
         && binding.transition().mode() == crate::journal::codec::TransitionMode::ExactReplay;
-    if anchor_epoch != epoch && !resumes_from_replacement_source {
+    if source_epoch != epoch && !resumes_from_replacement_source {
         return Err(StoredSessionContinuationError::new(format!(
-            "Continuation Anchor {} belongs to epoch {anchor_epoch}, not open epoch {epoch}",
-            anchor_sequence.get()
+            "continuation source {} belongs to epoch {source_epoch}, not open epoch {epoch}",
+            source_sequence.get()
         )));
     }
 
@@ -217,10 +250,19 @@ fn build_continuation(
             "stored Session {session_id} transcript cannot be restored: {detail}"
         ))
     })?;
+    let target = match resume_source {
+        BackendResumeSource::ContinuationAnchor(sequence) => {
+            BackendResumeTarget::new(session_id, epoch, evidence, sequence)
+        },
+        BackendResumeSource::ContextCheckpoint(sequence) => {
+            BackendResumeTarget::from_checkpoint(session_id, epoch, evidence, sequence)
+        },
+    }
+    .with_model_replay(model_replay)
+    .with_replay_contract_rebind_required(recovered.replay_contract_rebind_required());
     Ok(StoredSessionContinuation {
         recovered,
-        target: BackendResumeTarget::new(session_id, epoch, evidence, anchor_sequence)
-            .with_model_replay(model_replay),
+        target,
         next_turn_id,
         transcript_records,
     })

@@ -79,7 +79,8 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
              continuation_strategy={}\n\
              transition={}\n\
              cache={}\n\
-             source_anchor_sequence={}",
+             source_anchor_sequence={}\n\
+             source_checkpoint_sequence={}",
             identity_text("binding_identity", binding_identity),
             identity_text("model_identity", model_identity),
             identity_text("session_locator", session_locator),
@@ -87,6 +88,7 @@ pub(in crate::runner) fn format_record(sequence: u64, record: &StoredRequestTrac
             transition_mode_text(transition.mode()),
             cache_state_text(transition.cache()),
             sequence_text(transition.source_anchor_sequence()),
+            sequence_text(transition.source_checkpoint_sequence()),
         ),
         StoredRequestTraceRecord::BindingClosed { epoch, reason } => format!(
             "{prefix} binding.closed\n\

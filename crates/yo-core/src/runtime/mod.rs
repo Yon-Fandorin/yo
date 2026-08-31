@@ -6,9 +6,9 @@ pub use error::RuntimeError;
 
 use crate::{
     AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendBindingEvidence,
-    BackendCommandEvidence, BackendEvent, BackendPoll, BackendResumeTarget, ContinuationStrategy,
-    Failure, JournalSequence, ModelReplay, SessionId, SubmissionId, TurnOutcome, TurnRef,
-    journal::SessionJournal,
+    BackendCommandEvidence, BackendEvent, BackendPoll, BackendResumeSource, BackendResumeTarget,
+    ContinuationStrategy, Failure, JournalSequence, ModelReplay, SessionId, SubmissionId,
+    TurnOutcome, TurnRef, journal::SessionJournal,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,7 +33,8 @@ pub struct AgentRuntime<B> {
     binding: Option<BackendBindingEvidence>,
     continuation_strategy: Option<ContinuationStrategy>,
     model_replay: ModelReplay,
-    source_anchor_sequence: Option<JournalSequence>,
+    replay_contract_rebind_required: bool,
+    resume_source: Option<BackendResumeSource>,
     accepted_requests: HashMap<TurnRef, JournalSequence>,
 }
 
@@ -52,7 +53,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
             binding: None,
             continuation_strategy: None,
             model_replay: ModelReplay::default(),
-            source_anchor_sequence: None,
+            replay_contract_rebind_required: false,
+            resume_source: None,
             accepted_requests: HashMap::new(),
         }
     }
@@ -96,15 +98,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
             .resume_session_replacing_binding(target)
             .map_err(RuntimeError::backend)?;
         let previous = target.binding();
-        if !evidence.is_valid()
-            || evidence.backend_kind() != previous.backend_kind()
-            || evidence.session_locator() != previous.session_locator()
-            || evidence.continuation_strategy() != previous.continuation_strategy()
-            || evidence.binding_identity() == previous.binding_identity()
-        {
+        if !valid_replacement_binding(previous, &evidence, target.model_replay()) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
                 crate::BackendFailureKind::Session,
-                "exact-replay replacement returned an invalid or unchanged binding identity",
+                "exact-replay replacement returned an incompatible target binding",
             )));
         }
         self.publish_resume_snapshot()?;
@@ -117,7 +114,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
         if !self.journal.commit_exact_replay_replacement(
             target.epoch(),
             epoch,
-            target.source_anchor_sequence(),
+            target.source(),
             evidence.clone(),
         ) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
@@ -129,7 +126,13 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.binding = Some(evidence.clone());
         self.continuation_strategy = Some(evidence.continuation_strategy());
         self.model_replay = target.model_replay().clone();
-        self.source_anchor_sequence = Some(target.source_anchor_sequence());
+        if evidence.continuation_strategy() == ContinuationStrategy::BackendManagedState {
+            self.model_replay = ModelReplay::default();
+            self.replay_contract_rebind_required = false;
+        } else {
+            self.replay_contract_rebind_required = true;
+        }
+        self.resume_source = Some(target.source());
         Ok(())
     }
 
@@ -156,7 +159,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.binding = Some(target.binding().clone());
         self.continuation_strategy = Some(target.binding().continuation_strategy());
         self.model_replay = target.model_replay().clone();
-        self.source_anchor_sequence = Some(target.source_anchor_sequence());
+        self.replay_contract_rebind_required = target.replay_contract_rebind_required();
+        self.resume_source = Some(target.source());
         self.accepted_requests.clear();
         Ok(())
     }
@@ -402,7 +406,12 @@ impl<B: AgentBackend> AgentRuntime<B> {
             };
             let next_replay = evidence.model_replay().map(|delta| {
                 let mut replay = self.model_replay.clone();
-                replay.apply(delta).map(|()| replay)
+                let applied = if self.replay_contract_rebind_required {
+                    replay.apply_binding_replacement(delta)
+                } else {
+                    replay.apply(delta)
+                };
+                applied.map(|()| replay)
             });
             let next_replay = match next_replay {
                 Some(Ok(replay)) => Some(replay),
@@ -424,8 +433,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
                     );
                     if let Some(replay) = next_replay {
                         self.model_replay = replay;
+                        self.replay_contract_rebind_required = false;
                     }
-                    self.source_anchor_sequence = Some(anchor);
+                    self.resume_source = Some(BackendResumeSource::ContinuationAnchor(anchor));
                     self.accepted_requests.remove(&turn);
                     Ok(RuntimePoll::Event(event))
                 },
@@ -534,11 +544,11 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                 )),
             ));
         }
-        let (Some(session_id), Some(epoch), Some(binding), Some(source_anchor_sequence)) = (
+        let (Some(session_id), Some(epoch), Some(binding), Some(resume_source)) = (
             self.engine.session_id(),
             self.binding_epoch,
             self.binding.clone(),
-            self.source_anchor_sequence,
+            self.resume_source,
         ) else {
             return Err(reject_replacement_candidate(
                 &mut candidate,
@@ -560,9 +570,15 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                 )),
             ));
         }
-        let target =
-            BackendResumeTarget::new(session_id, epoch, binding.clone(), source_anchor_sequence)
-                .with_model_replay(self.model_replay.clone());
+        let target = match resume_source {
+            BackendResumeSource::ContinuationAnchor(sequence) => {
+                BackendResumeTarget::new(session_id, epoch, binding.clone(), sequence)
+            },
+            BackendResumeSource::ContextCheckpoint(sequence) => {
+                BackendResumeTarget::from_checkpoint(session_id, epoch, binding.clone(), sequence)
+            },
+        }
+        .with_model_replay(self.model_replay.clone());
         let evidence = match candidate.resume_session_replacing_binding(&target) {
             Ok(evidence) => evidence,
             Err(failure) => {
@@ -572,17 +588,12 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                 ));
             },
         };
-        if !evidence.is_valid()
-            || evidence.backend_kind() != binding.backend_kind()
-            || evidence.session_locator() != binding.session_locator()
-            || evidence.continuation_strategy() != binding.continuation_strategy()
-            || evidence.binding_identity() == binding.binding_identity()
-        {
+        if !valid_replacement_binding(&binding, &evidence, &self.model_replay) {
             return Err(reject_replacement_candidate(
                 &mut candidate,
                 RuntimeError::backend(crate::BackendFailure::new(
                     crate::BackendFailureKind::Session,
-                    "exact-replay replacement returned an invalid or unchanged binding identity",
+                    "exact-replay replacement returned an incompatible target binding",
                 )),
             ));
         }
@@ -598,7 +609,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
         if !self.journal.commit_exact_replay_replacement(
             epoch,
             next_epoch,
-            source_anchor_sequence,
+            resume_source,
             evidence.clone(),
         ) {
             return Err(reject_replacement_candidate(
@@ -613,9 +624,44 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
         self.binding_epoch = Some(next_epoch);
         self.binding = Some(evidence.clone());
         self.continuation_strategy = Some(evidence.continuation_strategy());
+        if evidence.continuation_strategy() == ContinuationStrategy::BackendManagedState {
+            self.model_replay = ModelReplay::default();
+            self.replay_contract_rebind_required = false;
+        } else {
+            self.replay_contract_rebind_required = true;
+        }
         let mut previous = std::mem::replace(&mut self.backend, candidate);
         Ok(previous.shutdown().err())
     }
+}
+
+fn valid_replacement_binding(
+    previous: &BackendBindingEvidence,
+    replacement: &BackendBindingEvidence,
+    replay: &ModelReplay,
+) -> bool {
+    if !replacement.is_valid()
+        || replacement.backend_kind() != previous.backend_kind()
+        || replacement.session_locator() != previous.session_locator()
+    {
+        return false;
+    }
+    let has_provider_private = replay.items().iter().any(|item| {
+        matches!(
+            item,
+            crate::ModelReplayItem::ProviderPrivateAssistant { .. }
+        )
+    });
+    if !has_provider_private {
+        return replacement.binding_identity() != previous.binding_identity();
+    }
+    let replay_profile = |strategy| match strategy {
+        ContinuationStrategy::ExactReplay { replay_profile, .. } => Some(replay_profile),
+        ContinuationStrategy::BackendManagedState => None,
+    };
+    replacement.binding_identity() == previous.binding_identity()
+        && replay_profile(replacement.continuation_strategy())
+            == replay_profile(previous.continuation_strategy())
 }
 
 fn reject_replacement_candidate(
@@ -642,5 +688,82 @@ fn command_kind(command: &AgentCommand) -> &'static str {
         AgentCommand::SteerTurn { .. } => "SteerTurn",
         AgentCommand::InterruptTurn { .. } => "InterruptTurn",
         AgentCommand::RespondToActivity { .. } => "RespondToActivity",
+    }
+}
+
+#[cfg(test)]
+mod replacement_binding_tests {
+    use super::*;
+    use crate::{
+        BackendIdentity, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+        ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile,
+    };
+
+    fn binding(identity: &str, strategy: ContinuationStrategy) -> BackendBindingEvidence {
+        BackendBindingEvidence::new(
+            "managed",
+            "1.0.0",
+            BackendIdentity::new("test.binding/v1", identity),
+            BackendIdentity::new("test.model/v1", "model"),
+            BackendIdentity::new("test.session/v1", "session"),
+            strategy,
+        )
+    }
+
+    // retained private replay는 같은 binding identity와 replay profile에서만 손실 없이
+    // 교체할 수 있고, private item이 없는 seed는 다른 target 전략을 허용합니다.
+    #[test]
+    fn replacement_binding_compatibility_is_conditional_on_private_replay() {
+        let private_strategy = ContinuationStrategy::ExactReplay {
+            executor: ReplayExecutor::LocalClient,
+            replay_profile: ReplayProfile::ProviderPrivateLocalPlaintext,
+        };
+        let previous = binding("same", private_strategy);
+        let mut private_replay = ModelReplay::default();
+        private_replay
+            .apply(&ModelReplayDelta::new(
+                Some(ModelReplayContract::new("system", Vec::new())),
+                vec![
+                    ModelReplayItem::Message {
+                        role: ModelReplayRole::Assistant,
+                        content: "answer".to_owned(),
+                        refusal: None,
+                    },
+                    ModelReplayItem::ProviderPrivateAssistant {
+                        envelope: ProviderPrivateReplayEnvelope::new(
+                            "kimi.assistant-message/v1alpha1",
+                            b"{}".to_vec(),
+                        )
+                        .unwrap(),
+                    },
+                ],
+            ))
+            .unwrap();
+
+        assert!(valid_replacement_binding(
+            &previous,
+            &binding("same", private_strategy),
+            &private_replay,
+        ));
+        assert!(!valid_replacement_binding(
+            &previous,
+            &binding("different", private_strategy),
+            &private_replay,
+        ));
+
+        let semantic_replay = ModelReplay::from_checkpoint(
+            ModelReplayContract::new("system", Vec::new()),
+            vec![ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: "summary".to_owned(),
+                refusal: None,
+            }],
+        )
+        .unwrap();
+        assert!(valid_replacement_binding(
+            &previous,
+            &binding("different", ContinuationStrategy::BackendManagedState),
+            &semantic_replay,
+        ));
     }
 }

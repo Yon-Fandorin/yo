@@ -393,10 +393,11 @@ fn unrelated_jsonl_filename_does_not_abort_discovery() {
     assert_eq!(sessions[0].session_id(), session_id);
 }
 
-// 지원되는 v1에 anchor가 없으면 실행 가능한 재개 근거가 없으므로 unavailable이고,
-// 미지원 schema는 bounded evidence를 해석할 수 없어 unknown으로 구분해야 합니다.
+// 물리 v1 discovery에는 checkpoint 좌표를 추가하지 않으므로 anchor 부재만으로는
+// checkpoint-only 복구 가능성을 배제할 수 없고, 미지원 schema와 마찬가지로 full read
+// 전까지 unknown이어야 합니다.
 #[test]
-fn continuation_eligibility_distinguishes_missing_anchor_from_unknown_schema() {
+fn continuation_eligibility_keeps_missing_anchor_and_unknown_schema_unresolved() {
     let directory = TestDirectory::new("typed-continuation-eligibility");
     let session_id = session(34);
     {
@@ -413,7 +414,7 @@ fn continuation_eligibility_distinguishes_missing_anchor_from_unknown_schema() {
     let supported = reader.discover().expect("supported Session is listed");
     assert_eq!(
         supported[0].continuation_eligibility(),
-        ContinuationEligibility::Unavailable
+        ContinuationEligibility::Unknown
     );
 
     let path = log_path(directory.path(), session_id);

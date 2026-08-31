@@ -294,7 +294,9 @@ impl TranscriptRecord {
             | SemanticRecord::BackendRequestAccepted(_)
             | SemanticRecord::ModelReplayDelta(_)
             | SemanticRecord::BackendResumableOutcome(_)
-            | SemanticRecord::ContinuationAnchor(_) => return None,
+            | SemanticRecord::ContinuationAnchor(_)
+            | SemanticRecord::ContextPolicyChanged(_)
+            | SemanticRecord::ContextCheckpoint(_) => return None,
         })
     }
 }

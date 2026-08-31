@@ -109,6 +109,7 @@ pub struct StoredBindingTransition {
     mode: StoredBindingTransitionMode,
     cache: StoredBindingCacheState,
     source_anchor_sequence: Option<JournalSequence>,
+    source_checkpoint_sequence: Option<JournalSequence>,
 }
 
 impl StoredBindingTransition {
@@ -121,7 +122,16 @@ impl StoredBindingTransition {
             mode,
             cache,
             source_anchor_sequence,
+            source_checkpoint_sequence: None,
         }
+    }
+
+    pub(crate) const fn with_source_checkpoint_sequence(
+        mut self,
+        source_checkpoint_sequence: JournalSequence,
+    ) -> Self {
+        self.source_checkpoint_sequence = Some(source_checkpoint_sequence);
+        self
     }
 
     #[must_use]
@@ -137,6 +147,11 @@ impl StoredBindingTransition {
     #[must_use]
     pub const fn source_anchor_sequence(&self) -> Option<JournalSequence> {
         self.source_anchor_sequence
+    }
+
+    #[must_use]
+    pub const fn source_checkpoint_sequence(&self) -> Option<JournalSequence> {
+        self.source_checkpoint_sequence
     }
 }
 

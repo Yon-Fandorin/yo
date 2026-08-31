@@ -84,6 +84,8 @@ pub(super) struct WireBindingTransition {
     pub(super) cache: WireCacheState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) source_anchor_sequence: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) source_checkpoint_sequence: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]

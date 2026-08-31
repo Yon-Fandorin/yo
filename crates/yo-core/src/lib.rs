@@ -28,10 +28,10 @@ pub(crate) use backend::ProviderPrivateReplayPayload;
 pub use backend::{
     AgentBackend, BackendAdapter, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
-    BackendOutcomeEvidence, BackendPoll, BackendRequestEvidence, BackendResumeTarget,
-    BackendScriptStep, BackendStopHandle, ContinuationStrategy, ModelReplay, ModelReplayBudget,
-    ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelReplayTool,
-    ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
+    BackendOutcomeEvidence, BackendPoll, BackendRequestEvidence, BackendResumeSource,
+    BackendResumeTarget, BackendScriptStep, BackendStopHandle, ContinuationStrategy, ModelReplay,
+    ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+    ModelReplayTool, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
     provider_private_schema,
 };
 pub use command::{ActivityResponse, AgentCommand, ApprovalDecision};

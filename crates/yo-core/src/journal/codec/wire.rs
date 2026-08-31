@@ -324,10 +324,16 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
             },
             JournalRecord::BackendRequestAccepted(request) => {
                 correlation::positive(request.epoch(), "epoch")?;
+                if let Some(context_epoch) = request.context_epoch() {
+                    correlation::positive(context_epoch, "context_epoch")?;
+                }
                 correlation::encode_identity(request.request_identity())?;
             },
             JournalRecord::ModelReplayDelta(replay) => {
                 correlation::positive(replay.epoch(), "epoch")?;
+                if let Some(context_epoch) = replay.context_epoch() {
+                    correlation::positive(context_epoch, "context_epoch")?;
+                }
                 if !replay.delta().is_valid() {
                     return Err(JournalCodecError::new(
                         "model_replay_delta is invalid or exceeds its bounds",
@@ -336,13 +342,20 @@ fn validate_commit(commit: &JournalCommit) -> Result<(), JournalCodecError> {
             },
             JournalRecord::BackendResumableOutcome(outcome) => {
                 correlation::positive(outcome.epoch(), "epoch")?;
+                if let Some(context_epoch) = outcome.context_epoch() {
+                    correlation::positive(context_epoch, "context_epoch")?;
+                }
                 if let Some(identity) = outcome.outcome_identity() {
                     correlation::encode_identity(identity)?;
                 }
             },
             JournalRecord::ContinuationAnchor(anchor) => {
                 correlation::positive(anchor.epoch(), "epoch")?;
+                if let Some(context_epoch) = anchor.context_epoch() {
+                    correlation::positive(context_epoch, "context_epoch")?;
+                }
             },
+            JournalRecord::ContextPolicyChanged(_) | JournalRecord::ContextCheckpoint(_) => {},
         }
     }
     if commit.kind() == JournalCommitKind::Snapshot {
@@ -392,20 +405,27 @@ fn validate_transition(transition: &BindingTransition) -> Result<(), JournalCode
             transition.mode(),
             transition.cache(),
             transition.source_anchor_sequence(),
+            transition.source_checkpoint_sequence(),
         ),
-        (TransitionMode::Initial, CacheState::NotApplicable, None)
-            | (TransitionMode::ExactReplay, CacheState::Lost, Some(_))
+        (
+            TransitionMode::Initial,
+            CacheState::NotApplicable,
+            None,
+            None
+        ) | (TransitionMode::ExactReplay, CacheState::Lost, Some(_), None)
+            | (TransitionMode::ExactReplay, CacheState::Lost, None, Some(_))
             | (
                 TransitionMode::LossyHandoff,
                 CacheState::Lost | CacheState::Unknown,
                 Some(_),
+                None,
             )
     );
     if valid {
         Ok(())
     } else {
         Err(JournalCodecError::new(
-            "binding transition mode, cache, and source Anchor are inconsistent",
+            "binding transition mode, cache, and source are inconsistent",
         ))
     }
 }

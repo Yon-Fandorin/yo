@@ -179,6 +179,32 @@ fn model_replay_enforces_contract_delta_and_prefix_byte_bounds() {
     assert!(error.contains("prefix byte limit"));
 }
 
+// checkpoint root는 request-local delta의 16 MiB보다 클 수 있지만 전체 replay-prefix
+// 64 MiB 상한과 공통 관계 검증은 그대로 적용해야 한다.
+#[test]
+fn context_checkpoint_replay_root_uses_the_prefix_budget_not_the_delta_budget() {
+    let items = vec![
+        ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "x".repeat(9 * 1024 * 1024),
+            refusal: None,
+        },
+        ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "y".repeat(9 * 1024 * 1024),
+            refusal: None,
+        },
+    ];
+    assert!(!ModelReplayDelta::new(None, items.clone()).is_valid());
+
+    let replay = ModelReplay::from_checkpoint(
+        ModelReplayContract::new("system", Vec::new()),
+        items.clone(),
+    )
+    .expect("a checkpoint root uses the complete replay-prefix budget");
+    assert_eq!(replay.items(), items);
+}
+
 // contract만 있고 semantic item이 없는 delta는 완료 Turn의 replay 증거가 될 수 없음을 검증합니다.
 #[test]
 fn model_replay_delta_requires_at_least_one_semantic_item() {
@@ -222,6 +248,50 @@ fn model_replay_contract_is_required_on_the_first_delta_only() {
             ))
             .unwrap_err()
             .contains("more than once")
+    );
+}
+
+// replacement binding은 checkpoint seed item을 보존하면서 첫 delta의 새 contract를
+// 정확히 한 번 채택해야 하며 ordinary append의 중복-contract 규칙은 그대로 유지합니다.
+#[test]
+fn replacement_binding_reestablishes_the_replay_contract_once() {
+    let seed = ModelReplayItem::Message {
+        role: ModelReplayRole::User,
+        content: "checkpoint".to_owned(),
+        refusal: None,
+    };
+    let mut replay = ModelReplay::from_checkpoint(
+        ModelReplayContract::new("old-system", Vec::new()),
+        vec![seed.clone()],
+    )
+    .unwrap();
+    let delta = ModelReplayDelta::new(
+        Some(ModelReplayContract::new("new-system", Vec::new())),
+        vec![ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "continued".to_owned(),
+            refusal: None,
+        }],
+    );
+
+    replay.apply_binding_replacement(&delta).unwrap();
+    assert_eq!(
+        replay.contract(),
+        Some(&ModelReplayContract::new("new-system", Vec::new()))
+    );
+    assert_eq!(replay.items().first(), Some(&seed));
+    assert!(
+        replay
+            .apply_binding_replacement(&ModelReplayDelta::new(
+                None,
+                vec![ModelReplayItem::Message {
+                    role: ModelReplayRole::Assistant,
+                    content: "missing contract".to_owned(),
+                    refusal: None,
+                }],
+            ))
+            .unwrap_err()
+            .contains("new contract")
     );
 }
 

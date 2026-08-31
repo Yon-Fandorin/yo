@@ -258,7 +258,17 @@ fn observe_host_continuation_inner(
             format!("continued delegated Session has no new Continuation Anchor: {error}"),
         )
     })?;
-    let anchor = continuation.target().source_anchor_sequence().get();
+    let anchor = continuation
+        .target()
+        .source_anchor_sequence()
+        .ok_or_else(|| {
+            (
+                observation.clone(),
+                "continued delegated review Session has a checkpoint source, not a new Continuation Anchor"
+                    .to_owned(),
+            )
+        })?
+        .get();
     if continuation.target().epoch() != binding_epoch || anchor <= prior_anchor_sequence {
         return Err((
             observation,

@@ -8,9 +8,9 @@ pub use contract::{
 };
 pub use evidence::{
     BackendBindingEvidence, BackendCommandEvidence, BackendIdentity, BackendOutcomeEvidence,
-    BackendRequestEvidence, BackendResumeTarget, ContinuationStrategy, ModelReplay,
-    ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    ModelReplayTool, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile,
+    BackendRequestEvidence, BackendResumeSource, BackendResumeTarget, ContinuationStrategy,
+    ModelReplay, ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
+    ModelReplayRole, ModelReplayTool, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile,
     provider_private_schema,
 };
 pub(crate) use evidence::{

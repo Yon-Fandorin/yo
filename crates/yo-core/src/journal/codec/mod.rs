@@ -1,5 +1,6 @@
 //! Durable semantic Journal encoding and recovery.
 
+mod context;
 mod correlation;
 mod model;
 mod recovery;
@@ -16,6 +17,11 @@ pub(crate) use wire::{JournalCodecError, decode, encode};
 
 #[cfg(test)]
 mod tests;
+pub(crate) use context::{
+    CONTEXT_ARTIFACT_PROFILE, CONTEXT_CHECKPOINT_PROFILE, CONTEXT_POLICY_PROFILE,
+    ContextArtifactReceipt, ContextCheckpoint, ContextLoss, ContextPolicyChanged,
+    ContextRetainedGroup, ContextStrategy, ContextSummaryUsage,
+};
 pub(crate) use correlation::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
     BackendResumableOutcome, BindingCloseReason, BindingTransition, CacheState, ContinuationAnchor,

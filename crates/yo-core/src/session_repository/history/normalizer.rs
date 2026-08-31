@@ -95,7 +95,9 @@ impl HistoryNormalizer {
             | JournalRecord::BackendRequestAccepted(_)
             | JournalRecord::ModelReplayDelta(_)
             | JournalRecord::BackendResumableOutcome(_)
-            | JournalRecord::ContinuationAnchor(_) => Ok(()),
+            | JournalRecord::ContinuationAnchor(_)
+            | JournalRecord::ContextPolicyChanged(_)
+            | JournalRecord::ContextCheckpoint(_) => Ok(()),
             JournalRecord::MessageReset(reset) => {
                 let message = self.message_mut(reset.activity())?;
                 message.revision = reset.revision();
