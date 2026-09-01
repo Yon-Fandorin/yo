@@ -49,8 +49,8 @@ adapter가 사용하는 wire surface는 fail-closed로 유지한다.
 확인하고 허용한 형태를 malformed, mismatched, unsupported message와 구분하는
 결정론적 fixture를 유지한다.
 
-외부 검토에서는 admission v1alpha4가 stdin이 이미 EOF인 상태로 동결된 reviewer
-profile도 시작한다.
+외부 검토에서는 admission v1alpha5가 먼저 stdin이 이미 EOF인 상태로 동결된
+native reviewer profile을 시작한다.
 
 ```text
 grok --sandbox read-only --permission-mode dontAsk --tools Read,Grep \
@@ -58,13 +58,37 @@ grok --sandbox read-only --permission-mode dontAsk --tools Read,Grep \
 ```
 
 이 bounded startup probe는 ContextBuild나 packet 발행보다 먼저 실행된다. prompt,
-ACP initialize, Session request 또는 비공개 packet을 전송하지 않는다. sandbox 시작
-실패는 사용 불가능한 host이며 warning이나 sandbox 없는 fallback으로 바꾸지 않는다.
-Grok 1.0.13은 제한된 Linux container에서 bubblewrap profile이 container-runtime
-socket을 가리지 못하면 이 probe에 실패할 수 있다. 설치 version 문자열과 쓰기 가능한
-`~/.grok`만으로 reviewer profile 실행 가능성을 증명하지 않는다. 현재 upstream은
-runtime socket 처리를 sandbox 구현 내부에서 다루므로 해당 동작이 포함된 release가
-나오면 host를 갱신하는 것이 우선 해결책이다.
+ACP initialize, Session request 또는 비공개 packet을 전송하지 않는다. native profile이
+Linux에서 시작되지 않으면 Yo는 자신이 소유한 외곽 profile
+`yo-bwrap-read-only/v1alpha1`을 정확히 한 번 시도할 수 있다. 이는 불변 review packet을
+위한 제한된 compatibility 경계이지 범용 host sandbox가 아니다.
+
+외곽 profile은 bubblewrap으로 root와 review workspace를 read-only로 만들고 user, PID,
+IPC, UTS namespace를 분리하며 capability를 모두 제거한다. 임시·runtime directory는
+비공개로 만들고 알려진 Docker, libvirt, LXD runtime endpoint를 가린다. 정확한 Grok
+state directory와 Session repository만 쓸 수 있으며 Provider network access는 유지한다.
+이 경계 안의 Grok은 native sandbox를 끄고 `dontAsk` permission, 빈 tool 집합, web search
+및 subagent 비활성화 상태로 실행된다. delegated backend는 정확한 profile marker,
+read-only sentinel mount, 차단된 workspace 쓰기를 독립적으로 검증한 뒤에만 이를
+허용한다.
+
+admission은 delivery가 `grok-native-read-only/v1alpha1` 또는
+`yo-bwrap-read-only/v1alpha1` 중 무엇을 사용했는지 기록하며 delivery claim과 receipt가
+그 선택을 보존한다. finding-resolution continuation은 새 claim을 게시하기 전에 직전
+delivery receipt에 기록된 것과 정확히 같은 isolation을 선택해야 한다. 물리적 isolation이
+기록되지 않은 legacy receipt는 isolation을 선택하는 continuation을 승인할 수 없다. 실행
+파일 누락, 미지원 platform, 불완전한 경계, attestation 실패,
+native와 outer startup 모두의 실패는 host를 unavailable로 만들며 격리 없는 검토로
+약화하지 않는다. Grok 1.0.13은 제한된 Linux container에서 native bubblewrap profile이
+container-runtime socket을 가리지 못할 때 외곽 profile이 필요할 수 있다. 설치 version
+문자열이나 쓰기 가능한 `~/.grok`만으로 review readiness를 증명하지 않는다.
+
+outer isolation claim을 게시하기 전에 delivery는 `yo`를 build하는 데 쓰는 trusted
+current-develop source가 delegated runner capability manifest에서 그 exact isolation을
+광고하는지도 요구한다. 새 review isolation을 도입하는 Slice는 검토되지 않은 자신의
+후보를 자기 packet을 반출하는 runner로 사용할 수 없다. 이미 활성화된 별도 route로
+검토하고 통합한 뒤 새 isolation을 dogfood한다. capability 증거가 없으면 claim이나 host
+request 전에 중단한다.
 
 ## 집중 검증
 

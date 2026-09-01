@@ -23,6 +23,12 @@ pub(super) struct ProcessCapture {
     pub(super) failure: Option<String>,
 }
 
+struct DeliveryCommand<'a> {
+    session_repository: &'a Path,
+    arguments: &'a [String],
+    execution_isolation: Option<&'a str>,
+}
+
 pub(super) fn execute_once(
     yo_binary: &Path,
     integration: &Path,
@@ -58,8 +64,11 @@ pub(super) fn execute_once_with_timeout(
         yo_binary,
         integration,
         output,
-        &output.join("sessions"),
-        &arguments,
+        DeliveryCommand {
+            session_repository: &output.join("sessions"),
+            arguments: &arguments,
+            execution_isolation: None,
+        },
         &delivery.packet_bytes,
         timeout,
     )
@@ -82,8 +91,11 @@ pub(super) fn execute_continuation_once(
         yo_binary,
         integration,
         output,
-        session_repository,
-        &arguments,
+        DeliveryCommand {
+            session_repository,
+            arguments: &arguments,
+            execution_isolation: None,
+        },
         &delivery.packet_bytes,
         DELIVERY_TIMEOUT,
     )
@@ -94,6 +106,7 @@ pub(super) fn execute_delegated_once(
     integration: &Path,
     output: &Path,
     delivery: &AuthorizedHostDelivery,
+    execution_isolation: Option<&str>,
 ) -> ProcessCapture {
     let arguments = vec![
         "-p".to_owned(),
@@ -106,8 +119,11 @@ pub(super) fn execute_delegated_once(
         yo_binary,
         integration,
         output,
-        &output.join("sessions"),
-        &arguments,
+        DeliveryCommand {
+            session_repository: &output.join("sessions"),
+            arguments: &arguments,
+            execution_isolation,
+        },
         &delivery.packet_bytes,
         DELIVERY_TIMEOUT,
     )
@@ -120,6 +136,7 @@ pub(super) fn execute_delegated_continuation_once(
     session_repository: &Path,
     session_id: &str,
     delivery: &AuthorizedHostDelivery,
+    execution_isolation: Option<&str>,
 ) -> ProcessCapture {
     let arguments = vec![
         "-p".to_owned(),
@@ -130,8 +147,11 @@ pub(super) fn execute_delegated_continuation_once(
         yo_binary,
         integration,
         output,
-        session_repository,
-        &arguments,
+        DeliveryCommand {
+            session_repository,
+            arguments: &arguments,
+            execution_isolation,
+        },
         &delivery.packet_bytes,
         DELIVERY_TIMEOUT,
     )
@@ -141,11 +161,15 @@ fn execute_command_once_with_timeout(
     yo_binary: &Path,
     integration: &Path,
     output: &Path,
-    session_repository: &Path,
-    arguments: &[String],
+    delivery_command: DeliveryCommand<'_>,
     packet: &[u8],
     timeout: Duration,
 ) -> ProcessCapture {
+    let DeliveryCommand {
+        session_repository,
+        arguments,
+        execution_isolation,
+    } = delivery_command;
     let stdout_path = output.join(".review.stdout.tmp");
     let stderr_path = output.join(".review.stderr.tmp");
     let stdout = match create_new(&stdout_path, "temporary review stdout") {
@@ -165,8 +189,48 @@ fn execute_command_once_with_timeout(
             );
         },
     };
-    let child = Command::new(yo_binary)
-        .args(arguments)
+    let mut command = match execution_isolation {
+        None | Some(crate::grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE) => {
+            let mut command = Command::new(yo_binary);
+            command.args(arguments);
+            command
+        },
+        Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE) => {
+            match crate::grok_outer_sandbox::command(
+                yo_binary,
+                arguments,
+                integration,
+                session_repository,
+            ) {
+                Ok(command) => command,
+                Err(error) => {
+                    drop(stdout);
+                    drop(stderr);
+                    return finish_capture(
+                        &stdout_path,
+                        &stderr_path,
+                        None,
+                        Some(format!(
+                            "cannot construct the claimed Grok outer sandbox: {error}"
+                        )),
+                    );
+                },
+            }
+        },
+        Some(other) => {
+            drop(stdout);
+            drop(stderr);
+            return finish_capture(
+                &stdout_path,
+                &stderr_path,
+                None,
+                Some(format!(
+                    "unsupported delegated review execution isolation `{other}`"
+                )),
+            );
+        },
+    };
+    let child = command
         .env("YO_SESSION_REPOSITORY", session_repository)
         .current_dir(integration)
         .stdin(Stdio::piped())

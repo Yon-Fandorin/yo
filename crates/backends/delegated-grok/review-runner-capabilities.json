@@ -1,0 +1,8 @@
+{
+  "schema": "yo.delegated-review-runner-capabilities/v1alpha1",
+  "host": "grok",
+  "execution_isolations": [
+    "grok-native-read-only/v1alpha1",
+    "yo-bwrap-read-only/v1alpha1"
+  ]
+}

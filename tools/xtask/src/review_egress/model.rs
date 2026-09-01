@@ -16,6 +16,8 @@ pub(super) const DELEGATED_REVIEW_CHAIN_PROFILE: &str =
     "yo.external-review-chain/bounded-multihop/v1alpha1";
 pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA: &str =
     "yo.external-review-delegated-delivery-receipt/v1alpha1";
+pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2: &str =
+    "yo.external-review-delegated-delivery-receipt/v1alpha2";
 pub(super) const DELEGATED_RESULT_SCHEMA: &str = "yo.slice-review-delegated-egress-result/v1alpha1";
 pub(super) const DELEGATED_EXECUTION_PROFILE: &str = "yo.delegated-review-execution/v1alpha1";
 
@@ -227,6 +229,8 @@ pub(super) struct DelegatedDeliveryReceipt {
     pub(super) packet_hash: String,
     pub(super) target: DelegatedTarget,
     pub(super) execution_profile: String,
+    #[serde(default)]
+    pub(super) execution_isolation: Option<String>,
     pub(super) session_id: String,
     pub(super) host_request_id: String,
     pub(super) host_request_count: usize,

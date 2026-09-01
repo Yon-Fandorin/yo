@@ -6,12 +6,14 @@ use super::{
     delegated_session::{observe_host_continuation, observe_host_session},
     evaluate_host_admission, exit_label, integration_worktree,
     model::{
-        DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2,
+        DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2, DELEGATED_CLAIM_SCHEMA_V1_ALPHA3,
         DELEGATED_CONTINUATION_CLAIM_SCHEMA, DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2,
-        DELEGATED_CONTINUATION_OUTCOME_SCHEMA, DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2,
-        DELEGATED_CONTINUATION_RESULT_SCHEMA, DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA2,
+        DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA3, DELEGATED_CONTINUATION_OUTCOME_SCHEMA,
+        DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2, DELEGATED_CONTINUATION_RESULT_SCHEMA,
+        DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA2,
         DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA3, DELEGATED_DELIVERY_RECEIPT_SCHEMA,
-        DELEGATED_OUTCOME_SCHEMA, DELEGATED_REQUEST_SCHEMA_V1_ALPHA2, DELEGATED_RESULT_SCHEMA,
+        DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2, DELEGATED_OUTCOME_SCHEMA,
+        DELEGATED_REQUEST_SCHEMA_V1_ALPHA2, DELEGATED_RESULT_SCHEMA,
         DELEGATED_RESULT_SCHEMA_V1_ALPHA2, DELEGATED_RESULT_SCHEMA_V1_ALPHA3, DelegatedClaim,
         DelegatedContinuationClaim, DelegatedContinuationDeliveryOutcome,
         DelegatedContinuationRequest, DelegatedContinuationResultDocument,
@@ -79,11 +81,15 @@ pub(super) fn run_original(
             "delegated review target admission changed while preparing delivery".to_owned(),
         );
     }
+    let execution_isolation = final_admission.delegated_execution_isolation();
+    super::runner_capability::require(&integration, &authorized.host, execution_isolation)?;
     require_integration_state(&integration, &authorized.trusted_commit)?;
     require_empty_directory(&output_directory)?;
 
     let claim = DelegatedClaim {
-        schema: if require_state_readiness {
+        schema: if execution_isolation.is_some() {
+            DELEGATED_CLAIM_SCHEMA_V1_ALPHA3
+        } else if require_state_readiness {
             DELEGATED_CLAIM_SCHEMA_V1_ALPHA2
         } else {
             DELEGATED_CLAIM_SCHEMA
@@ -99,6 +105,7 @@ pub(super) fn run_original(
         managed_payload_tokens: authorized.managed_payload_tokens,
         target: target(&authorized),
         execution_profile: &authorized.execution_profile,
+        execution_isolation,
         session_mode: "fresh",
         host_request_limit: 1,
         retries: 0,
@@ -111,7 +118,13 @@ pub(super) fn run_original(
     let claim_path = output_directory.join("claim.json");
     publish_claim(&claim_path, &canonical_json(&claim)?)?;
 
-    let capture = execute_delegated_once(&yo_binary, &integration, &output_directory, &authorized);
+    let capture = execute_delegated_once(
+        &yo_binary,
+        &integration,
+        &output_directory,
+        &authorized,
+        execution_isolation,
+    );
     let observation = observe_host_session(
         &output_directory.join("sessions"),
         &authorized.packet_bytes,
@@ -231,11 +244,16 @@ pub(super) fn run_original(
         .as_deref()
         .expect("completed delegated observation has one host request identity");
     let receipt = DelegatedDeliveryReceipt {
-        schema: DELEGATED_DELIVERY_RECEIPT_SCHEMA,
+        schema: if execution_isolation.is_some() {
+            DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2
+        } else {
+            DELEGATED_DELIVERY_RECEIPT_SCHEMA
+        },
         review_id: &authorized.review_id,
         packet_hash: &authorized.packet_hash,
         target: target(&authorized),
         execution_profile: &authorized.execution_profile,
+        execution_isolation,
         session_id,
         host_request_id,
         host_request_count: 1,
@@ -278,6 +296,23 @@ pub(super) fn run_original(
             .map_err(|error| format!("cannot encode delegated delivery result: {error}"))?
     );
     Ok(())
+}
+
+pub(super) fn require_continuation_isolation(
+    authorized: &AuthorizedHostDelivery,
+    selected: Option<&str>,
+) -> Result<(), String> {
+    if authorized.prior_execution_isolation.as_deref() == selected {
+        return Ok(());
+    }
+    Err(format!(
+        "delegated continuation execution isolation changed from `{}` to `{}`; resume requires the exact prior physical isolation",
+        authorized
+            .prior_execution_isolation
+            .as_deref()
+            .unwrap_or("unrecorded"),
+        selected.unwrap_or("unrecorded")
+    ))
 }
 
 pub(super) fn run_continuation(
@@ -339,6 +374,9 @@ pub(super) fn run_continuation(
             "delegated review target admission changed while preparing continuation".to_owned(),
         );
     }
+    let execution_isolation = final_admission.delegated_execution_isolation();
+    require_continuation_isolation(authorized, execution_isolation)?;
+    super::runner_capability::require(&integration, &authorized.host, execution_isolation)?;
     let session_id = authorized
         .session_id
         .as_deref()
@@ -351,7 +389,9 @@ pub(super) fn run_continuation(
     require_empty_directory(&output_directory)?;
 
     let claim = DelegatedContinuationClaim {
-        schema: if require_state_readiness {
+        schema: if execution_isolation.is_some() {
+            DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA3
+        } else if require_state_readiness {
             DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2
         } else {
             DELEGATED_CONTINUATION_CLAIM_SCHEMA
@@ -368,6 +408,7 @@ pub(super) fn run_continuation(
         managed_payload_tokens: authorized.managed_payload_tokens,
         target: target(authorized),
         execution_profile: &authorized.execution_profile,
+        execution_isolation,
         session_mode: "resume",
         session_id,
         prior_host_request_id,
@@ -391,6 +432,7 @@ pub(super) fn run_continuation(
         &verified.session_root,
         session_id,
         authorized,
+        execution_isolation,
     );
     let observation = observe_host_continuation(
         &verified.session_root,
@@ -511,11 +553,16 @@ pub(super) fn run_continuation(
         .continuation_anchor_sequence
         .expect("completed delegated continuation has one new Anchor");
     let receipt = DelegatedDeliveryReceipt {
-        schema: DELEGATED_DELIVERY_RECEIPT_SCHEMA,
+        schema: if execution_isolation.is_some() {
+            DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2
+        } else {
+            DELEGATED_DELIVERY_RECEIPT_SCHEMA
+        },
         review_id: &authorized.review_id,
         packet_hash: &authorized.packet_hash,
         target: target(authorized),
         execution_profile: &authorized.execution_profile,
+        execution_isolation,
         session_id,
         host_request_id,
         host_request_count: 1,

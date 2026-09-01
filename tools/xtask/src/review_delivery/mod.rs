@@ -3,6 +3,7 @@ mod delegated_session;
 mod finalize;
 mod model;
 mod process;
+mod runner_capability;
 mod session;
 mod usage;
 

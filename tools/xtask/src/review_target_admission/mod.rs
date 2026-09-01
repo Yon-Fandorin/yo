@@ -16,7 +16,8 @@ use std::{
 
 use model::{
     AccountLimit, Availability, Decision, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2,
-    REQUEST_SCHEMA_V1_ALPHA3, REQUEST_SCHEMA_V1_ALPHA4, Request, result_schema,
+    REQUEST_SCHEMA_V1_ALPHA3, REQUEST_SCHEMA_V1_ALPHA4, REQUEST_SCHEMA_V1_ALPHA5, Request,
+    result_schema,
 };
 pub(crate) use model::{Admission, ReviewTarget};
 use yo_core::{AccountId, LocalConnectionRepository, ModelId, ModelRequestFailureKind, ProviderId};
@@ -74,6 +75,7 @@ fn evaluate_request(request: &Request) -> Result<Admission, String> {
         ReviewTarget::DelegatedHost { host } => host_availability(
             host,
             match request.schema.as_str() {
+                REQUEST_SCHEMA_V1_ALPHA5 => HostReadiness::ExecutionIsolation,
                 REQUEST_SCHEMA_V1_ALPHA4 => HostReadiness::ExecutionProfile,
                 REQUEST_SCHEMA_V1_ALPHA3 => HostReadiness::State,
                 _ => HostReadiness::Version,
@@ -119,9 +121,10 @@ fn validate_request(request: &Request) -> Result<(), String> {
             | REQUEST_SCHEMA_V1_ALPHA2
             | REQUEST_SCHEMA_V1_ALPHA3
             | REQUEST_SCHEMA_V1_ALPHA4
+            | REQUEST_SCHEMA_V1_ALPHA5
     ) {
         return Err(format!(
-            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, or `{REQUEST_SCHEMA_V1_ALPHA4}`",
+            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, `{REQUEST_SCHEMA_V1_ALPHA4}`, or `{REQUEST_SCHEMA_V1_ALPHA5}`",
             request.schema
         ));
     }
@@ -190,6 +193,7 @@ fn managed_availability(path: &str, provider: &str, account: &str, model: &str) 
                 observed_at: None,
                 version: None,
                 executable: None,
+                execution_isolation: None,
                 detail: format!("cannot read the exact connection repository: {error}"),
             };
         },
@@ -208,6 +212,7 @@ fn managed_availability(path: &str, provider: &str, account: &str, model: &str) 
             observed_at: None,
             version: None,
             executable: None,
+            execution_isolation: None,
             detail: "the exact managed review target is not stored".to_owned(),
         };
     };
@@ -219,6 +224,7 @@ fn managed_availability(path: &str, provider: &str, account: &str, model: &str) 
             observed_at: None,
             version: None,
             executable: None,
+            execution_isolation: None,
             detail:
                 "the binding is stored, but no request-free entitlement or quota proof is available"
                     .to_owned(),
@@ -232,6 +238,7 @@ fn managed_availability(path: &str, provider: &str, account: &str, model: &str) 
         observed_at: Some(failure.observed_at().to_owned()),
         version: None,
         executable: None,
+        execution_isolation: None,
         detail: if blocking {
             "the newest typed target observation is unavailable; a successful exact request must clear it"
                 .to_owned()
@@ -257,11 +264,19 @@ enum HostReadiness {
     Version,
     State,
     ExecutionProfile,
+    ExecutionIsolation,
+}
+
+struct HostProbe {
+    executable: String,
+    version: String,
+    execution_isolation: Option<String>,
+    isolation_detail: Option<String>,
 }
 
 fn host_availability(host: &str, readiness: HostReadiness) -> Availability {
     match probe_host(host, readiness) {
-        Ok((executable, version)) => Availability {
+        Ok(probe) => Availability {
             state: "available",
             source: match readiness {
                 HostReadiness::Version => "delegated_host_executable_version",
@@ -269,15 +284,20 @@ fn host_availability(host: &str, readiness: HostReadiness) -> Availability {
                 HostReadiness::ExecutionProfile => {
                     "delegated_host_executable_state_and_execution_profile_readiness"
                 },
+                HostReadiness::ExecutionIsolation => {
+                    "delegated_host_executable_state_and_execution_isolation_readiness"
+                },
             },
             failure_kind: None,
             observed_at: None,
-            version: Some(version),
-            executable: Some(executable),
+            version: Some(probe.version),
+            executable: Some(probe.executable),
+            execution_isolation: probe.execution_isolation,
             detail: match readiness {
                 HostReadiness::Version => "the executable answered its bounded version probe; account usage and entitlement remain host-owned".to_owned(),
                 HostReadiness::State => "the executable answered its bounded version probe and its existing host-state directory passed a create-and-remove probe; account usage and entitlement remain host-owned".to_owned(),
                 HostReadiness::ExecutionProfile => "the executable answered its bounded version probe, its existing host-state directory passed a create-and-remove probe, and the exact request-free execution profile started successfully; account usage and entitlement remain host-owned".to_owned(),
+                HostReadiness::ExecutionIsolation => probe.isolation_detail.expect("execution-isolation readiness records its selected boundary"),
             },
         },
         Err(error) => Availability {
@@ -288,52 +308,97 @@ fn host_availability(host: &str, readiness: HostReadiness) -> Availability {
                 HostReadiness::ExecutionProfile => {
                     "delegated_host_executable_state_and_execution_profile_readiness"
                 },
+                HostReadiness::ExecutionIsolation => {
+                    "delegated_host_executable_state_and_execution_isolation_readiness"
+                },
             },
             failure_kind: Some("local_configuration".to_owned()),
             observed_at: None,
             version: None,
             executable: None,
+            execution_isolation: None,
             detail: error,
         },
     }
 }
 
-fn probe_host(host: &str, readiness: HostReadiness) -> Result<(String, String), String> {
+fn probe_host(host: &str, readiness: HostReadiness) -> Result<HostProbe, String> {
     let (executable, version) = probe_host_version(host)?;
     if readiness != HostReadiness::Version {
         let state = host_state_directory(host)?;
         probe_host_state_writable(&state)?;
     }
-    if readiness == HostReadiness::ExecutionProfile {
+    let (execution_isolation, isolation_detail) = if matches!(
+        readiness,
+        HostReadiness::ExecutionProfile | HostReadiness::ExecutionIsolation
+    ) {
         if host != "grok" {
             return Err(format!(
                 "no request-free execution-profile readiness probe is registered for delegated host `{host}`"
             ));
         }
-        probe_grok_read_only_startup(&executable)?;
-    }
-    Ok((executable.to_string_lossy().into_owned(), version))
+        match probe_grok_read_only_startup(&executable) {
+            Ok(()) => (
+                (readiness == HostReadiness::ExecutionIsolation)
+                    .then(|| crate::grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE.to_owned()),
+                (readiness == HostReadiness::ExecutionIsolation).then(|| {
+                    "the native Grok read-only profile passed the request-free startup probe and remains the selected isolation; account usage and entitlement remain host-owned".to_owned()
+                }),
+            ),
+            Err(native_failure) if readiness == HostReadiness::ExecutionIsolation => {
+                probe_grok_outer_read_only_startup(&executable)?;
+                (
+                    Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE.to_owned()),
+                    Some(format!(
+                        "the native Grok read-only profile was unavailable ({native_failure}); the Yo-owned bwrap read-only no-tools profile passed its request-free startup probe and was selected; account usage and entitlement remain host-owned"
+                    )),
+                )
+            },
+            Err(error) => return Err(error),
+        }
+    } else {
+        (None, None)
+    };
+    Ok(HostProbe {
+        executable: executable.to_string_lossy().into_owned(),
+        version,
+        execution_isolation,
+        isolation_detail,
+    })
 }
 
 fn probe_grok_read_only_startup(executable: &Path) -> Result<(), String> {
-    let mut child = Command::new(executable)
-        .args([
-            "--sandbox",
-            "read-only",
-            "--permission-mode",
-            "dontAsk",
-            "--tools",
-            "Read,Grep",
-            "--no-subagents",
-            "--disable-web-search",
-            "agent",
-            "stdio",
-        ])
+    let mut command = Command::new(executable);
+    command.args([
+        "--sandbox",
+        "read-only",
+        "--permission-mode",
+        "dontAsk",
+        "--tools",
+        "Read,Grep",
+        "--no-subagents",
+        "--disable-web-search",
+        "agent",
+        "stdio",
+    ]);
+    run_grok_startup(command, "Grok's request-free read-only profile")
+}
+
+fn probe_grok_outer_read_only_startup(executable: &Path) -> Result<(), String> {
+    let working_directory = std::env::current_dir()
+        .and_then(fs::canonicalize)
+        .map_err(|error| format!("cannot resolve the outer-sandbox probe directory: {error}"))?;
+    let command = crate::grok_outer_sandbox::probe_command(executable, &working_directory)?;
+    run_grok_startup(command, "Yo's request-free outer read-only Grok profile")
+}
+
+fn run_grok_startup(mut command: Command, label: &str) -> Result<(), String> {
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("cannot start Grok's request-free read-only profile: {error}"))?;
+        .map_err(|error| format!("cannot start {label}: {error}"))?;
     let stdout = child
         .stdout
         .take()
@@ -344,17 +409,17 @@ fn probe_grok_read_only_startup(executable: &Path) -> Result<(), String> {
         .expect("piped Grok startup stderr is available");
     let stdout_reader = thread::spawn(move || read_bounded_diagnostic(stdout));
     let stderr_reader = thread::spawn(move || read_bounded_diagnostic(stderr));
-    let status = wait_for_host_probe(&mut child, "Grok's request-free read-only profile");
+    let status = wait_for_host_probe(&mut child, label);
     let (stdout, stdout_exceeded) = stdout_reader
         .join()
-        .map_err(|_| "cannot collect Grok's request-free read-only profile stdout".to_owned())?;
+        .map_err(|_| format!("cannot collect {label} stdout"))?;
     let (stderr, stderr_exceeded) = stderr_reader
         .join()
-        .map_err(|_| "cannot collect Grok's request-free read-only profile stderr".to_owned())?;
+        .map_err(|_| format!("cannot collect {label} stderr"))?;
     let status = status?;
     if stdout_exceeded || stderr_exceeded {
         return Err(format!(
-            "Grok's request-free read-only profile exceeded the {HOST_DIAGNOSTIC_LIMIT}-byte per-stream diagnostic limit"
+            "{label} exceeded the {HOST_DIAGNOSTIC_LIMIT}-byte per-stream diagnostic limit"
         ));
     }
     if status.success() {
@@ -368,12 +433,10 @@ fn probe_grok_read_only_startup(executable: &Path) -> Result<(), String> {
         .collect::<Vec<_>>()
         .join("; ");
     if diagnostic.is_empty() {
-        Err(format!(
-            "Grok's request-free read-only profile exited without success ({status})"
-        ))
+        Err(format!("{label} exited without success ({status})"))
     } else {
         Err(format!(
-            "Grok's request-free read-only profile exited without success ({status}): {diagnostic}"
+            "{label} exited without success ({status}): {diagnostic}"
         ))
     }
 }

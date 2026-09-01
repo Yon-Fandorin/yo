@@ -3,7 +3,9 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::time::{Duration, Instant};
 
 use super::{
-    canonical_json, combine_failures, managed_model_reference,
+    canonical_json, combine_failures,
+    delegated::require_continuation_isolation,
+    managed_model_reference,
     model::{Artifact, CLAIM_SCHEMA, Claim, DeliveryRequest, ResultDocument, Route},
     prepare_output_directory_at,
     process::{
@@ -60,7 +62,41 @@ fn authorized_host() -> AuthorizedHostDelivery {
         session_id: None,
         prior_packet_hash: None,
         prior_host_request_id: None,
+        prior_execution_isolation: None,
     }
+}
+
+// continuation은 직전 receipt의 물리적 isolation과 새 admission 결과가 exact하게
+// 같을 때만 진행해 같은 reviewer Session의 보안 경계가 중간에 바뀌지 않게 합니다.
+#[test]
+fn delegated_continuation_pins_prior_execution_isolation() {
+    let mut authorized = authorized_host();
+    authorized.host = "grok".to_owned();
+    authorized.prior_execution_isolation =
+        Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE.to_owned());
+
+    require_continuation_isolation(
+        &authorized,
+        Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE),
+    )
+    .unwrap();
+    assert!(
+        require_continuation_isolation(
+            &authorized,
+            Some(crate::grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE),
+        )
+        .unwrap_err()
+        .contains("exact prior physical isolation")
+    );
+
+    authorized.prior_execution_isolation = None;
+    assert!(
+        require_continuation_isolation(
+            &authorized,
+            Some(crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE),
+        )
+        .is_err()
+    );
 }
 
 // continuation effect는 기존 original-fresh wire를 재해석하지 않고 preflight bytes만
@@ -565,6 +601,7 @@ fn continuation_launch_uses_exact_print_resume_arguments() {
         &sessions,
         delegated.session_id.as_deref().unwrap(),
         &delegated,
+        None,
     );
     assert!(capture.status.unwrap().success());
     assert_eq!(
@@ -596,7 +633,8 @@ fn delegated_launch_uses_exact_host_read_only_arguments() {
         std::fs::create_dir(&output).unwrap();
         let mut delivery = authorized_host();
         delivery.host = host.to_owned();
-        let capture = execute_delegated_once(&executable, &repository.path, &output, &delivery);
+        let capture =
+            execute_delegated_once(&executable, &repository.path, &output, &delivery, None);
 
         assert!(capture.status.unwrap().success());
         assert_eq!(

@@ -53,8 +53,8 @@ Do not infer compatibility from the executable version alone. Inspect the
 candidate's ACP behavior and retain deterministic fixtures that distinguish
 the admitted shape from malformed, mismatched, or unsupported messages.
 
-For external review, admission v1alpha4 also starts the frozen reviewer profile
-with stdin already at EOF:
+For external review, admission v1alpha5 first starts the frozen native reviewer
+profile with stdin already at EOF:
 
 ```text
 grok --sandbox read-only --permission-mode dontAsk --tools Read,Grep \
@@ -62,14 +62,40 @@ grok --sandbox read-only --permission-mode dontAsk --tools Read,Grep \
 ```
 
 This bounded startup probe happens before ContextBuild or packet publication.
-It sends no prompt, ACP initialize, Session request, or private packet. A
-sandbox startup failure is an unavailable host, not a warning and not grounds
-for an unsandboxed fallback. Grok 1.0.13 can fail this probe in restricted Linux
-containers when its bubblewrap profile cannot mask a container-runtime socket;
-the installed version string and writable `~/.grok` alone do not prove that the
-reviewer profile can run. Current upstream keeps runtime-socket handling inside
-the sandbox implementation, so upgrading the host remains the preferred fix
-when a release containing that behavior is available.
+It sends no prompt, ACP initialize, Session request, or private packet. If the
+native profile cannot start on Linux, Yo may try exactly one owned outer profile,
+`yo-bwrap-read-only/v1alpha1`. It is a bounded compatibility boundary for
+immutable review packets, not a general-purpose host sandbox.
+
+The outer profile uses bubblewrap with a read-only root and review workspace,
+separate user, PID, IPC, and UTS namespaces, no capabilities, private temporary
+and runtime directories, and masked known Docker, libvirt, and LXD runtime
+endpoints. Only the exact Grok state directory and Session repository are
+writable. Provider network access remains available. Inside that boundary Grok
+runs with its native sandbox disabled, `dontAsk` permissions, an empty tool set,
+and web search and subagents disabled. The delegated backend independently
+attests the exact profile marker, read-only sentinel mount, and blocked workspace
+write before accepting it.
+
+Admission records whether the delivery uses `grok-native-read-only/v1alpha1` or
+`yo-bwrap-read-only/v1alpha1`, and the delivery claim and receipt preserve that
+choice. A finding-resolution continuation must select the exact isolation
+recorded by its prior delivery receipt before it may publish a new claim. A
+legacy receipt with no physical isolation cannot authorize a continuation that
+selects one. A missing binary, unsupported platform, incomplete boundary, failed
+attestation, or failed native and outer startup makes the host unavailable; it
+never degrades to an unisolated review. Grok 1.0.13 can need the outer profile in
+restricted Linux containers when its native bubblewrap profile cannot mask a
+container-runtime socket. An installed version string or writable `~/.grok`
+alone does not prove review readiness.
+
+Before publishing an outer-isolation claim, delivery also requires the trusted
+current-develop source used to build `yo` to advertise that exact isolation in
+the delegated runner capability manifest. A Slice that introduces a new review
+isolation cannot use its unreviewed candidate as the runner that exports its own
+packet. Review it through a disjoint already-active route, integrate it, and
+then dogfood the new isolation. Missing capability evidence stops before a
+claim or host request.
 
 ## Focused validation
 

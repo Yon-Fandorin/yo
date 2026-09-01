@@ -37,10 +37,14 @@ pub(super) const DELEGATED_CLAIM_SCHEMA: &str =
     "yo.external-review-delegated-delivery-claim/v1alpha1";
 pub(super) const DELEGATED_CLAIM_SCHEMA_V1_ALPHA2: &str =
     "yo.external-review-delegated-delivery-claim/v1alpha2";
+pub(super) const DELEGATED_CLAIM_SCHEMA_V1_ALPHA3: &str =
+    "yo.external-review-delegated-delivery-claim/v1alpha3";
 pub(super) const DELEGATED_CONTINUATION_CLAIM_SCHEMA: &str =
     "yo.external-review-delegated-continuation-delivery-claim/v1alpha1";
 pub(super) const DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2: &str =
     "yo.external-review-delegated-continuation-delivery-claim/v1alpha2";
+pub(super) const DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA3: &str =
+    "yo.external-review-delegated-continuation-delivery-claim/v1alpha3";
 pub(super) const DELEGATED_OUTCOME_SCHEMA: &str =
     "yo.external-review-delegated-delivery-outcome/v1alpha1";
 pub(super) const DELEGATED_CONTINUATION_OUTCOME_SCHEMA: &str =
@@ -59,6 +63,8 @@ pub(super) const DELEGATED_CONTINUATION_RESULT_SCHEMA_V1_ALPHA3: &str =
     "yo.slice-review-delegated-continuation-delivery-result/v1alpha3";
 pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA: &str =
     "yo.external-review-delegated-delivery-receipt/v1alpha1";
+pub(super) const DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2: &str =
+    "yo.external-review-delegated-delivery-receipt/v1alpha2";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -316,6 +322,8 @@ pub(super) struct DelegatedClaim<'a> {
     pub(super) managed_payload_tokens: usize,
     pub(super) target: DelegatedTarget<'a>,
     pub(super) execution_profile: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) execution_isolation: Option<&'a str>,
     pub(super) session_mode: &'static str,
     pub(super) host_request_limit: usize,
     pub(super) retries: usize,
@@ -341,6 +349,8 @@ pub(super) struct DelegatedContinuationClaim<'a> {
     pub(super) managed_payload_tokens: usize,
     pub(super) target: DelegatedTarget<'a>,
     pub(super) execution_profile: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) execution_isolation: Option<&'a str>,
     pub(super) session_mode: &'static str,
     pub(super) session_id: &'a str,
     pub(super) prior_host_request_id: &'a str,
@@ -392,6 +402,8 @@ pub(super) struct DelegatedDeliveryReceipt<'a> {
     pub(super) packet_hash: &'a str,
     pub(super) target: DelegatedTarget<'a>,
     pub(super) execution_profile: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) execution_isolation: Option<&'a str>,
     pub(super) session_id: &'a str,
     pub(super) host_request_id: &'a str,
     pub(super) host_request_count: usize,

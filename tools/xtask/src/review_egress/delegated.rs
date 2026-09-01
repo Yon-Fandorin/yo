@@ -8,10 +8,11 @@ use super::{
         AuthorizedDelegatedTarget, AuthorizedDelegatedTargetV1Alpha2,
         AuthorizedDelegatedTargetV1Alpha3, DELEGATED_AUTHORIZATION_SCHEMA,
         DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA2, DELEGATED_AUTHORIZATION_SCHEMA_V1_ALPHA3,
-        DELEGATED_DELIVERY_RECEIPT_SCHEMA, DELEGATED_EXECUTION_PROFILE, DELEGATED_REQUEST_SCHEMA,
-        DELEGATED_RESULT_SCHEMA, DELEGATED_REVIEW_CHAIN_PROFILE, DelegatedAuthorizationDocument,
-        DelegatedDeliveryLimits, DelegatedDeliveryReceipt, DelegatedRequest,
-        DelegatedResultDocument, ManifestHeader, PacketResult, ReviewKind, Session,
+        DELEGATED_DELIVERY_RECEIPT_SCHEMA, DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2,
+        DELEGATED_EXECUTION_PROFILE, DELEGATED_REQUEST_SCHEMA, DELEGATED_RESULT_SCHEMA,
+        DELEGATED_REVIEW_CHAIN_PROFILE, DelegatedAuthorizationDocument, DelegatedDeliveryLimits,
+        DelegatedDeliveryReceipt, DelegatedRequest, DelegatedResultDocument, ManifestHeader,
+        PacketResult, ReviewKind, Session,
     },
     require_exact_hash, require_sha256, resolve_input_path, review_delta,
 };
@@ -40,12 +41,14 @@ pub(crate) struct AuthorizedHostDelivery {
     pub(crate) session_id: Option<String>,
     pub(crate) prior_packet_hash: Option<String>,
     pub(crate) prior_host_request_id: Option<String>,
+    pub(crate) prior_execution_isolation: Option<String>,
 }
 
 struct CapturedHostReceipt {
     path: PathBuf,
     bytes: Vec<u8>,
     host_request_id: String,
+    execution_isolation: Option<String>,
 }
 
 pub(crate) fn authorize_host_delivery(
@@ -213,6 +216,9 @@ fn authorize_with(
         prior_host_request_id: prior_delivery
             .as_ref()
             .map(|receipt| receipt.host_request_id.clone()),
+        prior_execution_isolation: prior_delivery
+            .as_ref()
+            .and_then(|receipt| receipt.execution_isolation.clone()),
     };
     let document = DelegatedResultDocument {
         schema: DELEGATED_RESULT_SCHEMA,
@@ -611,6 +617,7 @@ fn capture_prior_delivery(
         path,
         bytes,
         host_request_id: receipt.host_request_id,
+        execution_isolation: receipt.execution_isolation,
     }))
 }
 
@@ -634,9 +641,12 @@ pub(super) fn verify_completed_delivery_bytes(
 fn parse_delivery_receipt(bytes: &[u8], label: &str) -> Result<DelegatedDeliveryReceipt, String> {
     let receipt: DelegatedDeliveryReceipt =
         serde_json::from_slice(bytes).map_err(|error| format!("invalid {label}: {error}"))?;
-    if receipt.schema != DELEGATED_DELIVERY_RECEIPT_SCHEMA {
+    if !matches!(
+        receipt.schema.as_str(),
+        DELEGATED_DELIVERY_RECEIPT_SCHEMA | DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2
+    ) {
         return Err(format!(
-            "unsupported delegated delivery receipt schema `{}`; expected `{DELEGATED_DELIVERY_RECEIPT_SCHEMA}`",
+            "unsupported delegated delivery receipt schema `{}`; expected `{DELEGATED_DELIVERY_RECEIPT_SCHEMA}` or `{DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2}`",
             receipt.schema
         ));
     }
@@ -644,6 +654,31 @@ fn parse_delivery_receipt(bytes: &[u8], label: &str) -> Result<DelegatedDelivery
     require_sha256(&receipt.packet_hash, "delivery packet hash")?;
     validate_host(receipt.target.host())?;
     require_execution_profile(&receipt.execution_profile)?;
+    match (
+        receipt.schema.as_str(),
+        receipt.execution_isolation.as_deref(),
+    ) {
+        (DELEGATED_DELIVERY_RECEIPT_SCHEMA, None) => {},
+        (DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2, Some(isolation))
+            if receipt.target.host() == "grok"
+                && matches!(
+                    isolation,
+                    crate::grok_outer_sandbox::NATIVE_SANDBOX_REVIEW_PROFILE
+                        | crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE
+                ) => {},
+        (DELEGATED_DELIVERY_RECEIPT_SCHEMA, Some(_)) => {
+            return Err(
+                "delegated delivery receipt v1alpha1 must not name execution isolation".to_owned(),
+            );
+        },
+        (DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2, _) => {
+            return Err(
+                "delegated delivery receipt v1alpha2 requires an exact Grok execution isolation"
+                    .to_owned(),
+            );
+        },
+        _ => unreachable!("validated delegated receipt schema"),
+    }
     compact_token(
         &receipt.session_id,
         MAX_SESSION_ID_BYTES,
@@ -875,6 +910,51 @@ mod tests {
             parse_delivery_receipt(&serde_json::to_vec(&fabricated).unwrap(), "receipt")
                 .unwrap_err()
                 .contains("unknown field")
+        );
+    }
+
+    // v1alpha2 receipt는 Grok 요청에 실제로 선택된 native 또는 Yo outer isolation을
+    // 반드시 기록하고, 기존 v1alpha1이나 Codex receipt로 그 의미를 위조하지 못합니다.
+    #[test]
+    fn delegated_receipt_v1alpha2_binds_exact_grok_isolation() {
+        let receipt = serde_json::json!({
+            "schema": DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2,
+            "review_id": format!("sha256:{}", "1".repeat(64)),
+            "packet_hash": format!("sha256:{}", "2".repeat(64)),
+            "target": {"kind": "delegated_host", "host": "grok"},
+            "execution_profile": DELEGATED_EXECUTION_PROFILE,
+            "execution_isolation": crate::grok_outer_sandbox::OUTER_SANDBOX_REVIEW_PROFILE,
+            "session_id": "session-a",
+            "host_request_id": "request-a",
+            "host_request_count": 1
+        });
+        parse_delivery_receipt(&serde_json::to_vec(&receipt).unwrap(), "receipt").unwrap();
+
+        let mut missing = receipt.clone();
+        missing
+            .as_object_mut()
+            .unwrap()
+            .remove("execution_isolation");
+        assert!(
+            parse_delivery_receipt(&serde_json::to_vec(&missing).unwrap(), "receipt")
+                .unwrap_err()
+                .contains("requires an exact Grok execution isolation")
+        );
+
+        let mut legacy = receipt.clone();
+        legacy["schema"] = DELEGATED_DELIVERY_RECEIPT_SCHEMA.into();
+        assert!(
+            parse_delivery_receipt(&serde_json::to_vec(&legacy).unwrap(), "receipt")
+                .unwrap_err()
+                .contains("must not name execution isolation")
+        );
+
+        let mut codex = receipt;
+        codex["target"]["host"] = "codex".into();
+        assert!(
+            parse_delivery_receipt(&serde_json::to_vec(&codex).unwrap(), "receipt")
+                .unwrap_err()
+                .contains("requires an exact Grok execution isolation")
         );
     }
 

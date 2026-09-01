@@ -1482,3 +1482,16 @@ fn local_grok_authenticates_and_shuts_down_without_a_session() {
 
     GrokBackend::verify(GrokBackendConfig::new(cwd)).unwrap();
 }
+
+// Yo outer sandbox smoke는 실제 mount/write attestation 뒤 native sandbox 대신 exact
+// no-tools ACP argv로 인증까지만 수행하고 Agent Session이나 inference Turn을 만들지 않습니다.
+#[test]
+#[ignore = "requires the Yo bwrap profile plus a compatible installed and logged-in Grok CLI"]
+fn local_outer_sandbox_grok_authenticates_without_a_session() {
+    let cwd = std::env::current_dir().unwrap();
+    let config = GrokBackendConfig::new(cwd)
+        .with_read_only_review(true)
+        .with_outer_sandboxed_review(true);
+
+    GrokBackend::verify(config).unwrap();
+}

@@ -413,8 +413,11 @@ fn run_agent_generation(
                 (Box::new(backend), skills)
             },
             Some((host, execution)) if host.as_str() == yo_core::HostId::GROK => {
+                let outer_sandboxed_review =
+                    std::env::var_os(yo_backend_delegated_grok::OUTER_SANDBOX_REVIEW_ENV).is_some();
                 let grok_config = yo_backend_delegated_grok::GrokBackendConfig::new(&session_cwd)
-                    .with_read_only_review(execution.is_read_only_review());
+                    .with_read_only_review(execution.is_read_only_review())
+                    .with_outer_sandboxed_review(outer_sandboxed_review);
                 let backend = match yo_backend_delegated_grok::GrokBackend::spawn(grok_config) {
                     Ok(backend) => backend,
                     Err(error) if launch.resume_id().is_some() => {

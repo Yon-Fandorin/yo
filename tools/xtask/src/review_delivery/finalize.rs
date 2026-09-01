@@ -7,11 +7,12 @@ use super::{
     delegated_session::{observe_host_continuation, observe_host_session},
     evaluate_host_admission,
     model::{
-        DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2,
+        DELEGATED_CLAIM_SCHEMA, DELEGATED_CLAIM_SCHEMA_V1_ALPHA2, DELEGATED_CLAIM_SCHEMA_V1_ALPHA3,
         DELEGATED_CONTINUATION_CLAIM_SCHEMA, DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2,
+        DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA3,
         DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2, DELEGATED_DELIVERY_RECEIPT_SCHEMA,
-        DELEGATED_REQUEST_SCHEMA_V1_ALPHA2, DelegatedContinuationRequest, DelegatedDeliveryReceipt,
-        DelegatedRequest, DeliveryRequest,
+        DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2, DELEGATED_REQUEST_SCHEMA_V1_ALPHA2,
+        DelegatedContinuationRequest, DelegatedDeliveryReceipt, DelegatedRequest, DeliveryRequest,
     },
     output_directory, read_request, require_exact_file_hash, shared_path,
 };
@@ -149,26 +150,30 @@ fn finalize_original(repository: &Path, request: DelegatedRequest) -> Result<Fin
         );
     }
     let strong = request.schema == DELEGATED_REQUEST_SCHEMA_V1_ALPHA2;
-    evaluate_host_admission(
+    let admission = evaluate_host_admission(
         repository,
         &request.admission_request_path,
         &request.admission_request_hash,
         &delivery,
         strong,
     )?;
+    let execution_isolation = admission.delegated_execution_isolation();
     let output = output_directory(repository, &request.output_directory)?;
     let claim = read_json(&output.join("claim.json"), "delegated delivery claim")?;
     validate_claim(
         &claim,
         &delivery,
         &request.admission_request_hash,
-        if strong {
+        if execution_isolation.is_some() {
+            DELEGATED_CLAIM_SCHEMA_V1_ALPHA3
+        } else if strong {
             DELEGATED_CLAIM_SCHEMA_V1_ALPHA2
         } else {
             DELEGATED_CLAIM_SCHEMA
         },
         false,
         None,
+        execution_isolation,
     )?;
     validate_process_and_artifacts(&output, &delivery.request_id, false)?;
     let observation =
@@ -189,7 +194,14 @@ fn finalize_original(repository: &Path, request: DelegatedRequest) -> Result<Fin
             "recovered delegated delivery must contain exactly one host request".to_owned(),
         );
     }
-    publish_recovery(&output, &delivery, &session_id, &host_request_id, None)
+    publish_recovery(
+        &output,
+        &delivery,
+        &session_id,
+        &host_request_id,
+        None,
+        execution_isolation,
+    )
 }
 
 fn finalize_continuation(
@@ -228,13 +240,14 @@ fn finalize_continuation(
         );
     }
     let strong = request.schema == DELEGATED_CONTINUATION_REQUEST_SCHEMA_V1_ALPHA2;
-    evaluate_host_admission(
+    let admission = evaluate_host_admission(
         repository,
         &request.admission_request_path,
         &request.admission_request_hash,
         &delivery,
         strong,
     )?;
+    let execution_isolation = admission.delegated_execution_isolation();
     let output = output_directory(repository, &request.output_directory)?;
     let claim = read_json(&output.join("claim.json"), "delegated continuation claim")?;
     let prior_anchor = required_u64(&claim, "continuation_anchor_sequence")?;
@@ -244,13 +257,16 @@ fn finalize_continuation(
         &claim,
         &delivery,
         &request.admission_request_hash,
-        if strong {
+        if execution_isolation.is_some() {
+            DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA3
+        } else if strong {
             DELEGATED_CONTINUATION_CLAIM_SCHEMA_V1_ALPHA2
         } else {
             DELEGATED_CONTINUATION_CLAIM_SCHEMA
         },
         true,
         Some(&preflight_id),
+        execution_isolation,
     )?;
     validate_process_and_artifacts(&output, &delivery.request_id, true)?;
     let session_root = fs::canonicalize(&preflight.session_repository_path).map_err(|error| {
@@ -292,6 +308,7 @@ fn finalize_continuation(
         &session_id,
         &host_request_id,
         Some(anchor),
+        execution_isolation,
     )
 }
 
@@ -302,6 +319,7 @@ fn validate_claim(
     expected_schema: &str,
     continuation: bool,
     preflight_id: Option<&str>,
+    execution_isolation: Option<&str>,
 ) -> Result<(), String> {
     require_claim_schema(claim, expected_schema)?;
     for (field, expected) in [
@@ -318,6 +336,13 @@ fn validate_claim(
         if claim.get(field).and_then(serde_json::Value::as_str) != Some(expected) {
             return Err(format!("delegated delivery claim changed `{field}`"));
         }
+    }
+    if claim
+        .get("execution_isolation")
+        .and_then(serde_json::Value::as_str)
+        != execution_isolation
+    {
+        return Err("delegated delivery claim changed `execution_isolation`".to_owned());
     }
     if claim
         .pointer("/target/kind")
@@ -458,13 +483,19 @@ fn publish_recovery(
     session_id: &str,
     host_request_id: &str,
     continuation_anchor_sequence: Option<u64>,
+    execution_isolation: Option<&str>,
 ) -> Result<Finalized, String> {
     let receipt = DelegatedDeliveryReceipt {
-        schema: DELEGATED_DELIVERY_RECEIPT_SCHEMA,
+        schema: if execution_isolation.is_some() {
+            DELEGATED_DELIVERY_RECEIPT_SCHEMA_V1_ALPHA2
+        } else {
+            DELEGATED_DELIVERY_RECEIPT_SCHEMA
+        },
         review_id: &delivery.review_id,
         packet_hash: &delivery.packet_hash,
         target: super::delegated::target(delivery),
         execution_profile: &delivery.execution_profile,
+        execution_isolation,
         session_id,
         host_request_id,
         host_request_count: 1,

@@ -70,6 +70,10 @@ fn admitted_next_action_selects_the_disjoint_delivery_protocol() {
         delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA4),
         ("eligible", "deliver_delegated_once")
     );
+    assert_eq!(
+        delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA5),
+        ("eligible", "deliver_delegated_once")
+    );
 }
 
 // bounded 탐색 구간에 신뢰할 수 없는 Session이 있으면 이를 absence로 건너뛰지 않고,
@@ -149,6 +153,15 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     assert_eq!(
         super::model::result_schema(&alpha4.schema),
         super::model::RESULT_SCHEMA_V1_ALPHA4
+    );
+
+    let mut alpha5 = valid.clone();
+    alpha5["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA5.into();
+    let alpha5: super::model::Request = serde_json::from_value(alpha5).unwrap();
+    super::validate_request(&alpha5).unwrap();
+    assert_eq!(
+        super::model::result_schema(&alpha5.schema),
+        super::model::RESULT_SCHEMA_V1_ALPHA5
     );
 
     let mut extra = valid;

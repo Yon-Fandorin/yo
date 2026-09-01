@@ -3,6 +3,7 @@ mod bounded_file;
 mod cost_report;
 mod docs_translation;
 mod git;
+mod grok_outer_sandbox;
 mod impact;
 mod review_continuation_preflight;
 mod review_delivery;
