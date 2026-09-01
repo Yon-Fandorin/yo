@@ -498,13 +498,30 @@ a literal wrapper-sentinel prefix with ASCII `\x3c`; hashes and byte counts
 continue to bind the decoded original. This keeps in-body source text from
 being mistaken for a real section or payload boundary.
 
-Use a separate fresh-context Codex session by default. Use a configured
-different-perspective provider when the lens needs hidden assumptions,
-counterexamples, alternatives, or future costs; require its strongest
-counterargument before the verdict. A provider is configured only after the
-human selects it and local guidance defines invocation, stable identity, setup
-failure, and unavailability. Kimi is the current preferred profile, not a
-product dependency. Do not invent commands for an unconfigured provider.
+Choose the reviewer before packet delivery from routes that the human has
+already configured and authorized. First match the required lens, then compare
+current target admission and the newest available account-capacity or Session
+usage observation, and finally prefer the route expected to complete with less
+coordination and token cost. An unknown quota is not proof of availability or
+unavailability. A typed blocking failure younger than 5 hours remains current;
+use the managed v1alpha6 stale-failure rule above when it is older instead of
+carrying the failure forward indefinitely. Record the chosen route and this
+selection basis in Slice coordination before delivery. No Provider, including
+Kimi or Codex, has a permanent default priority. Do not invent commands for an
+unconfigured provider.
+
+One independent reviewer is the default for an ordinary implementation Slice.
+Use multiple providers only when the human or Slice contract requires
+independent perspectives for a consequential design boundary, cross-Provider
+semantics, or another named risk whose likely blind spots justify the added
+cost. Give parallel reviewers the same immutable candidate and lens-specific
+questions, start them concurrently when their effects are independently
+authorized, and reconcile findings only after all requested results arrive.
+Do not send an already-clear ordinary review to another provider merely to
+compare models. When the lens specifically needs hidden assumptions,
+counterexamples, alternatives, or future costs, select a configured
+different-perspective provider and require its strongest counterargument before
+the verdict.
 
 Run a Kimi review from the Slice worktree in a new non-interactive prompt
 session. The sentinel prevents command substitution from stripping the
@@ -661,11 +678,14 @@ attempt as complete.
 For every completed agent review, record the lens, actual provider, exposed
 model and session identity, and verdict in the Slice status or handoff; report
 the actual provider and model at close. Record missing identifiers rather than
-guessing. If a correctly invoked preferred provider cannot finish because the
-service or allowance is unavailable, record the requested provider and reason,
-then a separate fresh-context Codex session may perform the same lens. Do not
-retry an unavailable provider until its state changes. Human exact review is
-also valid; the implementing session's self-check is not.
+guessing. If a correctly invoked selected provider cannot finish because the
+service or allowance is unavailable, record the requested provider and reason.
+Another configured provider may perform the same lens in a separate
+fresh-context Session only under delivery authority that permits that new
+effect; it is not an automatic fallback or retry. Do not retry an unavailable
+provider until its state changes or its blocking observation becomes stale
+under the 5-hour rule. Human exact review is also valid; the implementing
+session's self-check is not.
 
 When the provider exposes them, also record managed packet tokens, model-call
 and reviewer-tool-call counts, cumulative input, cached input, output, and the
