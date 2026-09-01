@@ -14,13 +14,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+use jiff::Timestamp;
 use model::{
     AccountLimit, Availability, Decision, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2,
-    REQUEST_SCHEMA_V1_ALPHA3, REQUEST_SCHEMA_V1_ALPHA4, REQUEST_SCHEMA_V1_ALPHA5, Request,
-    result_schema,
+    REQUEST_SCHEMA_V1_ALPHA3, REQUEST_SCHEMA_V1_ALPHA4, REQUEST_SCHEMA_V1_ALPHA5,
+    REQUEST_SCHEMA_V1_ALPHA6, Request, result_schema,
 };
 pub(crate) use model::{Admission, ReviewTarget};
-use yo_core::{AccountId, LocalConnectionRepository, ModelId, ModelRequestFailureKind, ProviderId};
+use yo_core::{
+    AccountId, LocalConnectionRepository, ModelId, ModelLastFailure, ModelRequestFailureKind,
+    ProviderId,
+};
 
 use crate::bounded_file;
 
@@ -29,6 +33,7 @@ const MAX_TOKEN_BYTES: usize = 128;
 const HOST_VERSION_LIMIT: usize = 256;
 const HOST_DIAGNOSTIC_LIMIT: usize = 8 * 1024;
 const HOST_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+const BLOCKING_FAILURE_FRESHNESS_SECONDS: i64 = 5 * 60 * 60;
 static HOST_STATE_PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn run(request_path: &Path) -> Result<(), String> {
@@ -71,11 +76,15 @@ fn evaluate_request(request: &Request) -> Result<Admission, String> {
             provider,
             account,
             model,
+            request.schema == REQUEST_SCHEMA_V1_ALPHA6,
+            Timestamp::now(),
         ),
         ReviewTarget::DelegatedHost { host } => host_availability(
             host,
             match request.schema.as_str() {
-                REQUEST_SCHEMA_V1_ALPHA5 => HostReadiness::ExecutionIsolation,
+                REQUEST_SCHEMA_V1_ALPHA5 | REQUEST_SCHEMA_V1_ALPHA6 => {
+                    HostReadiness::ExecutionIsolation
+                },
                 REQUEST_SCHEMA_V1_ALPHA4 => HostReadiness::ExecutionProfile,
                 REQUEST_SCHEMA_V1_ALPHA3 => HostReadiness::State,
                 _ => HostReadiness::Version,
@@ -122,9 +131,10 @@ fn validate_request(request: &Request) -> Result<(), String> {
             | REQUEST_SCHEMA_V1_ALPHA3
             | REQUEST_SCHEMA_V1_ALPHA4
             | REQUEST_SCHEMA_V1_ALPHA5
+            | REQUEST_SCHEMA_V1_ALPHA6
     ) {
         return Err(format!(
-            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, `{REQUEST_SCHEMA_V1_ALPHA4}`, or `{REQUEST_SCHEMA_V1_ALPHA5}`",
+            "unsupported external review target admission request schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, `{REQUEST_SCHEMA_V1_ALPHA4}`, `{REQUEST_SCHEMA_V1_ALPHA5}`, or `{REQUEST_SCHEMA_V1_ALPHA6}`",
             request.schema
         ));
     }
@@ -181,7 +191,14 @@ pub(crate) fn validate_target(target: &ReviewTarget) -> Result<(), String> {
     Ok(())
 }
 
-fn managed_availability(path: &str, provider: &str, account: &str, model: &str) -> Availability {
+fn managed_availability(
+    path: &str,
+    provider: &str,
+    account: &str,
+    model: &str,
+    expire_blocking_failure: bool,
+    now: Timestamp,
+) -> Availability {
     let repository = LocalConnectionRepository::new(PathBuf::from(path));
     let snapshot = match repository.capture() {
         Ok(snapshot) => snapshot,
@@ -191,6 +208,7 @@ fn managed_availability(path: &str, provider: &str, account: &str, model: &str) 
                 source: "connection_repository",
                 failure_kind: Some("local_configuration".to_owned()),
                 observed_at: None,
+                failure_freshness: None,
                 version: None,
                 executable: None,
                 execution_isolation: None,
@@ -210,6 +228,7 @@ fn managed_availability(path: &str, provider: &str, account: &str, model: &str) 
             source: "connection_repository",
             failure_kind: Some("local_configuration".to_owned()),
             observed_at: None,
+            failure_freshness: None,
             version: None,
             executable: None,
             execution_isolation: None,
@@ -222,6 +241,7 @@ fn managed_availability(path: &str, provider: &str, account: &str, model: &str) 
             source: "connection_repository",
             failure_kind: None,
             observed_at: None,
+            failure_freshness: None,
             version: None,
             executable: None,
             execution_isolation: None,
@@ -230,16 +250,43 @@ fn managed_availability(path: &str, provider: &str, account: &str, model: &str) 
                     .to_owned(),
         };
     };
+    observed_failure_availability(failure, expire_blocking_failure, now)
+}
+
+fn observed_failure_availability(
+    failure: &ModelLastFailure,
+    expire_blocking_failure: bool,
+    now: Timestamp,
+) -> Availability {
     let blocking = blocking_failure(failure.kind());
+    let observed = failure
+        .observed_at()
+        .parse::<Timestamp>()
+        .expect("stored last_failure was validated before repository capture");
+    let stale =
+        now.as_second().saturating_sub(observed.as_second()) >= BLOCKING_FAILURE_FRESHNESS_SECONDS;
+    let stale_blocking = expire_blocking_failure && blocking && stale;
     Availability {
-        state: if blocking { "unavailable" } else { "unknown" },
+        state: if blocking && !stale_blocking {
+            "unavailable"
+        } else {
+            "unknown"
+        },
         source: "connection_repository.last_failure",
         failure_kind: Some(failure.kind().as_str().to_owned()),
         observed_at: Some(failure.observed_at().to_owned()),
+        failure_freshness: expire_blocking_failure.then_some(if stale {
+            "stale"
+        } else {
+            "recent"
+        }),
         version: None,
         executable: None,
         execution_isolation: None,
-        detail: if blocking {
+        detail: if stale_blocking {
+            "the blocking observation is at least 5 hours old; the already-authorized original delivery may revalidate it exactly once without a probe, retry, steer, or fallback"
+                .to_owned()
+        } else if blocking {
             "the newest typed target observation is unavailable; a successful exact request must clear it"
                 .to_owned()
         } else {
@@ -290,6 +337,7 @@ fn host_availability(host: &str, readiness: HostReadiness) -> Availability {
             },
             failure_kind: None,
             observed_at: None,
+            failure_freshness: None,
             version: Some(probe.version),
             executable: Some(probe.executable),
             execution_isolation: probe.execution_isolation,
@@ -314,6 +362,7 @@ fn host_availability(host: &str, readiness: HostReadiness) -> Availability {
             },
             failure_kind: Some("local_configuration".to_owned()),
             observed_at: None,
+            failure_freshness: None,
             version: None,
             executable: None,
             execution_isolation: None,

@@ -267,7 +267,7 @@ fn managed_route_documents_bind_current_authorization_and_delivery_shape() {
         "session_repository_path": "/tmp/sessions"
     }));
 
-    let target = target_preparation(&request.target, false, false).unwrap();
+    let target = target_preparation(&request.target, false, false, false).unwrap();
     let egress = egress_document(&workspace.0, &request.target, &published_review()).unwrap();
     assert!(matches!(target.kind, RouteKind::Managed));
     assert_eq!(target.next_action, "deliver_once");
@@ -299,7 +299,7 @@ fn delegated_route_documents_keep_host_owned_identity() {
         "session_repository_path": "/tmp/sessions"
     }));
 
-    let target = target_preparation(&request.target, false, false).unwrap();
+    let target = target_preparation(&request.target, false, false, false).unwrap();
     let egress = egress_document(&workspace.0, &request.target, &published_review()).unwrap();
     assert!(matches!(target.kind, RouteKind::Delegated));
     assert_eq!(target.next_action, "deliver_delegated_once");
@@ -428,7 +428,7 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
         "connection_repository_path": "/tmp/connections.yaml"
     }));
     assert_eq!(
-        target_preparation(&managed.target, false, false)
+        target_preparation(&managed.target, false, false, false)
             .unwrap()
             .delivery_schema,
         MANAGED_DELIVERY_SCHEMA
@@ -436,7 +436,7 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
     managed.schema = "yo.slice-review-prepare-request/v1alpha3".to_owned();
     validate_and_normalize(&mut managed).unwrap();
     assert_eq!(
-        target_preparation(&managed.target, true, false)
+        target_preparation(&managed.target, true, false, false)
             .unwrap()
             .delivery_schema,
         MANAGED_USAGE_DELIVERY_SCHEMA
@@ -444,13 +444,13 @@ fn alpha3_preparation_selects_usage_bound_delivery_without_changing_older_versio
 
     let delegated = request(json!({"kind": "delegated_host", "host": "grok"}));
     assert_eq!(
-        target_preparation(&delegated.target, false, false)
+        target_preparation(&delegated.target, false, false, false)
             .unwrap()
             .delivery_schema,
         DELEGATED_DELIVERY_SCHEMA
     );
     assert_eq!(
-        target_preparation(&delegated.target, true, false)
+        target_preparation(&delegated.target, true, false, false)
             .unwrap()
             .delivery_schema,
         DELEGATED_USAGE_DELIVERY_SCHEMA
@@ -509,7 +509,7 @@ fn alpha6_selects_profile_readiness_only_for_grok() {
     grok.repository_authority_paths.clear();
     grok.repository_authority_policy = Some("changed-workflow-authority/v1alpha2".to_owned());
     validate_and_normalize(&mut grok).unwrap();
-    let prepared = target_preparation(&grok.target, true, true).unwrap();
+    let prepared = target_preparation(&grok.target, true, true, false).unwrap();
     let admission: serde_json::Value = serde_json::from_slice(&prepared.admission).unwrap();
     assert_eq!(
         admission["schema"],
@@ -522,7 +522,57 @@ fn alpha6_selects_profile_readiness_only_for_grok() {
     codex.repository_authority_paths.clear();
     codex.repository_authority_policy = Some("changed-workflow-authority/v1alpha2".to_owned());
     validate_and_normalize(&mut codex).unwrap();
-    let prepared = target_preparation(&codex.target, true, true).unwrap();
+    let prepared = target_preparation(&codex.target, true, true, false).unwrap();
+    let admission: serde_json::Value = serde_json::from_slice(&prepared.admission).unwrap();
+    assert_eq!(
+        admission["schema"],
+        "yo.external-review-target-admission-request/v1alpha3"
+    );
+}
+
+// alpha7은 실제 delivery 준비 경로에서 최신 admission만 선택합니다. 관리형은 오래된
+// 실패 기록을 재검증할 수 있고, Grok은 outer sandbox 불가 환경까지 판별하며, Codex는
+// 검증되지 않은 Grok 전용 실행 계약을 공유하지 않습니다.
+#[test]
+fn alpha7_selects_current_admission_without_changing_delivery_protocol() {
+    let mut managed = request(json!({
+        "kind": "managed_model",
+        "provider": "kimi",
+        "account": "default",
+        "model": "k3-256k",
+        "connection_repository_path": "/tmp/connections.yaml"
+    }));
+    managed.schema = "yo.slice-review-prepare-request/v1alpha7".to_owned();
+    managed.repository_authority_paths.clear();
+    managed.repository_authority_policy = Some("changed-workflow-authority/v1alpha2".to_owned());
+    validate_and_normalize(&mut managed).unwrap();
+    let prepared = target_preparation(&managed.target, true, true, true).unwrap();
+    let admission: serde_json::Value = serde_json::from_slice(&prepared.admission).unwrap();
+    assert_eq!(
+        admission["schema"],
+        "yo.external-review-target-admission-request/v1alpha6"
+    );
+    assert_eq!(prepared.delivery_schema, MANAGED_USAGE_DELIVERY_SCHEMA);
+
+    let mut grok = request(json!({"kind": "delegated_host", "host": "grok"}));
+    grok.schema = "yo.slice-review-prepare-request/v1alpha7".to_owned();
+    grok.repository_authority_paths.clear();
+    grok.repository_authority_policy = Some("changed-workflow-authority/v1alpha2".to_owned());
+    validate_and_normalize(&mut grok).unwrap();
+    let prepared = target_preparation(&grok.target, true, true, true).unwrap();
+    let admission: serde_json::Value = serde_json::from_slice(&prepared.admission).unwrap();
+    assert_eq!(
+        admission["schema"],
+        "yo.external-review-target-admission-request/v1alpha5"
+    );
+    assert_eq!(prepared.delivery_schema, DELEGATED_USAGE_DELIVERY_SCHEMA);
+
+    let mut codex = request(json!({"kind": "delegated_host", "host": "codex"}));
+    codex.schema = "yo.slice-review-prepare-request/v1alpha7".to_owned();
+    codex.repository_authority_paths.clear();
+    codex.repository_authority_policy = Some("changed-workflow-authority/v1alpha2".to_owned());
+    validate_and_normalize(&mut codex).unwrap();
+    let prepared = target_preparation(&codex.target, true, true, true).unwrap();
     let admission: serde_json::Value = serde_json::from_slice(&prepared.admission).unwrap();
     assert_eq!(
         admission["schema"],

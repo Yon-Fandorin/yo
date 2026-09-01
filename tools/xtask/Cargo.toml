@@ -17,6 +17,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+jiff = { version = "=0.2.35", default-features = false, features = ["std"] }
 methexis = { path = "../methexis" }
 rustix = { version = "1.1.4", features = ["fs"] }
 serde = { version = "1.0.219", features = ["derive"] }

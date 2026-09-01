@@ -12,6 +12,8 @@ pub(super) const REQUEST_SCHEMA_V1_ALPHA5: &str = "yo.slice-review-prepare-reque
 pub(super) const RESULT_SCHEMA_V1_ALPHA5: &str = "yo.slice-review-prepare-result/v1alpha5";
 pub(super) const REQUEST_SCHEMA_V1_ALPHA6: &str = "yo.slice-review-prepare-request/v1alpha6";
 pub(super) const RESULT_SCHEMA_V1_ALPHA6: &str = "yo.slice-review-prepare-result/v1alpha6";
+pub(super) const REQUEST_SCHEMA_V1_ALPHA7: &str = "yo.slice-review-prepare-request/v1alpha7";
+pub(super) const RESULT_SCHEMA_V1_ALPHA7: &str = "yo.slice-review-prepare-result/v1alpha7";
 pub(super) const CONTEXT_SCHEMA: &str = "methexis.context-request/v1alpha1";
 pub(super) const REVIEW_SCHEMA: &str = "yo.slice-review-packet-request/v1";
 pub(super) const DELIVERY_PROFILE: &str = "yo.slice-review-markdown/v1alpha2";
@@ -21,10 +23,14 @@ pub(super) const DELEGATED_EGRESS_SCHEMA: &str =
     "yo.slice-review-delegated-egress-request/v1alpha1";
 pub(super) const MANAGED_ADMISSION_SCHEMA: &str =
     "yo.external-review-target-admission-request/v1alpha1";
+pub(super) const MANAGED_FRESHNESS_ADMISSION_SCHEMA: &str =
+    "yo.external-review-target-admission-request/v1alpha6";
 pub(super) const DELEGATED_ADMISSION_SCHEMA: &str =
     "yo.external-review-target-admission-request/v1alpha3";
 pub(super) const DELEGATED_PROFILE_ADMISSION_SCHEMA: &str =
     "yo.external-review-target-admission-request/v1alpha4";
+pub(super) const DELEGATED_ISOLATION_ADMISSION_SCHEMA: &str =
+    "yo.external-review-target-admission-request/v1alpha5";
 pub(super) const MANAGED_DELIVERY_SCHEMA: &str = "yo.slice-review-delivery-request/v1alpha2";
 pub(super) const DELEGATED_DELIVERY_SCHEMA: &str =
     "yo.slice-review-delegated-delivery-request/v1alpha2";

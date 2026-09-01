@@ -158,6 +158,23 @@ probe catches a read-only or missing host state mount that a version-only probe
 cannot see. A successful probe leaves no file and still proves neither account
 entitlement nor quota.
 
+Frozen delegated request v1alpha4 adds Grok's exact native read-only startup
+probe. Frozen v1alpha5 preserves that check and, only when the native sandbox
+cannot start, probes Yo's bounded `bwrap` read-only no-tools boundary and
+records the selected `execution_isolation`. Neither probe supplies a prompt,
+starts a Session, or makes a Provider request. Codex continues to use v1alpha3;
+do not apply Grok's invocation contract to another host.
+
+Use managed request v1alpha6 for new integrated preparation. It preserves the
+exact stored Provider, Account, and Model binding checks, but treats a typed
+blocking `last_failure` as current for 5 hours instead of forever. At 5 hours
+the observation becomes an explicit stale warning and the already-authorized
+exact delivery may revalidate the target once. This creates no probe request
+and grants no retry, steer, fallback, target switch, or additional Provider
+request. The existing observation path remains the only state update: success
+clears `last_failure`; failure records the new kind and time. Frozen admission
+v1alpha1 through v1alpha5 retain their prior blocking behavior.
+
 The optional Session repository search reads at most the newest 64 Sessions
 and returns the latest matching receipt in the first most-recently-updated
 matching Session. The result names that selection basis and reports truncation

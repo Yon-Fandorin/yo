@@ -1,7 +1,8 @@
 use std::{path::PathBuf, str::FromStr};
 
+use jiff::Timestamp;
 use yo_core::{
-    ModelRequestFailureKind, SessionId,
+    ModelLastFailure, ModelRequestFailureKind, SessionId,
     session_repository::{StoredSession, StoredSessionUnavailableReason},
 };
 
@@ -72,6 +73,10 @@ fn admitted_next_action_selects_the_disjoint_delivery_protocol() {
     );
     assert_eq!(
         delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA5),
+        ("eligible", "deliver_delegated_once")
+    );
+    assert_eq!(
+        delegated.admitted_outcome(super::model::REQUEST_SCHEMA_V1_ALPHA6),
         ("eligible", "deliver_delegated_once")
     );
 }
@@ -162,6 +167,15 @@ fn admission_request_preserves_alpha1_and_accepts_alpha2() {
     assert_eq!(
         super::model::result_schema(&alpha5.schema),
         super::model::RESULT_SCHEMA_V1_ALPHA5
+    );
+
+    let mut alpha6 = valid.clone();
+    alpha6["schema"] = super::model::REQUEST_SCHEMA_V1_ALPHA6.into();
+    let alpha6: super::model::Request = serde_json::from_value(alpha6).unwrap();
+    super::validate_request(&alpha6).unwrap();
+    assert_eq!(
+        super::model::result_schema(&alpha6.schema),
+        super::model::RESULT_SCHEMA_V1_ALPHA6
     );
 
     let mut extra = valid;
@@ -269,4 +283,68 @@ fn only_typed_unavailability_failures_block_before_claim() {
     ] {
         assert!(!super::blocking_failure(kind));
     }
+}
+
+fn failure_at(kind: ModelRequestFailureKind, second: i64) -> ModelLastFailure {
+    ModelLastFailure::new(kind, Timestamp::from_second(second).unwrap().to_string()).unwrap()
+}
+
+// 새 admission만 5시간이 지나지 않은 typed blocking observation을 계속 차단합니다.
+// frozen schema의 영구 차단 의미는 재해석하지 않습니다.
+#[test]
+fn managed_failure_freshness_preserves_recent_and_frozen_blocking() {
+    let now = Timestamp::from_second(1_800_000_000).unwrap();
+    let recent = failure_at(
+        ModelRequestFailureKind::AccessDenied,
+        now.as_second() - super::BLOCKING_FAILURE_FRESHNESS_SECONDS + 1,
+    );
+    let recent = super::observed_failure_availability(&recent, true, now);
+    assert_eq!(recent.state, "unavailable");
+    assert_eq!(recent.failure_freshness, Some("recent"));
+
+    let old = failure_at(
+        ModelRequestFailureKind::AccessDenied,
+        now.as_second() - super::BLOCKING_FAILURE_FRESHNESS_SECONDS,
+    );
+    let frozen = super::observed_failure_availability(&old, false, now);
+    assert_eq!(frozen.state, "unavailable");
+    assert_eq!(frozen.failure_freshness, None);
+}
+
+// 정확히 5시간 지난 blocking observation은 별도 probe를 만들지 않고, 이미 승인된
+// original delivery 한 번이 그 상태를 재검증하도록 unknown warning으로 낮춥니다.
+#[test]
+fn stale_blocking_failure_allows_exactly_one_original_revalidation() {
+    let now = Timestamp::from_second(1_800_000_000).unwrap();
+    let failure = failure_at(
+        ModelRequestFailureKind::Authentication,
+        now.as_second() - super::BLOCKING_FAILURE_FRESHNESS_SECONDS,
+    );
+    let availability = super::observed_failure_availability(&failure, true, now);
+    assert_eq!(availability.state, "unknown");
+    assert_eq!(availability.failure_freshness, Some("stale"));
+    assert!(availability.detail.contains("exactly once"));
+    assert!(availability.detail.contains("without a probe"));
+}
+
+// 잘못된 미래 timestamp는 만료로 간주하지 않으며, 비차단 실패는 나이와 무관하게
+// 기존처럼 warning-only 상태를 유지합니다.
+#[test]
+fn future_and_nonblocking_failures_do_not_expand_retry_authority() {
+    let now = Timestamp::from_second(1_800_000_000).unwrap();
+    let future = failure_at(
+        ModelRequestFailureKind::ModelUnavailable,
+        now.as_second() + 1,
+    );
+    let future = super::observed_failure_availability(&future, true, now);
+    assert_eq!(future.state, "unavailable");
+    assert_eq!(future.failure_freshness, Some("recent"));
+
+    let transient = failure_at(
+        ModelRequestFailureKind::RateLimited,
+        now.as_second() - 10 * super::BLOCKING_FAILURE_FRESHNESS_SECONDS,
+    );
+    let transient = super::observed_failure_availability(&transient, true, now);
+    assert_eq!(transient.state, "unknown");
+    assert_eq!(transient.failure_freshness, Some("stale"));
 }

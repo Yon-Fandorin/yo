@@ -14,15 +14,16 @@ use serde::Serialize;
 use self::model::{
     CONTEXT_SCHEMA, ContextAnchor, ContextRequest, DELEGATED_ADMISSION_SCHEMA,
     DELEGATED_DELIVERY_SCHEMA, DELEGATED_EGRESS_SCHEMA, DELEGATED_EXECUTION_PROFILE,
-    DELEGATED_PROFILE_ADMISSION_SCHEMA, DELEGATED_USAGE_DELIVERY_SCHEMA, DELIVERY_PROFILE,
-    DelegatedAdmission, DelegatedEgress, DelegatedTarget, DeliveryRequest, FreshSession,
-    MANAGED_ADMISSION_SCHEMA, MANAGED_DELIVERY_SCHEMA, MANAGED_EGRESS_SCHEMA,
+    DELEGATED_ISOLATION_ADMISSION_SCHEMA, DELEGATED_PROFILE_ADMISSION_SCHEMA,
+    DELEGATED_USAGE_DELIVERY_SCHEMA, DELIVERY_PROFILE, DelegatedAdmission, DelegatedEgress,
+    DelegatedTarget, DeliveryRequest, FreshSession, MANAGED_ADMISSION_SCHEMA,
+    MANAGED_DELIVERY_SCHEMA, MANAGED_EGRESS_SCHEMA, MANAGED_FRESHNESS_ADMISSION_SCHEMA,
     MANAGED_USAGE_DELIVERY_SCHEMA, ManagedAdmission, ManagedAdmissionTarget, ManagedEgress,
     ManagedRoute, REQUEST_SCHEMA, REQUEST_SCHEMA_V1_ALPHA2, REQUEST_SCHEMA_V1_ALPHA3,
-    REQUEST_SCHEMA_V1_ALPHA4, REQUEST_SCHEMA_V1_ALPHA5, REQUEST_SCHEMA_V1_ALPHA6, RESULT_SCHEMA,
-    RESULT_SCHEMA_V1_ALPHA2, RESULT_SCHEMA_V1_ALPHA3, RESULT_SCHEMA_V1_ALPHA4,
-    RESULT_SCHEMA_V1_ALPHA5, RESULT_SCHEMA_V1_ALPHA6, REVIEW_SCHEMA, Request, ReviewRequest,
-    TOKENIZER_PROFILE, Target,
+    REQUEST_SCHEMA_V1_ALPHA4, REQUEST_SCHEMA_V1_ALPHA5, REQUEST_SCHEMA_V1_ALPHA6,
+    REQUEST_SCHEMA_V1_ALPHA7, RESULT_SCHEMA, RESULT_SCHEMA_V1_ALPHA2, RESULT_SCHEMA_V1_ALPHA3,
+    RESULT_SCHEMA_V1_ALPHA4, RESULT_SCHEMA_V1_ALPHA5, RESULT_SCHEMA_V1_ALPHA6,
+    RESULT_SCHEMA_V1_ALPHA7, REVIEW_SCHEMA, Request, ReviewRequest, TOKENIZER_PROFILE, Target,
 };
 use crate::{
     bounded_file, git, review_egress, review_packet,
@@ -168,8 +169,13 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
                 | REQUEST_SCHEMA_V1_ALPHA4
                 | REQUEST_SCHEMA_V1_ALPHA5
                 | REQUEST_SCHEMA_V1_ALPHA6
+                | REQUEST_SCHEMA_V1_ALPHA7
         ),
-        request.schema == REQUEST_SCHEMA_V1_ALPHA6,
+        matches!(
+            request.schema.as_str(),
+            REQUEST_SCHEMA_V1_ALPHA6 | REQUEST_SCHEMA_V1_ALPHA7
+        ),
+        request.schema == REQUEST_SCHEMA_V1_ALPHA7,
     )?;
     created |= publish(
         &admission_path,
@@ -250,6 +256,7 @@ pub(crate) fn run(repository: &Path, request_path: &Path) -> Result<(), String> 
     let review_hash = digest(&review_bytes);
     let delivery_hash = digest(&delivery_bytes);
     let result_schema = match request.schema.as_str() {
+        REQUEST_SCHEMA_V1_ALPHA7 => RESULT_SCHEMA_V1_ALPHA7,
         REQUEST_SCHEMA_V1_ALPHA6 => RESULT_SCHEMA_V1_ALPHA6,
         REQUEST_SCHEMA_V1_ALPHA5 => RESULT_SCHEMA_V1_ALPHA5,
         REQUEST_SCHEMA_V1_ALPHA4 => RESULT_SCHEMA_V1_ALPHA4,
@@ -300,6 +307,7 @@ fn target_preparation(
     target: &Target,
     bind_usage: bool,
     probe_execution_profile: bool,
+    use_current_admission: bool,
 ) -> Result<TargetPreparation, String> {
     match target {
         Target::ManagedModel {
@@ -313,7 +321,11 @@ fn target_preparation(
             target_reference: format!("{provider}:{account}:{model}"),
             next_action: "deliver_once",
             admission: canonical_json(&ManagedAdmission {
-                schema: MANAGED_ADMISSION_SCHEMA,
+                schema: if use_current_admission {
+                    MANAGED_FRESHNESS_ADMISSION_SCHEMA
+                } else {
+                    MANAGED_ADMISSION_SCHEMA
+                },
                 target: ManagedAdmissionTarget {
                     kind: "managed_model",
                     provider,
@@ -337,7 +349,9 @@ fn target_preparation(
             target_reference: format!("host:{host}"),
             next_action: "deliver_delegated_once",
             admission: canonical_json(&DelegatedAdmission {
-                schema: if probe_execution_profile && host == "grok" {
+                schema: if host == "grok" && use_current_admission {
+                    DELEGATED_ISOLATION_ADMISSION_SCHEMA
+                } else if host == "grok" && probe_execution_profile {
                     DELEGATED_PROFILE_ADMISSION_SCHEMA
                 } else {
                     DELEGATED_ADMISSION_SCHEMA
@@ -517,9 +531,10 @@ fn validate_and_normalize(request: &mut Request) -> Result<(), String> {
             | REQUEST_SCHEMA_V1_ALPHA4
             | REQUEST_SCHEMA_V1_ALPHA5
             | REQUEST_SCHEMA_V1_ALPHA6
+            | REQUEST_SCHEMA_V1_ALPHA7
     ) {
         return Err(format!(
-            "unsupported Slice review preparation schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, `{REQUEST_SCHEMA_V1_ALPHA4}`, `{REQUEST_SCHEMA_V1_ALPHA5}`, or `{REQUEST_SCHEMA_V1_ALPHA6}`",
+            "unsupported Slice review preparation schema `{}`; expected `{REQUEST_SCHEMA}`, `{REQUEST_SCHEMA_V1_ALPHA2}`, `{REQUEST_SCHEMA_V1_ALPHA3}`, `{REQUEST_SCHEMA_V1_ALPHA4}`, `{REQUEST_SCHEMA_V1_ALPHA5}`, `{REQUEST_SCHEMA_V1_ALPHA6}`, or `{REQUEST_SCHEMA_V1_ALPHA7}`",
             request.schema
         ));
     }
@@ -528,7 +543,10 @@ fn validate_and_normalize(request: &mut Request) -> Result<(), String> {
     normalize_strings(&mut request.knowledge_ids, "knowledge_ids")?;
     if matches!(
         request.schema.as_str(),
-        REQUEST_SCHEMA_V1_ALPHA4 | REQUEST_SCHEMA_V1_ALPHA5 | REQUEST_SCHEMA_V1_ALPHA6
+        REQUEST_SCHEMA_V1_ALPHA4
+            | REQUEST_SCHEMA_V1_ALPHA5
+            | REQUEST_SCHEMA_V1_ALPHA6
+            | REQUEST_SCHEMA_V1_ALPHA7
     ) {
         if !request.repository_authority_paths.is_empty() {
             return Err(
@@ -537,7 +555,7 @@ fn validate_and_normalize(request: &mut Request) -> Result<(), String> {
         }
         let expected_policy = if matches!(
             request.schema.as_str(),
-            REQUEST_SCHEMA_V1_ALPHA5 | REQUEST_SCHEMA_V1_ALPHA6
+            REQUEST_SCHEMA_V1_ALPHA5 | REQUEST_SCHEMA_V1_ALPHA6 | REQUEST_SCHEMA_V1_ALPHA7
         ) {
             "changed-workflow-authority/v1alpha2"
         } else {
@@ -628,6 +646,7 @@ fn prepared_review_questions(request: &Request) -> Vec<String> {
             | REQUEST_SCHEMA_V1_ALPHA4
             | REQUEST_SCHEMA_V1_ALPHA5
             | REQUEST_SCHEMA_V1_ALPHA6
+            | REQUEST_SCHEMA_V1_ALPHA7
     ) {
         questions.push(review_result::OUTPUT_INSTRUCTION.to_owned());
     }
@@ -641,7 +660,9 @@ fn apply_repository_authority_policy(
 ) -> Result<(), String> {
     let policy = match request.schema.as_str() {
         REQUEST_SCHEMA_V1_ALPHA4 => AuthorityPolicy::V1Alpha1,
-        REQUEST_SCHEMA_V1_ALPHA5 | REQUEST_SCHEMA_V1_ALPHA6 => AuthorityPolicy::V1Alpha2,
+        REQUEST_SCHEMA_V1_ALPHA5 | REQUEST_SCHEMA_V1_ALPHA6 | REQUEST_SCHEMA_V1_ALPHA7 => {
+            AuthorityPolicy::V1Alpha2
+        },
         _ => return Ok(()),
     };
     let range = format!("{}..HEAD", bound.base);
