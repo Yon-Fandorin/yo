@@ -4,7 +4,8 @@ pub use yo_backend::{
 
 use crate::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
-    BackendOutcomeEvidence, BackendResumeTarget, TurnOutcome, TurnRef,
+    BackendOutcomeEvidence, BackendRequestEvidence, BackendResumeTarget, ContextCheckpointProposal,
+    ContextPolicyChanged, ModelReplayItem, TurnOutcome, TurnRef,
 };
 
 /// Yo's frontend-independent specialization of the generic backend adapter port.
@@ -30,6 +31,24 @@ pub type BackendPoll = yo_backend::BackendPoll<BackendEvent>;
 /// corresponding frontend events through this type.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BackendEvent {
+    /// A managed exact-replay Session selected or replaced its durable context policy.
+    ContextPolicyChanged {
+        policy: ContextPolicyChanged,
+    },
+    /// A tools-disabled summary that awaits exact Journal binding and atomic publication.
+    ContextCheckpointPrepared {
+        proposal: ContextCheckpointProposal,
+    },
+    /// A completed active-Turn semantic suffix that core may bind to its exact Journal boundary.
+    ContextActiveSuffixCompleted {
+        turn: TurnRef,
+        items: Vec<ModelReplayItem>,
+    },
+    /// An internally dispatched ordinary model request awaiting its acceptance record.
+    ModelRequestAccepted {
+        turn: TurnRef,
+        evidence: BackendRequestEvidence,
+    },
     ActivityStarted {
         activity: ActivityRef,
         kind: ActivityKind,

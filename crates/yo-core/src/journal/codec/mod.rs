@@ -19,9 +19,10 @@ pub(crate) use wire::{JournalCodecError, decode, encode};
 mod tests;
 pub(crate) use context::{
     CONTEXT_ARTIFACT_PROFILE, CONTEXT_CHECKPOINT_PROFILE, CONTEXT_POLICY_PROFILE,
-    ContextArtifactReceipt, ContextCheckpoint, ContextLoss, ContextPolicyChanged,
-    ContextRetainedGroup, ContextStrategy, ContextSummaryUsage,
+    ContextArtifactReceipt, ContextCheckpoint, ContextLoss, ContextRetainedGroup,
+    ContextSummaryUsage,
 };
+pub use context::{ContextPolicyChanged, ContextStrategy};
 pub(crate) use correlation::{
     BackendBindingClosed, BackendBindingOpened, BackendExchangeObserved, BackendRequestAccepted,
     BackendResumableOutcome, BindingCloseReason, BindingTransition, CacheState, ContinuationAnchor,

@@ -1,5 +1,7 @@
 //! Provider-neutral Yo-managed model/tool loop over an admitted API-dialect connector.
 
+mod context;
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     num::NonZeroU64,
@@ -21,8 +23,9 @@ use yo_core::{
     BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
     BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence, BackendPoll,
     BackendRequestEvidence, BackendResumeTarget, BackendStopHandle, CacheReadInputTokens,
-    CompleteModelBinding, ContinuationStrategy, EffectiveModelBinding, EffectiveModelProfile,
-    Failure, FrozenToolRegistry, ModelCacheAffinityHint, ModelCatalogEntry, ModelConnector,
+    CompleteModelBinding, ContextCheckpointProposal, ContextPolicyChanged, ContextStrategy,
+    ContinuationStrategy, EffectiveModelBinding, EffectiveModelProfile, Failure,
+    FrozenToolRegistry, ModelCacheAffinityHint, ModelCatalogEntry, ModelConnector,
     ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorInputRole, ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort,
     ModelConnectorTerminal, ModelContextProfile, ModelReplay, ModelReplayContract,
@@ -47,6 +50,7 @@ pub struct NativeModelBackendConfig {
     pub maximum_tool_argument_bytes: usize,
     pub maximum_tool_output_bytes: usize,
     pub absolute_tool_execution_timeout: Option<Duration>,
+    pub context_policy: ContextPolicyChanged,
 }
 
 impl Default for NativeModelBackendConfig {
@@ -58,6 +62,16 @@ impl Default for NativeModelBackendConfig {
             maximum_tool_argument_bytes: 4 * 1024 * 1024,
             maximum_tool_output_bytes: 4 * 1024 * 1024,
             absolute_tool_execution_timeout: None,
+            context_policy: ContextPolicyChanged::try_new(
+                1,
+                true,
+                ContextStrategy::PortableSummaryV1Alpha1,
+                85,
+                90,
+                Some(10),
+                Some(65_536),
+            )
+            .expect("the built-in context policy is valid"),
         }
     }
 }
@@ -132,6 +146,35 @@ struct CallActivity {
     name: String,
 }
 
+enum CompactionState {
+    Summarizing {
+        input_tokens_before: u64,
+        summarized_groups: Vec<Vec<ModelReplayItem>>,
+        retained_groups: Vec<Vec<ModelReplayItem>>,
+        body: String,
+        response_id: Option<String>,
+        message_done: bool,
+    },
+    AwaitingCheckpoint {
+        replay: ModelReplay,
+    },
+}
+
+enum IdleCompactionState {
+    Summarizing {
+        input_tokens_before: u64,
+        summarized_groups: Vec<Vec<ModelReplayItem>>,
+        retained_groups: Vec<Vec<ModelReplayItem>>,
+        body: String,
+        response_id: Option<String>,
+        message_done: bool,
+        stream: Box<dyn ModelConnectorStreamPort>,
+    },
+    AwaitingCheckpoint {
+        replay: ModelReplay,
+    },
+}
+
 struct TurnState {
     turn: TurnRef,
     round: usize,
@@ -152,6 +195,8 @@ struct TurnState {
     dispatch_tool: Option<(ValidatedToolCall, ActivityRef)>,
     awaiting_approval: Option<(ActivityRequestRef, PendingCall)>,
     start_next_round: bool,
+    compaction: Option<CompactionState>,
+    compaction_attempted: bool,
 }
 
 pub struct NativeModelBackend {
@@ -170,7 +215,10 @@ pub struct NativeModelBackend {
     replay_profile: yo_core::ReplayProfile,
     session: Option<SessionId>,
     replay: ModelReplay,
+    replay_groups: Vec<Vec<ModelReplayItem>>,
+    context_policy_active: bool,
     turn: Option<TurnState>,
+    idle_compaction: Option<IdleCompactionState>,
     events: VecDeque<BackendEvent>,
     open_activities: HashSet<ActivityRef>,
     next_activity_id: u64,
@@ -420,6 +468,9 @@ impl NativeModelBackend {
     }
 
     fn ensure_pending_replay_capacity(&self, state: &TurnState) -> Result<(), BackendFailure> {
+        if state.delta.is_empty() {
+            return Ok(());
+        }
         let delta = ModelReplayDelta::new(
             self.replay
                 .contract()
@@ -561,7 +612,10 @@ impl NativeModelBackend {
             replay_profile,
             session: None,
             replay: ModelReplay::default(),
+            replay_groups: Vec::new(),
+            context_policy_active: false,
             turn: None,
+            idle_compaction: None,
             events: VecDeque::new(),
             open_activities: HashSet::new(),
             next_activity_id: 1,
@@ -598,7 +652,10 @@ impl NativeModelBackend {
                 "context_exhausted: this binding cannot admit another model request",
             ));
         }
-        if self.session != Some(turn.session_id()) || self.turn.is_some() {
+        if self.session != Some(turn.session_id())
+            || self.turn.is_some()
+            || self.idle_compaction.is_some()
+        {
             return Err(failure(
                 BackendFailureKind::Session,
                 "native backend requires its bound idle Session before starting a Turn",
@@ -637,11 +694,14 @@ impl NativeModelBackend {
             dispatch_tool: None,
             awaiting_approval: None,
             start_next_round: false,
+            compaction: None,
+            compaction_attempted: false,
         };
         let request_started = match self.start_model_round(&mut state) {
             Ok(()) => {
+                let request_started = state.compaction.is_none();
                 self.turn = Some(state);
-                true
+                request_started
             },
             Err(error) if error.kind() == BackendFailureKind::ContextExhausted => {
                 self.context_exhausted = true;
@@ -653,6 +713,12 @@ impl NativeModelBackend {
         if !request_started {
             return Ok(BackendCommandEvidence::None);
         }
+        Ok(BackendCommandEvidence::RequestAccepted(
+            self.request_evidence(turn),
+        ))
+    }
+
+    fn request_evidence(&self, turn: TurnRef) -> BackendRequestEvidence {
         let (request_schema, endpoint_schema) = match self.binding.api_dialect() {
             ApiDialect::OpenAiResponses => (
                 "openai.responses/yo-managed-turn/v1",
@@ -667,16 +733,14 @@ impl NativeModelBackend {
                 "kimi-chat-completions.endpoint/v1",
             ),
         };
-        Ok(BackendCommandEvidence::RequestAccepted(
-            BackendRequestEvidence::new(
-                request_schema,
-                BackendIdentity::new(endpoint_schema, self.connector.request_url()),
-                BackendIdentity::new(
-                    "yo.turn/v1",
-                    format!("{}:{}", turn.session_id(), turn.turn_id().get()),
-                ),
+        BackendRequestEvidence::new(
+            request_schema,
+            BackendIdentity::new(endpoint_schema, self.connector.request_url()),
+            BackendIdentity::new(
+                "yo.turn/v1",
+                format!("{}:{}", turn.session_id(), turn.turn_id().get()),
             ),
-        ))
+        )
     }
 
     fn start_model_round(&mut self, state: &mut TurnState) -> Result<(), BackendFailure> {
@@ -756,6 +820,9 @@ impl NativeModelBackend {
                         .checked_add(cap)
                         .is_some_and(|sum| sum <= input_limit) =>
                 {
+                    if self.admit_or_start_compaction(state, input_tokens)? {
+                        return Ok(());
+                    }
                     break request;
                 },
                 Some(cap) => {
@@ -767,6 +834,9 @@ impl NativeModelBackend {
                         _ => 0,
                     };
                     if next_cap == 0 {
+                        if self.admit_or_start_compaction(state, input_tokens)? {
+                            return Ok(());
+                        }
                         return Err(failure(
                             BackendFailureKind::ContextExhausted,
                             format!(
@@ -777,8 +847,16 @@ impl NativeModelBackend {
                     request_cap = Some(next_cap);
                     cap_adjustments += 1;
                 },
-                None if input_tokens < input_limit => break request,
+                None if input_tokens < input_limit => {
+                    if self.admit_or_start_compaction(state, input_tokens)? {
+                        return Ok(());
+                    }
+                    break request;
+                },
                 None => {
+                    if self.admit_or_start_compaction(state, input_tokens)? {
+                        return Ok(());
+                    }
                     return Err(failure(
                         BackendFailureKind::ContextExhausted,
                         format!(
@@ -815,6 +893,372 @@ impl NativeModelBackend {
         state.round_messages.clear();
         state.round_refusals.clear();
         state.round_replay.clear();
+        Ok(())
+    }
+
+    fn admit_or_start_compaction(
+        &mut self,
+        state: &mut TurnState,
+        input_tokens: u64,
+    ) -> Result<bool, BackendFailure> {
+        use context::PressureAdmission;
+
+        if !self.context_policy_active {
+            return Ok(false);
+        }
+
+        let decision = context::admit_pressure(
+            &self.config.context_policy,
+            input_tokens,
+            self.model_context.input_token_limit(),
+            state.compaction_attempted,
+        );
+        let warning = match decision {
+            PressureAdmission::Admit { warning }
+            | PressureAdmission::Compact { warning }
+            | PressureAdmission::Reject { warning } => warning,
+        };
+        if warning {
+            let observation = yo_core::ContextPressureObservation::new(
+                input_tokens,
+                self.model_context.input_token_limit(),
+                self.config.context_policy.warning_percent(),
+                self.config.context_policy.trigger_percent(),
+                match decision {
+                    PressureAdmission::Admit { .. } => yo_core::ContextPressureDecision::Admit,
+                    PressureAdmission::Compact { .. } => yo_core::ContextPressureDecision::Compact,
+                    PressureAdmission::Reject { .. } => yo_core::ContextPressureDecision::Reject,
+                },
+            )
+            .expect("an admitted context policy produces a valid pressure observation");
+            let activity = self.next_activity(state.turn)?;
+            self.queue_activity_text(
+                activity,
+                ActivityKind::ModelWork,
+                observation.to_snapshot_json(),
+                Some(ActivityOutcome::Completed),
+            );
+        }
+        match decision {
+            PressureAdmission::Admit { .. } => Ok(false),
+            PressureAdmission::Compact { .. } => {
+                self.start_compaction_summary(state, input_tokens)?;
+                Ok(true)
+            },
+            PressureAdmission::Reject { .. } => Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "context_exhausted: context pressure remained above the configured trigger",
+            )),
+        }
+    }
+
+    fn start_compaction_summary(
+        &mut self,
+        state: &mut TurnState,
+        input_tokens_before: u64,
+    ) -> Result<(), BackendFailure> {
+        let starts_with_current_input = matches!(
+            state.delta.first(),
+            Some(ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                refusal: None,
+                ..
+            })
+        );
+        let completed_tool_boundary = state.round > 0
+            && state
+                .delta
+                .iter()
+                .any(|item| matches!(item, ModelReplayItem::FunctionCall { .. }))
+            && state
+                .delta
+                .iter()
+                .any(|item| matches!(item, ModelReplayItem::FunctionCallOutput { .. }))
+            && state.pending_calls.is_empty()
+            && state.active_tool.is_none()
+            && state.ready_tool.is_none()
+            && state.dispatch_tool.is_none()
+            && state.awaiting_approval.is_none();
+        if !starts_with_current_input
+            || (state.round == 0 && state.delta.len() != 1)
+            || (state.round > 0 && !completed_tool_boundary)
+        {
+            return Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "context_exhausted: active-Turn compaction requires a completely admitted current suffix",
+            ));
+        }
+        let summarized_count = if state.round == 0 {
+            self.replay_groups.len().saturating_sub(1)
+        } else {
+            self.replay_groups.len()
+        };
+        if state.compaction.is_some() || summarized_count == 0 {
+            return Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "context_exhausted: no older complete semantic prefix is available to compact",
+            ));
+        }
+        let summarized_groups = self.replay_groups[..summarized_count].to_vec();
+        let retained_groups = self.replay_groups[summarized_count..].to_vec();
+        let visible_prefix = summarized_groups
+            .iter()
+            .flatten()
+            .filter(|item| !matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }))
+            .map(replay_input)
+            .collect::<Vec<_>>();
+        if visible_prefix.is_empty() {
+            return Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "context_exhausted: the compactable prefix has no visible semantic history",
+            ));
+        }
+        let mut items = vec![ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::System,
+            content: context::PORTABLE_SUMMARY_INSTRUCTION.to_owned(),
+            refusal: None,
+        }];
+        items.extend(visible_prefix);
+        let (request, _) = self.admitted_request(
+            items,
+            RequestToolExposure::disabled(),
+            state.turn.session_id(),
+        )?;
+        let cancellation = ModelConnectorCancellation::new();
+        *self
+            .shared_stop
+            .response
+            .lock()
+            .map_err(|_| failure(BackendFailureKind::Cleanup, "native stop state is poisoned"))? =
+            Some(cancellation.clone());
+        let stream = match self.connector.start(request, cancellation) {
+            Ok(stream) => stream,
+            Err(error) => {
+                *self.shared_stop.response.lock().map_err(|_| {
+                    failure(BackendFailureKind::Cleanup, "native stop state is poisoned")
+                })? = None;
+                self.observe_connector_failure(state.turn, &error);
+                return Err(map_connector_turn(error));
+            },
+        };
+        state.stream = Some(stream);
+        state.compaction = Some(CompactionState::Summarizing {
+            input_tokens_before,
+            summarized_groups,
+            retained_groups,
+            body: String::new(),
+            response_id: None,
+            message_done: false,
+        });
+        Ok(())
+    }
+
+    fn admitted_request(
+        &mut self,
+        items: Vec<ModelConnectorInputItem>,
+        tools: RequestToolExposure,
+        session_id: SessionId,
+    ) -> Result<(ModelConnectorRequest, u64), BackendFailure> {
+        let input_limit = self.model_context.input_token_limit();
+        let mut request_cap = self.model_context.max_output_tokens();
+        let mut cap_adjustments = 0_u8;
+        loop {
+            let request = ModelConnectorRequest::new(
+                items.clone(),
+                tools.clone(),
+                request_cap,
+                self.config.reasoning_effort,
+            )
+            .map_err(map_connector_turn)?
+            .with_cache_affinity_hint(ModelCacheAffinityHint::for_session(session_id));
+            let payload = self
+                .connector
+                .tokenization_payload(&request)
+                .map_err(map_connector_turn)?;
+            let input_tokens = self
+                .token_counter
+                .count_input_tokens(self.model_context.tokenizer_profile(), &payload)
+                .map_err(|_| {
+                    failure(
+                        BackendFailureKind::Turn,
+                        "model token counting failed before remote request dispatch",
+                    )
+                })?;
+            match request_cap {
+                Some(cap)
+                    if input_tokens
+                        .checked_add(cap)
+                        .is_some_and(|sum| sum <= input_limit) =>
+                {
+                    return Ok((request, input_tokens));
+                },
+                Some(cap) => {
+                    let next_cap = match cap_adjustments {
+                        0 => cap
+                            .saturating_sub(1)
+                            .min(input_limit.saturating_sub(input_tokens)),
+                        1 if cap > 1 => 1,
+                        _ => 0,
+                    };
+                    if next_cap == 0 {
+                        return Err(failure(
+                            BackendFailureKind::ContextExhausted,
+                            "context_exhausted: summary request leaves no positive output cap",
+                        ));
+                    }
+                    request_cap = Some(next_cap);
+                    cap_adjustments += 1;
+                },
+                None if input_tokens < input_limit => return Ok((request, input_tokens)),
+                None => {
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        "context_exhausted: summary request does not fit the input limit",
+                    ));
+                },
+            }
+        }
+    }
+
+    fn count_input_for_items(
+        &self,
+        items: Vec<ModelConnectorInputItem>,
+        tools: RequestToolExposure,
+        session_id: SessionId,
+    ) -> Result<u64, BackendFailure> {
+        let request = ModelConnectorRequest::new(
+            items,
+            tools,
+            self.model_context.max_output_tokens(),
+            self.config.reasoning_effort,
+        )
+        .map_err(map_connector_turn)?
+        .with_cache_affinity_hint(ModelCacheAffinityHint::for_session(session_id));
+        let payload = self
+            .connector
+            .tokenization_payload(&request)
+            .map_err(map_connector_turn)?;
+        self.token_counter
+            .count_input_tokens(self.model_context.tokenizer_profile(), &payload)
+            .map_err(|_| {
+                failure(
+                    BackendFailureKind::Turn,
+                    "model token counting failed before context compaction",
+                )
+            })
+    }
+
+    fn start_idle_compaction(&mut self, guidance: Option<String>) -> Result<(), BackendFailure> {
+        if self.context_exhausted {
+            return Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "context_exhausted: this binding cannot attempt another context compaction",
+            ));
+        }
+        let session_id = self.session.ok_or_else(|| {
+            failure(
+                BackendFailureKind::Session,
+                "context compaction requires an open Session",
+            )
+        })?;
+        if self.turn.is_some() || self.idle_compaction.is_some() {
+            return Err(failure(
+                BackendFailureKind::Turn,
+                "context compaction requires an idle Session",
+            ));
+        }
+        if !self.context_policy_active
+            || !self.config.context_policy.enabled()
+            || self.config.context_policy.strategy() != ContextStrategy::PortableSummaryV1Alpha1
+        {
+            return Err(failure(
+                BackendFailureKind::CommandRejected,
+                "the current context policy does not permit manual compaction",
+            ));
+        }
+        if self.replay_groups.len() < 2 {
+            return Err(failure(
+                BackendFailureKind::CommandRejected,
+                "no older complete semantic prefix is available to compact",
+            ));
+        }
+        let tool_exposure =
+            if self.tool_exposure_enabled {
+                RequestToolExposure::enabled(self.registry.function_tools().map_err(|error| {
+                    failure(BackendFailureKind::Initialization, error.to_string())
+                })?)
+            } else {
+                RequestToolExposure::disabled()
+            };
+        let mut current_items = vec![ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::System,
+            content: self.contract.system_prompt().to_owned(),
+            refusal: None,
+        }];
+        current_items.extend(self.replay.items().iter().map(replay_input));
+        let input_tokens_before =
+            self.count_input_for_items(current_items, tool_exposure, session_id)?;
+
+        let retained_groups = vec![
+            self.replay_groups
+                .last()
+                .expect("two replay groups have a newest group")
+                .clone(),
+        ];
+        let summarized_groups = self.replay_groups[..self.replay_groups.len() - 1].to_vec();
+        let visible_prefix = summarized_groups
+            .iter()
+            .flatten()
+            .filter(|item| !matches!(item, ModelReplayItem::ProviderPrivateAssistant { .. }))
+            .map(replay_input)
+            .collect::<Vec<_>>();
+        if visible_prefix.is_empty() {
+            return Err(failure(
+                BackendFailureKind::CommandRejected,
+                "the compactable prefix has no visible semantic history",
+            ));
+        }
+        let mut instruction = context::PORTABLE_SUMMARY_INSTRUCTION.to_owned();
+        if let Some(guidance) = guidance {
+            instruction.push_str("\n\nUser guidance for this checkpoint:\n");
+            instruction.push_str(&guidance);
+        }
+        let mut summary_items = vec![ModelConnectorInputItem::Message {
+            role: ModelConnectorInputRole::System,
+            content: instruction,
+            refusal: None,
+        }];
+        summary_items.extend(visible_prefix);
+        let (request, _) =
+            self.admitted_request(summary_items, RequestToolExposure::disabled(), session_id)?;
+        let cancellation = ModelConnectorCancellation::new();
+        *self
+            .shared_stop
+            .response
+            .lock()
+            .map_err(|_| failure(BackendFailureKind::Cleanup, "native stop state is poisoned"))? =
+            Some(cancellation.clone());
+        let stream = match self.connector.start(request, cancellation) {
+            Ok(stream) => stream,
+            Err(error) => {
+                *self.shared_stop.response.lock().map_err(|_| {
+                    failure(BackendFailureKind::Cleanup, "native stop state is poisoned")
+                })? = None;
+                return Err(failure(
+                    BackendFailureKind::ContextExhausted,
+                    format!("context_exhausted: context summary request failed: {error}"),
+                ));
+            },
+        };
+        self.idle_compaction = Some(IdleCompactionState::Summarizing {
+            input_tokens_before,
+            summarized_groups,
+            retained_groups,
+            body: String::new(),
+            response_id: None,
+            message_done: false,
+            stream,
+        });
         Ok(())
     }
 
@@ -908,8 +1352,14 @@ impl NativeModelBackend {
                 "response event has no active Turn",
             )
         })?;
-        if let Err(error) = self.apply_response_event(&mut state, event) {
-            if error.kind() == BackendFailureKind::ContextExhausted {
+        let was_compacting = matches!(state.compaction, Some(CompactionState::Summarizing { .. }));
+        let result = if was_compacting {
+            self.apply_compaction_response_event(&mut state, event)
+        } else {
+            self.apply_response_event(&mut state, event)
+        };
+        if let Err(error) = result {
+            if was_compacting || error.kind() == BackendFailureKind::ContextExhausted {
                 self.observe_model_request(
                     state.turn,
                     yo_core::ModelRequestOutcome::Failed(
@@ -917,7 +1367,14 @@ impl NativeModelBackend {
                     ),
                 );
                 self.context_exhausted = true;
-                self.exhaust_turn(&mut state, error.to_string());
+                self.exhaust_turn(
+                    &mut state,
+                    if was_compacting && error.kind() != BackendFailureKind::ContextExhausted {
+                        format!("context_exhausted: context summary failed: {error}")
+                    } else {
+                        error.to_string()
+                    },
+                );
             } else {
                 if error.kind() == BackendFailureKind::Protocol {
                     self.observe_model_request(
@@ -939,6 +1396,433 @@ impl NativeModelBackend {
             })
         {
             self.turn = Some(state);
+        }
+        Ok(())
+    }
+
+    fn apply_compaction_response_event(
+        &mut self,
+        state: &mut TurnState,
+        event: ModelConnectorEvent,
+    ) -> Result<(), BackendFailure> {
+        match event {
+            ModelConnectorEvent::ResponseCreated { response_id } => {
+                let Some(CompactionState::Summarizing {
+                    response_id: current,
+                    ..
+                }) = state.compaction.as_mut()
+                else {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "context summary response arrived outside summary collection",
+                    ));
+                };
+                if current.replace(response_id).is_some() {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "context summary created more than one response identity",
+                    ));
+                }
+            },
+            ModelConnectorEvent::TextDelta {
+                output_index,
+                content_index,
+                delta,
+                ..
+            } => {
+                let Some(CompactionState::Summarizing {
+                    body, message_done, ..
+                }) = state.compaction.as_mut()
+                else {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "context summary text arrived outside summary collection",
+                    ));
+                };
+                if output_index != 0 || content_index != 0 || *message_done {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "context summary must contain exactly one text message",
+                    ));
+                }
+                body.push_str(&delta);
+                if body.len() > 16 * 1024 * 1024 {
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        "context_exhausted: context summary exceeded its byte bound",
+                    ));
+                }
+            },
+            ModelConnectorEvent::MessageDone { output_index, .. } => {
+                let Some(CompactionState::Summarizing { message_done, .. }) =
+                    state.compaction.as_mut()
+                else {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "context summary completion arrived outside summary collection",
+                    ));
+                };
+                if output_index != 0 || std::mem::replace(message_done, true) {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "context summary completed more than one message",
+                    ));
+                }
+            },
+            ModelConnectorEvent::ReasoningDelta { .. }
+            | ModelConnectorEvent::ProviderPrivateAssistant { .. } => {},
+            ModelConnectorEvent::Terminal {
+                response_id,
+                status,
+                usage,
+            } => {
+                let Some(CompactionState::Summarizing {
+                    input_tokens_before,
+                    summarized_groups,
+                    retained_groups,
+                    body,
+                    response_id: created_response_id,
+                    message_done,
+                }) = state.compaction.take()
+                else {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "context summary terminal arrived outside summary collection",
+                    ));
+                };
+                if created_response_id.as_deref() != Some(response_id.as_str()) {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "context summary terminal identity does not match its response",
+                    ));
+                }
+                if !matches!(status, ModelConnectorTerminal::Completed) || !message_done {
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        "context_exhausted: context summary did not complete exactly once",
+                    ));
+                }
+                context::validate_portable_summary(&body).map_err(|detail| {
+                    failure(
+                        BackendFailureKind::ContextExhausted,
+                        format!("context_exhausted: {detail}"),
+                    )
+                })?;
+                if let Some(mut stream) = state.stream.take() {
+                    stream.shutdown().map_err(map_connector_cleanup)?;
+                }
+                *self.shared_stop.response.lock().map_err(|_| {
+                    failure(BackendFailureKind::Cleanup, "native stop state is poisoned")
+                })? = None;
+
+                let summary_usage = self.context_summary_usage(
+                    &response_id,
+                    state.round.saturating_add(1),
+                    &usage,
+                )?;
+                let mut checkpoint_items = vec![ModelReplayItem::Message {
+                    role: ModelReplayRole::User,
+                    content: body.clone(),
+                    refusal: None,
+                }];
+                checkpoint_items.extend(retained_groups.iter().flatten().cloned());
+                checkpoint_items.extend(state.delta.iter().cloned());
+                let replay = ModelReplay::from_checkpoint(self.contract.clone(), checkpoint_items)
+                    .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
+
+                let mut successor_items = vec![ModelConnectorInputItem::Message {
+                    role: ModelConnectorInputRole::System,
+                    content: self.contract.system_prompt().to_owned(),
+                    refusal: None,
+                }];
+                successor_items.extend(replay.items().iter().map(replay_input));
+                let tool_exposure = if self.tool_exposure_enabled {
+                    RequestToolExposure::enabled(self.registry.function_tools().map_err(
+                        |error| failure(BackendFailureKind::Initialization, error.to_string()),
+                    )?)
+                } else {
+                    RequestToolExposure::disabled()
+                };
+                let (_, input_tokens_after) =
+                    self.admitted_request(successor_items, tool_exposure, state.turn.session_id())?;
+                if !matches!(
+                    context::admit_pressure(
+                        &self.config.context_policy,
+                        input_tokens_after,
+                        self.model_context.input_token_limit(),
+                        true,
+                    ),
+                    context::PressureAdmission::Admit { .. }
+                ) {
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        "context_exhausted: compacted context still reaches the configured trigger",
+                    ));
+                }
+                let proposal = ContextCheckpointProposal::new(
+                    Some(state.turn),
+                    self.config.context_policy.policy_revision(),
+                    self.model_context.input_token_limit(),
+                    input_tokens_before,
+                    input_tokens_after,
+                    self.contract.clone(),
+                    body,
+                    summarized_groups,
+                    retained_groups,
+                    state.delta.clone(),
+                    summary_usage,
+                )
+                .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
+                self.observe_model_request(state.turn, yo_core::ModelRequestOutcome::Succeeded);
+                self.events
+                    .push_back(BackendEvent::ContextCheckpointPrepared { proposal });
+                state.compaction = Some(CompactionState::AwaitingCheckpoint { replay });
+                state.compaction_attempted = true;
+            },
+            ModelConnectorEvent::RefusalDelta { .. }
+            | ModelConnectorEvent::FunctionCallStarted { .. }
+            | ModelConnectorEvent::FunctionArgumentsDelta { .. }
+            | ModelConnectorEvent::FunctionCallDone { .. } => {
+                return Err(failure(
+                    BackendFailureKind::Protocol,
+                    "context summary returned a forbidden semantic item",
+                ));
+            },
+        }
+        Ok(())
+    }
+
+    fn context_summary_usage(
+        &self,
+        response_id: &str,
+        round: usize,
+        usage: &yo_core::ModelConnectorUsage,
+    ) -> Result<serde_json::Value, BackendFailure> {
+        let (Some(input_tokens), Some(output_tokens), Some(total_tokens)) =
+            (usage.input_tokens, usage.output_tokens, usage.total_tokens)
+        else {
+            return Err(failure(
+                BackendFailureKind::ContextExhausted,
+                "context_exhausted: context summary usage is incomplete",
+            ));
+        };
+        let cache_read_input_tokens = match &usage.cache_read_input_tokens {
+            CacheReadInputTokens::Reported {
+                tokens,
+                source_profile,
+            } => json!({
+                "availability": "reported",
+                "tokens": tokens,
+                "source_profile": source_profile.as_str(),
+            }),
+            CacheReadInputTokens::Absent { source_profile } => json!({
+                "availability": "absent",
+                "source_profile": source_profile.as_str(),
+            }),
+            CacheReadInputTokens::Unsupported => json!({
+                "availability": "unsupported",
+            }),
+        };
+        Ok(json!({
+            "schema": "yo.model-usage-receipt/v1",
+            "response_id": response_id,
+            "round": u64::try_from(round).unwrap_or(u64::MAX),
+            "provider": self.binding.provider_id().as_str(),
+            "account": self.binding.account_id().as_str(),
+            "model": self.binding.model_id().as_str(),
+            "connector": self.binding.connector_id().as_str(),
+            "api_dialect": self.binding.api_dialect().as_str(),
+            "base_url": self.binding.endpoint().as_str(),
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "reasoning_tokens": usage.reasoning_tokens,
+            },
+            "cache_read_input_tokens": cache_read_input_tokens,
+        }))
+    }
+
+    fn apply_idle_compaction_event(
+        &mut self,
+        event: ModelConnectorEvent,
+    ) -> Result<(), BackendFailure> {
+        match event {
+            ModelConnectorEvent::ResponseCreated { response_id } => {
+                let Some(IdleCompactionState::Summarizing {
+                    response_id: current,
+                    ..
+                }) = self.idle_compaction.as_mut()
+                else {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "idle context summary response arrived outside summary collection",
+                    ));
+                };
+                if current.replace(response_id).is_some() {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "idle context summary created more than one response identity",
+                    ));
+                }
+            },
+            ModelConnectorEvent::TextDelta {
+                output_index,
+                content_index,
+                delta,
+                ..
+            } => {
+                let Some(IdleCompactionState::Summarizing {
+                    body, message_done, ..
+                }) = self.idle_compaction.as_mut()
+                else {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "idle context summary text arrived outside summary collection",
+                    ));
+                };
+                if output_index != 0 || content_index != 0 || *message_done {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "idle context summary must contain exactly one text message",
+                    ));
+                }
+                body.push_str(&delta);
+                if body.len() > 16 * 1024 * 1024 {
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        "context_exhausted: idle context summary exceeded its byte bound",
+                    ));
+                }
+            },
+            ModelConnectorEvent::MessageDone { output_index, .. } => {
+                let Some(IdleCompactionState::Summarizing { message_done, .. }) =
+                    self.idle_compaction.as_mut()
+                else {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "idle context summary completion arrived outside summary collection",
+                    ));
+                };
+                if output_index != 0 || std::mem::replace(message_done, true) {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "idle context summary completed more than one message",
+                    ));
+                }
+            },
+            ModelConnectorEvent::ReasoningDelta { .. }
+            | ModelConnectorEvent::ProviderPrivateAssistant { .. } => {},
+            ModelConnectorEvent::Terminal {
+                response_id,
+                status,
+                usage,
+            } => {
+                let Some(IdleCompactionState::Summarizing {
+                    input_tokens_before,
+                    summarized_groups,
+                    retained_groups,
+                    body,
+                    response_id: created_response_id,
+                    message_done,
+                    mut stream,
+                }) = self.idle_compaction.take()
+                else {
+                    return Err(failure(
+                        BackendFailureKind::Protocol,
+                        "idle context summary terminal arrived outside summary collection",
+                    ));
+                };
+                stream.shutdown().map_err(map_connector_cleanup)?;
+                *self.shared_stop.response.lock().map_err(|_| {
+                    failure(BackendFailureKind::Cleanup, "native stop state is poisoned")
+                })? = None;
+                if created_response_id.as_deref() != Some(response_id.as_str())
+                    || !matches!(status, ModelConnectorTerminal::Completed)
+                    || !message_done
+                {
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        "context_exhausted: idle context summary did not complete exactly once",
+                    ));
+                }
+                context::validate_portable_summary(&body).map_err(|detail| {
+                    failure(
+                        BackendFailureKind::ContextExhausted,
+                        format!("context_exhausted: {detail}"),
+                    )
+                })?;
+                let summary_usage = self.context_summary_usage(&response_id, 1, &usage)?;
+                let mut checkpoint_items = vec![ModelReplayItem::Message {
+                    role: ModelReplayRole::User,
+                    content: body.clone(),
+                    refusal: None,
+                }];
+                checkpoint_items.extend(retained_groups.iter().flatten().cloned());
+                let replay = ModelReplay::from_checkpoint(self.contract.clone(), checkpoint_items)
+                    .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
+                let tool_exposure = if self.tool_exposure_enabled {
+                    RequestToolExposure::enabled(self.registry.function_tools().map_err(
+                        |error| failure(BackendFailureKind::Initialization, error.to_string()),
+                    )?)
+                } else {
+                    RequestToolExposure::disabled()
+                };
+                let mut successor_items = vec![ModelConnectorInputItem::Message {
+                    role: ModelConnectorInputRole::System,
+                    content: self.contract.system_prompt().to_owned(),
+                    refusal: None,
+                }];
+                successor_items.extend(replay.items().iter().map(replay_input));
+                let session_id = self.session.expect("idle compaction has an open Session");
+                let (_, input_tokens_after) =
+                    self.admitted_request(successor_items, tool_exposure, session_id)?;
+                if input_tokens_after >= input_tokens_before
+                    || !matches!(
+                        context::admit_pressure(
+                            &self.config.context_policy,
+                            input_tokens_after,
+                            self.model_context.input_token_limit(),
+                            true,
+                        ),
+                        context::PressureAdmission::Admit { .. }
+                    )
+                {
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        "context_exhausted: idle compacted context did not reduce and admit the payload",
+                    ));
+                }
+                let proposal = ContextCheckpointProposal::new(
+                    None,
+                    self.config.context_policy.policy_revision(),
+                    self.model_context.input_token_limit(),
+                    input_tokens_before,
+                    input_tokens_after,
+                    self.contract.clone(),
+                    body,
+                    summarized_groups,
+                    retained_groups,
+                    Vec::new(),
+                    summary_usage,
+                )
+                .map_err(|detail| failure(BackendFailureKind::ContextExhausted, detail))?;
+                if let Some(observer) = self.request_observer.as_mut() {
+                    let _ = observer.observe(yo_core::ModelRequestOutcome::Succeeded);
+                }
+                self.events
+                    .push_back(BackendEvent::ContextCheckpointPrepared { proposal });
+                self.idle_compaction = Some(IdleCompactionState::AwaitingCheckpoint { replay });
+            },
+            ModelConnectorEvent::RefusalDelta { .. }
+            | ModelConnectorEvent::FunctionCallStarted { .. }
+            | ModelConnectorEvent::FunctionArgumentsDelta { .. }
+            | ModelConnectorEvent::FunctionCallDone { .. } => {
+                return Err(failure(
+                    BackendFailureKind::ContextExhausted,
+                    "context_exhausted: idle context summary returned a forbidden semantic item",
+                ));
+            },
         }
         Ok(())
     }
@@ -1727,6 +2611,11 @@ impl NativeModelBackend {
         });
         state.delta.push(replay_output);
         if state.pending_calls.is_empty() {
+            self.events
+                .push_back(BackendEvent::ContextActiveSuffixCompleted {
+                    turn: state.turn,
+                    items: state.delta.clone(),
+                });
             state.start_next_round = true;
         } else {
             self.advance_tool_queue(state)?;
@@ -1742,6 +2631,7 @@ impl NativeModelBackend {
                 .then(|| self.contract.clone()),
             std::mem::take(&mut state.delta),
         );
+        let completed_group = delta.items().to_vec();
         if let Err(message) = self.replay.apply(&delta) {
             if is_replay_capacity_error(message) {
                 self.context_exhausted = true;
@@ -1754,6 +2644,7 @@ impl NativeModelBackend {
             }
             return Err(failure(BackendFailureKind::Turn, message));
         }
+        self.replay_groups.push(completed_group);
         self.events.push_back(BackendEvent::ResumableTurnFinished {
             turn: state.turn,
             evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
@@ -1811,7 +2702,11 @@ impl NativeModelBackend {
                 BackendEvent::TurnFinished { .. } | BackendEvent::ResumableTurnFinished { .. } => {
                     activities.clear()
                 },
-                BackendEvent::ActivityUpdated { .. } => {},
+                BackendEvent::ActivityUpdated { .. }
+                | BackendEvent::ContextPolicyChanged { .. }
+                | BackendEvent::ContextCheckpointPrepared { .. }
+                | BackendEvent::ContextActiveSuffixCompleted { .. }
+                | BackendEvent::ModelRequestAccepted { .. } => {},
             }
         }
         activities
@@ -2006,6 +2901,53 @@ impl NativeModelBackend {
         Ok(BackendCommandEvidence::None)
     }
 
+    fn restore_context_state(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<(), BackendFailure> {
+        let legacy_groups = target.context_policy().is_none()
+            && target.model_replay_groups().is_empty()
+            && !target.model_replay().items().is_empty();
+        if target.context_policy().is_some() != target.context_epoch().is_some()
+            || target.model_replay_groups().iter().any(Vec::is_empty)
+            || (!legacy_groups
+                && !target
+                    .model_replay_groups()
+                    .iter()
+                    .flatten()
+                    .eq(target.model_replay().items()))
+        {
+            return Err(failure(
+                BackendFailureKind::Session,
+                "durable context policy, epoch, or replay groups are internally inconsistent",
+            ));
+        }
+        if let Some(policy) = target.context_policy() {
+            self.config.context_policy = policy.clone();
+        }
+        self.context_policy_active = target.context_policy().is_some();
+        self.replay_groups = if legacy_groups {
+            vec![target.model_replay().items().to_vec()]
+        } else {
+            target.model_replay_groups().to_vec()
+        };
+        Ok(())
+    }
+
+    fn cleanup_idle_compaction(&mut self) {
+        if let Some(IdleCompactionState::Summarizing { mut stream, .. }) =
+            self.idle_compaction.take()
+        {
+            stream.cancel();
+            let _ = stream.shutdown();
+        } else {
+            self.idle_compaction = None;
+        }
+        if let Ok(mut response) = self.shared_stop.response.lock() {
+            *response = None;
+        }
+    }
+
     fn pop_event(&mut self) -> Option<BackendEvent> {
         let event = self.events.pop_front()?;
         match &event {
@@ -2018,7 +2960,11 @@ impl NativeModelBackend {
             BackendEvent::TurnFinished { .. } | BackendEvent::ResumableTurnFinished { .. } => {
                 self.open_activities.clear();
             },
-            BackendEvent::ActivityUpdated { .. } => {},
+            BackendEvent::ActivityUpdated { .. }
+            | BackendEvent::ContextPolicyChanged { .. }
+            | BackendEvent::ContextCheckpointPrepared { .. }
+            | BackendEvent::ContextActiveSuffixCompleted { .. }
+            | BackendEvent::ModelRequestAccepted { .. } => {},
         }
         Some(event)
     }
@@ -2075,6 +3021,7 @@ impl BackendAdapter for NativeModelBackend {
         }
         self.session = Some(target.session_id());
         self.replay = target.model_replay().clone();
+        self.restore_context_state(target)?;
         Ok(target.binding().clone())
     }
 
@@ -2096,6 +3043,7 @@ impl BackendAdapter for NativeModelBackend {
         }
         self.session = Some(target.session_id());
         self.replay = target.model_replay().clone();
+        self.restore_context_state(target)?;
         Ok(self.binding_evidence(target.session_id()))
     }
 
@@ -2118,6 +3066,10 @@ impl BackendAdapter for NativeModelBackend {
                     ));
                 }
                 self.session = Some(session_id);
+                self.context_policy_active = true;
+                self.events.push_back(BackendEvent::ContextPolicyChanged {
+                    policy: self.config.context_policy.clone(),
+                });
                 Ok(BackendCommandEvidence::BindingOpened(
                     self.binding_evidence(session_id),
                 ))
@@ -2136,6 +3088,10 @@ impl BackendAdapter for NativeModelBackend {
                 BackendFailureKind::Unsupported,
                 "native model loop only accepts approval responses",
             )),
+            AgentCommand::CompactContext { guidance } => {
+                self.start_idle_compaction(guidance)?;
+                Ok(BackendCommandEvidence::None)
+            },
         }
     }
 
@@ -2146,6 +3102,68 @@ impl BackendAdapter for NativeModelBackend {
         if self.closed {
             return Ok(BackendPoll::Closed);
         }
+        if matches!(
+            self.idle_compaction,
+            Some(IdleCompactionState::AwaitingCheckpoint { .. })
+        ) {
+            let Some(IdleCompactionState::AwaitingCheckpoint { replay }) =
+                self.idle_compaction.take()
+            else {
+                unreachable!("checkpoint-ready idle compaction was checked")
+            };
+            self.replay = replay;
+            self.replay_groups = vec![self.replay.items().to_vec()];
+            return Ok(BackendPoll::Pending);
+        }
+        if matches!(
+            self.idle_compaction,
+            Some(IdleCompactionState::Summarizing { .. })
+        ) {
+            let poll = {
+                let Some(IdleCompactionState::Summarizing { stream, .. }) =
+                    self.idle_compaction.as_mut()
+                else {
+                    unreachable!("active idle summary was checked")
+                };
+                stream.poll()
+            };
+            match poll {
+                Ok(ModelConnectorPoll::Event(event)) => {
+                    if let Err(error) = self.apply_idle_compaction_event(event) {
+                        self.context_exhausted = true;
+                        self.cleanup_idle_compaction();
+                        return Err(if error.kind() == BackendFailureKind::ContextExhausted {
+                            error
+                        } else {
+                            failure(
+                                BackendFailureKind::ContextExhausted,
+                                format!("context_exhausted: idle context summary failed: {error}"),
+                            )
+                        });
+                    }
+                },
+                Ok(ModelConnectorPoll::Pending) => {},
+                Ok(ModelConnectorPoll::Closed) => {
+                    self.context_exhausted = true;
+                    self.cleanup_idle_compaction();
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        "context_exhausted: idle context summary stream closed without a terminal event",
+                    ));
+                },
+                Err(error) => {
+                    self.context_exhausted = true;
+                    self.cleanup_idle_compaction();
+                    return Err(failure(
+                        BackendFailureKind::ContextExhausted,
+                        format!("context_exhausted: idle context summary request failed: {error}"),
+                    ));
+                },
+            }
+            return Ok(self
+                .pop_event()
+                .map_or(BackendPoll::Pending, BackendPoll::Event));
+        }
         if self.shared_stop.requested.swap(false, Ordering::AcqRel)
             && let Some(turn) = self.turn.as_ref().map(|state| state.turn)
         {
@@ -2154,7 +3172,31 @@ impl BackendAdapter for NativeModelBackend {
                 self.pop_event().expect("interrupt queues an event"),
             ));
         }
-        if self
+        if self.turn.as_ref().is_some_and(|state| {
+            matches!(
+                state.compaction,
+                Some(CompactionState::AwaitingCheckpoint { .. })
+            )
+        }) {
+            let mut state = self.turn.take().expect("checkpoint-ready Turn was checked");
+            let Some(CompactionState::AwaitingCheckpoint { replay }) = state.compaction.take()
+            else {
+                unreachable!("checkpoint-ready compaction state was checked")
+            };
+            self.replay = replay;
+            self.replay_groups = vec![self.replay.items().to_vec()];
+            state.delta.clear();
+            state.compaction_attempted = true;
+            if let Err(error) = self.start_model_round(&mut state) {
+                self.fail_or_exhaust_turn(&mut state, error);
+            } else {
+                self.events.push_back(BackendEvent::ModelRequestAccepted {
+                    turn: state.turn,
+                    evidence: self.request_evidence(state.turn),
+                });
+                self.turn = Some(state);
+            }
+        } else if self
             .turn
             .as_ref()
             .is_some_and(|state| state.active_tool.is_some())
@@ -2211,6 +3253,12 @@ impl BackendAdapter for NativeModelBackend {
             if let Err(error) = self.start_model_round(&mut state) {
                 self.fail_or_exhaust_turn(&mut state, error);
             } else {
+                if state.compaction.is_none() && state.stream.is_some() {
+                    self.events.push_back(BackendEvent::ModelRequestAccepted {
+                        turn: state.turn,
+                        evidence: self.request_evidence(state.turn),
+                    });
+                }
                 self.turn = Some(state);
             }
         } else if self
@@ -2230,7 +3278,18 @@ impl BackendAdapter for NativeModelBackend {
                 Err(error) => {
                     let mut state = self.turn.take().expect("active Turn was checked");
                     self.observe_connector_failure(state.turn, &error);
-                    self.fail_turn(&mut state, map_connector_turn(error).to_string());
+                    if matches!(state.compaction, Some(CompactionState::Summarizing { .. })) {
+                        self.context_exhausted = true;
+                        self.exhaust_turn(
+                            &mut state,
+                            format!(
+                                "context_exhausted: context summary request failed: {}",
+                                map_connector_turn(error)
+                            ),
+                        );
+                    } else {
+                        self.fail_turn(&mut state, map_connector_turn(error).to_string());
+                    }
                 },
                 Ok(ModelConnectorPoll::Event(event)) => self.handle_response_event(event)?,
                 Ok(ModelConnectorPoll::Closed) => {
@@ -2241,10 +3300,19 @@ impl BackendAdapter for NativeModelBackend {
                             yo_core::ModelRequestFailureKind::Protocol,
                         ),
                     );
-                    self.fail_turn(
-                        &mut state,
-                        "model connector stream closed without a terminal event".to_owned(),
-                    );
+                    if matches!(state.compaction, Some(CompactionState::Summarizing { .. })) {
+                        self.context_exhausted = true;
+                        self.exhaust_turn(
+                            &mut state,
+                            "context_exhausted: context summary stream closed without a terminal event"
+                                .to_owned(),
+                        );
+                    } else {
+                        self.fail_turn(
+                            &mut state,
+                            "model connector stream closed without a terminal event".to_owned(),
+                        );
+                    }
                 },
                 Ok(ModelConnectorPoll::Pending) => {},
             }
@@ -2273,6 +3341,16 @@ impl BackendAdapter for NativeModelBackend {
                 {
                     result = Err(map_tool_cleanup(error));
                 }
+            }
+        }
+        if let Some(IdleCompactionState::Summarizing { mut stream, .. }) =
+            self.idle_compaction.take()
+        {
+            stream.cancel();
+            if let Err(error) = stream.shutdown()
+                && result.is_ok()
+            {
+                result = Err(map_connector_cleanup(error));
             }
         }
         if let Err(error) = self.tool_host.shutdown()

@@ -416,6 +416,10 @@ impl<P: JsonPeer> Backend<P> {
             AgentCommand::RespondToActivity { request, response } => {
                 self.respond_to_activity(request, response)
             },
+            AgentCommand::CompactContext { .. } => Err(BackendFailure::new(
+                BackendFailureKind::CommandRejected,
+                "Grok delegated Sessions do not use Yo-managed context compaction",
+            )),
         }
     }
 

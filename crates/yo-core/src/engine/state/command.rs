@@ -57,6 +57,27 @@ impl EngineState {
                     Ok(())
                 }
             },
+            AgentCommand::CompactContext { guidance } => {
+                let Some(session) = self.session.as_ref() else {
+                    return Err(AgentRejection::SessionNotCreated);
+                };
+                if let Some(active) = session.active_turn() {
+                    return Err(AgentRejection::TurnAlreadyActive {
+                        active: active.turn,
+                    });
+                }
+                if guidance.as_ref().is_some_and(|guidance| {
+                    guidance.is_empty()
+                        || guidance.trim() != guidance
+                        || guidance.len() > 8 * 1024
+                        || guidance.chars().any(|character| {
+                            character.is_control() && !matches!(character, '\n' | '\t')
+                        })
+                }) {
+                    return Err(AgentRejection::InvalidContextCompactionGuidance);
+                }
+                Ok(())
+            },
         }
     }
 
@@ -75,6 +96,7 @@ impl EngineState {
                 Ok(Vec::new())
             },
             AgentCommand::InterruptTurn { turn } => self.interrupt_turn(turn),
+            AgentCommand::CompactContext { .. } => Ok(Vec::new()),
         }
     }
 

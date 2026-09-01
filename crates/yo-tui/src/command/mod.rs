@@ -1,5 +1,6 @@
 //! Prompt-local built-in commands and their shallow composition registry.
 
+mod compact;
 mod exit;
 mod help;
 mod model;
@@ -10,13 +11,18 @@ use crate::overlay::{
     AcceptanceReceipt, OverlayInstanceToken, PanelSnapshot, PromptOverlaySlot, SelectionEntry,
 };
 
-const ORDERED_DEFINITIONS: &[&CommandDefinition] =
-    &[&help::DEFINITION, &model::DEFINITION, &exit::DEFINITION];
+const ORDERED_DEFINITIONS: &[&CommandDefinition] = &[
+    &help::DEFINITION,
+    &model::DEFINITION,
+    &compact::DEFINITION,
+    &exit::DEFINITION,
+];
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum CommandId {
     Help,
     Model,
+    Compact,
     Exit,
 }
 
@@ -24,6 +30,7 @@ pub(crate) enum CommandId {
 pub(crate) enum CommandEffect {
     ShowHelp,
     SelectModel,
+    CompactContext,
     ExitProcess,
 }
 
@@ -266,6 +273,10 @@ pub(crate) fn model_argument(value: &str) -> Option<&str> {
     model::argument(value)
 }
 
+pub(crate) fn compact_argument(value: &str) -> Option<&str> {
+    compact::argument(value)
+}
+
 fn command_query(text: &str, cursor: usize) -> Option<String> {
     if cursor != text.len() {
         return None;
@@ -343,7 +354,12 @@ mod tests {
                 .matching("")
                 .map(|definition| definition.id)
                 .collect::<Vec<_>>(),
-            vec![CommandId::Help, CommandId::Model, CommandId::Exit]
+            vec![
+                CommandId::Help,
+                CommandId::Model,
+                CommandId::Compact,
+                CommandId::Exit,
+            ]
         );
     }
 

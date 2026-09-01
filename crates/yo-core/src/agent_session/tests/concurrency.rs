@@ -2,7 +2,7 @@ use std::{
     collections::VecDeque,
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicU8, AtomicU64},
+        atomic::{AtomicBool, AtomicU8, AtomicU64},
         mpsc,
     },
     thread,
@@ -12,7 +12,8 @@ use std::{
 use super::{
     super::{
         AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, AgentWorker, ChangeLane,
-        CommandAdmission, PendingCommand, SessionState, WORKER_IDLE, WorkerSignal, apply_event,
+        CommandAdmission, PendingCommand, SessionState, WORKER_IDLE, WorkerSharedState,
+        WorkerSignal, apply_event,
     },
     support::{next_poll, session, start_app, turn},
 };
@@ -47,13 +48,19 @@ fn interrupt_rejects_an_already_queued_submission_with_its_exact_identity() {
     }));
     let active_turn_id = Arc::new(AtomicU64::new(active_turn.turn_id().get().get()));
     let outcomes = Arc::new(Mutex::new(VecDeque::new()));
+    let control_outcomes = Arc::new(Mutex::new(VecDeque::new()));
+    let context_compaction_pending = Arc::new(AtomicBool::new(false));
     let mut worker = AgentWorker::new(
         Box::new(backend),
         session(),
-        Arc::clone(&state),
-        Arc::clone(&active_turn_id),
         SessionJournal::new(),
-        Arc::clone(&outcomes),
+        WorkerSharedState::new(
+            Arc::clone(&state),
+            Arc::clone(&active_turn_id),
+            Arc::clone(&outcomes),
+            control_outcomes,
+            context_compaction_pending,
+        ),
         None,
     );
     worker.initialize().unwrap();

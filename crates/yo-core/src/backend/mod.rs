@@ -1,7 +1,9 @@
+mod context;
 mod contract;
 mod evidence;
 mod scripted;
 
+pub use context::{ContextCheckpointProposal, ContextPressureDecision, ContextPressureObservation};
 pub use contract::{
     AgentBackend, BackendAdapter, BackendCapabilities, BackendEvent, BackendFailure,
     BackendFailureKind, BackendPoll, BackendStopHandle,

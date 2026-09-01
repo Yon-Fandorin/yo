@@ -4,7 +4,8 @@ use std::collections::HashMap;
 
 use yo_core::{
     ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand, AgentEvent,
-    TranscriptRecord, TurnOutcome,
+    ContextCheckpointObservation, ContextPolicyChanged, ContextPressureDecision,
+    ContextPressureObservation, TranscriptRecord, TurnOutcome,
 };
 
 use super::state::StateError;
@@ -16,6 +17,7 @@ pub(super) struct ChatProjection {
     publication_cursor: PublicationCursor,
     next_item_id: u64,
     activities: HashMap<ActivityRef, ActivityPresentation>,
+    context_policy: Option<ContextPolicyChanged>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -142,6 +144,17 @@ impl ChatProjection {
             },
             TranscriptRecord::CommandCommitted(_) => Ok(ChatProjectionChange::Unchanged),
             TranscriptRecord::EventCommitted(event) => self.observe_event(event),
+            TranscriptRecord::ContextPolicyChanged(policy) => {
+                self.context_policy = Some(policy.clone());
+                Ok(ChatProjectionChange::Unchanged)
+            },
+            TranscriptRecord::ContextCheckpointCommitted(checkpoint) => {
+                let id = self.push_notice(format_context_checkpoint(
+                    *checkpoint,
+                    self.context_policy.as_ref(),
+                ))?;
+                Ok(ChatProjectionChange::VisibleItem(id))
+            },
         }
     }
 
@@ -308,7 +321,55 @@ impl ChatProjection {
     }
 }
 
+fn format_context_checkpoint(
+    checkpoint: ContextCheckpointObservation,
+    policy: Option<&ContextPolicyChanged>,
+) -> String {
+    let retained_budget = policy
+        .filter(|policy| policy.policy_revision() == checkpoint.policy_revision())
+        .map_or_else(
+            || "unknown".to_owned(),
+            |policy| match (
+                policy.retained_raw_percent(),
+                policy.retained_raw_max_tokens(),
+            ) {
+                (Some(percent), Some(tokens)) => format!("{percent}% · max {tokens} tokens"),
+                (Some(percent), None) => format!("{percent}%"),
+                (None, Some(tokens)) => format!("max {tokens} tokens"),
+                (None, None) => "none".to_owned(),
+            },
+        );
+    let mut losses = vec![format!(
+        "visible-prefix:{}",
+        checkpoint.visible_prefix_loss_count()
+    )];
+    if checkpoint.provider_private_loss_count() > 0 {
+        losses.push(format!(
+            "provider-private:{}",
+            checkpoint.provider_private_loss_count()
+        ));
+    }
+    format!(
+        "Context checkpoint committed\n{} → {} tokens (limit {})\ncontext epoch {} → {} · source {}..{}\nretained raw: {} group(s) (budget {retained_budget}) · artifact receipts: {} · losses: {}",
+        checkpoint.input_tokens_before(),
+        checkpoint.input_tokens_after(),
+        checkpoint.input_token_limit(),
+        checkpoint.previous_context_epoch(),
+        checkpoint.successor_context_epoch(),
+        checkpoint.source_anchor_sequence().get(),
+        checkpoint.source_journal_boundary().get(),
+        checkpoint.retained_group_count(),
+        checkpoint.artifact_receipt_count(),
+        losses.join(", "),
+    )
+}
+
 fn project_snapshot(kind: ActivityKind, text: String) -> String {
+    if kind == ActivityKind::ModelWork
+        && let Some(pressure) = project_context_pressure(&text)
+    {
+        return pressure;
+    }
     let Some(label) = activity_label(kind) else {
         return text;
     };
@@ -317,6 +378,29 @@ fn project_snapshot(kind: ActivityKind, text: String) -> String {
     } else {
         format!("{label}\n{text}")
     }
+}
+
+fn project_context_pressure(text: &str) -> Option<String> {
+    let observation = ContextPressureObservation::from_snapshot_json(text)?;
+    let input_tokens = observation.input_tokens();
+    let input_token_limit = observation.input_token_limit();
+    let trigger_percent = observation.trigger_percent();
+    let decision = match observation.decision() {
+        ContextPressureDecision::Admit => "near compaction threshold",
+        ContextPressureDecision::Compact => "compacting before the next request",
+        ContextPressureDecision::Reject => "context limit reached",
+    };
+    let used_percent = if input_token_limit == 0 {
+        100
+    } else {
+        u128::from(input_tokens)
+            .saturating_mul(100)
+            .checked_div(u128::from(input_token_limit))?
+            .min(100) as u64
+    };
+    Some(format!(
+        "Context pressure\n{used_percent}% used ({input_tokens} / {input_token_limit} tokens) · {decision} · compacts at {trigger_percent}%"
+    ))
 }
 
 const fn activity_label(kind: ActivityKind) -> Option<&'static str> {
@@ -332,5 +416,29 @@ const fn activity_label(kind: ActivityKind) -> Option<&'static str> {
         ActivityKind::ApprovalResponse { .. } => Some("Approval response sent"),
         ActivityKind::UserInputRequest { .. } => Some("Agent requested input"),
         ActivityKind::UserInputResponse { .. } => Some("Input response sent"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // context pressure receipt는 durable typed JSON을 유지하되 Chat에는 model reasoning처럼
+    // 원문을 노출하지 않고 사람이 읽을 수 있는 pressure 상태로 투영합니다.
+    #[test]
+    fn projects_context_pressure_without_exposing_raw_telemetry() {
+        let projected = project_snapshot(
+            ActivityKind::ModelWork,
+            ContextPressureObservation::new(86, 100, 85, 90, ContextPressureDecision::Admit)
+                .unwrap()
+                .to_snapshot_json(),
+        );
+
+        assert_eq!(
+            projected,
+            "Context pressure\n86% used (86 / 100 tokens) · near compaction threshold · compacts at 90%"
+        );
+        assert!(!projected.contains("yo.context-pressure"));
+        assert!(!projected.contains("Thinking"));
     }
 }

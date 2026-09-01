@@ -1,9 +1,12 @@
 use super::{activity, runtime_with_active_turn, session, submission, turn};
 use crate::{
-    ActivityKind, AgentCommand, AgentRuntime, BackendBindingEvidence, BackendCapabilities,
-    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
-    BackendOutcomeEvidence, BackendRequestEvidence, BackendScriptStep, RuntimeError,
-    ScriptedBackend, TurnOutcome, UserInput, journal::SemanticRecord,
+    ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, AgentRuntime,
+    BackendBindingEvidence, BackendCapabilities, BackendCommandEvidence, BackendEvent,
+    BackendFailure, BackendFailureKind, BackendIdentity, BackendOutcomeEvidence,
+    BackendRequestEvidence, BackendScriptStep, ContextCheckpointProposal, ContextPolicyChanged,
+    ContextStrategy, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+    ReplayExecutor, ReplayProfile, RuntimeError, ScriptedBackend, TurnOutcome, UserInput,
+    journal::SemanticRecord,
 };
 
 // Runtime의 공개 경계도 Start/Steer와 SubmissionId를 분리해서 받을 수 없게 막아,
@@ -457,6 +460,457 @@ fn clears_accepted_request_evidence_when_a_turn_becomes_terminal() {
     runtime.shutdown().unwrap();
 }
 
+// runtime이 successor 요청 수락보다 checkpoint를 먼저 Journal에 commit하는 순서를 검증합니다.
+#[test]
+fn commits_a_checkpoint_before_accepting_the_successor_context_request() {
+    let session_id = session(8);
+    let turns = [
+        turn(session_id, 1),
+        turn(session_id, 2),
+        turn(session_id, 3),
+    ];
+    let inputs = ["first input", "second input", "current input"];
+    let starts = std::array::from_fn::<_, 3, _>(|index| AgentCommand::StartTurn {
+        turn: turns[index],
+        input: UserInput::new(inputs[index]),
+    });
+    let contract = ModelReplayContract::new("system", Vec::new());
+    let group = |input: &str, answer: &str| {
+        vec![
+            ModelReplayItem::Message {
+                role: ModelReplayRole::User,
+                content: input.to_owned(),
+                refusal: None,
+            },
+            ModelReplayItem::Message {
+                role: ModelReplayRole::Assistant,
+                content: answer.to_owned(),
+                refusal: None,
+            },
+        ]
+    };
+    let first_group = vec![
+        ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: inputs[0].to_owned(),
+            refusal: None,
+        },
+        ModelReplayItem::FunctionCall {
+            call_id: "call-1".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: r#"{"path":"README.md"}"#.to_owned(),
+        },
+        ModelReplayItem::FunctionCallOutput {
+            call_id: "call-1".to_owned(),
+            output: "identical artifact bytes".to_owned(),
+        },
+        ModelReplayItem::FunctionCall {
+            call_id: "call-2".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: r#"{"path":"README.md"}"#.to_owned(),
+        },
+        ModelReplayItem::FunctionCallOutput {
+            call_id: "call-2".to_owned(),
+            output: "identical artifact bytes".to_owned(),
+        },
+        ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "first answer".to_owned(),
+            refusal: None,
+        },
+    ];
+    let second_group = group(inputs[1], "second answer");
+    let active_group = vec![ModelReplayItem::Message {
+        role: ModelReplayRole::User,
+        content: inputs[2].to_owned(),
+        refusal: None,
+    }];
+    let policy = ContextPolicyChanged::try_new(
+        1,
+        true,
+        ContextStrategy::PortableSummaryV1Alpha1,
+        85,
+        90,
+        Some(10),
+        Some(65_536),
+    )
+    .unwrap();
+    let body = "# Context Checkpoint\n\
+## Current Objective\nContinue.\n\
+## Active Constraints\nNone.\n\
+## Decisions\nRetain exact recent context.\n\
+## Verified Progress\nThe first turn completed.\n\
+## Current State\nThe third turn is active.\n\
+## Unknown or Unverified\nNone.\n\
+## Next Actions\nAnswer the current input.\n\
+## Critical References\nNone.";
+    let proposal = ContextCheckpointProposal::new(
+        Some(turns[2]),
+        1,
+        100,
+        90,
+        40,
+        contract.clone(),
+        body,
+        vec![first_group.clone()],
+        vec![second_group.clone()],
+        active_group,
+        serde_json::json!({
+            "schema": "yo.model-usage-receipt/v1",
+            "response_id": "summary-1",
+            "round": 1,
+            "provider": "test",
+            "account": "default",
+            "model": "test-model",
+            "connector": "openai-responses",
+            "api_dialect": "openai-responses",
+            "base_url": "https://example.invalid/",
+            "usage": {
+                "input_tokens": 20,
+                "output_tokens": 10,
+                "total_tokens": 30,
+                "reasoning_tokens": 0
+            },
+            "cache_read_input_tokens": { "availability": "unsupported" }
+        }),
+    )
+    .unwrap();
+    let binding = exact_replay_binding_evidence();
+    let create = AgentCommand::CreateSession { session_id };
+    let first_delta = ModelReplayDelta::new(Some(contract), first_group);
+    let second_delta = ModelReplayDelta::new(None, second_group);
+    let final_delta = ModelReplayDelta::new(
+        None,
+        vec![ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "final answer".to_owned(),
+            refusal: None,
+        }],
+    );
+    let steps = [
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: create.clone(),
+            evidence: BackendCommandEvidence::BindingOpened(binding),
+        },
+        BackendScriptStep::Emit(BackendEvent::ContextPolicyChanged {
+            policy: policy.clone(),
+        }),
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: starts[0].clone(),
+            evidence: BackendCommandEvidence::RequestAccepted(request_evidence()),
+        },
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn: turns[0],
+            evidence: BackendOutcomeEvidence::without_identity().with_replay(first_delta),
+        }),
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: starts[1].clone(),
+            evidence: BackendCommandEvidence::RequestAccepted(request_evidence()),
+        },
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn: turns[1],
+            evidence: BackendOutcomeEvidence::without_identity().with_replay(second_delta),
+        }),
+        BackendScriptStep::AcceptCommand(starts[2].clone()),
+        BackendScriptStep::Emit(BackendEvent::ContextCheckpointPrepared { proposal }),
+        BackendScriptStep::Emit(BackendEvent::ModelRequestAccepted {
+            turn: turns[2],
+            evidence: request_evidence(),
+        }),
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn: turns[2],
+            evidence: BackendOutcomeEvidence::without_identity().with_replay(final_delta),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ];
+    let mut runtime = AgentRuntime::new(ScriptedBackend::new(steps));
+    let transcript = runtime.journal().transcript_reader();
+
+    runtime.execute_command(create).unwrap();
+    for (index, start) in starts.iter().take(2).enumerate() {
+        runtime
+            .execute_submission(start.clone(), submission(20 + index as u8))
+            .unwrap();
+        assert!(matches!(
+            runtime.poll_event().unwrap(),
+            crate::RuntimePoll::Event(_)
+        ));
+    }
+    runtime
+        .execute_submission(starts[2].clone(), submission(22))
+        .unwrap();
+    assert_eq!(runtime.poll_event().unwrap(), crate::RuntimePoll::Pending);
+    let checkpoint_index = runtime
+        .journal()
+        .entries()
+        .iter()
+        .position(|entry| matches!(entry.record(), SemanticRecord::ContextCheckpoint(_)))
+        .expect("runtime did not durably commit the proposed checkpoint");
+    {
+        let checkpoint_entries = runtime.journal().entries();
+        let SemanticRecord::ContextCheckpoint(checkpoint) =
+            checkpoint_entries[checkpoint_index].record()
+        else {
+            unreachable!()
+        };
+        assert_eq!(checkpoint.artifact_receipts().len(), 1);
+    }
+    let observation = transcript
+        .read_after(None)
+        .into_entries()
+        .into_iter()
+        .find_map(|entry| match entry.record() {
+            crate::TranscriptRecord::ContextCheckpointCommitted(observation) => Some(*observation),
+            _ => None,
+        })
+        .expect("the committed lossy boundary must be visible to operators");
+    assert_eq!(observation.input_tokens_before(), 90);
+    assert_eq!(observation.input_tokens_after(), 40);
+    assert_eq!(observation.retained_group_count(), 2);
+    assert_eq!(observation.artifact_receipt_count(), 1);
+    assert_eq!(observation.visible_prefix_loss_count(), 1);
+    assert_eq!(runtime.poll_event().unwrap(), crate::RuntimePoll::Pending);
+    let accepted_index = runtime
+        .journal()
+        .entries()
+        .iter()
+        .rposition(|entry| matches!(entry.record(), SemanticRecord::BackendRequestAccepted(_)))
+        .expect("runtime did not record the successor request");
+    assert!(checkpoint_index < accepted_index);
+    assert!(matches!(
+        runtime.poll_event().unwrap(),
+        crate::RuntimePoll::Event(_)
+    ));
+    let entries = runtime.journal().entries();
+    let SemanticRecord::ModelReplayDelta(delta) = entries
+        .iter()
+        .rev()
+        .find(|entry| matches!(entry.record(), SemanticRecord::ModelReplayDelta(_)))
+        .unwrap()
+        .record()
+    else {
+        unreachable!()
+    };
+    assert_eq!(delta.context_epoch(), Some(2));
+    assert_eq!(delta.delta().items().len(), 1);
+    runtime.shutdown().unwrap();
+}
+
+// 도구 call/result Activity가 모두 닫힌 뒤 backend가 제출한 active suffix만 checkpoint의
+// inline retained replay가 될 수 있고, 그 뒤 요청은 successor context epoch에 기록됩니다.
+#[test]
+fn binds_a_completed_tool_suffix_before_committing_the_mid_turn_checkpoint() {
+    let session_id = session(9);
+    let first_turn = turn(session_id, 1);
+    let active_turn = turn(session_id, 2);
+    let first_start = AgentCommand::StartTurn {
+        turn: first_turn,
+        input: UserInput::new("first input"),
+    };
+    let active_start = AgentCommand::StartTurn {
+        turn: active_turn,
+        input: UserInput::new("inspect the workspace"),
+    };
+    let contract = ModelReplayContract::new("system", Vec::new());
+    let first_group = vec![
+        ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "first input".to_owned(),
+            refusal: None,
+        },
+        ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "first answer".to_owned(),
+            refusal: None,
+        },
+    ];
+    let active_group = vec![
+        ModelReplayItem::Message {
+            role: ModelReplayRole::User,
+            content: "inspect the workspace".to_owned(),
+            refusal: None,
+        },
+        ModelReplayItem::FunctionCall {
+            call_id: "call-1".to_owned(),
+            name: "read_file".to_owned(),
+            arguments: r#"{"path":"README.md"}"#.to_owned(),
+        },
+        ModelReplayItem::FunctionCallOutput {
+            call_id: "call-1".to_owned(),
+            output: "workspace contents".to_owned(),
+        },
+    ];
+    let policy = ContextPolicyChanged::try_new(
+        1,
+        true,
+        ContextStrategy::PortableSummaryV1Alpha1,
+        85,
+        90,
+        Some(10),
+        Some(65_536),
+    )
+    .unwrap();
+    let proposal = ContextCheckpointProposal::new(
+        Some(active_turn),
+        1,
+        100,
+        90,
+        40,
+        contract.clone(),
+        "# Context Checkpoint\n\
+## Current Objective\nContinue.\n\
+## Active Constraints\nNone.\n\
+## Decisions\nRetain the completed tool result.\n\
+## Verified Progress\nThe prior turn completed.\n\
+## Current State\nThe tool result is available.\n\
+## Unknown or Unverified\nNone.\n\
+## Next Actions\nContinue after the tool result.\n\
+## Critical References\nREADME.md.",
+        vec![first_group.clone()],
+        Vec::new(),
+        active_group.clone(),
+        serde_json::json!({
+            "schema": "yo.model-usage-receipt/v1",
+            "response_id": "summary-tool",
+            "round": 2,
+            "provider": "test",
+            "account": "default",
+            "model": "test-model",
+            "connector": "openai-responses",
+            "api_dialect": "openai-responses",
+            "base_url": "https://example.invalid/",
+            "usage": {
+                "input_tokens": 20,
+                "output_tokens": 10,
+                "total_tokens": 30,
+                "reasoning_tokens": 0
+            },
+            "cache_read_input_tokens": { "availability": "unsupported" }
+        }),
+    )
+    .unwrap();
+    let call_activity = activity(active_turn, 1);
+    let result_activity = activity(active_turn, 2);
+    let final_delta = ModelReplayDelta::new(
+        None,
+        vec![ModelReplayItem::Message {
+            role: ModelReplayRole::Assistant,
+            content: "final answer".to_owned(),
+            refusal: None,
+        }],
+    );
+    let create = AgentCommand::CreateSession { session_id };
+    let steps = [
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: create.clone(),
+            evidence: BackendCommandEvidence::BindingOpened(exact_replay_binding_evidence()),
+        },
+        BackendScriptStep::Emit(BackendEvent::ContextPolicyChanged { policy }),
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: first_start.clone(),
+            evidence: BackendCommandEvidence::RequestAccepted(request_evidence()),
+        },
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn: first_turn,
+            evidence: BackendOutcomeEvidence::without_identity()
+                .with_replay(ModelReplayDelta::new(Some(contract), first_group)),
+        }),
+        BackendScriptStep::AcceptCommandWithEvidence {
+            command: active_start.clone(),
+            evidence: BackendCommandEvidence::RequestAccepted(request_evidence()),
+        },
+        BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+            activity: call_activity,
+            kind: ActivityKind::ToolCall,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityUpdated {
+            activity: call_activity,
+            update: ActivityUpdate::TextSnapshot("read_file".to_owned()),
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+            activity: call_activity,
+            outcome: ActivityOutcome::Completed,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityStarted {
+            activity: result_activity,
+            kind: ActivityKind::ToolResult,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityUpdated {
+            activity: result_activity,
+            update: ActivityUpdate::TextSnapshot("workspace contents".to_owned()),
+        }),
+        BackendScriptStep::Emit(BackendEvent::ActivityFinished {
+            activity: result_activity,
+            outcome: ActivityOutcome::Completed,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ContextActiveSuffixCompleted {
+            turn: active_turn,
+            items: active_group,
+        }),
+        BackendScriptStep::Emit(BackendEvent::ContextCheckpointPrepared { proposal }),
+        BackendScriptStep::Emit(BackendEvent::ModelRequestAccepted {
+            turn: active_turn,
+            evidence: request_evidence(),
+        }),
+        BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+            turn: active_turn,
+            evidence: BackendOutcomeEvidence::without_identity().with_replay(final_delta),
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ];
+    let mut runtime = AgentRuntime::new(ScriptedBackend::new(steps));
+
+    runtime.execute_command(create).unwrap();
+    runtime
+        .execute_submission(first_start, submission(30))
+        .unwrap();
+    assert!(matches!(
+        runtime.poll_event().unwrap(),
+        crate::RuntimePoll::Event(crate::AgentEvent::TurnFinished { .. })
+    ));
+    runtime
+        .execute_submission(active_start, submission(31))
+        .unwrap();
+    for _ in 0..6 {
+        assert!(matches!(
+            runtime.poll_event().unwrap(),
+            crate::RuntimePoll::Event(_)
+        ));
+    }
+    assert_eq!(runtime.poll_event().unwrap(), crate::RuntimePoll::Pending);
+    assert_eq!(runtime.poll_event().unwrap(), crate::RuntimePoll::Pending);
+    let checkpoint_index = runtime
+        .journal()
+        .entries()
+        .iter()
+        .position(|entry| matches!(entry.record(), SemanticRecord::ContextCheckpoint(_)))
+        .expect("mid-Turn checkpoint was not committed");
+    assert_eq!(runtime.poll_event().unwrap(), crate::RuntimePoll::Pending);
+    let accepted_index = runtime
+        .journal()
+        .entries()
+        .iter()
+        .rposition(|entry| matches!(entry.record(), SemanticRecord::BackendRequestAccepted(_)))
+        .expect("successor request was not accepted");
+    assert!(checkpoint_index < accepted_index);
+    let accepted_operations = runtime
+        .journal()
+        .entries()
+        .iter()
+        .filter_map(|entry| match entry.record() {
+            SemanticRecord::BackendRequestAccepted(accepted) => Some(accepted.operation_id()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(accepted_operations.len(), 3);
+    assert_ne!(accepted_operations[1], accepted_operations[2]);
+    assert!(matches!(
+        runtime.poll_event().unwrap(),
+        crate::RuntimePoll::Event(crate::AgentEvent::TurnFinished { .. })
+    ));
+    runtime.shutdown().unwrap();
+}
+
 fn binding_evidence() -> BackendBindingEvidence {
     BackendBindingEvidence::new(
         "scripted",
@@ -465,6 +919,20 @@ fn binding_evidence() -> BackendBindingEvidence {
         BackendIdentity::new("scripted/model/v1", "model-1"),
         BackendIdentity::new("scripted/session/v1", "session-1"),
         crate::ContinuationStrategy::BackendManagedState,
+    )
+}
+
+fn exact_replay_binding_evidence() -> BackendBindingEvidence {
+    BackendBindingEvidence::new(
+        "scripted",
+        "1",
+        BackendIdentity::new("scripted/binding/v1", "binding-1"),
+        BackendIdentity::new("scripted/model/v1", "model-1"),
+        BackendIdentity::new("scripted/session/v1", "session-1"),
+        crate::ContinuationStrategy::ExactReplay {
+            executor: ReplayExecutor::LocalClient,
+            replay_profile: ReplayProfile::SemanticOnly,
+        },
     )
 }
 

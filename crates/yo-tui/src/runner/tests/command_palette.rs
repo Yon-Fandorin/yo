@@ -40,9 +40,32 @@ fn slash_opens_the_local_command_palette() {
     assert!(rendered.contains("Commands"), "{rendered}");
     assert!(rendered.contains("/help"), "{rendered}");
     assert!(rendered.contains("/model"), "{rendered}");
+    assert!(rendered.contains("/compact"), "{rendered}");
     assert!(rendered.contains("/exit"), "{rendered}");
     assert_eq!(state.editor().text(), "/");
     assert!(state.transcript().items().is_empty());
+}
+
+// 선택 지침이 있는 `/compact`가 idle control intent 하나로 정확히 변환됨을 검증합니다.
+#[test]
+fn compact_with_guidance_dispatches_one_idle_control_intent() {
+    let mut state = TuiState::new();
+    state
+        .handle(
+            InputEvent::Paste("/compact preserve unresolved constraints".to_owned()),
+            Duration::ZERO,
+        )
+        .unwrap();
+
+    assert_eq!(
+        state
+            .handle(key(KeyCode::Enter, KeyModifiers::NONE), Duration::ZERO)
+            .unwrap(),
+        StateEffect::Dispatch(AgentAction::CompactContext {
+            guidance: Some("preserve unresolved constraints".to_owned()),
+        })
+    );
+    assert!(state.editor().text().is_empty());
 }
 
 // slash 접두어는 일치하는 명령만 남기고 editor draft와 cursor 소유권을 유지한다.
@@ -274,7 +297,7 @@ fn selected_exit_uses_the_existing_runner_exit_boundary() {
         .unwrap();
     present_palette(&mut state, Size::new(80, 16));
 
-    for _ in 0..2 {
+    for _ in 0..3 {
         assert_eq!(
             state
                 .handle(key(KeyCode::Down, KeyModifiers::NONE), Duration::ZERO)

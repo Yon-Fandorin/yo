@@ -95,9 +95,21 @@ impl HistoryNormalizer {
             | JournalRecord::BackendRequestAccepted(_)
             | JournalRecord::ModelReplayDelta(_)
             | JournalRecord::BackendResumableOutcome(_)
-            | JournalRecord::ContinuationAnchor(_)
-            | JournalRecord::ContextPolicyChanged(_)
-            | JournalRecord::ContextCheckpoint(_) => Ok(()),
+            | JournalRecord::ContinuationAnchor(_) => Ok(()),
+            JournalRecord::ContextPolicyChanged(policy) => {
+                self.flush_dirty();
+                self.output
+                    .push(TranscriptRecord::ContextPolicyChanged(policy.clone()));
+                Ok(())
+            },
+            JournalRecord::ContextCheckpoint(checkpoint) => {
+                self.flush_dirty();
+                self.output
+                    .push(TranscriptRecord::ContextCheckpointCommitted(
+                        crate::ContextCheckpointObservation::from(checkpoint),
+                    ));
+                Ok(())
+            },
             JournalRecord::MessageReset(reset) => {
                 let message = self.message_mut(reset.activity())?;
                 message.revision = reset.revision();

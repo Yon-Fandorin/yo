@@ -17,6 +17,8 @@ pub enum AgentIntent {
     },
     /// Requests interruption of the active Turn.
     Interrupt,
+    /// Compacts an idle Session with optional user guidance.
+    CompactContext { guidance: Option<String> },
     /// Answers one correlated approval request.
     RespondToApproval {
         /// The outstanding request being answered.
@@ -57,6 +59,22 @@ pub enum CommandAdmission {
         /// The frontend-neutral reason admission did not occur.
         rejection: SubmissionRejection,
     },
+}
+
+/// Result of an admitted Session control that did not mutate durable semantics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AgentControlOutcome {
+    /// Manual context compaction was unavailable at the current Session boundary.
+    ContextCompactionRejected { detail: String },
+}
+
+impl AgentControlOutcome {
+    #[must_use]
+    pub fn detail(&self) -> &str {
+        match self {
+            Self::ContextCompactionRejected { detail } => detail,
+        }
+    }
 }
 
 /// An opaque, single-use operation retained across nonblocking backpressure.

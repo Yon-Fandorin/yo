@@ -119,6 +119,59 @@ attributes each terminal response's usage to its exact Provider, Account,
 Model, connector, endpoint, and complete resolved profile. The process host owns startup
 selection and assembly of these inputs and concrete local tools.
 
+Every new local-client exact-replay Session commits its closed context policy
+before the first model request. The default reports pressure at 85 percent and
+selects portable-summary compaction at 90 percent from the exact complete
+Connector tokenization payload; reported cache-read tokens do not reduce that
+occupancy. At a supported boundary, the managed backend sends exactly one
+tools-disabled summary request through the already selected binding, excludes
+provider-private replay from the summary input, validates the fixed
+`Context Checkpoint` Markdown shape, retains the newest complete replay group
+and current input, and recounts the complete successor payload. Provider-private
+summary events are transient and never enter the checkpoint; unavailable optional
+reasoning usage remains `null` while input, output, and total usage stay required.
+Core binds the
+proposal to exact Journal groups and atomically commits the checkpoint before
+the backend swaps replay or dispatches the successor request. Every internally
+dispatched successor receives a distinct writer-assigned UUIDv4 operation root
+derived from the Session, Turn, and exact outbound exchange sequence. Recovery
+accepts that identity only for an active Turn after a prior accepted request, or
+for the first request after an active checkpoint crossed the submitted input;
+the same bytes cannot attach work to a completed Turn. The checkpoint
+advances only the Session-global context epoch, and resume restores its policy,
+epoch, replay root, and semantic group boundaries.
+
+The live and archived Transcript project the committed policy plus a redacted
+checkpoint observation. Chat reports the before/after measurements, limit,
+context-epoch transition, source boundary, retained-group budget, artifact
+receipt count, and disclosed loss classes without exposing the summary body or
+raw artifacts. Equal non-empty tool-output bytes in one summarized source group
+share one disclosure receipt identity rather than making an unrecoverable
+duplicate receipt.
+
+Automatic execution supports both the first request of a new Turn and the
+boundary after a complete admitted tool call/result suffix. At the latter
+boundary, the managed backend first publishes the exact monotonic active
+suffix after every related Activity has finished; core binds it to the current
+input command and that last durable `ActivityFinished` before it will accept a
+checkpoint proposal. A pending approval, tool effect, model stream, invented
+suffix, or ordinary accepted request without the completed boundary fails
+closed before a summary can become durable. Idle `/compact [GUIDANCE]` uses the
+same one-request pipeline even below the automatic threshold and keeps the Session
+closed to a new Turn until its checkpoint boundary resolves. Admission reserves
+that interval before the worker sees the command, so a following prompt and a
+binding replacement cannot overtake the checkpoint; the retained prompt is
+released by the post-activation change signal. A policy that disallows manual
+compaction or a Session with too little completed history returns a typed,
+nonterminal control outcome, leaving the same Session available for later
+prompts. Invalid guidance and an admission race with a queued or active Turn use
+that same control outcome instead of terminating the worker. Pressure observations
+remain typed durable telemetry while Chat renders a concise human-readable state
+instead of exposing their JSON as model work. Disabled or
+exact-replay-only policy also rejects instead of compacting, and malformed
+output, failed usage attribution, a non-reducing result, or a successor payload
+still at the trigger permits no retry or fallback.
+
 For a new local-tools Session, startup freezes the five-tool basic registry in
 the order `list_files`, `read_files`, `edit_file`, `write_file`, and
 `run_command`. Resume compares the durable replay projection with the exact
@@ -221,7 +274,7 @@ live native model replacement retains the Session's frozen empty registry.
 
 In editable Chat, a slash in the only prompt token opens the prompt-adjacent
 command palette while the cursor is at the end of the draft. Further characters
-filter the ordered `/help`, `/model`, and `/exit` catalog. Each child under
+filter the ordered `/help`, `/model`, `/compact`, and `/exit` catalog. Each child under
 `command/` owns one command's ID, invocation, description, and typed effect; the
 shallow registry only validates uniqueness, composes order, filters entries,
 and projects help. The shared overlay slot owns Up/Down navigation, Enter or Tab
@@ -243,6 +296,13 @@ implicitly answers or cancels an outstanding Activity. `/exit` is the explicit
 process-lifecycle exception and uses the existing runner exit boundary. A
 read-only view makes the palette ineligible; a pending Activity does not hide
 these local commands.
+
+`/compact` is an idle Yo-managed control command. Its optional suffix is bounded
+user guidance for the summary request, not an ordinary prompt submission. The
+command preserves the draft and reports an idle requirement while a Turn is
+active; delegated Codex and Grok Sessions reject it as unsupported rather than
+claiming a Yo-managed checkpoint. That expected rejection is a nonterminal
+control result and does not close the delegated Session.
 
 An ordinary prompt submitted while a Turn is visible carries that exact
 `TurnRef` into `yo-core`. If the worker has already finished it, core rejects
@@ -1353,7 +1413,9 @@ uses each `SubmissionId` as the Start/Steer operation identity, and publishes
 `TurnFinished(completed)`, its resumable outcome, and the Continuation Anchor in
 one semantic commit. Provider adapters return opaque evidence without choosing
 epochs or Journal coordinates; the runtime owns those semantic identities and
-the Journal remains their sole sequence allocator. Transcript projection omits
+the Journal remains their sole sequence allocator. Internal successor requests
+that have no user submission receive separate writer-assigned UUIDv4 identities.
+Transcript projection omits
 the correlation-only records.
 
 The Codex adapter preserves the user's effective model selection by omitting a

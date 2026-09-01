@@ -19,6 +19,7 @@ pub enum AgentSessionError {
     NoOutstandingRequest,
     TurnNoLongerActive,
     TurnInterruptPending,
+    ContextCompactionRequiresIdle,
     TurnIdExhausted,
     DuplicateSubmissionId(SubmissionId),
     SessionIdentityUnavailable(SessionIdGenerationError),
@@ -53,6 +54,9 @@ impl fmt::Display for AgentSessionError {
             },
             Self::TurnInterruptPending => {
                 formatter.write_str("the active Turn is already being interrupted")
+            },
+            Self::ContextCompactionRequiresIdle => {
+                formatter.write_str("context compaction requires an idle Session")
             },
             Self::TurnIdExhausted => formatter.write_str("the Turn identity space was exhausted"),
             Self::DuplicateSubmissionId(id) => {
@@ -92,6 +96,7 @@ impl Error for AgentSessionError {
             | Self::NoOutstandingRequest
             | Self::TurnNoLongerActive
             | Self::TurnInterruptPending
+            | Self::ContextCompactionRequiresIdle
             | Self::TurnIdExhausted
             | Self::DuplicateSubmissionId(_)
             | Self::WorkerUnavailable(_)

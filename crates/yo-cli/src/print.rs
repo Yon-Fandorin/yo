@@ -215,6 +215,8 @@ impl FinalResponseProjection {
             },
             TranscriptRecord::CommandCommitted(_) => {},
             TranscriptRecord::EventCommitted(event) => return self.observe_event(event),
+            TranscriptRecord::ContextPolicyChanged(_)
+            | TranscriptRecord::ContextCheckpointCommitted(_) => {},
         }
         Ok(None)
     }
@@ -310,10 +312,11 @@ mod tests {
 
     use yo_core::{
         ActivityId, BackendBindingEvidence, BackendCommandEvidence, BackendEvent, BackendIdentity,
-        BackendOutcomeEvidence, BackendRequestEvidence, BackendScriptStep, ContinuationStrategy,
-        Failure, HostWorkspacePath, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
-        ModelReplayRole, ReplayExecutor, RequestId, ScriptedBackend, SessionDescriptor,
-        SubmissionRejection, SubmissionRejectionKind, TurnId, WorkspaceHostId,
+        BackendOutcomeEvidence, BackendRequestEvidence, BackendScriptStep, ContextPolicyChanged,
+        ContextStrategy, ContinuationStrategy, Failure, HostWorkspacePath, ModelReplayContract,
+        ModelReplayDelta, ModelReplayItem, ModelReplayRole, ReplayExecutor, RequestId,
+        ScriptedBackend, SessionDescriptor, SubmissionRejection, SubmissionRejectionKind, TurnId,
+        WorkspaceHostId,
         session_repository::{
             AppendError, AppendReceipt, DurableRecord, LocalSessionRepository, RepositoryEntry,
             RepositoryError, RepositorySequence, SessionRepository, SessionWriterRepository,
@@ -760,6 +763,20 @@ mod tests {
                 },
                 evidence: BackendCommandEvidence::BindingOpened(resumable_binding()),
             });
+            steps.push(BackendScriptStep::Emit(
+                BackendEvent::ContextPolicyChanged {
+                    policy: ContextPolicyChanged::try_new(
+                        1,
+                        true,
+                        ContextStrategy::PortableSummaryV1Alpha1,
+                        85,
+                        90,
+                        Some(10),
+                        Some(65_536),
+                    )
+                    .unwrap(),
+                },
+            ));
         }
         steps.push(BackendScriptStep::AcceptCommandWithEvidence {
             command: AgentCommand::StartTurn {

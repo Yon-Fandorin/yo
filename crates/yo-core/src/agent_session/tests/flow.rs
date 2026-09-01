@@ -1,13 +1,34 @@
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
+
 use super::{
     super::{AgentIntent, AgentSession, AgentSessionError},
     support::{activity, id, next_poll, session, start_app, turn},
 };
 use crate::{
-    ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand, AgentEvent,
-    ApprovalDecision, BackendCapabilities, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendScriptStep, CommandAdmission, InputSubmission, RequestId, RuntimeError, RuntimePoll,
-    ScriptedBackend, SubmissionId, SubmissionOutcome, TurnOutcome, UserInput,
+    ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand,
+    AgentControlOutcome, AgentEvent, ApprovalDecision, BackendCapabilities, BackendEvent,
+    BackendFailure, BackendFailureKind, BackendScriptStep, CommandAdmission, InputSubmission,
+    RequestId, RuntimeError, RuntimePoll, ScriptedBackend, SubmissionId, SubmissionOutcome,
+    TurnOutcome, UserInput,
 };
+
+fn wait_for_control_outcome(app: &mut AgentSession) -> AgentControlOutcome {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(outcome) = app.take_control_outcome() {
+            return outcome;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "test timed out waiting for a control outcome; poll={:?}",
+            app.poll()
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
 
 // 첫 prompt는 Session을 한 번 만든 뒤 Turn 1을 시작하고 backend의 완료 event를 그대로
 // frontend poll 경계로 전달한다.
@@ -49,6 +70,249 @@ fn starts_the_first_turn_and_forwards_completion() {
             outcome: TurnOutcome::Completed,
         })
     );
+    app.shutdown().unwrap();
+}
+
+// 수동 압축을 적용할 수 없는 정상적인 경계는 Session failure가 아니다. frontend는
+// typed control 결과를 받고 같은 Session에서 다음 prompt를 계속 실행할 수 있다.
+#[test]
+fn keeps_the_session_healthy_after_manual_compaction_is_rejected() {
+    let first = turn(1);
+    let compact = AgentCommand::CompactContext {
+        guidance: Some("keep unresolved constraints".to_owned()),
+    };
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::RejectCommand {
+            command: compact.clone(),
+            failure: BackendFailure::new(
+                BackendFailureKind::CommandRejected,
+                "at least two completed replay groups are required",
+            ),
+        },
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: first,
+            input: UserInput::from("continue"),
+        }),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: first,
+            outcome: TurnOutcome::Completed,
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = start_app(backend);
+
+    assert_eq!(
+        app.dispatch(AgentIntent::CompactContext {
+            guidance: Some("keep unresolved constraints".to_owned()),
+        })
+        .unwrap(),
+        CommandAdmission::Queued
+    );
+    app.wait_until_processed(1);
+    assert_eq!(
+        app.take_control_outcome(),
+        Some(AgentControlOutcome::ContextCompactionRejected {
+            detail: "at least two completed replay groups are required".to_owned(),
+        })
+    );
+
+    assert_eq!(
+        app.dispatch(AgentIntent::submit("continue").unwrap())
+            .unwrap(),
+        CommandAdmission::Queued
+    );
+    app.wait_until_processed(2);
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnStarted { turn: first })
+    );
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnFinished {
+            turn: first,
+            outcome: TurnOutcome::Completed,
+        })
+    );
+    app.shutdown().unwrap();
+}
+
+// Engine-level validation is an expected control rejection too. Invalid guidance must not
+// close the worker before the frontend can correct it and continue in the same Session.
+#[test]
+fn keeps_the_session_healthy_after_invalid_compaction_guidance() {
+    let first = turn(1);
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: first,
+            input: UserInput::from("continue"),
+        }),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: first,
+            outcome: TurnOutcome::Completed,
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = start_app(backend);
+
+    assert_eq!(
+        app.dispatch(AgentIntent::CompactContext {
+            guidance: Some(" leading whitespace".to_owned()),
+        })
+        .unwrap(),
+        CommandAdmission::Queued
+    );
+    app.wait_until_processed(1);
+    assert_eq!(
+        wait_for_control_outcome(&mut app),
+        AgentControlOutcome::ContextCompactionRejected {
+            detail: "InvalidContextCompactionGuidance".to_owned(),
+        }
+    );
+
+    assert_eq!(
+        app.dispatch(AgentIntent::submit("continue").unwrap())
+            .unwrap(),
+        CommandAdmission::Queued
+    );
+    app.wait_until_processed(2);
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnStarted { turn: first })
+    );
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnFinished {
+            turn: first,
+            outcome: TurnOutcome::Completed,
+        })
+    );
+    app.shutdown().unwrap();
+}
+
+// A prompt reserves its Turn before TurnStarted reaches the TUI. A compact command admitted in
+// that window resolves as a notice instead of turning the expected scheduling race into failure.
+#[test]
+fn keeps_the_session_healthy_when_compaction_races_a_queued_turn() {
+    let first = turn(1);
+    let second = turn(2);
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: first,
+            input: UserInput::from("first"),
+        }),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: first,
+            outcome: TurnOutcome::Completed,
+        }),
+        BackendScriptStep::AcceptCommand(AgentCommand::StartTurn {
+            turn: second,
+            input: UserInput::from("second"),
+        }),
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
+            turn: second,
+            outcome: TurnOutcome::Completed,
+        }),
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = start_app(backend);
+
+    assert_eq!(
+        app.dispatch(AgentIntent::submit("first").unwrap()).unwrap(),
+        CommandAdmission::Queued
+    );
+    assert_eq!(
+        app.dispatch(AgentIntent::CompactContext { guidance: None })
+            .unwrap(),
+        CommandAdmission::Queued
+    );
+    assert_eq!(
+        wait_for_control_outcome(&mut app),
+        AgentControlOutcome::ContextCompactionRejected {
+            detail: "context compaction requires an idle Session".to_owned(),
+        }
+    );
+    app.wait_until_processed(1);
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnStarted { turn: first })
+    );
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnFinished {
+            turn: first,
+            outcome: TurnOutcome::Completed,
+        })
+    );
+
+    assert_eq!(
+        app.dispatch(AgentIntent::submit("second").unwrap())
+            .unwrap(),
+        CommandAdmission::Queued
+    );
+    app.wait_until_processed(2);
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnStarted { turn: second })
+    );
+    assert_eq!(
+        next_poll(&mut app).unwrap(),
+        RuntimePoll::Event(AgentEvent::TurnFinished {
+            turn: second,
+            outcome: TurnOutcome::Completed,
+        })
+    );
+    app.shutdown().unwrap();
+}
+
+// frontend가 idle compaction을 queue한 뒤 binding replacement를 요청해도 replacement가
+// 먼저 실행될 수 없다. 후보 backend는 정리되고 기존 Session이 compaction 결과를 소유한다.
+#[test]
+fn prevents_binding_replacement_from_overtaking_idle_compaction() {
+    let compact = AgentCommand::CompactContext { guidance: None };
+    let backend = ScriptedBackend::new([
+        BackendScriptStep::AcceptCommand(AgentCommand::CreateSession {
+            session_id: session(),
+        }),
+        BackendScriptStep::RejectCommand {
+            command: compact,
+            failure: BackendFailure::new(
+                BackendFailureKind::CommandRejected,
+                "there is not enough history to compact",
+            ),
+        },
+        BackendScriptStep::Shutdown(Ok(())),
+    ]);
+    let mut app = start_app(backend);
+
+    assert_eq!(
+        app.dispatch(AgentIntent::CompactContext { guidance: None })
+            .unwrap(),
+        CommandAdmission::Queued
+    );
+    let candidate = ScriptedBackend::new([BackendScriptStep::Shutdown(Ok(()))]);
+    let error = app
+        .replace_backend(Box::new(candidate), || false)
+        .expect_err("replacement cannot pass the compaction reservation");
+    assert!(matches!(
+        error,
+        AgentSessionError::WorkerUnavailable(ref detail)
+            if detail.contains("cannot overtake pending context compaction")
+    ));
+
+    app.wait_until_processed(1);
+    assert!(matches!(
+        app.take_control_outcome(),
+        Some(AgentControlOutcome::ContextCompactionRejected { .. })
+    ));
     app.shutdown().unwrap();
 }
 

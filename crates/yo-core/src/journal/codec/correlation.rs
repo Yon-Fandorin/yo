@@ -1,11 +1,32 @@
+use sha2::{Digest, Sha256};
 use uuid::{Uuid, Variant, Version};
 
-use crate::{ContinuationStrategy, JournalSequence, ModelReplayDelta, SubmissionId, TurnId};
+use crate::{
+    ContinuationStrategy, JournalSequence, ModelReplayDelta, SessionId, SubmissionId, TurnId,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct OperationId(Uuid);
 
 impl OperationId {
+    pub(crate) fn for_internal_request(
+        session_id: SessionId,
+        turn_id: TurnId,
+        exchange_sequence: JournalSequence,
+    ) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"yo.journal.internal-request-operation/v1\0");
+        hasher.update(session_id.as_uuid().as_bytes());
+        hasher.update(turn_id.get().get().to_be_bytes());
+        hasher.update(exchange_sequence.get().to_be_bytes());
+        let digest = hasher.finalize();
+        let mut value = [0_u8; 16];
+        value.copy_from_slice(&digest[..16]);
+        value[6] = (value[6] & 0x0f) | 0x40;
+        value[8] = (value[8] & 0x3f) | 0x80;
+        Self(Uuid::from_bytes(value))
+    }
+
     pub(crate) fn from_uuid(value: Uuid) -> Option<Self> {
         (value.get_version() == Some(Version::Random) && value.get_variant() == Variant::RFC4122)
             .then_some(Self(value))

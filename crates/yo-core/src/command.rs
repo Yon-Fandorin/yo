@@ -20,6 +20,9 @@ pub enum AgentCommand {
     InterruptTurn {
         turn: TurnRef,
     },
+    CompactContext {
+        guidance: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

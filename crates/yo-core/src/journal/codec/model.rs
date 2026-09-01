@@ -274,6 +274,7 @@ impl JournalRecord {
                 AgentCommand::RespondToActivity { request, .. } => {
                     Some(request.activity().session_id())
                 },
+                AgentCommand::CompactContext { .. } => None,
             },
             Self::EventCommitted(event) => match event {
                 AgentEvent::SessionCreated { session_id } => Some(*session_id),

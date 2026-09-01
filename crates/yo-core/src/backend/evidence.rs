@@ -31,6 +31,9 @@ pub struct BackendResumeTarget {
     epoch: u64,
     binding: BackendBindingEvidence,
     model_replay: ModelReplay,
+    model_replay_groups: Vec<Vec<ModelReplayItem>>,
+    context_policy: Option<crate::ContextPolicyChanged>,
+    context_epoch: Option<u64>,
     replay_contract_rebind_required: bool,
     source: BackendResumeSource,
 }
@@ -47,6 +50,9 @@ impl BackendResumeTarget {
             epoch,
             binding,
             model_replay: ModelReplay::default(),
+            model_replay_groups: Vec::new(),
+            context_policy: None,
+            context_epoch: None,
             replay_contract_rebind_required: false,
             source: BackendResumeSource::ContinuationAnchor(source_anchor_sequence),
         }
@@ -63,6 +69,9 @@ impl BackendResumeTarget {
             epoch,
             binding,
             model_replay: ModelReplay::default(),
+            model_replay_groups: Vec::new(),
+            context_policy: None,
+            context_epoch: None,
             replay_contract_rebind_required: false,
             source: BackendResumeSource::ContextCheckpoint(source_checkpoint_sequence),
         }
@@ -86,6 +95,21 @@ impl BackendResumeTarget {
     #[must_use]
     pub const fn model_replay(&self) -> &ModelReplay {
         &self.model_replay
+    }
+
+    #[must_use]
+    pub fn model_replay_groups(&self) -> &[Vec<ModelReplayItem>] {
+        &self.model_replay_groups
+    }
+
+    #[must_use]
+    pub const fn context_policy(&self) -> Option<&crate::ContextPolicyChanged> {
+        self.context_policy.as_ref()
+    }
+
+    #[must_use]
+    pub const fn context_epoch(&self) -> Option<u64> {
+        self.context_epoch
     }
 
     pub(crate) const fn replay_contract_rebind_required(&self) -> bool {
@@ -115,6 +139,18 @@ impl BackendResumeTarget {
 
     pub(crate) fn with_model_replay(mut self, replay: ModelReplay) -> Self {
         self.model_replay = replay;
+        self
+    }
+
+    pub(crate) fn with_context_state(
+        mut self,
+        policy: Option<crate::ContextPolicyChanged>,
+        context_epoch: Option<u64>,
+        replay_groups: Vec<Vec<ModelReplayItem>>,
+    ) -> Self {
+        self.context_policy = policy;
+        self.context_epoch = context_epoch;
+        self.model_replay_groups = replay_groups;
         self
     }
 

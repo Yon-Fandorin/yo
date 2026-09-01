@@ -21,15 +21,16 @@ mod tool;
 mod workspace_reference;
 
 pub use agent_session::{
-    AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll, BackendReplacementOutcome,
-    CommandAdmission, PendingCommand,
+    AgentControlOutcome, AgentIntent, AgentSession, AgentSessionError, AgentSessionPoll,
+    BackendReplacementOutcome, CommandAdmission, PendingCommand,
 };
 pub(crate) use backend::ProviderPrivateReplayPayload;
 pub use backend::{
     AgentBackend, BackendAdapter, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
     BackendOutcomeEvidence, BackendPoll, BackendRequestEvidence, BackendResumeSource,
-    BackendResumeTarget, BackendScriptStep, BackendStopHandle, ContinuationStrategy, ModelReplay,
+    BackendResumeTarget, BackendScriptStep, BackendStopHandle, ContextCheckpointProposal,
+    ContextPressureDecision, ContextPressureObservation, ContinuationStrategy, ModelReplay,
     ModelReplayBudget, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
     ModelReplayTool, ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend,
     provider_private_schema,
@@ -48,10 +49,10 @@ pub use input::{
     skill_reference_projection, workspace_reference_projection,
 };
 pub use journal::{
-    DurabilityGapCause, JournalDurability, JournalSequence, RequestTraceReader, RequestTraceSlice,
-    TranscriptEntry, TranscriptObservation, TranscriptObservationEntry,
-    TranscriptObservationSequence, TranscriptObservationSlice, TranscriptReader, TranscriptRecord,
-    TranscriptSlice,
+    ContextCheckpointObservation, ContextPolicyChanged, ContextStrategy, DurabilityGapCause,
+    JournalDurability, JournalSequence, RequestTraceReader, RequestTraceSlice, TranscriptEntry,
+    TranscriptObservation, TranscriptObservationEntry, TranscriptObservationSequence,
+    TranscriptObservationSlice, TranscriptReader, TranscriptRecord, TranscriptSlice,
 };
 pub use model_connector::{
     CacheReadInputTokens, ConnectorError, ConnectorFailureKind, FunctionTool,

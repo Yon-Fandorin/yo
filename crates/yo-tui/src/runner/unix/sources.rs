@@ -243,6 +243,11 @@ pub(in crate::runner) fn apply_agent_poll(
                 .observe_submission_outcome(outcome)
                 .map_err(LoopError::State)?;
         },
+        AgentPoll::Control(outcome) => {
+            state
+                .observe_control_outcome(outcome)
+                .map_err(LoopError::State)?;
+        },
         AgentPoll::Closed => {
             return Err(LoopError::Agent(
                 "the agent connection closed unexpectedly".to_owned(),

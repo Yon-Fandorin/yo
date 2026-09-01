@@ -127,6 +127,7 @@ mod tests {
             submission.id(),
             &[AgentEvent::TurnStarted { turn }],
             1,
+            None,
             BackendRequestEvidence::new(
                 "payload/v1",
                 BackendIdentity::new("exchange/v1", "exchange"),

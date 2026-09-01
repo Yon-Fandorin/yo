@@ -33,6 +33,9 @@ pub(super) enum WireCommand {
     InterruptTurn {
         turn: WireTurnRef,
     },
+    CompactContext {
+        guidance: Option<String>,
+    },
 }
 
 #[derive(Deserialize, Serialize)]
@@ -74,6 +77,9 @@ impl TryFrom<&CommittedCommand> for WireCommand {
             },
             AgentCommand::InterruptTurn { turn } => Self::InterruptTurn {
                 turn: WireTurnRef::from(*turn),
+            },
+            AgentCommand::CompactContext { guidance } => Self::CompactContext {
+                guidance: guidance.clone(),
             },
         };
         Ok(wire)
@@ -126,6 +132,9 @@ impl TryFrom<WireCommand> for CommittedCommand {
                 },
                 None,
             ),
+            WireCommand::CompactContext { guidance } => {
+                (AgentCommand::CompactContext { guidance }, None)
+            },
         };
         match submission_id {
             Some(submission_id) => Self::submission(command, submission_id),

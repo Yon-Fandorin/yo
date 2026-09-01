@@ -3,11 +3,11 @@ use std::{
     task::{Context, Poll},
 };
 
+use yo_core::{AgentControlOutcome, JournalDurability, RequestTraceEntry, TranscriptRecord};
 pub use yo_core::{
     AgentIntent as AgentAction, CommandAdmission as DispatchOutcome,
     PendingCommand as PendingDispatch, SubmissionOutcome,
 };
-use yo_core::{JournalDurability, RequestTraceEntry, TranscriptRecord};
 
 /// One nonblocking observation exposed to the TUI.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,6 +22,8 @@ pub enum AgentPoll {
     Durability(JournalDurability),
     /// Whole-request admission resolved for one immutable frontend snapshot.
     Submission(SubmissionOutcome),
+    /// One nonterminal Session-control result.
+    Control(AgentControlOutcome),
     /// The connection closed after exposing every preceding record.
     Closed,
 }

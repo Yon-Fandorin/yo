@@ -36,6 +36,10 @@ impl AgentEngine {
         self.state.active_turn_input()
     }
 
+    pub(crate) fn active_turn_has_open_activity(&self) -> bool {
+        self.state.active_turn_has_open_activity()
+    }
+
     pub fn turn_count(&self) -> usize {
         self.state.turn_count()
     }

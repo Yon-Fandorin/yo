@@ -7,8 +7,9 @@ pub use error::RuntimeError;
 use crate::{
     AgentBackend, AgentCommand, AgentEngine, AgentEvent, BackendBindingEvidence,
     BackendCommandEvidence, BackendEvent, BackendPoll, BackendResumeSource, BackendResumeTarget,
-    ContinuationStrategy, Failure, JournalSequence, ModelReplay, SessionId, SubmissionId,
-    TurnOutcome, TurnRef, journal::SessionJournal,
+    ContextPolicyChanged, ContinuationStrategy, Failure, JournalSequence, ModelReplay, SessionId,
+    SubmissionId, TurnOutcome, TurnRef,
+    journal::{ContextActiveSource, SessionJournal},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -35,7 +36,15 @@ pub struct AgentRuntime<B> {
     model_replay: ModelReplay,
     replay_contract_rebind_required: bool,
     resume_source: Option<BackendResumeSource>,
+    context_policy: Option<ContextPolicyChanged>,
+    context_epoch: Option<u64>,
+    context_policy_initialized: bool,
+    idle_context_compaction_pending: bool,
+    idle_context_checkpoint_committed: bool,
+    context_replay_groups: Vec<Vec<crate::ModelReplayItem>>,
+    active_context_source: Option<ContextActiveSource>,
     accepted_requests: HashMap<TurnRef, JournalSequence>,
+    accepted_submissions: HashMap<TurnRef, SubmissionId>,
 }
 
 impl<B: AgentBackend> AgentRuntime<B> {
@@ -55,7 +64,15 @@ impl<B: AgentBackend> AgentRuntime<B> {
             model_replay: ModelReplay::default(),
             replay_contract_rebind_required: false,
             resume_source: None,
+            context_policy: None,
+            context_epoch: None,
+            context_policy_initialized: false,
+            idle_context_compaction_pending: false,
+            idle_context_checkpoint_committed: false,
+            context_replay_groups: Vec::new(),
+            active_context_source: None,
             accepted_requests: HashMap::new(),
+            accepted_submissions: HashMap::new(),
         }
     }
 
@@ -161,7 +178,13 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.model_replay = target.model_replay().clone();
         self.replay_contract_rebind_required = target.replay_contract_rebind_required();
         self.resume_source = Some(target.source());
+        self.context_policy = target.context_policy().cloned();
+        self.context_epoch = target.context_epoch();
+        self.context_policy_initialized = true;
+        self.context_replay_groups = target.model_replay_groups().to_vec();
+        self.active_context_source = None;
         self.accepted_requests.clear();
+        self.accepted_submissions.clear();
         Ok(())
     }
 
@@ -190,6 +213,10 @@ impl<B: AgentBackend> AgentRuntime<B> {
 
     pub(crate) fn durability(&self) -> crate::JournalDurability {
         self.journal.transcript_reader().durability()
+    }
+
+    pub(crate) const fn idle_context_compaction_pending(&self) -> bool {
+        self.idle_context_compaction_pending
     }
 
     pub(crate) fn initialize_durability(&mut self) {
@@ -232,6 +259,28 @@ impl<B: AgentBackend> AgentRuntime<B> {
         command: AgentCommand,
         submission_id: Option<SubmissionId>,
     ) -> Result<Vec<AgentEvent>, RuntimeError> {
+        if matches!(command, AgentCommand::StartTurn { .. })
+            && !self.context_policy_initialized
+            && matches!(
+                self.continuation_strategy,
+                Some(ContinuationStrategy::ExactReplay {
+                    executor: crate::ReplayExecutor::LocalClient,
+                    ..
+                })
+            )
+        {
+            match self.backend.poll_event().map_err(RuntimeError::backend)? {
+                BackendPoll::Event(event @ BackendEvent::ContextPolicyChanged { .. }) => {
+                    self.apply_backend_event(event)?;
+                },
+                BackendPoll::Event(_) | BackendPoll::Pending | BackendPoll::Closed => {
+                    return Err(RuntimeError::backend(crate::BackendFailure::new(
+                        crate::BackendFailureKind::Protocol,
+                        "local-client exact replay did not publish its context policy before the first model request",
+                    )));
+                },
+            }
+        }
         let supports_steer = self.backend.capabilities().supports_steer();
         self.engine
             .validate_command(&command, supports_steer)
@@ -242,11 +291,27 @@ impl<B: AgentBackend> AgentRuntime<B> {
             .map_err(RuntimeError::backend)?;
         if let Err(error) = self.validate_command_evidence(&command, submission_id, &evidence) {
             if submission_id.is_some() {
-                self.accepted_requests.remove(&submission_turn(&command));
+                let turn = submission_turn(&command);
+                self.accepted_requests.remove(&turn);
+                self.accepted_submissions.remove(&turn);
             }
             return Err(error);
         }
         let committed = command.clone();
+        let starts_idle_context_compaction =
+            matches!(&committed, AgentCommand::CompactContext { .. });
+        let command_sequence = self.journal.next_sequence();
+        let active_input = match &committed {
+            AgentCommand::StartTurn { turn, input } => Some((
+                *turn,
+                crate::ModelReplayItem::Message {
+                    role: crate::ModelReplayRole::User,
+                    content: input.as_str().to_owned(),
+                    refusal: None,
+                },
+            )),
+            _ => None,
+        };
         let events = self
             .engine
             .commit_command(command, supports_steer)
@@ -264,14 +329,18 @@ impl<B: AgentBackend> AgentRuntime<B> {
                     submission_id,
                     &events,
                     epoch,
+                    self.context_epoch,
                     evidence,
                 );
                 self.accepted_requests.insert(turn, accepted);
+                self.accepted_submissions.insert(turn, submission_id);
             },
             (Some(submission_id), BackendCommandEvidence::None) => {
                 let inserted = self.submission_ids.insert(submission_id);
                 debug_assert!(inserted, "a duplicate submission cannot pass validation");
-                self.accepted_requests.remove(&submission_turn(&committed));
+                let turn = submission_turn(&committed);
+                self.accepted_requests.remove(&turn);
+                self.accepted_submissions.insert(turn, submission_id);
                 self.journal
                     .append_committed_submission(committed, submission_id, &events);
             },
@@ -287,6 +356,18 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 self.journal.append_committed_command(committed, &events);
             },
             _ => unreachable!("command evidence was validated before semantic commit"),
+        }
+        if starts_idle_context_compaction {
+            self.idle_context_compaction_pending = true;
+            self.idle_context_checkpoint_committed = false;
+        }
+        if let Some((turn, item)) = active_input {
+            self.active_context_source = Some(ContextActiveSource::new(
+                turn,
+                command_sequence,
+                command_sequence,
+                vec![item],
+            ));
         }
         Ok(events)
     }
@@ -330,7 +411,13 @@ impl<B: AgentBackend> AgentRuntime<B> {
     pub fn poll_event(&mut self) -> Result<RuntimePoll, RuntimeError> {
         self.journal.flush_due();
         match self.backend.poll_event() {
-            Ok(BackendPoll::Pending) => Ok(RuntimePoll::Pending),
+            Ok(BackendPoll::Pending) => {
+                if self.idle_context_checkpoint_committed {
+                    self.idle_context_compaction_pending = false;
+                    self.idle_context_checkpoint_committed = false;
+                }
+                Ok(RuntimePoll::Pending)
+            },
             Ok(BackendPoll::Closed) if self.engine.active_turn().is_none() => {
                 Ok(RuntimePoll::Closed)
             },
@@ -379,6 +466,127 @@ impl<B: AgentBackend> AgentRuntime<B> {
     }
 
     fn apply_backend_event(&mut self, event: BackendEvent) -> Result<RuntimePoll, RuntimeError> {
+        if let BackendEvent::ContextPolicyChanged { policy } = event.clone() {
+            let expected_revision = self
+                .context_policy
+                .as_ref()
+                .map_or(1, |current| current.policy_revision().saturating_add(1));
+            if self.engine.active_turn().is_some()
+                || self.binding_epoch.is_none()
+                || !matches!(
+                    self.continuation_strategy,
+                    Some(ContinuationStrategy::ExactReplay {
+                        executor: crate::ReplayExecutor::LocalClient,
+                        ..
+                    })
+                )
+                || policy.policy_revision() != expected_revision
+            {
+                return self.reject_correlation_event(
+                    "backend proposed a context policy outside an idle local-client exact-replay binding",
+                );
+            }
+            if !self.journal.append_context_policy(policy.clone()) {
+                return self.reject_correlation_event(
+                    "backend context policy could not be committed durably",
+                );
+            }
+            self.context_policy = Some(policy);
+            self.context_epoch.get_or_insert(1);
+            self.context_policy_initialized = true;
+            return Ok(RuntimePoll::Pending);
+        }
+        if let BackendEvent::ContextCheckpointPrepared { proposal } = event.clone() {
+            let Some(policy) = self.context_policy.as_ref() else {
+                return self.reject_correlation_event(
+                    "backend proposed a context checkpoint without a current policy",
+                );
+            };
+            let Some(epoch) = self.binding_epoch else {
+                return self.reject_correlation_event(
+                    "backend proposed a context checkpoint without an open binding",
+                );
+            };
+            let Some(previous_context_epoch) = self.context_epoch else {
+                return self.reject_correlation_event(
+                    "backend proposed a context checkpoint without a context epoch",
+                );
+            };
+            let Some(BackendResumeSource::ContinuationAnchor(source_anchor)) = self.resume_source
+            else {
+                return self.reject_correlation_event(
+                    "backend proposed a context checkpoint without a current continuation Anchor",
+                );
+            };
+            if proposal.turn().is_some() != self.engine.active_turn().is_some()
+                || proposal
+                    .turn()
+                    .is_some_and(|turn| self.engine.active_turn() != Some(turn))
+            {
+                return self.reject_correlation_event(
+                    "backend context checkpoint does not match the current Turn boundary",
+                );
+            }
+            let Some((sequence, replay)) = self.journal.commit_context_checkpoint(
+                &proposal,
+                policy,
+                epoch,
+                previous_context_epoch,
+                source_anchor,
+                self.active_context_source.as_ref(),
+            ) else {
+                return self.reject_correlation_event(
+                    "backend context checkpoint could not be validated and committed durably",
+                );
+            };
+            self.context_epoch = previous_context_epoch.checked_add(1);
+            self.context_replay_groups = vec![replay.items().to_vec()];
+            self.model_replay = replay;
+            self.replay_contract_rebind_required = false;
+            self.resume_source = Some(BackendResumeSource::ContextCheckpoint(sequence));
+            self.active_context_source = None;
+            if proposal.turn().is_none() && self.idle_context_compaction_pending {
+                self.idle_context_checkpoint_committed = true;
+            }
+            return Ok(RuntimePoll::Pending);
+        }
+        if let BackendEvent::ContextActiveSuffixCompleted { turn, items } = event.clone() {
+            let Some(last_sequence) = self.journal.last_sequence() else {
+                return self.reject_correlation_event(
+                    "backend completed an active context suffix without Journal evidence",
+                );
+            };
+            if self.engine.active_turn() != Some(turn)
+                || self.engine.active_turn_has_open_activity()
+                || !self
+                    .active_context_source
+                    .as_mut()
+                    .is_some_and(|source| source.try_advance(turn, last_sequence, items))
+            {
+                return self.reject_correlation_event(
+                    "backend completed an active context suffix outside a closed semantic boundary",
+                );
+            }
+            return Ok(RuntimePoll::Pending);
+        }
+        if let BackendEvent::ModelRequestAccepted { turn, evidence } = event.clone() {
+            if self.engine.active_turn() != Some(turn) || !evidence.is_valid() {
+                return self.reject_correlation_event(
+                    "backend accepted a post-checkpoint request outside its active Turn",
+                );
+            }
+            let (Some(epoch), Some(context_epoch)) = (self.binding_epoch, self.context_epoch)
+            else {
+                return self.reject_correlation_event(
+                    "backend accepted a post-checkpoint request without durable correlation state",
+                );
+            };
+            let accepted =
+                self.journal
+                    .append_accepted_request(turn, epoch, context_epoch, evidence);
+            self.accepted_requests.insert(turn, accepted);
+            return Ok(RuntimePoll::Pending);
+        }
         if let BackendEvent::ResumableTurnFinished { turn, evidence } = event.clone() {
             let Some(continuation_strategy) = self.continuation_strategy else {
                 return self.reject_correlation_event(
@@ -422,11 +630,13 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 },
                 None => None,
             };
+            let completed_group = evidence.model_replay().map(|delta| delta.items().to_vec());
             return match self.engine.finish_turn(turn, TurnOutcome::Completed) {
                 Ok(event) => {
                     let anchor = self.journal.append_resumable_turn(
                         &event,
                         epoch,
+                        self.context_epoch,
                         accepted_request_sequence,
                         continuation_strategy,
                         evidence,
@@ -435,8 +645,15 @@ impl<B: AgentBackend> AgentRuntime<B> {
                         self.model_replay = replay;
                         self.replay_contract_rebind_required = false;
                     }
+                    if self.context_epoch.is_some()
+                        && let Some(group) = completed_group
+                    {
+                        self.context_replay_groups.push(group);
+                    }
                     self.resume_source = Some(BackendResumeSource::ContinuationAnchor(anchor));
                     self.accepted_requests.remove(&turn);
+                    self.accepted_submissions.remove(&turn);
+                    self.active_context_source = None;
                     Ok(RuntimePoll::Event(event))
                 },
                 Err(rejection) => {
@@ -465,6 +682,18 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 self.engine.finish_activity(activity, outcome)
             },
             BackendEvent::TurnFinished { turn, outcome } => self.engine.finish_turn(turn, outcome),
+            BackendEvent::ContextPolicyChanged { .. } => {
+                unreachable!("context policy is handled before generic events")
+            },
+            BackendEvent::ContextCheckpointPrepared { .. } => {
+                unreachable!("context checkpoint is handled before generic events")
+            },
+            BackendEvent::ContextActiveSuffixCompleted { .. } => {
+                unreachable!("active context suffix is handled before generic events")
+            },
+            BackendEvent::ModelRequestAccepted { .. } => {
+                unreachable!("request acceptance is handled before generic events")
+            },
             BackendEvent::ResumableTurnFinished { .. } => {
                 unreachable!("resumable completion is handled before generic events")
             },
@@ -516,6 +745,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
         for event in events {
             if let AgentEvent::TurnFinished { turn, .. } = event {
                 self.accepted_requests.remove(turn);
+                self.accepted_submissions.remove(turn);
+                self.active_context_source = None;
             }
         }
     }
@@ -578,7 +809,12 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                 BackendResumeTarget::from_checkpoint(session_id, epoch, binding.clone(), sequence)
             },
         }
-        .with_model_replay(self.model_replay.clone());
+        .with_model_replay(self.model_replay.clone())
+        .with_context_state(
+            self.context_policy.clone(),
+            self.context_epoch,
+            self.context_replay_groups.clone(),
+        );
         let evidence = match candidate.resume_session_replacing_binding(&target) {
             Ok(evidence) => evidence,
             Err(failure) => {
@@ -626,6 +862,7 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
         self.continuation_strategy = Some(evidence.continuation_strategy());
         if evidence.continuation_strategy() == ContinuationStrategy::BackendManagedState {
             self.model_replay = ModelReplay::default();
+            self.context_replay_groups.clear();
             self.replay_contract_rebind_required = false;
         } else {
             self.replay_contract_rebind_required = true;
@@ -688,6 +925,7 @@ fn command_kind(command: &AgentCommand) -> &'static str {
         AgentCommand::SteerTurn { .. } => "SteerTurn",
         AgentCommand::InterruptTurn { .. } => "InterruptTurn",
         AgentCommand::RespondToActivity { .. } => "RespondToActivity",
+        AgentCommand::CompactContext { .. } => "CompactContext",
     }
 }
 

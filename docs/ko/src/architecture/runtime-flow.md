@@ -115,6 +115,47 @@ admission된 call/result replay만 기록하고, 승인과 실행 시도 Activit
 Provider·Account·Model·connector·endpoint·완전한 resolved profile에 귀속한다. process host가 startup
 선택, 이 입력들의 조립, 구체적인 local tool을 소유한다.
 
+새 local-client exact-replay Session은 첫 model request 전에 닫힌 context policy를
+commit한다. 기본값은 정확한 전체 Connector tokenization payload의 85%에서 pressure를
+알리고 90%에서 portable-summary 압축을 선택하며, 보고된 cache-read token은 이 점유량에서
+빼지 않는다. 지원하는 경계에서 managed backend는 이미 선택한 binding을 통해 tools-disabled
+summary request를 정확히 한 번 보내고, summary 입력에서 provider-private replay를 제외하며,
+고정된 `Context Checkpoint` Markdown 형태를 검증하고, 가장 최신 complete replay group과
+현재 input을 보존한 뒤 successor payload 전체를 다시 계산한다. Summary 중 나타나는
+provider-private event는 일시적인 값으로 버려 checkpoint에 넣지 않고, optional reasoning
+usage를 보고하지 않은 connector는 `null`을 유지하되 input·output·total usage는 필수다.
+Core는 proposal을 정확한
+Journal group에 연결해 checkpoint를 원자적으로 commit한 뒤에만 backend가 replay를 바꾸거나
+successor request를 dispatch하게 한다. 내부 successor request마다 writer가 Session, Turn,
+정확한 outbound exchange sequence에서 도출한 별도의 UUIDv4 operation root를 부여한다.
+Recovery는 이전 accepted request가 있는 active Turn이거나 active checkpoint가 submitted
+input을 가로지른 뒤 첫 request인 경우에만 이 identity를 허용하며, 같은 byte로 완료된 Turn에
+작업을 붙일 수 없다. Checkpoint는 Session-global context epoch만 전진시키며,
+resume은 policy, epoch, replay root, semantic group 경계를 함께 복원한다.
+
+Live와 archived Transcript는 commit된 policy와 redacted checkpoint observation을 투영한다.
+Chat은 summary body나 raw artifact를 노출하지 않고 before/after 측정값, limit, context-epoch
+전이, source boundary, retained-group budget, artifact receipt 수, 공개된 loss class를 보여준다.
+요약된 source group 하나에서 비어 있지 않은 tool-output byte가 같으면 복구 불가능한 중복
+receipt를 만들지 않고 disclosure receipt identity 하나를 공유한다.
+
+Automatic 실행은 새 Turn의 첫 request 경계와 완전히 승인된 tool call/result suffix 뒤의
+경계를 모두 지원한다. 후자에서 managed backend는 관련 Activity가 모두 끝난 뒤 정확하고
+단조 증가하는 active suffix를 먼저 공개하고, core는 checkpoint proposal을 받기 전에 이를
+현재 input command와 마지막 durable `ActivityFinished`에 결속한다. Pending approval·tool
+effect·model stream, 조작된 suffix, complete boundary가 없는 ordinary accepted request는
+summary가 durable해지기 전에 fail-closed한다. Idle `/compact [GUIDANCE]`는 automatic
+threshold 아래에서도 같은 단일-request pipeline을 사용하고 checkpoint 경계가 끝날 때까지
+새 Turn을 받지 않는다. Admission은 worker가 command를 보기 전에 이 구간을 예약하므로 뒤따른
+prompt와 binding replacement가 checkpoint를 앞지를 수 없고, 보존된 prompt는 activation 뒤
+change signal로 다시 시도된다. Manual compaction을 허용하지 않는 policy나 완료된 history가
+너무 적은 Session은 typed nonterminal control outcome을 반환하며 같은 Session은 이후 prompt에
+계속 사용할 수 있다. 잘못된 guidance와 queued 또는 active Turn과의 admission 경합도 worker를
+종료하지 않고 같은 control outcome을 사용한다. Pressure observation은 typed durable telemetry로 유지하되 Chat은
+JSON을 model work처럼 노출하지 않고 간결한 사람이 읽을 수 있는 상태로 투영한다. Disabled 또는
+exact-replay-only policy도 압축 대신 거부하며 malformed output, 불완전한 usage 귀속, 줄지
+않은 결과, trigger에 계속 걸리는 successor payload에는 retry나 fallback이 없다.
+
 새 local-tools Session의 startup은 `list_files`, `read_files`, `edit_file`,
 `write_file`, `run_command` 순서인 5개 basic registry를 고정한다. Resume은 durable
 replay Projection을 exact basic manifest, 직전 3개 legacy manifest, empty manifest와
@@ -203,7 +244,7 @@ tool definition과 tool choice를 생략하며, Session을 flag 없이 재개해
 
 편집 가능한 Chat에서 유일한 prompt token의 slash를 입력하고 cursor가 draft 끝에 있으면
 prompt에 인접한 command palette가 열린다. 이어지는 문자는 순서가 정해진 `/help`,
-`/model`, `/exit` catalog를 filtering한다. `command/`의 각 child는 command 하나의 ID,
+`/model`, `/compact`, `/exit` catalog를 filtering한다. `command/`의 각 child는 command 하나의 ID,
 invocation, description, typed effect를 소유한다. 얕은 registry는 uniqueness 검증,
 순서 합성, 항목 filtering, help Projection만 담당한다. 공용 overlay slot은 위·아래 이동,
 Enter 또는 Tab acceptance, Esc 닫기를 소유한다. open됐지만 아직 표시되지 않은 panel은
@@ -222,6 +263,12 @@ Activity 응답 처리보다 먼저 selection flow에 들어가므로 둘 다 �
 암묵적으로 답하거나 취소하지 않는다. `/exit`는 명시적인 process-lifecycle 예외이며 기존
 runner 종료 경계를 사용한다. 읽기 전용 view에서는 palette가 비활성화되지만 pending
 Activity는 이 로컬 command를 숨기지 않는다.
+
+`/compact`는 idle Yo-managed control command다. 선택적인 suffix는 일반 prompt 제출이 아니라
+summary request를 위한 bounded user guidance다. Active Turn에서는 draft를 보존하고 idle이
+필요하다고 알리며, delegated Codex와 Grok Session은 Yo-managed checkpoint를 지원한다고
+가장하지 않고 unsupported로 거부한다. 이 정상적인 거부는 nonterminal control result이며
+delegated Session을 닫지 않는다.
 
 Turn이 보이는 동안 제출한 일반 prompt는 정확히 그 `TurnRef`를 `yo-core`까지 전달한다.
 worker가 이미 해당 Turn을 끝냈다면 core는 같은 text를 새 Turn으로 재해석하지 않고 steer를
@@ -1224,7 +1271,8 @@ live producer는 이제 `SessionCreated` 뒤에 최초 backend binding을 기록
 `TurnFinished(completed)`, resumable outcome, Continuation Anchor를 semantic commit
 하나로 공개한다. provider adapter는 epoch나 Journal 좌표를 정하지 않고 opaque
 evidence만 반환한다. runtime이 그 semantic identity를 소유하고 Journal만 sequence를
-배정한다. Transcript Projection은 correlation 전용 record를 제외한다.
+배정한다. User submission이 없는 내부 successor request에는 writer가 별도의 UUIDv4 identity를
+부여한다. Transcript Projection은 correlation 전용 record를 제외한다.
 
 Codex adapter는 model override를 보내지 않아 사용자의 effective model 선택을 보존하고,
 `thread/start`가 반환한 `model`과 `modelProvider`를 기록한다. ephemeral thread가 아니라

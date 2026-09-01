@@ -301,6 +301,7 @@ fn durable_live_correlation_publishes_one_recoverable_anchor() {
         submission_id,
         &[AgentEvent::TurnStarted { turn }],
         1,
+        None,
         BackendRequestEvidence::new(
             "scripted/request/v1",
             BackendIdentity::new("scripted/exchange/v1", "exchange-1"),
@@ -313,6 +314,7 @@ fn durable_live_correlation_publishes_one_recoverable_anchor() {
             outcome: TurnOutcome::Completed,
         },
         1,
+        None,
         accepted,
         crate::ContinuationStrategy::BackendManagedState,
         BackendOutcomeEvidence::without_identity(),

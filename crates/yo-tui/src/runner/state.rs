@@ -1,15 +1,16 @@
 use std::{collections::VecDeque, time::Duration};
 
 use yo_core::{
-    ActivityKind, ActivityRef, ActivityRequestRef, AgentEvent, ApprovalDecision, InputSubmission,
-    JournalDurability, RequestTraceEntry, SkillReferenceSearchRequest, SkillReferenceSearchUpdate,
-    SubmissionId, SubmissionOutcome, TranscriptRecord, TurnRef, UserInput,
-    WorkspaceReferenceSearchRequest, WorkspaceReferenceSearchUpdate,
+    ActivityKind, ActivityRef, ActivityRequestRef, AgentControlOutcome, AgentEvent,
+    ApprovalDecision, InputSubmission, JournalDurability, RequestTraceEntry,
+    SkillReferenceSearchRequest, SkillReferenceSearchUpdate, SubmissionId, SubmissionOutcome,
+    TranscriptRecord, TurnRef, UserInput, WorkspaceReferenceSearchRequest,
+    WorkspaceReferenceSearchUpdate,
 };
 
 use crate::{
     appearance::{AppearancePin, AppearanceRevision},
-    command::{CommandEffect, CommandPalette, CommandRegistry, model_argument},
+    command::{CommandEffect, CommandPalette, CommandRegistry, compact_argument, model_argument},
     input::{
         editor::{EditorEffect, PromptEditor},
         event::InputEvent,
@@ -272,6 +273,10 @@ impl TuiState {
                         self.command_palette.close(&mut self.overlay);
                         return self.handle_model_command(&text, &text);
                     }
+                    if compact_argument(&text).is_some() {
+                        self.command_palette.close(&mut self.overlay);
+                        return self.handle_compact_command(&text, &text);
+                    }
                     if self.command_palette.owns_submission(&text, previous_cursor) {
                         self.command_palette.close(&mut self.overlay);
                         self.editor.replace_range(0..0, &text);
@@ -360,6 +365,19 @@ impl TuiState {
                 Ok(StateEffect::Redraw)
             },
         }
+    }
+
+    pub(super) fn observe_control_outcome(
+        &mut self,
+        outcome: AgentControlOutcome,
+    ) -> Result<StateEffect, StateError> {
+        match outcome {
+            AgentControlOutcome::ContextCompactionRejected { detail } => {
+                self.chat
+                    .push_notice(format!("Context compaction was not started.\n{detail}"))?;
+            },
+        }
+        Ok(StateEffect::Redraw)
     }
 
     pub(super) fn observe_record(
@@ -815,12 +833,31 @@ impl TuiState {
                 Ok(StateEffect::Redraw)
             },
             CommandEffect::SelectModel => self.handle_model_command(invocation, draft),
+            CommandEffect::CompactContext => self.handle_compact_command(invocation, draft),
             CommandEffect::ExitProcess => {
                 self.cancel_model_switches();
                 self.clear_editor();
                 Ok(StateEffect::Exit)
             },
         }
+    }
+
+    fn handle_compact_command(
+        &mut self,
+        text: &str,
+        draft: &str,
+    ) -> Result<StateEffect, StateError> {
+        let guidance = compact_argument(text).expect("command syntax checked");
+        if self.active_turn.is_some() {
+            self.chat
+                .push_notice("Context compaction requires an idle Session.".to_owned())?;
+            self.restore_draft(draft);
+            return Ok(StateEffect::Redraw);
+        }
+        self.clear_editor();
+        Ok(StateEffect::Dispatch(AgentAction::CompactContext {
+            guidance: (!guidance.is_empty()).then(|| guidance.to_owned()),
+        }))
     }
 
     fn accept_model_selection(&mut self, identity: &str) -> Result<StateEffect, StateError> {

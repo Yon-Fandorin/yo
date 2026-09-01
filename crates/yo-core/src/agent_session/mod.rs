@@ -2,7 +2,7 @@ use std::{
     collections::{HashSet, VecDeque},
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
     },
     task::{Context, Poll},
@@ -23,11 +23,11 @@ mod error;
 mod worker;
 
 use admission::SessionState;
-pub use contract::{AgentIntent, CommandAdmission, PendingCommand};
+pub use contract::{AgentControlOutcome, AgentIntent, CommandAdmission, PendingCommand};
 pub use error::AgentSessionError;
 #[cfg(test)]
 use worker::apply_event;
-use worker::{AgentWorker, ChangeLane, WorkerExit, WorkerSignal};
+use worker::{AgentWorker, ChangeLane, WorkerExit, WorkerSharedState, WorkerSignal};
 
 const WORKER_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const WORKER_GRACEFUL_SHUTDOWN: Duration = Duration::from_millis(50);
@@ -81,6 +81,8 @@ pub struct AgentSession {
     transcript: TranscriptReader,
     request_trace: crate::RequestTraceReader,
     submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
+    control_outcomes: Arc<Mutex<VecDeque<AgentControlOutcome>>>,
+    context_compaction_pending: Arc<AtomicBool>,
     submission_ids: HashSet<crate::SubmissionId>,
     readiness: Arc<crate::readiness::Readiness>,
     #[cfg(test)]
@@ -288,6 +290,10 @@ impl AgentSession {
         let request_trace = journal.request_trace_reader();
         let submission_outcomes = Arc::new(Mutex::new(VecDeque::new()));
         let worker_submission_outcomes = Arc::clone(&submission_outcomes);
+        let control_outcomes = Arc::new(Mutex::new(VecDeque::new()));
+        let worker_control_outcomes = Arc::clone(&control_outcomes);
+        let context_compaction_pending = Arc::new(AtomicBool::new(false));
+        let worker_context_compaction_pending = Arc::clone(&context_compaction_pending);
         let readiness = Arc::new(crate::readiness::Readiness::new());
         let worker_readiness = Arc::clone(&readiness);
         let worker = match thread::Builder::new()
@@ -300,10 +306,14 @@ impl AgentSession {
                 let mut worker = AgentWorker::new(
                     backend,
                     session_id,
-                    worker_state,
-                    worker_active_turn_id,
                     journal,
-                    worker_submission_outcomes,
+                    WorkerSharedState::new(
+                        worker_state,
+                        worker_active_turn_id,
+                        worker_submission_outcomes,
+                        worker_control_outcomes,
+                        worker_context_compaction_pending,
+                    ),
                     resume,
                 );
                 let outcome = match worker.initialize() {
@@ -407,6 +417,8 @@ impl AgentSession {
                     transcript,
                     request_trace,
                     submission_outcomes,
+                    control_outcomes,
+                    context_compaction_pending,
                     submission_ids,
                     readiness,
                     #[cfg(test)]
@@ -442,9 +454,22 @@ impl AgentSession {
     /// fails. Cancellation stops only the candidate while the worker completes that decision.
     pub fn replace_backend(
         &mut self,
-        backend: Box<dyn AgentBackend + Send>,
+        mut backend: Box<dyn AgentBackend + Send>,
         mut is_cancelled: impl FnMut() -> bool,
     ) -> Result<BackendReplacementOutcome, AgentSessionError> {
+        if self.context_compaction_pending.load(Ordering::Acquire) {
+            let cleanup = backend.shutdown().err();
+            let primary = AgentSessionError::WorkerUnavailable(
+                "binding replacement cannot overtake pending context compaction".to_owned(),
+            );
+            return Err(match cleanup {
+                Some(cleanup) => AgentSessionError::Multiple {
+                    primary: Box::new(primary),
+                    additional: Box::new(AgentSessionError::BackendCleanup(cleanup)),
+                },
+                None => primary,
+            });
+        }
         if self.lifecycle.load(Ordering::Acquire) != WORKER_IDLE {
             return Err(AgentSessionError::WorkerUnavailable(
                 "binding replacement requires an idle Session".to_owned(),
@@ -626,6 +651,11 @@ impl AgentSession {
     /// Takes the oldest whole-request admission result, if one is available.
     pub fn take_submission_outcome(&mut self) -> Option<SubmissionOutcome> {
         self.submission_outcomes.lock().ok()?.pop_front()
+    }
+
+    /// Takes the oldest completed control result, if one is available.
+    pub fn take_control_outcome(&mut self) -> Option<AgentControlOutcome> {
+        self.control_outcomes.lock().ok()?.pop_front()
     }
 }
 

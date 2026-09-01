@@ -175,6 +175,7 @@ pub enum BackendFailureKind {
     Unavailable,
     Initialization,
     Session,
+    CommandRejected,
     Unsupported,
     Protocol,
     ProcessExit,

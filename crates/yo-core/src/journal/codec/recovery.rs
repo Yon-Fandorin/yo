@@ -99,6 +99,14 @@ impl RecoveredJournal {
         self.correlation.context_epoch()
     }
 
+    pub(crate) const fn context_policy(&self) -> Option<&super::ContextPolicyChanged> {
+        self.correlation.current_policy()
+    }
+
+    pub(crate) fn model_replay_groups(&self) -> Vec<Vec<crate::ModelReplayItem>> {
+        self.correlation.replay_groups()
+    }
+
     pub(crate) const fn model_replay(&self) -> &crate::ModelReplay {
         self.correlation.model_replay()
     }

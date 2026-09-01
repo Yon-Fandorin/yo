@@ -232,6 +232,9 @@ fn format_record_body(prefix: String, record: &TranscriptRecord) -> String {
                 turn.session_id(),
                 turn.turn_id().get().get()
             ),
+            AgentCommand::CompactContext { guidance } => {
+                format!("{prefix}\nguidance={guidance:?}")
+            },
         },
         TranscriptRecord::EventCommitted(event) => match event {
             AgentEvent::SessionCreated { session_id } => {
@@ -270,6 +273,31 @@ fn format_record_body(prefix: String, record: &TranscriptRecord) -> String {
                 turn_outcome_name(outcome)
             ),
         },
+        TranscriptRecord::ContextPolicyChanged(policy) => format!(
+            "{prefix}\nrevision={} enabled={} strategy={} warning_percent={} trigger_percent={} retained_raw_percent={:?} retained_raw_max_tokens={:?}",
+            policy.policy_revision(),
+            policy.enabled(),
+            policy.strategy().as_str(),
+            policy.warning_percent(),
+            policy.trigger_percent(),
+            policy.retained_raw_percent(),
+            policy.retained_raw_max_tokens(),
+        ),
+        TranscriptRecord::ContextCheckpointCommitted(checkpoint) => format!(
+            "{prefix}\nsource={}..{} policy_revision={} context_epoch={}..{} input_tokens={}..{} input_token_limit={} retained_groups={} artifact_receipts={} visible_prefix_losses={} provider_private_losses={}",
+            checkpoint.source_anchor_sequence().get(),
+            checkpoint.source_journal_boundary().get(),
+            checkpoint.policy_revision(),
+            checkpoint.previous_context_epoch(),
+            checkpoint.successor_context_epoch(),
+            checkpoint.input_tokens_before(),
+            checkpoint.input_tokens_after(),
+            checkpoint.input_token_limit(),
+            checkpoint.retained_group_count(),
+            checkpoint.artifact_receipt_count(),
+            checkpoint.visible_prefix_loss_count(),
+            checkpoint.provider_private_loss_count(),
+        ),
     }
 }
 
@@ -281,6 +309,7 @@ fn record_name(record: &TranscriptRecord) -> &'static str {
             AgentCommand::SteerTurn { .. } => "command.steer_turn",
             AgentCommand::RespondToActivity { .. } => "command.respond_to_activity",
             AgentCommand::InterruptTurn { .. } => "command.interrupt_turn",
+            AgentCommand::CompactContext { .. } => "command.compact_context",
         },
         TranscriptRecord::EventCommitted(event) => match event {
             AgentEvent::SessionCreated { .. } => "event.session_created",
@@ -290,6 +319,8 @@ fn record_name(record: &TranscriptRecord) -> &'static str {
             AgentEvent::ActivityFinished { .. } => "event.activity_finished",
             AgentEvent::TurnFinished { .. } => "event.turn_finished",
         },
+        TranscriptRecord::ContextPolicyChanged(_) => "context.policy_changed",
+        TranscriptRecord::ContextCheckpointCommitted(_) => "context.checkpoint_committed",
     }
 }
 

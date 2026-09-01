@@ -77,6 +77,7 @@ pub enum AgentRejection {
         actual: ResponseKind,
     },
     UnsupportedSteer,
+    InvalidContextCompactionGuidance,
 }
 
 impl fmt::Display for AgentRejection {

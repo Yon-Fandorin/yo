@@ -296,6 +296,10 @@ impl<P: JsonMessagePeer> Backend<P> {
             AgentCommand::RespondToActivity { request, response } => {
                 self.respond_to_activity(request, response)
             },
+            AgentCommand::CompactContext { .. } => Err(BackendFailure::new(
+                BackendFailureKind::CommandRejected,
+                "Codex delegated Sessions do not use Yo-managed context compaction",
+            )),
         }
     }
 

@@ -8,9 +8,10 @@ use crate::{
     ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentCommand,
     AgentEvent, AgentIntent, AgentRuntime, AgentSession, AgentSessionPoll, BackendBindingEvidence,
     BackendCommandEvidence, BackendEvent, BackendIdentity, BackendOutcomeEvidence,
-    BackendRequestEvidence, BackendScriptStep, CommandAdmission, ContinuationStrategy,
-    InputSubmission, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-    ReplayExecutor, RuntimePoll, ScriptedBackend, SubmissionId, TurnId, TurnRef, UserInput,
+    BackendRequestEvidence, BackendScriptStep, CommandAdmission, ContextPolicyChanged,
+    ContextStrategy, ContinuationStrategy, InputSubmission, ModelReplayContract, ModelReplayDelta,
+    ModelReplayItem, ModelReplayRole, ReplayExecutor, RuntimePoll, ScriptedBackend, SubmissionId,
+    TurnId, TurnRef, UserInput,
     journal::SessionJournal,
     session_repository::{
         AppendError, AppendReceipt, DurableRecord, DurableRecordKind, RepositoryEntry,
@@ -145,6 +146,18 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
             command: AgentCommand::CreateSession { session_id },
             evidence: BackendCommandEvidence::BindingOpened(binding()),
         },
+        BackendScriptStep::Emit(BackendEvent::ContextPolicyChanged {
+            policy: ContextPolicyChanged::try_new(
+                1,
+                true,
+                ContextStrategy::PortableSummaryV1Alpha1,
+                85,
+                90,
+                Some(10),
+                Some(65_536),
+            )
+            .unwrap(),
+        }),
         BackendScriptStep::AcceptCommandWithEvidence {
             command: AgentCommand::StartTurn {
                 turn,
@@ -384,7 +397,12 @@ fn idle_replacement_is_immediately_resumable_without_another_turn() {
         replacement.clone(),
         target.source().sequence(),
     )
-    .with_model_replay(target.model_replay().clone());
+    .with_model_replay(target.model_replay().clone())
+    .with_context_state(
+        target.context_policy().cloned(),
+        target.context_epoch(),
+        target.model_replay_groups().to_vec(),
+    );
     let second_candidate = ScriptedBackend::new([
         BackendScriptStep::ReplaceBinding {
             target: Box::new(second_target),

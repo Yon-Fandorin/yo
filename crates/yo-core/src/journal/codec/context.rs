@@ -11,13 +11,13 @@ const MAX_CONTEXT_USAGE_ID_BYTES: usize = 256;
 const MAX_CONTEXT_USAGE_ENDPOINT_BYTES: usize = 2_048;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum ContextStrategy {
+pub enum ContextStrategy {
     PortableSummaryV1Alpha1,
     ExactReplayOnlyV1Alpha1,
 }
 
 impl ContextStrategy {
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::PortableSummaryV1Alpha1 => "portable-summary/v1alpha1",
             Self::ExactReplayOnlyV1Alpha1 => "exact-replay-only/v1alpha1",
@@ -34,7 +34,7 @@ impl ContextStrategy {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ContextPolicyChanged {
+pub struct ContextPolicyChanged {
     policy_revision: u64,
     enabled: bool,
     strategy: ContextStrategy,
@@ -46,7 +46,7 @@ pub(crate) struct ContextPolicyChanged {
 
 impl ContextPolicyChanged {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn try_new(
+    pub fn try_new(
         policy_revision: u64,
         enabled: bool,
         strategy: ContextStrategy,
@@ -93,31 +93,31 @@ impl ContextPolicyChanged {
         Ok(())
     }
 
-    pub(crate) const fn policy_revision(&self) -> u64 {
+    pub const fn policy_revision(&self) -> u64 {
         self.policy_revision
     }
 
-    pub(crate) const fn enabled(&self) -> bool {
+    pub const fn enabled(&self) -> bool {
         self.enabled
     }
 
-    pub(crate) const fn strategy(&self) -> ContextStrategy {
+    pub const fn strategy(&self) -> ContextStrategy {
         self.strategy
     }
 
-    pub(crate) const fn warning_percent(&self) -> u8 {
+    pub const fn warning_percent(&self) -> u8 {
         self.warning_percent
     }
 
-    pub(crate) const fn trigger_percent(&self) -> u8 {
+    pub const fn trigger_percent(&self) -> u8 {
         self.trigger_percent
     }
 
-    pub(crate) const fn retained_raw_percent(&self) -> Option<u8> {
+    pub const fn retained_raw_percent(&self) -> Option<u8> {
         self.retained_raw_percent
     }
 
-    pub(crate) const fn retained_raw_max_tokens(&self) -> Option<u64> {
+    pub const fn retained_raw_max_tokens(&self) -> Option<u64> {
         self.retained_raw_max_tokens
     }
 }
@@ -615,9 +615,17 @@ fn validate_summary_usage(value: &Value) -> Result<(), &'static str> {
     let input_tokens = token("input_tokens")?;
     let output_tokens = token("output_tokens")?;
     let total_tokens = token("total_tokens")?;
-    let reasoning_tokens = token("reasoning_tokens")?;
+    let reasoning_tokens = match usage.get("reasoning_tokens") {
+        Some(Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .ok_or("context summary reasoning token value is invalid")?,
+        ),
+        None => return Err("context summary usage is missing reasoning tokens"),
+    };
     if input_tokens.checked_add(output_tokens) != Some(total_tokens)
-        || reasoning_tokens > output_tokens
+        || reasoning_tokens.is_some_and(|tokens| tokens > output_tokens)
     {
         return Err("context summary usage token relationship is invalid");
     }

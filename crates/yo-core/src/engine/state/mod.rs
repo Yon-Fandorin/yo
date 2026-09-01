@@ -60,6 +60,13 @@ impl EngineState {
             .map(|turn| &turn.input)
     }
 
+    pub(super) fn active_turn_has_open_activity(&self) -> bool {
+        self.session
+            .as_ref()
+            .and_then(SessionState::active_turn)
+            .is_some_and(|turn| turn.activities.values().any(|activity| activity.active))
+    }
+
     pub(super) fn turn_count(&self) -> usize {
         self.session
             .as_ref()

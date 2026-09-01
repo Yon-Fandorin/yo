@@ -7,7 +7,7 @@ use super::{
     JournalDurability, JournalEntry, JournalSequence, SemanticRecord, SessionJournalState,
     read_state,
 };
-use crate::{AgentCommand, AgentEvent};
+use crate::{AgentCommand, AgentEvent, ContextPolicyChanged};
 
 const READ_LIMIT: usize = 256;
 
@@ -294,10 +294,130 @@ impl TranscriptRecord {
             | SemanticRecord::BackendRequestAccepted(_)
             | SemanticRecord::ModelReplayDelta(_)
             | SemanticRecord::BackendResumableOutcome(_)
-            | SemanticRecord::ContinuationAnchor(_)
-            | SemanticRecord::ContextPolicyChanged(_)
-            | SemanticRecord::ContextCheckpoint(_) => return None,
+            | SemanticRecord::ContinuationAnchor(_) => return None,
+            SemanticRecord::ContextPolicyChanged(policy) => {
+                Self::ContextPolicyChanged(policy.clone())
+            },
+            SemanticRecord::ContextCheckpoint(checkpoint) => {
+                Self::ContextCheckpointCommitted(ContextCheckpointObservation::from(checkpoint))
+            },
         })
+    }
+}
+
+/// Redacted operator-facing facts about one durably committed lossy checkpoint.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ContextCheckpointObservation {
+    source_anchor_sequence: JournalSequence,
+    source_journal_boundary: JournalSequence,
+    policy_revision: u64,
+    previous_context_epoch: u64,
+    successor_context_epoch: u64,
+    input_token_limit: u64,
+    input_tokens_before: u64,
+    input_tokens_after: u64,
+    retained_group_count: u64,
+    artifact_receipt_count: u64,
+    visible_prefix_loss_count: u64,
+    provider_private_loss_count: u64,
+}
+
+impl From<&super::codec::ContextCheckpoint> for ContextCheckpointObservation {
+    fn from(checkpoint: &super::codec::ContextCheckpoint) -> Self {
+        let visible_prefix_loss_count = checkpoint
+            .losses()
+            .iter()
+            .filter(|loss| {
+                matches!(
+                    loss,
+                    super::codec::ContextLoss::VisiblePrefixSummarized { .. }
+                )
+            })
+            .count();
+        let provider_private_loss_count = checkpoint
+            .losses()
+            .len()
+            .saturating_sub(visible_prefix_loss_count);
+        Self {
+            source_anchor_sequence: checkpoint.source_anchor_sequence(),
+            source_journal_boundary: checkpoint.source_journal_boundary(),
+            policy_revision: checkpoint.policy_revision(),
+            previous_context_epoch: checkpoint.previous_context_epoch(),
+            successor_context_epoch: checkpoint.successor_context_epoch(),
+            input_token_limit: checkpoint.input_token_limit(),
+            input_tokens_before: checkpoint.input_tokens_before(),
+            input_tokens_after: checkpoint.input_tokens_after(),
+            retained_group_count: u64::try_from(checkpoint.retained_groups().len())
+                .expect("bounded retained group count fits u64"),
+            artifact_receipt_count: u64::try_from(checkpoint.artifact_receipts().len())
+                .expect("bounded artifact receipt count fits u64"),
+            visible_prefix_loss_count: u64::try_from(visible_prefix_loss_count)
+                .expect("bounded loss count fits u64"),
+            provider_private_loss_count: u64::try_from(provider_private_loss_count)
+                .expect("bounded loss count fits u64"),
+        }
+    }
+}
+
+impl ContextCheckpointObservation {
+    #[must_use]
+    pub const fn source_anchor_sequence(self) -> JournalSequence {
+        self.source_anchor_sequence
+    }
+
+    #[must_use]
+    pub const fn source_journal_boundary(self) -> JournalSequence {
+        self.source_journal_boundary
+    }
+
+    #[must_use]
+    pub const fn policy_revision(self) -> u64 {
+        self.policy_revision
+    }
+
+    #[must_use]
+    pub const fn previous_context_epoch(self) -> u64 {
+        self.previous_context_epoch
+    }
+
+    #[must_use]
+    pub const fn successor_context_epoch(self) -> u64 {
+        self.successor_context_epoch
+    }
+
+    #[must_use]
+    pub const fn input_token_limit(self) -> u64 {
+        self.input_token_limit
+    }
+
+    #[must_use]
+    pub const fn input_tokens_before(self) -> u64 {
+        self.input_tokens_before
+    }
+
+    #[must_use]
+    pub const fn input_tokens_after(self) -> u64 {
+        self.input_tokens_after
+    }
+
+    #[must_use]
+    pub const fn retained_group_count(self) -> u64 {
+        self.retained_group_count
+    }
+
+    #[must_use]
+    pub const fn artifact_receipt_count(self) -> u64 {
+        self.artifact_receipt_count
+    }
+
+    #[must_use]
+    pub const fn visible_prefix_loss_count(self) -> u64 {
+        self.visible_prefix_loss_count
+    }
+
+    #[must_use]
+    pub const fn provider_private_loss_count(self) -> u64 {
+        self.provider_private_loss_count
     }
 }
 
@@ -306,6 +426,8 @@ impl TranscriptRecord {
 pub enum TranscriptRecord {
     CommandCommitted(AgentCommand),
     EventCommitted(AgentEvent),
+    ContextPolicyChanged(ContextPolicyChanged),
+    ContextCheckpointCommitted(ContextCheckpointObservation),
 }
 
 #[cfg(test)]

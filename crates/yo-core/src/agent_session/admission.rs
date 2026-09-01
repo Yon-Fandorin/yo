@@ -4,7 +4,10 @@ use std::{
     sync::{Arc, TryLockError, atomic::Ordering, mpsc::TrySendError},
 };
 
-use super::{AgentIntent, AgentSession, AgentSessionError, CommandAdmission, PendingCommand};
+use super::{
+    AgentControlOutcome, AgentIntent, AgentSession, AgentSessionError, CommandAdmission,
+    PendingCommand,
+};
 use crate::{
     ActivityRequestRef, ActivityResponse, AgentCommand, SubmissionId, SubmissionRejection,
     SubmissionRejectionKind, TurnId, TurnRef, UserInput,
@@ -81,6 +84,14 @@ impl AgentSession {
             AgentIntent::Interrupt => {
                 Ok(PendingCommand::from_command(AgentCommand::InterruptTurn {
                     turn: state.active_turn.ok_or(AgentSessionError::NoActiveTurn)?,
+                }))
+            },
+            AgentIntent::CompactContext { guidance } => {
+                if state.active_turn.is_some() {
+                    return Err(AgentSessionError::ContextCompactionRequiresIdle);
+                }
+                Ok(PendingCommand::from_command(AgentCommand::CompactContext {
+                    guidance,
                 }))
             },
             AgentIntent::RespondToApproval { request, decision } => {
@@ -166,6 +177,15 @@ impl AgentSession {
                 AgentCommand::InterruptTurn { turn }
                     if state.turn_started && state.active_turn == Some(*turn)
             );
+        let reserves_context_compaction = matches!(command, AgentCommand::CompactContext { .. });
+        if reserves_context_compaction
+            && self
+                .context_compaction_pending
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return Ok(CommandAdmission::Backpressured(pending));
+        }
         let sender = if urgent {
             &self.urgent_commands
         } else {
@@ -181,10 +201,22 @@ impl AgentSession {
                 }
                 Ok(CommandAdmission::Queued)
             },
-            Err(TrySendError::Full(pending)) => Ok(CommandAdmission::Backpressured(pending)),
-            Err(TrySendError::Disconnected(_)) => Err(AgentSessionError::WorkerUnavailable(
-                "the runtime worker closed before accepting an action".to_owned(),
-            )),
+            Err(TrySendError::Full(pending)) => {
+                if reserves_context_compaction {
+                    self.context_compaction_pending
+                        .store(false, Ordering::Release);
+                }
+                Ok(CommandAdmission::Backpressured(pending))
+            },
+            Err(TrySendError::Disconnected(_)) => {
+                if reserves_context_compaction {
+                    self.context_compaction_pending
+                        .store(false, Ordering::Release);
+                }
+                Err(AgentSessionError::WorkerUnavailable(
+                    "the runtime worker closed before accepting an action".to_owned(),
+                ))
+            },
         }
     }
 
@@ -251,6 +283,14 @@ impl AgentSession {
                     turn: active_turn.ok_or(AgentSessionError::NoActiveTurn)?,
                 }))
             },
+            AgentIntent::CompactContext { guidance } => {
+                if active_turn.is_some() {
+                    return Err(AgentSessionError::ContextCompactionRequiresIdle);
+                }
+                Ok(PendingCommand::from_command(AgentCommand::CompactContext {
+                    guidance,
+                }))
+            },
             AgentIntent::RespondToApproval { request, decision } => Ok(
                 PendingCommand::from_command(AgentCommand::RespondToActivity {
                     request,
@@ -268,11 +308,28 @@ impl AgentSession {
 
     /// Queues one frontend intent without waiting for provider acceptance.
     pub fn dispatch(&mut self, action: AgentIntent) -> Result<CommandAdmission, AgentSessionError> {
+        if self.context_compaction_pending.load(Ordering::Acquire) {
+            return self
+                .resolve_snapshot(action)
+                .map(CommandAdmission::Backpressured);
+        }
+        let is_context_compaction = matches!(&action, AgentIntent::CompactContext { .. });
+        if is_context_compaction && self.active_turn_id.load(Ordering::Acquire) != 0 {
+            return Ok(self.reject_context_compaction_requires_idle());
+        }
         let state = Arc::clone(&self.state);
         let mut state = match state.try_lock() {
             Ok(state) => state,
             Err(TryLockError::WouldBlock) => {
-                let pending = self.resolve_snapshot(action)?;
+                let pending = match self.resolve_snapshot(action) {
+                    Ok(pending) => pending,
+                    Err(AgentSessionError::ContextCompactionRequiresIdle)
+                        if is_context_compaction =>
+                    {
+                        return Ok(self.reject_context_compaction_requires_idle());
+                    },
+                    Err(error) => return Err(error),
+                };
                 return Ok(CommandAdmission::Backpressured(pending));
             },
             Err(TryLockError::Poisoned(error)) => error.into_inner(),
@@ -288,9 +345,22 @@ impl AgentSession {
                 self.reserve_submission(id)?;
                 return Ok(Self::stale_turn_rejection(id));
             },
+            Err(AgentSessionError::ContextCompactionRequiresIdle) if is_context_compaction => {
+                return Ok(self.reject_context_compaction_requires_idle());
+            },
             Err(error) => return Err(error),
         };
         self.queue_command(command, &mut state)
+    }
+
+    fn reject_context_compaction_requires_idle(&mut self) -> CommandAdmission {
+        self.control_outcomes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push_back(AgentControlOutcome::ContextCompactionRejected {
+                detail: AgentSessionError::ContextCompactionRequiresIdle.to_string(),
+            });
+        CommandAdmission::Queued
     }
 
     /// Retries an operation retained by an earlier dispatch attempt.
@@ -298,6 +368,9 @@ impl AgentSession {
         &mut self,
         pending: PendingCommand,
     ) -> Result<CommandAdmission, AgentSessionError> {
+        if self.context_compaction_pending.load(Ordering::Acquire) {
+            return Ok(CommandAdmission::Backpressured(pending));
+        }
         let state = Arc::clone(&self.state);
         let mut state = match state.try_lock() {
             Ok(state) => state,

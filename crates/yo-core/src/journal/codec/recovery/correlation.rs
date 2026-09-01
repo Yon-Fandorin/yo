@@ -12,7 +12,7 @@ use super::super::{
 };
 use crate::{
     AgentCommand, AgentEvent, ContinuationStrategy, JournalSequence, ModelReplay, ModelReplayItem,
-    ReplayProfile, TurnId, TurnOutcome,
+    ReplayProfile, SessionId, TurnId, TurnOutcome,
     backend::{provider_private_schema, validate_provider_private_replay_sequence},
 };
 
@@ -21,10 +21,13 @@ pub(super) struct CorrelationRecovery {
     reference_targets: BTreeMap<JournalSequence, ReferenceTarget>,
     operation_roots: BTreeSet<OperationId>,
     submission_commands: BTreeMap<OperationId, TurnId>,
+    active_turn_starts: BTreeMap<TurnId, JournalSequence>,
     submitted_inputs: BTreeMap<JournalSequence, String>,
+    completed_activity_boundaries: BTreeSet<JournalSequence>,
     latest_request_exchange: BTreeMap<(u64, OperationId), JournalSequence>,
     latest_accepted_request: BTreeMap<(u64, TurnId), JournalSequence>,
     completed_turns: BTreeMap<TurnId, JournalSequence>,
+    session_id: Option<SessionId>,
     session_created: bool,
     open_epoch: Option<u64>,
     open_strategy: Option<ContinuationStrategy>,
@@ -218,15 +221,37 @@ impl CorrelationRecovery {
                     ));
                 }
                 let operation = request.operation_id();
-                let Some(command_turn) = self.submission_commands.get(&operation) else {
-                    return Err(JournalCodecError::new(
-                        "backend_request_accepted has no matching submission command",
-                    ));
-                };
-                if *command_turn != request.turn_id() {
-                    return Err(JournalCodecError::new(
-                        "backend_request_accepted turn does not match its submission command",
-                    ));
+                if let Some(command_turn) = self.submission_commands.get(&operation) {
+                    if *command_turn != request.turn_id() {
+                        return Err(JournalCodecError::new(
+                            "backend_request_accepted turn does not match its submission command",
+                        ));
+                    }
+                } else {
+                    let is_internal_successor = self.session_id.is_some_and(|session_id| {
+                        let has_prior_request = self
+                            .latest_accepted_request
+                            .contains_key(&(request.epoch(), request.turn_id()));
+                        let is_first_post_checkpoint_request = self
+                            .latest_checkpoint
+                            .zip(self.active_turn_starts.get(&request.turn_id()).copied())
+                            .is_some_and(|(checkpoint, start)| {
+                                start < checkpoint && !self.request_after_checkpoint
+                            });
+                        self.active_turn_starts.contains_key(&request.turn_id())
+                            && (has_prior_request || is_first_post_checkpoint_request)
+                            && operation
+                                == OperationId::for_internal_request(
+                                    session_id,
+                                    request.turn_id(),
+                                    request.exchange_sequence(),
+                                )
+                    });
+                    if !is_internal_successor {
+                        return Err(JournalCodecError::new(
+                            "backend_request_accepted has neither a matching submission command nor a valid writer-assigned successor identity",
+                        ));
+                    }
                 }
                 if self
                     .latest_request_exchange
@@ -572,6 +597,17 @@ impl CorrelationRecovery {
 
     pub(super) const fn context_epoch(&self) -> Option<u64> {
         self.context_epoch
+    }
+
+    pub(super) const fn current_policy(&self) -> Option<&ContextPolicyChanged> {
+        self.current_policy.as_ref()
+    }
+
+    pub(super) fn replay_groups(&self) -> Vec<Vec<ModelReplayItem>> {
+        self.replay_groups
+            .iter()
+            .map(|group| group.items.clone())
+            .collect()
     }
 
     pub(super) const fn model_replay(&self) -> &ModelReplay {
@@ -969,20 +1005,39 @@ impl CorrelationRecovery {
     }
 
     fn active_input_group_matches(&self, group: &super::super::ContextRetainedGroup) -> bool {
-        group.first_sequence() == group.last_sequence()
-            && self
+        let Some(input) = self.submitted_inputs.get(&group.first_sequence()) else {
+            return false;
+        };
+        let Some(ModelReplayItem::Message {
+            role: crate::ModelReplayRole::User,
+            content,
+            refusal: None,
+        }) = group.items().first()
+        else {
+            return false;
+        };
+        if content != input
+            || self
                 .submitted_inputs
-                .get(&group.first_sequence())
-                .is_some_and(|input| {
-                    matches!(
-                        group.items(),
-                        [ModelReplayItem::Message {
-                            role: crate::ModelReplayRole::User,
-                            content,
-                            refusal: None,
-                        }] if content == input
-                    )
-                })
+                .range(group.first_sequence()..=group.last_sequence())
+                .count()
+                != 1
+        {
+            return false;
+        }
+        if group.first_sequence() == group.last_sequence() {
+            return group.items().len() == 1;
+        }
+        self.completed_activity_boundaries
+            .contains(&group.last_sequence())
+            && group
+                .items()
+                .iter()
+                .any(|item| matches!(item, ModelReplayItem::FunctionCall { .. }))
+            && group
+                .items()
+                .iter()
+                .any(|item| matches!(item, ModelReplayItem::FunctionCallOutput { .. }))
     }
 
     fn validate_source_range(
@@ -1016,13 +1071,20 @@ impl CorrelationRecovery {
             return;
         };
         let turn_id = match command.command() {
-            AgentCommand::StartTurn { turn, input } | AgentCommand::SteerTurn { turn, input } => {
+            AgentCommand::StartTurn { turn, input } => {
+                self.active_turn_starts.insert(turn.turn_id(), sequence);
+                self.submitted_inputs
+                    .insert(sequence, input.as_str().to_owned());
+                turn.turn_id()
+            },
+            AgentCommand::SteerTurn { turn, input } => {
                 self.submitted_inputs
                     .insert(sequence, input.as_str().to_owned());
                 turn.turn_id()
             },
             AgentCommand::CreateSession { .. }
             | AgentCommand::InterruptTurn { .. }
+            | AgentCommand::CompactContext { .. }
             | AgentCommand::RespondToActivity { .. } => return,
         };
         self.submission_commands
@@ -1031,8 +1093,12 @@ impl CorrelationRecovery {
 
     fn observe_event(&mut self, sequence: JournalSequence, event: &AgentEvent) {
         match event {
-            AgentEvent::SessionCreated { .. } => self.session_created = true,
+            AgentEvent::SessionCreated { session_id } => {
+                self.session_id = Some(*session_id);
+                self.session_created = true;
+            },
             AgentEvent::TurnFinished { turn, outcome } => {
+                self.active_turn_starts.remove(&turn.turn_id());
                 if matches!(outcome, TurnOutcome::Completed) {
                     self.completed_turns.insert(turn.turn_id(), sequence);
                 } else {
@@ -1042,9 +1108,10 @@ impl CorrelationRecovery {
             AgentEvent::TurnStarted { turn } => {
                 self.completed_turns.remove(&turn.turn_id());
             },
-            AgentEvent::ActivityStarted { .. }
-            | AgentEvent::ActivityUpdated { .. }
-            | AgentEvent::ActivityFinished { .. } => {},
+            AgentEvent::ActivityFinished { .. } => {
+                self.completed_activity_boundaries.insert(sequence);
+            },
+            AgentEvent::ActivityStarted { .. } | AgentEvent::ActivityUpdated { .. } => {},
         }
     }
 

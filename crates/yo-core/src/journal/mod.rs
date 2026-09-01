@@ -9,14 +9,16 @@ mod transcript;
 
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
+pub use codec::{ContextPolicyChanged, ContextStrategy};
+pub(crate) use correlation::ContextActiveSource;
 pub use durable::{DurabilityGapCause, JournalDurability};
 pub use record::JournalSequence;
 pub(crate) use record::{CommittedCommand, JournalEntry, SemanticRecord};
 pub use request_trace::{RequestTraceReader, RequestTraceSlice};
 pub use transcript::{
-    TranscriptEntry, TranscriptObservation, TranscriptObservationEntry,
-    TranscriptObservationSequence, TranscriptObservationSlice, TranscriptReader, TranscriptRecord,
-    TranscriptSlice,
+    ContextCheckpointObservation, TranscriptEntry, TranscriptObservation,
+    TranscriptObservationEntry, TranscriptObservationSequence, TranscriptObservationSlice,
+    TranscriptReader, TranscriptRecord, TranscriptSlice,
 };
 
 use crate::{
@@ -99,6 +101,17 @@ impl SessionJournal {
 
     pub(crate) fn semantic_entries(&self) -> Vec<JournalEntry> {
         read_state(&self.state).entries.clone()
+    }
+
+    pub(crate) fn next_sequence(&self) -> JournalSequence {
+        read_state(&self.state).next_sequence()
+    }
+
+    pub(crate) fn last_sequence(&self) -> Option<JournalSequence> {
+        read_state(&self.state)
+            .entries
+            .last()
+            .map(JournalEntry::sequence)
     }
 
     #[cfg(test)]

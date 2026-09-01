@@ -2,16 +2,16 @@ use std::{
     collections::VecDeque,
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicU8, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         mpsc::{Receiver, SyncSender, TryRecvError, TrySendError},
     },
     thread,
 };
 
 use super::{
-    AgentSessionError, BackendReplacementOutcome, PendingCommand, ReplacementRequest,
-    ResumeInitialization, SessionState, WORKER_EXECUTING, WORKER_IDLE, WORKER_POLL_INTERVAL,
-    WORKER_STOPPING,
+    AgentControlOutcome, AgentSessionError, BackendReplacementOutcome, PendingCommand,
+    ReplacementRequest, ResumeInitialization, SessionState, WORKER_EXECUTING, WORKER_IDLE,
+    WORKER_POLL_INTERVAL, WORKER_STOPPING,
 };
 use crate::{
     ActivityKind, ActivityRequestRef, AgentBackend, AgentCommand, AgentEvent, AgentRuntime,
@@ -113,25 +113,53 @@ pub(super) struct AgentWorker {
     state: Arc<Mutex<SessionState>>,
     active_turn_id: Arc<AtomicU64>,
     submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
+    control_outcomes: Arc<Mutex<VecDeque<AgentControlOutcome>>>,
+    context_compaction_pending: Arc<AtomicBool>,
     resume: Option<ResumeInitialization>,
+}
+
+pub(super) struct WorkerSharedState {
+    state: Arc<Mutex<SessionState>>,
+    active_turn_id: Arc<AtomicU64>,
+    submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
+    control_outcomes: Arc<Mutex<VecDeque<AgentControlOutcome>>>,
+    context_compaction_pending: Arc<AtomicBool>,
+}
+
+impl WorkerSharedState {
+    pub(super) fn new(
+        state: Arc<Mutex<SessionState>>,
+        active_turn_id: Arc<AtomicU64>,
+        submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
+        control_outcomes: Arc<Mutex<VecDeque<AgentControlOutcome>>>,
+        context_compaction_pending: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            state,
+            active_turn_id,
+            submission_outcomes,
+            control_outcomes,
+            context_compaction_pending,
+        }
+    }
 }
 
 impl AgentWorker {
     pub(super) fn new(
         backend: Box<dyn AgentBackend + Send>,
         session_id: SessionId,
-        state: Arc<Mutex<SessionState>>,
-        active_turn_id: Arc<AtomicU64>,
         journal: SessionJournal,
-        submission_outcomes: Arc<Mutex<VecDeque<SubmissionOutcome>>>,
+        shared: WorkerSharedState,
         resume: Option<ResumeInitialization>,
     ) -> Self {
         Self {
             runtime: AgentRuntime::with_journal(backend, journal),
             session_id,
-            state,
-            active_turn_id,
-            submission_outcomes,
+            state: shared.state,
+            active_turn_id: shared.active_turn_id,
+            submission_outcomes: shared.submission_outcomes,
+            control_outcomes: shared.control_outcomes,
+            context_compaction_pending: shared.context_compaction_pending,
             resume,
         }
     }
@@ -186,45 +214,30 @@ impl AgentWorker {
     ) -> WorkerExit {
         let mut deferred_commands = VecDeque::new();
         let mut deferred_urgent = VecDeque::new();
+        let mut context_compaction_in_flight = false;
         loop {
             if lifecycle.load(Ordering::Acquire) == WORKER_STOPPING {
                 return WorkerExit::from_cleanup(self.runtime.shutdown());
             }
 
-            match replacements.try_recv() {
-                Ok(request) => {
-                    if lifecycle
-                        .compare_exchange(
-                            WORKER_IDLE,
-                            WORKER_EXECUTING,
-                            Ordering::AcqRel,
-                            Ordering::Acquire,
-                        )
-                        .is_err()
-                    {
-                        let mut backend = request.backend;
-                        let cleanup = backend.shutdown().err();
-                        let primary = AgentSessionError::WorkerUnavailable(
-                            "binding replacement requires an idle Session".to_owned(),
-                        );
-                        let error = match cleanup {
-                            Some(cleanup) => AgentSessionError::Multiple {
-                                primary: Box::new(primary),
-                                additional: Box::new(AgentSessionError::BackendCleanup(cleanup)),
-                            },
-                            None => primary,
-                        };
-                        let _ = request.result.send(Err(error));
-                        continue;
-                    }
-                    let durability_before = self.runtime.durability();
-                    let result = self
-                        .runtime
-                        .replace_backend(request.backend)
-                        .map(|cleanup_failure| BackendReplacementOutcome { cleanup_failure })
-                        .map_err(|error| {
-                            let primary = AgentSessionError::Runtime(error.primary);
-                            match error.cleanup_failure {
+            if !self.runtime.idle_context_compaction_pending() {
+                match replacements.try_recv() {
+                    Ok(request) => {
+                        if lifecycle
+                            .compare_exchange(
+                                WORKER_IDLE,
+                                WORKER_EXECUTING,
+                                Ordering::AcqRel,
+                                Ordering::Acquire,
+                            )
+                            .is_err()
+                        {
+                            let mut backend = request.backend;
+                            let cleanup = backend.shutdown().err();
+                            let primary = AgentSessionError::WorkerUnavailable(
+                                "binding replacement requires an idle Session".to_owned(),
+                            );
+                            let error = match cleanup {
                                 Some(cleanup) => AgentSessionError::Multiple {
                                     primary: Box::new(primary),
                                     additional: Box::new(AgentSessionError::BackendCleanup(
@@ -232,27 +245,52 @@ impl AgentWorker {
                                     )),
                                 },
                                 None => primary,
-                            }
-                        });
-                    lifecycle.store(WORKER_IDLE, Ordering::Release);
-                    let changed = self.runtime.durability() != durability_before || result.is_ok();
-                    let _ = request.result.send(result);
-                    if changed && !changes.changed() {
-                        return WorkerExit::from_cleanup(self.runtime.shutdown());
-                    }
-                    continue;
-                },
-                Err(TryRecvError::Disconnected | TryRecvError::Empty) => {},
+                            };
+                            let _ = request.result.send(Err(error));
+                            continue;
+                        }
+                        let durability_before = self.runtime.durability();
+                        let result = self
+                            .runtime
+                            .replace_backend(request.backend)
+                            .map(|cleanup_failure| BackendReplacementOutcome { cleanup_failure })
+                            .map_err(|error| {
+                                let primary = AgentSessionError::Runtime(error.primary);
+                                match error.cleanup_failure {
+                                    Some(cleanup) => AgentSessionError::Multiple {
+                                        primary: Box::new(primary),
+                                        additional: Box::new(AgentSessionError::BackendCleanup(
+                                            cleanup,
+                                        )),
+                                    },
+                                    None => primary,
+                                }
+                            });
+                        lifecycle.store(WORKER_IDLE, Ordering::Release);
+                        let changed =
+                            self.runtime.durability() != durability_before || result.is_ok();
+                        let _ = request.result.send(result);
+                        if changed && !changes.changed() {
+                            return WorkerExit::from_cleanup(self.runtime.shutdown());
+                        }
+                        continue;
+                    },
+                    Err(TryRecvError::Disconnected | TryRecvError::Empty) => {},
+                }
             }
 
-            let urgent = deferred_urgent
-                .pop_front()
-                .map_or_else(|| urgent_commands.try_recv(), Ok);
-            let command = match urgent {
-                Ok(command) => Ok(command),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => deferred_commands
+            let command = if self.runtime.idle_context_compaction_pending() {
+                Err(TryRecvError::Empty)
+            } else {
+                let urgent = deferred_urgent
                     .pop_front()
-                    .map_or_else(|| commands.try_recv(), Ok),
+                    .map_or_else(|| urgent_commands.try_recv(), Ok);
+                match urgent {
+                    Ok(command) => Ok(command),
+                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => deferred_commands
+                        .pop_front()
+                        .map_or_else(|| commands.try_recv(), Ok),
+                }
             };
             match command {
                 Ok(pending) => {
@@ -287,6 +325,8 @@ impl AgentWorker {
                         return WorkerExit::from_cleanup(self.runtime.shutdown());
                     }
                     let (command, submission_id) = pending.into_parts();
+                    let is_context_compaction =
+                        matches!(&command, AgentCommand::CompactContext { .. });
                     let result = self.dispatch(command, submission_id);
                     if let Ok(mut count) = processed.0.lock() {
                         *count += 1;
@@ -302,6 +342,9 @@ impl AgentWorker {
                         .is_err();
                     match result {
                         Ok(_) => {
+                            if is_context_compaction {
+                                context_compaction_in_flight = true;
+                            }
                             if let Some(id) = submission_id {
                                 self.record_submission_outcome(SubmissionOutcome::Accepted { id });
                             }
@@ -310,6 +353,22 @@ impl AgentWorker {
                             }
                         },
                         Err(error) => {
+                            if is_context_compaction
+                                && let Some(detail) = context_compaction_rejection(&error)
+                            {
+                                self.context_compaction_pending
+                                    .store(false, Ordering::Release);
+                                self.control_outcomes
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .push_back(AgentControlOutcome::ContextCompactionRejected {
+                                        detail,
+                                    });
+                                if !changes.changed() {
+                                    return WorkerExit::from_cleanup(self.runtime.shutdown());
+                                }
+                                continue;
+                            }
                             return self.finish_after_failure(error, changes);
                         },
                     }
@@ -354,6 +413,15 @@ impl AgentWorker {
                     let primary = AgentSessionError::Runtime(error);
                     return self.finish_after_failure(primary, changes);
                 },
+            }
+
+            if context_compaction_in_flight && !self.runtime.idle_context_compaction_pending() {
+                context_compaction_in_flight = false;
+                self.context_compaction_pending
+                    .store(false, Ordering::Release);
+                if !changes.changed() {
+                    return WorkerExit::from_cleanup(self.runtime.shutdown());
+                }
             }
 
             thread::sleep(WORKER_POLL_INTERVAL);
@@ -422,6 +490,24 @@ impl AgentWorker {
     }
 }
 
+fn context_compaction_rejection(error: &AgentSessionError) -> Option<String> {
+    match error {
+        AgentSessionError::Runtime(RuntimeError::CommandRejected(rejection)) => {
+            Some(rejection.to_string())
+        },
+        AgentSessionError::Runtime(RuntimeError::Backend {
+            failure,
+            terminal_events,
+        }) if failure.kind() == crate::BackendFailureKind::CommandRejected
+            && terminal_events.is_empty() =>
+        {
+            Some(failure.message().to_owned())
+        },
+        AgentSessionError::ContextCompactionRequiresIdle => Some(error.to_string()),
+        _ => None,
+    }
+}
+
 fn apply_events(state: &mut SessionState, active_turn_id: &AtomicU64, events: &[AgentEvent]) {
     for event in events {
         apply_event(state, active_turn_id, event);
@@ -483,6 +569,7 @@ fn cancel_queued_turn_commands(
 fn command_turn(command: &AgentCommand) -> Option<TurnRef> {
     match command {
         AgentCommand::CreateSession { .. } => None,
+        AgentCommand::CompactContext { .. } => None,
         AgentCommand::StartTurn { turn, .. }
         | AgentCommand::SteerTurn { turn, .. }
         | AgentCommand::InterruptTurn { turn } => Some(*turn),

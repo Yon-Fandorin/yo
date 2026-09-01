@@ -36,6 +36,7 @@ fn drain_frontend_until_turn_finished<E: std::fmt::Display>(
             AgentPoll::Record(_) => "record",
             AgentPoll::RequestTrace(_) => "request-trace",
             AgentPoll::Durability(_) => "durability",
+            AgentPoll::Control(_) => "control",
             AgentPoll::Closed => "closed",
         };
         match observation {
@@ -331,7 +332,8 @@ fn exposes_initial_storage_pressure_to_the_connected_frontend() {
             | AgentPoll::Record(_)
             | AgentPoll::RequestTrace(_)
             | AgentPoll::Durability(_)
-            | AgentPoll::Submission(_) => {},
+            | AgentPoll::Submission(_)
+            | AgentPoll::Control(_) => {},
             AgentPoll::Closed => panic!("connection closed before reporting storage pressure"),
         }
         assert!(

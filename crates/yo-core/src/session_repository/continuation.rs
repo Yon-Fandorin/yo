@@ -226,7 +226,7 @@ pub(crate) fn build_continuation(
                 AgentCommand::RespondToActivity { request, .. } => {
                     max_turn = max_turn.max(request.activity().turn().turn_id().get().get());
                 },
-                AgentCommand::CreateSession { .. } => {},
+                AgentCommand::CreateSession { .. } | AgentCommand::CompactContext { .. } => {},
             }
         }
     }
@@ -259,6 +259,11 @@ pub(crate) fn build_continuation(
         },
     }
     .with_model_replay(model_replay)
+    .with_context_state(
+        recovered.context_policy().cloned(),
+        recovered.context_epoch(),
+        recovered.model_replay_groups(),
+    )
     .with_replay_contract_rebind_required(recovered.replay_contract_rebind_required());
     Ok(StoredSessionContinuation {
         recovered,
