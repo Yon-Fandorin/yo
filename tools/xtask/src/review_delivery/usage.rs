@@ -15,7 +15,7 @@ use crate::{
     review_session::{host_request_identity, provider_request_identity},
 };
 
-pub(super) const PROVIDER_USAGE_SCHEMA: &str = "yo.external-review-provider-usage/v1alpha1";
+pub(super) const PROVIDER_USAGE_SCHEMA: &str = "yo.external-review-provider-usage/v1alpha2";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum UsageTarget {
@@ -33,6 +33,7 @@ pub(super) enum UsageTarget {
 pub(super) struct UsageBinding {
     pub(super) review_id: String,
     pub(super) packet_hash: String,
+    pub(super) packet_managed_tokens: usize,
     pub(super) request_id: String,
     pub(super) session_id: String,
     pub(super) turn_id: TurnId,
@@ -53,6 +54,7 @@ pub(super) struct ProviderUsageDocument {
     unavailable_reason: Option<&'static str>,
     receipts: Vec<UsageReceipt>,
     usage: AggregatedUsage,
+    analysis: UsageAnalysis,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +101,10 @@ enum UsageSource {
     Grok {
         source_profile: String,
         prompt_request_id: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        model_calls: Option<u64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        num_turns: Option<u64>,
     },
     Codex {
         source_profile: String,
@@ -131,7 +137,7 @@ enum UsageValue {
     Unsupported,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Eq, PartialEq, Serialize)]
 struct AggregatedUsage {
     input_tokens: AggregateValue,
     output_tokens: AggregateValue,
@@ -139,6 +145,38 @@ struct AggregatedUsage {
     reasoning_tokens: AggregateValue,
     cache_read_input_tokens: AggregateValue,
     cache_write_input_tokens: AggregateValue,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+struct UsageAnalysis {
+    packet_managed_tokens: usize,
+    uncached_input_tokens: DerivedTokenValue,
+    input_amplification: InputAmplification,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "availability", rename_all = "snake_case")]
+enum DerivedTokenValue {
+    Reported {
+        tokens: u64,
+        derivation: &'static str,
+    },
+    Unavailable {
+        reason: &'static str,
+    },
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(tag = "availability", rename_all = "snake_case")]
+enum InputAmplification {
+    Reported {
+        ratio: f64,
+        provider_input_tokens: u64,
+        packet_managed_tokens: usize,
+    },
+    Unavailable {
+        reason: &'static str,
+    },
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize)]
@@ -208,6 +246,7 @@ pub(super) fn project(
         .is_empty()
         .then_some("no_terminal_usage_receipt_for_exact_request_turn");
     let usage = aggregate(&receipts)?;
+    let analysis = analyze(&usage, binding.packet_managed_tokens);
     let (request_kind, target) = match binding.target {
         UsageTarget::ManagedModel {
             provider,
@@ -238,6 +277,7 @@ pub(super) fn project(
         unavailable_reason,
         receipts,
         usage,
+        analysis,
     })
 }
 
@@ -309,7 +349,10 @@ fn source_matches(source: &SessionUsageSource, target: &UsageTarget) -> bool {
         ) => {
             provider == expected_provider && account == expected_account && model == expected_model
         },
-        (SessionUsageSource::Grok { .. }, UsageTarget::DelegatedHost { host }) => host == "grok",
+        (
+            SessionUsageSource::Grok { .. } | SessionUsageSource::GrokDiagnostic { .. },
+            UsageTarget::DelegatedHost { host },
+        ) => host == "grok",
         (SessionUsageSource::Codex { .. }, UsageTarget::DelegatedHost { host }) => host == "codex",
         _ => false,
     }
@@ -395,6 +438,19 @@ fn project_receipt(receipt: &SessionUsageReceipt, raw: &str) -> UsageReceipt {
         } => UsageSource::Grok {
             source_profile: source_profile.clone(),
             prompt_request_id: *prompt_request_id,
+            model_calls: None,
+            num_turns: None,
+        },
+        SessionUsageSource::GrokDiagnostic {
+            source_profile,
+            prompt_request_id,
+            model_calls,
+            num_turns,
+        } => UsageSource::Grok {
+            source_profile: source_profile.clone(),
+            prompt_request_id: *prompt_request_id,
+            model_calls: Some(*model_calls),
+            num_turns: Some(*num_turns),
         },
         SessionUsageSource::Codex {
             source_profile,
@@ -538,13 +594,62 @@ fn aggregate_field(values: impl IntoIterator<Item = UsageValue>) -> Result<Aggre
     })
 }
 
+fn analyze(usage: &AggregatedUsage, packet_managed_tokens: usize) -> UsageAnalysis {
+    let uncached_input_tokens = match (&usage.input_tokens, &usage.cache_read_input_tokens) {
+        (
+            AggregateValue::Reported { tokens: input },
+            AggregateValue::Reported { tokens: cache_read },
+        ) if cache_read <= input => DerivedTokenValue::Reported {
+            tokens: input - cache_read,
+            derivation: "input_tokens-cache_read_input_tokens",
+        },
+        (
+            AggregateValue::Reported { tokens: input },
+            AggregateValue::Reported { tokens: cache_read },
+        ) if cache_read > input => DerivedTokenValue::Unavailable {
+            reason: "cache_read_exceeds_input",
+        },
+        _ => DerivedTokenValue::Unavailable {
+            reason: "incomplete_input_or_cache_read_coverage",
+        },
+    };
+    let input_amplification = match (&usage.input_tokens, packet_managed_tokens) {
+        (_, 0) => InputAmplification::Unavailable {
+            reason: "packet_managed_tokens_zero",
+        },
+        (AggregateValue::Reported { tokens }, packet_managed_tokens) => {
+            let ratio =
+                ((*tokens as f64 / packet_managed_tokens as f64) * 1_000.0).round() / 1_000.0;
+            InputAmplification::Reported {
+                ratio,
+                provider_input_tokens: *tokens,
+                packet_managed_tokens,
+            }
+        },
+        _ => InputAmplification::Unavailable {
+            reason: "incomplete_input_coverage",
+        },
+    };
+    UsageAnalysis {
+        packet_managed_tokens,
+        uncached_input_tokens,
+        input_amplification,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use yo_core::SessionUsageSource;
+    use std::num::NonZeroU64;
+
+    use yo_core::{
+        ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityUpdate, AgentEvent,
+        SessionUsageProjection, SessionUsageSource, TranscriptRecord, TurnId, TurnRef,
+    };
 
     use super::{
-        AggregateValue, UsageTarget, UsageValue, aggregate_field, require_bound_request_identity,
-        source_matches,
+        AggregateValue, AggregatedUsage, DerivedTokenValue, InputAmplification, UsageAnalysis,
+        UsageTarget, UsageValue, aggregate_field, analyze, project_receipt,
+        require_bound_request_identity, source_matches,
     };
 
     // 모든 receipt가 값을 보고하면 합계는 완전한 reported 값이고, 하나라도 absent면
@@ -593,6 +698,132 @@ mod tests {
             aggregate_field([UsageValue::Reported { tokens: 0 }]).unwrap(),
             AggregateValue::Reported { tokens: 0 }
         );
+    }
+
+    // packet 크기와 완전하게 보고된 provider/cache 입력에서만 비캐시 입력과 읽기 쉬운
+    // 3자리 증폭률을 파생하고, cache token을 Provider 입력에 다시 더하지 않습니다.
+    #[test]
+    fn analysis_separates_uncached_input_and_packet_amplification() {
+        let usage = complete_usage(990_347, 585_728);
+        assert_eq!(
+            analyze(&usage, 43_276),
+            UsageAnalysis {
+                packet_managed_tokens: 43_276,
+                uncached_input_tokens: DerivedTokenValue::Reported {
+                    tokens: 404_619,
+                    derivation: "input_tokens-cache_read_input_tokens",
+                },
+                input_amplification: InputAmplification::Reported {
+                    ratio: 22.884,
+                    provider_input_tokens: 990_347,
+                    packet_managed_tokens: 43_276,
+                },
+            }
+        );
+    }
+
+    // Grok diagnostic receipt의 새 schema와 host-work 계수는 shared Session projection을
+    // 통과한 뒤에도 external-review Provider Usage source에 손실 없이 직렬화됩니다.
+    #[test]
+    fn grok_diagnostics_survive_provider_usage_projection() {
+        let session_id = "018f0a00-0000-7000-8000-000000000001".parse().unwrap();
+        let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(1).unwrap()));
+        let activity = ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(1).unwrap()));
+        let raw = serde_json::json!({
+            "schema": "grok.acp-prompt-usage-receipt/v1alpha1",
+            "source_profile": "grok.acp.prompt-response.meta-usage/v1",
+            "prompt_request_id": 4,
+            "model_calls": 7,
+            "num_turns": 3,
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 10,
+                "total_tokens": 110,
+                "reasoning_tokens": 8,
+                "cache_read_input_tokens": 60,
+                "cache_write_input_tokens": 0
+            }
+        })
+        .to_string();
+        let records = vec![
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityStarted {
+                activity,
+                kind: ActivityKind::ModelWork,
+            }),
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityUpdated {
+                activity,
+                update: ActivityUpdate::TextSnapshot(raw.clone()),
+            }),
+            TranscriptRecord::EventCommitted(AgentEvent::ActivityFinished {
+                activity,
+                outcome: ActivityOutcome::Completed,
+            }),
+        ];
+        let projection = SessionUsageProjection::from_records(&records).unwrap();
+        let projected =
+            serde_json::to_value(project_receipt(&projection.receipts()[0], &raw)).unwrap();
+
+        assert_eq!(
+            projected["receipt_schema"],
+            serde_json::json!("grok.acp-prompt-usage-receipt/v1alpha1")
+        );
+        assert_eq!(projected["source"]["model_calls"], serde_json::json!(7));
+        assert_eq!(projected["source"]["num_turns"], serde_json::json!(3));
+    }
+
+    // 불완전한 coverage, 0-byte packet, 또는 input보다 큰 cache 보고는 0이나 음수를
+    // 꾸며내지 않고 각 파생치의 구체적인 unavailable 이유로 남깁니다.
+    #[test]
+    fn analysis_fails_closed_when_inputs_do_not_support_a_derivation() {
+        let mut partial = complete_usage(10, 4);
+        partial.input_tokens = AggregateValue::Partial {
+            tokens: 10,
+            reported_receipts: 1,
+            total_receipts: 2,
+        };
+        assert_eq!(
+            analyze(&partial, 5),
+            UsageAnalysis {
+                packet_managed_tokens: 5,
+                uncached_input_tokens: DerivedTokenValue::Unavailable {
+                    reason: "incomplete_input_or_cache_read_coverage",
+                },
+                input_amplification: InputAmplification::Unavailable {
+                    reason: "incomplete_input_coverage",
+                },
+            }
+        );
+
+        let invalid_cache = complete_usage(3, 4);
+        assert_eq!(
+            analyze(&invalid_cache, 0),
+            UsageAnalysis {
+                packet_managed_tokens: 0,
+                uncached_input_tokens: DerivedTokenValue::Unavailable {
+                    reason: "cache_read_exceeds_input",
+                },
+                input_amplification: InputAmplification::Unavailable {
+                    reason: "packet_managed_tokens_zero",
+                },
+            }
+        );
+    }
+
+    fn complete_usage(input_tokens: u64, cache_read_input_tokens: u64) -> AggregatedUsage {
+        AggregatedUsage {
+            input_tokens: AggregateValue::Reported {
+                tokens: input_tokens,
+            },
+            output_tokens: AggregateValue::Reported { tokens: 0 },
+            total_tokens: AggregateValue::Reported {
+                tokens: input_tokens,
+            },
+            reasoning_tokens: AggregateValue::Reported { tokens: 0 },
+            cache_read_input_tokens: AggregateValue::Reported {
+                tokens: cache_read_input_tokens,
+            },
+            cache_write_input_tokens: AggregateValue::Reported { tokens: 0 },
+        }
     }
 
     // usage artifact는 같은 turn에서 관측한 exact outcome identity만 받으며, 다른 identity나

@@ -280,6 +280,17 @@ durable Session, binds the exact delivery request identity and target, and
 reports presence-aware input, output, total, reasoning, cache-read, and
 cache-write values without guessing absent fields.
 
+New deliveries publish `yo.external-review-provider-usage/v1alpha2`. It keeps
+the exact v1alpha1 receipt and aggregate fields, adds the immutable packet's
+managed-token count, and separately labels two derived diagnostics: uncached
+input is emitted only when complete input and cache-read values permit the
+exact subtraction, while input amplification is emitted only when complete
+Provider input and a nonzero packet count permit the ratio. Otherwise each
+diagnostic carries a typed unavailable reason instead of guessing. Grok's new
+`grok.acp-prompt-usage-receipt/v1alpha1` preserves the host-reported
+`modelCalls` and `numTurns` beside its whole-prompt ledger; existing stable v1
+receipts remain unchanged and carry no inferred counters.
+
 Start every new experimental wire schema, profile, identity domain, request,
 result, manifest, or receipt family at `v1alpha1`. Do not publish a new shape as
 `v1` merely because it has no predecessor or only repository-local consumers.

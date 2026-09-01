@@ -66,6 +66,11 @@ pub(in crate::runner) fn source_text(
         SessionUsageSource::Grok {
             source_profile,
             prompt_request_id,
+        }
+        | SessionUsageSource::GrokDiagnostic {
+            source_profile,
+            prompt_request_id,
+            ..
         } => format!(
             "grok{divider}profile={} request={prompt_request_id}",
             safe_text(source_profile),

@@ -256,6 +256,7 @@ fn run_original(
             UsageBinding {
                 review_id: authorized.review_id.clone(),
                 packet_hash: authorized.packet_hash.clone(),
+                packet_managed_tokens: authorized.managed_payload_tokens,
                 request_id: observation
                     .provider_request_id
                     .clone()
@@ -533,6 +534,7 @@ fn run_continuation(
             UsageBinding {
                 review_id: authorized.review_id.clone(),
                 packet_hash: authorized.packet_hash.clone(),
+                packet_managed_tokens: authorized.managed_payload_tokens,
                 request_id: observation
                     .provider_request_id
                     .clone()

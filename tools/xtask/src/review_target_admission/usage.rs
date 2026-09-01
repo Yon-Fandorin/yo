@@ -170,7 +170,10 @@ fn matches_target(receipt: &SessionUsageReceipt, target: &ReviewTarget) -> bool 
             provider == expected_provider && account == expected_account && model == expected_model
         },
         (SessionUsageSource::Codex { .. }, ReviewTarget::DelegatedHost { host }) => host == "codex",
-        (SessionUsageSource::Grok { .. }, ReviewTarget::DelegatedHost { host }) => host == "grok",
+        (
+            SessionUsageSource::Grok { .. } | SessionUsageSource::GrokDiagnostic { .. },
+            ReviewTarget::DelegatedHost { host },
+        ) => host == "grok",
         _ => false,
     }
 }
@@ -203,6 +206,11 @@ fn project_receipt(
         SessionUsageSource::Grok {
             source_profile,
             prompt_request_id,
+        }
+        | SessionUsageSource::GrokDiagnostic {
+            source_profile,
+            prompt_request_id,
+            ..
         } => serde_json::json!({
             "source_profile": source_profile,
             "prompt_request_id": prompt_request_id,

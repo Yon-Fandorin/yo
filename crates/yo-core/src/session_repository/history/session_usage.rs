@@ -8,6 +8,7 @@ use crate::{
 
 pub const MANAGED_USAGE_SCHEMA: &str = "yo.model-usage-receipt/v1";
 pub const GROK_USAGE_SCHEMA: &str = "grok.acp-prompt-usage-receipt/v1";
+pub const GROK_USAGE_DIAGNOSTIC_SCHEMA: &str = "grok.acp-prompt-usage-receipt/v1alpha1";
 pub const CODEX_USAGE_SCHEMA: &str = "codex.app-server-token-usage-receipt/v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +45,12 @@ pub enum SessionUsageSource {
         source_profile: String,
         prompt_request_id: u64,
     },
+    GrokDiagnostic {
+        source_profile: String,
+        prompt_request_id: u64,
+        model_calls: u64,
+        num_turns: u64,
+    },
     Codex {
         source_profile: String,
         turn_id: String,
@@ -56,14 +63,17 @@ impl SessionUsageSource {
     pub const fn provider(&self) -> SessionUsageProvider {
         match self {
             Self::Managed { .. } => SessionUsageProvider::Managed,
-            Self::Grok { .. } => SessionUsageProvider::Grok,
+            Self::Grok { .. } | Self::GrokDiagnostic { .. } => SessionUsageProvider::Grok,
             Self::Codex { .. } => SessionUsageProvider::Codex,
         }
     }
 
     #[must_use]
     pub const fn schema(&self) -> &'static str {
-        self.provider().schema()
+        match self {
+            Self::GrokDiagnostic { .. } => GROK_USAGE_DIAGNOSTIC_SCHEMA,
+            _ => self.provider().schema(),
+        }
     }
 }
 
@@ -518,6 +528,7 @@ fn parse_receipt(
     let result = match schema {
         MANAGED_USAGE_SCHEMA => parse_managed(&value),
         GROK_USAGE_SCHEMA => parse_grok(&value),
+        GROK_USAGE_DIAGNOSTIC_SCHEMA => parse_grok_diagnostic(&value),
         CODEX_USAGE_SCHEMA => parse_codex(&value),
         _ => return Ok(None),
     };
@@ -635,11 +646,69 @@ fn parse_managed_cache(value: Option<&Value>) -> Result<UsageValue, String> {
 
 fn parse_grok(value: &Value) -> Result<(SessionUsageSource, SessionUsage), String> {
     let usage = object_at(value, "usage")?;
-    Ok((
-        SessionUsageSource::Grok {
-            source_profile: required_string(value, "source_profile")?,
-            prompt_request_id: required_root_u64(value, "prompt_request_id")?,
+    parse_grok_fields(value, usage, None, None)
+}
+
+fn parse_grok_diagnostic(value: &Value) -> Result<(SessionUsageSource, SessionUsage), String> {
+    let root = closed_object(
+        value,
+        "Grok diagnostic receipt",
+        &[
+            "schema",
+            "source_profile",
+            "prompt_request_id",
+            "model_calls",
+            "num_turns",
+            "usage",
+        ],
+    )?;
+    let usage = closed_object_at(
+        root,
+        "usage",
+        &[
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "reasoning_tokens",
+            "cache_read_input_tokens",
+            "cache_write_input_tokens",
+        ],
+    )?;
+    parse_grok_fields(
+        value,
+        usage,
+        Some(required_root_u64(value, "model_calls")?),
+        Some(required_root_u64(value, "num_turns")?),
+    )
+}
+
+fn parse_grok_fields(
+    value: &Value,
+    usage: &serde_json::Map<String, Value>,
+    model_calls: Option<u64>,
+    num_turns: Option<u64>,
+) -> Result<(SessionUsageSource, SessionUsage), String> {
+    let source_profile = required_string(value, "source_profile")?;
+    let prompt_request_id = required_root_u64(value, "prompt_request_id")?;
+    let source = match (model_calls, num_turns) {
+        (None, None) => SessionUsageSource::Grok {
+            source_profile,
+            prompt_request_id,
         },
+        (Some(model_calls), Some(num_turns)) => SessionUsageSource::GrokDiagnostic {
+            source_profile,
+            prompt_request_id,
+            model_calls,
+            num_turns,
+        },
+        _ => {
+            return Err(
+                "Grok diagnostic work counts must be both present or both absent".to_owned(),
+            );
+        },
+    };
+    Ok((
+        source,
         SessionUsage {
             input_tokens: required_usage(usage, "input_tokens")?,
             output_tokens: required_usage(usage, "output_tokens")?,
@@ -869,6 +938,70 @@ mod tests {
         .unwrap();
         malformed["usage"]["input_tokens"] = serde_json::json!("not a number");
         assert!(parse_managed(&malformed).is_err());
+    }
+
+    // 새 Grok diagnostic receipt는 whole-prompt token 값과 함께 host 내부 model-call 및
+    // turn 계수를 보존하고, 기존 v1 receipt는 같은 계수를 꾸며내지 않은 채 계속 읽습니다.
+    #[test]
+    fn grok_diagnostic_receipt_preserves_host_work_counts_without_reinterpreting_v1() {
+        let diagnostic = serde_json::json!({
+            "schema": GROK_USAGE_DIAGNOSTIC_SCHEMA,
+            "source_profile": "grok.acp.prompt-response.meta-usage/v1",
+            "prompt_request_id": 4,
+            "model_calls": 7,
+            "num_turns": 3,
+            "usage": {
+                "input_tokens": 990_347,
+                "output_tokens": 17_988,
+                "total_tokens": 1_008_335,
+                "reasoning_tokens": 16_432,
+                "cache_read_input_tokens": 585_728,
+                "cache_write_input_tokens": 0
+            }
+        });
+        let diagnostic = parse_receipt(&diagnostic.to_string(), activity(1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(diagnostic.schema(), GROK_USAGE_DIAGNOSTIC_SCHEMA);
+        assert!(matches!(
+            diagnostic.source(),
+            SessionUsageSource::GrokDiagnostic {
+                model_calls: 7,
+                num_turns: 3,
+                ..
+            }
+        ));
+
+        let stable = parse_receipt(&grok_text(20), activity(2)).unwrap().unwrap();
+        assert_eq!(stable.schema(), GROK_USAGE_SCHEMA);
+        assert!(matches!(stable.source(), SessionUsageSource::Grok { .. }));
+    }
+
+    // experimental diagnostic shape는 호출 계수와 token 객체를 닫아 부분 관측이나
+    // 알 수 없는 필드가 분석 근거로 조용히 들어오지 못하게 합니다.
+    #[test]
+    fn grok_diagnostic_receipt_rejects_missing_or_extra_diagnostics() {
+        let mut value = serde_json::json!({
+            "schema": GROK_USAGE_DIAGNOSTIC_SCHEMA,
+            "source_profile": "grok.acp.prompt-response.meta-usage/v1",
+            "prompt_request_id": 4,
+            "model_calls": 1,
+            "num_turns": 1,
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 1,
+                "total_tokens": 2,
+                "reasoning_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "cache_write_input_tokens": 0
+            }
+        });
+        value.as_object_mut().unwrap().remove("model_calls");
+        assert!(parse_grok_diagnostic(&value).is_err());
+
+        value["model_calls"] = serde_json::json!(1);
+        value["usage"]["unexpected"] = serde_json::json!(true);
+        assert!(parse_grok_diagnostic(&value).is_err());
     }
 
     // managed cache availability는 reported·absent·unsupported마다 허용 필드와 versioned

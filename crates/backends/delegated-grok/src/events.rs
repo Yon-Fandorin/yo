@@ -558,17 +558,27 @@ fn grok_meta_prompt_usage_receipt(
     if incomplete {
         return Ok(None);
     }
+    let input_tokens = non_negative_usage_at(usage, "inputTokens")?;
+    let output_tokens = non_negative_usage_at(usage, "outputTokens")?;
+    let total_tokens = non_negative_usage_at(usage, "totalTokens")?;
+    let reasoning_tokens = non_negative_usage_at(usage, "reasoningTokens")?;
+    let cache_read_input_tokens = non_negative_usage_at(usage, "cachedReadTokens")?;
+    let cache_write_input_tokens = non_negative_usage_at(usage, "cacheCreationTokens")?;
+    let model_calls = non_negative_usage_at(usage, "modelCalls")?;
+    let num_turns = non_negative_usage_at(usage, "numTurns")?;
     Ok(Some(json!({
-        "schema": "grok.acp-prompt-usage-receipt/v1",
+        "schema": "grok.acp-prompt-usage-receipt/v1alpha1",
         "source_profile": "grok.acp.prompt-response.meta-usage/v1",
         "prompt_request_id": response_id,
+        "model_calls": model_calls,
+        "num_turns": num_turns,
         "usage": {
-            "input_tokens": non_negative_usage_at(usage, "inputTokens")?,
-            "output_tokens": non_negative_usage_at(usage, "outputTokens")?,
-            "total_tokens": non_negative_usage_at(usage, "totalTokens")?,
-            "reasoning_tokens": non_negative_usage_at(usage, "reasoningTokens")?,
-            "cache_read_input_tokens": non_negative_usage_at(usage, "cachedReadTokens")?,
-            "cache_write_input_tokens": non_negative_usage_at(usage, "cacheCreationTokens")?,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "cache_read_input_tokens": cache_read_input_tokens,
+            "cache_write_input_tokens": cache_write_input_tokens,
         }
     })))
 }

@@ -593,9 +593,11 @@ fn maps_grok_meta_prompt_usage_to_semantic_receipt() {
     assert_eq!(
         serde_json::from_str::<Value>(&receipt).unwrap(),
         json!({
-            "schema": "grok.acp-prompt-usage-receipt/v1",
+            "schema": "grok.acp-prompt-usage-receipt/v1alpha1",
             "source_profile": "grok.acp.prompt-response.meta-usage/v1",
             "prompt_request_id": 4,
+            "model_calls": 1,
+            "num_turns": 1,
             "usage": {
                 "input_tokens": 14_851,
                 "output_tokens": 48,
