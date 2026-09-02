@@ -1,0 +1,17 @@
+# Allow this repository's project-owned xtask entry points to cross the
+# filesystem sandbox without prompting. This does not authorize external,
+# destructive, or otherwise approval-gated semantic effects.
+prefix_rule(
+    pattern = ["cargo", "xtask"],
+    decision = "allow",
+    justification = "Allow project-owned cargo xtask coordination and validation commands without repeated sandbox prompts.",
+    match = [
+        "cargo xtask check slice-scope",
+        "cargo xtask slice status example-slice",
+        "cargo xtask slice review-packet request.json",
+    ],
+    not_match = [
+        "cargo test --locked",
+        "cargo run --locked -p xtask",
+    ],
+)
