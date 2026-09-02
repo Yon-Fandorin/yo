@@ -202,6 +202,8 @@ struct LiveSession {
     tui: yo_tui::TuiSession,
     workspace: std::path::PathBuf,
     local_tool_registry: Option<local_tools::LocalToolRegistryRevision>,
+    active_host: Option<yo_core::HostId>,
+    host_catalogs: Vec<model::HostCatalogObservation>,
 }
 
 #[cfg(unix)]
@@ -367,36 +369,11 @@ fn run_agent_generation(
             launch.resume_id().is_some(),
             selection.replaces_binding(),
         )?;
-        let host_catalog = if uses_terminal_frontend {
-            match selection.delegated_host() {
-                Some((host, execution)) if host.as_str() == yo_core::HostId::CODEX => {
-                    let host = host.clone();
-                    let config = yo_backend_delegated_codex::CodexBackendConfig::new(&session_cwd)
-                        .with_read_only_review(execution.is_read_only_review());
-                    Some((
-                        host,
-                        yo_backend_delegated_codex::read_model_catalog(config)
-                            .map_err(|error| error.to_string()),
-                    ))
-                },
-                Some((host, execution)) if host.as_str() == yo_core::HostId::GROK => {
-                    let host = host.clone();
-                    let outer_sandboxed_review =
-                        std::env::var_os(yo_backend_delegated_grok::OUTER_SANDBOX_REVIEW_ENV)
-                            .is_some();
-                    let config = yo_backend_delegated_grok::GrokBackendConfig::new(&session_cwd)
-                        .with_read_only_review(execution.is_read_only_review())
-                        .with_outer_sandboxed_review(outer_sandboxed_review);
-                    Some((
-                        host,
-                        yo_backend_delegated_grok::read_model_catalog(config)
-                            .map_err(|error| error.to_string()),
-                    ))
-                },
-                _ => None,
-            }
+        let active_host = selection.delegated_host().map(|(host, _)| host.clone());
+        let host_catalogs = if uses_terminal_frontend {
+            model::read_builtin_host_catalogs(&session_cwd, selection.delegated_host())
         } else {
-            None
+            Vec::new()
         };
         let (backend, skill_references): (
             Box<dyn yo_core::AgentBackend + Send>,
@@ -565,32 +542,14 @@ fn run_agent_generation(
         if let Some(skill_references) = skill_references {
             tui = tui.with_skill_references(skill_references);
         }
-        let mut model_controller = yo_core::ModelSelectionController::new(
-            config.model_catalog().clone(),
-            selection.model_selection(),
+        let model_controller = model::project_host_catalogs(
+            yo_core::ModelSelectionController::new(
+                config.model_catalog().clone(),
+                selection.model_selection(),
+            ),
+            active_host.as_ref(),
+            &host_catalogs,
         );
-        if let Some((host, catalog)) = host_catalog {
-            model_controller = match catalog {
-                Ok(catalog) => model_controller.with_host_catalog(catalog, true),
-                Err(_) => {
-                    let account = yo_core::derive_host_account_id(&host, &[("local", "local")])
-                        .expect("the fixed local host-account evidence is valid");
-                    model_controller
-                        .with_host_status(
-                            &host,
-                            match host.as_str() {
-                                yo_core::HostId::CODEX => "Codex",
-                                yo_core::HostId::GROK => "Grok",
-                                _ => host.as_str(),
-                            },
-                            &account,
-                            "local",
-                            "Unavailable; host model inventory could not be read",
-                        )
-                        .expect("bounded host status is valid")
-                },
-            };
-        }
         if !model_controller.sections().is_empty() {
             tui = tui.with_model_selection(model_controller);
         }
@@ -599,6 +558,8 @@ fn run_agent_generation(
             tui,
             workspace: session_cwd,
             local_tool_registry: selection.registry_revision(),
+            active_host,
+            host_catalogs,
         });
     }
     let session = live
@@ -617,6 +578,14 @@ fn run_agent_generation(
         Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(
             yo_core::ModelPickerTarget::Managed(selection),
         )) => {
+            if let Some(host) = session.active_host.as_ref() {
+                session.tui.report_model_switch_failure(format!(
+                    "switching from host:{} to managed model {} requires the semantic-handoff transition",
+                    host.as_str(),
+                    selection.model()
+                ));
+                return Ok(SessionStep::Continue);
+            }
             let replacement = model::replacement(
                 &selection,
                 session
@@ -635,14 +604,17 @@ fn run_agent_generation(
                     Ok(outcome) => {
                         let cleanup_warning = outcome.cleanup_failure().map(ToString::to_string);
                         let label = selection.model().to_string();
-                        session.tui.commit_model_switch(
+                        let model_controller = model::project_host_catalogs(
                             yo_core::ModelSelectionController::new(
                                 config.model_catalog().clone(),
                                 Some(selection),
                             ),
-                            label,
-                            cleanup_warning,
+                            None,
+                            &session.host_catalogs,
                         );
+                        session
+                            .tui
+                            .commit_model_switch(model_controller, label, cleanup_warning);
                         return Ok(SessionStep::Continue);
                     },
                     Err(error) => {

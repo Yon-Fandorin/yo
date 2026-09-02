@@ -10,9 +10,14 @@ use yo_core::{
 
 use crate::{AppError, config::Config};
 
+mod host_catalog;
 mod native;
 mod startup;
 mod tokenizer;
+
+pub(crate) use host_catalog::{
+    HostCatalogObservation, project_host_catalogs, read_builtin_host_catalogs,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) enum StartupBackend {

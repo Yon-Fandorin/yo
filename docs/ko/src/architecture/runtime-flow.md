@@ -275,22 +275,27 @@ worker가 이미 해당 Turn을 끝냈다면 core는 같은 text를 새 Turn으�
 거절한다. backpressure와 retry도 같은 immutable intent를 보존한다.
 
 편집 가능한 TUI에서 `/model`은 account section으로 나눈 selection panel 하나를 연다. 저장된
-managed model은 `Provider 표시 이름 · Account 표시 이름` 아래에 묶인다. live delegated host는
-Agent Session을 하나 더 만들지 않고 인증된 runtime inventory도 읽는다. Codex는
-`account/read`와 보이는 `model/list` page 전체를 사용하고, Grok은 인증된 ACP `modelState`를
-사용한다. Host account label은 검증된 email, 검증된 subscription, `local` 순으로 선택하며,
-내부의 안정적인 AccountId에는 표시한 증거 원문 대신 fingerprint를 쓴다. 현재 account section이
-맨 앞에 오고 정확한 model label에만 inline ` (current)` suffix가 붙는다. Section과 account
-status 행은 선택할 수 없고, 숨겨진 host model은 생략하며, Yo는 `Automatic` model 행을
-만들어내지 않는다.
+managed model은 `Provider 표시 이름 · Account 표시 이름` 아래에 묶인다. 편집 가능한 모든
+TUI는 현재 backend와 무관하게 built-in host 둘의 session-free 인증 inventory를 동시에 읽는다.
+Codex는 `account/read`와 보이는 `model/list` page 전체를 사용하고, Grok은 인증된 ACP
+`modelState`를 사용한다. 활성 delegated host는 자신의 정확한 실행 profile을 유지하고 비활성
+sibling은 일반 inventory profile을 사용한다. 어느 read도 Agent Session을 하나 더 만들지 않는다.
+실행 파일, account 또는 usable inventory가 없으면 그 host의 선택 불가능한
+`model catalog unavailable` section을 남기며 sibling을 숨기지 않는다. Host account label은
+검증된 email, 검증된 subscription, `local` 순으로 선택하며, 내부의 안정적인 AccountId에는
+표시한 증거 원문 대신 fingerprint를 쓴다. 현재 account section이 맨 앞에 오고 정확한 model
+label에만 inline ` (current)` suffix가 붙는다. Section과 account status 행은 선택할 수 없고,
+숨겨진 host model은 생략하며, Yo는 `Automatic` model 행을 만들어내지 않는다.
 
 Managed 행과 host 행은 서로 다른 typed 좌표를 가진다. Managed 행은 Provider, Account,
 Model을 유지하고, host 행은 Host, 인증된 Account, 정확한 Model, fresh catalog revision을
 유지한다. `/model MODEL_REFERENCE`는 계속 managed 전용이며 startup과 같은 resolver를
 사용하므로 bare 형식은 현재 managed namespace에 머물고 qualified 형식은 설정된 다른
 Provider나 Account를 선택할 수 있다. 현재 구현은 managed 행에만 기존 exact-replay 교체를
-수행한다. 다른 host 행은 typed process-host 경계까지 도달하지만, 별도로 필요한 확인형
-semantic-handoff 전환이 구현될 때까지 source Session을 건드리지 않고 실패한다.
+수행하며 current와 selected 행이 모두 managed일 때만 적용한다. Managed-to-host,
+host-to-managed, cross-host, non-native same-host 선택은 typed process-host 경계까지 도달하지만,
+별도로 필요한 확인형 semantic-handoff 전환이 구현될 때까지 source Session을 건드리지 않고
+실패한다.
 
 Active Turn, pending Activity 또는 pending prompt admission 중에는 current가 아닌 선택을 다음
 Turn을 위해 예약한다. 현재 Turn, steer, Activity 응답은 이전 model을 계속 사용한다. 이후

@@ -310,16 +310,20 @@ the steer instead of reinterpreting the same text as a new Turn. Backpressure
 and retry retain the same immutable intent.
 
 In an editable TUI, `/model` opens one account-sectioned selection panel. Stored
-managed models are grouped under `Provider display · Account display`. A live
-delegated host additionally reads its authenticated runtime inventory without
-creating another Agent Session: Codex uses `account/read` plus every visible
-`model/list` page, while Grok uses authenticated ACP `modelState`. Host account
-labels prefer verified email, then verified subscription, then `local`; the
-stable internal AccountId is a fingerprint rather than the displayed evidence.
-The current account section is first and only the exact model label receives
-the inline ` (current)` suffix. Section and account-status rows are not
-selectable, hidden host models are omitted, and Yo does not invent an
-`Automatic` model row.
+managed models are grouped under `Provider display · Account display`. Every
+editable TUI concurrently reads the session-free authenticated inventories of
+both built-in hosts, independently of the active backend: Codex uses
+`account/read` plus every visible `model/list` page, while Grok uses
+authenticated ACP `modelState`. The active delegated host retains its exact
+execution profile; an inactive sibling uses its ordinary inventory profile.
+Neither read creates another Agent Session. A missing executable, account, or
+usable inventory leaves that host's non-selectable `model catalog unavailable`
+section without suppressing its sibling. Host account labels prefer verified
+email, then verified subscription, then `local`; the stable internal AccountId
+is a fingerprint rather than the displayed evidence. The current account
+section is first and only the exact model label receives the inline ` (current)`
+suffix. Section and account-status rows are not selectable, hidden host models
+are omitted, and Yo does not invent an `Automatic` model row.
 
 Managed and host rows carry disjoint typed coordinates. A managed row retains
 Provider, Account, and Model; a host row retains Host, authenticated Account,
@@ -327,10 +331,11 @@ exact Model, and the fresh catalog revision. `/model MODEL_REFERENCE` remains
 managed-only and uses the same resolver as startup, so its bare form remains in
 the current managed namespace while a qualified form can select another
 configured Provider or Account. The current implementation performs the
-existing exact-replay replacement only for managed rows. A different host row
-reaches the typed process-host boundary but fails without touching the source
-Session until the separately required confirmed semantic-handoff transition is
-implemented.
+existing exact-replay replacement only when both the current and selected rows
+are managed. Managed-to-host, host-to-managed, cross-host, and non-native
+same-host choices reach the typed process-host boundary but fail without
+touching the source Session until the separately required confirmed
+semantic-handoff transition is implemented.
 
 During an active Turn, a pending Activity, or pending prompt admission, a
 non-current selection is reserved for the next Turn and the current Turn,
