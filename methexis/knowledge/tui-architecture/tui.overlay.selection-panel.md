@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.overlay-001
-    revision: sha256:bf952e72e8c70e000f0177c3c009eaa39d8450d5a8f97a55436aaed0c3b0a935
+    revision: sha256:836d937c046b58e50c3576221b2fa9dae60b8f331ef5da85287051f979c15921
 relations:
   constrained_by:
     - tui.surface.geometry
@@ -57,14 +57,28 @@ presentation and MAY apply an appearance-resolved style-only sheen to activity
 status without changing its text or geometry.
 
 The panel MUST span the prompt width and use a muted frame, a title at the left
-of the top border, compact current-binding hints at the right, bold section labels, an
-appearance-profile-resolved marker and accent focus treatment on the selected
-entry row, muted optional detail and status rows, dimmed disabled rows with their reason, and
-explicit hidden-above or hidden-below counts. Section and status rows consume viewport space but never receive the selection marker. When a provider filters entries, it MUST retain each matching entry's owning section and remove empty sections. A provider MAY append literal safe text ` (current)` to a current entry's primary label; the panel MUST render it inline without inventing a leading separator or separate status column. Selection MUST remain visible as
-it moves. Wide layout SHOULD align primary and detail text as two columns.
-Narrow fitting MUST remove detail and disabled reason before truncating the
-primary label at a grapheme boundary. Content MUST NOT wrap outside the panel
-or change the supplied width.
+of the top border, compact current-binding hints at the right, regular neutral
+section labels without bold, the appearance profile's resolved focus accent on
+only the selected marker and the selected entry's primary label without bold,
+muted optional detail and status rows, dimmed disabled rows with their reason,
+and explicit hidden-above or hidden-below counts. Selected secondary detail
+MUST remain muted and MUST NOT inherit the focus accent. Section and status
+rows consume viewport space but never receive the selection marker.
+
+When the selected entry's owning section would otherwise fall outside the
+fitted window, the panel MUST pin that section as the first visible content
+row. It MUST NOT duplicate the pinned label when the same section row is
+naturally visible. It MUST NOT leave a later section label as the final visible
+content row without at least one following row owned by that section. Geometry
+that cannot show both a required owning section label and the selected entry
+MUST produce a hidden outcome. When a provider filters entries, it MUST retain
+each matching entry's owning section and remove empty sections. A provider MAY
+append literal safe text ` (current)` to a current entry's primary label; the
+panel MUST render it inline without inventing a leading separator or separate
+status column. Selection MUST remain visible as it moves. Wide layout SHOULD
+align primary and detail text as two columns. Narrow fitting MUST remove detail
+and disabled reason before truncating the primary label at a grapheme boundary.
+Content MUST NOT wrap outside the panel or change the supplied width.
 
 Available height MUST be bounded by the caller's destination rectangle and a
 component-owned visible-entry cap. Geometry that cannot contain both borders
@@ -81,6 +95,10 @@ Rib's completion and picker retain distinct state and effects but share a
 recognizable panel language. Reusing that narrower presentation boundary gives
 Yo consistent prompt-adjacent choices without forcing filesystem completion,
 session resume, model preview, and later providers into one controller.
-Separating semantic replacement freshness from caller-owned frame
+Keeping section labels neutral while reserving the theme's unbolded focus
+accent for the selected primary row preserves hierarchy without making section
+and focus compete. Pinning the owning section keeps account context visible
+during navigation without duplicating natural headers or orphaning the next
+section. Separating semantic replacement freshness from caller-owned frame
 synchronization keeps one owner for each gate and prevents individual providers
 from racing visible selection.

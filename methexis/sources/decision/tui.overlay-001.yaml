@@ -1,6 +1,6 @@
 schema: methexis.source/v1alpha1
 id: tui.overlay-001
-revision: sha256:bf952e72e8c70e000f0177c3c009eaa39d8450d5a8f97a55436aaed0c3b0a935
+revision: sha256:836d937c046b58e50c3576221b2fa9dae60b8f331ef5da85287051f979c15921
 payload:
   kind: decision
-  content: The reusable selection panel accepts ordered non-selectable section rows, section-owned non-selectable status rows, and selectable entry rows. Navigation and acceptance skip sections, statuses, and disabled entries. Filtering retains the owning section for every matching entry and removes empty sections. Sections render as bold labels, statuses as muted text, and a provider may render a typed current entry inline as Model (current) without a leading separator or separate status column.
+  content: The reusable selection panel accepts ordered non-selectable section rows, section-owned non-selectable status rows, and selectable entry rows. Navigation and acceptance skip sections, statuses, and disabled entries. Filtering retains each matching entry's owning section and removes empty sections. A fitted viewport pins the selected entry's owning section when its natural header is outside the window, never duplicates a naturally visible header, and never orphans a following section header. Sections render as regular neutral labels without bold. Only the selected marker and selected primary label use the appearance profile's resolved focus accent without bold; selected detail remains muted. A provider may render a typed current entry inline as Model (current) without a leading separator or separate status column.
