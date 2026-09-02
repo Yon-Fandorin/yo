@@ -4,7 +4,7 @@ use super::{
     AppearanceCandidate, AppearanceCandidateError, AppearanceCommitError, AppearanceGlyphRole,
     AppearanceState, ColorCapability, GlyphProfile, MotionPreference, validate_marker,
 };
-use crate::surface::{Color, GraphemeError};
+use crate::surface::{Attributes, Color, GraphemeError, Style};
 
 // 기본 appearance는 Rich 글리프와 첫 revision을 같은 검증 경로로 확정한다.
 #[test]
@@ -15,6 +15,43 @@ fn default_state_starts_with_a_valid_rich_snapshot() {
     assert_eq!(pin.revision().get(), 1);
     assert_eq!(pin.snapshot().transcript_config().user_marker(), "❯");
     assert_eq!(pin.snapshot().transcript_config().assistant_marker(), "•");
+}
+
+// 내장 profile의 focus accent는 host 색상 능력에 맞춰 해석하되 선택 행에 굵기를 더하지
+// 않는다. section label은 같은 publication 안에서도 neutral 기본 style을 유지한다.
+#[test]
+fn built_in_selection_focus_uses_resolved_theme_accent_without_bold() {
+    let cases = [
+        (
+            ColorCapability::TrueColor,
+            Color::Rgb {
+                red: 94,
+                green: 179,
+                blue: 179,
+            },
+        ),
+        (ColorCapability::Limited, Color::Indexed(73)),
+        (ColorCapability::Unknown, Color::Default),
+    ];
+
+    for profile in [GlyphProfile::Rich, GlyphProfile::Ascii] {
+        for (color_capability, expected_foreground) in cases {
+            let state =
+                AppearanceState::new(AppearanceCandidate::for_profile_with_host_preferences(
+                    profile,
+                    color_capability,
+                    MotionPreference::Standard,
+                ))
+                .unwrap();
+            let styles = state.pin().snapshot().styles().overlay.styles;
+
+            assert_eq!(
+                styles.selected,
+                Style::new(expected_foreground, Color::Default, Attributes::empty())
+            );
+            assert_eq!(styles.label, Style::default());
+        }
+    }
 }
 
 // 유효한 후보만 revision을 증가시키며 Rich snapshot 전체를 ASCII snapshot으로 교체한다.

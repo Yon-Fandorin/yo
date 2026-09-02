@@ -21,6 +21,14 @@ use crate::{
 };
 
 const BODY_INDENT: u16 = 2;
+// The built-in theme keeps focus in one quiet teal role; xterm 73 is its nearest
+// indexed-palette equivalent (95, 175, 175) when the host cannot emit RGB.
+const BUILT_IN_FOCUS_ACCENT_RGB: Color = Color::Rgb {
+    red: 94,
+    green: 179,
+    blue: 179,
+};
+const BUILT_IN_FOCUS_ACCENT_INDEXED: Color = Color::Indexed(73);
 
 mod activity;
 
@@ -159,7 +167,7 @@ impl AppearanceCandidate {
         Self {
             user_marker: user_marker.to_owned(),
             assistant_marker: assistant_marker.to_owned(),
-            styles: default_styles(profile),
+            styles: default_styles(profile, color_capability),
             activity_motion,
         }
     }
@@ -332,7 +340,10 @@ fn validate_marker(
     Ok(())
 }
 
-const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
+const fn default_styles(
+    profile: GlyphProfile,
+    color_capability: ColorCapability,
+) -> AgentShellStyles {
     let style = Style::new(Color::Default, Color::Default, Attributes::empty());
     AgentShellStyles {
         transcript: TranscriptStyles {
@@ -367,7 +378,11 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
                 hint: Style::new(Color::Default, Color::Default, Attributes::DIM),
                 label: style,
                 detail: Style::new(Color::Default, Color::Default, Attributes::DIM),
-                selected: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+                selected: Style::new(
+                    resolve_focus_accent(color_capability),
+                    Color::Default,
+                    Attributes::empty(),
+                ),
                 disabled: Style::new(Color::Default, Color::Default, Attributes::DIM),
             },
             glyphs: match profile {
@@ -375,6 +390,14 @@ const fn default_styles(profile: GlyphProfile) -> AgentShellStyles {
                 GlyphProfile::Ascii => SelectionPanelGlyphs::ascii(),
             },
         },
+    }
+}
+
+const fn resolve_focus_accent(color_capability: ColorCapability) -> Color {
+    match color_capability {
+        ColorCapability::TrueColor => BUILT_IN_FOCUS_ACCENT_RGB,
+        ColorCapability::Limited => BUILT_IN_FOCUS_ACCENT_INDEXED,
+        ColorCapability::Unknown => Color::Default,
     }
 }
 
