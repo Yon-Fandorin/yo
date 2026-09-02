@@ -1,7 +1,7 @@
 schema: methexis.approval/v1alpha2
 knowledge_id: tui.overlay.selection-panel
-revision: sha256:290ef544829200b7204700eb5a4af1bf7d67493d556300d96d733856382fae38
+revision: sha256:f99f1da2ba18236bc3d6eb487c515406cbaa5a0ebf29b7aed4572247a944ff98
 reviewer: tui-architecture
-reviewed_at: 2026-08-28T07:04:34Z
+reviewed_at: 2026-09-02T00:34:19Z
 review_basis: canonical
-request_hash: sha256:09eb2c63ee0ebf4e9c0c77c012cbb0ce828e2ba31940260641a6f532e76d8c1f
+request_hash: sha256:d6067a4d61c39eba12fc29ccdce2d00003f2297e15dfcfec8870509d872ea804

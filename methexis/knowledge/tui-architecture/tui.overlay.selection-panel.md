@@ -5,7 +5,7 @@ kind: decision
 owner: tui-architecture
 sources:
   - id: tui.overlay-001
-    revision: sha256:749c879abfd73b581c0e92f3f56d7d37ba3cdfc468392ae209e2cf3e0a863391
+    revision: sha256:bf952e72e8c70e000f0177c3c009eaa39d8450d5a8f97a55436aaed0c3b0a935
 relations:
   constrained_by:
     - tui.surface.geometry
@@ -28,12 +28,9 @@ access a filesystem or backend, or execute an accepted product effect.
 
 The input MUST contain a non-empty safe title, current keymap-derived physical
 binding labels paired with semantic action captions, and at least one ordered
-entry. Entry identities MUST be unique within one snapshot. Each entry MUST
-contain an opaque stable identity, a non-empty primary label, optional detail,
-and typed availability of either enabled or disabled with a reason. Title,
+row. A row is either a non-selectable section, a non-selectable status owned by one section, or a selectable entry. Section identities and entry identities MUST each be unique within one snapshot. Each section MUST contain an opaque stable identity and non-empty label. Each status MUST name its owning section and contain non-empty status text. Each entry MUST name its owning section, contain an opaque stable identity, a non-empty primary label, optional detail, typed current state, and typed availability of either enabled or disabled with a reason. Title,
 captions, labels, detail, and disabled reasons MUST pass the existing safe
-grapheme and control-text validation before publication. Navigation MUST skip
-disabled entries, and accept MUST never return a disabled identity. An
+grapheme and control-text validation before publication. Navigation MUST skip sections, statuses, and disabled entries, and accept MUST never return any of their identities. An
 all-disabled snapshot MUST remain displayable with no selection and accept MUST
 return a handled no-selection outcome.
 
@@ -60,10 +57,10 @@ presentation and MAY apply an appearance-resolved style-only sheen to activity
 status without changing its text or geometry.
 
 The panel MUST span the prompt width and use a muted frame, a title at the left
-of the top border, compact current-binding hints at the right, an
+of the top border, compact current-binding hints at the right, bold section labels, an
 appearance-profile-resolved marker and accent focus treatment on the selected
-row, muted optional detail, dimmed disabled rows with their reason, and
-explicit hidden-above or hidden-below counts. Selection MUST remain visible as
+entry row, muted optional detail and status rows, dimmed disabled rows with their reason, and
+explicit hidden-above or hidden-below counts. Section and status rows consume viewport space but never receive the selection marker. When a provider filters entries, it MUST retain each matching entry's owning section and remove empty sections. A provider MAY append literal safe text ` (current)` to a current entry's primary label; the panel MUST render it inline without inventing a leading separator or separate status column. Selection MUST remain visible as
 it moves. Wide layout SHOULD align primary and detail text as two columns.
 Narrow fitting MUST remove detail and disabled reason before truncating the
 primary label at a grapheme boundary. Content MUST NOT wrap outside the panel

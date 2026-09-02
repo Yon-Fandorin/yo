@@ -1,7 +1,7 @@
 schema: methexis.approval/v1alpha2
 knowledge_id: agent.session.continuation-lineage
-revision: sha256:656457ee1203a57ac0095bc7ae4dabf635253375068fd4f02281342f5770c863
+revision: sha256:42d79e689cba6ffe225aba39210bb5f1a933541333061907435047e066922582
 reviewer: agent-runtime
-reviewed_at: 2026-08-30T10:52:40Z
+reviewed_at: 2026-09-02T00:34:19Z
 review_basis: canonical
-request_hash: sha256:1a86f880046040cd8d66cc45d171b44071707549d6697787e2790b82d0e51239
+request_hash: sha256:ba9f59654344fd5fe85d15aa70af2d777f72945239e5286002162a3046264307

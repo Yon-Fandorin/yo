@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.session-001
-    revision: sha256:5351e29ca017025832c40404fcabeccab7151d565a510fb9708784ce95349242
+    revision: sha256:8985664b1165caef5e74547c343bf114a9036682a6c2872cb7b26906d685bc51
 relations:
   depends_on:
     - agent.backend.execution-topology
@@ -85,7 +85,7 @@ binding epoch, availability, and retention are verified by an independently
 reviewed implementation.
 
 A backend using `backend_managed_state` MUST reconnect through the anchor's
-versioned locator and verify the returned backend identity. Successful backend-managed resume continues the same Yo Session and binding.
+versioned locator and verify the returned backend identity. Successful backend-managed resume continues the same Yo Session and binding. One `backend_native_model_rebind/v1alpha1` transition MAY preserve host-owned conversational state only for the same delegated Host and verified authenticated account when the live protocol creates a distinct candidate locator through a state-preserving native fork, advertises model mutation for that candidate, and confirms the exact applied model afterward. The source locator MUST NOT be mutated or reused by the new binding. Yo fully prepares and verifies the candidate while the source epoch remains current, then atomically closes the source epoch and opens a new epoch naming the candidate locator and confirmed model identity without claiming semantic replay, cache restoration, or cross-account portability. Unsupported fork or mutation, account drift, missing confirmation, a mismatched model, or publication failure leaves the source epoch and locator unchanged and executable; the unbound candidate is discarded or quarantined and never becomes continuation authority.
 Yo still owns the durable transcript, semantic events, correlation evidence, and
 locator, while the backend owns the model-visible conversational state. Such an
 Anchor MUST NOT claim or reference a Yo replay delta. If continuation under the
@@ -122,7 +122,7 @@ the checkpoint's older provenance Anchor and thereby reintroduce its summarized
 prefix.
 
 If only a lossy handoff is possible, yo MUST open the saved Session read-only,
-describe the missing or transformed context, and ask once before continuing.
+describe the missing or transformed context, and ask once before continuing. The concrete `transformed-semantic-handoff/v1alpha1` path admits Host-to-Managed, Managed-to-Host, cross-Host, and non-native same-Host replacement. It projects only the newest fully committed semantic boundary: visible user and assistant text, ordered tool calls and correlated tool results, and required role and ordering metadata. It MUST exclude provider-private reasoning, encrypted payloads, backend caches, hidden backend context, uncertain requests, and uncommitted suffixes. Before confirmation Yo reports the source and target identities, transformed boundary, included semantic classes, excluded loss classes, and whether private state is present without revealing private contents. The accepted target seed and its digest MUST be durable before the source epoch closes; target rejection or any dual failure preserves the source epoch and locator.
 Explicit approval MAY create a replacement binding inside the same Yo Session,
 but the Journal MUST record a visible context-loss boundary and the original
 durable history MUST remain intact. Yo MUST NOT silently perform a lossy
