@@ -29,7 +29,7 @@ fn appearance() -> SelectionPanelAppearance {
             hint: Style::new(Color::Default, Color::Default, Attributes::DIM),
             label: plain,
             detail: Style::new(Color::Default, Color::Default, Attributes::DIM),
-            selected: Style::new(Color::Default, Color::Default, Attributes::BOLD),
+            selected: Style::new(Color::Indexed(45), Color::Default, Attributes::empty()),
             disabled: Style::new(Color::Default, Color::Default, Attributes::DIM),
         },
         glyphs: SelectionPanelGlyphs::rich(),
@@ -257,6 +257,10 @@ fn narrow_panel_drops_secondary_text_before_grapheme_safe_truncation() {
 #[test]
 fn insufficient_destination_hides_without_preparing_paint() {
     let panel = SelectionPanel::new(snapshot(vec![enabled("one", "One")]));
+    let sectioned = SelectionPanel::new(snapshot(vec![
+        SelectionEntry::section("codex", "Codex · yon@example.com"),
+        enabled("model", "GPT"),
+    ]));
 
     let bindings = OverlayBindings::default();
     assert_eq!(
@@ -267,6 +271,41 @@ fn insufficient_destination_hides_without_preparing_paint() {
         panel.prepare(Size::new(2, 8), appearance(), &bindings, false),
         None
     );
+    assert_eq!(
+        sectioned.prepare(Size::new(30, 3), appearance(), &bindings, false),
+        None
+    );
+}
+
+// section은 계층만 제공하는 neutral label이고, appearance가 해석한 무볼드 focus accent는
+// 선택 marker와 primary label에만 적용된다. 선택 detail은 계속 muted 계층을 유지한다.
+#[test]
+fn section_is_neutral_while_selected_marker_and_primary_use_focus_accent() {
+    let panel = SelectionPanel::new(snapshot(vec![
+        SelectionEntry::section("codex", "Codex · yon@example.com"),
+        SelectionEntry::enabled("model", "GPT-5", Some("hosted".into())),
+    ]));
+
+    let (surface, _) = render(&panel, Size::new(40, 5)).unwrap();
+    let styles = appearance().styles;
+
+    assert_eq!(
+        surface.cell(Point::new(2, 1)).unwrap().style(),
+        styles.label
+    );
+    assert_eq!(
+        surface.cell(Point::new(1, 2)).unwrap().style(),
+        styles.selected
+    );
+    assert_eq!(
+        surface.cell(Point::new(3, 2)).unwrap().style(),
+        styles.selected
+    );
+    assert_eq!(
+        surface.cell(Point::new(33, 2)).unwrap().style(),
+        styles.detail
+    );
+    assert_eq!(styles.selected.attributes, Attributes::empty());
 }
 
 // active Turn에서 Esc close와 Ctrl+C interrupt hint를 함께 표시할 폭이 없으면 panel은

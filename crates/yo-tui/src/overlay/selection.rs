@@ -42,6 +42,7 @@ pub(crate) struct PanelSnapshot {
     title: String,
     title_status: Option<PanelTitleStatus>,
     entries: Vec<SelectionEntry>,
+    owning_sections: Vec<Option<usize>>,
     filter_bar: Option<FilterBar>,
 }
 
@@ -62,7 +63,17 @@ struct FilterBar {
 pub(crate) struct SelectionPanel {
     snapshot: PanelSnapshot,
     selected: Option<EntryIdentity>,
+    selected_index: Option<usize>,
     freshness: SnapshotFreshness,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct VisibleEntryWindow {
+    pinned_section: Option<usize>,
+    start: usize,
+    end: usize,
+    hidden_above: usize,
+    hidden_below: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -247,10 +258,22 @@ impl PanelSnapshot {
         title: impl Into<String>,
         entries: Vec<SelectionEntry>,
     ) -> Result<Self, PanelValidationError> {
+        let mut owning_section = None;
+        let owning_sections = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                if entry.kind == SelectionEntryKind::Section {
+                    owning_section = Some(index);
+                }
+                owning_section
+            })
+            .collect();
         let snapshot = Self {
             title: title.into(),
             title_status: None,
             entries,
+            owning_sections,
             filter_bar: None,
         };
         snapshot.validate()?;
@@ -345,33 +368,29 @@ impl PanelSnapshot {
 
 impl SelectionPanel {
     pub(crate) fn new(snapshot: PanelSnapshot) -> Self {
-        let selected = snapshot
-            .entries
-            .iter()
-            .find(|entry| entry.is_enabled())
-            .map(|entry| entry.identity.clone());
+        let selected_index = snapshot.entries.iter().position(SelectionEntry::is_enabled);
+        let selected = selected_index.map(|index| snapshot.entries[index].identity.clone());
         Self {
             snapshot,
             selected,
+            selected_index,
             freshness: SnapshotFreshness::Fresh,
         }
     }
 
     pub(crate) fn refresh(&mut self, snapshot: PanelSnapshot) {
-        let selected = self.selected.as_ref().and_then(|selected| {
-            snapshot
-                .entries
-                .iter()
-                .find(|entry| entry.identity == *selected && entry.is_enabled())
-                .map(|entry| entry.identity.clone())
-        });
-        self.selected = selected.or_else(|| {
-            snapshot
-                .entries
-                .iter()
-                .find(|entry| entry.is_enabled())
-                .map(|entry| entry.identity.clone())
-        });
+        let selected_index = self
+            .selected
+            .as_ref()
+            .and_then(|selected| {
+                snapshot
+                    .entries
+                    .iter()
+                    .position(|entry| entry.identity == *selected && entry.is_enabled())
+            })
+            .or_else(|| snapshot.entries.iter().position(SelectionEntry::is_enabled));
+        self.selected = selected_index.map(|index| snapshot.entries[index].identity.clone());
+        self.selected_index = selected_index;
         self.snapshot = snapshot;
         self.freshness = SnapshotFreshness::Fresh;
     }
@@ -447,35 +466,107 @@ impl SelectionPanel {
             .collect::<Vec<_>>();
         if enabled.is_empty() {
             self.selected = None;
+            self.selected_index = None;
             return NavigationOutcome::HandledNoSelection;
         }
-        let current = self.selected.as_ref().and_then(|selected| {
-            enabled
-                .iter()
-                .position(|index| self.snapshot.entries[*index].identity == *selected)
-        });
+        let current = self
+            .selected_index
+            .and_then(|selected| enabled.iter().position(|index| *index == selected));
         let position = match (direction, current) {
             (Direction::Next, Some(position)) => (position + 1) % enabled.len(),
             (Direction::Previous, Some(0)) => enabled.len() - 1,
             (Direction::Previous, Some(position)) => position - 1,
             (_, None) => 0,
         };
-        self.selected = Some(self.snapshot.entries[enabled[position]].identity.clone());
+        let selected_index = enabled[position];
+        self.selected = Some(self.snapshot.entries[selected_index].identity.clone());
+        self.selected_index = Some(selected_index);
         NavigationOutcome::SelectionChanged
     }
 
-    fn visible_window(&self, visible_rows: usize) -> (usize, usize) {
-        let selected = self.selected.as_ref().and_then(|identity| {
-            self.snapshot
-                .entries
-                .iter()
-                .position(|entry| entry.identity == *identity)
-        });
-        let start = selected
-            .map(|index| index.saturating_sub(visible_rows - 1))
-            .unwrap_or(0)
-            .min(self.snapshot.entries.len() - visible_rows);
-        (start, start + visible_rows)
+    fn visible_window(&self, visible_rows: usize) -> VisibleEntryWindow {
+        let Some(selected) = self.selected_index else {
+            let end = self.trim_trailing_sections(0, visible_rows.min(self.snapshot.entries.len()));
+            return VisibleEntryWindow {
+                pinned_section: None,
+                start: 0,
+                end,
+                hidden_above: 0,
+                hidden_below: self.snapshot.entries.len() - end,
+            };
+        };
+        let selected_section = self.owning_section(selected);
+        // A start farther away than one physical window cannot contain the selection. Keeping the
+        // candidate set bounded by the component cap prevents catalog size from affecting paint.
+        let first_start = selected
+            .saturating_sub(visible_rows)
+            .max(selected_section.unwrap_or(0));
+        let mut best = None;
+        for start in first_start..=selected {
+            let pinned_section = selected_section.filter(|section| *section < start);
+            let source_capacity =
+                visible_rows.saturating_sub(usize::from(pinned_section.is_some()));
+            if source_capacity == 0 {
+                continue;
+            }
+            let mut end = start
+                .saturating_add(source_capacity)
+                .min(self.snapshot.entries.len());
+            if selected >= end {
+                continue;
+            }
+            end = self.trim_trailing_sections(start, end);
+            if selected >= end {
+                continue;
+            }
+            let physical_rows = end - start + usize::from(pinned_section.is_some());
+            let candidate = VisibleEntryWindow {
+                pinned_section,
+                start,
+                end,
+                hidden_above: start.saturating_sub(usize::from(pinned_section.is_some())),
+                hidden_below: self.snapshot.entries.len() - end,
+            };
+            let replace = best.is_none_or(
+                |(best_rows, best_start, _): (usize, usize, VisibleEntryWindow)| {
+                    physical_rows > best_rows || (physical_rows == best_rows && start < best_start)
+                },
+            );
+            if replace {
+                best = Some((physical_rows, start, candidate));
+            }
+        }
+        best.map(|(_, _, window)| window).unwrap_or_else(|| {
+            let start = selected;
+            let end = (selected + 1).min(self.snapshot.entries.len());
+            let pinned_section = self
+                .owning_section(selected)
+                .filter(|section| *section < start);
+            VisibleEntryWindow {
+                pinned_section,
+                start,
+                end,
+                hidden_above: start.saturating_sub(usize::from(pinned_section.is_some())),
+                hidden_below: self.snapshot.entries.len() - end,
+            }
+        })
+    }
+
+    fn owning_section(&self, index: usize) -> Option<usize> {
+        self.snapshot.owning_sections.get(index).copied().flatten()
+    }
+
+    fn trim_trailing_sections(&self, start: usize, mut end: usize) -> usize {
+        while end > start && self.snapshot.entries[end - 1].kind == SelectionEntryKind::Section {
+            end -= 1;
+        }
+        end
+    }
+}
+
+impl VisibleEntryWindow {
+    fn physical_rows(self) -> usize {
+        self.end - self.start + usize::from(self.pinned_section.is_some())
     }
 }
 

@@ -66,13 +66,13 @@ impl SelectionPanel {
         if width.get() < 3 || available.height < 3 {
             return None;
         }
-        let visible_rows = self
+        let row_capacity = self
             .snapshot
             .entries
             .len()
             .min(VISIBLE_ENTRY_CAP)
             .min(usize::from(available.height - 2));
-        if visible_rows == 0 {
+        if row_capacity == 0 {
             return None;
         }
         let hints = fitting_hints(
@@ -83,7 +83,11 @@ impl SelectionPanel {
         if hints.is_empty() {
             return None;
         }
-        let (start, end) = self.visible_window(visible_rows);
+        let window = self.visible_window(row_capacity);
+        let visible_rows = window.physical_rows();
+        if visible_rows == 0 || visible_rows > row_capacity {
+            return None;
+        }
         let height = u16::try_from(visible_rows + 2).expect("visible cap fits u16");
         let size = Size::new(width.get(), height);
         let mut prepared = PreparedSelectionPanel {
@@ -99,24 +103,36 @@ impl SelectionPanel {
                 title_status: self.snapshot.title_status.as_ref(),
                 motion,
                 hints: &hints,
-                hidden: (start, self.snapshot.entries.len() - end),
+                hidden: (window.hidden_above, window.hidden_below),
                 filter_bar: self.snapshot.filter_bar.as_ref(),
             },
         );
-        let label_column_width = self.snapshot.entries[start..end]
+        let label_column_width = self.snapshot.entries[window.start..window.end]
             .iter()
             .filter(|entry| entry.context.is_some())
             .map(|entry| text_width(&entry.label))
             .max()
             .unwrap_or(0);
-        for (row, entry) in self.snapshot.entries[start..end].iter().enumerate() {
+        let mut row = 1;
+        if let Some(section) = window.pinned_section {
             prepared.prepare_entry(
-                u16::try_from(row + 1).expect("visible cap fits u16"),
+                row,
+                &self.snapshot.entries[section],
+                false,
+                appearance,
+                label_column_width,
+            );
+            row += 1;
+        }
+        for entry in &self.snapshot.entries[window.start..window.end] {
+            prepared.prepare_entry(
+                row,
                 entry,
                 self.selected.as_ref() == Some(&entry.identity),
                 appearance,
                 label_column_width,
             );
+            row += 1;
         }
         Some(prepared)
     }
@@ -393,12 +409,7 @@ impl PreparedSelectionPanel {
         }
         let styles = appearance.styles;
         if entry.kind == SelectionEntryKind::Section {
-            self.push_truncated_text(
-                Point::new(2, row),
-                &entry.label,
-                content_end,
-                styles.selected,
-            );
+            self.push_truncated_text(Point::new(2, row), &entry.label, content_end, styles.label);
             return;
         }
         if entry.kind == SelectionEntryKind::Status {

@@ -36,6 +36,120 @@ fn selected_identity_drives_visible_window_and_hidden_counts() {
     assert!(row(&surface, 6).contains("↑5 · 2↓"));
 }
 
+// account section의 자연 header가 위로 밀려나면 같은 header를 첫 행에 고정하고,
+// 선택이 다음 section으로 넘어간 순간 새 account header로 교체한다.
+#[test]
+fn section_header_sticks_without_duplication_and_swaps_at_the_boundary() {
+    let mut entries = vec![SelectionEntry::section("codex", "Codex · yon@example.com")];
+    entries
+        .extend((0..5).map(|index| enabled(&format!("codex-{index}"), &format!("Codex {index}"))));
+    entries.push(SelectionEntry::section("grok", "Grok · yon@example.com"));
+    entries.extend((0..3).map(|index| enabled(&format!("grok-{index}"), &format!("Grok {index}"))));
+    let mut panel = SelectionPanel::new(snapshot(entries));
+    for _ in 0..4 {
+        panel.next();
+    }
+
+    let (codex, _) = render(&panel, Size::new(42, 7)).unwrap();
+    let codex_rows = (1..codex.size().height - 1)
+        .map(|y| row(&codex, y))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        codex_rows
+            .iter()
+            .filter(|line| line.contains("Codex · yon@example.com"))
+            .count(),
+        1
+    );
+    assert!(codex_rows[0].contains("Codex · yon@example.com"));
+    assert!(codex_rows.last().unwrap().contains("› Codex 4"));
+
+    panel.next();
+    let (grok, _) = render(&panel, Size::new(42, 7)).unwrap();
+    let grok_rows = (1..grok.size().height - 1)
+        .map(|y| row(&grok, y))
+        .collect::<Vec<_>>();
+    assert!(grok_rows[0].contains("Grok · yon@example.com"));
+    assert_eq!(
+        grok_rows
+            .iter()
+            .filter(|line| line.contains("Grok · yon@example.com"))
+            .count(),
+        1
+    );
+    assert!(grok_rows.iter().all(|line| !line.contains("Codex ·")));
+}
+
+// 다음 section header 하나만 남는 창은 header를 고아로 표시하지 않고 숨김으로 남겨,
+// account와 그 첫 상태 또는 model 행이 항상 함께 나타나게 한다.
+#[test]
+fn viewport_never_leaves_a_section_header_as_its_last_content_row() {
+    let panel = SelectionPanel::new(snapshot(vec![
+        SelectionEntry::section("codex", "Codex · yon@example.com"),
+        enabled("codex-0", "Codex 0"),
+        enabled("codex-1", "Codex 1"),
+        SelectionEntry::section("grok", "Grok · yon@example.com"),
+        enabled("grok-0", "Grok 0"),
+    ]));
+
+    let (surface, size) = render(&panel, Size::new(42, 6)).unwrap();
+
+    assert_eq!(size.height, 5);
+    assert!(row(&surface, 1).contains("Codex · yon@example.com"));
+    assert!(row(&surface, 2).contains("› Codex 0"));
+    assert!(row(&surface, 3).contains("Codex 1"));
+    assert!(!row(&surface, 3).contains("Grok ·"));
+    assert!(row(&surface, 4).contains("2↓"));
+}
+
+// 선택 가능한 행이 없는 snapshot도 창 끝의 다음 account header만 홀로 노출하지 않는다.
+// section을 제거한 만큼 hidden count에 남겨 account와 소유 행을 함께 보여 준다.
+#[test]
+fn unselected_viewport_also_trims_an_orphaned_section_header() {
+    let panel = SelectionPanel::new(snapshot(vec![
+        SelectionEntry::section("codex", "Codex · yon@example.com"),
+        SelectionEntry::disabled("codex-0", "Codex 0", None, "offline"),
+        SelectionEntry::disabled("codex-1", "Codex 1", None, "offline"),
+        SelectionEntry::section("grok", "Grok · yon@example.com"),
+        SelectionEntry::disabled("grok-0", "Grok 0", None, "offline"),
+    ]));
+
+    let (surface, size) = render(&panel, Size::new(42, 6)).unwrap();
+
+    assert_eq!(size.height, 5);
+    assert!(row(&surface, 1).contains("Codex · yon@example.com"));
+    assert!(row(&surface, 2).contains("Codex 0"));
+    assert!(row(&surface, 3).contains("Codex 1"));
+    assert!(!row(&surface, 3).contains("Grok ·"));
+    assert!(row(&surface, 4).contains("2↓"));
+}
+
+// section ownership과 선택 index는 snapshot 수립 때 계산되므로, 깊은 catalog의 마지막
+// enabled model을 그릴 때도 준비 경로는 전체 앞부분을 다시 역방향 탐색하지 않는다.
+#[test]
+fn deep_selected_entry_keeps_its_precomputed_owning_section() {
+    let mut entries = vec![SelectionEntry::section(
+        "large-account",
+        "Large account · yon@example.com",
+    )];
+    entries.extend((0..4_096).map(|index| {
+        SelectionEntry::disabled(
+            format!("disabled-{index}"),
+            format!("Disabled {index}"),
+            None,
+            "offline",
+        )
+    }));
+    entries.push(enabled("current", "Current model"));
+    let panel = SelectionPanel::new(snapshot(entries));
+
+    let (surface, size) = render(&panel, Size::new(42, 7)).unwrap();
+
+    assert_eq!(size.height, 7);
+    assert!(row(&surface, 1).contains("Large account · yon@example.com"));
+    assert!(row(&surface, 5).contains("› Current model"));
+}
+
 // 새 snapshot에 같은 enabled identity가 있으면 selection을 보존하고, 사라지거나
 // disabled가 되면 provider 순서의 첫 enabled 항목으로 이동한다.
 #[test]
