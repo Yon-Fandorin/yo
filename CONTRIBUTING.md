@@ -428,6 +428,23 @@ After a command fails, classify the failure and change the input or state before
 retrying. Rerun a validation group only when its reviewed inputs changed or at a
 declared Slice gate.
 
+Treat a platform sandbox capability as an execution boundary, not as Slice
+disposition or semantic authorization. When an exact command is known in
+advance to require a resource unavailable in the active sandbox—for example a
+local listening socket, a Git-common-dir lock, or authorized Provider
+egress—run that narrow command under an already granted platform capability on
+the first attempt; do not execute a known-doomed sandbox probe merely to obtain
+the capability. When the restriction is discovered only after execution,
+confirm that the bounded diagnostic identifies the sandbox boundary, preserve
+that failed result as diagnostic rather than passing validation evidence, and
+rerun the unchanged argv at most once under the narrow capability. Do not
+classify that environmental failure as an implementation failure or request a
+second Slice-disposition approval. A platform capability never grants Provider
+egress or other semantic effects: those still require their owning repository
+authorization, including the external-review rules in
+`CONTRIBUTING/review-delivery.md`. If the narrow platform capability is absent,
+the required platform confirmation is the only additional prompt.
+
 After the candidate is a clean commit, consolidate its existing evidence with
 `cargo xtask slice gate <request.json>`. The transient, versioned request names
 the candidate commit, planner-required review lenses, bounded validation
