@@ -1,4 +1,4 @@
-use yo_core::{ModelSelection, ModelSelectionController};
+use yo_core::{ModelPickerTarget, ModelSelectionController};
 
 use crate::overlay::{PanelSnapshot, SelectionEntry};
 
@@ -13,64 +13,57 @@ impl ModelSelectionState {
     }
 
     pub(super) fn panel(&self) -> Result<PanelSnapshot, String> {
-        let entries = self
-            .controller
-            .choices()
-            .iter()
-            .map(|choice| {
-                let selection = choice.selection();
-                let detail = Some(format!(
-                    "{} / {} / {}",
-                    selection.provider(),
-                    selection.account(),
-                    selection.model()
+        let mut entries = Vec::new();
+        for section in self.controller.sections() {
+            entries.push(SelectionEntry::section(section.identity(), section.label()));
+            if let Some(status) = section.status() {
+                entries.push(SelectionEntry::status(
+                    format!("{}|status", section.identity()),
+                    status,
                 ));
+            }
+            for choice in section.choices() {
+                let detail = Some(choice.detail().to_owned());
                 if let Some(reason) = choice.disabled_reason() {
-                    return SelectionEntry::disabled(
-                        selection.row_identity(),
-                        choice.model_label(),
+                    entries.push(SelectionEntry::disabled(
+                        choice.target().row_identity(),
+                        choice.label(),
                         detail,
                         reason,
-                    );
+                    ));
+                } else {
+                    entries.push(SelectionEntry::enabled_with_context(
+                        choice.target().row_identity(),
+                        choice.label(),
+                        None,
+                        detail,
+                    ));
                 }
-                let context = choice.last_failure().map_or_else(
-                    || format!("{} › {}", choice.provider_label(), choice.account_label()),
-                    |failure| {
-                        format!(
-                            "{} › {} · warning: {} at {}",
-                            choice.provider_label(),
-                            choice.account_label(),
-                            failure.kind(),
-                            failure.observed_at()
-                        )
-                    },
-                );
-                SelectionEntry::enabled_with_context(
-                    selection.row_identity(),
-                    choice.model_label(),
-                    Some(context),
-                    detail,
-                )
-            })
-            .collect();
+            }
+        }
         PanelSnapshot::new("Select model", entries)
             .map_err(|error| format!("the configured model catalog cannot be displayed: {error:?}"))
     }
 
-    pub(super) fn resolve_direct(&self, value: &str) -> Result<ModelSelection, String> {
+    pub(super) fn resolve_direct(&self, value: &str) -> Result<ModelPickerTarget, String> {
         self.controller
             .resolve_reference(value)
+            .map(ModelPickerTarget::Managed)
             .map_err(|error| error.to_string())
     }
 
-    pub(super) fn accept_identity(&self, identity: &str) -> Result<ModelSelection, String> {
+    pub(super) fn accept_identity(&self, identity: &str) -> Result<ModelPickerTarget, String> {
         self.controller
-            .accept_row_identity(identity)
+            .accept_picker_identity(identity)
             .map_err(|error| error.to_string())
     }
 
-    pub(super) fn is_current(&self, selection: &ModelSelection) -> bool {
-        self.controller.current() == Some(selection)
+    pub(super) fn is_current(&self, selection: &ModelPickerTarget) -> bool {
+        self.controller
+            .sections()
+            .iter()
+            .flat_map(yo_core::ModelPickerSection::choices)
+            .any(|choice| choice.is_current() && choice.target() == selection)
     }
 }
 
@@ -79,9 +72,10 @@ mod tests {
     use std::{fs, path::PathBuf, time::SystemTime};
 
     use yo_core::{
-        AccountId, CompleteModelBinding, ConnectionAccount, LocalConnectionRepository,
-        ModelLastFailure, ModelRequestFailureKind, ModelSelectionController, ProviderId,
-        StoredModelBinding,
+        AccountId, CompleteModelBinding, ConnectionAccount, HostCatalogModel, HostId,
+        HostModelCatalog, LocalConnectionRepository, ModelId, ModelLastFailure,
+        ModelRequestFailureKind, ModelSelectionController, ProviderId, StoredModelBinding,
+        derive_host_catalog_revision,
     };
 
     use super::ModelSelectionState;
@@ -193,14 +187,12 @@ mod tests {
         let state = ModelSelectionState::new(controller);
         let rendered = rendered_panel(&state);
 
-        assert!(
-            rendered
-                .contains("Qwen Cloud › Default · warning: rate_limited at 2026-08-17T09:10:11Z"),
-            "{rendered}"
-        );
+        assert!(rendered.contains("Qwen Cloud · Default"), "{rendered}");
         assert_eq!(
-            state.accept_identity(&selection.row_identity()).unwrap(),
-            selection
+            state
+                .accept_identity(&format!("managed|{}", selection.row_identity()))
+                .unwrap(),
+            yo_core::ModelPickerTarget::Managed(selection)
         );
     }
 
@@ -249,9 +241,50 @@ mod tests {
         assert!(rendered.contains("disabled by operator"), "{rendered}");
         assert!(
             state
-                .accept_identity(&selection.row_identity())
+                .accept_identity(&format!("managed|{}", selection.row_identity()))
                 .unwrap_err()
                 .contains("disabled by operator")
         );
+    }
+
+    // account heading은 별도 non-selectable row이고 current는 정확한 model label의 inline
+    // suffix로만 렌더링되어 leading status dot이나 별도 current column을 만들지 않습니다.
+    #[test]
+    fn host_account_section_renders_exact_models_with_inline_current_marker() {
+        let directory = TestDirectory::new();
+        let repository = LocalConnectionRepository::new(directory.0.join("connections.yaml"));
+        let host = HostId::grok();
+        let account = AccountId::new("account-test").unwrap();
+        let current = ModelId::new("grok-4.6").unwrap();
+        let ids = vec![current.clone(), ModelId::new("grok-4.5").unwrap()];
+        let revision = derive_host_catalog_revision(&host, &account, Some(&current), &ids);
+        let catalog = HostModelCatalog::new(
+            host,
+            "Grok",
+            account,
+            "person@example.test",
+            revision,
+            Some(current),
+            vec![
+                HostCatalogModel::selectable(ids[0].clone(), "Grok 4.6").unwrap(),
+                HostCatalogModel::selectable(ids[1].clone(), "Grok 4.5").unwrap(),
+            ],
+        )
+        .unwrap();
+        let controller = ModelSelectionController::new(
+            repository.capture().unwrap().model_catalog().unwrap(),
+            None,
+        )
+        .with_host_catalog(catalog, true);
+        let rendered = rendered_panel(&ModelSelectionState::new(controller));
+
+        assert!(
+            rendered.contains("Grok · person@example.test"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Grok 4.6 (current)"), "{rendered}");
+        assert!(rendered.contains("Grok 4.5"), "{rendered}");
+        assert!(!rendered.contains("· current"), "{rendered}");
+        assert!(!rendered.contains("Automatic"), "{rendered}");
     }
 }

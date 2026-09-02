@@ -95,7 +95,7 @@ pub enum TerminalOutcome {
     /// Terminal state was restored and the process host should suspend.
     SuspendRequested,
     /// The frontend selected a fully qualified model binding for this Session.
-    ModelSelectionRequested(yo_core::ModelSelection),
+    ModelSelectionRequested(yo_core::ModelPickerTarget),
 }
 
 impl RunOutcome {

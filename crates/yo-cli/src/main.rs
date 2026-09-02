@@ -367,6 +367,37 @@ fn run_agent_generation(
             launch.resume_id().is_some(),
             selection.replaces_binding(),
         )?;
+        let host_catalog = if uses_terminal_frontend {
+            match selection.delegated_host() {
+                Some((host, execution)) if host.as_str() == yo_core::HostId::CODEX => {
+                    let host = host.clone();
+                    let config = yo_backend_delegated_codex::CodexBackendConfig::new(&session_cwd)
+                        .with_read_only_review(execution.is_read_only_review());
+                    Some((
+                        host,
+                        yo_backend_delegated_codex::read_model_catalog(config)
+                            .map_err(|error| error.to_string()),
+                    ))
+                },
+                Some((host, execution)) if host.as_str() == yo_core::HostId::GROK => {
+                    let host = host.clone();
+                    let outer_sandboxed_review =
+                        std::env::var_os(yo_backend_delegated_grok::OUTER_SANDBOX_REVIEW_ENV)
+                            .is_some();
+                    let config = yo_backend_delegated_grok::GrokBackendConfig::new(&session_cwd)
+                        .with_read_only_review(execution.is_read_only_review())
+                        .with_outer_sandboxed_review(outer_sandboxed_review);
+                    Some((
+                        host,
+                        yo_backend_delegated_grok::read_model_catalog(config)
+                            .map_err(|error| error.to_string()),
+                    ))
+                },
+                _ => None,
+            }
+        } else {
+            None
+        };
         let (backend, skill_references): (
             Box<dyn yo_core::AgentBackend + Send>,
             Option<yo_backend_delegated_codex::CodexSkillReferenceProvider>,
@@ -534,11 +565,34 @@ fn run_agent_generation(
         if let Some(skill_references) = skill_references {
             tui = tui.with_skill_references(skill_references);
         }
-        if selection.model_selection().is_some() {
-            tui = tui.with_model_selection(yo_core::ModelSelectionController::new(
-                config.model_catalog().clone(),
-                selection.model_selection(),
-            ));
+        let mut model_controller = yo_core::ModelSelectionController::new(
+            config.model_catalog().clone(),
+            selection.model_selection(),
+        );
+        if let Some((host, catalog)) = host_catalog {
+            model_controller = match catalog {
+                Ok(catalog) => model_controller.with_host_catalog(catalog, true),
+                Err(_) => {
+                    let account = yo_core::derive_host_account_id(&host, &[("local", "local")])
+                        .expect("the fixed local host-account evidence is valid");
+                    model_controller
+                        .with_host_status(
+                            &host,
+                            match host.as_str() {
+                                yo_core::HostId::CODEX => "Codex",
+                                yo_core::HostId::GROK => "Grok",
+                                _ => host.as_str(),
+                            },
+                            &account,
+                            "local",
+                            "Unavailable; host model inventory could not be read",
+                        )
+                        .expect("bounded host status is valid")
+                },
+            };
+        }
+        if !model_controller.sections().is_empty() {
+            tui = tui.with_model_selection(model_controller);
         }
         *live = Some(LiveSession {
             agent,
@@ -560,7 +614,9 @@ fn run_agent_generation(
     let mut errors = Vec::<AppError>::new();
     match terminal {
         Ok(yo_tui::TerminalOutcome::SuspendRequested) => return Ok(SessionStep::Suspend),
-        Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(selection)) => {
+        Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(
+            yo_core::ModelPickerTarget::Managed(selection),
+        )) => {
             let replacement = model::replacement(
                 &selection,
                 session
@@ -599,6 +655,16 @@ fn run_agent_generation(
                     return Ok(SessionStep::Continue);
                 },
             }
+        },
+        Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(yo_core::ModelPickerTarget::Host(
+            selection,
+        ))) => {
+            session.tui.report_model_switch_failure(format!(
+                "switching to host:{} model {} requires the semantic-handoff transition",
+                selection.host().as_str(),
+                selection.model()
+            ));
+            return Ok(SessionStep::Continue);
         },
         Ok(yo_tui::TerminalOutcome::Exited(outcome)) => {
             if let Some(output) = outcome.output()

@@ -309,17 +309,33 @@ An ordinary prompt submitted while a Turn is visible carries that exact
 the steer instead of reinterpreting the same text as a new Turn. Backpressure
 and retry retain the same immutable intent.
 
-In a Yo-managed TUI, `/model` opens the generic selection panel with entries
-ordered as Provider, Account, then Model. Labels use the optional display names,
-but each row carries the complete stable coordinate. `/model MODEL_REFERENCE`
-uses the same resolver as startup, so its bare form remains in the current
-namespace while a qualified form can select another configured Provider or
-Account. A delegated-host live Session does not expose this picker. An idle
-selection requests host replacement immediately. During an active Turn, a
-pending Activity, or pending prompt admission, it instead reserves one model
-for the next Turn and tells the user; the current Turn, steers, and Activity
-responses continue on the old model. A later choice replaces the reservation,
-and choosing the current model cancels it.
+In an editable TUI, `/model` opens one account-sectioned selection panel. Stored
+managed models are grouped under `Provider display · Account display`. A live
+delegated host additionally reads its authenticated runtime inventory without
+creating another Agent Session: Codex uses `account/read` plus every visible
+`model/list` page, while Grok uses authenticated ACP `modelState`. Host account
+labels prefer verified email, then verified subscription, then `local`; the
+stable internal AccountId is a fingerprint rather than the displayed evidence.
+The current account section is first and only the exact model label receives
+the inline ` (current)` suffix. Section and account-status rows are not
+selectable, hidden host models are omitted, and Yo does not invent an
+`Automatic` model row.
+
+Managed and host rows carry disjoint typed coordinates. A managed row retains
+Provider, Account, and Model; a host row retains Host, authenticated Account,
+exact Model, and the fresh catalog revision. `/model MODEL_REFERENCE` remains
+managed-only and uses the same resolver as startup, so its bare form remains in
+the current managed namespace while a qualified form can select another
+configured Provider or Account. The current implementation performs the
+existing exact-replay replacement only for managed rows. A different host row
+reaches the typed process-host boundary but fails without touching the source
+Session until the separately required confirmed semantic-handoff transition is
+implemented.
+
+During an active Turn, a pending Activity, or pending prompt admission, a
+non-current selection is reserved for the next Turn and the current Turn,
+steers, and Activity responses continue on the old model. A later choice
+replaces the reservation, and choosing the current model cancels it.
 
 Only a durable completion of the exact active Turn seals a reservation. A
 memory-only or durability-gap completion clears it with a visible failure while

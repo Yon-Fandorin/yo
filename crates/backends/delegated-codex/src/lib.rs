@@ -9,7 +9,7 @@ mod transport;
 mod tests;
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     num::NonZeroU64,
 };
 
@@ -107,6 +107,26 @@ pub fn read_account_capacity(
     }
 }
 
+/// Reads the authenticated Codex account and complete visible app-server model inventory.
+pub fn read_model_catalog(
+    config: CodexBackendConfig,
+) -> Result<yo_core::HostModelCatalog, BackendFailure> {
+    validate_config(&config)?;
+    let peer = StdioPeer::spawn(&config)?;
+    let mut client = AppServerClient::new(peer, config.request_timeout());
+    let observation = observe_model_catalog(&mut client);
+    let cleanup = client.shutdown();
+    match (observation, cleanup) {
+        (Ok(catalog), Ok(())) => Ok(catalog),
+        (Ok(_), Err(cleanup)) => Err(cleanup),
+        (Err(observation), Ok(())) => Err(observation),
+        (Err(observation), Err(cleanup)) => Err(BackendFailure::new(
+            observation.kind(),
+            format!("{}; cleanup also failed: {cleanup}", observation.message()),
+        )),
+    }
+}
+
 fn validate_config(config: &CodexBackendConfig) -> Result<(), BackendFailure> {
     if !config.working_directory().is_absolute()
         || !config.working_directory().is_dir()
@@ -126,6 +146,79 @@ fn observe_account_capacity<P: JsonMessagePeer>(
     client.initialize()?;
     let result = client.call("account/rateLimits/read", Value::Null)?.result;
     protocol::decode_account_capacity(result)
+}
+
+fn observe_model_catalog<P: JsonMessagePeer>(
+    client: &mut AppServerClient<P>,
+) -> Result<yo_core::HostModelCatalog, BackendFailure> {
+    const PAGE_LIMIT: u64 = 100;
+    const MAX_MODELS: usize = 4096;
+
+    client.initialize()?;
+    let account_result = client
+        .call("account/read", json!({ "refreshToken": false }))?
+        .result;
+    let (account_label, evidence) = protocol::decode_account_identity(&account_result)?;
+    let evidence_refs = evidence
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    let host = yo_core::HostId::codex();
+    let account = yo_core::derive_host_account_id(&host, &evidence_refs)
+        .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+
+    let mut cursor = None::<String>;
+    let mut seen_cursors = HashSet::new();
+    let mut seen_models = HashSet::new();
+    let mut models = Vec::new();
+    let mut ids = Vec::new();
+    let mut current = None;
+    loop {
+        let mut params = json!({ "limit": PAGE_LIMIT, "includeHidden": false });
+        if let Some(cursor) = cursor.as_ref() {
+            params["cursor"] = Value::String(cursor.clone());
+        }
+        let page = protocol::decode_model_list(client.call("model/list", params)?.result)?;
+        for (id, label, is_default) in page.models {
+            if models.len() == MAX_MODELS || !seen_models.insert(id.clone()) {
+                return Err(protocol::protocol_failure(
+                    "Codex model/list exceeded the model bound or repeated a model id",
+                ));
+            }
+            let id = yo_core::ModelId::new(id)
+                .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+            if is_default && current.replace(id.clone()).is_some() {
+                return Err(protocol::protocol_failure(
+                    "Codex model/list advertised more than one default model",
+                ));
+            }
+            ids.push(id.clone());
+            models.push(
+                yo_core::HostCatalogModel::selectable(id, label)
+                    .map_err(|error| protocol::protocol_failure(error.to_string()))?,
+            );
+        }
+        let Some(next) = page.next_cursor else {
+            break;
+        };
+        if !seen_cursors.insert(next.clone()) {
+            return Err(protocol::protocol_failure(
+                "Codex model/list repeated a pagination cursor",
+            ));
+        }
+        cursor = Some(next);
+    }
+    let revision = yo_core::derive_host_catalog_revision(&host, &account, current.as_ref(), &ids);
+    yo_core::HostModelCatalog::new(
+        host,
+        "Codex",
+        account,
+        account_label,
+        revision,
+        current,
+        models,
+    )
+    .map_err(|error| protocol::protocol_failure(error.to_string()))
 }
 
 impl BackendAdapter for CodexBackend {

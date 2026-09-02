@@ -27,6 +27,14 @@ pub(crate) struct SelectionEntry {
     context: Option<String>,
     detail: Option<String>,
     availability: EntryAvailability,
+    kind: SelectionEntryKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SelectionEntryKind {
+    Section,
+    Status,
+    Choice,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -164,6 +172,7 @@ impl SelectionEntry {
             context: None,
             detail,
             availability: EntryAvailability::Enabled,
+            kind: SelectionEntryKind::Choice,
         }
     }
 
@@ -179,6 +188,7 @@ impl SelectionEntry {
             context,
             detail,
             availability: EntryAvailability::Enabled,
+            kind: SelectionEntryKind::Choice,
         }
     }
 
@@ -196,11 +206,39 @@ impl SelectionEntry {
             availability: EntryAvailability::Disabled {
                 reason: reason.into(),
             },
+            kind: SelectionEntryKind::Choice,
+        }
+    }
+
+    pub(crate) fn section(identity: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            identity: EntryIdentity::new(identity),
+            label: label.into(),
+            context: None,
+            detail: None,
+            availability: EntryAvailability::Disabled {
+                reason: "section heading".to_owned(),
+            },
+            kind: SelectionEntryKind::Section,
+        }
+    }
+
+    pub(crate) fn status(identity: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            identity: EntryIdentity::new(identity),
+            label: label.into(),
+            context: None,
+            detail: None,
+            availability: EntryAvailability::Disabled {
+                reason: "account status".to_owned(),
+            },
+            kind: SelectionEntryKind::Status,
         }
     }
 
     fn is_enabled(&self) -> bool {
-        matches!(self.availability, EntryAvailability::Enabled)
+        self.kind == SelectionEntryKind::Choice
+            && matches!(self.availability, EntryAvailability::Enabled)
     }
 }
 

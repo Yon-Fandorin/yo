@@ -153,7 +153,7 @@ impl TuiSession {
         self
     }
 
-    pub(super) fn take_model_selection(&mut self) -> Option<yo_core::ModelSelection> {
+    pub(super) fn take_model_selection(&mut self) -> Option<yo_core::ModelPickerTarget> {
         self.state.take_model_selection()
     }
 

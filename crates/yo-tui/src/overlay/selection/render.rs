@@ -3,8 +3,8 @@ use std::{num::NonZeroU16, time::Duration};
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
-    EntryAvailability, PanelPaintError, PanelTitleStatus, SelectionEntry, SelectionPanel,
-    SelectionPanelAppearance, VISIBLE_ENTRY_CAP,
+    EntryAvailability, PanelPaintError, PanelTitleStatus, SelectionEntry, SelectionEntryKind,
+    SelectionPanel, SelectionPanelAppearance, VISIBLE_ENTRY_CAP,
 };
 use crate::{
     appearance::ActivityMotionFrame,
@@ -392,6 +392,24 @@ impl PreparedSelectionPanel {
             return;
         }
         let styles = appearance.styles;
+        if entry.kind == SelectionEntryKind::Section {
+            self.push_truncated_text(
+                Point::new(2, row),
+                &entry.label,
+                content_end,
+                styles.selected,
+            );
+            return;
+        }
+        if entry.kind == SelectionEntryKind::Status {
+            self.push_truncated_text(
+                Point::new(3, row),
+                &entry.label,
+                content_end,
+                styles.disabled,
+            );
+            return;
+        }
         let marker = if selected {
             appearance.glyphs.selected_marker
         } else {

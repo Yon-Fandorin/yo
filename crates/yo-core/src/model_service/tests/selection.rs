@@ -1,7 +1,8 @@
 use super::{
     super::{
-        AccountId, ModelCatalog, ModelId, ModelSelection, ModelSelectionController,
-        ModelServiceErrorKind, ProviderId,
+        AccountId, HostCatalogModel, HostId, HostModelCatalog, ModelCatalog, ModelId,
+        ModelPickerTarget, ModelSelection, ModelSelectionController, ModelServiceErrorKind,
+        ProviderId, derive_host_account_id, derive_host_catalog_revision,
     },
     support::{disabled_selection_entry, selection_entry},
 };
@@ -191,4 +192,79 @@ fn disabled_binding_remains_visible_but_new_selection_fails_with_one_typed_reaso
             .unwrap(),
         selection.clone()
     );
+}
+
+// Host inventory는 managed 좌표와 다른 typed namespace를 유지하고, 현재 account section을
+// 첫 번째로 올리며 exact host model label에만 inline current 표식을 붙입니다.
+#[test]
+fn unified_picker_places_the_active_host_account_first_and_preserves_exact_target_evidence() {
+    let catalog = ModelCatalog::new(vec![selection_entry(
+        "qwencloud",
+        "default",
+        "qwen3.8-max",
+        "Qwen Cloud",
+        "Default",
+    )])
+    .unwrap();
+    let managed = ModelSelection::new(
+        ProviderId::new("qwencloud").unwrap(),
+        AccountId::new("default").unwrap(),
+        ModelId::new("qwen3.8-max").unwrap(),
+    );
+    let host = HostId::grok();
+    let account = derive_host_account_id(&host, &[("email", "verified@example.test")]).unwrap();
+    let current = ModelId::new("grok-4.6").unwrap();
+    let ids = vec![current.clone(), ModelId::new("grok-4.5").unwrap()];
+    let revision = derive_host_catalog_revision(&host, &account, Some(&current), &ids);
+    let host_catalog = HostModelCatalog::new(
+        host.clone(),
+        "Grok",
+        account.clone(),
+        "verified@example.test",
+        revision.clone(),
+        Some(current.clone()),
+        vec![
+            HostCatalogModel::selectable(ids[0].clone(), "Grok 4.6").unwrap(),
+            HostCatalogModel::selectable(ids[1].clone(), "Grok 4.5").unwrap(),
+        ],
+    )
+    .unwrap();
+    let controller =
+        ModelSelectionController::new(catalog, Some(managed)).with_host_catalog(host_catalog, true);
+
+    let sections = controller.sections();
+    assert_eq!(sections[0].label(), "Grok · verified@example.test");
+    assert_eq!(sections[0].choices()[0].label(), "Grok 4.6 (current)");
+    assert_eq!(sections[0].choices()[1].label(), "Grok 4.5");
+    assert!(
+        sections[1]
+            .choices()
+            .iter()
+            .all(|choice| !choice.is_current())
+    );
+
+    let target = controller
+        .accept_picker_identity(&sections[0].choices()[1].target().row_identity())
+        .unwrap();
+    let ModelPickerTarget::Host(target) = target else {
+        panic!("host row must remain a host target");
+    };
+    assert_eq!(target.host(), &host);
+    assert_eq!(target.account(), &account);
+    assert_eq!(target.model().as_str(), "grok-4.5");
+    assert_eq!(target.catalog_revision(), revision);
+}
+
+// verified account evidence가 바뀌면 내부 AccountId도 바뀌고, 같은 증거는 display label과
+// 무관하게 동일한 local key를 재생성합니다.
+#[test]
+fn host_account_key_is_stable_for_exact_evidence_and_changes_on_account_drift() {
+    let host = HostId::codex();
+    let first = derive_host_account_id(&host, &[("email", "first@example.test")]).unwrap();
+    let repeated = derive_host_account_id(&host, &[("email", "first@example.test")]).unwrap();
+    let drifted = derive_host_account_id(&host, &[("email", "second@example.test")]).unwrap();
+
+    assert_eq!(first, repeated);
+    assert_ne!(first, drifted);
+    assert!(!first.as_str().contains("first"));
 }

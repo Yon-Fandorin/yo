@@ -42,6 +42,12 @@ pub(super) struct InitializeResult {
     pub compatibility_warning: Option<String>,
 }
 
+#[derive(Debug)]
+pub(super) struct ModelListPage {
+    pub(super) models: Vec<(String, String, bool)>,
+    pub(super) next_cursor: Option<String>,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AccountRateLimitsResponse {
@@ -201,6 +207,88 @@ pub(super) fn decode_account_capacity(
     Ok(AccountCapacitySnapshot::new(provider, account, buckets))
 }
 
+pub(super) fn decode_account_identity(
+    result: &Value,
+) -> Result<(String, Vec<(String, String)>), BackendFailure> {
+    let account = result.get("account").unwrap_or(result);
+    let email = account
+        .get("email")
+        .and_then(Value::as_str)
+        .filter(|value| valid_catalog_text(value));
+    let plan = account
+        .get("planType")
+        .and_then(Value::as_str)
+        .filter(|value| valid_catalog_text(value));
+    let stable_id = account
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| valid_catalog_text(value));
+    let label = email.or(plan).unwrap_or("local").to_owned();
+    let evidence = if let Some(stable_id) = stable_id {
+        vec![("account_id".to_owned(), stable_id.to_owned())]
+    } else if let Some(email) = email {
+        vec![("email".to_owned(), email.to_owned())]
+    } else if let Some(plan) = plan {
+        vec![("plan_type".to_owned(), plan.to_owned())]
+    } else {
+        vec![("local".to_owned(), "local".to_owned())]
+    };
+    Ok((label, evidence))
+}
+
+pub(super) fn decode_model_list(result: Value) -> Result<ModelListPage, BackendFailure> {
+    let data = result
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| protocol_failure("invalid Codex model/list response: missing `data`"))?;
+    let mut models = Vec::new();
+    for entry in data {
+        if entry.get("hidden").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let id = entry.get("model").and_then(Value::as_str).ok_or_else(|| {
+            protocol_failure("invalid Codex model/list response: model has no `model`")
+        })?;
+        let label = entry
+            .get("displayName")
+            .and_then(Value::as_str)
+            .unwrap_or(id);
+        if !valid_catalog_text(id) || !valid_catalog_text(label) {
+            return Err(protocol_failure(
+                "invalid Codex model/list response: invalid model id or display name",
+            ));
+        }
+        models.push((
+            id.to_owned(),
+            label.to_owned(),
+            entry
+                .get("isDefault")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        ));
+    }
+    let next_cursor = match result.get("nextCursor") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(cursor)) if valid_catalog_text(cursor) => Some(cursor.clone()),
+        _ => {
+            return Err(protocol_failure(
+                "invalid Codex model/list response: invalid nextCursor",
+            ));
+        },
+    };
+    Ok(ModelListPage {
+        models,
+        next_cursor,
+    })
+}
+
+fn valid_catalog_text(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 4096
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
+}
+
 fn decode_capacity_bucket(
     fallback_id: Option<String>,
     bucket: WireRateLimitSnapshot,
@@ -300,6 +388,8 @@ pub(super) fn protocol_failure(message: impl Into<String>) -> BackendFailure {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     // 실제 wire 흐름을 검증한 Codex 0.145, 0.146, 0.149 minor line은 실행 파일 이름과
@@ -361,5 +451,41 @@ mod tests {
             Incoming::ServerRequest { id, method, .. }
                 if id == json!("approval-1") && method == "item/fileChange/requestApproval"
         ));
+    }
+
+    // model/list는 host가 숨긴 항목을 다시 노출하지 않고 exact model ID, display label,
+    // default marker와 pagination cursor를 함께 보존합니다.
+    #[test]
+    fn decodes_only_visible_codex_models_with_default_and_cursor() {
+        let page = decode_model_list(json!({
+            "data": [
+                {"id": "one", "model": "gpt-5.6-codex", "displayName": "GPT-5.6 Codex", "hidden": false, "isDefault": true},
+                {"id": "hidden", "model": "internal", "displayName": "Internal", "hidden": true}
+            ],
+            "nextCursor": "page-2"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            page.models,
+            vec![("gpt-5.6-codex".to_owned(), "GPT-5.6 Codex".to_owned(), true)]
+        );
+        assert_eq!(page.next_cursor.as_deref(), Some("page-2"));
+    }
+
+    // account section은 verified email을 subscription보다 우선 표시하되 stable native id가
+    // 있으면 AccountId fingerprint 입력은 그 더 강한 identity를 사용합니다.
+    #[test]
+    fn codex_account_identity_prefers_email_label_and_stable_id_evidence() {
+        let (label, evidence) = decode_account_identity(&json!({
+            "account": {"type": "chatgpt", "id": "acct-1", "email": "person@example.test", "planType": "pro"}
+        }))
+        .unwrap();
+
+        assert_eq!(label, "person@example.test");
+        assert_eq!(
+            evidence,
+            vec![("account_id".to_owned(), "acct-1".to_owned())]
+        );
     }
 }

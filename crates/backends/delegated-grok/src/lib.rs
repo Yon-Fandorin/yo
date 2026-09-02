@@ -89,6 +89,18 @@ pub fn read_account_capacity(
     combine_with_cleanup(observation, cleanup)
 }
 
+/// Reads the exact authenticated Grok ACP model inventory without creating an Agent Session.
+pub fn read_model_catalog(
+    config: GrokBackendConfig,
+) -> Result<yo_core::HostModelCatalog, BackendFailure> {
+    validate_config(&config)?;
+    let peer = StdioPeer::spawn(&config)?;
+    let mut client = AcpClient::new(peer, config.request_timeout());
+    let observation = observe_model_catalog(&mut client);
+    let cleanup = client.shutdown();
+    combine_with_cleanup(observation, cleanup)
+}
+
 fn validate_config(config: &GrokBackendConfig) -> Result<(), BackendFailure> {
     if !config.working_directory().is_absolute()
         || !config.working_directory().is_dir()
@@ -251,6 +263,51 @@ fn observe_account_capacity<P: JsonPeer>(
 ) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
     let authenticated = initialize_and_authenticate(client)?;
     protocol::decode_account_capacity(authenticated.authentication, usage)
+}
+
+fn observe_model_catalog<P: JsonPeer>(
+    client: &mut AcpClient<P>,
+) -> Result<yo_core::HostModelCatalog, BackendFailure> {
+    let authenticated = initialize_and_authenticate(client)?;
+    let (account_label, evidence) =
+        protocol::decode_account_identity(&authenticated.authentication)?;
+    let evidence_refs = evidence
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    let host = yo_core::HostId::grok();
+    let account = yo_core::derive_host_account_id(&host, &evidence_refs)
+        .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+    let current = authenticated
+        .initialized
+        .current_model_id
+        .map(yo_core::ModelId::new)
+        .transpose()
+        .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+    let mut ids = Vec::new();
+    let models = authenticated
+        .initialized
+        .available_models
+        .into_iter()
+        .map(|(id, label)| {
+            let id = yo_core::ModelId::new(id)
+                .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+            ids.push(id.clone());
+            yo_core::HostCatalogModel::selectable(id, label)
+                .map_err(|error| protocol::protocol_failure(error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let revision = yo_core::derive_host_catalog_revision(&host, &account, current.as_ref(), &ids);
+    yo_core::HostModelCatalog::new(
+        host,
+        "Grok",
+        account,
+        account_label,
+        revision,
+        current,
+        models,
+    )
+    .map_err(|error| protocol::protocol_failure(error.to_string()))
 }
 
 impl BackendAdapter for GrokBackend {

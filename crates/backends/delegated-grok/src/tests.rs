@@ -10,8 +10,8 @@ use yo_core::{
 };
 
 use super::{
-    Backend, GrokBackend, GrokBackendConfig, client::AcpClient, observe_account_capacity, protocol,
-    transport::PeerPoll,
+    Backend, GrokBackend, GrokBackendConfig, client::AcpClient, observe_account_capacity,
+    observe_model_catalog, protocol, transport::PeerPoll,
 };
 
 #[derive(Clone)]
@@ -122,6 +122,60 @@ fn reads_account_capacity_from_authentication_metadata_without_a_session() {
             Some("session/new" | "session/load" | "session/prompt")
         )
     }));
+}
+
+// initialize modelState와 authenticate email을 한 snapshot으로 묶고 session/new 없이
+// Grok 4.6/4.5 exact model rows를 만듭니다.
+#[test]
+fn reads_exact_grok_model_catalog_without_creating_a_session() {
+    let messages = [
+        json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": true},
+                "authMethods": [{"id": "cached_token", "name": "cached_token"}],
+                "agentInfo": {"name": "grok", "version": "1.0.13"},
+                "_meta": {"modelState": {
+                    "currentModelId": "grok-4.6",
+                    "availableModels": [
+                        {"modelId": "grok-4.6", "name": "Grok 4.6"},
+                        {"modelId": "grok-4.5", "name": "Grok 4.5"}
+                    ]
+                }}
+            }
+        }),
+        response(
+            2,
+            json!({"_meta": {"email": "person@example.test", "subscription_tier": "SuperGrok"}}),
+        ),
+    ];
+    let (peer, sent) = FakePeer::new(messages);
+    let mut client = AcpClient::new(peer, Duration::from_secs(1));
+
+    let catalog = observe_model_catalog(&mut client).unwrap();
+    let controller = yo_core::ModelSelectionController::new(
+        yo_core::ModelCatalog::new(Vec::new()).unwrap(),
+        None,
+    )
+    .with_host_catalog(catalog, true);
+    let section = &controller.sections()[0];
+    assert_eq!(section.label(), "Grok · person@example.test");
+    assert_eq!(section.choices()[0].label(), "Grok 4.6 (current)");
+    assert_eq!(section.choices()[1].label(), "Grok 4.5");
+    assert!(
+        section
+            .choices()
+            .iter()
+            .all(|choice| choice.label() != "Automatic")
+    );
+    assert!(
+        sent.0
+            .borrow()
+            .iter()
+            .all(|message| message["method"] != "session/new")
+    );
 }
 
 // 플랜을 추측하면 로그인 성공을 용량 정보로 오인하므로 누락·공백·제어문자 tier는

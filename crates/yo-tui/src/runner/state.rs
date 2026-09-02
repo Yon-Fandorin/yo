@@ -113,8 +113,8 @@ pub(super) struct TuiState {
     pending_submissions: VecDeque<InputSubmission>,
     model_selection: Option<ModelSelectionState>,
     model_overlay: Option<OverlayInstanceToken>,
-    pending_model_selection: Option<yo_core::ModelSelection>,
-    reserved_model_selection: Option<yo_core::ModelSelection>,
+    pending_model_selection: Option<yo_core::ModelPickerTarget>,
+    reserved_model_selection: Option<yo_core::ModelPickerTarget>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -744,7 +744,7 @@ impl TuiState {
         self.model_selection = Some(ModelSelectionState::new(controller));
     }
 
-    pub(super) fn take_model_selection(&mut self) -> Option<yo_core::ModelSelection> {
+    pub(super) fn take_model_selection(&mut self) -> Option<yo_core::ModelPickerTarget> {
         self.pending_model_selection.take()
     }
 
@@ -883,7 +883,7 @@ impl TuiState {
 
     fn accept_current_model(
         &mut self,
-        selected: yo_core::ModelSelection,
+        selected: yo_core::ModelPickerTarget,
     ) -> Result<StateEffect, StateError> {
         self.clear_editor();
         if self.reserved_model_selection.take().is_some() {
@@ -900,18 +900,13 @@ impl TuiState {
 
     fn admit_model_selection(
         &mut self,
-        selected: yo_core::ModelSelection,
+        selected: yo_core::ModelPickerTarget,
     ) -> Result<StateEffect, StateError> {
         if self.active_turn.is_some()
             || !self.pending_submissions.is_empty()
             || self.has_pending_request()
         {
-            let label = format!(
-                "{}::{}::{}",
-                selected.provider().as_str(),
-                selected.account().as_str(),
-                selected.model().as_str()
-            );
+            let label = selected.coordinate_label();
             self.reserved_model_selection = Some(selected);
             self.chat
                 .push_notice(format!("Model {label} will be applied to the next Turn."))?;

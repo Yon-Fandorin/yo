@@ -69,7 +69,11 @@ pub use qwencloud_catalog::{
     QwenCloudCatalogAvailability, QwenCloudCatalogDisabledReason, QwenCloudCatalogModel,
     QwenCloudCatalogSeed,
 };
-pub use selection::{ModelSelection, ModelSelectionChoice, ModelSelectionController};
+pub use selection::{
+    HostCatalogModel, HostModelCatalog, HostModelSelection, ModelPickerChoice, ModelPickerSection,
+    ModelPickerTarget, ModelSelection, ModelSelectionChoice, ModelSelectionController,
+    derive_host_account_id, derive_host_catalog_revision,
+};
 pub use startup::{
     HostId, StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };

@@ -35,6 +35,8 @@ pub(super) struct InitializeResult {
     pub(super) agent_version: String,
     pub(super) auth_methods: Vec<String>,
     pub(super) load_session: bool,
+    pub(super) current_model_id: Option<String>,
+    pub(super) available_models: Vec<(String, String)>,
 }
 
 pub(super) fn request(id: u64, method: &str, params: Value) -> Value {
@@ -181,12 +183,96 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
         .pointer("/agentCapabilities/loadSession")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let model_state = result.pointer("/_meta/modelState");
+    let current_model_id = model_state
+        .and_then(|state| state.get("currentModelId"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut available_models = Vec::new();
+    if let Some(models) = model_state
+        .and_then(|state| state.get("availableModels"))
+        .and_then(Value::as_array)
+    {
+        for model in models {
+            let id = model
+                .get("modelId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    initialization_failure("Grok modelState contains a model without `modelId`")
+                })?;
+            let label = model.get("name").and_then(Value::as_str).unwrap_or(id);
+            if id.is_empty()
+                || id.len() > 256
+                || label.is_empty()
+                || label.len() > 256
+                || id.chars().any(char::is_control)
+                || label.chars().any(char::is_control)
+                || available_models.iter().any(|(known, _)| known == id)
+            {
+                return Err(initialization_failure(
+                    "Grok modelState contains an invalid or duplicate model",
+                ));
+            }
+            available_models.push((id.to_owned(), label.to_owned()));
+        }
+    }
+    if current_model_id
+        .as_ref()
+        .is_some_and(|current| !available_models.iter().any(|(model, _)| model == current))
+    {
+        return Err(initialization_failure(
+            "Grok currentModelId is absent from availableModels",
+        ));
+    }
     Ok(InitializeResult {
         agent_name,
         agent_version,
         auth_methods,
         load_session,
+        current_model_id,
+        available_models,
     })
+}
+
+pub(super) fn decode_account_identity(
+    authentication: &Value,
+) -> Result<(String, Vec<(String, String)>), BackendFailure> {
+    let metadata = authentication
+        .get("_meta")
+        .and_then(Value::as_object)
+        .ok_or_else(|| protocol_failure("Grok authenticate response has no `_meta` object"))?;
+    let email = metadata
+        .get("email")
+        .and_then(Value::as_str)
+        .filter(|value| valid_account_text(value));
+    let tier = metadata
+        .get("subscription_tier")
+        .and_then(Value::as_str)
+        .filter(|value| valid_account_text(value));
+    let (label, evidence) = if let Some(email) = email {
+        (
+            email.to_owned(),
+            vec![("email".to_owned(), email.to_owned())],
+        )
+    } else if let Some(tier) = tier {
+        (
+            tier.to_owned(),
+            vec![("subscription_tier".to_owned(), tier.to_owned())],
+        )
+    } else {
+        (
+            "local".to_owned(),
+            vec![("local".to_owned(), "local".to_owned())],
+        )
+    };
+    Ok((label, evidence))
+}
+
+fn valid_account_text(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 256
+        && value.trim() == value
+        && !value.chars().any(char::is_control)
 }
 
 pub(super) fn decode_account_capacity(
@@ -344,5 +430,58 @@ mod tests {
             ]
         });
         assert!(decode_initialize(duplicate).is_err());
+    }
+
+    // ACP initialize의 modelState는 Automatic 같은 합성 row 없이 host가 광고한 exact
+    // currentModelId와 availableModels를 그대로 보존합니다.
+    #[test]
+    fn decodes_exact_grok_model_state_without_an_automatic_row() {
+        let initialized = decode_initialize(json!({
+            "protocolVersion": 1,
+            "authMethods": [],
+            "_meta": {
+                "modelState": {
+                    "currentModelId": "grok-4.6",
+                    "availableModels": [
+                        {"modelId": "grok-4.6", "name": "Grok 4.6"},
+                        {"modelId": "grok-4.5", "name": "Grok 4.5"}
+                    ]
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(initialized.current_model_id.as_deref(), Some("grok-4.6"));
+        assert_eq!(
+            initialized.available_models,
+            vec![
+                ("grok-4.6".to_owned(), "Grok 4.6".to_owned()),
+                ("grok-4.5".to_owned(), "Grok 4.5".to_owned())
+            ]
+        );
+        assert!(
+            initialized
+                .available_models
+                .iter()
+                .all(|(id, _)| id != "automatic")
+        );
+    }
+
+    // account label은 verified email, subscription tier, local 순으로 내려갑니다.
+    #[test]
+    fn grok_account_identity_prefers_verified_email_then_subscription() {
+        let (label, evidence) = decode_account_identity(&json!({
+            "_meta": {"email": "person@example.test", "subscription_tier": "supergrok"}
+        }))
+        .unwrap();
+        assert_eq!(label, "person@example.test");
+        assert_eq!(evidence[0].0, "email");
+
+        let (label, evidence) = decode_account_identity(&json!({
+            "_meta": {"subscription_tier": "supergrok"}
+        }))
+        .unwrap();
+        assert_eq!(label, "supergrok");
+        assert_eq!(evidence[0].0, "subscription_tier");
     }
 }

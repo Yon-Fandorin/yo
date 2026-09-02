@@ -125,8 +125,11 @@ fn direct_model_command_resolves_only_inside_the_current_provider_and_account() 
         StateEffect::Exit
     );
     let selected = state.take_model_selection().unwrap();
-    assert_eq!(selected.provider().as_str(), "openrouter");
-    assert_eq!(selected.account().as_str(), "default");
+    assert_eq!(
+        selected.managed().unwrap().provider().as_str(),
+        "openrouter"
+    );
+    assert_eq!(selected.managed().unwrap().account().as_str(), "default");
     assert_eq!(selected.model().as_str(), "free-model");
 }
 
@@ -154,6 +157,15 @@ fn grouped_model_picker_returns_the_complete_selected_binding() {
     assert_eq!(
         state
             .handle(
+                key(KeyCode::Down, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(
+        state
+            .handle(
                 key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
@@ -161,8 +173,11 @@ fn grouped_model_picker_returns_the_complete_selected_binding() {
         StateEffect::Exit
     );
     let selected = state.take_model_selection().unwrap();
-    assert_eq!(selected.provider().as_str(), "openrouter");
-    assert_eq!(selected.account().as_str(), "default");
+    assert_eq!(
+        selected.managed().unwrap().provider().as_str(),
+        "openrouter"
+    );
+    assert_eq!(selected.managed().unwrap().account().as_str(), "default");
     assert_eq!(selected.model().as_str(), "free-model");
 }
 
@@ -197,6 +212,15 @@ fn command_palette_model_selection_reuses_the_model_picker() {
         .unwrap();
     assert!(model_frame.overlay_presented);
     state.commit_frame(&model_frame);
+    assert_eq!(
+        state
+            .handle(
+                key(KeyCode::Down, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
     assert_eq!(
         state
             .handle(
@@ -365,7 +389,13 @@ fn failed_model_replacement_preserves_the_previous_controller() {
         StateEffect::Exit
     );
     assert_eq!(
-        state.take_model_selection().unwrap().provider().as_str(),
+        state
+            .take_model_selection()
+            .unwrap()
+            .managed()
+            .unwrap()
+            .provider()
+            .as_str(),
         "openrouter"
     );
 }
@@ -442,7 +472,13 @@ fn active_turn_model_selection_is_reserved_until_durable_completion() {
     );
     assert!(state.model_switch_ready());
     assert_eq!(
-        state.take_model_selection().unwrap().provider().as_str(),
+        state
+            .take_model_selection()
+            .unwrap()
+            .managed()
+            .unwrap()
+            .provider()
+            .as_str(),
         "openrouter"
     );
 }
@@ -482,6 +518,15 @@ fn active_turn_model_picker_acceptance_creates_a_reservation() {
     assert_eq!(
         state
             .handle(
+                key(KeyCode::Down, crate::input::event::KeyModifiers::NONE),
+                Duration::ZERO,
+            )
+            .unwrap(),
+        StateEffect::Redraw
+    );
+    assert_eq!(
+        state
+            .handle(
                 key(KeyCode::Enter, crate::input::event::KeyModifiers::NONE),
                 Duration::ZERO,
             )
@@ -500,7 +545,13 @@ fn active_turn_model_picker_acceptance_creates_a_reservation() {
         StateEffect::Exit
     );
     assert_eq!(
-        state.take_model_selection().unwrap().provider().as_str(),
+        state
+            .take_model_selection()
+            .unwrap()
+            .managed()
+            .unwrap()
+            .provider()
+            .as_str(),
         "openrouter"
     );
 }
@@ -548,7 +599,13 @@ fn later_model_selection_replaces_or_cancels_the_reservation() {
         StateEffect::Exit
     );
     assert_eq!(
-        state.take_model_selection().unwrap().provider().as_str(),
+        state
+            .take_model_selection()
+            .unwrap()
+            .managed()
+            .unwrap()
+            .provider()
+            .as_str(),
         "anthropic"
     );
 
