@@ -150,6 +150,42 @@ struct BlockingSteerBackend {
     blocked_once: bool,
 }
 
+struct ShutdownProbeBackend {
+    shutdown_calls: Arc<AtomicU64>,
+    failure: Option<BackendFailure>,
+}
+
+impl BackendAdapter for ShutdownProbeBackend {
+    type Command = AgentCommand;
+    type Event = BackendEvent;
+    type ResumeTarget = BackendResumeTarget;
+
+    fn stop_handle(&self) -> BackendStopHandle {
+        BackendStopHandle::no_op()
+    }
+
+    fn capabilities(&self) -> BackendCapabilities {
+        BackendCapabilities::none()
+    }
+
+    fn execute_command(
+        &mut self,
+        _command: AgentCommand,
+    ) -> Result<BackendCommandEvidence, BackendFailure> {
+        panic!("a rejected replacement candidate must never execute a command")
+    }
+
+    fn poll_event(&mut self) -> Result<BackendPoll, BackendFailure> {
+        panic!("a rejected replacement candidate must never be polled")
+    }
+
+    fn shutdown(&mut self) -> Result<(), BackendFailure> {
+        self.shutdown_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.failure.clone().map_or(Ok(()), Err)
+    }
+}
+
 impl BackendAdapter for BlockingSteerBackend {
     type Command = AgentCommand;
     type Event = BackendEvent;
@@ -321,6 +357,93 @@ fn provider_wait_never_blocks_the_frontend_connection() {
         next_poll(&mut app).unwrap(),
         RuntimePoll::Event(AgentEvent::TurnStarted { .. })
     ));
+    app.shutdown().unwrap();
+}
+
+// A replacement rejected while the worker owns an in-flight provider call still explicitly
+// shuts down the consumed candidate exactly once before returning the idle-session error.
+#[test]
+fn busy_replacement_rejection_shuts_down_the_candidate() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = BlockingBackend {
+        entered: entered_tx,
+        release: release_rx,
+        stop: release_tx.clone(),
+    };
+    let mut app = start_app(backend);
+    app.dispatch(AgentIntent::submit("wait".to_owned()).unwrap())
+        .unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let shutdown_calls = Arc::new(AtomicU64::new(0));
+    let candidate = ShutdownProbeBackend {
+        shutdown_calls: Arc::clone(&shutdown_calls),
+        failure: None,
+    };
+
+    let error = app
+        .replace_backend(Box::new(candidate), || false)
+        .expect_err("an in-flight provider call keeps replacement non-idle");
+
+    assert!(matches!(
+        error,
+        AgentSessionError::WorkerUnavailable(ref detail)
+            if detail.contains("requires an idle Session")
+    ));
+    assert_eq!(shutdown_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    release_tx.send(()).unwrap();
+    next_poll(&mut app).unwrap();
+    app.shutdown().unwrap();
+}
+
+// Candidate cleanup failure is retained beside the primary non-idle rejection instead of being
+// lost when the candidate never reaches the replacement worker lane.
+#[test]
+fn busy_replacement_rejection_reports_candidate_cleanup_failure() {
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let backend = BlockingBackend {
+        entered: entered_tx,
+        release: release_rx,
+        stop: release_tx.clone(),
+    };
+    let mut app = start_app(backend);
+    app.dispatch(AgentIntent::submit("wait".to_owned()).unwrap())
+        .unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let shutdown_calls = Arc::new(AtomicU64::new(0));
+    let candidate = ShutdownProbeBackend {
+        shutdown_calls: Arc::clone(&shutdown_calls),
+        failure: Some(BackendFailure::new(
+            BackendFailureKind::Cleanup,
+            "candidate cleanup failed",
+        )),
+    };
+
+    let error = app
+        .replace_backend(Box::new(candidate), || false)
+        .expect_err("candidate cleanup failure must remain visible");
+
+    let AgentSessionError::Multiple {
+        primary,
+        additional,
+    } = error
+    else {
+        panic!("replacement rejection and cleanup failure must both be returned");
+    };
+    assert!(matches!(
+        *primary,
+        AgentSessionError::WorkerUnavailable(ref detail)
+            if detail.contains("requires an idle Session")
+    ));
+    assert!(matches!(
+        *additional,
+        AgentSessionError::BackendCleanup(ref failure)
+            if failure.kind() == BackendFailureKind::Cleanup
+    ));
+    assert_eq!(shutdown_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    release_tx.send(()).unwrap();
+    next_poll(&mut app).unwrap();
     app.shutdown().unwrap();
 }
 

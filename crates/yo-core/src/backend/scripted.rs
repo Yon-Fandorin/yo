@@ -18,6 +18,10 @@ pub enum BackendScriptStep {
         target: Box<BackendResumeTarget>,
         evidence: BackendBindingEvidence,
     },
+    RebindModel {
+        target: Box<BackendResumeTarget>,
+        evidence: BackendBindingEvidence,
+    },
     AcceptCommand(AgentCommand),
     AcceptCommandWithEvidence {
         command: AgentCommand,
@@ -130,6 +134,29 @@ impl BackendAdapter for ScriptedBackend {
         }
     }
 
+    fn resume_session_rebinding_model(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        match self.steps.front() {
+            Some(BackendScriptStep::RebindModel {
+                target: expected, ..
+            }) if expected.as_ref() == target => {
+                let Some(BackendScriptStep::RebindModel { evidence, .. }) = self.steps.pop_front()
+                else {
+                    unreachable!("the front script step was native model rebind")
+                };
+                Ok(evidence)
+            },
+            Some(step) => Err(Self::protocol_failure(format!(
+                "unexpected native model rebind while awaiting {step:?}"
+            ))),
+            None => Err(Self::protocol_failure(
+                "unexpected native model rebind after the script was exhausted",
+            )),
+        }
+    }
+
     fn execute_command(
         &mut self,
         command: AgentCommand,
@@ -210,6 +237,7 @@ impl BackendAdapter for ScriptedBackend {
             Some(
                 BackendScriptStep::Resume { .. }
                 | BackendScriptStep::ReplaceBinding { .. }
+                | BackendScriptStep::RebindModel { .. }
                 | BackendScriptStep::AcceptCommand(_)
                 | BackendScriptStep::AcceptCommandWithEvidence { .. }
                 | BackendScriptStep::RejectCommand { .. }

@@ -210,6 +210,14 @@ pub(super) fn decode_account_capacity(
 pub(super) fn decode_account_identity(
     result: &Value,
 ) -> Result<(String, Vec<(String, String)>), BackendFailure> {
+    decode_optional_account_identity(result).ok_or_else(|| {
+        protocol_failure("Codex account/read response has no stable account id or verified email")
+    })
+}
+
+pub(super) fn decode_optional_account_identity(
+    result: &Value,
+) -> Option<(String, Vec<(String, String)>)> {
     let account = result.get("account").unwrap_or(result);
     let email = account
         .get("email")
@@ -226,14 +234,11 @@ pub(super) fn decode_account_identity(
     let label = email.or(plan).unwrap_or("local").to_owned();
     let evidence = if let Some(stable_id) = stable_id {
         vec![("account_id".to_owned(), stable_id.to_owned())]
-    } else if let Some(email) = email {
-        vec![("email".to_owned(), email.to_owned())]
-    } else if let Some(plan) = plan {
-        vec![("plan_type".to_owned(), plan.to_owned())]
     } else {
-        vec![("local".to_owned(), "local".to_owned())]
+        let email = email?;
+        vec![("email".to_owned(), email.to_owned())]
     };
-    Ok((label, evidence))
+    Some((label, evidence))
 }
 
 pub(super) fn decode_model_list(result: Value) -> Result<ModelListPage, BackendFailure> {
@@ -487,5 +492,24 @@ mod tests {
             evidence,
             vec![("account_id".to_owned(), "acct-1".to_owned())]
         );
+    }
+
+    // subscription 이름이나 고정 local 문자열은 서로 다른 로그인에 공통일 수 있으므로
+    // rebind 가능한 AccountId의 근거가 될 수 없습니다.
+    #[test]
+    fn codex_account_identity_rejects_plan_only_or_missing_identity() {
+        for account in [
+            json!({"account": {"type": "chatgpt", "planType": "pro"}}),
+            json!({"account": {"type": "apiKey"}}),
+        ] {
+            let error = decode_account_identity(&account).unwrap_err();
+
+            assert_eq!(error.kind(), BackendFailureKind::Protocol);
+            assert!(
+                error
+                    .message()
+                    .contains("stable account id or verified email")
+            );
+        }
     }
 }

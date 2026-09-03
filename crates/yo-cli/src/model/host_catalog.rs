@@ -1,15 +1,64 @@
 use std::path::Path;
 
-use yo_core::{HostId, HostModelCatalog, ModelSelectionController};
+use yo_core::{AccountId, HostId, HostModelCatalog, ModelId, ModelSelectionController};
 
 use super::DelegatedExecutionProfile;
 
 const CATALOG_UNAVAILABLE: &str = "model catalog unavailable";
+const SEMANTIC_HANDOFF_UNAVAILABLE: &str = "semantic handoff is not implemented";
+const NATIVE_REBIND_UNAVAILABLE: &str =
+    "this host does not advertise state-preserving model switching";
+const ACCOUNT_MISMATCH_UNAVAILABLE: &str =
+    "the authenticated host account differs from this Session";
 
 #[derive(Clone, Debug)]
 pub(crate) struct HostCatalogObservation {
     host: HostId,
     catalog: Result<HostModelCatalog, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ActiveHostModel {
+    host: HostId,
+    account: AccountId,
+    model: ModelId,
+    native_model_rebind: bool,
+}
+
+impl ActiveHostModel {
+    pub(crate) const fn new(
+        host: HostId,
+        account: AccountId,
+        model: ModelId,
+        native_model_rebind: bool,
+    ) -> Self {
+        Self {
+            host,
+            account,
+            model,
+            native_model_rebind,
+        }
+    }
+
+    pub(crate) const fn host(&self) -> &HostId {
+        &self.host
+    }
+
+    pub(crate) const fn account(&self) -> &AccountId {
+        &self.account
+    }
+
+    pub(crate) const fn model(&self) -> &ModelId {
+        &self.model
+    }
+
+    pub(crate) const fn supports_native_model_rebind(&self) -> bool {
+        self.native_model_rebind
+    }
+
+    pub(crate) fn set_model(&mut self, model: ModelId) {
+        self.model = model;
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,6 +71,14 @@ struct HostInventoryRequest {
 impl HostCatalogObservation {
     fn new(host: HostId, catalog: Result<HostModelCatalog, String>) -> Self {
         Self { host, catalog }
+    }
+
+    pub(crate) const fn host(&self) -> &HostId {
+        &self.host
+    }
+
+    pub(crate) fn catalog(&self) -> Result<&HostModelCatalog, &str> {
+        self.catalog.as_ref().map_err(String::as_str)
     }
 }
 
@@ -71,17 +128,72 @@ pub(crate) fn read_builtin_host_catalogs(
     })
 }
 
+/// Resolves the live host state used by the picker. Codex current state comes only from its
+/// durable binding; a pre-start inventory default is never treated as the running thread model.
+pub(crate) fn resolve_active_host_model(
+    active_host: Option<&HostId>,
+    confirmed_codex: Option<(&AccountId, &ModelId)>,
+    supports_native_model_rebind: bool,
+    is_resume: bool,
+    observations: &[HostCatalogObservation],
+) -> Option<ActiveHostModel> {
+    let host = active_host?;
+    if host.as_str() == HostId::CODEX {
+        let (account, model) = confirmed_codex?;
+        return Some(ActiveHostModel::new(
+            host.clone(),
+            account.clone(),
+            model.clone(),
+            supports_native_model_rebind,
+        ));
+    }
+    let catalog = observations
+        .iter()
+        .find(|observation| observation.host() == host)?
+        .catalog()
+        .ok()?;
+    Some(ActiveHostModel::new(
+        host.clone(),
+        catalog.account().clone(),
+        catalog.current_model()?.clone(),
+        supports_native_model_rebind && !is_resume,
+    ))
+}
+
 /// Projects every observed host independently so one missing binary or account cannot suppress a
 /// sibling host section. Only the live host is allowed to mark an advertised model as current.
 pub(crate) fn project_host_catalogs(
     mut controller: ModelSelectionController,
-    active_host: Option<&HostId>,
+    active: Option<&ActiveHostModel>,
     observations: &[HostCatalogObservation],
 ) -> ModelSelectionController {
     for observation in observations {
-        let active = active_host == Some(&observation.host);
+        let is_active_host = active.is_some_and(|active| active.host == observation.host);
         controller = match &observation.catalog {
-            Ok(catalog) => controller.with_host_catalog(catalog.clone(), active),
+            Ok(catalog) => {
+                let same_account = active.is_some_and(|active| {
+                    active.host == observation.host && active.account == *catalog.account()
+                });
+                let active_model =
+                    same_account.then(|| active.expect("same account is active").model());
+                let unavailable = if same_account
+                    && active.is_some_and(ActiveHostModel::supports_native_model_rebind)
+                {
+                    None
+                } else if same_account {
+                    Some(NATIVE_REBIND_UNAVAILABLE)
+                } else if is_active_host {
+                    Some(ACCOUNT_MISMATCH_UNAVAILABLE)
+                } else {
+                    Some(SEMANTIC_HANDOFF_UNAVAILABLE)
+                };
+                controller.with_host_catalog_state(
+                    catalog.clone(),
+                    is_active_host,
+                    active_model,
+                    unavailable,
+                )
+            },
             Err(_) => {
                 let account =
                     yo_core::derive_host_account_id(&observation.host, &[("local", "local")])

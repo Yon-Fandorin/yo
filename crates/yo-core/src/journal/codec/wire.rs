@@ -415,6 +415,12 @@ fn validate_transition(transition: &BindingTransition) -> Result<(), JournalCode
         ) | (TransitionMode::ExactReplay, CacheState::Lost, Some(_), None)
             | (TransitionMode::ExactReplay, CacheState::Lost, None, Some(_))
             | (
+                TransitionMode::BackendNativeModelRebind,
+                CacheState::Unknown,
+                Some(_) | None,
+                None,
+            )
+            | (
                 TransitionMode::LossyHandoff,
                 CacheState::Lost | CacheState::Unknown,
                 Some(_),

@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::VecDeque, num::NonZeroU64, rc::Rc, time::D
 
 use serde_json::{Value, json};
 use yo_backend::transport::JsonMessagePeer;
-use yo_core::{ActivityId, ActivityRef, BackendFailure, SessionId, TurnId, TurnRef};
+use yo_core::{AccountId, ActivityId, ActivityRef, BackendFailure, SessionId, TurnId, TurnRef};
 
 use super::super::{Backend, client::AppServerClient, transport::PeerPoll};
 
@@ -116,8 +116,10 @@ pub(super) fn backend_with_profile(
     let (peer, sent) = FakePeer::new(messages);
     let mut client = AppServerClient::new(peer, Duration::from_secs(1));
     let initialize = client.initialize().unwrap();
-    let mut backend = Backend::new_uninitialized(client, "/workspace".into(), read_only_review);
+    let mut backend =
+        Backend::new_uninitialized(client, "/workspace".into(), read_only_review, None);
     backend.initialized = true;
     backend.backend_version = Some(initialize.user_agent);
+    backend.account = Some(AccountId::new("account-test").unwrap());
     (backend, sent)
 }

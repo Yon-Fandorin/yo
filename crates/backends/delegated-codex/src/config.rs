@@ -4,6 +4,8 @@ use std::{
     time::Duration,
 };
 
+use yo_core::{AccountId, ModelId};
+
 /// Process and compatibility settings for a local Codex app-server backend.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexBackendConfig {
@@ -12,6 +14,7 @@ pub struct CodexBackendConfig {
     request_timeout: Duration,
     shutdown_timeout: Duration,
     read_only_review: bool,
+    model_rebind_target: Option<(AccountId, ModelId)>,
 }
 
 impl CodexBackendConfig {
@@ -22,6 +25,7 @@ impl CodexBackendConfig {
             request_timeout: Duration::from_secs(30),
             shutdown_timeout: Duration::from_secs(2),
             read_only_review: false,
+            model_rebind_target: None,
         }
     }
 
@@ -43,6 +47,12 @@ impl CodexBackendConfig {
 
     pub fn read_only_review(&self) -> bool {
         self.read_only_review
+    }
+
+    pub fn model_rebind_target(&self) -> Option<(&AccountId, &ModelId)> {
+        self.model_rebind_target
+            .as_ref()
+            .map(|(account, model)| (account, model))
     }
 
     pub(crate) fn process_arguments(&self) -> Vec<&'static str> {
@@ -77,6 +87,11 @@ impl CodexBackendConfig {
 
     pub fn with_read_only_review(mut self, enabled: bool) -> Self {
         self.read_only_review = enabled;
+        self
+    }
+
+    pub fn with_model_rebind_target(mut self, account: AccountId, model: ModelId) -> Self {
+        self.model_rebind_target = Some((account, model));
         self
     }
 }

@@ -35,7 +35,8 @@ pub struct BackendResumeTarget {
     context_policy: Option<crate::ContextPolicyChanged>,
     context_epoch: Option<u64>,
     replay_contract_rebind_required: bool,
-    source: BackendResumeSource,
+    binding_has_accepted_request: bool,
+    source: Option<BackendResumeSource>,
 }
 
 impl BackendResumeTarget {
@@ -54,7 +55,10 @@ impl BackendResumeTarget {
             context_policy: None,
             context_epoch: None,
             replay_contract_rebind_required: false,
-            source: BackendResumeSource::ContinuationAnchor(source_anchor_sequence),
+            binding_has_accepted_request: true,
+            source: Some(BackendResumeSource::ContinuationAnchor(
+                source_anchor_sequence,
+            )),
         }
     }
 
@@ -73,7 +77,30 @@ impl BackendResumeTarget {
             context_policy: None,
             context_epoch: None,
             replay_contract_rebind_required: false,
-            source: BackendResumeSource::ContextCheckpoint(source_checkpoint_sequence),
+            binding_has_accepted_request: true,
+            source: Some(BackendResumeSource::ContextCheckpoint(
+                source_checkpoint_sequence,
+            )),
+        }
+    }
+
+    pub(crate) fn for_model_rebind(
+        session_id: crate::SessionId,
+        epoch: u64,
+        binding: BackendBindingEvidence,
+        source_anchor_sequence: Option<crate::JournalSequence>,
+    ) -> Self {
+        Self {
+            session_id,
+            epoch,
+            binding,
+            model_replay: ModelReplay::default(),
+            model_replay_groups: Vec::new(),
+            context_policy: None,
+            context_epoch: None,
+            replay_contract_rebind_required: false,
+            binding_has_accepted_request: false,
+            source: source_anchor_sequence.map(BackendResumeSource::ContinuationAnchor),
         }
     }
 
@@ -116,24 +143,28 @@ impl BackendResumeTarget {
         self.replay_contract_rebind_required
     }
 
+    pub(crate) const fn binding_has_accepted_request(&self) -> bool {
+        self.binding_has_accepted_request
+    }
+
     #[must_use]
-    pub const fn source(&self) -> BackendResumeSource {
+    pub const fn source(&self) -> Option<BackendResumeSource> {
         self.source
     }
 
     #[must_use]
     pub const fn source_anchor_sequence(&self) -> Option<crate::JournalSequence> {
         match self.source {
-            BackendResumeSource::ContinuationAnchor(sequence) => Some(sequence),
-            BackendResumeSource::ContextCheckpoint(_) => None,
+            Some(BackendResumeSource::ContinuationAnchor(sequence)) => Some(sequence),
+            Some(BackendResumeSource::ContextCheckpoint(_)) | None => None,
         }
     }
 
     #[must_use]
     pub const fn source_checkpoint_sequence(&self) -> Option<crate::JournalSequence> {
         match self.source {
-            BackendResumeSource::ContinuationAnchor(_) => None,
-            BackendResumeSource::ContextCheckpoint(sequence) => Some(sequence),
+            Some(BackendResumeSource::ContextCheckpoint(sequence)) => Some(sequence),
+            Some(BackendResumeSource::ContinuationAnchor(_)) | None => None,
         }
     }
 
@@ -156,6 +187,11 @@ impl BackendResumeTarget {
 
     pub(crate) const fn with_replay_contract_rebind_required(mut self, required: bool) -> Self {
         self.replay_contract_rebind_required = required;
+        self
+    }
+
+    pub(crate) const fn with_binding_has_accepted_request(mut self, accepted: bool) -> Self {
+        self.binding_has_accepted_request = accepted;
         self
     }
 }

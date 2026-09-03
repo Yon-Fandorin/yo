@@ -20,18 +20,38 @@ pub use skill_catalog::CodexSkillReferenceProvider;
 use transport::StdioPeer;
 use yo_backend::{BackendAdapter, transport::JsonMessagePeer};
 use yo_core::{
-    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
+    AccountId, ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef,
+    ActivityResponse, AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
     BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
     BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
-    ContinuationStrategy, RequestId, SessionId, TurnRef,
+    ContinuationStrategy, ModelId, RequestId, SessionId, TurnRef,
 };
 
 pub const HOST_ID: &str = "codex";
 pub const BACKEND_KIND: &str = "codex-app-server";
 const READ_ONLY_REVIEW_PROFILE: &str = "yo.delegated-review-execution/v1alpha1";
-const STANDARD_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1";
-const READ_ONLY_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1alpha1";
+const LEGACY_STANDARD_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1";
+const LEGACY_READ_ONLY_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1alpha1";
+pub const STANDARD_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v2";
+pub const READ_ONLY_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1alpha2";
+const MODEL_IDENTITY_SCHEMA: &str = "codex.app-server/model-and-provider/v1";
+
+/// Exact account and model recovered from a rebind-capable Codex binding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexNativeModelBinding {
+    account: AccountId,
+    model: ModelId,
+}
+
+impl CodexNativeModelBinding {
+    pub const fn account(&self) -> &AccountId {
+        &self.account
+    }
+
+    pub const fn model(&self) -> &ModelId {
+        &self.model
+    }
+}
 
 /// Local stdio adapter for a compatible `codex app-server` process.
 pub struct CodexBackend {
@@ -57,8 +77,16 @@ impl CodexBackend {
             .to_owned();
         let peer = StdioPeer::spawn(&config)?;
         let client = AppServerClient::new(peer, config.request_timeout());
+        let model_rebind_target = config
+            .model_rebind_target()
+            .map(|(account, model)| (account.clone(), model.clone()));
         Ok(Self {
-            inner: Backend::new_uninitialized(client, cwd, config.read_only_review()),
+            inner: Backend::new_uninitialized(
+                client,
+                cwd,
+                config.read_only_review(),
+                model_rebind_target,
+            ),
         })
     }
 
@@ -81,6 +109,48 @@ impl CodexBackend {
             )),
         }
     }
+}
+
+/// Decodes only the account-bearing binding schema that can authorize native model rebind.
+pub fn native_model_binding(
+    binding: &BackendBindingEvidence,
+) -> Result<Option<CodexNativeModelBinding>, BackendFailure> {
+    native_model_binding_from_parts(
+        binding.backend_kind(),
+        binding.binding_identity(),
+        binding.model_identity(),
+    )
+}
+
+/// Decodes the same account-bearing Codex binding from one live Request-trace fact.
+pub fn native_model_binding_from_trace(
+    record: &yo_core::RequestTraceRecord,
+) -> Result<Option<CodexNativeModelBinding>, BackendFailure> {
+    let yo_core::RequestTraceRecord::BindingOpened {
+        backend_kind,
+        binding_identity,
+        model_identity,
+        ..
+    } = record
+    else {
+        return Ok(None);
+    };
+    native_model_binding_from_parts(backend_kind, binding_identity, model_identity)
+}
+
+fn native_model_binding_from_parts(
+    backend_kind: &str,
+    binding_identity: &BackendIdentity,
+    model_identity: &BackendIdentity,
+) -> Result<Option<CodexNativeModelBinding>, BackendFailure> {
+    if backend_kind != BACKEND_KIND {
+        return Ok(None);
+    }
+    let Some(account) = binding_account(binding_identity)? else {
+        return Ok(None);
+    };
+    let (model, _) = model_and_provider(model_identity)?;
+    Ok(Some(CodexNativeModelBinding { account, model }))
 }
 
 /// Reads the current Codex account capacity without creating an Agent Session.
@@ -158,14 +228,8 @@ fn observe_model_catalog<P: JsonMessagePeer>(
     let account_result = client
         .call("account/read", json!({ "refreshToken": false }))?
         .result;
-    let (account_label, evidence) = protocol::decode_account_identity(&account_result)?;
-    let evidence_refs = evidence
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_str()))
-        .collect::<Vec<_>>();
     let host = yo_core::HostId::codex();
-    let account = yo_core::derive_host_account_id(&host, &evidence_refs)
-        .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+    let (account_label, account) = decode_account(&host, &account_result)?;
 
     let mut cursor = None::<String>;
     let mut seen_cursors = HashSet::new();
@@ -221,6 +285,36 @@ fn observe_model_catalog<P: JsonMessagePeer>(
     .map_err(|error| protocol::protocol_failure(error.to_string()))
 }
 
+fn decode_account(
+    host: &yo_core::HostId,
+    result: &Value,
+) -> Result<(String, AccountId), BackendFailure> {
+    let (account_label, evidence) = protocol::decode_account_identity(result)?;
+    let evidence_refs = evidence
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    let account = yo_core::derive_host_account_id(host, &evidence_refs)
+        .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+    Ok((account_label, account))
+}
+
+fn decode_optional_account(
+    host: &yo_core::HostId,
+    result: &Value,
+) -> Result<Option<AccountId>, BackendFailure> {
+    let Some((_, evidence)) = protocol::decode_optional_account_identity(result) else {
+        return Ok(None);
+    };
+    let evidence_refs = evidence
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    yo_core::derive_host_account_id(host, &evidence_refs)
+        .map(Some)
+        .map_err(|error| protocol::protocol_failure(error.to_string()))
+}
+
 impl BackendAdapter for CodexBackend {
     type Command = AgentCommand;
     type Event = BackendEvent;
@@ -239,6 +333,13 @@ impl BackendAdapter for CodexBackend {
         target: &BackendResumeTarget,
     ) -> Result<BackendBindingEvidence, BackendFailure> {
         self.inner.resume_session(target)
+    }
+
+    fn resume_session_rebinding_model(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        self.inner.resume_session_rebinding_model(target)
     }
 
     fn execute_command(
@@ -281,8 +382,10 @@ struct Backend<P> {
     client: AppServerClient<P>,
     initialized: bool,
     backend_version: Option<String>,
+    account: Option<AccountId>,
     cwd: String,
     read_only_review: bool,
+    model_rebind_target: Option<(AccountId, ModelId)>,
     session: Option<SessionBinding>,
     turns: HashMap<TurnRef, String>,
     wire_turns: HashMap<String, WireTurnBinding>,
@@ -296,13 +399,20 @@ struct Backend<P> {
 }
 
 impl<P: JsonMessagePeer> Backend<P> {
-    fn new_uninitialized(client: AppServerClient<P>, cwd: String, read_only_review: bool) -> Self {
+    fn new_uninitialized(
+        client: AppServerClient<P>,
+        cwd: String,
+        read_only_review: bool,
+        model_rebind_target: Option<(AccountId, ModelId)>,
+    ) -> Self {
         Self {
             client,
             initialized: false,
             backend_version: None,
+            account: None,
             cwd,
             read_only_review,
+            model_rebind_target,
             session: None,
             turns: HashMap::new(),
             wire_turns: HashMap::new(),
@@ -317,7 +427,9 @@ impl<P: JsonMessagePeer> Backend<P> {
     }
 
     fn capabilities(&self) -> BackendCapabilities {
-        BackendCapabilities::none().with_steer()
+        BackendCapabilities::none()
+            .with_steer()
+            .with_native_model_rebind()
     }
 
     fn execute_command(
@@ -427,8 +539,8 @@ impl<P: JsonMessagePeer> Backend<P> {
             BackendBindingEvidence::new(
                 BACKEND_KIND,
                 backend_version,
-                self.binding_identity(backend_session_id, &thread_id),
-                BackendIdentity::new("codex.app-server/model-and-provider/v1", model_value),
+                self.binding_identity(backend_session_id, &thread_id)?,
+                BackendIdentity::new(MODEL_IDENTITY_SCHEMA, model_value),
                 BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
                 ContinuationStrategy::BackendManagedState,
             ),
@@ -438,7 +550,12 @@ impl<P: JsonMessagePeer> Backend<P> {
     fn initialize(&mut self) -> Result<(), BackendFailure> {
         if !self.initialized {
             let initialize = self.client.initialize()?;
+            let account_result = self
+                .client
+                .call("account/read", json!({ "refreshToken": false }))?
+                .result;
             self.backend_version = Some(initialize.user_agent);
+            self.account = decode_optional_account(&yo_core::HostId::codex(), &account_result)?;
             self.initialized = true;
         }
         Ok(())
@@ -469,7 +586,6 @@ impl<P: JsonMessagePeer> Backend<P> {
                 ),
             ));
         }
-        self.validate_execution_binding(binding)?;
         let locator = binding.session_locator();
         if locator.schema() != "codex.app-server/thread-locator/v1" {
             return Err(BackendFailure::new(
@@ -479,6 +595,7 @@ impl<P: JsonMessagePeer> Backend<P> {
         }
         let thread_id = locator.value();
         self.initialize()?;
+        self.validate_execution_binding(binding)?;
         let mut params = json!({ "threadId": thread_id });
         self.apply_thread_policy(&mut params);
         let result = self.client.call("thread/resume", params)?.result;
@@ -486,9 +603,10 @@ impl<P: JsonMessagePeer> Backend<P> {
         let backend_session_id = protocol::string_at(&result, &["thread", "sessionId"])?;
         let model = protocol::string_at(&result, &["model"])?;
         let model_provider = protocol::string_at(&result, &["modelProvider"])?;
-        let binding_identity = self.binding_identity(backend_session_id, resumed_thread);
+        let binding_identity =
+            self.binding_identity_for_resume(binding, backend_session_id, resumed_thread)?;
         let model_identity = BackendIdentity::new(
-            "codex.app-server/model-and-provider/v1",
+            MODEL_IDENTITY_SCHEMA,
             json!({ "model": model, "provider": model_provider }).to_string(),
         );
         let evidence = BackendBindingEvidence::new(
@@ -516,6 +634,105 @@ impl<P: JsonMessagePeer> Backend<P> {
         Ok(evidence)
     }
 
+    fn resume_session_rebinding_model(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        self.rebind_model(target.session_id(), target.binding())
+    }
+
+    fn rebind_model(
+        &mut self,
+        session_id: SessionId,
+        source: &BackendBindingEvidence,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        if source.backend_kind() != BACKEND_KIND
+            || source.continuation_strategy() != ContinuationStrategy::BackendManagedState
+        {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "Codex native model rebind requires a Codex backend-managed source binding",
+            ));
+        }
+        if source.session_locator().schema() != "codex.app-server/thread-locator/v1" {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "Codex native model rebind requires the supported thread locator",
+            ));
+        }
+        let (requested_account, requested_model) =
+            self.model_rebind_target.clone().ok_or_else(|| {
+                BackendFailure::new(
+                    BackendFailureKind::Unsupported,
+                    "Codex native model rebind has no exact account and model target",
+                )
+            })?;
+        self.initialize()?;
+        self.validate_execution_binding(source)?;
+        let source_account = binding_account(source.binding_identity())?.ok_or_else(|| {
+            BackendFailure::new(
+                BackendFailureKind::Unsupported,
+                "this legacy Codex binding predates verified account identity and cannot be rebound",
+            )
+        })?;
+        if source_account != requested_account || self.account.as_ref() != Some(&requested_account)
+        {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "Codex native model rebind account differs from the source Session account",
+            ));
+        }
+        let (source_model, source_provider) = model_and_provider(source.model_identity())?;
+        if source_model == requested_model {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "Codex native model rebind target is already active",
+            ));
+        }
+
+        let source_thread = source.session_locator().value();
+        let mut params = json!({
+            "threadId": source_thread,
+            "model": requested_model.as_str(),
+            "cwd": self.cwd,
+        });
+        self.apply_thread_policy(&mut params);
+        let result = self.client.call("thread/fork", params)?.result;
+        let thread_id = protocol::string_at(&result, &["thread", "id"])?;
+        let backend_session_id = protocol::string_at(&result, &["thread", "sessionId"])?;
+        let model = protocol::string_at(&result, &["model"])?;
+        let model_provider = protocol::string_at(&result, &["modelProvider"])?;
+        if thread_id == source_thread
+            || model != requested_model.as_str()
+            || model_provider != source_provider
+        {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "Codex thread/fork did not return a distinct thread with the exact requested model and source provider",
+            ));
+        }
+        let evidence = BackendBindingEvidence::new(
+            BACKEND_KIND,
+            self.backend_version.clone().ok_or_else(|| {
+                protocol::protocol_failure(
+                    "Codex backend version was not retained after rebind initialize",
+                )
+            })?,
+            self.binding_identity(backend_session_id, thread_id)?,
+            BackendIdentity::new(
+                MODEL_IDENTITY_SCHEMA,
+                json!({ "model": model, "provider": model_provider }).to_string(),
+            ),
+            BackendIdentity::new("codex.app-server/thread-locator/v1", thread_id),
+            ContinuationStrategy::BackendManagedState,
+        );
+        self.session = Some(SessionBinding {
+            yo: session_id,
+            codex: thread_id.to_owned(),
+        });
+        Ok(evidence)
+    }
+
     fn apply_thread_policy(&self, params: &mut Value) {
         if self.read_only_review {
             params["approvalPolicy"] = json!("never");
@@ -533,23 +750,77 @@ impl<P: JsonMessagePeer> Backend<P> {
         }
     }
 
-    fn binding_identity(&self, session_id: &str, thread_id: &str) -> BackendIdentity {
-        if self.read_only_review {
-            BackendIdentity::new(
+    fn binding_identity(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+    ) -> Result<BackendIdentity, BackendFailure> {
+        Ok(match (self.read_only_review, self.account.as_ref()) {
+            (true, Some(account)) => BackendIdentity::new(
                 READ_ONLY_BINDING_SCHEMA,
+                json!({
+                    "accountId": account.as_str(),
+                    "executionProfile": READ_ONLY_REVIEW_PROFILE,
+                    "sessionId": session_id,
+                    "threadId": thread_id,
+                })
+                .to_string(),
+            ),
+            (true, None) => BackendIdentity::new(
+                LEGACY_READ_ONLY_BINDING_SCHEMA,
                 json!({
                     "executionProfile": READ_ONLY_REVIEW_PROFILE,
                     "sessionId": session_id,
                     "threadId": thread_id,
                 })
                 .to_string(),
-            )
-        } else {
-            BackendIdentity::new(
+            ),
+            (false, Some(account)) => BackendIdentity::new(
                 STANDARD_BINDING_SCHEMA,
+                json!({
+                    "accountId": account.as_str(),
+                    "sessionId": session_id,
+                    "threadId": thread_id,
+                })
+                .to_string(),
+            ),
+            (false, None) => BackendIdentity::new(
+                LEGACY_STANDARD_BINDING_SCHEMA,
                 json!({ "sessionId": session_id, "threadId": thread_id }).to_string(),
-            )
-        }
+            ),
+        })
+    }
+
+    fn binding_identity_for_resume(
+        &self,
+        source: &BackendBindingEvidence,
+        session_id: &str,
+        thread_id: &str,
+    ) -> Result<BackendIdentity, BackendFailure> {
+        Ok(match source.binding_identity().schema() {
+            LEGACY_STANDARD_BINDING_SCHEMA => BackendIdentity::new(
+                LEGACY_STANDARD_BINDING_SCHEMA,
+                json!({ "sessionId": session_id, "threadId": thread_id }).to_string(),
+            ),
+            LEGACY_READ_ONLY_BINDING_SCHEMA => BackendIdentity::new(
+                LEGACY_READ_ONLY_BINDING_SCHEMA,
+                json!({
+                    "executionProfile": READ_ONLY_REVIEW_PROFILE,
+                    "sessionId": session_id,
+                    "threadId": thread_id,
+                })
+                .to_string(),
+            ),
+            STANDARD_BINDING_SCHEMA | READ_ONLY_BINDING_SCHEMA => {
+                self.binding_identity(session_id, thread_id)?
+            },
+            _ => {
+                return Err(BackendFailure::new(
+                    BackendFailureKind::Session,
+                    "Codex durable execution binding schema is unsupported",
+                ));
+            },
+        })
     }
 
     fn validate_execution_binding(
@@ -557,15 +828,29 @@ impl<P: JsonMessagePeer> Backend<P> {
         binding: &BackendBindingEvidence,
     ) -> Result<(), BackendFailure> {
         let identity = binding.binding_identity();
-        let expected_schema = if self.read_only_review {
-            READ_ONLY_BINDING_SCHEMA
+        let profile_matches = if self.read_only_review {
+            matches!(
+                identity.schema(),
+                READ_ONLY_BINDING_SCHEMA | LEGACY_READ_ONLY_BINDING_SCHEMA
+            )
         } else {
-            STANDARD_BINDING_SCHEMA
+            matches!(
+                identity.schema(),
+                STANDARD_BINDING_SCHEMA | LEGACY_STANDARD_BINDING_SCHEMA
+            )
         };
-        if identity.schema() != expected_schema {
+        if !profile_matches {
             return Err(BackendFailure::new(
                 BackendFailureKind::Session,
                 "Codex durable execution profile differs from the requested resume profile",
+            ));
+        }
+        if let Some(account) = binding_account(identity)?
+            && self.account.as_ref() != Some(&account)
+        {
+            return Err(BackendFailure::new(
+                BackendFailureKind::Session,
+                "Codex durable binding account differs from the authenticated account",
             ));
         }
         if self.read_only_review {
@@ -689,6 +974,13 @@ impl<P: JsonMessagePeer> BackendAdapter for Backend<P> {
         self.resume_session(target)
     }
 
+    fn resume_session_rebinding_model(
+        &mut self,
+        target: &BackendResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        self.resume_session_rebinding_model(target)
+    }
+
     fn execute_command(
         &mut self,
         command: AgentCommand,
@@ -703,6 +995,52 @@ impl<P: JsonMessagePeer> BackendAdapter for Backend<P> {
     fn shutdown(&mut self) -> Result<(), BackendFailure> {
         self.shutdown()
     }
+}
+
+fn binding_account(identity: &BackendIdentity) -> Result<Option<AccountId>, BackendFailure> {
+    match identity.schema() {
+        LEGACY_STANDARD_BINDING_SCHEMA | LEGACY_READ_ONLY_BINDING_SCHEMA => Ok(None),
+        STANDARD_BINDING_SCHEMA | READ_ONLY_BINDING_SCHEMA => {
+            let value: Value = serde_json::from_str(identity.value())
+                .map_err(|_| protocol::protocol_failure("Codex binding identity is malformed"))?;
+            let account = value
+                .get("accountId")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    protocol::protocol_failure("Codex binding identity has no accountId")
+                })?;
+            AccountId::new(account)
+                .map(Some)
+                .map_err(|error| protocol::protocol_failure(error.to_string()))
+        },
+        _ => Err(BackendFailure::new(
+            BackendFailureKind::Unsupported,
+            format!("unsupported Codex binding identity `{}`", identity.schema()),
+        )),
+    }
+}
+
+fn model_and_provider(identity: &BackendIdentity) -> Result<(ModelId, String), BackendFailure> {
+    if identity.schema() != MODEL_IDENTITY_SCHEMA {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Unsupported,
+            format!("unsupported Codex model identity `{}`", identity.schema()),
+        ));
+    }
+    let value: Value = serde_json::from_str(identity.value())
+        .map_err(|_| protocol::protocol_failure("Codex model identity is malformed"))?;
+    let model = value
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| protocol::protocol_failure("Codex model identity has no exact model"))?;
+    let provider = value
+        .get("provider")
+        .and_then(Value::as_str)
+        .filter(|provider| !provider.is_empty())
+        .ok_or_else(|| protocol::protocol_failure("Codex model identity has no exact provider"))?;
+    let model =
+        ModelId::new(model).map_err(|error| protocol::protocol_failure(error.to_string()))?;
+    Ok((model, provider.to_owned()))
 }
 
 fn json_rpc_identity(request_id: u64) -> BackendIdentity {

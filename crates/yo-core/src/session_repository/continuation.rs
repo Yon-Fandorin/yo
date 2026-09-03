@@ -206,7 +206,11 @@ pub(crate) fn build_continuation(
             ))
         })?;
     let resumes_from_replacement_source = transition_source == Some(resume_source)
-        && binding.transition().mode() == crate::journal::codec::TransitionMode::ExactReplay;
+        && matches!(
+            binding.transition().mode(),
+            crate::journal::codec::TransitionMode::ExactReplay
+                | crate::journal::codec::TransitionMode::BackendNativeModelRebind
+        );
     if source_epoch != epoch && !resumes_from_replacement_source {
         return Err(StoredSessionContinuationError::new(format!(
             "continuation source {} belongs to epoch {source_epoch}, not open epoch {epoch}",
@@ -264,7 +268,8 @@ pub(crate) fn build_continuation(
         recovered.context_epoch(),
         recovered.model_replay_groups(),
     )
-    .with_replay_contract_rebind_required(recovered.replay_contract_rebind_required());
+    .with_replay_contract_rebind_required(recovered.replay_contract_rebind_required())
+    .with_binding_has_accepted_request(open_epoch_has_accepted_request);
     Ok(StoredSessionContinuation {
         recovered,
         target,

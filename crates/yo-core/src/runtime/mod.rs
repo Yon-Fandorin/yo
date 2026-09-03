@@ -36,6 +36,8 @@ pub struct AgentRuntime<B> {
     model_replay: ModelReplay,
     replay_contract_rebind_required: bool,
     resume_source: Option<BackendResumeSource>,
+    binding_has_accepted_request: bool,
+    binding_has_unanchored_request: bool,
     context_policy: Option<ContextPolicyChanged>,
     context_epoch: Option<u64>,
     context_policy_initialized: bool,
@@ -64,6 +66,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
             model_replay: ModelReplay::default(),
             replay_contract_rebind_required: false,
             resume_source: None,
+            binding_has_accepted_request: false,
+            binding_has_unanchored_request: false,
             context_policy: None,
             context_epoch: None,
             context_policy_initialized: false,
@@ -128,10 +132,16 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 "backend binding epoch is exhausted",
             ))
         })?;
+        let source = target.source().ok_or_else(|| {
+            RuntimeError::backend(crate::BackendFailure::new(
+                crate::BackendFailureKind::Session,
+                "exact-replay replacement requires one durable source",
+            ))
+        })?;
         if !self.journal.commit_exact_replay_replacement(
             target.epoch(),
             epoch,
-            target.source(),
+            source,
             evidence.clone(),
         ) {
             return Err(RuntimeError::backend(crate::BackendFailure::new(
@@ -149,7 +159,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
         } else {
             self.replay_contract_rebind_required = true;
         }
-        self.resume_source = Some(target.source());
+        self.resume_source = Some(source);
+        self.binding_has_accepted_request = false;
+        self.binding_has_unanchored_request = false;
         Ok(())
     }
 
@@ -177,7 +189,9 @@ impl<B: AgentBackend> AgentRuntime<B> {
         self.continuation_strategy = Some(target.binding().continuation_strategy());
         self.model_replay = target.model_replay().clone();
         self.replay_contract_rebind_required = target.replay_contract_rebind_required();
-        self.resume_source = Some(target.source());
+        self.resume_source = target.source();
+        self.binding_has_accepted_request = target.binding_has_accepted_request();
+        self.binding_has_unanchored_request = false;
         self.context_policy = target.context_policy().cloned();
         self.context_epoch = target.context_epoch();
         self.context_policy_initialized = true;
@@ -334,6 +348,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 );
                 self.accepted_requests.insert(turn, accepted);
                 self.accepted_submissions.insert(turn, submission_id);
+                self.binding_has_accepted_request = true;
+                self.binding_has_unanchored_request = true;
             },
             (Some(submission_id), BackendCommandEvidence::None) => {
                 let inserted = self.submission_ids.insert(submission_id);
@@ -351,6 +367,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 self.journal
                     .append_initial_binding(committed, &events, epoch, evidence);
                 self.binding_epoch = Some(epoch);
+                self.binding_has_accepted_request = false;
+                self.binding_has_unanchored_request = false;
             },
             (None, BackendCommandEvidence::None) => {
                 self.journal.append_committed_command(committed, &events);
@@ -585,6 +603,8 @@ impl<B: AgentBackend> AgentRuntime<B> {
                 self.journal
                     .append_accepted_request(turn, epoch, context_epoch, evidence);
             self.accepted_requests.insert(turn, accepted);
+            self.binding_has_accepted_request = true;
+            self.binding_has_unanchored_request = true;
             return Ok(RuntimePoll::Pending);
         }
         if let BackendEvent::ResumableTurnFinished { turn, evidence } = event.clone() {
@@ -651,6 +671,7 @@ impl<B: AgentBackend> AgentRuntime<B> {
                         self.context_replay_groups.push(group);
                     }
                     self.resume_source = Some(BackendResumeSource::ContinuationAnchor(anchor));
+                    self.binding_has_unanchored_request = false;
                     self.accepted_requests.remove(&turn);
                     self.accepted_submissions.remove(&turn);
                     self.active_context_source = None;
@@ -775,64 +796,19 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                 )),
             ));
         }
-        let (Some(session_id), Some(epoch), Some(binding), Some(resume_source)) = (
+        let (Some(session_id), Some(epoch), Some(binding)) = (
             self.engine.session_id(),
             self.binding_epoch,
             self.binding.clone(),
-            self.resume_source,
         ) else {
             return Err(reject_replacement_candidate(
                 &mut candidate,
                 RuntimeError::backend(crate::BackendFailure::new(
                     crate::BackendFailureKind::Session,
-                    "binding replacement requires one durable continuation target",
+                    "binding replacement requires one open durable binding",
                 )),
             ));
         };
-        if !matches!(
-            binding.continuation_strategy(),
-            ContinuationStrategy::ExactReplay { .. }
-        ) {
-            return Err(reject_replacement_candidate(
-                &mut candidate,
-                RuntimeError::backend(crate::BackendFailure::new(
-                    crate::BackendFailureKind::Unsupported,
-                    "binding replacement requires exact replay",
-                )),
-            ));
-        }
-        let target = match resume_source {
-            BackendResumeSource::ContinuationAnchor(sequence) => {
-                BackendResumeTarget::new(session_id, epoch, binding.clone(), sequence)
-            },
-            BackendResumeSource::ContextCheckpoint(sequence) => {
-                BackendResumeTarget::from_checkpoint(session_id, epoch, binding.clone(), sequence)
-            },
-        }
-        .with_model_replay(self.model_replay.clone())
-        .with_context_state(
-            self.context_policy.clone(),
-            self.context_epoch,
-            self.context_replay_groups.clone(),
-        );
-        let evidence = match candidate.resume_session_replacing_binding(&target) {
-            Ok(evidence) => evidence,
-            Err(failure) => {
-                return Err(reject_replacement_candidate(
-                    &mut candidate,
-                    RuntimeError::backend(failure),
-                ));
-            },
-        };
-        if !valid_replacement_binding(&binding, &evidence, &self.model_replay) {
-            return Err(reject_replacement_candidate(
-                &mut candidate,
-                RuntimeError::backend(crate::BackendFailure::new(
-                    crate::BackendFailureKind::Session,
-                    "exact-replay replacement returned an incompatible target binding",
-                )),
-            ));
-        }
         let Some(next_epoch) = epoch.checked_add(1) else {
             return Err(reject_replacement_candidate(
                 &mut candidate,
@@ -842,24 +818,148 @@ impl AgentRuntime<Box<dyn AgentBackend + Send>> {
                 )),
             ));
         };
-        if !self.journal.commit_exact_replay_replacement(
-            epoch,
-            next_epoch,
-            resume_source,
-            evidence.clone(),
-        ) {
-            return Err(reject_replacement_candidate(
-                &mut candidate,
-                RuntimeError::backend(crate::BackendFailure::new(
-                    crate::BackendFailureKind::Session,
-                    "exact-replay replacement could not publish its binding transition",
-                )),
-            ));
-        }
+
+        let evidence = match binding.continuation_strategy() {
+            ContinuationStrategy::ExactReplay { .. } => {
+                let Some(resume_source) = self.resume_source else {
+                    return Err(reject_replacement_candidate(
+                        &mut candidate,
+                        RuntimeError::backend(crate::BackendFailure::new(
+                            crate::BackendFailureKind::Session,
+                            "exact-replay replacement requires one durable continuation source",
+                        )),
+                    ));
+                };
+                let target = match resume_source {
+                    BackendResumeSource::ContinuationAnchor(sequence) => {
+                        BackendResumeTarget::new(session_id, epoch, binding.clone(), sequence)
+                    },
+                    BackendResumeSource::ContextCheckpoint(sequence) => {
+                        BackendResumeTarget::from_checkpoint(
+                            session_id,
+                            epoch,
+                            binding.clone(),
+                            sequence,
+                        )
+                    },
+                }
+                .with_model_replay(self.model_replay.clone())
+                .with_context_state(
+                    self.context_policy.clone(),
+                    self.context_epoch,
+                    self.context_replay_groups.clone(),
+                );
+                let evidence = candidate
+                    .resume_session_replacing_binding(&target)
+                    .map_err(RuntimeError::backend)
+                    .map_err(|primary| reject_replacement_candidate(&mut candidate, primary))?;
+                if !valid_replacement_binding(&binding, &evidence, &self.model_replay) {
+                    return Err(reject_replacement_candidate(
+                        &mut candidate,
+                        RuntimeError::backend(crate::BackendFailure::new(
+                            crate::BackendFailureKind::Session,
+                            "exact-replay replacement returned an incompatible target binding",
+                        )),
+                    ));
+                }
+                if !self.journal.commit_exact_replay_replacement(
+                    epoch,
+                    next_epoch,
+                    resume_source,
+                    evidence.clone(),
+                ) {
+                    return Err(reject_replacement_candidate(
+                        &mut candidate,
+                        RuntimeError::backend(crate::BackendFailure::new(
+                            crate::BackendFailureKind::Session,
+                            "exact-replay replacement could not publish its binding transition",
+                        )),
+                    ));
+                }
+                evidence
+            },
+            ContinuationStrategy::BackendManagedState => {
+                if !self.backend.capabilities().supports_native_model_rebind()
+                    || !candidate.capabilities().supports_native_model_rebind()
+                {
+                    return Err(reject_replacement_candidate(
+                        &mut candidate,
+                        RuntimeError::backend(crate::BackendFailure::new(
+                            crate::BackendFailureKind::Unsupported,
+                            "source and candidate backends must advertise native model rebinding",
+                        )),
+                    ));
+                }
+                let source_anchor = if self.binding_has_accepted_request {
+                    if self.binding_has_unanchored_request {
+                        return Err(reject_replacement_candidate(
+                            &mut candidate,
+                            RuntimeError::backend(crate::BackendFailure::new(
+                                crate::BackendFailureKind::Session,
+                                "native model rebinding requires the newest durable continuation Anchor after an accepted request",
+                            )),
+                        ));
+                    }
+                    match self.resume_source {
+                        Some(BackendResumeSource::ContinuationAnchor(sequence)) => Some(sequence),
+                        Some(BackendResumeSource::ContextCheckpoint(_)) | None => {
+                            return Err(reject_replacement_candidate(
+                                &mut candidate,
+                                RuntimeError::backend(crate::BackendFailure::new(
+                                    crate::BackendFailureKind::Session,
+                                    "native model rebinding requires the newest durable continuation Anchor after an accepted request",
+                                )),
+                            ));
+                        },
+                    }
+                } else {
+                    None
+                };
+                let target = BackendResumeTarget::for_model_rebind(
+                    session_id,
+                    epoch,
+                    binding.clone(),
+                    source_anchor,
+                );
+                let evidence = candidate
+                    .resume_session_rebinding_model(&target)
+                    .map_err(RuntimeError::backend)
+                    .map_err(|primary| reject_replacement_candidate(&mut candidate, primary))?;
+                if !valid_native_model_rebind(&binding, &evidence) {
+                    return Err(reject_replacement_candidate(
+                        &mut candidate,
+                        RuntimeError::backend(crate::BackendFailure::new(
+                            crate::BackendFailureKind::Session,
+                            "native model rebind returned an incompatible target binding",
+                        )),
+                    ));
+                }
+                if !self.journal.commit_native_model_rebind(
+                    epoch,
+                    next_epoch,
+                    source_anchor,
+                    evidence.clone(),
+                ) {
+                    return Err(reject_replacement_candidate(
+                        &mut candidate,
+                        RuntimeError::backend(crate::BackendFailure::new(
+                            crate::BackendFailureKind::Session,
+                            "native model rebind could not publish its binding transition",
+                        )),
+                    ));
+                }
+                self.resume_source = source_anchor.map(BackendResumeSource::ContinuationAnchor);
+                self.binding_has_accepted_request = false;
+                self.binding_has_unanchored_request = false;
+                evidence
+            },
+        };
 
         self.binding_epoch = Some(next_epoch);
         self.binding = Some(evidence.clone());
         self.continuation_strategy = Some(evidence.continuation_strategy());
+        self.binding_has_accepted_request = false;
+        self.binding_has_unanchored_request = false;
         if evidence.continuation_strategy() == ContinuationStrategy::BackendManagedState {
             self.model_replay = ModelReplay::default();
             self.context_replay_groups.clear();
@@ -901,6 +1001,19 @@ fn valid_replacement_binding(
             == replay_profile(previous.continuation_strategy())
 }
 
+fn valid_native_model_rebind(
+    previous: &BackendBindingEvidence,
+    replacement: &BackendBindingEvidence,
+) -> bool {
+    replacement.is_valid()
+        && previous.continuation_strategy() == ContinuationStrategy::BackendManagedState
+        && replacement.continuation_strategy() == ContinuationStrategy::BackendManagedState
+        && replacement.backend_kind() == previous.backend_kind()
+        && replacement.binding_identity() != previous.binding_identity()
+        && replacement.session_locator() != previous.session_locator()
+        && replacement.model_identity() != previous.model_identity()
+}
+
 fn reject_replacement_candidate(
     candidate: &mut Box<dyn AgentBackend + Send>,
     primary: RuntimeError,
@@ -931,11 +1044,62 @@ fn command_kind(command: &AgentCommand) -> &'static str {
 
 #[cfg(test)]
 mod replacement_binding_tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
     use crate::{
-        BackendIdentity, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
-        ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile,
+        BackendCapabilities, BackendIdentity, BackendOutcomeEvidence, BackendRequestEvidence,
+        BackendScriptStep, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+        ProviderPrivateReplayEnvelope, ReplayExecutor, ReplayProfile, ScriptedBackend, TurnId,
+        UserInput,
+        session_repository::{
+            AppendError, AppendReceipt, DurableRecord, RepositoryEntry, RepositoryError,
+            RepositorySequence, SessionRepository, SessionWriterRepository,
+        },
     };
+
+    #[derive(Clone, Default)]
+    struct MemoryRepository(Arc<Mutex<Vec<RepositoryEntry>>>);
+
+    impl SessionRepository for MemoryRepository {
+        fn append(
+            &mut self,
+            _session_id: SessionId,
+            record: DurableRecord,
+        ) -> Result<AppendReceipt, AppendError> {
+            let mut entries = self.0.lock().unwrap();
+            let sequence = RepositorySequence::new(u64::try_from(entries.len()).unwrap() + 1);
+            entries.push(RepositoryEntry::new(sequence, record));
+            Ok(AppendReceipt::new(sequence))
+        }
+
+        fn read_after(
+            &self,
+            _session_id: SessionId,
+            sequence: Option<RepositorySequence>,
+            limit: usize,
+        ) -> Result<Vec<RepositoryEntry>, RepositoryError> {
+            let after = sequence.map_or(0, RepositorySequence::get);
+            Ok(self
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.sequence().get() > after)
+                .take(limit)
+                .cloned()
+                .collect())
+        }
+    }
+
+    impl SessionWriterRepository for MemoryRepository {
+        fn acquire_session_writer(
+            &mut self,
+            _session_id: SessionId,
+        ) -> Result<(), RepositoryError> {
+            Ok(())
+        }
+    }
 
     fn binding(identity: &str, strategy: ContinuationStrategy) -> BackendBindingEvidence {
         BackendBindingEvidence::new(
@@ -946,6 +1110,39 @@ mod replacement_binding_tests {
             BackendIdentity::new("test.session/v1", "session"),
             strategy,
         )
+    }
+
+    fn native_binding(identity: &str, model: &str, locator: &str) -> BackendBindingEvidence {
+        BackendBindingEvidence::new(
+            "codex-app-server",
+            "codex_cli_rs/0.152.1",
+            BackendIdentity::new("codex.app-server/thread-binding/v2", identity),
+            BackendIdentity::new("codex.app-server/model-and-provider/v1", model),
+            BackendIdentity::new("codex.app-server/thread-locator/v1", locator),
+            ContinuationStrategy::BackendManagedState,
+        )
+    }
+
+    fn durable_runtime(
+        backend: ScriptedBackend,
+        session_id: SessionId,
+    ) -> (
+        AgentRuntime<Box<dyn crate::AgentBackend + Send>>,
+        MemoryRepository,
+    ) {
+        let repository = MemoryRepository::default();
+        let journal = SessionJournal::with_repository_and_descriptor(
+            Box::new(repository.clone()),
+            crate::fixture_descriptor(session_id),
+        );
+        let mut runtime = AgentRuntime::with_journal(
+            Box::new(
+                backend.with_capabilities(BackendCapabilities::none().with_native_model_rebind()),
+            ) as Box<dyn crate::AgentBackend + Send>,
+            journal,
+        );
+        runtime.initialize_durability();
+        (runtime, repository)
     }
 
     // retained private replay는 같은 binding identity와 replay profile에서만 손실 없이
@@ -1003,5 +1200,315 @@ mod replacement_binding_tests {
             &binding("different", ContinuationStrategy::BackendManagedState),
             &semantic_replay,
         ));
+    }
+
+    // 아직 request를 수락하지 않은 backend-managed binding은 Anchor 없이 provider-native
+    // fork할 수 있고, distinct binding/model/locator를 한 atomic transition으로 엽니다.
+    #[test]
+    fn native_model_rebind_allows_a_source_free_unused_binding() {
+        let session_id = crate::fixture_session(41);
+        let source = native_binding("binding-a", "model-a", "thread-a");
+        let replacement = native_binding("binding-b", "model-b", "thread-b");
+        let current = ScriptedBackend::new([
+            BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::CreateSession { session_id },
+                evidence: BackendCommandEvidence::BindingOpened(source.clone()),
+            },
+            BackendScriptStep::Shutdown(Ok(())),
+        ]);
+        let target = BackendResumeTarget::for_model_rebind(session_id, 1, source, None);
+        let candidate = ScriptedBackend::new([
+            BackendScriptStep::RebindModel {
+                target: Box::new(target),
+                evidence: replacement.clone(),
+            },
+            BackendScriptStep::Shutdown(Ok(())),
+        ])
+        .with_capabilities(BackendCapabilities::none().with_native_model_rebind());
+        let (mut runtime, _) = durable_runtime(current, session_id);
+
+        runtime
+            .execute_command(AgentCommand::CreateSession { session_id })
+            .unwrap();
+        if let Err(error) = runtime.replace_backend(Box::new(candidate)) {
+            panic!("native model rebind failed: {}", error.primary);
+        }
+
+        assert_eq!(runtime.binding.as_ref(), Some(&replacement));
+        let entries = runtime.journal.semantic_entries();
+        let opened = entries
+            .iter()
+            .rev()
+            .find_map(|entry| match entry.record() {
+                crate::journal::SemanticRecord::BackendBindingOpened(binding) => Some(binding),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            opened.transition().mode(),
+            crate::journal::codec::TransitionMode::BackendNativeModelRebind
+        );
+        assert_eq!(
+            opened.transition().cache(),
+            crate::journal::codec::CacheState::Unknown
+        );
+        assert!(opened.transition().source_anchor_sequence().is_none());
+        runtime.shutdown().unwrap();
+    }
+
+    // source binding이 request를 수락했다면 runtime은 그 Turn의 newest Anchor를 fork
+    // target과 durable transition 모두에 결속하고 임의의 source-free 전환을 허용하지 않습니다.
+    #[test]
+    fn native_model_rebind_uses_the_newest_source_anchor_after_model_work() {
+        let session_id = crate::fixture_session(42);
+        let turn = TurnRef::new(
+            session_id,
+            TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
+        );
+        let source = native_binding("binding-a", "model-a", "thread-a");
+        let replacement = native_binding("binding-b", "model-b", "thread-b");
+        let request = BackendRequestEvidence::new(
+            "codex.app-server/turn-start/v1",
+            BackendIdentity::new("codex.app-server/json-rpc-request/v1", "2"),
+            BackendIdentity::new("codex.app-server/accepted-request/v1", "turn-a"),
+        );
+        let current = ScriptedBackend::new([
+            BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::CreateSession { session_id },
+                evidence: BackendCommandEvidence::BindingOpened(source.clone()),
+            },
+            BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::StartTurn {
+                    turn,
+                    input: UserInput::new("hello"),
+                },
+                evidence: BackendCommandEvidence::RequestAccepted(request),
+            },
+            BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+                turn,
+                evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
+                    "codex.app-server/turn-outcome/v1",
+                    "turn-a",
+                )),
+            }),
+            BackendScriptStep::Shutdown(Ok(())),
+        ]);
+        let (mut runtime, mut repository) = durable_runtime(current, session_id);
+        runtime
+            .execute_command(AgentCommand::CreateSession { session_id })
+            .unwrap();
+        runtime
+            .execute_submission(
+                AgentCommand::StartTurn {
+                    turn,
+                    input: UserInput::new("hello"),
+                },
+                SubmissionId::new().unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            runtime.poll_event().unwrap(),
+            RuntimePoll::Event(AgentEvent::TurnFinished { .. })
+        ));
+        let Some(BackendResumeSource::ContinuationAnchor(anchor)) = runtime.resume_source else {
+            panic!("completed backend-managed work has a continuation Anchor");
+        };
+        let target = BackendResumeTarget::for_model_rebind(session_id, 1, source, Some(anchor));
+        let candidate = ScriptedBackend::new([
+            BackendScriptStep::RebindModel {
+                target: Box::new(target),
+                evidence: replacement,
+            },
+            BackendScriptStep::Shutdown(Ok(())),
+        ])
+        .with_capabilities(BackendCapabilities::none().with_native_model_rebind());
+
+        if let Err(error) = runtime.replace_backend(Box::new(candidate)) {
+            panic!("native model rebind failed: {}", error.primary);
+        }
+
+        let entries = runtime.journal.semantic_entries();
+        let opened = entries
+            .iter()
+            .rev()
+            .find_map(|entry| match entry.record() {
+                crate::journal::SemanticRecord::BackendBindingOpened(binding) => Some(binding),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(opened.transition().source_anchor_sequence(), Some(anchor));
+        let continuation = crate::session_repository::recover_stored_session_continuation(
+            &mut repository,
+            session_id,
+        )
+        .unwrap();
+        assert!(!continuation.target().binding_has_accepted_request());
+        runtime.shutdown().unwrap();
+    }
+
+    // request는 수락됐지만 resumable outcome이 없어 Anchor를 만들 수 없었던 binding을
+    // unused binding처럼 취급하지 않고 candidate RPC 전에 닫습니다.
+    #[test]
+    fn native_model_rebind_rejects_an_unanchored_accepted_request() {
+        let session_id = crate::fixture_session(43);
+        let turn = TurnRef::new(
+            session_id,
+            TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
+        );
+        let source = native_binding("binding-a", "model-a", "thread-a");
+        let current = ScriptedBackend::new([
+            BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::CreateSession { session_id },
+                evidence: BackendCommandEvidence::BindingOpened(source),
+            },
+            BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::StartTurn {
+                    turn,
+                    input: UserInput::new("fail"),
+                },
+                evidence: BackendCommandEvidence::RequestAccepted(BackendRequestEvidence::new(
+                    "codex.app-server/turn-start/v1",
+                    BackendIdentity::new("codex.app-server/json-rpc-request/v1", "2"),
+                    BackendIdentity::new("codex.app-server/accepted-request/v1", "turn-a"),
+                )),
+            },
+            BackendScriptStep::Emit(BackendEvent::TurnFinished {
+                turn,
+                outcome: TurnOutcome::Failed(crate::Failure::new("failed")),
+            }),
+            BackendScriptStep::Shutdown(Ok(())),
+        ]);
+        let (mut runtime, _) = durable_runtime(current, session_id);
+        runtime
+            .execute_command(AgentCommand::CreateSession { session_id })
+            .unwrap();
+        runtime
+            .execute_submission(
+                AgentCommand::StartTurn {
+                    turn,
+                    input: UserInput::new("fail"),
+                },
+                SubmissionId::new().unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            runtime.poll_event().unwrap(),
+            RuntimePoll::Event(AgentEvent::TurnFinished { .. })
+        ));
+        let candidate = ScriptedBackend::new([BackendScriptStep::Shutdown(Ok(()))])
+            .with_capabilities(BackendCapabilities::none().with_native_model_rebind());
+
+        let error = runtime.replace_backend(Box::new(candidate)).unwrap_err();
+
+        assert!(
+            error
+                .primary
+                .to_string()
+                .contains("newest durable continuation Anchor")
+        );
+        runtime.shutdown().unwrap();
+    }
+
+    // 새 request가 수락되는 순간 이전 Turn의 Anchor는 더 이상 최신 source가 아닙니다.
+    // 후속 Turn 실패 뒤에는 candidate fork 자체를 호출하기 전에 rebind를 닫아야 합니다.
+    #[test]
+    fn native_model_rebind_rejects_a_stale_anchor_before_candidate_fork() {
+        let session_id = crate::fixture_session(44);
+        let first_turn = TurnRef::new(
+            session_id,
+            TurnId::new(std::num::NonZeroU64::new(1).unwrap()),
+        );
+        let second_turn = TurnRef::new(
+            session_id,
+            TurnId::new(std::num::NonZeroU64::new(2).unwrap()),
+        );
+        let source = native_binding("binding-a", "model-a", "thread-a");
+        let request = |id: &str| {
+            BackendRequestEvidence::new(
+                "codex.app-server/turn-start/v1",
+                BackendIdentity::new("codex.app-server/json-rpc-request/v1", id),
+                BackendIdentity::new("codex.app-server/accepted-request/v1", id),
+            )
+        };
+        let current = ScriptedBackend::new([
+            BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::CreateSession { session_id },
+                evidence: BackendCommandEvidence::BindingOpened(source.clone()),
+            },
+            BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::StartTurn {
+                    turn: first_turn,
+                    input: UserInput::new("first"),
+                },
+                evidence: BackendCommandEvidence::RequestAccepted(request("request-1")),
+            },
+            BackendScriptStep::Emit(BackendEvent::ResumableTurnFinished {
+                turn: first_turn,
+                evidence: BackendOutcomeEvidence::with_identity(BackendIdentity::new(
+                    "codex.app-server/turn-outcome/v1",
+                    "request-1",
+                )),
+            }),
+            BackendScriptStep::AcceptCommandWithEvidence {
+                command: AgentCommand::StartTurn {
+                    turn: second_turn,
+                    input: UserInput::new("second"),
+                },
+                evidence: BackendCommandEvidence::RequestAccepted(request("request-2")),
+            },
+            BackendScriptStep::Emit(BackendEvent::TurnFinished {
+                turn: second_turn,
+                outcome: TurnOutcome::Failed(crate::Failure::new("failed")),
+            }),
+            BackendScriptStep::Shutdown(Ok(())),
+        ]);
+        let (mut runtime, _) = durable_runtime(current, session_id);
+        runtime
+            .execute_command(AgentCommand::CreateSession { session_id })
+            .unwrap();
+        runtime
+            .execute_submission(
+                AgentCommand::StartTurn {
+                    turn: first_turn,
+                    input: UserInput::new("first"),
+                },
+                SubmissionId::new().unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            runtime.poll_event().unwrap(),
+            RuntimePoll::Event(AgentEvent::TurnFinished { .. })
+        ));
+        runtime
+            .execute_submission(
+                AgentCommand::StartTurn {
+                    turn: second_turn,
+                    input: UserInput::new("second"),
+                },
+                SubmissionId::new().unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            runtime.poll_event().unwrap(),
+            RuntimePoll::Event(AgentEvent::TurnFinished { .. })
+        ));
+        let candidate = ScriptedBackend::new([BackendScriptStep::Shutdown(Ok(()))])
+            .with_capabilities(BackendCapabilities::none().with_native_model_rebind());
+        let previous_epoch = runtime.binding_epoch;
+        let previous_binding = runtime.binding.clone();
+        let previous_records = runtime.journal.semantic_entries().len();
+
+        let error = runtime.replace_backend(Box::new(candidate)).unwrap_err();
+
+        assert!(
+            error
+                .primary
+                .to_string()
+                .contains("newest durable continuation Anchor")
+        );
+        assert_eq!(runtime.binding_epoch, previous_epoch);
+        assert_eq!(runtime.binding, previous_binding);
+        assert_eq!(runtime.journal.semantic_entries().len(), previous_records);
+        runtime.shutdown().unwrap();
     }
 }

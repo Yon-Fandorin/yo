@@ -315,6 +315,21 @@ impl HostCatalogModel {
     pub const fn id(&self) -> &ModelId {
         &self.id
     }
+
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    #[must_use]
+    pub const fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+
+    #[must_use]
+    pub fn unavailable_reason(&self) -> Option<&str> {
+        self.unavailable_reason.as_deref()
+    }
 }
 
 impl HostModelCatalog {
@@ -363,6 +378,31 @@ impl HostModelCatalog {
             current_model,
             models,
         })
+    }
+
+    #[must_use]
+    pub const fn host(&self) -> &HostId {
+        &self.host
+    }
+
+    #[must_use]
+    pub const fn account(&self) -> &AccountId {
+        &self.account
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    #[must_use]
+    pub const fn current_model(&self) -> Option<&ModelId> {
+        self.current_model.as_ref()
+    }
+
+    #[must_use]
+    pub fn models(&self) -> &[HostCatalogModel] {
+        &self.models
     }
 }
 
@@ -539,7 +579,19 @@ impl ModelSelectionController {
 
     /// Adds one fresh host inventory. `active` marks only the live host account's exact current
     /// model; inventories from other available hosts remain ordinary sections.
-    pub fn with_host_catalog(mut self, catalog: HostModelCatalog, active: bool) -> Self {
+    pub fn with_host_catalog(self, catalog: HostModelCatalog, active: bool) -> Self {
+        let current = active.then(|| catalog.current_model.clone()).flatten();
+        self.with_host_catalog_state(catalog, active, current.as_ref(), None)
+    }
+
+    /// Adds one host inventory with runtime availability and an exact live-model override.
+    pub fn with_host_catalog_state(
+        mut self,
+        catalog: HostModelCatalog,
+        active: bool,
+        active_model: Option<&ModelId>,
+        unavailable_reason: Option<&str>,
+    ) -> Self {
         if active {
             self.current = None;
             for section in &mut self.sections {
@@ -550,6 +602,8 @@ impl ModelSelectionController {
                             choice.label = label.to_owned();
                         }
                     }
+                    choice.enabled = false;
+                    choice.disabled_reason = Some("semantic handoff is not implemented".to_owned());
                 }
             }
         }
@@ -560,7 +614,10 @@ impl ModelSelectionController {
             .models
             .into_iter()
             .map(|model| {
-                let current = active && catalog.current_model.as_ref() == Some(&model.id);
+                let current = active && active_model == Some(&model.id);
+                let disabled_reason = model
+                    .unavailable_reason
+                    .or_else(|| unavailable_reason.map(str::to_owned));
                 let target = ModelPickerTarget::Host(HostModelSelection::new(
                     catalog.host.clone(),
                     catalog.account.clone(),
@@ -576,8 +633,8 @@ impl ModelSelectionController {
                     },
                     detail: model.id.to_string(),
                     current,
-                    enabled: model.selectable,
-                    disabled_reason: model.unavailable_reason,
+                    enabled: model.selectable && disabled_reason.is_none(),
+                    disabled_reason,
                 }
             })
             .collect();

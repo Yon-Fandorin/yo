@@ -203,6 +203,8 @@ struct LiveSession {
     workspace: std::path::PathBuf,
     local_tool_registry: Option<local_tools::LocalToolRegistryRevision>,
     active_host: Option<yo_core::HostId>,
+    active_host_execution: Option<model::DelegatedExecutionProfile>,
+    active_host_model: Option<model::ActiveHostModel>,
     host_catalogs: Vec<model::HostCatalogObservation>,
 }
 
@@ -370,6 +372,18 @@ fn run_agent_generation(
             selection.replaces_binding(),
         )?;
         let active_host = selection.delegated_host().map(|(host, _)| host.clone());
+        let active_host_execution = selection.delegated_host().map(|(_, execution)| execution);
+        let resumed_codex_binding = match (&launch, active_host.as_ref()) {
+            (Launch::Resume(continuation), Some(host))
+                if host.as_str() == yo_core::HostId::CODEX =>
+            {
+                yo_backend_delegated_codex::native_model_binding(continuation.target().binding())
+                    .ok()
+                    .flatten()
+            },
+            _ => None,
+        };
+        let is_resume = launch.resume_id().is_some();
         let host_catalogs = if uses_terminal_frontend {
             model::read_builtin_host_catalogs(&session_cwd, selection.delegated_host())
         } else {
@@ -484,6 +498,7 @@ fn run_agent_generation(
                 (backend, None)
             },
         };
+        let supports_native_model_rebind = backend.capabilities().supports_native_model_rebind();
         let agent = match launch {
             Launch::New(descriptor) => agent::TuiAgentConnection::start_persistent(
                 backend,
@@ -516,6 +531,29 @@ fn run_agent_generation(
         let Some(agent) = agent else {
             return Ok(SessionStep::Complete);
         };
+        let started_codex_binding = if !is_resume
+            && active_host
+                .as_ref()
+                .is_some_and(|host| host.as_str() == yo_core::HostId::CODEX)
+        {
+            agent.initial_binding_record().and_then(|record| {
+                yo_backend_delegated_codex::native_model_binding_from_trace(&record)
+                    .ok()
+                    .flatten()
+            })
+        } else {
+            None
+        };
+        let confirmed_codex_binding = resumed_codex_binding.or(started_codex_binding);
+        let active_host_model = model::resolve_active_host_model(
+            active_host.as_ref(),
+            confirmed_codex_binding
+                .as_ref()
+                .map(|binding| (binding.account(), binding.model())),
+            supports_native_model_rebind,
+            is_resume,
+            &host_catalogs,
+        );
         if let GenerationFrontend::Print(input) = frontend {
             let mut session = agent.into_session();
             let output = print::run(&mut session, input, || termination_requested(termination));
@@ -547,7 +585,7 @@ fn run_agent_generation(
                 config.model_catalog().clone(),
                 selection.model_selection(),
             ),
-            active_host.as_ref(),
+            active_host_model.as_ref(),
             &host_catalogs,
         );
         if !model_controller.sections().is_empty() {
@@ -559,6 +597,8 @@ fn run_agent_generation(
             workspace: session_cwd,
             local_tool_registry: selection.registry_revision(),
             active_host,
+            active_host_execution,
+            active_host_model,
             host_catalogs,
         });
     }
@@ -631,12 +671,121 @@ fn run_agent_generation(
         Ok(yo_tui::TerminalOutcome::ModelSelectionRequested(yo_core::ModelPickerTarget::Host(
             selection,
         ))) => {
-            session.tui.report_model_switch_failure(format!(
-                "switching to host:{} model {} requires the semantic-handoff transition",
-                selection.host().as_str(),
-                selection.model()
-            ));
-            return Ok(SessionStep::Continue);
+            let Some(active) = session.active_host_model.as_ref() else {
+                session.tui.report_model_switch_failure(format!(
+                    "switching to host:{} model {} requires the semantic-handoff transition",
+                    selection.host().as_str(),
+                    selection.model()
+                ));
+                return Ok(SessionStep::Continue);
+            };
+            if active.host() != selection.host() || active.account() != selection.account() {
+                session.tui.report_model_switch_failure(
+                    "the selected host or account differs from the active Session".to_owned(),
+                );
+                return Ok(SessionStep::Continue);
+            }
+            if active.model() == selection.model() {
+                return Ok(SessionStep::Continue);
+            }
+            if !active.supports_native_model_rebind() {
+                session.tui.report_model_switch_failure(
+                    "the active host does not advertise state-preserving model switching"
+                        .to_owned(),
+                );
+                return Ok(SessionStep::Continue);
+            }
+
+            let refreshed = model::read_builtin_host_catalogs(
+                &session.workspace,
+                session
+                    .active_host
+                    .as_ref()
+                    .zip(session.active_host_execution),
+            );
+            let admission = refreshed
+                .iter()
+                .find(|observation| observation.host() == selection.host())
+                .ok_or_else(|| "the selected host inventory is absent".to_owned())
+                .and_then(|observation| observation.catalog().map_err(str::to_owned))
+                .and_then(|catalog| {
+                    if catalog.account() != selection.account() {
+                        return Err(
+                            "the authenticated host account changed before selection".to_owned()
+                        );
+                    }
+                    let model = catalog
+                        .models()
+                        .iter()
+                        .find(|model| model.id() == selection.model())
+                        .ok_or_else(|| {
+                            "the selected model is absent from the refreshed host inventory"
+                                .to_owned()
+                        })?;
+                    if !model.is_selectable() {
+                        return Err(model
+                            .unavailable_reason()
+                            .unwrap_or("the selected model is unavailable")
+                            .to_owned());
+                    }
+                    Ok(())
+                });
+            session.host_catalogs = refreshed;
+            if let Err(error) = admission {
+                session.tui.report_model_switch_failure(error);
+                return Ok(SessionStep::Continue);
+            }
+            if selection.host().as_str() != yo_core::HostId::CODEX {
+                session.tui.report_model_switch_failure(
+                    "this host has no native model-rebind adapter".to_owned(),
+                );
+                return Ok(SessionStep::Continue);
+            }
+            let candidate_config =
+                yo_backend_delegated_codex::CodexBackendConfig::new(&session.workspace)
+                    .with_read_only_review(
+                        session
+                            .active_host_execution
+                            .is_some_and(model::DelegatedExecutionProfile::is_read_only_review),
+                    )
+                    .with_model_rebind_target(
+                        selection.account().clone(),
+                        selection.model().clone(),
+                    );
+            let backend = match yo_backend_delegated_codex::CodexBackend::spawn(candidate_config) {
+                Ok(backend) => Box::new(backend) as Box<dyn yo_core::AgentBackend + Send>,
+                Err(error) => {
+                    session.tui.report_model_switch_failure(error.to_string());
+                    return Ok(SessionStep::Continue);
+                },
+            };
+            match session.agent.replace_backend(backend, termination) {
+                Ok(outcome) => {
+                    session
+                        .active_host_model
+                        .as_mut()
+                        .expect("admitted host rebind retained active host state")
+                        .set_model(selection.model().clone());
+                    let controller = model::project_host_catalogs(
+                        yo_core::ModelSelectionController::new(
+                            config.model_catalog().clone(),
+                            None,
+                        ),
+                        session.active_host_model.as_ref(),
+                        &session.host_catalogs,
+                    );
+                    session.tui.commit_model_switch(
+                        controller,
+                        selection.model().to_string(),
+                        outcome.cleanup_failure().map(ToString::to_string),
+                    );
+                    return Ok(SessionStep::Continue);
+                },
+                Err(error) => {
+                    session.tui.report_model_switch_failure(error.to_string());
+                    return Ok(SessionStep::Continue);
+                },
+            }
         },
         Ok(yo_tui::TerminalOutcome::Exited(outcome)) => {
             if let Some(output) = outcome.output()

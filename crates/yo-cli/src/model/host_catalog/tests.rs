@@ -75,6 +75,13 @@ fn managed_picker_projects_both_inactive_host_catalogs() {
             .flat_map(yo_core::ModelPickerSection::choices)
             .all(|choice| !choice.is_current())
     );
+    assert!(
+        sections[1..]
+            .iter()
+            .flat_map(yo_core::ModelPickerSection::choices)
+            .all(|choice| !choice.is_enabled()
+                && choice.disabled_reason() == Some(SEMANTIC_HANDOFF_UNAVAILABLE))
+    );
 }
 
 // delegated Grok이 활성인 picker는 Grok exact model만 current로 올리고, managed와 Codex
@@ -85,18 +92,29 @@ fn active_host_is_current_while_every_sibling_section_remains_visible() {
         ModelCatalog::new(vec![managed_entry()]).unwrap(),
         Some(managed_selection()),
     );
+    let grok_catalog = host_catalog(HostId::grok());
+    let active = ActiveHostModel::new(
+        HostId::grok(),
+        grok_catalog.account().clone(),
+        grok_catalog.current_model().unwrap().clone(),
+        false,
+    );
     let observations = vec![
         HostCatalogObservation::new(HostId::codex(), Ok(host_catalog(HostId::codex()))),
-        HostCatalogObservation::new(HostId::grok(), Ok(host_catalog(HostId::grok()))),
+        HostCatalogObservation::new(HostId::grok(), Ok(grok_catalog)),
     ];
 
-    let grok = HostId::grok();
-    let controller = project_host_catalogs(controller, Some(&grok), &observations);
+    let controller = project_host_catalogs(controller, Some(&active), &observations);
     let sections = controller.sections();
 
     assert_eq!(sections.len(), 3);
     assert_eq!(sections[0].label(), "Grok · grok@example.test");
     assert!(sections[0].choices()[0].label().ends_with(" (current)"));
+    assert!(!sections[0].choices()[0].is_enabled());
+    assert_eq!(
+        sections[0].choices()[0].disabled_reason(),
+        Some(NATIVE_REBIND_UNAVAILABLE)
+    );
     assert!(
         sections
             .iter()
@@ -107,6 +125,103 @@ fn active_host_is_current_while_every_sibling_section_remains_visible() {
             .iter()
             .any(|section| section.label() == "Qwen Cloud · Default")
     );
+}
+
+// Codex가 native rebind를 광고한 같은 account에서만 exact model 행을 선택할 수 있고,
+// Grok·managed sibling은 현재 구현되지 않은 handoff 경계로 남습니다.
+#[test]
+fn active_codex_enables_only_same_account_native_rebind_rows() {
+    let codex_catalog = host_catalog(HostId::codex());
+    let active = ActiveHostModel::new(
+        HostId::codex(),
+        codex_catalog.account().clone(),
+        codex_catalog.current_model().unwrap().clone(),
+        true,
+    );
+    let observations = vec![
+        HostCatalogObservation::new(HostId::codex(), Ok(codex_catalog)),
+        HostCatalogObservation::new(HostId::grok(), Ok(host_catalog(HostId::grok()))),
+    ];
+
+    let controller = project_host_catalogs(
+        ModelSelectionController::new(
+            ModelCatalog::new(vec![managed_entry()]).unwrap(),
+            Some(managed_selection()),
+        ),
+        Some(&active),
+        &observations,
+    );
+    let codex = &controller.sections()[0];
+
+    assert_eq!(codex.label(), "Codex · codex@example.test");
+    assert!(codex.choices()[0].is_enabled());
+    assert!(codex.choices()[0].is_current());
+    assert!(
+        controller.sections()[1..]
+            .iter()
+            .flat_map(yo_core::ModelPickerSection::choices)
+            .all(|choice| !choice.is_enabled())
+    );
+}
+
+// 새 thread가 확인한 exact model은 시작 전에 읽은 catalog default보다 우선합니다. 따라서
+// 실제 model은 current/no-op이고 이전 default는 같은 account의 rebind 선택지로 남습니다.
+#[test]
+fn confirmed_codex_binding_overrides_the_pre_start_catalog_default() {
+    let host = HostId::codex();
+    let account_label = "codex@example.test";
+    let account = derive_host_account_id(&host, &[("email", account_label)]).unwrap();
+    let catalog_default = ModelId::new("gpt-catalog-default").unwrap();
+    let started_model = ModelId::new("gpt-thread-start").unwrap();
+    let revision = derive_host_catalog_revision(
+        &host,
+        &account,
+        Some(&catalog_default),
+        &[catalog_default.clone(), started_model.clone()],
+    );
+    let catalog = HostModelCatalog::new(
+        host.clone(),
+        "Codex",
+        account.clone(),
+        account_label,
+        revision,
+        Some(catalog_default.clone()),
+        vec![
+            HostCatalogModel::selectable(catalog_default.clone(), catalog_default.to_string())
+                .unwrap(),
+            HostCatalogModel::selectable(started_model.clone(), started_model.to_string()).unwrap(),
+        ],
+    )
+    .unwrap();
+    let observations = vec![HostCatalogObservation::new(host.clone(), Ok(catalog))];
+
+    let active = resolve_active_host_model(
+        Some(&host),
+        Some((&account, &started_model)),
+        true,
+        false,
+        &observations,
+    )
+    .unwrap();
+    let controller = project_host_catalogs(
+        ModelSelectionController::new(ModelCatalog::default(), None),
+        Some(&active),
+        &observations,
+    );
+    let choices = controller.sections()[0].choices();
+
+    let previous_default = choices
+        .iter()
+        .find(|choice| choice.detail() == catalog_default.as_str())
+        .unwrap();
+    let started = choices
+        .iter()
+        .find(|choice| choice.detail() == started_model.as_str())
+        .unwrap();
+    assert!(previous_default.is_enabled());
+    assert!(!previous_default.is_current());
+    assert!(started.is_enabled());
+    assert!(started.is_current());
 }
 
 // 한 host를 실행하거나 인증할 수 없어도 Codex와 Grok status section을 각각 남겨, 빈

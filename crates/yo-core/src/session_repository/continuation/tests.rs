@@ -395,7 +395,10 @@ fn idle_replacement_is_immediately_resumable_without_another_turn() {
         session_id,
         2,
         replacement.clone(),
-        target.source().sequence(),
+        target
+            .source()
+            .expect("stored continuation has a source")
+            .sequence(),
     )
     .with_model_replay(target.model_replay().clone())
     .with_context_state(

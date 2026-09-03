@@ -198,8 +198,10 @@ fn durable_host_execution(
 ) -> Result<DelegatedExecutionProfile, AppError> {
     match (host.as_str(), binding_schema) {
         (HostId::CODEX, "codex.app-server/thread-binding/v1")
+        | (HostId::CODEX, "codex.app-server/thread-binding/v2")
         | (HostId::GROK, "grok.acp/session-binding/v1") => Ok(DelegatedExecutionProfile::Standard),
         (HostId::CODEX, "codex.app-server/thread-binding/v1alpha1")
+        | (HostId::CODEX, "codex.app-server/thread-binding/v1alpha2")
         | (HostId::GROK, "grok.acp/session-binding/v1alpha1") => {
             Ok(DelegatedExecutionProfile::ReadOnlyReview)
         },
@@ -712,6 +714,10 @@ mod tests {
         for (host, binding) in [
             (
                 HostId::codex(),
+                codex_binding("codex.app-server/thread-binding/v1alpha2"),
+            ),
+            (
+                HostId::codex(),
                 codex_binding("codex.app-server/thread-binding/v1alpha1"),
             ),
             (
@@ -725,7 +731,17 @@ mod tests {
             ));
         }
 
-        let unknown = codex_binding("codex.app-server/thread-binding/v2");
+        assert!(matches!(
+            resolve_host_resume(
+                HostId::codex(),
+                None,
+                &codex_binding("codex.app-server/thread-binding/v2")
+            )
+            .unwrap(),
+            StartupBackend::Host(_)
+        ));
+
+        let unknown = codex_binding("codex.app-server/thread-binding/v3");
         let error = resolve_host_resume(HostId::codex(), None, &unknown).unwrap_err();
         assert!(error.to_string().contains("permission downgrade"));
     }

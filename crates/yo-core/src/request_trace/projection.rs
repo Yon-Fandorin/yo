@@ -185,6 +185,9 @@ pub(crate) const fn transition_mode(value: TransitionMode) -> StoredBindingTrans
     match value {
         TransitionMode::Initial => StoredBindingTransitionMode::Initial,
         TransitionMode::ExactReplay => StoredBindingTransitionMode::ExactReplay,
+        TransitionMode::BackendNativeModelRebind => {
+            StoredBindingTransitionMode::BackendNativeModelRebind
+        },
         TransitionMode::LossyHandoff => StoredBindingTransitionMode::LossyHandoff,
     }
 }

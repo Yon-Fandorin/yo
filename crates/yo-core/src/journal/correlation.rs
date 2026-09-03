@@ -343,6 +343,37 @@ impl SessionJournal {
         ])
     }
 
+    pub(crate) fn commit_native_model_rebind(
+        &mut self,
+        previous_epoch: u64,
+        epoch: u64,
+        source_anchor_sequence: Option<JournalSequence>,
+        evidence: BackendBindingEvidence,
+    ) -> bool {
+        use super::codec::{BackendBindingClosed, BindingCloseReason};
+
+        self.append_records_transactionally(vec![
+            SemanticRecord::BackendBindingClosed(BackendBindingClosed::new(
+                previous_epoch,
+                BindingCloseReason::Replaced,
+            )),
+            SemanticRecord::BackendBindingOpened(BackendBindingOpened::new(
+                epoch,
+                evidence.backend_kind(),
+                evidence.backend_version(),
+                versioned(evidence.binding_identity()),
+                versioned(evidence.model_identity()),
+                versioned(evidence.session_locator()),
+                BindingTransition::new(
+                    TransitionMode::BackendNativeModelRebind,
+                    CacheState::Unknown,
+                    source_anchor_sequence,
+                ),
+                evidence.continuation_strategy(),
+            )),
+        ])
+    }
+
     pub(crate) fn append_accepted_submission(
         &mut self,
         command: AgentCommand,

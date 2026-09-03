@@ -34,6 +34,8 @@ pub(super) struct CorrelationRecovery {
     last_epoch: Option<u64>,
     last_close_reason: Option<BindingCloseReason>,
     replacement_source: Option<ReplacementSource>,
+    replacement_without_source_allowed: bool,
+    open_epoch_has_accepted_request: bool,
     latest_anchor: Option<JournalSequence>,
     latest_checkpoint: Option<JournalSequence>,
     request_after_checkpoint: bool,
@@ -194,6 +196,9 @@ impl CorrelationRecovery {
                 self.open_strategy = None;
                 self.open_binding_identity = None;
                 self.last_close_reason = Some(binding.reason());
+                self.replacement_without_source_allowed = binding.reason()
+                    == BindingCloseReason::Replaced
+                    && !self.open_epoch_has_accepted_request;
                 self.replacement_source = if binding.reason() == BindingCloseReason::Replaced {
                     anchor_before_record
                         .map(|sequence| ReplacementSource::Anchor {
@@ -264,6 +269,7 @@ impl CorrelationRecovery {
                 }
                 self.latest_accepted_request
                     .insert((request.epoch(), request.turn_id()), sequence);
+                self.open_epoch_has_accepted_request = true;
                 if self.latest_checkpoint.is_some() {
                     self.request_after_checkpoint = true;
                 }
@@ -1264,12 +1270,18 @@ impl CorrelationRecovery {
                                 replay_profile: crate::ReplayProfile::SemanticOnly,
                             })
                             && binding.transition().mode() == TransitionMode::ExactReplay;
+                        let backend_native_model_rebind = binding.continuation_strategy()
+                            == ContinuationStrategy::BackendManagedState
+                            && binding.transition().mode()
+                                == TransitionMode::BackendNativeModelRebind;
                         if self.replacement_source
                             != Some(ReplacementSource::Anchor {
                                 sequence: source,
                                 epoch: previous,
                             })
-                            || (epoch != previous && !inherited_local_replay_anchor)
+                            || (epoch != previous
+                                && !inherited_local_replay_anchor
+                                && !backend_native_model_rebind)
                             || context_epoch != self.context_epoch
                         {
                             return Err(JournalCodecError::new(
@@ -1316,9 +1328,15 @@ impl CorrelationRecovery {
                             ));
                         }
                     },
+                    (None, None)
+                        if binding.transition().mode()
+                            == TransitionMode::BackendNativeModelRebind
+                            && binding.continuation_strategy()
+                                == ContinuationStrategy::BackendManagedState
+                            && self.replacement_without_source_allowed => {},
                     _ => {
                         return Err(JournalCodecError::new(
-                            "replacement binding requires exactly one Anchor or checkpoint source",
+                            "replacement binding requires an eligible Anchor, checkpoint, or source-free native model rebind",
                         ));
                     },
                 }
@@ -1357,6 +1375,8 @@ impl CorrelationRecovery {
         self.last_epoch = Some(binding.epoch());
         self.last_close_reason = None;
         self.replacement_source = None;
+        self.replacement_without_source_allowed = false;
+        self.open_epoch_has_accepted_request = false;
         Ok(())
     }
 }

@@ -195,7 +195,11 @@ payload-free resumable outcome, Continuation Anchor 순서로 commit한다.
 Backend-managed state는 replay-delta 참조가 없는 outcome을 Anchor보다 먼저
 commit한다. Recovery는 backend 이름으로 소유권을 추론하지 않고 이 순서와
 strategy별 존재 조건을 검증한다. Managed-server exact-replay executor는 예약된
-contract 값이며 현재 이를 선택하는 backend는 없다.
+contract 값이며 현재 이를 선택하는 backend는 없다. 별도의 backend-native
+model-rebind 전환은 cache state를 `unknown`으로 두고 binding epoch를 원자적으로
+닫고 연다. checkpoint source는 절대 포함하지 않는다. 이전 binding이 request를
+accept했다면 최신 Continuation Anchor를 포함해야 하고, request를 하나도 accept하지
+않은 동안에만 source를 생략할 수 있다.
 
 ### 모델 선택과 교체
 
@@ -291,11 +295,14 @@ Managed 행과 host 행은 서로 다른 typed 좌표를 가진다. Managed 행�
 Model을 유지하고, host 행은 Host, 인증된 Account, 정확한 Model, fresh catalog revision을
 유지한다. `/model MODEL_REFERENCE`는 계속 managed 전용이며 startup과 같은 resolver를
 사용하므로 bare 형식은 현재 managed namespace에 머물고 qualified 형식은 설정된 다른
-Provider나 Account를 선택할 수 있다. 현재 구현은 managed 행에만 기존 exact-replay 교체를
-수행하며 current와 selected 행이 모두 managed일 때만 적용한다. Managed-to-host,
-host-to-managed, cross-host, non-native same-host 선택은 typed process-host 경계까지 도달하지만,
-별도로 필요한 확인형 semantic-handoff 전환이 구현될 때까지 source Session을 건드리지 않고
-실패한다.
+Provider나 Account를 선택할 수 있다. 현재 구현은 current와 selected 행이 모두 managed일
+때 기존 exact-replay 교체를 수행한다. 활성 Codex Session에서는 adapter가 state-preserving
+native model rebind를 advertise하므로 새로 인증한 같은 account의 정확한 model을 활성화한다.
+활성 Grok Session은 정확한 current model을 계속 표시하지만 adapter가 이 capability를
+advertise하지 않으므로 같은 host의 다른 model을 비활성화한다. 비활성 managed 또는 host
+sibling과 cross-account host 행은 typed 이유와 함께 계속 보이지만 선택할 수 없다.
+Managed-to-host, host-to-managed, cross-host handoff는 계속 미뤄져 있으며 source Session을
+건드리지 않는다.
 
 Active Turn, pending Activity 또는 pending prompt admission 중에는 current가 아닌 선택을 다음
 Turn을 위해 예약한다. 현재 Turn, steer, Activity 응답은 이전 model을 계속 사용한다. 이후
@@ -306,13 +313,15 @@ Turn을 위해 예약한다. 현재 Turn, steer, Activity 응답은 이전 model
 input loop를 동기적으로 벗어나고, terminal input이 중단된 동안 process host가 교체를 수행한
 뒤 보존된 TUI가 다시 진입한다.
 
-frontend 중립 `ModelSelectionController`가 이 resolution 규칙을 소유한다. 선택을
-accept하면 process host는 현재 binding을 유지한 채 startup credential snapshot,
-tokenizer, connector, tool registry, tool host로 후보 backend를 구성하고 검증한다.
-준비 실패는 보존한 TUI에 알린다. 이어서 Session worker가 exact-replay 전환을 원자적으로
-commit한다. durable 실패면 후보를 버리고 기존 backend를 계속 사용하며, 성공하면 이전
-binding epoch를 닫고 replacement epoch 하나를 연 뒤 backend를 제자리에서 교체한다.
-같은 TUI와 Yo Session이 계속 활성 상태이고, 선택은 설정 기본값을 변경하지 않는다.
+frontend 중립 `ModelSelectionController`가 이 resolution 규칙을 소유한다. Managed 선택이면
+process host는 현재 binding을 유지한 채 startup credential snapshot, tokenizer, connector,
+tool registry, tool host로 후보 backend를 구성하고 검증한다. Codex 선택이면 활성 실행
+profile로 두 host inventory를 새로 읽고 같은 인증 account와 정확한 target model을
+재검증한 뒤 그 target에 묶인 adapter를 준비한다. 준비 실패는 보존한 TUI에 알린다.
+이어서 Session worker가 해당 exact-replay 또는 backend-native 전환을 원자적으로 commit한다.
+durable 실패나 fork 실패면 후보를 버리고 기존 backend를 계속 사용하며, 성공하면 이전
+binding epoch를 닫고 서로 다른 replacement epoch 하나를 연 뒤 backend를 제자리에서
+교체한다. 같은 TUI와 Yo Session이 계속 활성 상태이고, 선택은 설정 기본값을 변경하지 않는다.
 
 ## 시작
 
@@ -333,7 +342,7 @@ yo-core AgentSession
   worker 시작
   descriptor envelope 시도
   CreateSession
-      ├── CodexBackend → app-server initialize + thread/start
+      ├── CodexBackend → app-server initialize + account/read + thread/start
       ├── GrokBackend → ACP initialize + cached-token 인증 + session/new
       └── NativeModelBackend → local exact-replay Session state 연결
       ↓
@@ -350,7 +359,7 @@ yo-tui
 | 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | process host가 invocation·저장·operator 계층을 resolve한 다음 선택한 delegated stdio transport를 시작하거나 startup snapshot과 주입된 tool로 managed binding을 조립한다. 모든 경로는 worker가 backend를 소유할 때까지 model 작업을 미룬다. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository`가 backend와 local repository를 `yo-agent-runtime`이라는 worker thread로 넘긴다. 종료 관찰을 막지 않으면서 시작 완료를 기다린다. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize`가 descriptor-only Journal envelope를 먼저 시도한 뒤 `AgentRuntime`을 통해 `CreateSession`을 보낸다. storage pressure가 있으면 descriptor와 이후 activity를 복구 가능한 volatile prefix로 함께 유지한다. |
-| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex는 `initialize`와 `thread/start`, Grok은 ACP 초기화·cached-token 인증·`session/new`를 수행한다. managed backend는 provider 요청 없이 local exact-replay state를 연결한다. 각 경로는 semantic engine이 `SessionCreated`를 만들게 한다. |
+| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex는 `initialize`, `account/read`, `thread/start`, Grok은 ACP 초기화·cached-token 인증·`session/new`를 수행한다. managed backend는 provider 요청 없이 local exact-replay state를 연결한다. 각 경로는 semantic engine이 `SessionCreated`를 만들게 한다. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode`가 첫 터미널 소유 세대의 input과 터미널 상태를 획득하고 이미 선택된 표시 mode로 들어간다. |
 
 handshake 중에 종료 요청이 오면 `AgentSession::start_inner`가 취소
@@ -1291,11 +1300,16 @@ evidence만 반환한다. runtime이 그 semantic identity를 소유하고 Journ
 배정한다. User submission이 없는 내부 successor request에는 writer가 별도의 UUIDv4 identity를
 부여한다. Transcript Projection은 correlation 전용 record를 제외한다.
 
-Codex adapter는 model override를 보내지 않아 사용자의 effective model 선택을 보존하고,
-`thread/start`가 반환한 `model`과 `modelProvider`를 기록한다. ephemeral thread가 아니라
-저장되는 thread를 만든다. continuation에서는 versioned Codex locator만 decode하고
-`thread/resume`을 정확히 한 번 보낸 뒤, runtime이 재개 상태를 공개하기 전에 반환된
-thread·model provider·model identity를 최신 durable Anchor와 검증한다.
+Codex adapter는 초기화 뒤 인증된 account를 읽는다. 새 Session은 model override를
+보내지 않아 host의 effective model 선택을 보존하고, account와 `thread/start`가 반환한
+`model`, `modelProvider`를 기록하며 ephemeral이 아닌 저장되는 thread를 만든다. 현재
+binding은 account를 포함하는 `v2` schema를 쓰고 read-only 실행 profile은 `v1alpha2`를
+쓴다. Legacy `v1`과 `v1alpha1` binding은 resume 전용으로 남는다. 일반 continuation은
+`thread/resume`을 정확히 한 번 보내고 반환된 thread·provider·model identity를 최신
+durable Anchor와 검증한다. 같은 account의 model rebind는 대신 source thread와 정확한
+target model을 담은 공개 `thread/fork`를 정확히 한 번 보내며, runtime이 replacement
+binding을 공개하기 전에 반환된 thread가 서로 다르고 provider가 같으며 model이 정확한지
+검증한다.
 
 pending message text는 non-text 순서 경계 전에 immutable segment로 강제
 저장되므로 동시 Activity event의 원래 순서를 보존할 수 있다. crash 뒤 열린

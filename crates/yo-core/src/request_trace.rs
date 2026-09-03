@@ -159,6 +159,7 @@ impl StoredBindingTransition {
 pub enum StoredBindingTransitionMode {
     Initial,
     ExactReplay,
+    BackendNativeModelRebind,
     LossyHandoff,
 }
 

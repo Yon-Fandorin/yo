@@ -245,6 +245,7 @@ pub(super) const fn transition_mode_text(mode: StoredBindingTransitionMode) -> &
     match mode {
         StoredBindingTransitionMode::Initial => "initial",
         StoredBindingTransitionMode::ExactReplay => "exact-replay",
+        StoredBindingTransitionMode::BackendNativeModelRebind => "backend-native-model-rebind",
         StoredBindingTransitionMode::LossyHandoff => "lossy-handoff",
     }
 }

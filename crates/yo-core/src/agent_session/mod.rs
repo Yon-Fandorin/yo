@@ -50,6 +50,19 @@ pub(super) struct ReplacementRequest {
     result: SyncSender<Result<BackendReplacementOutcome, AgentSessionError>>,
 }
 
+fn reject_replacement_after_cleanup(
+    backend: &mut (dyn AgentBackend + Send),
+    primary: AgentSessionError,
+) -> AgentSessionError {
+    match backend.shutdown() {
+        Ok(()) => primary,
+        Err(cleanup) => AgentSessionError::Multiple {
+            primary: Box::new(primary),
+            additional: Box::new(AgentSessionError::BackendCleanup(cleanup)),
+        },
+    }
+}
+
 /// Result of an atomically committed idle backend replacement.
 #[derive(Clone, Debug)]
 pub struct BackendReplacementOutcome {
@@ -458,22 +471,16 @@ impl AgentSession {
         mut is_cancelled: impl FnMut() -> bool,
     ) -> Result<BackendReplacementOutcome, AgentSessionError> {
         if self.context_compaction_pending.load(Ordering::Acquire) {
-            let cleanup = backend.shutdown().err();
             let primary = AgentSessionError::WorkerUnavailable(
                 "binding replacement cannot overtake pending context compaction".to_owned(),
             );
-            return Err(match cleanup {
-                Some(cleanup) => AgentSessionError::Multiple {
-                    primary: Box::new(primary),
-                    additional: Box::new(AgentSessionError::BackendCleanup(cleanup)),
-                },
-                None => primary,
-            });
+            return Err(reject_replacement_after_cleanup(&mut *backend, primary));
         }
         if self.lifecycle.load(Ordering::Acquire) != WORKER_IDLE {
-            return Err(AgentSessionError::WorkerUnavailable(
+            let primary = AgentSessionError::WorkerUnavailable(
                 "binding replacement requires an idle Session".to_owned(),
-            ));
+            );
+            return Err(reject_replacement_after_cleanup(&mut *backend, primary));
         }
         let candidate_stop = backend.stop_handle();
         let (result_tx, result_rx) = mpsc::sync_channel(1);
@@ -484,17 +491,13 @@ impl AgentSession {
             let mut request = match error {
                 TrySendError::Full(request) | TrySendError::Disconnected(request) => request,
             };
-            let cleanup = request.backend.shutdown().err();
             let primary = AgentSessionError::WorkerUnavailable(
                 "the backend replacement lane is unavailable".to_owned(),
             );
-            return Err(match cleanup {
-                Some(cleanup) => AgentSessionError::Multiple {
-                    primary: Box::new(primary),
-                    additional: Box::new(AgentSessionError::BackendCleanup(cleanup)),
-                },
-                None => primary,
-            });
+            return Err(reject_replacement_after_cleanup(
+                &mut *request.backend,
+                primary,
+            ));
         }
         self.readiness.notify();
         let mut cancellation_requested = false;

@@ -164,11 +164,14 @@ while IFS= read -r message; do
     *'"method":"initialize"'*)
       printf '%s\n' '{"id":1,"result":{"userAgent":"codex_cli_rs/0.149.1 (e2e)","platformFamily":"unix","platformOs":"linux","codexHome":"/tmp/codex-e2e"}}'
       ;;
+    *'"method":"account/read"'*)
+      printf '%s\n' '{"id":2,"result":{"account":{"type":"chatgpt","email":"person@example.test","planType":"pro"}}}'
+      ;;
     *'"method":"thread/start"'*)
-      printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-e2e","sessionId":"session-e2e"},"model":"gpt-e2e","modelProvider":"openai"}}'
+      printf '%s\n' '{"id":3,"result":{"thread":{"id":"thread-e2e","sessionId":"session-e2e"},"model":"gpt-e2e","modelProvider":"openai"}}'
       ;;
     *'"method":"turn/start"'*)
-      printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-e2e"}}}'
+      printf '%s\n' '{"id":4,"result":{"turn":{"id":"turn-e2e"}}}'
       if [ "$mode" = generation-failure ]; then
         printf '%s\n' '{"method":"error","params":{"threadId":"thread-e2e","turnId":"turn-e2e","error":{"message":"model stream failed"}}}'
         printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread-e2e","turn":{"id":"turn-e2e","status":"failed","error":{"message":"less specific"}}}}'

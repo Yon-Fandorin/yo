@@ -52,6 +52,7 @@ pub(super) enum WireDetailAvailability {
 pub(super) enum WireTransitionMode {
     Initial,
     ExactReplay,
+    BackendNativeModelRebind,
     LossyHandoff,
 }
 
@@ -319,6 +320,7 @@ impl From<TransitionMode> for WireTransitionMode {
         match value {
             TransitionMode::Initial => Self::Initial,
             TransitionMode::ExactReplay => Self::ExactReplay,
+            TransitionMode::BackendNativeModelRebind => Self::BackendNativeModelRebind,
             TransitionMode::LossyHandoff => Self::LossyHandoff,
         }
     }
@@ -329,6 +331,7 @@ impl From<WireTransitionMode> for TransitionMode {
         match value {
             WireTransitionMode::Initial => Self::Initial,
             WireTransitionMode::ExactReplay => Self::ExactReplay,
+            WireTransitionMode::BackendNativeModelRebind => Self::BackendNativeModelRebind,
             WireTransitionMode::LossyHandoff => Self::LossyHandoff,
         }
     }

@@ -327,12 +327,14 @@ fn maps_every_closed_request_trace_enum_without_semantic_drift() {
         [
             TransitionMode::Initial,
             TransitionMode::ExactReplay,
+            TransitionMode::BackendNativeModelRebind,
             TransitionMode::LossyHandoff,
         ]
         .map(transition_mode),
         [
             StoredBindingTransitionMode::Initial,
             StoredBindingTransitionMode::ExactReplay,
+            StoredBindingTransitionMode::BackendNativeModelRebind,
             StoredBindingTransitionMode::LossyHandoff,
         ]
     );

@@ -46,6 +46,20 @@ impl TuiAgentConnection {
         self.session
     }
 
+    /// Returns the initial durable binding fact after the startup handshake has completed.
+    pub(crate) fn initial_binding_record(&self) -> Option<yo_core::RequestTraceRecord> {
+        self.request_trace
+            .read_after(None)
+            .into_entries()
+            .into_iter()
+            .find_map(|entry| match entry.record() {
+                record @ yo_core::RequestTraceRecord::BindingOpened { epoch: 1, .. } => {
+                    Some(record.clone())
+                },
+                _ => None,
+            })
+    }
+
     #[cfg(test)]
     pub(crate) fn start<B>(
         backend: B,

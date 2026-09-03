@@ -165,6 +165,7 @@ impl BackendExchangeObserved {
 pub(crate) enum TransitionMode {
     Initial,
     ExactReplay,
+    BackendNativeModelRebind,
     LossyHandoff,
 }
 

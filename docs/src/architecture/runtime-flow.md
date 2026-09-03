@@ -218,7 +218,11 @@ and then the Continuation Anchor. Backend-managed state commits an outcome with
 no replay-delta reference before its Anchor. Recovery validates this ordering
 and strategy-dependent presence instead of inferring ownership from backend
 names. A managed-server exact-replay executor remains a reserved contract value
-and no current backend selects it.
+and no current backend selects it. The distinct backend-native model-rebind
+transition closes and opens binding epochs atomically with cache state
+`unknown`. It never carries a checkpoint source. It carries the newest
+Continuation Anchor after the old binding has accepted a request, and may omit
+the source only while that binding has accepted no request.
 
 ### Model selection and replacement
 
@@ -331,11 +335,15 @@ exact Model, and the fresh catalog revision. `/model MODEL_REFERENCE` remains
 managed-only and uses the same resolver as startup, so its bare form remains in
 the current managed namespace while a qualified form can select another
 configured Provider or Account. The current implementation performs the
-existing exact-replay replacement only when both the current and selected rows
-are managed. Managed-to-host, host-to-managed, cross-host, and non-native
-same-host choices reach the typed process-host boundary but fail without
-touching the source Session until the separately required confirmed
-semantic-handoff transition is implemented.
+existing exact-replay replacement when both the current and selected rows are
+managed. An active Codex Session enables exact models from the same freshly
+authenticated account because its adapter advertises state-preserving native
+model rebind. An active Grok Session keeps its exact current model visible but
+disables its same-host alternatives because its adapter does not advertise that
+capability. Inactive managed or host siblings and cross-account host rows remain
+visible and non-selectable with their typed reason. Managed-to-host,
+host-to-managed, and cross-host handoff remain deferred and never touch the
+source Session.
 
 During an active Turn, a pending Activity, or pending prompt admission, a
 non-current selection is reserved for the next Turn and the current Turn,
@@ -349,15 +357,18 @@ synchronously, the process host performs replacement with terminal input
 suspended, and the retained TUI reenters afterward.
 
 The frontend-neutral `ModelSelectionController` owns those resolution rules.
-After acceptance, the process host constructs and validates the candidate
+For a managed choice, the process host constructs and validates the candidate
 backend from the startup credential snapshot, tokenizer, connector, tool
-registry, and tool host while the current binding remains live. A preparation
-failure is reported back into the retained TUI. The Session worker then commits
-the exact-replay transition atomically: a durable failure discards the candidate
-and keeps the old backend usable, while success swaps the backend in place after
-closing the prior binding epoch and opening one replacement epoch. The same TUI
-and Yo Session remain active, and the choice does not change configuration
-defaults.
+registry, and tool host while the current binding remains live. For a Codex
+choice, it refreshes both host inventories under the active execution profile,
+revalidates the same authenticated account and exact target model, and prepares
+an adapter bound to that target. A preparation failure is reported back into
+the retained TUI. The Session worker then commits the matching exact-replay or
+backend-native transition atomically: a durable or fork failure discards the
+candidate and keeps the old backend usable, while success closes the prior
+binding epoch, opens one distinct replacement epoch, and swaps the backend in
+place. The same TUI and Yo Session remain active, and the choice does not change
+configuration defaults.
 
 ## Startup
 
@@ -379,7 +390,7 @@ yo-core AgentSession
   start worker
   attempt descriptor envelope
   CreateSession
-      ├── CodexBackend → app-server initialize + thread/start
+      ├── CodexBackend → app-server initialize + account/read + thread/start
       ├── GrokBackend → ACP initialize + cached-token authentication + session/new
       └── NativeModelBackend → bind local exact-replay Session state
       ↓
@@ -396,7 +407,7 @@ yo-tui
 | 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | The process host resolves invocation, stored, and operator layers, then either starts the selected delegated stdio transport or assembles the managed binding from the startup snapshots and injected tools. Every path defers model work until the worker owns the backend. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` first attempts the descriptor-only Journal envelope, then sends `CreateSession` through `AgentRuntime`; storage pressure keeps both the descriptor and later activity in the recoverable volatile prefix. |
-| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex performs `initialize` and `thread/start`; Grok performs ACP initialization, cached-token authentication, and `session/new`; the managed backend binds local exact-replay state without a provider request. Each path lets the semantic engine produce `SessionCreated`. |
+| 5 | [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | Codex performs `initialize`, `account/read`, and `thread/start`; Grok performs ACP initialization, cached-token authentication, and `session/new`; the managed backend binds local exact-replay state without a provider request. Each path lets the semantic engine produce `SessionCreated`. |
 | 6 | [`yo-tui/runner/unix.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/unix.rs) | `run_session_with_mode` acquires input and terminal state for the first terminal ownership generation, then enters the already selected presentation mode. |
 
 If termination arrives during the handshake, `AgentSession::start_inner`
@@ -1439,13 +1450,18 @@ that have no user submission receive separate writer-assigned UUIDv4 identities.
 Transcript projection omits
 the correlation-only records.
 
-The Codex adapter preserves the user's effective model selection by omitting a
-model override and records the `model` and `modelProvider` returned by
-`thread/start`. It creates a persisted thread rather than an ephemeral one.
-On continuation it decodes only its versioned Codex locator, sends exactly one
-`thread/resume`, and verifies the returned thread, model-provider, and model
-identities against the newest durable Anchor before the runtime publishes any
-resumed state.
+The Codex adapter reads the authenticated account after initialization. A new
+Session preserves the host's effective model selection by omitting a model
+override, records the account plus the `model` and `modelProvider` returned by
+`thread/start`, and creates a persisted rather than ephemeral thread. Current
+bindings use the account-bearing `v2` schema, or `v1alpha2` for the read-only
+execution profile; legacy `v1` and `v1alpha1` bindings remain resume-only. On
+ordinary continuation the adapter sends exactly one `thread/resume` and
+verifies the returned thread, provider, and model identities against the newest
+durable Anchor. A same-account model rebind instead sends exactly one public
+`thread/fork` with the source thread and exact target model, then requires a
+distinct returned thread, the same provider, and the exact target model before
+the runtime publishes the replacement binding.
 
 Pending message text is forced into an immutable segment before a non-text
 ordering boundary, so concurrent Activity events can retain their original order.

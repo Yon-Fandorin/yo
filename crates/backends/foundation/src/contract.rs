@@ -44,6 +44,21 @@ pub trait BackendAdapter {
         ))
     }
 
+    /// Forks provider-managed Session state into a distinct binding using a configured model.
+    ///
+    /// Adapters must advertise [`BackendCapabilities::supports_native_model_rebind`] before this
+    /// method can be called. The configured target model remains adapter-owned wire state; the
+    /// durable source coordinate is carried by `target`.
+    fn resume_session_rebinding_model(
+        &mut self,
+        _target: &Self::ResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        Err(BackendFailure::new(
+            BackendFailureKind::Unsupported,
+            "this backend does not support native model rebinding",
+        ))
+    }
+
     /// Executes a command far enough to know whether the backend accepted it.
     ///
     /// The returned provider-neutral evidence contains only facts the adapter observed; the
@@ -93,6 +108,13 @@ where
         target: &Self::ResumeTarget,
     ) -> Result<BackendBindingEvidence, BackendFailure> {
         (**self).resume_session_replacing_binding(target)
+    }
+
+    fn resume_session_rebinding_model(
+        &mut self,
+        target: &Self::ResumeTarget,
+    ) -> Result<BackendBindingEvidence, BackendFailure> {
+        (**self).resume_session_rebinding_model(target)
     }
 
     fn execute_command(
@@ -146,11 +168,15 @@ impl fmt::Debug for BackendStopHandle {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BackendCapabilities {
     steer: bool,
+    native_model_rebind: bool,
 }
 
 impl BackendCapabilities {
     pub const fn none() -> Self {
-        Self { steer: false }
+        Self {
+            steer: false,
+            native_model_rebind: false,
+        }
     }
 
     pub const fn with_steer(mut self) -> Self {
@@ -160,6 +186,15 @@ impl BackendCapabilities {
 
     pub const fn supports_steer(self) -> bool {
         self.steer
+    }
+
+    pub const fn with_native_model_rebind(mut self) -> Self {
+        self.native_model_rebind = true;
+        self
+    }
+
+    pub const fn supports_native_model_rebind(self) -> bool {
+        self.native_model_rebind
     }
 }
 
