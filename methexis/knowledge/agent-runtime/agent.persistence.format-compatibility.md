@@ -5,7 +5,7 @@ kind: decision
 owner: agent-runtime
 sources:
   - id: agent.persistence-001
-    revision: sha256:4031459899151783f0ab8bbf86fbf7374c2969d2738c2feb062435545fd3b2b6
+    revision: sha256:99e90bd799d103a41cac35932d10a610d552316c547c76d5ec0cf787ce01a75b
 relations:
   depends_on:
     - agent.input.explicit-skill-reference
@@ -34,8 +34,11 @@ replay item and replay-profile evidence while retaining the physical v1 envelope
 This sixth reviewed revision replaces the unimplemented
 `context_compaction_handoff` development proposal with same-binding
 `context_checkpoint` and context-epoch evidence. The displaced handoff shape is
-unreadable development data rather than an accepted alias.
-Its exact shape and UUIDv7 Session identity are part of the
+unreadable development data rather than an accepted alias. This seventh reviewed
+revision additively extends the same anchored-session shape with the
+`backend_native_model_rebind` transition and its failure-atomic lineage evidence.
+The physical v1 envelope remains unchanged. Its exact shape and UUIDv7 Session
+identity are part of the
 baseline; a matching schema tag alone MUST NOT admit a record.
 
 Every semantic `/v1` commit, including a descriptor-only commit, MUST contain
@@ -304,20 +307,45 @@ identity, replay boundary, replay-content and contract digests, binding epoch,
 availability, and retention under an independently reviewed contract.
 
 The closed `transition` object contains exact `mode: initial`, `exact_replay`,
-or `lossy_handoff`; exact `cache: not_applicable`, `lost`, or `unknown`; and
-optional positive `source_anchor_sequence` and `source_checkpoint_sequence`.
-`initial` requires `cache: not_applicable` and neither source coordinate. Both
-replacement modes require exactly one source coordinate in an earlier closed
-epoch. A source Anchor after a checkpoint names the reconstruction whose lineage
-starts at that checkpoint. A source checkpoint is valid only when it is the
-newest executable reconstruction root and no later request was accepted in its
-binding. `exact_replay` requires `cache: lost`.
-`lossy_handoff` requires `cache: lost` or `unknown` and marks the binding open
-as the visible context-loss boundary. Its user-approved transformed-context
-description remains ordinary semantic Journal data rather than an opaque
-backend identity. The binding's backend and model identities, transition mode,
-source Anchor, and cache state therefore remain available without Request Audit
-detail.
+`lossy_handoff`, or `backend_native_model_rebind`; exact cache value
+`not_applicable`, `lost`, or `unknown`; and optional positive
+`source_anchor_sequence` and `source_checkpoint_sequence`. `initial` requires
+`cache: not_applicable` and neither source coordinate. `exact_replay` and
+`lossy_handoff` require exactly one source coordinate in an earlier closed epoch.
+A source Anchor after a checkpoint names the reconstruction whose lineage starts
+at that checkpoint. A source checkpoint is valid only when it is the newest
+executable reconstruction root and no later request was accepted in its binding.
+`exact_replay` requires `cache: lost`. `lossy_handoff` requires `cache: lost`
+or `unknown` and marks the binding open as the visible context-loss boundary.
+Its user-approved transformed-context description remains ordinary semantic
+Journal data rather than an opaque backend identity.
+
+`backend_native_model_rebind` requires exact `cache: unknown`, forbids
+`source_checkpoint_sequence`, and is valid only between two
+`backend_managed_state` bindings for the same delegated Host and verified
+authenticated account. When the source epoch contains any accepted backend
+request, it requires `source_anchor_sequence` naming that epoch's newest durable
+Continuation Anchor. It may omit both source coordinates only when the live source
+epoch contains no accepted backend request. An accepted request without a newest
+matching Anchor makes the transition invalid rather than permitting omission.
+The target locator MUST differ from the source locator, the target model identity
+MUST equal the exact model confirmed after mutation, and the adapter MUST verify
+same-Host and same-account binding evidence before publication. The shared codec
+retains those identities as opaque values and validates the closed transition
+shape and epoch graph; it does not parse HostId, HostAccountId, or HostModelId.
+
+The native-rebind candidate is prepared through one live advertised
+state-preserving fork plus model-mutation capability while the source epoch stays
+open. Only the atomic Journal commit closes the source with `reason: replaced`
+and opens the successor epoch. Unsupported capability, stale inventory, account
+drift, a reused locator, missing confirmation, a mismatched model, or publication
+failure MUST leave the source epoch and locator unchanged and executable. The
+unbound candidate is discarded or quarantined and MUST NOT become continuation
+authority. This transition claims neither semantic replay nor cache restoration,
+and it MUST NOT admit cross-Host, cross-account, in-place source mutation, or an
+unadvertised private mutation method. The binding's backend and model identities,
+transition mode, optional source Anchor, and cache state therefore remain
+available without Request Audit detail.
 
 When the selected replay reconstruction named by a source Anchor or source
 checkpoint contains a provider-private item, a replacement
