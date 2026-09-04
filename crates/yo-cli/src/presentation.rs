@@ -1,5 +1,10 @@
 use std::{env, io::IsTerminal as _};
 
+use yo_tui::{
+    GlyphProfile,
+    meter::{MeterGlyphs, MeterShape, MeterSpec},
+};
+
 const ANSI_RESET: &str = "\u{1b}[0m";
 
 /// Whether semantic CLI text may include ANSI decoration.
@@ -84,9 +89,15 @@ impl TextStyle {
 
 /// Renders a bounded left-to-right bar whose filled cells represent remaining capacity.
 pub(crate) fn remaining_bar(remaining_percent: u8, width: usize) -> String {
-    let remaining_percent = remaining_percent.min(100);
-    let filled = usize::from(remaining_percent) * width / 100;
-    format!("{}{}", "█".repeat(filled), "░".repeat(width - filled))
+    if width == 0 {
+        return String::new();
+    }
+    MeterSpec::raw(
+        MeterShape::HorizontalBar { width },
+        MeterGlyphs::for_profile(GlyphProfile::Rich),
+    )
+    .render_glyph(u16::from(remaining_percent.min(100)) * 100)
+    .expect("built-in horizontal capacity meter must remain renderable")
 }
 
 #[cfg(test)]

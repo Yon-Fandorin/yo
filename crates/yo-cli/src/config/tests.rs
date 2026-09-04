@@ -196,6 +196,27 @@ fn empty_config_uses_defaults() {
     assert!(config.date_formatter().is_ok());
 }
 
+// 파일명만 있는 상대 YO_CONFIG도 빈 parent를 state root로 노출하지 않고 현재 디렉터리를
+// 기준으로 credentials, connections, account-capacity cache를 함께 둡니다.
+#[test]
+fn relative_config_filename_uses_the_current_state_directory() {
+    let config = parse(Path::new("config.yaml"), "{}\n").unwrap();
+
+    assert_eq!(config.state_directory(), PathBuf::from("."));
+    assert_eq!(
+        config.account_capacity_path(),
+        PathBuf::from("./account-capacity.yaml")
+    );
+    assert_eq!(
+        config.credential_path(),
+        PathBuf::from("./credentials.yaml")
+    );
+    assert_eq!(
+        config.connection_path(),
+        PathBuf::from("./connections.yaml")
+    );
+}
+
 // 읽기 전용 명령은 설정 파일이 없어도 기본값을 사용하며 경로나 파일을 만들지 않습니다.
 #[test]
 fn missing_configuration_uses_defaults_without_creating_a_file() {

@@ -266,5 +266,6 @@ fn host_account_key_is_stable_for_exact_evidence_and_changes_on_account_drift() 
 
     assert_eq!(first, repeated);
     assert_ne!(first, drifted);
+    assert!(!first.as_str().starts_with("account-"));
     assert!(!first.as_str().contains("first"));
 }

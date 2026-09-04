@@ -65,17 +65,23 @@ impl Config {
     }
 
     pub(crate) fn credential_path(&self) -> PathBuf {
-        self.source_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("credentials.yaml")
+        self.state_directory().join("credentials.yaml")
     }
 
     pub(crate) fn connection_path(&self) -> PathBuf {
+        self.state_directory().join("connections.yaml")
+    }
+
+    pub(crate) fn account_capacity_path(&self) -> PathBuf {
+        self.state_directory().join("account-capacity.yaml")
+    }
+
+    pub(crate) fn state_directory(&self) -> PathBuf {
         self.source_path
             .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or_else(|| Path::new("."))
-            .join("connections.yaml")
+            .to_owned()
     }
 
     pub(crate) fn verify_unchanged(&self) -> Result<(), ConfigError> {

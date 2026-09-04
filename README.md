@@ -36,13 +36,19 @@ top-level 하위 명령과 한 호출에 섞을 수 없으며, 하위 명령과 
 대화형 실행, `--no-tools`, 새 Session이 아닌 resume과의 조합은 시작 전에 거절된다.
 
 저장된 Session의 토큰·캐시 사용량은 `yo usage SESSION_ID`로 확인한다. 계정 자체의
-현재 한도는 별도 개념이며, Codex는 `yo account codex --refresh`, 로컬 Grok은
-`yo account grok --refresh`, 저장된 Kimi Code Membership 계정은
-`yo account kimi:ACCOUNT --refresh`, 저장된 QwenCloud Token Plan 계정은
-`yo account qwencloud:ACCOUNT --refresh`로 명시적으로 한 번 조회한다. 어느 경로도 새
-Agent Session이나 모델 요청을 만들지 않는다. Yo는 Provider가 보고한 플랜과 한도만
-공용 화면으로 표시하며, 유효한 잔여량 관측이 없는 경로에서는 이를
-합성하지 않는다. Agent가 읽을 때는 `--format json`을 덧붙인다. 구현이 참고한
+현재 한도는 별도 개념이다. `yo account`는 모든 지원 계정의 마지막 관측값을 보여주고,
+`yo account kimi`처럼 Provider만 지정하면 그 Provider의 모든 계정을,
+`yo account kimi:ACCOUNT`처럼 지정하면 한 계정을 보여준다. `--refresh`를 붙인 경우에만
+선택한 범위를 다시 조회하며, 각 결과에는 마지막 갱신 시각이 함께 표시된다. 조회
+결과가 하나면 상세 화면을, 여러 결과면 컬럼형 요약 표를 기본으로 사용하며 `--detail`로
+언제든 상세 화면을 강제할 수 있다. 여러 계정 요약은 `PROVIDER`, `ACCOUNT`, `PLAN`,
+`LIMITS`, `UPDATED` 컬럼 표이며, `LIMITS`에는 작은 수직 level meter가 함께 표시된다.
+캐시가 없는 delegated host는 `Local Codex` 또는
+`Local Grok`의 `Account  Not resolved` 행으로 표시된다. 어느 경로도 새 Agent Session이나 모델 요청을
+만들지 않는다. Yo는 Provider가 보고한 플랜과 한도만 공용 화면으로 표시하며, 유효한
+잔여량 관측이 없는 경로에서는 이를 합성하지 않는다. Agent가 읽을 때는 `--format json`을
+덧붙인다. 캐시가 없는 delegated host의 실제 계정은 `yo account PROVIDER --refresh`로
+host에 질의하면 확정된다. 구현이 참고한
 upstream 소스와 정확한 어댑터 경계는
 [`Account capacity`](docs/src/workflows/account-capacity.md)에 기록한다.
 

@@ -1,14 +1,15 @@
 use super::*;
 
-// 계정 용량 조회는 Session Usage와 다른 최상위 명령이며, 초기 live 구현은 외부 관측을
-// 사용자가 명시한 `--refresh` 한 번으로만 시작하고 Codex source를 그대로 보존합니다.
+// 계정 용량 조회는 Session Usage와 다른 최상위 명령이며, 기본값은 저장된 마지막 관측값을
+// 읽고 `--refresh`가 있을 때만 외부 관측을 수행합니다.
 #[test]
-fn account_capacity_requires_an_explicit_refresh() {
+fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
     assert_eq!(
         parse(["account".into(), "codex".into(), "--refresh".into()]).unwrap(),
         Command::Account(AccountCommand {
-            source: "codex".to_owned(),
+            source: Some("codex".to_owned()),
             refresh: true,
+            detail: false,
             format: OutputFormat::Text,
         })
     );
@@ -22,8 +23,9 @@ fn account_capacity_requires_an_explicit_refresh() {
         ])
         .unwrap(),
         Command::Account(AccountCommand {
-            source: "kimi:default".to_owned(),
+            source: Some("kimi:default".to_owned()),
             refresh: true,
+            detail: false,
             format: OutputFormat::Json,
         })
     );
@@ -37,13 +39,63 @@ fn account_capacity_requires_an_explicit_refresh() {
         ])
         .unwrap(),
         Command::Account(AccountCommand {
-            source: "codex".to_owned(),
+            source: Some("codex".to_owned()),
             refresh: true,
+            detail: false,
             format: OutputFormat::Json,
         })
     );
-    assert!(parse(["account".into(), "codex".into()]).is_err());
-    assert!(parse(["account".into(), "--refresh".into()]).is_err());
+    assert_eq!(
+        parse(["account".into()]).unwrap(),
+        Command::Account(AccountCommand {
+            source: None,
+            refresh: false,
+            detail: false,
+            format: OutputFormat::Text,
+        })
+    );
+    assert_eq!(
+        parse(["account".into(), "kimi".into()]).unwrap(),
+        Command::Account(AccountCommand {
+            source: Some("kimi".to_owned()),
+            refresh: false,
+            detail: false,
+            format: OutputFormat::Text,
+        })
+    );
+    assert_eq!(
+        parse(["account".into(), "--refresh".into()]).unwrap(),
+        Command::Account(AccountCommand {
+            source: None,
+            refresh: true,
+            detail: false,
+            format: OutputFormat::Text,
+        })
+    );
+    assert_eq!(
+        parse(["account".into(), "--detail".into()]).unwrap(),
+        Command::Account(AccountCommand {
+            source: None,
+            refresh: false,
+            detail: true,
+            format: OutputFormat::Text,
+        })
+    );
+    assert_eq!(
+        parse([
+            "account".into(),
+            "--detail".into(),
+            "--format".into(),
+            "json".into(),
+        ])
+        .unwrap(),
+        Command::Account(AccountCommand {
+            source: None,
+            refresh: false,
+            detail: true,
+            format: OutputFormat::Json,
+        })
+    );
 }
 
 // 인자가 없으면 기존 제품 진입점인 live Inline/Rich 실행으로 남아 `session` 기능 추가가

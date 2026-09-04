@@ -5,6 +5,7 @@ pub(crate) mod command;
 pub mod html;
 pub(crate) mod input;
 pub(crate) mod layout;
+pub mod meter;
 pub(crate) mod overlay;
 pub mod plain;
 pub(crate) mod prompt;

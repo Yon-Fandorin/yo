@@ -1,10 +1,15 @@
 use super::{AccountId, ModelServiceError, ProviderId};
 
-/// One Provider-and-Account capacity observation.
+/// One Provider-and-Account capacity snapshot.
+///
+/// `account` is the stable identity used for joins and cache coordinates. The label is kept on
+/// the same value because it is part of the account result, but it must not be confused with that
+/// stable identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AccountCapacitySnapshot {
     provider: ProviderId,
     account: AccountId,
+    account_label: String,
     buckets: Vec<AccountCapacityBucket>,
 }
 
@@ -14,9 +19,11 @@ impl AccountCapacitySnapshot {
         account: AccountId,
         buckets: Vec<AccountCapacityBucket>,
     ) -> Self {
+        let account_label = account.to_string();
         Self {
             provider,
             account,
+            account_label,
             buckets,
         }
     }
@@ -29,6 +36,17 @@ impl AccountCapacitySnapshot {
     #[must_use]
     pub const fn account(&self) -> &AccountId {
         &self.account
+    }
+
+    #[must_use]
+    pub fn account_label(&self) -> &str {
+        &self.account_label
+    }
+
+    #[must_use]
+    pub fn with_account_label(mut self, account_label: impl Into<String>) -> Self {
+        self.account_label = account_label.into();
+        self
     }
 
     #[must_use]
@@ -259,6 +277,20 @@ impl AccountCredits {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // stable account key와 사람이 읽는 이메일 label은 하나의 snapshot에서 함께 보존합니다.
+    #[test]
+    fn snapshot_keeps_stable_account_key_and_display_label_together() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("0123456789abcdef").unwrap(),
+            Vec::new(),
+        )
+        .with_account_label("person@example.test");
+
+        assert_eq!(snapshot.account().as_str(), "0123456789abcdef");
+        assert_eq!(snapshot.account_label(), "person@example.test");
+    }
 
     // Provider가 보고한 사용률만 받아 남은 비율을 정확한 보수 산술로 계산하고,
     // 100%를 넘는 값은 잔여량처럼 보이는 잘못된 값으로 투영하지 않습니다.

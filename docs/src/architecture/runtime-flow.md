@@ -322,9 +322,11 @@ authenticated ACP `modelState`. The active delegated host retains its exact
 execution profile; an inactive sibling uses its ordinary inventory profile.
 Neither read creates another Agent Session. A missing executable, account, or
 usable inventory leaves that host's non-selectable `model catalog unavailable`
-section without suppressing its sibling. Host account labels prefer verified
+section without suppressing its sibling. Host model-inventory labels prefer verified
 email, then verified subscription, then `local`; the stable internal AccountId
-is a fingerprint rather than the displayed evidence. The current account
+is a fingerprint rather than the displayed evidence. Account-capacity refresh is
+stricter and stores a host capacity result only when the authenticated email is valid.
+The current account
 section is first and only the exact model label receives the inline ` (current)`
 suffix. Section and account-status rows are not selectable, hidden host models
 are omitted, and Yo does not invent an `Automatic` model row.

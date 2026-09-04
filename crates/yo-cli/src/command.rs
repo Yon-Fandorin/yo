@@ -73,7 +73,7 @@ struct Cli {
 
 #[derive(Clone, Debug, Eq, PartialEq, Subcommand)]
 enum CliCommand {
-    /// Show current capacity reported by one account source.
+    /// Show cached or refreshed capacity for one or more account sources.
     Account(AccountArguments),
 
     /// Connect one service target.
@@ -97,13 +97,18 @@ enum CliCommand {
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 struct AccountArguments {
-    /// Account source to inspect: codex or kimi:<account>.
+    /// Optional account source: a Provider, or an exact Provider:Account pair.
     #[arg(value_name = "SOURCE")]
-    source: String,
+    source: Option<String>,
 
-    /// Perform one explicit live refresh instead of reading Session usage.
-    #[arg(long, required = true)]
+    /// Re-observe the selected account source before displaying it.
+    #[arg(long)]
     refresh: bool,
+
+    /// Show the full multi-line capacity details instead of the compact account summary (text
+    /// only).
+    #[arg(long)]
+    detail: bool,
 
     /// Select human-readable text or stable machine-readable JSON.
     #[arg(long, value_enum, default_value = "text")]
@@ -280,8 +285,9 @@ pub(crate) enum Command {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct AccountCommand {
-    pub(crate) source: String,
+    pub(crate) source: Option<String>,
     pub(crate) refresh: bool,
+    pub(crate) detail: bool,
     pub(crate) format: OutputFormat,
 }
 
@@ -360,6 +366,7 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
         Some(CliCommand::Account(arguments)) => Ok(Command::Account(AccountCommand {
             source: arguments.source,
             refresh: arguments.refresh,
+            detail: arguments.detail,
             format: arguments.format,
         })),
         Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {

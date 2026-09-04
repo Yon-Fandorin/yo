@@ -3,7 +3,8 @@ use std::time::Duration;
 use serde_json::json;
 use yo_core::{
     AccountId, AgentCommand, BackendBindingEvidence, BackendCommandEvidence, BackendFailureKind,
-    BackendIdentity, BackendPoll, ContinuationStrategy, ModelId, UserInput,
+    BackendIdentity, BackendPoll, ContinuationStrategy, HostId, ModelId, UserInput,
+    derive_host_account_id,
 };
 
 use super::{
@@ -112,7 +113,14 @@ fn initializes_before_starting_a_thread() {
         evidence.binding_identity().schema(),
         "codex.app-server/thread-binding/v2"
     );
-    assert!(evidence.binding_identity().value().contains("account-"));
+    let account =
+        derive_host_account_id(&HostId::codex(), &[("email", "person@example.test")]).unwrap();
+    assert!(
+        evidence
+            .binding_identity()
+            .value()
+            .contains(account.as_str())
+    );
     assert_eq!(
         evidence.continuation_strategy(),
         yo_core::ContinuationStrategy::BackendManagedState

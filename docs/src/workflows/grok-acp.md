@@ -26,8 +26,9 @@ adapter.
 
 `yo account grok --refresh` reuses only the initialize-authenticate prefix and
 then shuts the child down. It maps the exact `subscription_tier` from the
-successful authentication metadata into the provider-neutral account snapshot;
-email, team identity, and authentication-mode metadata are ignored. It creates
+successful authentication metadata into the provider-neutral account snapshot and
+uses the required verified email as both the human-readable account label and stable
+identity evidence. Team identity and authentication-mode metadata are ignored. It creates
 no Agent Session and sends no prompt. Installed Grok CLI 1.0.5 does not expose
 the newer `x.ai/billing` extension, so the command does not infer quota windows
 from a plan name.
@@ -39,6 +40,8 @@ Keep the adapter fail-closed around the wire surface it consumes:
 - initialize with ACP protocol version 1 and empty client capabilities;
 - require the installed agent to advertise `cached_token`, then authenticate
   with exactly that method;
+- require a valid authenticated email and use it as the account label and stable
+  identity evidence;
 - accept only a bounded, non-empty, whitespace-exact, control-free subscription
   tier when producing an account snapshot;
 - create with `session/new`, and resume with `session/load` only when the agent

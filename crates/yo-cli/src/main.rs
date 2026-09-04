@@ -62,7 +62,10 @@ fn main() -> ExitCode {
 #[cfg(unix)]
 fn run(command: command::Command) -> Result<(), AppError> {
     match command {
-        command::Command::Account(command) => write_command_output(account::run(command)?),
+        command::Command::Account(command) => {
+            let result = account::run(command)?;
+            finish_account_output(result, write_command_output)
+        },
         command::Command::Connect(command) => {
             write_command_output(connection::run_connect(command)?)
         },
@@ -89,6 +92,39 @@ fn write_command_output(output: String) -> Result<(), AppError> {
         .write_all(output.as_bytes())
         .and_then(|()| stdout.flush())
         .map_err(|error| AppError::single("writing command output", error))
+}
+
+#[cfg(unix)]
+fn finish_account_output(
+    result: account::AccountRunOutput,
+    publish: impl FnOnce(String) -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    publish(result.output)?;
+    result.error.map_or(Ok(()), Err)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{account::AccountRunOutput, diagnostic::AppError, finish_account_output};
+
+    // 일부 refresh가 실패해도 이미 만든 account 출력은 먼저 publish해야 합니다.
+    #[test]
+    fn account_output_is_published_before_a_partial_refresh_error() {
+        let mut published = None;
+        let result = finish_account_output(
+            AccountRunOutput {
+                output: "partial account output\n".to_owned(),
+                error: Some(AppError::message("one refresh failed")),
+            },
+            |output| {
+                published = Some(output);
+                Ok(())
+            },
+        );
+
+        assert_eq!(published.as_deref(), Some("partial account output\n"));
+        assert!(result.is_err());
+    }
 }
 
 #[cfg(unix)]

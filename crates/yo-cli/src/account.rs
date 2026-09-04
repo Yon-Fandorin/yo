@@ -1,4 +1,4 @@
-use std::fmt::Write as _;
+use std::{collections::BTreeMap, fmt::Write as _};
 
 use yo_backend_delegated_codex::{
     CodexBackendConfig, read_account_capacity as read_codex_account_capacity,
@@ -15,6 +15,13 @@ use yo_core::{
 
 mod json;
 mod qwencloud;
+mod storage;
+
+use yo_tui::{
+    GlyphProfile,
+    meter::{MeterGlyphs, MeterShape, MeterSpec, MeterTemplate},
+    surface::cell_width,
+};
 
 use super::{
     AppError,
@@ -24,28 +31,117 @@ use super::{
     presentation::{PresentationStyle, TextStyle, remaining_bar},
 };
 
-pub(crate) fn run(command: AccountCommand) -> Result<String, AppError> {
-    if !command.refresh {
-        return Err(AppError::message(
-            "account capacity currently requires an explicit --refresh",
-        ));
-    }
-    let report = match parse_source(&command.source)? {
-        AccountSource::Codex => AccountCapacityReport::plain(read_codex_capacity()?),
-        AccountSource::Grok => AccountCapacityReport::plain(read_grok_capacity()?),
-        AccountSource::Kimi(account) => AccountCapacityReport::plain(read_kimi_capacity(account)?),
-        AccountSource::QwenCloud(account) => read_qwencloud_capacity(account)?,
-    };
-    match command.format {
-        OutputFormat::Text => Ok(render(&report.snapshot, PresentationStyle::for_stdout())),
-        OutputFormat::Json => json::render(&report)
-            .map_err(|error| AppError::single("serializing account capacity JSON", error)),
-    }
+pub(crate) struct AccountRunOutput {
+    pub(crate) output: String,
+    pub(crate) error: Option<AppError>,
 }
 
+const ACCOUNT_COMPACT_METER_TEMPLATE: MeterTemplate<'static> =
+    MeterTemplate::new("{label} {meter} {percent}%");
+const ACCOUNT_COMPACT_METER: MeterSpec<'static> = MeterSpec::new(
+    MeterShape::VerticalLevel,
+    MeterGlyphs::for_profile(GlyphProfile::Rich),
+    ACCOUNT_COMPACT_METER_TEMPLATE,
+);
+
+pub(crate) fn run(command: AccountCommand) -> Result<AccountRunOutput, AppError> {
+    let config = config::load().map_err(|error| AppError::single("loading config", error))?;
+    let cache_path = config.account_capacity_path();
+    let cached = storage::load(&cache_path)
+        .map_err(|error| AppError::single("loading account capacity cache", error))?;
+    let connection_repository = LocalConnectionRepository::new(config.connection_path());
+    connection_repository
+        .recover_pending_operation()
+        .map_err(|error| AppError::single("checking pending connection operations", error))?;
+    let connections = connection_repository
+        .capture()
+        .map_err(|error| AppError::single("reading stored model connections", error))?;
+    let query = parse_query(command.source.as_deref())?;
+    let targets = resolve_targets(&query, &connections, &cached, command.refresh)?;
+
+    let mut refreshed = BTreeMap::new();
+    let mut failures = Vec::new();
+    if command.refresh {
+        for target in &targets {
+            let display_target = target_display_reference(target, &cached);
+            match refresh_target(target) {
+                Ok(report) => {
+                    let matches_exact = exact_refresh_matches(&query, target, &report);
+                    if matches_exact == Some(false) {
+                        failures.push(AccountRefreshFailure {
+                            target: display_target.clone(),
+                            message: format!(
+                                "the authenticated account is `{}` (requested `{}`)",
+                                report.account_label(),
+                                query_exact_account(&query).unwrap_or_default()
+                            ),
+                        });
+                    } else {
+                        refreshed.insert(target.clone(), report);
+                    }
+                },
+                Err(error) => failures.push(AccountRefreshFailure {
+                    target: display_target,
+                    message: error.to_string(),
+                }),
+            }
+        }
+        let updates = refreshed.values().cloned().collect::<Vec<_>>();
+        if !updates.is_empty()
+            && let Err(error) = storage::upsert(&cache_path, &updates)
+        {
+            failures.push(AccountRefreshFailure {
+                target: "cache".to_owned(),
+                message: format!("saving account capacity cache: {error}"),
+            });
+        }
+    }
+
+    let cached = cached
+        .into_iter()
+        .map(|report| (report.coordinate(), report))
+        .collect::<BTreeMap<_, _>>();
+    let records = targets
+        .into_iter()
+        .map(|target| {
+            let report = refreshed.get(&target).cloned().or_else(|| {
+                target
+                    .exact_coordinate()
+                    .and_then(|coordinate| cached.get(coordinate).cloned())
+            });
+            AccountCapacityRecord { target, report }
+        })
+        .collect::<Vec<_>>();
+    let output = match command.format {
+        OutputFormat::Text => Ok(render_records(
+            &records,
+            &query,
+            command.refresh,
+            command.detail,
+            &failures,
+            PresentationStyle::for_stdout(),
+        )),
+        OutputFormat::Json => json::render_for_query(&records, &query, &failures)
+            .map_err(|error| AppError::single("serializing account capacity JSON", error)),
+    }?;
+    Ok(AccountRunOutput {
+        output,
+        error: (!failures.is_empty())
+            .then(|| AppError::message("one or more account capacity refreshes failed")),
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AccountRefreshFailure {
+    target: String,
+    message: String,
+}
+
+#[derive(Clone)]
 struct AccountCapacityReport {
     snapshot: AccountCapacitySnapshot,
     provider_data: Option<AccountProviderData>,
+    observed_at: Option<String>,
 }
 
 impl AccountCapacityReport {
@@ -53,46 +149,394 @@ impl AccountCapacityReport {
         Self {
             snapshot,
             provider_data: None,
+            observed_at: None,
         }
+    }
+
+    fn from_cached(
+        snapshot: AccountCapacitySnapshot,
+        account_label: Option<String>,
+        provider_data: Option<AccountProviderData>,
+        observed_at: String,
+    ) -> Self {
+        let snapshot = match account_label {
+            Some(label) => snapshot.with_account_label(label),
+            None => snapshot,
+        };
+        Self {
+            snapshot,
+            provider_data,
+            observed_at: Some(observed_at),
+        }
+    }
+
+    fn with_observed_at(mut self, observed_at: String) -> Self {
+        self.observed_at = Some(observed_at);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_account_label(mut self, account_label: impl Into<String>) -> Self {
+        self.snapshot = self.snapshot.with_account_label(account_label);
+        self
+    }
+
+    fn coordinate(&self) -> AccountCoordinate {
+        AccountCoordinate {
+            provider: self.snapshot.provider().clone(),
+            account: self.snapshot.account().clone(),
+        }
+    }
+
+    fn snapshot(&self) -> &AccountCapacitySnapshot {
+        &self.snapshot
+    }
+
+    fn account_label(&self) -> &str {
+        self.snapshot.account_label()
+    }
+
+    fn provider_data(&self) -> Option<&AccountProviderData> {
+        self.provider_data.as_ref()
+    }
+
+    fn observed_at(&self) -> Option<&str> {
+        self.observed_at.as_deref()
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 enum AccountProviderData {
     QwenCloud(qwencloud::QwenCloudProviderData),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum AccountSource<'a> {
-    Codex,
-    Grok,
-    Kimi(&'a str),
-    QwenCloud(&'a str),
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+struct AccountCoordinate {
+    provider: ProviderId,
+    account: AccountId,
 }
 
-fn parse_source(source: &str) -> Result<AccountSource<'_>, AppError> {
-    if source == "codex" {
-        return Ok(AccountSource::Codex);
+impl AccountCoordinate {
+    fn new(provider: &str, account: &str) -> Result<Self, AppError> {
+        Ok(Self {
+            provider: ProviderId::new(provider)
+                .map_err(|error| AppError::single("resolving account Provider", error))?,
+            account: AccountId::new(account)
+                .map_err(|error| AppError::single("resolving account Account", error))?,
+        })
     }
-    if source == "grok" {
-        return Ok(AccountSource::Grok);
+
+    fn reference(&self) -> String {
+        format!("{}:{}", self.provider, self.account)
     }
-    if let Some(account) = source.strip_prefix("kimi:")
-        && !account.is_empty()
-        && !account.contains(':')
-    {
-        return Ok(AccountSource::Kimi(account));
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum AccountTarget {
+    Exact(AccountCoordinate),
+    LocalHost { provider: ProviderId },
+}
+
+impl AccountTarget {
+    fn provider(&self) -> &ProviderId {
+        match self {
+            Self::Exact(coordinate) => &coordinate.provider,
+            Self::LocalHost { provider } => provider,
+        }
     }
-    if let Some(account) = source.strip_prefix("qwencloud:")
-        && !account.is_empty()
-        && !account.contains(':')
-    {
-        return Ok(AccountSource::QwenCloud(account));
+
+    fn exact_coordinate(&self) -> Option<&AccountCoordinate> {
+        match self {
+            Self::Exact(coordinate) => Some(coordinate),
+            Self::LocalHost { .. } => None,
+        }
     }
-    Err(AppError::message(format!(
-        "unsupported account source `{source}`; current support: codex, grok, kimi:<account>, qwencloud:<account>"
-    )))
+
+    fn reference(&self) -> String {
+        match self {
+            Self::Exact(coordinate) => coordinate.reference(),
+            Self::LocalHost { provider } => local_host_label(provider),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AccountQuery {
+    All,
+    Provider(ProviderId),
+    Exact(AccountCoordinate),
+}
+
+#[derive(Clone)]
+struct AccountCapacityRecord {
+    target: AccountTarget,
+    report: Option<AccountCapacityReport>,
+}
+
+fn parse_query(source: Option<&str>) -> Result<AccountQuery, AppError> {
+    let Some(source) = source else {
+        return Ok(AccountQuery::All);
+    };
+    if let Some((provider, account)) = source.split_once(':') {
+        if provider.is_empty() || account.is_empty() || account.contains(':') {
+            return Err(AppError::message(format!(
+                "invalid account source `{source}`; use PROVIDER or PROVIDER:ACCOUNT"
+            )));
+        }
+        return Ok(AccountQuery::Exact(AccountCoordinate::new(
+            provider, account,
+        )?));
+    }
+    Ok(AccountQuery::Provider(ProviderId::new(source).map_err(
+        |error| AppError::single("resolving account Provider", error),
+    )?))
+}
+
+fn resolve_targets(
+    query: &AccountQuery,
+    connections: &yo_core::ConnectionSnapshot,
+    cached: &[AccountCapacityReport],
+    refresh: bool,
+) -> Result<Vec<AccountTarget>, AppError> {
+    let mut known = Vec::new();
+    for provider in ["codex", "grok"] {
+        if let Some(report) = latest_host_cache(cached, provider) {
+            known.push(AccountTarget::Exact(report.coordinate()));
+        } else if host_command_available(provider) {
+            known.push(AccountTarget::LocalHost {
+                provider: ProviderId::new(provider)
+                    .map_err(|error| AppError::single("resolving host Provider", error))?,
+            });
+        }
+    }
+    for account in connections.accounts() {
+        let target = AccountCoordinate {
+            provider: account.provider_id().clone(),
+            account: account.account_id().clone(),
+        };
+        if is_stored_capacity_account(connections, &target)? {
+            known.push(AccountTarget::Exact(target));
+        }
+    }
+    known.sort();
+    known.dedup();
+
+    let targets = match query {
+        AccountQuery::All => known,
+        AccountQuery::Provider(provider) => known
+            .into_iter()
+            .filter(|target| target.provider() == provider)
+            .collect(),
+        AccountQuery::Exact(target) => {
+            if let Some(candidate) = known.iter().find(|candidate| {
+                candidate
+                    .exact_coordinate()
+                    .is_some_and(|coordinate| coordinate == target)
+            }) {
+                vec![candidate.clone()]
+            } else if let Some(candidate) = cached.iter().find(|report| {
+                report.snapshot().provider() == &target.provider
+                    && account_selector_matches(target, report)
+                    && cached_report_is_selectable(connections, report)
+            }) {
+                vec![AccountTarget::Exact(candidate.coordinate())]
+            } else if refresh
+                && matches!(target.provider.as_str(), "codex" | "grok")
+                && host_command_available(target.provider.as_str())
+            {
+                vec![AccountTarget::Exact(target.clone())]
+            } else {
+                return Err(AppError::message(format!(
+                    "no stored account-capacity source matches `{}`",
+                    target.reference()
+                )));
+            }
+        },
+    };
+    if targets.is_empty() {
+        let description = match query {
+            AccountQuery::All => "any supported Provider".to_owned(),
+            AccountQuery::Provider(provider) => format!("Provider `{provider}`"),
+            AccountQuery::Exact(target) => format!("`{}`", target.reference()),
+        };
+        return Err(AppError::message(format!(
+            "no account-capacity sources are available for {description}"
+        )));
+    }
+    Ok(targets)
+}
+
+fn refresh_target(target: &AccountTarget) -> Result<AccountCapacityReport, AppError> {
+    let report = match target.provider().as_str() {
+        "codex" => read_codex_capacity()?,
+        "grok" => read_grok_capacity()?,
+        "kimi" => AccountCapacityReport::plain(read_kimi_capacity(
+            target
+                .exact_coordinate()
+                .ok_or_else(|| AppError::message("Kimi requires an exact account target"))?
+                .account
+                .as_str(),
+        )?),
+        "qwencloud" => read_qwencloud_capacity(
+            target
+                .exact_coordinate()
+                .ok_or_else(|| AppError::message("QwenCloud requires an exact account target"))?
+                .account
+                .as_str(),
+        )?,
+        _ => {
+            return Err(AppError::message(format!(
+                "unsupported account-capacity source `{}`",
+                target.reference()
+            )));
+        },
+    };
+    Ok(report.with_observed_at(current_observed_at()))
+}
+
+fn query_exact_account(query: &AccountQuery) -> Option<&str> {
+    match query {
+        AccountQuery::Exact(target) => Some(target.account.as_str()),
+        _ => None,
+    }
+}
+
+fn account_selector_matches(target: &AccountCoordinate, report: &AccountCapacityReport) -> bool {
+    target.account == *report.snapshot().account()
+        || target
+            .account
+            .as_str()
+            .strip_prefix("account-")
+            .is_some_and(|legacy| legacy == report.snapshot().account().as_str())
+        || report
+            .snapshot()
+            .account()
+            .as_str()
+            .strip_prefix("account-")
+            .is_some_and(|legacy| legacy == target.account.as_str())
+        || target.account.as_str() == report.account_label()
+        || target
+            .account
+            .as_str()
+            .eq_ignore_ascii_case(report.account_label())
+}
+
+fn exact_refresh_matches(
+    query: &AccountQuery,
+    target: &AccountTarget,
+    report: &AccountCapacityReport,
+) -> Option<bool> {
+    match query {
+        AccountQuery::Exact(expected)
+            if expected.provider.as_str() == target.provider().as_str()
+                && matches!(target.provider().as_str(), "codex" | "grok") =>
+        {
+            target
+                .exact_coordinate()
+                .map(|_| account_selector_matches(expected, report))
+        },
+        _ => None,
+    }
+}
+
+fn cached_report_is_selectable(
+    connections: &yo_core::ConnectionSnapshot,
+    report: &AccountCapacityReport,
+) -> bool {
+    match report.snapshot().provider().as_str() {
+        "codex" | "grok" => true,
+        "kimi" | "qwencloud" => {
+            is_stored_capacity_account(connections, &report.coordinate()).unwrap_or(false)
+        },
+        _ => false,
+    }
+}
+
+fn target_display_reference(target: &AccountTarget, cached: &[AccountCapacityReport]) -> String {
+    let Some(coordinate) = target.exact_coordinate() else {
+        return target.reference();
+    };
+    cached
+        .iter()
+        .find(|report| report.coordinate() == *coordinate)
+        .map(|report| format!("{}:{}", coordinate.provider, report.account_label()))
+        .unwrap_or_else(|| coordinate.reference())
+}
+
+fn latest_host_cache<'a>(
+    cached: &'a [AccountCapacityReport],
+    provider: &str,
+) -> Option<&'a AccountCapacityReport> {
+    cached
+        .iter()
+        .filter(|report| report.snapshot().provider().as_str() == provider)
+        .max_by_key(|report| report.observed_at().unwrap_or_default())
+}
+
+fn is_stored_capacity_account(
+    connections: &yo_core::ConnectionSnapshot,
+    target: &AccountCoordinate,
+) -> Result<bool, AppError> {
+    match target.provider.as_str() {
+        "kimi" => Ok(has_kimi_code_membership_binding(connections, target)),
+        "qwencloud" => Ok(has_qwencloud_token_plan_binding(
+            connections,
+            &target.provider,
+            &target.account,
+        )),
+        _ => Ok(false),
+    }
+}
+
+fn has_kimi_code_membership_binding(
+    connections: &yo_core::ConnectionSnapshot,
+    target: &AccountCoordinate,
+) -> bool {
+    connections
+        .kimi_catalog_seed(&target.provider, &target.account)
+        .ok()
+        .flatten()
+        .is_some_and(|seed| seed.profile().as_str() == "kimi-code-membership/v1")
+        || connections.models().iter().any(|stored| {
+            let binding = stored.complete().binding();
+            binding.provider_id() == &target.provider
+                && binding.account_id() == &target.account
+                && KimiCatalogSeed::from_code_membership_binding(binding)
+                    .ok()
+                    .flatten()
+                    .is_some()
+        })
+}
+
+fn host_command_available(command: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|directory| {
+        let candidate = directory.join(command);
+        let Ok(metadata) = std::fs::metadata(candidate) else {
+            return false;
+        };
+        metadata.is_file() && {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode() & 0o111 != 0
+            }
+            #[cfg(not(unix))]
+            {
+                true
+            }
+        }
+    })
+}
+
+fn current_observed_at() -> String {
+    let now = jiff::Timestamp::now();
+    jiff::Timestamp::from_second(now.as_second())
+        .expect("the current timestamp rounded to seconds remains in range")
+        .to_string()
 }
 
 fn read_qwencloud_capacity(account: &str) -> Result<AccountCapacityReport, AppError> {
@@ -101,11 +545,7 @@ fn read_qwencloud_capacity(account: &str) -> Result<AccountCapacityReport, AppEr
     let account = AccountId::new(account)
         .map_err(|error| AppError::single("resolving the QwenCloud Account", error))?;
     let config = config::load().map_err(|error| AppError::single("loading config", error))?;
-    let state_directory = config
-        .connection_path()
-        .parent()
-        .ok_or_else(|| AppError::message("Yo configuration has no state directory"))?
-        .to_owned();
+    let state_directory = config.state_directory();
     let repositories = LocalConnectionOperationRepositories::in_directory(state_directory)
         .map_err(|error| AppError::single("opening connection repositories", error))?;
     let mut operation = repositories
@@ -138,6 +578,7 @@ fn read_qwencloud_capacity(account: &str) -> Result<AccountCapacityReport, AppEr
     Ok(AccountCapacityReport {
         snapshot,
         provider_data: Some(AccountProviderData::QwenCloud(provider_data)),
+        observed_at: None,
     })
 }
 
@@ -261,18 +702,20 @@ fn has_qwencloud_token_plan_binding(
         })
 }
 
-fn read_codex_capacity() -> Result<AccountCapacitySnapshot, AppError> {
+fn read_codex_capacity() -> Result<AccountCapacityReport, AppError> {
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
-    read_codex_account_capacity(CodexBackendConfig::new(cwd))
-        .map_err(|error| AppError::single("refreshing Codex account capacity", error))
+    let snapshot = read_codex_account_capacity(CodexBackendConfig::new(cwd))
+        .map_err(|error| AppError::single("refreshing Codex account capacity", error))?;
+    Ok(AccountCapacityReport::plain(snapshot))
 }
 
-fn read_grok_capacity() -> Result<AccountCapacitySnapshot, AppError> {
+fn read_grok_capacity() -> Result<AccountCapacityReport, AppError> {
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
-    read_grok_account_capacity(GrokBackendConfig::new(cwd))
-        .map_err(|error| AppError::single("refreshing Grok account capacity", error))
+    let snapshot = read_grok_account_capacity(GrokBackendConfig::new(cwd))
+        .map_err(|error| AppError::single("refreshing Grok account capacity", error))?;
+    Ok(AccountCapacityReport::plain(snapshot))
 }
 
 fn read_kimi_capacity(account: &str) -> Result<AccountCapacitySnapshot, AppError> {
@@ -326,24 +769,499 @@ fn derive_kimi_code_seed(
     Ok(None)
 }
 
-fn render(snapshot: &AccountCapacitySnapshot, style: PresentationStyle) -> String {
+fn render_records(
+    records: &[AccountCapacityRecord],
+    query: &AccountQuery,
+    refreshed: bool,
+    detail: bool,
+    failures: &[AccountRefreshFailure],
+    style: PresentationStyle,
+) -> String {
+    let detailed = detail || records.len() == 1;
+    let mut output = if detailed {
+        render_detailed_records(records, style)
+    } else {
+        render_compact_records(records, query, style)
+    };
+    let mut commands = Vec::new();
+    if !detailed {
+        commands.push(("Detail", account_command(query, "--detail")));
+    }
+    if !refreshed && records.iter().any(|record| record.report.is_none()) {
+        commands.push(("Refresh", account_command(query, "--refresh")));
+    }
+    if !failures.is_empty() {
+        commands.push(("Retry", account_command(query, "--refresh")));
+    }
+    if !commands.is_empty() {
+        output.push('\n');
+        for (label, command) in commands {
+            style.push(
+                &mut output,
+                TextStyle::Muted,
+                &format!("{label}: {command}"),
+            );
+            output.push('\n');
+        }
+    }
+    if !failures.is_empty() {
+        output.push('\n');
+        style.push(&mut output, TextStyle::Error, "Refresh failures");
+        output.push('\n');
+        for failure in failures {
+            output.push_str("  ");
+            output.push_str(&terminal_safe(&failure.target));
+            output.push_str(" · ");
+            output.push_str(&terminal_safe(&failure.message));
+            output.push('\n');
+        }
+    }
+    output
+}
+
+fn render_detailed_records(records: &[AccountCapacityRecord], style: PresentationStyle) -> String {
+    let mut output = String::new();
+    if records.len() > 1 {
+        style.push(
+            &mut output,
+            TextStyle::Bold,
+            &format!("Account capacity · {} accounts", records.len()),
+        );
+        output.push_str("\n\n");
+    }
+    for (index, record) in records.iter().enumerate() {
+        if index != 0 {
+            output.push('\n');
+        }
+        match &record.report {
+            Some(report) => output.push_str(&render_report(report, style)),
+            None => output.push_str(&render_missing(&record.target, style)),
+        }
+    }
+    output
+}
+
+const COMPACT_ACCOUNT_HEADINGS: [&str; 5] = ["PROVIDER", "ACCOUNT", "PLAN", "LIMITS", "UPDATED"];
+
+#[derive(Clone, Debug)]
+struct CompactCell {
+    plain: String,
+    parts: Vec<CompactCellPart>,
+}
+
+#[derive(Clone, Debug)]
+struct CompactCellPart {
+    value: String,
+    tone: Option<TextStyle>,
+}
+
+impl CompactCell {
+    fn from_parts(parts: Vec<CompactCellPart>) -> Self {
+        let mut plain = String::new();
+        for part in &parts {
+            plain.push_str(&part.value);
+        }
+        Self { plain, parts }
+    }
+
+    fn plain(value: impl Into<String>) -> Self {
+        Self::from_parts(vec![CompactCellPart {
+            value: value.into(),
+            tone: None,
+        }])
+    }
+
+    fn styled(value: impl Into<String>, tone: TextStyle) -> Self {
+        Self::from_parts(vec![CompactCellPart {
+            value: value.into(),
+            tone: Some(tone),
+        }])
+    }
+
+    fn width(&self) -> usize {
+        cell_width(&self.plain).expect("compact account cells must be terminal-safe")
+    }
+
+    fn render(
+        &self,
+        output: &mut String,
+        style: PresentationStyle,
+        default_tone: Option<TextStyle>,
+    ) {
+        for part in &self.parts {
+            match part.tone.or(default_tone) {
+                Some(tone) => style.push(output, tone, &part.value),
+                None => output.push_str(&part.value),
+            }
+        }
+    }
+}
+
+fn compact_account_row(record: &AccountCapacityRecord) -> Vec<CompactCell> {
+    let Some(report) = record.report.as_ref() else {
+        return match &record.target {
+            AccountTarget::LocalHost { provider } => vec![
+                CompactCell::plain(provider.as_str()),
+                CompactCell::styled("Local host", TextStyle::Muted),
+                CompactCell::styled("Unknown", TextStyle::Muted),
+                CompactCell::styled("Not refreshed", TextStyle::Muted),
+                CompactCell::styled("Never", TextStyle::Muted),
+            ],
+            AccountTarget::Exact(coordinate) => vec![
+                CompactCell::plain(coordinate.provider.as_str()),
+                CompactCell::plain(terminal_safe(coordinate.account.as_str())),
+                CompactCell::styled("Unknown", TextStyle::Muted),
+                CompactCell::styled("Not refreshed", TextStyle::Muted),
+                CompactCell::styled("Never", TextStyle::Muted),
+            ],
+        };
+    };
+
+    let snapshot = report.snapshot();
+    let (status, status_tone) = display_status(snapshot);
+    let mut limits = compact_limit_cell(snapshot);
+    if status != "Available" {
+        let mut parts = vec![CompactCellPart {
+            value: status,
+            tone: Some(status_tone),
+        }];
+        if !limits.plain.is_empty() {
+            parts.push(CompactCellPart {
+                value: " · ".to_owned(),
+                tone: None,
+            });
+        }
+        parts.extend(limits.parts);
+        limits = CompactCell::from_parts(parts);
+    }
+
+    let updated = report.observed_at().map_or_else(
+        || CompactCell::styled("Never", TextStyle::Muted),
+        compact_observed_at_cell,
+    );
+    vec![
+        CompactCell::plain(snapshot.provider().as_str()),
+        CompactCell::plain(terminal_safe(report.account_label())),
+        CompactCell::plain(display_plan(snapshot)),
+        limits,
+        updated,
+    ]
+}
+
+fn render_compact_records(
+    records: &[AccountCapacityRecord],
+    query: &AccountQuery,
+    style: PresentationStyle,
+) -> String {
     let mut output = String::new();
     style.push(
         &mut output,
         TextStyle::Bold,
         &format!(
-            "{} account",
-            display_identifier(snapshot.provider().as_str())
+            "{} · {} {}",
+            account_scope_label(query),
+            records.len(),
+            if records.len() == 1 {
+                "account"
+            } else {
+                "accounts"
+            }
         ),
     );
+    output.push_str("\n\n");
+
+    let headings = COMPACT_ACCOUNT_HEADINGS
+        .iter()
+        .map(|heading| CompactCell::plain(*heading))
+        .collect::<Vec<_>>();
+    let rows = records.iter().map(compact_account_row).collect::<Vec<_>>();
+    let widths = compact_column_widths(&headings, &rows);
+    push_compact_table_row(
+        &mut output,
+        &headings,
+        &widths,
+        style,
+        Some(TextStyle::Muted),
+    );
+    for row in &rows {
+        push_compact_table_row(&mut output, row, &widths, style, None);
+    }
+    output
+}
+
+fn compact_column_widths(headings: &[CompactCell], rows: &[Vec<CompactCell>]) -> Vec<usize> {
+    let mut widths = headings.iter().map(CompactCell::width).collect::<Vec<_>>();
+    for row in rows {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.width());
+        }
+    }
+    widths
+}
+
+fn push_compact_table_row(
+    output: &mut String,
+    cells: &[CompactCell],
+    widths: &[usize],
+    style: PresentationStyle,
+    default_tone: Option<TextStyle>,
+) {
+    for (index, (cell, width)) in cells.iter().zip(widths).enumerate() {
+        cell.render(output, style, default_tone);
+        if index + 1 < cells.len() {
+            output.push_str(&" ".repeat(width.saturating_sub(cell.width()) + 2));
+        }
+    }
     output.push('\n');
+}
+
+fn account_scope_label(query: &AccountQuery) -> String {
+    match query {
+        AccountQuery::All => "Account capacity".to_owned(),
+        AccountQuery::Provider(provider) => {
+            format!("{} account capacity", display_identifier(provider.as_str()))
+        },
+        AccountQuery::Exact(target) => target.reference(),
+    }
+}
+
+fn account_command(query: &AccountQuery, flag: &str) -> String {
+    let source = match query {
+        AccountQuery::All => String::new(),
+        AccountQuery::Provider(provider) => format!(" {provider}"),
+        AccountQuery::Exact(target) => format!(" {}", shell_quote(&target.reference())),
+    };
+    format!("yo account{source} {flag}")
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.chars().all(|character| {
+        character.is_ascii_alphanumeric()
+            || matches!(character, '_' | '-' | '.' | '/' | ':' | '@' | '%' | '+')
+    }) {
+        return value.to_owned();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn compact_limit_cell(snapshot: &AccountCapacitySnapshot) -> CompactCell {
+    let mut parts = Vec::new();
+    for (index, (value, tone)) in compact_limit_items(snapshot).into_iter().enumerate() {
+        if index != 0 {
+            parts.push(CompactCellPart {
+                value: " · ".to_owned(),
+                tone: None,
+            });
+        }
+        parts.push(CompactCellPart {
+            value,
+            tone: Some(tone),
+        });
+    }
+    CompactCell::from_parts(parts)
+}
+
+fn compact_limit_items(snapshot: &AccountCapacitySnapshot) -> Vec<(String, TextStyle)> {
+    let mut limits = Vec::new();
+    for (index, bucket) in snapshot.buckets().iter().enumerate() {
+        let nested = is_additional_bucket(snapshot, bucket, index);
+        let bucket_label = nested.then(|| compact_bucket_label(bucket));
+        for window in [bucket.primary(), bucket.secondary()].into_iter().flatten() {
+            let mut label = compact_window_label(window.window_duration_minutes());
+            if let Some(bucket_label) = &bucket_label {
+                label = format!("{bucket_label} {label}");
+            }
+            let remaining = window.remaining_percent_basis_points();
+            let rendered = ACCOUNT_COMPACT_METER
+                .render(&label, remaining)
+                .expect("built-in account limit meter must remain renderable");
+            limits.push((rendered, capacity_tone(remaining)));
+        }
+    }
+    if limits.is_empty()
+        && let Some(credits) = snapshot
+            .buckets()
+            .iter()
+            .find_map(|bucket| bucket.credits())
+    {
+        return vec![(
+            format!("credits {}", display_credits(credits)),
+            TextStyle::Muted,
+        )];
+    }
+    if limits.is_empty() {
+        return vec![("No capacity".to_owned(), TextStyle::Muted)];
+    }
+    limits
+}
+
+fn compact_bucket_label(bucket: &AccountCapacityBucket) -> String {
+    let value = bucket
+        .name()
+        .or_else(|| bucket.id())
+        .unwrap_or("Additional");
+    if value.to_ascii_lowercase().contains("spark") {
+        return "Spark".to_owned();
+    }
+    let value = display_identifier(value);
+    let mut characters = value.chars();
+    let compact = characters.by_ref().take(15).collect::<String>();
+    if characters.next().is_some() {
+        format!("{compact}…")
+    } else {
+        compact
+    }
+}
+
+fn compact_window_label(minutes: Option<u64>) -> String {
+    let Some(minutes) = minutes else {
+        return "window".to_owned();
+    };
+    const MINUTES_PER_DAY: u64 = 24 * 60;
+    if minutes == 7 * MINUTES_PER_DAY {
+        return "7d".to_owned();
+    }
+    if minutes != 0 && minutes.is_multiple_of(60) {
+        return format!("{}h", minutes / 60);
+    }
+    format!("{minutes}m")
+}
+
+fn display_observed_at_with_age(value: &str) -> String {
+    let displayed = display_observed_at(value);
+    let Ok(timestamp) = value.parse::<jiff::Timestamp>() else {
+        return displayed;
+    };
+    let age = jiff::Timestamp::now()
+        .as_second()
+        .saturating_sub(timestamp.as_second());
+    if age < 0 {
+        return displayed;
+    }
+    format!("{displayed} ({})", display_age(age as u64))
+}
+
+fn compact_observed_at_cell(value: &str) -> CompactCell {
+    let Ok(timestamp) = value.parse::<jiff::Timestamp>() else {
+        return CompactCell::plain(display_observed_at_with_age(value));
+    };
+    let displayed = timestamp
+        .to_zoned(jiff::tz::TimeZone::system())
+        .strftime("%Y-%m-%d %H:%M %Z")
+        .to_string();
+    let age = jiff::Timestamp::now()
+        .as_second()
+        .saturating_sub(timestamp.as_second());
+    if age < 0 {
+        return CompactCell::plain(displayed);
+    }
+    CompactCell::from_parts(vec![
+        CompactCellPart {
+            value: displayed,
+            tone: None,
+        },
+        CompactCellPart {
+            value: format!(" ({})", display_age(age as u64)),
+            tone: Some(TextStyle::Muted),
+        },
+    ])
+}
+
+fn display_age(seconds: u64) -> String {
+    if seconds < 60 {
+        return "just now".to_owned();
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m ago");
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("{hours}h {}m ago", minutes % 60);
+    }
+    let days = hours / 24;
+    format!("{days}d {}h ago", hours % 24)
+}
+
+fn render_missing(target: &AccountTarget, style: PresentationStyle) -> String {
+    let mut output = String::new();
+    let (heading, account, heading_account) = match target {
+        AccountTarget::LocalHost { provider } => {
+            (local_host_label(provider), "Not resolved".to_owned(), None)
+        },
+        AccountTarget::Exact(coordinate) => (
+            display_identifier(coordinate.provider.as_str()),
+            terminal_safe(coordinate.account.as_str()),
+            Some(terminal_safe(coordinate.account.as_str())),
+        ),
+    };
+    push_account_heading(&mut output, &heading, heading_account.as_deref(), style);
+    if heading_account.is_none() {
+        push_field(&mut output, "Account", &account, style, None);
+    }
+    push_field(&mut output, "Plan", "Unknown", style, None);
     push_field(
         &mut output,
-        "Account",
-        &terminal_safe(snapshot.account().as_str()),
+        "Status",
+        "Not refreshed",
         style,
-        None,
+        Some(TextStyle::Muted),
     );
+    push_field(
+        &mut output,
+        "Updated",
+        "Never",
+        style,
+        Some(TextStyle::Muted),
+    );
+    output.push('\n');
+    style.push(&mut output, TextStyle::Accent, "Usage limits");
+    output.push('\n');
+    style.push(
+        &mut output,
+        TextStyle::Muted,
+        "  No cached capacity information.",
+    );
+    output.push('\n');
+    output
+}
+
+fn local_host_label(provider: &ProviderId) -> String {
+    format!("Local {}", display_identifier(provider.as_str()))
+}
+
+#[cfg(test)]
+fn render(snapshot: &AccountCapacitySnapshot, style: PresentationStyle) -> String {
+    render_snapshot(snapshot, None, style)
+}
+
+fn render_report(report: &AccountCapacityReport, style: PresentationStyle) -> String {
+    render_snapshot(report.snapshot(), report.observed_at(), style)
+}
+
+fn push_account_heading(
+    output: &mut String,
+    provider: &str,
+    account: Option<&str>,
+    style: PresentationStyle,
+) {
+    style.push(output, TextStyle::Bold, provider);
+    if let Some(account) = account {
+        output.push_str(" · ");
+        style.push(output, TextStyle::Accent, account);
+    }
+    output.push_str("\n\n");
+}
+
+fn render_snapshot(
+    snapshot: &AccountCapacitySnapshot,
+    observed_at: Option<&str>,
+    style: PresentationStyle,
+) -> String {
+    let mut output = String::new();
+    let provider = display_identifier(snapshot.provider().as_str());
+    let account = terminal_safe(snapshot.account_label());
+    push_account_heading(&mut output, &provider, Some(&account), style);
     push_field(&mut output, "Plan", &display_plan(snapshot), style, None);
     let (status, status_tone) = display_status(snapshot);
     push_field(&mut output, "Status", &status, style, Some(status_tone));
@@ -360,9 +1278,18 @@ fn render(snapshot: &AccountCapacitySnapshot, style: PresentationStyle) -> Strin
             None,
         );
     }
+    if let Some(observed_at) = observed_at {
+        push_field(
+            &mut output,
+            "Updated",
+            &display_observed_at_with_age(observed_at),
+            style,
+            None,
+        );
+    }
 
     output.push('\n');
-    style.push(&mut output, TextStyle::Bold, "Usage limits");
+    style.push(&mut output, TextStyle::Accent, "Usage limits");
     output.push('\n');
     if !snapshot.buckets().iter().any(|bucket| {
         bucket.primary().is_some() || bucket.secondary().is_some() || bucket.credits().is_some()
@@ -387,6 +1314,18 @@ fn render(snapshot: &AccountCapacitySnapshot, style: PresentationStyle) -> Strin
         render_bucket(&mut output, bucket, nested, style);
     }
     output
+}
+
+fn display_observed_at(value: &str) -> String {
+    value.parse::<jiff::Timestamp>().map_or_else(
+        |_| terminal_safe(value),
+        |timestamp| {
+            timestamp
+                .to_zoned(jiff::tz::TimeZone::system())
+                .strftime("%Y-%m-%d %H:%M:%S %Z")
+                .to_string()
+        },
+    )
 }
 
 fn push_field(
@@ -445,13 +1384,7 @@ fn render_window(
         .map_or_else(|| format!("{fallback_label} limit:"), display_window_label);
     let _ = write!(output, "{prefix}{label:<15} [");
     let remaining = window.remaining_percent_basis_points();
-    let tone = if remaining >= 5_000 {
-        TextStyle::Positive
-    } else if remaining >= 2_000 {
-        TextStyle::Warning
-    } else {
-        TextStyle::Danger
-    };
+    let tone = capacity_tone(remaining);
     style.push(output, tone, &remaining_bar(window.remaining_percent(), 20));
     let _ = write!(output, "] {}% left", display_percent(remaining));
     if let Some(reset) = window.resets_at_unix_seconds() {
@@ -460,16 +1393,18 @@ fn render_window(
     output.push('\n');
 }
 
-fn display_percent(percent_basis_points: u16) -> String {
-    let whole = percent_basis_points / 100;
-    let fractional = percent_basis_points % 100;
-    if fractional == 0 {
-        whole.to_string()
-    } else if fractional.is_multiple_of(10) {
-        format!("{whole}.{}", fractional / 10)
+fn capacity_tone(remaining_percent_basis_points: u16) -> TextStyle {
+    if remaining_percent_basis_points >= 5_000 {
+        TextStyle::Positive
+    } else if remaining_percent_basis_points >= 2_000 {
+        TextStyle::Warning
     } else {
-        format!("{whole}.{fractional:02}")
+        TextStyle::Danger
     }
+}
+
+fn display_percent(percent_basis_points: u16) -> String {
+    yo_tui::meter::format_percent(percent_basis_points)
 }
 
 fn display_window_label(minutes: u64) -> String {
@@ -702,31 +1637,297 @@ mod tests {
         assert!(!missing.contains("credentials.yaml"));
     }
 
-    // Kimi source는 저장된 account를 명시하는 exact 두 segment 문법만 받아 Provider나
-    // 기본 계정을 추측하지 않습니다.
+    // account query는 전체, Provider 전체, exact Provider:Account 범위를 구분합니다.
     #[test]
-    fn parses_exact_account_sources() {
-        assert_eq!(parse_source("codex").unwrap(), AccountSource::Codex);
-        assert_eq!(parse_source("grok").unwrap(), AccountSource::Grok);
+    fn parses_account_query_scopes() {
+        assert_eq!(parse_query(None).unwrap(), AccountQuery::All);
         assert_eq!(
-            parse_source("kimi:default").unwrap(),
-            AccountSource::Kimi("default")
+            parse_query(Some("codex")).unwrap(),
+            AccountQuery::Provider(ProviderId::new("codex").unwrap())
         );
         assert_eq!(
-            parse_source("qwencloud:default").unwrap(),
-            AccountSource::QwenCloud("default")
+            parse_query(Some("kimi:default")).unwrap(),
+            AccountQuery::Exact(AccountCoordinate::new("kimi", "default").unwrap())
+        );
+        assert_eq!(
+            parse_query(Some("qwencloud:default")).unwrap(),
+            AccountQuery::Exact(AccountCoordinate::new("qwencloud", "default").unwrap())
         );
         for source in [
-            "kimi",
             "kimi:",
             "kimi:default:extra",
-            "qwencloud",
             "qwencloud:",
             "qwencloud:default:extra",
-            "grok:default",
         ] {
-            assert!(parse_source(source).is_err());
+            assert!(parse_query(Some(source)).is_err());
         }
+    }
+
+    // host cache의 email label을 입력해도 stable 내부 AccountId 좌표로 찾아야 합니다.
+    #[test]
+    fn resolves_a_host_account_by_its_email_label() {
+        let root = std::env::temp_dir().join(format!(
+            "yo-account-alias-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let connections = LocalConnectionRepository::new(root.join("connections.yaml"))
+            .capture()
+            .unwrap();
+        let report = AccountCapacityReport::plain(AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("0123456789abcdef").unwrap(),
+            Vec::new(),
+        ))
+        .with_account_label("person@example.test")
+        .with_observed_at("2026-09-03T01:02:03Z".to_owned());
+        let query = parse_query(Some("codex:person@example.test")).unwrap();
+
+        let targets = resolve_targets(&query, &connections, &[report], false).unwrap();
+
+        assert_eq!(
+            targets,
+            vec![AccountTarget::Exact(
+                AccountCoordinate::new("codex", "0123456789abcdef").unwrap()
+            )]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // host refresh 결과의 인증 email이 exact 요청과 일치하면 새 좌표를 정상적으로 승인합니다.
+    #[test]
+    fn exact_host_refresh_accepts_the_requested_email_identity() {
+        let query = parse_query(Some("grok:person@example.test")).unwrap();
+        let target =
+            AccountTarget::Exact(AccountCoordinate::new("grok", "fedcba9876543210").unwrap());
+        let report = AccountCapacityReport::plain(AccountCapacitySnapshot::new(
+            ProviderId::new("grok").unwrap(),
+            AccountId::new("fedcba9876543210").unwrap(),
+            Vec::new(),
+        ))
+        .with_account_label("person@example.test");
+
+        assert_eq!(exact_refresh_matches(&query, &target, &report), Some(true));
+    }
+
+    // 저장되지 않은 Kimi 계정은 임의의 cache 행으로 취급하지 않고 선택을 거부합니다.
+    #[test]
+    fn does_not_select_an_unsupported_cached_account() {
+        let root = std::env::temp_dir().join(format!(
+            "yo-account-eligibility-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let connections = LocalConnectionRepository::new(root.join("connections.yaml"))
+            .capture()
+            .unwrap();
+        let report = AccountCapacityReport::plain(AccountCapacitySnapshot::new(
+            ProviderId::new("kimi").unwrap(),
+            AccountId::new("retired").unwrap(),
+            Vec::new(),
+        ));
+        let query = parse_query(Some("kimi:retired")).unwrap();
+
+        let error = resolve_targets(&query, &connections, &[report], false).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("no stored account-capacity source")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // 이전 account- 접두어 cache도 읽을 수 있어 기존 사용자 cache를 잃지 않습니다.
+    #[test]
+    fn accepts_a_legacy_host_cache_key_after_the_prefix_removal() {
+        let root = std::env::temp_dir().join(format!(
+            "yo-account-legacy-key-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let connections = LocalConnectionRepository::new(root.join("connections.yaml"))
+            .capture()
+            .unwrap();
+        let report = AccountCapacityReport::plain(AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("account-0123456789abcdef").unwrap(),
+            Vec::new(),
+        ));
+        let query = parse_query(Some("codex:0123456789abcdef")).unwrap();
+
+        let targets = resolve_targets(&query, &connections, &[report], false).unwrap();
+
+        assert_eq!(
+            targets,
+            vec![AccountTarget::Exact(
+                AccountCoordinate::new("codex", "account-0123456789abcdef").unwrap()
+            )]
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // 상세 출력은 마지막 관측 시각과 한 번도 refresh하지 않은 host 상태를 함께 보여줍니다.
+    #[test]
+    fn renders_last_refresh_time_and_unobserved_accounts() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("default").unwrap(),
+            Vec::new(),
+        );
+        let report = AccountCapacityReport::plain(snapshot)
+            .with_observed_at("2026-09-03T01:02:03Z".to_owned());
+        let records = [
+            AccountCapacityRecord {
+                target: AccountTarget::Exact(report.coordinate()),
+                report: Some(report),
+            },
+            AccountCapacityRecord {
+                target: AccountTarget::LocalHost {
+                    provider: ProviderId::new("grok").unwrap(),
+                },
+                report: None,
+            },
+        ];
+
+        let output = render_records(
+            &records,
+            &AccountQuery::All,
+            false,
+            true,
+            &[],
+            PresentationStyle::Plain,
+        );
+
+        assert!(output.contains(&format!(
+            "Updated  {}",
+            display_observed_at("2026-09-03T01:02:03Z")
+        )));
+        assert!(output.contains("Local Grok"));
+        assert!(output.contains("Account  Not resolved"));
+        assert!(!output.contains("Current host"));
+        assert!(output.contains("Status   Not refreshed"));
+        assert!(output.contains("Updated  Never"));
+    }
+
+    // 여러 계정의 축약 목록은 컬럼형 표에서 남은 한도, 관측 age, 다음 실행 명령을 제공합니다.
+    #[test]
+    fn compact_account_list_includes_age_and_scope_commands() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("codex".to_owned()),
+                None,
+                Some("prolite".to_owned()),
+                Some(AccountCapacityWindow::new(82, Some(10_080), None).unwrap()),
+                None,
+                None,
+                None,
+            )],
+        );
+        let report = AccountCapacityReport::plain(snapshot)
+            .with_observed_at("2026-09-03T01:02:03Z".to_owned());
+        let records = [
+            AccountCapacityRecord {
+                target: AccountTarget::Exact(report.coordinate()),
+                report: Some(report),
+            },
+            AccountCapacityRecord {
+                target: AccountTarget::LocalHost {
+                    provider: ProviderId::new("grok").unwrap(),
+                },
+                report: None,
+            },
+        ];
+
+        let output = render_records(
+            &records,
+            &AccountQuery::All,
+            false,
+            false,
+            &[],
+            PresentationStyle::Plain,
+        );
+
+        assert!(output.contains("Account capacity · 2 accounts"));
+        assert!(output.contains("PROVIDER"));
+        assert!(output.contains("ACCOUNT"));
+        assert!(output.contains("PLAN"));
+        assert!(output.contains("LIMITS"));
+        assert!(output.contains("UPDATED"));
+        assert!(output.contains("codex"));
+        assert!(output.contains("default"));
+        assert!(output.contains("Pro Lite"));
+        assert!(output.contains("7d ▂ 18%"));
+        assert!(output.contains("grok"));
+        assert!(output.contains("Local host"));
+        assert!(output.contains("Not refreshed"));
+        assert!(output.contains("Never"));
+        assert!(
+            output.lines().any(|line| {
+                line.contains("codex") && line.contains(" (") && line.contains("ago")
+            })
+        );
+        assert!(output.contains("Detail: yo account --detail"));
+        assert!(output.contains("Refresh: yo account --refresh"));
+
+        let ansi = render_records(
+            &records,
+            &AccountQuery::All,
+            false,
+            false,
+            &[],
+            PresentationStyle::Ansi,
+        );
+        assert!(ansi.contains("\u{1b}[31m7d ▂ 18%\u{1b}[0m"));
+        assert!(ansi.contains("\u{1b}[2m ("));
+        assert_eq!(crate::presentation::strip_ansi(&ansi), output);
+    }
+
+    // 부분 refresh 실패도 retry 명령과 원래 오류를 함께 표시합니다.
+    #[test]
+    fn refresh_failures_include_a_retry_command_and_the_original_error() {
+        let records = [AccountCapacityRecord {
+            target: AccountTarget::LocalHost {
+                provider: ProviderId::new("grok").unwrap(),
+            },
+            report: None,
+        }];
+        let failures = [AccountRefreshFailure {
+            target: "Local Grok".to_owned(),
+            message: "login required".to_owned(),
+        }];
+
+        let output = render_records(
+            &records,
+            &AccountQuery::All,
+            true,
+            false,
+            &failures,
+            PresentationStyle::Plain,
+        );
+
+        assert!(output.contains("Retry: yo account --refresh"));
+        assert!(output.contains("Refresh failures\n  Local Grok · login required"));
+    }
+
+    // 상대 시간 표시는 짧은 단위부터 일 단위까지 결정적인 문구로 유지합니다.
+    #[test]
+    fn displays_compact_age_units() {
+        assert_eq!(display_age(0), "just now");
+        assert_eq!(display_age(120), "2m ago");
+        assert_eq!(display_age(3_720), "1h 2m ago");
+        assert_eq!(display_age(90_000), "1d 1h ago");
     }
 
     // 저장된 account_session이 없으면 no-echo 입력에서 받은 exact Cookie를 먼저 같은 account
@@ -1027,8 +2228,7 @@ mod tests {
 
         let output = render(&snapshot, PresentationStyle::Plain);
 
-        assert!(output.contains("Codex account"));
-        assert!(output.contains("Account  default"));
+        assert!(output.contains("Codex · default"));
         assert!(output.contains("Plan     Plus"));
         assert!(output.contains("Status   Available"));
         assert!(output.contains("Credits  12.5"));
@@ -1085,7 +2285,7 @@ mod tests {
 
         let output = render(&snapshot, PresentationStyle::Plain);
 
-        assert!(output.contains("Kimi account"));
+        assert!(output.contains("Kimi · default"));
         assert!(output.contains("Plan     Moderato"));
     }
 
@@ -1109,7 +2309,7 @@ mod tests {
 
         let output = render(&snapshot, PresentationStyle::Plain);
 
-        assert!(output.contains("Grok account"));
+        assert!(output.contains("Grok · default"));
         assert!(output.contains("Plan     SuperGrok"));
         assert!(output.contains("Status   Available"));
         assert!(output.contains("No capacity information available."));

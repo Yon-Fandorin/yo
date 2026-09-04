@@ -189,6 +189,7 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
 
 pub(super) fn decode_account_capacity(
     result: Value,
+    account: AccountId,
 ) -> Result<AccountCapacitySnapshot, BackendFailure> {
     let decoded: AccountRateLimitsResponse = serde_json::from_value(result).map_err(|error| {
         protocol_failure(format!(
@@ -203,21 +204,38 @@ pub(super) fn decode_account_capacity(
         _ => vec![decode_capacity_bucket(None, decoded.rate_limits)?],
     };
     let provider = ProviderId::new("codex").map_err(|error| protocol_failure(error.to_string()))?;
-    let account = AccountId::new("default").map_err(|error| protocol_failure(error.to_string()))?;
     Ok(AccountCapacitySnapshot::new(provider, account, buckets))
 }
 
 pub(super) fn decode_account_identity(
     result: &Value,
 ) -> Result<(String, Vec<(String, String)>), BackendFailure> {
-    decode_optional_account_identity(result).ok_or_else(|| {
-        protocol_failure("Codex account/read response has no stable account id or verified email")
-    })
+    let (email, plan, stable_id) = account_identity_fields(result);
+    let label = email.or(plan).unwrap_or("local").to_owned();
+    let evidence = match (stable_id, email, plan) {
+        (Some(stable_id), _, _) => vec![("account_id".to_owned(), stable_id.to_owned())],
+        (None, Some(email), _) => vec![("email".to_owned(), email.to_owned())],
+        (None, None, Some(plan)) => vec![("subscription".to_owned(), plan.to_owned())],
+        (None, None, None) => vec![("local".to_owned(), "local".to_owned())],
+    };
+    Ok((label, evidence))
 }
 
 pub(super) fn decode_optional_account_identity(
     result: &Value,
 ) -> Option<(String, Vec<(String, String)>)> {
+    let (email, plan, stable_id) = account_identity_fields(result);
+    let label = email.or(plan).unwrap_or("local").to_owned();
+    match (stable_id, email) {
+        (Some(stable_id), _) => {
+            Some((label, vec![("account_id".to_owned(), stable_id.to_owned())]))
+        },
+        (None, Some(email)) => Some((label, vec![("email".to_owned(), email.to_owned())])),
+        (None, None) => None,
+    }
+}
+
+fn account_identity_fields(result: &Value) -> (Option<&str>, Option<&str>, Option<&str>) {
     let account = result.get("account").unwrap_or(result);
     let email = account
         .get("email")
@@ -231,14 +249,28 @@ pub(super) fn decode_optional_account_identity(
         .get("id")
         .and_then(Value::as_str)
         .filter(|value| valid_catalog_text(value));
-    let label = email.or(plan).unwrap_or("local").to_owned();
-    let evidence = if let Some(stable_id) = stable_id {
-        vec![("account_id".to_owned(), stable_id.to_owned())]
-    } else {
-        let email = email?;
-        vec![("email".to_owned(), email.to_owned())]
-    };
-    Some((label, evidence))
+    (email, plan, stable_id)
+}
+
+pub(super) fn decode_account_capacity_identity(
+    result: &Value,
+) -> Result<(String, Vec<(String, String)>), BackendFailure> {
+    let account = result.get("account").unwrap_or(result);
+    let email = account
+        .get("email")
+        .and_then(Value::as_str)
+        .filter(|value| valid_catalog_text(value))
+        .filter(|value| AccountId::new((*value).to_owned()).is_ok())
+        .ok_or_else(|| protocol_failure("Codex account/read response has no valid `email`"))?;
+    let stable_id = account
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|value| valid_catalog_text(value));
+    let evidence = stable_id.map_or_else(
+        || vec![("email".to_owned(), email.to_owned())],
+        |stable_id| vec![("account_id".to_owned(), stable_id.to_owned())],
+    );
+    Ok((email.to_owned(), evidence))
 }
 
 pub(super) fn decode_model_list(result: Value) -> Result<ModelListPage, BackendFailure> {
@@ -478,10 +510,10 @@ mod tests {
         assert_eq!(page.next_cursor.as_deref(), Some("page-2"));
     }
 
-    // account section은 verified email을 subscription보다 우선 표시하되 stable native id가
-    // 있으면 AccountId fingerprint 입력은 그 더 강한 identity를 사용합니다.
+    // account section은 verified email을 사람이 보는 label로 사용하고 native id가 있으면
+    // 기존 stable AccountId fingerprint를 보존하며, 없을 때만 email을 증거로 사용합니다.
     #[test]
-    fn codex_account_identity_prefers_email_label_and_stable_id_evidence() {
+    fn codex_account_identity_uses_email_label_and_evidence() {
         let (label, evidence) = decode_account_identity(&json!({
             "account": {"type": "chatgpt", "id": "acct-1", "email": "person@example.test", "planType": "pro"}
         }))
@@ -494,22 +526,66 @@ mod tests {
         );
     }
 
-    // subscription 이름이나 고정 local 문자열은 서로 다른 로그인에 공통일 수 있으므로
-    // rebind 가능한 AccountId의 근거가 될 수 없습니다.
+    // email, subscription, local 순서의 catalog label fallback은 host inventory를 계속
+    // 표시하고, native id가 없을 때도 선택한 evidence로 안정적인 계정을 만듭니다.
     #[test]
-    fn codex_account_identity_rejects_plan_only_or_missing_identity() {
-        for account in [
-            json!({"account": {"type": "chatgpt", "planType": "pro"}}),
-            json!({"account": {"type": "apiKey"}}),
-        ] {
-            let error = decode_account_identity(&account).unwrap_err();
+    fn codex_account_identity_falls_back_to_subscription_or_local() {
+        let (label, evidence) = decode_account_identity(&json!({
+            "account": {"type": "chatgpt", "planType": "pro"}
+        }))
+        .unwrap();
+        assert_eq!(label, "pro");
+        assert_eq!(evidence[0].0, "subscription");
 
-            assert_eq!(error.kind(), BackendFailureKind::Protocol);
-            assert!(
-                error
-                    .message()
-                    .contains("stable account id or verified email")
-            );
-        }
+        let (label, evidence) = decode_account_identity(&json!({
+            "account": {"type": "apiKey"}
+        }))
+        .unwrap();
+        assert_eq!(label, "local");
+        assert_eq!(evidence[0].0, "local");
+    }
+
+    // 이메일이 없는 Codex capacity identity는 공용 default로 추정하지 않고 거부합니다.
+    #[test]
+    fn codex_account_capacity_identity_requires_email() {
+        let failure = decode_account_capacity_identity(&json!({
+            "account": {"id": "acct-1", "planType": "pro"}
+        }))
+        .unwrap_err();
+
+        assert!(failure.message().contains("no valid `email`"));
+    }
+
+    // native id가 없어도 검증된 이메일을 Codex capacity identity로 사용할 수 있습니다.
+    #[test]
+    fn codex_account_capacity_identity_uses_email_when_native_id_is_absent() {
+        let (label, evidence) = decode_account_capacity_identity(&json!({
+            "account": {"email": "person@example.test", "planType": "pro"}
+        }))
+        .unwrap();
+
+        assert_eq!(label, "person@example.test");
+        assert_eq!(
+            evidence,
+            vec![("email".to_owned(), "person@example.test".to_owned())]
+        );
+    }
+
+    // cache가 허용하는 AccountId 경계 안의 이메일만 capacity identity로 통과시킵니다.
+    #[test]
+    fn codex_account_capacity_identity_rejects_an_email_that_cannot_be_cached() {
+        let accepted = "a".repeat(256);
+        let (label, _) = decode_account_capacity_identity(&json!({
+            "account": {"email": accepted}
+        }))
+        .unwrap();
+        assert_eq!(label.len(), 256);
+
+        let rejected = "a".repeat(257);
+        let failure = decode_account_capacity_identity(&json!({
+            "account": {"email": rejected}
+        }))
+        .unwrap_err();
+        assert!(failure.message().contains("no valid `email`"));
     }
 }

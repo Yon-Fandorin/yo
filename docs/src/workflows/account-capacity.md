@@ -8,15 +8,47 @@ not share totals or infer one from the other.
 ## Public commands
 
 ```bash
+yo account
+yo account kimi
+yo account --detail
 yo account codex --refresh
 yo account grok --refresh
 yo account kimi:default --refresh
 yo account qwencloud:default --refresh
 yo account kimi:default --refresh --format json
+yo account codex:you@example.com --refresh
 ```
 
+Omit `SOURCE` to show every currently supported account-capacity source. A bare
+Provider such as `kimi` shows every stored account for that Provider, while
+`PROVIDER:ACCOUNT` selects one exact account. Without `--refresh`, the command shows
+the locally cached last observation and its `Updated` timestamp for each result. An
+account that has never been refreshed is shown as `Not refreshed` with `Never` as its
+timestamp. `--refresh` applies to the selected scope and saves successful observations
+and their timestamps in the local account-capacity cache. A multi-account refresh is
+best-effort: every selected source is attempted, successful results are saved and shown,
+and failures are reported together with a non-zero exit status.
+
+Text output uses the detailed view by default when the selected scope resolves to one
+account, and a borderless column table when it resolves to multiple accounts. The
+compact table keeps `PROVIDER`, `ACCOUNT`, `PLAN`, `LIMITS`, and `UPDATED` aligned;
+each limit window uses a one-cell vertical level meter beside its exact remaining
+percentage. `--detail` forces the detailed view for any scope, whose limit rows use
+the same meter family as a horizontal bar. Rich/ASCII glyphs, meter shape, and
+`{label}`/`{meter}`/`{percent}` layout are reusable through `yo-tui::meter`, while
+semantic colors remain a presentation-layer decision.
+Refresh or detail command suggestions are shown only when useful; JSON output never
+includes human-oriented command text.
+
 `codex` and `grok` mean the accounts used by their locally installed delegated
-hosts. `kimi:ACCOUNT` names one exact account already stored by Yo with either
+hosts. For account-capacity refresh, both hosts require a valid authenticated email and
+use it as the human-readable account label. The stable internal account key is kept separately:
+Codex preserves its native account id when one is available, while Grok uses the
+verified email as its identity evidence. Either the email label or the internal key can
+select the cached result. A first run without a cache shows `Local Codex` or `Local Grok`
+with `Account  Not resolved` until it is refreshed; use `yo account PROVIDER --refresh`
+to ask the local host for the authenticated account. That unresolved row is not itself a
+selectable account, and it is not a literal `current` account name. `kimi:ACCOUNT` names one exact account already stored by Yo with either
 the `kimi-code-membership/v1` catalog profile or an exact canonical Kimi Code
 complete binding, plus its exact Provider-and-Account credential. The binding
 fallback retains connections made before catalog-seed persistence; it does not
@@ -26,12 +58,15 @@ Plan connection using the canonical Singapore endpoint. It reads the Personal
 Token Plan console with the current QwenCloud browser session; the stored
 `sk-sp-*` model-inference key cannot authorize that console surface.
 
-`--refresh` deliberately re-observes the named account source. No route creates
+`--refresh` deliberately re-observes the selected account source or sources. No route creates
 an Agent Session, sends a model prompt, or falls back to another Provider. Codex starts
-its local app-server, initializes it, calls `account/rateLimits/read` once, and
-shuts it down. Grok starts `grok agent stdio`, initializes ACP v1, authenticates
+its local app-server, initializes it, calls `account/read` and
+`account/rateLimits/read` once each, and shuts it down. Grok starts `grok agent stdio`,
+initializes ACP v1, authenticates
 once with the advertised `cached_token` method, reads the exact
-`_meta.subscription_tier`, and shuts it down. Identity metadata is ignored.
+`_meta.subscription_tier` and the required email identity, and shuts it down. A host
+response without a valid email fails closed instead of being stored under a shared
+default account.
 The distributed Grok ACP service does not expose its internal billing extension,
 so Yo also reads at most the last 1 MiB of Grok's official `unified.jsonl` and
 uses only the newest complete `billing: fetched credits config` event whose
@@ -89,8 +124,14 @@ account-session mutation is prepared against that observed revision before the
 no-echo prompt or remote refresh. A concurrent credential or session change
 therefore reports a conflict instead of being silently replanned or overwritten.
 
-Text output is for people. `--format json` emits the same provider-neutral
-snapshot under the versioned `yo.account-capacity/v1alpha2` schema for agents.
+Text output is for people. `--format json` emits one exact result under the versioned
+`yo.account-capacity/v1alpha3` schema, or an `accounts` array under the
+`yo.account-capacity-list/v1alpha2` envelope for `yo account` and Provider scopes,
+even when that scope currently contains one account. The `account` field is the
+human-readable label; `accountId` is present when the stable internal key differs.
+Each cached result also carries its canonical `observedAt` timestamp. A partial refresh
+adds an `errors` array and still exits non-zero. `--detail` affects text only; JSON keeps
+its fixed machine-readable shape.
 Provider percentages are retained to `0.01%`; whole values omit a noisy `.0`.
 Count values are normalized conservatively by rounding used capacity up to that
 precision, so displayed remaining capacity never overstates the exact ratio.
@@ -102,9 +143,10 @@ values there; authentication material and unvalidated envelope fields are never
 included. Missing data stays absent or Unknown and is not synthesized from
 Session token usage.
 
-The earlier `v1alpha1` shape remains the integer-percentage contract. `v1alpha2`
-is the first shape that admits fractional percentages, exact count fields, and
-allowlisted `providerData`; consumers must dispatch on the recorded schema.
+The earlier `v1alpha1` and `v1alpha2` shapes remain historical contracts. `v1alpha3`
+adds the account label/key split and refresh-error envelope to the fractional,
+count-preserving, allowlisted-provider-data shape; consumers must dispatch on the
+recorded schema.
 
 ## Referenced upstream code
 

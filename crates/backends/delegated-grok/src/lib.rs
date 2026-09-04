@@ -25,11 +25,11 @@ use serde_json::{Value, json};
 use transport::{JsonPeer, StdioPeer};
 use yo_backend::BackendAdapter;
 use yo_core::{
-    ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef, ActivityResponse,
-    AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
-    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
-    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
-    ContinuationStrategy, RequestId, SessionId, TurnRef,
+    AccountCapacitySnapshot, ActivityId, ActivityKind, ActivityOutcome, ActivityRef,
+    ActivityRequestRef, ActivityResponse, AgentCommand, ApprovalDecision, BackendBindingEvidence,
+    BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind,
+    BackendIdentity, BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
+    ContinuationStrategy, HostId, RequestId, SessionId, TurnRef, derive_host_account_id,
 };
 
 pub const HOST_ID: &str = "grok";
@@ -74,10 +74,10 @@ impl GrokBackend {
     }
 }
 
-/// Reads the current Grok subscription tier without creating an Agent Session.
+/// Reads the current Grok account capacity and account identity without creating an Agent Session.
 pub fn read_account_capacity(
     config: GrokBackendConfig,
-) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
+) -> Result<AccountCapacitySnapshot, BackendFailure> {
     validate_config(&config)?;
     let usage = config
         .usage_log_path()
@@ -260,9 +260,18 @@ fn initialize_and_authenticate<P: JsonPeer>(
 fn observe_account_capacity<P: JsonPeer>(
     client: &mut AcpClient<P>,
     usage: Option<yo_core::AccountCapacityWindow>,
-) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
+) -> Result<AccountCapacitySnapshot, BackendFailure> {
     let authenticated = initialize_and_authenticate(client)?;
-    protocol::decode_account_capacity(authenticated.authentication, usage)
+    let (account_label, evidence) =
+        protocol::decode_account_capacity_identity(&authenticated.authentication)?;
+    let evidence_refs = evidence
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    let account = derive_host_account_id(&HostId::grok(), &evidence_refs)
+        .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+    let snapshot = protocol::decode_account_capacity(authenticated.authentication, usage, account)?;
+    Ok(snapshot.with_account_label(account_label))
 }
 
 fn observe_model_catalog<P: JsonPeer>(

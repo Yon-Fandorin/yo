@@ -8,14 +8,43 @@
 ## 공개 명령
 
 ```bash
+yo account
+yo account kimi
+yo account --detail
 yo account codex --refresh
 yo account grok --refresh
 yo account kimi:default --refresh
 yo account qwencloud:default --refresh
 yo account kimi:default --refresh --format json
+yo account codex:you@example.com --refresh
 ```
 
+`SOURCE`를 생략하면 현재 지원되는 모든 account-capacity source를 보여준다. Provider만
+(`kimi`) 지정하면 그 Provider에 저장된 모든 계정을 보여주고, `PROVIDER:ACCOUNT`를
+지정하면 하나의 정확한 계정만 보여준다. `--refresh`가 없으면 로컬에 저장된 마지막
+관측값만 표시하며 각 결과의 `Updated` 필드에 마지막 갱신 시각을 표시한다. 아직 한 번도
+갱신하지 않은 계정은 `Not refreshed`와 `Never`로 표시된다. `--refresh`는 선택한 전체
+범위에 적용되며, 성공한 관측값과 시각을 로컬 account-capacity cache에 저장한다.
+여러 계정을 갱신할 때는 best-effort로 선택한 모든 source를 시도한다. 성공한 결과는
+저장·표시하고 실패는 모아서 보고하며 종료 코드는 non-zero가 된다.
+
+Text 출력은 선택한 범위가 계정 하나로 해석되면 기본으로 상세 화면을 사용하고, 여러
+계정이면 테두리 없는 컬럼 표를 사용한다. 요약 표는 `PROVIDER`, `ACCOUNT`, `PLAN`,
+`LIMITS`, `UPDATED` 컬럼을 정렬하고 각 limit window의 정확한 잔여율 옆에 한 칸짜리
+수직 level meter를 표시한다. `--detail`은 범위와 관계없이 상세 화면을 강제하며,
+상세 limit 행도 같은 meter 계열을 수평 bar로 사용한다. Rich/ASCII glyph, meter 모양,
+`{label}`/`{meter}`/`{percent}` 배치는 `yo-tui::meter`에서 재사용할 수 있고,
+의미 기반 색상은 presentation 계층이 결정한다. 갱신 또는 상세 명령 안내는 유용할 때만
+표시하며 JSON 출력에는 사람용 명령 문구를 포함하지 않는다.
+
 `codex`와 `grok`은 각각 로컬에 설치된 delegated host가 사용하는 계정을 뜻한다.
+account-capacity를 실시간 갱신할 때는 두 host 모두 유효한 인증 이메일을 요구하고 이를 사람이 보는
+계정 label로 표시한다. stable한 내부 account key는 별도로 보관한다. Codex는 native
+account id가 있으면 이를 유지하고, Grok은 검증된 이메일을 identity evidence로
+사용한다. 캐시된 결과는 이메일 label 또는 내부 key로 선택할 수 있다. 캐시가 없는
+첫 실행에서는 갱신 전까지 `Local Codex` 또는 `Local Grok`과 `Account  Not resolved` 행으로
+표시된다. 실제 로그인 계정을 확인하려면 `yo account PROVIDER --refresh`로 로컬 host에
+질의한다. 이 미해결 행 자체는 선택 가능한 계정 이름이 아니며, 실제 `current` 계정명도 아니다.
 `kimi:ACCOUNT`는 Yo에
 `kimi-code-membership/v1` catalog profile 또는 정확한 canonical Kimi Code
 complete binding과 정확한 Provider-and-Account credential로 이미 저장된 계정
@@ -26,12 +55,14 @@ endpoint를 사용하는 정확히 저장된 Token Plan 연결을 받는다. 현
 session으로 Personal Token Plan console을 읽으며, 저장된 `sk-sp-*` 모델 추론 키로는
 이 console surface를 인증할 수 없다.
 
-`--refresh`는 지정한 계정 소스를 다시 관찰한다. 어느 경로도 Agent Session을 만들거나
+`--refresh`는 지정한 계정 소스 또는 소스들을 다시 관찰한다. 어느 경로도 Agent Session을 만들거나
 모델 prompt를 보내거나 다른 Provider로 fallback하지 않는다. Codex는
-로컬 app-server를 시작해 initialize한 뒤 `account/rateLimits/read`를 한 번 호출하고
-종료한다. Grok은 `grok agent stdio`를 시작해 ACP v1로 initialize하고, 광고된
-`cached_token` method로 한 번 인증한 뒤 정확한 `_meta.subscription_tier`를 읽고
-종료한다. Identity metadata는 무시한다. 배포된 Grok ACP 서비스는 내부 billing
+로컬 app-server를 시작해 initialize한 뒤 `account/read`와 `account/rateLimits/read`를
+각각 한 번 호출하고 종료한다. Grok은 `grok agent stdio`를 시작해 ACP v1로 initialize하고,
+광고된
+`cached_token` method로 한 번 인증한 뒤 정확한 `_meta.subscription_tier`와 필수 이메일
+identity를 읽고 종료한다. 유효한 이메일이 없는 host 응답은 공용 default 계정으로
+저장하지 않고 실패한다. 배포된 Grok ACP 서비스는 내부 billing
 extension을 노출하지 않으므로 Yo는 Grok 공식 `unified.jsonl`의 마지막 1 MiB까지만
 읽고, 주간 기간이 끝나지 않은 가장 최신의 완전한
 `billing: fetched credits config` event만 사용한다. 그런 event가 없으면 사용량 창을
@@ -83,8 +114,13 @@ revision을 capture한다. Account-session mutation은 no-echo prompt나 remote 
 그 관찰 revision에 묶어 준비한다. 따라서 credential이나 session이 동시에 바뀌면 조용히
 다시 계획하거나 덮어쓰지 않고 conflict를 보고한다.
 
-Text 출력은 사람용이다. `--format json`은 같은 Provider 중립 snapshot을 agent가
-읽을 수 있는 versioned `yo.account-capacity/v1alpha2` schema로 출력한다. Provider의
+Text 출력은 사람용이다. `--format json`은 정확한 계정 하나일 때 versioned
+`yo.account-capacity/v1alpha3` schema로, `yo account` 또는 Provider scope일 때는
+계정이 하나여도 `accounts` 배열을 가진 `yo.account-capacity-list/v1alpha2` envelope로
+출력한다. `account`는 사람이 읽는 label이고 stable key가 다를 때 `accountId`가 함께
+나온다. 각 cache 결과에는 canonical `observedAt` timestamp도 포함된다. 일부 refresh가
+실패하면 `errors` 배열을 추가하고 종료 코드는 non-zero가 된다. `--detail`은 text에만
+적용하며 JSON shape는 고정한다. Provider의
 percentage는 `0.01%`까지 보존하고 정수 값에는 불필요한 `.0`을 붙이지 않는다. count
 값은 이 정밀도에서 used capacity를 올림해 보수적으로 정규화하므로 표시한 remaining
 capacity가 정확한 비율보다 커지지 않는다. Provider가 보고한 exact `used`와 `limit`
@@ -94,9 +130,10 @@ Provider가 보고한 exact percentage와 reset 값, active `specCode`, active-t
 값을 여기에 유지하지만 인증 material과 검증하지 않은 envelope field는 포함하지
 않는다. 누락된 값은 absent 또는 Unknown으로 남고 Session token usage로 합성하지 않는다.
 
-이전 `v1alpha1` shape는 정수 percentage 계약으로 유지한다. `v1alpha2`는 fractional
-percentage, exact count field, allowlist한 `providerData`를 처음 허용하는 shape이며
-consumer는 기록된 schema로 명시적으로 dispatch해야 한다.
+이전 `v1alpha1`과 `v1alpha2` shape는 historical contract로 유지한다. `v1alpha3`은
+계정 label/key 분리와 refresh 오류 envelope를 fractional percentage, exact count,
+allowlist한 `providerData` shape에 추가하며 consumer는 기록된 schema로 명시적으로
+dispatch해야 한다.
 
 ## 참고한 upstream 코드
 
@@ -119,8 +156,8 @@ branch를 인용하거나 UI 출력만 보고 private endpoint를 추론하지 �
 
 - 저장된 Kimi 계정이나 credential이 없으면 local configuration error이며 요청을
   보내지 않는다.
-- Grok cached login이 없거나 subscription tier가 없거나 문자열이 아니거나 안전하지
-  않으면 refresh를 실패시킨다. Grok billing log가 없거나 사용할 수 없으면 usage
+- Grok cached login이나 유효한 email이 없거나 subscription tier가 없거나 문자열이 아니거나
+  안전하지 않으면 refresh를 실패시킨다. Grok billing log가 없거나 사용할 수 없으면 usage
   window만 생략한다. Direct xAI 접근으로 fallback하거나 Grok credential file을
   읽거나 identity metadata를 노출하지 않는다.
 - 저장된 QwenCloud account session이 없으면 no-echo interactive capture를 한 번

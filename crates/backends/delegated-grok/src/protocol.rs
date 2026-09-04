@@ -237,16 +237,21 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
 pub(super) fn decode_account_identity(
     authentication: &Value,
 ) -> Result<(String, Vec<(String, String)>), BackendFailure> {
-    let metadata = authentication
-        .get("_meta")
-        .and_then(Value::as_object)
-        .ok_or_else(|| protocol_failure("Grok authenticate response has no `_meta` object"))?;
+    decode_optional_account_identity(authentication).ok_or_else(|| {
+        protocol_failure("Grok authenticate response has no stable account id or verified email")
+    })
+}
+
+fn decode_optional_account_identity(
+    authentication: &Value,
+) -> Option<(String, Vec<(String, String)>)> {
+    let metadata = authentication.get("_meta").and_then(Value::as_object);
     let email = metadata
-        .get("email")
+        .and_then(|metadata| metadata.get("email"))
         .and_then(Value::as_str)
         .filter(|value| valid_account_text(value));
     let tier = metadata
-        .get("subscription_tier")
+        .and_then(|metadata| metadata.get("subscription_tier"))
         .and_then(Value::as_str)
         .filter(|value| valid_account_text(value));
     let (label, evidence) = if let Some(email) = email {
@@ -265,7 +270,19 @@ pub(super) fn decode_account_identity(
             vec![("local".to_owned(), "local".to_owned())],
         )
     };
-    Ok((label, evidence))
+    Some((label, evidence))
+}
+
+pub(super) fn decode_account_capacity_identity(
+    authentication: &Value,
+) -> Result<(String, Vec<(String, String)>), BackendFailure> {
+    let (label, evidence) = decode_account_identity(authentication)?;
+    if matches!(evidence.first().map(|(key, _)| key.as_str()), Some("email")) {
+        return Ok((label, evidence));
+    }
+    Err(protocol_failure(
+        "Grok authenticate response has no valid `email`",
+    ))
 }
 
 fn valid_account_text(value: &str) -> bool {
@@ -278,6 +295,7 @@ fn valid_account_text(value: &str) -> bool {
 pub(super) fn decode_account_capacity(
     authentication: Value,
     primary: Option<AccountCapacityWindow>,
+    account: AccountId,
 ) -> Result<AccountCapacitySnapshot, BackendFailure> {
     let metadata = authentication
         .get("_meta")
@@ -299,7 +317,6 @@ pub(super) fn decode_account_capacity(
         ));
     }
     let provider = ProviderId::new("grok").map_err(|error| protocol_failure(error.to_string()))?;
-    let account = AccountId::new("default").map_err(|error| protocol_failure(error.to_string()))?;
     Ok(AccountCapacitySnapshot::new(
         provider,
         account,
@@ -467,9 +484,10 @@ mod tests {
         );
     }
 
-    // account label은 verified email, subscription tier, local 순으로 내려갑니다.
+    // account catalog은 verified email을 우선하고, 없는 경우 검증된 subscription tier와
+    // local evidence를 사용해 host picker를 계속 표시합니다.
     #[test]
-    fn grok_account_identity_prefers_verified_email_then_subscription() {
+    fn grok_account_identity_prefers_email_then_subscription_or_local() {
         let (label, evidence) = decode_account_identity(&json!({
             "_meta": {"email": "person@example.test", "subscription_tier": "supergrok"}
         }))
@@ -483,5 +501,31 @@ mod tests {
         .unwrap();
         assert_eq!(label, "supergrok");
         assert_eq!(evidence[0].0, "subscription_tier");
+
+        let (label, evidence) = decode_account_identity(&json!({"_meta": {}})).unwrap();
+        assert_eq!(label, "local");
+        assert_eq!(evidence[0].0, "local");
+
+        let (label, evidence) = decode_account_identity(&json!({})).unwrap();
+        assert_eq!(label, "local");
+        assert_eq!(evidence[0].0, "local");
+    }
+
+    // account capacity는 실제 로그인 계정 email이 없으면 subscription을 계정처럼
+    // 저장하지 않고 refresh 자체를 실패시킵니다.
+    #[test]
+    fn grok_account_capacity_identity_requires_email() {
+        let (label, evidence) = decode_account_capacity_identity(&json!({
+            "_meta": {"email": "person@example.test", "subscription_tier": "supergrok"}
+        }))
+        .unwrap();
+        assert_eq!(label, "person@example.test");
+        assert_eq!(evidence[0].0, "email");
+
+        let failure = decode_account_capacity_identity(&json!({
+            "_meta": {"subscription_tier": "supergrok"}
+        }))
+        .unwrap_err();
+        assert!(failure.message().contains("no valid `email`"));
     }
 }

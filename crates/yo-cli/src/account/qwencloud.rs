@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use reqwest::{Client, RequestBuilder, Url, header, redirect};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::time::{Instant, timeout_at};
 use yo_core::{
@@ -39,7 +39,7 @@ pub(super) struct QwenCloudCapacityError {
     source: AppError,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct QwenCloudProviderData {
     spec_code: String,
@@ -47,7 +47,7 @@ pub(super) struct QwenCloudProviderData {
     quota: QwenCloudQuotaData,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct QwenCloudUsageData {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,7 +60,7 @@ struct QwenCloudUsageData {
     per1_week_reset_time: Option<Value>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct QwenCloudQuotaData {
     #[serde(skip_serializing_if = "Option::is_none")]
     five_hour: Option<Value>,

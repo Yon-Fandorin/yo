@@ -89,7 +89,7 @@ pub fn derive_host_account_id(
         digest.update(value.as_bytes());
     }
     let digest = digest.finalize();
-    AccountId::new(format!("account-{}", hex_prefix(&digest, 16)))
+    AccountId::new(hex_prefix(&digest, 16))
 }
 
 /// Binds a picker row to the exact authenticated visible inventory it came from.

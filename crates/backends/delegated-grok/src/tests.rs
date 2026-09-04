@@ -3,7 +3,7 @@ use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Duration};
 use serde_json::{Value, json};
 use yo_backend::transport::JsonMessagePeer;
 use yo_core::{
-    ActivityKind, ActivityOutcome, ActivityResponse, AgentCommand, ApprovalDecision,
+    AccountId, ActivityKind, ActivityOutcome, ActivityResponse, AgentCommand, ApprovalDecision,
     BackendBindingEvidence, BackendCommandEvidence, BackendEvent, BackendFailure,
     BackendFailureKind, BackendIdentity, BackendPoll, ContinuationStrategy, SessionId, TurnOutcome,
     TurnRef, UserInput,
@@ -82,7 +82,7 @@ fn response(id: u64, result: Value) -> Value {
 }
 
 // 계정 조회는 기존 initialize와 cached-token authenticate만 수행하고 Agent Session이나
-// prompt를 만들지 않은 채 공개 subscription tier를 공용 snapshot으로 투영합니다.
+// prompt를 만들지 않은 채 필수 email과 공개 subscription tier를 공용 snapshot으로 투영합니다.
 #[test]
 fn reads_account_capacity_from_authentication_metadata_without_a_session() {
     let messages = [
@@ -105,7 +105,8 @@ fn reads_account_capacity_from_authentication_metadata_without_a_session() {
     let snapshot = observe_account_capacity(&mut client, None).unwrap();
 
     assert_eq!(snapshot.provider().as_str(), "grok");
-    assert_eq!(snapshot.account().as_str(), "default");
+    assert_eq!(snapshot.account_label(), "ignored@example.test");
+    assert_ne!(snapshot.account().as_str(), "default");
     assert_eq!(snapshot.buckets().len(), 1);
     assert_eq!(snapshot.buckets()[0].id(), Some("grok"));
     assert_eq!(snapshot.buckets()[0].plan(), Some("SuperGrok"));
@@ -121,6 +122,29 @@ fn reads_account_capacity_from_authentication_metadata_without_a_session() {
             message["method"].as_str(),
             Some("session/new" | "session/load" | "session/prompt")
         )
+    }));
+}
+
+// 이메일이 없는 Grok 인증 응답은 capacity cache에 임의의 계정을 만들지 않고 실패해야 합니다.
+#[test]
+fn rejects_account_capacity_without_an_email_identity() {
+    let messages = [
+        initialize_response(1, &["cached_token", "grok.com"], true),
+        response(
+            2,
+            json!({
+                "_meta": {"subscription_tier": "SuperGrok"}
+            }),
+        ),
+    ];
+    let (peer, sent) = FakePeer::new(messages);
+    let mut client = AcpClient::new(peer, Duration::from_secs(1));
+
+    let failure = observe_account_capacity(&mut client, None).unwrap_err();
+
+    assert!(failure.message().contains("no valid `email`"));
+    assert!(sent.0.borrow().iter().all(|message| {
+        message["method"] != "session/new" && message["method"] != "session/prompt"
     }));
 }
 
@@ -189,7 +213,14 @@ fn rejects_missing_or_unsafe_account_subscription_tiers() {
         json!({ "_meta": { "subscription_tier": " SuperGrok" } }),
         json!({ "_meta": { "subscription_tier": "Super\nGrok" } }),
     ] {
-        assert!(protocol::decode_account_capacity(authentication, None).is_err());
+        assert!(
+            protocol::decode_account_capacity(
+                authentication,
+                None,
+                AccountId::new("test").unwrap(),
+            )
+            .is_err()
+        );
     }
 }
 

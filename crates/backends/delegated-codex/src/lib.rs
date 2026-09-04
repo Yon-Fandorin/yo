@@ -20,11 +20,11 @@ pub use skill_catalog::CodexSkillReferenceProvider;
 use transport::StdioPeer;
 use yo_backend::{BackendAdapter, transport::JsonMessagePeer};
 use yo_core::{
-    AccountId, ActivityId, ActivityKind, ActivityOutcome, ActivityRef, ActivityRequestRef,
-    ActivityResponse, AgentCommand, ApprovalDecision, BackendBindingEvidence, BackendCapabilities,
-    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendIdentity,
-    BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
-    ContinuationStrategy, ModelId, RequestId, SessionId, TurnRef,
+    AccountCapacitySnapshot, AccountId, ActivityId, ActivityKind, ActivityOutcome, ActivityRef,
+    ActivityRequestRef, ActivityResponse, AgentCommand, ApprovalDecision, BackendBindingEvidence,
+    BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind,
+    BackendIdentity, BackendPoll, BackendRequestEvidence, BackendResumeTarget, BackendStopHandle,
+    ContinuationStrategy, HostId, ModelId, RequestId, SessionId, TurnRef, derive_host_account_id,
 };
 
 pub const HOST_ID: &str = "codex";
@@ -153,10 +153,11 @@ fn native_model_binding_from_parts(
     Ok(Some(CodexNativeModelBinding { account, model }))
 }
 
-/// Reads the current Codex account capacity without creating an Agent Session.
+/// Reads the current Codex account capacity and account identity without creating an Agent
+/// Session.
 pub fn read_account_capacity(
     config: CodexBackendConfig,
-) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
+) -> Result<AccountCapacitySnapshot, BackendFailure> {
     validate_config(&config)?;
     let peer = StdioPeer::spawn(&config)?;
     let mut client = AppServerClient::new(peer, config.request_timeout());
@@ -212,10 +213,29 @@ fn validate_config(config: &CodexBackendConfig) -> Result<(), BackendFailure> {
 
 fn observe_account_capacity<P: JsonMessagePeer>(
     client: &mut AppServerClient<P>,
-) -> Result<yo_core::AccountCapacitySnapshot, BackendFailure> {
+) -> Result<AccountCapacitySnapshot, BackendFailure> {
     client.initialize()?;
+    let account_result = client
+        .call("account/read", json!({ "refreshToken": false }))?
+        .result;
+    let (account_label, evidence) = protocol::decode_account_capacity_identity(&account_result)?;
+    let evidence_refs = evidence
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.as_str()))
+        .collect::<Vec<_>>();
+    if !matches!(
+        evidence.first().map(|(key, _)| key.as_str()),
+        Some("account_id" | "email")
+    ) {
+        return Err(protocol::protocol_failure(
+            "Codex account/read response has no stable email account identity",
+        ));
+    }
+    let account = derive_host_account_id(&HostId::codex(), &evidence_refs)
+        .map_err(|error| protocol::protocol_failure(error.to_string()))?;
     let result = client.call("account/rateLimits/read", Value::Null)?.result;
-    protocol::decode_account_capacity(result)
+    let snapshot = protocol::decode_account_capacity(result, account)?;
+    Ok(snapshot.with_account_label(account_label))
 }
 
 fn observe_model_catalog<P: JsonMessagePeer>(

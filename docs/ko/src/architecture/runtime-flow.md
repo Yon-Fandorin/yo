@@ -286,8 +286,9 @@ Codex는 `account/read`와 보이는 `model/list` page 전체를 사용하고, G
 sibling은 일반 inventory profile을 사용한다. 어느 read도 Agent Session을 하나 더 만들지 않는다.
 실행 파일, account 또는 usable inventory가 없으면 그 host의 선택 불가능한
 `model catalog unavailable` section을 남기며 sibling을 숨기지 않는다. Host account label은
-검증된 email, 검증된 subscription, `local` 순으로 선택하며, 내부의 안정적인 AccountId에는
-표시한 증거 원문 대신 fingerprint를 쓴다. 현재 account section이 맨 앞에 오고 정확한 model
+검증된 email, 검증된 subscription, `local` 순으로 선택한다. 내부의 안정적인 AccountId에는
+표시한 증거 원문 대신 fingerprint를 쓴다. account-capacity refresh는 더 엄격하게 유효한
+인증 email이 있을 때만 host capacity 결과를 저장한다. 현재 account section이 맨 앞에 오고 정확한 model
 label에만 inline ` (current)` suffix가 붙는다. Section과 account status 행은 선택할 수 없고,
 숨겨진 host model은 생략하며, Yo는 `Automatic` model 행을 만들어내지 않는다.
 
