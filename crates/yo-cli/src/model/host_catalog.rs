@@ -84,9 +84,10 @@ impl HostCatalogObservation {
 
 /// Reads every built-in delegated host inventory concurrently. The active host keeps its exact
 /// execution profile; inactive hosts use their ordinary session-free inventory profile.
-pub(crate) fn read_builtin_host_catalogs(
+pub(crate) fn read_builtin_host_catalogs_with_codex_warning_observer(
     workspace: &Path,
     active: Option<(&HostId, DelegatedExecutionProfile)>,
+    warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
 ) -> Vec<HostCatalogObservation> {
     let requests = inventory_requests(
         active,
@@ -94,6 +95,7 @@ pub(crate) fn read_builtin_host_catalogs(
     );
     let codex = requests[0].clone();
     let grok = requests[1].clone();
+    let codex_warning_observer = warning_observer;
     let codex_workspace = workspace.to_path_buf();
     let grok_workspace = workspace.to_path_buf();
 
@@ -101,8 +103,11 @@ pub(crate) fn read_builtin_host_catalogs(
         let codex_reader = scope.spawn(move || {
             let config = yo_backend_delegated_codex::CodexBackendConfig::new(codex_workspace)
                 .with_read_only_review(codex.execution.is_read_only_review());
-            yo_backend_delegated_codex::read_model_catalog(config)
-                .map_err(|error| error.to_string())
+            yo_backend_delegated_codex::read_model_catalog_with_warning_observer(
+                config,
+                codex_warning_observer,
+            )
+            .map_err(|error| error.to_string())
         });
         let grok_reader = scope.spawn(move || {
             let config = yo_backend_delegated_grok::GrokBackendConfig::new(grok_workspace)

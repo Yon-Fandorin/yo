@@ -1,19 +1,73 @@
-use std::time::Duration;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
-use serde_json::json;
+use serde_json::{Value, json};
+use yo_backend::transport::JsonMessagePeer;
 use yo_core::{
     AccountId, AgentCommand, BackendBindingEvidence, BackendCommandEvidence, BackendFailureKind,
-    BackendIdentity, BackendPoll, ContinuationStrategy, HostId, ModelId, UserInput,
-    derive_host_account_id,
+    BackendIdentity, BackendPoll, BackendStopHandle, ContinuationStrategy, HostId, ModelId,
+    UserInput, derive_host_account_id,
 };
 
 use super::{
-    super::{Backend, client::AppServerClient},
+    super::{Backend, CodexCompatibilityWarning, client::AppServerClient},
     support::{
         FakePeer, backend, backend_with_profile, initialize_response, session,
         thread_start_response, turn,
     },
 };
+
+struct FailsOnInitializedPeer {
+    incoming: VecDeque<Value>,
+}
+
+impl FailsOnInitializedPeer {
+    fn new(incoming: impl IntoIterator<Item = Value>) -> Self {
+        Self {
+            incoming: incoming.into_iter().collect(),
+        }
+    }
+}
+
+impl JsonMessagePeer for FailsOnInitializedPeer {
+    fn stop_handle(&self) -> BackendStopHandle {
+        BackendStopHandle::no_op()
+    }
+
+    fn send(&mut self, message: &Value) -> Result<(), yo_core::BackendFailure> {
+        if message.get("method").and_then(Value::as_str) == Some("initialized") {
+            return Err(yo_core::BackendFailure::new(
+                BackendFailureKind::Initialization,
+                "initialized notification failed",
+            ));
+        }
+        Ok(())
+    }
+
+    fn receive(
+        &mut self,
+        _timeout: Duration,
+    ) -> Result<super::super::transport::PeerPoll, yo_core::BackendFailure> {
+        Ok(self
+            .incoming
+            .pop_front()
+            .map(super::super::transport::PeerPoll::Message)
+            .unwrap_or(super::super::transport::PeerPoll::Closed))
+    }
+
+    fn try_receive(
+        &mut self,
+    ) -> Result<super::super::transport::PeerPoll, yo_core::BackendFailure> {
+        Ok(super::super::transport::PeerPoll::Pending)
+    }
+
+    fn shutdown(&mut self) -> Result<(), yo_core::BackendFailure> {
+        Ok(())
+    }
+}
 
 fn resume_binding(thread_id: &str) -> BackendBindingEvidence {
     BackendBindingEvidence::new(
@@ -563,17 +617,67 @@ fn unverified_minor_warns_and_completes_initialization() {
     assert_eq!(sent.0.borrow()[1], json!({ "method": "initialized" }));
 }
 
-// 대화형 호환 경로는 typed warning을 한 번만 stderr writer에 게시하고, 초기화 결과 자체는
-// one-shot 경로와 동일하게 보존합니다.
+// 대화형 호환 경로는 출력 writer를 직접 만지지 않고 caller-owned observer로 typed warning을
+// 전달하며, 초기화 결과 자체는 one-shot 경로와 동일하게 보존합니다.
 #[test]
-fn explicit_warning_writer_publishes_the_warning_once() {
+fn warning_observer_receives_the_warning_once() {
     let (peer, _) = FakePeer::new([initialize_response(1, "0.150.0")]);
-    let mut client = AppServerClient::new(peer, Duration::from_secs(1));
-    let mut output = Vec::new();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&warnings);
+    let observer = Arc::new(move |warning: CodexCompatibilityWarning| {
+        observed.lock().unwrap().push(warning);
+    });
+    let mut client =
+        AppServerClient::new(peer, Duration::from_secs(1)).with_warning_observer(Some(observer));
 
-    client.initialize_with_warning_writer(&mut output).unwrap();
+    client.initialize().unwrap();
 
-    let output = String::from_utf8(output).unwrap();
-    assert_eq!(output.matches("yo: warning:").count(), 1);
-    assert!(output.contains("0.150.0"));
+    let warnings = warnings.lock().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].to_string().contains("0.150.0"));
+}
+
+// 초기화 다음 RPC가 실패해도 warning은 backend 오류에 묻히지 않고 caller-owned collector에
+// 남아 최종 CLI publication 시점까지 보존됩니다.
+#[test]
+fn warning_observer_retains_the_warning_when_a_following_call_fails() {
+    let (peer, _) = FakePeer::new([initialize_response(1, "0.150.0")]);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&warnings);
+    let observer = Arc::new(move |warning: CodexCompatibilityWarning| {
+        observed.lock().unwrap().push(warning.to_string());
+    });
+    let mut client =
+        AppServerClient::new(peer, Duration::from_secs(1)).with_warning_observer(Some(observer));
+
+    client.initialize().unwrap();
+    assert!(client.call("account/read", json!({})).is_err());
+
+    let warnings = warnings.lock().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("0.150.0"));
+}
+
+// initialized 알림 전송이 실패해도 이미 decode된 warning은 observer에 전달되어, 초기화
+// 오류와 함께 사라지지 않습니다.
+#[test]
+fn warning_observer_receives_the_warning_before_initialized_send_failure() {
+    let peer = FailsOnInitializedPeer::new([initialize_response(1, "0.150.0")]);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&warnings);
+    let observer = Arc::new(move |warning: CodexCompatibilityWarning| {
+        observed.lock().unwrap().push(warning.to_string());
+    });
+    let mut client =
+        AppServerClient::new(peer, Duration::from_secs(1)).with_warning_observer(Some(observer));
+
+    let failure = match client.initialize() {
+        Ok(_) => panic!("initialized notification failure must fail initialization"),
+        Err(error) => error,
+    };
+
+    assert_eq!(failure.kind(), BackendFailureKind::Initialization);
+    let warnings = warnings.lock().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("0.150.0"));
 }

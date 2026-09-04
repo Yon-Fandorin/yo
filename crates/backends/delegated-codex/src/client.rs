@@ -1,13 +1,11 @@
-use std::{
-    io::{self, Write},
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use yo_backend::transport::{JsonMessagePeer, JsonRpcMailbox};
 use yo_core::{BackendFailure, BackendFailureKind, BackendStopHandle};
 
 use super::{
+    CodexWarningObserver,
     protocol::{self, Incoming},
     transport::PeerPoll,
 };
@@ -22,6 +20,7 @@ pub(super) struct AppServerClient<P> {
     peer: P,
     request_timeout: Duration,
     mailbox: JsonRpcMailbox<Incoming>,
+    warning_observer: Option<CodexWarningObserver>,
 }
 
 pub(super) struct CallResult {
@@ -35,7 +34,16 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             peer,
             request_timeout,
             mailbox: JsonRpcMailbox::new("Codex app-server"),
+            warning_observer: None,
         }
+    }
+
+    pub(super) fn with_warning_observer(
+        mut self,
+        warning_observer: Option<CodexWarningObserver>,
+    ) -> Self {
+        self.warning_observer = warning_observer;
+        self
     }
 
     pub(super) fn stop_handle(&self) -> BackendStopHandle {
@@ -56,27 +64,13 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             )?
             .result;
         let initialize = protocol::decode_initialize(result)?;
+        if let (Some(observer), Some(warning)) = (
+            self.warning_observer.as_ref(),
+            initialize.compatibility_warning.as_ref(),
+        ) {
+            observer(warning.clone());
+        }
         self.peer.send(&protocol::initialized_notification())?;
-        Ok(initialize)
-    }
-
-    /// Preserves the legacy interactive warning route while callers migrate to the typed result.
-    pub(super) fn initialize_with_stderr(
-        &mut self,
-    ) -> Result<protocol::InitializeResult, BackendFailure> {
-        let initialize = self.initialize()?;
-        let mut stderr = io::stderr().lock();
-        write_compatibility_warning(&initialize, &mut stderr);
-        Ok(initialize)
-    }
-
-    #[cfg(test)]
-    pub(super) fn initialize_with_warning_writer<W: Write>(
-        &mut self,
-        writer: &mut W,
-    ) -> Result<protocol::InitializeResult, BackendFailure> {
-        let initialize = self.initialize()?;
-        write_compatibility_warning(&initialize, writer);
         Ok(initialize)
     }
 
@@ -179,12 +173,6 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
 
     pub(super) fn shutdown(&mut self) -> Result<(), BackendFailure> {
         self.peer.shutdown()
-    }
-}
-
-fn write_compatibility_warning<W: Write>(initialize: &protocol::InitializeResult, writer: &mut W) {
-    if let Some(warning) = &initialize.compatibility_warning {
-        let _ = writeln!(writer, "yo: warning: {warning}");
     }
 }
 

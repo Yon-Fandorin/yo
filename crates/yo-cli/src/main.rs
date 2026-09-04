@@ -2,6 +2,8 @@
 use std::fmt;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(unix)]
+use std::sync::{Arc, Mutex};
 use std::{io::Write, process::ExitCode};
 
 #[cfg(unix)]
@@ -67,9 +69,7 @@ fn run(command: command::Command) -> Result<ExitCode, AppError> {
             finish_account_output(result, write_command_output, write_cli_diagnostics)
                 .map(account_exit_code)
         },
-        command::Command::Connect(command) => {
-            success_exit(write_command_output(connection::run_connect(command)?))
-        },
+        command::Command::Connect(command) => success_exit(run_connect_command(command)),
         command::Command::Default(command) => {
             success_exit(write_command_output(connection::run_default(command)?))
         },
@@ -99,6 +99,118 @@ fn account_exit_code(completion: account::AccountCompletion) -> ExitCode {
 #[cfg(unix)]
 fn success_exit(result: Result<(), AppError>) -> Result<ExitCode, AppError> {
     result.map(|()| ExitCode::SUCCESS)
+}
+
+#[cfg(unix)]
+const MAX_CODEX_COMPATIBILITY_WARNINGS: usize = 32;
+
+#[cfg(unix)]
+#[derive(Clone, Default)]
+struct CodexWarningCollector {
+    state: Arc<Mutex<CodexWarningCollectorState>>,
+}
+
+#[cfg(unix)]
+#[derive(Default)]
+struct CodexWarningCollectorState {
+    warnings: Vec<String>,
+    seen_messages: Vec<String>,
+    published: usize,
+    suppressed: bool,
+    suppression_published: bool,
+    disabled: bool,
+}
+
+#[cfg(unix)]
+impl CodexWarningCollector {
+    fn observer(&self) -> yo_backend_delegated_codex::CodexWarningObserver {
+        let collector = self.clone();
+        Arc::new(move |warning| collector.observe(warning))
+    }
+
+    fn observe(&self, warning: yo_backend_delegated_codex::CodexCompatibilityWarning) {
+        self.observe_message(warning.to_string());
+    }
+
+    fn observe_message(&self, message: String) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.disabled || state.seen_messages.iter().any(|seen| seen == &message) {
+            return;
+        }
+        if state.warnings.len() < MAX_CODEX_COMPATIBILITY_WARNINGS {
+            state.seen_messages.push(message.clone());
+            state.warnings.push(message);
+        } else {
+            state.suppressed = true;
+        }
+    }
+
+    fn take_pending_diagnostics(&self) -> Vec<CliDiagnostic> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let pending = state.warnings[state.published..]
+            .iter()
+            .map(|warning| CliDiagnostic::warning(warning.clone()))
+            .collect::<Vec<_>>();
+        state.published = state.warnings.len();
+        let mut diagnostics = pending;
+        if state.suppressed && !state.suppression_published {
+            state.suppression_published = true;
+            diagnostics.push(CliDiagnostic::warning(format!(
+                "additional Codex compatibility warnings were suppressed after {MAX_CODEX_COMPATIBILITY_WARNINGS} distinct warnings"
+            )));
+        }
+        diagnostics
+    }
+
+    fn discard_pending(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.published = state.warnings.len();
+        state.suppressed = false;
+        state.suppression_published = true;
+        state.disabled = true;
+    }
+}
+
+#[cfg(unix)]
+fn publish_pending_codex_diagnostics(collector: &CodexWarningCollector) -> Result<(), AppError> {
+    let diagnostics = collector.take_pending_diagnostics();
+    if diagnostics.is_empty() {
+        Ok(())
+    } else {
+        write_cli_diagnostics(&diagnostics)
+    }
+}
+
+#[cfg(unix)]
+fn error_after_codex_diagnostics(error: AppError, collector: &CodexWarningCollector) -> AppError {
+    match publish_pending_codex_diagnostics(collector) {
+        Ok(()) => error,
+        Err(diagnostics_error) => AppError::combine([error, diagnostics_error]),
+    }
+}
+
+#[cfg(unix)]
+fn run_connect_command(command: command::ConnectCommand) -> Result<(), AppError> {
+    let codex_warnings = CodexWarningCollector::default();
+    match connection::run_connect_with_codex_warning_observer(
+        command,
+        Some(codex_warnings.observer()),
+    ) {
+        Ok(output) => {
+            write_command_output(output)?;
+            publish_pending_codex_diagnostics(&codex_warnings)
+        },
+        Err(error) => Err(error_after_codex_diagnostics(error, &codex_warnings)),
+    }
 }
 
 #[cfg(unix)]
@@ -170,6 +282,7 @@ mod tests {
     use std::process::ExitCode;
 
     use super::{
+        CodexWarningCollector, MAX_CODEX_COMPATIBILITY_WARNINGS,
         account::{AccountCompletion, AccountRunOutput},
         account_exit_code,
         diagnostic::{AppError, CliDiagnostic},
@@ -394,6 +507,56 @@ mod tests {
 
         assert!(error.to_string().contains("flushing command diagnostics"));
     }
+
+    // 같은 warning은 한 번만 남기고, 서로 다른 warning은 관측된 순서로 publication합니다.
+    #[test]
+    fn codex_warning_collector_deduplicates_and_preserves_observation_order() {
+        let collector = CodexWarningCollector::default();
+        collector.observe_message("first".to_owned());
+        collector.observe_message("first".to_owned());
+        collector.observe_message("second".to_owned());
+
+        let diagnostics = collector.take_pending_diagnostics();
+        assert_eq!(
+            diagnostics
+                .iter()
+                .map(CliDiagnostic::message)
+                .collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        assert!(collector.take_pending_diagnostics().is_empty());
+    }
+
+    // 상한을 넘는 warning은 메모리와 stderr 모두 bounded하게 한 개의 suppression 진단으로
+    // 접습니다.
+    #[test]
+    fn codex_warning_collector_suppresses_distinct_overflow_once() {
+        let collector = CodexWarningCollector::default();
+        for index in 0..=MAX_CODEX_COMPATIBILITY_WARNINGS {
+            collector.observe_message(format!("warning {index}"));
+        }
+
+        let diagnostics = collector.take_pending_diagnostics();
+        assert_eq!(diagnostics.len(), MAX_CODEX_COMPATIBILITY_WARNINGS + 1);
+        assert_eq!(
+            diagnostics.last().map(CliDiagnostic::message),
+            Some(
+                "additional Codex compatibility warnings were suppressed after 32 distinct warnings"
+            )
+        );
+        assert!(collector.take_pending_diagnostics().is_empty());
+    }
+
+    // stdout publication이 실패하면 이후에 도착한 Codex warning도 publication하지 않습니다.
+    #[test]
+    fn codex_warning_collector_discard_blocks_late_observations() {
+        let collector = CodexWarningCollector::default();
+        collector.observe_message("already pending".to_owned());
+        collector.discard_pending();
+        collector.observe_message("arrived after stdout failure".to_owned());
+
+        assert!(collector.take_pending_diagnostics().is_empty());
+    }
 }
 
 #[cfg(unix)]
@@ -434,6 +597,7 @@ fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
         AppError::single("installing the process termination coordinator", error)
     })?;
     let mut live = None;
+    let codex_warnings = CodexWarningCollector::default();
     let mut job_control = process::job_control::JobControl::new();
     let mut errors = Vec::<AppError>::new();
     loop {
@@ -450,12 +614,24 @@ fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
                         config: &config,
                         credentials: &mut credentials,
                         stored_preference: stored_preference.as_ref(),
+                        codex_warnings: &codex_warnings,
                     },
                     GenerationFrontend::Tui,
                 )
             },
             shutdown_live_session,
         );
+        if let Err(error) = publish_pending_codex_diagnostics(&codex_warnings) {
+            errors.push(error);
+            match generation {
+                Ok(Ok(_)) => {},
+                Ok(Err(error)) => errors.push(error),
+                Err(error) => errors.push(AppError::message(format!(
+                    "process termination session: {error}"
+                ))),
+            }
+            break;
+        }
         match generation {
             Ok(Ok(SessionStep::Suspend)) => {
                 if let Err(error) = job_control.suspend() {
@@ -486,6 +662,9 @@ fn run_live_session(mut options: command::LiveOptions) -> Result<(), AppError> {
         }
     }
     if let Err(error) = shutdown_live_session(&mut live) {
+        errors.push(error);
+    }
+    if let Err(error) = publish_pending_codex_diagnostics(&codex_warnings) {
         errors.push(error);
     }
     if let Err(error) = host.shutdown() {
@@ -532,6 +711,7 @@ struct StartupSnapshots<'a> {
     config: &'a config::Config,
     credentials: &'a mut Option<yo_core::CredentialSnapshot>,
     stored_preference: Option<&'a yo_core::StartupTarget>,
+    codex_warnings: &'a CodexWarningCollector,
 }
 
 #[cfg(unix)]
@@ -548,7 +728,9 @@ fn run_agent_generation(
         config,
         credentials,
         stored_preference,
+        codex_warnings,
     } = snapshots;
+    let codex_warning_observer = codex_warnings.observer();
     let uses_terminal_frontend = matches!(&frontend, GenerationFrontend::Tui);
     if live.is_none() {
         let storage = match storage::open_default() {
@@ -690,7 +872,11 @@ fn run_agent_generation(
         };
         let is_resume = launch.resume_id().is_some();
         let host_catalogs = if uses_terminal_frontend {
-            model::read_builtin_host_catalogs(&session_cwd, selection.delegated_host())
+            model::read_builtin_host_catalogs_with_codex_warning_observer(
+                &session_cwd,
+                selection.delegated_host(),
+                Some(codex_warning_observer.clone()),
+            )
         } else {
             Vec::new()
         };
@@ -703,9 +889,10 @@ fn run_agent_generation(
                     yo_backend_delegated_codex::CodexBackendConfig::new(&session_cwd)
                         .with_read_only_review(execution.is_read_only_review());
                 let skills = if uses_terminal_frontend {
-                    match yo_backend_delegated_codex::CodexSkillReferenceProvider::start(
+                    match yo_backend_delegated_codex::CodexSkillReferenceProvider::start_with_warning_observer(
                         codex_config.clone(),
                         workspace_host_id,
+                        Some(codex_warning_observer.clone()),
                     ) {
                         Ok(skills) => Some(skills),
                         Err(error) if launch.resume_id().is_some() => {
@@ -724,19 +911,23 @@ fn run_agent_generation(
                 } else {
                     None
                 };
-                let backend = match yo_backend_delegated_codex::CodexBackend::spawn(codex_config) {
-                    Ok(backend) => backend,
-                    Err(error) if launch.resume_id().is_some() => {
-                        drop(repository);
-                        return handle_launch_failure(
-                            launch_failure_selection,
-                            options.glyph_profile,
-                            live::ResumeFailureStage::BackendSpawn,
-                            error,
-                        );
-                    },
-                    Err(error) => return Err(AppError::single("starting Codex", error)),
-                };
+                let backend =
+                    match yo_backend_delegated_codex::CodexBackend::spawn_with_warning_observer(
+                        codex_config,
+                        Some(codex_warning_observer.clone()),
+                    ) {
+                        Ok(backend) => backend,
+                        Err(error) if launch.resume_id().is_some() => {
+                            drop(repository);
+                            return handle_launch_failure(
+                                launch_failure_selection,
+                                options.glyph_profile,
+                                live::ResumeFailureStage::BackendSpawn,
+                                error,
+                            );
+                        },
+                        Err(error) => return Err(AppError::single("starting Codex", error)),
+                    };
                 (Box::new(backend), skills)
             },
             Some((host, execution)) if host.as_str() == yo_core::HostId::GROK => {
@@ -907,6 +1098,9 @@ fn run_agent_generation(
             host_catalogs,
         });
     }
+    if uses_terminal_frontend {
+        publish_pending_codex_diagnostics(codex_warnings)?;
+    }
     let session = live
         .as_mut()
         .expect("live session is initialized before terminal acquisition");
@@ -1001,12 +1195,13 @@ fn run_agent_generation(
                 return Ok(SessionStep::Continue);
             }
 
-            let refreshed = model::read_builtin_host_catalogs(
+            let refreshed = model::read_builtin_host_catalogs_with_codex_warning_observer(
                 &session.workspace,
                 session
                     .active_host
                     .as_ref()
                     .zip(session.active_host_execution),
+                Some(codex_warning_observer.clone()),
             );
             let admission = refreshed
                 .iter()
@@ -1057,13 +1252,17 @@ fn run_agent_generation(
                         selection.account().clone(),
                         selection.model().clone(),
                     );
-            let backend = match yo_backend_delegated_codex::CodexBackend::spawn(candidate_config) {
-                Ok(backend) => Box::new(backend) as Box<dyn yo_core::AgentBackend + Send>,
-                Err(error) => {
-                    session.tui.report_model_switch_failure(error.to_string());
-                    return Ok(SessionStep::Continue);
-                },
-            };
+            let backend =
+                match yo_backend_delegated_codex::CodexBackend::spawn_with_warning_observer(
+                    candidate_config,
+                    Some(codex_warning_observer.clone()),
+                ) {
+                    Ok(backend) => Box::new(backend) as Box<dyn yo_core::AgentBackend + Send>,
+                    Err(error) => {
+                        session.tui.report_model_switch_failure(error.to_string());
+                        return Ok(SessionStep::Continue);
+                    },
+                };
             match session.agent.replace_backend(backend, termination) {
                 Ok(outcome) => {
                     session
@@ -1096,6 +1295,7 @@ fn run_agent_generation(
             if let Some(output) = outcome.output()
                 && let Err(error) = write_session_output(output)
             {
+                codex_warnings.discard_pending();
                 errors.push(AppError::message(format!(
                     "writing session output: {error}"
                 )));
@@ -1143,6 +1343,7 @@ fn run_print_session(options: command::PrintOptions) -> Result<(), AppError> {
         AppError::single("installing the process termination coordinator", error)
     })?;
     let mut live = None;
+    let codex_warnings = CodexWarningCollector::default();
     let startup = command::LiveOptions {
         mode: yo_tui::PresentationMode::Inline,
         glyph_profile: yo_tui::GlyphProfile::Rich,
@@ -1166,6 +1367,7 @@ fn run_print_session(options: command::PrintOptions) -> Result<(), AppError> {
                     config: &config,
                     credentials: &mut credentials,
                     stored_preference: stored_preference.as_ref(),
+                    codex_warnings: &codex_warnings,
                 },
                 GenerationFrontend::Print(input),
             )
@@ -1193,7 +1395,34 @@ fn run_print_session(options: command::PrintOptions) -> Result<(), AppError> {
             "process termination cleanup: {error}"
         )));
     }
-    finish_print_output(output, errors, write_command_output)
+    finish_print_output_with_codex_diagnostics(output, errors, &codex_warnings)
+}
+
+#[cfg(unix)]
+fn finish_print_output_with_codex_diagnostics(
+    output: Option<String>,
+    errors: Vec<AppError>,
+    codex_warnings: &CodexWarningCollector,
+) -> Result<(), AppError> {
+    if !errors.is_empty() {
+        return Err(error_after_codex_diagnostics(
+            AppError::combine(errors),
+            codex_warnings,
+        ));
+    }
+    let output = match output {
+        Some(output) => output,
+        None => {
+            return Err(error_after_codex_diagnostics(
+                AppError::message("print session completed without buffered final-response output"),
+                codex_warnings,
+            ));
+        },
+    };
+    finish_print_output(Some(output), Vec::new(), |output| {
+        write_command_output(output)?;
+        publish_pending_codex_diagnostics(codex_warnings)
+    })
 }
 
 #[cfg(unix)]

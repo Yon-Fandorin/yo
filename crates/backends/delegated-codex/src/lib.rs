@@ -11,6 +11,7 @@ mod tests;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     num::NonZeroU64,
+    sync::Arc,
 };
 
 use client::AppServerClient;
@@ -36,6 +37,9 @@ const LEGACY_READ_ONLY_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v
 pub const STANDARD_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v2";
 pub const READ_ONLY_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1alpha2";
 const MODEL_IDENTITY_SCHEMA: &str = "codex.app-server/model-and-provider/v1";
+
+/// Receives bounded Codex app-server compatibility observations without owning process output.
+pub type CodexWarningObserver = Arc<dyn Fn(CodexCompatibilityWarning) + Send + Sync + 'static>;
 
 /// A one-shot Codex read and the compatibility warning observed during its handshake.
 #[derive(Debug)]
@@ -91,6 +95,14 @@ impl CodexBackend {
     /// The initialize handshake is deferred to `CreateSession` so the runtime owner can cancel it
     /// through [`yo_core::AgentBackend::stop_handle`].
     pub fn spawn(config: CodexBackendConfig) -> Result<Self, BackendFailure> {
+        Self::spawn_with_warning_observer(config, None)
+    }
+
+    /// Spawns Codex and forwards compatibility observations to the caller-owned observer.
+    pub fn spawn_with_warning_observer(
+        config: CodexBackendConfig,
+        warning_observer: Option<CodexWarningObserver>,
+    ) -> Result<Self, BackendFailure> {
         validate_config(&config)?;
         let cwd = config
             .working_directory()
@@ -103,7 +115,8 @@ impl CodexBackend {
             })?
             .to_owned();
         let peer = StdioPeer::spawn(&config)?;
-        let client = AppServerClient::new(peer, config.request_timeout());
+        let client = AppServerClient::new(peer, config.request_timeout())
+            .with_warning_observer(warning_observer);
         let model_rebind_target = config
             .model_rebind_target()
             .map(|(account, model)| (account.clone(), model.clone()));
@@ -119,7 +132,15 @@ impl CodexBackend {
 
     /// Verifies the local app-server handshake without creating a backend Session.
     pub fn verify(config: CodexBackendConfig) -> Result<(), BackendFailure> {
-        let mut backend = Self::spawn(config)?;
+        Self::verify_with_warning_observer(config, None)
+    }
+
+    /// Verifies the local app-server handshake and forwards compatibility observations.
+    pub fn verify_with_warning_observer(
+        config: CodexBackendConfig,
+        warning_observer: Option<CodexWarningObserver>,
+    ) -> Result<(), BackendFailure> {
+        let mut backend = Self::spawn_with_warning_observer(config, warning_observer)?;
         let verification = backend.inner.verify();
         let cleanup = backend.inner.shutdown();
         match (verification, cleanup) {
@@ -209,9 +230,18 @@ pub fn read_account_capacity(
 pub fn read_model_catalog(
     config: CodexBackendConfig,
 ) -> Result<yo_core::HostModelCatalog, BackendFailure> {
+    read_model_catalog_with_warning_observer(config, None)
+}
+
+/// Reads the authenticated Codex model inventory and forwards compatibility observations.
+pub fn read_model_catalog_with_warning_observer(
+    config: CodexBackendConfig,
+    warning_observer: Option<CodexWarningObserver>,
+) -> Result<yo_core::HostModelCatalog, BackendFailure> {
     validate_config(&config)?;
     let peer = StdioPeer::spawn(&config)?;
-    let mut client = AppServerClient::new(peer, config.request_timeout());
+    let mut client = AppServerClient::new(peer, config.request_timeout())
+        .with_warning_observer(warning_observer);
     let observation = observe_model_catalog(&mut client);
     let cleanup = client.shutdown();
     match (observation, cleanup) {
@@ -274,7 +304,7 @@ fn observe_model_catalog<P: JsonMessagePeer>(
     const PAGE_LIMIT: u64 = 100;
     const MAX_MODELS: usize = 4096;
 
-    client.initialize_with_stderr()?;
+    client.initialize()?;
     let account_result = client
         .call("account/read", json!({ "refreshToken": false }))?
         .result;
@@ -599,7 +629,7 @@ impl<P: JsonMessagePeer> Backend<P> {
 
     fn initialize(&mut self) -> Result<(), BackendFailure> {
         if !self.initialized {
-            let initialize = self.client.initialize_with_stderr()?;
+            let initialize = self.client.initialize()?;
             let account_result = self
                 .client
                 .call("account/read", json!({ "refreshToken": false }))?

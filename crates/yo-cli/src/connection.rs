@@ -51,7 +51,10 @@ pub(crate) fn run_default(command: DefaultCommand) -> Result<String, AppError> {
     execute_default(&config_path, command)
 }
 
-pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
+pub(crate) fn run_connect_with_codex_warning_observer(
+    command: ConnectCommand,
+    warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
+) -> Result<String, AppError> {
     if command.from.is_some() {
         let config_path = absolute_config_path(
             config::selected_path()
@@ -71,7 +74,7 @@ pub(crate) fn run_connect(command: ConnectCommand) -> Result<String, AppError> {
     let Some(host) = host else {
         return external::run_external_connect(&config_path, command);
     };
-    execute_local_connect(&config_path, command, host)
+    execute_local_connect(&config_path, command, host, warning_observer)
 }
 
 fn validate_local_connect_options(command: &ConnectCommand) -> Result<(), AppError> {
@@ -213,10 +216,11 @@ fn execute_local_connect(
     config_path: &Path,
     command: ConnectCommand,
     host: HostId,
+    warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
 ) -> Result<String, AppError> {
     let verification_host = host.clone();
     execute_local_connect_with_lane(config_path, command, move || {
-        verify_local_host(&verification_host)
+        verify_local_host_with_codex_warning_observer(&verification_host, warning_observer)
     })
 }
 
@@ -324,16 +328,23 @@ fn admit_target(config: &Config, reference: &str) -> Result<StartupTarget, AppEr
     Ok(target)
 }
 
-fn verify_local_host(host: &HostId) -> Result<(), AppError> {
+fn verify_local_host_with_codex_warning_observer(
+    host: &HostId,
+    warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
+) -> Result<(), AppError> {
     let workspace = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
-    verify_local_host_at(host, &workspace)
+    verify_local_host_at_with_codex_warning_observer(host, &workspace, warning_observer)
 }
 
-fn verify_local_host_at(host: &HostId, workspace: &Path) -> Result<(), AppError> {
+fn verify_local_host_at_with_codex_warning_observer(
+    host: &HostId,
+    workspace: &Path,
+    warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
+) -> Result<(), AppError> {
     let _workspace_host_id = storage::open_default_host_identity()
         .map_err(|error| AppError::single("opening the stable workspace Host identity", error))?;
-    crate::host::verify_at(host, workspace)
+    crate::host::verify_at_with_codex_warning_observer(host, workspace, warning_observer)
 }
 
 fn display_target(target: Option<&StartupTarget>) -> String {

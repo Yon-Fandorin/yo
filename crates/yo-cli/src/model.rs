@@ -16,8 +16,8 @@ mod startup;
 mod tokenizer;
 
 pub(crate) use host_catalog::{
-    ActiveHostModel, HostCatalogObservation, project_host_catalogs, read_builtin_host_catalogs,
-    resolve_active_host_model,
+    ActiveHostModel, HostCatalogObservation, project_host_catalogs,
+    read_builtin_host_catalogs_with_codex_warning_observer, resolve_active_host_model,
 };
 
 #[derive(Clone, Debug)]

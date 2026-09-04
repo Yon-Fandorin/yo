@@ -7,7 +7,7 @@ use std::{
         mpsc::{self, Receiver, Sender, TryRecvError},
     },
     task::{Context, Poll},
-    thread,
+    thread::{self, JoinHandle},
 };
 
 use serde::Deserialize;
@@ -21,11 +21,12 @@ use yo_core::{
     search_skill_reference_candidates,
 };
 
-use super::{AppServerClient, CodexBackendConfig, StdioPeer};
+use super::{AppServerClient, CodexBackendConfig, CodexWarningObserver, StdioPeer};
 
 pub struct CodexSkillReferenceProvider {
-    requests: Sender<SkillReferenceSearchRequest>,
+    requests: Option<Sender<SkillReferenceSearchRequest>>,
     updates: ReadyReceiver<SkillReferenceSearchUpdate>,
+    worker: Option<JoinHandle<()>>,
 }
 
 struct Inventory {
@@ -85,11 +86,20 @@ impl CodexSkillReferenceProvider {
         config: CodexBackendConfig,
         workspace_host_id: WorkspaceHostId,
     ) -> Result<Self, std::io::Error> {
+        Self::start_with_warning_observer(config, workspace_host_id, None)
+    }
+
+    /// Starts a worker and forwards compatibility observations to the caller-owned observer.
+    pub fn start_with_warning_observer(
+        config: CodexBackendConfig,
+        workspace_host_id: WorkspaceHostId,
+        warning_observer: Option<CodexWarningObserver>,
+    ) -> Result<Self, std::io::Error> {
         let (request_tx, request_rx) = mpsc::channel();
         let (update_tx, update_rx) = mpsc::channel();
         let readiness = Arc::new(Readiness::new());
         let worker_readiness = Arc::clone(&readiness);
-        thread::Builder::new()
+        let worker = thread::Builder::new()
             .name("yo-codex-skill-catalog".to_owned())
             .spawn(move || {
                 worker(
@@ -98,19 +108,32 @@ impl CodexSkillReferenceProvider {
                     request_rx,
                     update_tx,
                     &worker_readiness,
+                    warning_observer,
                 );
                 worker_readiness.notify();
             })?;
         Ok(Self {
-            requests: request_tx,
+            requests: Some(request_tx),
             updates: ReadyReceiver::new(update_rx, readiness),
+            worker: Some(worker),
         })
+    }
+}
+
+impl Drop for CodexSkillReferenceProvider {
+    fn drop(&mut self) {
+        self.requests.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
 impl SkillReferenceProvider for CodexSkillReferenceProvider {
     fn search(&mut self, request: SkillReferenceSearchRequest) -> Result<(), String> {
         self.requests
+            .as_ref()
+            .ok_or_else(|| "Codex skill catalog worker closed".to_owned())?
             .send(request)
             .map_err(|_| "Codex skill catalog worker closed".to_owned())
     }
@@ -134,6 +157,7 @@ fn worker(
     requests: Receiver<SkillReferenceSearchRequest>,
     updates: Sender<SkillReferenceSearchUpdate>,
     readiness: &Readiness,
+    warning_observer: Option<CodexWarningObserver>,
 ) {
     let mut inventory = None;
     let mut catalog_generation = 0_u64;
@@ -145,6 +169,7 @@ fn worker(
                 &config,
                 workspace_host_id,
                 catalog_generation,
+                warning_observer.clone(),
             ));
         }
         let update = match inventory
@@ -185,17 +210,17 @@ fn load_inventory(
     config: &CodexBackendConfig,
     workspace_host_id: WorkspaceHostId,
     catalog_generation: u64,
+    warning_observer: Option<CodexWarningObserver>,
 ) -> Result<Inventory, String> {
     let cwd = config
         .working_directory()
         .to_str()
         .ok_or_else(|| "Codex skill catalog working directory is not valid UTF-8".to_owned())?;
     let peer = StdioPeer::spawn(config).map_err(|error| error.to_string())?;
-    let mut client = AppServerClient::new(peer, config.request_timeout());
+    let mut client = AppServerClient::new(peer, config.request_timeout())
+        .with_warning_observer(warning_observer);
     let result = (|| {
-        client
-            .initialize_with_stderr()
-            .map_err(|error| error.to_string())?;
+        client.initialize().map_err(|error| error.to_string())?;
         let value = client
             .call("skills/list", json!({ "cwds": [cwd], "forceReload": true }))
             .map_err(|error| error.to_string())?
