@@ -28,6 +28,12 @@ timestamp. `--refresh` applies to the selected scope and saves successful observ
 and their timestamps in the local account-capacity cache. A multi-account refresh is
 best-effort: every selected source is attempted, successful results are saved and shown,
 and failures are reported together with a non-zero exit status.
+Expected per-target refresh failures are part of the selected result format only: text
+shows them under `Refresh failures`, and JSON keeps them in its existing `errors` array.
+The CLI does not append a duplicate generic stderr error for these expected failures.
+Fatal setup, serialization, or output-sink failures still use the normal stderr error path.
+A cache-persistence failure after a successful observation remains in the same structured
+failure result while the freshly observed in-memory record is still shown.
 
 When a Codex app-server reports an unverified minor version within the supported
 protocol major, the refresh still succeeds and emits one compatibility warning.

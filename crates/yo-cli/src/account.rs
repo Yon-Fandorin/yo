@@ -35,7 +35,13 @@ use super::{
 pub(crate) struct AccountRunOutput {
     pub(crate) output: String,
     pub(crate) diagnostics: Vec<CliDiagnostic>,
-    pub(crate) error: Option<AppError>,
+    pub(crate) completion: AccountCompletion,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AccountCompletion {
+    Success,
+    RefreshFailures,
 }
 
 const ACCOUNT_COMPACT_METER_TEMPLATE: MeterTemplate<'static> =
@@ -140,8 +146,11 @@ pub(crate) fn run(command: AccountCommand) -> Result<AccountRunOutput, AppError>
             OutputFormat::Text => Vec::new(),
             OutputFormat::Json => warnings,
         },
-        error: (!failures.is_empty())
-            .then(|| AppError::message("one or more account capacity refreshes failed")),
+        completion: if failures.is_empty() {
+            AccountCompletion::Success
+        } else {
+            AccountCompletion::RefreshFailures
+        },
     })
 }
 

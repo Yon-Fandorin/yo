@@ -27,6 +27,12 @@ yo account codex:you@example.com --refresh
 범위에 적용되며, 성공한 관측값과 시각을 로컬 account-capacity cache에 저장한다.
 여러 계정을 갱신할 때는 best-effort로 선택한 모든 source를 시도한다. 성공한 결과는
 저장·표시하고 실패는 모아서 보고하며 종료 코드는 non-zero가 된다.
+계정별 refresh failure는 선택한 결과 형식에만 포함한다. Text에서는 `Refresh failures` 아래에,
+JSON에서는 기존 `errors` 배열에 표시하며, 이 예상된 실패를 위해 일반적인 stderr error를
+중복해서 출력하지 않는다. 설정·직렬화·출력 대상 자체의 실패 같은 치명적 오류는 기존 stderr
+error 경로를 사용한다.
+성공한 관측 뒤 cache 저장에 실패한 경우에도 같은 구조화된 failure 결과에 포함하며, 방금
+관측한 메모리상의 record는 계속 표시한다.
 
 Codex app-server가 지원되는 protocol major 안의 검증되지 않은 minor version을
 보고하면 refresh 자체는 성공하고 compatibility warning 하나를 낸다. Text에서는
