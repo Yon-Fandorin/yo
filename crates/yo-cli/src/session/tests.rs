@@ -346,7 +346,7 @@ fn chat_warns_when_durability_continuity_is_not_observable() {
     );
 
     assert_eq!(chat.len(), 1);
-    assert!(chat[0].contains("volatile suffix"));
+    assert!(chat[0].message().contains("volatile suffix"));
     assert!(transcript.is_empty());
     assert!(request.is_empty());
 }
@@ -369,9 +369,9 @@ fn chat_preserves_continuity_and_typed_discovery_diagnostics_together() {
     );
 
     assert_eq!(diagnostics.len(), 2);
-    assert!(diagnostics[0].contains("volatile suffix"));
-    assert!(diagnostics[1].contains("binding epoch 4"));
-    assert!(diagnostics[1].contains("repository sequence 10"));
+    assert!(diagnostics[0].message().contains("volatile suffix"));
+    assert!(diagnostics[1].message().contains("binding epoch 4"));
+    assert!(diagnostics[1].message().contains("repository sequence 10"));
 }
 
 // CLI Session 경계는 Transcript 전용 selector를 공유 Projection options로 그대로 넘겨 최신

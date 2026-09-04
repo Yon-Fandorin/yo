@@ -116,20 +116,33 @@ fn finish_account_output(
     publish: impl FnOnce(String) -> Result<(), AppError>,
     publish_diagnostics: impl FnOnce(&[CliDiagnostic]) -> Result<(), AppError>,
 ) -> Result<account::AccountCompletion, AppError> {
-    publish(result.output)?;
-    publish_diagnostics(&result.diagnostics)?;
-    Ok(result.completion)
+    let account::AccountRunOutput {
+        output,
+        diagnostics,
+        completion,
+    } = result;
+    finish_command_output(output, &diagnostics, publish, publish_diagnostics)?;
+    Ok(completion)
+}
+
+#[cfg(unix)]
+fn finish_command_output(
+    output: String,
+    diagnostics: &[CliDiagnostic],
+    publish: impl FnOnce(String) -> Result<(), AppError>,
+    publish_diagnostics: impl FnOnce(&[CliDiagnostic]) -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    publish(output)?;
+    publish_diagnostics(diagnostics)
 }
 
 #[cfg(unix)]
 fn write_cli_diagnostics(diagnostics: &[CliDiagnostic]) -> Result<(), AppError> {
     let mut stderr = std::io::stderr().lock();
-    write_cli_diagnostics_to(diagnostics, &mut stderr)?;
-    stderr
-        .flush()
-        .map_err(|error| AppError::single("flushing command diagnostics", error))
+    write_cli_diagnostics_to_and_flush(diagnostics, &mut stderr)
 }
 
+#[cfg(unix)]
 fn write_cli_diagnostics_to<W: Write>(
     diagnostics: &[CliDiagnostic],
     writer: &mut W,
@@ -141,6 +154,17 @@ fn write_cli_diagnostics_to<W: Write>(
     Ok(())
 }
 
+#[cfg(unix)]
+fn write_cli_diagnostics_to_and_flush<W: Write>(
+    diagnostics: &[CliDiagnostic],
+    writer: &mut W,
+) -> Result<(), AppError> {
+    write_cli_diagnostics_to(diagnostics, writer)?;
+    writer
+        .flush()
+        .map_err(|error| AppError::single("flushing command diagnostics", error))
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use std::process::ExitCode;
@@ -149,8 +173,21 @@ mod tests {
         account::{AccountCompletion, AccountRunOutput},
         account_exit_code,
         diagnostic::{AppError, CliDiagnostic},
-        finish_account_output, write_cli_diagnostics_to,
+        finish_account_output, finish_command_output, write_cli_diagnostics_to,
+        write_cli_diagnostics_to_and_flush,
     };
+
+    struct FlushFails;
+
+    impl std::io::Write for FlushFails {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("flush failed"))
+        }
+    }
 
     // 일부 refresh가 실패해도 이미 만든 account 출력은 먼저 publish해야 합니다.
     #[test]
@@ -288,6 +325,74 @@ mod tests {
         assert_eq!(published.as_deref(), Some("account result\n"));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("stderr failed"));
+    }
+
+    // 모든 one-shot 결과는 stdout을 먼저 게시한 다음 warning을 게시합니다.
+    #[test]
+    fn command_output_publishes_stdout_before_diagnostics() {
+        let events = std::cell::RefCell::new(Vec::new());
+        let result = finish_command_output(
+            "session output\n".to_owned(),
+            &[CliDiagnostic::warning("history is read-only")],
+            |output| {
+                assert_eq!(output, "session output\n");
+                events.borrow_mut().push("stdout");
+                Ok(())
+            },
+            |diagnostics| {
+                assert_eq!(diagnostics[0].message(), "history is read-only");
+                events.borrow_mut().push("stderr");
+                Ok(())
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(events.into_inner(), vec!["stdout", "stderr"]);
+    }
+
+    // stdout 실패 시 결과가 partial이어도 stderr warning을 뒤늦게 쓰지 않습니다.
+    #[test]
+    fn command_output_skips_diagnostics_after_stdout_failure() {
+        let result = finish_command_output(
+            "session output\n".to_owned(),
+            &[CliDiagnostic::warning("history is read-only")],
+            |_| Err(AppError::message("stdout failed")),
+            |_| panic!("diagnostics must not be published after stdout failure"),
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("stdout failed"));
+    }
+
+    // diagnostics sink 실패는 stdout 성공 이후 fatal 오류로 전환됩니다.
+    #[test]
+    fn command_output_reports_diagnostics_sink_failure() {
+        let mut published = false;
+        let result = finish_command_output(
+            "session output\n".to_owned(),
+            &[CliDiagnostic::warning("history is read-only")],
+            |_| {
+                published = true;
+                Ok(())
+            },
+            |_| Err(AppError::message("stderr failed")),
+        );
+
+        assert!(published);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("stderr failed"));
+    }
+
+    // warning 본문을 쓴 뒤 stderr flush가 실패해도 결과 sink 오류로 보고합니다.
+    #[test]
+    fn diagnostics_writer_reports_flush_failure() {
+        let error = write_cli_diagnostics_to_and_flush(
+            &[CliDiagnostic::warning("history is read-only")],
+            &mut FlushFails,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("flushing command diagnostics"));
     }
 }
 
@@ -1381,22 +1486,19 @@ fn write_session_output(output: &str) -> std::io::Result<()> {
 
 #[cfg(unix)]
 fn write_session_command_output(output: session::Output) -> Result<(), AppError> {
-    let mut failures = Vec::new();
-    if let Err(error) = write_session_output(&output.stdout) {
-        failures.push(format!("writing Session command output: {error}"));
-    }
-    let mut stderr = std::io::stderr().lock();
-    for diagnostic in output.diagnostics {
-        if let Err(error) = writeln!(stderr, "yo: warning: {diagnostic}") {
-            failures.push(format!("writing Session command diagnostic: {error}"));
-            break;
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(AppError::many(failures))
-    }
+    let session::Output {
+        stdout,
+        diagnostics,
+    } = output;
+    finish_command_output(
+        stdout,
+        &diagnostics,
+        |output| {
+            write_session_output(&output)
+                .map_err(|error| AppError::single("writing Session command output", error))
+        },
+        write_cli_diagnostics,
+    )
 }
 
 #[cfg(not(unix))]

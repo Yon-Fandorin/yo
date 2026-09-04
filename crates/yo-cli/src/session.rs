@@ -20,6 +20,7 @@ use yo_tui::{
 use super::{
     AppError,
     command::{SessionCommand, SessionContent, SessionView},
+    diagnostic::CliDiagnostic,
 };
 
 pub(crate) fn resume_read_only(
@@ -51,15 +52,15 @@ pub(crate) fn read_only_resume_from(
             content: None,
         },
     )?;
-    output.diagnostics.push(format!(
+    output.diagnostics.push(CliDiagnostic::warning(format!(
         "stored Session {session_id} continuation is unavailable ({reason}); opened durable history read-only"
-    ));
+    )));
     Ok(output)
 }
 
 pub(crate) struct Output {
     pub(crate) stdout: String,
-    pub(crate) diagnostics: Vec<String>,
+    pub(crate) diagnostics: Vec<CliDiagnostic>,
 }
 
 pub(crate) fn run(command: SessionCommand) -> Result<Output, AppError> {
@@ -137,12 +138,12 @@ fn archival_diagnostics(
     view: SessionView,
     continuity: StoredSessionContinuity,
     discovery_validation: StoredDiscoveryValidation,
-) -> Vec<String> {
+) -> Vec<CliDiagnostic> {
     let mut diagnostics = Vec::new();
     if view == SessionView::Chat && continuity == StoredSessionContinuity::NotObservable {
-        diagnostics.push(format!(
+        diagnostics.push(CliDiagnostic::warning(format!(
             "stored Session {session_id} may omit a volatile suffix; v1 durability continuity is not observable"
-        ));
+        )));
     }
     diagnostics.extend(discovery_diagnostics(session_id, discovery_validation));
     diagnostics
@@ -151,11 +152,13 @@ fn archival_diagnostics(
 pub(crate) fn discovery_diagnostics(
     session_id: SessionId,
     discovery_validation: StoredDiscoveryValidation,
-) -> Vec<String> {
+) -> Vec<CliDiagnostic> {
     match discovery_validation {
         StoredDiscoveryValidation::Consistent => Vec::new(),
         StoredDiscoveryValidation::Mismatch(mismatch) => {
-            vec![discovery_mismatch_diagnostic(session_id, mismatch)]
+            vec![CliDiagnostic::warning(discovery_mismatch_diagnostic(
+                session_id, mismatch,
+            ))]
         },
     }
 }
