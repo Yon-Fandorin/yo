@@ -222,7 +222,7 @@ fn completed_turn_in_epoch_two() -> Vec<JournalCommit> {
 fn clears_the_latest_anchor_when_a_new_semantic_suffix_begins() {
     let mut commits = valid_history();
     let submission_id = submission(12);
-    let turn = crate::TurnRef::new(
+    let turn = TurnRef::new(
         activity().session_id(),
         crate::TurnId::new(std::num::NonZeroU64::new(4).unwrap()),
     );

@@ -183,7 +183,7 @@ fn caller_git_environment_and_replacement_refs_cannot_change_authority() {
         KNOWLEDGE_ID
     );
 
-    std::fs::remove_file(repository.path.join(created["path"].as_str().unwrap())).unwrap();
+    fs::remove_file(repository.path.join(created["path"].as_str().unwrap())).unwrap();
     let trusted = String::from_utf8(repository.git(&["rev-parse", "develop"]).stdout).unwrap();
     let parent = String::from_utf8(repository.git(&["rev-parse", "develop^"]).stdout).unwrap();
     repository.git(&["replace", trusted.trim(), parent.trim()]);

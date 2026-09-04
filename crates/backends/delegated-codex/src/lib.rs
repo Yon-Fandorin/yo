@@ -308,7 +308,7 @@ fn observe_model_catalog<P: JsonMessagePeer>(
     let account_result = client
         .call("account/read", json!({ "refreshToken": false }))?
         .result;
-    let host = yo_core::HostId::codex();
+    let host = HostId::codex();
     let (account_label, account) = decode_account(&host, &account_result)?;
 
     let mut cursor = None::<String>;
@@ -329,8 +329,8 @@ fn observe_model_catalog<P: JsonMessagePeer>(
                     "Codex model/list exceeded the model bound or repeated a model id",
                 ));
             }
-            let id = yo_core::ModelId::new(id)
-                .map_err(|error| protocol::protocol_failure(error.to_string()))?;
+            let id =
+                ModelId::new(id).map_err(|error| protocol::protocol_failure(error.to_string()))?;
             if is_default && current.replace(id.clone()).is_some() {
                 return Err(protocol::protocol_failure(
                     "Codex model/list advertised more than one default model",
@@ -365,22 +365,19 @@ fn observe_model_catalog<P: JsonMessagePeer>(
     .map_err(|error| protocol::protocol_failure(error.to_string()))
 }
 
-fn decode_account(
-    host: &yo_core::HostId,
-    result: &Value,
-) -> Result<(String, AccountId), BackendFailure> {
+fn decode_account(host: &HostId, result: &Value) -> Result<(String, AccountId), BackendFailure> {
     let (account_label, evidence) = protocol::decode_account_identity(result)?;
     let evidence_refs = evidence
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect::<Vec<_>>();
-    let account = yo_core::derive_host_account_id(host, &evidence_refs)
+    let account = derive_host_account_id(host, &evidence_refs)
         .map_err(|error| protocol::protocol_failure(error.to_string()))?;
     Ok((account_label, account))
 }
 
 fn decode_optional_account(
-    host: &yo_core::HostId,
+    host: &HostId,
     result: &Value,
 ) -> Result<Option<AccountId>, BackendFailure> {
     let Some((_, evidence)) = protocol::decode_optional_account_identity(result) else {
@@ -390,7 +387,7 @@ fn decode_optional_account(
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect::<Vec<_>>();
-    yo_core::derive_host_account_id(host, &evidence_refs)
+    derive_host_account_id(host, &evidence_refs)
         .map(Some)
         .map_err(|error| protocol::protocol_failure(error.to_string()))
 }
@@ -635,7 +632,7 @@ impl<P: JsonMessagePeer> Backend<P> {
                 .call("account/read", json!({ "refreshToken": false }))?
                 .result;
             self.backend_version = Some(initialize.user_agent);
-            self.account = decode_optional_account(&yo_core::HostId::codex(), &account_result)?;
+            self.account = decode_optional_account(&HostId::codex(), &account_result)?;
             self.initialized = true;
         }
         Ok(())

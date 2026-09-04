@@ -232,7 +232,7 @@ fn malformed_backend_event_is_rejected_and_fails_the_turn() {
     let steps = [
         BackendScriptStep::Emit(BackendEvent::ActivityFinished {
             activity: unknown,
-            outcome: crate::ActivityOutcome::Completed,
+            outcome: ActivityOutcome::Completed,
         }),
         BackendScriptStep::Shutdown(Ok(())),
     ];

@@ -1,4 +1,5 @@
 use std::{
+    env, io,
     os::unix::fs::{FileTypeExt, MetadataExt},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -11,7 +12,7 @@ struct TestDirectory(PathBuf);
 
 impl TestDirectory {
     fn new(label: &str) -> Self {
-        Self::new_in(&std::env::temp_dir(), label)
+        Self::new_in(&env::temp_dir(), label)
     }
 
     fn new_in(parent: &Path, label: &str) -> Self {
@@ -23,7 +24,7 @@ impl TestDirectory {
             ));
             match fs::create_dir(&path) {
                 Ok(()) => return Self(path),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {},
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {},
                 Err(error) => panic!(
                     "creating exclusive config test directory {} failed: {error}",
                     path.display()
@@ -220,7 +221,7 @@ fn relative_config_filename_uses_the_current_state_directory() {
 // 읽기 전용 명령은 설정 파일이 없어도 기본값을 사용하며 경로나 파일을 만들지 않습니다.
 #[test]
 fn missing_configuration_uses_defaults_without_creating_a_file() {
-    let root = std::env::temp_dir().join(format!("yo-config-missing-{}", std::process::id()));
+    let root = env::temp_dir().join(format!("yo-config-missing-{}", std::process::id()));
     let path = root.join("config.yaml");
 
     assert!(!path.exists());
@@ -278,7 +279,7 @@ fn default_configuration_roots_require_absolute_paths() {
 // 읽기 상한을 한 byte 넘는 파일은 YAML parser에 넘기기 전에 거절합니다.
 #[test]
 fn oversized_configuration_is_bounded_during_the_read() {
-    let path = std::env::temp_dir().join(format!("yo-config-large-{}", std::process::id()));
+    let path = env::temp_dir().join(format!("yo-config-large-{}", std::process::id()));
     fs::write(&path, vec![b'a'; MAX_CONFIG_BYTES as usize + 1]).unwrap();
 
     let error = load_from(&path).unwrap_err();

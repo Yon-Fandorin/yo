@@ -163,7 +163,7 @@ impl OpenAiResponsesConnector {
         &self,
         request: ModelConnectorRequest,
         cancellation: ModelConnectorCancellation,
-    ) -> Result<yo_connector_transport::ConnectorStream, ConnectorError> {
+    ) -> Result<ConnectorStream, ConnectorError> {
         let body = self.wire_body(&request)?;
         start_stream(
             self.client.clone(),

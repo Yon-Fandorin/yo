@@ -84,7 +84,7 @@ impl SessionJournal {
             state
                 .observations
                 .push(transcript::JournalObservationEntry::record(
-                    transcript::TranscriptObservationSequence::from_index(state.observations.len()),
+                    TranscriptObservationSequence::from_index(state.observations.len()),
                     record.clone(),
                 ));
         }
@@ -256,7 +256,7 @@ impl SessionJournalState {
         self.durability = durability;
         self.observations
             .push(transcript::JournalObservationEntry::durability(
-                transcript::TranscriptObservationSequence::from_index(self.observations.len()),
+                TranscriptObservationSequence::from_index(self.observations.len()),
                 durability,
             ));
     }
@@ -267,7 +267,7 @@ impl SessionJournalState {
         };
         self.observations
             .push(transcript::JournalObservationEntry::record(
-                transcript::TranscriptObservationSequence::from_index(self.observations.len()),
+                TranscriptObservationSequence::from_index(self.observations.len()),
                 record,
             ));
     }

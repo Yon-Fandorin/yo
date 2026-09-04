@@ -466,7 +466,7 @@ struct FailingWriter;
 
 impl Write for FailingWriter {
     fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
-        Err(io::Error::new(io::ErrorKind::BrokenPipe, "injected"))
+        Err(io::Error::new(ErrorKind::BrokenPipe, "injected"))
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -481,7 +481,7 @@ fn stream_failures_are_returned_to_the_binary_boundary() {
     let error = methexis::run(Vec::<OsString>::new(), FailingWriter, Vec::<u8>::new())
         .expect_err("injected writer must fail");
 
-    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+    assert_eq!(error.kind(), ErrorKind::BrokenPipe);
 }
 
 // active record만 제거한 독립 trusted corpus에서 `methexis check`의 stdout 순서와
@@ -679,7 +679,7 @@ fn check_only_rejects_unknown_and_empty_selectors() {
 // 잘못된 fixture 저장소에서 check는 종료 코드 2와 실패 보고 JSON을 stdout이 아닌 stderr로 보낸다.
 #[test]
 fn check_reports_validation_failures_on_stderr() {
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests")
         .join("fixtures")
         .join("local-invalid");

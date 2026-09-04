@@ -151,8 +151,7 @@ fn captured_source_record_rejects_same_semantics_with_new_file_identity() {
     fs::write(&replacement, bytes).unwrap();
     fs::rename(replacement, &source.path).unwrap();
 
-    let failure =
-        super::working_tree::final_revalidate(&repository.path, &captures[0]).unwrap_err();
+    let failure = working_tree::final_revalidate(&repository.path, &captures[0]).unwrap_err();
 
     assert_eq!(failure.code, "source_changed_during_validation");
 }
@@ -377,7 +376,7 @@ fn conversation_and_external_sources_fail_closed_in_a_multi_source_unit() {
             id: "tui.external".to_owned(),
             revision: hash('0'),
             payload: SourcePayload::External {
-                freshness: crate::model::ExternalFreshness::Immutable {
+                freshness: ExternalFreshness::Immutable {
                     locator: "https://example.invalid/spec".to_owned(),
                     version: "v1".to_owned(),
                     content_hash: hash('4'),

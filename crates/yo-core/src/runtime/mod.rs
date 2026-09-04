@@ -1126,10 +1126,7 @@ mod replacement_binding_tests {
     fn durable_runtime(
         backend: ScriptedBackend,
         session_id: SessionId,
-    ) -> (
-        AgentRuntime<Box<dyn crate::AgentBackend + Send>>,
-        MemoryRepository,
-    ) {
+    ) -> (AgentRuntime<Box<dyn AgentBackend + Send>>, MemoryRepository) {
         let repository = MemoryRepository::default();
         let journal = SessionJournal::with_repository_and_descriptor(
             Box::new(repository.clone()),
@@ -1138,7 +1135,7 @@ mod replacement_binding_tests {
         let mut runtime = AgentRuntime::with_journal(
             Box::new(
                 backend.with_capabilities(BackendCapabilities::none().with_native_model_rebind()),
-            ) as Box<dyn crate::AgentBackend + Send>,
+            ) as Box<dyn AgentBackend + Send>,
             journal,
         );
         runtime.initialize_durability();
@@ -1374,7 +1371,7 @@ mod replacement_binding_tests {
             },
             BackendScriptStep::Emit(BackendEvent::TurnFinished {
                 turn,
-                outcome: TurnOutcome::Failed(crate::Failure::new("failed")),
+                outcome: TurnOutcome::Failed(Failure::new("failed")),
             }),
             BackendScriptStep::Shutdown(Ok(())),
         ]);
@@ -1458,7 +1455,7 @@ mod replacement_binding_tests {
             },
             BackendScriptStep::Emit(BackendEvent::TurnFinished {
                 turn: second_turn,
-                outcome: TurnOutcome::Failed(crate::Failure::new("failed")),
+                outcome: TurnOutcome::Failed(Failure::new("failed")),
             }),
             BackendScriptStep::Shutdown(Ok(())),
         ]);

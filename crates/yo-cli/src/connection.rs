@@ -681,7 +681,7 @@ mod tests {
             .unwrap();
         repository.commit(&definition).unwrap();
         let racing_repository = repository.clone();
-        let winner = StartupTarget::Model(yo_core::ModelSelection::new(
+        let winner = StartupTarget::Model(ModelSelection::new(
             yo_core::ProviderId::new("qwencloud").unwrap(),
             yo_core::AccountId::new("default").unwrap(),
             yo_core::ModelId::new("winner").unwrap(),
@@ -754,7 +754,7 @@ mod tests {
         let durable = format!(
             r#"{{"provider":"qwencloud","account":"default","model":"{model}","connector":"openai-responses","base_url":"https://example.test/v1","api_dialect":"openai-responses","tokenizer_profile":"utf8-bytes/v1","input_token_limit":1000,"max_output_tokens":100,"reasoning_parameters":{{"effort":"{effort}"}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#,
         );
-        let complete = yo_core::CompleteModelBinding::from_durable_json(&durable).unwrap();
+        let complete = CompleteModelBinding::from_durable_json(&durable).unwrap();
         let account = yo_core::ConnectionAccount::new(
             yo_core::ProviderId::new("qwencloud").unwrap(),
             yo_core::AccountId::new("default").unwrap(),
@@ -771,7 +771,7 @@ mod tests {
     // uppercase escape로 표시해 출력값을 다음 exact 명령에 그대로 재사용할 수 있어야 합니다.
     #[test]
     fn model_target_output_uses_the_shared_canonical_reference() {
-        let target = StartupTarget::Model(yo_core::ModelSelection::new(
+        let target = StartupTarget::Model(ModelSelection::new(
             yo_core::ProviderId::new("vendor:edge").unwrap(),
             yo_core::AccountId::new("team%blue").unwrap(),
             yo_core::ModelId::new("model:latest/v1").unwrap(),

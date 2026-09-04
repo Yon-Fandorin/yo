@@ -25,8 +25,20 @@ repository = "https://github.com/Yon-Fandorin/yo"
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unused_must_use = "deny"
+unused_imports = "deny"
+unused_qualifications = "deny"
+unused_variables = "warn"
+unused_mut = "deny"
+unused_assignments = "deny"
+unused_unsafe = "deny"
+unused_attributes = "deny"
+unreachable_code = "deny"
+unreachable_patterns = "deny"
+unexpected_cfgs = "deny"
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+# prelude와 테스트의 `super::*` 같은 Clippy 의도적 예외는 유지하고, 그 밖의 wildcard만 거부한다.
+wildcard_imports = "deny"

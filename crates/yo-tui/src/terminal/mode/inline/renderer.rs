@@ -310,11 +310,7 @@ impl Cursor {
         Ok(Self { row: 0 })
     }
 
-    fn from_tracked_cursor(
-        writer: &mut impl Write,
-        size: crate::surface::Size,
-        cursor: Point,
-    ) -> io::Result<Self> {
+    fn from_tracked_cursor(writer: &mut impl Write, size: Size, cursor: Point) -> io::Result<Self> {
         move_down(writer, size.height - cursor.y)?;
         move_up(writer, size.height)?;
         move_to_column(writer, 0)?;

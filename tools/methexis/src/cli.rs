@@ -614,7 +614,7 @@ fn run_context_operation(
     stderr: &mut impl Write,
 ) -> io::Result<ExitCode> {
     let root = env::current_dir()?;
-    let result = ContextService::new(&root).resolve(std::path::Path::new(request));
+    let result = ContextService::new(&root).resolve(Path::new(request));
     match result {
         Ok(result) => write_json(stdout, &result, ExitCode::SUCCESS),
         Err(error) => write_json(stderr, &error, ExitCode::from(2)),
@@ -683,7 +683,7 @@ fn run_checkpoint_operation(
 ) -> io::Result<ExitCode> {
     let root = env::current_dir()?;
     let service = CheckpointService::new(&root);
-    let request = std::path::Path::new(request);
+    let request = Path::new(request);
     let result = match operation {
         CheckpointOperation::Create => service.create(request),
         CheckpointOperation::Activate => service.propose_activation(request),
@@ -721,7 +721,7 @@ fn run_review_operation(
 ) -> io::Result<ExitCode> {
     let root = env::current_dir()?;
     let service = ReviewService::new(&root);
-    let request = std::path::Path::new(request);
+    let request = Path::new(request);
     let result = match operation {
         ReviewOperation::Project => service.generate_projection(request),
         ReviewOperation::Build => service.build_review(request),

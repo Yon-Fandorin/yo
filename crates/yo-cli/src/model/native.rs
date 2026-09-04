@@ -345,7 +345,7 @@ mod tests {
             &Config::default(),
             &credentials,
             &StartupBackend::Host(yo_core::HostId::codex()),
-            std::path::Path::new("."),
+            Path::new("."),
         ) {
             Ok(_) => panic!("host backend must be rejected before native startup"),
             Err(error) => error,

@@ -129,7 +129,7 @@ fn terminal_outcomes_are_reported_once_with_closed_classification() {
                     reason: Some("provider-private-sentinel".to_owned()),
                     request_failure: ModelRequestFailureKind::ProviderUnavailable,
                 },
-                usage: yo_core::ResponsesUsage::default(),
+                usage: ResponsesUsage::default(),
             },
         ]],
         rejected.clone(),

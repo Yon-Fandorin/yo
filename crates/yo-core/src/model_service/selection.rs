@@ -795,7 +795,7 @@ impl ModelSelectionController {
         &self,
         reference: &str,
     ) -> Result<ModelSelection, ModelServiceError> {
-        if let Some(host) = super::HostId::from_reference(reference)? {
+        if let Some(host) = HostId::from_reference(reference)? {
             return Err(ModelServiceError::new(format!(
                 "{} is a HostTarget and has no stored model activation state",
                 host.reference()
@@ -808,7 +808,7 @@ impl ModelSelectionController {
         &self,
         reference: &str,
     ) -> Result<StartupTarget, ModelServiceError> {
-        if let Some(host) = super::HostId::from_reference(reference)? {
+        if let Some(host) = HostId::from_reference(reference)? {
             return Ok(StartupTarget::Host(host));
         }
         self.resolve_model_reference(reference, true)

@@ -74,7 +74,7 @@ fn capacity_gap_recovers_with_one_complete_live_snapshot() {
     pressure.store(false, Ordering::Release);
     journal.append_events(&[AgentEvent::TurnFinished {
         turn,
-        outcome: crate::TurnOutcome::Completed,
+        outcome: TurnOutcome::Completed,
     }]);
 
     assert!(matches!(

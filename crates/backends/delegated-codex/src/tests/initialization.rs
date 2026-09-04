@@ -177,7 +177,7 @@ fn initializes_before_starting_a_thread() {
     );
     assert_eq!(
         evidence.continuation_strategy(),
-        yo_core::ContinuationStrategy::BackendManagedState
+        ContinuationStrategy::BackendManagedState
     );
 
     let sent = sent.0.borrow();
@@ -267,9 +267,11 @@ fn api_key_account_rejects_native_rebind_before_fork() {
         .unwrap_err();
 
     assert_eq!(failure.kind(), BackendFailureKind::Unsupported);
-    assert!(sent.0.borrow().iter().all(|message| {
-        message.get("method").and_then(serde_json::Value::as_str) != Some("thread/fork")
-    }));
+    assert!(
+        sent.0.borrow().iter().all(|message| {
+            message.get("method").and_then(Value::as_str) != Some("thread/fork")
+        })
+    );
 }
 
 // 같은 verified account의 exact model target은 공개 thread/fork model 파라미터 한 번으로
@@ -425,7 +427,7 @@ fn verifies_the_handshake_without_creating_a_thread() {
     assert_eq!(sent[2]["method"], "account/read");
     assert!(sent.iter().all(|message| {
         !matches!(
-            message.get("method").and_then(serde_json::Value::as_str),
+            message.get("method").and_then(Value::as_str),
             Some("thread/start" | "thread/resume")
         )
     }));

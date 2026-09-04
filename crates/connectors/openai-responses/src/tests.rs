@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{Value, json};
 use yo_core::{
     AccountId, ApiCredential, ApiDialect, ConnectorFailureKind, EffectiveModelBinding,
     FunctionTool, ModelConnectorInputItem, ModelConnectorInputRole, ModelConnectorLimits,
@@ -25,7 +25,7 @@ fn responses_binding(model: &str) -> EffectiveModelBinding {
     )
 }
 
-fn response_body(request: &ModelConnectorRequest, model: &str) -> serde_json::Value {
+fn response_body(request: &ModelConnectorRequest, model: &str) -> Value {
     OpenAiResponsesConnector::new(
         &responses_binding(model),
         ApiCredential::new("test-secret").unwrap(),

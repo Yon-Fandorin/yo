@@ -284,8 +284,8 @@ fn observe_model_catalog<P: JsonPeer>(
         .iter()
         .map(|(key, value)| (key.as_str(), value.as_str()))
         .collect::<Vec<_>>();
-    let host = yo_core::HostId::grok();
-    let account = yo_core::derive_host_account_id(&host, &evidence_refs)
+    let host = HostId::grok();
+    let account = derive_host_account_id(&host, &evidence_refs)
         .map_err(|error| protocol::protocol_failure(error.to_string()))?;
     let current = authenticated
         .initialized

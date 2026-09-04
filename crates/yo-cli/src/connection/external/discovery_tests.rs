@@ -237,12 +237,12 @@ fn successful_discovery_binds_one_candidate_and_selected_row_to_publication() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-fn discovered_entry(model: &str) -> yo_core::ModelCatalogEntry {
-    let complete = yo_core::CompleteModelBinding::from_durable_json(&format!(
+fn discovered_entry(model: &str) -> ModelCatalogEntry {
+    let complete = CompleteModelBinding::from_durable_json(&format!(
         r#"{{"provider":"openrouter","account":"team","model":"{model}","connector":"openai-responses","base_url":"https://openrouter.ai/api/v1","api_dialect":"openai-responses","tokenizer_profile":"o200k_base/v1","input_token_limit":120000,"max_output_tokens":12000,"reasoning_parameters":{{}},"optional_request_parameters":{{}},"tool_capability_policy":"local-tools/v1"}}"#
     ))
     .unwrap();
-    yo_core::ModelCatalogEntry::with_explicit_profile(
+    ModelCatalogEntry::with_explicit_profile(
         complete.binding().clone(),
         Some("OpenRouter".to_owned()),
         Some("Team".to_owned()),

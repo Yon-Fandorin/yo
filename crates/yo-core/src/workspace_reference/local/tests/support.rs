@@ -33,7 +33,7 @@ impl Drop for TempFixture {
     fn drop(&mut self) {
         if let Err(error) = fs::remove_dir_all(&self.root) {
             if std::thread::panicking() {
-                let mut stderr = std::io::stderr();
+                let mut stderr = io::stderr();
                 let _ = writeln!(
                     stderr,
                     "cleaning test fixture {} failed during unwinding: {error}",

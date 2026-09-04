@@ -65,14 +65,14 @@ fn template_supports_aliases_and_escaped_braces() {
 // 출력 문자열을 확장하기 전에 바이트 상한을 검사해 과도한 할당을 막는다.
 #[test]
 fn template_output_is_bounded_before_expansion_allocates() {
-    let oversized_label = "x".repeat(super::MAX_METER_BYTES + 1);
+    let oversized_label = "x".repeat(MAX_METER_BYTES + 1);
     assert!(matches!(
         MeterTemplate::new("{label}").render(&oversized_label, "█", 0),
         Err(MeterTemplateError::OutputTooLarge { bytes, .. })
             if bytes == oversized_label.len()
     ));
 
-    let oversized_pattern = "x".repeat(super::MAX_METER_BYTES + 1);
+    let oversized_pattern = "x".repeat(MAX_METER_BYTES + 1);
     assert!(matches!(
         MeterTemplate::new(oversized_pattern.as_str()).render("label", "█", 0),
         Err(MeterTemplateError::OutputTooLarge { bytes, .. })
@@ -83,14 +83,14 @@ fn template_output_is_bounded_before_expansion_allocates() {
 // 반복된 placeholder까지 포함한 터미널 셀 수 상한을 정확히 적용한다.
 #[test]
 fn template_cell_budget_covers_labels_and_repeated_placeholders() {
-    let oversized_label = "x".repeat(super::MAX_METER_CELLS + 1);
+    let oversized_label = "x".repeat(MAX_METER_CELLS + 1);
     assert!(matches!(
         MeterTemplate::new("{label}").render(&oversized_label, "█", 0),
         Err(MeterTemplateError::OutputTooLarge { cells, bytes })
             if cells == oversized_label.len() && bytes == oversized_label.len()
     ));
 
-    let repeated_label = "x".repeat(super::MAX_METER_CELLS / 2 + 1);
+    let repeated_label = "x".repeat(MAX_METER_CELLS / 2 + 1);
     assert!(matches!(
         MeterTemplate::new("{label}{label}").render(&repeated_label, "█", 0),
         Err(MeterTemplateError::OutputTooLarge { cells, bytes })
@@ -101,25 +101,25 @@ fn template_cell_budget_covers_labels_and_repeated_placeholders() {
 // 유니코드 폭과 줄바꿈도 템플릿 출력 셀 예산 계산에 반영한다.
 #[test]
 fn template_cell_budget_uses_terminal_width_for_unicode_and_newlines() {
-    let wide_label = "界".repeat(super::MAX_METER_CELLS / 2 + 1);
+    let wide_label = "界".repeat(MAX_METER_CELLS / 2 + 1);
     assert!(matches!(
         MeterTemplate::new("{label}").render(&wide_label, "█", 0),
         Err(MeterTemplateError::OutputTooLarge { cells, bytes })
-            if cells == (super::MAX_METER_CELLS / 2 + 1) * 2
+            if cells == (MAX_METER_CELLS / 2 + 1) * 2
                 && bytes == wide_label.len()
     ));
 
-    let combining_label = "e\u{301}".repeat(super::MAX_METER_CELLS);
+    let combining_label = "e\u{301}".repeat(MAX_METER_CELLS);
     let rendered = MeterTemplate::new("{label}")
         .render(&combining_label, "█", 0)
         .unwrap();
     assert_eq!(rendered, combining_label);
 
-    let newline_meter = "\n".repeat(super::MAX_METER_BYTES);
+    let newline_meter = "\n".repeat(MAX_METER_BYTES);
     let rendered = MeterTemplate::new("{meter}")
         .render("label", &newline_meter, 0)
         .unwrap();
-    assert_eq!(rendered.len(), super::MAX_METER_BYTES);
+    assert_eq!(rendered.len(), MAX_METER_BYTES);
 }
 
 // 정적 글리프와 수명 짧은 템플릿을 조합하는 빌더 수명을 지원한다.
@@ -192,7 +192,7 @@ fn invalid_shapes_and_oversized_outputs_fail_closed() {
         Err(MeterError::ZeroHeight)
     ));
 
-    let too_many_levels = vec!["."; super::MAX_METER_LEVELS + 1];
+    let too_many_levels = vec!["."; MAX_METER_LEVELS + 1];
     assert!(matches!(
         MeterSpec::raw(
             MeterShape::VerticalLevel,
@@ -200,10 +200,10 @@ fn invalid_shapes_and_oversized_outputs_fail_closed() {
         )
         .render_glyph(0),
         Err(MeterError::TooManyLevels { count })
-            if count == super::MAX_METER_LEVELS + 1
+            if count == MAX_METER_LEVELS + 1
     ));
 
-    for oversized_cells in [super::MAX_METER_CELLS + 1, usize::MAX] {
+    for oversized_cells in [MAX_METER_CELLS + 1, usize::MAX] {
         for shape in [
             MeterShape::HorizontalBar {
                 width: oversized_cells,
@@ -219,7 +219,7 @@ fn invalid_shapes_and_oversized_outputs_fail_closed() {
         }
     }
 
-    let oversized_glyph = format!("e{}", "\u{301}".repeat(super::MAX_METER_BYTES));
+    let oversized_glyph = format!("e{}", "\u{301}".repeat(MAX_METER_BYTES));
     let spec = MeterSpec::raw(
         MeterShape::HorizontalBar { width: 1 },
         MeterGlyphs::new(oversized_glyph.as_str(), "-", &["."]),

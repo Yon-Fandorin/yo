@@ -219,7 +219,7 @@ pub(super) struct ExactAdmission;
 impl ToolSemanticAdmission for ExactAdmission {
     fn admit_arguments(
         &self,
-        _definition: &yo_core::ToolDefinition,
+        _definition: &ToolDefinition,
         validated_argument_bytes: &str,
     ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
         Ok(validated_argument_bytes.to_owned())
@@ -227,7 +227,7 @@ impl ToolSemanticAdmission for ExactAdmission {
 
     fn admit_output(
         &self,
-        _definition: &yo_core::ToolDefinition,
+        _definition: &ToolDefinition,
         bounded_output: &str,
     ) -> Result<String, yo_core::ToolSemanticAdmissionError> {
         Ok(bounded_output.to_owned())

@@ -2,10 +2,9 @@
 
 use std::path::Path;
 
-#[cfg(test)]
-use yo_core::ModelSelection;
 use yo_core::{
-    AccountId, AgentBackend, BackendResumeTarget, CredentialSnapshot, HostId, ModelId, ProviderId,
+    AccountId, AgentBackend, BackendResumeTarget, CredentialSnapshot, HostId, ModelId,
+    ModelSelection, ProviderId,
 };
 
 use crate::{AppError, config::Config};
@@ -64,7 +63,7 @@ impl StartupBackend {
         )
     }
 
-    pub(crate) fn model_selection(&self) -> Option<yo_core::ModelSelection> {
+    pub(crate) fn model_selection(&self) -> Option<ModelSelection> {
         match self {
             Self::Host(_) | Self::ReadOnlyHost(_) => None,
             Self::Native {
@@ -72,7 +71,7 @@ impl StartupBackend {
                 account,
                 model,
                 ..
-            } => Some(yo_core::ModelSelection::new(
+            } => Some(ModelSelection::new(
                 provider.clone(),
                 account.clone(),
                 model.clone(),
@@ -101,7 +100,7 @@ impl StartupBackend {
 }
 
 pub(crate) fn replacement(
-    selection: &yo_core::ModelSelection,
+    selection: &ModelSelection,
     registry_revision: crate::local_tools::LocalToolRegistryRevision,
 ) -> StartupBackend {
     startup::replacement(selection, registry_revision)

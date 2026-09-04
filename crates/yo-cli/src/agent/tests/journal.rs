@@ -256,7 +256,7 @@ fn exposes_committed_commands_and_events_in_journal_order() {
     let backend = ScriptedBackend::new([
         BackendScriptStep::AcceptCommand(create.clone()),
         BackendScriptStep::AcceptCommand(start.clone()),
-        BackendScriptStep::Emit(yo_core::BackendEvent::TurnFinished {
+        BackendScriptStep::Emit(BackendEvent::TurnFinished {
             turn: turn(),
             outcome: TurnOutcome::Completed,
         }),

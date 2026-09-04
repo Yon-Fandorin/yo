@@ -369,7 +369,7 @@ fn collect_files_recursive(
             return;
         },
     };
-    entries.sort_by_key(std::fs::DirEntry::path);
+    entries.sort_by_key(fs::DirEntry::path);
 
     for entry in entries {
         let path = entry.path();
@@ -1373,8 +1373,7 @@ mod tests {
     fn parse_for_test(content: &str) -> String {
         let normalized = content.replace("\r\n", "\n");
         let (frontmatter, body) = super::split_frontmatter(&normalized).expect("frontmatter");
-        let metadata =
-            super::parse_yaml(frontmatter, "test.md", 1).expect("valid test frontmatter");
+        let metadata = parse_yaml(frontmatter, "test.md", 1).expect("valid test frontmatter");
         knowledge_revision(&metadata, body)
     }
 }

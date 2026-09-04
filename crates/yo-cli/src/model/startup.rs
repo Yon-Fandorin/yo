@@ -17,7 +17,7 @@ enum DurableBackendKind {
 }
 
 pub(super) fn replacement(
-    selection: &yo_core::ModelSelection,
+    selection: &ModelSelection,
     registry_revision: crate::local_tools::LocalToolRegistryRevision,
 ) -> StartupBackend {
     StartupBackend::Native {

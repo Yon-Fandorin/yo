@@ -59,7 +59,7 @@ mod tests {
             entries
                 .iter()
                 .map(|(provider, account, model)| {
-                    yo_core::ModelCatalogEntry::new(
+                    ModelCatalogEntry::new(
                         yo_core::EffectiveModelBinding::new(
                             yo_core::ProviderId::new(*provider).unwrap(),
                             yo_core::AccountId::new(*account).unwrap(),

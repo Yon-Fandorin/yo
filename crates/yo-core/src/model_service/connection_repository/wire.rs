@@ -308,7 +308,7 @@ where
     let value = String::deserialize(deserializer)?;
     if matches!(
         value.as_str(),
-        crate::SEMANTIC_REPLAY_PROFILE | crate::KIMI_PRIVATE_REPLAY_PROFILE
+        SEMANTIC_REPLAY_PROFILE | crate::KIMI_PRIVATE_REPLAY_PROFILE
     ) {
         Ok(Some(value))
     } else {

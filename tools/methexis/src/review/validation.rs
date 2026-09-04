@@ -320,7 +320,7 @@ fn collect_optional_files(
             return;
         },
     };
-    entries.sort_by_key(std::fs::DirEntry::path);
+    entries.sort_by_key(fs::DirEntry::path);
     for entry in entries {
         let path = entry.path();
         let file_type = match entry.file_type() {

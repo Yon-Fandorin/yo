@@ -25,3 +25,5 @@ jobs:
         run: rustup toolchain install nightly-2026-05-22 --profile minimal
       - name: Compile yo-cli
         run: cargo check --locked -p yo-cli --all-targets
+      - name: Lint workspace
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings

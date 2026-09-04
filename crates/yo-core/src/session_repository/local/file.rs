@@ -28,7 +28,7 @@ impl LegacyWriterCompatibilityGuard {
         let file = open_lock_file(&path)?;
         match file.try_lock_shared() {
             Ok(()) => {},
-            Err(std::fs::TryLockError::WouldBlock) => {
+            Err(fs::TryLockError::WouldBlock) => {
                 return Err(RepositoryError::Unavailable {
                     message: format!(
                         "a legacy writer owns the Session repository compatibility lock at {}",
@@ -36,7 +36,7 @@ impl LegacyWriterCompatibilityGuard {
                     ),
                 });
             },
-            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+            Err(fs::TryLockError::Error(error)) => return Err(error.into()),
         }
         Ok(Self { _file: file })
     }
@@ -53,12 +53,12 @@ impl SessionWriterLease {
         let file = open_lock_file(&path)?;
         match file.try_lock() {
             Ok(()) => {},
-            Err(std::fs::TryLockError::WouldBlock) => {
+            Err(fs::TryLockError::WouldBlock) => {
                 return Err(RepositoryError::Unavailable {
                     message: format!("another writer owns Session {session_id}"),
                 });
             },
-            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+            Err(fs::TryLockError::Error(error)) => return Err(error.into()),
         }
         Ok(Self { _file: file })
     }
@@ -146,8 +146,8 @@ fn exclusive_file_lock_is_active(file: &File) -> Result<bool, RepositoryError> {
             let _ = file.unlock();
             Ok(false)
         },
-        Err(std::fs::TryLockError::WouldBlock) => Ok(true),
-        Err(std::fs::TryLockError::Error(error)) => Err(error.into()),
+        Err(fs::TryLockError::WouldBlock) => Ok(true),
+        Err(fs::TryLockError::Error(error)) => Err(error.into()),
     }
 }
 

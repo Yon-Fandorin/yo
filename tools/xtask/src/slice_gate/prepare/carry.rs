@@ -376,7 +376,7 @@ mod tests {
     }
 
     fn git_line(repository: &TestRepository, arguments: &[&str]) -> String {
-        crate::git::output_in(&repository.path, arguments, false)
+        git::output_in(&repository.path, arguments, false)
             .unwrap()
             .trim()
             .to_owned()

@@ -390,8 +390,7 @@ fn accepts_a_command_after_a_forced_message_segment() {
 fn persists_the_final_message_tail_and_terminal_seal_atomically() {
     let session_id = session();
     let turn = TurnRef::new(session_id, TurnId::new(NonZeroU64::new(2).unwrap()));
-    let activity =
-        crate::ActivityRef::new(turn, crate::ActivityId::new(NonZeroU64::new(3).unwrap()));
+    let activity = ActivityRef::new(turn, ActivityId::new(NonZeroU64::new(3).unwrap()));
     let mut segmenter = MessageSegmenter::new(activity, MessageStream::Agent);
     segmenter.push_text("final tail", Duration::ZERO);
     let commit = JournalCommit::incremental(vec![SequencedJournalRecord::new(

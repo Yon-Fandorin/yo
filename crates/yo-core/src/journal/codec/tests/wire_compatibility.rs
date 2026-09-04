@@ -1,6 +1,6 @@
 use super::*;
 
-fn committed(command: AgentCommand, submission_id: Option<crate::SubmissionId>) -> JournalRecord {
+fn committed(command: AgentCommand, submission_id: Option<SubmissionId>) -> JournalRecord {
     let committed = match submission_id {
         Some(submission_id) => crate::journal::CommittedCommand::submission(command, submission_id),
         None => crate::journal::CommittedCommand::uncorrelated(command),

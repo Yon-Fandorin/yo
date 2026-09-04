@@ -137,7 +137,7 @@ fn prevents_a_legacy_writer_after_new_writers_open() {
 
     assert!(matches!(
         legacy_lock.try_lock(),
-        Err(std::fs::TryLockError::WouldBlock)
+        Err(fs::TryLockError::WouldBlock)
     ));
 
     drop((first, second));

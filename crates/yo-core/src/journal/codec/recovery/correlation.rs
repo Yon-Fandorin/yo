@@ -1267,7 +1267,7 @@ impl CorrelationRecovery {
                         let inherited_local_replay_anchor = binding.continuation_strategy()
                             == (ContinuationStrategy::ExactReplay {
                                 executor: crate::ReplayExecutor::LocalClient,
-                                replay_profile: crate::ReplayProfile::SemanticOnly,
+                                replay_profile: ReplayProfile::SemanticOnly,
                             })
                             && binding.transition().mode() == TransitionMode::ExactReplay;
                         let backend_native_model_rebind = binding.continuation_strategy()

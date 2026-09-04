@@ -523,7 +523,7 @@ fn wait_for_session_change(session: &mut AgentSession) {
         match session.poll().unwrap() {
             AgentSessionPoll::Changed => return,
             AgentSessionPoll::Pending if Instant::now() < deadline => {
-                std::thread::yield_now();
+                thread::yield_now();
             },
             other => panic!("worker did not publish the expected change: {other:?}"),
         }
@@ -537,7 +537,7 @@ fn dispatch_until_queued(session: &mut AgentSession, intent: AgentIntent) {
         match admission {
             CommandAdmission::Queued => return,
             CommandAdmission::Backpressured(pending) if Instant::now() < deadline => {
-                std::thread::yield_now();
+                thread::yield_now();
                 admission = session.retry(pending).unwrap();
             },
             other => panic!("worker did not admit the command before the deadline: {other:?}"),

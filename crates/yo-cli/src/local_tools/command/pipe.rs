@@ -265,7 +265,7 @@ mod tests {
     }
 
     impl Read for DropObservedReader {
-        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
             self.reader.read(buffer)
         }
     }

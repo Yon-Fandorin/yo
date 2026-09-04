@@ -212,7 +212,7 @@ pub struct NativeModelBackend {
     token_counter: Box<dyn ModelTokenCounter>,
     request_observer: Option<Box<dyn ModelRequestObserver>>,
     contract: ModelReplayContract,
-    replay_profile: yo_core::ReplayProfile,
+    replay_profile: ReplayProfile,
     session: Option<SessionId>,
     replay: ModelReplay,
     replay_groups: Vec<Vec<ModelReplayItem>>,
@@ -541,7 +541,7 @@ impl NativeModelBackend {
         let (tool_exposure_enabled, replay_profile) = if let Some(profile) =
             explicit_profile.as_ref()
         {
-            let complete = yo_core::CompleteModelBinding::new(binding.clone(), profile.clone())
+            let complete = CompleteModelBinding::new(binding.clone(), profile.clone())
                 .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
             let admitted = admit_new_complete_binding(&complete)
                 .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
@@ -2284,7 +2284,7 @@ impl NativeModelBackend {
                     ));
                 }
                 if matches!(&status, ModelConnectorTerminal::Completed)
-                    && self.replay_profile == yo_core::ReplayProfile::ProviderPrivateLocalPlaintext
+                    && self.replay_profile == ReplayProfile::ProviderPrivateLocalPlaintext
                 {
                     validate_provider_private_replay_sequence(
                         &state.round_replay.values().cloned().collect::<Vec<_>>(),

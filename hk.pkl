@@ -76,15 +76,6 @@ local checks = new Mapping<String, Step> {
         )
         check = "cargo test --quiet --locked -p yo-yaml"
     }
-    ["yo-yaml-lints"] = new Step {
-        glob = List(
-            "shared/yo-yaml/**/*.rs",
-            "shared/yo-yaml/Cargo.toml",
-            "Cargo.lock",
-            "Cargo.toml",
-        )
-        check = "cargo clippy --quiet --locked -p yo-yaml --all-targets -- -D warnings"
-    }
     ["yo-tui-tests"] = new Step {
         glob = List(
             "crates/yo-tui/**/*.rs",
@@ -105,16 +96,19 @@ local checks = new Mapping<String, Step> {
         )
         check = "cargo test --quiet --locked -p yo-cli"
     }
-    ["yo-cli-lints"] = new Step {
+    ["workspace-lints"] = new Step {
         glob = List(
-            "crates/yo-cli/**/*.rs",
-            "crates/yo-cli/Cargo.toml",
-            "crates/yo-tui/**/*.rs",
-            "crates/yo-tui/Cargo.toml",
+            "crates/**/*.rs",
+            "crates/**/Cargo.toml",
+            "shared/**/*.rs",
+            "shared/**/Cargo.toml",
+            "tools/**/*.rs",
+            "tools/**/Cargo.toml",
             "Cargo.lock",
             "Cargo.toml",
+            ".github/workflows/unix-compile.yml",
         )
-        check = "cargo clippy --quiet --locked -p yo-cli --all-targets -- -D warnings"
+        check = "cargo clippy --quiet --locked --workspace --all-targets -- -D warnings"
     }
     ["yo-cli-unix-matrix"] = new Step {
         glob = List(
@@ -153,6 +147,7 @@ local checks = new Mapping<String, Step> {
             "AGENTS.md",
             "CONTRIBUTING.md",
             "hk.pkl",
+            "crates/yo-cli/Cargo.toml",
             "tools/xtask/**/*.rs",
             "tools/xtask/Cargo.toml",
             "Cargo.lock",

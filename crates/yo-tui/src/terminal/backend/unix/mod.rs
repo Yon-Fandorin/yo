@@ -78,7 +78,7 @@ impl DirectTerminalWriter {
 
 impl Write for DirectTerminalWriter {
     fn write(&mut self, bytes: &[u8]) -> std_io::Result<usize> {
-        rustix::io::write(self.output, bytes)
+        io::write(self.output, bytes)
             .map_err(|error| std_io::Error::from_raw_os_error(error.raw_os_error()))
     }
 

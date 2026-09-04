@@ -222,7 +222,7 @@ fn durable_resumable_session() -> (MemoryRepository, StoredSessionContinuation) 
         .unwrap();
     loop {
         match runtime.poll_event().unwrap() {
-            RuntimePoll::Event(crate::AgentEvent::TurnFinished {
+            RuntimePoll::Event(AgentEvent::TurnFinished {
                 turn: finished,
                 outcome: crate::TurnOutcome::Completed,
             }) if finished == turn => break,

@@ -322,7 +322,7 @@ fn build_derived_metrics(
         })
         .collect::<Vec<_>>();
     let metrics = DerivedMetrics {
-        schema: super::metrics::DERIVED_SCHEMA,
+        schema: metrics::DERIVED_SCHEMA,
         slice: &request.slice,
         slice_candidate,
         accepted_commit,

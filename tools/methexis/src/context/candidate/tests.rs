@@ -119,9 +119,9 @@ fn independent_decoder_accepts_a_relation_wire_reason() {
 // `.`이나 빈 구성 요소가 있는 경로는 거부하고 평범한 상대 경로만 허용한다.
 #[test]
 fn candidate_paths_reject_dot_and_empty_raw_components() {
-    assert!(!super::capture::safe_relative(Path::new("a/./b.json")));
-    assert!(!super::capture::safe_relative(Path::new("a//b.json")));
-    assert!(super::capture::safe_relative(Path::new("a/b.json")));
+    assert!(!capture::safe_relative(Path::new("a/./b.json")));
+    assert!(!capture::safe_relative(Path::new("a//b.json")));
+    assert!(capture::safe_relative(Path::new("a/b.json")));
 }
 
 fn librarian_fixture() -> PathBuf {

@@ -189,7 +189,7 @@ fn standing_authorization_requires_active_human_origin_and_unique_routes() {
 // standing authorization은 별도 다중-hop 권한이 없으므로 두 번째 resolution을 거부한다.
 #[test]
 fn recursive_classification_counts_resolution_requests_but_direct_authorization_stays_bounded() {
-    let repository = crate::test_support::TestRepository::new("review-egress-depth");
+    let repository = TestRepository::new("review-egress-depth");
     let original_text = format!(
         "{{\"schema\":\"yo.slice-review-manifest/v1\",\"review_id\":\"{}\",\"packet\":{{\"hash\":\"{}\",\"managed_payload_tokens\":1}}}}\n",
         hash(5),
@@ -281,7 +281,7 @@ fn request_identity_is_bounded_before_artifact_reads() {
 // 사용하므로 이전 active bytes를 다른 경로로 복사해 revocation을 우회할 수 없다.
 #[test]
 fn authorization_path_is_shared_and_not_caller_selected() {
-    let repository = crate::test_support::TestRepository::new("review-egress-authorization-path");
+    let repository = TestRepository::new("review-egress-authorization-path");
 
     assert_eq!(
         canonical_authorization_path(&repository.path).unwrap(),

@@ -322,7 +322,7 @@ mod tests {
         assert!(revision_for_replay_contract(None).is_err());
         let unknown = ModelReplayContract::new(
             "system",
-            vec![yo_core::ModelReplayTool::new(
+            vec![ModelReplayTool::new(
                 "read_files",
                 "different",
                 "yo.tool-schema/v1",

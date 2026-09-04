@@ -419,9 +419,9 @@ impl LocalConnectionOperationSession<'_> {
 
 fn validated_parent<'a>(
     repository: ConnectionOperationRepositoryKind,
-    path: &'a std::path::Path,
+    path: &'a Path,
     filename: &str,
-) -> Result<&'a std::path::Path, ConnectionOperationExecutionError> {
+) -> Result<&'a Path, ConnectionOperationExecutionError> {
     let valid_filename = path.file_name().is_some_and(|name| name == filename);
     let Some(parent) = path
         .parent()

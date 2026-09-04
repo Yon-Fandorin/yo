@@ -358,7 +358,7 @@ fn chat_warns_when_durability_continuity_is_not_observable() {
 fn chat_preserves_continuity_and_typed_discovery_diagnostics_together() {
     let session_id = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
     let mismatch = StoredDiscoveryMismatch::new(
-        yo_core::session_repository::RepositorySequence::new(10),
+        RepositorySequence::new(10),
         yo_core::session_repository::StoredDiscoveryMismatchKind::BindingEpoch { claimed: 4 },
     );
 

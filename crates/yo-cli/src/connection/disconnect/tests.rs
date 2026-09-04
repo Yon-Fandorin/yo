@@ -770,7 +770,7 @@ impl Fixture {
             let target = StartupTarget::Model(ModelSelection::new(
                 provider(),
                 account(),
-                yo_core::ModelId::new(model).unwrap(),
+                ModelId::new(model).unwrap(),
             ));
             let mutation = repository
                 .capture()

@@ -1087,8 +1087,8 @@ mod tests {
         assert_eq!(
             credential
                 .resolve(
-                    &yo_core::ProviderId::new("vendor").unwrap(),
-                    &yo_core::AccountId::new("team").unwrap(),
+                    &ProviderId::new("vendor").unwrap(),
+                    &AccountId::new("team").unwrap(),
                 )
                 .unwrap()
                 .expose_secret(),
@@ -1459,7 +1459,7 @@ models:
     // TTY/file 흐름을 우회할 수 없고 config와 repository를 읽기 전에 같은 오류로 닫힙니다.
     #[test]
     fn runtime_rejects_an_invalid_non_interactive_option_combination() {
-        let config_path = std::path::Path::new("/not/read/config.yaml");
+        let config_path = Path::new("/not/read/config.yaml");
         for command in [
             ConnectCommand {
                 from: None,
@@ -1507,8 +1507,8 @@ models:
         std::fs::write(&config_path, "session: {}\n").unwrap();
         seed_stored_definition(&root, explicit_definition());
         let credentials = yo_core::LocalCredentialRepository::new(root.join("credentials.yaml"));
-        let provider = yo_core::ProviderId::new("vendor").unwrap();
-        let account = yo_core::AccountId::new("team").unwrap();
+        let provider = ProviderId::new("vendor").unwrap();
+        let account = AccountId::new("team").unwrap();
         let mutation =
             yo_core::CredentialRepository::prepare_set(&credentials, &provider, &account).unwrap();
         let original = yo_core::ApiCredential::new("existing-secret").unwrap();
@@ -1555,8 +1555,8 @@ models:
         let catalog = fixture_catalog();
         let snapshot = fixture_snapshot_with_stored(fixture_complete("beta"));
         let selection = ModelSelection::new(
-            yo_core::ProviderId::new("vendor").unwrap(),
-            yo_core::AccountId::new("team").unwrap(),
+            ProviderId::new("vendor").unwrap(),
+            AccountId::new("team").unwrap(),
             yo_core::ModelId::new("alpha").unwrap(),
         );
 
@@ -1613,8 +1613,8 @@ models:
         assert_eq!(
             plan.preference,
             Some(StartupTarget::Model(ModelSelection::new(
-                yo_core::ProviderId::new("vendor").unwrap(),
-                yo_core::AccountId::new("team").unwrap(),
+                ProviderId::new("vendor").unwrap(),
+                AccountId::new("team").unwrap(),
                 yo_core::ModelId::new("beta").unwrap(),
             )))
         );
@@ -1632,8 +1632,8 @@ models:
             r#"{"effort":"medium"}"#,
         ));
         let selection = ModelSelection::new(
-            yo_core::ProviderId::new("vendor").unwrap(),
-            yo_core::AccountId::new("team").unwrap(),
+            ProviderId::new("vendor").unwrap(),
+            AccountId::new("team").unwrap(),
             yo_core::ModelId::new("alpha").unwrap(),
         );
         let selected = catalog
@@ -1687,8 +1687,8 @@ models:
             r#"{"retired":true}"#,
         ));
         let selection = ModelSelection::new(
-            yo_core::ProviderId::new("vendor").unwrap(),
-            yo_core::AccountId::new("team").unwrap(),
+            ProviderId::new("vendor").unwrap(),
+            AccountId::new("team").unwrap(),
             yo_core::ModelId::new("alpha").unwrap(),
         );
         let selected = catalog
@@ -1739,8 +1739,8 @@ models:
     fn plan_enforces_target_policy_before_confirmation() {
         let catalog = fixture_catalog();
         let selection = ModelSelection::new(
-            yo_core::ProviderId::new("vendor").unwrap(),
-            yo_core::AccountId::new("team").unwrap(),
+            ProviderId::new("vendor").unwrap(),
+            AccountId::new("team").unwrap(),
             yo_core::ModelId::new("alpha").unwrap(),
         );
         let selected = catalog
@@ -1863,8 +1863,8 @@ models:
         ));
         let repository = yo_core::LocalConnectionRepository::new(root.join("connections.yaml"));
         let account = ConnectionAccount::new(
-            yo_core::ProviderId::new("vendor").unwrap(),
-            yo_core::AccountId::new("team").unwrap(),
+            ProviderId::new("vendor").unwrap(),
+            AccountId::new("team").unwrap(),
             Some("Vendor".to_owned()),
             Some("Team".to_owned()),
         )

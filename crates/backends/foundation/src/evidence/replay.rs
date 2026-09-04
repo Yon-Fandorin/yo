@@ -126,7 +126,7 @@ impl ModelReplayContract {
 
     #[doc(hidden)]
     pub fn is_valid(&self) -> bool {
-        let mut names = std::collections::HashSet::new();
+        let mut names = HashSet::new();
         !self.system_prompt.is_empty()
             && self.tools.len() <= 1_024
             && self.tools.iter().all(ModelReplayTool::is_valid)

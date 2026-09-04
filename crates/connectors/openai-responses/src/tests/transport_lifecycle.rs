@@ -14,7 +14,7 @@ use yo_core::{
 use super::local_tls::{LocalServerMode, LocalTlsServer, run_in_tls_child};
 use crate::OpenAiResponsesConnector;
 
-fn event(value: serde_json::Value) -> String {
+fn event(value: Value) -> String {
     format!("data: {}\n\n", serde_json::to_string(&value).unwrap())
 }
 

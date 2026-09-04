@@ -1,9 +1,9 @@
-use serde_json::json;
-use yo_core::ModelRequestFailureKind;
+use serde_json::{Value, json};
+use yo_core::{CacheReadInputTokens, ModelRequestFailureKind};
 
 use super::*;
 
-fn event(value: serde_json::Value) -> String {
+fn event(value: Value) -> String {
     format!("data: {}\n\n", serde_json::to_string(&value).unwrap())
 }
 
@@ -97,7 +97,7 @@ fn decodes_chunked_text_and_terminal_usage() {
                 output_tokens: Some(7),
                 total_tokens: Some(19),
                 reasoning_tokens: Some(3),
-                cache_read_input_tokens: yo_core::CacheReadInputTokens::Reported {
+                cache_read_input_tokens: CacheReadInputTokens::Reported {
                     tokens: 5,
                     source_profile,
                 },
@@ -120,7 +120,7 @@ fn cache_read_usage_distinguishes_omission_from_reported_zero() {
         let usage = usage_at(&json!({"response": response})).unwrap();
         assert!(matches!(
             usage.cache_read_input_tokens,
-            yo_core::CacheReadInputTokens::Absent { ref source_profile }
+            CacheReadInputTokens::Absent { ref source_profile }
                 if source_profile.as_str()
                     == "openai.responses.usage.input-tokens-details.cached-tokens/v1"
         ));
@@ -137,7 +137,7 @@ fn cache_read_usage_distinguishes_omission_from_reported_zero() {
     .unwrap();
     assert!(matches!(
         usage.cache_read_input_tokens,
-        yo_core::CacheReadInputTokens::Reported {
+        CacheReadInputTokens::Reported {
             tokens: 0,
             ref source_profile,
         } if source_profile.as_str()
@@ -150,7 +150,7 @@ fn cache_read_usage_distinguishes_omission_from_reported_zero() {
 #[test]
 fn cache_read_usage_rejects_malformed_or_inconsistent_reports() {
     let invalid_usage = [
-        serde_json::Value::Null,
+        Value::Null,
         json!([]),
         json!("invalid"),
         json!({"input_tokens": 4, "input_tokens_details": null}),

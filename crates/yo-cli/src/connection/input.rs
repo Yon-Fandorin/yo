@@ -3,7 +3,7 @@ use std::{
     io::{Read, Write},
 };
 
-use nix::sys::termios::{self, LocalFlags, SetArg, SpecialCharacterIndices, Termios};
+use nix::sys::termios::{self, LocalFlags, SetArg, SpecialCharacterIndices, Termios, tcsetattr};
 use rustix::termios::{QueueSelector, tcflush};
 use yo_core::ApiCredential;
 
@@ -117,7 +117,7 @@ impl TtyConnectionInput {
             .remove(LocalFlags::ECHO | LocalFlags::ICANON);
         hidden.control_chars[SpecialCharacterIndices::VMIN as usize] = 1;
         hidden.control_chars[SpecialCharacterIndices::VTIME as usize] = 0;
-        termios::tcsetattr(&*terminal, SetArg::TCSAFLUSH, &hidden)
+        tcsetattr(&*terminal, SetArg::TCSAFLUSH, &hidden)
             .map_err(|error| AppError::single("disabling terminal echo", error))?;
         let restore = EchoRestore {
             terminal,
@@ -222,9 +222,7 @@ struct EchoRestore<'a> {
 
 impl EchoRestore<'_> {
     fn restore(self) -> Result<(), AppError> {
-        self.restore_with(|terminal, original| {
-            termios::tcsetattr(terminal, SetArg::TCSAFLUSH, original)
-        })
+        self.restore_with(|terminal, original| tcsetattr(terminal, SetArg::TCSAFLUSH, original))
     }
 
     fn restore_with(
@@ -245,7 +243,7 @@ impl EchoRestore<'_> {
 impl Drop for EchoRestore<'_> {
     fn drop(&mut self) {
         if let Some(original) = self.original.as_ref() {
-            let _ = termios::tcsetattr(self.terminal, SetArg::TCSAFLUSH, original);
+            let _ = tcsetattr(self.terminal, SetArg::TCSAFLUSH, original);
         }
     }
 }
@@ -615,7 +613,7 @@ mod tests {
         let original = tcgetattr(&terminal).unwrap();
         let mut hidden = original.clone();
         hidden.local_flags.remove(LocalFlags::ECHO);
-        termios::tcsetattr(&terminal, SetArg::TCSAFLUSH, &hidden).unwrap();
+        tcsetattr(&terminal, SetArg::TCSAFLUSH, &hidden).unwrap();
 
         let error = EchoRestore {
             terminal: &terminal,

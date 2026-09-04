@@ -16,6 +16,7 @@ use std::{
 };
 
 use nix::{
+    libc,
     pty::{Winsize, openpty},
     sys::{
         signal::{Signal, kill},
@@ -747,7 +748,7 @@ fn capture_pty(
                 leave_count = next_leave_count;
                 let _ = output_events.send(output.len());
             },
-            Err(error) if error.raw_os_error() == Some(nix::libc::EIO) => break,
+            Err(error) if error.raw_os_error() == Some(libc::EIO) => break,
             Err(error) => panic!("reading PTY output failed: {error}"),
         }
     }
