@@ -41,8 +41,12 @@ struct Cli {
     fullscreen: bool,
 
     /// Use ASCII characters instead of rich terminal glyphs.
-    #[arg(long)]
+    #[arg(long, global = true)]
     ascii: bool,
+
+    /// Select human-readable text or a supported machine-readable format.
+    #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Text)]
+    format: OutputFormat,
 
     /// Resume a Session by its ID.
     #[arg(long, value_name = "SESSION_ID", conflicts_with = "continue_session")]
@@ -105,14 +109,9 @@ struct AccountArguments {
     #[arg(long)]
     refresh: bool,
 
-    /// Show the full multi-line capacity details instead of the compact account summary (text
-    /// only).
+    /// Show the full multi-line capacity details instead of the account table (text only).
     #[arg(long)]
     detail: bool,
-
-    /// Select human-readable text or stable machine-readable JSON.
-    #[arg(long, value_enum, default_value = "text")]
-    format: OutputFormat,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -214,10 +213,6 @@ struct SessionArguments {
     #[arg(long, value_enum, value_name = "VIEW", requires = "session_id")]
     view: Option<SessionView>,
 
-    /// Use ASCII characters instead of rich terminal glyphs.
-    #[arg(long, requires = "session_id")]
-    ascii: bool,
-
     /// Show at most the newest N semantic Transcript records.
     #[arg(long, value_name = "N", requires = "session_id")]
     limit: Option<NonZeroUsize>,
@@ -232,10 +227,6 @@ struct UsageArguments {
     /// Session whose usage should be shown.
     #[arg(value_name = "SESSION_ID")]
     session_id: yo_core::SessionId,
-
-    /// Use ASCII characters instead of rich terminal glyphs.
-    #[arg(long)]
-    ascii: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -288,7 +279,7 @@ pub(crate) struct AccountCommand {
     pub(crate) source: Option<String>,
     pub(crate) refresh: bool,
     pub(crate) detail: bool,
-    pub(crate) format: OutputFormat,
+    pub(crate) output: OutputOptions,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
@@ -296,6 +287,27 @@ pub(crate) enum OutputFormat {
     #[default]
     Text,
     Json,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct OutputOptions {
+    pub(crate) format: OutputFormat,
+    pub(crate) glyph_profile: GlyphProfile,
+}
+
+impl OutputOptions {
+    fn from_cli(format: OutputFormat, ascii: bool) -> Self {
+        Self {
+            format,
+            glyph_profile: glyph_profile(ascii),
+        }
+    }
+}
+
+impl Default for OutputOptions {
+    fn default() -> Self {
+        Self::from_cli(OutputFormat::Text, false)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -346,7 +358,7 @@ pub(crate) struct SessionCommand {
     pub(crate) all: bool,
     pub(crate) details: bool,
     pub(crate) view: SessionView,
-    pub(crate) glyph_profile: GlyphProfile,
+    pub(crate) output: OutputOptions,
     pub(crate) limit: Option<NonZeroUsize>,
     pub(crate) content: Option<SessionContent>,
 }
@@ -354,38 +366,53 @@ pub(crate) struct SessionCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UsageCommand {
     pub(crate) session_id: yo_core::SessionId,
-    pub(crate) glyph_profile: GlyphProfile,
+    pub(crate) output: OutputOptions,
 }
 
 pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Command, clap::Error> {
     let arguments = arguments.into_iter().collect::<Vec<_>>();
     reject_print_subcommand_overlap(&arguments)?;
+    let arguments = normalize_global_output_options(arguments);
     let cli = Cli::try_parse_from(std::iter::once(OsString::from("yo")).chain(arguments))?;
+    let output = OutputOptions::from_cli(cli.format, cli.ascii);
 
     match cli.command {
-        Some(CliCommand::Account(arguments)) => Ok(Command::Account(AccountCommand {
-            source: arguments.source,
-            refresh: arguments.refresh,
-            detail: arguments.detail,
-            format: arguments.format,
-        })),
-        Some(CliCommand::Connect(arguments)) => Ok(Command::Connect(ConnectCommand {
-            target: arguments.target.unwrap_or_default(),
-            from: arguments.from,
-            verbose: arguments.verbose,
-            credential_file: arguments.credential_file,
-            yes: arguments.yes,
-        })),
-        Some(CliCommand::Disconnect(arguments)) => Ok(Command::Disconnect(DisconnectCommand {
-            provider: arguments.provider,
-            account: arguments.account,
-            yes: arguments.yes,
-            verbose: arguments.verbose,
-        })),
-        Some(CliCommand::Default(arguments)) => Ok(Command::Default(DefaultCommand {
-            target: arguments.target,
-        })),
+        Some(CliCommand::Account(arguments)) => {
+            validate_output(output, "account", true, true)?;
+            Ok(Command::Account(AccountCommand {
+                source: arguments.source,
+                refresh: arguments.refresh,
+                detail: arguments.detail,
+                output,
+            }))
+        },
+        Some(CliCommand::Connect(arguments)) => {
+            validate_output(output, "connect", false, false)?;
+            Ok(Command::Connect(ConnectCommand {
+                target: arguments.target.unwrap_or_default(),
+                from: arguments.from,
+                verbose: arguments.verbose,
+                credential_file: arguments.credential_file,
+                yes: arguments.yes,
+            }))
+        },
+        Some(CliCommand::Disconnect(arguments)) => {
+            validate_output(output, "disconnect", false, false)?;
+            Ok(Command::Disconnect(DisconnectCommand {
+                provider: arguments.provider,
+                account: arguments.account,
+                yes: arguments.yes,
+                verbose: arguments.verbose,
+            }))
+        },
+        Some(CliCommand::Default(arguments)) => {
+            validate_output(output, "default", false, false)?;
+            Ok(Command::Default(DefaultCommand {
+                target: arguments.target,
+            }))
+        },
         Some(CliCommand::Model(arguments)) => {
+            validate_output(output, "model", false, false)?;
             let (target, enabled) = match arguments.action {
                 ModelActionArguments::Enable(arguments) => (arguments.target, true),
                 ModelActionArguments::Disable(arguments) => (arguments.target, false),
@@ -397,29 +424,43 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
             if view != SessionView::Transcript
                 && (arguments.limit.is_some() || arguments.content.is_some())
             {
-                return Err(clap::Error::raw(
+                return Err(raw_command_error(
                     clap::error::ErrorKind::ArgumentConflict,
                     "--limit and --content are supported only with --view transcript",
                 ));
             }
+            validate_output(
+                output,
+                if arguments.session_id.is_some() {
+                    "session"
+                } else {
+                    "session list"
+                },
+                false,
+                arguments.session_id.is_some(),
+            )?;
             Ok(Command::Session(SessionCommand {
                 session_id: arguments.session_id,
                 all: arguments.all,
                 details: arguments.details,
                 view,
-                glyph_profile: glyph_profile(arguments.ascii),
+                output,
                 limit: arguments.limit,
                 content: arguments.content,
             }))
         },
-        Some(CliCommand::Usage(arguments)) => Ok(Command::Usage(UsageCommand {
-            session_id: arguments.session_id,
-            glyph_profile: glyph_profile(arguments.ascii),
-        })),
+        Some(CliCommand::Usage(arguments)) => {
+            validate_output(output, "usage", false, true)?;
+            Ok(Command::Usage(UsageCommand {
+                session_id: arguments.session_id,
+                output,
+            }))
+        },
         None if cli.print => {
+            validate_output(output, "print", false, false)?;
             let selection = cli.resume.map_or(LiveSelection::New, LiveSelection::Resume);
             if selection != LiveSelection::New && cli.model.is_some() {
-                return Err(clap::Error::raw(
+                return Err(raw_command_error(
                     clap::error::ErrorKind::ArgumentConflict,
                     "--print --resume uses the stored model binding and cannot be combined with --model",
                 ));
@@ -432,24 +473,117 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
                 sandbox: cli.sandbox,
             }))
         },
-        None => Ok(Command::Live(LiveOptions {
-            mode: match (cli.inline, cli.fullscreen) {
-                (false, true) => PresentationMode::Fullscreen,
-                (_, false) => PresentationMode::Inline,
-                (true, true) => unreachable!("clap rejects conflicting presentation modes"),
-            },
-            glyph_profile: glyph_profile(cli.ascii),
-            selection: match (cli.resume, cli.continue_session) {
-                (Some(session_id), false) => LiveSelection::Resume(session_id),
-                (None, true) => LiveSelection::Continue,
-                (None, false) => LiveSelection::New,
-                (Some(_), true) => unreachable!("clap rejects conflicting continuation options"),
-            },
-            model: cli.model,
-            no_tools: cli.no_tools,
-            sandbox: cli.sandbox,
-        })),
+        None => {
+            validate_output(output, "live", false, true)?;
+            Ok(Command::Live(LiveOptions {
+                mode: match (cli.inline, cli.fullscreen) {
+                    (false, true) => PresentationMode::Fullscreen,
+                    (_, false) => PresentationMode::Inline,
+                    (true, true) => unreachable!("clap rejects conflicting presentation modes"),
+                },
+                glyph_profile: output.glyph_profile,
+                selection: match (cli.resume, cli.continue_session) {
+                    (Some(session_id), false) => LiveSelection::Resume(session_id),
+                    (None, true) => LiveSelection::Continue,
+                    (None, false) => LiveSelection::New,
+                    (Some(_), true) => {
+                        unreachable!("clap rejects conflicting continuation options")
+                    },
+                },
+                model: cli.model,
+                no_tools: cli.no_tools,
+                sandbox: cli.sandbox,
+            }))
+        },
     }
+}
+
+fn validate_output(
+    output: OutputOptions,
+    command: &str,
+    supports_json: bool,
+    supports_ascii: bool,
+) -> Result<(), clap::Error> {
+    if output.format == OutputFormat::Json && !supports_json {
+        return Err(raw_command_error(
+            clap::error::ErrorKind::ArgumentConflict,
+            format!("--format json is not supported by `{command}`"),
+        ));
+    }
+    if output.glyph_profile == GlyphProfile::Ascii && !supports_ascii {
+        return Err(raw_command_error(
+            clap::error::ErrorKind::ArgumentConflict,
+            format!("--ascii is not supported by `{command}`"),
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_global_output_options(arguments: Vec<OsString>) -> Vec<OsString> {
+    let Some(command_index) = top_level_subcommand_index(&arguments) else {
+        return arguments;
+    };
+    if command_index == 0 {
+        return arguments;
+    }
+
+    let mut command_arguments = arguments[command_index..].to_vec();
+    let mut global_output_options = Vec::new();
+    let mut root_arguments = Vec::new();
+    let mut index = 0;
+    while index < command_index {
+        let argument = &arguments[index];
+        if argument == "--ascii" {
+            global_output_options.push(argument.clone());
+        } else if argument == "--format" {
+            global_output_options.push(argument.clone());
+            if let Some(value) = arguments.get(index + 1) {
+                global_output_options.push(value.clone());
+                index += 1;
+            }
+        } else if argument
+            .to_str()
+            .is_some_and(|value| value.starts_with("--format="))
+        {
+            global_output_options.push(argument.clone());
+        } else {
+            root_arguments.push(argument.clone());
+        }
+        index += 1;
+    }
+    if global_output_options.is_empty() {
+        return arguments;
+    }
+    command_arguments.extend(global_output_options);
+    root_arguments.extend(command_arguments);
+    root_arguments
+}
+
+fn top_level_subcommand_index(arguments: &[OsString]) -> Option<usize> {
+    let mut skip_option_value = false;
+    for (index, argument) in arguments.iter().enumerate() {
+        if skip_option_value {
+            skip_option_value = false;
+            continue;
+        }
+        let Some(argument) = argument.to_str() else {
+            continue;
+        };
+        if argument == "--" {
+            return None;
+        }
+        if matches!(argument, "--model" | "--resume" | "--sandbox" | "--format") {
+            skip_option_value = true;
+            continue;
+        }
+        if matches!(
+            argument,
+            "account" | "connect" | "disconnect" | "default" | "model" | "session" | "usage"
+        ) {
+            return Some(index);
+        }
+    }
+    None
 }
 
 fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::Error> {
@@ -467,7 +601,7 @@ fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::E
         if argument == "--" {
             break;
         }
-        if matches!(argument, "--model" | "--resume" | "--sandbox") {
+        if matches!(argument, "--model" | "--resume" | "--sandbox" | "--format") {
             skip_option_value = true;
             continue;
         }
@@ -476,14 +610,14 @@ fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::E
         } else if subcommand.is_none()
             && matches!(
                 argument,
-                "connect" | "disconnect" | "default" | "model" | "session" | "usage"
+                "account" | "connect" | "disconnect" | "default" | "model" | "session" | "usage"
             )
         {
             subcommand = Some(argument);
         }
     }
     if let (true, Some(subcommand)) = (print_requested, subcommand) {
-        Err(clap::Error::raw(
+        Err(raw_command_error(
             clap::error::ErrorKind::ArgumentConflict,
             format!(
                 "-p/--print cannot be combined with the `{subcommand}` subcommand; use `--` before a literal prompt named `{subcommand}`"
@@ -492,6 +626,14 @@ fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::E
     } else {
         Ok(())
     }
+}
+
+fn raw_command_error(kind: clap::error::ErrorKind, message: impl Into<String>) -> clap::Error {
+    let mut message = message.into();
+    if !message.ends_with('\n') {
+        message.push('\n');
+    }
+    clap::Error::raw(kind, message)
 }
 
 fn glyph_profile(ascii: bool) -> GlyphProfile {

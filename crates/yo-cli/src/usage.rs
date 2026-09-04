@@ -18,7 +18,7 @@ pub(crate) fn show_from_reader(
     command: UsageCommand,
 ) -> Result<session::Output, AppError> {
     let history = session::read_history_from_reader(reader, command.session_id)?;
-    let stdout = project_archived_usage(&history, command.glyph_profile)
+    let stdout = project_archived_usage(&history, command.output.glyph_profile)
         .map_err(|error| AppError::single("projecting stored Session history", error))?;
     Ok(session::Output {
         stdout: session::with_final_newline(stdout),

@@ -18,6 +18,7 @@ use yo_core::{
 };
 
 use super::*;
+use crate::command::{OutputFormat, OutputOptions, UsageCommand};
 
 fn unbounded(rows: &[SessionRow], all: bool, details: bool) -> String {
     format_rows(
@@ -108,13 +109,13 @@ fn usage_session_id() -> SessionId {
     "01890f00-0000-7000-8000-000000000001".parse().unwrap()
 }
 
-fn usage_command(
-    session_id: SessionId,
-    glyph_profile: yo_tui::GlyphProfile,
-) -> crate::command::UsageCommand {
-    crate::command::UsageCommand {
+fn usage_command(session_id: SessionId, glyph_profile: yo_tui::GlyphProfile) -> UsageCommand {
+    UsageCommand {
         session_id,
-        glyph_profile,
+        output: OutputOptions {
+            format: OutputFormat::Text,
+            glyph_profile,
+        },
     }
 }
 
@@ -388,7 +389,10 @@ fn bounded_transcript_options_reach_the_archived_projection() {
             all: false,
             details: false,
             view: SessionView::Transcript,
-            glyph_profile: yo_tui::GlyphProfile::Rich,
+            output: OutputOptions {
+                format: OutputFormat::Text,
+                glyph_profile: yo_tui::GlyphProfile::Rich,
+            },
             limit: NonZeroUsize::new(3),
             content: Some(SessionContent::None),
         },

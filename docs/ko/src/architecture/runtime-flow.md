@@ -369,10 +369,14 @@ callback을 관찰하고 backend 중지를 요청한 뒤 worker 정리를 기다
 코드가 아니라 여기서 조사를 시작한다.
 
 공개 host flag는 표시를 위한 `--inline` 또는 `--fullscreen`과 built-in
-ASCII glyph profile을 위한 `--ascii`이며 순서와 관계없이 사용할 수 있다.
-표시 flag를 생략하면 Inline, `--ascii`를 생략하면 호환 기본값인 Rich를
-사용한다. 알 수 없는 flag, 반복한 `--ascii`, 둘 이상의 표시 flag는
-provider나 터미널을 시작하기 전에 실패한다. 선택한 glyph profile로 보존할
+ASCII glyph profile을 위한 `--ascii`이며 output flag는 subcommand 앞뒤에서
+사용할 수 있다. 표시 flag를 생략하면 Inline, `--ascii`를 생략하면 호환
+기본값인 Rich를 사용한다. root-global `--format text|json`은 선택한 command가
+구현한 경우에만 machine-readable 형식을 선택한다. 현재 JSON은 `account`가
+구현하며 다른 command는 외부 작업 전에 parser 단계에서 거절한다. live 실행도
+`--format json`을 조용히 무시하지 않고 거절한다. 알 수 없는 flag, 반복한
+`--ascii`, 둘 이상의 표시 flag는 provider나 터미널을 시작하기 전에 실패한다.
+선택한 glyph profile로 보존할
 `TuiSession`을 생성하므로 준비한 frame과 마지막 plain session output은
 같은 committed appearance snapshot을 읽는다. Glyph 선택은 명시적이며
 `TERM`이나 `NO_COLOR`를 검사하지 않는다. 별도로 CLI는 명시적인

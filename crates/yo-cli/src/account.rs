@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, fmt::Write as _};
+use std::{collections::BTreeMap, fmt::Write as _, io::IsTerminal as _, num::NonZeroU16};
 
 use yo_backend_delegated_codex::{
     CodexBackendConfig, read_account_capacity as read_codex_account_capacity,
@@ -17,6 +17,7 @@ mod json;
 mod qwencloud;
 mod storage;
 
+use unicode_segmentation::UnicodeSegmentation;
 use yo_tui::{
     GlyphProfile,
     meter::{MeterGlyphs, MeterShape, MeterSpec, MeterTemplate},
@@ -44,13 +45,31 @@ pub(crate) enum AccountCompletion {
     RefreshFailures,
 }
 
-const ACCOUNT_COMPACT_METER_TEMPLATE: MeterTemplate<'static> =
+const ACCOUNT_TABLE_METER_TEMPLATE: MeterTemplate<'static> =
     MeterTemplate::new("{label} {meter} {percent}%");
-const ACCOUNT_COMPACT_METER: MeterSpec<'static> = MeterSpec::new(
-    MeterShape::VerticalLevel,
-    MeterGlyphs::for_profile(GlyphProfile::Rich),
-    ACCOUNT_COMPACT_METER_TEMPLATE,
-);
+
+fn account_table_meter(glyph_profile: GlyphProfile) -> MeterSpec<'static> {
+    MeterSpec::new(
+        MeterShape::VerticalLevel,
+        MeterGlyphs::for_profile(glyph_profile),
+        ACCOUNT_TABLE_METER_TEMPLATE,
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AccountOutputWidth {
+    Unbounded,
+    Bounded(NonZeroU16),
+    Unknown,
+}
+
+fn account_output_width() -> AccountOutputWidth {
+    if !std::io::stdout().is_terminal() {
+        return AccountOutputWidth::Unbounded;
+    }
+    yo_tui::terminal::current_width()
+        .map_or(AccountOutputWidth::Unknown, AccountOutputWidth::Bounded)
+}
 
 pub(crate) fn run(command: AccountCommand) -> Result<AccountRunOutput, AppError> {
     let config = config::load().map_err(|error| AppError::single("loading config", error))?;
@@ -127,22 +146,26 @@ pub(crate) fn run(command: AccountCommand) -> Result<AccountRunOutput, AppError>
             AccountCapacityRecord { target, report }
         })
         .collect::<Vec<_>>();
-    let output = match command.format {
-        OutputFormat::Text => Ok(render_records(
+    let output = match command.output.format {
+        OutputFormat::Text => Ok(render_records_with_width(
             &records,
-            &query,
-            command.refresh,
-            command.detail,
-            &warnings,
-            &failures,
-            PresentationStyle::for_stdout(),
+            AccountRenderOptions {
+                query: &query,
+                refreshed: command.refresh,
+                detail: command.detail,
+                glyph_profile: command.output.glyph_profile,
+                warnings: &warnings,
+                failures: &failures,
+                output_width: account_output_width(),
+                style: PresentationStyle::for_stdout(),
+            },
         )),
         OutputFormat::Json => json::render_for_query(&records, &query, &failures)
             .map_err(|error| AppError::single("serializing account capacity JSON", error)),
     }?;
     Ok(AccountRunOutput {
         output,
-        diagnostics: match command.format {
+        diagnostics: match command.output.format {
             OutputFormat::Text => Vec::new(),
             OutputFormat::Json => warnings,
         },
@@ -811,6 +834,7 @@ fn derive_kimi_code_seed(
     Ok(None)
 }
 
+#[cfg(test)]
 fn render_records(
     records: &[AccountCapacityRecord],
     query: &AccountQuery,
@@ -820,11 +844,51 @@ fn render_records(
     failures: &[AccountRefreshFailure],
     style: PresentationStyle,
 ) -> String {
-    let detailed = detail || records.len() == 1;
+    render_records_with_width(
+        records,
+        AccountRenderOptions {
+            query,
+            refreshed,
+            detail,
+            glyph_profile: GlyphProfile::Rich,
+            warnings,
+            failures,
+            output_width: AccountOutputWidth::Unbounded,
+            style,
+        },
+    )
+}
+
+struct AccountRenderOptions<'a> {
+    query: &'a AccountQuery,
+    refreshed: bool,
+    detail: bool,
+    glyph_profile: GlyphProfile,
+    warnings: &'a [CliDiagnostic],
+    failures: &'a [AccountRefreshFailure],
+    output_width: AccountOutputWidth,
+    style: PresentationStyle,
+}
+
+fn render_records_with_width(
+    records: &[AccountCapacityRecord],
+    options: AccountRenderOptions<'_>,
+) -> String {
+    let detailed = options.detail || records.len() == 1 || !table_fits(records, &options);
+    let AccountRenderOptions {
+        query,
+        refreshed,
+        detail: _,
+        glyph_profile,
+        warnings,
+        failures,
+        output_width,
+        style,
+    } = options;
     let mut output = if detailed {
-        render_detailed_records(records, style)
+        render_detailed_records(records, style, glyph_profile, detail_width(output_width))
     } else {
-        render_compact_records(records, query, style)
+        render_table_records(records, query, style, glyph_profile)
     };
     let mut commands = Vec::new();
     if !detailed {
@@ -838,78 +902,172 @@ fn render_records(
     }
     if !warnings.is_empty() {
         output.push('\n');
-        style.push(&mut output, TextStyle::Warning, "Refresh warnings");
-        output.push('\n');
+        push_heading(
+            &mut output,
+            "Refresh warnings",
+            style,
+            detail_width(output_width),
+            TextStyle::Warning,
+        );
         for warning in warnings {
-            output.push_str("  ");
-            output.push_str(&terminal_safe(warning.message()));
-            output.push('\n');
+            push_tail_plain_line(
+                &mut output,
+                &format!("  {}", terminal_safe(warning.message())),
+                detail_width(output_width),
+            );
         }
     }
     if !failures.is_empty() {
         output.push('\n');
-        style.push(&mut output, TextStyle::Error, "Refresh failures");
-        output.push('\n');
+        push_heading(
+            &mut output,
+            "Refresh failures",
+            style,
+            detail_width(output_width),
+            TextStyle::Error,
+        );
         for failure in failures {
-            output.push_str("  ");
-            output.push_str(&terminal_safe(&failure.target));
-            output.push_str(" · ");
-            output.push_str(&terminal_safe(&failure.message));
-            output.push('\n');
+            push_tail_plain_line(
+                &mut output,
+                &format!(
+                    "  {} · {}",
+                    terminal_safe(&failure.target),
+                    terminal_safe(&failure.message)
+                ),
+                detail_width(output_width),
+            );
         }
     }
     if !commands.is_empty() {
         output.push('\n');
         for (label, command) in commands {
-            style.push(
+            push_tail_styled_line(
                 &mut output,
-                TextStyle::Muted,
                 &format!("{label}: {command}"),
+                style,
+                TextStyle::Muted,
+                detail_width(output_width),
             );
-            output.push('\n');
         }
     }
     output
 }
 
-fn render_detailed_records(records: &[AccountCapacityRecord], style: PresentationStyle) -> String {
+fn table_fits(records: &[AccountCapacityRecord], options: &AccountRenderOptions<'_>) -> bool {
+    let output_width = options.output_width;
+    let AccountOutputWidth::Bounded(terminal_width) = output_width else {
+        return !matches!(output_width, AccountOutputWidth::Unknown);
+    };
+    let table = render_table_records(
+        records,
+        options.query,
+        PresentationStyle::Plain,
+        options.glyph_profile,
+    );
+    let tail = table_tail_lines(records, options);
+    table
+        .lines()
+        .chain(tail.iter().map(String::as_str))
+        .all(|line| {
+            cell_width(line).is_ok_and(|line_width| line_width <= usize::from(terminal_width.get()))
+        })
+}
+
+fn table_tail_lines(
+    records: &[AccountCapacityRecord],
+    options: &AccountRenderOptions<'_>,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !options.warnings.is_empty() {
+        lines.push("Refresh warnings".to_owned());
+        lines.extend(
+            options
+                .warnings
+                .iter()
+                .map(|warning| format!("  {}", terminal_safe(warning.message()))),
+        );
+    }
+    if !options.failures.is_empty() {
+        lines.push("Refresh failures".to_owned());
+        lines.extend(options.failures.iter().map(|failure| {
+            format!(
+                "  {} · {}",
+                terminal_safe(&failure.target),
+                terminal_safe(&failure.message)
+            )
+        }));
+    }
+    lines.push(format!(
+        "Detail: {}",
+        account_command(options.query, "--detail")
+    ));
+    if !options.refreshed && records.iter().any(|record| record.report.is_none()) {
+        lines.push(format!(
+            "Refresh: {}",
+            account_command(options.query, "--refresh")
+        ));
+    }
+    if !options.failures.is_empty() {
+        lines.push(format!(
+            "Retry: {}",
+            account_command(options.query, "--refresh")
+        ));
+    }
+    lines
+}
+
+fn render_detailed_records(
+    records: &[AccountCapacityRecord],
+    style: PresentationStyle,
+    glyph_profile: GlyphProfile,
+    width: Option<usize>,
+) -> String {
     let mut output = String::new();
     if records.len() > 1 {
-        style.push(
-            &mut output,
-            TextStyle::Bold,
-            &format!("Account capacity · {} accounts", records.len()),
-        );
-        output.push_str("\n\n");
+        let heading = format!("Account capacity · {} accounts", records.len());
+        if let Some(width) = width {
+            push_wrapped_value(&mut output, "", &heading, width, style, TextStyle::Bold);
+        } else {
+            style.push(&mut output, TextStyle::Bold, &heading);
+            output.push('\n');
+        }
+        output.push('\n');
     }
     for (index, record) in records.iter().enumerate() {
         if index != 0 {
             output.push('\n');
         }
         match &record.report {
-            Some(report) => output.push_str(&render_report(report, style)),
-            None => output.push_str(&render_missing(&record.target, style)),
+            Some(report) => output.push_str(&render_report(report, style, glyph_profile, width)),
+            None => output.push_str(&render_missing(&record.target, style, width)),
         }
     }
     output
 }
 
-const COMPACT_ACCOUNT_HEADINGS: [&str; 5] = ["PROVIDER", "ACCOUNT", "PLAN", "LIMITS", "UPDATED"];
+fn detail_width(output_width: AccountOutputWidth) -> Option<usize> {
+    match output_width {
+        AccountOutputWidth::Bounded(width) => Some(usize::from(width.get())),
+        AccountOutputWidth::Unbounded | AccountOutputWidth::Unknown => None,
+    }
+}
+
+const TABLE_ACCOUNT_HEADINGS: [&str; 5] = ["PROVIDER", "ACCOUNT", "PLAN", "LIMITS", "UPDATED"];
 
 #[derive(Clone, Debug)]
-struct CompactCell {
+struct TableCell {
     plain: String,
-    parts: Vec<CompactCellPart>,
+    parts: Vec<TableCellPart>,
 }
 
 #[derive(Clone, Debug)]
-struct CompactCellPart {
+struct TableCellPart {
     value: String,
     tone: Option<TextStyle>,
 }
 
-impl CompactCell {
-    fn from_parts(parts: Vec<CompactCellPart>) -> Self {
+impl TableCell {
+    fn from_parts(parts: Vec<TableCellPart>) -> Self {
         let mut plain = String::new();
         for part in &parts {
             plain.push_str(&part.value);
@@ -918,21 +1076,21 @@ impl CompactCell {
     }
 
     fn plain(value: impl Into<String>) -> Self {
-        Self::from_parts(vec![CompactCellPart {
+        Self::from_parts(vec![TableCellPart {
             value: value.into(),
             tone: None,
         }])
     }
 
     fn styled(value: impl Into<String>, tone: TextStyle) -> Self {
-        Self::from_parts(vec![CompactCellPart {
+        Self::from_parts(vec![TableCellPart {
             value: value.into(),
             tone: Some(tone),
         }])
     }
 
     fn width(&self) -> usize {
-        cell_width(&self.plain).expect("compact account cells must be terminal-safe")
+        cell_width(&self.plain).expect("account table cells must be terminal-safe")
     }
 
     fn render(
@@ -950,61 +1108,65 @@ impl CompactCell {
     }
 }
 
-fn compact_account_row(record: &AccountCapacityRecord) -> Vec<CompactCell> {
+fn table_account_row(
+    record: &AccountCapacityRecord,
+    glyph_profile: GlyphProfile,
+) -> Vec<TableCell> {
     let Some(report) = record.report.as_ref() else {
         return match &record.target {
             AccountTarget::LocalHost { provider } => vec![
-                CompactCell::plain(provider.as_str()),
-                CompactCell::styled("Local host", TextStyle::Muted),
-                CompactCell::styled("Unknown", TextStyle::Muted),
-                CompactCell::styled("Not refreshed", TextStyle::Muted),
-                CompactCell::styled("Never", TextStyle::Muted),
+                TableCell::plain(provider.as_str()),
+                TableCell::styled("Local host", TextStyle::Muted),
+                TableCell::styled("Unknown", TextStyle::Muted),
+                TableCell::styled("Not refreshed", TextStyle::Muted),
+                TableCell::styled("Never", TextStyle::Muted),
             ],
             AccountTarget::Exact(coordinate) => vec![
-                CompactCell::plain(coordinate.provider.as_str()),
-                CompactCell::plain(terminal_safe(coordinate.account.as_str())),
-                CompactCell::styled("Unknown", TextStyle::Muted),
-                CompactCell::styled("Not refreshed", TextStyle::Muted),
-                CompactCell::styled("Never", TextStyle::Muted),
+                TableCell::plain(coordinate.provider.as_str()),
+                TableCell::plain(terminal_safe(coordinate.account.as_str())),
+                TableCell::styled("Unknown", TextStyle::Muted),
+                TableCell::styled("Not refreshed", TextStyle::Muted),
+                TableCell::styled("Never", TextStyle::Muted),
             ],
         };
     };
 
     let snapshot = report.snapshot();
     let (status, status_tone) = display_status(snapshot);
-    let mut limits = compact_limit_cell(snapshot);
+    let mut limits = table_limit_cell(snapshot, glyph_profile);
     if status != "Available" {
-        let mut parts = vec![CompactCellPart {
+        let mut parts = vec![TableCellPart {
             value: status,
             tone: Some(status_tone),
         }];
         if !limits.plain.is_empty() {
-            parts.push(CompactCellPart {
+            parts.push(TableCellPart {
                 value: " · ".to_owned(),
                 tone: None,
             });
         }
         parts.extend(limits.parts);
-        limits = CompactCell::from_parts(parts);
+        limits = TableCell::from_parts(parts);
     }
 
     let updated = report.observed_at().map_or_else(
-        || CompactCell::styled("Never", TextStyle::Muted),
-        compact_observed_at_cell,
+        || TableCell::styled("Never", TextStyle::Muted),
+        table_observed_at_cell,
     );
     vec![
-        CompactCell::plain(snapshot.provider().as_str()),
-        CompactCell::plain(terminal_safe(report.account_label())),
-        CompactCell::plain(display_plan(snapshot)),
+        TableCell::plain(snapshot.provider().as_str()),
+        TableCell::plain(terminal_safe(report.account_label())),
+        TableCell::plain(display_plan(snapshot)),
         limits,
         updated,
     ]
 }
 
-fn render_compact_records(
+fn render_table_records(
     records: &[AccountCapacityRecord],
     query: &AccountQuery,
     style: PresentationStyle,
+    glyph_profile: GlyphProfile,
 ) -> String {
     let mut output = String::new();
     style.push(
@@ -1023,13 +1185,16 @@ fn render_compact_records(
     );
     output.push('\n');
 
-    let headings = COMPACT_ACCOUNT_HEADINGS
+    let headings = TABLE_ACCOUNT_HEADINGS
         .iter()
-        .map(|heading| CompactCell::plain(*heading))
+        .map(|heading| TableCell::plain(*heading))
         .collect::<Vec<_>>();
-    let rows = records.iter().map(compact_account_row).collect::<Vec<_>>();
-    let widths = compact_column_widths(&headings, &rows);
-    push_compact_table_row(
+    let rows = records
+        .iter()
+        .map(|record| table_account_row(record, glyph_profile))
+        .collect::<Vec<_>>();
+    let widths = table_column_widths(&headings, &rows);
+    push_table_row(
         &mut output,
         &headings,
         &widths,
@@ -1037,13 +1202,13 @@ fn render_compact_records(
         Some(TextStyle::Muted),
     );
     for row in &rows {
-        push_compact_table_row(&mut output, row, &widths, style, None);
+        push_table_row(&mut output, row, &widths, style, None);
     }
     output
 }
 
-fn compact_column_widths(headings: &[CompactCell], rows: &[Vec<CompactCell>]) -> Vec<usize> {
-    let mut widths = headings.iter().map(CompactCell::width).collect::<Vec<_>>();
+fn table_column_widths(headings: &[TableCell], rows: &[Vec<TableCell>]) -> Vec<usize> {
+    let mut widths = headings.iter().map(TableCell::width).collect::<Vec<_>>();
     for row in rows {
         for (width, cell) in widths.iter_mut().zip(row) {
             *width = (*width).max(cell.width());
@@ -1052,9 +1217,9 @@ fn compact_column_widths(headings: &[CompactCell], rows: &[Vec<CompactCell>]) ->
     widths
 }
 
-fn push_compact_table_row(
+fn push_table_row(
     output: &mut String,
-    cells: &[CompactCell],
+    cells: &[TableCell],
     widths: &[usize],
     style: PresentationStyle,
     default_tone: Option<TextStyle>,
@@ -1097,35 +1262,41 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
-fn compact_limit_cell(snapshot: &AccountCapacitySnapshot) -> CompactCell {
+fn table_limit_cell(snapshot: &AccountCapacitySnapshot, glyph_profile: GlyphProfile) -> TableCell {
     let mut parts = Vec::new();
-    for (index, (value, tone)) in compact_limit_items(snapshot).into_iter().enumerate() {
+    for (index, (value, tone)) in table_limit_items(snapshot, glyph_profile)
+        .into_iter()
+        .enumerate()
+    {
         if index != 0 {
-            parts.push(CompactCellPart {
+            parts.push(TableCellPart {
                 value: " · ".to_owned(),
                 tone: None,
             });
         }
-        parts.push(CompactCellPart {
+        parts.push(TableCellPart {
             value,
             tone: Some(tone),
         });
     }
-    CompactCell::from_parts(parts)
+    TableCell::from_parts(parts)
 }
 
-fn compact_limit_items(snapshot: &AccountCapacitySnapshot) -> Vec<(String, TextStyle)> {
+fn table_limit_items(
+    snapshot: &AccountCapacitySnapshot,
+    glyph_profile: GlyphProfile,
+) -> Vec<(String, TextStyle)> {
     let mut limits = Vec::new();
     for (index, bucket) in snapshot.buckets().iter().enumerate() {
         let nested = is_additional_bucket(snapshot, bucket, index);
-        let bucket_label = nested.then(|| compact_bucket_label(bucket));
+        let bucket_label = nested.then(|| table_bucket_label(bucket));
         for window in [bucket.primary(), bucket.secondary()].into_iter().flatten() {
-            let mut label = compact_window_label(window.window_duration_minutes());
+            let mut label = table_window_label(window.window_duration_minutes());
             if let Some(bucket_label) = &bucket_label {
                 label = format!("{bucket_label} {label}");
             }
             let remaining = window.remaining_percent_basis_points();
-            let rendered = ACCOUNT_COMPACT_METER
+            let rendered = account_table_meter(glyph_profile)
                 .render(&label, remaining)
                 .expect("built-in account limit meter must remain renderable");
             limits.push((rendered, capacity_tone(remaining)));
@@ -1148,7 +1319,7 @@ fn compact_limit_items(snapshot: &AccountCapacitySnapshot) -> Vec<(String, TextS
     limits
 }
 
-fn compact_bucket_label(bucket: &AccountCapacityBucket) -> String {
+fn table_bucket_label(bucket: &AccountCapacityBucket) -> String {
     let value = bucket
         .name()
         .or_else(|| bucket.id())
@@ -1166,7 +1337,7 @@ fn compact_bucket_label(bucket: &AccountCapacityBucket) -> String {
     }
 }
 
-fn compact_window_label(minutes: Option<u64>) -> String {
+fn table_window_label(minutes: Option<u64>) -> String {
     let Some(minutes) = minutes else {
         return "window".to_owned();
     };
@@ -1194,9 +1365,9 @@ fn display_observed_at_with_age(value: &str) -> String {
     format!("{displayed} ({})", display_age(age as u64))
 }
 
-fn compact_observed_at_cell(value: &str) -> CompactCell {
+fn table_observed_at_cell(value: &str) -> TableCell {
     let Ok(timestamp) = value.parse::<jiff::Timestamp>() else {
-        return CompactCell::plain(display_observed_at_with_age(value));
+        return TableCell::plain(display_observed_at_with_age(value));
     };
     let displayed = timestamp
         .to_zoned(jiff::tz::TimeZone::system())
@@ -1206,14 +1377,14 @@ fn compact_observed_at_cell(value: &str) -> CompactCell {
         .as_second()
         .saturating_sub(timestamp.as_second());
     if age < 0 {
-        return CompactCell::plain(displayed);
+        return TableCell::plain(displayed);
     }
-    CompactCell::from_parts(vec![
-        CompactCellPart {
+    TableCell::from_parts(vec![
+        TableCellPart {
             value: displayed,
             tone: None,
         },
-        CompactCellPart {
+        TableCellPart {
             value: format!(" ({})", display_age(age as u64)),
             tone: Some(TextStyle::Muted),
         },
@@ -1236,7 +1407,11 @@ fn display_age(seconds: u64) -> String {
     format!("{days}d {}h ago", hours % 24)
 }
 
-fn render_missing(target: &AccountTarget, style: PresentationStyle) -> String {
+fn render_missing(
+    target: &AccountTarget,
+    style: PresentationStyle,
+    width: Option<usize>,
+) -> String {
     let mut output = String::new();
     let (heading, account, heading_account) = match target {
         AccountTarget::LocalHost { provider } => {
@@ -1248,17 +1423,24 @@ fn render_missing(target: &AccountTarget, style: PresentationStyle) -> String {
             Some(terminal_safe(coordinate.account.as_str())),
         ),
     };
-    push_account_heading(&mut output, &heading, heading_account.as_deref(), style);
+    push_account_heading(
+        &mut output,
+        &heading,
+        heading_account.as_deref(),
+        style,
+        width,
+    );
     if heading_account.is_none() {
-        push_field(&mut output, "Account", &account, style, None);
+        push_field(&mut output, "Account", &account, style, None, width);
     }
-    push_field(&mut output, "Plan", "Unknown", style, None);
+    push_field(&mut output, "Plan", "Unknown", style, None, width);
     push_field(
         &mut output,
         "Status",
         "Not refreshed",
         style,
         Some(TextStyle::Muted),
+        width,
     );
     push_field(
         &mut output,
@@ -1266,16 +1448,27 @@ fn render_missing(target: &AccountTarget, style: PresentationStyle) -> String {
         "Never",
         style,
         Some(TextStyle::Muted),
+        width,
     );
     output.push('\n');
-    style.push(&mut output, TextStyle::Accent, "Usage limits");
-    output.push('\n');
-    style.push(
-        &mut output,
-        TextStyle::Muted,
-        "  No cached capacity information.",
-    );
-    output.push('\n');
+    push_heading(&mut output, "Usage limits", style, width, TextStyle::Accent);
+    if let Some(width) = width {
+        push_wrapped_value(
+            &mut output,
+            "  ",
+            "No cached capacity information.",
+            width,
+            style,
+            TextStyle::Muted,
+        );
+    } else {
+        style.push(
+            &mut output,
+            TextStyle::Muted,
+            "  No cached capacity information.",
+        );
+        output.push('\n');
+    }
     output
 }
 
@@ -1285,11 +1478,22 @@ fn local_host_label(provider: &ProviderId) -> String {
 
 #[cfg(test)]
 fn render(snapshot: &AccountCapacitySnapshot, style: PresentationStyle) -> String {
-    render_snapshot(snapshot, None, style)
+    render_snapshot(snapshot, None, style, GlyphProfile::Rich, None)
 }
 
-fn render_report(report: &AccountCapacityReport, style: PresentationStyle) -> String {
-    render_snapshot(report.snapshot(), report.observed_at(), style)
+fn render_report(
+    report: &AccountCapacityReport,
+    style: PresentationStyle,
+    glyph_profile: GlyphProfile,
+    width: Option<usize>,
+) -> String {
+    render_snapshot(
+        report.snapshot(),
+        report.observed_at(),
+        style,
+        glyph_profile,
+        width,
+    )
 }
 
 fn push_account_heading(
@@ -1297,7 +1501,20 @@ fn push_account_heading(
     provider: &str,
     account: Option<&str>,
     style: PresentationStyle,
+    width: Option<usize>,
 ) {
+    if let Some(width) = width {
+        let provider_overflows = line_width(provider) > width;
+        let heading_overflows =
+            account.is_some_and(|account| line_width(&format!("{provider} · {account}")) > width);
+        if provider_overflows || heading_overflows {
+            push_wrapped_value(output, "", provider, width, style, TextStyle::Bold);
+            if let Some(account) = account {
+                push_wrapped_value(output, "  ", account, width, style, TextStyle::Accent);
+            }
+            return;
+        }
+    }
     style.push(output, TextStyle::Bold, provider);
     if let Some(account) = account {
         output.push_str(" · ");
@@ -1310,14 +1527,30 @@ fn render_snapshot(
     snapshot: &AccountCapacitySnapshot,
     observed_at: Option<&str>,
     style: PresentationStyle,
+    glyph_profile: GlyphProfile,
+    width: Option<usize>,
 ) -> String {
     let mut output = String::new();
     let provider = display_identifier(snapshot.provider().as_str());
     let account = terminal_safe(snapshot.account_label());
-    push_account_heading(&mut output, &provider, Some(&account), style);
-    push_field(&mut output, "Plan", &display_plan(snapshot), style, None);
+    push_account_heading(&mut output, &provider, Some(&account), style, width);
+    push_field(
+        &mut output,
+        "Plan",
+        &display_plan(snapshot),
+        style,
+        None,
+        width,
+    );
     let (status, status_tone) = display_status(snapshot);
-    push_field(&mut output, "Status", &status, style, Some(status_tone));
+    push_field(
+        &mut output,
+        "Status",
+        &status,
+        style,
+        Some(status_tone),
+        width,
+    );
     if let Some(credits) = snapshot
         .buckets()
         .iter()
@@ -1329,6 +1562,7 @@ fn render_snapshot(
             &display_credits(credits),
             style,
             None,
+            width,
         );
     }
     if let Some(observed_at) = observed_at {
@@ -1338,33 +1572,48 @@ fn render_snapshot(
             &display_observed_at_with_age(observed_at),
             style,
             None,
+            width,
         );
     }
 
     output.push('\n');
-    style.push(&mut output, TextStyle::Accent, "Usage limits");
-    output.push('\n');
+    push_heading(&mut output, "Usage limits", style, width, TextStyle::Accent);
     if !snapshot.buckets().iter().any(|bucket| {
         bucket.primary().is_some() || bucket.secondary().is_some() || bucket.credits().is_some()
     }) {
-        style.push(
-            &mut output,
-            TextStyle::Muted,
-            "  No capacity information available.",
-        );
-        output.push('\n');
+        if let Some(width) = width {
+            push_wrapped_value(
+                &mut output,
+                "  ",
+                "No capacity information available.",
+                width,
+                style,
+                TextStyle::Muted,
+            );
+        } else {
+            style.push(
+                &mut output,
+                TextStyle::Muted,
+                "  No capacity information available.",
+            );
+            output.push('\n');
+        }
         return output;
     }
 
     for (index, bucket) in snapshot.buckets().iter().enumerate() {
         let nested = is_additional_bucket(snapshot, bucket, index);
         if nested {
-            let heading = additional_bucket_heading(bucket);
-            output.push_str("  ");
-            style.push(&mut output, TextStyle::Bold, &format!("{heading} limit:"));
-            output.push('\n');
+            let heading = format!("{} limit:", additional_bucket_heading(bucket));
+            if let Some(width) = width {
+                push_wrapped_value(&mut output, "  ", &heading, width, style, TextStyle::Bold);
+            } else {
+                output.push_str("  ");
+                style.push(&mut output, TextStyle::Bold, &heading);
+                output.push('\n');
+            }
         }
-        render_bucket(&mut output, bucket, nested, style);
+        render_bucket(&mut output, bucket, nested, style, glyph_profile, width);
     }
     output
 }
@@ -1387,14 +1636,158 @@ fn push_field(
     value: &str,
     style: PresentationStyle,
     tone: Option<TextStyle>,
+    width: Option<usize>,
 ) {
-    output.push_str("  ");
-    style.push(output, TextStyle::Muted, &format!("{label:<9}"));
+    let Some(width) = width else {
+        output.push_str("  ");
+        style.push(output, TextStyle::Muted, &format!("{label:<9}"));
+        match tone {
+            Some(tone) => style.push(output, tone, value),
+            None => output.push_str(value),
+        }
+        output.push('\n');
+        return;
+    };
+
+    let field_indent = "  ";
+    let inline_indent_width = cell_width("  ").expect("account field indent must be terminal-safe");
+    let inline_prefix_width = inline_indent_width + 9;
+    if width > inline_prefix_width {
+        let value_width = width - inline_prefix_width;
+        let lines = wrap_terminal_text(value, value_width);
+        for (index, line) in lines.iter().enumerate() {
+            if index == 0 {
+                output.push_str(field_indent);
+                style.push(output, TextStyle::Muted, &format!("{label:<9}"));
+            } else {
+                output.push_str(&" ".repeat(inline_prefix_width));
+            }
+            push_styled_value(output, line, style, tone);
+            output.push('\n');
+        }
+        return;
+    }
+
+    let label_indent_width = inline_indent_width.min(width.saturating_sub(1));
+    let label_indent = " ".repeat(label_indent_width);
+    let label_width = width.saturating_sub(label_indent_width).max(1);
+    for line in wrap_terminal_text(label, label_width) {
+        output.push_str(&label_indent);
+        style.push(output, TextStyle::Muted, &line);
+        output.push('\n');
+    }
+    let value_indent_width = inline_indent_width.min(width.saturating_sub(1));
+    let value_indent = " ".repeat(value_indent_width);
+    let value_width = width.saturating_sub(value_indent_width).max(1);
+    for line in wrap_terminal_text(value, value_width) {
+        output.push_str(&value_indent);
+        push_styled_value(output, &line, style, tone);
+        output.push('\n');
+    }
+}
+
+fn push_styled_value(
+    output: &mut String,
+    value: &str,
+    style: PresentationStyle,
+    tone: Option<TextStyle>,
+) {
     match tone {
         Some(tone) => style.push(output, tone, value),
         None => output.push_str(value),
     }
-    output.push('\n');
+}
+
+fn push_heading(
+    output: &mut String,
+    value: &str,
+    style: PresentationStyle,
+    width: Option<usize>,
+    tone: TextStyle,
+) {
+    if let Some(width) = width {
+        push_wrapped_value(output, "", value, width, style, tone);
+    } else {
+        style.push(output, tone, value);
+        output.push('\n');
+    }
+}
+
+fn push_tail_plain_line(output: &mut String, value: &str, width: Option<usize>) {
+    if let Some(width) = width {
+        push_wrapped_plain(output, "", value, width);
+    } else {
+        output.push_str(value);
+        output.push('\n');
+    }
+}
+
+fn push_tail_styled_line(
+    output: &mut String,
+    value: &str,
+    style: PresentationStyle,
+    tone: TextStyle,
+    width: Option<usize>,
+) {
+    if let Some(width) = width {
+        push_wrapped_value(output, "", value, width, style, tone);
+    } else {
+        style.push(output, tone, value);
+        output.push('\n');
+    }
+}
+
+fn push_wrapped_value(
+    output: &mut String,
+    indent: &str,
+    value: &str,
+    width: usize,
+    style: PresentationStyle,
+    tone: TextStyle,
+) {
+    let indent_width = cell_width(indent)
+        .expect("account value indent must be terminal-safe")
+        .min(width.saturating_sub(1));
+    let indent = " ".repeat(indent_width);
+    let value_width = width.saturating_sub(indent_width).max(1);
+    for line in wrap_terminal_text(value, value_width) {
+        output.push_str(&indent);
+        style.push(output, tone, &line);
+        output.push('\n');
+    }
+}
+
+fn wrap_terminal_text(value: &str, width: usize) -> Vec<String> {
+    if value.is_empty() {
+        return vec![String::new()];
+    }
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    let mut line_width = 0;
+    for grapheme in value.graphemes(true) {
+        let grapheme_width = cell_width(grapheme).unwrap_or(1);
+        if grapheme_width > width {
+            if !line.is_empty() {
+                lines.push(line);
+                line = String::new();
+                line_width = 0;
+            }
+            lines.push("?".to_owned());
+            continue;
+        }
+        if !line.is_empty() && line_width + grapheme_width > width {
+            lines.push(line);
+            line = String::new();
+            line_width = 0;
+        }
+        line.push_str(grapheme);
+        line_width += grapheme_width;
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
 }
 
 fn render_bucket(
@@ -1402,6 +1795,8 @@ fn render_bucket(
     bucket: &AccountCapacityBucket,
     nested: bool,
     style: PresentationStyle,
+    glyph_profile: GlyphProfile,
+    width: Option<usize>,
 ) {
     let windows = [
         ("Primary", bucket.primary().copied()),
@@ -1410,18 +1805,23 @@ fn render_bucket(
     .into_iter()
     .filter_map(|(label, window)| window.map(|window| (label, window)))
     .collect::<Vec<_>>();
+    let (branch_prefix, last_branch_prefix) = match glyph_profile {
+        GlyphProfile::Rich => ("  ├─ ", "  └─ "),
+        GlyphProfile::Ascii => ("  |-- ", "  `-- "),
+        _ => ("  |-- ", "  `-- "),
+    };
 
     for (index, (label, window)) in windows.iter().enumerate() {
         let prefix = if nested {
             if index + 1 == windows.len() {
-                "  └─ "
+                last_branch_prefix
             } else {
-                "  ├─ "
+                branch_prefix
             }
         } else {
             "  "
         };
-        render_window(output, prefix, label, *window, style);
+        render_window(output, prefix, label, *window, style, glyph_profile, width);
     }
 }
 
@@ -1431,19 +1831,158 @@ fn render_window(
     fallback_label: &str,
     window: AccountCapacityWindow,
     style: PresentationStyle,
+    glyph_profile: GlyphProfile,
+    width: Option<usize>,
 ) {
     let label = window
         .window_duration_minutes()
         .map_or_else(|| format!("{fallback_label} limit:"), display_window_label);
-    let _ = write!(output, "{prefix}{label:<15} [");
     let remaining = window.remaining_percent_basis_points();
     let tone = capacity_tone(remaining);
-    style.push(output, tone, &remaining_bar(window.remaining_percent(), 20));
-    let _ = write!(output, "] {}% left", display_percent(remaining));
-    if let Some(reset) = window.resets_at_unix_seconds() {
-        let _ = write!(output, " (resets {})", display_reset(reset));
+    let reset = window
+        .resets_at_unix_seconds()
+        .map(|reset| format!("(resets {})", display_reset(reset)));
+    let full_bar = remaining_bar(window.remaining_percent(), 20, glyph_profile);
+    let percent = format!("{}% left", display_percent(remaining));
+    let plain_line = format!(
+        "{prefix}{label:<15} [{full_bar}] {percent}{}",
+        reset
+            .as_deref()
+            .map_or(String::new(), |value| format!(" {value}"))
+    );
+    if width.is_none() || width.is_some_and(|width| line_width(&plain_line) <= width) {
+        let _ = write!(output, "{prefix}{label:<15} [");
+        style.push(output, tone, &full_bar);
+        let _ = write!(output, "] {percent}");
+        if let Some(reset) = reset {
+            let _ = write!(output, " {reset}");
+        }
+        output.push('\n');
+        return;
     }
-    output.push('\n');
+
+    render_narrow_window(
+        output,
+        NarrowWindowOptions {
+            prefix,
+            label: &label,
+            percent: &percent,
+            reset: reset.as_deref(),
+            remaining_percent: window.remaining_percent(),
+            tone,
+            style,
+            glyph_profile,
+            width: width.expect("narrow window rendering requires a bounded width"),
+        },
+    );
+}
+
+struct NarrowWindowOptions<'a> {
+    prefix: &'a str,
+    label: &'a str,
+    percent: &'a str,
+    reset: Option<&'a str>,
+    remaining_percent: u8,
+    tone: TextStyle,
+    style: PresentationStyle,
+    glyph_profile: GlyphProfile,
+    width: usize,
+}
+
+fn render_narrow_window(output: &mut String, options: NarrowWindowOptions<'_>) {
+    let NarrowWindowOptions {
+        prefix,
+        label,
+        percent,
+        reset,
+        remaining_percent,
+        tone,
+        style,
+        glyph_profile,
+        width,
+    } = options;
+    let label_prefix = format!("{prefix}{label} [");
+    let suffix = format!("] {percent}");
+    let bar_width = width
+        .saturating_sub(line_width(&label_prefix) + line_width(&suffix))
+        .min(20);
+    if bar_width > 0 {
+        output.push_str(&label_prefix);
+        style_meter(
+            output,
+            style,
+            tone,
+            remaining_percent,
+            bar_width,
+            glyph_profile,
+        );
+        output.push_str(&suffix);
+        output.push('\n');
+    } else {
+        push_wrapped_plain(output, "", &format!("{prefix}{label}"), width);
+        let indent_width = line_width(prefix).min(width.saturating_sub(1));
+        let indent = " ".repeat(indent_width);
+        let value_suffix = format!("] {percent}");
+        let bar_width = width
+            .saturating_sub(indent_width + 1 + line_width(&value_suffix))
+            .min(20);
+        if bar_width > 0 {
+            output.push_str(&indent);
+            output.push('[');
+            style_meter(
+                output,
+                style,
+                tone,
+                remaining_percent,
+                bar_width,
+                glyph_profile,
+            );
+            output.push_str(&value_suffix);
+            output.push('\n');
+        } else {
+            output.push_str(&indent);
+            style_meter(output, style, tone, remaining_percent, 1, glyph_profile);
+            output.push('\n');
+            push_wrapped_plain(output, &indent, percent, width);
+        }
+    }
+
+    if let Some(reset) = reset {
+        let indent_width = line_width(prefix).min(width.saturating_sub(1));
+        push_wrapped_plain(
+            output,
+            &" ".repeat(indent_width),
+            &format!("resets {reset}"),
+            width,
+        );
+    }
+}
+
+fn style_meter(
+    output: &mut String,
+    style: PresentationStyle,
+    tone: TextStyle,
+    remaining_percent: u8,
+    width: usize,
+    glyph_profile: GlyphProfile,
+) {
+    let meter = remaining_bar(remaining_percent, width, glyph_profile);
+    style.push(output, tone, &meter);
+}
+
+fn push_wrapped_plain(output: &mut String, indent: &str, value: &str, width: usize) {
+    let indent_width = line_width(indent).min(width.saturating_sub(1));
+    let indent = " ".repeat(indent_width);
+    let value_width = width.saturating_sub(indent_width).max(1);
+    for line in wrap_terminal_text(value, value_width) {
+        output.push_str(&indent);
+        output.push_str(&line);
+        output.push('\n');
+    }
+}
+
+fn line_width(value: &str) -> usize {
+    cell_width(value).unwrap_or_else(|_| value.chars().count())
 }
 
 fn capacity_tone(remaining_percent_basis_points: u16) -> TextStyle {
@@ -1873,9 +2412,9 @@ mod tests {
         assert!(output.contains("Updated  Never"));
     }
 
-    // 여러 계정의 축약 목록은 컬럼형 표에서 남은 한도, 관측 age, 다음 실행 명령을 제공합니다.
+    // 여러 계정의 table 목록은 컬럼형 표에서 남은 한도, 관측 age, 다음 실행 명령을 제공합니다.
     #[test]
-    fn compact_account_list_includes_age_and_scope_commands() {
+    fn account_table_includes_age_and_scope_commands() {
         let snapshot = AccountCapacitySnapshot::new(
             ProviderId::new("codex").unwrap(),
             AccountId::new("default").unwrap(),
@@ -1950,6 +2489,284 @@ mod tests {
         assert!(ansi.contains("\u{1b}[31m7d ▂ 18%\u{1b}[0m"));
         assert!(ansi.contains("\u{1b}[2m ("));
         assert_eq!(crate::presentation::strip_ansi(&ansi), output);
+    }
+
+    // account text는 table level meter와 상세 horizontal bar 모두에 공용 ASCII profile을
+    // 적용하며, Rich glyph로 조용히 되돌아가지 않습니다.
+    #[test]
+    fn account_text_uses_the_requested_ascii_meter_profile() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("codex".to_owned()),
+                None,
+                Some("prolite".to_owned()),
+                Some(AccountCapacityWindow::new(82, Some(10_080), None).unwrap()),
+                None,
+                None,
+                None,
+            )],
+        );
+        let report = AccountCapacityReport::plain(snapshot);
+        let records = [
+            AccountCapacityRecord {
+                target: AccountTarget::Exact(report.coordinate()),
+                report: Some(report),
+            },
+            AccountCapacityRecord {
+                target: AccountTarget::LocalHost {
+                    provider: ProviderId::new("grok").unwrap(),
+                },
+                report: None,
+            },
+        ];
+
+        let table = render_records_with_width(
+            &records,
+            AccountRenderOptions {
+                query: &AccountQuery::All,
+                refreshed: false,
+                detail: false,
+                glyph_profile: GlyphProfile::Ascii,
+                warnings: &[],
+                failures: &[],
+                output_width: AccountOutputWidth::Unbounded,
+                style: PresentationStyle::Plain,
+            },
+        );
+        assert!(table.contains("7d : 18%"));
+        assert!(!table.contains('▂'));
+
+        let detail = render_records_with_width(
+            &records,
+            AccountRenderOptions {
+                query: &AccountQuery::All,
+                refreshed: false,
+                detail: true,
+                glyph_profile: GlyphProfile::Ascii,
+                warnings: &[],
+                failures: &[],
+                output_width: AccountOutputWidth::Unbounded,
+                style: PresentationStyle::Plain,
+            },
+        );
+        assert!(detail.contains("[###-----------------]"));
+        assert!(!detail.contains('█'));
+    }
+
+    // 여러 계정은 terminal 폭에 정확히 맞을 때 table에 남고, 한 칸이라도 부족하면 기존
+    // 상세 block으로 전환합니다.
+    #[test]
+    fn account_table_switches_to_detail_when_the_terminal_is_narrow() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("codex".to_owned()),
+                None,
+                Some("prolite".to_owned()),
+                Some(AccountCapacityWindow::new(82, Some(10_080), None).unwrap()),
+                None,
+                None,
+                None,
+            )],
+        );
+        let report = AccountCapacityReport::plain(snapshot);
+        let records = [
+            AccountCapacityRecord {
+                target: AccountTarget::Exact(report.coordinate()),
+                report: Some(report),
+            },
+            AccountCapacityRecord {
+                target: AccountTarget::LocalHost {
+                    provider: ProviderId::new("grok").unwrap(),
+                },
+                report: None,
+            },
+        ];
+        let compact = render_table_records(
+            &records,
+            &AccountQuery::All,
+            PresentationStyle::Plain,
+            GlyphProfile::Rich,
+        );
+        let required_width = compact
+            .lines()
+            .map(|line| cell_width(line).unwrap())
+            .max()
+            .unwrap();
+        let exact = render_records_with_width(
+            &records,
+            AccountRenderOptions {
+                query: &AccountQuery::All,
+                refreshed: false,
+                detail: false,
+                glyph_profile: GlyphProfile::Rich,
+                warnings: &[],
+                failures: &[],
+                output_width: AccountOutputWidth::Bounded(
+                    NonZeroU16::new(required_width as u16).unwrap(),
+                ),
+                style: PresentationStyle::Plain,
+            },
+        );
+        assert!(exact.contains("PROVIDER"));
+
+        let narrow = render_records_with_width(
+            &records,
+            AccountRenderOptions {
+                query: &AccountQuery::All,
+                refreshed: false,
+                detail: false,
+                glyph_profile: GlyphProfile::Rich,
+                warnings: &[],
+                failures: &[],
+                output_width: AccountOutputWidth::Bounded(
+                    NonZeroU16::new(required_width.saturating_sub(1) as u16).unwrap(),
+                ),
+                style: PresentationStyle::Plain,
+            },
+        );
+        assert!(!narrow.contains("PROVIDER"));
+        assert!(narrow.contains("Account capacity · 2 accounts\n\n"));
+        assert!(narrow.contains("Codex · default"));
+    }
+
+    // detail은 긴 account label과 reset metadata를 자르지 않고 값을 감싸며, horizontal
+    // meter만 줄여 bounded terminal 안에 유지합니다.
+    #[test]
+    fn account_detail_wraps_long_values_for_a_narrow_terminal() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("stable-account").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("codex".to_owned()),
+                None,
+                Some("prolite".to_owned()),
+                Some(AccountCapacityWindow::new(82, Some(10_080), Some(1_900_000_000)).unwrap()),
+                None,
+                None,
+                None,
+            )],
+        )
+        .with_account_label("yon.long.account.label.for.narrow.terminals@example.com界");
+        let report = AccountCapacityReport::plain(snapshot);
+        let coordinate = report.coordinate();
+        let records = [AccountCapacityRecord {
+            target: AccountTarget::Exact(coordinate.clone()),
+            report: Some(report),
+        }];
+        let output = render_records_with_width(
+            &records,
+            AccountRenderOptions {
+                query: &AccountQuery::Exact(coordinate.clone()),
+                refreshed: false,
+                detail: false,
+                glyph_profile: GlyphProfile::Rich,
+                warnings: &[],
+                failures: &[],
+                output_width: AccountOutputWidth::Bounded(NonZeroU16::new(32).unwrap()),
+                style: PresentationStyle::Plain,
+            },
+        );
+
+        assert!(
+            output.contains("yon.long.account.label"),
+            "output:\n{output}"
+        );
+        assert!(
+            output.contains("terminals@example.com"),
+            "output:\n{output}"
+        );
+        assert!(output.contains("resets"));
+        assert!(output.lines().all(|line| cell_width(line).unwrap() <= 32));
+
+        let very_narrow = render_records_with_width(
+            &records,
+            AccountRenderOptions {
+                query: &AccountQuery::Exact(coordinate),
+                refreshed: false,
+                detail: false,
+                glyph_profile: GlyphProfile::Rich,
+                warnings: &[],
+                failures: &[],
+                output_width: AccountOutputWidth::Bounded(NonZeroU16::new(1).unwrap()),
+                style: PresentationStyle::Plain,
+            },
+        );
+        assert!(
+            very_narrow
+                .lines()
+                .all(|line| cell_width(line).unwrap() <= 1)
+        );
+        assert!(very_narrow.contains('?'));
+    }
+
+    // table 선택은 표 본문뿐 아니라 warning·실패·다음 명령 안내까지 terminal 폭 안에
+    // 들어오는지 확인하므로, 긴 진단이 있으면 상세 block으로 전환합니다.
+    #[test]
+    fn account_table_considers_diagnostic_tail_width() {
+        let snapshot = AccountCapacitySnapshot::new(
+            ProviderId::new("codex").unwrap(),
+            AccountId::new("default").unwrap(),
+            vec![AccountCapacityBucket::new(
+                Some("codex".to_owned()),
+                None,
+                Some("prolite".to_owned()),
+                Some(AccountCapacityWindow::new(82, Some(10_080), None).unwrap()),
+                None,
+                None,
+                None,
+            )],
+        );
+        let report = AccountCapacityReport::plain(snapshot);
+        let records = [
+            AccountCapacityRecord {
+                target: AccountTarget::Exact(report.coordinate()),
+                report: Some(report),
+            },
+            AccountCapacityRecord {
+                target: AccountTarget::LocalHost {
+                    provider: ProviderId::new("grok").unwrap(),
+                },
+                report: None,
+            },
+        ];
+        let table = render_table_records(
+            &records,
+            &AccountQuery::All,
+            PresentationStyle::Plain,
+            GlyphProfile::Rich,
+        );
+        let width = table
+            .lines()
+            .map(|line| cell_width(line).unwrap())
+            .max()
+            .unwrap();
+        let warnings = [CliDiagnostic::warning("a".repeat(width + 1))];
+
+        let output = render_records_with_width(
+            &records,
+            AccountRenderOptions {
+                query: &AccountQuery::All,
+                refreshed: true,
+                detail: false,
+                glyph_profile: GlyphProfile::Rich,
+                warnings: &warnings,
+                failures: &[],
+                output_width: AccountOutputWidth::Bounded(NonZeroU16::new(width as u16).unwrap()),
+                style: PresentationStyle::Plain,
+            },
+        );
+
+        assert!(!output.contains("\nPROVIDER"));
+        assert!(output.contains("Refresh warnings"));
+        assert!(
+            output
+                .lines()
+                .all(|line| cell_width(line).unwrap() <= width)
+        );
     }
 
     // 부분 refresh 실패도 retry 명령과 원래 오류를 함께 표시합니다.
@@ -2452,6 +3269,18 @@ mod tests {
         assert!(output.contains("\n  └─ Weekly limit:"));
         assert!(!output.contains("bengalfox"));
         assert!(!output.contains("bucket:"));
+
+        let ascii_output = render_snapshot(
+            &snapshot,
+            None,
+            PresentationStyle::Plain,
+            GlyphProfile::Ascii,
+            None,
+        );
+        assert!(ascii_output.contains("  GPT-5.3-Codex-Spark limit:\n  |-- 5h limit:"));
+        assert!(ascii_output.contains("\n  `-- Weekly limit:"));
+        assert!(!ascii_output.contains('├'));
+        assert!(!ascii_output.contains('└'));
     }
 
     // TTY 출력만 제목과 상태를 꾸미고, 파이프나 파일로 보내는 기본 렌더링에는

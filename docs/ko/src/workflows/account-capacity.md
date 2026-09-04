@@ -42,13 +42,18 @@ Codex app-server가 지원되는 protocol major 안의 검증되지 않은 minor
 refresh failure로 처리한다.
 
 Text 출력은 선택한 범위가 계정 하나로 해석되면 기본으로 상세 화면을 사용하고, 여러
-계정이면 테두리 없는 컬럼 표를 사용한다. 요약 표는 `PROVIDER`, `ACCOUNT`, `PLAN`,
-`LIMITS`, `UPDATED` 컬럼을 정렬하고 각 limit window의 정확한 잔여율 옆에 한 칸짜리
+계정이면 테두리 없는 컬럼 표를 사용한다. 표가 interactive terminal 폭에 들어갈 때는
+`PROVIDER`, `ACCOUNT`, `PLAN`, `LIMITS`, `UPDATED` 컬럼을 정렬한다. 폭이 부족하면
+같은 결과를 상세 block으로 전환하며, pipe나 file 출력은 폭에 제한 없는 표 형식을 유지한다.
+각 limit window의 정확한 잔여율 옆에 한 칸짜리
 수직 level meter를 표시한다. `--detail`은 범위와 관계없이 상세 화면을 강제하며,
 상세 limit 행도 같은 meter 계열을 수평 bar로 사용한다. Rich/ASCII glyph, meter 모양,
 `{label}`/`{meter}`/`{percent}` 배치는 `yo-tui::meter`에서 재사용할 수 있고,
-의미 기반 색상은 presentation 계층이 결정한다. 갱신 또는 상세 명령 안내는 유용할 때만
-표시하며 JSON 출력에는 사람용 명령 문구를 포함하지 않는다.
+의미 기반 색상은 presentation 계층이 결정한다. 공통 출력 옵션인 `--ascii`는 account의
+두 meter 형식 모두에 적용된다. `--format json`은 현재 `account`가 지원하며, 지원하지
+않는 command에서는 실행 전에 미지원 오류로 거절한다. JSON은 terminal 폭, ANSI style,
+glyph profile과 독립적이다. 갱신 또는 상세 명령 안내는 유용할 때만 표시하며 JSON
+출력에는 사람용 명령 문구를 포함하지 않는다.
 
 `codex`와 `grok`은 각각 로컬에 설치된 delegated host가 사용하는 계정을 뜻한다.
 account-capacity를 실시간 갱신할 때는 두 host 모두 유효한 인증 이메일을 요구하고 이를 사람이 보는

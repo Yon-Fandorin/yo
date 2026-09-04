@@ -41,8 +41,12 @@ top-level 하위 명령과 한 호출에 섞을 수 없으며, 하위 명령과 
 `yo account kimi:ACCOUNT`처럼 지정하면 한 계정을 보여준다. `--refresh`를 붙인 경우에만
 선택한 범위를 다시 조회하며, 각 결과에는 마지막 갱신 시각이 함께 표시된다. 조회
 결과가 하나면 상세 화면을, 여러 결과면 컬럼형 요약 표를 기본으로 사용하며 `--detail`로
-언제든 상세 화면을 강제할 수 있다. 여러 계정 요약은 `PROVIDER`, `ACCOUNT`, `PLAN`,
+언제든 상세 화면을 강제할 수 있다. 여러 결과가 터미널 폭에 들어가지 않으면 상세 화면으로
+전환한다. 여러 계정 요약은 `PROVIDER`, `ACCOUNT`, `PLAN`,
 `LIMITS`, `UPDATED` 컬럼 표이며, `LIMITS`에는 작은 수직 level meter가 함께 표시된다.
+`--ascii`와 `--format`은 공통 출력 옵션이다. `--ascii`는 지원되는 text meter glyph를
+ASCII로 바꾸고, `--format json`은 현재 account에서 지원한다. 아직 JSON을 지원하지 않는
+명령에서 해당 format을 사용하면 실행 전에 명확한 미지원 오류를 낸다.
 캐시가 없는 delegated host는 `Local Codex` 또는
 `Local Grok`의 `Account  Not resolved` 행으로 표시된다. 어느 경로도 새 Agent Session이나 모델 요청을
 만들지 않는다. Yo는 Provider가 보고한 플랜과 한도만 공용 화면으로 표시하며, 유효한

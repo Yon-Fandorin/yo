@@ -19,7 +19,7 @@ use yo_tui::{
 
 use super::{
     AppError,
-    command::{SessionCommand, SessionContent, SessionView},
+    command::{OutputFormat, OutputOptions, SessionCommand, SessionContent, SessionView},
     diagnostic::CliDiagnostic,
 };
 
@@ -47,7 +47,10 @@ pub(crate) fn read_only_resume_from(
             all: false,
             details: false,
             view: SessionView::Chat,
-            glyph_profile,
+            output: OutputOptions {
+                format: OutputFormat::Text,
+                glyph_profile,
+            },
             limit: None,
             content: None,
         },
@@ -102,9 +105,13 @@ fn show_from_reader(
             Some(SessionContent::Full) | None => ArchivedContentPolicy::Full,
         },
     );
-    let stdout =
-        project_archived_session_with_options(&history, view, command.glyph_profile, options)
-            .map_err(|error| AppError::single("projecting stored Session history", error))?;
+    let stdout = project_archived_session_with_options(
+        &history,
+        view,
+        command.output.glyph_profile,
+        options,
+    )
+    .map_err(|error| AppError::single("projecting stored Session history", error))?;
     let diagnostics = archival_diagnostics(
         session_id,
         command.view,

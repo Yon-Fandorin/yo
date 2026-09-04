@@ -10,7 +10,7 @@ fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
             source: Some("codex".to_owned()),
             refresh: true,
             detail: false,
-            format: OutputFormat::Text,
+            output: OutputOptions::default(),
         })
     );
     assert_eq!(
@@ -26,7 +26,10 @@ fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
             source: Some("kimi:default".to_owned()),
             refresh: true,
             detail: false,
-            format: OutputFormat::Json,
+            output: OutputOptions {
+                format: OutputFormat::Json,
+                ..OutputOptions::default()
+            },
         })
     );
     assert_eq!(
@@ -42,7 +45,10 @@ fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
             source: Some("codex".to_owned()),
             refresh: true,
             detail: false,
-            format: OutputFormat::Json,
+            output: OutputOptions {
+                format: OutputFormat::Json,
+                ..OutputOptions::default()
+            },
         })
     );
     assert_eq!(
@@ -51,7 +57,7 @@ fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
             source: None,
             refresh: false,
             detail: false,
-            format: OutputFormat::Text,
+            output: OutputOptions::default(),
         })
     );
     assert_eq!(
@@ -60,7 +66,7 @@ fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
             source: Some("kimi".to_owned()),
             refresh: false,
             detail: false,
-            format: OutputFormat::Text,
+            output: OutputOptions::default(),
         })
     );
     assert_eq!(
@@ -69,7 +75,7 @@ fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
             source: None,
             refresh: true,
             detail: false,
-            format: OutputFormat::Text,
+            output: OutputOptions::default(),
         })
     );
     assert_eq!(
@@ -78,7 +84,7 @@ fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
             source: None,
             refresh: false,
             detail: true,
-            format: OutputFormat::Text,
+            output: OutputOptions::default(),
         })
     );
     assert_eq!(
@@ -93,9 +99,93 @@ fn account_capacity_accepts_all_query_scopes_with_optional_refresh() {
             source: None,
             refresh: false,
             detail: true,
-            format: OutputFormat::Json,
+            output: OutputOptions {
+                format: OutputFormat::Json,
+                ..OutputOptions::default()
+            },
         })
     );
+}
+
+// ASCII와 format은 root에서 한 번만 선언된 전역 출력 요청이며, subcommand 앞뒤에서 같은
+// typed command로 보존됩니다. JSON은 account에서 지원되고 ASCII meter와 함께 선택할 수 있습니다.
+#[test]
+fn global_output_options_are_position_independent() {
+    let expected = Command::Account(AccountCommand {
+        source: None,
+        refresh: false,
+        detail: false,
+        output: OutputOptions {
+            format: OutputFormat::Json,
+            glyph_profile: GlyphProfile::Ascii,
+        },
+    });
+
+    assert_eq!(
+        parse([
+            "--format".into(),
+            "json".into(),
+            "--ascii".into(),
+            "account".into(),
+        ])
+        .unwrap(),
+        expected
+    );
+    assert_eq!(
+        parse([
+            "account".into(),
+            "--format".into(),
+            "json".into(),
+            "--ascii".into(),
+        ])
+        .unwrap(),
+        expected
+    );
+    assert_eq!(
+        parse(["--format=json".into(), "account".into()]).unwrap(),
+        Command::Account(AccountCommand {
+            source: None,
+            refresh: false,
+            detail: false,
+            output: OutputOptions {
+                format: OutputFormat::Json,
+                ..OutputOptions::default()
+            },
+        })
+    );
+}
+
+// 지원하지 않는 전역 출력 요청은 외부 저장소나 host를 읽기 전에 parser 단계에서 거절해
+// 명령이 format을 조용히 무시하지 않게 합니다.
+#[test]
+fn unsupported_output_requests_are_rejected_at_parse_time() {
+    let session_id = "01890f00-0000-7000-8000-000000000001";
+    for arguments in [
+        vec!["session", session_id, "--format", "json"],
+        vec!["connect", "vendor:account:model", "--format", "json"],
+    ] {
+        let error = parse(arguments.into_iter().map(Into::into)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("--format json is not supported by")
+        );
+    }
+
+    let error = parse(["session".into(), "--ascii".into()]).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("--ascii is not supported by `session list`")
+    );
+
+    let error = parse(["--format".into(), "json".into()]).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("--format json is not supported by `live`")
+    );
+    assert!(error.to_string().ends_with('\n'));
 }
 
 // 인자가 없으면 기존 제품 진입점인 live Inline/Rich 실행으로 남아 `session` 기능 추가가
@@ -587,7 +677,7 @@ fn session_list_accepts_all_and_details_in_any_order() {
             all: true,
             details: true,
             view: SessionView::Chat,
-            glyph_profile: GlyphProfile::Rich,
+            output: OutputOptions::default(),
             limit: None,
             content: None,
         })
@@ -613,7 +703,7 @@ fn direct_session_selects_a_read_only_projection() {
     };
     assert_eq!(command.session_id.unwrap().to_string(), id);
     assert_eq!(command.view, SessionView::Transcript);
-    assert_eq!(command.glyph_profile, GlyphProfile::Ascii);
+    assert_eq!(command.output.glyph_profile, GlyphProfile::Ascii);
     assert_eq!(command.limit, None);
     assert_eq!(command.content, None);
 }
@@ -706,7 +796,10 @@ fn top_level_usage_selects_one_archived_session() {
         command,
         Command::Usage(UsageCommand {
             session_id: id.parse().unwrap(),
-            glyph_profile: GlyphProfile::Ascii,
+            output: OutputOptions {
+                format: OutputFormat::Text,
+                glyph_profile: GlyphProfile::Ascii,
+            },
         })
     );
     assert!(parse(["usage".into()]).is_err());

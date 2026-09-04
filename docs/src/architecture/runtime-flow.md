@@ -418,9 +418,13 @@ cleanup, and returns without giving the TUI a Session. Start investigation
 there, not in terminal mode code.
 
 The public host flags are `--inline` or `--fullscreen` for presentation and
-`--ascii` for the built-in ASCII glyph profile; flags may appear in either
-order. Omitting the presentation flag keeps the Inline default, and omitting
-`--ascii` keeps the Rich compatibility default. Unknown flags, repeated
+`--ascii` for the built-in ASCII glyph profile; output flags may appear before
+or after a subcommand. Omitting the presentation flag keeps the Inline default,
+and omitting `--ascii` keeps the Rich compatibility default. The root-global
+`--format text|json` selects a machine-readable format only where the selected
+command implements one; `account` currently implements JSON and other commands
+reject it during parsing before any external work. Live startup also rejects
+`--format json` rather than silently ignoring it. Unknown flags, repeated
 `--ascii`, and multiple presentation flags fail before provider or terminal
 startup. The selected glyph profile constructs the retained `TuiSession`, so
 prepared frames and final plain session output read the same committed

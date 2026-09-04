@@ -88,13 +88,17 @@ impl TextStyle {
 }
 
 /// Renders a bounded left-to-right bar whose filled cells represent remaining capacity.
-pub(crate) fn remaining_bar(remaining_percent: u8, width: usize) -> String {
+pub(crate) fn remaining_bar(
+    remaining_percent: u8,
+    width: usize,
+    glyph_profile: GlyphProfile,
+) -> String {
     if width == 0 {
         return String::new();
     }
     MeterSpec::raw(
         MeterShape::HorizontalBar { width },
-        MeterGlyphs::for_profile(GlyphProfile::Rich),
+        MeterGlyphs::for_profile(glyph_profile),
     )
     .render_glyph(u16::from(remaining_percent.min(100)) * 100)
     .expect("built-in horizontal capacity meter must remain renderable")
@@ -137,8 +141,18 @@ mod tests {
     // 값이 들어와도 화면 폭을 넘기지 않습니다.
     #[test]
     fn remaining_bar_is_bounded_and_conservative() {
-        assert_eq!(remaining_bar(92, 20), "██████████████████░░");
-        assert_eq!(remaining_bar(100, 20), "████████████████████");
-        assert_eq!(remaining_bar(101, 20), "████████████████████");
+        assert_eq!(
+            remaining_bar(92, 20, GlyphProfile::Rich),
+            "██████████████████░░"
+        );
+        assert_eq!(
+            remaining_bar(100, 20, GlyphProfile::Rich),
+            "████████████████████"
+        );
+        assert_eq!(
+            remaining_bar(101, 20, GlyphProfile::Rich),
+            "████████████████████"
+        );
+        assert_eq!(remaining_bar(50, 4, GlyphProfile::Ascii), "##--");
     }
 }

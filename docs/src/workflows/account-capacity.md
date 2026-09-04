@@ -44,12 +44,17 @@ version remains a refresh failure.
 
 Text output uses the detailed view by default when the selected scope resolves to one
 account, and a borderless column table when it resolves to multiple accounts. The
-compact table keeps `PROVIDER`, `ACCOUNT`, `PLAN`, `LIMITS`, and `UPDATED` aligned;
+table keeps `PROVIDER`, `ACCOUNT`, `PLAN`, `LIMITS`, and `UPDATED` aligned when it
+fits the interactive terminal. If it does not fit, the same result switches to the
+detailed blocks; pipe and file output keep the unbounded table shape.
 each limit window uses a one-cell vertical level meter beside its exact remaining
 percentage. `--detail` forces the detailed view for any scope, whose limit rows use
 the same meter family as a horizontal bar. Rich/ASCII glyphs, meter shape, and
 `{label}`/`{meter}`/`{percent}` layout are reusable through `yo-tui::meter`, while
-semantic colors remain a presentation-layer decision.
+semantic colors remain a presentation-layer decision. `--ascii` is a common output
+option and changes both account meter families. `--format json` is currently supported
+by `account`; unsupported commands reject it before execution. JSON is independent of
+terminal width, ANSI style, and glyph profile.
 Refresh or detail command suggestions are shown only when useful; JSON output never
 includes human-oriented command text.
 
