@@ -1021,7 +1021,7 @@ fn render_compact_records(
             }
         ),
     );
-    output.push_str("\n\n");
+    output.push('\n');
 
     let headings = COMPACT_ACCOUNT_HEADINGS
         .iter()
@@ -1915,6 +1915,8 @@ mod tests {
         );
 
         assert!(output.contains("Account capacity · 2 accounts"));
+        assert!(output.contains("Account capacity · 2 accounts\nPROVIDER"));
+        assert!(!output.contains("Account capacity · 2 accounts\n\nPROVIDER"));
         assert!(output.contains("PROVIDER"));
         assert!(output.contains("ACCOUNT"));
         assert!(output.contains("PLAN"));
