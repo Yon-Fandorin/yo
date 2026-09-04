@@ -52,7 +52,6 @@ the assertion or silently skipping it.
 | A ready Slice needs an exact commit message and close record without identity transcription | Run `cargo xtask slice commit prepare <gate.json> <message-source> <message-out>`, commit the exact squash, then run `cargo xtask slice close prepare <request.json>` before `close plan/apply` | The first prepare runs in the clean Slice worktree; close prepare runs in the clean integration worktree after the accepted commit |
 | Repository hook policy or structured development checks | `cargo test -p xtask` | `tools/xtask/src` |
 | Prospective activation ContextBuild and review-packet identity | `cargo test -p methexis activation_review_context` and `cargo test -p xtask review_packet::tests::prospective` | Exact activation request, proposed Checkpoint/active record, authority mode, packet replay, and active-authority cross-use rejection |
-| Linux/macOS conditional compilation | `bash tools/validation/yo-cli-unix-matrix.sh` | Local host result plus `.github/workflows/unix-compile.yml` for both hosts |
 | tmux, SSH, or nested tmux behavior | See the [terminal environment matrix](./terminal-matrix.md) | Ignored `yo-cli` environment tests |
 
 These commands are entry points, not permission to ignore affected neighboring
