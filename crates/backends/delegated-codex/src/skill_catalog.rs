@@ -193,7 +193,9 @@ fn load_inventory(
     let peer = StdioPeer::spawn(config).map_err(|error| error.to_string())?;
     let mut client = AppServerClient::new(peer, config.request_timeout());
     let result = (|| {
-        client.initialize().map_err(|error| error.to_string())?;
+        client
+            .initialize_with_stderr()
+            .map_err(|error| error.to_string())?;
         let value = client
             .call("skills/list", json!({ "cwds": [cwd], "forceReload": true }))
             .map_err(|error| error.to_string())?

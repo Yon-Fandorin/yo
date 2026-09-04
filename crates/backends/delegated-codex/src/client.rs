@@ -56,10 +56,27 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
             )?
             .result;
         let initialize = protocol::decode_initialize(result)?;
-        if let Some(warning) = &initialize.compatibility_warning {
-            let _ = writeln!(io::stderr().lock(), "yo: warning: {warning}");
-        }
         self.peer.send(&protocol::initialized_notification())?;
+        Ok(initialize)
+    }
+
+    /// Preserves the legacy interactive warning route while callers migrate to the typed result.
+    pub(super) fn initialize_with_stderr(
+        &mut self,
+    ) -> Result<protocol::InitializeResult, BackendFailure> {
+        let initialize = self.initialize()?;
+        let mut stderr = io::stderr().lock();
+        write_compatibility_warning(&initialize, &mut stderr);
+        Ok(initialize)
+    }
+
+    #[cfg(test)]
+    pub(super) fn initialize_with_warning_writer<W: Write>(
+        &mut self,
+        writer: &mut W,
+    ) -> Result<protocol::InitializeResult, BackendFailure> {
+        let initialize = self.initialize()?;
+        write_compatibility_warning(&initialize, writer);
         Ok(initialize)
     }
 
@@ -162,6 +179,12 @@ impl<P: JsonMessagePeer> AppServerClient<P> {
 
     pub(super) fn shutdown(&mut self) -> Result<(), BackendFailure> {
         self.peer.shutdown()
+    }
+}
+
+fn write_compatibility_warning<W: Write>(initialize: &protocol::InitializeResult, writer: &mut W) {
+    if let Some(warning) = &initialize.compatibility_warning {
+        let _ = writeln!(writer, "yo: warning: {warning}");
     }
 }
 

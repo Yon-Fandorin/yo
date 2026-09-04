@@ -28,6 +28,13 @@ yo account codex:you@example.com --refresh
 여러 계정을 갱신할 때는 best-effort로 선택한 모든 source를 시도한다. 성공한 결과는
 저장·표시하고 실패는 모아서 보고하며 종료 코드는 non-zero가 된다.
 
+Codex app-server가 지원되는 protocol major 안의 검증되지 않은 minor version을
+보고하면 refresh 자체는 성공하고 compatibility warning 하나를 낸다. Text에서는
+계정 data 뒤의 `Refresh warnings`에 표시하고, JSON에서는 versioned stdout 문서를
+바꾸지 않고 warning을 stderr로 보낸다. 표시하는 `userAgent`는 길이가 제한되고
+터미널 안전 형태로 바뀐다. Major가 다르거나 version을 해석할 수 없으면 계속
+refresh failure로 처리한다.
+
 Text 출력은 선택한 범위가 계정 하나로 해석되면 기본으로 상세 화면을 사용하고, 여러
 계정이면 테두리 없는 컬럼 표를 사용한다. 요약 표는 `PROVIDER`, `ACCOUNT`, `PLAN`,
 `LIMITS`, `UPDATED` 컬럼을 정렬하고 각 limit window의 정확한 잔여율 옆에 한 칸짜리

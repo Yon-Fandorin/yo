@@ -28,11 +28,13 @@ use super::{
     command::{AccountCommand, OutputFormat},
     config,
     connection::{HiddenSecretAction, HiddenSecretPrompt, read_hidden_secret},
+    diagnostic::CliDiagnostic,
     presentation::{PresentationStyle, TextStyle, remaining_bar},
 };
 
 pub(crate) struct AccountRunOutput {
     pub(crate) output: String,
+    pub(crate) diagnostics: Vec<CliDiagnostic>,
     pub(crate) error: Option<AppError>,
 }
 
@@ -61,11 +63,18 @@ pub(crate) fn run(command: AccountCommand) -> Result<AccountRunOutput, AppError>
 
     let mut refreshed = BTreeMap::new();
     let mut failures = Vec::new();
+    let mut warnings = Vec::new();
     if command.refresh {
         for target in &targets {
             let display_target = target_display_reference(target, &cached);
             match refresh_target(target) {
-                Ok(report) => {
+                Ok(refresh) => {
+                    for warning in refresh.diagnostics {
+                        if !warnings.contains(&warning) {
+                            warnings.push(warning);
+                        }
+                    }
+                    let report = refresh.report;
                     let matches_exact = exact_refresh_matches(&query, target, &report);
                     if matches_exact == Some(false) {
                         failures.push(AccountRefreshFailure {
@@ -118,6 +127,7 @@ pub(crate) fn run(command: AccountCommand) -> Result<AccountRunOutput, AppError>
             &query,
             command.refresh,
             command.detail,
+            &warnings,
             &failures,
             PresentationStyle::for_stdout(),
         )),
@@ -126,6 +136,10 @@ pub(crate) fn run(command: AccountCommand) -> Result<AccountRunOutput, AppError>
     }?;
     Ok(AccountRunOutput {
         output,
+        diagnostics: match command.format {
+            OutputFormat::Text => Vec::new(),
+            OutputFormat::Json => warnings,
+        },
         error: (!failures.is_empty())
             .then(|| AppError::message("one or more account capacity refreshes failed")),
     })
@@ -367,24 +381,35 @@ fn resolve_targets(
     Ok(targets)
 }
 
-fn refresh_target(target: &AccountTarget) -> Result<AccountCapacityReport, AppError> {
-    let report = match target.provider().as_str() {
+struct AccountRefreshResult {
+    report: AccountCapacityReport,
+    diagnostics: Vec<CliDiagnostic>,
+}
+
+fn refresh_target(target: &AccountTarget) -> Result<AccountRefreshResult, AppError> {
+    let (report, diagnostics) = match target.provider().as_str() {
         "codex" => read_codex_capacity()?,
-        "grok" => read_grok_capacity()?,
-        "kimi" => AccountCapacityReport::plain(read_kimi_capacity(
-            target
-                .exact_coordinate()
-                .ok_or_else(|| AppError::message("Kimi requires an exact account target"))?
-                .account
-                .as_str(),
-        )?),
-        "qwencloud" => read_qwencloud_capacity(
-            target
-                .exact_coordinate()
-                .ok_or_else(|| AppError::message("QwenCloud requires an exact account target"))?
-                .account
-                .as_str(),
-        )?,
+        "grok" => (read_grok_capacity()?, Vec::new()),
+        "kimi" => (
+            AccountCapacityReport::plain(read_kimi_capacity(
+                target
+                    .exact_coordinate()
+                    .ok_or_else(|| AppError::message("Kimi requires an exact account target"))?
+                    .account
+                    .as_str(),
+            )?),
+            Vec::new(),
+        ),
+        "qwencloud" => (
+            read_qwencloud_capacity(
+                target
+                    .exact_coordinate()
+                    .ok_or_else(|| AppError::message("QwenCloud requires an exact account target"))?
+                    .account
+                    .as_str(),
+            )?,
+            Vec::new(),
+        ),
         _ => {
             return Err(AppError::message(format!(
                 "unsupported account-capacity source `{}`",
@@ -392,7 +417,10 @@ fn refresh_target(target: &AccountTarget) -> Result<AccountCapacityReport, AppEr
             )));
         },
     };
-    Ok(report.with_observed_at(current_observed_at()))
+    Ok(AccountRefreshResult {
+        report: report.with_observed_at(current_observed_at()),
+        diagnostics,
+    })
 }
 
 fn query_exact_account(query: &AccountQuery) -> Option<&str> {
@@ -702,12 +730,17 @@ fn has_qwencloud_token_plan_binding(
         })
 }
 
-fn read_codex_capacity() -> Result<AccountCapacityReport, AppError> {
+fn read_codex_capacity() -> Result<(AccountCapacityReport, Vec<CliDiagnostic>), AppError> {
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
-    let snapshot = read_codex_account_capacity(CodexBackendConfig::new(cwd))
+    let read = read_codex_account_capacity(CodexBackendConfig::new(cwd))
         .map_err(|error| AppError::single("refreshing Codex account capacity", error))?;
-    Ok(AccountCapacityReport::plain(snapshot))
+    let (snapshot, warning) = read.into_parts();
+    let diagnostics = warning
+        .into_iter()
+        .map(|warning| CliDiagnostic::warning(warning.to_string()))
+        .collect();
+    Ok((AccountCapacityReport::plain(snapshot), diagnostics))
 }
 
 fn read_grok_capacity() -> Result<AccountCapacityReport, AppError> {
@@ -774,6 +807,7 @@ fn render_records(
     query: &AccountQuery,
     refreshed: bool,
     detail: bool,
+    warnings: &[CliDiagnostic],
     failures: &[AccountRefreshFailure],
     style: PresentationStyle,
 ) -> String {
@@ -793,14 +827,13 @@ fn render_records(
     if !failures.is_empty() {
         commands.push(("Retry", account_command(query, "--refresh")));
     }
-    if !commands.is_empty() {
+    if !warnings.is_empty() {
         output.push('\n');
-        for (label, command) in commands {
-            style.push(
-                &mut output,
-                TextStyle::Muted,
-                &format!("{label}: {command}"),
-            );
+        style.push(&mut output, TextStyle::Warning, "Refresh warnings");
+        output.push('\n');
+        for warning in warnings {
+            output.push_str("  ");
+            output.push_str(&terminal_safe(warning.message()));
             output.push('\n');
         }
     }
@@ -813,6 +846,17 @@ fn render_records(
             output.push_str(&terminal_safe(&failure.target));
             output.push_str(" · ");
             output.push_str(&terminal_safe(&failure.message));
+            output.push('\n');
+        }
+    }
+    if !commands.is_empty() {
+        output.push('\n');
+        for (label, command) in commands {
+            style.push(
+                &mut output,
+                TextStyle::Muted,
+                &format!("{label}: {command}"),
+            );
             output.push('\n');
         }
     }
@@ -1805,6 +1849,7 @@ mod tests {
             false,
             true,
             &[],
+            &[],
             PresentationStyle::Plain,
         );
 
@@ -1856,6 +1901,7 @@ mod tests {
             false,
             false,
             &[],
+            &[],
             PresentationStyle::Plain,
         );
 
@@ -1887,6 +1933,7 @@ mod tests {
             false,
             false,
             &[],
+            &[],
             PresentationStyle::Ansi,
         );
         assert!(ansi.contains("\u{1b}[31m7d ▂ 18%\u{1b}[0m"));
@@ -1913,12 +1960,55 @@ mod tests {
             &AccountQuery::All,
             true,
             false,
+            &[],
             &failures,
             PresentationStyle::Plain,
         );
 
         assert!(output.contains("Retry: yo account --refresh"));
         assert!(output.contains("Refresh failures\n  Local Grok · login required"));
+    }
+
+    // Codex 호환성 warning은 data 뒤에 한 번 표시되고, 실패와 다음 명령 안내보다 앞선다.
+    #[test]
+    fn refresh_warnings_are_ordered_before_failures_and_commands() {
+        let records = [AccountCapacityRecord {
+            target: AccountTarget::LocalHost {
+                provider: ProviderId::new("codex").unwrap(),
+            },
+            report: None,
+        }];
+        let warnings = [CliDiagnostic::warning(
+            "Codex app-server compatibility warning",
+        )];
+        let failures = [AccountRefreshFailure {
+            target: "Local Codex".to_owned(),
+            message: "login required".to_owned(),
+        }];
+
+        let output = render_records(
+            &records,
+            &AccountQuery::All,
+            true,
+            false,
+            &warnings,
+            &failures,
+            PresentationStyle::Plain,
+        );
+
+        let data = output.find("Account").unwrap();
+        let warning = output.find("Refresh warnings").unwrap();
+        let failure = output.find("Refresh failures").unwrap();
+        let retry = output.find("Retry: yo account --refresh").unwrap();
+        assert!(data < warning);
+        assert!(warning < failure);
+        assert!(failure < retry);
+        assert_eq!(
+            output
+                .matches("Codex app-server compatibility warning")
+                .count(),
+            1
+        );
     }
 
     // 상대 시간 표시는 짧은 단위부터 일 단위까지 결정적인 문구로 유지합니다.

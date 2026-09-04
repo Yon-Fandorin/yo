@@ -5,7 +5,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::{io::Write, process::ExitCode};
 
 #[cfg(unix)]
-use diagnostic::AppError;
+use diagnostic::{AppError, CliDiagnostic};
 
 #[cfg(unix)]
 mod account;
@@ -64,7 +64,7 @@ fn run(command: command::Command) -> Result<(), AppError> {
     match command {
         command::Command::Account(command) => {
             let result = account::run(command)?;
-            finish_account_output(result, write_command_output)
+            finish_account_output(result, write_command_output, write_cli_diagnostics)
         },
         command::Command::Connect(command) => {
             write_command_output(connection::run_connect(command)?)
@@ -98,14 +98,40 @@ fn write_command_output(output: String) -> Result<(), AppError> {
 fn finish_account_output(
     result: account::AccountRunOutput,
     publish: impl FnOnce(String) -> Result<(), AppError>,
+    publish_diagnostics: impl FnOnce(&[CliDiagnostic]) -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     publish(result.output)?;
+    publish_diagnostics(&result.diagnostics)?;
     result.error.map_or(Ok(()), Err)
+}
+
+#[cfg(unix)]
+fn write_cli_diagnostics(diagnostics: &[CliDiagnostic]) -> Result<(), AppError> {
+    let mut stderr = std::io::stderr().lock();
+    write_cli_diagnostics_to(diagnostics, &mut stderr)?;
+    stderr
+        .flush()
+        .map_err(|error| AppError::single("flushing command diagnostics", error))
+}
+
+fn write_cli_diagnostics_to<W: Write>(
+    diagnostics: &[CliDiagnostic],
+    writer: &mut W,
+) -> Result<(), AppError> {
+    for diagnostic in diagnostics {
+        writeln!(writer, "yo: warning: {}", diagnostic.message())
+            .map_err(|error| AppError::single("writing command diagnostic", error))?;
+    }
+    Ok(())
 }
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{account::AccountRunOutput, diagnostic::AppError, finish_account_output};
+    use super::{
+        account::AccountRunOutput,
+        diagnostic::{AppError, CliDiagnostic},
+        finish_account_output, write_cli_diagnostics_to,
+    };
 
     // 일부 refresh가 실패해도 이미 만든 account 출력은 먼저 publish해야 합니다.
     #[test]
@@ -114,16 +140,56 @@ mod tests {
         let result = finish_account_output(
             AccountRunOutput {
                 output: "partial account output\n".to_owned(),
+                diagnostics: vec![CliDiagnostic::warning("one warning")],
                 error: Some(AppError::message("one refresh failed")),
             },
             |output| {
                 published = Some(output);
                 Ok(())
             },
+            |diagnostics| {
+                assert_eq!(diagnostics.len(), 1);
+                assert_eq!(diagnostics[0].message(), "one warning");
+                Ok(())
+            },
         );
 
         assert_eq!(published.as_deref(), Some("partial account output\n"));
         assert!(result.is_err());
+    }
+
+    // JSON은 stdout에 정확히 한 문서만 남기고, warning은 그 뒤 stderr에 한 번만 게시합니다.
+    #[test]
+    fn account_json_routes_warning_after_unchanged_stdout() {
+        let stdout = std::cell::RefCell::new(String::new());
+        let stderr = std::cell::RefCell::new(Vec::new());
+        let events = std::cell::RefCell::new(Vec::new());
+        let output = "{\"schema\":\"yo.account-capacity/v1alpha3\",\"provider\":\"codex\",\"account\":\"person@example.test\",\"limits\":[]}\n";
+
+        finish_account_output(
+            AccountRunOutput {
+                output: output.to_owned(),
+                diagnostics: vec![CliDiagnostic::warning("Codex compatibility warning")],
+                error: None,
+            },
+            |output| {
+                events.borrow_mut().push("stdout");
+                stdout.replace(output);
+                Ok(())
+            },
+            |diagnostics| {
+                events.borrow_mut().push("stderr");
+                write_cli_diagnostics_to(diagnostics, &mut *stderr.borrow_mut())
+            },
+        )
+        .unwrap();
+
+        let stdout = stdout.into_inner();
+        let stderr = String::from_utf8(stderr.into_inner()).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+        assert!(!stdout.contains("Codex compatibility warning"));
+        assert_eq!(stderr.matches("yo: warning:").count(), 1);
+        assert_eq!(events.into_inner(), vec!["stdout", "stderr"]);
     }
 }
 

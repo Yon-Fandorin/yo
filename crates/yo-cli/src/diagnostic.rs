@@ -7,6 +7,23 @@ use std::{
 
 use crate::presentation::{PresentationStyle, TextStyle};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CliDiagnostic {
+    message: String,
+}
+
+impl CliDiagnostic {
+    pub(crate) fn warning(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct AppError {
     failures: Vec<AppFailure>,

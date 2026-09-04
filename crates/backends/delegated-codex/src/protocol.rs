@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -9,6 +9,7 @@ use yo_core::{
 
 const SUPPORTED_CODEX_MAJOR: u64 = 0;
 const SUPPORTED_CODEX_MINORS: &[u64] = &[145, 146, 149];
+const MAX_USER_AGENT_DISPLAY_BYTES: usize = 256;
 
 #[derive(Debug)]
 pub(super) enum Incoming {
@@ -39,7 +40,29 @@ pub(super) struct InitializeResult {
     pub platform_family: String,
     pub platform_os: String,
     #[serde(skip)]
-    pub compatibility_warning: Option<String>,
+    pub compatibility_warning: Option<CodexCompatibilityWarning>,
+}
+
+/// A bounded, terminal-safe compatibility warning from the Codex app-server handshake.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CodexCompatibilityWarning {
+    display_user_agent: String,
+}
+
+impl fmt::Display for CodexCompatibilityWarning {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let supported = SUPPORTED_CODEX_MINORS
+            .iter()
+            .map(|minor| format!("{SUPPORTED_CODEX_MAJOR}.{minor}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        formatter.write_str("Codex app-server `")?;
+        formatter.write_str(&self.display_user_agent)?;
+        write!(
+            formatter,
+            "` is newer or otherwise unverified; continuing because its 0.x protocol major matches (verified minor lines: {supported})"
+        )
+    }
 }
 
 #[derive(Debug)]
@@ -178,10 +201,7 @@ pub(super) fn decode_initialize(result: Value) -> Result<InitializeResult, Backe
     {
         return Err(BackendFailure::new(
             BackendFailureKind::Initialization,
-            format!(
-                "unsupported Codex app-server platform {}/{}",
-                initialize.platform_family, initialize.platform_os
-            ),
+            "unsupported Codex app-server platform; expected unix/linux or unix/macos",
         ));
     }
     Ok(initialize)
@@ -366,7 +386,10 @@ fn decode_capacity_window(
         .map_err(|error| protocol_failure(error.to_string()))
 }
 
-fn version_compatibility_warning(user_agent: &str) -> Result<Option<String>, BackendFailure> {
+fn version_compatibility_warning(
+    user_agent: &str,
+) -> Result<Option<CodexCompatibilityWarning>, BackendFailure> {
+    let display_user_agent = safe_user_agent(user_agent);
     let version = user_agent
         .split_whitespace()
         .find_map(|part| part.split_once('/').map(|(_, version)| version))
@@ -377,34 +400,45 @@ fn version_compatibility_warning(user_agent: &str) -> Result<Option<String>, Bac
     let Some(major) = major else {
         return Err(BackendFailure::new(
             BackendFailureKind::Initialization,
-            format!("Codex app-server returned an unparseable version in `{user_agent}`"),
+            format!("Codex app-server returned an unparseable version in `{display_user_agent}`"),
         ));
     };
     let Some(minor) = minor else {
         return Err(BackendFailure::new(
             BackendFailureKind::Initialization,
-            format!("Codex app-server returned an unparseable version in `{user_agent}`"),
+            format!("Codex app-server returned an unparseable version in `{display_user_agent}`"),
         ));
     };
     if major != SUPPORTED_CODEX_MAJOR {
         return Err(BackendFailure::new(
             BackendFailureKind::Initialization,
             format!(
-                "unsupported Codex app-server major version in `{user_agent}`; yo requires {SUPPORTED_CODEX_MAJOR}.x"
+                "unsupported Codex app-server major version in `{display_user_agent}`; yo requires {SUPPORTED_CODEX_MAJOR}.x"
             ),
         ));
     }
     if SUPPORTED_CODEX_MINORS.contains(&minor) {
         return Ok(None);
     }
-    let supported = SUPPORTED_CODEX_MINORS
-        .iter()
-        .map(|minor| format!("{SUPPORTED_CODEX_MAJOR}.{minor}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Ok(Some(format!(
-        "Codex app-server `{user_agent}` is newer or otherwise unverified; continuing because its 0.x protocol major matches (verified minor lines: {supported})"
-    )))
+    Ok(Some(CodexCompatibilityWarning { display_user_agent }))
+}
+
+fn safe_user_agent(user_agent: &str) -> String {
+    const ELLIPSIS: &str = "…";
+    let mut output = String::new();
+    for character in user_agent.chars() {
+        let rendered = if character.is_control() {
+            character.escape_default().collect::<String>()
+        } else {
+            character.to_string()
+        };
+        if output.len() + rendered.len() + ELLIPSIS.len() > MAX_USER_AGENT_DISPLAY_BYTES {
+            output.push_str(ELLIPSIS);
+            break;
+        }
+        output.push_str(&rendered);
+    }
+    output
 }
 
 pub(super) fn string_at<'a>(value: &'a Value, path: &[&str]) -> Result<&'a str, BackendFailure> {
@@ -455,6 +489,7 @@ mod tests {
             .unwrap()
             .expect("an unverified minor line must produce a warning");
 
+        let warning = warning.to_string();
         assert!(warning.contains("codex_cli_rs/0.150.0"));
         assert!(warning.contains("0.145, 0.146, 0.149"));
     }
@@ -470,6 +505,35 @@ mod tests {
         let failure = version_compatibility_warning("codex_cli_rs/unknown").unwrap_err();
         assert_eq!(failure.kind(), BackendFailureKind::Initialization);
         assert!(failure.message().contains("unparseable version"));
+    }
+
+    // warning과 version failure가 제어문자와 과도한 길이를 포함해도 bounded 한 줄 안전 출력인지
+    // 확인합니다.
+    #[test]
+    fn bounds_and_escapes_user_agent_in_warning_and_version_errors() {
+        let user_agent = format!("codex_cli_rs/0.150.0\n\u{1b}[31m{}", "x".repeat(512));
+        let display_user_agent = safe_user_agent(&user_agent);
+        assert!(display_user_agent.len() <= MAX_USER_AGENT_DISPLAY_BYTES);
+        assert!(!display_user_agent.contains('\n'));
+        assert!(!display_user_agent.contains('\u{1b}'));
+
+        let warning = version_compatibility_warning(&user_agent)
+            .unwrap()
+            .expect("an unverified minor line must produce a warning");
+
+        let warning = warning.to_string();
+        assert!(warning.len() <= 512);
+        assert!(!warning.contains('\n'));
+        assert!(!warning.contains('\u{1b}'));
+        assert!(warning.contains("\\n"));
+        assert!(warning.contains("\\u{1b}"));
+
+        let malformed = format!("codex_cli_rs/unknown\n\u{1b}[31m{}", "x".repeat(512));
+        let failure =
+            version_compatibility_warning(&malformed).expect_err("the malformed version must fail");
+        assert!(failure.message().len() <= 512);
+        assert!(!failure.message().contains('\n'));
+        assert!(!failure.message().contains('\u{1b}'));
     }
 
     // method와 id가 함께 있는 app-server 메시지는 일반 notification이 아니라 클라이언트가

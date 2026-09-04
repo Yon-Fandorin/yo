@@ -15,6 +15,7 @@ use std::{
 
 use client::AppServerClient;
 pub use config::CodexBackendConfig;
+pub use protocol::CodexCompatibilityWarning;
 use serde_json::{Value, json};
 pub use skill_catalog::CodexSkillReferenceProvider;
 use transport::StdioPeer;
@@ -35,6 +36,32 @@ const LEGACY_READ_ONLY_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v
 pub const STANDARD_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v2";
 pub const READ_ONLY_BINDING_SCHEMA: &str = "codex.app-server/thread-binding/v1alpha2";
 const MODEL_IDENTITY_SCHEMA: &str = "codex.app-server/model-and-provider/v1";
+
+/// A one-shot Codex read and the compatibility warning observed during its handshake.
+#[derive(Debug)]
+pub struct CodexRead<T> {
+    value: T,
+    compatibility_warning: Option<CodexCompatibilityWarning>,
+}
+
+impl<T> CodexRead<T> {
+    fn new(value: T, compatibility_warning: Option<CodexCompatibilityWarning>) -> Self {
+        Self {
+            value,
+            compatibility_warning,
+        }
+    }
+
+    /// Borrows the one-shot value without discarding its warning metadata.
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
+    /// Splits the read value from its optional compatibility warning.
+    pub fn into_parts(self) -> (T, Option<CodexCompatibilityWarning>) {
+        (self.value, self.compatibility_warning)
+    }
+}
 
 /// Exact account and model recovered from a rebind-capable Codex binding.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -157,7 +184,7 @@ fn native_model_binding_from_parts(
 /// Session.
 pub fn read_account_capacity(
     config: CodexBackendConfig,
-) -> Result<AccountCapacitySnapshot, BackendFailure> {
+) -> Result<CodexRead<AccountCapacitySnapshot>, BackendFailure> {
     validate_config(&config)?;
     let peer = StdioPeer::spawn(&config)?;
     let mut client = AppServerClient::new(peer, config.request_timeout());
@@ -213,8 +240,8 @@ fn validate_config(config: &CodexBackendConfig) -> Result<(), BackendFailure> {
 
 fn observe_account_capacity<P: JsonMessagePeer>(
     client: &mut AppServerClient<P>,
-) -> Result<AccountCapacitySnapshot, BackendFailure> {
-    client.initialize()?;
+) -> Result<CodexRead<AccountCapacitySnapshot>, BackendFailure> {
+    let initialize = client.initialize()?;
     let account_result = client
         .call("account/read", json!({ "refreshToken": false }))?
         .result;
@@ -235,7 +262,10 @@ fn observe_account_capacity<P: JsonMessagePeer>(
         .map_err(|error| protocol::protocol_failure(error.to_string()))?;
     let result = client.call("account/rateLimits/read", Value::Null)?.result;
     let snapshot = protocol::decode_account_capacity(result, account)?;
-    Ok(snapshot.with_account_label(account_label))
+    Ok(CodexRead::new(
+        snapshot.with_account_label(account_label),
+        initialize.compatibility_warning,
+    ))
 }
 
 fn observe_model_catalog<P: JsonMessagePeer>(
@@ -244,7 +274,7 @@ fn observe_model_catalog<P: JsonMessagePeer>(
     const PAGE_LIMIT: u64 = 100;
     const MAX_MODELS: usize = 4096;
 
-    client.initialize()?;
+    client.initialize_with_stderr()?;
     let account_result = client
         .call("account/read", json!({ "refreshToken": false }))?
         .result;
@@ -569,7 +599,7 @@ impl<P: JsonMessagePeer> Backend<P> {
 
     fn initialize(&mut self) -> Result<(), BackendFailure> {
         if !self.initialized {
-            let initialize = self.client.initialize()?;
+            let initialize = self.client.initialize_with_stderr()?;
             let account_result = self
                 .client
                 .call("account/read", json!({ "refreshToken": false }))?

@@ -54,7 +54,8 @@ fn reads_account_capacity_without_creating_a_session() {
     ]);
     let mut client = AppServerClient::new(peer, Duration::from_secs(1));
 
-    let snapshot = observe_account_capacity(&mut client).unwrap();
+    let read = observe_account_capacity(&mut client).unwrap();
+    let (snapshot, warning) = read.into_parts();
 
     assert_eq!(snapshot.provider().as_str(), "codex");
     assert_eq!(snapshot.account_label(), "person@example.test");
@@ -67,6 +68,7 @@ fn reads_account_capacity_without_creating_a_session() {
         63
     );
     assert_eq!(snapshot.buckets()[1].id(), Some("z-extra"));
+    assert!(warning.is_none());
 
     let sent = sent.0.borrow();
     assert_eq!(sent.len(), 4);
@@ -79,6 +81,34 @@ fn reads_account_capacity_without_creating_a_session() {
             Some("thread/start" | "thread/resume")
         )
     }));
+}
+
+// 같은 protocol major의 미검증 minor 경고는 capacity 값과 함께 one-shot 결과에서 회수되어
+// 호출자가 출력할 수 있고, backend가 경고를 잃지 않습니다.
+#[test]
+fn returns_an_unverified_minor_warning_with_account_capacity() {
+    let account_response = json!({
+        "id": 2,
+        "result": {
+            "account": { "id": "acct-1", "email": "person@example.test" }
+        }
+    });
+    let rate_limits_response = json!({
+        "id": 3,
+        "result": { "rateLimits": {} }
+    });
+    let (peer, _) = FakePeer::new([
+        initialize_response(1, "0.150.0"),
+        account_response,
+        rate_limits_response,
+    ]);
+    let mut client = AppServerClient::new(peer, Duration::from_secs(1));
+
+    let read = observe_account_capacity(&mut client).unwrap();
+    let (_, warning) = read.into_parts();
+
+    let warning = warning.expect("an unverified minor line must be returned to the caller");
+    assert!(warning.to_string().contains("0.150.0"));
 }
 
 // Provider가 계약 범위를 벗어난 사용률을 보내면 잔여량을 음수나 포화값으로 꾸미지 않고

@@ -29,6 +29,13 @@ and their timestamps in the local account-capacity cache. A multi-account refres
 best-effort: every selected source is attempted, successful results are saved and shown,
 and failures are reported together with a non-zero exit status.
 
+When a Codex app-server reports an unverified minor version within the supported
+protocol major, the refresh still succeeds and emits one compatibility warning.
+Text puts it in `Refresh warnings` after the account data; JSON keeps its versioned
+stdout document unchanged and writes the warning to stderr. The displayed
+`userAgent` is bounded and terminal-safe. A different major or an unparseable
+version remains a refresh failure.
+
 Text output uses the detailed view by default when the selected scope resolves to one
 account, and a borderless column table when it resolves to multiple accounts. The
 compact table keeps `PROVIDER`, `ACCOUNT`, `PLAN`, `LIMITS`, and `UPDATED` aligned;

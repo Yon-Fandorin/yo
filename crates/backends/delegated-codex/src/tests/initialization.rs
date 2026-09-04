@@ -556,9 +556,24 @@ fn unverified_minor_warns_and_completes_initialization() {
     assert!(
         initialize
             .compatibility_warning
-            .as_deref()
-            .is_some_and(|warning| warning.contains("0.150.0"))
+            .as_ref()
+            .is_some_and(|warning| warning.to_string().contains("0.150.0"))
     );
     assert_eq!(sent.0.borrow().len(), 2);
     assert_eq!(sent.0.borrow()[1], json!({ "method": "initialized" }));
+}
+
+// 대화형 호환 경로는 typed warning을 한 번만 stderr writer에 게시하고, 초기화 결과 자체는
+// one-shot 경로와 동일하게 보존합니다.
+#[test]
+fn explicit_warning_writer_publishes_the_warning_once() {
+    let (peer, _) = FakePeer::new([initialize_response(1, "0.150.0")]);
+    let mut client = AppServerClient::new(peer, Duration::from_secs(1));
+    let mut output = Vec::new();
+
+    client.initialize_with_warning_writer(&mut output).unwrap();
+
+    let output = String::from_utf8(output).unwrap();
+    assert_eq!(output.matches("yo: warning:").count(), 1);
+    assert!(output.contains("0.150.0"));
 }
