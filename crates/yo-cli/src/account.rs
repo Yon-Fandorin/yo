@@ -1303,7 +1303,7 @@ fn push_account_heading(
         output.push_str(" · ");
         style.push(output, TextStyle::Accent, account);
     }
-    output.push_str("\n\n");
+    output.push('\n');
 }
 
 fn render_snapshot(
@@ -2328,12 +2328,15 @@ mod tests {
         let output = render(&snapshot, PresentationStyle::Plain);
 
         assert!(output.contains("Codex · default"));
+        assert!(output.contains("Codex · default\n  Plan     Plus"));
+        assert!(!output.contains("Codex · default\n\n  Plan"));
         assert!(output.contains("Plan     Plus"));
         assert!(output.contains("Status   Available"));
         assert!(output.contains("Credits  12.5"));
         assert!(output.contains("5h limit:"));
         assert!(output.contains("[████████████░░░░░░░░] 63% left"));
         assert!(output.contains("(resets "));
+        assert!(output.contains("\n\nUsage limits\n"));
         assert!(!output.contains("token"));
     }
 
