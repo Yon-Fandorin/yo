@@ -4,6 +4,9 @@ use yo_core::{AccountId, HostId, HostModelCatalog, ModelId, ModelSelectionContro
 
 use super::DelegatedExecutionProfile;
 
+mod codex;
+mod grok;
+
 const CATALOG_UNAVAILABLE: &str = "model catalog unavailable";
 const SEMANTIC_HANDOFF_UNAVAILABLE: &str = "semantic handoff is not implemented";
 const NATIVE_REBIND_UNAVAILABLE: &str =
@@ -65,7 +68,6 @@ impl ActiveHostModel {
 struct HostInventoryRequest {
     host: HostId,
     execution: DelegatedExecutionProfile,
-    outer_sandboxed_review: bool,
 }
 
 impl HostCatalogObservation {
@@ -89,32 +91,22 @@ pub(crate) fn read_builtin_host_catalogs_with_codex_warning_observer(
     active: Option<(&HostId, DelegatedExecutionProfile)>,
     warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
 ) -> Vec<HostCatalogObservation> {
-    let requests = inventory_requests(
-        active,
-        std::env::var_os(yo_backend_delegated_grok::OUTER_SANDBOX_REVIEW_ENV).is_some(),
-    );
-    let codex = requests[0].clone();
-    let grok = requests[1].clone();
+    let requests = inventory_requests(active);
+    let [codex_request, grok_request] = requests;
     let codex_warning_observer = warning_observer;
     let codex_workspace = workspace.to_path_buf();
     let grok_workspace = workspace.to_path_buf();
 
     std::thread::scope(|scope| {
         let codex_reader = scope.spawn(move || {
-            let config = yo_backend_delegated_codex::CodexBackendConfig::new(codex_workspace)
-                .with_read_only_review(codex.execution.is_read_only_review());
-            yo_backend_delegated_codex::read_model_catalog_with_warning_observer(
-                config,
+            codex::read_catalog(
+                codex_workspace,
+                codex_request.execution,
                 codex_warning_observer,
             )
-            .map_err(|error| error.to_string())
         });
-        let grok_reader = scope.spawn(move || {
-            let config = yo_backend_delegated_grok::GrokBackendConfig::new(grok_workspace)
-                .with_read_only_review(grok.execution.is_read_only_review())
-                .with_outer_sandboxed_review(grok.outer_sandboxed_review);
-            yo_backend_delegated_grok::read_model_catalog(config).map_err(|error| error.to_string())
-        });
+        let grok_reader =
+            scope.spawn(move || grok::read_catalog(grok_workspace, grok_request.execution));
 
         vec![
             HostCatalogObservation::new(
@@ -220,7 +212,6 @@ pub(crate) fn project_host_catalogs(
 
 fn inventory_requests(
     active: Option<(&HostId, DelegatedExecutionProfile)>,
-    outer_sandbox_available: bool,
 ) -> [HostInventoryRequest; 2] {
     let profile_for = |host: &HostId| {
         active
@@ -234,12 +225,10 @@ fn inventory_requests(
         HostInventoryRequest {
             execution: profile_for(&codex),
             host: codex,
-            outer_sandboxed_review: false,
         },
         HostInventoryRequest {
             host: grok,
             execution: grok_execution,
-            outer_sandboxed_review: outer_sandbox_available && grok_execution.is_read_only_review(),
         },
     ]
 }

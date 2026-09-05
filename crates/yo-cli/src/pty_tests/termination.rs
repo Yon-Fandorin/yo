@@ -1,7 +1,8 @@
 use nix::sys::signal::{Signal, kill};
 
 use super::support::{
-    CHILD_MARKER, ENTER_ALTERNATE_SCREEN, PtyChild, assert_fullscreen_pair, run_fullscreen,
+    CHILD_MARKER, ENTER_ALTERNATE_SCREEN, PtyChild,
+    tui::{assert_fullscreen_pair, run_fullscreen},
 };
 use crate::process::termination::TerminationCoordinator;
 

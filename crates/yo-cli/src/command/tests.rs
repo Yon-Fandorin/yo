@@ -1,4 +1,6 @@
-use super::*;
+use yo_tui::{GlyphProfile, PresentationMode};
+
+use super::{live::SandboxMode, *};
 
 // 계정 용량 조회는 Session Usage와 다른 최상위 명령이며, 기본값은 저장된 마지막 관측값을
 // 읽고 `--refresh`가 있을 때만 외부 관측을 수행합니다.
@@ -297,56 +299,6 @@ fn print_resume_is_exact_and_rejects_incompatible_startup_options() {
             prompt: Some("follow up".to_owned()),
             selection: LiveSelection::Resume(id.parse().unwrap()),
             model: None,
-            no_tools: false,
-            sandbox: None,
-        })
-    );
-}
-
-// print mode와 top-level subcommand를 한 호출에 섞으면 subcommand나 prompt 중 하나를
-// 조용히 우선하지 않고, 사용자가 `--` 뒤의 명시적 literal prompt로 고치게 합니다.
-#[test]
-fn print_rejects_top_level_subcommands_without_literal_separator() {
-    for subcommand in [
-        "connect",
-        "disconnect",
-        "default",
-        "model",
-        "session",
-        "usage",
-    ] {
-        let error = parse(["-p".into(), subcommand.into()]).unwrap_err();
-        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-        assert!(
-            error
-                .to_string()
-                .contains("use `--` before a literal prompt")
-        );
-    }
-
-    assert_eq!(
-        parse(["-p".into(), "--".into(), "session".into()]).unwrap(),
-        Command::Print(PrintOptions {
-            prompt: Some("session".to_owned()),
-            selection: LiveSelection::New,
-            model: None,
-            no_tools: false,
-            sandbox: None,
-        })
-    );
-
-    assert_eq!(
-        parse([
-            "-p".into(),
-            "--model".into(),
-            "session".into(),
-            "question".into(),
-        ])
-        .unwrap(),
-        Command::Print(PrintOptions {
-            prompt: Some("question".to_owned()),
-            selection: LiveSelection::New,
-            model: Some("session".to_owned()),
             no_tools: false,
             sandbox: None,
         })

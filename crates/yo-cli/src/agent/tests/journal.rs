@@ -388,7 +388,7 @@ fn preserves_gap_and_recovery_before_the_frontend_first_polls() {
         .recv_timeout(TEST_DEADLOCK_GUARD)
         .expect("worker did not finish the scripted Turn");
     assert_eq!(
-        connection.transcript.head_sequence().map(|head| head.get()),
+        connection.transcript_head_sequence().map(|head| head.get()),
         Some(5),
         "backend completion must make the complete Journal prefix observable"
     );
@@ -505,7 +505,7 @@ fn drains_more_than_one_bounded_page_from_one_coalesced_wake() {
         .recv_timeout(TEST_DEADLOCK_GUARD)
         .expect("worker did not finish the scripted Journal suffix");
     assert_eq!(
-        connection.transcript.head_sequence().map(|head| head.get()),
+        connection.transcript_head_sequence().map(|head| head.get()),
         Some(EXPECTED_RECORDS as u64),
         "worker completion must make the complete Journal suffix observable"
     );

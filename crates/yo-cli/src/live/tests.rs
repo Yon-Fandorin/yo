@@ -88,16 +88,7 @@ fn non_resume_launch_failures_remain_errors() {
 #[test]
 fn resolved_continue_preserves_its_abort_policy() {
     let session_id: SessionId = "01890f00-0000-7000-8000-000000000001".parse().unwrap();
-    let preparation = LivePreparation::Resume {
-        session_id,
-        failure_selection: LiveSelection::Continue,
-    };
-    let LivePreparation::Resume {
-        failure_selection, ..
-    } = preparation
-    else {
-        panic!("the fixture is a resolved continuation")
-    };
+    let failure_selection = resolved_failure_selection(true, session_id);
 
     assert!(matches!(
         classify_launch_failure(

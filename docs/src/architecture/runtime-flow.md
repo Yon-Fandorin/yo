@@ -405,7 +405,7 @@ yo-tui
 
 | Step | Current owner | What to follow |
 |---|---|---|
-| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/connection.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection.rs) | `run` selects presentation options, captures the working directory and command-local configuration, reads a new Session's stored preference without creating state, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`. Resume omits the stored-preference read. |
+| 1 | [`yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`yo-cli/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/lib.rs), [`yo-cli/src/application.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application.rs), [`yo-cli/src/application/runtime/startup.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application/runtime/startup.rs), [`yo-cli/src/application/runtime/live.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application/runtime/live.rs), [`yo-cli/src/connection/startup.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/startup.rs) | `main.rs` selects the Unix entrypoint; `lib.rs` exposes the public `run` facade and `application.rs` parses the command and dispatches it. `runtime/startup.rs` selects presentation options, captures the working directory and command-local configuration, reads a new Session's stored preference without creating state, installs termination coordination, opens Host identity plus Session storage, canonicalizes the workspace, and creates one matching UUIDv7 `SessionDescriptor`; `runtime/live.rs` retains the live-generation loop and cleanup. Resume omits the stored-preference read. |
 | 2 | [`yo-cli/src/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/model.rs), [`yo-backend-delegated-codex`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-codex/src/lib.rs), [`yo-backend-delegated-grok`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/delegated-grok/src/lib.rs), [`yo-backend-managed`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/managed/src/lib.rs) | The process host resolves invocation, stored, and operator layers, then either starts the selected delegated stdio transport or assembles the managed binding from the startup snapshots and injected tools. Every path defers model work until the worker owns the backend. |
 | 3 | [`yo-core/agent_session`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/mod.rs) | `AgentSession::start_cancellable_with_repository` transfers the backend and local repository to the worker thread (named `yo-agent-runtime`) and waits for startup without blocking termination observation. |
 | 4 | [`yo-core/agent_session/worker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/agent_session/worker.rs) | `AgentWorker::initialize` first attempts the descriptor-only Journal envelope, then sends `CreateSession` through `AgentRuntime`; storage pressure keeps both the descriptor and later activity in the recoverable volatile prefix. |
@@ -787,8 +787,11 @@ yo-tui archived Usage projection
 plain stdout
 ```
 
-`yo-cli/src/command.rs` owns the command grammar, `session.rs` owns selection
-and table/output routing, `config.rs` owns date-format configuration, and
+`yo-cli/src/command/` owns the command grammar (`parser.rs` composes the
+root grammar and each command directory owns its typed arguments),
+`command/session/{list,show,presentation}.rs` owns stored-session selection,
+history projection, and table formatting, while `command/usage/execution.rs`
+owns the separate archived Usage projection. `config.rs` owns date-format configuration, and
 `storage.rs::open_default_reader` is deliberately separate from writer startup.
 Request has no anchor selector: it renders every durable correlation and
 availability record in chronological Journal order instead of guessing a
@@ -806,7 +809,8 @@ command reuses the typed Session usage projection; it neither decodes receipts
 again in the CLI nor starts a backend or live TUI view. `--ascii` changes only
 the output glyph profile.
 
-For terminal stdout, `session.rs` supplies the observed width and Session-specific
+For terminal stdout, `command/session/list.rs` supplies the observed width and
+`command/session/presentation.rs` supplies Session-specific
 column priorities and continuation hints to the generic `yo-tui::plain`
 renderer. It first folds PATH and DETAIL, then continuation/version, started
 time, and workspace. Short folded label/value pairs flow left to right below

@@ -10,8 +10,9 @@ use nix::{
 use yo_tui::PresentationMode;
 
 use super::support::{
-    CHILD_MARKER, ENTER_ALTERNATE_SCREEN, LEAVE_ALTERNATE_SCREEN, PendingAgent, PtyChild,
-    RetainedChatAgent, ScreenEvent, assert_child_is_gone,
+    CHILD_MARKER, ENTER_ALTERNATE_SCREEN, LEAVE_ALTERNATE_SCREEN, PtyChild, ScreenEvent,
+    agent::{PendingAgent, RetainedChatAgent},
+    assert_child_is_gone,
 };
 use crate::process::termination::TerminationCoordinator;
 

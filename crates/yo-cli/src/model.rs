@@ -111,7 +111,7 @@ pub(crate) fn resolve(
     stored_preference: Option<yo_core::StartupTarget>,
     override_model: Option<&str>,
     no_tools: bool,
-    sandbox: Option<crate::command::SandboxMode>,
+    read_only_review: bool,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
     startup::resolve(
@@ -119,7 +119,7 @@ pub(crate) fn resolve(
         stored_preference,
         override_model,
         no_tools,
-        sandbox,
+        read_only_review,
         resume,
     )
 }

@@ -10,33 +10,27 @@ use super::*;
 // delegated host가 아니라는 이유로 host account section 전체가 사라지지 않게 합니다.
 #[test]
 fn managed_session_requests_both_builtin_host_inventories() {
-    let requests = inventory_requests(None, true);
+    let requests = inventory_requests(None);
 
     assert_eq!(requests[0].host, HostId::codex());
     assert_eq!(requests[1].host, HostId::grok());
     assert_eq!(requests[0].execution, DelegatedExecutionProfile::Standard);
     assert_eq!(requests[1].execution, DelegatedExecutionProfile::Standard);
-    assert!(!requests[0].outer_sandboxed_review);
-    assert!(!requests[1].outer_sandboxed_review);
 }
 
-// 제한 실행 프로필과 outer sandbox는 정확한 활성 Grok에만 적용하고, sibling Codex
-// inventory는 일반 session-free profile로 남겨 다른 host의 정책을 전이하지 않습니다.
+// 제한 실행 프로필은 정확한 활성 Grok에만 적용하고 sibling Codex inventory는 일반
+// session-free profile로 남겨 다른 host의 정책을 전이하지 않습니다. Grok outer sandbox
+// 정책은 provider owner인 host_catalog::grok 테스트가 검증합니다.
 #[test]
 fn active_read_only_grok_does_not_change_the_codex_inventory_profile() {
     let grok = HostId::grok();
-    let requests = inventory_requests(
-        Some((&grok, DelegatedExecutionProfile::ReadOnlyReview)),
-        true,
-    );
+    let requests = inventory_requests(Some((&grok, DelegatedExecutionProfile::ReadOnlyReview)));
 
     assert_eq!(requests[0].execution, DelegatedExecutionProfile::Standard);
-    assert!(!requests[0].outer_sandboxed_review);
     assert_eq!(
         requests[1].execution,
         DelegatedExecutionProfile::ReadOnlyReview
     );
-    assert!(requests[1].outer_sandboxed_review);
 }
 
 // managed binding이 현재인 picker에도 두 host account와 exact advertised model을 모두

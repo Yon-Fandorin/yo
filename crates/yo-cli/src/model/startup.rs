@@ -34,7 +34,7 @@ pub(super) fn resolve(
     stored_preference: Option<StartupTarget>,
     override_model: Option<&str>,
     no_tools: bool,
-    sandbox: Option<crate::command::SandboxMode>,
+    read_only_review: bool,
     resume: Option<&BackendResumeTarget>,
 ) -> Result<StartupBackend, AppError> {
     if let Some(target) = resume {
@@ -46,7 +46,7 @@ pub(super) fn resolve(
         None,
         override_model,
         no_tools,
-        sandbox.is_some(),
+        read_only_review,
     )
 }
 
