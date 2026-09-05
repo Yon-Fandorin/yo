@@ -1,5 +1,8 @@
 use crate::surface::Size;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum InputEvent {
     Key(KeyEvent),

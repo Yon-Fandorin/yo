@@ -1,11 +1,11 @@
-//! Shared terminal-independent text formatting for archived and live Usage views.
+//! Terminal-independent text formatting for archived Usage.
 
 use yo_core::{
     CacheReadSummary, SessionUsageReceipt, SessionUsageSource, UsageAggregate, UsageCoverage,
     UsageValue,
 };
 
-pub(in crate::runner) fn aggregate_text(aggregate: UsageAggregate, receipt_count: usize) -> String {
+pub(super) fn aggregate_text(aggregate: UsageAggregate, receipt_count: usize) -> String {
     match aggregate.coverage() {
         UsageCoverage::Complete => aggregate
             .tokens()
@@ -19,7 +19,7 @@ pub(in crate::runner) fn aggregate_text(aggregate: UsageAggregate, receipt_count
     }
 }
 
-pub(in crate::runner) fn cache_read_text(summary: CacheReadSummary) -> String {
+pub(super) fn cache_read_text(summary: CacheReadSummary) -> String {
     let value = match summary.share() {
         Some(share) => format!(
             "{}/{} ({}%)",
@@ -45,10 +45,7 @@ pub(in crate::runner) fn cache_read_text(summary: CacheReadSummary) -> String {
     )
 }
 
-pub(in crate::runner) fn source_text(
-    receipt: &SessionUsageReceipt,
-    separator: Option<&str>,
-) -> String {
+pub(super) fn source_text(receipt: &SessionUsageReceipt, separator: Option<&str>) -> String {
     let divider = separator.map_or_else(|| " ".to_owned(), |value| format!(" {value} "));
     match receipt.source() {
         SessionUsageSource::Managed {
@@ -93,7 +90,7 @@ pub(in crate::runner) fn source_text(
     }
 }
 
-pub(in crate::runner) fn value_text(value: UsageValue) -> String {
+pub(super) fn value_text(value: UsageValue) -> String {
     match value {
         UsageValue::Reported(tokens) => format_tokens(tokens),
         UsageValue::Absent => "absent".to_owned(),
@@ -101,7 +98,7 @@ pub(in crate::runner) fn value_text(value: UsageValue) -> String {
     }
 }
 
-pub(in crate::runner) fn safe_text(value: &str) -> String {
+pub(super) fn safe_text(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for character in value.chars() {
         if character.is_control() {
