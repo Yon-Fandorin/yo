@@ -6,7 +6,7 @@
 | 영역 | 소유하는 책임 | 탐색 시작점 |
 |---|---|---|
 | `yo-cli` | 프로세스 시작, Unix 종료 조율, CLI application orchestration | [`crates/yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`crates/yo-cli/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/lib.rs), [`crates/yo-cli/src/application.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application.rs) |
-| `yo-core` | 에이전트 세션 의미, 명령과 이벤트, 백엔드 포트, Codex app-server 어댑터 | [`crates/yo-core/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/lib.rs) |
+| `yo-core` | 에이전트 세션 의미, 명령과 이벤트, provider 중립 backend port | [`crates/yo-core/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/lib.rs) |
 | `yo-tui` | 입력 편집, 대화 기록 레이아웃, 터미널 모드와 렌더링, 공유 HTML Projection | [`crates/yo-tui/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/lib.rs) |
 
 의존성은 다음 방향으로만 흐른다.

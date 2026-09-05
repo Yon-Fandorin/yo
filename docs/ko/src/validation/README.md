@@ -26,7 +26,7 @@ command, host, credential, platform을 기록한다.
 
 | 변경 영역 | 처음 실행할 유용한 명령 | 가장 가까운 증거 |
 |---|---|---|
-| Session, Turn, Activity, engine, runtime 의미 | `cargo test -p yo-core` | `crates/yo-core/src/tests`와 소유 모듈 test |
+| Session, Turn, Activity, engine, runtime 의미 | `cargo test -p yo-core` | `crates/yo-core/src/engine/tests`와 `crates/yo-core/src/runtime/tests` |
 | typed input span, submission identity, 고정된 v1의 structured-reference 거절 | `cargo test -p yo-core input::tests`와 `cargo test -p yo-core journal::codec` | `crates/yo-core/src/input/tests.rs`와 Journal wire-compatibility test |
 | Agent-session admission, concurrency, 시작, 종료 | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
 | backend lifecycle, evidence 또는 bounded child-process transport 추출 | `cargo test --locked -p yo-backend` 뒤 `cargo test --locked -p yo-core backend::evidence`와 `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, `yo-core` specialization, Journal wire·recovery 호환성 test |
@@ -51,7 +51,7 @@ command, host, credential, platform을 기록한다.
 | 하나의 깨끗한 Slice 후보에서 검증, 리뷰, 위험, 승인 증거가 모두 같은 identity에 결속됐는지 | `cargo xtask slice gate <request.json>` | 검증이나 리뷰를 다시 실행하지 않고 다음 행동 하나만 반환 |
 | ready Slice의 정확한 commit message와 close 기록을 identity 전사 없이 준비하는지 | `cargo xtask slice commit prepare <gate.json> <message-source> <message-out>` 실행 후 exact squash를 commit하고, `close plan/apply` 전에 `cargo xtask slice close prepare <request.json>` 실행 | 첫 prepare는 깨끗한 Slice worktree, close prepare는 accepted commit 이후 깨끗한 통합 worktree에서 실행 |
 | 저장소 hook 정책이나 구조화된 개발 검사 | `cargo test -p xtask` | `tools/xtask/src` |
-| Prospective activation ContextBuild와 review-packet identity | `cargo test -p methexis activation_review_context`와 `cargo test -p xtask review_packet::tests::prospective` | 정확한 activation request, 제안 Checkpoint·active record, authority mode, packet 재생, active-authority 교차 사용 거절 |
+| Prospective activation ContextBuild와 review-packet identity | `cargo test -p methexis activation_review_context`와 `cargo test -p xtask review::packet::tests::prospective` | 정확한 activation request, 제안 Checkpoint·active record, authority mode, packet 재생, active-authority 교차 사용 거절 |
 | tmux, SSH, SSH 내부 tmux 동작 | [터미널 환경 매트릭스](./terminal-matrix.md) 참고 | ignored `yo-cli` 환경 test |
 
 이 명령들은 시작점이지, 영향받은 인접 경계를 무시해도 된다는 허가가

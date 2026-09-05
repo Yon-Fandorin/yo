@@ -26,7 +26,7 @@ the assertion or silently skipping it.
 
 | Change area | First useful command | Closest evidence |
 |---|---|---|
-| Session, Turn, Activity, engine, or runtime semantics | `cargo test -p yo-core` | `crates/yo-core/src/tests` and the owning module tests |
+| Session, Turn, Activity, engine, or runtime semantics | `cargo test -p yo-core` | `crates/yo-core/src/engine/tests` and `crates/yo-core/src/runtime/tests` |
 | Typed input spans, submission identity, or fixed-v1 structured-reference rejection | `cargo test -p yo-core input::tests` and `cargo test -p yo-core journal::codec` | `crates/yo-core/src/input/tests.rs` and Journal wire-compatibility tests |
 | Agent-session admission, concurrency, startup, or shutdown | `cargo test -p yo-core agent_session::tests` | `crates/yo-core/src/agent_session/tests` |
 | Backend lifecycle, evidence, or bounded child-process transport extraction | `cargo test --locked -p yo-backend` followed by `cargo test --locked -p yo-core backend::evidence` and `cargo test --locked -p yo-core journal::codec::tests::correlation` | `crates/backends/foundation/src`, the `yo-core` specialization, and Journal wire/recovery compatibility tests |
@@ -51,7 +51,7 @@ the assertion or silently skipping it.
 | One clean Slice candidate has validation, review, risk, and approval evidence bound to the same identity | `cargo xtask slice gate <request.json>` | Returns exactly one next action without rerunning validation or review |
 | A ready Slice needs an exact commit message and close record without identity transcription | Run `cargo xtask slice commit prepare <gate.json> <message-source> <message-out>`, commit the exact squash, then run `cargo xtask slice close prepare <request.json>` before `close plan/apply` | The first prepare runs in the clean Slice worktree; close prepare runs in the clean integration worktree after the accepted commit |
 | Repository hook policy or structured development checks | `cargo test -p xtask` | `tools/xtask/src` |
-| Prospective activation ContextBuild and review-packet identity | `cargo test -p methexis activation_review_context` and `cargo test -p xtask review_packet::tests::prospective` | Exact activation request, proposed Checkpoint/active record, authority mode, packet replay, and active-authority cross-use rejection |
+| Prospective activation ContextBuild and review-packet identity | `cargo test -p methexis activation_review_context` and `cargo test -p xtask review::packet::tests::prospective` | Exact activation request, proposed Checkpoint/active record, authority mode, packet replay, and active-authority cross-use rejection |
 | tmux, SSH, or nested tmux behavior | See the [terminal environment matrix](./terminal-matrix.md) | Ignored `yo-cli` environment tests |
 
 These commands are entry points, not permission to ignore affected neighboring

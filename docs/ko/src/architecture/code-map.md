@@ -211,7 +211,7 @@ transport 공유 구조를 추출한다.
 | [`plain`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/plain.rs) | terminal cell 폭에 맞춰 고정 열을 유지하고 짧은 접힌 label/value pair는 폭 안에서 flow로 채우며 block 값은 독립된 한 줄을 사용하되 필요할 때만 label과 값을 분리하고, grapheme을 자르지 않고 개행한 뒤 필요하면 세로 card layout으로 전환하는 plain 목록 | 열의 의미와 접기 우선순위 또는 continuation hint, 설정, stdout TTY 정책, terminal 소유권 |
 | [`meter`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/meter.rs) | 재사용 가능한 terminal-safe percentage meter. vertical-level·horizontal-bar·vertical-bar shape, profile 또는 custom glyph family, 검증된 layout template을 제공한다 | 호출 측 presentation 정책, semantic threshold 색상, 표의 컬럼 의미 또는 terminal ownership |
 | [`input`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/input.rs) | 해석이 끝난 semantic key event, 편집 buffer, 설정 가능한 binding, 종료 gesture, prompt 편집, typed view-switch 표시 정책, 사용 가능한 key action의 공용 terminal 표기 | terminal label만 다루는 곳은 `input/key_notation.rs`, 보이는 cursor 배치는 `prompt`, 선택한 Projection은 `runner/view.rs` |
-| [`command`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/command.rs) | built-in slash command마다 ID, invocation, description, typed effect를 소유하는 child module 하나, 얕은 registry 합성과 uniqueness 검증, 첫 token query scan, filtering한 prompt-overlay snapshot, 정확한 draft의 Esc 소유권, registry에서 파생한 help Projection | input 우선순위와 effect 실행은 `runner/state.rs`, 선택과 표시는 `overlay`, `/model` 해석은 `runner/model.rs` |
+| [`command.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/command.rs), [`definition.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/command/definition.rs), [`registry.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/command/registry.rs), [`palette.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/command/palette.rs) | built-in slash command마다 불변 definition을 소유하는 child module, registry 합성·uniqueness 검증·조회·help Projection, palette 수명주기가 소유하는 첫 token query scan·filtering한 prompt-overlay snapshot·정확한 draft의 Esc 처리 | input 우선순위와 effect 실행은 `runner/state.rs`, 선택과 표시는 `overlay`, `/model` 해석은 `runner/model.rs` |
 | [`runner/model.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/model.rs) | 통합 managed·delegated-host account section을 공용 selection panel에 Projection하고, non-selectable section/status 행과 inline current 상태의 정확한 model label, disabled 행 표시, typed managed-or-host acceptance를 유지 | Durable activation mutation, host inventory transport, binding-transition policy 또는 범용 overlay interaction |
 | [`transcript`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/transcript.rs) | 순서가 있는 사용자·에이전트 item, streaming revision, separator를 보존하는 범위 Projection, 대화 기록 layout, scroll 상태 | 단조 증가 publication cursor는 `runner/chat.rs`, prompt와 compact 조합하는 일은 `shell` |
 | [`runner/view.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/runner/view.rs) | Chat·Transcript·Request 선택, 상단 헤더가 없는 편집 가능한 Chat 화면, 읽기 전용 mode 헤더, 전체 Transcript Projection, 선택적인 정확한 context 강조를 포함한 Session 전체 payload-free Request trace, mode별 context·viewport 상태 | Journal 관찰과 editor dispatch는 `runner/state.rs`, 공통 layout·scroll은 `transcript` |
@@ -333,14 +333,14 @@ Inline publication과 compact live geometry는
 `yo` 제품이 아니라 이 저장소를 관리하는 구조화된 검사를 소유한다. 변경
 경로와 commit trailer를 분류하여 Slice 검수와 Developer Docs 영향을
 확인하고, Rust test에 이해 가능한 인접 설명이 있는지도 검사한다.
-`activation_slice` 모듈은 작은 semantic request를 받아 현재 `develop`을
+`slice::activation` 모듈은 작은 semantic request를 받아 현재 `develop`을
 고정하고 canonical Methexis activation contract를 발행하며, Direct Slice
 worktree를 생성해 둘을 bind하고 exact 부분 setup을 복구한다. review-packet
 모듈은 일반 후보에는 active ContextBuild를 쓰고, 이후 activation request 하나에는
 명시적으로 versioning한 prospective operation을 쓴다. 후자는 activation을 허가하지
 않고 제안된 Checkpoint와 active-record 전환을 결속한다. bootstrap 모듈은 trusted
 `develop`의 정확한 versioned capability를 요구하고 닫힌 4개 경로 activation 전환만
-허용하므로 구현과 workflow 변경은 계속 일반 검수 경로를 쓴다. `slice_close`
+허용하므로 구현과 workflow 변경은 계속 일반 검수 경로를 쓴다. `slice::close`
 모듈은 수용 commit, Slice patch, 검수 증거, binding, ref,
 깨끗한 worktree가 모두 일치한 뒤에만 hash-addressed 로컬 정리 plan을 만들고
 적용한다. 그 storage 경계는 안전하지 않은 plan file 입력을 거절한다.
