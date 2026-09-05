@@ -1,5 +1,8 @@
 mod error;
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::{HashMap, HashSet};
 
 pub use error::RuntimeError;

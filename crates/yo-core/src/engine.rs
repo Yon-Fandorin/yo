@@ -2,6 +2,9 @@ mod error;
 mod recovery;
 mod state;
 
+#[cfg(test)]
+mod tests;
+
 pub use error::{AgentRejection, ExpectedResponse, ResponseKind};
 use state::EngineState;
 
