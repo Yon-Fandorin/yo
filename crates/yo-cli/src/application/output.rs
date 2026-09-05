@@ -2,7 +2,7 @@ use std::io::Write;
 
 use crate::{
     command,
-    diagnostic::{AppError, CliDiagnostic},
+    interaction::diagnostic::{AppError, CliDiagnostic},
 };
 
 pub(super) fn write_command_output(output: String) -> Result<(), AppError> {

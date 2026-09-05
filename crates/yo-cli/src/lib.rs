@@ -1,21 +1,12 @@
 #![cfg(unix)]
 
-mod agent;
 mod application;
 mod command;
-mod config;
-mod connection;
-mod diagnostic;
-mod host;
-mod live;
-mod local_tools;
-mod model;
-mod presentation;
-mod print;
-mod process;
-mod storage;
+mod execution;
+mod interaction;
+mod state;
 
-pub(crate) use diagnostic::AppError;
+pub(crate) use interaction::diagnostic::AppError;
 
 pub fn run() -> std::process::ExitCode {
     application::run()

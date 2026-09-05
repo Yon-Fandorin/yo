@@ -1,8 +1,10 @@
 use std::process::ExitCode;
 
-use crate::{command, diagnostic::AppError, local_tools};
+use crate::{command, execution::tools, interaction::diagnostic::AppError};
 
+mod agent;
 mod codex_diagnostics;
+mod live_selection;
 mod output;
 mod runtime;
 
@@ -16,7 +18,7 @@ use codex_diagnostics::{
 use output::write_command_output;
 
 pub(super) fn run() -> ExitCode {
-    local_tools::initialize_process_file_mode();
+    tools::initialize_process_file_mode();
     let command = match command::parse(std::env::args_os().skip(1)) {
         Ok(command) => command,
         Err(error) => {

@@ -2,13 +2,13 @@ use std::{collections::BTreeSet, num::NonZeroU16};
 
 use yo_core::CredentialMutationAction;
 
-use crate::{
-    connection::presentation::{
+use crate::interaction::{
+    PresentationStyle,
+    connection::{
         BindingDetails, ConfirmationView, PlanAction, PlanCounts, PresentationError,
         SuccessPresentation, group_profiles, plural, push_change, push_model_list_field,
         push_plan_summary, push_section_heading, push_title, render_success, trim_trailing_newline,
     },
-    presentation::PresentationStyle,
 };
 
 #[cfg(test)]

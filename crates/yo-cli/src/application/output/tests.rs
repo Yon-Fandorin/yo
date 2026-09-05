@@ -7,7 +7,7 @@ use super::{
 use crate::{
     application::account_exit_code,
     command::{AccountCompletion, AccountRunOutput},
-    diagnostic::{AppError, CliDiagnostic},
+    interaction::diagnostic::{AppError, CliDiagnostic},
 };
 
 struct FlushFails;

@@ -19,7 +19,7 @@ rollback, shutdown compensation, thread ownership, and isolated subprocess
 signal behavior:
 
 ```bash
-cargo test -p yo-cli process::termination::tests
+cargo test -p yo-cli execution::process::termination::tests
 ```
 
 These host-integrated checks are part of the ordinary package test run. Their

@@ -18,8 +18,7 @@ use crate::{
             render_records_with_width,
         },
     },
-    diagnostic::CliDiagnostic,
-    presentation::PresentationStyle,
+    interaction::{PresentationStyle, diagnostic::CliDiagnostic},
 };
 
 fn render_records(
@@ -404,5 +403,5 @@ fn ansi_decoration_is_explicit_and_plain_output_stays_clean() {
     assert!(!plain.contains('\u{1b}'));
     assert!(ansi.contains("\u{1b}[1m"));
     assert!(ansi.contains("\u{1b}[31m"));
-    assert_eq!(crate::presentation::strip_ansi(&ansi), plain);
+    assert_eq!(crate::interaction::strip_ansi(&ansi), plain);
 }

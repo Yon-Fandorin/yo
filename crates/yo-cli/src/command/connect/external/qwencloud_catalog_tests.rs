@@ -17,7 +17,7 @@ struct CatalogCancelInput {
 impl ExternalConnectInput for CatalogCancelInput {
     fn confirm(
         &mut self,
-        _: &dyn crate::connection::presentation::ConfirmationView,
+        _: &dyn crate::interaction::connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         panic!("catalog cancellation must happen before confirmation")
     }
@@ -80,7 +80,7 @@ struct CatalogSuccessInput {
 impl ExternalConnectInput for CatalogSuccessInput {
     fn confirm(
         &mut self,
-        _: &dyn crate::connection::presentation::ConfirmationView,
+        _: &dyn crate::interaction::connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         self.events.push("confirm");
         Ok(true)
@@ -146,7 +146,7 @@ struct ExactInput {
 impl ExternalConnectInput for ExactInput {
     fn confirm(
         &mut self,
-        _: &dyn crate::connection::presentation::ConfirmationView,
+        _: &dyn crate::interaction::connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         Ok(true)
     }
@@ -268,7 +268,7 @@ impl Drop for TestRoot {
 }
 
 fn test_root(label: &str) -> TestRoot {
-    let root = crate::connection::canonical_test_temp_dir().join(format!(
+    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
         "yo-qwencloud-catalog-{label}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()

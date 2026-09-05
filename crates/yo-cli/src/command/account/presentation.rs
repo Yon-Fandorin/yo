@@ -10,8 +10,7 @@ use crate::{
     command::account::domain::{
         AccountCapacityRecord, AccountQuery, AccountRefreshFailure, terminal_safe,
     },
-    diagnostic::CliDiagnostic,
-    presentation::{PresentationStyle, TextStyle},
+    interaction::{PresentationStyle, TextStyle, diagnostic::CliDiagnostic},
 };
 
 pub(super) mod common;

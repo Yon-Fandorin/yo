@@ -35,13 +35,13 @@ impl ExternalDisconnectInput for FakeInput {
 
     fn confirm(
         &mut self,
-        preview: &dyn crate::connection::presentation::ConfirmationView,
+        preview: &dyn crate::interaction::connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         self.summaries.push(
             preview
                 .render_styled(
-                    crate::connection::presentation::default_width(),
-                    crate::presentation::PresentationStyle::Plain,
+                    crate::interaction::connection::default_width(),
+                    crate::interaction::PresentationStyle::Plain,
                 )
                 .unwrap(),
         );
@@ -252,7 +252,7 @@ fn preview_resolves_the_exact_lower_priority_startup_target() {
         let plan = ExternalDisconnectPlan::prepare(&snapshot, &selection, &policy, false).unwrap();
         let preview = plan
             .preview
-            .render(crate::connection::presentation::default_width())
+            .render(crate::interaction::connection::default_width())
             .unwrap();
 
         assert!(preview.contains("✓ New sessions\n  Use host:codex"));
@@ -439,7 +439,7 @@ fn last_explicit_binding_preserves_credential_for_a_stored_catalog_seed() {
     .unwrap();
     let preview = plan
         .preview
-        .render(crate::connection::presentation::default_width())
+        .render(crate::interaction::connection::default_width())
         .unwrap();
 
     assert_eq!(
@@ -461,7 +461,7 @@ impl ExternalDisconnectInput for ConfigChangingInput {
 
     fn confirm(
         &mut self,
-        _: &dyn crate::connection::presentation::ConfirmationView,
+        _: &dyn crate::interaction::connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         self.confirmation_reads += 1;
         fs::write(&self.config_path, "tui:\n  max_fps: 60\n").unwrap();
@@ -582,7 +582,7 @@ fn queued_confirmation_line_cannot_authorize_disconnect() {
         let (result_tx, result_rx) = mpsc::channel();
         let worker_config = config_path.clone();
         let worker = thread::spawn(move || {
-            let mut input = TtyConnectionInput::with_terminal(fs::File::from(pty.slave));
+            let mut input = TtyPrompt::with_terminal(fs::File::from(pty.slave));
             let result = execute_external_disconnect_with(
                 &worker_config,
                 DisconnectCommand {
@@ -730,7 +730,7 @@ impl Fixture {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-cli-disconnect-{}-{name}-{nonce}",
             std::process::id()
         ));

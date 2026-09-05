@@ -6,7 +6,7 @@ use yo_core::ApiCredential;
 pub(crate) use super::picker::ModelPickerItem;
 use crate::{
     AppError,
-    connection::{input::TtyConnectionInput, presentation::ConfirmationView},
+    interaction::{connection::ConfirmationView, prompt::TtyPrompt},
 };
 
 pub(crate) trait ExternalConnectInput {
@@ -20,13 +20,13 @@ pub(crate) trait ExternalConnectInput {
     }
 }
 
-impl ExternalConnectInput for TtyConnectionInput {
+impl ExternalConnectInput for TtyPrompt {
     fn confirm(&mut self, preview: &dyn ConfirmationView) -> Result<bool, AppError> {
-        TtyConnectionInput::confirm(self, preview)
+        TtyPrompt::confirm(self, preview)
     }
 
     fn read_credential(&mut self, account: &str) -> Result<ApiCredential, AppError> {
-        TtyConnectionInput::read_credential(self, account)
+        TtyPrompt::read_credential(self, account)
     }
 
     fn select_model(&mut self, models: &[ModelPickerItem]) -> Result<Option<usize>, AppError> {
@@ -57,7 +57,7 @@ mod confirmation_tests {
     use yo_tui::surface::cell_width;
 
     use super::super::presentation::{Confirmation, ConnectPreview, StoredConnectionChange};
-    use crate::connection::{input::TtyConnectionInput, presentation::BindingDetails};
+    use crate::interaction::{connection::BindingDetails, prompt::TtyPrompt};
     // 실제 48열 PTY의 winsize를 읽은 confirmation 경로가 connect 핵심 정보와 exact profile을
     // 모두 보존하면서 모든 preview 물리 줄을 48셀 안에서 직접 감싸는지 검증합니다.
     #[test]
@@ -90,7 +90,7 @@ mod confirmation_tests {
             .with_verbose(true),
         ));
         let child = thread::spawn(move || {
-            let mut input = TtyConnectionInput::with_terminal(File::from(pty.slave));
+            let mut input = TtyPrompt::with_terminal(File::from(pty.slave));
             input.confirm(&preview).unwrap()
         });
 
@@ -166,7 +166,7 @@ mod confirmation_tests {
             true,
             vec![BindingDetails::from(&complete)],
         )));
-        let mut input = TtyConnectionInput::with_terminal(terminal);
+        let mut input = TtyPrompt::with_terminal(terminal);
 
         let error = input.confirm(&preview).unwrap_err();
         drop(input);
