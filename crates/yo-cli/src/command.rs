@@ -13,9 +13,6 @@ mod print;
 mod session;
 mod usage;
 
-#[cfg(test)]
-mod tests;
-
 pub(crate) use account::{
     AccountCompletion, AccountRunOutput, Command as AccountCommand, run as run_account,
 };
@@ -26,15 +23,11 @@ use error::raw_command_error;
 pub(crate) use live::{LiveOptions, LiveSelection};
 pub(crate) use model::{Command as ModelCommand, run as run_model_activation};
 pub(crate) use output::OutputFormat;
-#[cfg(test)]
-pub(crate) use output::OutputOptions;
 pub(crate) use parser::parse;
 pub(crate) use print::PrintOptions;
 pub(crate) use session::{
     Command as SessionCommand, Output as SessionOutput, read_only_resume_from, run as run_session,
 };
-#[cfg(test)]
-pub(crate) use session::{Content as SessionContent, View as SessionView};
 pub(crate) use usage::{Command as UsageCommand, run as run_usage};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
