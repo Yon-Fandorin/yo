@@ -2,7 +2,7 @@ use clap::Args;
 
 mod execution;
 mod input;
-pub(super) mod presentation;
+mod presentation;
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 pub(super) struct Arguments {

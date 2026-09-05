@@ -1,7 +1,6 @@
 use std::{
     fs,
     io::{ErrorKind, Read, Write},
-    num::NonZeroU16,
     path::PathBuf,
     sync::mpsc,
     thread,
@@ -514,8 +513,8 @@ fn changed_config_after_confirmation_aborts_before_disconnect_intent() {
     assert!(!fixture.root.join("connection-operation.yaml").exists());
 }
 
-// width=1에서는 exact target의 두 셀 grapheme를 보존하며 표시할 수 없으므로 success를
-// commit 전에 완성하는 경계가 typed formatting error를 돌려주고 세 저장소를 그대로 둡니다.
+// success renderer가 width=1의 두 셀 grapheme 오류를 반환하면 execution은 commit 전에
+// 해당 원인을 보존한 formatting error를 돌려주고 세 저장소를 그대로 둡니다.
 #[test]
 fn width_one_success_failure_precedes_disconnect_commit() {
     let fixture = Fixture::new("width-one-success");
@@ -540,15 +539,11 @@ fn width_one_success_failure_precedes_disconnect_commit() {
             verbose: false,
         },
         &mut input,
-        |_, api_key, default| {
-            super::super::presentation::disconnect_success_with(
-                crate::connection::presentation::SuccessPresentation::plain(
-                    NonZeroU16::new(1).unwrap(),
-                ),
-                "한",
-                api_key,
-                default,
-            )
+        |_, _, _| {
+            Err(PresentationError::GraphemeExceedsWidth {
+                grapheme_width: 2,
+                width: 1,
+            })
         },
     )
     .unwrap_err();

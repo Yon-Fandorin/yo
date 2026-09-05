@@ -14,9 +14,6 @@ mod session;
 mod usage;
 
 #[cfg(test)]
-mod connection_presentation_tests;
-
-#[cfg(test)]
 mod tests;
 
 pub(crate) use account::{

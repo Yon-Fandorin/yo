@@ -12,7 +12,7 @@ use yo_tui::{
 
 use super::{Command, Content, Output, View};
 
-pub(crate) fn run(
+pub(super) fn run(
     storage: &crate::storage::LocalReadStorage,
     session_id: SessionId,
     command: Command,
@@ -51,7 +51,7 @@ pub(crate) fn read_only_resume_from(
     Ok(output)
 }
 
-pub(crate) fn show_from_reader(
+fn show_from_reader(
     reader: Option<&dyn StoredSessionReader>,
     session_id: SessionId,
     command: Command,
@@ -91,7 +91,7 @@ pub(crate) fn show_from_reader(
     })
 }
 
-pub(crate) fn read_history_from_reader(
+pub(in crate::command) fn read_history_from_reader(
     reader: Option<&dyn StoredSessionReader>,
     session_id: SessionId,
 ) -> Result<StoredSessionHistory, crate::diagnostic::AppError> {
@@ -108,7 +108,7 @@ pub(crate) fn read_history_from_reader(
     })
 }
 
-pub(super) fn archival_diagnostics(
+fn archival_diagnostics(
     session_id: SessionId,
     view: View,
     continuity: StoredSessionContinuity,
@@ -124,7 +124,7 @@ pub(super) fn archival_diagnostics(
     diagnostics
 }
 
-pub(crate) fn discovery_diagnostics(
+pub(in crate::command) fn discovery_diagnostics(
     session_id: SessionId,
     discovery_validation: StoredDiscoveryValidation,
 ) -> Vec<crate::diagnostic::CliDiagnostic> {
@@ -145,9 +145,12 @@ fn discovery_mismatch_diagnostic(
     format!("stored Session {session_id} discovery {mismatch}")
 }
 
-pub(crate) fn with_final_newline(mut output: String) -> String {
+pub(in crate::command) fn with_final_newline(mut output: String) -> String {
     if !output.ends_with('\n') {
         output.push('\n');
     }
     output
 }
+
+#[cfg(test)]
+mod tests;

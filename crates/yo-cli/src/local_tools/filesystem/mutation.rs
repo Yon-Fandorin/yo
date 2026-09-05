@@ -698,39 +698,6 @@ mod tests {
     };
     use crate::local_tools::{filesystem::path::AdmittedPath, tests::TestDirectory};
 
-    fn edit(old_text: &str, new_text: &str) -> super::super::mutation_plan::ExactEdit {
-        super::super::mutation_plan::ExactEdit::new(old_text.to_owned(), new_text.to_owned())
-    }
-
-    // 후보 byte 위치를 겹쳐 세므로 aaa 안의 aa는 두 번으로 분류되고, 서로 다른 edit의
-    // 유일 match가 겹치는 경우에도 원본을 수정하기 전에 별도 오류가 됩니다.
-    #[test]
-    fn exact_edit_planning_detects_ambiguity_and_cross_edit_overlap() {
-        assert_eq!(
-            super::super::mutation_plan::plan_replacements(b"aaa", &[edit("aa", "x")]),
-            Err("match_ambiguous")
-        );
-        assert_eq!(
-            super::super::mutation_plan::plan_replacements(
-                b"abc",
-                &[edit("ab", "x"), edit("bc", "y")]
-            ),
-            Err("overlapping_edits")
-        );
-    }
-
-    // edit 배열 순서와 무관하게 위치는 원본에서 계산하고 뒤에서 앞으로 적용해 앞쪽
-    // replacement가 뒤쪽 match offset을 움직이지 않습니다.
-    #[test]
-    fn exact_edits_apply_from_the_end_of_the_original() {
-        let edits = [edit("ab", "left"), edit("ef", "right")];
-        let starts = super::super::mutation_plan::plan_replacements(b"ab--ef", &edits).unwrap();
-        assert_eq!(
-            super::super::mutation_plan::apply_replacements(b"ab--ef", &edits, &starts),
-            b"left--right"
-        );
-    }
-
     // waiting mutation은 같은 host lock을 우회하지 않으며 cancellation이 이미 보이면
     // filesystem phase에 들어가지 않고 Interrupted 경로를 선택할 수 있습니다.
     #[test]
@@ -829,7 +796,10 @@ mod tests {
                 "growing.txt".to_owned(),
                 vec![OsString::from("growing.txt")],
             ),
-            edits: vec![edit("x", "y")],
+            edits: vec![super::super::mutation_plan::ExactEdit::new(
+                "x".into(),
+                "y".into(),
+            )],
         };
 
         let result = execute_edit_after_capture(

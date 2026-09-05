@@ -8,16 +8,16 @@ use yo_tui::plain::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SessionRow {
-    pub(crate) resume: String,
-    pub(crate) status: String,
-    pub(crate) workspace: String,
-    pub(crate) updated: String,
-    pub(super) started: String,
-    pub(super) version: String,
-    pub(super) continuation: String,
-    pub(super) path: String,
-    pub(super) detail: String,
+pub(super) struct SessionRow {
+    resume: String,
+    status: String,
+    workspace: String,
+    updated: String,
+    started: String,
+    version: String,
+    continuation: String,
+    path: String,
+    detail: String,
 }
 
 impl SessionRow {
@@ -59,7 +59,7 @@ impl SessionRow {
     }
 }
 
-pub(crate) fn format_rows(
+pub(super) fn format_rows(
     rows: &[SessionRow],
     all: bool,
     details: bool,
@@ -163,7 +163,7 @@ pub(crate) fn format_rows(
     )
 }
 
-pub(crate) fn output_width(
+pub(super) fn output_width(
     stdout_is_terminal: bool,
     observed: std::io::Result<NonZeroU16>,
 ) -> OutputWidth {
@@ -176,7 +176,7 @@ pub(crate) fn output_width(
     }
 }
 
-pub(crate) fn heading_style(stdout_is_terminal: bool) -> HeadingStyle {
+pub(super) fn heading_style(stdout_is_terminal: bool) -> HeadingStyle {
     if stdout_is_terminal {
         HeadingStyle::BoldAnsi
     } else {
@@ -184,7 +184,7 @@ pub(crate) fn heading_style(stdout_is_terminal: bool) -> HeadingStyle {
     }
 }
 
-pub(crate) fn terminal_safe(value: &str) -> String {
+fn terminal_safe(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for character in value.chars() {
         if character.is_control() {
@@ -222,3 +222,6 @@ fn workspace_label(path: &str) -> String {
         .unwrap_or(path)
         .to_owned()
 }
+
+#[cfg(test)]
+mod tests;

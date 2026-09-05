@@ -6,6 +6,7 @@ use yo_core::{
 };
 
 use super::{
+    Command as DisconnectCommand,
     input::ExternalDisconnectInput,
     presentation::{
         Confirmation, DisconnectEffect, DisconnectImpact, DisconnectPreview, RemainingBinding,
@@ -13,9 +14,7 @@ use super::{
     },
 };
 use crate::{
-    AppError,
-    command::DisconnectCommand,
-    config,
+    AppError, config,
     connection::{
         complete_binding_details, display_target,
         input::TtyConnectionInput,

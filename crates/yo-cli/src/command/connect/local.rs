@@ -4,10 +4,9 @@ use yo_core::{
     ConnectionOperationExecutionError, ConnectionRepositoryError, HostId, StartupTarget,
 };
 
+use super::Command as ConnectCommand;
 use crate::{
-    AppError,
-    command::ConnectCommand,
-    config,
+    AppError, config,
     connection::{self, display_target},
     storage,
 };

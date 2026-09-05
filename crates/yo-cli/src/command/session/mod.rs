@@ -9,9 +9,6 @@ mod output;
 mod presentation;
 mod show;
 
-#[cfg(test)]
-mod tests;
-
 pub(crate) use output::Output;
 pub(crate) use show::read_only_resume_from;
 use show::run as run_show;

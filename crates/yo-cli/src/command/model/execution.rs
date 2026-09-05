@@ -2,10 +2,9 @@ use std::path::Path;
 
 use yo_core::StartupTarget;
 
+use super::Command as ModelCommand;
 use crate::{
-    AppError,
-    command::ModelCommand,
-    config,
+    AppError, config,
     connection::{self, presentation},
 };
 

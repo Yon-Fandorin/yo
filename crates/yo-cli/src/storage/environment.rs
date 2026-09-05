@@ -5,7 +5,7 @@ use std::{
 
 use super::StorageConfigError;
 
-pub(super) const DEFAULT_CAPACITY_BYTES: u64 = 1024 * 1024 * 1024;
+const DEFAULT_CAPACITY_BYTES: u64 = 1024 * 1024 * 1024;
 
 pub(super) fn platform_state_root() -> Result<PathBuf, StorageConfigError> {
     platform_state_root_from(std::env::var_os("XDG_STATE_HOME"), std::env::var_os("HOME"))
@@ -21,7 +21,7 @@ pub(super) fn repository_root_from(
     Ok(state_root.join("sessions"))
 }
 
-pub(super) fn platform_state_root_from(
+fn platform_state_root_from(
     xdg_state_home: Option<OsString>,
     home: Option<OsString>,
 ) -> Result<PathBuf, StorageConfigError> {
@@ -45,7 +45,7 @@ pub(super) fn capacity_bytes() -> Result<u64, StorageConfigError> {
     capacity_bytes_from(std::env::var_os("YO_SESSION_CAPACITY_BYTES"))
 }
 
-pub(super) fn capacity_bytes_from(value: Option<OsString>) -> Result<u64, StorageConfigError> {
+fn capacity_bytes_from(value: Option<OsString>) -> Result<u64, StorageConfigError> {
     let Some(value) = value else {
         return Ok(DEFAULT_CAPACITY_BYTES);
     };
@@ -96,3 +96,6 @@ fn non_empty_path(name: &'static str, value: OsString) -> Result<PathBuf, Storag
         Ok(PathBuf::from(value))
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -38,10 +38,7 @@ fn default_config_path() -> Result<PathBuf, ConfigError> {
     Ok(root.join("yo").join("config.yaml"))
 }
 
-pub(super) fn environment_root(
-    name: &'static str,
-    value: OsString,
-) -> Result<PathBuf, ConfigError> {
+fn environment_root(name: &'static str, value: OsString) -> Result<PathBuf, ConfigError> {
     let path = PathBuf::from(value);
     if path.as_os_str().is_empty() || !path.is_absolute() {
         return Err(ConfigError::Environment(match name {
@@ -51,4 +48,23 @@ pub(super) fn environment_root(
         }));
     }
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{ffi::OsString, path::PathBuf};
+
+    use super::environment_root;
+
+    // 기본 설정 root는 현재 디렉터리에 따라 뜻이 바뀌는 상대경로를 허용하지 않습니다.
+    #[test]
+    fn default_configuration_roots_require_absolute_paths() {
+        assert!(environment_root("HOME", OsString::from("")).is_err());
+        assert!(environment_root("HOME", OsString::from("relative")).is_err());
+        assert!(environment_root("XDG_CONFIG_HOME", OsString::from("config")).is_err());
+        assert_eq!(
+            environment_root("HOME", OsString::from("/home/user")).unwrap(),
+            PathBuf::from("/home/user")
+        );
+    }
 }

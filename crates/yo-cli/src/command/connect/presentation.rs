@@ -11,15 +11,18 @@ use crate::{
     presentation::PresentationStyle,
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum StoredConnectionChange {
+pub(super) enum StoredConnectionChange {
     Create,
     Update,
     Keep,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ImportPreview {
+pub(super) struct ImportPreview {
     account: String,
     added: Vec<String>,
     changed: Vec<String>,
@@ -40,7 +43,7 @@ pub(crate) struct ImportPreview {
 
 impl ImportPreview {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(super) fn new(
         account: String,
         added: Vec<String>,
         changed: Vec<String>,
@@ -249,7 +252,7 @@ impl ImportPreview {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ConnectPreview {
+pub(super) struct ConnectPreview {
     target: String,
     account: String,
     default_after: String,
@@ -261,7 +264,7 @@ pub(crate) struct ConnectPreview {
 }
 
 impl ConnectPreview {
-    pub(crate) fn new(
+    pub(super) fn new(
         target: String,
         account: String,
         default_after: String,
@@ -282,7 +285,7 @@ impl ConnectPreview {
         }
     }
 
-    pub(crate) const fn with_verbose(mut self, verbose: bool) -> Self {
+    pub(super) const fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
         self
     }
@@ -412,14 +415,14 @@ impl ConnectPreview {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Confirmation {
+pub(super) enum Confirmation {
     Connect(Box<ConnectPreview>),
     Import(Box<ImportPreview>),
 }
 
 impl Confirmation {
     #[cfg(test)]
-    pub(crate) fn render(&self, width: NonZeroU16) -> Result<String, PresentationError> {
+    pub(super) fn render(&self, width: NonZeroU16) -> Result<String, PresentationError> {
         self.render_styled(width, PresentationStyle::Plain)
     }
 }
@@ -444,7 +447,7 @@ impl ConfirmationView for Confirmation {
     }
 }
 
-pub(crate) fn connect_success(
+pub(super) fn connect_success(
     target: &str,
     registered: usize,
     default: &str,
@@ -457,7 +460,7 @@ pub(crate) fn connect_success(
     )
 }
 
-pub(crate) fn connect_success_with(
+fn connect_success_with(
     presentation: SuccessPresentation,
     target: &str,
     registered: usize,
@@ -481,7 +484,7 @@ pub(crate) fn connect_success_with(
     )
 }
 
-pub(crate) fn import_success(
+pub(super) fn import_success(
     account: &str,
     registered: usize,
     default: &str,
@@ -494,7 +497,7 @@ pub(crate) fn import_success(
     )
 }
 
-pub(crate) fn import_success_with(
+fn import_success_with(
     presentation: SuccessPresentation,
     account: &str,
     registered: usize,

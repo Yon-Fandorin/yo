@@ -6,6 +6,9 @@ use yo_tui::surface::{Grapheme, GraphemeError};
 
 use crate::presentation::{PresentationStyle, TextStyle};
 
+#[cfg(test)]
+mod tests;
+
 const DEFAULT_WIDTH: u16 = 80;
 const FIELD_LABEL_WIDTH: usize = 16;
 const FIELD_INDENT: usize = 2;
@@ -249,8 +252,8 @@ pub(crate) fn default_width() -> NonZeroU16 {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SuccessPresentation {
-    pub(crate) width: NonZeroU16,
-    pub(crate) style: PresentationStyle,
+    width: NonZeroU16,
+    style: PresentationStyle,
 }
 
 impl SuccessPresentation {
@@ -260,11 +263,7 @@ impl SuccessPresentation {
         Self::for_output(&stdout, terminal, std::env::var_os("NO_COLOR").is_some())
     }
 
-    pub(crate) fn for_output(
-        output: &impl std::os::fd::AsFd,
-        terminal: bool,
-        no_color: bool,
-    ) -> Self {
+    fn for_output(output: &impl std::os::fd::AsFd, terminal: bool, no_color: bool) -> Self {
         let width = terminal
             .then(|| rustix::termios::tcgetwinsize(output).ok())
             .flatten()
@@ -279,6 +278,14 @@ impl SuccessPresentation {
         Self {
             width,
             style: PresentationStyle::Plain,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn ansi(width: NonZeroU16) -> Self {
+        Self {
+            width,
+            style: PresentationStyle::Ansi,
         }
     }
 }
@@ -544,7 +551,7 @@ pub(crate) fn escape_remote_text(value: &str) -> String {
     escaped
 }
 
-pub(crate) fn wrap_list(values: &[&str], width: usize) -> Result<Vec<String>, PresentationError> {
+fn wrap_list(values: &[&str], width: usize) -> Result<Vec<String>, PresentationError> {
     let width = width.max(1);
     let mut lines = Vec::new();
     let mut line = String::new();

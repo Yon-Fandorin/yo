@@ -13,8 +13,8 @@ use nix::{
 
 use crate::local_tools::execution::{completed, failed, interrupted};
 
-pub(super) const MAX_LIST_ENTRIES: usize = 100_000;
-pub(super) const LIST_TRUNCATION_MARKER: &str = "\n[yo: tool output truncated]";
+const MAX_LIST_ENTRIES: usize = 100_000;
+const LIST_TRUNCATION_MARKER: &str = "\n[yo: tool output truncated]";
 
 pub(super) fn list_files(
     mut directory: Dir,
@@ -45,18 +45,18 @@ pub(super) fn list_files(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ListObservationError {
+enum ListObservationError {
     Interrupted,
     Failed,
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(super) struct RetainedListNames {
-    pub(super) names: Vec<OsString>,
-    pub(super) truncated: bool,
+struct RetainedListNames {
+    names: Vec<OsString>,
+    truncated: bool,
 }
 
-pub(super) fn retain_list_names(
+fn retain_list_names(
     mut entries: impl Iterator<Item = Result<OsString, Errno>>,
     maximum: usize,
     cancelled: &AtomicBool,
@@ -87,7 +87,7 @@ pub(super) fn retain_list_names(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum ListedEntryKind {
+enum ListedEntryKind {
     Directory,
     Regular,
     Excluded,
@@ -105,7 +105,7 @@ fn classify_list_entry(directory: &Dir, name: &OsStr) -> Result<ListedEntryKind,
     })
 }
 
-pub(super) fn render_list_names(
+fn render_list_names(
     names: Vec<OsString>,
     relative_directory: &Path,
     limit: usize,

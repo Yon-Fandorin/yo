@@ -47,10 +47,7 @@ pub(super) fn read_file(
     }
 }
 
-pub(super) fn read_bounded(
-    mut reader: impl Read,
-    limit: usize,
-) -> std::io::Result<(Vec<u8>, bool)> {
+fn read_bounded(mut reader: impl Read, limit: usize) -> std::io::Result<(Vec<u8>, bool)> {
     let mut output = Vec::with_capacity(limit.min(64 * 1024));
     let mut chunk = [0_u8; 8 * 1024];
     let target = limit.saturating_add(1);

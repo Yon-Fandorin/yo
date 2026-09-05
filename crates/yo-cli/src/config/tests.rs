@@ -1,12 +1,10 @@
 use std::{
-    env,
-    ffi::OsString,
-    fs, io,
+    env, fs, io,
     os::unix::fs::{FileTypeExt, MetadataExt},
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use super::{path::environment_root, snapshot::MAX_CONFIG_BYTES, *};
+use super::{snapshot::MAX_CONFIG_BYTES, *};
 
 static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -264,18 +262,6 @@ fn invalid_date_format_is_rejected() {
 
     assert!(error.to_string().contains("config.yaml"));
     assert!(error.to_string().contains("session.list.date_format"));
-}
-
-// 기본 설정 root는 현재 디렉터리에 따라 뜻이 바뀌는 상대경로를 허용하지 않습니다.
-#[test]
-fn default_configuration_roots_require_absolute_paths() {
-    assert!(environment_root("HOME", OsString::from("")).is_err());
-    assert!(environment_root("HOME", OsString::from("relative")).is_err());
-    assert!(environment_root("XDG_CONFIG_HOME", OsString::from("config")).is_err());
-    assert_eq!(
-        environment_root("HOME", OsString::from("/home/user")).unwrap(),
-        PathBuf::from("/home/user")
-    );
 }
 
 // 읽기 상한을 한 byte 넘는 파일은 YAML parser에 넘기기 전에 거절합니다.

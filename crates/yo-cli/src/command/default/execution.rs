@@ -1,9 +1,8 @@
 use std::path::Path;
 
+use super::Command as DefaultCommand;
 use crate::{
-    AppError,
-    command::DefaultCommand,
-    config,
+    AppError, config,
     connection::{self, display_target},
 };
 

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use yo_core::LocalConnectionRepository;
 
 use super::{
+    Command as AccountCommand,
     domain::{
         AccountCapacityRecord, AccountRefreshFailure, exact_refresh_matches,
         target_display_reference,
@@ -13,10 +14,7 @@ use super::{
     storage,
 };
 use crate::{
-    AppError,
-    command::{OutputFormat, account::Command as AccountCommand},
-    config,
-    diagnostic::CliDiagnostic,
+    AppError, command::OutputFormat, config, diagnostic::CliDiagnostic,
     presentation::PresentationStyle,
 };
 

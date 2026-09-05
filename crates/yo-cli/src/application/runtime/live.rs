@@ -29,11 +29,10 @@ pub(in crate::application) fn run_live_session(
                 reason,
                 storage,
             } => {
-                let reader = storage.reader().ok_or_else(|| {
-                    AppError::message("captured read-only storage has no Session reader")
-                })?;
-                let output = command::read_only_resume_from(
-                    reader,
+                let output = read_only_resume_output(
+                    storage.reader().map(|reader| {
+                        reader as &dyn yo_core::session_repository::StoredSessionReader
+                    }),
                     session_id,
                     options.glyph_profile,
                     &reason,
@@ -178,3 +177,17 @@ fn domain_selection(selection: command::LiveSelection) -> live::LiveSelection {
         command::LiveSelection::Continue => live::LiveSelection::Continue,
     }
 }
+
+fn read_only_resume_output(
+    reader: Option<&dyn yo_core::session_repository::StoredSessionReader>,
+    session_id: yo_core::SessionId,
+    glyph_profile: yo_tui::GlyphProfile,
+    reason: &str,
+) -> Result<command::SessionOutput, AppError> {
+    let reader = reader
+        .ok_or_else(|| AppError::many([format!("stored Session {session_id} was not found")]))?;
+    command::read_only_resume_from(reader, session_id, glyph_profile, reason)
+}
+
+#[cfg(test)]
+mod tests;

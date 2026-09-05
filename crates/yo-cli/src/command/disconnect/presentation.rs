@@ -11,19 +11,22 @@ use crate::{
     presentation::PresentationStyle,
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct RemainingBinding {
-    pub(crate) model: String,
+pub(super) struct RemainingBinding {
+    model: String,
 }
 
 impl RemainingBinding {
-    pub(crate) fn new(selection: ModelSelection) -> Self {
+    pub(super) fn new(selection: ModelSelection) -> Self {
         Self {
             model: selection.model().to_string(),
         }
     }
 
-    pub(crate) fn model(&self) -> &str {
+    pub(super) fn model(&self) -> &str {
         &self.model
     }
 
@@ -38,7 +41,7 @@ impl RemainingBinding {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DisconnectPreview {
+pub(super) struct DisconnectPreview {
     target: String,
     stored_source: String,
     removed: BindingDetails,
@@ -48,7 +51,7 @@ pub(crate) struct DisconnectPreview {
 }
 
 impl DisconnectPreview {
-    pub(crate) fn new(
+    pub(super) fn new(
         target: String,
         stored_source: String,
         removed: BindingDetails,
@@ -154,7 +157,7 @@ impl DisconnectPreview {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DisconnectImpact {
+pub(super) struct DisconnectImpact {
     default: DisconnectEffect,
     api_key: DisconnectEffect,
     new_sessions: DisconnectEffect,
@@ -162,7 +165,7 @@ pub(crate) struct DisconnectImpact {
 }
 
 impl DisconnectImpact {
-    pub(crate) fn new(
+    pub(super) fn new(
         default: DisconnectEffect,
         api_key: DisconnectEffect,
         new_sessions: DisconnectEffect,
@@ -178,41 +181,41 @@ impl DisconnectImpact {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct DisconnectEffect {
+pub(super) struct DisconnectEffect {
     detail: String,
     action: PlanAction,
 }
 
 impl DisconnectEffect {
-    pub(crate) fn change(detail: String) -> Self {
+    pub(super) fn change(detail: String) -> Self {
         Self {
             detail,
             action: PlanAction::Change,
         }
     }
 
-    pub(crate) fn remove(detail: String) -> Self {
+    pub(super) fn remove(detail: String) -> Self {
         Self {
             detail,
             action: PlanAction::Remove,
         }
     }
 
-    pub(crate) fn keep(detail: String) -> Self {
+    pub(super) fn keep(detail: String) -> Self {
         Self {
             detail,
             action: PlanAction::Keep,
         }
     }
 
-    pub(crate) fn ready(detail: String) -> Self {
+    pub(super) fn ready(detail: String) -> Self {
         Self {
             detail,
             action: PlanAction::Success,
         }
     }
 
-    pub(crate) fn attention(detail: String) -> Self {
+    pub(super) fn attention(detail: String) -> Self {
         Self {
             detail,
             action: PlanAction::Attention,
@@ -221,13 +224,13 @@ impl DisconnectEffect {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum Confirmation {
+pub(super) enum Confirmation {
     Disconnect(Box<DisconnectPreview>),
 }
 
 impl Confirmation {
     #[cfg(test)]
-    pub(crate) fn render(&self, width: NonZeroU16) -> Result<String, PresentationError> {
+    pub(super) fn render(&self, width: NonZeroU16) -> Result<String, PresentationError> {
         self.render_styled(width, PresentationStyle::Plain)
     }
 }
@@ -248,7 +251,7 @@ impl ConfirmationView for Confirmation {
     }
 }
 
-pub(crate) fn disconnect_success(
+pub(super) fn disconnect_success(
     target: &str,
     api_key: &str,
     default: &str,
@@ -256,7 +259,7 @@ pub(crate) fn disconnect_success(
     disconnect_success_with(SuccessPresentation::for_stdout(), target, api_key, default)
 }
 
-pub(crate) fn disconnect_success_with(
+fn disconnect_success_with(
     presentation: SuccessPresentation,
     target: &str,
     api_key: &str,

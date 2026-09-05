@@ -7,7 +7,7 @@ mod import;
 mod input;
 mod local;
 mod picker;
-pub(super) mod presentation;
+mod presentation;
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 #[command(group(

@@ -8,6 +8,7 @@ use yo_core::{
 };
 
 use super::{
+    Command as ConnectCommand,
     import::{self, ImportedDefinition},
     presentation::{
         Confirmation, ConnectPreview, ImportPreview, StoredConnectionChange, connect_success,
@@ -16,12 +17,9 @@ use super::{
 };
 use crate::{
     AppError,
-    command::{
-        ConnectCommand,
-        connect::{
-            input::{AuthorizedCredentialFileInput, ExternalConnectInput},
-            picker::ModelPickerItem,
-        },
+    command::connect::{
+        input::{AuthorizedCredentialFileInput, ExternalConnectInput},
+        picker::ModelPickerItem,
     },
     config,
     connection::{
