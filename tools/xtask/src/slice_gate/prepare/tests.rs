@@ -10,7 +10,7 @@ use super::{
     prepare_with, set_final_revalidate_hook,
 };
 use crate::{
-    review_packet::{VerifiedEvidence, VerifiedReview},
+    review::packet::{VerifiedEvidence, VerifiedReview},
     review_protocol::digest,
     slice_contract,
     test_support::{TestRepository, unique_path},

@@ -24,8 +24,7 @@ use super::{
 use crate::{
     bounded_file, git,
     impact::{review_coverage, slice_review::Lens},
-    review_delta, review_egress,
-    review_packet::VerifiedReview,
+    review::{delta as review_delta, egress as review_egress, packet::VerifiedReview},
     review_protocol::{digest, relative, resolve_input_path},
     review_result, slice_contract,
 };

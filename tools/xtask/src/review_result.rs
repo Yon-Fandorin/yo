@@ -6,7 +6,8 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bounded_file, review_delta, review_egress,
+    bounded_file,
+    review::{delta as review_delta, egress as review_egress},
     review_protocol::{digest, resolve_input_path},
 };
 

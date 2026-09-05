@@ -5,7 +5,7 @@ use super::model::{
 };
 use crate::{
     git,
-    review_packet::VerifiedReview,
+    review::packet::VerifiedReview,
     review_protocol::{self, digest},
 };
 
@@ -222,7 +222,7 @@ fn optional_blob(repository: &Path, commit: &str, path: &str) -> Result<Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{review_packet::VerifiedEvidence, test_support::TestRepository};
+    use crate::{review::packet::VerifiedEvidence, test_support::TestRepository};
 
     struct Fixture {
         repository: TestRepository,

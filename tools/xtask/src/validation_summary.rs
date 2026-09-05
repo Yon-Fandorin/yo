@@ -2,7 +2,7 @@ use std::{path::Path, process::Command};
 
 use serde::Deserialize;
 
-use crate::{git, review_packet::external_operation, review_protocol};
+use crate::{git, review::packet::external_operation, review_protocol};
 
 const LEGACY_SCHEMA: &str = "yo.validation-run-summary/v1";
 const ALPHA1_SCHEMA: &str = "yo.validation-run-summary/v1alpha1";

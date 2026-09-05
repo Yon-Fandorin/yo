@@ -5,16 +5,9 @@ mod docs_translation;
 mod git;
 mod grok_outer_sandbox;
 mod impact;
-mod review_continuation_preflight;
-mod review_delivery;
-mod review_delta;
-mod review_egress;
-mod review_packet;
-mod review_prepare;
+mod review;
 mod review_protocol;
 mod review_result;
-mod review_session;
-mod review_target_admission;
 mod slice_accept;
 mod slice_close;
 mod slice_contract;
@@ -143,7 +136,7 @@ fn run_review_prepare(arguments: &mut impl Iterator<Item = OsString>) -> Result<
         return Err(review_prepare_usage());
     }
     let repository = current_repository()?;
-    review_prepare::run(&repository, &request)
+    review::prepare::run(&repository, &request)
 }
 
 fn run_slice_accept(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -300,12 +293,12 @@ fn run_review_packet(arguments: &mut impl Iterator<Item = OsString>) -> Result<(
     let repository = current_repository()?;
     match mode {
         ReviewPacketMode::CheckReadiness => {
-            review_packet::check_readiness(&repository, &request, &mut std::io::stdout().lock())
+            review::packet::check_readiness(&repository, &request, &mut std::io::stdout().lock())
         },
         ReviewPacketMode::Preflight => {
-            review_packet::preflight(&repository, &request, &mut std::io::stdout().lock())
+            review::packet::preflight(&repository, &request, &mut std::io::stdout().lock())
         },
-        ReviewPacketMode::Publish => review_packet::run(&repository, &request),
+        ReviewPacketMode::Publish => review::packet::run(&repository, &request),
     }
 }
 
@@ -324,7 +317,7 @@ fn run_review_delta(arguments: &mut impl Iterator<Item = OsString>) -> Result<()
         return Err(review_delta_usage());
     }
     let repository = current_repository()?;
-    review_delta::run(&repository, &request)
+    review::delta::run(&repository, &request)
 }
 
 fn run_review_egress(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -336,7 +329,7 @@ fn run_review_egress(arguments: &mut impl Iterator<Item = OsString>) -> Result<(
         return Err(review_egress_usage());
     }
     let repository = current_repository()?;
-    review_egress::run(&repository, &request)
+    review::egress::run(&repository, &request)
 }
 
 fn run_review_delivery(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -357,9 +350,9 @@ fn run_review_delivery(arguments: &mut impl Iterator<Item = OsString>) -> Result
     }
     let repository = current_repository()?;
     if finalize {
-        review_delivery::finalize(&repository, &request)
+        review::delivery::finalize(&repository, &request)
     } else {
-        review_delivery::run(&repository, &request)
+        review::delivery::run(&repository, &request)
     }
 }
 
@@ -373,7 +366,7 @@ fn run_review_target_admission(
     if arguments.next().is_some() {
         return Err(review_target_admission_usage());
     }
-    review_target_admission::run(&request)
+    review::target_admission::run(&request)
 }
 
 fn run_review_continuation_preflight(
@@ -387,7 +380,7 @@ fn run_review_continuation_preflight(
         return Err(review_continuation_preflight_usage());
     }
     let repository = current_repository()?;
-    review_continuation_preflight::run(&repository, &request)
+    review::continuation_preflight::run(&repository, &request)
 }
 
 fn run_slice_close(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
