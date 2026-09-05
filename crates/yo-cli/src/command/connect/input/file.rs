@@ -8,7 +8,7 @@ use std::{
 use yo_core::ApiCredential;
 
 use super::ExternalConnectInput;
-use crate::{AppError, connection::presentation::ConfirmationView};
+use crate::{AppError, interaction::connection::ConfirmationView};
 
 const MAX_CREDENTIAL_BYTES: usize = 16 * 1024;
 const MAX_FILE_BYTES: usize = MAX_CREDENTIAL_BYTES + 2;

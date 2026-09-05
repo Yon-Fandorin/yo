@@ -23,8 +23,8 @@ pub(super) struct SessionRow {
 impl SessionRow {
     pub(super) fn from_stored(
         session: StoredSession,
-        dates: &crate::config::DateFormatter,
-    ) -> Result<Self, crate::config::ConfigError> {
+        dates: &crate::state::config::DateFormatter,
+    ) -> Result<Self, crate::state::config::ConfigError> {
         let resume = session.session_id().to_string();
         let continuation = eligibility_text(session.continuation_eligibility()).to_owned();
         Ok(match session {

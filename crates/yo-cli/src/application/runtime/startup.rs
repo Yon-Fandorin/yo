@@ -3,7 +3,13 @@ use std::{fmt, os::unix::ffi::OsStrExt};
 use super::super::{
     codex_diagnostics::CodexWarningCollector, output::write_session_command_output,
 };
-use crate::{agent, command, config, diagnostic::AppError, live, local_tools, model, storage};
+use crate::{
+    application::{agent, live_selection as live},
+    command,
+    execution::{model, tools as local_tools},
+    interaction::diagnostic::AppError,
+    state::{config, storage},
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum StartupFrontend {

@@ -18,7 +18,7 @@ process coordinator test는 handler 설치, rollback, shutdown compensation,
 thread ownership, 격리된 subprocess signal 동작을 별도로 실행한다.
 
 ```bash
-cargo test -p yo-cli process::termination::tests
+cargo test -p yo-cli execution::process::termination::tests
 ```
 
 이 호스트 통합 검사는 일반 package test에 포함된다. 통과했다고 해서 tmux나

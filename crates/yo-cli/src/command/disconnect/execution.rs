@@ -14,18 +14,21 @@ use super::{
     },
 };
 use crate::{
-    AppError, config,
-    connection::{
-        complete_binding_details, display_target,
-        input::TtyConnectionInput,
-        operation_repositories,
-        presentation::{PresentationError, display_model_item, escape_remote_text},
-        selection_for_binding,
+    AppError,
+    interaction::{
+        connection::{PresentationError, display_model_item, escape_remote_text},
+        prompt::TtyPrompt,
+    },
+    state::{
+        config,
+        connection::{
+            complete_binding_details, display_target, operation_repositories, selection_for_binding,
+        },
     },
 };
 
 pub(crate) fn run(command: DisconnectCommand) -> Result<String, AppError> {
-    let config_path = crate::connection::absolute_config_path(
+    let config_path = crate::state::connection::absolute_config_path(
         config::selected_path()
             .map_err(|error| AppError::single("locating Yo configuration", error))?,
     )?;
@@ -36,7 +39,7 @@ fn run_external_disconnect(
     config_path: &Path,
     command: DisconnectCommand,
 ) -> Result<String, AppError> {
-    let mut input = TtyConnectionInput::new();
+    let mut input = TtyPrompt::new();
     execute_external_disconnect_with(config_path, command, &mut input)
 }
 

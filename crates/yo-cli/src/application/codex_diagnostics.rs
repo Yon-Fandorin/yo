@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::output::write_cli_diagnostics;
-use crate::diagnostic::{AppError, CliDiagnostic};
+use crate::interaction::diagnostic::{AppError, CliDiagnostic};
 
 pub(super) const MAX_CODEX_COMPATIBILITY_WARNINGS: usize = 32;
 

@@ -10,7 +10,7 @@ use crate::{
 // 예약하고, 다른 Provider나 세 부분 exact ModelTarget과 섞이지 않는지 판별합니다.
 #[test]
 fn recognizes_only_the_closed_two_part_onboarding_shapes() {
-    let root = crate::connection::canonical_test_temp_dir().join(format!(
+    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
         "yo-catalog-pairs-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -90,7 +90,7 @@ struct DiscoveryCancelInput {
 impl ExternalConnectInput for DiscoveryCancelInput {
     fn confirm(
         &mut self,
-        _: &dyn crate::connection::presentation::ConfirmationView,
+        _: &dyn crate::interaction::connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         panic!("discovery cancellation must happen before confirmation")
     }
@@ -107,7 +107,7 @@ impl ExternalConnectInput for DiscoveryCancelInput {
 // discovery picker 취소 시 plan·preview·세 repository mutation 전에 멈추는지 판별합니다.
 #[test]
 fn discovery_cancellation_discards_the_candidate_before_mutation() {
-    let root = crate::connection::canonical_test_temp_dir().join(format!(
+    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
         "yo-external-discovery-cancel-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
@@ -167,7 +167,7 @@ struct DiscoverySuccessInput {
 impl ExternalConnectInput for DiscoverySuccessInput {
     fn confirm(
         &mut self,
-        _: &dyn crate::connection::presentation::ConfirmationView,
+        _: &dyn crate::interaction::connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         self.confirmations += 1;
         Ok(true)
@@ -185,7 +185,7 @@ impl ExternalConnectInput for DiscoverySuccessInput {
 // publication boundary에 도달해, 선택 뒤 credential 재입력이나 다른 model 선택을 막습니다.
 #[test]
 fn successful_discovery_binds_one_candidate_and_selected_row_to_publication() {
-    let root = crate::connection::canonical_test_temp_dir().join(format!(
+    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
         "yo-external-discovery-success-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()

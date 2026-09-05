@@ -1,5 +1,5 @@
 use super::finish_print_output;
-use crate::diagnostic::AppError;
+use crate::interaction::diagnostic::AppError;
 
 // print projection이 이미 framing한 bytes는 cleanup 성공 뒤 publisher에 정확히 한 번
 // 전달되며 process layer가 두 번째 LF나 다른 stdout payload를 덧붙이지 않습니다.

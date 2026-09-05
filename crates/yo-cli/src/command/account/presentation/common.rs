@@ -2,7 +2,7 @@ use yo_core::{AccountCapacityBucket, AccountCapacitySnapshot};
 
 use crate::{
     command::account::domain::{AccountQuery, display_identifier, terminal_safe},
-    presentation::TextStyle,
+    interaction::TextStyle,
 };
 
 pub(in crate::command::account) fn display_observed_at(value: &str) -> String {

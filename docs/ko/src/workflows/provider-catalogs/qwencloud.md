@@ -25,7 +25,7 @@ Static profile definition, endpoint, row, typed capability, deterministic
 ordering은
 [`qwencloud_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/qwencloud_catalog.rs)가
 소유한다. Configuration은
-[`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs)에서
+[`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/config.rs)에서
 profile을 non-routable seed로 해석한다. Shared selection과 recoverable connection
 transaction은
 [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs)와

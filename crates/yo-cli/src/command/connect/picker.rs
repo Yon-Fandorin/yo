@@ -5,8 +5,10 @@ use yo_tui::surface::Grapheme;
 
 use crate::{
     AppError,
-    connection::presentation::{default_width, escape_remote_text},
-    presentation::{PresentationStyle, TextStyle},
+    interaction::{
+        PresentationStyle, TextStyle,
+        connection::{default_width, escape_remote_text},
+    },
 };
 
 const MAX_VISIBLE_RESULTS: usize = 8;

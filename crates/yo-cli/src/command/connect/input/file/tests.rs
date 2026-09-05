@@ -18,7 +18,7 @@ impl Fixture {
     fn new(contents: &[u8], mode: u32) -> Self {
         let root = loop {
             let fixture_id = NEXT_FIXTURE_ID.fetch_add(1, Ordering::Relaxed);
-            let candidate = crate::connection::canonical_test_temp_dir().join(format!(
+            let candidate = crate::state::connection::canonical_test_temp_dir().join(format!(
                 "yo-credential-input-{}-{}",
                 std::process::id(),
                 fixture_id

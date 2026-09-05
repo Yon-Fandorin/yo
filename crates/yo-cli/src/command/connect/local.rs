@@ -6,9 +6,12 @@ use yo_core::{
 
 use super::Command as ConnectCommand;
 use crate::{
-    AppError, config,
-    connection::{self, display_target},
-    storage,
+    AppError,
+    state::{
+        config,
+        connection::{self, display_target},
+        storage,
+    },
 };
 
 fn verify_local_host_with_codex_warning_observer(
@@ -19,7 +22,11 @@ fn verify_local_host_with_codex_warning_observer(
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let _workspace_host_id = storage::open_default_host_identity()
         .map_err(|error| AppError::single("opening the stable workspace Host identity", error))?;
-    crate::host::verify_at_with_codex_warning_observer(host, &workspace, warning_observer)
+    crate::execution::host::verify_at_with_codex_warning_observer(
+        host,
+        &workspace,
+        warning_observer,
+    )
 }
 
 pub(super) fn validate_options(command: &ConnectCommand) -> Result<(), AppError> {

@@ -1,3 +1,7 @@
+mod input;
+mod projection;
+mod runner;
+
 use super::{
     super::{
         codex_diagnostics::{
@@ -9,13 +13,17 @@ use super::{
     startup,
 };
 use crate::{
-    command, config, connection, diagnostic::AppError, live, print as print_projection, process,
+    application::live_selection as live,
+    command,
+    execution::process,
+    interaction::diagnostic::AppError,
+    state::{config, connection},
 };
 
 pub(in crate::application) fn run_print_session(
     options: command::PrintOptions,
 ) -> Result<(), AppError> {
-    let input = print_projection::input::read_input(options.prompt)?;
+    let input = input::read_input(options.prompt)?;
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let mut config =
@@ -57,9 +65,7 @@ pub(in crate::application) fn run_print_session(
             };
             let PreparedAgent { agent, .. } = *prepared;
             let mut session = agent.into_session();
-            let output = print_projection::runner::run(&mut session, input, || {
-                termination_requested(termination)
-            });
+            let output = runner::run(&mut session, input, || termination_requested(termination));
             let cleanup = session
                 .shutdown()
                 .map(drop)
