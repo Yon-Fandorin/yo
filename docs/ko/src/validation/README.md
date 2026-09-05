@@ -42,7 +42,7 @@ command, host, credential, platform을 기록한다.
 | Inline 또는 Fullscreen mode 동작 | `cargo test -p yo-tui terminal::mode::` | `yo-tui/src/terminal/mode` 아래 test |
 | live loop 순서, backpressure, submission draft 소유권, event Projection | `cargo test -p yo-tui runner::` | `yo-tui/src/runner` 아래 test |
 | 같은 완성 frame의 터미널·HTML Projection | `cargo test -p yo-tui --test rendering_parity` | `crates/yo-tui/tests/rendering_parity`와 golden |
-| process termination이나 실제 터미널 복원 | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
+| process termination이나 실제 터미널 복원 | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests/` |
 | Unix process coordinator 상태와 보상 | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |
 | 공통 bounded YAML parse·inference·failure budget | `cargo test -p yo-yaml` | `shared/yo-yaml/src/lib.rs` |
 | Rust test 바로 위에 필요한 설명 | `cargo xtask check test-explanations` | `crates/`, `shared/`, `tools/` 아래 Rust source |

@@ -42,7 +42,7 @@ the assertion or silently skipping it.
 | Inline or Fullscreen mode behavior | `cargo test -p yo-tui terminal::mode::` | Tests under `yo-tui/src/terminal/mode` |
 | Live-loop ordering, backpressure, submission draft ownership, or event projection | `cargo test -p yo-tui runner::` | Tests under `yo-tui/src/runner` |
 | Terminal and HTML projection of the same completed frame | `cargo test -p yo-tui --test rendering_parity` | `crates/yo-tui/tests/rendering_parity` and its goldens |
-| Process termination or real terminal restoration | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests.rs` |
+| Process termination or real terminal restoration | `cargo test -p yo-cli pty_tests::` | `crates/yo-cli/src/pty_tests/` |
 | Unix process-coordinator state and compensation | `cargo test -p yo-cli process::termination::tests` | `crates/yo-cli/src/process/termination/tests` |
 | Shared bounded YAML parsing, inference, and failure budgets | `cargo test -p yo-yaml` | `shared/yo-yaml/src/lib.rs` |
 | Required explanations immediately above Rust tests | `cargo xtask check test-explanations` | Rust sources under `crates/`, `shared/`, and `tools/` |

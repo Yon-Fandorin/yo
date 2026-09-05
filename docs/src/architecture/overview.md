@@ -5,7 +5,7 @@ process entry point.
 
 | Area | Owns | Start here |
 |---|---|---|
-| `yo-cli` | Process entry, Unix termination coordination, and selecting Inline or Fullscreen presentation | [`crates/yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs) |
+| `yo-cli` | Process entry, Unix termination coordination, and CLI application orchestration | [`crates/yo-cli/src/main.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/main.rs), [`crates/yo-cli/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/lib.rs), [`crates/yo-cli/src/application.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application.rs) |
 | `yo-core` | Agent session semantics, commands and events, backend ports, and the Codex app-server adapter | [`crates/yo-core/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/lib.rs) |
 | `yo-tui` | Input editing, transcript layout, terminal modes, rendering, and the shared HTML projection | [`crates/yo-tui/src/lib.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-tui/src/lib.rs) |
 
