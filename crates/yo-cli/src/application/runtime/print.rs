@@ -9,13 +9,13 @@ use super::{
     startup,
 };
 use crate::{
-    command, config, connection, diagnostic::AppError, print as print_projection, process,
+    command, config, connection, diagnostic::AppError, live, print as print_projection, process,
 };
 
 pub(in crate::application) fn run_print_session(
     options: command::PrintOptions,
 ) -> Result<(), AppError> {
-    let input = print_projection::read_input(options.prompt)?;
+    let input = print_projection::input::read_input(options.prompt)?;
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
     let mut config =
@@ -42,7 +42,8 @@ pub(in crate::application) fn run_print_session(
                 termination,
                 &cwd,
                 &startup,
-                command::LiveSelection::New,
+                live::LiveSelection::New,
+                None,
                 &mut StartupSnapshots {
                     config: &config,
                     credentials: &mut credentials,
@@ -56,8 +57,9 @@ pub(in crate::application) fn run_print_session(
             };
             let PreparedAgent { agent, .. } = *prepared;
             let mut session = agent.into_session();
-            let output =
-                print_projection::run(&mut session, input, || termination_requested(termination));
+            let output = print_projection::runner::run(&mut session, input, || {
+                termination_requested(termination)
+            });
             let cleanup = session
                 .shutdown()
                 .map(drop)

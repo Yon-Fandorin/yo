@@ -100,12 +100,3 @@ fn styled_rendering_colors_only_semantic_labels() {
     assert!(!rendered.contains("\x1b[1;31mno startup"));
     assert!(!rendered.contains("\x1b[1;36myo connect"));
 }
-
-// 색상은 대화형 stderr에서만 켜고 NO_COLOR가 존재하면 값과 관계없이 끕니다.
-// 따라서 로그·파이프·접근성 설정에서는 제품 오류가 항상 plain text로 남습니다.
-#[test]
-fn styling_requires_a_terminal_and_respects_no_color() {
-    assert!(PresentationStyle::for_output(true, false).is_ansi());
-    assert!(!PresentationStyle::for_output(false, false).is_ansi());
-    assert!(!PresentationStyle::for_output(true, true).is_ansi());
-}

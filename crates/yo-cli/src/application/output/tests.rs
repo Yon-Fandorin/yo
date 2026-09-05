@@ -5,8 +5,8 @@ use super::{
     write_cli_diagnostics_to_and_flush,
 };
 use crate::{
-    account::{AccountCompletion, AccountRunOutput},
     application::account_exit_code,
+    command::{AccountCompletion, AccountRunOutput},
     diagnostic::{AppError, CliDiagnostic},
 };
 

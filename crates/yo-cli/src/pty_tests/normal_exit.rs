@@ -15,9 +15,10 @@ use nix::sys::signal::Signal;
 use yo_tui::{PresentationMode, TerminationEvent, TerminationSource};
 
 use super::support::{
-    CHILD_MARKER, ChildReapReceipt, ENTER_ALTERNATE_SCREEN, PendingAgent, PtyChild,
-    ReadinessWaitFailure, RetainedChatAgent, assert_child_is_gone, assert_fullscreen_pair,
-    run_fullscreen,
+    CHILD_MARKER, ChildReapReceipt, ENTER_ALTERNATE_SCREEN, PtyChild, ReadinessWaitFailure,
+    agent::{PendingAgent, RetainedChatAgent},
+    assert_child_is_gone,
+    tui::{assert_fullscreen_pair, run_fullscreen},
 };
 
 type ConsumingReadinessWait =

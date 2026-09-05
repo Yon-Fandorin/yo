@@ -6,8 +6,8 @@ use std::{
 };
 
 use super::{
-    DEFAULT_CAPACITY_BYTES, capacity_bytes_from, open_at, open_host_identity_at, open_reader_at,
-    platform_state_root_from, repository_root_from,
+    environment::{DEFAULT_CAPACITY_BYTES, capacity_bytes_from, platform_state_root_from},
+    open_at, open_host_identity_at, open_reader_at, repository_root_from,
 };
 
 struct TestDirectory(PathBuf);

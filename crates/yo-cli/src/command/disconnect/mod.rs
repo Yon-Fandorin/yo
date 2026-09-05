@@ -1,5 +1,9 @@
 use clap::Args;
 
+mod execution;
+mod input;
+pub(super) mod presentation;
+
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 pub(super) struct Arguments {
     /// Provider whose stored model connection should be removed.
@@ -41,3 +45,5 @@ impl Arguments {
         })
     }
 }
+
+pub(crate) use execution::run;

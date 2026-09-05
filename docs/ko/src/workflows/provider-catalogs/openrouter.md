@@ -19,7 +19,7 @@ OpenRouter의 공식
 | 크기가 제한된 authenticated transport | [`openrouter_discovery/transport.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery/transport.rs) |
 | Response parsing, normalization, availability, authored override | [`openrouter_discovery.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery.rs)와 [`openrouter_discovery/normalize.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery/normalize.rs) |
 | 설정된 discovery seed | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs) |
-| Connect orchestration과 picker handoff | [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs)와 [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs) |
+| Connect orchestration과 picker handoff | [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs)와 [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/picker.rs) |
 
 ## 갱신 절차
 
@@ -42,6 +42,6 @@ OpenRouter의 공식
 
 ```bash
 cargo test --locked -p yo-core openrouter_discovery
-cargo test --locked -p yo-cli connection::external::discovery_tests
-cargo test --locked -p yo-cli connection::input::picker
+cargo test --locked -p yo-cli command::connect::external::discovery_tests
+cargo test --locked -p yo-cli command::connect::picker
 ```

@@ -8,19 +8,28 @@ use yo_core::{
     },
 };
 
-use super::{
-    AppError,
-    command::LiveSelection,
-    session::{self, Output},
-};
+use super::AppError;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum LiveSelection {
+    #[default]
+    New,
+    Resume(SessionId),
+    Continue,
+}
 
 pub(crate) enum LivePreparation {
     New,
     Resume {
         session_id: SessionId,
         failure_selection: LiveSelection,
+        storage: super::storage::LocalReadStorage,
     },
-    ReadOnly(Output),
+    ReadOnly {
+        session_id: SessionId,
+        reason: String,
+        storage: super::storage::LocalReadStorage,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -71,11 +80,7 @@ pub(crate) fn classify_launch_failure(
     }
 }
 
-pub(crate) fn prepare(
-    selection: LiveSelection,
-    cwd: &Path,
-    glyph_profile: yo_tui::GlyphProfile,
-) -> Result<LivePreparation, AppError> {
+pub(crate) fn prepare(selection: LiveSelection, cwd: &Path) -> Result<LivePreparation, AppError> {
     let was_continue = selection == LiveSelection::Continue;
     let selection = match selection {
         LiveSelection::New => return Ok(LivePreparation::New),
@@ -96,11 +101,8 @@ pub(crate) fn prepare(
     {
         return Ok(LivePreparation::Resume {
             session_id: selection,
-            failure_selection: if was_continue {
-                LiveSelection::Continue
-            } else {
-                LiveSelection::Resume(selection)
-            },
+            failure_selection: resolved_failure_selection(was_continue, selection),
+            storage,
         });
     }
     if was_continue {
@@ -114,12 +116,19 @@ pub(crate) fn prepare(
         || "the Session belongs to another workspace host".to_owned(),
         |error| error.to_string(),
     );
-    Ok(LivePreparation::ReadOnly(session::read_only_resume_from(
-        &storage,
-        selection,
-        glyph_profile,
-        &reason,
-    )?))
+    Ok(LivePreparation::ReadOnly {
+        session_id: selection,
+        reason,
+        storage,
+    })
+}
+
+fn resolved_failure_selection(was_continue: bool, session_id: SessionId) -> LiveSelection {
+    if was_continue {
+        LiveSelection::Continue
+    } else {
+        LiveSelection::Resume(session_id)
+    }
 }
 
 fn select_continue(cwd: &Path) -> Result<SessionId, AppError> {

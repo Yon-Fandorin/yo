@@ -2,6 +2,11 @@ use clap::Args;
 
 use super::output::OutputOptions;
 
+mod execution;
+
+#[cfg(test)]
+mod tests;
+
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 pub(super) struct Arguments {
     /// Session whose usage should be shown.
@@ -24,3 +29,5 @@ impl Arguments {
         })
     }
 }
+
+pub(crate) use execution::run;

@@ -2,6 +2,13 @@ use std::path::PathBuf;
 
 use clap::{ArgGroup, Args};
 
+mod external;
+mod import;
+mod input;
+mod local;
+mod picker;
+pub(super) mod presentation;
+
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 #[command(group(
     ArgGroup::new("connection_source")
@@ -54,4 +61,26 @@ impl Arguments {
             yes: self.yes,
         })
     }
+}
+
+pub(crate) fn run(
+    command: Command,
+    warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
+) -> Result<String, crate::AppError> {
+    let config_path = crate::connection::absolute_config_path(
+        crate::config::selected_path()
+            .map_err(|error| crate::AppError::single("locating Yo configuration", error))?,
+    )?;
+    if command.from.is_some() {
+        return external::run_definition_import(&config_path, command);
+    }
+    let host = yo_core::HostId::from_reference(&command.target)
+        .map_err(|error| crate::AppError::single("parsing the agent host target", error))?;
+    if host.is_some() {
+        local::validate_options(&command)?;
+    }
+    let Some(host) = host else {
+        return external::run_external_connect(&config_path, command);
+    };
+    local::run(&config_path, command, host, warning_observer)
 }

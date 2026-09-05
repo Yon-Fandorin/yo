@@ -1,5 +1,7 @@
 use clap::Args;
 
+mod execution;
+
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 #[group(required = true, multiple = false)]
 pub(super) struct Arguments {
@@ -28,3 +30,5 @@ impl Arguments {
         })
     }
 }
+
+pub(crate) use execution::run;

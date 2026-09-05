@@ -1,16 +1,15 @@
+pub(super) mod agent;
+pub(super) mod tui;
+
 use std::{
-    collections::VecDeque,
-    error::Error,
     fs::File,
-    io::{self, Read},
-    num::NonZeroU64,
+    io::Read,
     process::{Command, Stdio},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
-    task::{Context, Poll},
     thread,
     time::Duration,
 };
@@ -25,94 +24,9 @@ use nix::{
     },
     unistd::Pid,
 };
-use yo_core::{AgentCommand, TranscriptRecord, TurnId, TurnRef, UserInput};
-use yo_tui::{
-    AgentAction, AgentConnection, AgentPoll, DispatchOutcome, PendingDispatch, PresentationMode,
-    TerminationSource,
-};
-
 pub(super) const CHILD_MARKER: &str = "YO_PTY_CHILD";
 pub(super) const ENTER_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049h";
 pub(super) const LEAVE_ALTERNATE_SCREEN: &[u8] = b"\x1b[?1049l";
-
-pub(super) struct PendingAgent;
-
-impl AgentConnection for PendingAgent {
-    type Error = io::Error;
-
-    fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Queued)
-    }
-
-    fn retry(&mut self, _pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Queued)
-    }
-
-    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
-        Ok(AgentPoll::Pending)
-    }
-
-    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
-        Poll::Pending
-    }
-}
-
-pub(super) struct RetainedChatAgent {
-    records: VecDeque<TranscriptRecord>,
-}
-
-impl RetainedChatAgent {
-    pub(super) fn new() -> Self {
-        Self::with_input("YO_INLINE_RETAINED")
-    }
-
-    pub(super) fn new_with_large_publication() -> Self {
-        Self::with_input(format!("YO_INLINE_RETAINED{}", " x".repeat(48 * 1024)))
-    }
-
-    fn with_input(input: impl Into<UserInput>) -> Self {
-        let session_id = "01890f00-0000-7000-8000-000000000001"
-            .parse()
-            .expect("the fixture is a UUIDv7");
-        let turn = TurnRef::new(session_id, id(TurnId::new));
-        Self {
-            records: [TranscriptRecord::CommandCommitted(
-                AgentCommand::StartTurn {
-                    turn,
-                    input: input.into(),
-                },
-            )]
-            .into(),
-        }
-    }
-}
-
-impl AgentConnection for RetainedChatAgent {
-    type Error = io::Error;
-
-    fn dispatch(&mut self, _action: AgentAction) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Queued)
-    }
-
-    fn retry(&mut self, _pending: PendingDispatch) -> Result<DispatchOutcome, Self::Error> {
-        Ok(DispatchOutcome::Queued)
-    }
-
-    fn poll(&mut self) -> Result<AgentPoll, Self::Error> {
-        Ok(self
-            .records
-            .pop_front()
-            .map_or(AgentPoll::Pending, AgentPoll::Record))
-    }
-
-    fn poll_ready(&mut self, _context: &mut Context<'_>) -> Poll<()> {
-        if self.records.is_empty() {
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
-    }
-}
 
 pub(super) struct PtyChild {
     child: Option<std::process::Child>,
@@ -753,49 +667,4 @@ fn capture_pty(
         }
     }
     output
-}
-
-fn id<T>(constructor: impl FnOnce(NonZeroU64) -> T) -> T {
-    constructor(NonZeroU64::MIN)
-}
-
-pub(super) fn assert_fullscreen_pair(output: &[u8]) {
-    let enter = output
-        .windows(ENTER_ALTERNATE_SCREEN.len())
-        .position(|candidate| candidate == ENTER_ALTERNATE_SCREEN)
-        .expect("fullscreen output must enter the alternate screen");
-    let leave = output
-        .windows(LEAVE_ALTERNATE_SCREEN.len())
-        .position(|candidate| candidate == LEAVE_ALTERNATE_SCREEN)
-        .expect("fullscreen output must leave the alternate screen");
-
-    assert!(enter < leave, "alternate-screen cleanup must follow entry");
-    assert_eq!(
-        output
-            .windows(ENTER_ALTERNATE_SCREEN.len())
-            .filter(|candidate| *candidate == ENTER_ALTERNATE_SCREEN)
-            .count(),
-        1
-    );
-    assert_eq!(
-        output
-            .windows(LEAVE_ALTERNATE_SCREEN.len())
-            .filter(|candidate| *candidate == LEAVE_ALTERNATE_SCREEN)
-            .count(),
-        1
-    );
-}
-
-pub(super) fn run_fullscreen(
-    termination: &mut impl TerminationSource,
-) -> Result<(), Box<dyn Error>> {
-    let mut agent = PendingAgent;
-    yo_tui::run_with_mode(
-        termination,
-        &mut agent,
-        PresentationMode::Fullscreen,
-        yo_tui::ColorCapability::Unknown,
-        yo_tui::MotionPreference::Standard,
-    )?;
-    Ok(())
 }

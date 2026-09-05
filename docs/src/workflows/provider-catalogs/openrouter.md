@@ -20,7 +20,7 @@ official.
 | Bounded authenticated transport | [`openrouter_discovery/transport.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery/transport.rs) |
 | Response parsing, normalization, availability, and authored overrides | [`openrouter_discovery.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery.rs) and [`openrouter_discovery/normalize.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/openrouter_discovery/normalize.rs) |
 | Configured discovery seed | [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs) |
-| Connect orchestration and picker handoff | [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs) and [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs) |
+| Connect orchestration and picker handoff | [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs) and [`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/picker.rs) |
 
 ## Update procedure
 
@@ -44,6 +44,6 @@ Focused checks:
 
 ```bash
 cargo test --locked -p yo-core openrouter_discovery
-cargo test --locked -p yo-cli connection::external::discovery_tests
-cargo test --locked -p yo-cli connection::input::picker
+cargo test --locked -p yo-cli command::connect::external::discovery_tests
+cargo test --locked -p yo-cli command::connect::picker
 ```

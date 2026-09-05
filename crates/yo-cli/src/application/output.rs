@@ -1,9 +1,8 @@
 use std::io::Write;
 
 use crate::{
-    account,
+    command,
     diagnostic::{AppError, CliDiagnostic},
-    session,
 };
 
 pub(super) fn write_command_output(output: String) -> Result<(), AppError> {
@@ -15,11 +14,11 @@ pub(super) fn write_command_output(output: String) -> Result<(), AppError> {
 }
 
 pub(super) fn finish_account_output(
-    result: account::AccountRunOutput,
+    result: command::AccountRunOutput,
     publish: impl FnOnce(String) -> Result<(), AppError>,
     publish_diagnostics: impl FnOnce(&[CliDiagnostic]) -> Result<(), AppError>,
-) -> Result<account::AccountCompletion, AppError> {
-    let account::AccountRunOutput {
+) -> Result<command::AccountCompletion, AppError> {
+    let command::AccountRunOutput {
         output,
         diagnostics,
         completion,
@@ -70,8 +69,8 @@ pub(super) fn write_session_output(output: &str) -> std::io::Result<()> {
     stdout.flush()
 }
 
-pub(super) fn write_session_command_output(output: session::Output) -> Result<(), AppError> {
-    let session::Output {
+pub(super) fn write_session_command_output(output: command::SessionOutput) -> Result<(), AppError> {
+    let command::SessionOutput {
         stdout,
         diagnostics,
     } = output;

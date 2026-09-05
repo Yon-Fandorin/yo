@@ -4,6 +4,19 @@ use clap::{Args, ValueEnum};
 
 use super::output::OutputOptions;
 
+mod list;
+mod output;
+mod presentation;
+mod show;
+
+#[cfg(test)]
+mod tests;
+
+pub(crate) use output::Output;
+pub(crate) use show::read_only_resume_from;
+use show::run as run_show;
+pub(super) use show::{discovery_diagnostics, read_history_from_reader, with_final_newline};
+
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 pub(super) struct Arguments {
     /// Session to inspect.
@@ -81,5 +94,15 @@ impl Arguments {
             limit: self.limit,
             content: self.content,
         })
+    }
+}
+
+pub(crate) fn run(command: Command) -> Result<Output, crate::diagnostic::AppError> {
+    let storage = crate::storage::open_default_reader().map_err(|error| {
+        crate::diagnostic::AppError::single("opening read-only local Yo storage", error)
+    })?;
+    match command.session_id {
+        Some(session_id) => run_show(&storage, session_id, command),
+        None => list::run(&storage, command),
     }
 }

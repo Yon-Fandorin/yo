@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsString,
     fs::File,
     io::Read,
     ops::Range,
@@ -11,38 +10,68 @@ use serde_json::Value;
 use yo_core::{ToolExecutionError, ToolExecutionResult};
 
 use super::{
-    FileIdentity, OpenRegularError, open_regular_file,
+    descriptor::{FileIdentity, OpenRegularError, open_regular_file},
     output::{error, json_string},
+    path::AdmittedPath,
 };
-use crate::local_tools::execution::{completed, interrupted};
+use crate::local_tools::execution::{completed, failed, interrupted};
+
+pub(super) fn read_file(
+    file: impl Read,
+    limit: usize,
+    cancelled: &AtomicBool,
+) -> ToolExecutionResult {
+    if cancelled.load(Ordering::Acquire) {
+        return interrupted();
+    }
+    let result = read_bounded(file, limit);
+    if cancelled.load(Ordering::Acquire) {
+        return interrupted();
+    }
+    match result {
+        Ok((mut bytes, truncated)) => match std::str::from_utf8(&bytes) {
+            Ok(_) => completed(
+                String::from_utf8(bytes).expect("validated UTF-8 remains valid"),
+                truncated,
+            ),
+            Err(error) if truncated && error.error_len().is_none() => {
+                bytes.truncate(error.valid_up_to());
+                completed(
+                    String::from_utf8(bytes).expect("valid UTF-8 prefix remains valid"),
+                    true,
+                )
+            },
+            Err(_) => failed("read_file supports UTF-8 text files only"),
+        },
+        Err(_) => failed("read_file failed"),
+    }
+}
+
+pub(super) fn read_bounded(
+    mut reader: impl Read,
+    limit: usize,
+) -> std::io::Result<(Vec<u8>, bool)> {
+    let mut output = Vec::with_capacity(limit.min(64 * 1024));
+    let mut chunk = [0_u8; 8 * 1024];
+    let target = limit.saturating_add(1);
+    while output.len() < target {
+        let remaining = target.saturating_sub(output.len());
+        let read_len = chunk.len().min(remaining);
+        let count = reader.read(&mut chunk[..read_len])?;
+        if count == 0 {
+            break;
+        }
+        output.extend_from_slice(&chunk[..count]);
+    }
+    let truncated = output.len() > limit;
+    output.truncate(limit);
+    Ok((output, truncated))
+}
 
 const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ITEMS: usize = 8;
 const MAX_LINES: usize = 400;
 const MAX_ITEM_BYTES: usize = 16_384;
-
-#[derive(Clone, Debug)]
-pub(super) struct AdmittedPath {
-    display: String,
-    components: Vec<OsString>,
-}
-
-impl AdmittedPath {
-    pub(super) const fn new(display: String, components: Vec<OsString>) -> Self {
-        Self {
-            display,
-            components,
-        }
-    }
-
-    pub(super) fn display(&self) -> &str {
-        &self.display
-    }
-
-    pub(super) fn components(&self) -> &[OsString] {
-        &self.components
-    }
-}
 
 #[derive(Clone, Debug)]
 pub(super) struct ReadRequest {
@@ -312,8 +341,11 @@ mod tests {
     use std::{
         ffi::OsString,
         fs::{self, OpenOptions},
-        io::Write,
-        sync::atomic::AtomicBool,
+        io::{Read, Write},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        },
     };
 
     use super::{
@@ -328,6 +360,50 @@ mod tests {
             offset: content_offset,
             limit,
         }
+    }
+
+    struct CountingReader {
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl Read for CountingReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            buffer.fill(b'x');
+            Ok(buffer.len())
+        }
+    }
+
+    // bounded reader는 limit+1 byte로 truncation을 판별한 즉시 멈춰 무한하거나 거대한
+    // 입력을 끝까지 drain하지 않고 반환한다.
+    #[test]
+    fn bounded_reader_stops_after_the_truncation_probe() {
+        let reads = Arc::new(AtomicUsize::new(0));
+        let (output, truncated) = super::read_bounded(
+            CountingReader {
+                reads: Arc::clone(&reads),
+            },
+            16,
+        )
+        .unwrap();
+
+        assert_eq!(output.len(), 16);
+        assert!(truncated);
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+    }
+
+    // legacy 4 MiB probe가 multi-byte scalar 한가운데서 끝나도 완전한 UTF-8 prefix를
+    // Completed+truncated로 넘겨 common truncation marker가 붙을 수 있게 합니다.
+    #[test]
+    fn legacy_reader_truncates_only_an_incomplete_final_scalar() {
+        let bytes = [b'a', 0xE2, 0x82, 0xAC];
+        let result = super::read_file(&bytes[..], 3, &AtomicBool::new(false));
+        assert_eq!(result.outcome(), yo_core::ToolExecutionOutcome::Completed);
+        assert_eq!(result.output(), "a");
+        assert!(result.truncated());
+
+        let malformed = super::read_file(&[b'a', 0xFF, b'b'][..], 3, &AtomicBool::new(false));
+        assert_eq!(malformed.outcome(), yo_core::ToolExecutionOutcome::Failed);
     }
 
     // LF만 line separator로 취급하고 final LF가 가짜 빈 줄을 만들지 않으며, 다음 offset은

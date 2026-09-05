@@ -3,9 +3,7 @@ use std::{fmt, os::unix::ffi::OsStrExt};
 use super::super::{
     codex_diagnostics::CodexWarningCollector, output::write_session_command_output,
 };
-use crate::{
-    agent, command, config, diagnostic::AppError, live, local_tools, model, session, storage,
-};
+use crate::{agent, command, config, diagnostic::AppError, live, local_tools, model, storage};
 
 #[derive(Clone, Copy)]
 pub(super) enum StartupFrontend {
@@ -42,7 +40,8 @@ pub(super) fn prepare_agent(
     termination: &mut impl yo_tui::TerminationSource,
     cwd: &std::path::Path,
     options: &command::LiveOptions,
-    launch_failure_selection: command::LiveSelection,
+    launch_failure_selection: live::LiveSelection,
+    read_only_storage: Option<&storage::LocalReadStorage>,
     snapshots: &mut StartupSnapshots<'_>,
     frontend: StartupFrontend,
 ) -> Result<StartupOutcome, AppError> {
@@ -58,6 +57,7 @@ pub(super) fn prepare_agent(
             return handle_launch_failure(
                 launch_failure_selection,
                 options.glyph_profile,
+                read_only_storage,
                 live::ResumeFailureStage::WritableStorage,
                 error,
             );
@@ -85,6 +85,7 @@ pub(super) fn prepare_agent(
                         return handle_launch_failure(
                             launch_failure_selection,
                             options.glyph_profile,
+                            read_only_storage,
                             live::ResumeFailureStage::Revalidation,
                             error,
                         );
@@ -95,6 +96,7 @@ pub(super) fn prepare_agent(
                 return handle_launch_failure(
                     launch_failure_selection,
                     options.glyph_profile,
+                    read_only_storage,
                     live::ResumeFailureStage::Revalidation,
                     "the Session belongs to another workspace host",
                 );
@@ -117,6 +119,7 @@ pub(super) fn prepare_agent(
             return handle_launch_failure(
                 launch_failure_selection,
                 options.glyph_profile,
+                read_only_storage,
                 live::ResumeFailureStage::RecordedWorkspace,
                 session_cwd.display(),
             );
@@ -135,6 +138,7 @@ pub(super) fn prepare_agent(
                     return handle_launch_failure(
                         launch_failure_selection,
                         options.glyph_profile,
+                        read_only_storage,
                         live::ResumeFailureStage::WorkspaceReferences,
                         error,
                     );
@@ -153,7 +157,7 @@ pub(super) fn prepare_agent(
         stored_preference.cloned(),
         options.model.as_deref(),
         options.no_tools,
-        options.sandbox,
+        options.sandbox.is_some(),
         match &launch {
             Launch::New(_) => None,
             Launch::Resume(continuation) => Some(continuation.target()),
@@ -165,6 +169,7 @@ pub(super) fn prepare_agent(
             return handle_launch_failure(
                 launch_failure_selection,
                 options.glyph_profile,
+                read_only_storage,
                 live::ResumeFailureStage::BackendSpawn,
                 error,
             );
@@ -215,6 +220,7 @@ pub(super) fn prepare_agent(
                     return handle_launch_failure(
                         launch_failure_selection,
                         options.glyph_profile,
+                        read_only_storage,
                         live::ResumeFailureStage::SkillReferences,
                         error,
                     );
@@ -237,6 +243,7 @@ pub(super) fn prepare_agent(
                         return handle_launch_failure(
                             launch_failure_selection,
                             options.glyph_profile,
+                            read_only_storage,
                             live::ResumeFailureStage::BackendSpawn,
                             error,
                         );
@@ -258,6 +265,7 @@ pub(super) fn prepare_agent(
                     return handle_launch_failure(
                         launch_failure_selection,
                         options.glyph_profile,
+                        read_only_storage,
                         live::ResumeFailureStage::BackendSpawn,
                         error,
                     );
@@ -282,6 +290,7 @@ pub(super) fn prepare_agent(
                         return handle_launch_failure(
                             launch_failure_selection,
                             options.glyph_profile,
+                            read_only_storage,
                             live::ResumeFailureStage::BackendSpawn,
                             error,
                         );
@@ -296,6 +305,7 @@ pub(super) fn prepare_agent(
                         return handle_launch_failure(
                             launch_failure_selection,
                             options.glyph_profile,
+                            read_only_storage,
                             live::ResumeFailureStage::BackendSpawn,
                             error,
                         );
@@ -327,6 +337,7 @@ pub(super) fn prepare_agent(
                     return handle_launch_failure(
                         launch_failure_selection,
                         options.glyph_profile,
+                        read_only_storage,
                         live::ResumeFailureStage::NativeResume,
                         error,
                     );
@@ -391,25 +402,33 @@ fn require_exact_print_resume_binding(
 }
 
 fn complete_with_read_only_resume(
+    storage: &storage::LocalReadStorage,
     session_id: yo_core::SessionId,
     glyph_profile: yo_tui::GlyphProfile,
     reason: &str,
 ) -> Result<StartupOutcome, AppError> {
-    let output = session::resume_read_only(session_id, glyph_profile, reason)?;
+    let reader = storage
+        .reader()
+        .ok_or_else(|| AppError::message("captured read-only storage has no Session reader"))?;
+    let output = command::read_only_resume_from(reader, session_id, glyph_profile, reason)?;
     write_session_command_output(output)?;
     Ok(StartupOutcome::Complete)
 }
 
 fn handle_launch_failure(
-    selection: command::LiveSelection,
+    selection: live::LiveSelection,
     glyph_profile: yo_tui::GlyphProfile,
+    storage: Option<&storage::LocalReadStorage>,
     stage: live::ResumeFailureStage,
     detail: impl fmt::Display,
 ) -> Result<StartupOutcome, AppError> {
     match live::classify_launch_failure(selection, stage, detail) {
         live::ResumeFailureDisposition::Abort(reason) => Err(AppError::many([reason])),
         live::ResumeFailureDisposition::ReadOnly { session_id, reason } => {
-            complete_with_read_only_resume(session_id, glyph_profile, &reason)
+            let storage = storage.ok_or_else(|| {
+                AppError::message("read-only resume fallback lost its captured local storage")
+            })?;
+            complete_with_read_only_resume(storage, session_id, glyph_profile, &reason)
         },
     }
 }

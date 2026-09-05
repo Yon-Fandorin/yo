@@ -28,9 +28,9 @@ deterministic ordering live in
 Configuration resolves a profile into a non-routable seed in
 [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs).
 The shared selection and recoverable connection transaction live in
-[`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs)
+[`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs)
 and
-[`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs).
+[`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/picker.rs).
 
 ## Update procedure
 
@@ -58,7 +58,7 @@ Focused checks:
 ```bash
 cargo test --locked -p yo-core qwencloud_catalog
 cargo test --locked -p yo-cli qwencloud_catalog
-cargo test --locked -p yo-cli connection::input::picker
+cargo test --locked -p yo-cli command::connect::picker
 ```
 
 This update path intentionally makes no network request to enumerate a

@@ -28,8 +28,8 @@ ordering은
 [`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs)에서
 profile을 non-routable seed로 해석한다. Shared selection과 recoverable connection
 transaction은
-[`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/external.rs)와
-[`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/connection/input/picker.rs)에
+[`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs)와
+[`picker.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/picker.rs)에
 있다.
 
 ## 갱신 절차
@@ -58,7 +58,7 @@ transaction은
 ```bash
 cargo test --locked -p yo-core qwencloud_catalog
 cargo test --locked -p yo-cli qwencloud_catalog
-cargo test --locked -p yo-cli connection::input::picker
+cargo test --locked -p yo-cli command::connect::picker
 ```
 
 이 갱신 경로는 QwenCloud plan을 열거하는 network request를 의도적으로 수행하지

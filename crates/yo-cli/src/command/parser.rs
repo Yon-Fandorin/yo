@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use yo_tui::PresentationMode;
 
 use super::{
@@ -107,8 +107,9 @@ enum CliCommand {
 
 pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Command, clap::Error> {
     let arguments = arguments.into_iter().collect::<Vec<_>>();
-    reject_print_subcommand_overlap(&arguments)?;
-    let arguments = normalize_global_output_options(arguments);
+    let subcommands = top_level_subcommand_inventory();
+    reject_print_subcommand_overlap(&arguments, &subcommands)?;
+    let arguments = normalize_global_output_options(arguments, &subcommands);
     let cli = Cli::try_parse_from(std::iter::once(OsString::from("yo")).chain(arguments))?;
     let output = OutputOptions::from_cli(cli.format, cli.ascii);
 
@@ -159,8 +160,11 @@ pub(crate) fn parse(arguments: impl IntoIterator<Item = OsString>) -> Result<Com
     }
 }
 
-fn normalize_global_output_options(arguments: Vec<OsString>) -> Vec<OsString> {
-    let Some(command_index) = top_level_subcommand_index(&arguments) else {
+fn normalize_global_output_options(
+    arguments: Vec<OsString>,
+    subcommands: &[String],
+) -> Vec<OsString> {
+    let Some(command_index) = top_level_subcommand_index(&arguments, subcommands) else {
         return arguments;
     };
     if command_index == 0 {
@@ -199,7 +203,7 @@ fn normalize_global_output_options(arguments: Vec<OsString>) -> Vec<OsString> {
     root_arguments
 }
 
-fn top_level_subcommand_index(arguments: &[OsString]) -> Option<usize> {
+fn top_level_subcommand_index(arguments: &[OsString], subcommands: &[String]) -> Option<usize> {
     let mut skip_option_value = false;
     for (index, argument) in arguments.iter().enumerate() {
         if skip_option_value {
@@ -216,17 +220,17 @@ fn top_level_subcommand_index(arguments: &[OsString]) -> Option<usize> {
             skip_option_value = true;
             continue;
         }
-        if matches!(
-            argument,
-            "account" | "connect" | "disconnect" | "default" | "model" | "session" | "usage"
-        ) {
+        if subcommands.iter().any(|subcommand| subcommand == argument) {
             return Some(index);
         }
     }
     None
 }
 
-fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::Error> {
+fn reject_print_subcommand_overlap(
+    arguments: &[OsString],
+    subcommands: &[String],
+) -> Result<(), clap::Error> {
     let mut print_requested = false;
     let mut subcommand = None;
     let mut skip_option_value = false;
@@ -248,10 +252,7 @@ fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::E
         if matches!(argument, "-p" | "--print") {
             print_requested = true;
         } else if subcommand.is_none()
-            && matches!(
-                argument,
-                "account" | "connect" | "disconnect" | "default" | "model" | "session" | "usage"
-            )
+            && subcommands.iter().any(|subcommand| subcommand == argument)
         {
             subcommand = Some(argument);
         }
@@ -265,5 +266,68 @@ fn reject_print_subcommand_overlap(arguments: &[OsString]) -> Result<(), clap::E
         ))
     } else {
         Ok(())
+    }
+}
+
+fn top_level_subcommand_inventory() -> Vec<String> {
+    Cli::command()
+        .get_subcommands()
+        .flat_map(|subcommand| {
+            std::iter::once(subcommand.get_name())
+                .chain(subcommand.get_all_aliases())
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        super::{LiveSelection, PrintOptions},
+        *,
+    };
+
+    // print mode와 Clap이 생성한 모든 top-level subcommand/alias를 한 호출에 섞으면
+    // subcommand나 prompt 중 하나를 조용히 우선하지 않고, 사용자가 `--` 뒤의 명시적
+    // literal prompt로 고치게 합니다.
+    #[test]
+    fn print_rejects_top_level_subcommands_without_literal_separator() {
+        for subcommand in top_level_subcommand_inventory() {
+            let error = parse(["-p".into(), subcommand.into()]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+            assert!(
+                error
+                    .to_string()
+                    .contains("use `--` before a literal prompt")
+            );
+        }
+
+        assert_eq!(
+            parse(["-p".into(), "--".into(), "session".into()]).unwrap(),
+            Command::Print(PrintOptions {
+                prompt: Some("session".to_owned()),
+                selection: LiveSelection::New,
+                model: None,
+                no_tools: false,
+                sandbox: None,
+            })
+        );
+
+        assert_eq!(
+            parse([
+                "-p".into(),
+                "--model".into(),
+                "session".into(),
+                "question".into(),
+            ])
+            .unwrap(),
+            Command::Print(PrintOptions {
+                prompt: Some("question".to_owned()),
+                selection: LiveSelection::New,
+                model: Some("session".to_owned()),
+                no_tools: false,
+                sandbox: None,
+            })
+        );
     }
 }

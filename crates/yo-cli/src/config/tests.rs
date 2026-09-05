@@ -1,10 +1,12 @@
 use std::{
-    env, io,
+    env,
+    ffi::OsString,
+    fs, io,
     os::unix::fs::{FileTypeExt, MetadataExt},
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use super::*;
+use super::{path::environment_root, snapshot::MAX_CONFIG_BYTES, *};
 
 static NEXT_TEST_DIRECTORY_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -285,7 +287,10 @@ fn oversized_configuration_is_bounded_during_the_read() {
     let error = load_from(&path).unwrap_err();
 
     fs::remove_file(&path).unwrap();
-    assert!(matches!(error, ConfigError::TooLarge(found) if found == path));
+    assert!(matches!(
+        error,
+        ConfigError::TooLarge { path: found, .. } if found == path
+    ));
 }
 
 // FIFO는 nonblocking open 뒤 regular-file 검사를 받아 writer를 기다리지 않고 실패합니다.

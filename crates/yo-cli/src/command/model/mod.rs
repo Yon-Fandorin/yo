@@ -1,5 +1,7 @@
 use clap::{Args, Subcommand};
 
+mod execution;
+
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
 pub(super) struct Arguments {
     #[command(subcommand)]
@@ -40,3 +42,5 @@ impl Arguments {
         Ok(Command { target, enabled })
     }
 }
+
+pub(crate) use execution::run;

@@ -13,17 +13,31 @@ pub(in crate::application) fn run_live_session(
 ) -> Result<(), AppError> {
     let cwd = std::env::current_dir()
         .map_err(|error| AppError::single("reading the working directory", error))?;
-    let launch_failure_selection =
-        match live::prepare(options.selection, &cwd, options.glyph_profile)? {
-            live::LivePreparation::New => command::LiveSelection::New,
+    let (launch_failure_selection, read_only_storage) =
+        match live::prepare(domain_selection(options.selection), &cwd)? {
+            live::LivePreparation::New => (live::LiveSelection::New, None),
             live::LivePreparation::Resume {
                 session_id,
                 failure_selection,
+                storage,
             } => {
                 options.selection = command::LiveSelection::Resume(session_id);
-                failure_selection
+                (failure_selection, Some(storage))
             },
-            live::LivePreparation::ReadOnly(output) => {
+            live::LivePreparation::ReadOnly {
+                session_id,
+                reason,
+                storage,
+            } => {
+                let reader = storage.reader().ok_or_else(|| {
+                    AppError::message("captured read-only storage has no Session reader")
+                })?;
+                let output = command::read_only_resume_from(
+                    reader,
+                    session_id,
+                    options.glyph_profile,
+                    &reason,
+                )?;
                 write_session_command_output(output)?;
                 return Ok(());
             },
@@ -54,6 +68,7 @@ pub(in crate::application) fn run_live_session(
                     &cwd,
                     options.clone(),
                     launch_failure_selection,
+                    read_only_storage.as_ref(),
                     &mut StartupSnapshots {
                         config: &config,
                         credentials: &mut credentials,
@@ -122,7 +137,8 @@ fn run_generation(
     live: &mut Option<LiveSession>,
     cwd: &std::path::Path,
     options: command::LiveOptions,
-    launch_failure_selection: command::LiveSelection,
+    launch_failure_selection: live::LiveSelection,
+    read_only_storage: Option<&crate::storage::LocalReadStorage>,
     snapshots: &mut StartupSnapshots<'_>,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {
@@ -131,6 +147,7 @@ fn run_generation(
             cwd,
             &options,
             launch_failure_selection,
+            read_only_storage,
             snapshots,
             StartupFrontend::Terminal,
         )?;
@@ -152,4 +169,12 @@ fn run_generation(
         snapshots.codex_warnings,
         options,
     )
+}
+
+fn domain_selection(selection: command::LiveSelection) -> live::LiveSelection {
+    match selection {
+        command::LiveSelection::New => live::LiveSelection::New,
+        command::LiveSelection::Resume(session_id) => live::LiveSelection::Resume(session_id),
+        command::LiveSelection::Continue => live::LiveSelection::Continue,
+    }
 }

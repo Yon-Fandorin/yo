@@ -1,6 +1,5 @@
 #![cfg(unix)]
 
-mod account;
 mod agent;
 mod application;
 mod command;
@@ -14,9 +13,7 @@ mod model;
 mod presentation;
 mod print;
 mod process;
-mod session;
 mod storage;
-mod usage;
 
 pub(crate) use diagnostic::AppError;
 
