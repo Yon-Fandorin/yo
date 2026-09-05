@@ -1,5 +1,5 @@
 use super::{CloseFixture, git, git_succeeds};
-use crate::slice_close::{apply, apply_with_before_delete, identity};
+use crate::slice::close::{apply, apply_with_before_delete, identity};
 
 // 계획 이후 develop이 한 커밋이라도 움직이면 apply는 오래된 승인 상태를
 // 추측하지 않고 멈추며 Slice worktree와 다른 로컬 자료를 그대로 보존한다.

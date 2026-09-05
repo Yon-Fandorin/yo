@@ -10,7 +10,9 @@ pub(super) use slice_worktree::Worktree;
 
 use crate::{git, slice_worktree};
 
-const CLOSE_METRICS_CUTOVER_MARKER: &str = "tools/xtask/src/slice_close/metrics-cutover";
+const CLOSE_METRICS_CUTOVER_MARKER: &str = "tools/xtask/src/slice/close/metrics-cutover";
+// 재배치 이전 accepted commit도 이미 적용된 metrics 의무를 유지한다.
+const LEGACY_CLOSE_METRICS_CUTOVER_MARKER: &str = "tools/xtask/src/slice_close/metrics-cutover";
 const _: &[u8] = include_bytes!("metrics-cutover");
 
 pub(super) struct CleanupLock {
@@ -133,12 +135,13 @@ pub(super) fn accepted_commit_requires_close_metrics(
             accepted_commit,
             "--",
             CLOSE_METRICS_CUTOVER_MARKER,
+            LEGACY_CLOSE_METRICS_CUTOVER_MARKER,
         ],
         false,
     )?;
-    Ok(marker
-        .lines()
-        .any(|path| path == CLOSE_METRICS_CUTOVER_MARKER))
+    Ok(marker.lines().any(|path| {
+        path == CLOSE_METRICS_CUTOVER_MARKER || path == LEGACY_CLOSE_METRICS_CUTOVER_MARKER
+    }))
 }
 
 fn single_parent(repository: &Path, commit: &str) -> Result<Option<String>, String> {
@@ -297,3 +300,6 @@ fn run_git(
         Err(format!("{label} failed with {status}"))
     }
 }
+
+#[cfg(test)]
+mod tests;

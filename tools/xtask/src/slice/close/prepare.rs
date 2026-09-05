@@ -2,8 +2,8 @@ use std::{collections::BTreeSet, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-use super::{accepted_slice, metrics, standard_coordination_directory};
-use crate::{bounded_file, review_protocol, slice_gate, slice_worktree};
+use super::{super::gate as slice_gate, accepted_slice, metrics, standard_coordination_directory};
+use crate::{bounded_file, review_protocol, slice_worktree};
 
 const REQUEST_SCHEMA: &str = "yo.slice-close-prepare-request/v1alpha1";
 const DERIVED_REQUEST_SCHEMA: &str = "yo.slice-close-prepare-request/v1alpha2";

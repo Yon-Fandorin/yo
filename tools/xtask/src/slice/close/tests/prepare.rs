@@ -1,4 +1,4 @@
-use crate::{slice_close::prepare::build_metrics_for_test, slice_gate};
+use crate::slice::{close::prepare::build_metrics_for_test, gate as slice_gate};
 
 fn gate(environments: Vec<String>) -> slice_gate::ReadyGate {
     slice_gate::ReadyGate {

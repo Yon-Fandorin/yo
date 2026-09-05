@@ -799,20 +799,17 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
         )
     {
         Some(DELIVERY_AUTHORITY)
-    } else if workflow_module(path, "slice_gate")
-        || workflow_module(path, "slice_accept")
-        || workflow_module(path, "slice_close")
-        || workflow_module(path, "slice_status")
+    } else if slice_module(path, "gate")
+        || slice_module(path, "accept")
+        || slice_module(path, "close")
+        || slice_module(path, "status")
         || workflow_module(path, "impact")
-        || matches!(
-            path,
-            "tools/xtask/src/slice_accept.rs" | "tools/xtask/src/cost_report.rs"
-        )
+        || path == "tools/xtask/src/cost_report.rs"
     {
         Some(INTEGRATION_AUTHORITY)
     } else if workflow_module(path, "slice_contract")
-        || workflow_module(path, "slice_create")
-        || workflow_module(path, "activation_slice")
+        || slice_module(path, "create")
+        || slice_module(path, "activation")
         || matches!(
             path,
             "tools/xtask/src/slice_worktree.rs"
@@ -839,12 +836,19 @@ fn review_module(path: &str, module: &str) -> bool {
         .is_some_and(|suffix| suffix == ".rs" || suffix.starts_with('/'))
 }
 
+fn slice_module(path: &str, module: &str) -> bool {
+    path.strip_prefix("tools/xtask/src/slice/")
+        .and_then(|relative| relative.strip_prefix(module))
+        .is_some_and(|suffix| suffix == ".rs" || suffix.starts_with('/'))
+}
+
 fn is_neutral_workflow_facade(path: &str) -> bool {
     matches!(
         path,
         "tools/xtask/src/lib.rs"
             | "tools/xtask/src/main.rs"
             | "tools/xtask/src/review.rs"
+            | "tools/xtask/src/slice.rs"
             | "tools/xtask/Cargo.toml"
     )
 }

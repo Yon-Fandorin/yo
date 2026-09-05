@@ -1,6 +1,6 @@
 use super::{CloseFixture, git, output};
 use crate::{
-    slice_close::{build_plan, identity, plan},
+    slice::close::{build_plan, identity, plan},
     test_support,
 };
 

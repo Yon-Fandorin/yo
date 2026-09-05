@@ -5,10 +5,11 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use super::{close as slice_close, gate as slice_gate, status as slice_status};
 use crate::{
     bounded_file, git,
     impact::{self, ImpactInput},
-    review_protocol, slice_close, slice_gate, slice_status, slice_worktree,
+    review_protocol, slice_worktree,
 };
 
 const MESSAGE_LIMIT: usize = 64 * 1024;
@@ -900,5 +901,4 @@ fn compose_message(source: &[u8], trailers: &[String]) -> Result<Vec<u8>, String
 }
 
 #[cfg(test)]
-#[path = "slice_accept/tests.rs"]
 mod tests;

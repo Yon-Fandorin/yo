@@ -1,4 +1,3 @@
-mod activation_slice;
 mod bounded_file;
 mod cost_report;
 mod docs_translation;
@@ -8,12 +7,8 @@ mod impact;
 mod review;
 mod review_protocol;
 mod review_result;
-mod slice_accept;
-mod slice_close;
+mod slice;
 mod slice_contract;
-mod slice_create;
-mod slice_gate;
-mod slice_status;
 mod slice_worktree;
 mod test_explanations;
 mod validation_stage;
@@ -108,7 +103,7 @@ fn run_slice_create(arguments: &mut impl Iterator<Item = OsString>) -> Result<()
         return Err(slice_create_usage());
     }
     let repository = current_repository()?;
-    slice_create::run(&repository, &contract)
+    slice::create::run(&repository, &contract)
 }
 
 fn run_cost_report(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -150,14 +145,14 @@ fn run_slice_accept(arguments: &mut impl Iterator<Item = OsString>) -> Result<()
             return Err(slice_accept_usage());
         }
         let repository = current_repository()?;
-        return slice_accept::prepare(&repository, &request);
+        return slice::accept::prepare(&repository, &request);
     }
     let request = PathBuf::from(first);
     if arguments.next().is_some() {
         return Err(slice_accept_usage());
     }
     let repository = current_repository()?;
-    slice_accept::accept(&repository, &request)
+    slice::accept::accept(&repository, &request)
 }
 
 fn run_slice_status(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -169,7 +164,7 @@ fn run_slice_status(arguments: &mut impl Iterator<Item = OsString>) -> Result<()
         return Err(slice_status_usage());
     }
     let repository = current_repository()?;
-    slice_status::run(&repository, &slice)
+    slice::status::run(&repository, &slice)
 }
 
 fn run_review_result_correction_preflight(
@@ -201,14 +196,14 @@ fn run_slice_gate(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), 
             return Err(slice_gate_usage());
         }
         let repository = current_repository()?;
-        return slice_gate::prepare_request(&repository, &request, &output);
+        return slice::gate::prepare_request(&repository, &request, &output);
     }
     let request = PathBuf::from(first);
     if arguments.next().is_some() {
         return Err(slice_gate_usage());
     }
     let repository = current_repository()?;
-    slice_gate::run(&repository, &request)
+    slice::gate::run(&repository, &request)
 }
 
 fn run_slice_commit(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -230,7 +225,7 @@ fn run_slice_commit(arguments: &mut impl Iterator<Item = OsString>) -> Result<()
             return Err(slice_commit_usage());
         }
         let repository = current_repository()?;
-        return slice_accept::prepare_commit_message(
+        return slice::accept::prepare_commit_message(
             &repository,
             &gate_request,
             &message_source,
@@ -265,7 +260,7 @@ fn run_activation_slice(arguments: &mut impl Iterator<Item = OsString>) -> Resul
         return Err(activation_slice_usage());
     }
     let repository = current_repository()?;
-    activation_slice::run(&repository, &request)
+    slice::activation::run(&repository, &request)
 }
 
 fn run_review_packet(arguments: &mut impl Iterator<Item = OsString>) -> Result<(), String> {
@@ -398,7 +393,7 @@ fn run_slice_close(arguments: &mut impl Iterator<Item = OsString>) -> Result<(),
             return Err(slice_close_usage());
         }
         let repository = current_repository()?;
-        return slice_close::prepare_metrics(&repository, &request);
+        return slice::close::prepare_metrics(&repository, &request);
     }
     let value = arguments
         .next()
@@ -414,9 +409,9 @@ fn run_slice_close(arguments: &mut impl Iterator<Item = OsString>) -> Result<(),
             let slice = value
                 .to_str()
                 .ok_or_else(|| "Slice name must be valid UTF-8".to_owned())?;
-            slice_close::plan(&repository, slice, output.as_deref())
+            slice::close::plan(&repository, slice, output.as_deref())
         },
-        "apply" if output.is_none() => slice_close::apply(&repository, &value),
+        "apply" if output.is_none() => slice::close::apply(&repository, &value),
         _ => Err(slice_close_usage()),
     }
 }

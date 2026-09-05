@@ -1,5 +1,5 @@
 use super::{CloseFixture, close_metrics, output};
-use crate::slice_close::{apply, build_plan, identity};
+use crate::slice::close::{apply, build_plan, identity};
 
 // 표준 close-metrics 파일이 없거나 다른 candidate/accepted commit을 가리키면
 // plan이 수치 기록을 추측하거나 cleanup 계획을 발행하기 전에 각각 거부한다.

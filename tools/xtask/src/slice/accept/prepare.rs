@@ -3,13 +3,12 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::{
+    super::{close as slice_close, gate as slice_gate},
     ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, ACCEPT_REQUEST_SCHEMA_V1_ALPHA3,
     AcceptRequest, Push, effect_scope, fast_commit_verification, fast_effect_scope,
     integration_worktree, require_gate_authorization, validate_accept_request,
 };
-use crate::{
-    bounded_file, git, review_protocol, slice_close, slice_contract, slice_gate, slice_worktree,
-};
+use crate::{bounded_file, git, review_protocol, slice_contract, slice_worktree};
 
 const PREPARE_REQUEST_SCHEMA: &str = "yo.slice-accept-prepare-request/v1alpha1";
 const PREPARE_REQUEST_SCHEMA_V1_ALPHA2: &str = "yo.slice-accept-prepare-request/v1alpha2";

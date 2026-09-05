@@ -1,7 +1,7 @@
 use std::process::Command;
 
 use super::{CloseFixture, output};
-use crate::{slice_close::apply, test_support};
+use crate::{slice::close::apply, test_support};
 
 const CHILD_MARKER: &str = "YO_XTASK_POISONED_GIT_CHILD";
 
@@ -19,7 +19,7 @@ fn git_helpers_ignore_poisoned_hook_environment() {
     let result = Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
-            "slice_close::tests::environment::poisoned_hook_child",
+            "slice::close::tests::environment::poisoned_hook_child",
             "--nocapture",
         ])
         .env(CHILD_MARKER, "1")

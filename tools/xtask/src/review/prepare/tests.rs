@@ -116,7 +116,8 @@ fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/lib.rs".to_owned(),
-            "tools/xtask/src/slice_gate.rs".to_owned(),
+            "tools/xtask/src/slice.rs".to_owned(),
+            "tools/xtask/src/slice/gate.rs".to_owned(),
         ]),
         vec![
             "AGENTS.md".to_owned(),
@@ -139,7 +140,8 @@ fn changed_authority_policy_v1alpha2_unions_cross_owner_changes() {
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/review/packet.rs".to_owned(),
             "tools/xtask/src/review/egress.rs".to_owned(),
-            "tools/xtask/src/slice_close.rs".to_owned(),
+            "tools/xtask/src/slice.rs".to_owned(),
+            "tools/xtask/src/slice/close.rs".to_owned(),
             "nested/AGENTS.md".to_owned(),
         ]),
         vec![

@@ -42,10 +42,10 @@ impl CloseFixture {
         repository.git(["add", "base.txt"]);
         if after_metrics_cutover {
             repository.write(
-                "tools/xtask/src/slice_close/metrics-cutover",
+                "tools/xtask/src/slice/close/metrics-cutover",
                 "yo.slice-close-metrics/v1\n",
             );
-            repository.git(["add", "tools/xtask/src/slice_close/metrics-cutover"]);
+            repository.git(["add", "tools/xtask/src/slice/close/metrics-cutover"]);
         }
         repository.git(["commit", "--quiet", "-m", "test: base"]);
         let base = output(&repository.path, &["rev-parse", "HEAD"]);

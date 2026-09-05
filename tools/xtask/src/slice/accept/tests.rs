@@ -6,7 +6,7 @@ use super::{
     compose_message, effect_scope, fast_commit_verification, fast_effect_scope,
     integrate_candidate_with, integration_worktree,
 };
-use crate::{slice_gate, slice_worktree, test_support::TestRepository};
+use crate::{slice::gate as slice_gate, slice_worktree, test_support::TestRepository};
 
 struct AcceptanceFixture {
     repository: TestRepository,

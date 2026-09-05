@@ -7,11 +7,15 @@ use super::{
 };
 use crate::{
     review_protocol,
-    slice_accept::{
-        ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2, ACCEPT_REQUEST_SCHEMA_V1_ALPHA3,
-        COMMIT_GIT_HOOKS, fast_effect_scope, require_gate_authorization,
+    slice::{
+        accept::{
+            ACCEPT_REQUEST_SCHEMA, ACCEPT_REQUEST_SCHEMA_V1_ALPHA2,
+            ACCEPT_REQUEST_SCHEMA_V1_ALPHA3, COMMIT_GIT_HOOKS, fast_effect_scope,
+            require_gate_authorization,
+        },
+        close as slice_close,
     },
-    slice_close, slice_contract, test_support,
+    slice_contract, test_support,
 };
 
 struct Fixture {
