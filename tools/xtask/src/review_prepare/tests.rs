@@ -95,7 +95,7 @@ fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/lib.rs".to_owned(),
-            "tools/xtask/src/review_prepare/mod.rs".to_owned(),
+            "tools/xtask/src/review_prepare.rs".to_owned(),
         ]),
         vec![
             "AGENTS.md".to_owned(),
@@ -105,7 +105,7 @@ fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/lib.rs".to_owned(),
-            "tools/xtask/src/review_delivery/mod.rs".to_owned(),
+            "tools/xtask/src/review_delivery.rs".to_owned(),
         ]),
         vec![
             "AGENTS.md".to_owned(),
@@ -115,7 +115,7 @@ fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/lib.rs".to_owned(),
-            "tools/xtask/src/slice_gate/mod.rs".to_owned(),
+            "tools/xtask/src/slice_gate.rs".to_owned(),
         ]),
         vec![
             "AGENTS.md".to_owned(),
@@ -124,7 +124,7 @@ fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
     );
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
-            "tools/xtask/src/slice_contract/mod.rs".to_owned(),
+            "tools/xtask/src/slice_contract.rs".to_owned(),
         ]),
         vec!["AGENTS.md".to_owned(), "CONTRIBUTING.md".to_owned()]
     );
@@ -136,9 +136,9 @@ fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
 fn changed_authority_policy_v1alpha2_unions_cross_owner_changes() {
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
-            "tools/xtask/src/review_packet/mod.rs".to_owned(),
-            "tools/xtask/src/review_egress/mod.rs".to_owned(),
-            "tools/xtask/src/slice_close/mod.rs".to_owned(),
+            "tools/xtask/src/review_packet.rs".to_owned(),
+            "tools/xtask/src/review_egress.rs".to_owned(),
+            "tools/xtask/src/slice_close.rs".to_owned(),
             "nested/AGENTS.md".to_owned(),
         ]),
         vec![
@@ -196,7 +196,7 @@ fn changed_authority_policy_v1alpha2_fails_closed_for_ambiguous_workflow() {
     assert_eq!(
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/bounded_file.rs".to_owned(),
-            "tools/xtask/src/review_prepare/mod.rs".to_owned(),
+            "tools/xtask/src/review_prepare.rs".to_owned(),
         ]),
         expected
     );

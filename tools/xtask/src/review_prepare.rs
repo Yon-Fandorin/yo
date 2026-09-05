@@ -774,9 +774,9 @@ fn shared_workflow_owners(path: &str) -> Option<&'static [&'static str]> {
 }
 
 fn workflow_code_owner(path: &str) -> Option<&'static str> {
-    if path.starts_with("tools/xtask/src/review_packet/")
-        || path.starts_with("tools/xtask/src/review_prepare/")
-        || path.starts_with("tools/xtask/src/review_delta/")
+    if workflow_module(path, "review_packet")
+        || workflow_module(path, "review_prepare")
+        || workflow_module(path, "review_delta")
         || path == "tools/xtask/src/validation_summary.rs"
         || matches!(
             path,
@@ -784,10 +784,10 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
         )
     {
         Some(PACKET_AUTHORITY)
-    } else if path.starts_with("tools/xtask/src/review_delivery/")
-        || path.starts_with("tools/xtask/src/review_egress/")
-        || path.starts_with("tools/xtask/src/review_target_admission/")
-        || path.starts_with("tools/xtask/src/review_continuation_preflight/")
+    } else if workflow_module(path, "review_delivery")
+        || workflow_module(path, "review_egress")
+        || workflow_module(path, "review_target_admission")
+        || workflow_module(path, "review_continuation_preflight")
         || matches!(
             path,
             "tools/xtask/src/review_continuation_preflight.rs"
@@ -795,20 +795,20 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
         )
     {
         Some(DELIVERY_AUTHORITY)
-    } else if path.starts_with("tools/xtask/src/slice_gate/")
-        || path.starts_with("tools/xtask/src/slice_accept/")
-        || path.starts_with("tools/xtask/src/slice_close/")
-        || path.starts_with("tools/xtask/src/slice_status/")
-        || path.starts_with("tools/xtask/src/impact/")
+    } else if workflow_module(path, "slice_gate")
+        || workflow_module(path, "slice_accept")
+        || workflow_module(path, "slice_close")
+        || workflow_module(path, "slice_status")
+        || workflow_module(path, "impact")
         || matches!(
             path,
             "tools/xtask/src/slice_accept.rs" | "tools/xtask/src/cost_report.rs"
         )
     {
         Some(INTEGRATION_AUTHORITY)
-    } else if path.starts_with("tools/xtask/src/slice_contract/")
-        || path.starts_with("tools/xtask/src/slice_create/")
-        || path.starts_with("tools/xtask/src/activation_slice/")
+    } else if workflow_module(path, "slice_contract")
+        || workflow_module(path, "slice_create")
+        || workflow_module(path, "activation_slice")
         || matches!(
             path,
             "tools/xtask/src/slice_worktree.rs"
@@ -821,6 +821,12 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn workflow_module(path: &str, module: &str) -> bool {
+    path.strip_prefix("tools/xtask/src/")
+        .and_then(|relative| relative.strip_prefix(module))
+        .is_some_and(|suffix| suffix == ".rs" || suffix.starts_with('/'))
 }
 
 fn is_neutral_workflow_facade(path: &str) -> bool {

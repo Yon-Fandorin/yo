@@ -86,5 +86,5 @@ fn final_revalidate_after_read(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "candidate/tests.rs"]
 mod tests;

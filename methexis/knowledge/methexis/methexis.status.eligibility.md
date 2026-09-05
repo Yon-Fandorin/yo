@@ -16,7 +16,7 @@ relations:
     - tools/methexis/tests/checkpoint_flow/contract.rs::trusted_code_activation_degrades_without_losing_approval_on_byte_drift
   applies_to:
     - tools/methexis/src/check/runner.rs::check_repository_selected
-    - tools/methexis/src/source/mod.rs::Eligibility
+    - tools/methexis/src/source.rs::Eligibility
 ---
 # Derived eligibility status
 

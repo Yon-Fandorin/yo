@@ -300,11 +300,11 @@ fn relative_path(repository_root: &Path, path: &Path) -> String {
 }
 
 #[cfg(test)]
-#[path = "context_tests.rs"]
+#[path = "checkpoint/context_tests.rs"]
 mod context_tests;
 
 #[cfg(test)]
-#[path = "tests.rs"]
+#[path = "checkpoint/tests.rs"]
 mod tests;
 
 struct SelectedCheckpoint {

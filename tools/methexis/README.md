@@ -217,8 +217,8 @@ src/author/
   mod.rs          AuthorService facade and exact-version dispatch
   shared.rs       shared Source and Knowledge derivation and publication
   records.rs      deterministic Source record and Knowledge unit encoding
-  v1alpha1/mod.rs v1alpha1 request, response, Projection, and packet flow
-  v1alpha2/mod.rs v1alpha2 request, response, and semantic-only flow
+  v1alpha1.rs v1alpha1 request, response, Projection, and packet flow
+  v1alpha2.rs v1alpha2 request, response, and semantic-only flow
 
 src/review/
   mod.rs         ReviewService and shared wire-contract types

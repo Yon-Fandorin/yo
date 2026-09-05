@@ -101,7 +101,7 @@ fn bootstrap_fixture(
     }
     if implementation_change {
         repository.write(
-            "tools/xtask/src/review_packet/mod.rs",
+            "tools/xtask/src/review_packet.rs",
             "// candidate changes its own prospective implementation\n",
         );
     }

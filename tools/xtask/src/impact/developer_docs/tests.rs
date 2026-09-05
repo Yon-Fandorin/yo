@@ -24,7 +24,7 @@ fn preserves_developer_docs_impact_contract() {
         Case {
             name: "code changes cannot omit the trailer",
             message: "refactor(core): move runtime ownership",
-            paths: &["crates/yo-core/src/runtime/mod.rs"],
+            paths: &["crates/yo-core/src/runtime.rs"],
             branch: "develop",
             passes: false,
         },
@@ -45,7 +45,7 @@ fn preserves_developer_docs_impact_contract() {
         Case {
             name: "updated requires a Developer Docs change",
             message: "refactor(core): move runtime ownership\n\nDeveloper-Docs-Impact: updated",
-            paths: &["crates/yo-core/src/runtime/mod.rs"],
+            paths: &["crates/yo-core/src/runtime.rs"],
             branch: "develop",
             passes: false,
         },
@@ -53,7 +53,7 @@ fn preserves_developer_docs_impact_contract() {
             name: "updated accepts a staged Developer Docs change",
             message: "refactor(core): move runtime ownership\n\nDeveloper-Docs-Impact: updated",
             paths: &[
-                "crates/yo-core/src/runtime/mod.rs",
+                "crates/yo-core/src/runtime.rs",
                 "docs/src/architecture/runtime-flow.md",
             ],
             branch: "develop",
@@ -86,7 +86,7 @@ fn preserves_developer_docs_impact_contract() {
         Case {
             name: "working Slice commits defer the decision",
             message: "refactor(core): move runtime ownership",
-            paths: &["crates/yo-core/src/runtime/mod.rs"],
+            paths: &["crates/yo-core/src/runtime.rs"],
             branch: "slice/direct/runtime-ownership",
             passes: true,
         },

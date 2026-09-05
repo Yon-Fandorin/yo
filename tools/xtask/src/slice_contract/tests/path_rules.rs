@@ -7,7 +7,7 @@ fn tree_rule_matches_only_its_repository_subtree() {
     let rule = PathRule::parse("crates/yo-tui/src/**").unwrap();
 
     assert!(rule.matches("crates/yo-tui/src"));
-    assert!(rule.matches("crates/yo-tui/src/render/mod.rs"));
+    assert!(rule.matches("crates/yo-tui/src/render.rs"));
     assert!(!rule.matches("crates/yo-tui/src-old/render.rs"));
 }
 
