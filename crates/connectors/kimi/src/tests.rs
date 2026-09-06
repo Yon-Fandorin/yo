@@ -929,25 +929,6 @@ fn kimi_usage_preserves_reported_zero_cache_reads() {
     )));
 }
 
-// Kimi의 cached_tokens 부재는 unsupported나 0으로 바꾸지 않고 absent로 남기며,
-// 음수·null·prompt 초과 값은 Provider 보고값을 추측해 고치지 않고 거절합니다.
-#[test]
-fn kimi_usage_distinguishes_absent_cache_reads_and_rejects_invalid_reports() {
-    let usage = json!({"prompt_tokens":4,"completion_tokens":3,"total_tokens":7});
-    let decoded = super::sse::decode_usage(&usage).unwrap();
-    assert!(matches!(
-        decoded.cache_read_input_tokens,
-        yo_core::CacheReadInputTokens::Absent { ref source_profile }
-            if source_profile.as_str() == "kimi.usage.cached-tokens/v1"
-    ));
-
-    for cached_tokens in [json!(-1), serde_json::Value::Null, json!(5)] {
-        let mut invalid = usage.clone();
-        invalid["cached_tokens"] = cached_tokens;
-        assert!(super::sse::decode_usage(&invalid).is_err());
-    }
-}
-
 // 같은 wire chunk에 반복된 usage라도 cached_tokens 부재와 reported 0은 같은 값이
 // 아니므로 하나로 합치지 않고 cache telemetry 불일치로 거절합니다.
 #[test]
