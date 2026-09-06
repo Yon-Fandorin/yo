@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use serde_json::Value;
-use yo_connector_transport::{DecodeBatch, SseFrame, SseFramer};
+use yo_connector_transport::{DecodeBatch, SseDecoder, SseFrame, SseFramer};
 use yo_core::{
     ConnectorError, ConnectorFailureKind, ModelConnectorEvent, ModelConnectorLimits,
     ModelConnectorTerminal, ModelConnectorUsage, ReasoningChannel,
@@ -29,6 +29,16 @@ struct ToolCall {
     arguments: String,
 }
 
+impl SseDecoder for ChatCompletionsSseDecoder {
+    fn push(&mut self, bytes: &[u8]) -> DecodeBatch {
+        self.push_batch(bytes)
+    }
+
+    fn finish(&mut self) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
+        self.finish()
+    }
+}
+
 impl ChatCompletionsSseDecoder {
     pub(super) fn new(limits: ModelConnectorLimits) -> Self {
         let framer = SseFramer::new(
@@ -54,10 +64,7 @@ impl ChatCompletionsSseDecoder {
     }
 
     #[cfg(test)]
-    pub(super) fn push(
-        &mut self,
-        bytes: &[u8],
-    ) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
         let batch = self.push_batch(bytes);
         match batch.failure {
             Some(failure) => Err(failure),
@@ -65,7 +72,7 @@ impl ChatCompletionsSseDecoder {
         }
     }
 
-    pub(super) fn push_batch(&mut self, bytes: &[u8]) -> DecodeBatch {
+    fn push_batch(&mut self, bytes: &[u8]) -> DecodeBatch {
         let mut decoded = Vec::new();
         let frames = self.framer.push(bytes);
         for frame in frames.frames {
@@ -85,7 +92,7 @@ impl ChatCompletionsSseDecoder {
         }
     }
 
-    pub(super) fn finish(&mut self) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
+    fn finish(&mut self) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
         if let Some(frame) = self.framer.finish()? {
             let emitted = self.decode_event(frame)?;
             if !emitted.is_empty() {
