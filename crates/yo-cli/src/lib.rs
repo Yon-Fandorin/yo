@@ -3,19 +3,19 @@
 mod agent;
 mod application;
 mod command;
-mod config;
 mod connection;
 mod diagnostic;
-mod host;
+mod execution;
 mod live;
-mod local_tools;
-mod model;
 mod presentation;
 mod print;
 mod process;
-mod storage;
+mod state;
 
 pub(crate) use diagnostic::AppError;
+// Temporary routes for consumers moved by the next ownership patch.
+pub(crate) use execution::{host, model, tools as local_tools};
+pub(crate) use state::{config, storage};
 
 pub fn run() -> std::process::ExitCode {
     application::run()

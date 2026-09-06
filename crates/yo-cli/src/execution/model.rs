@@ -7,7 +7,7 @@ use yo_core::{
     ModelSelection, ProviderId,
 };
 
-use crate::{AppError, config::Config};
+use crate::{AppError, state::config::Config};
 
 mod host_catalog;
 mod native;
@@ -28,7 +28,7 @@ pub(crate) enum StartupBackend {
         account: AccountId,
         model: ModelId,
         replace_binding: bool,
-        registry_revision: crate::local_tools::LocalToolRegistryRevision,
+        registry_revision: crate::execution::tools::LocalToolRegistryRevision,
     },
 }
 
@@ -81,7 +81,7 @@ impl StartupBackend {
 
     pub(crate) const fn registry_revision(
         &self,
-    ) -> Option<crate::local_tools::LocalToolRegistryRevision> {
+    ) -> Option<crate::execution::tools::LocalToolRegistryRevision> {
         match self {
             Self::Host(_) | Self::ReadOnlyHost(_) => None,
             Self::Native {
@@ -101,7 +101,7 @@ impl StartupBackend {
 
 pub(crate) fn replacement(
     selection: &ModelSelection,
-    registry_revision: crate::local_tools::LocalToolRegistryRevision,
+    registry_revision: crate::execution::tools::LocalToolRegistryRevision,
 ) -> StartupBackend {
     startup::replacement(selection, registry_revision)
 }
@@ -180,7 +180,7 @@ mod tests {
             account: selection.account().clone(),
             model: selection.model().clone(),
             replace_binding: false,
-            registry_revision: crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            registry_revision: crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         };
         assert_eq!(native.label(), "qwen3.8max");
         assert!(!native.replaces_binding());
@@ -188,7 +188,7 @@ mod tests {
 
         let replacement = replacement(
             &selection,
-            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         );
         assert_eq!(replacement.label(), "qwen3.8max");
         assert!(replacement.replaces_binding());
@@ -211,7 +211,7 @@ mod tests {
         let config_path = path.join("config.yaml");
         fs::write(&config_path, "session: {}\n").unwrap();
         fs::write(path.join("credentials.yaml"), "invalid: [").unwrap();
-        let config = crate::config::load_from(&config_path).unwrap();
+        let config = crate::state::config::load_from(&config_path).unwrap();
         let mut retained = None;
 
         assert!(
@@ -230,7 +230,7 @@ mod tests {
             account: AccountId::new("account").unwrap(),
             model: ModelId::new("model").unwrap(),
             replace_binding: false,
-            registry_revision: crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            registry_revision: crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         };
         let error = credentials_for_startup(&config, &mut retained, &native).unwrap_err();
 

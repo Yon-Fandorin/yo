@@ -11,7 +11,7 @@ use nix::{
     sys::stat::{SFlag, fstatat},
 };
 
-use crate::local_tools::execution::{completed, failed, interrupted};
+use crate::execution::tools::execution::{completed, failed, interrupted};
 
 const MAX_LIST_ENTRIES: usize = 100_000;
 const LIST_TRUNCATION_MARKER: &str = "\n[yo: tool output truncated]";

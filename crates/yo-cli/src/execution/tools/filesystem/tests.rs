@@ -16,7 +16,7 @@ use super::{
     path::path_components,
     read::read_file,
 };
-use crate::local_tools::registry::{LocalToolRegistryRevision, registry};
+use crate::execution::tools::registry::{LocalToolRegistryRevision, registry};
 
 // legacy read_file은 workspace 안의 일반 파일을 읽되 credential path 실패를 고정된
 // execution result로 닫고, 잘못된 상위 경로는 worker 시작 전 거절합니다.

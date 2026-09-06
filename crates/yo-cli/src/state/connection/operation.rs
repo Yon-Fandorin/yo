@@ -5,7 +5,7 @@ use yo_core::{
     ModelSelection, StartupPolicy, StartupSelectionSources, StartupTarget, resolve_startup_target,
 };
 
-use crate::{AppError, config::Config};
+use crate::{AppError, state::config::Config};
 
 pub(crate) fn absolute_config_path(
     path: std::path::PathBuf,
@@ -45,7 +45,7 @@ pub(crate) fn admit_target(config: &Config, reference: &str) -> Result<StartupTa
     .map_err(|error| AppError::single("admitting the startup target", error))?
     .ok_or_else(|| AppError::message("target admission returned no startup target"))?;
     if let StartupTarget::Host(host) = &target {
-        crate::host::require_supported(host)?;
+        crate::execution::host::require_supported(host)?;
     }
     Ok(target)
 }

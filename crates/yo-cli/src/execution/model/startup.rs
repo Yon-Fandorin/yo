@@ -6,7 +6,7 @@ use yo_core::{
 };
 
 use super::{DelegatedExecutionProfile, StartupBackend};
-use crate::{AppError, config::Config};
+use crate::{AppError, state::config::Config};
 
 const SESSION_TOOL_EXPOSURE_PROFILE: &str = "yo.session-tool-exposure/v1alpha1";
 
@@ -18,7 +18,7 @@ enum DurableBackendKind {
 
 pub(super) fn replacement(
     selection: &ModelSelection,
-    registry_revision: crate::local_tools::LocalToolRegistryRevision,
+    registry_revision: crate::execution::tools::LocalToolRegistryRevision,
 ) -> StartupBackend {
     StartupBackend::Native {
         provider: selection.provider().clone(),
@@ -119,9 +119,9 @@ fn resolve_new_session_with_tool_restriction(
                 || entry.explicit_profile().is_some_and(|profile| {
                     profile.tool_capability_policy().as_str() == "no-tools/v1"
                 }) {
-                crate::local_tools::LocalToolRegistryRevision::NoTools
+                crate::execution::tools::LocalToolRegistryRevision::NoTools
             } else {
-                crate::local_tools::LocalToolRegistryRevision::BasicFiles
+                crate::execution::tools::LocalToolRegistryRevision::BasicFiles
             };
             Ok(native_selection(selection, false, registry_revision))
         },
@@ -143,7 +143,7 @@ fn resolve_resume(
     let durable_binding =
         parse_durable_binding(binding_identity.schema(), binding_identity.value())?;
     let registry_revision =
-        crate::local_tools::revision_for_replay_contract(target.model_replay().contract())
+        crate::execution::tools::revision_for_replay_contract(target.model_replay().contract())
             .map_err(|error| AppError::single("selecting the saved local tool registry", error))?;
     resolve_native_resume(
         config.model_catalog(),
@@ -154,7 +154,7 @@ fn resolve_resume(
 }
 
 fn classify_durable_backend(kind: &str) -> Result<DurableBackendKind, AppError> {
-    if let Some(host) = crate::host::from_backend_kind(kind) {
+    if let Some(host) = crate::execution::host::from_backend_kind(kind) {
         return Ok(DurableBackendKind::Host(host));
     }
     if kind == "yo-managed-model" {
@@ -169,7 +169,7 @@ fn resolve_host(
     host: HostId,
     execution: DelegatedExecutionProfile,
 ) -> Result<StartupBackend, AppError> {
-    crate::host::require_supported(&host)?;
+    crate::execution::host::require_supported(&host)?;
     Ok(match execution {
         DelegatedExecutionProfile::Standard => StartupBackend::Host(host),
         DelegatedExecutionProfile::ReadOnlyReview => StartupBackend::ReadOnlyHost(host),
@@ -216,7 +216,7 @@ fn resolve_native_resume(
     catalog: &yo_core::ModelCatalog,
     durable_binding: DurableNativeBinding,
     reference: Option<&str>,
-    registry_revision: crate::local_tools::LocalToolRegistryRevision,
+    registry_revision: crate::execution::tools::LocalToolRegistryRevision,
 ) -> Result<StartupBackend, AppError> {
     let binding = durable_binding.binding();
     let durable_selection = ModelSelection::new(
@@ -260,7 +260,7 @@ fn resolve_native_resume(
 fn native_selection(
     selection: ModelSelection,
     replace_binding: bool,
-    registry_revision: crate::local_tools::LocalToolRegistryRevision,
+    registry_revision: crate::execution::tools::LocalToolRegistryRevision,
 ) -> StartupBackend {
     StartupBackend::Native {
         provider: selection.provider().clone(),
@@ -791,7 +791,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Legacy(durable.clone()),
             Some("same"),
-            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap();
         assert!(!same.replaces_binding());
@@ -804,7 +804,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Legacy(durable.clone()),
             Some("host:codex"),
-            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap_err()
         .to_string();
@@ -815,7 +815,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Legacy(durable),
             Some("openrouter::same"),
-            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap();
         assert!(replacement.replaces_binding());
@@ -920,7 +920,7 @@ mod tests {
                 &exact_catalog,
                 durable.clone(),
                 None,
-                crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+                crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
             )
             .unwrap()
             .replaces_binding()
@@ -952,7 +952,7 @@ mod tests {
                 &changed_catalog,
                 durable,
                 None,
-                crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+                crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
             )
             .unwrap()
             .replaces_binding()
@@ -969,7 +969,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Complete(exact.clone()),
             None,
-            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap();
         assert!(!resumed.replaces_binding());
@@ -978,7 +978,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Complete(exact),
             Some("model"),
-            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap_err();
         assert!(explicit.to_string().contains("disabled by operator"));
@@ -987,7 +987,7 @@ mod tests {
             &catalog,
             DurableNativeBinding::Complete(complete_binding("high")),
             None,
-            crate::local_tools::LocalToolRegistryRevision::BasicFiles,
+            crate::execution::tools::LocalToolRegistryRevision::BasicFiles,
         )
         .unwrap_err();
         assert!(changed.to_string().contains("disabled by operator"));
@@ -1029,7 +1029,7 @@ mod tests {
 
         assert_eq!(
             startup.registry_revision(),
-            Some(crate::local_tools::LocalToolRegistryRevision::NoTools)
+            Some(crate::execution::tools::LocalToolRegistryRevision::NoTools)
         );
     }
 
@@ -1049,7 +1049,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             startup.registry_revision(),
-            Some(crate::local_tools::LocalToolRegistryRevision::NoTools)
+            Some(crate::execution::tools::LocalToolRegistryRevision::NoTools)
         );
         assert_eq!(startup.model_selection().unwrap().model().as_str(), "model");
 

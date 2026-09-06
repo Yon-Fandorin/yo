@@ -17,7 +17,7 @@ use super::{
     StartupBackend,
     tokenizer::{TokenizerRegistry, require_supported_tokenizer},
 };
-use crate::{AppError, config::Config, local_tools};
+use crate::{AppError, execution::tools as local_tools, state::config::Config};
 
 pub(super) fn start_native(
     config: &Config,
@@ -373,7 +373,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&root).unwrap();
         let config_path = root.join("config.yaml");
-        let mut config = crate::config::load_from(&config_path).unwrap();
+        let mut config = crate::state::config::load_from(&config_path).unwrap();
         let complete = fixture_complete();
         let account = yo_core::ConnectionAccount::new(
             complete.binding().provider_id().clone(),

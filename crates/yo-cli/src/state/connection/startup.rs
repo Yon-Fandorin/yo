@@ -1,6 +1,6 @@
 use yo_core::StartupTarget;
 
-use crate::{AppError, config::Config};
+use crate::{AppError, state::config::Config};
 
 pub(crate) fn load_startup_connections(
     config: &mut Config,
@@ -80,7 +80,7 @@ mod tests {
             .unwrap();
         repository.commit(&mutation).unwrap();
 
-        let mut config = crate::config::load_from(&config_path).unwrap();
+        let mut config = crate::state::config::load_from(&config_path).unwrap();
         let preference = load_startup_connections(&mut config).unwrap();
 
         assert!(matches!(preference, Some(StartupTarget::Model(_))));

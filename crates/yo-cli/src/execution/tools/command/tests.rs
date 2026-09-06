@@ -297,7 +297,7 @@ fn cleanup_releases_pipe_readers_held_by_an_escaped_writer() {
     let pid_argument = shell_quote(pid_path.to_str().unwrap());
     let closed_argument = shell_quote(closed_path.to_str().unwrap());
     let command = format!(
-        "YO_COMMAND_DETACHED_PIPE_PID={pid_argument} YO_COMMAND_DETACHED_PIPE_CLOSED={closed_argument} {executable} --exact local_tools::command::tests::detached_pipe_holder_helper --nocapture --test-threads=1 & while [ ! -s {pid_argument} ]; do sleep 0.01; done; exit 0"
+        "YO_COMMAND_DETACHED_PIPE_PID={pid_argument} YO_COMMAND_DETACHED_PIPE_CLOSED={closed_argument} {executable} --exact execution::tools::command::tests::detached_pipe_holder_helper --nocapture --test-threads=1 & while [ ! -s {pid_argument} ]; do sleep 0.01; done; exit 0"
     );
     let mut execution = spawn(
         &command,

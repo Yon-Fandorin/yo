@@ -26,7 +26,7 @@ The static profile definitions, endpoints, rows, typed capabilities, and
 deterministic ordering live in
 [`qwencloud_catalog.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-core/src/model_service/qwencloud_catalog.rs).
 Configuration resolves a profile into a non-routable seed in
-[`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/config.rs).
+[`config.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/state/config.rs).
 The shared selection and recoverable connection transaction live in
 [`external.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/command/connect/external.rs)
 and

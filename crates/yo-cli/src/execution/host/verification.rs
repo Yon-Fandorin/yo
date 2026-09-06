@@ -2,7 +2,8 @@ use std::path::Path;
 
 use yo_core::HostId;
 
-use crate::{AppError, host::registry::require_supported};
+use super::registry::require_supported;
+use crate::AppError;
 
 pub(crate) fn verify_at_with_codex_warning_observer(
     host: &HostId,

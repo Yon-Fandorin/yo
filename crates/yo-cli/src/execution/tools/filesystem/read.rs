@@ -14,7 +14,7 @@ use super::{
     output::{error, json_string},
     path::AdmittedPath,
 };
-use crate::local_tools::execution::{completed, failed, interrupted};
+use crate::execution::tools::execution::{completed, failed, interrupted};
 
 pub(super) fn read_file(
     file: impl Read,
@@ -349,7 +349,7 @@ mod tests {
         AdmittedPath, MAX_FILE_BYTES, ReadRequest, read_item_after_capture, render_window,
         selected_line_ranges,
     };
-    use crate::local_tools::tests::TestDirectory;
+    use crate::execution::tools::tests::TestDirectory;
 
     fn request(content_offset: usize, limit: usize) -> ReadRequest {
         ReadRequest {

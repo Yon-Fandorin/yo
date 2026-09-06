@@ -27,7 +27,7 @@ use super::{
     output::{error, json_string},
     path::AdmittedPath,
 };
-use crate::local_tools::execution::{completed, failed, interrupted};
+use crate::execution::tools::execution::{completed, failed, interrupted};
 
 const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_EDITS: usize = 256;
@@ -696,7 +696,7 @@ mod tests {
         catch_failure, execute_edit_after_capture, execute_write, execute_write_after_mode,
         lock_mutation, publish_in_parent,
     };
-    use crate::local_tools::{filesystem::path::AdmittedPath, tests::TestDirectory};
+    use crate::execution::tools::{filesystem::path::AdmittedPath, tests::TestDirectory};
 
     // waiting mutation은 같은 host lock을 우회하지 않으며 cancellation이 이미 보이면
     // filesystem phase에 들어가지 않고 Interrupted 경로를 선택할 수 있습니다.
