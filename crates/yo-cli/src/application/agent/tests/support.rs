@@ -8,7 +8,7 @@ use std::{
 use yo_core::{AgentIntent, CommandAdmission, SessionId, TranscriptRecord, TurnId, TurnRef};
 use yo_tui::{AgentConnection, AgentPoll, TerminationEvent, TerminationSource};
 
-use crate::agent::TuiAgentConnection;
+use crate::application::agent::TuiAgentConnection;
 
 /// Finite guard for a test worker that failed to publish an already-selected typed boundary.
 ///

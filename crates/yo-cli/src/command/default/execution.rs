@@ -2,8 +2,11 @@ use std::path::Path;
 
 use super::Command as DefaultCommand;
 use crate::{
-    AppError, config,
-    connection::{self, display_target},
+    AppError,
+    state::{
+        config,
+        connection::{self, display_target},
+    },
 };
 
 pub(crate) fn run(command: DefaultCommand) -> Result<String, AppError> {

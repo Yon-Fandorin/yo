@@ -10,7 +10,7 @@ use yo_tui::{AgentConnection, AgentPoll};
 use super::support::{
     NeverTerminated, TEST_DEADLOCK_GUARD, dispatch_until_queued, session_id, turn,
 };
-use crate::agent::TuiAgentConnection;
+use crate::application::agent::TuiAgentConnection;
 
 // CLI adapter는 worker 알림 하나에서 Transcript와 payload-free Request trace를 함께
 // 끝까지 배출하여, TUI가 backend나 저장소 내부 타입을 직접 읽지 않게 합니다.

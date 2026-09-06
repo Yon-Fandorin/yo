@@ -55,7 +55,7 @@ pub(crate) fn display_target(target: Option<&StartupTarget>) -> String {
         None => "unset".to_owned(),
         Some(StartupTarget::Host(host)) => host.reference(),
         Some(StartupTarget::Model(selection)) => {
-            crate::connection::presentation::escape_remote_text(&selection.canonical_reference())
+            crate::interaction::connection::escape_remote_text(&selection.canonical_reference())
         },
     }
 }
@@ -70,8 +70,8 @@ pub(crate) fn selection_for_binding(binding: &yo_core::EffectiveModelBinding) ->
 
 pub(crate) fn complete_binding_details(
     complete: &CompleteModelBinding,
-) -> crate::connection::presentation::BindingDetails {
-    crate::connection::presentation::BindingDetails::from(complete)
+) -> crate::interaction::connection::BindingDetails {
+    crate::interaction::connection::BindingDetails::from(complete)
 }
 
 #[cfg(test)]

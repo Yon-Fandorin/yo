@@ -1,4 +1,4 @@
-use crate::diagnostic::CliDiagnostic;
+use crate::interaction::diagnostic::CliDiagnostic;
 
 pub(crate) struct Output {
     pub(crate) stdout: String,

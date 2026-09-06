@@ -23,12 +23,12 @@ pub(crate) enum LivePreparation {
     Resume {
         session_id: SessionId,
         failure_selection: LiveSelection,
-        storage: super::storage::LocalReadStorage,
+        storage: crate::state::storage::LocalReadStorage,
     },
     ReadOnly {
         session_id: SessionId,
         reason: String,
-        storage: super::storage::LocalReadStorage,
+        storage: crate::state::storage::LocalReadStorage,
     },
 }
 
@@ -87,7 +87,7 @@ pub(crate) fn prepare(selection: LiveSelection, cwd: &Path) -> Result<LivePrepar
         LiveSelection::Resume(session_id) => session_id,
         LiveSelection::Continue => select_continue(cwd)?,
     };
-    let storage = super::storage::open_default_reader()
+    let storage = crate::state::storage::open_default_reader()
         .map_err(|error| AppError::single("opening read-only local Yo storage", error))?;
     let continuation = storage
         .reader()
@@ -132,7 +132,7 @@ fn resolved_failure_selection(was_continue: bool, session_id: SessionId) -> Live
 }
 
 fn select_continue(cwd: &Path) -> Result<SessionId, AppError> {
-    let storage = super::storage::open_default_reader()
+    let storage = crate::state::storage::open_default_reader()
         .map_err(|error| AppError::single("opening read-only local Yo storage", error))?;
     let reader = storage.reader().ok_or_else(|| {
         AppError::many(["no resumable Session exists in the current workspace".to_owned()])

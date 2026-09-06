@@ -9,7 +9,7 @@ use std::{
 use nix::sys::termios::{self, InputFlags, LocalFlags, SetArg, SpecialCharacterIndices, Termios};
 
 use super::{PickerChoice, PickerIdentity, PickerState, render_lines};
-use crate::{AppError, presentation::PresentationStyle};
+use crate::{AppError, interaction::PresentationStyle};
 
 const ESCAPE_SEQUENCE_WAIT: Duration = Duration::from_millis(25);
 const MAX_ESCAPE_SEQUENCE_BYTES: usize = 32;

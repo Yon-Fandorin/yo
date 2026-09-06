@@ -7,17 +7,20 @@ use nix::sys::termios::{self, LocalFlags, SetArg, SpecialCharacterIndices, Termi
 use rustix::termios::{QueueSelector, tcflush};
 use yo_core::ApiCredential;
 
-use super::presentation::{ConfirmationView, default_width};
-use crate::{AppError, presentation::PresentationStyle};
+use super::{
+    PresentationStyle,
+    connection::{ConfirmationView, default_width},
+};
+use crate::AppError;
 
 const MAX_INPUT_BYTES: usize = 16 * 1024;
 
-pub(crate) struct TtyConnectionInput {
+pub(crate) struct TtyPrompt {
     terminal: Option<File>,
     style: PresentationStyle,
 }
 
-impl TtyConnectionInput {
+impl TtyPrompt {
     pub(crate) const fn style(&self) -> PresentationStyle {
         self.style
     }
@@ -215,7 +218,7 @@ mod tests {
         let observed_slave = pty.slave.try_clone().unwrap();
         let original = tcgetattr(&observed_slave).unwrap();
         let child = thread::spawn(move || {
-            let mut input = TtyConnectionInput {
+            let mut input = TtyPrompt {
                 terminal: Some(File::from(pty.slave)),
                 style: PresentationStyle::Plain,
             };
@@ -363,7 +366,7 @@ mod tests {
             let original = tcgetattr(&observed).unwrap();
             let (result_tx, result_rx) = mpsc::channel();
             let worker = thread::spawn(move || {
-                let mut input = TtyConnectionInput::with_terminal(File::from(pty.slave));
+                let mut input = TtyPrompt::with_terminal(File::from(pty.slave));
                 let result = input
                     .read_credential("vendor:team")
                     .map(|credential| credential.expose_secret().to_owned())
@@ -399,7 +402,7 @@ mod tests {
         let original = tcgetattr(&observed).unwrap();
         let (result_tx, result_rx) = mpsc::channel();
         let worker = thread::spawn(move || {
-            let mut input = TtyConnectionInput::with_terminal(File::from(pty.slave));
+            let mut input = TtyPrompt::with_terminal(File::from(pty.slave));
             let result = input
                 .read_credential("vendor:team")
                 .map(|_| ())
@@ -425,7 +428,7 @@ mod tests {
         let original = tcgetattr(&observed).unwrap();
         let (result_tx, result_rx) = mpsc::channel();
         let worker = thread::spawn(move || {
-            let mut input = TtyConnectionInput::with_terminal(File::from(pty.slave));
+            let mut input = TtyPrompt::with_terminal(File::from(pty.slave));
             let result = input.read_credential_with("vendor:team", |terminal| {
                 let current = tcgetattr(terminal).unwrap();
                 assert!(!current.local_flags.contains(LocalFlags::ECHO));
@@ -456,7 +459,7 @@ mod tests {
     fn terminal_line_overflow_flushes_the_complete_pending_input_queue() {
         for length in [MAX_INPUT_BYTES - 1, MAX_INPUT_BYTES] {
             let (terminal, _observed, mut master, _mode) = immediate_input_terminal();
-            let reader = thread::spawn(move || TtyConnectionInput::read_line(&terminal).unwrap());
+            let reader = thread::spawn(move || TtyPrompt::read_line(&terminal).unwrap());
             let mut input = vec![b'a'; length];
             input.push(b'\n');
             master.write_all(&input).unwrap();
@@ -464,7 +467,7 @@ mod tests {
         }
 
         let (terminal, mut observed, mut master, _mode) = immediate_input_terminal();
-        let reader = thread::spawn(move || TtyConnectionInput::read_line(&terminal).unwrap_err());
+        let reader = thread::spawn(move || TtyPrompt::read_line(&terminal).unwrap_err());
         let mut input = vec![b'a'; MAX_INPUT_BYTES + 1];
         input.extend_from_slice(b"shell-sentinel\n");
         master.write_all(&input).unwrap();
@@ -492,7 +495,7 @@ mod tests {
         fs::write(&path, vec![b'a'; MAX_INPUT_BYTES + 1]).unwrap();
         let file = File::open(&path).unwrap();
 
-        let error = TtyConnectionInput::read_line(&file).unwrap_err();
+        let error = TtyPrompt::read_line(&file).unwrap_err();
         let _ = fs::remove_file(path);
 
         assert!(
@@ -510,7 +513,7 @@ mod tests {
         original.local_flags.insert(LocalFlags::ECHO);
         tcsetattr(&terminal, SetArg::TCSANOW, &original).unwrap();
         let child = thread::spawn(move || {
-            let mut input = TtyConnectionInput {
+            let mut input = TtyPrompt {
                 terminal: Some(terminal),
                 style: PresentationStyle::Plain,
             };

@@ -5,7 +5,7 @@ use super::{
     },
     LiveSession, PreparedAgent, SessionStep,
 };
-use crate::{command, config, diagnostic::AppError, model};
+use crate::{command, execution::model, interaction::diagnostic::AppError, state::config};
 
 pub(super) fn build_live_session(
     prepared: PreparedAgent,

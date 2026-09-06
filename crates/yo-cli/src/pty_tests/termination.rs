@@ -4,7 +4,7 @@ use super::support::{
     CHILD_MARKER, ENTER_ALTERNATE_SCREEN, PtyChild,
     tui::{assert_fullscreen_pair, run_fullscreen},
 };
-use crate::process::termination::TerminationCoordinator;
+use crate::execution::process::termination::TerminationCoordinator;
 
 // 실제 Linux PTY에서 SIGTERM을 받아도 화면과 termios를 먼저 복구한 뒤 같은 SIGTERM을 재생한다.
 #[test]

@@ -1,6 +1,6 @@
 use std::io::{IsTerminal, Read};
 
-use crate::diagnostic::AppError;
+use crate::interaction::diagnostic::AppError;
 
 pub(crate) fn read_input(prompt: Option<String>) -> Result<String, AppError> {
     let stdin = std::io::stdin();

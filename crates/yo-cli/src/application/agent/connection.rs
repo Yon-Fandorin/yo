@@ -21,7 +21,7 @@ pub(crate) struct TuiAgentConnection {
 }
 
 impl TuiAgentConnection {
-    pub(in crate::agent) fn from_session(session: AgentSession) -> Self {
+    pub(in crate::application::agent) fn from_session(session: AgentSession) -> Self {
         Self {
             journal: JournalState::from_session(&session),
             session,
@@ -41,17 +41,19 @@ impl TuiAgentConnection {
     }
 
     #[cfg(test)]
-    pub(in crate::agent) fn transcript_head_sequence(&self) -> Option<yo_core::JournalSequence> {
+    pub(in crate::application::agent) fn transcript_head_sequence(
+        &self,
+    ) -> Option<yo_core::JournalSequence> {
         self.journal.transcript_head_sequence()
     }
 
-    pub(in crate::agent) fn shutdown_session(
+    pub(in crate::application::agent) fn shutdown_session(
         &mut self,
     ) -> Result<Vec<yo_core::AgentEvent>, AgentSessionError> {
         self.session.shutdown()
     }
 
-    pub(in crate::agent) fn replace_session_backend(
+    pub(in crate::application::agent) fn replace_session_backend(
         &mut self,
         backend: Box<dyn yo_core::AgentBackend + Send>,
         termination_source: &mut impl yo_tui::TerminationSource,

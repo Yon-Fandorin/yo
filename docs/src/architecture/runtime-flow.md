@@ -466,7 +466,7 @@ last completed AgentMessage of the completed Turn
 stdout with a trailing LF when the answer lacks one
 ```
 
-[`yo-cli/src/print.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/print.rs)
+[`yo-cli/src/application/runtime/print.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application/runtime/print.rs)
 owns only input composition, Submission admission, Transcript projection, and
 output framing. It retries a backpressured command with the same Submission
 identity and waits for both the matching admission outcome and terminal Turn
@@ -625,7 +625,7 @@ The useful inspection points are:
    `Accepted` outcome with the matching `SubmissionId` arrives. If the user has
    edited a newer draft meanwhile, that newer text is not cleared. A rejection
    preserves the draft, and duplicate or stale outcomes have no effect.
-2. [`TuiAgentConnection`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs)
+2. [`TuiAgentConnection`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application/agent.rs)
    is a narrow local adapter. It forwards dispatch, retry, and submission
    outcomes; turns
    a coalesced Session change notification into bounded `TranscriptReader`
@@ -791,8 +791,8 @@ plain stdout
 root grammar and each command directory owns its typed arguments),
 `command/session/{list,show,presentation}.rs` owns stored-session selection,
 history projection, and table formatting, while `command/usage/execution.rs`
-owns the separate archived Usage projection. `state/config.rs` owns date-format configuration, and
-`state/storage.rs::open_default_reader` is deliberately separate from writer startup.
+owns the separate archived Usage projection. `config.rs` owns date-format configuration, and
+`storage.rs::open_default_reader` is deliberately separate from writer startup.
 Request has no anchor selector: it renders every durable correlation and
 availability record in chronological Journal order instead of guessing a
 nearby request. The projection never prints backend payloads or physical
@@ -1578,7 +1578,7 @@ process behavior. Its guarded runner restores terminal state before returning
 either outcome. `run_agent_generation` then calls agent shutdown even when the
 terminal operation failed and aggregates both failures when necessary.
 
-On an ordinary return, [`TerminationCoordinator::shutdown`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs)
+On an ordinary return, [`TerminationCoordinator::shutdown`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/process/termination.rs)
 restores installed signal dispositions and the installing thread's original
 mask. On a selected termination signal, `with_active_resource` waits until the
 TUI cleanup route has returned, invokes retained-agent cleanup when necessary,
@@ -1595,8 +1595,8 @@ Follow the context nearest the first failed boundary:
 | `creating the agent Session` | `yo-core/agent_session` startup and worker handshake |
 | `terminal session` | `yo-tui/runner` and terminal mode cleanup |
 | `agent cleanup` | `yo-core/agent_session::shutdown`, then runtime/backend cleanup |
-| `process termination session` or `process termination cleanup` | `yo-cli/process/termination` |
-| `suspending the process` | `yo-cli/process/job_control` |
+| `process termination session` or `process termination cleanup` | `yo-cli/execution/process/termination` |
+| `suspending the process` | `yo-cli/execution/process/job_control` |
 
 Do not discard later cleanup failures: the current top-level path attempts the
 independent cleanup boundaries and reports their contexts together.
