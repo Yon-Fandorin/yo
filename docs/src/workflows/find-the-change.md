@@ -9,6 +9,23 @@ meaning of the resulting evidence.
 Methexis owns behavioral contracts. The routes below link to those owners
 instead of redefining them.
 
+For a small route shortlist, run `python3 tools/context.py find "prompt cursor"`.
+It ranks the existing Markdown route/check tables by lexical overlap and returns
+at most three excerpts with file/line anchors, preferring matches in the outcome
+column over incidental mentions. Exact source is not loaded. A
+`no_match` or weak match means use `rg`, not repeatedly rephrase the query.
+English route vocabulary works best; this is not semantic or multilingual search.
+
+`python3 tools/context.py impact --changed` finds documentation links to staged,
+unstaged, deleted, and untracked paths. Explicit paths can replace `--changed`.
+Treat its results as potentially affected notes to inspect, not proven stale
+behavior. `python3 tools/context.py check` checks local file-link existence and
+repository containment. Neither command resolves symbols, validates heading
+fragments, proves semantic freshness, or replaces Methexis. JSON output is
+capped at 12 KiB and reports omitted matches. The [reader](https://github.com/Yon-Fandorin/yo/blob/develop/tools/context.py)
+has no network, persisted index, source-copy cache, or automatic repair.
+It requires Python 3.9 or newer.
+
 ## Choose the search depth
 
 After selecting a boundary, use the least expensive search that answers the

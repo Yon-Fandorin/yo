@@ -1,5 +1,9 @@
 # Review packets
 
+Use this reference only when constructing a formal packet. Ordinary reviews
+follow [Contributing](../CONTRIBUTING.md#review-and-integration) and do not need
+this protocol. Existing packet identities and versioned semantics are unchanged.
+
 This file is the repository workflow authority for review input readiness,
 packet construction, preparation, validation evidence, and experimental wire
 versioning. It is routed directly from [`AGENTS.md`](../AGENTS.md).

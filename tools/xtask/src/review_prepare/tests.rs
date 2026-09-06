@@ -126,7 +126,10 @@ fn changed_authority_policy_v1alpha2_routes_precise_workflow_owners() {
         authority_paths_for_changed_paths_v1alpha2(&[
             "tools/xtask/src/slice_contract/mod.rs".to_owned(),
         ]),
-        vec!["AGENTS.md".to_owned(), "CONTRIBUTING.md".to_owned()]
+        vec![
+            "AGENTS.md".to_owned(),
+            "CONTRIBUTING/formal-slices.md".to_owned()
+        ]
     );
 }
 
@@ -185,6 +188,7 @@ fn changed_authority_policy_v1alpha2_fails_closed_for_ambiguous_workflow() {
     let expected = vec![
         "AGENTS.md".to_owned(),
         "CONTRIBUTING.md".to_owned(),
+        "CONTRIBUTING/formal-slices.md".to_owned(),
         "CONTRIBUTING/review-and-integration.md".to_owned(),
         "CONTRIBUTING/review-delivery.md".to_owned(),
         "CONTRIBUTING/review-packets.md".to_owned(),
@@ -221,16 +225,13 @@ fn changed_authority_policy_v1alpha2_keeps_product_cost_minimal() {
     );
 }
 
-// 실제 repository authority bytes를 동일 tokenizer로 비교해, packet 전용 작은 후보와
-// packet+integration 중간 후보가 기존 coarse root authority보다 각각 2,000 tokens 이상
-// 줄어드는지 고정합니다. 이 수치는 lens나 owner를 생략하지 않은 라우팅 결과입니다.
+// 기본 session context에 절대 token 상한을 적용하여 다른 문서를 늘리는 방식으로
+// 절약 수치를 만족시키지 못하게 한다. Formal 상세 문서는 기본 읽기에서 분리된다.
 #[test]
-fn precise_authority_owners_materially_reduce_small_and_medium_fixed_cost() {
+fn default_workflow_has_an_absolute_context_budget() {
     let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let root = std::fs::read(repository.join("CONTRIBUTING.md")).unwrap();
-    let packets = std::fs::read(repository.join("CONTRIBUTING/review-packets.md")).unwrap();
-    let integration =
-        std::fs::read(repository.join("CONTRIBUTING/review-and-integration.md")).unwrap();
+    let index = std::fs::read(repository.join("AGENTS.md")).unwrap();
     let tokenizer = tiktoken_rs::o200k_base_singleton();
     let count = |bytes: &[u8]| {
         tokenizer
@@ -238,14 +239,43 @@ fn precise_authority_owners_materially_reduce_small_and_medium_fixed_cost() {
             .len()
     };
     let root_tokens = count(&root);
-    let packet_tokens = count(&packets);
-    let mut medium = packets;
-    medium.push(b'\n');
-    medium.extend(integration);
-    let medium_tokens = count(&medium);
+    assert!(
+        root_tokens <= 1_300,
+        "default workflow uses {root_tokens} tokens"
+    );
+    let startup_tokens = root_tokens + count(&index);
+    eprintln!("workflow context: root={root_tokens}, startup={startup_tokens}");
+    assert!(
+        startup_tokens <= 1_700,
+        "default startup uses {startup_tokens} tokens"
+    );
+    let formal = std::fs::read(repository.join("CONTRIBUTING/formal-slices.md")).unwrap();
+    let formal_tokens = count(&formal);
+    eprintln!("formal workflow context: {formal_tokens}");
+    assert!(
+        formal_tokens <= 1_800,
+        "formal workflow uses {formal_tokens} tokens"
+    );
+}
 
-    assert!(root_tokens >= packet_tokens + 2_000);
-    assert!(root_tokens >= medium_tokens + 2_000);
+// 일반 hook은 짧은 기본 규칙만 읽고, formal 문서 변경은 이동된 실제 owner를
+// 포함해야 한다. 단순 코드 변경에 거대한 formal 절차를 덧붙이지 않는다.
+#[test]
+fn ordinary_and_formal_workflows_route_to_their_actual_owners() {
+    for (path, owner) in [
+        ("tools/xtask/src/impact/change.rs", "CONTRIBUTING.md"),
+        ("tools/context.py", "CONTRIBUTING.md"),
+        ("tools/test_context.py", "CONTRIBUTING.md"),
+        (
+            "CONTRIBUTING/formal-slices.md",
+            "CONTRIBUTING/formal-slices.md",
+        ),
+    ] {
+        assert_eq!(
+            authority_paths_for_changed_paths_v1alpha2(&[path.to_owned()]),
+            vec!["AGENTS.md".to_owned(), owner.to_owned()]
+        );
+    }
 }
 
 // 관리형 준비는 사람이 반복 작성하던 egress와 admission 문서를 동일 manifest 및

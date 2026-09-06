@@ -1,5 +1,9 @@
 # Review and integration
 
+This reference applies to formal Slices. Ordinary changes use
+[Contributing](../CONTRIBUTING.md#review-and-integration), without mandatory
+packets, trailers, or close metrics. Existing formal evidence remains strict.
+
 This file is the repository workflow authority for required review lenses,
 verdict evidence, approval, integration, and cleanup. It is routed directly
 from [`AGENTS.md`](../AGENTS.md).
@@ -98,11 +102,12 @@ accepted surface with only an incremental staged diff. Working `slice/`, `task/`
 an accepted change needs correction, prepare the complete message in a file
 and create a new commit with `cargo xtask slice commit <message>` so both
 preflight and Slice close observe the same first-parent surface. The command
-invokes a non-amend Git commit through the ordinary editor boundary; the
-`prepare-commit-msg` hook rejects ambiguous `-m`, `-F`, `-t`, `-c`, `-C`, and
-`--amend` operations before the message is edited. A person may instead use
-plain `git commit` without a configured message template, read the complete
-message in the editor, and accept it there.
+invokes a non-amend Git commit through the ordinary editor boundary. A person
+uses the same command with a human-authored complete message.
+The ordinary hooks no longer enforce the formal operation-source restriction:
+use the Slice command for formal acceptance, never an ordinary commit to bypass
+its prepared-message preflight. `review-coverage-operation` remains an explicit
+compatibility check for frozen formal runners.
 
 When no additional lens applies, record `Slice-Review: none - <reason>`.
 `cargo xtask check slice-review-impact` reads the final trailer block and fails

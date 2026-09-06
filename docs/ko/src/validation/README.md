@@ -1,9 +1,9 @@
 # 검증
 
 변경된 경계를 기준으로 증거를 고른다. 기대 동작과 중요한 실패를 구분할
-수 있는 가장 작은 검사부터 시작한다. 그다음 검사를 넓히고
-[Slice](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#slice-contract)를
-닫는다.
+수 있는 가장 작은 검사부터 시작한다. 일반 작업은 영향받는 검사만 사용한다.
+아래의 formal 기준선은 명시적으로 선택한
+[Slice](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#slice-contract)에만 적용한다.
 
 ## 증거 계층
 
@@ -46,6 +46,7 @@ command, host, credential, platform을 기록한다.
 | Unix process coordinator 상태와 보상 | `cargo test -p yo-cli execution::process::termination::tests` | `crates/yo-cli/src/execution/process/termination/tests` |
 | 공통 bounded YAML parse·inference·failure budget | `cargo test -p yo-yaml` | `shared/yo-yaml/src/lib.rs` |
 | Rust test 바로 위에 필요한 설명 | `cargo xtask check test-explanations` | `crates/`, `shared/`, `tools/` 아래 Rust source |
+| 작업 context 경로, 변경 파일에 연결된 문서 안내, 로컬 참조 검사 | `python3 -m unittest discover -s tools -p test_context.py`와 `python3 tools/context.py check` | `tools/context.py`, 기존 Markdown 경로 표와 로컬 링크 대상 |
 | Slice 변경이 bind된 로컬 write-set 안에 머무는지 | `cargo xtask check slice-scope` | 하나의 활성 Slice worktree; planner가 먼저 `cargo xtask slice-contract bind <contract.json>` 실행 |
 | 두 Slice contract의 현재 통합 기준점이 같고 선언한 소유권이 겹치지 않는지 | `cargo xtask check slice-parallel <left.json> <right.json>` | direct Slice는 `develop`, Wave Slice는 해당 Wave branch 사용 |
 | 하나의 깨끗한 Slice 후보에서 검증, 리뷰, 위험, 승인 증거가 모두 같은 identity에 결속됐는지 | `cargo xtask slice gate <request.json>` | 검증이나 리뷰를 다시 실행하지 않고 다음 행동 하나만 반환 |
@@ -136,6 +137,9 @@ worktree와 함께 폐기한다.
 
 ## 한 후보의 게이트 통합하기
 
+이 절은 formal Slice에만 적용한다. 일반 작업은 검사 결과와 한계를 직접
+보고하며 gate request나 immutable evidence chain을 만들 필요가 없다.
+
 Slice 후보가 깨끗한 commit이 되면 bounded validation JSON summary와 각 최종
 review 응답을 별도 local file로 저장한다. 정확한 hash, 후보 commit, canonical diff
 hash, 필수 lens, 알려진 미검증 환경, 위험 분류, human-origin 승인을
@@ -200,7 +204,12 @@ worktree 밖에 두고 Slice 종료 시 제거한다.
 
 ## Slice 종료 기준선
 
-집중 검사가 통과하면 저장소 기준선을 실행한다.
+이 절은 명시적으로 선택한 formal Slice에 적용한다. 일반 작업은 영향받는
+package와 consumer 검사, 필요한 문서 검사, `git diff --check`로 마무리한다.
+공유 runtime/build 변경, release, package 간 영향이 불명확한 경우에는 전체
+workspace suite를 실행한다. 무관한 문서 변경이나 국소 구현 변경에는 요구하지 않는다.
+
+Formal Slice에서는 집중 검사가 통과하면 저장소 기준선을 실행한다.
 
 ```bash
 bash tools/validation/bounded-run.sh workspace-tests -- cargo test --workspace --all-targets

@@ -1,3 +1,4 @@
+pub(crate) mod change;
 pub(crate) mod developer_docs;
 pub(crate) mod preflight;
 pub(crate) mod review_coverage;

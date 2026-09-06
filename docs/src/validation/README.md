@@ -1,8 +1,8 @@
 # Validation
 
 Choose evidence by the boundary that changed. Start with the smallest check
-that can distinguish the expected behavior from its important failure, then
-widen before closing the
+that can distinguish the expected behavior from its important failure. Ordinary
+work uses affected checks; the formal baseline below applies only to a selected
 [Slice](https://github.com/Yon-Fandorin/yo/blob/develop/CONTRIBUTING.md#slice-contract).
 
 ## Evidence layers
@@ -46,6 +46,7 @@ the assertion or silently skipping it.
 | Unix process-coordinator state and compensation | `cargo test -p yo-cli execution::process::termination::tests` | `crates/yo-cli/src/execution/process/termination/tests` |
 | Shared bounded YAML parsing, inference, and failure budgets | `cargo test -p yo-yaml` | `shared/yo-yaml/src/lib.rs` |
 | Required explanations immediately above Rust tests | `cargo xtask check test-explanations` | Rust sources under `crates/`, `shared/`, and `tools/` |
+| Task-context routing, changed-file documentation hints, or local reference checks | `python3 -m unittest discover -s tools -p test_context.py` and `python3 tools/context.py check` | `tools/context.py`, existing Markdown route tables, and their local link targets |
 | Slice changes remain inside their bound local write-set | `cargo xtask check slice-scope` | One active Slice worktree; the planner first runs `cargo xtask slice-contract bind <contract.json>` |
 | Two Slice contracts have a common current integration base and disjoint declared ownership | `cargo xtask check slice-parallel <left.json> <right.json>` | Direct Slices use `develop`; Wave Slices use their Wave branch |
 | One clean Slice candidate has validation, review, risk, and approval evidence bound to the same identity | `cargo xtask slice gate <request.json>` | Returns exactly one next action without rerunning validation or review |
@@ -148,6 +149,9 @@ finding is unresolved and discard completed logs with the Slice worktree.
 
 ## Consolidate one candidate gate
 
+Use this section only for a formal Slice. Ordinary work reports its checks
+and limits directly; it does not need a gate request or immutable evidence chain.
+
 Once a Slice candidate is a clean commit, save each bounded validation JSON
 summary and each final review response as a separate local file. Record their
 exact hashes, the candidate commit, canonical diff hash, required lenses,
@@ -215,7 +219,13 @@ then remove them when the Slice closes.
 
 ## Slice-close baseline
 
-After focused checks pass, run the repository baseline:
+This section is for an explicitly selected formal Slice. Ordinary completion
+requires affected package and consumer checks, documentation checks when
+relevant, and `git diff --check`. Run the full workspace suite for shared
+runtime/build changes, releases, or unresolved cross-package impact. Do not
+run it for unrelated documentation or local implementation changes.
+
+For a formal Slice, after focused checks pass, run the repository baseline:
 
 ```bash
 bash tools/validation/bounded-run.sh workspace-tests -- cargo test --workspace --all-targets

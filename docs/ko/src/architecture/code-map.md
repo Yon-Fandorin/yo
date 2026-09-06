@@ -336,6 +336,9 @@ Inline publication과 compact live geometry는
 `yo` 제품이 아니라 이 저장소를 관리하는 구조화된 검사를 소유한다. 변경
 경로와 commit trailer를 분류하여 Slice 검수와 Developer Docs 영향을
 확인하고, Rust test에 이해 가능한 인접 설명이 있는지도 검사한다.
+`impact/change.rs`는 일반 `change-preflight` hook을 소유한다. formal metadata를
+요구하지 않지만 입력된 review/docs 주장을 검증하고 Wave 통합은 엄격하게 유지한다.
+`commit-preflight`와 Slice 명령은 전체 formal evidence 요건을 그대로 적용한다.
 `activation_slice` 모듈은 작은 semantic request를 받아 현재 `develop`을
 고정하고 canonical Methexis activation contract를 발행하며, Direct Slice
 worktree를 생성해 둘을 bind하고 exact 부분 setup을 복구한다. review-packet

@@ -4,6 +4,18 @@ import "package://github.com/jdx/hk/releases/download/v1.52.0/hk@1.52.0#/Builtin
 min_hk_version = "1.52.0"
 
 local checks = new Mapping<String, Step> {
+    ["context-links"] = new Step {
+        glob = List("AGENTS.md", "CONTRIBUTING.md", "CONTRIBUTING/**/*.md", "docs/src/**/*.md", "crates/**", "shared/**", "tools/**")
+        check = "python3 tools/context.py check"
+    }
+    ["context-tests"] = new Step {
+        glob = List("tools/context.py", "tools/test_context.py")
+        check = "python3 -m unittest discover -s tools -p test_context.py"
+    }
+    ["workflow-context-budget"] = new Step {
+        glob = List("AGENTS.md", "CONTRIBUTING.md", "CONTRIBUTING/**/*.md")
+        check = "cargo test --quiet --locked -p xtask default_workflow_has_an_absolute_context_budget"
+    }
     ["hk-test"] = Builtins.hk_test
     ["cargo-fmt"] = Builtins.cargo_fmt
     ["bounded-validation-runner"] = new Step {
@@ -18,7 +30,6 @@ local checks = new Mapping<String, Step> {
             "crates/**/*.rs",
             "shared/**/*.rs",
             "tools/**/*.rs",
-            "CONTRIBUTING.md",
         )
         check = "cargo xtask check test-explanations"
     }
@@ -144,8 +155,6 @@ local checks = new Mapping<String, Step> {
     ["xtask-tests"] = new Step {
         glob = List(
             ".cargo/config.toml",
-            "AGENTS.md",
-            "CONTRIBUTING.md",
             "hk.pkl",
             "crates/yo-cli/Cargo.toml",
             "tools/xtask/**/*.rs",
@@ -158,13 +167,6 @@ local checks = new Mapping<String, Step> {
 }
 
 hooks {
-    ["prepare-commit-msg"] {
-        steps {
-            ["accepted-review-operation"] {
-                check = "cargo xtask check review-coverage-operation {{hook_args}}"
-            }
-        }
-    }
     ["pre-commit"] {
         steps = checks
     }
@@ -177,8 +179,8 @@ hooks {
     }
     ["commit-msg"] {
         steps {
-            ["commit-preflight"] {
-                check = "cargo xtask check commit-preflight {{commit_msg_file}}"
+            ["change-preflight"] {
+                check = "cargo xtask check change-preflight {{commit_msg_file}}"
             }
         }
     }

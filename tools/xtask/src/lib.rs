@@ -480,9 +480,10 @@ fn run_check(check: &OsStr, arguments: &mut impl Iterator<Item = OsString>) -> R
         "wave-assembly" => run_wave_assembly_check(arguments),
         "methexis-check-for-stage" => run_methexis_check_for_stage(arguments),
         "review-coverage-operation" => run_review_coverage_operation_check(arguments),
-        "commit-preflight" | "developer-docs-impact" | "slice-review-impact" => {
-            run_impact_check(arguments, check.as_ref())
-        },
+        "change-preflight"
+        | "commit-preflight"
+        | "developer-docs-impact"
+        | "slice-review-impact" => run_impact_check(arguments, check.as_ref()),
         _ => Err(usage(check.as_ref())),
     }
 }
@@ -586,7 +587,10 @@ fn run_impact_check(
     arguments: &mut impl Iterator<Item = OsString>,
     check: &str,
 ) -> Result<(), String> {
-    let head_fallback = matches!(check, "commit-preflight" | "slice-review-impact");
+    let head_fallback = matches!(
+        check,
+        "change-preflight" | "commit-preflight" | "slice-review-impact"
+    );
     let message = arguments
         .next()
         .map(PathBuf::from)
@@ -600,6 +604,7 @@ fn run_impact_check(
     }
     let input = ImpactInput::load(message, changed_paths, branch, head_fallback)?;
     match check {
+        "change-preflight" => impact::change::check(&input),
         "commit-preflight" => impact::preflight::check(&input),
         "developer-docs-impact" => impact::developer_docs::check(&input),
         "slice-review-impact" => impact::slice_review::check(&input),
@@ -666,7 +671,7 @@ fn general_usage() -> String {
      cargo xtask check slice-parallel <left.json> <right.json>\n\
      cargo xtask check wave-assembly <boundary.json> <component.json>...\n\
      cargo xtask check review-coverage-operation <commit-message-file> [source] [commit]\n\
-     cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
+     cargo xtask check <change-preflight|commit-preflight|developer-docs-impact|slice-review-impact> \
      <commit-message-file> [changed-paths-file] [branch]"
         .to_owned()
 }
@@ -792,7 +797,7 @@ mod cli_tests {
              cargo xtask check wave-assembly <boundary.json> <component.json>...\n\
              cargo xtask check review-coverage-operation \
              <commit-message-file> [source] [commit]\n\
-             cargo xtask check <commit-preflight|developer-docs-impact|slice-review-impact> \
+             cargo xtask check <change-preflight|commit-preflight|developer-docs-impact|slice-review-impact> \
              <commit-message-file> [changed-paths-file] [branch]"
         );
     }

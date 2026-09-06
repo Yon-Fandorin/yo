@@ -32,14 +32,15 @@ KnowledgeUnit으로 연결한다.
 
 처음 변경할 때는 다음 순서로 읽는다.
 
-1. [아키텍처](./architecture/overview.md)에서 전체 시스템 형태를 파악한다.
-2. [코드 지도](./architecture/code-map.md)에서 소유자를 선택한다. 코드
+1. [코드 지도](./architecture/code-map.md)에서 소유자를 선택한다. 코드
    위치보다 관찰 가능한 결과에서 출발하려면
    [변경 지점 찾기](./workflows/find-the-change.md)에서 시작한다.
+2. 작업을 해결하는 데 전체 시스템 형태가 필요할 때만
+   [아키텍처](./architecture/overview.md)를 읽는다.
 3. 변경이 여러 경계를 지난다면 [실행 흐름](./architecture/runtime-flow.md)을
    따라간다.
-4. [검증](./validation/)에서 개발 중에 실행할 집중 검사와
-   Slice를 닫기 전에 실행할 검사를 선택한다.
+4. [검증](./validation/)에서 영향받는 검사를 선택한다.
+   Formal Slice를 선택한 경우에는 그 기준선을 사용한다.
 5. 모델 목록이나 Provider onboarding을 변경할 때는
    [Provider 카탈로그 관리](./workflows/provider-catalogs.md)를 사용한다.
 

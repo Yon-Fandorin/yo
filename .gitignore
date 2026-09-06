@@ -8,6 +8,9 @@
 # Rust workspace build output
 /target/
 
+# Local Python helper bytecode
+__pycache__/
+
 # Unix subprocess failure artifacts
 /core
 /core.*

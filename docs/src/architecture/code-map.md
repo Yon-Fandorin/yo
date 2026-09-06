@@ -350,7 +350,10 @@ other.
 owns structured checks that maintain this repository rather than the `yo`
 product. Its checks classify changed paths and commit trailers for Slice review
 and Developer Docs impact, and verify that Rust tests carry nearby explanatory
-comments. The `activation_slice` module consumes a small semantic request,
+comments. `impact/change.rs` owns the ordinary `change-preflight` hook: it does
+not require formal metadata, but validates supplied review/docs claims and
+keeps Wave integration strict. `commit-preflight` and the Slice commands retain
+the full formal evidence requirements. The `activation_slice` module consumes a small semantic request,
 pins current `develop`, publishes the canonical Methexis activation contract,
 creates its Direct Slice worktree, and binds the two while recovering exact
 partial setup. The review-packet modules use ordinary active ContextBuilds for

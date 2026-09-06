@@ -1,5 +1,9 @@
 # Review delivery
 
+Use this reference only for an authorized external-review operation. The
+[default workflow](../CONTRIBUTING.md#review-and-integration) does not require
+external review. Selecting this protocol never grants transmission authority.
+
 This file is the repository workflow authority for external-review
 authorization, target admission, exact-once delivery, continuation, and
 reviewer execution. It is routed directly from [`AGENTS.md`](../AGENTS.md).

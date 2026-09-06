@@ -32,12 +32,13 @@ matching pages.
 
 For a first change:
 
-1. Use [Architecture](./architecture/overview.md) to learn the system shape.
-2. Choose an owner from the [Code map](./architecture/code-map.md), or start
+1. Choose an owner from the [Code map](./architecture/code-map.md), or start
    from an observable outcome in [Find the change](./workflows/find-the-change.md).
+2. Read [Architecture](./architecture/overview.md) only when the system shape
+   is needed to resolve the task.
 3. Follow the [Runtime flow](./architecture/runtime-flow.md) if the change
    crosses boundaries.
-4. Select focused and Slice-close evidence in
+4. Select affected checks (or the formal Slice baseline when selected) in
    [Validation](./validation/).
 5. For model inventory or Provider onboarding, use
    [Maintain Provider catalogs](./workflows/provider-catalogs.md).

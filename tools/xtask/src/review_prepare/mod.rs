@@ -711,6 +711,7 @@ fn authority_paths_for_changed_paths_v1alpha1(changed: &[String]) -> Vec<String>
 }
 
 const CONTRIBUTOR_AUTHORITY: &str = "CONTRIBUTING.md";
+const FORMAL_AUTHORITY: &str = "CONTRIBUTING/formal-slices.md";
 const PACKET_AUTHORITY: &str = "CONTRIBUTING/review-packets.md";
 const DELIVERY_AUTHORITY: &str = "CONTRIBUTING/review-delivery.md";
 const INTEGRATION_AUTHORITY: &str = "CONTRIBUTING/review-and-integration.md";
@@ -744,6 +745,7 @@ fn authority_paths_for_changed_paths_v1alpha2(changed: &[String]) -> Vec<String>
     if ambiguous_shared_workflow || neutral_facade && !has_specific_owner {
         authorities.extend([
             CONTRIBUTOR_AUTHORITY.to_owned(),
+            FORMAL_AUTHORITY.to_owned(),
             PACKET_AUTHORITY.to_owned(),
             DELIVERY_AUTHORITY.to_owned(),
             INTEGRATION_AUTHORITY.to_owned(),
@@ -755,6 +757,7 @@ fn authority_paths_for_changed_paths_v1alpha2(changed: &[String]) -> Vec<String>
 fn exact_authority_owner(path: &str) -> Option<&'static str> {
     match path {
         "CONTRIBUTING.md" => Some(CONTRIBUTOR_AUTHORITY),
+        FORMAL_AUTHORITY => Some(FORMAL_AUTHORITY),
         PACKET_AUTHORITY => Some(PACKET_AUTHORITY),
         DELIVERY_AUTHORITY => Some(DELIVERY_AUTHORITY),
         INTEGRATION_AUTHORITY => Some(INTEGRATION_AUTHORITY),
@@ -774,7 +777,12 @@ fn shared_workflow_owners(path: &str) -> Option<&'static [&'static str]> {
 }
 
 fn workflow_code_owner(path: &str) -> Option<&'static str> {
-    if path.starts_with("tools/xtask/src/review_packet/")
+    if matches!(
+        path,
+        "tools/xtask/src/impact/change.rs" | "tools/context.py" | "tools/test_context.py"
+    ) {
+        Some(CONTRIBUTOR_AUTHORITY)
+    } else if path.starts_with("tools/xtask/src/review_packet/")
         || path.starts_with("tools/xtask/src/review_prepare/")
         || path.starts_with("tools/xtask/src/review_delta/")
         || path == "tools/xtask/src/validation_summary.rs"
@@ -809,13 +817,13 @@ fn workflow_code_owner(path: &str) -> Option<&'static str> {
     } else if path.starts_with("tools/xtask/src/slice_contract/")
         || path.starts_with("tools/xtask/src/slice_create/")
         || path.starts_with("tools/xtask/src/activation_slice/")
-        || matches!(
-            path,
-            "tools/xtask/src/slice_worktree.rs"
-                | "tools/xtask/src/validation_stage.rs"
-                | "tools/xtask/src/test_explanations.rs"
-        )
-        || path.starts_with(".github/")
+        || path == "tools/xtask/src/slice_worktree.rs"
+    {
+        Some(FORMAL_AUTHORITY)
+    } else if matches!(
+        path,
+        "tools/xtask/src/validation_stage.rs" | "tools/xtask/src/test_explanations.rs"
+    ) || path.starts_with(".github/")
     {
         Some(CONTRIBUTOR_AUTHORITY)
     } else {

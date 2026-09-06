@@ -9,6 +9,23 @@
 동작 계약은 Methexis가 소유한다. 아래 경로는 계약을 다시 정의하지 않고
 해당 소유자로 연결한다.
 
+짧은 경로 후보 목록은 `python3 tools/context.py find "prompt cursor"`로 얻는다.
+기존 Markdown의 경로/검사 표를 단어 일치 수로 정렬하고, 파일/행 위치를 붙인
+발췌를 최대 세 개 반환한다. 다른 열의 우연한 언급보다 결과 열의 일치를 우선한다.
+실제 소스는 읽지 않는다. `no_match`이거나 결과가
+약하면 검색어를 반복해서 바꾸지 말고 `rg`를 쓴다. 영어 경로 용어가 가장 잘 맞으며,
+의미 기반 검색이나 다국어 검색은 아니다.
+
+`python3 tools/context.py impact --changed`는 staged, unstaged, 삭제, untracked
+경로를 참조하는 문서 링크를 찾는다. `--changed` 대신 명시적인 경로를 줄 수 있다.
+결과는 확인할 후보이며 내용이 오래됐다는 증명은 아니다.
+`python3 tools/context.py check`는 로컬 링크 대상의 존재와 저장소 내부 여부를
+검사한다. 두 명령 모두 symbol 해석, heading fragment 검증, 의미적 최신성 증명을
+수행하지 않고 Methexis를 대체하지 않는다. JSON 출력은 12 KiB로 제한하고 생략된
+일치 결과가 있는지 알린다. [reader](https://github.com/Yon-Fandorin/yo/blob/develop/tools/context.py)는
+네트워크, 영속 index, 소스 복사 cache, 자동 수정을 사용하지 않는다.
+Python 3.9 이상이 필요하다.
+
 ## 검색 깊이 선택하기
 
 경계를 골랐다면 질문에 답할 수 있는 가장 저렴한 검색부터 사용한다.
