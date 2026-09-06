@@ -2399,14 +2399,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yo-provider"
-version = "0.0.0"
-dependencies = [
- "serde_json",
- "yo-core",
-]
-
-[[package]]
 name = "yo-tui"
 version = "0.0.0"
 dependencies = [

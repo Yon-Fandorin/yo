@@ -8,7 +8,6 @@ members = [
     "crates/connectors/kimi",
     "crates/connectors/openai-responses",
     "crates/connectors/openai-chat-completions",
-    "crates/providers/foundation",
     "crates/yo-cli",
     "crates/yo-core",
     "crates/yo-tui",
