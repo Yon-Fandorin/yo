@@ -2,6 +2,7 @@ mod failure;
 mod flow;
 mod interaction;
 mod journal;
+mod replacement_binding;
 
 use std::num::NonZeroU64;
 

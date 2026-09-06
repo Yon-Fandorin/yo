@@ -3,6 +3,9 @@ mod contract;
 mod evidence;
 mod scripted;
 
+#[cfg(test)]
+mod tests;
+
 pub use context::{ContextCheckpointProposal, ContextPressureDecision, ContextPressureObservation};
 pub use contract::{
     AgentBackend, BackendAdapter, BackendCapabilities, BackendEvent, BackendFailure,
