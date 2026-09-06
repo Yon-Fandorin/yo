@@ -17,7 +17,8 @@ use crate::{
             render_records_with_width,
         },
     },
-    interaction::{PresentationStyle, diagnostic::CliDiagnostic},
+    diagnostic::CliDiagnostic,
+    presentation::PresentationStyle,
 };
 
 fn render_records(
@@ -120,7 +121,7 @@ fn account_table_includes_age_and_scope_commands() {
     );
     assert!(ansi.contains("\u{1b}[31m7d ▂ 18%\u{1b}[0m"));
     assert!(ansi.contains("\u{1b}[2m ("));
-    assert_eq!(crate::interaction::strip_ansi(&ansi), output);
+    assert_eq!(crate::presentation::strip_ansi(&ansi), output);
 }
 
 // 적용하며, Rich glyph로 조용히 되돌아가지 않습니다.

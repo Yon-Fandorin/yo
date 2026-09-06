@@ -4,7 +4,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use yo_core::CompleteModelBinding;
 use yo_tui::surface::{Grapheme, GraphemeError};
 
-use crate::interaction::{PresentationStyle, TextStyle};
+use crate::presentation::{PresentationStyle, TextStyle};
 
 #[cfg(test)]
 mod tests;

@@ -5,7 +5,7 @@ use std::{
     io::{self, IsTerminal, Write},
 };
 
-use crate::interaction::{PresentationStyle, TextStyle};
+use crate::presentation::{PresentationStyle, TextStyle};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CliDiagnostic {

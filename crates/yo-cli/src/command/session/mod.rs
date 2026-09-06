@@ -94,12 +94,9 @@ impl Arguments {
     }
 }
 
-pub(crate) fn run(command: Command) -> Result<Output, crate::interaction::diagnostic::AppError> {
-    let storage = crate::state::storage::open_default_reader().map_err(|error| {
-        crate::interaction::diagnostic::AppError::single(
-            "opening read-only local Yo storage",
-            error,
-        )
+pub(crate) fn run(command: Command) -> Result<Output, crate::diagnostic::AppError> {
+    let storage = crate::storage::open_default_reader().map_err(|error| {
+        crate::diagnostic::AppError::single("opening read-only local Yo storage", error)
     })?;
     match command.session_id {
         Some(session_id) => run_show(&storage, session_id, command),

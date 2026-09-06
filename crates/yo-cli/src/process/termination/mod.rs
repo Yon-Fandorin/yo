@@ -19,7 +19,7 @@ use self::{
     state::{Phase, SharedState, StateError},
 };
 
-pub(in crate::execution::process) mod disposition;
+pub(in crate::process) mod disposition;
 mod readiness;
 mod state;
 

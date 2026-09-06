@@ -18,7 +18,7 @@ use super::{
     input::{HiddenSecretAction, HiddenSecretPrompt, read_hidden_secret},
     qwencloud,
 };
-use crate::{AppError, interaction::diagnostic::CliDiagnostic, state::config};
+use crate::{AppError, config, diagnostic::CliDiagnostic};
 
 #[cfg(test)]
 mod tests;

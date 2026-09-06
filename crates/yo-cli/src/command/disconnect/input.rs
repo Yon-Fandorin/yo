@@ -1,6 +1,6 @@
 use crate::{
     AppError,
-    interaction::{connection::ConfirmationView, prompt::TtyPrompt},
+    connection::{input::TtyConnectionInput, presentation::ConfirmationView},
 };
 
 pub(crate) trait ExternalDisconnectInput {
@@ -8,7 +8,7 @@ pub(crate) trait ExternalDisconnectInput {
     fn confirm(&mut self, preview: &dyn ConfirmationView) -> Result<bool, AppError>;
 }
 
-impl ExternalDisconnectInput for TtyPrompt {
+impl ExternalDisconnectInput for TtyConnectionInput {
     fn select_target(&mut self, choices: &[String]) -> Result<String, AppError> {
         let terminal = self.terminal()?;
         use std::io::Write;
@@ -19,10 +19,10 @@ impl ExternalDisconnectInput for TtyPrompt {
         )
         .and_then(|()| terminal.flush())
         .map_err(|error| AppError::single("writing the disconnect target prompt", error))?;
-        TtyPrompt::read_line(terminal)
+        TtyConnectionInput::read_line(terminal)
     }
 
     fn confirm(&mut self, preview: &dyn ConfirmationView) -> Result<bool, AppError> {
-        TtyPrompt::confirm(self, preview)
+        TtyConnectionInput::confirm(self, preview)
     }
 }

@@ -12,7 +12,7 @@ use crate::{
     command::account::domain::{
         AccountCapacityRecord, AccountQuery, AccountTarget, display_identifier, terminal_safe,
     },
-    interaction::{PresentationStyle, TextStyle},
+    presentation::{PresentationStyle, TextStyle},
 };
 
 #[cfg(test)]

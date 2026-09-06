@@ -6,13 +6,7 @@ use super::{
     LiveSession, SessionStep, StartupFrontend, StartupOutcome, StartupSnapshots, frontend,
     shutdown_live_session, startup,
 };
-use crate::{
-    application::live_selection as live,
-    command,
-    execution::process,
-    interaction::diagnostic::AppError,
-    state::{config, connection},
-};
+use crate::{command, config, connection, diagnostic::AppError, live, process};
 
 pub(in crate::application) fn run_live_session(
     mut options: command::LiveOptions,
@@ -143,7 +137,7 @@ fn run_generation(
     cwd: &std::path::Path,
     options: command::LiveOptions,
     launch_failure_selection: live::LiveSelection,
-    read_only_storage: Option<&crate::state::storage::LocalReadStorage>,
+    read_only_storage: Option<&crate::storage::LocalReadStorage>,
     snapshots: &mut StartupSnapshots<'_>,
 ) -> Result<SessionStep, AppError> {
     if live.is_none() {

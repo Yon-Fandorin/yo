@@ -4,11 +4,13 @@ use yo_core::ApiCredential;
 
 use crate::{
     AppError,
-    interaction::{
-        PresentationStyle, TextStyle,
-        connection::{PlanAction, PresentationError, default_width, push_change, push_title, wrap},
-        prompt::TtyPrompt,
+    connection::{
+        input::TtyConnectionInput,
+        presentation::{
+            PlanAction, PresentationError, default_width, push_change, push_title, wrap,
+        },
     },
+    presentation::{PresentationStyle, TextStyle},
 };
 
 /// Structured presentation for the account command's no-echo secret capture.
@@ -100,7 +102,7 @@ pub(crate) fn read_hidden_secret(
     prompt: &HiddenSecretPrompt,
     validation_context: &'static str,
 ) -> Result<ApiCredential, AppError> {
-    let mut input = TtyPrompt::new();
+    let mut input = TtyConnectionInput::new();
     let terminal_width = {
         let terminal = input.terminal()?;
         rustix::termios::tcgetwinsize(&*terminal)
@@ -111,7 +113,7 @@ pub(crate) fn read_hidden_secret(
     let rendered = prompt
         .render_styled(terminal_width, input.style())
         .map_err(|error| AppError::single("formatting the hidden-secret prompt", error))?;
-    input.read_secret_with(&rendered, validation_context, TtyPrompt::read_line)
+    input.read_secret_with(&rendered, validation_context, TtyConnectionInput::read_line)
 }
 
 #[cfg(test)]

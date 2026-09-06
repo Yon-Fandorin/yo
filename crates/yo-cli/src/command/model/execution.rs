@@ -4,9 +4,8 @@ use yo_core::StartupTarget;
 
 use super::Command as ModelCommand;
 use crate::{
-    AppError,
-    interaction::connection as presentation,
-    state::{config, connection},
+    AppError, config,
+    connection::{self, presentation},
 };
 
 pub(crate) fn run(command: ModelCommand) -> Result<String, AppError> {

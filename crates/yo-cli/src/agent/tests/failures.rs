@@ -9,7 +9,7 @@ use yo_tui::{AgentConnection, AgentPoll};
 use super::support::{
     NeverTerminated, TEST_DEADLOCK_GUARD, collect_until, dispatch_until_queued, session_id, turn,
 };
-use crate::application::agent::TuiAgentConnection;
+use crate::agent::TuiAgentConnection;
 
 // 백엔드 실패가 저널에 Turn 실패를 확정한 경우 CLI 어댑터는 그 레코드를 먼저 모두
 // 전달한 뒤 연결 오류를 보고한다.

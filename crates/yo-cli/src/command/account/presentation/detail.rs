@@ -16,7 +16,7 @@ use crate::{
         AccountCapacityRecord, AccountCapacityReport, AccountTarget, display_identifier,
         local_host_label, terminal_safe,
     },
-    interaction::{PresentationStyle, TextStyle, remaining_bar},
+    presentation::{PresentationStyle, TextStyle, remaining_bar},
 };
 
 #[cfg(test)]

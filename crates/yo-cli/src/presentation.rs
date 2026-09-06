@@ -1,15 +1,9 @@
-//! Shared CLI diagnostics, prompts, and non-interactive presentation.
-
 use std::{env, io::IsTerminal as _};
 
 use yo_tui::{
     GlyphProfile,
     meter::{MeterGlyphs, MeterShape, MeterSpec},
 };
-
-pub(crate) mod connection;
-pub(crate) mod diagnostic;
-pub(crate) mod prompt;
 
 const ANSI_RESET: &str = "\u{1b}[0m";
 

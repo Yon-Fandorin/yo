@@ -67,8 +67,8 @@ pub(crate) fn run(
     command: Command,
     warning_observer: Option<yo_backend_delegated_codex::CodexWarningObserver>,
 ) -> Result<String, crate::AppError> {
-    let config_path = crate::state::connection::absolute_config_path(
-        crate::state::config::selected_path()
+    let config_path = crate::connection::absolute_config_path(
+        crate::config::selected_path()
             .map_err(|error| crate::AppError::single("locating Yo configuration", error))?,
     )?;
     if command.from.is_some() {

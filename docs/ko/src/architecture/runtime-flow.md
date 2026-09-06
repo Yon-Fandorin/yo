@@ -417,7 +417,7 @@ TranscriptReader
 답변 끝에 LF가 없을 때 LF 하나를 붙인 stdout
 ```
 
-[`yo-cli/src/application/runtime/print.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application/runtime/print.rs)는
+[`yo-cli/src/print.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/print.rs)는
 입력 조합, Submission admission, Transcript 투영, 출력 framing만 소유한다.
 backpressure가 걸린 command는 같은 Submission identity로 다시 시도하고, 일치하는
 admission outcome과 terminal Turn outcome을 모두 기다린다. 선택한 Backend는 계속
@@ -570,7 +570,7 @@ exact replay-profile·schema 해석은 계속 core가 소유한다.
    `Accepted` outcome이 올 때까지 plain text를 입력창에 보존한다. 그사이
    사용자가 새 draft를 편집했다면 그 새 text는 지우지 않는다. 거절은 draft를
    보존하며, 중복되거나 오래된 outcome은 아무 영향도 주지 않는다.
-2. [`TuiAgentConnection`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/application/agent.rs)은
+2. [`TuiAgentConnection`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/agent/mod.rs)은
    좁은 local adapter다. dispatch, retry, submission outcome을 전달하고, 하나로 합쳐진
    Session 변경 알림을 `TranscriptReader`의 크기가 제한된 suffix 읽기로
    바꿔 순서가 보장된 record를 TUI에 제공한다. Session이나 provider
@@ -723,7 +723,7 @@ plain stdout
 각 command 디렉토리가 typed argument를 소유),
 `command/session/{list,show,presentation}.rs`는 저장 Session 선택·history 투영·table/output routing을,
 `command/usage/execution.rs`는 별도의 archived Usage 투영을,
-`config.rs`는 날짜 형식 설정, `storage.rs::open_default_reader`는 writer startup과
+`state/config.rs`는 날짜 형식 설정, `state/storage.rs::open_default_reader`는 writer startup과
 분리된 읽기 전용 조합을 소유한다.
 Request에는 anchor selector가 없다. 인접 request를 추측하지 않고 durable correlation과
 availability record 전체를 Journal 시간순으로 출력한다. 이 Projection은 backend payload나
@@ -1419,7 +1419,7 @@ application Session이 끝날 때 TUI는 `UserRequested` 또는
 모두 보고한다.
 
 일반 반환에서는
-[`TerminationCoordinator::shutdown`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/process/termination.rs)이
+[`TerminationCoordinator::shutdown`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/process/termination/mod.rs)이
 설치했던 signal disposition과 설치 thread의 원래 mask를 복원한다.
 종료 signal이 선택되면 `with_active_resource`는 TUI 정리 경로가
 반환될 때까지 기다리고, 필요한 경우 보존된 agent도 정리한다. 그 뒤
@@ -1436,8 +1436,8 @@ disposition을 적용한다.
 | `creating the agent Session` | `yo-core/agent_session` 시작과 worker handshake |
 | `terminal session` | `yo-tui/runner`와 터미널 mode 정리 |
 | `agent cleanup` | `yo-core/agent_session::shutdown`, 그다음 runtime/backend 정리 |
-| `process termination session` 또는 `process termination cleanup` | `yo-cli/execution/process/termination` |
-| `suspending the process` | `yo-cli/execution/process/job_control` |
+| `process termination session` 또는 `process termination cleanup` | `yo-cli/process/termination` |
+| `suspending the process` | `yo-cli/process/job_control` |
 
 뒤이어 발생한 정리 실패를 버리지 않는다. 현재 최상위 경로는 서로
 독립적인 정리 경계를 모두 시도하고 각 오류 문맥을 함께 보고한다.

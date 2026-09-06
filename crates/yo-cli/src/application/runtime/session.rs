@@ -1,8 +1,4 @@
-use crate::{
-    application::agent,
-    execution::{model, tools as local_tools},
-    interaction::diagnostic::AppError,
-};
+use crate::{agent, diagnostic::AppError, local_tools, model};
 
 pub(super) struct LiveSession {
     pub(super) agent: agent::TuiAgentConnection,

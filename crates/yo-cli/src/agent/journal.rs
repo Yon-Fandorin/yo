@@ -15,7 +15,7 @@ pub(super) struct JournalState {
 }
 
 impl JournalState {
-    pub(in crate::application::agent) fn from_session(session: &AgentSession) -> Self {
+    pub(in crate::agent) fn from_session(session: &AgentSession) -> Self {
         Self {
             transcript: session.transcript_reader(),
             request_trace: session.request_trace_reader(),

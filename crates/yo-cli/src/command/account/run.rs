@@ -14,10 +14,8 @@ use super::{
     storage,
 };
 use crate::{
-    AppError,
-    command::OutputFormat,
-    interaction::{PresentationStyle, diagnostic::CliDiagnostic},
-    state::config,
+    AppError, command::OutputFormat, config, diagnostic::CliDiagnostic,
+    presentation::PresentationStyle,
 };
 
 pub(crate) struct AccountRunOutput {
