@@ -21,10 +21,12 @@ use crate::{
         input::{AuthorizedCredentialFileInput, ExternalConnectInput},
         picker::ModelPickerItem,
     },
-    config,
-    connection::{
-        complete_binding_details, display_target, input::TtyConnectionInput,
-        operation_repositories, selection_for_binding,
+    interaction::prompt::TtyPrompt,
+    state::{
+        config,
+        connection::{
+            complete_binding_details, display_target, operation_repositories, selection_for_binding,
+        },
     },
 };
 
@@ -49,7 +51,7 @@ pub(super) fn run_external_connect(
             execute_external_connect_with(config_path, command, &mut input)
         },
         (None, false, _) => {
-            let mut input = TtyConnectionInput::new();
+            let mut input = TtyPrompt::new();
             execute_external_connect_with(config_path, command, &mut input)
         },
         _ => Err(AppError::message(
@@ -98,7 +100,7 @@ pub(super) fn run_definition_import(
             execute_definition_import_with(config_path, command, definition, &mut input)
         },
         None => {
-            let mut input = TtyConnectionInput::new();
+            let mut input = TtyPrompt::new();
             execute_definition_import_with(config_path, command, definition, &mut input)
         },
     }
@@ -368,11 +370,11 @@ fn account_metadata_summary(account: Option<&ConnectionAccount>) -> String {
     };
     let provider = account
         .provider_display_name()
-        .map(crate::connection::presentation::escape_remote_text)
+        .map(crate::interaction::connection::escape_remote_text)
         .unwrap_or_else(|| "unset".to_owned());
     let account = account
         .account_display_name()
-        .map(crate::connection::presentation::escape_remote_text)
+        .map(crate::interaction::connection::escape_remote_text)
         .unwrap_or_else(|| "unset".to_owned());
     format!("provider_display_name={provider}; account_display_name={account}")
 }
@@ -683,7 +685,7 @@ struct ExternalConnectPlan {
     default_after: String,
     stored_change: StoredConnectionChange,
     default_changed: bool,
-    binding_details: Vec<crate::connection::presentation::BindingDetails>,
+    binding_details: Vec<crate::interaction::connection::BindingDetails>,
 }
 
 impl ExternalConnectPlan {
@@ -787,7 +789,7 @@ impl ExternalConnectPlan {
             binding_count,
             preference,
             target: display_target(Some(&StartupTarget::Model(selection.clone()))),
-            account: crate::connection::presentation::escape_remote_text(&format!(
+            account: crate::interaction::connection::escape_remote_text(&format!(
                 "{}:{}",
                 selection.provider(),
                 selection.account()
@@ -954,7 +956,7 @@ fn stored_account_reference(
 
 fn safe_discovery_error(error: AppError, discovered: bool) -> AppError {
     if discovered {
-        AppError::message(crate::connection::presentation::escape_remote_text(
+        AppError::message(crate::interaction::connection::escape_remote_text(
             &error.to_string(),
         ))
     } else {
@@ -970,7 +972,7 @@ fn safe_discovery_source(
     if discovered {
         AppError::message(format!(
             "{context}: {}",
-            crate::connection::presentation::escape_remote_text(&error.to_string())
+            crate::interaction::connection::escape_remote_text(&error.to_string())
         ))
     } else {
         AppError::single(context, error)
@@ -1020,14 +1022,14 @@ mod tests {
     impl ExternalConnectInput for ImportInput {
         fn confirm(
             &mut self,
-            preview: &dyn crate::connection::presentation::ConfirmationView,
+            preview: &dyn crate::interaction::connection::ConfirmationView,
         ) -> Result<bool, AppError> {
             self.confirmations += 1;
             self.preview = Some(
                 preview
                     .render_styled(
-                        crate::connection::presentation::default_width(),
-                        crate::presentation::PresentationStyle::Plain,
+                        crate::interaction::connection::default_width(),
+                        crate::interaction::PresentationStyle::Plain,
                     )
                     .unwrap(),
             );
@@ -1046,7 +1048,7 @@ mod tests {
     // revision에 게시되고, definition-only import는 임의 default를 만들지 않습니다.
     #[test]
     fn grouped_import_publishes_multiple_models_without_selecting_a_default() {
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-grouped-import-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1115,7 +1117,7 @@ mod tests {
     // do not invent a routable model or preference during import.
     #[test]
     fn grouped_catalog_import_publishes_a_seed_without_inventing_a_model() {
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-grouped-catalog-import-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1168,7 +1170,7 @@ mod tests {
     // 변경·삭제되는 complete binding을 사용하는 저장 Session의 resume 위험을 숨기지 않습니다.
     #[test]
     fn grouped_import_previews_seed_metadata_and_resume_transitions() {
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-grouped-transition-preview-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1242,7 +1244,7 @@ mod tests {
     // only labels must not report a duplicate `same catalog -> same catalog` transition.
     #[test]
     fn grouped_import_keeps_an_unchanged_seed_when_only_account_metadata_changes() {
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-grouped-metadata-only-preview-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1297,7 +1299,7 @@ mod tests {
     // encoded Account separators and vendor-owned ModelId colons are never split heuristically.
     #[test]
     fn selected_entry_uses_canonical_coordinates_with_encoded_accounts_and_colon_models() {
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-canonical-selected-entry-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1351,13 +1353,13 @@ models:
     impl ExternalConnectInput for CancelInput {
         fn confirm(
             &mut self,
-            preview: &dyn crate::connection::presentation::ConfirmationView,
+            preview: &dyn crate::interaction::connection::ConfirmationView,
         ) -> Result<bool, AppError> {
             self.summary = Some(
                 preview
                     .render_styled(
-                        crate::connection::presentation::default_width(),
-                        crate::presentation::PresentationStyle::Plain,
+                        crate::interaction::connection::default_width(),
+                        crate::interaction::PresentationStyle::Plain,
                     )
                     .unwrap(),
             );
@@ -1376,7 +1378,7 @@ models:
     // 거절하면 credential을 읽거나 세 repository 파일을 만들지 않습니다.
     #[test]
     fn cancelled_command_stops_before_secret_or_repository_mutation() {
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-external-cancel-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1427,7 +1429,7 @@ models:
     // credential 파일은 새 intent나 public/credential repository mutation 전에 실패합니다.
     #[test]
     fn non_interactive_file_failure_stops_before_new_repository_mutation() {
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-external-file-failure-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1513,7 +1515,7 @@ models:
     // confirmation까지 전달해 새 key 추가라고 오해시키지 않으며 취소는 기존 secret을 보존합니다.
     #[test]
     fn cancelled_rotation_discloses_exact_credential_replacement() {
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-external-replace-preview-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -1593,7 +1595,7 @@ models:
         assert_eq!(plan.binding_count, 2);
         let preview = plan
             .preview(yo_core::CredentialMutationAction::Replace, true)
-            .render(crate::connection::presentation::default_width())
+            .render(crate::interaction::connection::default_width())
             .unwrap();
         assert!(preview.contains("Models (2)"));
         assert!(preview.contains("alpha, beta"));
@@ -1674,7 +1676,7 @@ models:
         );
         let preview = plan
             .preview(yo_core::CredentialMutationAction::Replace, true)
-            .render(crate::connection::presentation::default_width())
+            .render(crate::interaction::connection::default_width())
             .unwrap();
         assert!(preview.contains("Connection profile 1 of 2"));
         assert!(preview.contains("Connection profile 2 of 2"));
@@ -1726,13 +1728,13 @@ models:
         assert_eq!(plan.bindings, vec![expected]);
         let preview = plan
             .preview(yo_core::CredentialMutationAction::Replace, true)
-            .render(crate::connection::presentation::default_width())
+            .render(crate::interaction::connection::default_width())
             .unwrap();
         assert!(preview.contains("Connection profile 1 of 2"));
         assert!(preview.contains("Connection profile 2 of 2"));
         assert!(preview.contains(r#"{"retired":true}"#));
 
-        let root = crate::connection::canonical_test_temp_dir().join(format!(
+        let root = crate::state::connection::canonical_test_temp_dir().join(format!(
             "yo-external-displaced-profile-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()

@@ -14,7 +14,7 @@ use super::support::{
     agent::{PendingAgent, RetainedChatAgent},
     assert_child_is_gone,
 };
-use crate::process::termination::TerminationCoordinator;
+use crate::execution::process::termination::TerminationCoordinator;
 
 // 실제 Linux PTY에서 두 번 연속 Ctrl+Z로 terminal을 완전히 복구해 프로세스를 멈추고,
 // SIGCONT마다 같은 TUI state로 새 Fullscreen 세대를 획득한 뒤 정상 종료한다.
@@ -143,7 +143,7 @@ fn child_fullscreen_repeated_suspend_resume() {
     }
     setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
     let mut coordinator = TerminationCoordinator::install().unwrap();
-    let mut job_control = crate::process::job_control::JobControl::new();
+    let mut job_control = crate::execution::process::job_control::JobControl::new();
     let mut agent = PendingAgent;
     let mut tui = yo_tui::TuiSession::new(
         yo_tui::ColorCapability::Unknown,
@@ -181,7 +181,7 @@ fn child_inline_repeated_suspend_resume() {
     }
     setpgid(Pid::from_raw(0), Pid::from_raw(0)).unwrap();
     let mut coordinator = TerminationCoordinator::install().unwrap();
-    let mut job_control = crate::process::job_control::JobControl::new();
+    let mut job_control = crate::execution::process::job_control::JobControl::new();
     let mut agent = RetainedChatAgent::new();
     let mut tui = yo_tui::TuiSession::new(
         yo_tui::ColorCapability::Unknown,

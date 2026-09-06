@@ -2,13 +2,13 @@ use std::num::NonZeroU16;
 
 use yo_core::ModelSelection;
 
-use crate::{
-    connection::presentation::{
+use crate::interaction::{
+    PresentationStyle,
+    connection::{
         BindingDetails, ConfirmationView, PlanAction, PlanCounts, PresentationError,
         SuccessPresentation, display_model_item, push_bullet, push_change, push_detail_field,
         push_plan_summary, push_section_heading, push_title, render_success, trim_trailing_newline,
     },
-    presentation::PresentationStyle,
 };
 
 #[cfg(test)]

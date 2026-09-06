@@ -12,14 +12,14 @@ struct KimiInput {
 impl ExternalConnectInput for KimiInput {
     fn confirm(
         &mut self,
-        preview: &dyn crate::connection::presentation::ConfirmationView,
+        preview: &dyn crate::interaction::connection::ConfirmationView,
     ) -> Result<bool, AppError> {
         self.events.push("confirm");
         self.preview = Some(
             preview
                 .render_styled(
-                    crate::connection::presentation::default_width(),
-                    crate::presentation::PresentationStyle::Plain,
+                    crate::interaction::connection::default_width(),
+                    crate::interaction::PresentationStyle::Plain,
                 )
                 .unwrap(),
         );
@@ -196,7 +196,7 @@ catalog: kimi-code-membership/v1
 }
 
 fn test_root(label: &str) -> std::path::PathBuf {
-    let root = crate::connection::canonical_test_temp_dir().join(format!(
+    let root = crate::state::connection::canonical_test_temp_dir().join(format!(
         "yo-kimi-catalog-{label}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()

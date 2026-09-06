@@ -1,21 +1,12 @@
 #![cfg(unix)]
 
-mod agent;
 mod application;
 mod command;
-mod connection;
-mod diagnostic;
 mod execution;
-mod live;
-mod presentation;
-mod print;
-mod process;
+mod interaction;
 mod state;
 
-pub(crate) use diagnostic::AppError;
-// Temporary routes for consumers moved by the next ownership patch.
-pub(crate) use execution::{host, model, tools as local_tools};
-pub(crate) use state::{config, storage};
+pub(crate) use interaction::diagnostic::AppError;
 
 pub fn run() -> std::process::ExitCode {
     application::run()

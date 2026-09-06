@@ -6,7 +6,7 @@ use yo_core::{
 };
 
 use super::projection::{self, FinalResponseProjection};
-use crate::diagnostic::AppError;
+use crate::interaction::diagnostic::AppError;
 
 const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(10);
 

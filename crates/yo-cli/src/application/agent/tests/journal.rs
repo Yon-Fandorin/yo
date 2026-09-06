@@ -20,7 +20,7 @@ use yo_tui::{AgentConnection, AgentPoll};
 use super::support::{
     NeverTerminated, TEST_DEADLOCK_GUARD, collect_until, dispatch_until_queued, session_id, turn,
 };
-use crate::agent::TuiAgentConnection;
+use crate::application::agent::TuiAgentConnection;
 
 fn drain_frontend_until_turn_finished<E: std::fmt::Display>(
     timeout: Duration,

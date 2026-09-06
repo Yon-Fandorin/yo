@@ -1,5 +1,5 @@
 use super::{CodexWarningCollector, MAX_CODEX_COMPATIBILITY_WARNINGS};
-use crate::diagnostic::CliDiagnostic;
+use crate::interaction::diagnostic::CliDiagnostic;
 
 // 같은 warning은 한 번만 남기고, 서로 다른 warning은 관측된 순서로 publication합니다.
 #[test]

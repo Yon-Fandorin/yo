@@ -5,7 +5,7 @@ use yo_core::{
     TranscriptObservation, TranscriptRecord, TurnOutcome, TurnRef,
 };
 
-use crate::diagnostic::AppError;
+use crate::interaction::diagnostic::AppError;
 
 pub(super) fn frame_output(mut message: String) -> String {
     if !message.ends_with('\n') {

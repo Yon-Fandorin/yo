@@ -24,7 +24,10 @@ pub(super) fn restore(signal: Signal, action: &SigAction) -> nix::Result<()> {
 }
 
 #[allow(unsafe_code)]
-pub(in crate::process) fn replace(signal: Signal, action: &SigAction) -> nix::Result<SigAction> {
+pub(in crate::execution::process) fn replace(
+    signal: Signal,
+    action: &SigAction,
+) -> nix::Result<SigAction> {
     // SAFETY: callers provide a Nix-owned action whose handler storage is
     // static. The returned prior action is retained until it is restored.
     unsafe { sigaction(signal, action) }

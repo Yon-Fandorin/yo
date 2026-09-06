@@ -95,7 +95,7 @@ fn assert_child() {
 #[test]
 fn subprocess_signal_waits_for_active_cleanup() {
     let output = run_child(
-        "process::termination::tests::signal_job_control::subprocess_child_signal_waits_for_active_cleanup",
+        "execution::process::termination::tests::signal_job_control::subprocess_child_signal_waits_for_active_cleanup",
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
@@ -150,7 +150,7 @@ impl Wake for ThreadWake {
 #[test]
 fn subprocess_idle_overrides_an_ignored_action() {
     let output = run_child(
-        "process::termination::tests::signal_job_control::subprocess_child_idle_overrides_an_ignored_action",
+        "execution::process::termination::tests::signal_job_control::subprocess_child_idle_overrides_an_ignored_action",
     );
 
     assert_eq!(output.status.signal(), Some(SIGTERM));
@@ -176,7 +176,7 @@ extern "C" fn prior_custom_handler(_signal: i32) {}
 #[test]
 fn subprocess_idle_overrides_a_custom_action() {
     let output = run_child(
-        "process::termination::tests::signal_job_control::subprocess_child_idle_overrides_a_custom_action",
+        "execution::process::termination::tests::signal_job_control::subprocess_child_idle_overrides_a_custom_action",
     );
 
     assert_eq!(output.status.signal(), Some(SIGHUP));
@@ -204,7 +204,7 @@ fn subprocess_child_idle_overrides_a_custom_action() {
 #[test]
 fn subprocess_shutdown_restores_action_and_caller_mask() {
     let output = run_child(
-        "process::termination::tests::signal_job_control::subprocess_child_shutdown_restores_action_and_caller_mask",
+        "execution::process::termination::tests::signal_job_control::subprocess_child_shutdown_restores_action_and_caller_mask",
     );
 
     assert!(output.status.success(), "{:?}", output.stderr);
@@ -254,7 +254,7 @@ fn subprocess_child_shutdown_restores_action_and_caller_mask() {
 #[test]
 fn subprocess_failed_install_restores_action_and_caller_mask() {
     let output = run_child(
-        "process::termination::tests::signal_job_control::subprocess_child_failed_install_restores_action_and_caller_mask",
+        "execution::process::termination::tests::signal_job_control::subprocess_child_failed_install_restores_action_and_caller_mask",
     );
 
     assert!(output.status.success(), "{:?}", output.stderr);
@@ -323,7 +323,7 @@ impl Drop for CleanupMarker {
 #[test]
 fn subprocess_signal_wins_over_session_panic() {
     let output = run_child(
-        "process::termination::tests::signal_job_control::subprocess_child_signal_wins_over_session_panic",
+        "execution::process::termination::tests::signal_job_control::subprocess_child_signal_wins_over_session_panic",
     );
 
     assert_eq!(output.status.signal(), Some(SIGQUIT));
@@ -352,7 +352,7 @@ fn subprocess_child_signal_wins_over_session_panic() {
 #[test]
 fn subprocess_cleanup_error_precedes_signal_replay() {
     let output = run_child(
-        "process::termination::tests::signal_job_control::subprocess_child_cleanup_error_precedes_signal_replay",
+        "execution::process::termination::tests::signal_job_control::subprocess_child_cleanup_error_precedes_signal_replay",
     );
 
     assert_eq!(output.status.signal(), Some(SIGTERM));
@@ -364,7 +364,7 @@ fn subprocess_cleanup_error_precedes_signal_replay() {
 #[test]
 fn subprocess_selected_termination_cleans_shared_resource_before_replay() {
     let output = run_child(
-        "process::termination::tests::signal_job_control::subprocess_child_selected_termination_cleans_shared_resource_before_replay",
+        "execution::process::termination::tests::signal_job_control::subprocess_child_selected_termination_cleans_shared_resource_before_replay",
     );
 
     assert_eq!(output.status.signal(), Some(SIGTERM));

@@ -5,13 +5,17 @@ use yo_core::{HostWorkspacePath, session_repository::StoredSessionReader};
 use super::{Command, Output};
 
 pub(crate) fn run(
-    storage: &crate::storage::LocalReadStorage,
+    storage: &crate::state::storage::LocalReadStorage,
     command: Command,
-) -> Result<Output, crate::diagnostic::AppError> {
-    let config = crate::config::load()
-        .map_err(|error| crate::diagnostic::AppError::single("loading Yo configuration", error))?;
+) -> Result<Output, crate::interaction::diagnostic::AppError> {
+    let config = crate::state::config::load().map_err(|error| {
+        crate::interaction::diagnostic::AppError::single("loading Yo configuration", error)
+    })?;
     let date_formatter = config.date_formatter().map_err(|error| {
-        crate::diagnostic::AppError::single("validating the Session date format", error)
+        crate::interaction::diagnostic::AppError::single(
+            "validating the Session date format",
+            error,
+        )
     })?;
     let Some(reader) = storage.reader() else {
         return Ok(Output {
@@ -23,14 +27,17 @@ pub(crate) fn run(
         None
     } else {
         let cwd = std::env::current_dir().map_err(|error| {
-            crate::diagnostic::AppError::single("reading the working directory", error)
+            crate::interaction::diagnostic::AppError::single("reading the working directory", error)
         })?;
         Some(HostWorkspacePath::normalize_local(cwd).map_err(|error| {
-            crate::diagnostic::AppError::single("normalizing the current workspace", error)
+            crate::interaction::diagnostic::AppError::single(
+                "normalizing the current workspace",
+                error,
+            )
         })?)
     };
     let sessions = reader.discover().map_err(|error| {
-        crate::diagnostic::AppError::single("discovering stored Sessions", error)
+        crate::interaction::diagnostic::AppError::single("discovering stored Sessions", error)
     })?;
     let rows = sessions
         .into_iter()
@@ -49,7 +56,10 @@ pub(crate) fn run(
         .map(|session| super::presentation::SessionRow::from_stored(session, &date_formatter))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| {
-            crate::diagnostic::AppError::single("formatting stored Session dates", error)
+            crate::interaction::diagnostic::AppError::single(
+                "formatting stored Session dates",
+                error,
+            )
         })?;
     let stdout_is_terminal = std::io::stdout().is_terminal();
     Ok(Output {
@@ -64,7 +74,7 @@ pub(crate) fn run(
             super::presentation::heading_style(stdout_is_terminal),
         )
         .map_err(|error| {
-            crate::diagnostic::AppError::single("formatting the Session list", error)
+            crate::interaction::diagnostic::AppError::single("formatting the Session list", error)
         })?,
         diagnostics: Vec::new(),
     })
