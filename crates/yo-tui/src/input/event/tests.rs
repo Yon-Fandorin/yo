@@ -1,4 +1,4 @@
-use super::event::{
+use super::{
     InputEvent, KeyAction, KeyCode, KeyEvent, KeyModifiers, KeyState, MediaKeyCode, ModifierKeyCode,
 };
 use crate::surface::Size;

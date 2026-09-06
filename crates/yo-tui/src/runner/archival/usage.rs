@@ -8,10 +8,11 @@ use yo_core::{
 };
 
 use super::ArchivedProjectionError;
-use crate::{
-    GlyphProfile,
-    runner::usage_format::{aggregate_text, cache_read_text, safe_text, source_text, value_text},
-};
+use crate::GlyphProfile;
+
+mod format;
+
+use format::{aggregate_text, cache_read_text, safe_text, source_text, value_text};
 
 pub(super) fn project(
     history: &yo_core::session_repository::StoredSessionHistory,
