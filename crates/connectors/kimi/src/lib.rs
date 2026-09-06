@@ -4,9 +4,7 @@ use std::fmt;
 
 use reqwest::{Client, Url};
 use serde_json::Value;
-use yo_connector_transport::{
-    ConnectorStream, DecodeBatch, SseDecoder, configuration_failure, http_client, start_stream,
-};
+use yo_connector_transport::{ConnectorStream, configuration_failure, http_client, start_stream};
 use yo_core::{
     ApiCredential, CompleteModelBinding, ConnectorError, ModelConnector,
     ModelConnectorCancellation, ModelConnectorLimits, ModelConnectorPoll, ModelConnectorRequest,
@@ -49,15 +47,6 @@ fn bounded_kimi_limits(mut limits: ModelConnectorLimits) -> ModelConnectorLimits
         .max_provider_private_bytes
         .min(KIMI_MAX_PROVIDER_PRIVATE_BYTES);
     limits
-}
-
-impl SseDecoder for ChatCompletionsSseDecoder {
-    fn push(&mut self, bytes: &[u8]) -> DecodeBatch {
-        self.push_batch(bytes)
-    }
-    fn finish(&mut self) -> Result<Vec<yo_core::ModelConnectorEvent>, ConnectorError> {
-        self.finish()
-    }
 }
 
 #[derive(Clone)]

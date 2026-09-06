@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
-use yo_connector_transport::{DecodeBatch as SseDecodeBatch, SseFrame, SseFramer};
+use yo_connector_transport::{DecodeBatch as SseDecodeBatch, SseDecoder, SseFrame, SseFramer};
 use yo_core::{
     CacheReadInputTokens, ConnectorError, ConnectorFailureKind, ModelConnectorEvent,
     ModelConnectorLimits, ModelConnectorTerminal, ModelConnectorUsage, ReasoningChannel,
@@ -74,6 +74,15 @@ enum MessageContent {
     },
 }
 
+impl SseDecoder for ResponsesSseDecoder {
+    fn push(&mut self, bytes: &[u8]) -> SseDecodeBatch {
+        self.push_batch(bytes)
+    }
+    fn finish(&mut self) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
+        self.finish()
+    }
+}
+
 impl ResponsesSseDecoder {
     pub(super) fn new(limits: ModelConnectorLimits) -> Self {
         let framer = SseFramer::new(
@@ -108,7 +117,7 @@ impl ResponsesSseDecoder {
         }
     }
 
-    pub(super) fn push_batch(&mut self, bytes: &[u8]) -> SseDecodeBatch {
+    fn push_batch(&mut self, bytes: &[u8]) -> SseDecodeBatch {
         let mut decoded = Vec::new();
         let frames = self.framer.push(bytes);
         for frame in frames.frames {
@@ -128,7 +137,7 @@ impl ResponsesSseDecoder {
         }
     }
 
-    pub(super) fn finish(&mut self) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
+    fn finish(&mut self) -> Result<Vec<ModelConnectorEvent>, ConnectorError> {
         let mut decoded = Vec::new();
         if let Some(frame) = self.framer.finish()? {
             decoded.extend(self.decode_event(frame)?);
