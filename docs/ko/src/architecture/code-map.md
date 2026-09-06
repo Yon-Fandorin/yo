@@ -50,7 +50,7 @@ yo-cli main
 
 | 경계 | 소유하는 책임 | 소유하지 않는 책임 |
 |---|---|---|
-| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs), [`transport`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/transport/mod.rs) | generic `BackendAdapter` lifecycle, typed polling·취소·failure 어휘, provider 중립 binding·request·outcome evidence, 크기가 제한된 semantic 또는 opaque provider-private replay evidence, bounded child-process JSONL·stderr tail·request ID·deferred-message mechanism | Yo command·event, Session·Journal 좌표, host protocol 해석, Connector 선택 또는 concrete Provider payload 해석 |
+| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs), [`transport`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/transport.rs) | generic `BackendAdapter` lifecycle, typed polling·취소·failure 어휘, provider 중립 binding·request·outcome evidence, 크기가 제한된 semantic 또는 opaque provider-private replay evidence, bounded child-process JSONL·stderr tail·request ID·deferred-message mechanism | Yo command·event, Session·Journal 좌표, host protocol 해석, Connector 선택 또는 concrete Provider payload 해석 |
 
 ## yo-cli: 프로세스 호스트
 

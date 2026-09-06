@@ -49,7 +49,7 @@ and [UI-only crate boundary](https://github.com/Yon-Fandorin/yo/blob/develop/met
 
 | Boundary | Owns | Does not own |
 |---|---|---|
-| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs), [`transport`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/transport/mod.rs) | The generic `BackendAdapter` lifecycle, typed polling/cancellation/failure vocabulary, provider-neutral binding/request/outcome evidence, bounded semantic or opaque provider-private replay evidence, and bounded child-process JSONL, stderr-tail, request-ID, and deferred-message mechanics | Yo commands, events, Session or Journal coordinates, host protocol interpretation, Connector selection, or concrete Provider payload interpretation |
+| [`contract.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/contract.rs), [`evidence.rs`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/evidence.rs), [`transport`](https://github.com/Yon-Fandorin/yo/blob/develop/crates/backends/foundation/src/transport.rs) | The generic `BackendAdapter` lifecycle, typed polling/cancellation/failure vocabulary, provider-neutral binding/request/outcome evidence, bounded semantic or opaque provider-private replay evidence, and bounded child-process JSONL, stderr-tail, request-ID, and deferred-message mechanics | Yo commands, events, Session or Journal coordinates, host protocol interpretation, Connector selection, or concrete Provider payload interpretation |
 
 ## yo-cli: process host
 
