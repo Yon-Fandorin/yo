@@ -6,26 +6,22 @@ use std::{
     time::{Duration, Instant},
 };
 
+use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
-    AgentEvent, AgentIntent, AgentSession, CommandAdmission, ContextPolicyChanged, ContextStrategy,
-    JournalSequence, ProviderPrivateReplayEnvelope, ToolExecutionError, ToolId, TranscriptReader,
-    TranscriptRecord, UserInput,
+    ActivityKind, ActivityRequestRef, ActivityResponse, AgentCommand, AgentEvent, AgentIntent,
+    AgentSession, ApprovalDecision, BackendCommandEvidence, BackendEvent, BackendFailureKind,
+    BackendPoll, CommandAdmission, ContextPolicyChanged, ContextStrategy, JournalSequence,
+    ModelConnectorEvent, ModelReplayContract, ModelReplayDelta, ModelReplayItem, ModelReplayRole,
+    ProviderPrivateReplayEnvelope, ToolApprovalRequirement, ToolExecution, ToolExecutionError,
+    ToolExecutionHost, ToolExecutionRequest, ToolId, TranscriptReader, TranscriptRecord,
+    TurnOutcome, TurnRef, UserInput,
 };
 
-use super::{
-    super::{
-        ActivityKind, ActivityRequestRef, ActivityResponse, AgentBackend, AgentCommand,
-        ApprovalDecision, BackendCommandEvidence, BackendEvent, BackendFailureKind, BackendPoll,
-        ModelConnectorEvent, ModelReplayContract, ModelReplayDelta, ModelReplayItem,
-        ModelReplayRole, NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-        ToolApprovalRequirement, ToolExecution, ToolExecutionHost, ToolExecutionRequest,
-        TurnOutcome, TurnRef,
-    },
-    support::{
-        ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, binding, completed,
-        drain_until_turn, event_rounds, mock_tokenization_payload, registry, turn,
-    },
+use super::support::{
+    ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, binding, completed,
+    drain_until_turn, event_rounds, mock_tokenization_payload, registry, turn,
 };
+use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 
 struct RecordingTokenCounter {
     input_tokens: u64,

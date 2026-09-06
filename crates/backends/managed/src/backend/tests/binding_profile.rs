@@ -6,28 +6,26 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
-    AgentEvent, AgentIntent, AgentSession, AgentSessionPoll, ApiDialect, BackendIdentity,
-    CommandAdmission, EffectiveModelProfile, HostWorkspacePath, ModelProfileLayer,
-    ModelProfileParameters, ReasoningEffort, SessionDescriptor, ToolApprovalRequirement,
-    ToolRegistry, TranscriptRecord, TurnOutcome, UserInput, VersionedProfileId, WorkspaceHostId,
+    AgentCommand, AgentEvent, AgentIntent, AgentSession, AgentSessionPoll, ApiDialect,
+    BackendCommandEvidence, BackendIdentity, CommandAdmission, EffectiveModelProfile,
+    HostWorkspacePath, ModelConnectorEvent, ModelProfileLayer, ModelProfileParameters,
+    ReasoningEffort, SessionDescriptor, ToolApprovalRequirement, ToolRegistry, TranscriptRecord,
+    TurnOutcome, UserInput, VersionedProfileId, WorkspaceHostId,
     session_repository::{
         LocalSessionReader, LocalSessionRepository, read_stored_session_continuation,
     },
 };
 
-use super::{
-    super::{
-        AgentBackend, AgentCommand, BackendCommandEvidence, ModelConnectorEvent,
-        NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-        semantically_equal_native_binding_identity,
-    },
-    support::{
-        ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, completed,
-        context_profile, event_rounds, mock_tokenization_payload, registry, turn,
-    },
+use super::support::{
+    ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, completed,
+    context_profile, event_rounds, fixture_session, mock_tokenization_payload, registry, turn,
 };
-use crate::fixture_session;
+use crate::backend::{
+    NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
+    identity::semantically_equal_native_binding_identity,
+};
 
 fn parameters(value: &str) -> ModelProfileParameters {
     serde_json::from_str(value).unwrap()

@@ -1,20 +1,18 @@
 use std::sync::{Arc, Mutex};
 
-use yo_core::{ToolExecutionError, ToolExecutionResult, ToolId, UserInput};
-
-use super::{
-    super::{
-        ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentBackend,
-        AgentCommand, ApprovalDecision, BackendEvent, BackendPoll, ModelConnectorEvent,
-        NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-        ToolApprovalRequirement, ToolExecution, ToolExecutionHost, ToolExecutionOutcome,
-        ToolExecutionPoll, ToolExecutionRequest, TurnOutcome,
-    },
-    support::{
-        ExactAdmission, FixedTokenCounter, MockConnector, backend, binding, completed,
-        context_profile, drain_until_turn, event_rounds, registry, turn,
-    },
+use yo_backend::BackendAdapter as AgentBackend;
+use yo_core::{
+    ActivityKind, ActivityOutcome, ActivityRequestRef, ActivityResponse, AgentCommand,
+    ApprovalDecision, BackendEvent, BackendPoll, ModelConnectorEvent, ToolApprovalRequirement,
+    ToolExecution, ToolExecutionError, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
+    ToolExecutionRequest, ToolExecutionResult, ToolId, TurnOutcome, UserInput,
 };
+
+use super::support::{
+    ExactAdmission, FixedTokenCounter, MockConnector, backend, binding, completed, context_profile,
+    drain_until_turn, event_rounds, registry, turn,
+};
+use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 
 struct PendingHost {
     cancelled: Arc<Mutex<usize>>,

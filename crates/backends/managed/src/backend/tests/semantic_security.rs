@@ -1,20 +1,17 @@
 use std::sync::{Arc, Mutex};
 
-use yo_core::{ToolExecutionError, ToolId, UserInput};
-
-use super::{
-    super::{
-        AgentBackend, AgentCommand, BackendEvent, BackendPoll, ModelConnectorEvent,
-        ModelConnectorInputItem, ModelReplayItem, NativeModelBackend, NativeModelBackendConfig,
-        NativeModelBackendServices, TOOL_TRUNCATION_MARKER, ToolApprovalRequirement, ToolExecution,
-        ToolExecutionHost, ToolExecutionRequest, ToolSemanticAdmission, ToolValidationFailure,
-        bounded_output,
-    },
-    support::{
-        ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, completed,
-        context_profile, event_rounds, registry, turn,
-    },
+use yo_backend::BackendAdapter as AgentBackend;
+use yo_core::{
+    AgentCommand, BackendEvent, BackendPoll, ModelConnectorEvent, ModelConnectorInputItem,
+    ModelReplayItem, ToolApprovalRequirement, ToolExecution, ToolExecutionError, ToolExecutionHost,
+    ToolExecutionRequest, ToolId, ToolSemanticAdmission, ToolValidationFailure, UserInput,
 };
+
+use super::support::{
+    ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, completed,
+    context_profile, event_rounds, registry, turn,
+};
+use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 
 struct FailingStartHost;
 
@@ -95,43 +92,6 @@ impl yo_core::ModelTokenCounter for FailingTokenCounter {
             "counter diagnostic contains request-secret",
         ))
     }
-}
-
-// host가 이미 잘랐다고 보고하거나 UTF-8 경계에서 다시 잘라도 truncation marker를 포함한
-// 최종 model-visible output 자체가 설정한 byte limit을 넘지 않는다.
-#[test]
-fn bounded_tool_output_includes_its_marker_inside_the_limit() {
-    let bounded = bounded_output("가나다라마바사", 32, true);
-    assert!(bounded.len() <= 32);
-    assert!(bounded.ends_with("[yo: tool output truncated]"));
-
-    let tiny = bounded_output("가나다", 5, false);
-    assert!(tiny.len() <= 5);
-    assert!(tiny.is_char_boundary(tiny.len()));
-
-    let invalid = NativeModelBackendConfig {
-        maximum_tool_output_bytes: TOOL_TRUNCATION_MARKER.len() - 1,
-        ..NativeModelBackendConfig::default()
-    };
-    assert!(
-        NativeModelBackend::with_connector(
-            Box::new(MockConnector {
-                rounds: event_rounds(Vec::new()),
-                requests: Arc::new(Mutex::new(Vec::new())),
-            }),
-            binding(),
-            registry(ToolApprovalRequirement::Automatic),
-            NativeModelBackendServices::new(
-                Box::new(yo_core::admit_standard_complete_binding),
-                Some(Box::new(ExactAdmission)),
-                Box::new(MockHost::default()),
-                Box::new(FixedTokenCounter(1)),
-            ),
-            context_profile(),
-            invalid,
-        )
-        .is_err()
-    );
 }
 
 // agent policy의 explicit absolute tool deadline에서 0은 즉시 만료나 무제한으로 해석하지

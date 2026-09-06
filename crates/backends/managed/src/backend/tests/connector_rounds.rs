@@ -3,53 +3,23 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
-    AccountId, ActivityUpdate, ApiDialect, ModelContextProfile, ModelId, ModelProfileLayer,
-    ModelProfileParameters, NormalizedEndpoint, ProviderId, ProviderPrivateReplayEnvelope,
-    ReplayProfile, UserInput, VersionedProfileId,
+    AccountId, ActivityKind, ActivityOutcome, ActivityUpdate, AgentCommand, ApiDialect,
+    BackendCommandEvidence, BackendEvent, BackendPoll, EffectiveModelBinding, ModelConnectorEvent,
+    ModelConnectorTerminal, ModelContextProfile, ModelId, ModelProfileLayer,
+    ModelProfileParameters, ModelReplayItem, ModelReplayRole, NormalizedEndpoint, ProviderId,
+    ProviderPrivateReplayEnvelope, ReasoningChannel, ReplayProfile, ToolApprovalRequirement,
+    TurnOutcome, UserInput, VersionedProfileId,
 };
 
-use super::{
-    super::{
-        ActivityKind, ActivityOutcome, AgentBackend, AgentCommand, BackendCommandEvidence,
-        BackendEvent, BackendFailureKind, BackendPoll, EffectiveModelBinding, ModelConnectorEvent,
-        ModelConnectorTerminal, ModelReplayItem, ModelReplayRole, NativeModelBackend,
-        NativeModelBackendConfig, NativeModelBackendServices, ReasoningChannel,
-        ToolApprovalRequirement, TurnOutcome,
-    },
-    support::{
-        ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, completed,
-        context_profile, drain_until_turn, event_rounds, mock_tokenization_payload, registry, turn,
-    },
+use super::support::{
+    ExactAdmission, FixedTokenCounter, MockConnector, MockHost, backend, completed,
+    context_profile, drain_until_turn, event_rounds,
+    kimi::{kimi_admission, kimi_binding, kimi_profile, private_envelope, visible_message},
+    mock_tokenization_payload, registry, turn,
 };
-
-fn kimi_admission(
-    complete: &yo_core::CompleteModelBinding,
-) -> Result<yo_core::AdmittedCompleteBinding, String> {
-    yo_connector_kimi::admit_complete_binding(complete).map_err(|error| error.to_string())
-}
-
-fn private_envelope(private: &str, visible: Option<&str>) -> ProviderPrivateReplayEnvelope {
-    let reasoning = serde_json::to_string(private).unwrap();
-    let content = visible.map_or_else(
-        || "null".to_owned(),
-        |visible| serde_json::to_string(visible).unwrap(),
-    );
-    ProviderPrivateReplayEnvelope::new(
-        "kimi.assistant-message/v1alpha1",
-        format!(r#"{{"role":"assistant","reasoning_content":{reasoning},"content":{content}}}"#)
-            .into_bytes(),
-    )
-    .unwrap()
-}
-
-fn visible_message(content: impl Into<String>) -> ModelReplayItem {
-    ModelReplayItem::Message {
-        role: ModelReplayRole::Assistant,
-        content: content.into(),
-        refusal: None,
-    }
-}
+use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 
 fn chat_binding() -> EffectiveModelBinding {
     EffectiveModelBinding::new(
@@ -61,16 +31,6 @@ fn chat_binding() -> EffectiveModelBinding {
     )
 }
 
-fn kimi_binding() -> EffectiveModelBinding {
-    EffectiveModelBinding::new(
-        ProviderId::new("kimi").unwrap(),
-        AccountId::new("team").unwrap(),
-        ModelId::new("kimi-k3").unwrap(),
-        ApiDialect::KimiChatCompletions,
-        NormalizedEndpoint::parse("https://api.moonshot.ai/v1").unwrap(),
-    )
-}
-
 fn kimi_k27_binding() -> EffectiveModelBinding {
     EffectiveModelBinding::new(
         ProviderId::new("kimi").unwrap(),
@@ -79,22 +39,6 @@ fn kimi_k27_binding() -> EffectiveModelBinding {
         ApiDialect::KimiChatCompletions,
         NormalizedEndpoint::parse("https://api.moonshot.ai/v1").unwrap(),
     )
-}
-
-fn kimi_profile() -> yo_core::EffectiveModelProfile {
-    let layer = ModelProfileLayer::new(
-        Some(ApiDialect::KimiChatCompletions),
-        Some(VersionedProfileId::new("utf8-bytes/v1").unwrap()),
-        Some(1_048_576),
-        Some(131_072),
-        Some(serde_json::from_str::<ModelProfileParameters>(r#"{"effort":"max"}"#).unwrap()),
-        Some(serde_json::from_str::<ModelProfileParameters>("{}").unwrap()),
-        Some(VersionedProfileId::new("local-tools/v1").unwrap()),
-    )
-    .with_replay_profile(Some(
-        VersionedProfileId::new("kimi-private-local-plaintext/v1").unwrap(),
-    ));
-    yo_core::EffectiveModelProfile::resolve(None, &layer).unwrap()
 }
 
 fn kimi_k27_profile() -> yo_core::EffectiveModelProfile {
@@ -428,83 +372,6 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
         yo_core::ModelConnectorInputItem::ProviderPrivateAssistant { envelope }
             if std::str::from_utf8(envelope.payload()).unwrap().contains("hidden-1")
     )));
-}
-
-// backend는 Kimi private object 단독 크기가 아니라 같은 turn의 visible semantic item과
-// contract를 합친 canonical replay delta를 저장 전에 재며 exact 16 MiB는 받고 +1은 버립니다.
-#[test]
-fn native_backend_bounds_complete_semantic_and_private_replay_before_retention() {
-    let mut backend = NativeModelBackend::with_connector_and_profile(
-        Box::new(MockConnector {
-            rounds: event_rounds(vec![Vec::new()]),
-            requests: Arc::new(Mutex::new(Vec::new())),
-        }),
-        kimi_binding(),
-        registry(ToolApprovalRequirement::Automatic),
-        NativeModelBackendServices::new(
-            Box::new(kimi_admission),
-            Some(Box::new(ExactAdmission)),
-            Box::new(MockHost::default()),
-            Box::new(FixedTokenCounter(1)),
-        ),
-        ModelContextProfile::new(1_048_576, 131_072, "utf8-bytes/v1").unwrap(),
-        Some(kimi_profile()),
-        NativeModelBackendConfig::default(),
-    )
-    .unwrap();
-    backend
-        .execute_command(AgentCommand::CreateSession {
-            session_id: turn().session_id(),
-        })
-        .unwrap();
-    backend
-        .execute_command(AgentCommand::StartTurn {
-            turn: turn(),
-            input: UserInput::from("size the complete replay delta"),
-        })
-        .unwrap();
-
-    let visible = "v".repeat(4 * 1024 * 1024);
-    let mut state = backend.turn.take().unwrap();
-    state.round_message_items.insert(0);
-    state.round_messages.insert((0, 0), visible.clone());
-    let item = |reasoning_bytes| ModelReplayItem::ProviderPrivateAssistant {
-        envelope: private_envelope(&"r".repeat(reasoning_bytes), Some(&visible)),
-    };
-
-    let empty_private = item(0);
-    let fixed_bytes = backend
-        .prospective_replay_delta_encoded_len(&state, Some((1, &empty_private)))
-        .unwrap();
-    let accepted = super::super::ModelReplayDelta::MAX_ENCODED_BYTES - fixed_bytes;
-    backend
-        .ensure_replay_capacity_with_round_item(&state, Some((1, &item(accepted))))
-        .expect("the exact complete replay boundary is admitted");
-
-    let overflow = backend
-        .apply_response_event(
-            &mut state,
-            ModelConnectorEvent::ProviderPrivateAssistant {
-                output_index: 1,
-                envelope: private_envelope(&"r".repeat(accepted + 1), Some(&visible)),
-                visible_projection: vec![visible_message(visible.clone())],
-            },
-        )
-        .unwrap_err();
-    assert_eq!(overflow.kind(), BackendFailureKind::ContextExhausted);
-    assert!(state.round_replay.is_empty());
-
-    backend
-        .apply_response_event(
-            &mut state,
-            ModelConnectorEvent::ProviderPrivateAssistant {
-                output_index: 1,
-                envelope: private_envelope(&"r".repeat(accepted), Some(&visible)),
-                visible_projection: vec![visible_message(visible)],
-            },
-        )
-        .unwrap();
-    assert!(state.round_replay.contains_key(&1));
 }
 
 // opaque payload를 해석하지 않는 backend도 completed projection, exact replay schema,

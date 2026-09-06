@@ -4,5 +4,5 @@ mod connector_rounds;
 mod context_replay;
 mod model_observation;
 mod semantic_security;
-mod support;
+pub(super) mod support;
 mod tool_execution;

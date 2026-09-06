@@ -1,13 +1,19 @@
-//! BackendAdapter lifecycle boundary for the managed model loop.
+//! Backend lifecycle scheduler and ordinary-versus-compaction response dispatch.
+
+use std::sync::{Arc, atomic::Ordering};
 
 use serde_json::json;
+use yo_backend::BackendAdapter;
+use yo_core::{
+    ActivityKind, ActivityResponse, AgentCommand, BackendBindingEvidence, BackendCapabilities,
+    BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind, BackendPoll,
+    BackendResumeTarget, BackendStopHandle, ModelConnectorEvent, ModelConnectorPoll,
+};
 
 use super::{
-    ActivityKind, ActivityResponse, AgentCommand, Arc, BackendAdapter, BackendBindingEvidence,
-    BackendCapabilities, BackendCommandEvidence, BackendEvent, BackendFailure, BackendFailureKind,
-    BackendPoll, BackendResumeTarget, BackendStopHandle, CompactionState, IdleCompactionState,
-    ModelConnectorPoll, NativeModelBackend, Ordering, failure, map_connector_cleanup,
-    map_connector_turn, map_tool_cleanup, same_native_resume_identity,
+    CompactionState, IdleCompactionState, NativeModelBackend, failure,
+    identity::semantically_equal_native_binding_identity, map_connector_cleanup,
+    map_connector_turn, map_tool_cleanup,
 };
 
 impl BackendAdapter for NativeModelBackend {
@@ -395,4 +401,75 @@ impl BackendAdapter for NativeModelBackend {
         self.shutdown_result = Some(result.clone());
         result
     }
+}
+
+impl NativeModelBackend {
+    fn handle_response_event(&mut self, event: ModelConnectorEvent) -> Result<(), BackendFailure> {
+        let mut state = self.turn.take().ok_or_else(|| {
+            failure(
+                BackendFailureKind::Protocol,
+                "response event has no active Turn",
+            )
+        })?;
+        let was_compacting = matches!(state.compaction, Some(CompactionState::Summarizing { .. }));
+        let result = if was_compacting {
+            self.apply_compaction_response_event(&mut state, event)
+        } else {
+            self.apply_response_event(&mut state, event)
+        };
+        if let Err(error) = result {
+            if was_compacting || error.kind() == BackendFailureKind::ContextExhausted {
+                self.observe_model_request(
+                    state.turn,
+                    yo_core::ModelRequestOutcome::Failed(
+                        yo_core::ModelRequestFailureKind::ResponseLimit,
+                    ),
+                );
+                self.context_exhausted = true;
+                self.exhaust_turn(
+                    &mut state,
+                    if was_compacting && error.kind() != BackendFailureKind::ContextExhausted {
+                        format!("context_exhausted: context summary failed: {error}")
+                    } else {
+                        error.to_string()
+                    },
+                );
+            } else {
+                if error.kind() == BackendFailureKind::Protocol {
+                    self.observe_model_request(
+                        state.turn,
+                        yo_core::ModelRequestOutcome::Failed(
+                            yo_core::ModelRequestFailureKind::Protocol,
+                        ),
+                    );
+                }
+                self.fail_turn(&mut state, error.to_string());
+            }
+        }
+        if self.turn.is_none()
+            && !self.events.iter().any(|event| {
+                matches!(
+                    event,
+                    BackendEvent::TurnFinished { .. } | BackendEvent::ResumableTurnFinished { .. }
+                )
+            })
+        {
+            self.turn = Some(state);
+        }
+        Ok(())
+    }
+}
+
+fn same_native_resume_identity(
+    current: &BackendBindingEvidence,
+    durable: &BackendBindingEvidence,
+) -> bool {
+    current.backend_kind() == durable.backend_kind()
+        && current.model_identity() == durable.model_identity()
+        && current.session_locator() == durable.session_locator()
+        && current.continuation_strategy() == durable.continuation_strategy()
+        && semantically_equal_native_binding_identity(
+            current.binding_identity(),
+            durable.binding_identity(),
+        )
 }

@@ -1,3 +1,5 @@
+pub(in crate::backend) mod kimi;
+
 use std::{
     collections::VecDeque,
     num::NonZeroU64,
@@ -5,24 +7,22 @@ use std::{
 };
 
 use serde_json::json;
+use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
-    AccountId, ApiDialect, ModelId, NormalizedEndpoint, ProviderId, ToolDefinition, ToolEffect,
-    ToolExecutionError, ToolExecutionResult, ToolId, ToolRegistry,
-};
-
-use super::super::{
-    AgentBackend, BackendEvent, BackendPoll, EffectiveModelBinding, FrozenToolRegistry,
+    AccountId, ApiDialect, BackendEvent, BackendPoll, EffectiveModelBinding, FrozenToolRegistry,
     ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort, ModelConnectorTerminal,
-    NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices,
-    ToolApprovalRequirement, ToolExecution, ToolExecutionHost, ToolExecutionOutcome,
-    ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission, TurnRef,
+    ModelId, NormalizedEndpoint, ProviderId, ToolApprovalRequirement, ToolDefinition, ToolEffect,
+    ToolExecution, ToolExecutionError, ToolExecutionHost, ToolExecutionOutcome, ToolExecutionPoll,
+    ToolExecutionRequest, ToolExecutionResult, ToolId, ToolRegistry, ToolSemanticAdmission,
+    TurnRef,
 };
-use crate::fixture_session;
 
-pub(super) struct MockConnector {
-    pub(super) rounds: Arc<Mutex<VecDeque<VecDeque<ModelConnectorEvent>>>>,
-    pub(super) requests: Arc<Mutex<Vec<ModelConnectorRequest>>>,
+use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
+
+pub(in crate::backend) struct MockConnector {
+    pub(in crate::backend) rounds: Arc<Mutex<VecDeque<VecDeque<ModelConnectorEvent>>>>,
+    pub(in crate::backend) requests: Arc<Mutex<Vec<ModelConnectorRequest>>>,
 }
 
 impl ModelConnector for MockConnector {
@@ -53,7 +53,7 @@ impl ModelConnector for MockConnector {
     }
 }
 
-pub(super) fn mock_tokenization_payload(
+pub(in crate::backend) fn mock_tokenization_payload(
     request: &ModelConnectorRequest,
     model: &str,
 ) -> serde_json::Value {
@@ -132,7 +132,7 @@ impl ModelConnectorStreamPort for MockStream {
 }
 
 #[derive(Default)]
-pub(super) struct MockHost {
+pub(in crate::backend) struct MockHost {
     starts: Arc<Mutex<usize>>,
 }
 
@@ -164,8 +164,8 @@ impl ToolExecutionHost for MockHost {
     }
 }
 
-pub(super) struct MockExecution {
-    pub(super) result: Option<ToolExecutionResult>,
+pub(in crate::backend) struct MockExecution {
+    pub(in crate::backend) result: Option<ToolExecutionResult>,
 }
 
 impl ToolExecution for MockExecution {
@@ -184,7 +184,7 @@ impl ToolExecution for MockExecution {
     }
 }
 
-pub(super) fn binding() -> EffectiveModelBinding {
+pub(in crate::backend) fn binding() -> EffectiveModelBinding {
     EffectiveModelBinding::new(
         ProviderId::new("qwencloud").unwrap(),
         AccountId::new("default").unwrap(),
@@ -194,7 +194,7 @@ pub(super) fn binding() -> EffectiveModelBinding {
     )
 }
 
-pub(super) fn registry(approval: ToolApprovalRequirement) -> FrozenToolRegistry {
+pub(in crate::backend) fn registry(approval: ToolApprovalRequirement) -> FrozenToolRegistry {
     ToolRegistry::new([ToolDefinition::new(
         ToolId::new("read-file").unwrap(),
         "read_file",
@@ -214,7 +214,7 @@ pub(super) fn registry(approval: ToolApprovalRequirement) -> FrozenToolRegistry 
     .freeze()
 }
 
-pub(super) struct ExactAdmission;
+pub(in crate::backend) struct ExactAdmission;
 
 impl ToolSemanticAdmission for ExactAdmission {
     fn admit_arguments(
@@ -234,11 +234,11 @@ impl ToolSemanticAdmission for ExactAdmission {
     }
 }
 
-pub(super) fn context_profile() -> yo_core::ModelContextProfile {
+pub(in crate::backend) fn context_profile() -> yo_core::ModelContextProfile {
     yo_core::ModelContextProfile::new(1_000_000, 4_096, "test-tokenizer/v1").unwrap()
 }
 
-pub(super) struct FixedTokenCounter(pub(super) u64);
+pub(in crate::backend) struct FixedTokenCounter(pub(in crate::backend) u64);
 
 impl yo_core::ModelTokenCounter for FixedTokenCounter {
     fn count_input_tokens(
@@ -250,7 +250,7 @@ impl yo_core::ModelTokenCounter for FixedTokenCounter {
     }
 }
 
-pub(super) fn event_rounds(
+pub(in crate::backend) fn event_rounds(
     rounds: Vec<Vec<ModelConnectorEvent>>,
 ) -> Arc<Mutex<VecDeque<VecDeque<ModelConnectorEvent>>>> {
     Arc::new(Mutex::new(
@@ -261,7 +261,7 @@ pub(super) fn event_rounds(
     ))
 }
 
-pub(super) fn backend(
+pub(in crate::backend) fn backend(
     rounds: Vec<Vec<ModelConnectorEvent>>,
     approval: ToolApprovalRequirement,
     starts: Arc<Mutex<usize>>,
@@ -285,14 +285,14 @@ pub(super) fn backend(
     .unwrap()
 }
 
-pub(super) fn turn() -> TurnRef {
+pub(in crate::backend) fn turn() -> TurnRef {
     TurnRef::new(
         fixture_session(44),
         yo_core::TurnId::new(NonZeroU64::new(1).unwrap()),
     )
 }
 
-pub(super) fn completed(response_id: &str) -> ModelConnectorEvent {
+pub(in crate::backend) fn completed(response_id: &str) -> ModelConnectorEvent {
     ModelConnectorEvent::Terminal {
         response_id: response_id.to_owned(),
         status: ModelConnectorTerminal::Completed,
@@ -300,7 +300,7 @@ pub(super) fn completed(response_id: &str) -> ModelConnectorEvent {
     }
 }
 
-pub(super) fn drain_until_turn(backend: &mut NativeModelBackend) -> BackendEvent {
+pub(in crate::backend) fn drain_until_turn(backend: &mut NativeModelBackend) -> BackendEvent {
     for _ in 0..100 {
         match backend.poll_event().unwrap() {
             BackendPoll::Event(
@@ -312,4 +312,10 @@ pub(super) fn drain_until_turn(backend: &mut NativeModelBackend) -> BackendEvent
         }
     }
     panic!("backend did not finish within the deterministic poll budget")
+}
+
+pub(in crate::backend) fn fixture_session(value: u64) -> yo_core::SessionId {
+    format!("01890f00-0000-7000-8000-{value:012x}")
+        .parse()
+        .expect("the test Session fixture is a UUIDv7")
 }

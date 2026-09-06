@@ -1,22 +1,18 @@
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
+use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
-    CacheReadInputTokens, ModelRequestFailureKind, ModelRequestOutcome, ResponsesUsage, UserInput,
-    VersionedProfileId,
+    AgentCommand, BackendEvent, BackendPoll, CacheReadInputTokens, ModelConnectorEvent,
+    ModelConnectorTerminal, ModelRequestFailureKind, ModelRequestOutcome, ResponsesUsage,
+    ToolApprovalRequirement, UserInput, VersionedProfileId,
 };
 
-use super::{
-    super::{
-        AgentBackend, AgentCommand, BackendEvent, BackendPoll, ModelConnectorEvent,
-        ModelConnectorTerminal, NativeModelBackend, NativeModelBackendConfig,
-        NativeModelBackendServices, ToolApprovalRequirement,
-    },
-    support::{
-        ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, context_profile,
-        event_rounds, registry, turn,
-    },
+use super::support::{
+    ExactAdmission, FixedTokenCounter, MockConnector, MockHost, binding, context_profile,
+    event_rounds, registry, turn,
 };
+use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 
 fn backend(
     rounds: Vec<Vec<ModelConnectorEvent>>,

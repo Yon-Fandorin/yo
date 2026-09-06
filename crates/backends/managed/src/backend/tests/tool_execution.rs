@@ -3,24 +3,20 @@ use std::{
     time::Duration,
 };
 
+use yo_backend::BackendAdapter as AgentBackend;
 use yo_core::{
-    AgentEvent, AgentRuntime, RuntimePoll, SubmissionId, ToolExecutionError, ToolExecutionResult,
-    ToolId, UserInput,
+    AgentCommand, AgentEvent, AgentRuntime, BackendCommandEvidence, BackendEvent,
+    ContinuationStrategy, ModelConnectorEvent, ModelConnectorInputItem, ModelReplayItem,
+    ModelReplayRole, ReplayExecutor, RuntimePoll, SubmissionId, ToolApprovalRequirement,
+    ToolExecution, ToolExecutionError, ToolExecutionHost, ToolExecutionOutcome,
+    ToolExecutionRequest, ToolExecutionResult, ToolId, TurnOutcome, UserInput,
 };
 
-use super::{
-    super::{
-        AgentBackend, AgentCommand, BackendCommandEvidence, BackendEvent, ContinuationStrategy,
-        ModelConnectorEvent, ModelConnectorInputItem, ModelReplayItem, ModelReplayRole,
-        NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices, ReplayExecutor,
-        ToolApprovalRequirement, ToolExecution, ToolExecutionHost, ToolExecutionOutcome,
-        ToolExecutionRequest, TurnOutcome,
-    },
-    support::{
-        ExactAdmission, FixedTokenCounter, MockConnector, MockExecution, backend, binding,
-        completed, context_profile, drain_until_turn, event_rounds, registry, turn,
-    },
+use super::support::{
+    ExactAdmission, FixedTokenCounter, MockConnector, MockExecution, backend, binding, completed,
+    context_profile, drain_until_turn, event_rounds, registry, turn,
 };
+use crate::backend::{NativeModelBackend, NativeModelBackendConfig, NativeModelBackendServices};
 
 struct OrderedHost {
     starts: Arc<Mutex<Vec<String>>>,
