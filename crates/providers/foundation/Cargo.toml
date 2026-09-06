@@ -1,0 +1,15 @@
+[package]
+name = "yo-provider"
+version = "0.0.0"
+edition.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+yo-core = { path = "../../yo-core" }
+
+[dev-dependencies]
+serde_json = "1.0.140"
+
+[lints]
+workspace = true
