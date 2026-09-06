@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use yo_core::{AccountId, ModelId};
+use yo_core::{AccountId, BackendFailure, BackendFailureKind, ModelId};
 
 /// Process and compatibility settings for a local Codex app-server backend.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,6 +94,19 @@ impl CodexBackendConfig {
         self.model_rebind_target = Some((account, model));
         self
     }
+}
+
+pub(super) fn validate_config(config: &CodexBackendConfig) -> Result<(), BackendFailure> {
+    if !config.working_directory().is_absolute()
+        || !config.working_directory().is_dir()
+        || config.request_timeout().is_zero()
+    {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Initialization,
+            "Codex requires an existing absolute working directory and a non-zero request timeout",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

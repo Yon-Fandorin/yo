@@ -2,10 +2,8 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::{
-    super::{client::AppServerClient, observe_account_capacity},
-    support::{FakePeer, initialize_response},
-};
+use super::super::{AppServerClient, observe_account_capacity};
+use crate::test_support::{FakePeer, initialize_response};
 
 // 계정 조회는 Agent thread를 만들지 않고 initialize 뒤 identity와 rate-limit을 각각 한 번씩
 // 읽으며, 다중 limit bucket을 안정된 key 순서와 공용 용량 값으로 변환합니다.

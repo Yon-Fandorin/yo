@@ -2,10 +2,8 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::{
-    super::{client::AppServerClient, observe_model_catalog},
-    support::{FakePeer, initialize_response},
-};
+use super::super::{AppServerClient, observe_model_catalog};
+use crate::test_support::{FakePeer, initialize_response};
 
 // account/read와 모든 model/list page만 읽어 exact account/model inventory를 만들며
 // Agent thread는 생성하지 않습니다.
