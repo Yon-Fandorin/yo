@@ -26,16 +26,15 @@ use yo_core::{
     BackendRequestEvidence, BackendResumeTarget, BackendStopHandle, CacheReadInputTokens,
     CompleteModelBinding, ContextCheckpointProposal, ContextPolicyChanged, ContextStrategy,
     ContinuationStrategy, EffectiveModelBinding, EffectiveModelProfile, Failure,
-    FrozenToolRegistry, ModelCacheAffinityHint, ModelCatalogEntry, ModelConnector,
-    ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
+    FrozenToolRegistry, ModelBindingAdmission, ModelCacheAffinityHint, ModelCatalogEntry,
+    ModelConnector, ModelConnectorCancellation, ModelConnectorEvent, ModelConnectorInputItem,
     ModelConnectorInputRole, ModelConnectorPoll, ModelConnectorRequest, ModelConnectorStreamPort,
     ModelConnectorTerminal, ModelContextProfile, ModelReplay, ModelReplayContract,
     ModelReplayDelta, ModelReplayItem, ModelReplayRole, ModelTokenCounter, ReasoningChannel,
     ReasoningEffort, ReplayExecutor, ReplayProfile, RequestId, RequestToolExposure, SessionId,
     ToolApprovalBinding, ToolApprovalRequirement, ToolExecution, ToolExecutionHost,
     ToolExecutionOutcome, ToolExecutionPoll, ToolExecutionRequest, ToolSemanticAdmission,
-    ToolValidationFailure, TurnOutcome, TurnRef, ValidatedToolCall, admit_new_complete_binding,
-    provider_private_schema,
+    ToolValidationFailure, TurnOutcome, TurnRef, ValidatedToolCall, provider_private_schema,
 };
 
 const BACKEND_KIND: &str = "yo-managed-model";
@@ -79,6 +78,7 @@ impl Default for NativeModelBackendConfig {
 
 /// Host-owned services used by the provider-neutral model loop.
 pub struct NativeModelBackendServices {
+    binding_admission: Box<dyn ModelBindingAdmission>,
     semantic_admission: Option<Box<dyn ToolSemanticAdmission>>,
     tool_host: Box<dyn ToolExecutionHost>,
     token_counter: Box<dyn ModelTokenCounter>,
@@ -101,11 +101,13 @@ where
 
 impl NativeModelBackendServices {
     pub fn new(
+        binding_admission: Box<dyn ModelBindingAdmission>,
         semantic_admission: Option<Box<dyn ToolSemanticAdmission>>,
         tool_host: Box<dyn ToolExecutionHost>,
         token_counter: Box<dyn ModelTokenCounter>,
     ) -> Self {
         Self {
+            binding_admission,
             semantic_admission,
             tool_host,
             token_counter,
@@ -544,7 +546,9 @@ impl NativeModelBackend {
         {
             let complete = CompleteModelBinding::new(binding.clone(), profile.clone())
                 .map_err(|error| failure(BackendFailureKind::Initialization, error.to_string()))?;
-            let admitted = admit_new_complete_binding(&complete)
+            let admitted = services
+                .binding_admission
+                .admit(&complete)
                 .map_err(|message| failure(BackendFailureKind::Initialization, message))?;
             config.reasoning_effort = admitted.profile().reasoning_effort();
             let tools = match admitted.profile().tool_policy() {

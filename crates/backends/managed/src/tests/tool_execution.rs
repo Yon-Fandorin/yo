@@ -237,6 +237,7 @@ fn native_backend_forwards_the_optional_absolute_tool_deadline() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(DeadlineHost {
                 observed: Arc::clone(&observed),
@@ -327,6 +328,7 @@ fn native_backend_executes_multiple_tools_in_model_output_order() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(OrderedHost {
                 starts: Arc::clone(&starts),

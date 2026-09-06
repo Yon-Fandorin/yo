@@ -79,6 +79,7 @@ pub(super) fn start_native(
     let tool_host = local_tools::LocalToolHost::new(workspace, &credential_path)
         .map_err(|error| AppError::single("starting local workspace tools", error))?;
     let mut services = NativeModelBackendServices::new(
+        Box::new(super::NativeBindingAdmission),
         Some(Box::new(semantic_admission)),
         Box::new(tool_host),
         Box::new(TokenizerRegistry),

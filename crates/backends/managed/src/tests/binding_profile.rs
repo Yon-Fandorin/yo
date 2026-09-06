@@ -82,6 +82,7 @@ fn backend_with_profile_and_registry(
         binding(),
         registry,
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -101,6 +102,7 @@ fn backend_without_profile() -> NativeModelBackend {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -109,6 +111,47 @@ fn backend_without_profile() -> NativeModelBackend {
         NativeModelBackendConfig::default(),
     )
     .unwrap()
+}
+
+// 기존 generic 검증이 허용하는 profile도 필수 주입 admission의 거절을 보존하며,
+// backend 생성 실패를 다른 validator로 우회하거나 connector 요청을 시작하지 않습니다.
+#[test]
+fn injected_binding_admission_rejection_precedes_connector_requests() {
+    let profile = profile("{}", "{}", "local-tools/v1");
+    let expected = yo_core::CompleteModelBinding::new(binding(), profile.clone()).unwrap();
+    assert!(yo_core::admit_standard_complete_binding(&expected).is_ok());
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let admission_calls = Arc::clone(&calls);
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let admission = move |complete: &yo_core::CompleteModelBinding| {
+        assert_eq!(complete, &expected);
+        admission_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Err("injected binding rejection".to_owned())
+    };
+    let result = NativeModelBackend::with_connector_and_profile(
+        Box::new(MockConnector {
+            rounds: event_rounds(Vec::new()),
+            requests: Arc::clone(&requests),
+        }),
+        binding(),
+        registry(ToolApprovalRequirement::Automatic),
+        NativeModelBackendServices::new(
+            Box::new(admission),
+            Some(Box::new(ExactAdmission)),
+            Box::new(MockHost::default()),
+            Box::new(FixedTokenCounter(1)),
+        ),
+        profile.context().clone(),
+        Some(profile),
+        NativeModelBackendConfig::default(),
+    );
+    let error = result
+        .err()
+        .expect("injected admission must reject initialization");
+    assert_eq!(error.kind(), yo_core::BackendFailureKind::Initialization);
+    assert_eq!(error.message(), "injected binding rejection");
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(requests.lock().unwrap().is_empty());
 }
 
 struct TestDirectory(PathBuf);

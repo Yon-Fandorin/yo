@@ -9,8 +9,8 @@ use super::{
 };
 use crate::{
     AccountId, ApiCredential, CompleteModelBinding, CredentialMutationAction,
-    PreparedConnectionMutation, PreparedCredentialMutation, ProviderId,
-    model_profile_admission::admit_new_complete_binding, model_service::LocalCredentialStoreError,
+    ModelBindingAdmission, PreparedConnectionMutation, PreparedCredentialMutation, ProviderId,
+    model_service::LocalCredentialStoreError,
 };
 
 /// A safe external-connect failure. It never retains or formats candidate credential bytes.
@@ -66,6 +66,7 @@ impl PreparedExternalConnection {
     }
 
     pub(super) fn new(
+        admission: &dyn ModelBindingAdmission,
         connection: PreparedConnectionMutation,
         credential: PreparedCredentialMutation,
         bindings: Vec<CompleteModelBinding>,
@@ -91,7 +92,7 @@ impl PreparedExternalConnection {
         }
         if let Some(unsupported) = bindings
             .iter()
-            .find(|complete| admit_new_complete_binding(complete).is_err())
+            .find(|complete| admission.admit(complete).is_err())
         {
             return Err(ExternalConnectionError::UnsupportedProfile {
                 target: unsupported.binding().selection_reference(),
@@ -106,6 +107,7 @@ impl PreparedExternalConnection {
     }
 
     fn new_group_replacement(
+        admission: &dyn ModelBindingAdmission,
         connection: PreparedConnectionMutation,
         credential: PreparedCredentialMutation,
         bindings: Vec<CompleteModelBinding>,
@@ -119,7 +121,7 @@ impl PreparedExternalConnection {
         }
         if let Some(unsupported) = bindings
             .iter()
-            .find(|complete| admit_new_complete_binding(complete).is_err())
+            .find(|complete| admission.admit(complete).is_err())
         {
             return Err(ExternalConnectionError::UnsupportedProfile {
                 target: unsupported.binding().selection_reference(),
@@ -149,6 +151,7 @@ impl LocalConnectionOperationSession<'_> {
     /// Prepares an external connection without opening or persisting credential bytes.
     pub fn prepare_external_connection(
         &mut self,
+        admission: &dyn ModelBindingAdmission,
         connection: PreparedConnectionMutation,
         bindings: Vec<CompleteModelBinding>,
     ) -> Result<PreparedExternalConnection, ConnectionOperationExecutionError> {
@@ -167,7 +170,7 @@ impl LocalConnectionOperationSession<'_> {
                     ExternalConnectionError::CredentialPreparation(source),
                 )
             })?;
-        PreparedExternalConnection::new(connection, credential, bindings)
+        PreparedExternalConnection::new(admission, connection, credential, bindings)
             .map_err(ConnectionOperationExecutionError::ExternalPreparation)
     }
 
@@ -175,6 +178,7 @@ impl LocalConnectionOperationSession<'_> {
     /// immediately routable model, but still publish one pair credential and public revision.
     pub fn prepare_external_definition(
         &mut self,
+        admission: &dyn ModelBindingAdmission,
         connection: PreparedConnectionMutation,
         provider: &ProviderId,
         account: &AccountId,
@@ -190,8 +194,10 @@ impl LocalConnectionOperationSession<'_> {
                     ExternalConnectionError::CredentialPreparation(source),
                 )
             })?;
-        PreparedExternalConnection::new_group_replacement(connection, credential, bindings)
-            .map_err(ConnectionOperationExecutionError::ExternalPreparation)
+        PreparedExternalConnection::new_group_replacement(
+            admission, connection, credential, bindings,
+        )
+        .map_err(ConnectionOperationExecutionError::ExternalPreparation)
     }
 
     /// Commits one structurally admitted external connect in journal, credential, public order.

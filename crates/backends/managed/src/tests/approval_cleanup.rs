@@ -242,6 +242,7 @@ fn native_backend_interrupts_and_seals_an_active_tool_execution() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(PendingHost {
                 cancelled: Arc::clone(&cancelled),
@@ -338,6 +339,7 @@ fn native_backend_seals_the_turn_when_tool_cleanup_fails() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(CleanupFailingHost {
                 cancelled: Arc::clone(&cancelled),

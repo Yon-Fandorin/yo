@@ -9,11 +9,13 @@ use yo_core::{
 
 use crate::{AppError, state::config::Config};
 
+mod admission;
 mod host_catalog;
 mod native;
 mod startup;
 mod tokenizer;
 
+pub(crate) use admission::NativeBindingAdmission;
 pub(crate) use host_catalog::{
     ActiveHostModel, HostCatalogObservation, project_host_catalogs,
     read_builtin_host_catalogs_with_codex_warning_observer, resolve_active_host_model,

@@ -283,6 +283,7 @@ fn context_exhaustion_finishes_non_resumably_and_latches_the_binding() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(100)),
@@ -342,6 +343,7 @@ fn recounts_and_dispatches_the_exact_smaller_output_cap() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(RecordingTokenCounter {
@@ -394,6 +396,7 @@ fn bounded_selector_uses_at_most_three_strictly_decreasing_exact_counts() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(SequenceTokenCounter::new(
@@ -465,6 +468,7 @@ fn pressure_compaction_summarizes_once_then_waits_for_checkpoint_before_dispatch
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(SequenceTokenCounter::new(
@@ -582,6 +586,7 @@ fn explicit_idle_compaction_uses_the_same_bounded_summary_pipeline() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(SequenceTokenCounter::new(
@@ -687,6 +692,7 @@ fn idle_compaction_backpressures_the_next_submission_until_activation() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(SequenceTokenCounter::new(
@@ -777,6 +783,7 @@ fn post_tool_pressure_compacts_only_after_completing_the_active_suffix() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(SequenceTokenCounter::new(
@@ -891,6 +898,7 @@ fn post_tool_round_exhaustion_stops_before_a_second_dispatch_and_latches() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(SequenceTokenCounter::new([1, 100], Arc::clone(&payloads))),
@@ -952,6 +960,7 @@ fn successful_tool_output_replay_overflow_uses_the_typed_failure_path() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -1012,6 +1021,7 @@ fn synchronous_tool_start_failure_replay_overflow_is_typed_and_latched() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(FailingStartHost),
             Box::new(FixedTokenCounter(1)),
@@ -1072,6 +1082,7 @@ fn approval_decline_replay_overflow_is_typed_and_latched() {
         binding(),
         registry(ToolApprovalRequirement::Required),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -1155,6 +1166,7 @@ fn unknown_output_cap_uses_strict_input_boundary_and_omits_the_field() {
             binding(),
             registry(ToolApprovalRequirement::Automatic),
             NativeModelBackendServices::new(
+                Box::new(yo_core::admit_standard_complete_binding),
                 Some(Box::new(ExactAdmission)),
                 Box::new(MockHost::default()),
                 Box::new(FixedTokenCounter(input_tokens)),
@@ -1209,6 +1221,7 @@ fn cumulative_replay_capacity_is_checked_before_dispatch() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),

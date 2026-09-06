@@ -25,6 +25,13 @@ prospective 검수 증거만 생성; activation이나 일반 eligibility는 부�
 
 ## Model-service와 OpenAI-compatible connector
 
+CLI의 [native admission dispatcher](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/model/admission.rs)는
+external connection/definition 준비와 managed backend service에 함께 주입된다.
+exact Connector/dialect 쌍을 core의 standard admission 또는 Kimi connector의
+canonical secret-free profile validator로 보낸다. 거절되면 다른 validator를 시도하지
+않고 게시 또는 model 사용을 멈춘다. 기존 connector 생성 match가 유일한 조립 경로로
+유지되며 catalog 저장과 delegated Host는 바꾸지 않는다.
+
 provider 중립 service 입력, 명시적인 remote API dialect, Yo-managed loop는 하나의
 typed 경로를 이룬다.
 

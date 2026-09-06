@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 use yo_core::{
+    AdmittedCompleteBinding, AdmittedModelProfile, AdmittedReplayProfile, AdmittedToolPolicy,
     ApiDialect, CompleteModelBinding, ConnectorError, ConnectorFailureKind, ConnectorId,
     FunctionTool, KIMI_PRIVATE_REPLAY_PROFILE, ModelConnectorInputItem, ModelConnectorInputRole,
     ModelConnectorRequest, ReasoningEffort, SEMANTIC_REPLAY_PROFILE,
@@ -27,6 +28,32 @@ impl KimiWireProfile {
     pub(super) const fn private_replay(self) -> bool {
         !matches!(self.kind, KimiWireKind::PlatformK26)
     }
+}
+
+/// Admits a complete Kimi binding without credentials, network requests, or writes.
+/// The same closed wire matrix guards direct connector construction.
+pub fn admit_complete_binding(
+    complete: &CompleteModelBinding,
+) -> Result<AdmittedCompleteBinding, ConnectorError> {
+    let wire = admit_binding(complete)?;
+    let effort = match wire.kind {
+        KimiWireKind::PlatformK3 { effort } | KimiWireKind::CodeK3 { effort } => Some(effort),
+        KimiWireKind::PlatformK27Code | KimiWireKind::PlatformK26 | KimiWireKind::CodeK27 => None,
+    };
+    let tools = if wire.local_tools {
+        AdmittedToolPolicy::LocalTools
+    } else {
+        AdmittedToolPolicy::NoTools
+    };
+    let replay = if wire.private_replay() {
+        AdmittedReplayProfile::ProviderPrivateLocalPlaintext
+    } else {
+        AdmittedReplayProfile::SemanticOnly
+    };
+    Ok(AdmittedCompleteBinding::new(
+        AdmittedModelProfile::new(effort, tools),
+        replay,
+    ))
 }
 
 pub(super) fn admit_binding(

@@ -274,6 +274,7 @@ pub(super) fn backend(
         binding(),
         registry(approval),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost { starts }),
             Box::new(FixedTokenCounter(1)),

@@ -122,6 +122,7 @@ fn bounded_tool_output_includes_its_marker_inside_the_limit() {
             binding(),
             registry(ToolApprovalRequirement::Automatic),
             NativeModelBackendServices::new(
+                Box::new(yo_core::admit_standard_complete_binding),
                 Some(Box::new(ExactAdmission)),
                 Box::new(MockHost::default()),
                 Box::new(FixedTokenCounter(1)),
@@ -145,6 +146,7 @@ fn native_backend_rejects_a_zero_absolute_tool_deadline() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -171,6 +173,7 @@ fn native_backend_refuses_to_expose_tools_without_semantic_admission() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             None,
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -229,6 +232,7 @@ fn semantic_admission_replaces_tool_values_before_activity_replay_and_next_reque
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(RedactingAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -325,6 +329,7 @@ fn schema_validation_diagnostics_do_not_persist_argument_property_names() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -394,6 +399,7 @@ fn injected_policy_diagnostics_do_not_cross_the_semantic_boundary() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(RejectingAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -437,6 +443,7 @@ fn injected_policy_diagnostics_do_not_cross_the_semantic_boundary() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FailingTokenCounter),
@@ -504,6 +511,7 @@ fn injected_policy_diagnostics_do_not_cross_the_semantic_boundary() {
         binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(FailingStartHost),
             Box::new(FixedTokenCounter(1)),

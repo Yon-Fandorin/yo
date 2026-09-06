@@ -97,7 +97,7 @@ fn body_for_complete(
     .unwrap()
 }
 
-// duplicated secret-free preflight와 Connector 방어 검사가 drift하지 않도록 모든 exact
+// 동일한 secret-free preflight와 Connector 방어 검사가 drift하지 않도록 모든 exact
 // ModelId/alias, K3 effort, Code context form과 주요 one-off 경계를 한 표로 고정합니다.
 #[test]
 fn complete_kimi_matrix_and_alias_wires_are_table_pinned() {
@@ -119,6 +119,7 @@ fn complete_kimi_matrix_and_alias_wires_are_table_pinned() {
             admit_binding(&platform).unwrap().kind,
             KimiWireKind::PlatformK3 { effort: admitted } if admitted == effort
         ));
+        assert_admitted_semantics(&platform, Some(effort), true);
         assert_eq!(
             body_for_complete(&platform, Some(effort))["reasoning_effort"],
             name
@@ -138,6 +139,7 @@ fn complete_kimi_matrix_and_alias_wires_are_table_pinned() {
                 admit_binding(&code).unwrap().kind,
                 KimiWireKind::CodeK3 { effort: admitted } if admitted == effort
             ));
+            assert_admitted_semantics(&code, Some(effort), true);
             let body = body_for_complete(&code, Some(effort));
             assert_eq!(body["reasoning_effort"], name);
             assert_eq!(body["thinking"], json!({"type":"enabled","keep":"all"}));
@@ -158,6 +160,7 @@ fn complete_kimi_matrix_and_alias_wires_are_table_pinned() {
             admit_binding(&complete).unwrap().kind,
             KimiWireKind::PlatformK27Code
         );
+        assert_admitted_semantics(&complete, None, true);
         assert_eq!(
             body_for_complete(&complete, None)["stream_options"]["include_usage"],
             true
@@ -172,6 +175,7 @@ fn complete_kimi_matrix_and_alias_wires_are_table_pinned() {
         "semantic-only/v1",
     );
     assert_eq!(admit_binding(&k26).unwrap().kind, KimiWireKind::PlatformK26);
+    assert_admitted_semantics(&k26, None, false);
     assert_eq!(
         body_for_complete(&k26, None)["thinking"]["type"],
         "disabled"
@@ -191,6 +195,7 @@ fn complete_kimi_matrix_and_alias_wires_are_table_pinned() {
             admit_binding(&complete).unwrap().kind,
             KimiWireKind::CodeK27
         );
+        assert_admitted_semantics(&complete, None, true);
         assert!(body_for_complete(&complete, None)["prompt_cache_key"].is_string());
     }
 
@@ -244,7 +249,37 @@ fn complete_kimi_matrix_and_alias_wires_are_table_pinned() {
         ),
     ] {
         assert!(admit_binding(&invalid).is_err());
+        assert!(crate::admit_complete_binding(&invalid).is_err());
+        assert!(
+            crate::KimiChatCompletionsConnector::new(
+                &invalid,
+                yo_core::ApiCredential::new("fixture-key").unwrap(),
+                ModelConnectorLimits::default(),
+            )
+            .is_err()
+        );
     }
+}
+
+fn assert_admitted_semantics(
+    complete: &CompleteModelBinding,
+    effort: Option<ReasoningEffort>,
+    private: bool,
+) {
+    let admitted = crate::admit_complete_binding(complete).unwrap();
+    assert_eq!(admitted.profile().reasoning_effort(), effort);
+    assert_eq!(
+        admitted.profile().tool_policy(),
+        yo_core::AdmittedToolPolicy::LocalTools
+    );
+    assert_eq!(
+        admitted.replay_profile(),
+        if private {
+            yo_core::AdmittedReplayProfile::ProviderPrivateLocalPlaintext
+        } else {
+            yo_core::AdmittedReplayProfile::SemanticOnly
+        }
+    );
 }
 
 // admitted tool policy를 Connector가 끝까지 보존해 no-tools wire 노출을 스스로 막는지 검증합니다.
@@ -284,6 +319,19 @@ fn connector_enforces_local_tools_and_no_tools_profiles() {
     )
     .unwrap();
     let profile = admit_binding(&no_tools).unwrap();
+    let admitted = crate::admit_complete_binding(&no_tools).unwrap();
+    assert_eq!(
+        admitted.profile().tool_policy(),
+        yo_core::AdmittedToolPolicy::NoTools
+    );
+    assert_eq!(
+        admitted.profile().reasoning_effort(),
+        Some(ReasoningEffort::Max)
+    );
+    assert_eq!(
+        admitted.replay_profile(),
+        yo_core::AdmittedReplayProfile::ProviderPrivateLocalPlaintext
+    );
     assert!(
         wire_body(
             &request(RequestToolExposure::enabled(vec![tool])),

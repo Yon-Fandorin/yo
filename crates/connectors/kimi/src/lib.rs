@@ -18,6 +18,7 @@ mod sse;
 mod tests;
 
 use request::KimiWireProfile;
+pub use request::admit_complete_binding;
 use sse::ChatCompletionsSseDecoder;
 
 const KIMI_MAX_REDIRECTS: usize = 3;

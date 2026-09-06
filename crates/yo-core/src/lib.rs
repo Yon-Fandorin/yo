@@ -8,6 +8,7 @@ mod event;
 mod host;
 mod input;
 mod journal;
+mod model_binding_admission;
 mod model_connector;
 mod model_profile_admission;
 mod model_service;
@@ -54,6 +55,11 @@ pub use journal::{
     TranscriptObservation, TranscriptObservationEntry, TranscriptObservationSequence,
     TranscriptObservationSlice, TranscriptReader, TranscriptRecord, TranscriptSlice,
 };
+#[doc(hidden)]
+pub use model_binding_admission::{
+    AdmittedCompleteBinding, AdmittedModelProfile, AdmittedReplayProfile, AdmittedToolPolicy,
+    ModelBindingAdmission,
+};
 pub use model_connector::{
     CacheReadInputTokens, ConnectorError, ConnectorFailureKind, FunctionTool,
     ModelCacheAffinityHint, ModelConnector, ModelConnectorCancellation, ModelConnectorEvent,
@@ -64,10 +70,7 @@ pub use model_connector::{
     ResponsesInputRole, ResponsesPoll, ResponsesRequest, ResponsesUsage,
 };
 #[doc(hidden)]
-pub use model_profile_admission::{
-    AdmittedCompleteBinding, AdmittedModelProfile, AdmittedReplayProfile, AdmittedToolPolicy,
-    admit_new_complete_binding,
-};
+pub use model_profile_admission::admit_standard_complete_binding;
 pub use model_service::{
     AccountCapacityBucket, AccountCapacitySnapshot, AccountCapacityWindow, AccountCredits,
     AccountId, ApiCredential, ApiDialect, CompleteModelBinding, ConnectionAccount,

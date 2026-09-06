@@ -26,6 +26,13 @@ reviews a candidate that changes its own implementation or workflow.
 
 ## Model-service and OpenAI-compatible connectors
 
+The CLI's [native admission dispatcher](https://github.com/Yon-Fandorin/yo/blob/develop/crates/yo-cli/src/execution/model/admission.rs)
+is injected into both external connection/definition preparation and managed backend
+services. It routes exact Connector/dialect pairs to standard core admission or the
+Kimi connector's canonical, secret-free profile validator. Rejection stops publication
+or model use without trying another validator. The existing connector-construction
+match remains the sole composition route; catalog storage and delegated Hosts are unchanged.
+
 The provider-neutral service inputs, explicit remote API dialect, and Yo-managed
 loop form one typed route:
 

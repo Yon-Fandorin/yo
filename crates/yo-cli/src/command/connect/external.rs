@@ -176,7 +176,13 @@ fn execute_definition_import_with(
         format!("Keep {}", display_target(preference_after.as_ref()))
     };
     let prepared = session
-        .prepare_external_definition(mutation, &provider, &account_id, complete_bindings)
+        .prepare_external_definition(
+            &crate::execution::model::NativeBindingAdmission,
+            mutation,
+            &provider,
+            &account_id,
+            complete_bindings,
+        )
         .map_err(|error| {
             AppError::single("structurally admitting the grouped definition", error)
         })?;
@@ -636,7 +642,11 @@ where
         binding_details,
     } = plan;
     let prepared = session
-        .prepare_external_connection(connection, bindings)
+        .prepare_external_connection(
+            &crate::execution::model::NativeBindingAdmission,
+            connection,
+            bindings,
+        )
         .map_err(|error| {
             safe_discovery_source("preparing the external connection", error, remote_selected)
         })?;
@@ -1747,7 +1757,11 @@ models:
             yo_core::LocalConnectionOperationRepositories::in_directory(&root).unwrap();
         let mut session = repositories.acquire().unwrap();
         let prepared = session
-            .prepare_external_connection(plan.connection, plan.bindings)
+            .prepare_external_connection(
+                &crate::execution::model::NativeBindingAdmission,
+                plan.connection,
+                plan.bindings,
+            )
             .unwrap();
         assert_eq!(prepared.binding_count(), 1);
         drop(session);

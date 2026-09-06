@@ -23,6 +23,12 @@ use super::{
     },
 };
 
+fn kimi_admission(
+    complete: &yo_core::CompleteModelBinding,
+) -> Result<yo_core::AdmittedCompleteBinding, String> {
+    yo_connector_kimi::admit_complete_binding(complete).map_err(|error| error.to_string())
+}
+
 fn private_envelope(private: &str, visible: Option<&str>) -> ProviderPrivateReplayEnvelope {
     let reasoning = serde_json::to_string(private).unwrap();
     let content = visible.map_or_else(
@@ -121,6 +127,7 @@ fn started_private_backend() -> NativeModelBackend {
         kimi_binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(kimi_admission),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -346,6 +353,7 @@ fn native_backend_preserves_and_reuses_kimi_private_assistant_state() {
         kimi_binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(kimi_admission),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -434,6 +442,7 @@ fn native_backend_bounds_complete_semantic_and_private_replay_before_retention()
         kimi_binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(kimi_admission),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -643,6 +652,7 @@ fn private_profile_fails_a_completed_round_missing_its_private_item() {
         kimi_binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(kimi_admission),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -734,6 +744,7 @@ fn private_profile_fails_a_later_round_missing_private_after_a_valid_tool_round(
         kimi_binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(kimi_admission),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),
@@ -811,6 +822,7 @@ fn kimi_context_admission_selects_a_smaller_cap_from_the_complete_tool_payload()
         kimi_k27_binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(kimi_admission),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(ToolAwareBoundaryCounter {
@@ -870,6 +882,7 @@ fn native_backend_commits_visible_refusal_as_a_normal_assistant_message() {
         chat_binding(),
         registry(ToolApprovalRequirement::Automatic),
         NativeModelBackendServices::new(
+            Box::new(yo_core::admit_standard_complete_binding),
             Some(Box::new(ExactAdmission)),
             Box::new(MockHost::default()),
             Box::new(FixedTokenCounter(1)),

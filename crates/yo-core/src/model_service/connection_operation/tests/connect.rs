@@ -21,7 +21,11 @@ fn unsupported_profile_fails_during_secret_free_preparation() {
     let connection = direct_connect_mutation(&fixture, &binding);
 
     let error = session
-        .prepare_external_connection(connection, vec![binding])
+        .prepare_external_connection(
+            &crate::admit_standard_complete_binding,
+            connection,
+            vec![binding],
+        )
         .err()
         .expect("unsupported optional parameters must fail preparation");
 
@@ -64,7 +68,11 @@ fn complete_binding_admission_precedes_external_publication() {
         let connection = direct_connect_mutation(&fixture, &binding);
 
         let error = session
-            .prepare_external_connection(connection, vec![binding])
+            .prepare_external_connection(
+                &crate::admit_standard_complete_binding,
+                connection,
+                vec![binding],
+            )
             .err()
             .expect("invalid complete binding must fail preparation");
 
@@ -209,6 +217,69 @@ fn repositories(fixture: &Fixture) -> LocalConnectionOperationRepositories {
     .unwrap()
 }
 
+// 유효한 binding도 주입한 admission이 거절하면 legacy 검증으로 fallback하지 않으며,
+// direct connect와 definition import 모두 journal/credential/public 쓰기 전에 멈춥니다.
+#[test]
+fn injected_admission_rejection_precedes_all_connection_writes() {
+    for definition in [false, true] {
+        let fixture = Fixture::new("injected-admission");
+        let binding = complete("alpha");
+        assert!(crate::admit_standard_complete_binding(&binding).is_ok());
+        let called = std::sync::atomic::AtomicUsize::new(0);
+        let admission = |candidate: &CompleteModelBinding| {
+            assert_eq!(candidate, &binding);
+            called.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Err("injected admission rejection".to_owned())
+        };
+        let mutation = if definition {
+            fixture
+                .connections
+                .capture()
+                .unwrap()
+                .prepare_group_replace(
+                    ConnectionAccount::new(provider(), account(), None, None).unwrap(),
+                    vec![StoredModelBinding::new(binding.clone(), None).unwrap()],
+                    None,
+                )
+                .unwrap()
+        } else {
+            direct_connect_mutation(&fixture, &binding)
+        };
+        let repositories = repositories(&fixture);
+        let mut session = repositories.acquire().unwrap();
+        let result = if definition {
+            session.prepare_external_definition(
+                &admission,
+                mutation,
+                &provider(),
+                &account(),
+                vec![binding.clone()],
+            )
+        } else {
+            session.prepare_external_connection(&admission, mutation, vec![binding.clone()])
+        };
+        assert!(result.is_err());
+        assert_eq!(called.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(fixture.journal.capture().unwrap().is_none());
+        assert!(
+            fixture
+                .credentials
+                .capture()
+                .unwrap()
+                .revision()
+                .is_absent()
+        );
+        assert!(
+            fixture
+                .connections
+                .capture()
+                .unwrap()
+                .revision()
+                .is_absent()
+        );
+    }
+}
+
 fn prepared(
     session: &mut crate::model_service::LocalConnectionOperationSession<'_>,
     fixture: &Fixture,
@@ -221,7 +292,11 @@ fn prepared(
             .expect("test direct connects contain one selected model"),
     );
     session
-        .prepare_external_connection(connection, bindings)
+        .prepare_external_connection(
+            &crate::admit_standard_complete_binding,
+            connection,
+            bindings,
+        )
         .unwrap()
 }
 
@@ -264,7 +339,13 @@ fn definition_preparation_rejects_a_public_mutation_without_the_exact_pair() {
         .unwrap();
 
     let error = session
-        .prepare_external_definition(connection, &provider(), &account(), Vec::new())
+        .prepare_external_definition(
+            &crate::admit_standard_complete_binding,
+            connection,
+            &provider(),
+            &account(),
+            Vec::new(),
+        )
         .err()
         .expect("an arbitrary public mutation must not become a definition import");
 
@@ -308,7 +389,13 @@ fn definition_preparation_rejects_an_unrelated_group_replacement() {
     let mut session = repositories.acquire().unwrap();
 
     let error = session
-        .prepare_external_definition(unrelated, &provider(), &account(), vec![target])
+        .prepare_external_definition(
+            &crate::admit_standard_complete_binding,
+            unrelated,
+            &provider(),
+            &account(),
+            vec![target],
+        )
         .err()
         .expect("another pair's replacement must not rotate this pair's credential");
 
@@ -359,7 +446,11 @@ fn direct_preparation_rejects_non_connect_mutation_intents() {
         (deleting_group, vec![alpha]),
     ] {
         let error = session
-            .prepare_external_connection(mutation, bindings)
+            .prepare_external_connection(
+                &crate::admit_standard_complete_binding,
+                mutation,
+                bindings,
+            )
             .err()
             .expect("only a direct-connect mutation may rotate its credential");
         assert!(

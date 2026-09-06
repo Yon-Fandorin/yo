@@ -24,6 +24,7 @@ fn backend(
     observer_failure: Option<&'static str>,
 ) -> NativeModelBackend {
     let services = NativeModelBackendServices::new(
+        Box::new(yo_core::admit_standard_complete_binding),
         Some(Box::new(ExactAdmission)),
         Box::new(MockHost::default()),
         Box::new(FixedTokenCounter(1)),
