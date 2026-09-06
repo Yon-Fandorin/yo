@@ -3,7 +3,8 @@ use std::{num::NonZeroU64, time::Duration};
 use serde_json::{Value, json};
 use yo_core::{AccountId, ActivityId, ActivityRef, SessionId, TurnId, TurnRef};
 
-use super::super::{Backend, client::AppServerClient};
+use super::super::Backend;
+use crate::client::AppServerClient;
 pub(super) use crate::test_support::{FakePeer, Sent, initialize_response};
 
 pub(super) fn thread_start_response(id: u64, thread_id: &str) -> Value {

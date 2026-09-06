@@ -5,8 +5,8 @@ use yo_core::{
     BackendFailure, BackendFailureKind, BackendOutcomeEvidence, BackendPoll, Failure, TurnOutcome,
 };
 
-use super::{
-    ApprovalBinding, Backend, ItemBinding,
+use super::{ApprovalBinding, Backend, ItemBinding};
+use crate::{
     client::ClientPoll,
     protocol::{self, Incoming},
 };

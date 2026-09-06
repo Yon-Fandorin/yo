@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use yo_backend::transport::JsonRpcMailbox;
 use yo_core::{BackendFailure, BackendFailureKind, BackendStopHandle};
 
@@ -23,6 +23,11 @@ pub(super) struct AcpClient<P> {
 
 pub(super) struct CallResult {
     pub(super) result: Value,
+}
+
+pub(super) struct AuthenticatedGrok {
+    pub(super) initialized: protocol::InitializeResult,
+    pub(super) authentication: Value,
 }
 
 impl<P: JsonPeer> AcpClient<P> {
@@ -229,6 +234,73 @@ impl<P: JsonPeer> AcpClient<P> {
 
     fn queue(&mut self, message: Incoming) -> Result<(), BackendFailure> {
         self.mailbox.push(message)
+    }
+}
+
+pub(super) fn initialize_and_authenticate<P: JsonPeer>(
+    client: &mut AcpClient<P>,
+) -> Result<AuthenticatedGrok, BackendFailure> {
+    let result = client
+        .call(
+            "initialize",
+            json!({
+                "protocolVersion": protocol::PROTOCOL_VERSION,
+                "clientCapabilities": {},
+                "clientInfo": {
+                    "name": "yo",
+                    "title": "yo",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+            }),
+        )?
+        .result;
+    let initialized = protocol::decode_initialize(result)?;
+    if !initialized
+        .auth_methods
+        .iter()
+        .any(|method| method == "cached_token")
+    {
+        return Err(BackendFailure::new(
+            BackendFailureKind::Initialization,
+            "Grok has no cached login; run `grok login` before using `host:grok`",
+        ));
+    }
+    let authentication = client
+        .call(
+            "authenticate",
+            json!({
+                "methodId": "cached_token",
+                "_meta": { "headless": true },
+            }),
+        )
+        .map_err(|error| {
+            BackendFailure::new(
+                error.kind(),
+                format!(
+                    "Grok cached login authentication failed; run `grok login` and retry: {}",
+                    error.message()
+                ),
+            )
+        })?
+        .result;
+    Ok(AuthenticatedGrok {
+        initialized,
+        authentication,
+    })
+}
+
+pub(super) fn combine_with_cleanup<T>(
+    primary: Result<T, BackendFailure>,
+    cleanup: Result<(), BackendFailure>,
+) -> Result<T, BackendFailure> {
+    match (primary, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(cleanup)) => Err(cleanup),
+        (Err(primary), Ok(())) => Err(primary),
+        (Err(primary), Err(cleanup)) => Err(BackendFailure::new(
+            primary.kind(),
+            format!("{}; cleanup also failed: {}", primary.message(), cleanup),
+        )),
     }
 }
 

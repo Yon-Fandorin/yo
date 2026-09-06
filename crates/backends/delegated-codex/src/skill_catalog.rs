@@ -21,7 +21,9 @@ use yo_core::{
     search_skill_reference_candidates,
 };
 
-use super::{AppServerClient, CodexBackendConfig, CodexWarningObserver, StdioPeer};
+use crate::{
+    CodexBackendConfig, CodexWarningObserver, client::AppServerClient, transport::StdioPeer,
+};
 
 pub struct CodexSkillReferenceProvider {
     requests: Option<Sender<SkillReferenceSearchRequest>>,

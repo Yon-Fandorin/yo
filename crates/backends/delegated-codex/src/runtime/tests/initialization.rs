@@ -13,12 +13,13 @@ use yo_core::{
 };
 
 use super::{
-    super::{Backend, CodexCompatibilityWarning, client::AppServerClient},
+    super::{Backend, CodexCompatibilityWarning},
     support::{
         FakePeer, backend, backend_with_profile, initialize_response, session,
         thread_start_response, turn,
     },
 };
+use crate::{client::AppServerClient, transport::PeerPoll};
 
 struct FailsOnInitializedPeer {
     incoming: VecDeque<Value>,
@@ -47,21 +48,16 @@ impl JsonMessagePeer for FailsOnInitializedPeer {
         Ok(())
     }
 
-    fn receive(
-        &mut self,
-        _timeout: Duration,
-    ) -> Result<super::super::transport::PeerPoll, yo_core::BackendFailure> {
+    fn receive(&mut self, _timeout: Duration) -> Result<PeerPoll, yo_core::BackendFailure> {
         Ok(self
             .incoming
             .pop_front()
-            .map(super::super::transport::PeerPoll::Message)
-            .unwrap_or(super::super::transport::PeerPoll::Closed))
+            .map(PeerPoll::Message)
+            .unwrap_or(PeerPoll::Closed))
     }
 
-    fn try_receive(
-        &mut self,
-    ) -> Result<super::super::transport::PeerPoll, yo_core::BackendFailure> {
-        Ok(super::super::transport::PeerPoll::Pending)
+    fn try_receive(&mut self) -> Result<PeerPoll, yo_core::BackendFailure> {
+        Ok(PeerPoll::Pending)
     }
 
     fn shutdown(&mut self) -> Result<(), yo_core::BackendFailure> {
