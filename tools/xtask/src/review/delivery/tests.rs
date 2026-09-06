@@ -1,6 +1,10 @@
 #[cfg(unix)]
 use std::os::unix::fs::{PermissionsExt, symlink};
-use std::time::{Duration, Instant};
+use std::{
+    process::ExitStatus,
+    sync::{Mutex, MutexGuard},
+    time::{Duration, Instant},
+};
 
 use super::{
     canonical_json, combine_failures,
@@ -9,8 +13,8 @@ use super::{
     model::{Artifact, CLAIM_SCHEMA, Claim, DeliveryRequest, ResultDocument, Route},
     prepare_output_directory_at,
     process::{
-        execute_continuation_once, execute_delegated_continuation_once, execute_delegated_once,
-        execute_once, execute_once_with_timeout,
+        ProcessCapture, execute_continuation_once, execute_delegated_continuation_once,
+        execute_delegated_once, execute_once, execute_once_with_timeout,
     },
     publish_claim, read_request, read_request_with_output_policy, require_empty_directory,
     require_integration_state, require_original_fresh,
@@ -23,6 +27,16 @@ use crate::{
     review_protocol::digest,
     test_support::TestRepository,
 };
+
+// Serialize fixtures that cross the external-process boundary, while unrelated unit tests remain
+// parallel and host process pressure cannot mask their assertions.
+static EXTERNAL_PROCESS_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
+
+fn external_process_fixture_guard() -> MutexGuard<'static, ()> {
+    EXTERNAL_PROCESS_FIXTURE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn authorized() -> AuthorizedDelivery {
     AuthorizedDelivery {
@@ -44,6 +58,17 @@ fn authorized() -> AuthorizedDelivery {
         prior_packet_hash: None,
         prior_provider_request_id: None,
     }
+}
+
+fn assert_successful_delivery_capture(capture: &ProcessCapture) {
+    assert!(
+        capture.status.as_ref().is_some_and(ExitStatus::success) && capture.failure.is_none(),
+        "review delivery did not exit successfully: status={:?}; failure={:?}; stdout={:?}; stderr={:?}",
+        capture.status,
+        capture.failure,
+        String::from_utf8_lossy(&capture.stdout),
+        String::from_utf8_lossy(&capture.stderr),
+    );
 }
 
 fn authorized_host() -> AuthorizedHostDelivery {
@@ -529,6 +554,7 @@ fn exact_claim_cannot_be_reused_as_resend_authority() {
 // 돌아와 호출자가 compact failed outcome을 게시할 수 있게 합니다.
 #[test]
 fn claimed_spawn_failure_returns_one_bounded_capture() {
+    let _external_process_fixture = external_process_fixture_guard();
     let repository = TestRepository::new("review-delivery-spawn-failure");
     let output = repository.path.join("output");
     std::fs::create_dir(&output).unwrap();
@@ -553,6 +579,7 @@ fn claimed_spawn_failure_returns_one_bounded_capture() {
 // argv, 기존 Session repository, immutable delta stdin만 child에 전달합니다.
 #[test]
 fn continuation_launch_uses_exact_print_resume_arguments() {
+    let _external_process_fixture = external_process_fixture_guard();
     let repository = TestRepository::new("review-continuation-delivery-launch");
     let output = repository.path.join("output");
     let sessions = repository.path.join("sessions");
@@ -580,7 +607,7 @@ fn continuation_launch_uses_exact_print_resume_arguments() {
         &delivery,
     );
 
-    assert!(capture.status.unwrap().success());
+    assert_successful_delivery_capture(&capture);
     assert_eq!(capture.stdout, b"reviewed\n");
     assert_eq!(
         std::fs::read_to_string(sessions.join("argv")).unwrap(),
@@ -605,7 +632,7 @@ fn continuation_launch_uses_exact_print_resume_arguments() {
         &delegated,
         None,
     );
-    assert!(capture.status.unwrap().success());
+    assert_successful_delivery_capture(&capture);
     assert_eq!(
         std::fs::read_to_string(sessions.join("argv")).unwrap(),
         "-p\n--resume\n01890f00-0000-7000-8000-000000000001\n"
@@ -621,6 +648,7 @@ fn continuation_launch_uses_exact_print_resume_arguments() {
 // read-only profile만 argv로 고정합니다.
 #[test]
 fn delegated_launch_uses_exact_host_read_only_arguments() {
+    let _external_process_fixture = external_process_fixture_guard();
     let repository = TestRepository::new("review-delegated-delivery-launch");
     let executable = repository.write(
         "yo",
@@ -638,7 +666,7 @@ fn delegated_launch_uses_exact_host_read_only_arguments() {
         let capture =
             execute_delegated_once(&executable, &repository.path, &output, &delivery, None);
 
-        assert!(capture.status.unwrap().success());
+        assert_successful_delivery_capture(&capture);
         assert_eq!(
             std::fs::read_to_string(output.join("sessions.argv")).unwrap(),
             format!("-p\n--model\nhost:{host}\n--sandbox\nread-only\n")
@@ -655,6 +683,7 @@ fn delegated_launch_uses_exact_host_read_only_arguments() {
 // 한 failed capture로 돌아와 coordinator가 같은 claim 아래에서 무한 대기하지 않습니다.
 #[test]
 fn claimed_process_is_terminated_at_its_deadline() {
+    let _external_process_fixture = external_process_fixture_guard();
     let repository = TestRepository::new("review-delivery-timeout");
     let output = repository.path.join("output");
     std::fs::create_dir(&output).unwrap();
